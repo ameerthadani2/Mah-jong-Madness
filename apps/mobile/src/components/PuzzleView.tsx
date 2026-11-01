@@ -97,7 +97,7 @@ function WaitsPuzzleView({ puzzle, onResult, onNext, nextLabel, autoAdvance }: {
         <View style={{ gap: 6 }}>
           <H2 style={{ color: correct ? colors.ok : colors.danger }}>{correct ? 'Exactly right!' : 'Not all of them.'}</H2>
           <Row style={{ flexWrap: 'wrap' }}>
-            <Text style={{ color: colors.text }}>Waits:</Text>
+            <Text style={{ color: colors.ink, fontWeight: '700' }}>Waits:</Text>
             {puzzle.answers.map((k) => (
               <Pill key={k} text={kindInfo(k).nameZh} tone="gold" />
             ))}

@@ -20,7 +20,8 @@ export interface TableTheme {
 }
 
 export const TABLE_THEMES: TableTheme[] = [
-  { id: 'classic', name: 'Classic Felt', nameZh: '經典綠', felt: '#0b3d2e', feltDark: '#072a20', feltLight: '#145c45', tileFace: '#f6f1e4', tileEdge: '#d9d0bb', tileBack: '#2f6b55', accent: '#e3b341', premium: false },
+  { id: 'classic', name: 'Classic Felt', nameZh: '經典綠', felt: '#2F9E6A', feltDark: '#1E7A4F', feltLight: '#3DB57D', tileFace: '#FFF9EE', tileEdge: '#D9C7A6', tileBack: '#1E7A4F', accent: '#FFC53D', premium: false },
+  { id: 'deep', name: 'Deep Green', nameZh: '墨綠', felt: '#0b3d2e', feltDark: '#072a20', feltLight: '#145c45', tileFace: '#f6f1e4', tileEdge: '#d9d0bb', tileBack: '#2f6b55', accent: '#e3b341', premium: false },
   { id: 'midnight', name: 'Midnight Blue', nameZh: '午夜藍', felt: '#122a4a', feltDark: '#0b1b31', feltLight: '#1f3f6b', tileFace: '#f7f4ec', tileEdge: '#d6d0c2', tileBack: '#3b5a88', accent: '#ffcc5c', premium: false },
   { id: 'nightmarket', name: 'Night Market', nameZh: '夜市霓虹', felt: '#2a0f3a', feltDark: '#1a0826', feltLight: '#45195f', tileFace: '#fff7fb', tileEdge: '#e6cfe0', tileBack: '#7a2d9c', accent: '#ff5fa2', premium: true },
   { id: 'bamboo', name: 'Bamboo Garden', nameZh: '竹林', felt: '#3e5a1f', feltDark: '#2a3f13', feltLight: '#5a7d2f', tileFace: '#fbf8ea', tileEdge: '#dfd8bd', tileBack: '#6e8f3c', accent: '#f4d35e', premium: true },

@@ -79,7 +79,7 @@ export function HomeScreen() {
           <Row>
             <Text style={{ fontSize: 28 }}>{app.profile.avatar}</Text>
             <View>
-              <Text style={{ color: colors.text, fontWeight: '800', fontSize: 16 }}>{app.profile.name}</Text>
+              <Text style={{ color: colors.ink, fontWeight: '900', fontSize: 16 }}>{app.profile.name}</Text>
               <P dim style={{ fontSize: 12 }}>
                 {app.progress.handsPlayed} hands · {winRate === null ? 'no wins yet' : `${winRate}% win rate`}
               </P>
@@ -167,11 +167,11 @@ const styles = StyleSheet.create({
   grid: { flexDirection: 'row', flexWrap: 'wrap', gap: space.md },
   tile: { flexGrow: 1, flexBasis: '45%', minWidth: 220 },
   tileIcon: { fontSize: 28 },
-  tileTitle: { color: colors.text, fontWeight: '900', fontSize: 17 },
+  tileTitle: { color: colors.ink, fontWeight: '900', fontSize: 17 },
   tileText: { fontSize: 13 },
-  input: { backgroundColor: colors.panelStrong, color: colors.text, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, fontSize: 16 },
+  input: { backgroundColor: '#FFFFFF', color: colors.ink, borderWidth: 3, borderColor: colors.creamEdge, borderRadius: 14, paddingHorizontal: 12, paddingVertical: 10, fontSize: 16 },
   avatar: { fontSize: 26, padding: 4, borderRadius: 8 },
-  avatarOn: { backgroundColor: colors.gold },
-  chip: { color: colors.text, backgroundColor: colors.panelStrong, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999, fontSize: 12, fontWeight: '700', overflow: 'hidden' },
-  chipOn: { backgroundColor: colors.gold, color: colors.ink },
+  avatarOn: { backgroundColor: colors.gold, borderWidth: 2, borderColor: colors.goldDim },
+  chip: { color: colors.ink, backgroundColor: colors.cream, borderWidth: 2, borderColor: colors.creamEdge, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 999, fontSize: 12, fontWeight: '800', overflow: 'hidden' },
+  chipOn: { backgroundColor: colors.gold, borderColor: colors.goldDim, color: colors.ink },
 });

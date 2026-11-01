@@ -155,6 +155,6 @@ function MoveCard({ move, compact }: { move: ReviewedMove; compact?: boolean }) 
 const styles = StyleSheet.create({
   wrap: { padding: space.lg, gap: space.md },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12 },
-  accuracy: { color: colors.gold, fontSize: 56, fontWeight: '900' },
+  accuracy: { color: colors.ink, fontSize: 56, fontWeight: '900' },
   hand: { flexDirection: 'row', flexWrap: 'wrap', gap: 2 },
 });

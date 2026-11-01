@@ -198,7 +198,7 @@ export function ClubScreen({ code }: { code: string }) {
         <View>
           <H1 style={{ fontSize: 22 }}>{club.name}</H1>
           <P dim style={{ fontSize: 12 }}>
-            Code <Text style={{ color: colors.gold, fontWeight: '800' }}>{club.code}</Text> · {club.members.length} members · {me ? me.role : 'guest'}
+            Code <Text style={{ color: colors.ink, fontWeight: '900' }}>{club.code}</Text> · {club.members.length} members · {me ? me.role : 'guest'}
           </P>
         </View>
         <Button small kind="ghost" title="Back" onPress={app.back} />
@@ -259,8 +259,8 @@ export function ClubScreen({ code }: { code: string }) {
                 <Text style={styles.rank}>{i + 1}</Text>
                 <Text style={{ fontSize: 20 }}>{m.avatar ?? '🀄'}</Text>
                 <View style={{ flex: 1 }}>
-                  <Text style={{ color: colors.text, fontWeight: '800' }}>
-                    {m.name} {m.role !== 'member' ? <Text style={{ color: colors.gold, fontSize: 11 }}>{m.role}</Text> : null}
+                  <Text style={{ color: colors.ink, fontWeight: '800' }}>
+                    {m.name} {m.role !== 'member' ? <Text style={{ color: colors.goldDim, fontSize: 11 }}>{m.role}</Text> : null}
                   </Text>
                   <P dim style={{ fontSize: 12 }}>
                     {m.matchesPlayed} matches · {m.matchesWon} wins
@@ -322,11 +322,11 @@ const styles = StyleSheet.create({
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12 },
   cols: { flexDirection: 'row', flexWrap: 'wrap', gap: space.md },
   col: { flexGrow: 1, flexBasis: '45%', minWidth: 240 },
-  input: { backgroundColor: colors.panelStrong, color: colors.text, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, fontSize: 16 },
-  codeInput: { backgroundColor: colors.panelStrong, color: colors.text, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 12, fontSize: 22, letterSpacing: 5, fontWeight: '800', textAlign: 'center' },
-  chip: { color: colors.text, backgroundColor: colors.panelStrong, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999, fontSize: 13, fontWeight: '700', overflow: 'hidden' },
-  chipOn: { backgroundColor: colors.gold, color: colors.ink },
-  clubName: { color: colors.text, fontWeight: '900', fontSize: 16 },
-  standing: { paddingVertical: 6, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.textDim },
-  rank: { color: colors.gold, fontWeight: '900', width: 22 },
+  input: { backgroundColor: '#FFFFFF', color: colors.ink, borderWidth: 3, borderColor: colors.creamEdge, borderRadius: 14, paddingHorizontal: 12, paddingVertical: 10, fontSize: 16 },
+  codeInput: { backgroundColor: '#FFFFFF', color: colors.ink, borderWidth: 3, borderColor: colors.creamEdge, borderRadius: 14, paddingHorizontal: 12, paddingVertical: 12, fontSize: 22, letterSpacing: 5, fontWeight: '800', textAlign: 'center' },
+  chip: { color: colors.ink, backgroundColor: colors.cream, borderWidth: 2, borderColor: colors.creamEdge, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 999, fontSize: 13, fontWeight: '800', overflow: 'hidden' },
+  chipOn: { backgroundColor: colors.gold, borderColor: colors.goldDim, color: colors.ink },
+  clubName: { color: colors.ink, fontWeight: '900', fontSize: 16 },
+  standing: { paddingVertical: 6, borderBottomWidth: 2, borderBottomColor: colors.creamDeep },
+  rank: { color: colors.goldDim, fontWeight: '900', width: 22 },
 });

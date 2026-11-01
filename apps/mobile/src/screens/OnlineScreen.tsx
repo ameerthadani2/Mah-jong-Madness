@@ -83,5 +83,5 @@ const styles = StyleSheet.create({
   wrap: { padding: space.lg, gap: space.md },
   cols: { flexDirection: 'row', flexWrap: 'wrap', gap: space.md },
   col: { flexGrow: 1, flexBasis: '45%', minWidth: 240 },
-  input: { backgroundColor: colors.panelStrong, color: colors.text, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 12, fontSize: 24, letterSpacing: 6, fontWeight: '800', textAlign: 'center' },
+  input: { backgroundColor: '#FFFFFF', color: colors.ink, borderWidth: 3, borderColor: colors.creamEdge, borderRadius: 14, paddingHorizontal: 12, paddingVertical: 12, fontSize: 24, letterSpacing: 6, fontWeight: '800', textAlign: 'center' },
 });

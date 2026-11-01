@@ -168,9 +168,9 @@ const styles = StyleSheet.create({
   grid: { flexDirection: 'row', flexWrap: 'wrap', gap: space.md },
   drill: { flexGrow: 1, flexBasis: '45%', minWidth: 240 },
   icon: { fontSize: 26 },
-  num: { color: colors.gold, fontSize: 24, fontWeight: '900', width: 28 },
-  title: { color: colors.text, fontSize: 16, fontWeight: '800' },
+  num: { color: colors.goldDim, fontSize: 24, fontWeight: '900', width: 28 },
+  title: { color: colors.ink, fontSize: 16, fontWeight: '900' },
   handRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, paddingVertical: 8 },
   group: { flexDirection: 'row', gap: 2 },
-  dot: { width: 10, height: 10, borderRadius: 5, backgroundColor: colors.panelStrong },
+  dot: { width: 12, height: 12, borderRadius: 6, backgroundColor: colors.cream, borderWidth: 2, borderColor: colors.creamEdge },
 });

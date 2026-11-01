@@ -54,7 +54,7 @@ export function TableScreen() {
   if (!session || !state) {
     return (
       <View style={styles.center}>
-        <P>No table.</P>
+        <P style={{ color: colors.text }}>No table.</P>
         <Button title="Home" onPress={() => app.go({ name: 'home' })} />
       </View>
     );
@@ -62,7 +62,7 @@ export function TableScreen() {
   if (!view) {
     return (
       <View style={styles.center}>
-        <P>Shuffling… ({state.ceremony === 'idle' ? 'waiting for players' : state.ceremony === 'committed' ? 'sealed your random share' : 'revealed'})</P>
+        <P style={{ color: colors.text }}>Shuffling… ({state.ceremony === 'idle' ? 'waiting for players' : state.ceremony === 'committed' ? 'sealed your random share' : 'revealed'})</P>
         <Button kind="ghost" title="Leave" onPress={leave} />
       </View>
     );
@@ -201,13 +201,13 @@ export function TableScreen() {
           {otherPanel(2)}
           <View style={styles.centerInfo}>
             {view.pending && (
-              <P dim style={{ fontSize: 12 }}>
+              <P style={{ fontSize: 12, color: colors.text }}>
                 {seatInfo(view.pending.from)?.name} 打出 {kindInfo(kindOf(view.pending.tile)).nameZh}
                 {view.pending.kind === 'addedKong' ? '（加槓）' : ''} — 等待回應…
               </P>
             )}
             {!view.pending && view.phase === 'discard' && view.turn !== mySeat && (
-              <P dim style={{ fontSize: 12 }}>
+              <P style={{ fontSize: 12, color: colors.text }}>
                 輪到 {seatInfo(view.turn)?.name}
               </P>
             )}
@@ -307,7 +307,7 @@ function ActionBar({ actions, view, act, selected, hint }: { actions: Action[]; 
       ))}
       {pass && <Button kind="ghost" title="過" onPress={() => act(pass)} />}
       {canDiscard && selected !== null && <Button kind="danger" title={`打 ${kindInfo(kindOf(selected)).nameZh}`} onPress={() => act({ type: 'discard', tile: selected })} />}
-      {canDiscard && selected === null && <P dim style={{ fontSize: 12 }}>Tap a tile, tap again to discard</P>}
+      {canDiscard && selected === null && <P style={{ fontSize: 12, color: colors.text }}>Tap a tile, tap again to discard</P>}
     </View>
   );
 }
@@ -366,13 +366,13 @@ function WinCard({ w, view, state }: { w: WinRecord; view: TableView; state: Cli
         {w.score.items.map((it) => (
           <Row key={it.key} style={{ justifyContent: 'space-between' }}>
             <Text style={styles.itemText}>
-              {it.nameZh} <Text style={{ color: colors.textDim }}>{it.nameEn}</Text>
+              {it.nameZh} <Text style={{ color: '#4B5068' }}>{it.nameEn}</Text>
             </Text>
             <Text style={styles.itemTai}>{it.tai} 台</Text>
           </Row>
         ))}
         {w.payments.map((p, i) => (
-          <Text key={i} style={[styles.itemText, { color: colors.textDim }]}>
+          <Text key={i} style={[styles.itemText, { color: '#4B5068' }]}>
             {name(p.from)} → {name(p.to)}: {p.points} ({p.tai} 台 incl. dealer)
           </Text>
         ))}
@@ -393,7 +393,7 @@ function ResultOverlay({ result, view, state, mySeat, onNext, onLeave, onReview,
         {result.wins.map((w) => (
           <WinCard key={w.seat} w={w} view={view} state={state} />
         ))}
-        {result.type === 'draw' && <P dim>Wall exhausted. Dealer {result.dealerContinues ? 'keeps the deal (連莊).' : 'passes.'}</P>}
+        {result.type === 'draw' && <P>Wall exhausted. Dealer {result.dealerContinues ? 'keeps the deal (連莊).' : 'passes.'}</P>}
         <Row style={{ flexWrap: 'wrap' }}>
           {view.scores.map((s, i) => (
             <Pill key={i} text={`${state.seats.find((x) => x.seat === i)?.name ?? i}: ${s >= 0 ? '+' : ''}${s} (${result.scoreDelta[i] >= 0 ? '+' : ''}${result.scoreDelta[i]})`} tone={i === mySeat ? 'gold' : 'neutral'} />
@@ -454,8 +454,8 @@ const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.felt },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12 },
   topBar: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: space.md, paddingVertical: 4 },
-  body: { flex: 1, flexDirection: 'row', paddingHorizontal: space.sm, gap: space.sm },
-  side: { gap: space.sm },
+  body: { flex: 1, flexDirection: 'row', paddingHorizontal: space.sm, gap: space.sm, overflow: 'hidden' },
+  side: { gap: space.sm, flexShrink: 1, overflow: 'hidden' },
   centerCol: { flex: 1, justifyContent: 'flex-start', gap: 6 },
   footer: { paddingHorizontal: 12, paddingBottom: 4 },
   banner: { position: 'absolute', top: 44, left: '20%', right: '20%', zIndex: 30, backgroundColor: colors.danger, borderRadius: radius.md, padding: 10, alignItems: 'center', gap: 6 },
@@ -469,18 +469,18 @@ const styles = StyleSheet.create({
   huBtn: { backgroundColor: colors.gold, paddingHorizontal: 26 },
   hand: { gap: 4, paddingBottom: 4 },
   handTiles: { flexDirection: 'row', alignItems: 'flex-end', gap: 2, paddingTop: 12 },
-  coach: { backgroundColor: colors.panelStrong, borderRadius: radius.md, padding: 8, gap: 4, borderWidth: 1, borderColor: colors.goldDim },
+  coach: { backgroundColor: colors.panelStrong, borderRadius: radius.md, padding: 8, gap: 4, borderWidth: 2, borderColor: colors.gold, flexShrink: 1, overflow: 'hidden' },
   coachTitle: { color: colors.gold, fontWeight: '900', fontSize: 12, letterSpacing: 1 },
   coachStatus: { color: colors.text, fontWeight: '700', fontSize: 13 },
   coachLine: { color: colors.textDim, fontSize: 11, lineHeight: 15 },
   overlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.7)', alignItems: 'center', justifyContent: 'center', padding: space.lg },
-  overlayCard: { backgroundColor: colors.feltDark, borderRadius: radius.lg, padding: space.lg, gap: space.md, minWidth: 360, maxWidth: 720, borderWidth: 1, borderColor: colors.goldDim },
-  overlayTitle: { color: colors.gold, fontSize: 24, fontWeight: '900' },
+  overlayCard: { backgroundColor: colors.cream, borderRadius: radius.lg, padding: space.lg, gap: space.md, minWidth: 360, maxWidth: 720, borderWidth: 4, borderColor: colors.creamEdge },
+  overlayTitle: { color: colors.ink, fontSize: 24, fontWeight: '900' },
   winCard: { gap: 6 },
-  winTitle: { color: colors.text, fontWeight: '800', fontSize: 15 },
+  winTitle: { color: colors.ink, fontWeight: '900', fontSize: 15 },
   items: { gap: 2 },
-  itemText: { color: colors.text, fontSize: 13 },
-  itemTai: { color: colors.gold, fontWeight: '800', fontSize: 13 },
+  itemText: { color: colors.ink, fontSize: 13, fontWeight: '600' },
+  itemTai: { color: colors.goldDim, fontWeight: '900', fontSize: 13 },
   toast: { position: 'absolute', bottom: 8, alignSelf: 'center', backgroundColor: colors.panelStrong, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8 },
   emoteBar: { position: 'absolute', top: 44, right: 12, zIndex: 20, flexDirection: 'row', flexWrap: 'wrap', gap: 8, maxWidth: 420, backgroundColor: colors.panelStrong, padding: 10, borderRadius: radius.md, borderWidth: 1, borderColor: colors.goldDim, alignItems: 'center' },
   quickChat: { backgroundColor: colors.feltLight, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999 },

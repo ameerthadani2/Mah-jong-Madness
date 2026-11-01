@@ -85,6 +85,6 @@ export function LobbyScreen() {
 const styles = StyleSheet.create({
   wrap: { padding: space.lg, gap: space.md },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12 },
-  code: { color: colors.gold, fontSize: 44, fontWeight: '900', letterSpacing: 10 },
-  seat: { paddingVertical: 6, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.textDim },
+  code: { color: colors.ink, fontSize: 44, fontWeight: '900', letterSpacing: 10 },
+  seat: { paddingVertical: 6, borderBottomWidth: 2, borderBottomColor: colors.creamDeep },
 });

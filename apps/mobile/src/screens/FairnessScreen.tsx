@@ -57,5 +57,5 @@ export function FairnessScreen() {
 
 const styles = StyleSheet.create({
   wrap: { padding: space.lg, gap: space.md },
-  mono: { color: colors.textDim, fontSize: 11, fontFamily: 'monospace' },
+  mono: { color: '#4B5068', fontSize: 11, fontFamily: 'monospace' },
 });

@@ -110,9 +110,9 @@ export function SettingsScreen() {
 
 const styles = StyleSheet.create({
   wrap: { padding: space.lg, gap: space.md },
-  input: { backgroundColor: colors.panelStrong, color: colors.text, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, fontSize: 16 },
+  input: { backgroundColor: '#FFFFFF', color: colors.ink, borderWidth: 3, borderColor: colors.creamEdge, borderRadius: 14, paddingHorizontal: 12, paddingVertical: 10, fontSize: 16 },
   avatar: { fontSize: 26, padding: 4, borderRadius: 8 },
-  avatarOn: { backgroundColor: colors.gold },
-  chip: { color: colors.text, backgroundColor: colors.panelStrong, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999, fontSize: 12, fontWeight: '700', overflow: 'hidden' },
-  chipOn: { backgroundColor: colors.gold, color: colors.ink },
+  avatarOn: { backgroundColor: colors.gold, borderWidth: 2, borderColor: colors.goldDim },
+  chip: { color: colors.ink, backgroundColor: colors.cream, borderWidth: 2, borderColor: colors.creamEdge, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 999, fontSize: 12, fontWeight: '800', overflow: 'hidden' },
+  chipOn: { backgroundColor: colors.gold, borderColor: colors.goldDim, color: colors.ink },
 });

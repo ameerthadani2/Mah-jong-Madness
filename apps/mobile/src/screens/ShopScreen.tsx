@@ -149,7 +149,7 @@ function ProductRow({ p, owned, busy, onBuy, onBuyDiamonds }: { p: Product; owne
 
 const styles = StyleSheet.create({
   wrap: { padding: space.lg, gap: space.md },
-  title: { color: colors.text, fontWeight: '900', fontSize: 15 },
+  title: { color: colors.ink, fontWeight: '900', fontSize: 15 },
   chip: { color: colors.text, backgroundColor: colors.panelStrong, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 999, fontSize: 13, fontWeight: '700', overflow: 'hidden' },
-  chipOn: { backgroundColor: colors.gold, color: colors.ink },
+  chipOn: { backgroundColor: colors.gold, borderColor: colors.goldDim, color: colors.ink },
 });

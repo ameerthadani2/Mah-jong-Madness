@@ -170,5 +170,5 @@ function PuzzleRushRun({ onAgain }: { onAgain: () => void }) {
 
 const styles = StyleSheet.create({
   wrap: { padding: space.lg, gap: space.md },
-  big: { color: colors.gold, fontSize: 64, fontWeight: '900' },
+  big: { color: colors.ink, fontSize: 64, fontWeight: '900' },
 });
