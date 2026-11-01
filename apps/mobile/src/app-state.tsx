@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { DEFAULT_PROFILE, DEFAULT_PROGRESS, DEFAULT_SETTINGS, storage, type ActiveSession, type Profile, type Progress, type Settings } from './storage';
 import type { Session } from './game/session';
+import { EMPTY_WALLET, loadWallet, saveWallet, type Wallet } from './monetisation/store';
 
 export type Screen =
   | { name: 'home' }
@@ -16,6 +17,7 @@ export type Screen =
   | { name: 'drill'; kind: 'discard' | 'waits' }
   | { name: 'daily' }
   | { name: 'rush' }
+  | { name: 'shop' }
   | { name: 'settings' };
 
 interface AppState {
@@ -35,6 +37,8 @@ interface AppState {
   /** Persisted pointer to a table that can be resumed after a crash/relaunch. */
   activeSession: ActiveSession | null;
   setActiveSession(s: ActiveSession | null): void;
+  wallet: Wallet;
+  setWallet(w: Wallet): void;
   loaded: boolean;
 }
 
@@ -47,15 +51,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [progress, setProgressState] = useState<Progress>(DEFAULT_PROGRESS);
   const [session, setSessionState] = useState<Session | null>(null);
   const [activeSession, setActiveSessionState] = useState<ActiveSession | null>(null);
+  const [wallet, setWalletState] = useState<Wallet>(EMPTY_WALLET);
   const [loaded, setLoaded] = useState(false);
   const persistTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    void Promise.all([storage.loadProfile(), storage.loadSettings(), storage.loadProgress(), storage.loadActiveSession()]).then(([p, s, pr, as]) => {
+    void Promise.all([storage.loadProfile(), storage.loadSettings(), storage.loadProgress(), storage.loadActiveSession(), loadWallet()]).then(([p, s, pr, as, w]) => {
       setProfileState(p);
       setSettingsState(s);
       setProgressState(pr);
       setActiveSessionState(as);
+      setWalletState(w);
       setLoaded(true);
     });
   }, []);
@@ -129,9 +135,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         if (s) void storage.saveActiveSession(s);
         else void storage.clearActiveSession();
       },
+      wallet,
+      setWallet: (w) => {
+        setWalletState(w);
+        void saveWallet(w);
+      },
       loaded,
     }),
-    [stack, profile, settings, progress, session, activeSession, loaded],
+    [stack, profile, settings, progress, session, activeSession, wallet, loaded],
   );
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

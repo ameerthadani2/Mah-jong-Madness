@@ -83,7 +83,10 @@ export function HomeScreen() {
               </P>
             </View>
           </Row>
-          <Button small kind="ghost" title="Edit" onPress={() => app.go({ name: 'settings' })} />
+          <Row>
+            <Button small kind="ghost" title={`💎 ${app.wallet.diamonds}`} onPress={() => app.go({ name: 'shop' })} />
+            <Button small kind="ghost" title="Edit" onPress={() => app.go({ name: 'settings' })} />
+          </Row>
         </Card>
       )}
 

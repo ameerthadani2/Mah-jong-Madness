@@ -4,6 +4,7 @@ import { BOT_SKILLS, DEFAULT_RULES, describeRules, RULE_PRESETS, rulesFromPreset
 import { useApp } from '../app-state';
 import { AVATARS } from '../storage';
 import { TABLE_THEMES } from '../themes';
+import { ownsCosmetic } from '../monetisation/store';
 import { colors, space } from '../theme';
 import { Button, Card, H1, H2, P, Row, Stepper, Toggle } from '../components/Ui';
 
@@ -33,13 +34,20 @@ export function SettingsScreen() {
       <Card>
         <H2>Table look</H2>
         <Row style={{ flexWrap: 'wrap' }}>
-          {TABLE_THEMES.map((t) => (
-            <Text key={t.id} onPress={() => setSettings({ ...settings, tableTheme: t.id })} style={[styles.chip, { backgroundColor: t.felt, color: t.accent, borderWidth: 2, borderColor: settings.tableTheme === t.id ? t.accent : 'transparent' }]}>
-              {t.name} {t.premium ? '✦' : ''}
-            </Text>
-          ))}
+          {TABLE_THEMES.map((t) => {
+            const locked = t.premium && !ownsCosmetic(app.wallet, t.id);
+            return (
+              <Text key={t.id} onPress={() => (locked ? app.go({ name: 'shop' }) : setSettings({ ...settings, tableTheme: t.id }))} style={[styles.chip, { backgroundColor: t.felt, color: t.accent, borderWidth: 2, borderColor: settings.tableTheme === t.id ? t.accent : 'transparent' }]}>
+                {locked ? '🔒 ' : ''}
+                {t.name}
+              </Text>
+            );
+          })}
         </Row>
-        <P dim style={{ fontSize: 12 }}>✦ marks looks that will be part of the shop; all are unlocked in this build.</P>
+        <Row style={{ justifyContent: 'space-between' }}>
+          <P dim style={{ fontSize: 12 }}>Locked looks are unlocked in the Shop.</P>
+          <Button small kind="ghost" title="Open Shop" onPress={() => app.go({ name: 'shop' })} />
+        </Row>
       </Card>
       <Card>
         <H2>Coach & bots</H2>

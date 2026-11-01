@@ -15,6 +15,7 @@ import { ClubScreen, ClubsScreen } from './src/screens/ClubsScreen';
 import { ReviewScreen } from './src/screens/ReviewScreen';
 import { FairnessScreen } from './src/screens/FairnessScreen';
 import { DailyPuzzleScreen, PuzzleRushScreen } from './src/screens/PuzzleScreens';
+import { ShopScreen } from './src/screens/ShopScreen';
 
 function Router() {
   const { screen } = useApp();
@@ -35,6 +36,8 @@ function Router() {
       return <DailyPuzzleScreen />;
     case 'rush':
       return <PuzzleRushScreen />;
+    case 'shop':
+      return <ShopScreen />;
     case 'lobby':
       return <LobbyScreen />;
     case 'table':
