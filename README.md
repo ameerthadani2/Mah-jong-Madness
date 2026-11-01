@@ -6,6 +6,8 @@ Think PokerBros for Mahjong: create a private table, share a six-letter code, an
 The game runs on the players' own phones. No company server deals the tiles, every player can audit every hand,
 and bots fill empty seats so a table always runs.
 
+![Table screen with coach panel](docs/screenshot-table.png)
+
 ## What is in this repository
 
 | Path | What it is |
