@@ -35,31 +35,48 @@ Find the laptop's LAN address (macOS: System Settings → Wi-Fi → Details; or 
 
 Limitations in Expo Go: no WebRTC (tables relay through the signaling server, which is fine), and haptics work only on a physical device.
 
-## 2. TestFlight build with EAS — share with friends without cables
+## 2. TestFlight with EAS — you have an Apple Developer membership, so this is the route
 
-Requirements: an Apple Developer Program membership ($99/year) and a free Expo account.
+One-time setup (10 minutes):
 
 ```bash
 npm install -g eas-cli
 cd apps/mobile
-eas login
-eas init                  # creates the project; copies its id into app.json automatically
+eas login                 # free Expo account; create one at expo.dev if needed
+eas init                  # creates the EAS project and writes its id into app.json
 ```
-`eas init` replaces the `REPLACE_WITH_EAS_PROJECT_ID` placeholders in `app.json`. Then:
 
-```bash
-eas build --platform ios --profile preview
-```
-EAS asks to log in to your Apple account, creates the signing certificate and provisioning profile for `com.mahjongmadness.app`, and builds in the cloud (10–20 minutes). The result is an **internal distribution** `.ipa`: register your devices once with `eas device:create` (it sends a link to install a profile on each iPhone), and after that every build gives you a QR code you can open on the phone to install.
+First build and TestFlight upload (EAS does the Apple paperwork for you):
 
-For TestFlight instead of internal distribution:
 ```bash
 eas build --platform ios --profile production
+```
+* EAS asks for your Apple ID (the one on the Developer Program). It registers the bundle id `com.mahjongmadness.app`, creates the distribution certificate and provisioning profile, and stores them in your Expo account. Answer **yes** to letting EAS manage credentials.
+* The cloud build takes 10–20 minutes. You can close the terminal; `eas build:list` shows status.
+
+```bash
 eas submit --platform ios --latest
 ```
-Then add testers in App Store Connect → TestFlight. Store review notes live in `docs/STORE_COMPLIANCE.md`.
+* On first run EAS asks for an App Store Connect API key or your Apple ID, and creates the App Store Connect app record if it does not exist yet (it will ask for the app name "Mahjong Madness" and the SKU).
+* Processing in App Store Connect takes 5–30 minutes. Then open **App Store Connect → Apps → Mahjong Madness → TestFlight**, click the build, answer "No" to the encryption question if asked (the plist already declares non-exempt encryption = false), and add yourself under **Internal Testing**. Install TestFlight on the iPhone, accept the invite, tap Install.
+* External testers (up to 10,000) need a short Beta App Review; internal testers (up to 100 people on your team) do not.
 
-Before a production build, change `extra.signalUrl` in `app.json` to your deployed `wss://` server so the Club features work out of the box.
+Each later release:
+```bash
+eas build --platform ios --profile production && eas submit --platform ios --latest
+```
+The build number auto-increments (`autoIncrement` in `eas.json`); bump `version` in `app.json` when you want a new TestFlight version string.
+
+Faster iteration without TestFlight review cycles — **internal distribution**:
+```bash
+eas device:create                                     # sends a link; open it on each iPhone once
+eas build --platform ios --profile preview
+```
+EAS prints a QR code; scan it on a registered iPhone to install directly (ad-hoc provisioning, up to 100 devices).
+
+Before building for others, set `extra.signalUrl` in `app.json` to your deployed signaling server (`wss://…`) so Clubs work out of the box; `ws://localhost:8787` only works for a laptop on the same Wi-Fi with the address changed in Settings.
+
+Artwork: `assets/icon.png` (1024×1024), `assets/splash.png` and `assets/adaptive-icon.png` are generated placeholders in the house style; replace them with final art any time.
 
 ## 3. Local build with Xcode (Mac only)
 
