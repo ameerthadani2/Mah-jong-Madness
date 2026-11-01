@@ -18,7 +18,26 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      ready: ${{ steps.gate.outputs.ready }}
+    steps:
+      - id: gate
+        env:
+          HAS_TOKEN: ${{ secrets.EXPO_TOKEN != '' }}
+        run: |
+          echo "ready=$HAS_TOKEN" >> $GITHUB_OUTPUT
+          if [ "$HAS_TOKEN" != "true" ]; then
+            echo "## Not published yet — add the EXPO_TOKEN secret" >> $GITHUB_STEP_SUMMARY
+            echo "1. expo.dev → Account settings → Access tokens → Create token" >> $GITHUB_STEP_SUMMARY
+            echo "2. GitHub → Settings → Secrets and variables → Actions → New repository secret: EXPO_TOKEN (and optionally EXPO_OWNER = your Expo username)" >> $GITHUB_STEP_SUMMARY
+            echo "3. Re-run this workflow." >> $GITHUB_STEP_SUMMARY
+            echo "::notice::EXPO_TOKEN secret missing — skipping publish (see the job summary for the two steps to fix it)"
+          fi
   publish:
+    needs: check
+    if: needs.check.outputs.ready == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
