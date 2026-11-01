@@ -89,6 +89,8 @@ export function TableScreen() {
   };
 
   const compact = height < 420;
+  // On short screens the side columns have no room under the opponent panel: show the coach in the centre instead.
+  const coachInCenter = height < 520;
   const sideWidth = width >= 1000 ? 200 : width >= 760 ? 160 : 130;
   // The hand spans the full width under the table, so 17 tiles + the drawn-tile gap always fit.
   const handRoom = width - 24;
@@ -199,6 +201,7 @@ export function TableScreen() {
         {/* Center column: 對家 on top, my area at bottom */}
         <View style={styles.centerCol}>
           {otherPanel(2)}
+          {coachOpen && hint && coachInCenter && <CoachPanel hint={hint} waitKinds={waitKinds} compact />}
           <View style={styles.centerInfo}>
             {view.pending && (
               <P style={{ fontSize: 12, color: colors.text }}>
@@ -217,7 +220,7 @@ export function TableScreen() {
         {/* Right: 下家 + coach */}
         <View style={[styles.side, { width: sideWidth }]}>
           {otherPanel(1)}
-          {coachOpen && hint && <CoachPanel hint={hint} waitKinds={waitKinds} />}
+          {coachOpen && hint && !coachInCenter && <CoachPanel hint={hint} waitKinds={waitKinds} />}
         </View>
       </View>
 
@@ -312,7 +315,33 @@ function ActionBar({ actions, view, act, selected, hint }: { actions: Action[]; 
   );
 }
 
-function CoachPanel({ hint, waitKinds }: { hint: Hint; waitKinds: Set<number> }) {
+function CoachPanel({ hint, waitKinds, compact }: { hint: Hint; waitKinds: Set<number>; compact?: boolean }) {
+  if (compact) {
+    // One or two lines: status + the single most useful piece of advice.
+    const line = hint.winPreview ? `${hint.winPreview.items.map((i) => `${i.nameZh} ${i.tai}`).join(' · ')} = ${hint.winPreview.tai} 台` : hint.discardReason ?? hint.claims.find((c) => c.recommended)?.reason ?? '';
+    return (
+      <View style={[styles.coach, styles.coachCompact]}>
+        <Text style={styles.coachTitle}>Coach</Text>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.coachStatus} numberOfLines={1}>
+            {hint.status}
+          </Text>
+          {!!line && (
+            <Text style={styles.coachLine} numberOfLines={2}>
+              {line}
+            </Text>
+          )}
+        </View>
+        {hint.waits.length > 0 && (
+          <Row gap={2}>
+            {hint.waits.slice(0, 6).map((w) => (
+              <Tile key={w.kind} kind={w.kind} size="xs" highlight={waitKinds.has(w.kind) ? 'wait' : undefined} />
+            ))}
+          </Row>
+        )}
+      </View>
+    );
+  }
   return (
     <View style={styles.coach}>
       <Text style={styles.coachTitle}>Coach</Text>
@@ -470,6 +499,7 @@ const styles = StyleSheet.create({
   hand: { gap: 4, paddingBottom: 4 },
   handTiles: { flexDirection: 'row', alignItems: 'flex-end', gap: 2, paddingTop: 12 },
   coach: { backgroundColor: colors.panelStrong, borderRadius: radius.md, padding: 8, gap: 4, borderWidth: 2, borderColor: colors.gold, flexShrink: 1, overflow: 'hidden' },
+  coachCompact: { flexDirection: 'row', alignItems: 'center', gap: 10, marginHorizontal: 4 },
   coachTitle: { color: colors.gold, fontWeight: '900', fontSize: 12, letterSpacing: 1 },
   coachStatus: { color: colors.text, fontWeight: '700', fontSize: 13 },
   coachLine: { color: colors.textDim, fontSize: 11, lineHeight: 15 },
