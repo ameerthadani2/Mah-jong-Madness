@@ -90,11 +90,13 @@ export function TableScreen() {
 
   const compact = height < 420;
   // On short screens the side columns have no room under the opponent panel: show the coach in the centre instead.
-  const coachInCenter = height < 520;
+  const portrait = height > width;
+  const coachInCenter = portrait || height < 520;
   const sideWidth = width >= 1000 ? 200 : width >= 760 ? 160 : 130;
   // The hand spans the full width under the table, so 17 tiles + the drawn-tile gap always fit.
   const handRoom = width - 24;
-  const handTile = Math.max(26, Math.min(compact ? 40 : 56, Math.floor((handRoom - 14) / 17.4)));
+  // Portrait (phone held upright, e.g. the web preview): the hand wraps into two rows of nine.
+  const handTile = portrait ? Math.max(28, Math.min(48, Math.floor((handRoom - 16) / 9.4))) : Math.max(26, Math.min(compact ? 40 : 56, Math.floor((handRoom - 14) / 17.4)));
   const seatAt = (r: number) => (mySeat + r) % 4;
   const seatInfo = (seat: number) => state.seats.find((s) => s.seat === seat);
   const latestDiscard = view.lastDiscard?.tile;
@@ -103,16 +105,16 @@ export function TableScreen() {
   const otherPanel = (r: 1 | 2 | 3) => {
     const seat = seatAt(r);
     const p = view.players[seat];
-    const vertical = r === 1 || r === 3;
+    const vertical = !portrait && (r === 1 || r === 3);
     return (
-      <View style={[styles.other, vertical ? styles.otherVertical : styles.otherHorizontal]} key={seat}>
+      <View style={[styles.other, portrait ? styles.otherPortrait : vertical ? styles.otherVertical : styles.otherHorizontal]} key={seat}>
         <Row>
           <SeatBadge seat={seat} info={seatInfo(seat)} player={p} dealerSeat={view.dealerSeat} isTurn={view.turn === seat && view.phase === 'discard'} score={view.scores[seat]} compact viewerSeat={mySeat} />
           {latestEmote(seat) && <Text style={styles.emoteBubble}>{latestEmote(seat)}</Text>}
         </Row>
         <View style={[styles.otherTiles, vertical && { flexDirection: 'column', alignItems: 'flex-start' }]}>
           <View style={{ flexDirection: 'row', gap: 1, flexWrap: 'wrap', maxWidth: vertical ? sideWidth - 16 : undefined }}>
-            {Array.from({ length: Math.min(p.handCount, 17) }).map((_, i) => (
+            {Array.from({ length: portrait ? Math.min(p.handCount, 8) : Math.min(p.handCount, 17) }).map((_, i) => (
               <Tile key={i} size="xs" faceDown />
             ))}
           </View>
@@ -122,7 +124,7 @@ export function TableScreen() {
             ))}
           </View>
         </View>
-        <DiscardPool tiles={p.discards} perRow={vertical ? 6 : 10} latest={latestDiscard && view.lastDiscard?.seat === seat ? latestDiscard : undefined} />
+        <DiscardPool tiles={p.discards} perRow={portrait ? 12 : vertical ? 6 : 10} latest={latestDiscard && view.lastDiscard?.seat === seat ? latestDiscard : undefined} />
       </View>
     );
   };
@@ -142,18 +144,18 @@ export function TableScreen() {
     <TableThemeContext.Provider value={theme}>
     <View style={[styles.root, { backgroundColor: theme.felt }]}>
       {/* Top bar */}
-      <View style={styles.topBar}>
-        <Row>
+      <View style={[styles.topBar, portrait && { flexWrap: 'wrap', rowGap: 6 }]}>
+        <Row style={{ flexShrink: 1, flexWrap: 'wrap', rowGap: 4 }}>
           <Pill text={`${windName}風 · 第${view.handNumber + 1}局`} tone="gold" />
           <Pill text={`莊 ${seatInfo(view.dealerSeat)?.name ?? ''}${view.dealerStreak ? ` 連${view.dealerStreak}` : ''}`} />
           <Pill text={`剩 ${view.drawsLeft} 張`} />
-          {session.roomCode !== 'LOCAL' && <Pill text={session.roomCode} />}
+          {session.roomCode !== 'LOCAL' && !portrait && <Pill text={session.roomCode} />}
           {countdown !== null && myMove && <Pill text={state.inTimeBank ? `⏳ bank ${countdown}s` : `${countdown}s`} tone={state.inTimeBank ? 'danger' : countdown <= 5 ? 'gold' : 'neutral'} />}
           {!myMove && state.timeBank > 0 && <Pill text={`bank ${state.timeBank}s`} />}
         </Row>
         <Row>
           <Button small kind={emotePicker ? 'primary' : 'ghost'} title="😀" onPress={() => setEmotePicker((v) => !v)} />
-          <Button small kind={coachOpen ? 'primary' : 'ghost'} title={coachOpen ? 'Coach on' : 'Coach'} onPress={() => setCoachOpen((v) => !v)} />
+          <Button small kind={coachOpen ? 'primary' : 'ghost'} title={portrait ? (coachOpen ? 'Coach ✓' : 'Coach') : coachOpen ? 'Coach on' : 'Coach'} onPress={() => setCoachOpen((v) => !v)} />
           <Button small kind="ghost" title="Leave" onPress={leave} />
         </Row>
       </View>
@@ -194,6 +196,28 @@ export function TableScreen() {
         </View>
       )}
 
+      {portrait ? (
+        <ScrollView style={styles.bodyPortraitScroll} contentContainerStyle={styles.bodyPortrait}>
+          <View style={styles.opponentsRow}>
+            {otherPanel(3)}
+            {otherPanel(2)}
+            {otherPanel(1)}
+          </View>
+          {coachOpen && hint && <CoachPanel hint={hint} waitKinds={waitKinds} compact />}
+          <View style={styles.centerInfo}>
+            {view.pending && (
+              <P style={{ fontSize: 12, color: colors.text }}>
+                {seatInfo(view.pending.from)?.name} 打出 {kindInfo(kindOf(view.pending.tile)).nameZh} — 等待回應…
+              </P>
+            )}
+            {!view.pending && view.phase === 'discard' && view.turn !== mySeat && (
+              <P style={{ fontSize: 12, color: colors.text }}>
+                輪到 {seatInfo(view.turn)?.name}
+              </P>
+            )}
+          </View>
+        </ScrollView>
+      ) : (
       <View style={styles.body}>
         {/* Left: 上家 */}
         <View style={[styles.side, { width: sideWidth }]}>{otherPanel(3)}</View>
@@ -223,6 +247,7 @@ export function TableScreen() {
           {coachOpen && hint && !coachInCenter && <CoachPanel hint={hint} waitKinds={waitKinds} />}
         </View>
       </View>
+      )}
 
       {/* Footer: melds, actions and hand across the full width */}
       <View style={styles.footer}>
@@ -240,7 +265,7 @@ export function TableScreen() {
               <SeatBadge seat={mySeat} info={myInfo} player={me} dealerSeat={view.dealerSeat} isTurn={isDiscardPhase} score={view.scores[mySeat]} compact viewerSeat={mySeat} />
               {latestEmote(mySeat) && <Text style={styles.emoteBubble}>{latestEmote(mySeat)}</Text>}
             </Row>
-            <View style={styles.handTiles}>
+            <View style={[styles.handTiles, portrait && { flexWrap: 'wrap', rowGap: 6 }]}>
               {(me.hand ?? []).map((t, i) => {
                 const isDrawn = view.lastDrawn === t && isDiscardPhase;
                 return (
@@ -322,8 +347,8 @@ function CoachPanel({ hint, waitKinds, compact }: { hint: Hint; waitKinds: Set<n
     return (
       <View style={[styles.coach, styles.coachCompact]}>
         <Text style={styles.coachTitle}>Coach</Text>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.coachStatus} numberOfLines={1}>
+        <View style={{ flex: 1, minWidth: 0, flexShrink: 1, overflow: 'hidden' }}>
+          <Text style={styles.coachStatus} numberOfLines={2}>
             {hint.status}
           </Text>
           {!!line && (
@@ -491,6 +516,10 @@ const styles = StyleSheet.create({
   centerInfo: { alignItems: 'center', minHeight: 18 },
   other: { backgroundColor: 'rgba(0,0,0,0.15)', borderRadius: radius.md, padding: 6, gap: 4 },
   otherVertical: {},
+  otherPortrait: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 6, minWidth: 0 },
+  bodyPortraitScroll: { flex: 1, paddingHorizontal: 8 },
+  bodyPortrait: { gap: 8, paddingBottom: 8 },
+  opponentsRow: { flexDirection: 'column', gap: 6 },
   otherHorizontal: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 8 },
   otherTiles: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   myMelds: { flexDirection: 'row', flexWrap: 'wrap', minHeight: 24, paddingHorizontal: 4 },
@@ -499,7 +528,7 @@ const styles = StyleSheet.create({
   hand: { gap: 4, paddingBottom: 4 },
   handTiles: { flexDirection: 'row', alignItems: 'flex-end', gap: 2, paddingTop: 12 },
   coach: { backgroundColor: colors.panelStrong, borderRadius: radius.md, padding: 8, gap: 4, borderWidth: 2, borderColor: colors.gold, flexShrink: 1, overflow: 'hidden' },
-  coachCompact: { flexDirection: 'row', alignItems: 'center', gap: 10, marginHorizontal: 4 },
+  coachCompact: { flexDirection: 'row', alignItems: 'center', gap: 10, marginHorizontal: 4, minWidth: 0, alignSelf: 'stretch' },
   coachTitle: { color: colors.gold, fontWeight: '900', fontSize: 12, letterSpacing: 1 },
   coachStatus: { color: colors.text, fontWeight: '700', fontSize: 13 },
   coachLine: { color: colors.textDim, fontSize: 11, lineHeight: 15 },
