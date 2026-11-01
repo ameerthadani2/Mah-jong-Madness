@@ -1,0 +1,21 @@
+{
+  "name": "mahjong-madness",
+  "private": true,
+  "version": "0.1.0",
+  "description": "P2P Taiwanese (16-tile) Mahjong for iOS and Android with a built-in coach.",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "test": "npm run test -w @mjm/engine -w @mjm/net",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present",
+    "mobile": "npm run start -w @mjm/mobile",
+    "signal": "npm run start -w @mjm/signal",
+    "sim": "npm run sim -w @mjm/engine"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
