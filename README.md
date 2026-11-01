@@ -16,7 +16,7 @@ and bots fill empty seats so a table always runs.
 | `packages/net` | P2P table protocol: commit–reveal shuffle seed, host-authoritative lock-step, hidden-information views, per-hand audit, timers/auto-play, reconnection. Transports: WebRTC data channels, WebSocket relay, in-memory loopback. 8 tests. |
 | `apps/mobile` | Expo / React Native app (iOS, Android, web): home, club (create/join by code), lobby, landscape table with coach panel, result and audit screens, Learn (6 lessons + 2 drills), house-rule settings. |
 | `apps/signal` | Tiny WebSocket signaling + relay server. Can also act as a neutral table host for clubs that want nobody's phone dealing. |
-| `docs/` | Architecture, rules/scoring reference, roadmap. |
+| `docs/` | Architecture, rules/scoring reference, Fair Play Charter, product definition, monetisation plan, store compliance checklist, design system, roadmap. |
 
 ## Quick start
 
@@ -53,7 +53,8 @@ npx expo run:ios   # or run:android
 * **Never lose a game**: crash, reload or switch networks and resume the same hand with a rejoin token (guests) or a saved host snapshot (offline).
 * **Learn like chess.com**: coach panel at the table, daily puzzle with streaks, Puzzle Rush, drills, 6 lessons, and a hand review that grades every decision.
 * **Provably not rigged**: commit-reveal shuffles audited by every phone, with a Fair-play screen showing the seeds and hashes.
-* **Make it yours**: avatars, table looks, emotes and quick chat.
+* **Make it yours**: avatars, table looks, emotes and quick chat; a shop that sells only cosmetics, coaching and club capacity.
+* **Looks like a game, not a spreadsheet**: bright sky lobby, chunky cream panels and shelf buttons in the spirit of Codigames' idle games (see `docs/DESIGN.md`).
 
 ## How a hand is kept honest
 
@@ -63,9 +64,10 @@ npx expo run:ios   # or run:android
 4. When the hand ends the host publishes all secrets and the action log. Each phone checks the commitments,
    re-derives the seed, replays the log and compares the state hash. The result screen shows the verdict.
 
-The host device does learn the seed at deal time, so a host running a modified app could peek. Clubs that
-care can tick **Neutral server hosts the table** — the signaling server runs the identical `TableHost` code.
-Cryptographic (mental-poker style) shuffling is on the roadmap. See `docs/ARCHITECTURE.md`.
+The host also contributes a committed share, the wall comes from a SHA-256 counter generator keyed by the whole
+256-bit seed, and every audit records the construction version plus any ceremony restarts. The host device does
+learn the seed at deal time, so a host running a modified app could peek; clubs tick **Neutral server hosts the
+table** and the signaling server runs the identical `TableHost` code. See `docs/FAIRNESS.md`.
 
 ## Rules implemented
 
