@@ -1,76 +1,85 @@
 import React, { useState } from 'react';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { kindsFromString, LESSONS, kindFromCode, type LessonStep } from '@mjm/engine';
 import { useApp } from '../app-state';
 import { effectiveStreak } from '../storage';
-import { colors, space } from '../theme';
+import { colors, fonts, space } from '../theme';
 import { Tile } from '../components/Tile';
-import { Button, Card, H1, H2, P, Pill, Row } from '../components/Ui';
+import { Button, Card, H2, P, Pill, Row, ScreenHeader, SectionLabel, StrokeText } from '../components/Ui';
+import { Icon, type IconName } from '../components/Icons';
 
 export function LearnScreen() {
   const app = useApp();
+  const { width } = useWindowDimensions();
   const done = app.progress.lessonsDone;
   const acc = app.progress.drillsPlayed ? Math.round((app.progress.drillsCorrect / app.progress.drillsPlayed) * 100) : null;
+  const streak = effectiveStreak(app.progress);
+  const cols = width >= 1000 ? 4 : width >= 640 ? 2 : 1;
+  const lessonCols = width >= 900 ? 2 : 1;
+  const pad = width >= 1000 ? 28 : space.lg;
+  const drillW = cols === 1 ? undefined : Math.floor((width - pad * 2 - space.md * (cols - 1)) / cols);
+  const lessonW = lessonCols === 1 ? undefined : Math.floor((width - pad * 2 - space.md) / 2);
+  const lessonsDone = Object.keys(done).length;
   return (
-    <ScrollView contentContainerStyle={styles.wrap}>
-      <Row style={{ justifyContent: 'space-between' }}>
-        <H1>Learn</H1>
-        <Button testID="back" small kind="ghost" title="Back" onPress={app.back} />
-      </Row>
+    <ScrollView contentContainerStyle={[styles.wrap, { padding: pad }]}>
+      <ScreenHeader title="Learn" onBack={app.back} backTestID="back" right={<Pill text={`${lessonsDone}/${LESSONS.length} lessons`} icon="book" tone="gold" />} />
       <View style={styles.grid}>
-        <Card style={styles.drill}>
-          <Text style={styles.icon}>🧩</Text>
-          <H2>Daily puzzle</H2>
-          <P dim style={{ fontSize: 13 }}>Same puzzle for everyone, every day. Keep the streak alive.</P>
-          <Row style={{ justifyContent: 'space-between' }}>
-            <Pill text={`🔥 ${effectiveStreak(app.progress)} streak`} tone={effectiveStreak(app.progress) > 0 ? 'gold' : 'neutral'} />
-            <Button small title="Solve" onPress={() => app.go({ name: 'daily' })} />
-          </Row>
-        </Card>
-        <Card style={styles.drill}>
-          <Text style={styles.icon}>⚡</Text>
-          <H2>Puzzle Rush</H2>
-          <P dim style={{ fontSize: 13 }}>Three minutes, three strikes, puzzles that get harder as you go.</P>
-          <Row style={{ justifyContent: 'space-between' }}>
-            <Pill text={`Best ${app.progress.rushBest} · ${app.progress.rushRuns} runs`} />
-            <Button small title="Go" onPress={() => app.go({ name: 'rush' })} />
-          </Row>
-        </Card>
-        <Card style={styles.drill}>
-          <Text style={styles.icon}>🎯</Text>
-          <H2>Best-discard drill</H2>
-          <P dim style={{ fontSize: 13 }}>Random hands, you pick the discard. The coach grades it with shanten and acceptance.</P>
-          <Row style={{ justifyContent: 'space-between' }}>
-            <Pill text={acc === null ? 'No drills yet' : `${acc}% correct · ${app.progress.drillsPlayed} played`} />
-            <Button small title="Train" onPress={() => app.go({ name: 'drill', kind: 'discard' })} />
-          </Row>
-        </Card>
-        <Card style={styles.drill}>
-          <Text style={styles.icon}>👂</Text>
-          <H2>Read the wait</H2>
-          <P dim style={{ fontSize: 13 }}>A ready hand is shown. Which tiles complete it? Learn to spot every 聽.</P>
-          <Row style={{ justifyContent: 'flex-end' }}>
-            <Button small title="Train" onPress={() => app.go({ name: 'drill', kind: 'waits' })} />
-          </Row>
-        </Card>
+        <DrillCard w={drillW} icon="scroll" tint={colors.gold} title="Daily puzzle" text="Same puzzle for everyone, every day. Keep the streak alive." stat={`${streak} day streak`} statIcon="flame" statTone={streak > 0 ? 'gold' : 'neutral'} cta="Solve" kind="gold" onPress={() => app.go({ name: 'daily' })} />
+        <DrillCard w={drillW} icon="bolt" tint={colors.danger} title="Puzzle Rush" text="Three minutes, three strikes, puzzles that get harder." stat={`Best ${app.progress.rushBest} · ${app.progress.rushRuns} runs`} statIcon="trophy" cta="Go" kind="danger" onPress={() => app.go({ name: 'rush' })} />
+        <DrillCard w={drillW} icon="target" tint={colors.cta} title="Best discard" text="Random hands; pick the discard. The coach grades shanten and acceptance." stat={acc === null ? 'No drills yet' : `${acc}% · ${app.progress.drillsPlayed} played`} statIcon="check" cta="Train" kind="primary" onPress={() => app.go({ name: 'drill', kind: 'discard' })} />
+        <DrillCard w={drillW} icon="magnifier" tint={colors.info} title="Read the wait" text="A ready hand is shown. Which tiles complete it? Spot every 聽." cta="Train" kind="secondary" onPress={() => app.go({ name: 'drill', kind: 'waits' })} />
       </View>
-      <H2>Lessons</H2>
-      {LESSONS.map((l, i) => (
-        <Card key={l.id} style={{ flexDirection: 'row', alignItems: 'center', gap: space.md }}>
-          <Text style={styles.num}>{i + 1}</Text>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.title}>
-              {l.title} <Text style={{ color: colors.textDim }}>{l.titleZh}</Text>
-            </Text>
-            <P dim style={{ fontSize: 13 }}>{l.summary}</P>
-          </View>
-          <View style={{ alignItems: 'flex-end', gap: 6 }}>
-            {done[l.id] ? <Pill text="Done" tone="ok" /> : <Pill text={`${l.minutes} min`} />}
-            <Button small kind="secondary" title={done[l.id] ? 'Review' : 'Start'} onPress={() => app.go({ name: 'lesson', id: l.id })} />
-          </View>
-        </Card>
-      ))}
+      <SectionLabel>Lessons</SectionLabel>
+      <View style={styles.grid}>
+        {LESSONS.map((l, i) => (
+          <Card key={l.id} style={{ width: lessonW, flexDirection: 'row', alignItems: 'center', gap: space.md, padding: 12 }}>
+            <View style={[styles.medal, done[l.id] && { backgroundColor: colors.cta }]}>
+              {done[l.id] ? (
+                <Icon name="check" size={28} />
+              ) : (
+                <StrokeText style={{ fontSize: 22 }} strokeWidth={1.8} drop={1.5}>
+                  {i + 1}
+                </StrokeText>
+              )}
+            </View>
+            <View style={{ flex: 1, gap: 2 }}>
+              <Row gap={6} style={{ flexWrap: 'wrap' }}>
+                <Text style={styles.title}>{l.title}</Text>
+                <Text style={styles.titleZh}>{l.titleZh}</Text>
+              </Row>
+              <P dim style={{ fontSize: 12, lineHeight: 16 }} numberOfLines={2}>
+                {l.summary}
+              </P>
+            </View>
+            <View style={{ alignItems: 'flex-end', gap: 6 }}>
+              {done[l.id] ? <Pill text="Done" tone="ok" size="sm" /> : <Pill text={`${l.minutes} min`} icon="clock" size="sm" />}
+              <Button small kind={done[l.id] ? 'ghost' : 'secondary'} title={done[l.id] ? 'Review' : 'Start'} onPress={() => app.go({ name: 'lesson', id: l.id })} />
+            </View>
+          </Card>
+        ))}
+      </View>
     </ScrollView>
+  );
+}
+
+function DrillCard({ w, icon, tint, title, text, stat, statIcon, statTone, cta, kind, onPress }: { w?: number; icon: IconName; tint: string; title: string; text: string; stat?: string; statIcon?: IconName; statTone?: 'gold' | 'neutral'; cta: string; kind: 'gold' | 'danger' | 'primary' | 'secondary'; onPress: () => void }) {
+  return (
+    <Card style={{ width: w, flexDirection: 'row', gap: 12, padding: 12, alignItems: 'center' }}>
+      <View style={[styles.iconPlate, { backgroundColor: tint }]}>
+        <View style={styles.iconShine} />
+        <Icon name={icon} size={40} />
+      </View>
+      <View style={{ flex: 1, gap: 4 }}>
+        <Text style={styles.drillTitle}>{title}</Text>
+        <P dim style={{ fontSize: 12, lineHeight: 16 }} numberOfLines={2}>
+          {text}
+        </P>
+        <Row style={{ justifyContent: 'space-between', flexWrap: 'wrap', rowGap: 6 }}>
+          {stat ? <Pill text={stat} icon={statIcon} tone={statTone ?? 'neutral'} size="sm" /> : <View />}
+          <Button small kind={kind} title={cta} onPress={onPress} />
+        </Row>
+      </View>
+    </Card>
   );
 }
 
@@ -121,13 +130,8 @@ export function LessonScreen({ id }: { id: string }) {
 
   return (
     <ScrollView contentContainerStyle={styles.wrap}>
-      <Row style={{ justifyContent: 'space-between' }}>
-        <H1 style={{ fontSize: 22 }}>
-          {lesson.title} <Text style={{ color: colors.textDim, fontSize: 16 }}>{lesson.titleZh}</Text>
-        </H1>
-        <Button small kind="ghost" title="Exit" onPress={app.back} />
-      </Row>
-      <Row>
+      <ScreenHeader title={lesson.title} onBack={app.back} sub={<Text style={styles.headerZh}>{lesson.titleZh}</Text>} />
+      <Row gap={6}>
         {lesson.steps.map((_, j) => (
           <View key={j} style={[styles.dot, j <= i && { backgroundColor: colors.gold }]} />
         ))}
@@ -138,7 +142,7 @@ export function LessonScreen({ id }: { id: string }) {
         {step.hand && <HandView hand={step.hand} size="md" />}
         {quiz && (
           <View style={{ gap: 8 }}>
-            <P style={{ color: colors.gold, fontWeight: '800' }}>{quiz.prompt}</P>
+            <P style={{ color: colors.infoShelf, fontWeight: '800' }}>{quiz.prompt}</P>
             <HandView
               hand={quiz.hand}
               size="md"
@@ -147,9 +151,9 @@ export function LessonScreen({ id }: { id: string }) {
               highlight={answer !== null ? { [quiz.answer]: 'good', ...(correct ? {} : { [answer]: 'bad' }) } : undefined}
             />
             {answer !== null && (
-              <P style={{ color: correct ? colors.ok : colors.danger }}>
+              <P style={{ color: correct ? colors.okText : colors.dangerText }}>
                 {correct ? 'Correct! ' : 'Not quite. '}
-                <Text style={{ color: colors.text }}>{quiz.explanation}</Text>
+                <Text style={{ color: colors.ink }}>{quiz.explanation}</Text>
               </P>
             )}
           </View>
@@ -166,11 +170,14 @@ export function LessonScreen({ id }: { id: string }) {
 const styles = StyleSheet.create({
   wrap: { padding: space.lg, gap: space.md },
   grid: { flexDirection: 'row', flexWrap: 'wrap', gap: space.md },
-  drill: { flexGrow: 1, flexBasis: '45%', minWidth: 240 },
-  icon: { fontSize: 26 },
-  num: { color: colors.goldDim, fontSize: 24, fontWeight: '900', width: 28 },
-  title: { color: colors.ink, fontSize: 16, fontWeight: '900' },
+  iconPlate: { width: 64, height: 64, borderRadius: 20, borderWidth: 3, borderColor: colors.ink, alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
+  iconShine: { position: 'absolute', top: 0, left: 0, right: 0, height: '45%', backgroundColor: 'rgba(255,255,255,0.3)' },
+  drillTitle: { fontFamily: fonts.display, color: colors.ink, fontSize: 19 },
+  medal: { width: 46, height: 46, borderRadius: 23, backgroundColor: colors.gold, borderWidth: 3, borderColor: colors.ink, alignItems: 'center', justifyContent: 'center' },
+  title: { color: colors.ink, fontSize: 16, fontFamily: fonts.uiBold },
+  titleZh: { color: colors.inkDim, fontSize: 14, fontWeight: '900' },
+  headerZh: { color: colors.ink, fontSize: 15, fontWeight: '900' },
   handRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, paddingVertical: 8 },
   group: { flexDirection: 'row', gap: 2 },
-  dot: { width: 12, height: 12, borderRadius: 6, backgroundColor: colors.cream, borderWidth: 2, borderColor: colors.creamEdge },
+  dot: { width: 14, height: 14, borderRadius: 7, backgroundColor: colors.cream, borderWidth: 2.5, borderColor: colors.ink },
 });

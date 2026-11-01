@@ -1,17 +1,32 @@
 import React, { useState } from 'react';
-import { ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 import { BOT_SKILLS, describeRules, type BotSkill } from '@mjm/engine';
 import { hasTier } from '../monetisation/store';
 import { useApp } from '../app-state';
 import { createLocalSession, createOnlineSession } from '../game/session';
 import { AVATARS, effectiveStreak, todayKey } from '../storage';
-import { colors, space } from '../theme';
-import { Button, Card, H1, P, Pill, Row } from '../components/Ui';
+import { colors, fonts, nameFont, space } from '../theme';
+import { Button, Card, Chip, GemCounter, IconButton, P, Pill, Row, StrokeText } from '../components/Ui';
+import { AvatarPlate } from '../components/Avatars';
+import { ChestScene, ClubhouseScene, ScrollScene, TableScene } from '../components/Scenes';
+import { Icon } from '../components/Icons';
+import { Logo } from '../components/Logo';
+
+const WINDOWS = {
+  play: ['#FFF0B8', '#FFD36B'] as const,
+  clubs: ['#C9F1FF', '#83D6FF'] as const,
+  learn: ['#EEE4FF', '#C6AFFF'] as const,
+  shop: ['#FFE0EC', '#FFA5C8'] as const,
+};
 
 export function HomeScreen() {
   const app = useApp();
+  const { width, height } = useWindowDimensions();
   const [name, setName] = useState(app.profile.name);
   const needsName = !app.profile.name;
+  const wide = width >= 700;
+  const tablet = width >= 1000 && height >= 700;
 
   const saveName = () => app.setProfile({ ...app.profile, name: name.trim() || 'Player' });
 
@@ -51,127 +66,263 @@ export function HomeScreen() {
   const winRate = app.progress.handsPlayed ? Math.round((app.progress.handsWon / app.progress.handsPlayed) * 100) : null;
   const dailyDone = app.progress.dailySolved[todayKey()] !== undefined;
   const streak = effectiveStreak(app.progress);
-  const avgAccuracy = app.progress.reviewAccuracies.length ? Math.round(app.progress.reviewAccuracies.reduce((a, b) => a + b, 0) / app.progress.reviewAccuracies.length) : null;
+  const lessonsDone = Object.keys(app.progress.lessonsDone).length;
+  const gems = app.wallet.diamonds + app.wallet.bonusDiamonds;
+  const goClubs = () => {
+    if (needsName) saveName();
+    app.go({ name: 'clubs' });
+  };
+  const goOnline = () => {
+    if (needsName) saveName();
+    app.go({ name: 'online' });
+  };
+
+  const phoneLand = wide && !tablet;
+  const windowH = tablet ? 190 : wide ? Math.max(70, Math.min(150, Math.round(height * 0.22))) : 104;
+  const smallWindow = tablet ? 190 : wide ? windowH : 100;
+
+  const skillChips = (
+    <Row style={{ flexWrap: 'wrap', rowGap: 6 }} gap={6}>
+      {(Object.keys(BOT_SKILLS) as BotSkill[]).map((k) => {
+        const locked = k === 'pro' && !hasTier(app.wallet, 'gold');
+        return <Chip key={k} label={BOT_SKILLS[k].label.replace(' player', '')} selected={app.settings.botSkill === k} locked={locked} onPress={() => (locked ? app.go({ name: 'shop' }) : app.setSettings({ ...app.settings, botSkill: k }))} />;
+      })}
+    </Row>
+  );
+
+  const playCard = (
+    <ModeCard key="play" colorsPair={WINDOWS.play} windowH={windowH} scene={<TableScene width="100%" height="100%" />} title="Play vs Bots" style={wide ? { flex: 1.55 } : undefined} horizontal={!wide}>
+      <P dim style={styles.cardText} numberOfLines={phoneLand ? 1 : 2}>
+        {describeRules(app.settings.rules)}
+      </P>
+      {skillChips}
+      <View style={styles.cardFoot}>
+        <Button testID="start-match" title="Play now" icon="play" large={tablet} onPress={playBots} />
+      </View>
+    </ModeCard>
+  );
+  const compact = !wide;
+  const clubsCard = (
+    <ModeCard key="clubs" colorsPair={WINDOWS.clubs} windowH={smallWindow} scene={<ClubhouseScene width="100%" height="100%" />} title={tablet ? 'Clubs & Friends' : 'Clubs'} compact={compact} style={{ flex: 1 }}>
+      {!compact && (
+        <P dim style={styles.cardText} numberOfLines={2}>
+          Your rules, your members. Share a code and play anywhere.
+        </P>
+      )}
+      <View style={styles.cardFoot}>
+        <Button testID="open-clubs" title="My clubs" kind="secondary" small={compact} large={tablet} onPress={goClubs} />
+        {!compact && (
+          <Pressable onPress={goOnline} hitSlop={6} style={styles.link}>
+            <Icon name="users" size={18} />
+            <Text style={styles.linkText}>Quick table</Text>
+          </Pressable>
+        )}
+      </View>
+    </ModeCard>
+  );
+  const learnCard = (
+    <ModeCard
+      key="learn"
+      colorsPair={WINDOWS.learn}
+      windowH={smallWindow}
+      scene={<ScrollScene width="100%" height="100%" />}
+      title="Learn"
+      compact={compact}
+      style={{ flex: 1 }}
+      badge={!dailyDone ? <View style={styles.notify}><Text style={styles.notifyText}>!</Text></View> : undefined}
+    >
+      {!compact && (
+        <Row style={{ flexWrap: 'wrap', rowGap: 6 }} gap={6}>
+          <Pill text={`${lessonsDone}/6 lessons`} icon="book" size="sm" />
+          <Pill text={`${streak} day streak`} icon="flame" tone={streak > 0 ? 'gold' : 'neutral'} size="sm" />
+        </Row>
+      )}
+      <View style={styles.cardFoot}>
+        <Button testID="open-learn" title="Learn" kind="premium" small={compact} large={tablet} onPress={() => app.go({ name: 'learn' })} />
+        {!compact && (
+          <Pressable onPress={() => app.go({ name: 'daily' })} hitSlop={6} style={styles.link}>
+            <Icon name={dailyDone ? 'check' : 'scroll'} size={18} color={colors.cta} />
+            <Text style={styles.linkText}>{dailyDone ? 'Daily done' : 'Daily puzzle'}</Text>
+          </Pressable>
+        )}
+      </View>
+    </ModeCard>
+  );
+  const shopCard = (
+    <ModeCard key="shop" colorsPair={WINDOWS.shop} windowH={smallWindow} scene={<ChestScene width="100%" height="100%" />} title="Shop" compact={compact} style={{ flex: 1 }}>
+      {!compact && (
+        <P dim style={styles.cardText} numberOfLines={2}>
+          Table looks, coaching and gems. Never luck.
+        </P>
+      )}
+      <View style={styles.cardFoot}>
+        <Button title="Open" kind="gold" small={compact} large={tablet} onPress={() => app.go({ name: 'shop' })} />
+      </View>
+    </ModeCard>
+  );
 
   return (
-    <ScrollView contentContainerStyle={styles.wrap}>
-      <View style={styles.hero}>
-        <Text style={styles.logo}>🀄</Text>
-        <H1>Mahjong Madness</H1>
-        <P dim>台灣十六張麻將 · Taiwanese 16-tile · Play with friends, peer to peer</P>
+    <ScrollView contentContainerStyle={[styles.wrap, wide && { paddingTop: 8 }, tablet && { padding: 28, gap: 22 }]}>
+      {/* Top bar: profile, logo, gems, settings */}
+      <View style={styles.topBar}>
+        {needsName ? (
+          <View style={{ flex: 1 }} />
+        ) : (
+          <Pressable onPress={() => app.go({ name: 'settings' })} style={({ pressed }) => [styles.profile, pressed && { transform: [{ translateY: 2 }] }, { flex: wide ? undefined : 1 }]}>
+            <AvatarPlate id={app.profile.avatar} size={tablet ? 54 : 44} />
+            <View style={{ flexShrink: 1 }}>
+              <Text numberOfLines={1} style={[styles.profileName, nameFont(app.profile.name)]}>
+                {app.profile.name}
+              </Text>
+              <Text numberOfLines={1} style={styles.profileMeta}>
+                {app.progress.handsPlayed} hands · {winRate === null ? 'no wins yet' : `${winRate}% wins`}
+              </Text>
+            </View>
+          </Pressable>
+        )}
+        {wide && (
+          <View style={styles.logoMid}>
+            <Logo size={tablet ? 1.15 : 0.82} />
+          </View>
+        )}
+        <Row gap={10} style={wide ? { flex: needsName ? 1 : undefined, justifyContent: 'flex-end' } : undefined}>
+          <GemCounter testID="open-shop" amount={gems} onPress={() => app.go({ name: 'shop' })} />
+          <IconButton icon="cog" kind="ghost" size={42} onPress={() => app.go({ name: 'settings' })} />
+        </Row>
       </View>
 
-      {needsName ? (
-        <Card>
-          <P>Pick a name and avatar</P>
-          <TextInput testID="name-input" value={name} onChangeText={setName} placeholder="Your name" placeholderTextColor={colors.textDim} style={styles.input} maxLength={24} />
-          <Row style={{ flexWrap: 'wrap' }}>
-            {AVATARS.map((a) => (
-              <Text key={a} onPress={() => app.setProfile({ ...app.profile, avatar: a })} style={[styles.avatar, app.profile.avatar === a && styles.avatarOn]}>
-                {a}
-              </Text>
-            ))}
-          </Row>
-          <Button testID="save-name" title="Save" onPress={saveName} disabled={!name.trim()} />
-        </Card>
-      ) : (
-        <Card style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-          <Row>
-            <Text style={{ fontSize: 28 }}>{app.profile.avatar}</Text>
+      {!wide && (
+        <View style={{ alignItems: 'center', paddingVertical: 6 }}>
+          <Logo size={1.25} />
+        </View>
+      )}
+
+      {needsName && (
+        <Card style={wide ? { flexDirection: 'row', alignItems: 'center', gap: space.lg } : undefined}>
+          <Row gap={14} style={{ flexShrink: 0 }}>
+            <AvatarPlate id={app.profile.avatar} size={wide ? 72 : 60} />
             <View>
-              <Text style={{ color: colors.ink, fontWeight: '900', fontSize: 16 }}>{app.profile.name}</Text>
-              <P dim style={{ fontSize: 12 }}>
-                {app.progress.handsPlayed} hands · {winRate === null ? 'no wins yet' : `${winRate}% win rate`}
+              <Text style={styles.welcomeTitle}>Welcome!</Text>
+              <P dim style={{ fontSize: 13 }}>
+                Pick a name and a buddy.
               </P>
             </View>
           </Row>
-          <Row>
-            <Button testID="open-shop" small kind="ghost" title={`💎 ${app.wallet.diamonds + app.wallet.bonusDiamonds}`} onPress={() => app.go({ name: 'shop' })} />
-            <Button small kind="ghost" title="Edit" onPress={() => app.go({ name: 'settings' })} />
-          </Row>
+          <View style={{ flex: wide ? 1 : undefined, gap: 10 }}>
+            <Row gap={10}>
+              <TextInput testID="name-input" value={name} onChangeText={setName} placeholder="Your name" placeholderTextColor="#9AA0BF" style={[styles.input, { flex: 1 }]} maxLength={24} />
+              <Button testID="save-name" title="Save" onPress={saveName} disabled={!name.trim()} />
+            </Row>
+            <Row style={{ flexWrap: 'wrap', rowGap: 8 }} gap={8}>
+              {AVATARS.map((a) => (
+                <Pressable key={a} onPress={() => app.setProfile({ ...app.profile, avatar: a })} hitSlop={2} style={[styles.pick, app.profile.avatar === a && styles.pickOn]}>
+                  <AvatarPlate id={a} size={wide ? 34 : 40} />
+                </Pressable>
+              ))}
+            </Row>
+          </View>
         </Card>
       )}
 
       {app.activeSession && !app.session && (
-        <Card style={{ borderColor: colors.gold, borderWidth: 1 }}>
-          <Row style={{ justifyContent: 'space-between' }}>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.tileTitle}>Table in progress</Text>
-              <P dim style={styles.tileText}>
-                {app.activeSession.kind === 'local' ? `Offline match vs bots · hand ${app.activeSession.host.snapshot.handNumber + 1}` : `Online table ${app.activeSession.roomCode}${app.activeSession.clubCode ? ` · club ${app.activeSession.clubCode}` : ''}`}
-              </P>
-              {resumeError && <P style={{ color: colors.danger, fontSize: 12 }}>{resumeError}</P>}
-            </View>
-            <Row>
-              <Button title={resuming ? 'Reconnecting…' : 'Resume'} onPress={() => void resume()} disabled={resuming} />
-              <Button small kind="ghost" title="Discard" onPress={() => app.setActiveSession(null)} />
-            </Row>
-          </Row>
+        <Card tone="gold" style={{ flexDirection: 'row', alignItems: 'center', gap: space.md }}>
+          <Icon name="hourglass" size={34} />
+          <View style={{ flex: 1 }}>
+            <Text style={styles.resumeTitle}>Table in progress</Text>
+            <P dim style={{ fontSize: 13 }} numberOfLines={2}>
+              {app.activeSession.kind === 'local' ? `Offline match vs bots · hand ${app.activeSession.host.snapshot.handNumber + 1}` : `Online table ${app.activeSession.roomCode}${app.activeSession.clubCode ? ` · club ${app.activeSession.clubCode}` : ''}`}
+            </P>
+            {resumeError && <P style={{ color: colors.dangerText, fontSize: 12 }}>{resumeError}</P>}
+          </View>
+          <Button title={resuming ? 'Reconnecting…' : 'Resume'} onPress={() => void resume()} disabled={resuming} />
+          <Button small kind="ghost" title="Discard" onPress={() => app.setActiveSession(null)} />
         </Card>
       )}
 
-      <View style={styles.grid}>
-        <Card style={styles.tile}>
-          <Text style={styles.tileIcon}>🤖</Text>
-          <Text style={styles.tileTitle}>Play vs Bots</Text>
-          <P dim style={styles.tileText}>{describeRules(app.settings.rules)}</P>
-          <Row style={{ flexWrap: 'wrap' }}>
-            {(Object.keys(BOT_SKILLS) as BotSkill[]).map((k) => {
-              const locked = k === 'pro' && !hasTier(app.wallet, 'gold');
-              return (
-                <Text key={k} onPress={() => (locked ? app.go({ name: 'shop' }) : app.setSettings({ ...app.settings, botSkill: k }))} style={[styles.chip, app.settings.botSkill === k && styles.chipOn]}>
-                  {locked ? '🔒 ' : ''}
-                  {BOT_SKILLS[k].label} · {BOT_SKILLS[k].rating}
-                </Text>
-              );
-            })}
-          </Row>
-          <Button testID="start-match" title="Start match" onPress={playBots} />
-        </Card>
-        <Card style={styles.tile}>
-          <Text style={styles.tileIcon}>👥</Text>
-          <Text style={styles.tileTitle}>Clubs & Friends</Text>
-          <P dim style={styles.tileText}>Create a club with your rules, or open a quick table and share the code.</P>
-          <Row>
-            <Button testID="open-clubs" title="My clubs" kind="secondary" onPress={() => (needsName ? saveName() : undefined) ?? app.go({ name: 'clubs' })} />
-            <Button small kind="ghost" title="Quick table" onPress={() => (needsName ? saveName() : undefined) ?? app.go({ name: 'online' })} />
-          </Row>
-        </Card>
-        <Card style={styles.tile}>
-          <Text style={styles.tileIcon}>🧩</Text>
-          <Text style={styles.tileTitle}>Daily puzzle</Text>
-          <P dim style={styles.tileText}>One best-discard puzzle a day, same for everyone.</P>
-          <Row style={{ justifyContent: 'space-between' }}>
-            <Pill text={`🔥 ${streak} streak`} tone={streak > 0 ? 'gold' : 'neutral'} />
-            <Button small kind={dailyDone ? 'ghost' : 'primary'} title={dailyDone ? 'Done ✓' : 'Solve'} onPress={() => app.go({ name: 'daily' })} />
-          </Row>
-        </Card>
-        <Card style={styles.tile}>
-          <Text style={styles.tileIcon}>🎓</Text>
-          <Text style={styles.tileTitle}>Learn</Text>
-          <P dim style={styles.tileText}>Lessons, Puzzle Rush, drills and hand reviews{avgAccuracy !== null ? ` · ${avgAccuracy}% review accuracy` : ''}.</P>
-          <Row style={{ justifyContent: 'space-between' }}>
-            <Pill text={`${Object.keys(app.progress.lessonsDone).length}/6 lessons`} tone="gold" />
-            <Button testID="open-learn" small kind="secondary" title="Open" onPress={() => app.go({ name: 'learn' })} />
-          </Row>
-        </Card>
-      </View>
+      {wide ? (
+        <View style={[styles.cardsRow, tablet && { gap: 18 }]}>
+          {playCard}
+          {clubsCard}
+          {learnCard}
+          {shopCard}
+        </View>
+      ) : (
+        <View style={{ gap: space.lg, flexGrow: 1, justifyContent: 'center', paddingBottom: 24 }}>
+          {playCard}
+          <View style={styles.cardsRow}>
+            {clubsCard}
+            {learnCard}
+            {shopCard}
+          </View>
+        </View>
+      )}
     </ScrollView>
   );
 }
 
+function ModeCard({
+  colorsPair,
+  windowH,
+  scene,
+  title,
+  children,
+  style,
+  compact,
+  horizontal,
+  badge,
+}: {
+  colorsPair: readonly [string, string];
+  windowH: number;
+  scene: React.ReactNode;
+  title: string;
+  children: React.ReactNode;
+  style?: object;
+  compact?: boolean;
+  horizontal?: boolean;
+  badge?: React.ReactNode;
+}) {
+  const window = (
+    <View style={[styles.window, horizontal ? { width: 156, alignSelf: 'stretch', minHeight: 150 } : { height: windowH }]}>
+      <LinearGradient colors={colorsPair} style={StyleSheet.absoluteFill} />
+      <View style={styles.windowShine} />
+      <View style={{ position: 'absolute', left: 4, right: 4, top: 4, bottom: 4 }}>{scene}</View>
+    </View>
+  );
+  return (
+    <Card style={[{ padding: compact ? 8 : 10, gap: compact ? 6 : 8 }, horizontal && { flexDirection: 'row', gap: 12 }, style]}>
+      {window}
+      <View style={{ flex: 1, gap: compact ? 6 : 8, paddingHorizontal: compact ? 0 : 4, paddingBottom: 2 }}>
+        <Text numberOfLines={1} style={[styles.cardTitle, compact && { fontSize: 18, textAlign: 'center' }]}>
+          {title}
+        </Text>
+        {children}
+      </View>
+      {badge && <View style={styles.badgeSpot}>{badge}</View>}
+    </Card>
+  );
+}
+
 const styles = StyleSheet.create({
-  wrap: { padding: space.lg, gap: space.lg },
-  hero: { alignItems: 'center', gap: 4 },
-  logo: { fontSize: 48 },
-  grid: { flexDirection: 'row', flexWrap: 'wrap', gap: space.md },
-  tile: { flexGrow: 1, flexBasis: '45%', minWidth: 220 },
-  tileIcon: { fontSize: 28 },
-  tileTitle: { color: colors.ink, fontWeight: '900', fontSize: 17 },
-  tileText: { fontSize: 13 },
-  input: { backgroundColor: '#FFFFFF', color: colors.ink, borderWidth: 3, borderColor: colors.creamEdge, borderRadius: 14, paddingHorizontal: 12, paddingVertical: 10, fontSize: 16 },
-  avatar: { fontSize: 26, padding: 4, borderRadius: 8 },
-  avatarOn: { backgroundColor: colors.gold, borderWidth: 2, borderColor: colors.goldDim },
-  chip: { color: colors.ink, backgroundColor: colors.cream, borderWidth: 2, borderColor: colors.creamEdge, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 999, fontSize: 12, fontWeight: '800', overflow: 'hidden' },
-  chipOn: { backgroundColor: colors.gold, borderColor: colors.goldDim, color: colors.ink },
+  wrap: { padding: space.lg, gap: space.md, flexGrow: 1 },
+  topBar: { flexDirection: 'row', alignItems: 'center', gap: space.md, justifyContent: 'space-between' },
+  logoMid: { flex: 1, alignItems: 'center' },
+  profile: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: 'rgba(16,20,47,0.55)', borderWidth: 3, borderColor: colors.ink, borderRadius: 999, paddingLeft: 3, paddingRight: 16, paddingVertical: 3, minWidth: 0, maxWidth: 260 },
+  profileName: { color: '#FFFFFF', fontSize: 16 },
+  profileMeta: { color: '#CFE9FF', fontSize: 11, fontFamily: fonts.ui },
+  cardsRow: { flexDirection: 'row', gap: space.md, alignItems: 'stretch' },
+  window: { borderWidth: 3, borderColor: colors.ink, borderRadius: 16, overflow: 'hidden' },
+  windowShine: { position: 'absolute', top: -40, left: -20, width: 120, height: 120, borderRadius: 60, backgroundColor: 'rgba(255,255,255,0.35)' },
+  cardTitle: { fontFamily: fonts.display, color: colors.ink, fontSize: 22, letterSpacing: 0.3 },
+  cardText: { fontSize: 12, lineHeight: 16 },
+  cardFoot: { marginTop: 'auto', gap: 8, paddingTop: 2 },
+  link: { flexDirection: 'row', alignItems: 'center', gap: 6, alignSelf: 'center' },
+  linkText: { fontFamily: fonts.uiBold, color: colors.infoShelf, fontSize: 14, textDecorationLine: 'underline' },
+  notify: { width: 26, height: 26, borderRadius: 13, backgroundColor: colors.danger, borderWidth: 3, borderColor: colors.ink, alignItems: 'center', justifyContent: 'center' },
+  notifyText: { color: '#FFFFFF', fontFamily: fonts.display, fontSize: 15 },
+  badgeSpot: { position: 'absolute', top: 4, right: 4 },
+  welcomeTitle: { fontFamily: fonts.display, color: colors.ink, fontSize: 26 },
+  input: { backgroundColor: '#FFFFFF', color: colors.ink, borderWidth: 3, borderColor: colors.ink, borderRadius: 14, paddingHorizontal: 14, paddingVertical: 10, fontSize: 18, fontFamily: fonts.uiBold },
+  pick: { borderRadius: 999, padding: 2, borderWidth: 3, borderColor: 'transparent' },
+  pickOn: { borderColor: colors.gold, backgroundColor: colors.gold },
+  resumeTitle: { fontFamily: fonts.display, color: colors.ink, fontSize: 19 },
 });

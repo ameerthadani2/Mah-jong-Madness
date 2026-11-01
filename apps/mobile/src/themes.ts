@@ -36,5 +36,6 @@ export function themeById(id: string | undefined): TableTheme {
 
 export const TableThemeContext = React.createContext<TableTheme>(DEFAULT_TABLE_THEME);
 
-export const EMOTES = ['👍', '😂', '😮', '😭', '🔥', '🙏', '💤', '🀄'];
-export const QUICK_CHATS = ['Nice!', 'Sorry 🙇', 'GG', 'Hurry up ⏰', '好牌!', '放槍了 😭', '再來一局', '快點啦'];
+/** Emote ids, drawn by components/Emotes.tsx. */
+export const EMOTES = ['thumbs', 'lol', 'wow', 'cry', 'fire', 'love', 'zzz', 'hu'];
+export const QUICK_CHATS = ['Nice!', 'Sorry!', 'GG', 'Hurry up!', '好牌!', '放槍了…', '再來一局', '快點啦'];
