@@ -1,0 +1,60 @@
+name: iOS TestFlight build
+# Builds the iOS app in the EAS cloud and submits it to TestFlight, entirely from GitHub.
+# Secrets needed (Settings → Secrets and variables → Actions):
+#   EXPO_TOKEN            expo.dev access token
+#   ASC_KEY_ID            App Store Connect API key id        (App Store Connect → Users and Access → Integrations → Team Keys)
+#   ASC_ISSUER_ID         App Store Connect API issuer id
+#   ASC_KEY_P8            full contents of the downloaded AuthKey_XXXX.p8 file
+#   APPLE_TEAM_ID         10-character team id (developer.apple.com → Membership)
+#   ASC_APP_ID            (optional) numeric App Store Connect app id, once the app record exists
+on:
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: EAS build profile
+        default: production
+        type: choice
+        options: [production, preview]
+      submit:
+        description: Submit to TestFlight after building
+        default: true
+        type: boolean
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
+      - run: npm ci
+      - name: Write App Store Connect API key
+        run: |
+          echo "${{ secrets.ASC_KEY_P8 }}" > $RUNNER_TEMP/AuthKey.p8
+          echo "EXPO_ASC_API_KEY_PATH=$RUNNER_TEMP/AuthKey.p8" >> $GITHUB_ENV
+          echo "EXPO_ASC_KEY_ID=${{ secrets.ASC_KEY_ID }}" >> $GITHUB_ENV
+          echo "EXPO_ASC_ISSUER_ID=${{ secrets.ASC_ISSUER_ID }}" >> $GITHUB_ENV
+          echo "EXPO_APPLE_TEAM_ID=${{ secrets.APPLE_TEAM_ID }}" >> $GITHUB_ENV
+          echo "EXPO_APPLE_TEAM_TYPE=COMPANY_OR_ORGANIZATION" >> $GITHUB_ENV
+      - name: Ensure the EAS project is linked
+        working-directory: apps/mobile
+        run: node -e "const c=require('./app.json'); if(!(c.expo.extra&&c.expo.extra.eas&&c.expo.extra.eas.projectId)){console.error('Run the \"Publish to Expo Go\" workflow once first: it links the EAS project.');process.exit(1)}"
+      - name: Build (and submit) on EAS
+        working-directory: apps/mobile
+        run: |
+          if [ "${{ github.event.inputs.submit }}" = "true" ]; then
+            eas build --platform ios --profile ${{ github.event.inputs.profile }} --non-interactive --auto-submit --wait
+          else
+            eas build --platform ios --profile ${{ github.event.inputs.profile }} --non-interactive --wait
+          fi
+      - name: Where to find it
+        run: |
+          echo "## Done" >> $GITHUB_STEP_SUMMARY
+          echo "Build list: https://expo.dev/accounts/${{ secrets.EXPO_OWNER || 'me' }}/projects/mahjong-madness/builds" >> $GITHUB_STEP_SUMMARY
+          echo "TestFlight: App Store Connect → Apps → Mahjong Madness → TestFlight → Internal Testing → add yourself." >> $GITHUB_STEP_SUMMARY
