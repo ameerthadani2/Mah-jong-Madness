@@ -17,8 +17,8 @@ export function LearnScreen() {
   const cols = width >= 1000 ? 4 : width >= 640 ? 2 : 1;
   const lessonCols = width >= 900 ? 2 : 1;
   const pad = width >= 1000 ? 28 : space.lg;
-  const drillW = cols === 1 ? undefined : Math.floor((width - pad * 2 - space.md * (cols - 1)) / cols);
-  const lessonW = lessonCols === 1 ? undefined : Math.floor((width - pad * 2 - space.md) / 2);
+  const drillW = Math.floor((width - pad * 2 - space.md * (cols - 1)) / cols);
+  const lessonW = Math.floor((width - pad * 2 - space.md * (lessonCols - 1)) / lessonCols);
   const lessonsDone = Object.keys(done).length;
   return (
     <ScrollView contentContainerStyle={[styles.wrap, { padding: pad }]}>

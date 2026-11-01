@@ -626,69 +626,112 @@ function WinCard({ w, state }: { w: WinRecord; state: ClientState }) {
 
 function ResultOverlay({ result, view, state, mySeat, onNext, onLeave, onReview, onFairness }: { result: HandResult; view: TableView; state: ClientState; mySeat: number; onNext: () => void; onLeave: () => void; onReview: () => void; onFairness: () => void }) {
   const [ready, setReady] = useState(false);
+  const { width, height } = useWindowDimensions();
+  // Short landscape phones: results on the left, scores and buttons on the right, so nothing needs scrolling to act.
+  const twoCol = width > height && height < 560;
   const iWon = result.wins.some((w) => w.seat === mySeat);
   const audit = state.auditStatus;
   const title = result.type === 'draw' ? '流局' : iWon ? '你胡了!' : '本局結束';
   const sub = result.type === 'draw' ? 'Draw' : iWon ? 'You won the hand!' : 'Hand over';
   const ribbon = result.type === 'draw' ? colors.info : iWon ? colors.gold : colors.premium;
+  const ribbonView = (
+    <View style={[styles.ribbon, { backgroundColor: ribbon }, twoCol && { alignSelf: 'flex-start', paddingVertical: 3 }]}>
+      {iWon && <Icon name="star" size={twoCol ? 24 : 30} />}
+      <StrokeText style={{ fontSize: twoCol ? 24 : 30, lineHeight: twoCol ? 30 : 36 }} strokeWidth={2.5} drop={2}>
+        {title}
+      </StrokeText>
+      <StrokeText style={{ fontSize: twoCol ? 15 : 18 }} strokeWidth={2} drop={1.5}>
+        {sub}
+      </StrokeText>
+      {iWon && <Icon name="star" size={twoCol ? 24 : 30} />}
+    </View>
+  );
+  const results = (
+    <>
+      {result.wins.map((w) => (
+        <WinCard key={w.seat} w={w} state={state} />
+      ))}
+      {result.type === 'draw' && <P>Wall exhausted. Dealer {result.dealerContinues ? 'keeps the deal (連莊).' : 'passes.'}</P>}
+    </>
+  );
+  const scores = (
+    <View style={[styles.scoreRow, twoCol && { flexDirection: 'column', flexWrap: 'nowrap', gap: 5 }]}>
+      {view.scores.map((s, i) => {
+        const info = state.seats.find((x) => x.seat === i);
+        const d = result.scoreDelta[i];
+        return (
+          <View key={i} style={[styles.scoreChip, i === mySeat && { backgroundColor: '#FFF1C4' }, twoCol && { alignSelf: 'stretch' }]}>
+            <AvatarPlate id={seatAvatarId(info, i)} size={twoCol ? 26 : 30} />
+            <View style={{ flexShrink: 1 }}>
+              <Text numberOfLines={1} style={[styles.scoreName, nameFont(info?.name ?? String(i))]}>
+                {info?.name ?? i}
+              </Text>
+              <Text style={styles.scoreNum}>
+                {s >= 0 ? '+' : ''}
+                {s} <Text style={{ color: d >= 0 ? colors.okText : colors.dangerText }}>({d >= 0 ? '+' : ''}{d})</Text>
+              </Text>
+            </View>
+          </View>
+        );
+      })}
+    </View>
+  );
+  const auditRow = (
+    <Row style={{ flexWrap: 'wrap', rowGap: 8 }}>
+      <Pressable onPress={onFairness}>
+        <Pill size={twoCol ? 'sm' : 'md'} text={audit === 'ok' ? (twoCol ? 'Verified · details' : 'Shuffle & log verified · details') : audit === 'failed' ? 'Audit failed · details' : 'Audit pending'} icon={audit === 'ok' ? 'shield' : audit === 'failed' ? 'warning' : 'hourglass'} tone={audit === 'ok' ? 'ok' : audit === 'failed' ? 'danger' : 'neutral'} />
+      </Pressable>
+      {state.auditFailures.map((f, i) => (
+        <Text key={i} style={{ color: colors.dangerText, fontSize: 12 }}>
+          {f}
+        </Text>
+      ))}
+    </Row>
+  );
+  const next = (
+    <Button
+      large={!twoCol}
+      title={ready ? 'Waiting for others…' : 'Next hand'}
+      disabled={ready}
+      onPress={() => {
+        setReady(true);
+        onNext();
+      }}
+    />
+  );
+  if (twoCol) {
+    return (
+      <View style={styles.overlay}>
+        <View style={[styles.overlayCard, styles.overlayWide]}>
+          <ScrollView style={{ flex: 1.45 }} contentContainerStyle={{ gap: 8 }}>
+            {ribbonView}
+            {results}
+          </ScrollView>
+          <View style={{ flex: 1, gap: 8, justifyContent: 'space-between' }}>
+            {scores}
+            {auditRow}
+            <View style={{ gap: 6 }}>
+              {next}
+              <Row gap={6}>
+                <Button small kind="secondary" title="Review" onPress={onReview} style={{ flex: 1 }} />
+                <Button small kind="ghost" title="Leave table" onPress={onLeave} style={{ flex: 1 }} />
+              </Row>
+            </View>
+          </View>
+        </View>
+      </View>
+    );
+  }
   return (
     <View style={styles.overlay}>
       <ScrollView style={{ width: '100%' }} contentContainerStyle={styles.overlayScroll}>
         <View style={styles.overlayCard}>
-          <View style={[styles.ribbon, { backgroundColor: ribbon }]}>
-            {iWon && <Icon name="star" size={30} />}
-            <StrokeText style={{ fontSize: 30, lineHeight: 36 }} strokeWidth={2.5} drop={2}>
-              {title}
-            </StrokeText>
-            <StrokeText style={{ fontSize: 18 }} strokeWidth={2} drop={1.5}>
-              {sub}
-            </StrokeText>
-            {iWon && <Icon name="star" size={30} />}
-          </View>
-          {result.wins.map((w) => (
-            <WinCard key={w.seat} w={w} state={state} />
-          ))}
-          {result.type === 'draw' && <P>Wall exhausted. Dealer {result.dealerContinues ? 'keeps the deal (連莊).' : 'passes.'}</P>}
-          <View style={styles.scoreRow}>
-            {view.scores.map((s, i) => {
-              const info = state.seats.find((x) => x.seat === i);
-              const d = result.scoreDelta[i];
-              return (
-                <View key={i} style={[styles.scoreChip, i === mySeat && { backgroundColor: '#FFF1C4' }]}>
-                  <AvatarPlate id={seatAvatarId(info, i)} size={30} />
-                  <View>
-                    <Text numberOfLines={1} style={[styles.scoreName, nameFont(info?.name ?? String(i))]}>
-                      {info?.name ?? i}
-                    </Text>
-                    <Text style={styles.scoreNum}>
-                      {s >= 0 ? '+' : ''}
-                      {s} <Text style={{ color: d >= 0 ? colors.okText : colors.dangerText }}>({d >= 0 ? '+' : ''}{d})</Text>
-                    </Text>
-                  </View>
-                </View>
-              );
-            })}
-          </View>
+          {ribbonView}
+          {results}
+          {scores}
+          {auditRow}
           <Row style={{ flexWrap: 'wrap', rowGap: 8 }}>
-            <Pressable onPress={onFairness}>
-              <Pill text={audit === 'ok' ? 'Shuffle & log verified · details' : audit === 'failed' ? 'Audit failed · details' : 'Audit pending'} icon={audit === 'ok' ? 'shield' : audit === 'failed' ? 'warning' : 'hourglass'} tone={audit === 'ok' ? 'ok' : audit === 'failed' ? 'danger' : 'neutral'} />
-            </Pressable>
-            {state.auditFailures.map((f, i) => (
-              <Text key={i} style={{ color: colors.dangerText, fontSize: 12 }}>
-                {f}
-              </Text>
-            ))}
-          </Row>
-          <Row style={{ flexWrap: 'wrap', rowGap: 8 }}>
-            <Button
-              large
-              title={ready ? 'Waiting for others…' : 'Next hand'}
-              disabled={ready}
-              onPress={() => {
-                setReady(true);
-                onNext();
-              }}
-            />
+            {next}
             <Button kind="secondary" title="Review my hand" onPress={onReview} />
             <Button kind="ghost" title="Leave table" onPress={onLeave} />
           </Row>
@@ -778,6 +821,7 @@ const styles = StyleSheet.create({
   overlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(16,20,47,0.72)', alignItems: 'center', justifyContent: 'center', padding: space.md, zIndex: 40 },
   overlayScroll: { flexGrow: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 16 },
   overlayCard: { backgroundColor: colors.cream, borderRadius: 26, padding: space.lg, paddingTop: 10, gap: space.md, width: '100%', maxWidth: 720, borderWidth: 3, borderColor: colors.ink, borderBottomWidth: 8 },
+  overlayWide: { flexDirection: 'row', maxWidth: 860, flex: 1, padding: 12, paddingTop: 10, gap: 12 },
   ribbon: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, borderWidth: 3, borderColor: colors.ink, borderRadius: 18, paddingVertical: 6, paddingHorizontal: 16, alignSelf: 'center', marginTop: -2, flexWrap: 'wrap' },
   winCard: { gap: 8, backgroundColor: '#FFFFFF', borderWidth: 2.5, borderColor: colors.ink, borderRadius: 18, padding: 12 },
   winTitle: { color: colors.ink, fontSize: 17 },

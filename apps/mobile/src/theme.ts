@@ -98,10 +98,19 @@ export const type = {
   zh: { fontWeight: '900', color: colors.ink } as TextStyle,
 };
 
-const CJK = /[　-〿㐀-鿿＀-￯]/;
-/** True when a string contains Chinese characters (and so must not use a Latin-only font). */
+const CJK_G = /[　-〿㐀-鿿＀-￯]/g;
+const LATIN_G = /[A-Za-z0-9]/g;
+/**
+ * True when a string is mainly Chinese, so it renders in the system CJK face
+ * (fontFamily unset). Mostly-Latin strings with an odd CJK glyph keep the Latin
+ * face; the platform falls back to the system CJK font for those glyphs.
+ */
 export function hasCJK(s: string | undefined | null): boolean {
-  return !!s && CJK.test(s);
+  if (!s) return false;
+  const cjk = (s.match(CJK_G) ?? []).length;
+  if (cjk === 0) return false;
+  const latin = (s.match(LATIN_G) ?? []).length;
+  return cjk * 2 >= latin;
 }
 /** Font style for user-supplied text (names) that may be Latin or Chinese. */
 export function nameFont(s: string | undefined | null, latin: string = fonts.uiBold): TextStyle {

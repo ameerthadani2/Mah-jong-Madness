@@ -208,6 +208,8 @@ export function WallRing({ remaining, size, children }: { remaining: number; siz
   return (
     <View style={{ width: S, height: S, alignItems: 'center', justifyContent: 'center' }}>
       <Svg width={S} height={S + 2} style={StyleSheet.absoluteFill} pointerEvents="none">
+        <Rect x={th * 0.5} y={th * 0.5} width={S - th} height={S - th} rx={th * 0.6} fill="none" stroke="#FFFFFF" strokeOpacity={0.14} strokeWidth={th} />
+        <Rect x={th + 2} y={th + 2} width={S - th * 2 - 4} height={S - th * 2 - 4} rx={th * 0.4} fill="#000000" fillOpacity={0.06} />
         {cells.slice(0, stacks).map((c, i) => (
           <G key={i}>
             <Rect x={c.x + 0.4} y={c.y + 0.4} width={c.w - 0.8} height={c.h - 0.8 + 1.8} rx={Math.min(c.w, c.h) * 0.22} fill={theme.tileEdge} stroke={colors.ink} strokeWidth={sw} />
