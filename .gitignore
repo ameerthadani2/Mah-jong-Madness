@@ -10,3 +10,4 @@ ios/
 android/
 *.tgz
 .env
+.claude/
