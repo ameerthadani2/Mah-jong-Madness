@@ -189,6 +189,39 @@ export function FeltFrame({ children, rail = 11, style }: { children: React.Reac
 }
 
 /**
+ * The live wall seen from above: a square of two-high stacks around the
+ * centre (18 per side when full) that empties as tiles are drawn.
+ */
+export function WallRing({ remaining, size, children }: { remaining: number; size: number; children?: React.ReactNode }) {
+  const theme = useContext(TableThemeContext);
+  const perSide = 18;
+  const tw = size / (perSide + 2.7);
+  const th = tw * 1.35;
+  const S = th * 2 + perSide * tw;
+  const stacks = Math.max(0, Math.min(perSide * 4, Math.ceil(remaining / 2)));
+  const cells: Array<{ x: number; y: number; w: number; h: number }> = [];
+  for (let i = 0; i < perSide; i++) cells.push({ x: th + i * tw, y: S - th, w: tw, h: th });
+  for (let i = 0; i < perSide; i++) cells.push({ x: S - th, y: S - th - (i + 1) * tw, w: th, h: tw });
+  for (let i = 0; i < perSide; i++) cells.push({ x: S - th - (i + 1) * tw, y: 0, w: tw, h: th });
+  for (let i = 0; i < perSide; i++) cells.push({ x: 0, y: th + i * tw, w: th, h: tw });
+  const sw = tw < 9 ? 0.9 : 1.3;
+  return (
+    <View style={{ width: S, height: S, alignItems: 'center', justifyContent: 'center' }}>
+      <Svg width={S} height={S + 2} style={StyleSheet.absoluteFill} pointerEvents="none">
+        {cells.slice(0, stacks).map((c, i) => (
+          <G key={i}>
+            <Rect x={c.x + 0.4} y={c.y + 0.4} width={c.w - 0.8} height={c.h - 0.8 + 1.8} rx={Math.min(c.w, c.h) * 0.22} fill={theme.tileEdge} stroke={colors.ink} strokeWidth={sw} />
+            <Rect x={c.x + 0.4} y={c.y + 0.4} width={c.w - 0.8} height={c.h - 0.8} rx={Math.min(c.w, c.h) * 0.22} fill={theme.tileBack} stroke={colors.ink} strokeWidth={sw} />
+            <Rect x={c.x + 1.6} y={c.y + 1.6} width={Math.max(0, c.w - 3.2)} height={Math.max(0, Math.min(2, c.h * 0.18))} fill="#FFFFFF" opacity={0.3} />
+          </G>
+        ))}
+      </Svg>
+      {children}
+    </View>
+  );
+}
+
+/**
  * Centre compass: prevailing wind and tiles left in the wall; each seat's wind
  * sits on its edge of the plate, and the seat whose turn it is glows gold.
  */

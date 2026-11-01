@@ -4,8 +4,10 @@ import { describeRules, RULE_PRESETS, rulesFromPreset, SPEED_PRESETS, withSpeed,
 import { useApp } from '../app-state';
 import { clubsApi, httpBase, type Club } from '../api/clubs';
 import { createOnlineSession } from '../game/session';
-import { colors, space } from '../theme';
-import { Button, Card, H1, H2, P, Pill, Row, Toggle } from '../components/Ui';
+import { colors, fonts, nameFont, space } from '../theme';
+import { Button, Card, Chip, H2, P, Pill, Row, ScreenHeader, SectionLabel, Toggle } from '../components/Ui';
+import { AvatarPlate } from '../components/Avatars';
+import { Icon } from '../components/Icons';
 
 export function ClubsScreen() {
   const app = useApp();
@@ -56,19 +58,16 @@ export function ClubsScreen() {
 
   return (
     <ScrollView contentContainerStyle={styles.wrap}>
-      <Row style={{ justifyContent: 'space-between' }}>
-        <H1>Clubs</H1>
-        <Row>
-          <Button small kind="ghost" title="Quick table" onPress={() => app.go({ name: 'online' })} />
-          <Button small kind="ghost" title="Back" onPress={app.back} />
-        </Row>
-      </Row>
-      <P dim>A club is your private room: your rules, your members, your standings. Share the code and play from anywhere.</P>
-      {error && <P style={{ color: colors.gold }}>{error}</P>}
+      <ScreenHeader title="Clubs" onBack={app.back} right={<Button small kind="ghost" icon="play" title="Quick table" onPress={() => app.go({ name: 'online' })} />} />
+      <View style={styles.note}>
+        <Icon name="users" size={22} />
+        <P style={{ flex: 1, fontSize: 13, lineHeight: 18 }}>A club is your private room: your rules, your members, your standings. Share the code and play from anywhere.</P>
+      </View>
+      {error && <Pill tone="gold" icon="warning" text={error} />}
       <View style={styles.cols}>
         <Card style={styles.col}>
           <H2>Join a club</H2>
-          <TextInput value={joinCode} onChangeText={(t) => setJoinCode(t.toUpperCase())} autoCapitalize="characters" placeholder="CLUB CODE" placeholderTextColor={colors.textDim} style={styles.codeInput} maxLength={8} />
+          <TextInput value={joinCode} onChangeText={(t) => setJoinCode(t.toUpperCase())} autoCapitalize="characters" placeholder="CLUB CODE" placeholderTextColor="#9AA0BF" style={styles.codeInput} maxLength={8} />
           <Button kind="secondary" title="Join" onPress={() => void join()} disabled={joinCode.trim().length < 4} />
         </Card>
         <Card style={styles.col}>
@@ -77,15 +76,13 @@ export function ClubsScreen() {
             <Button title="New club" onPress={() => setCreating(true)} />
           ) : (
             <>
-              <TextInput value={name} onChangeText={setName} placeholder="Club name" placeholderTextColor={colors.textDim} style={styles.input} maxLength={40} />
+              <TextInput value={name} onChangeText={setName} placeholder="Club name" placeholderTextColor="#9AA0BF" style={styles.input} maxLength={40} />
               <P dim style={{ fontSize: 12 }}>
                 House rules preset
               </P>
               <Row style={{ flexWrap: 'wrap' }}>
                 {RULE_PRESETS.map((p) => (
-                  <Text key={p.id} onPress={() => setPresetId(p.id)} style={[styles.chip, presetId === p.id && styles.chipOn]}>
-                    {p.name}
-                  </Text>
+                  <Chip key={p.id} label={p.name} selected={presetId === p.id} onPress={() => setPresetId(p.id)} />
                 ))}
               </Row>
               <P dim style={{ fontSize: 12 }}>
@@ -100,18 +97,22 @@ export function ClubsScreen() {
           )}
         </Card>
       </View>
-      <H2>My clubs</H2>
-      {clubs === null && !error && <P dim>Loading…</P>}
-      {clubs?.length === 0 && <P dim>You are not in any club yet.</P>}
+      <SectionLabel>My clubs</SectionLabel>
+      {clubs === null && !error && <Pill text="Loading…" icon="hourglass" />}
+      {clubs?.length === 0 && <Pill text="You are not in any club yet." icon="users" />}
       {clubs?.map((c) => {
         const me = c.members.find((m) => m.userId === user.userId);
         const pending = !me;
         return (
           <Card key={c.code} style={{ flexDirection: 'row', alignItems: 'center', gap: space.md }}>
+            <View style={styles.clubBadge}>
+              <Icon name="users" size={30} />
+            </View>
             <View style={{ flex: 1 }}>
-              <Text style={styles.clubName}>
-                {c.name} <Text style={{ color: colors.textDim }}>{c.code}</Text>
-              </Text>
+              <Row gap={6}>
+                <Text style={[styles.clubName, nameFont(c.name)]}>{c.name}</Text>
+                <Pill text={c.code} size="sm" />
+              </Row>
               <P dim style={{ fontSize: 12 }}>
                 {c.members.length} members · {c.tables.filter((t) => t.status !== 'finished').length} tables open · {describeRules(c.rules).split(' · ')[0]}
               </P>
@@ -194,28 +195,28 @@ export function ClubScreen({ code }: { code: string }) {
   const live = club.tables.filter((t) => t.status !== 'finished');
   return (
     <ScrollView contentContainerStyle={styles.wrap}>
-      <Row style={{ justifyContent: 'space-between' }}>
-        <View>
-          <H1 style={{ fontSize: 22 }}>{club.name}</H1>
-          <P dim style={{ fontSize: 12 }}>
-            Code <Text style={{ color: colors.ink, fontWeight: '900' }}>{club.code}</Text> · {club.members.length} members · {me ? me.role : 'guest'}
-          </P>
-        </View>
-        <Button small kind="ghost" title="Back" onPress={app.back} />
-      </Row>
-      {error && <P style={{ color: colors.danger }}>{error}</P>}
+      <ScreenHeader
+        title={club.name}
+        onBack={app.back}
+        sub={
+          <Row gap={6} style={{ marginTop: 2 }}>
+            <Pill text={`Code ${club.code}`} tone="gold" size="sm" />
+            <Pill text={`${club.members.length} members`} icon="users" size="sm" />
+            <Pill text={me ? me.role : 'guest'} size="sm" />
+          </Row>
+        }
+      />
+      {error && <Pill tone="danger" icon="warning" text={error} />}
       <Row>
         {(['tables', 'standings', 'rules'] as const).map((t) => (
-          <Text key={t} onPress={() => setTab(t)} style={[styles.chip, tab === t && styles.chipOn]}>
-            {t === 'tables' ? `Tables (${live.length})` : t === 'standings' ? 'Standings' : 'Rules'}
-          </Text>
+          <Chip key={t} label={t === 'tables' ? `Tables (${live.length})` : t === 'standings' ? 'Standings' : 'Rules'} selected={tab === t} onPress={() => setTab(t)} />
         ))}
       </Row>
 
       {tab === 'tables' && (
         <>
           {canOpen && <Button title={busy ? 'Opening…' : 'Open a table'} onPress={() => void openTable()} disabled={busy} />}
-          {live.length === 0 && <P dim>No open tables. {canOpen ? 'Open one and share the club code.' : ''}</P>}
+          {live.length === 0 && <Pill text={`No open tables.${canOpen ? ' Open one and share the club code.' : ''}`} icon="play" />}
           {live.map((t) => (
             <Card key={t.code} style={{ gap: 4 }}>
               <Row style={{ justifyContent: 'space-between' }}>
@@ -227,7 +228,7 @@ export function ClubScreen({ code }: { code: string }) {
               </P>
               <Row style={{ flexWrap: 'wrap' }}>
                 {t.players.map((p) => (
-                  <Pill key={p.seat} text={`${p.isBot ? '🤖 ' : ''}${p.name}${p.connected ? '' : ' (away)'}`} />
+                  <Pill key={p.seat} icon={p.isBot ? 'bot' : undefined} text={`${p.name}${p.connected ? '' : ' (away)'}`} />
                 ))}
                 {t.players.filter((p) => !p.isBot).length < 4 && <Pill text={`${4 - t.players.filter((p) => !p.isBot).length} seats`} tone="ok" />}
               </Row>
@@ -239,9 +240,10 @@ export function ClubScreen({ code }: { code: string }) {
               <H2>Pending requests</H2>
               {club.pending.map((p) => (
                 <Row key={p.userId} style={{ justifyContent: 'space-between' }}>
-                  <P>
-                    {p.avatar ?? ''} {p.name}
-                  </P>
+                  <Row>
+                    <AvatarPlate id={p.avatar} size={34} />
+                    <P>{p.name}</P>
+                  </Row>
                   <Button small title="Approve" onPress={() => void clubsApi.approve(base, club.code, user, p.userId).then(setClub).catch((e: Error) => setError(e.message))} />
                 </Row>
               ))}
@@ -256,17 +258,19 @@ export function ClubScreen({ code }: { code: string }) {
             .sort((a, b) => b.points - a.points)
             .map((m, i) => (
               <Row key={m.userId} style={styles.standing}>
-                <Text style={styles.rank}>{i + 1}</Text>
-                <Text style={{ fontSize: 20 }}>{m.avatar ?? '🀄'}</Text>
+                <View style={[styles.rankBadge, i === 0 && { backgroundColor: colors.gold }]}>
+                  <Text style={styles.rank}>{i + 1}</Text>
+                </View>
+                <AvatarPlate id={m.avatar} size={36} />
                 <View style={{ flex: 1 }}>
-                  <Text style={{ color: colors.ink, fontWeight: '800' }}>
+                  <Text style={[{ color: colors.ink }, nameFont(m.name)]}>
                     {m.name} {m.role !== 'member' ? <Text style={{ color: colors.goldDim, fontSize: 11 }}>{m.role}</Text> : null}
                   </Text>
                   <P dim style={{ fontSize: 12 }}>
                     {m.matchesPlayed} matches · {m.matchesWon} wins
                   </P>
                 </View>
-                <Text style={{ color: m.points >= 0 ? colors.ok : colors.danger, fontWeight: '900' }}>
+                <Text style={{ color: m.points >= 0 ? colors.okText : colors.dangerText, fontFamily: fonts.display, fontSize: 18 }}>
                   {m.points >= 0 ? '+' : ''}
                   {m.points}
                 </Text>
@@ -285,9 +289,7 @@ export function ClubScreen({ code }: { code: string }) {
               </P>
               <Row style={{ flexWrap: 'wrap' }}>
                 {RULE_PRESETS.map((p) => (
-                  <Text key={p.id} onPress={() => void setRules(rulesFromPreset(p.id))} style={styles.chip}>
-                    {p.name}
-                  </Text>
+                  <Chip key={p.id} label={p.name} onPress={() => void setRules(rulesFromPreset(p.id))} />
                 ))}
               </Row>
               <P dim style={{ fontSize: 12 }}>
@@ -295,9 +297,7 @@ export function ClubScreen({ code }: { code: string }) {
               </P>
               <Row style={{ flexWrap: 'wrap' }}>
                 {(Object.keys(SPEED_PRESETS) as GameSpeed[]).map((sp) => (
-                  <Text key={sp} onPress={() => void setRules(withSpeed(club.rules, sp))} style={[styles.chip, club.rules.speed === sp && styles.chipOn]}>
-                    {SPEED_PRESETS[sp].label} {SPEED_PRESETS[sp].turnSeconds}s
-                  </Text>
+                  <Chip key={sp} label={`${SPEED_PRESETS[sp].label} ${SPEED_PRESETS[sp].turnSeconds}s`} selected={club.rules.speed === sp} onPress={() => void setRules(withSpeed(club.rules, sp))} />
                 ))}
               </Row>
               <Toggle label="Members can open tables" value={club.settings.membersCanOpenTables} onChange={(v) => void clubsApi.update(base, club.code, user, { settings: { membersCanOpenTables: v } }).then(setClub)} />
@@ -322,11 +322,12 @@ const styles = StyleSheet.create({
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12 },
   cols: { flexDirection: 'row', flexWrap: 'wrap', gap: space.md },
   col: { flexGrow: 1, flexBasis: '45%', minWidth: 240 },
-  input: { backgroundColor: '#FFFFFF', color: colors.ink, borderWidth: 3, borderColor: colors.creamEdge, borderRadius: 14, paddingHorizontal: 12, paddingVertical: 10, fontSize: 16 },
-  codeInput: { backgroundColor: '#FFFFFF', color: colors.ink, borderWidth: 3, borderColor: colors.creamEdge, borderRadius: 14, paddingHorizontal: 12, paddingVertical: 12, fontSize: 22, letterSpacing: 5, fontWeight: '800', textAlign: 'center' },
-  chip: { color: colors.ink, backgroundColor: colors.cream, borderWidth: 2, borderColor: colors.creamEdge, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 999, fontSize: 13, fontWeight: '800', overflow: 'hidden' },
-  chipOn: { backgroundColor: colors.gold, borderColor: colors.goldDim, color: colors.ink },
-  clubName: { color: colors.ink, fontWeight: '900', fontSize: 16 },
+  note: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: 'rgba(255,255,255,0.75)', borderWidth: 2, borderColor: colors.ink, borderRadius: 14, paddingHorizontal: 10, paddingVertical: 6 },
+  input: { backgroundColor: '#FFFFFF', color: colors.ink, borderWidth: 3, borderColor: colors.ink, borderRadius: 14, paddingHorizontal: 12, paddingVertical: 10, fontSize: 16, fontFamily: fonts.uiBold },
+  codeInput: { backgroundColor: '#FFFFFF', color: colors.ink, borderWidth: 3, borderColor: colors.ink, borderRadius: 14, paddingHorizontal: 12, paddingVertical: 10, fontSize: 24, letterSpacing: 5, fontFamily: fonts.display, textAlign: 'center' },
+  clubName: { color: colors.ink, fontSize: 17 },
+  clubBadge: { width: 52, height: 52, borderRadius: 16, backgroundColor: colors.info, borderWidth: 3, borderColor: colors.ink, alignItems: 'center', justifyContent: 'center' },
   standing: { paddingVertical: 6, borderBottomWidth: 2, borderBottomColor: colors.creamDeep },
-  rank: { color: colors.goldDim, fontWeight: '900', width: 22 },
+  rankBadge: { width: 28, height: 28, borderRadius: 14, borderWidth: 2.5, borderColor: colors.ink, backgroundColor: colors.creamDeep, alignItems: 'center', justifyContent: 'center' },
+  rank: { color: colors.ink, fontFamily: fonts.display, fontSize: 14 },
 });

@@ -2,8 +2,10 @@ import React, { useEffect } from 'react';
 import { ScrollView, Share, StyleSheet, Text, View } from 'react-native';
 import { useApp } from '../app-state';
 import { useSession } from '../game/useTable';
-import { colors, space } from '../theme';
-import { Button, Card, H1, H2, P, Pill, Row } from '../components/Ui';
+import { colors, fonts, nameFont, space } from '../theme';
+import { Button, Card, H2, P, Pill, Row, ScreenHeader, StrokeText } from '../components/Ui';
+import { AvatarPlate, seatAvatarId } from '../components/Avatars';
+import { Icon } from '../components/Icons';
 
 export function LobbyScreen() {
   const app = useApp();
@@ -18,8 +20,10 @@ export function LobbyScreen() {
   if (!session || !state) {
     return (
       <View style={styles.center}>
-        <P>No table.</P>
-        <Button title="Back" onPress={app.back} />
+        <Card style={{ alignItems: 'center' }}>
+          <H2>No table</H2>
+          <Button title="Back" onPress={app.back} />
+        </Card>
       </View>
     );
   }
@@ -39,45 +43,64 @@ export function LobbyScreen() {
 
   return (
     <ScrollView contentContainerStyle={styles.wrap}>
-      <Row style={{ justifyContent: 'space-between' }}>
-        <H1>Table {session.roomCode}</H1>
-        <Button small kind="ghost" title="Leave" onPress={leave} />
-      </Row>
-      <Card style={{ alignItems: 'center' }}>
-        <P dim>Share this code</P>
-        <Text style={styles.code}>{session.roomCode}</Text>
-        <Row>
-          <Button small kind="secondary" title="Share" onPress={() => void Share.share({ message: `Join my Mahjong Madness table: ${session.roomCode}` })} />
-          <Pill text={session.transportKind === 'webrtc' ? 'Direct P2P' : session.transportKind === 'relay' ? 'Relay' : 'Local'} />
-          <Pill text={session.mode === 'guest' ? 'Hosted elsewhere' : 'You host'} tone="gold" />
-        </Row>
-      </Card>
-      <Card>
-        <H2>Seats</H2>
-        {state.seats.map((s) => (
-          <Row key={s.seat} style={styles.seat}>
-            <Text style={{ fontSize: 22 }}>{s.avatar ?? (s.isBot ? '🤖' : s.peerId ? '🀄' : '▫️')}</Text>
-            <P style={{ flex: 1 }}>{s.name || (s.isBot ? 'Bot' : 'Empty — waiting for a friend')}</P>
-            {s.seat === state.seat && <Pill text="you" tone="gold" />}
-            {s.isBot && isHost && <Button small kind="ghost" title="Remove" onPress={() => session.host!.removeBot(s.seat)} />}
+      <ScreenHeader title={`Table ${session.roomCode}`} onBack={leave} />
+      <View style={styles.cols}>
+        <Card style={[styles.col, { alignItems: 'center' }]}>
+          <P dim>Share this code</P>
+          <View style={styles.codeBox}>
+            <StrokeText style={styles.code} strokeWidth={2.5} drop={2.5}>
+              {session.roomCode}
+            </StrokeText>
+          </View>
+          <Row style={{ flexWrap: 'wrap', justifyContent: 'center', rowGap: 6 }}>
+            <Button small kind="secondary" icon="share" title="Share" onPress={() => void Share.share({ message: `Join my Mahjong Madness table: ${session.roomCode}` })} />
+            <Pill text={session.transportKind === 'webrtc' ? 'Direct P2P' : session.transportKind === 'relay' ? 'Relay' : 'Local'} />
+            <Pill text={session.mode === 'guest' ? 'Hosted elsewhere' : 'You host'} tone="gold" />
           </Row>
-        ))}
-        {canControl && (
-          <Row>
-            <Button small kind="secondary" title="Add bot" onPress={addBot} />
-            <P dim style={{ fontSize: 12 }}>Empty seats are filled with bots when you start.</P>
-          </Row>
-        )}
-      </Card>
+        </Card>
+        <Card style={styles.col}>
+          <H2>Seats</H2>
+          {state.seats.map((s) => {
+            const empty = !s.peerId && !s.isBot;
+            return (
+              <Row key={s.seat} style={styles.seat}>
+                {empty ? (
+                  <View style={styles.emptySeat}>
+                    <Icon name="plus" size={20} color="#C9CFE3" />
+                  </View>
+                ) : (
+                  <AvatarPlate id={seatAvatarId(s, s.seat)} size={40} />
+                )}
+                <Text style={[styles.seatName, nameFont(s.name || 'Bot'), empty && { color: colors.inkDim }]} numberOfLines={1}>
+                  {s.name || (s.isBot ? 'Bot' : 'Empty — waiting for a friend')}
+                </Text>
+                {s.isBot && <Icon name="bot" size={22} />}
+                {s.seat === state.seat && <Pill text="you" tone="gold" size="sm" />}
+                {s.isBot && isHost && <Button small kind="ghost" title="Remove" onPress={() => session.host!.removeBot(s.seat)} />}
+              </Row>
+            );
+          })}
+          {canControl && (
+            <Row style={{ flexWrap: 'wrap', rowGap: 6 }}>
+              <Button small kind="secondary" icon="bot" title="Add bot" onPress={addBot} />
+              <P dim style={{ fontSize: 12, flexShrink: 1 }}>
+                Empty seats are filled with bots when you start.
+              </P>
+            </Row>
+          )}
+        </Card>
+      </View>
       {canControl ? (
-        <Button title={humans > 1 ? 'Start match' : 'Start (bots fill empty seats)'} onPress={start} />
+        <Button large title={humans > 1 ? 'Start match' : 'Start (bots fill empty seats)'} icon="play" onPress={start} style={{ alignSelf: 'center' }} />
       ) : (
-        <P dim style={{ textAlign: 'center' }}>
-          Waiting for the host to start…
-        </P>
+        <Card style={{ alignItems: 'center' }}>
+          <P dim style={{ textAlign: 'center' }}>
+            Waiting for the host to start…
+          </P>
+        </Card>
       )}
-      {state.disconnected && <P style={{ color: colors.danger }}>Connection lost. Go back to Home and tap Resume.</P>}
-      {state.lastError && <P style={{ color: colors.danger }}>{state.lastError}</P>}
+      {state.disconnected && <Pill tone="danger" icon="warning" text="Connection lost. Go back to Home and tap Resume." />}
+      {state.lastError && <Pill tone="danger" icon="warning" text={state.lastError} />}
     </ScrollView>
   );
 }
@@ -85,6 +108,11 @@ export function LobbyScreen() {
 const styles = StyleSheet.create({
   wrap: { padding: space.lg, gap: space.md },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12 },
-  code: { color: colors.ink, fontSize: 44, fontWeight: '900', letterSpacing: 10 },
+  cols: { flexDirection: 'row', flexWrap: 'wrap', gap: space.md },
+  col: { flexGrow: 1, flexBasis: '45%', minWidth: 260 },
+  codeBox: { backgroundColor: colors.info, borderWidth: 3, borderColor: colors.ink, borderRadius: 18, paddingHorizontal: 22, paddingVertical: 6, borderBottomWidth: 7 },
+  code: { fontSize: 44, letterSpacing: 8, fontFamily: fonts.display },
   seat: { paddingVertical: 6, borderBottomWidth: 2, borderBottomColor: colors.creamDeep },
+  seatName: { flex: 1, color: colors.ink, fontSize: 15 },
+  emptySeat: { width: 40, height: 40, borderRadius: 20, borderWidth: 3, borderStyle: 'dashed', borderColor: colors.creamShelf, alignItems: 'center', justifyContent: 'center' },
 });

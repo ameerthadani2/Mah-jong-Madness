@@ -78,8 +78,8 @@ export function HomeScreen() {
   };
 
   const phoneLand = wide && !tablet;
-  const windowH = tablet ? 190 : wide ? Math.max(70, Math.min(150, Math.round(height * 0.22))) : 104;
-  const smallWindow = tablet ? 190 : wide ? windowH : 100;
+  const windowH = tablet ? Math.min(250, Math.round(height * 0.28)) : wide ? Math.max(70, Math.min(150, Math.round(height * 0.22))) : 104;
+  const smallWindow = tablet ? windowH : wide ? windowH : 100;
 
   const skillChips = (
     <Row style={{ flexWrap: 'wrap', rowGap: 6 }} gap={6}>
@@ -240,11 +240,13 @@ export function HomeScreen() {
       )}
 
       {wide ? (
-        <View style={[styles.cardsRow, tablet && { gap: 18 }]}>
-          {playCard}
-          {clubsCard}
-          {learnCard}
-          {shopCard}
+        <View style={tablet ? { flexGrow: 1, justifyContent: 'center', paddingBottom: 30 } : undefined}>
+          <View style={[styles.cardsRow, tablet && { gap: 18 }]}>
+            {playCard}
+            {clubsCard}
+            {learnCard}
+            {shopCard}
+          </View>
         </View>
       ) : (
         <View style={{ gap: space.lg, flexGrow: 1, justifyContent: 'center', paddingBottom: 24 }}>

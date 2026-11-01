@@ -7,7 +7,7 @@ import { useApp } from '../app-state';
 import { useCountdown, useSession } from '../game/useTable';
 import { colors, fonts, nameFont, space } from '../theme';
 import { Tile, HiddenHand, tileDims, type TileSize } from '../components/Tile';
-import { Compass, DiscardPool, FeltFrame, MeldsAndFlowers, MeldView, SeatBadge } from '../components/TableParts';
+import { Compass, DiscardPool, FeltFrame, MeldsAndFlowers, MeldView, SeatBadge, WallRing } from '../components/TableParts';
 import { Button, IconButton, P, Pill, Row, StrokeText, type ButtonKind } from '../components/Ui';
 import { Icon } from '../components/Icons';
 import { AvatarPlate, CoachOwl, seatAvatarId } from '../components/Avatars';
@@ -192,25 +192,39 @@ export function TableScreen() {
   const bestDiscard = hint?.bestDiscard?.tile;
   const relWind = (r: number) => WINDS[(seatAt(r) - view.dealerSeat + 4) % 4];
   const activeRel = turnSeat === null ? (view.pending ? null : null) : (turnSeat - mySeat + 4) % 4;
-  const compass = <Compass prevailing={WINDS[view.prevailingWind]} drawsLeft={view.drawsLeft} seatWinds={[relWind(0), relWind(1), relWind(2), relWind(3)]} active={activeRel} size={tablet ? 96 : 74} />;
+  // Where there is room (tablet, portrait) the live wall is drawn around the compass.
+  const showWall = tablet || portrait;
+  const wallSize = tablet ? Math.min(centerW - 24, 300) : Math.max(120, Math.min(centerW - 4, 220));
+  const compass = <Compass prevailing={WINDS[view.prevailingWind]} drawsLeft={view.drawsLeft} seatWinds={[relWind(0), relWind(1), relWind(2), relWind(3)]} active={activeRel} size={tablet ? 96 : portrait ? Math.min(66, Math.round(wallSize * 0.42)) : 74} />;
   const statusLine = view.pending ? `${seatInfo(view.pending.from)?.name ?? ''} 打出 ${kindInfo(kindOf(view.pending.tile)).nameZh}${view.pending.kind === 'addedKong' ? '（加槓）' : ''}` : !view.pending && view.phase === 'discard' && view.turn !== mySeat ? `輪到 ${seatInfo(view.turn)?.name ?? ''}` : null;
+  const status = statusLine ? (
+    <View style={styles.status}>
+      <Text numberOfLines={1} style={styles.statusText}>
+        {statusLine}
+      </Text>
+    </View>
+  ) : null;
 
   const centerColumn = (
     <View style={styles.centerCol}>
       {topSeat()}
-      <View style={styles.middle}>
-        <View style={{ alignItems: 'center', gap: 16, paddingVertical: 12, paddingHorizontal: 12 }}>
-          {compass}
-          {statusLine && (
-            <View style={styles.status}>
-              <Text numberOfLines={1} style={styles.statusText}>
-                {statusLine}
-              </Text>
-            </View>
-          )}
+      {showWall ? (
+        <View style={[styles.middle, { flexDirection: 'column', gap: 6 }]}>
+          <WallRing remaining={view.tilesRemaining} size={wallSize}>
+            {compass}
+            {tablet && status && <View style={{ marginTop: 22 }}>{status}</View>}
+          </WallRing>
+          {!tablet && status}
         </View>
-        {!portrait && coachOpen && hint && coachInCenter && <CoachPanel hint={hint} waitKinds={waitKinds} compact />}
-      </View>
+      ) : (
+        <View style={styles.middle}>
+          <View style={{ alignItems: 'center', gap: 16, paddingVertical: 12, paddingHorizontal: 12 }}>
+            {compass}
+            {status}
+          </View>
+          {coachOpen && hint && coachInCenter && <CoachPanel hint={hint} waitKinds={waitKinds} compact />}
+        </View>
+      )}
       <DiscardPool tiles={me.discards} size={pool} perRow={centerPerRow} align="center" latest={latestDiscard && view.lastDiscard?.seat === mySeat ? latestDiscard : undefined} />
     </View>
   );

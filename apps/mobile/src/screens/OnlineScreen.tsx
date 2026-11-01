@@ -3,8 +3,9 @@ import { ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { describeRules } from '@mjm/engine';
 import { useApp } from '../app-state';
 import { createOnlineSession } from '../game/session';
-import { colors, space } from '../theme';
-import { Button, Card, H1, H2, P, Row, Toggle } from '../components/Ui';
+import { colors, fonts, space } from '../theme';
+import { Button, Card, H2, P, Row, ScreenHeader, Toggle } from '../components/Ui';
+import { Icon } from '../components/Icons';
 
 export function OnlineScreen() {
   const app = useApp();
@@ -39,22 +40,20 @@ export function OnlineScreen() {
 
   return (
     <ScrollView contentContainerStyle={styles.wrap}>
-      <Row style={{ justifyContent: 'space-between' }}>
-        <H1>Quick table</H1>
-        <Row>
-          <Button small kind="ghost" title="Clubs" onPress={() => app.go({ name: 'clubs' })} />
-          <Button small kind="ghost" title="Back" onPress={app.back} />
-        </Row>
-      </Row>
-      <P dim>
-        Tables are hosted peer to peer: the phone that creates the table runs the game and every player audits each hand. Share the 6-letter code by any chat app.
-      </P>
+      <ScreenHeader title="Quick table" onBack={app.back} right={<Button small kind="ghost" icon="users" title="Clubs" onPress={() => app.go({ name: 'clubs' })} />} />
+      <View style={styles.note}>
+        <Icon name="shield" size={20} />
+        <P style={{ flex: 1, fontSize: 13, lineHeight: 18 }}>
+          Tables are hosted peer to peer: the phone that creates the table runs the game and every player audits each hand. Share the 6-letter code by any chat app.
+        </P>
+      </View>
       <View style={styles.cols}>
         <Card style={styles.col}>
-          <H2>Create a table</H2>
-          <P dim style={{ fontSize: 13 }}>
-            {describeRules(app.settings.rules)}
-          </P>
+          <Row>
+            <Icon name="play" size={26} color={colors.cta} />
+            <H2>Create a table</H2>
+          </Row>
+          <P dim style={{ fontSize: 13 }}>{describeRules(app.settings.rules)}</P>
           <Toggle label="Neutral server hosts the table" value={hosted} onChange={setHosted} />
           <P dim style={{ fontSize: 12 }}>
             {hosted ? 'The signaling server deals and referees; no player can peek at the wall.' : 'Your phone deals and referees. Fastest, works on a shared Wi-Fi.'}
@@ -62,14 +61,20 @@ export function OnlineScreen() {
           <Button title={busy === 'create' ? 'Creating…' : 'Create table'} onPress={() => void run('create')} disabled={busy !== null} />
         </Card>
         <Card style={styles.col}>
-          <H2>Join with a code</H2>
-          <TextInput value={code} onChangeText={(t) => setCode(t.toUpperCase())} autoCapitalize="characters" placeholder="ABC123" placeholderTextColor={colors.textDim} style={styles.input} maxLength={8} />
+          <Row>
+            <Icon name="users" size={26} />
+            <H2>Join with a code</H2>
+          </Row>
+          <TextInput value={code} onChangeText={(t) => setCode(t.toUpperCase())} autoCapitalize="characters" placeholder="ABC123" placeholderTextColor="#9AA0BF" style={styles.input} maxLength={8} />
           <Button title={busy === 'join' ? 'Joining…' : 'Join table'} kind="secondary" onPress={() => void run('join')} disabled={busy !== null || code.trim().length < 4} />
         </Card>
       </View>
       {error && (
-        <Card style={{ borderColor: colors.danger, borderWidth: 1 }}>
-          <P>{error}</P>
+        <Card tone="danger">
+          <Row>
+            <Icon name="warning" size={24} />
+            <P style={{ flex: 1 }}>{error}</P>
+          </Row>
           <P dim style={{ fontSize: 12 }}>
             Signaling server: {app.settings.signalUrl}. Change it in Settings, or run `npm run signal` on a laptop on the same network.
           </P>
@@ -81,7 +86,8 @@ export function OnlineScreen() {
 
 const styles = StyleSheet.create({
   wrap: { padding: space.lg, gap: space.md },
+  note: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: 'rgba(255,255,255,0.75)', borderWidth: 2, borderColor: colors.ink, borderRadius: 14, paddingHorizontal: 10, paddingVertical: 6 },
   cols: { flexDirection: 'row', flexWrap: 'wrap', gap: space.md },
   col: { flexGrow: 1, flexBasis: '45%', minWidth: 240 },
-  input: { backgroundColor: '#FFFFFF', color: colors.ink, borderWidth: 3, borderColor: colors.creamEdge, borderRadius: 14, paddingHorizontal: 12, paddingVertical: 12, fontSize: 24, letterSpacing: 6, fontWeight: '800', textAlign: 'center' },
+  input: { backgroundColor: '#FFFFFF', color: colors.ink, borderWidth: 3, borderColor: colors.ink, borderRadius: 14, paddingHorizontal: 12, paddingVertical: 10, fontSize: 26, letterSpacing: 6, fontFamily: fonts.display, textAlign: 'center' },
 });

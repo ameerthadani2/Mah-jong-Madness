@@ -4,7 +4,7 @@ import { discardPuzzle, waitsPuzzle } from '@mjm/engine';
 import { useApp } from '../app-state';
 import { space } from '../theme';
 import { PuzzleView } from '../components/PuzzleView';
-import { Button, Card, H1, Pill, Row } from '../components/Ui';
+import { Card, Chip, Pill, Row, ScreenHeader } from '../components/Ui';
 
 export function DrillScreen({ kind }: { kind: 'discard' | 'waits' }) {
   const app = useApp();
@@ -17,15 +17,12 @@ export function DrillScreen({ kind }: { kind: 'discard' | 'waits' }) {
   const acc = app.progress.drillsPlayed ? Math.round((app.progress.drillsCorrect / app.progress.drillsPlayed) * 100) : null;
   return (
     <ScrollView contentContainerStyle={styles.wrap}>
-      <Row style={{ justifyContent: 'space-between' }}>
-        <H1 style={{ fontSize: 22 }}>{kind === 'discard' ? 'Best discard' : 'Read the wait'}</H1>
-        <Button small kind="ghost" title="Back" onPress={app.back} />
-      </Row>
-      <Row>
+      <ScreenHeader title={kind === 'discard' ? 'Best discard' : 'Read the wait'} onBack={app.back} />
+      <Row style={{ flexWrap: 'wrap', rowGap: 6 }}>
         {([1, 2, 3] as const).map((d) => (
-          <Button key={d} small kind={difficulty === d ? 'primary' : 'ghost'} title={d === 1 ? 'Easy' : d === 2 ? 'Medium' : 'Hard'} onPress={() => setDifficulty(d)} />
+          <Chip key={d} label={d === 1 ? 'Easy' : d === 2 ? 'Medium' : 'Hard'} selected={difficulty === d} onPress={() => setDifficulty(d)} />
         ))}
-        {acc !== null && <Pill text={`${acc}% · ${app.progress.drillsPlayed} played`} />}
+        {acc !== null && <Pill icon="target" text={`${acc}% · ${app.progress.drillsPlayed} played`} />}
       </Row>
       <Card>
         <PuzzleView

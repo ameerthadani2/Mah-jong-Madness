@@ -5,9 +5,10 @@ import { randomHex } from '@mjm/net';
 import { useApp } from '../app-state';
 import { effectiveStreak, todayKey, yesterdayKey } from '../storage';
 import { canUse, consume } from '../monetisation/store';
-import { colors, space } from '../theme';
+import { colors, fonts, space } from '../theme';
 import { PuzzleView } from '../components/PuzzleView';
-import { Button, Card, H1, H2, P, Pill, Row } from '../components/Ui';
+import { Button, Card, H2, P, Pill, Row, ScreenHeader, StrokeText } from '../components/Ui';
+import { Icon } from '../components/Icons';
 
 export function DailyPuzzleScreen() {
   const app = useApp();
@@ -31,19 +32,19 @@ export function DailyPuzzleScreen() {
 
   return (
     <ScrollView contentContainerStyle={styles.wrap}>
-      <Row style={{ justifyContent: 'space-between' }}>
-        <H1 style={{ fontSize: 22 }}>Daily puzzle</H1>
-        <Button small kind="ghost" title="Back" onPress={app.back} />
-      </Row>
-      <Row>
-        <Pill text={dailySeed(new Date()).replace('daily-', '')} />
-        <Pill text={`🔥 ${streak}-day streak`} tone={streak > 0 ? 'gold' : 'neutral'} />
+      <ScreenHeader title="Daily puzzle" onBack={app.back} />
+      <Row style={{ flexWrap: 'wrap', rowGap: 6 }}>
+        <Pill icon="scroll" text={dailySeed(new Date()).replace('daily-', '')} />
+        <Pill icon="flame" text={`${streak}-day streak`} tone={streak > 0 ? 'gold' : 'neutral'} />
         {attemptedBefore && <Pill text={app.progress.dailySolved[today] === 'correct' ? 'Solved today' : 'Attempted today'} tone={app.progress.dailySolved[today] === 'correct' ? 'ok' : 'neutral'} />}
       </Row>
       <Card>
         {attemptedBefore && wasCorrect === null ? (
           <>
-            <H2>Already played today</H2>
+            <Row>
+              <Icon name="check" size={30} color={colors.cta} />
+              <H2>Already played today</H2>
+            </Row>
             <P dim>Come back tomorrow for a new one, or keep sharp with Puzzle Rush.</P>
             <Button title="Puzzle Rush" onPress={() => app.go({ name: 'rush' })} />
           </>
@@ -51,7 +52,7 @@ export function DailyPuzzleScreen() {
           <PuzzleView puzzle={puzzle} onResult={onResult} onNext={app.back} nextLabel={done ? 'Done' : 'Next'} />
         )}
       </Card>
-      <P dim style={{ fontSize: 12 }}>
+      <P style={{ fontSize: 12 }}>
         Everyone in the world gets the same puzzle each day. Weekends are harder.
       </P>
     </ScrollView>
@@ -72,12 +73,12 @@ export function PuzzleRushScreen() {
   if (!allowance.ok) {
     return (
       <ScrollView contentContainerStyle={styles.wrap}>
-        <Row style={{ justifyContent: 'space-between' }}>
-          <H1 style={{ fontSize: 22 }}>Puzzle Rush</H1>
-          <Button small kind="ghost" title="Back" onPress={app.back} />
-        </Row>
+        <ScreenHeader title="Puzzle Rush" onBack={app.back} />
         <Card>
-          <H2>Daily run used</H2>
+          <Row>
+            <Icon name="lock" size={30} />
+            <H2>Daily run used</H2>
+          </Row>
           <P dim>Free accounts get one Puzzle Rush a day. Coach Gold makes it unlimited, with history and leaderboards.</P>
           <Row>
             <Button title="See Coach plans" onPress={() => app.go({ name: 'shop' })} />
@@ -132,20 +133,25 @@ function PuzzleRushRun({ onAgain }: { onAgain: () => void }) {
 
   return (
     <ScrollView contentContainerStyle={styles.wrap}>
-      <Row style={{ justifyContent: 'space-between' }}>
-        <H1 style={{ fontSize: 22 }}>Puzzle Rush</H1>
-        <Button small kind="ghost" title="Quit" onPress={app.back} />
-      </Row>
-      <Row>
-        <Pill text={`⏱ ${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}`} tone={left <= 20 ? 'danger' : 'neutral'} />
-        <Pill text={`✓ ${score}`} tone="ok" />
-        <Pill text={`✗ ${'●'.repeat(strikes)}${'○'.repeat(RUSH_STRIKES - strikes)}`} tone={strikes > 0 ? 'danger' : 'neutral'} />
-        <Pill text={`Best ${app.progress.rushBest}`} tone="gold" />
+      <ScreenHeader title="Puzzle Rush" onBack={app.back} />
+      <Row style={{ flexWrap: 'wrap', rowGap: 6 }}>
+        <Pill icon="clock" text={`${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}`} tone={left <= 20 ? 'danger' : 'neutral'} />
+        <Pill icon="check" text={`${score}`} tone="ok" />
+        <View style={styles.strikes}>
+          {Array.from({ length: RUSH_STRIKES }).map((_, i) => (
+            <View key={i} style={[styles.strike, i < strikes && { backgroundColor: colors.danger }]}>
+              {i < strikes && <Icon name="cross" size={14} />}
+            </View>
+          ))}
+        </View>
+        <Pill icon="trophy" text={`Best ${app.progress.rushBest}`} tone="gold" />
       </Row>
       <Card>
         {over ? (
           <View style={{ gap: 8, alignItems: 'center' }}>
-            <Text style={styles.big}>{score}</Text>
+            <StrokeText style={styles.big} strokeWidth={3} drop={3}>
+              {String(score)}
+            </StrokeText>
             <H2>{score > app.progress.rushBest ? 'New personal best!' : score >= app.progress.rushBest && score > 0 ? 'Matched your best' : 'Run over'}</H2>
             <P dim>
               {strikes >= RUSH_STRIKES ? 'Three strikes.' : 'Time is up.'} Puzzles get harder the further you go.
@@ -170,5 +176,7 @@ function PuzzleRushRun({ onAgain }: { onAgain: () => void }) {
 
 const styles = StyleSheet.create({
   wrap: { padding: space.lg, gap: space.md },
-  big: { color: colors.ink, fontSize: 64, fontWeight: '900' },
+  big: { fontSize: 64, fontFamily: fonts.display },
+  strikes: { flexDirection: 'row', gap: 4, alignItems: 'center' },
+  strike: { width: 24, height: 24, borderRadius: 12, borderWidth: 2.5, borderColor: colors.ink, backgroundColor: colors.creamLight, alignItems: 'center', justifyContent: 'center' },
 });
