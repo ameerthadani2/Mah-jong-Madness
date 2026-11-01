@@ -3,7 +3,7 @@ import { ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { BOT_SKILLS, describeRules, type BotSkill } from '@mjm/engine';
 import { useApp } from '../app-state';
 import { createLocalSession, createOnlineSession } from '../game/session';
-import { AVATARS, todayKey } from '../storage';
+import { AVATARS, effectiveStreak, todayKey } from '../storage';
 import { colors, space } from '../theme';
 import { Button, Card, H1, P, Pill, Row } from '../components/Ui';
 
@@ -48,7 +48,8 @@ export function HomeScreen() {
   };
 
   const winRate = app.progress.handsPlayed ? Math.round((app.progress.handsWon / app.progress.handsPlayed) * 100) : null;
-  const dailyDone = !!app.progress.dailySolved[todayKey()];
+  const dailyDone = app.progress.dailySolved[todayKey()] !== undefined;
+  const streak = effectiveStreak(app.progress);
   const avgAccuracy = app.progress.reviewAccuracies.length ? Math.round(app.progress.reviewAccuracies.reduce((a, b) => a + b, 0) / app.progress.reviewAccuracies.length) : null;
 
   return (
@@ -136,7 +137,7 @@ export function HomeScreen() {
           <Text style={styles.tileTitle}>Daily puzzle</Text>
           <P dim style={styles.tileText}>One best-discard puzzle a day, same for everyone.</P>
           <Row style={{ justifyContent: 'space-between' }}>
-            <Pill text={`🔥 ${app.progress.dailyStreak} streak`} tone={app.progress.dailyStreak > 0 ? 'gold' : 'neutral'} />
+            <Pill text={`🔥 ${streak} streak`} tone={streak > 0 ? 'gold' : 'neutral'} />
             <Button small kind={dailyDone ? 'ghost' : 'primary'} title={dailyDone ? 'Done ✓' : 'Solve'} onPress={() => app.go({ name: 'daily' })} />
           </Row>
         </Card>

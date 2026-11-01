@@ -12,7 +12,7 @@ export interface Socket {
 }
 
 export type Inbound =
-  | { t: 'hello'; peerId?: string }
+  | { t: 'hello' }
   | { t: 'create'; room?: string; hosted?: boolean; rules?: Partial<RuleSet>; botSkill?: BotSkill }
   | { t: 'join'; room: string }
   | { t: 'to'; to: string; data: unknown }
@@ -101,8 +101,14 @@ export class RoomRegistry {
     if (!peer) return peerId;
     switch (msg.t) {
       case 'hello': {
-        let id = typeof msg.peerId === 'string' && /^[\w-]{4,40}$/.test(msg.peerId) && !this.peers.has(msg.peerId) ? msg.peerId : `p-${Math.random().toString(36).slice(2, 10)}`;
-        if (this.peers.has(id)) id = `p-${Math.random().toString(36).slice(2, 10)}`;
+        // Ids are always server-assigned and never change for the life of the socket, so a peer cannot
+        // impersonate a departed player or the server-side host ('server-…') by choosing its own id.
+        if (!peerId.startsWith('tmp-')) {
+          peer.socket.send(JSON.stringify({ t: 'hello', peerId }));
+          return peerId;
+        }
+        let id = `p-${Math.random().toString(36).slice(2, 12)}`;
+        while (this.peers.has(id)) id = `p-${Math.random().toString(36).slice(2, 12)}`;
         this.peers.delete(peerId);
         peer.id = id;
         this.peers.set(id, peer);
@@ -110,6 +116,7 @@ export class RoomRegistry {
         return id;
       }
       case 'create': {
+        if (peer.id.startsWith('tmp-')) return peer.id;
         this.leave(peer);
         const code = msg.room && /^[A-Z0-9]{4,8}$/.test(msg.room) && !this.rooms.has(msg.room) ? msg.room : this.newCode();
         const room: Room = { code, host: peer.id, peers: new Set([peer.id]), createdAt: this.now() };
@@ -120,7 +127,8 @@ export class RoomRegistry {
         return peer.id;
       }
       case 'join': {
-        const room = this.rooms.get(String(msg.room).toUpperCase());
+        if (peer.id.startsWith('tmp-') || typeof msg.room !== 'string') return peer.id;
+        const room = this.rooms.get(msg.room.toUpperCase());
         if (!room) {
           peer.socket.send(JSON.stringify({ t: 'error', message: 'Room not found' }));
           return peer.id;
@@ -138,8 +146,8 @@ export class RoomRegistry {
       }
       case 'to': {
         const room = peer.room ? this.rooms.get(peer.room) : undefined;
-        if (!room) return peer.id;
-        const to = String(msg.to);
+        if (!room || typeof msg.to !== 'string') return peer.id;
+        const to = msg.to;
         if (room.table && to === room.table.transport.id) {
           room.table.transport.receive(peer.id, msg.data);
           return peer.id;
@@ -269,8 +277,14 @@ export class ServerTransport implements Transport {
   /** @internal */
   receive(from: string, data: unknown): void {
     const env = data as { ch?: string; msg?: unknown };
-    if (!env || env.ch !== 'game') return;
-    for (const h of this.msgHandlers) h(from, env.msg);
+    if (!env || typeof env !== 'object' || env.ch !== 'game') return;
+    for (const h of this.msgHandlers) {
+      try {
+        h(from, env.msg);
+      } catch {
+        /* a misbehaving peer must not break the table for others */
+      }
+    }
   }
   /** @internal */
   peerLeft(peerId: string): void {

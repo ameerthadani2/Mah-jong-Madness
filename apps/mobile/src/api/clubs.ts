@@ -44,6 +44,8 @@ export interface ApiUser {
   userId: string;
   name: string;
   avatar?: string;
+  /** Device secret bound to userId on first use (see signaling server ClubRegistry.authenticate). */
+  secret: string;
 }
 
 /** ws://host:port[/path] → http://host:port ; wss → https. */

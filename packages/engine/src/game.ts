@@ -340,7 +340,8 @@ export function legalActions(s: GameState, seat: number): Action[] {
   if (s.phase === 'discard') {
     if (s.turn !== seat) return [];
     const actions: Action[] = [];
-    if (isSelfDrawWin(s, seat)) actions.push({ type: 'hu' });
+    // A self-draw win needs a drawn tile; after pong/chi the player must discard (they could have called 胡 on the claim).
+    if (s.lastDrawn !== undefined && isSelfDrawWin(s, seat)) actions.push({ type: 'hu' });
     // Kongs (need a replacement tile available)
     if (canDraw(s)) {
       const counts = countsFromKinds(p.hand.map(kindOf));
@@ -376,7 +377,10 @@ export function legalActions(s: GameState, seat: number): Action[] {
 }
 
 export function isLegal(s: GameState, seat: number, action: Action): boolean {
-  return legalActions(s, seat).some((a) => sameAction(a, action, s, seat));
+  if (!Number.isInteger(seat) || seat < 0 || seat > 3) return false;
+  const canon = canonicalAction(action);
+  if (!canon) return false;
+  return legalActions(s, seat).some((a) => sameAction(a, canon, s, seat));
 }
 
 function sameAction(a: Action, b: Action, s: GameState, seat: number): boolean {
@@ -385,15 +389,18 @@ function sameAction(a: Action, b: Action, s: GameState, seat: number): boolean {
     case 'discard': {
       // Any physical copy of the same kind held in hand is acceptable.
       const bt = (b as { tile: TileId }).tile;
-      return s.players[seat].hand.includes(bt) && kindOf(bt) === kindOf(a.tile);
+      return typeof bt === 'number' && s.players[seat].hand.includes(bt) && kindOf(bt) === kindOf(a.tile);
     }
     case 'kong': {
       const bt = (b as { tile: TileId }).tile;
-      return kindOf(bt) === kindOf(a.tile);
+      if (typeof bt !== 'number' || !Number.isInteger(bt)) return false;
+      // In the claim phase the kong tile is the pending discard; otherwise it must be a copy held in hand.
+      if (s.phase === 'claim') return s.pending !== undefined && bt === s.pending.tile;
+      return s.players[seat].hand.includes(bt) && kindOf(bt) === kindOf(a.tile);
     }
     case 'chi': {
       const bt = (b as { tiles: [TileId, TileId] }).tiles;
-      return a.tiles[0] === bt[0] && a.tiles[1] === bt[1];
+      return Array.isArray(bt) && bt.length === 2 && a.tiles[0] === bt[0] && a.tiles[1] === bt[1];
     }
     default:
       return true;
@@ -404,7 +411,29 @@ function sameAction(a: Action, b: Action, s: GameState, seat: number): boolean {
 // Apply
 // ---------------------------------------------------------------------------
 
-export function applyAction(prev: GameState, seat: number, action: Action): GameState {
+/** Strip unknown fields so only the canonical action shape is applied, logged and broadcast. */
+export function canonicalAction(input: unknown): Action | null {
+  if (!input || typeof input !== 'object') return null;
+  const a = input as { type?: unknown; tile?: unknown; tiles?: unknown };
+  switch (a.type) {
+    case 'hu':
+    case 'pass':
+    case 'pong':
+      return { type: a.type };
+    case 'discard':
+    case 'kong':
+      return typeof a.tile === 'number' && Number.isInteger(a.tile) ? { type: a.type, tile: a.tile } : null;
+    case 'chi':
+      return Array.isArray(a.tiles) && a.tiles.length === 2 && a.tiles.every((t) => typeof t === 'number' && Number.isInteger(t)) ? { type: 'chi', tiles: [a.tiles[0] as TileId, a.tiles[1] as TileId] } : null;
+    default:
+      return null;
+  }
+}
+
+export function applyAction(prev: GameState, seat: number, rawAction: Action): GameState {
+  const action = canonicalAction(rawAction);
+  if (!action) throw new IllegalAction('Malformed action');
+  if (!Number.isInteger(seat) || seat < 0 || seat > 3) throw new IllegalAction('Bad seat');
   if (!isLegal(prev, seat, action)) {
     throw new IllegalAction(`Seat ${seat} cannot ${action.type} in phase ${prev.phase}`);
   }
@@ -503,7 +532,7 @@ function resolveClaims(s: GameState): void {
   const huSeats = ordered.filter((x) => x.resp.type === 'hu').map((x) => x.o.seat);
   if (huSeats.length > 0) {
     const winners = s.rules.multipleWinners ? huSeats : [huSeats[0]];
-    s.anyClaimThisHand = true;
+    // Winning on a discard is not a "claim" for 人胡 purposes; earlier chi/pong/kong already set the flag.
     finishWin(
       s,
       winners.map((seat) => ({ seat, tile: pending.tile, selfDrawn: false, fromSeat: from, robbingKong: pending.kind === 'addedKong' })),

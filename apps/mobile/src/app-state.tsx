@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { BackHandler } from 'react-native';
 import { DEFAULT_PROFILE, DEFAULT_PROGRESS, DEFAULT_SETTINGS, storage, type ActiveSession, type Profile, type Progress, type Settings } from './storage';
 import type { Session } from './game/session';
 import { EMPTY_WALLET, loadWallet, saveWallet, type Wallet } from './monetisation/store';
@@ -64,6 +65,19 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setWalletState(w);
       setLoaded(true);
     });
+  }, []);
+
+  // Android hardware back pops the screen stack instead of leaving the app.
+  useEffect(() => {
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      let handled = false;
+      setStack((st) => {
+        handled = st.length > 1;
+        return handled ? st.slice(0, -1) : st;
+      });
+      return handled;
+    });
+    return () => sub.remove();
   }, []);
 
   // Keep the resumable-session record in sync with whatever table we are at.

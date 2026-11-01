@@ -1,15 +1,17 @@
 import { describe, expect, it } from 'vitest';
-import { ClubError, ClubRegistry, type Club } from '../src/clubs';
+import { ClubError, ClubRegistry, type Club, type ClubData } from '../src/clubs';
 import { RoomRegistry } from '../src/rooms';
 import { buildRoutes } from '../src/api';
 
 const alice = { userId: 'user-alice-1', name: 'Alice', avatar: '🐼' };
 const bob = { userId: 'user-bob-22', name: 'Bob' };
+const aliceCreds = { ...alice, secret: 'alice-secret-0123456789' };
+const bobCreds = { ...bob, secret: 'bob-secret-0123456789abc' };
 
 describe('ClubRegistry', () => {
   it('creates, joins, sets rules, opens tables and ranks standings; persists through the store', () => {
-    let saved: Club[] = [];
-    const store = { load: () => saved, save: (c: Club[]) => (saved = JSON.parse(JSON.stringify(c))) };
+    let saved: ClubData = { clubs: [], credentials: {} };
+    const store = { load: () => saved, save: (c: ClubData) => (saved = JSON.parse(JSON.stringify(c))) };
     const reg = new ClubRegistry({ store, now: () => 1000, random: () => 0.3 });
     const club = reg.createClub(alice, 'Taipei Tigers', { basePoints: 300, taiPoints: 100 });
     expect(club.code).toMatch(/^[A-Z2-9]{6}$/);
@@ -53,8 +55,12 @@ describe('API routes + hosted club tables', () => {
       }
       throw new Error(`no route ${method} ${path}`);
     };
-    const club = call('POST', '/api/clubs', { user: alice, name: 'API Club', rules: { handsPerMatch: 4 } }) as Club;
-    const table = call('POST', `/api/clubs/${club.code}/tables`, { user: alice, label: 'Friday' }) as { code: string; rules: { handsPerMatch: number } };
+    const club = call('POST', '/api/clubs', { user: aliceCreds, name: 'API Club', rules: { handsPerMatch: 4 } }) as Club;
+    // Same user id with a different secret is rejected; missing secret is rejected
+    expect(() => call('POST', `/api/clubs/${club.code}/join`, { user: { ...alice, secret: 'wrong-secret-0123456789' } })).toThrow(/Identity check/);
+    expect(() => call('POST', `/api/clubs/${club.code}/join`, { user: bob })).toThrow(ClubError);
+    expect((call('POST', `/api/clubs/${club.code}/join`, { user: bobCreds }) as { status: string }).status).toBe('joined');
+    const table = call('POST', `/api/clubs/${club.code}/tables`, { user: aliceCreds, label: 'Friday' }) as { code: string; rules: { handsPerMatch: number } };
     expect(table.rules.handsPerMatch).toBe(4);
     expect(rooms.hasRoom(table.code)).toBe(true);
     expect((call('GET', `/api/clubs/${club.code}`) as Club).tables[0].label).toBe('Friday');

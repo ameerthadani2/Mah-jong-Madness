@@ -3,33 +3,28 @@ import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { dailyPuzzle, dailySeed, rushPuzzle } from '@mjm/engine';
 import { randomHex } from '@mjm/net';
 import { useApp } from '../app-state';
-import { todayKey } from '../storage';
+import { effectiveStreak, todayKey, yesterdayKey } from '../storage';
 import { colors, space } from '../theme';
 import { PuzzleView } from '../components/PuzzleView';
 import { Button, Card, H1, H2, P, Pill, Row } from '../components/Ui';
-
-function yesterdayKey(): string {
-  const d = new Date();
-  d.setUTCDate(d.getUTCDate() - 1);
-  return todayKey(d);
-}
 
 export function DailyPuzzleScreen() {
   const app = useApp();
   const today = todayKey();
   const puzzle = useMemo(() => dailyPuzzle(new Date()), []);
-  const solvedBefore = !!app.progress.dailySolved[today];
-  const [done, setDone] = useState(solvedBefore);
+  const attemptedBefore = app.progress.dailySolved[today] !== undefined;
+  const [done, setDone] = useState(attemptedBefore);
   const [wasCorrect, setWasCorrect] = useState<boolean | null>(null);
+  const streak = effectiveStreak(app.progress);
 
   const onResult = (r: { correct: boolean }) => {
     setDone(true);
     setWasCorrect(r.correct);
     app.setProgress((p) => {
-      if (p.dailySolved[today]) return p;
-      const continues = p.dailyLastDate === yesterdayKey();
-      const streak = r.correct ? (continues ? p.dailyStreak + 1 : 1) : 0;
-      return { ...p, dailySolved: { ...p.dailySolved, [today]: r.correct }, dailyStreak: streak, dailyLastDate: today, drillsPlayed: p.drillsPlayed + 1, drillsCorrect: p.drillsCorrect + (r.correct ? 1 : 0) };
+      if (p.dailySolved[today] !== undefined) return p;
+      const continues = effectiveStreak(p) > 0 && p.dailyLastDate === yesterdayKey();
+      const nextStreak = r.correct ? (continues ? p.dailyStreak + 1 : 1) : 0;
+      return { ...p, dailySolved: { ...p.dailySolved, [today]: r.correct ? 'correct' : 'wrong' }, dailyStreak: nextStreak, dailyLastDate: today, drillsPlayed: p.drillsPlayed + 1, drillsCorrect: p.drillsCorrect + (r.correct ? 1 : 0) };
     });
   };
 
@@ -41,11 +36,11 @@ export function DailyPuzzleScreen() {
       </Row>
       <Row>
         <Pill text={dailySeed(new Date()).replace('daily-', '')} />
-        <Pill text={`🔥 ${app.progress.dailyStreak}-day streak`} tone={app.progress.dailyStreak > 0 ? 'gold' : 'neutral'} />
-        {solvedBefore && <Pill text={app.progress.dailySolved[today] ? 'Solved today' : 'Attempted today'} tone={app.progress.dailySolved[today] ? 'ok' : 'neutral'} />}
+        <Pill text={`🔥 ${streak}-day streak`} tone={streak > 0 ? 'gold' : 'neutral'} />
+        {attemptedBefore && <Pill text={app.progress.dailySolved[today] === 'correct' ? 'Solved today' : 'Attempted today'} tone={app.progress.dailySolved[today] === 'correct' ? 'ok' : 'neutral'} />}
       </Row>
       <Card>
-        {solvedBefore && wasCorrect === null ? (
+        {attemptedBefore && wasCorrect === null ? (
           <>
             <H2>Already played today</H2>
             <P dim>Come back tomorrow for a new one, or keep sharp with Puzzle Rush.</P>
@@ -66,6 +61,11 @@ const RUSH_SECONDS = 180;
 const RUSH_STRIKES = 3;
 
 export function PuzzleRushScreen() {
+  const [run, setRun] = useState(0);
+  return <PuzzleRushRun key={run} onAgain={() => setRun((r) => r + 1)} />;
+}
+
+function PuzzleRushRun({ onAgain }: { onAgain: () => void }) {
   const app = useApp();
   const [runSeed] = useState(() => `rush-${randomHex(4)}`);
   const [index, setIndex] = useState(0);
@@ -117,7 +117,7 @@ export function PuzzleRushScreen() {
               {strikes >= RUSH_STRIKES ? 'Three strikes.' : 'Time is up.'} Puzzles get harder the further you go.
             </P>
             <Row>
-              <Button title="Play again" onPress={() => app.go({ name: 'rush' })} />
+              <Button title="Play again" onPress={onAgain} />
               <Button kind="ghost" title="Back to Learn" onPress={app.back} />
             </Row>
           </View>

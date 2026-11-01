@@ -1,28 +1,40 @@
 import { createServer } from 'node:http';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { createApiHandler } from './api';
-import { ClubRegistry, type Club, type ClubStore } from './clubs';
+import { ClubRegistry, type ClubData, type ClubStore } from './clubs';
 import { RoomRegistry, type Inbound } from './rooms';
 
 const PORT = Number(process.env.PORT ?? 8787);
 const ALLOW_HOSTED = process.env.HOST_TABLES !== '0';
 const DATA_DIR = process.env.DATA_DIR ?? join(process.cwd(), 'data');
 
-/** JSON-file persistence; swap for a database when clubs outgrow one node. */
+/**
+ * JSON-file persistence; swap for a database when clubs outgrow one node.
+ * Writes are atomic (temp file + rename) and a corrupt file is set aside rather
+ * than silently replaced by an empty registry.
+ */
 function fileStore(path: string): ClubStore {
   return {
     load: () => {
+      if (!existsSync(path)) return { clubs: [], credentials: {} };
       try {
-        return existsSync(path) ? (JSON.parse(readFileSync(path, 'utf8')) as Club[]) : [];
-      } catch {
-        return [];
+        const parsed = JSON.parse(readFileSync(path, 'utf8')) as ClubData | unknown[];
+        if (Array.isArray(parsed)) return { clubs: parsed as ClubData['clubs'], credentials: {} }; // legacy shape
+        return { clubs: parsed.clubs ?? [], credentials: parsed.credentials ?? {} };
+      } catch (e) {
+        const backup = `${path}.corrupt-${Date.now()}`;
+        renameSync(path, backup);
+        console.error(`[signal] club store unreadable (${(e as Error).message}); moved to ${backup}`);
+        return { clubs: [], credentials: {} };
       }
     },
-    save: (clubs) => {
+    save: (data) => {
       mkdirSync(dirname(path), { recursive: true });
-      writeFileSync(path, JSON.stringify(clubs));
+      const tmp = `${path}.tmp`;
+      writeFileSync(tmp, JSON.stringify(data));
+      renameSync(tmp, path);
     },
   };
 }
@@ -49,15 +61,22 @@ rooms.onRoomEvent(({ room, event }) => {
 });
 
 const http = createServer((req, res) => {
-  void api(req, res).then((handled) => {
-    if (!handled) {
-      res.writeHead(404, { 'content-type': 'application/json' });
-      res.end(JSON.stringify({ error: 'not_found' }));
-    }
-  });
+  api(req, res)
+    .then((handled) => {
+      if (!handled) {
+        res.writeHead(404, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ error: 'not_found' }));
+      }
+    })
+    .catch((e: Error) => {
+      console.error('[signal] api error', e.message);
+      if (!res.headersSent) res.writeHead(500, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ error: 'internal' }));
+    });
 });
 
-const wss = new WebSocketServer({ server: http });
+// 64 KiB is far above any legitimate game frame; larger payloads are dropped by ws.
+const wss = new WebSocketServer({ server: http, maxPayload: 64 * 1024 });
 
 wss.on('connection', (ws: WebSocket) => {
   let peerId = rooms.connect({ send: (json) => ws.readyState === ws.OPEN && ws.send(json), close: () => ws.close() });
@@ -71,7 +90,12 @@ wss.on('connection', (ws: WebSocket) => {
       return;
     }
     if (!msg || typeof msg !== 'object' || typeof (msg as { t?: unknown }).t !== 'string') return;
-    peerId = rooms.handle(peerId, msg);
+    try {
+      peerId = rooms.handle(peerId, msg);
+    } catch (e) {
+      // One peer's bad frame must never take the server down.
+      console.error('[signal] handle error', (e as Error).message);
+    }
   });
   ws.on('close', () => rooms.disconnect(peerId));
   const hb = setInterval(() => {
@@ -86,7 +110,13 @@ wss.on('connection', (ws: WebSocket) => {
   ws.on('close', () => clearInterval(hb));
 });
 
-setInterval(() => rooms.tick(), 500);
+setInterval(() => {
+  try {
+    rooms.tick();
+  } catch (e) {
+    console.error('[signal] tick error', (e as Error).message);
+  }
+}, 500);
 
 http.listen(PORT, () => {
   console.log(`[signal] listening on :${PORT} (hosted tables ${ALLOW_HOSTED ? 'enabled' : 'disabled'}, data in ${DATA_DIR})`);

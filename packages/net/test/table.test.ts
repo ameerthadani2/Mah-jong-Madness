@@ -129,9 +129,12 @@ describe('P2P table over loopback', () => {
       else break; // bots took over everything else; host should have advanced
     }
     expect(['playing', 'hand_over']).toContain(host.phase);
-    // Rejoin with the same name reclaims the seat
-    const t = hub.create('p1b');
-    const c1b = new TableClient(transportLink(t, 'host'), 'Player 1');
+    // Rejoining with just the (public) name must NOT reclaim the seat; the token must.
+    const impostor = new TableClient(transportLink(hub.create('p1x'), 'host'), 'Player 1');
+    impostor.join();
+    expect(impostor.state.seat).not.toBe(1);
+    const token = clients[1].state.token!;
+    const c1b = new TableClient(transportLink(hub.create('p1b'), 'host'), 'Player 1', undefined, { token });
     c1b.join();
     expect(c1b.state.seat).toBe(1);
   });

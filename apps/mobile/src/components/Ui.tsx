@@ -21,6 +21,7 @@ export function Button({
     <Pressable
       onPress={onPress}
       disabled={disabled}
+      hitSlop={small ? 6 : 2}
       style={({ pressed }) => [
         styles.btn,
         small && styles.btnSmall,
@@ -91,8 +92,8 @@ export function Stepper({ label, value, onChange, step = 1, min = 0, max = 9999,
 }
 
 const styles = StyleSheet.create({
-  btn: { paddingHorizontal: 18, paddingVertical: 12, borderRadius: radius.md, alignItems: 'center', justifyContent: 'center' },
-  btnSmall: { paddingHorizontal: 12, paddingVertical: 7 },
+  btn: { paddingHorizontal: 18, paddingVertical: 12, minHeight: 44, borderRadius: radius.md, alignItems: 'center', justifyContent: 'center' },
+  btnSmall: { paddingHorizontal: 12, paddingVertical: 8, minHeight: 36 },
   btnText: { color: colors.text, fontWeight: '800', fontSize: 15 },
   card: { backgroundColor: colors.panel, borderRadius: radius.lg, padding: space.lg, gap: space.sm },
   h1: { color: colors.gold, fontSize: 28, fontWeight: '900', letterSpacing: 0.5 },

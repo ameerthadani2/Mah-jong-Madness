@@ -13,6 +13,8 @@ export interface Transport {
   onPeer(cb: (peerId: string, event: 'join' | 'leave') => void): Unsubscribe;
   peers(): string[];
   close(): void;
+  /** Fires once when the underlying connection is lost (not on local close()). */
+  onClose?(cb: () => void): Unsubscribe;
 }
 
 /** In-memory hub: all transports created from it can talk to each other synchronously or with a delay. */

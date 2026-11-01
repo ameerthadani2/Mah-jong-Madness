@@ -21,14 +21,17 @@ interface Route {
   handler: Handler;
 }
 
-function identity(body: Record<string, unknown>): Identity {
-  const u = body.user as Partial<Identity> | undefined;
-  if (!u || typeof u.userId !== 'string' || typeof u.name !== 'string' || !/^[\w-]{6,64}$/.test(u.userId)) throw new ClubError('invalid', 'user {userId, name} is required');
-  return { userId: u.userId, name: u.name.slice(0, 24), avatar: typeof u.avatar === 'string' ? u.avatar.slice(0, 8) : undefined };
+function parseUser(body: Record<string, unknown>): { userId: string; name: string; avatar?: string; secret: string } {
+  const u = body.user as Partial<{ userId: string; name: string; avatar: string; secret: string }> | undefined;
+  if (!u || typeof u.userId !== 'string' || typeof u.name !== 'string' || !/^[\w-]{6,64}$/.test(u.userId) || typeof u.secret !== 'string') {
+    throw new ClubError('invalid', 'user {userId, name, secret} is required');
+  }
+  return { userId: u.userId, name: u.name.slice(0, 24), avatar: typeof u.avatar === 'string' ? u.avatar.slice(0, 8) : undefined, secret: u.secret };
 }
 
 export function buildRoutes(deps: ApiDeps): Route[] {
   const { clubs, rooms } = deps;
+  const identity = (body: Record<string, unknown>): Identity => clubs.authenticate(parseUser(body));
   const r = (method: string, path: string, handler: Handler): Route => {
     const keys: string[] = [];
     const pattern = new RegExp('^' + path.replace(/:(\w+)/g, (_, k: string) => (keys.push(k), '([^/]+)')) + '/?$');
@@ -76,20 +79,18 @@ export function createApiHandler(deps: ApiDeps): (req: IncomingMessage, res: Ser
       if (route.method !== req.method) continue;
       const m = route.pattern.exec(url.pathname);
       if (!m) continue;
-      const params: Record<string, string> = {};
-      route.keys.forEach((k, i) => (params[k] = decodeURIComponent(m[i + 1])));
-      let body: Record<string, unknown> = {};
-      if (req.method !== 'GET') {
-        const raw = await readBody(req, 64 * 1024);
-        if (raw) {
-          try {
-            body = JSON.parse(raw) as Record<string, unknown>;
-          } catch {
-            return send(res, 400, { error: 'invalid', message: 'Body must be JSON' });
+      try {
+        const params: Record<string, string> = {};
+        route.keys.forEach((k, i) => (params[k] = decodeURIComponent(m[i + 1])));
+        let body: Record<string, unknown> = {};
+        if (req.method !== 'GET') {
+          const raw = await readBody(req, 64 * 1024);
+          if (raw) {
+            const parsed: unknown = JSON.parse(raw);
+            if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return send(res, 400, { error: 'invalid', message: 'Body must be a JSON object' });
+            body = parsed as Record<string, unknown>;
           }
         }
-      }
-      try {
         const result = route.handler(params, body, req);
         return send(res, 200, result ?? {});
       } catch (e) {
@@ -97,7 +98,10 @@ export function createApiHandler(deps: ApiDeps): (req: IncomingMessage, res: Ser
           const status = e.code === 'not_found' ? 404 : e.code === 'forbidden' ? 403 : e.code === 'exists' ? 409 : 400;
           return send(res, status, { error: e.code, message: e.message });
         }
-        return send(res, 500, { error: 'internal', message: (e as Error).message });
+        if (e instanceof SyntaxError || e instanceof URIError || (e as Error).message === 'Body too large') {
+          return send(res, 400, { error: 'invalid', message: 'Malformed request' });
+        }
+        return send(res, 500, { error: 'internal', message: 'Internal error' });
       }
     }
     return false;

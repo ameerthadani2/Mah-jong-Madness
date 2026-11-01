@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { kindInfo, kindOf, reviewHand, type MoveGrade, type ReviewedMove } from '@mjm/engine';
 import { useApp } from '../app-state';
@@ -18,11 +18,14 @@ const GRADE_LABEL: Record<MoveGrade, { label: string; tone: 'ok' | 'gold' | 'neu
 export function ReviewScreen() {
   const app = useApp();
   const session = app.session;
-  const state = useSession(session);
-  const audit = state?.lastAudit ?? null;
-  const snapshot = session?.client.handSnapshot() ?? null;
-  const seat = state?.seat ?? 0;
-  const rules = state?.rules ?? null;
+  // Freeze the hand being reviewed at mount so an intermission ending mid-review cannot swap it.
+  const [frozen] = useState(() => ({
+    audit: session?.client.state.lastAudit ?? null,
+    snapshot: session?.client.handSnapshot() ?? null,
+    seat: session?.client.state.seat ?? 0,
+    rules: session?.client.state.rules ?? null,
+  }));
+  const { audit, snapshot, seat, rules } = frozen;
 
   const review = useMemo(() => {
     if (!audit || !snapshot || !rules) return null;
@@ -34,8 +37,9 @@ export function ReviewScreen() {
   }, [audit, snapshot, rules, seat]);
 
   useEffect(() => {
-    if (!review) return;
-    app.setProgress((p) => ({ ...p, reviewAccuracies: [...p.reviewAccuracies.slice(-19), review.accuracy] }));
+    if (!review || !audit) return;
+    const key = `${audit.matchId}:${audit.handNumber}`;
+    app.setProgress((p) => (p.reviewedHands.includes(key) ? p : { ...p, reviewedHands: [...p.reviewedHands.slice(-199), key], reviewAccuracies: [...p.reviewAccuracies.slice(-19), review.accuracy] }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [review?.accuracy]);
 

@@ -27,7 +27,7 @@ export type ServerMessage =
   | { t: 'error'; message: string };
 
 export type ClientToServer =
-  | { t: 'hello'; peerId?: string }
+  | { t: 'hello' }
   | { t: 'create'; room?: string }
   | { t: 'join'; room: string }
   | { t: 'to'; to: string; data: unknown }
@@ -44,6 +44,8 @@ export class SignalingClient {
   room: RoomInfo | null = null;
   private ws: WebSocketLike | null = null;
   private readonly msgHandlers = new Set<(m: ServerMessage) => void>();
+  private readonly closeHandlers = new Set<() => void>();
+  private closedLocally = false;
   private pendingHello: Array<(id: string) => void> = [];
   private pendingRoom: Array<{ resolve: (r: RoomInfo) => void; reject: (e: Error) => void }> = [];
 
@@ -52,15 +54,17 @@ export class SignalingClient {
     private readonly makeSocket: WebSocketFactory = (u) => new (globalThis as unknown as { WebSocket: new (u: string) => WebSocketLike }).WebSocket(u),
   ) {}
 
-  connect(preferredId?: string): Promise<string> {
+  connect(): Promise<string> {
     return new Promise((resolve, reject) => {
       const ws = this.makeSocket(this.url);
       this.ws = ws;
-      ws.onopen = () => ws.send(JSON.stringify({ t: 'hello', peerId: preferredId } satisfies ClientToServer));
+      ws.onopen = () => ws.send(JSON.stringify({ t: 'hello' } satisfies ClientToServer));
       ws.onerror = () => reject(new Error('Signaling connection failed'));
       ws.onclose = () => {
         this.ws = null;
-        for (const h of this.msgHandlers) h({ t: 'error', message: 'disconnected' });
+        if (!this.closedLocally) for (const h of this.closeHandlers) h();
+        for (const p of this.pendingRoom) p.reject(new Error('Connection closed'));
+        this.pendingRoom = [];
       };
       ws.onmessage = (ev) => {
         let m: ServerMessage;
@@ -115,8 +119,18 @@ export class SignalingClient {
     return () => this.msgHandlers.delete(cb);
   }
 
+  onClose(cb: () => void): Unsubscribe {
+    this.closeHandlers.add(cb);
+    return () => this.closeHandlers.delete(cb);
+  }
+
   close(): void {
-    this.ws?.send(JSON.stringify({ t: 'leave' } satisfies ClientToServer));
+    this.closedLocally = true;
+    try {
+      this.ws?.send(JSON.stringify({ t: 'leave' } satisfies ClientToServer));
+    } catch {
+      /* already closed */
+    }
     this.ws?.close();
     this.ws = null;
   }
@@ -159,6 +173,9 @@ export class RelayTransport implements Transport {
   }
   peers(): string[] {
     return (this.signaling.room?.peers ?? []).filter((p) => p !== this.id);
+  }
+  onClose(cb: () => void): Unsubscribe {
+    return this.signaling.onClose(cb);
   }
   close(): void {
     this.unsub();

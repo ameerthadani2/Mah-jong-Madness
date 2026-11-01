@@ -4,11 +4,23 @@
  * injected so it can be unit-tested and swapped for a database later.
  */
 import { DEFAULT_RULES, type RuleSet } from '@mjm/engine';
+import { sha256Hex } from '@mjm/net';
 
 export interface Identity {
   userId: string;
   name: string;
   avatar?: string;
+}
+
+/** What a client presents: identity plus a device-held secret. */
+export interface Credentials extends Identity {
+  secret: string;
+}
+
+export interface ClubData {
+  clubs: Club[];
+  /** userId → sha256(secret), bound on first use. */
+  credentials: Record<string, string>;
 }
 
 export type ClubRole = 'owner' | 'admin' | 'member';
@@ -64,8 +76,8 @@ export interface Club {
 }
 
 export interface ClubStore {
-  load(): Club[];
-  save(clubs: Club[]): void;
+  load(): ClubData;
+  save(data: ClubData): void;
 }
 
 export class ClubError extends Error {
@@ -82,6 +94,7 @@ const ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
 export class ClubRegistry {
   private clubs = new Map<string, Club>();
+  private credentials = new Map<string, string>();
   private readonly now: () => number;
   private readonly random: () => number;
   private readonly store: ClubStore | null;
@@ -90,11 +103,32 @@ export class ClubRegistry {
     this.now = opts.now ?? Date.now;
     this.random = opts.random ?? Math.random;
     this.store = opts.store ?? null;
-    if (this.store) for (const c of this.store.load()) this.clubs.set(c.code, c);
+    if (this.store) {
+      const data = this.store.load();
+      for (const c of data.clubs) this.clubs.set(c.code, c);
+      for (const [k, v] of Object.entries(data.credentials ?? {})) this.credentials.set(k, v);
+    }
   }
 
   private persist(): void {
-    this.store?.save([...this.clubs.values()]);
+    this.store?.save({ clubs: [...this.clubs.values()], credentials: Object.fromEntries(this.credentials) });
+  }
+
+  /**
+   * Trust-on-first-use authentication: the first request for a userId binds its secret;
+   * later requests must present the same secret. Replace with Sign in with Apple/Google
+   * tokens before launch — this only stops casual impersonation of visible user ids.
+   */
+  authenticate(creds: Credentials): Identity {
+    if (!creds.userId || typeof creds.secret !== 'string' || creds.secret.length < 16 || creds.secret.length > 128) throw new ClubError('invalid', 'Credentials required');
+    const hash = sha256Hex(`mjm-user:${creds.userId}:${creds.secret}`);
+    const known = this.credentials.get(creds.userId);
+    if (known && known !== hash) throw new ClubError('forbidden', 'Identity check failed for this user id');
+    if (!known) {
+      this.credentials.set(creds.userId, hash);
+      this.persist();
+    }
+    return { userId: creds.userId, name: creds.name, avatar: creds.avatar };
   }
 
   private newCode(): string {

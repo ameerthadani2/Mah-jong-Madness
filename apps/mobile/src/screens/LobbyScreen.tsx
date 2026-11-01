@@ -25,11 +25,16 @@ export function LobbyScreen() {
   }
 
   const isHost = session.mode === 'host';
+  // Server-hosted tables have no host player: any seated human may start or add bots.
+  const canControl = isHost || session.mode === 'guest';
   const humans = state.seats.filter((s) => s.peerId && !s.isBot).length;
+  const addBot = () => (isHost ? session.host!.addBot() : session.client.requestBot());
+  const start = () => (isHost ? session.host!.start() : session.client.requestStart());
 
   const leave = () => {
     app.setSession(null);
-    app.back();
+    app.setActiveSession(null);
+    app.reset({ name: 'home' });
   };
 
   return (
@@ -57,20 +62,21 @@ export function LobbyScreen() {
             {s.isBot && isHost && <Button small kind="ghost" title="Remove" onPress={() => session.host!.removeBot(s.seat)} />}
           </Row>
         ))}
-        {isHost && (
+        {canControl && (
           <Row>
-            <Button small kind="secondary" title="Add bot" onPress={() => session.host!.addBot()} />
+            <Button small kind="secondary" title="Add bot" onPress={addBot} />
             <P dim style={{ fontSize: 12 }}>Empty seats are filled with bots when you start.</P>
           </Row>
         )}
       </Card>
-      {isHost ? (
-        <Button title={humans > 1 ? 'Start match' : 'Start (bots fill empty seats)'} onPress={() => session.host!.start()} />
+      {canControl ? (
+        <Button title={humans > 1 ? 'Start match' : 'Start (bots fill empty seats)'} onPress={start} />
       ) : (
         <P dim style={{ textAlign: 'center' }}>
           Waiting for the host to start…
         </P>
       )}
+      {state.disconnected && <P style={{ color: colors.danger }}>Connection lost. Go back to Home and tap Resume.</P>}
       {state.lastError && <P style={{ color: colors.danger }}>{state.lastError}</P>}
     </ScrollView>
   );

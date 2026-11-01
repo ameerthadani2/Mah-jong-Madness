@@ -2,7 +2,7 @@
  * Table client: joins a host, takes part in the seed ceremony, sends actions,
  * keeps the latest seat view, and verifies every hand's audit.
  */
-import { hashState, replayHand, viewToState, type Action, type GameState, type HandResult, type MatchSnapshot, type RuleSet, type TableView } from '@mjm/engine';
+import { hashState, replayHand, stableStringify, viewToState, type Action, type GameState, type HandResult, type MatchSnapshot, type RuleSet, type TableView } from '@mjm/engine';
 import { commitFor, deriveSeed, makeSecret, verifyReveals, type Commitment } from './fairness';
 import type { Link } from './host';
 import type { Audit, ClientMessage, HostMessage, SeatInfo } from './messages';
@@ -45,6 +45,10 @@ export interface ClientState {
   emotes: Array<{ seat: number; emote: string; at: number }>;
   lastError: string | null;
   rttMs: number | null;
+  /** The host used a stand-in random share for us this hand (we committed too late). */
+  standIn: boolean;
+  /** The link to the host was lost; resume from Home with the saved token. */
+  disconnected: boolean;
 }
 
 export function transportLink(transport: Transport, hostPeerId: string): Link {
@@ -81,6 +85,8 @@ export class TableClient {
     emotes: [],
     lastError: null,
     rttMs: null,
+    standIn: false,
+    disconnected: false,
   };
   private secret: string | null = null;
   private commits: Commitment[] | null = null;
@@ -96,7 +102,17 @@ export class TableClient {
     private readonly identity: { token?: string; userId?: string } = {},
   ) {
     this.unsub = link.onMessage((m) => this.onMessage(m));
+    link.onClose?.(() => this.update({ connected: false, disconnected: true, lastError: 'Connection to the table was lost.' }));
     if (identity.token) this.state = { ...this.state, token: identity.token };
+  }
+
+  /** Ask the host to start (server-hosted tables have no local host UI). */
+  requestStart(): void {
+    this.send({ t: 'start' });
+  }
+
+  requestBot(): void {
+    this.send({ t: 'add_bot' });
   }
 
   onChange(cb: (s: ClientState) => void): Unsubscribe {
@@ -166,7 +182,15 @@ export class TableClient {
         this.secret = makeSecret();
         this.commits = null;
         this.send({ t: 'commit', hash: commitFor(this.secret) });
-        this.update({ ceremony: 'committed' });
+        this.update({ ceremony: 'committed', standIn: false });
+        return;
+      case 'stand_in':
+        // Our own share was replaced; the audit will still verify every other property.
+        this.secret = null;
+        this.update({ standIn: true });
+        return;
+      case 'disconnected':
+        this.update({ connected: false, disconnected: true, lastError: 'This seat was opened on another device.' });
         return;
       case 'commits':
         this.commits = m.commits;
@@ -182,7 +206,7 @@ export class TableClient {
         return;
       }
       case 'hand_over': {
-        const { status, failures } = this.verifyAudit(m.audit, m.view);
+        const { status, failures } = this.verifyAudit(m.audit, m.view, m.result);
         const audits = this.state.audits.some((a) => a.audit.handNumber === m.audit.handNumber && a.audit.matchId === m.audit.matchId)
           ? this.state.audits
           : [...this.state.audits, { audit: m.audit, status, failures }];
@@ -214,7 +238,7 @@ export class TableClient {
    * reveal matches its commitment, the seed derives from the reveals, and
    * replaying the log reproduces the host's final state hash.
    */
-  verifyAudit(audit: Audit, finalView: TableView): { status: AuditStatus; failures: string[] } {
+  verifyAudit(audit: Audit, finalView: TableView, announced?: HandResult): { status: AuditStatus; failures: string[] } {
     const failures: string[] = [];
     if (!this.state.rules || !this.state.matchId) return { status: 'unverified', failures: ['No match context'] };
     if (this.secret) {
@@ -237,6 +261,9 @@ export class TableClient {
     try {
       const replayed = replayHand(start, audit.seed, this.state.rules, audit.log);
       if (hashState(replayed) !== audit.finalHash) failures.push('Replaying the action log does not reproduce the final state');
+      // The result and scores the host announced must be the ones the replay produces.
+      if (announced && stableStringify(replayed.result) !== stableStringify(announced)) failures.push('Announced result differs from the replayed hand');
+      if (replayed.scores.join(',') !== finalView.scores.join(',')) failures.push('Announced scores differ from the replayed hand');
       // The replayed state must agree with everything we were shown about our own seat.
       if (this.state.seat !== null && finalView.players[this.state.seat].hand) {
         const mine = replayed.players[this.state.seat].hand.slice().sort((a, b) => a - b).join(',');

@@ -10,7 +10,7 @@ import { Button, Card, H1, H2, P, Pill, Row, Toggle } from '../components/Ui';
 export function ClubsScreen() {
   const app = useApp();
   const base = httpBase(app.settings.signalUrl);
-  const user = { userId: app.profile.userId, name: app.profile.name || 'Player', avatar: app.profile.avatar };
+  const user = { userId: app.profile.userId, name: app.profile.name || 'Player', avatar: app.profile.avatar, secret: app.profile.userSecret };
   const [clubs, setClubs] = useState<Club[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [joinCode, setJoinCode] = useState('');
@@ -128,7 +128,7 @@ export function ClubsScreen() {
 export function ClubScreen({ code }: { code: string }) {
   const app = useApp();
   const base = httpBase(app.settings.signalUrl);
-  const user = { userId: app.profile.userId, name: app.profile.name || 'Player', avatar: app.profile.avatar };
+  const user = { userId: app.profile.userId, name: app.profile.name || 'Player', avatar: app.profile.avatar, secret: app.profile.userSecret };
   const [club, setClub] = useState<Club | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);

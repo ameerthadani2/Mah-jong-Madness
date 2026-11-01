@@ -18,7 +18,8 @@ const CN_NUM = ['一', '二', '三', '四', '五', '六', '七', '八', '九'];
 export interface TileProps {
   tile?: TileId;
   kind?: Kind;
-  size?: TileSize;
+  /** Named size, or an explicit width in pixels (height and fonts scale with it). */
+  size?: TileSize | number;
   faceDown?: boolean;
   selected?: boolean;
   dimmed?: boolean;
@@ -48,7 +49,7 @@ function suitColor(suit: string): string {
 }
 
 export const Tile = React.memo(function Tile({ tile, kind, size = 'md', faceDown, selected, dimmed, highlight, onPress, onLongPress, style, rotated }: TileProps) {
-  const d = DIMS[size];
+  const d = typeof size === 'number' ? { w: size, h: Math.round(size * 1.4), big: Math.round(size * 0.55), small: Math.round(size * 0.32) } : DIMS[size];
   const theme = useContext(TableThemeContext);
   const k = kind ?? (tile !== undefined ? kindOf(tile) : undefined);
   const info = k !== undefined ? kindInfo(k) : undefined;

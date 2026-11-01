@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { kindsFromString, LESSONS, kindFromCode, type LessonStep } from '@mjm/engine';
 import { useApp } from '../app-state';
+import { effectiveStreak } from '../storage';
 import { colors, space } from '../theme';
 import { Tile } from '../components/Tile';
 import { Button, Card, H1, H2, P, Pill, Row } from '../components/Ui';
@@ -22,7 +23,7 @@ export function LearnScreen() {
           <H2>Daily puzzle</H2>
           <P dim style={{ fontSize: 13 }}>Same puzzle for everyone, every day. Keep the streak alive.</P>
           <Row style={{ justifyContent: 'space-between' }}>
-            <Pill text={`🔥 ${app.progress.dailyStreak} streak`} tone={app.progress.dailyStreak > 0 ? 'gold' : 'neutral'} />
+            <Pill text={`🔥 ${effectiveStreak(app.progress)} streak`} tone={effectiveStreak(app.progress) > 0 ? 'gold' : 'neutral'} />
             <Button small title="Solve" onPress={() => app.go({ name: 'daily' })} />
           </Row>
         </Card>

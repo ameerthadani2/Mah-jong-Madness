@@ -32,6 +32,9 @@ export type ClientMessage =
   | { t: 'reveal'; secret: string }
   | { t: 'action'; seat: number; action: Action; expectHash?: string }
   | { t: 'ready' }
+  /** Ask the host to start the match / add a bot (used when the host is a neutral server). */
+  | { t: 'start' }
+  | { t: 'add_bot' }
   | { t: 'chat'; text: string }
   | { t: 'emote'; emote: string }
   | { t: 'ping'; at: number };
@@ -43,6 +46,9 @@ export type HostMessage =
   | { t: 'commit_request'; handNumber: number }
   | { t: 'commits'; handNumber: number; commits: Commitment[] }
   | { t: 'reveal_request'; handNumber: number }
+  /** The host used a stand-in secret for this seat (it did not commit in time). */
+  | { t: 'stand_in'; handNumber: number }
+  | { t: 'disconnected' }
   | { t: 'state'; view: TableView; hash: string; deadline: number | null; timeBank: number; inTimeBank: boolean }
   | { t: 'hand_over'; result: HandResult; audit: Audit; view: TableView }
   | { t: 'match_over'; scores: number[]; view: TableView }

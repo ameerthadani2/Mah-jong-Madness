@@ -13,7 +13,7 @@ export interface PlayerView extends Omit<PlayerState, 'hand'> {
   handCount: number;
 }
 
-export interface TableView extends Omit<GameState, 'wall' | 'players' | 'drawIndex' | 'backIndex'> {
+export interface TableView extends Omit<GameState, 'wall' | 'players' | 'drawIndex' | 'backIndex' | 'seed'> {
   viewerSeat: number;
   players: PlayerView[];
   tilesRemaining: number;
@@ -21,10 +21,12 @@ export interface TableView extends Omit<GameState, 'wall' | 'players' | 'drawInd
 }
 
 export function viewFor(s: GameState, seat: number): TableView {
-  const { wall: _w, drawIndex: _d, backIndex: _b, players, ...rest } = s;
+  // The seed determines the whole wall: it must never reach a client before the hand's audit.
+  const { wall: _w, drawIndex: _d, backIndex: _b, seed: _seed, players, ...rest } = s;
   void _w;
   void _d;
   void _b;
+  void _seed;
   const revealAll = s.phase === 'ended';
   return {
     ...rest,
@@ -55,6 +57,7 @@ export function viewToState(v: TableView): GameState {
   const PLACEHOLDER = NUM_PLAY_KINDS * 4; // id 136 = a bonus tile id; never matches a play kind
   return {
     ...rest,
+    seed: '',
     wall: [],
     drawIndex: 0,
     backIndex: remaining,

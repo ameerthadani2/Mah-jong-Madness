@@ -213,6 +213,10 @@ export class WebRTCTransport implements Transport {
     return this.relay.peers();
   }
 
+  onClose(cb: () => void): Unsubscribe {
+    return this.signaling.onClose(cb);
+  }
+
   close(): void {
     for (const u of this.unsubs) u();
     for (const id of [...this.links.keys()]) this.dropPeer(id);

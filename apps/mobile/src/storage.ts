@@ -6,6 +6,8 @@ import Constants from 'expo-constants';
 export interface Profile {
   /** Stable, client-generated id used by clubs until real sign-in lands. */
   userId: string;
+  /** Device-held secret that proves ownership of userId to the club API (trust on first use). */
+  userSecret: string;
   name: string;
   avatar: string;
 }
@@ -26,8 +28,8 @@ export interface Progress {
   drillsCorrect: number;
   handsPlayed: number;
   handsWon: number;
-  /** Daily puzzle */
-  dailySolved: Record<string, boolean>;
+  /** Daily puzzle: one attempt per UTC day, recorded as correct or wrong. */
+  dailySolved: Record<string, 'correct' | 'wrong'>;
   dailyStreak: number;
   dailyLastDate: string | null;
   /** Puzzle rush */
@@ -35,6 +37,9 @@ export interface Progress {
   rushRuns: number;
   /** Rolling review accuracy (last 20 reviewed hands). */
   reviewAccuracies: number[];
+  /** `${matchId}:${handNumber}` keys already counted / reviewed, so remounts never double-count. */
+  lastCountedHand: string | null;
+  reviewedHands: string[];
 }
 
 /** The table the player was last seated at, so a crash or relaunch can resume it. */
@@ -46,7 +51,7 @@ const KEYS = { profile: 'mjm.profile', settings: 'mjm.settings', progress: 'mjm.
 
 const extra = (Constants.expoConfig?.extra ?? {}) as { signalUrl?: string };
 
-export const DEFAULT_PROFILE: Profile = { userId: '', name: '', avatar: '🀄' };
+export const DEFAULT_PROFILE: Profile = { userId: '', userSecret: '', name: '', avatar: '🀄' };
 export const DEFAULT_SETTINGS: Settings = { rules: DEFAULT_RULES, coach: true, signalUrl: extra.signalUrl ?? 'ws://localhost:8787', hostedTables: false, botSkill: 'club', sound: true, tableTheme: 'classic' };
 export const DEFAULT_PROGRESS: Progress = {
   lessonsDone: {},
@@ -60,6 +65,8 @@ export const DEFAULT_PROGRESS: Progress = {
   rushBest: 0,
   rushRuns: 0,
   reviewAccuracies: [],
+  lastCountedHand: null,
+  reviewedHands: [],
 };
 
 async function load<T>(key: string, fallback: T): Promise<T> {
@@ -82,8 +89,9 @@ async function save<T>(key: string, value: T): Promise<void> {
 export const storage = {
   loadProfile: async (): Promise<Profile> => {
     const p = await load(KEYS.profile, DEFAULT_PROFILE);
-    if (!p.userId) {
-      p.userId = `user-${randomHex(12)}`;
+    if (!p.userId || !p.userSecret) {
+      p.userId = p.userId || `user-${randomHex(12)}`;
+      p.userSecret = p.userSecret || randomHex(24);
       await save(KEYS.profile, p);
     }
     return p;
@@ -122,4 +130,15 @@ export const AVATARS = ['🀄', '🐉', '🐼', '🦊', '🐯', '🦁', '🐸', 
 
 export function todayKey(d = new Date()): string {
   return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
+}
+
+export function yesterdayKey(d = new Date()): string {
+  const y = new Date(d.getTime() - 86400_000);
+  return todayKey(y);
+}
+
+/** Streak as it should be displayed: it dies once a day has been missed. */
+export function effectiveStreak(p: Progress, d = new Date()): number {
+  if (!p.dailyLastDate) return 0;
+  return p.dailyLastDate === todayKey(d) || p.dailyLastDate === yesterdayKey(d) ? p.dailyStreak : 0;
 }

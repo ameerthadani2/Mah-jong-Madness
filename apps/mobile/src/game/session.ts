@@ -107,6 +107,15 @@ export interface OnlineOptions {
 export async function createOnlineSession(opts: OnlineOptions): Promise<Session> {
   const signaling = new SignalingClient(opts.signalUrl);
   await signaling.connect();
+  try {
+    return await buildOnlineSession(signaling, opts);
+  } catch (e) {
+    signaling.close();
+    throw e;
+  }
+}
+
+async function buildOnlineSession(signaling: SignalingClient, opts: OnlineOptions): Promise<Session> {
   const pcFactory = opts.preferWebRTC === false ? null : findPeerConnection();
   const transport: Transport = pcFactory ? new WebRTCTransport(signaling, pcFactory) : new RelayTransport(signaling, 'game');
   const transportKind = pcFactory ? 'webrtc' : 'relay';

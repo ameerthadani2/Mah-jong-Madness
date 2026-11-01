@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { hintFor, kindInfo, kindOf, legalActions, viewToState, WINDS, type Action, type GameState, type HandResult, type Hint, type TableView, type TileId, type WinRecord } from '@mjm/engine';
 import type { ClientState } from '@mjm/net';
@@ -28,7 +28,6 @@ export function TableScreen() {
     return () => clearInterval(id);
   }, []);
   const countdown = useCountdown(state?.deadline ?? null);
-  const lastHandCounted = useRef<number>(-1);
 
   const view = state?.view ?? null;
   const mySeat = state?.seat ?? 0;
@@ -36,13 +35,12 @@ export function TableScreen() {
   const actions: Action[] = useMemo(() => (local ? legalActions(local, mySeat) : []), [local, mySeat]);
   const hint: Hint | null = useMemo(() => (coachOpen && local && local.phase !== 'ended' ? safeHint(local, mySeat) : null), [coachOpen, local, mySeat]);
 
-  // Progress bookkeeping once per finished hand.
+  // Progress bookkeeping once per finished hand (keyed in persisted progress so remounts never double count).
   useEffect(() => {
-    if (!state?.lastResult || !view) return;
-    if (lastHandCounted.current === view.handNumber) return;
-    lastHandCounted.current = view.handNumber;
+    if (!state?.lastResult || !state.lastAudit) return;
+    const key = `${state.lastAudit.matchId}:${state.lastAudit.handNumber}`;
     const won = state.lastResult.type === 'win' && state.lastResult.wins.some((w) => w.seat === mySeat);
-    app.setProgress((p) => ({ ...p, handsPlayed: p.handsPlayed + 1, handsWon: p.handsWon + (won ? 1 : 0) }));
+    app.setProgress((p) => (p.lastCountedHand === key ? p : { ...p, lastCountedHand: key, handsPlayed: p.handsPlayed + 1, handsWon: p.handsWon + (won ? 1 : 0) }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state?.lastResult]);
 
@@ -75,9 +73,9 @@ export function TableScreen() {
     setSelected(null);
   };
   function leave() {
-    const over = state?.matchOver ?? false;
+    // Leaving on purpose abandons the table; Resume is for crashes and dropped connections.
     app.setSession(null);
-    if (over || session?.mode === 'local') app.setActiveSession(null);
+    app.setActiveSession(null);
     app.reset({ name: 'home' });
   }
 
@@ -91,10 +89,10 @@ export function TableScreen() {
   };
 
   const compact = height < 420;
-  const sideWidth = width >= 1000 ? 200 : width >= 760 ? 170 : 140;
-  const handRoom = width - 2 * sideWidth - 48;
-  const perTile = handRoom / 17.6;
-  const handSize: 'sm' | 'md' | 'lg' = compact || perTile < 42 ? 'sm' : perTile < 52 ? 'md' : 'lg';
+  const sideWidth = width >= 1000 ? 200 : width >= 760 ? 160 : 130;
+  // The hand spans the full width under the table, so 17 tiles + the drawn-tile gap always fit.
+  const handRoom = width - 24;
+  const handTile = Math.max(26, Math.min(compact ? 40 : 56, Math.floor((handRoom - 14) / 17.4)));
   const seatAt = (r: number) => (mySeat + r) % 4;
   const seatInfo = (seat: number) => state.seats.find((s) => s.seat === seat);
   const latestDiscard = view.lastDiscard?.tile;
@@ -214,6 +212,17 @@ export function TableScreen() {
               </P>
             )}
           </View>
+        </View>
+
+        {/* Right: 下家 + coach */}
+        <View style={[styles.side, { width: sideWidth }]}>
+          {otherPanel(1)}
+          {coachOpen && hint && <CoachPanel hint={hint} waitKinds={waitKinds} />}
+        </View>
+      </View>
+
+      {/* Footer: melds, actions and hand across the full width */}
+      <View style={styles.footer}>
           {/* My melds + flowers */}
           <View style={styles.myMelds}>
             {me.melds.map((m, i) => (
@@ -235,7 +244,7 @@ export function TableScreen() {
                   <Tile
                     key={t}
                     tile={t}
-                    size={handSize}
+                    size={handTile}
                     selected={selected === t}
                     dimmed={canDiscard ? false : undefined}
                     highlight={bestDiscard === t && canDiscard ? 'good' : undefined}
@@ -246,21 +255,22 @@ export function TableScreen() {
               })}
             </View>
           </View>
-        </View>
-
-        {/* Right: 下家 + coach */}
-        <View style={[styles.side, { width: sideWidth }]}>
-          {otherPanel(1)}
-          {coachOpen && hint && <CoachPanel hint={hint} waitKinds={waitKinds} />}
-        </View>
       </View>
 
       {state.lastResult && <ResultOverlay result={state.lastResult} view={view} state={state} mySeat={mySeat} onNext={() => session.client.ready()} onLeave={leave} onReview={() => app.go({ name: 'review' })} onFairness={() => app.go({ name: 'fairness' })} />}
       {state.matchOver && <MatchOverOverlay state={state} onLeave={leave} />}
-      {state.lastError && (
-        <View style={styles.toast}>
-          <Text style={{ color: colors.text }}>{state.lastError}</Text>
+      {state.disconnected ? (
+        <View style={styles.banner}>
+          <Text style={{ color: colors.text, fontWeight: '800' }}>Connection lost</Text>
+          <Text style={{ color: colors.text, fontSize: 12 }}>Your seat is saved. A bot plays for you until you are back.</Text>
+          <Button small title="Reconnect" onPress={() => { app.setSession(null); app.reset({ name: 'home' }); }} />
         </View>
+      ) : (
+        state.lastError && (
+          <View style={styles.toast}>
+            <Text style={{ color: colors.text }}>{state.lastError}</Text>
+          </View>
+        )
       )}
       {pendingTile !== undefined && !view.pending && null}
     </View>
@@ -446,7 +456,9 @@ const styles = StyleSheet.create({
   topBar: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: space.md, paddingVertical: 4 },
   body: { flex: 1, flexDirection: 'row', paddingHorizontal: space.sm, gap: space.sm },
   side: { gap: space.sm },
-  centerCol: { flex: 1, justifyContent: 'space-between' },
+  centerCol: { flex: 1, justifyContent: 'flex-start', gap: 6 },
+  footer: { paddingHorizontal: 12, paddingBottom: 4 },
+  banner: { position: 'absolute', top: 44, left: '20%', right: '20%', zIndex: 30, backgroundColor: colors.danger, borderRadius: radius.md, padding: 10, alignItems: 'center', gap: 6 },
   centerInfo: { alignItems: 'center', minHeight: 18 },
   other: { backgroundColor: 'rgba(0,0,0,0.15)', borderRadius: radius.md, padding: 6, gap: 4 },
   otherVertical: {},

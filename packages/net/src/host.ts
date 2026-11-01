@@ -94,6 +94,8 @@ export interface Link {
   send(msg: ClientMessage): void;
   onMessage(cb: (msg: HostMessage) => void): Unsubscribe;
   close(): void;
+  /** Optional: fires when the transport under the link is lost. */
+  onClose?(cb: () => void): Unsubscribe;
 }
 
 const DEFAULT_BOT_NAMES = ['阿明 (Bot)', '小美 (Bot)', '老王 (Bot)', '阿花 (Bot)'];
@@ -342,7 +344,7 @@ export class TableHost {
 
   private broadcast(build: (seat: SeatState) => HostMessage | null): void {
     for (const s of this.seats) {
-      if (!s.peerId || s.isBot || !s.connected) continue;
+      if (!s.peerId || s.isBot || !s.connected || s.peerId.startsWith('gone-')) continue;
       const msg = build(s);
       if (msg) this.sendTo(s.peerId, msg);
     }
@@ -359,9 +361,16 @@ export class TableHost {
   }
 
   private handle(from: string, msg: ClientMessage): void {
+    if (!msg || typeof msg !== 'object' || typeof (msg as { t?: unknown }).t !== 'string') return;
     switch (msg.t) {
-      case 'join':
-        return this.onJoin(from, msg.name, msg.avatar, msg.wantSeat, msg.token, msg.userId);
+      case 'join': {
+        const name = typeof msg.name === 'string' ? msg.name : '';
+        const avatar = typeof msg.avatar === 'string' ? msg.avatar.slice(0, 8) : undefined;
+        const wantSeat = Number.isInteger(msg.wantSeat) && (msg.wantSeat as number) >= 0 && (msg.wantSeat as number) <= 3 ? (msg.wantSeat as number) : undefined;
+        const token = typeof msg.token === 'string' && /^[0-9a-f]{32}$/.test(msg.token) ? msg.token : undefined;
+        const userId = typeof msg.userId === 'string' && /^[\w-]{6,64}$/.test(msg.userId) ? msg.userId : undefined;
+        return this.onJoin(from, name, avatar, wantSeat, token, userId);
+      }
       case 'leave':
         return this.onDisconnect(from);
       case 'ping':
@@ -374,13 +383,27 @@ export class TableHost {
     switch (msg.t) {
       case 'commit':
         if (this.phase !== 'commit' || seat.commit) return;
+        if (typeof msg.hash !== 'string' || !/^[0-9a-f]{64}$/.test(msg.hash)) return this.sendTo(from, { t: 'error', code: 'bad_commit', message: 'Commitment must be a SHA-256 hex digest.' });
         seat.commit = msg.hash;
         return this.checkCeremony();
       case 'reveal':
         if (this.phase !== 'reveal' || seat.secret) return;
+        if (typeof msg.secret !== 'string' || msg.secret.length > 128) return;
         if (commitFor(msg.secret) !== seat.commit) return this.sendTo(from, { t: 'error', code: 'bad_reveal', message: 'Secret does not match your commitment.' });
         seat.secret = msg.secret;
         return this.checkCeremony();
+      case 'start':
+        if (this.phase !== 'lobby') return;
+        try {
+          this.start();
+        } catch (e) {
+          this.sendTo(from, { t: 'error', code: 'cannot_start', message: (e as Error).message });
+        }
+        return;
+      case 'add_bot':
+        if (this.phase !== 'lobby') return;
+        this.addBot();
+        return;
       case 'action':
         if (this.phase !== 'playing' || !this.game) return this.sendTo(from, { t: 'error', code: 'not_playing', message: 'No hand in progress.' });
         if (msg.seat !== seat.seat) return this.sendTo(from, { t: 'error', code: 'wrong_seat', message: 'You can only act for your own seat.' });
@@ -397,20 +420,26 @@ export class TableHost {
         if (this.seats.every((s) => s.isBot || !s.connected || s.ready)) this.afterHand();
         return;
       case 'chat':
-        return this.broadcast(() => ({ t: 'chat', seat: seat.seat, name: seat.name, text: String(msg.text).slice(0, 280) }));
+        if (typeof msg.text !== 'string' || !msg.text.trim()) return;
+        return this.broadcast(() => ({ t: 'chat', seat: seat.seat, name: seat.name, text: msg.text.slice(0, 280) }));
       case 'emote':
-        return this.broadcast(() => ({ t: 'emote', seat: seat.seat, emote: String(msg.emote).slice(0, 16) }));
+        if (typeof msg.emote !== 'string') return;
+        return this.broadcast(() => ({ t: 'emote', seat: seat.seat, emote: msg.emote.slice(0, 16) }));
       default:
         return;
     }
   }
 
   private onJoin(from: string, name: string, avatar: string | undefined, wantSeat?: number, token?: string, userId?: string): void {
-    let seat = this.seats.find((s) => s.peerId === from);
+    let seat = this.seats.find((s) => s.peerId === from && s.connected);
     if (!seat && token) {
-      // Reconnect with the rejoin token: works even if a bot has been standing in.
+      // Reconnect with the rejoin token — the only way to reclaim a seat. Names and user ids are public and never trusted.
       seat = this.seats.find((s) => s.token === token);
       if (seat) {
+        if (seat.connected && seat.peerId && seat.peerId !== from) {
+          // The token is live on another connection: kick the old one (the newest device wins, like PokerBros).
+          this.sendTo(seat.peerId, { t: 'disconnected' });
+        }
         seat.peerId = from;
         if (seat.isBot && seat.name.endsWith('(away)')) {
           seat.isBot = false;
@@ -418,21 +447,13 @@ export class TableHost {
         }
       }
     }
-    if (!seat && userId) {
-      seat = this.seats.find((s) => !s.connected && !s.isBot && s.userId === userId && s.peerId !== null);
-      if (seat) seat.peerId = from;
-    }
-    if (!seat) {
-      // Reconnect: a disconnected seat with the same name.
-      seat = this.seats.find((s) => !s.connected && !s.isBot && s.name === name && s.peerId !== null);
-      if (seat) seat.peerId = from;
-    }
     if (!seat) {
       if (this.phase !== 'lobby') {
-        // Mid-match: take over a bot seat only if one was a stand-in for a departed human.
+        // Mid-match: take over a bot seat only if one was a stand-in for a departed human. The old token is retired.
         seat = this.seats.find((s) => s.isBot && s.name.endsWith('(away)'));
         if (!seat) return this.sendTo(from, { t: 'error', code: 'full', message: 'Match already in progress.' });
         seat.isBot = false;
+        seat.token = undefined;
       } else {
         seat = (wantSeat !== undefined && this.seats[wantSeat] && !this.seats[wantSeat].peerId && !this.seats[wantSeat].isBot ? this.seats[wantSeat] : undefined) ?? this.seats.find((s) => !s.peerId && !s.isBot);
         if (!seat) return this.sendTo(from, { t: 'error', code: 'full', message: 'Table is full.' });
@@ -468,6 +489,7 @@ export class TableHost {
     const seat = this.seats.find((s) => s.peerId === peerId);
     if (!seat) return;
     seat.connected = false;
+    seat.peerId = this.phase === 'lobby' ? null : `gone-${peerId}`;
     if (this.phase === 'lobby') {
       seat.peerId = null;
       seat.name = '';
@@ -490,6 +512,7 @@ export class TableHost {
     if (!seat.commit) {
       seat.secret = makeSecret();
       seat.commit = commitFor(seat.secret);
+      if (seat.connected && seat.peerId && !seat.isBot) this.sendTo(seat.peerId, { t: 'stand_in', handNumber: this.snapshot.handNumber });
     } else if (!seat.secret) {
       // They committed but never revealed: without their secret no fair seed exists.
       // Restart the ceremony for this hand with a fresh commitment from a stand-in.
