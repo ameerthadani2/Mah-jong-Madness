@@ -34,6 +34,13 @@ export interface ClientState {
   auditFailures: string[];
   matchOver: boolean;
   finalScores: number[] | null;
+  /** Rejoin token from the host; persist it to resume after a crash. */
+  token: string | null;
+  /** Remaining time bank (seconds) and whether the clock is currently eating into it. */
+  timeBank: number;
+  inTimeBank: boolean;
+  /** Every audited hand this session, newest last. */
+  audits: Array<{ audit: Audit; status: AuditStatus; failures: string[] }>;
   chat: ChatLine[];
   emotes: Array<{ seat: number; emote: string; at: number }>;
   lastError: string | null;
@@ -66,6 +73,10 @@ export class TableClient {
     auditFailures: [],
     matchOver: false,
     finalScores: null,
+    token: null,
+    timeBank: 0,
+    inTimeBank: false,
+    audits: [],
     chat: [],
     emotes: [],
     lastError: null,
@@ -82,8 +93,10 @@ export class TableClient {
     private readonly link: Link,
     private readonly name: string,
     private readonly avatar?: string,
+    private readonly identity: { token?: string; userId?: string } = {},
   ) {
     this.unsub = link.onMessage((m) => this.onMessage(m));
+    if (identity.token) this.state = { ...this.state, token: identity.token };
   }
 
   onChange(cb: (s: ClientState) => void): Unsubscribe {
@@ -92,7 +105,7 @@ export class TableClient {
   }
 
   join(wantSeat?: number): void {
-    this.send({ t: 'join', name: this.name, avatar: this.avatar, wantSeat });
+    this.send({ t: 'join', name: this.name, avatar: this.avatar, wantSeat, token: this.state.token ?? this.identity.token, userId: this.identity.userId });
   }
 
   act(action: Action): void {
@@ -122,6 +135,11 @@ export class TableClient {
     this.link.close();
   }
 
+  /** Match snapshot at the start of the current/last hand (for local replay and review). */
+  handSnapshot(): MatchSnapshot | null {
+    return this.handStart;
+  }
+
   /** Engine-shaped state for running hints/bots locally on the visible information. */
   localState(): GameState | null {
     return this.state.view ? viewToState(this.state.view) : null;
@@ -139,7 +157,7 @@ export class TableClient {
   private onMessage(m: HostMessage): void {
     switch (m.t) {
       case 'welcome':
-        this.update({ connected: true, seat: m.seat, roomCode: m.roomCode, rules: m.rules, seats: m.seats, matchId: m.matchId, lastError: null });
+        this.update({ connected: true, seat: m.seat, roomCode: m.roomCode, rules: m.rules, seats: m.seats, matchId: m.matchId, token: m.token, lastError: null });
         return;
       case 'lobby':
         this.update({ seats: m.seats });
@@ -160,12 +178,15 @@ export class TableClient {
       case 'state': {
         const first = !this.state.view || this.state.view.handNumber !== m.view.handNumber || this.state.lastResult !== null;
         if (first || !this.handStart) this.handStart = snapshotFromView(m.view);
-        this.update({ view: m.view, stateHash: m.hash, deadline: m.deadline, lastResult: null, lastError: null, ceremony: 'idle' });
+        this.update({ view: m.view, stateHash: m.hash, deadline: m.deadline, timeBank: m.timeBank, inTimeBank: m.inTimeBank, lastResult: null, lastError: null, ceremony: 'idle' });
         return;
       }
       case 'hand_over': {
         const { status, failures } = this.verifyAudit(m.audit, m.view);
-        this.update({ view: m.view, lastResult: m.result, lastAudit: m.audit, auditStatus: status, auditFailures: failures, deadline: null });
+        const audits = this.state.audits.some((a) => a.audit.handNumber === m.audit.handNumber && a.audit.matchId === m.audit.matchId)
+          ? this.state.audits
+          : [...this.state.audits, { audit: m.audit, status, failures }];
+        this.update({ view: m.view, lastResult: m.result, lastAudit: m.audit, auditStatus: status, auditFailures: failures, deadline: null, audits });
         return;
       }
       case 'match_over':

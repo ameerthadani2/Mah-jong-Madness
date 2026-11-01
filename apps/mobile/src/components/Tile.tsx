@@ -52,6 +52,7 @@ export const Tile = React.memo(function Tile({ tile, kind, size = 'md', faceDown
   const info = k !== undefined ? kindInfo(k) : undefined;
   const body = (
     <View
+      testID={faceDown ? 'tile-back' : `tile-${info?.code ?? 'x'}`}
       style={[
         styles.tile,
         { width: rotated ? d.h : d.w, height: rotated ? d.w : d.h, borderRadius: d.w * 0.16 },

@@ -1,21 +1,29 @@
-import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
-import { DEFAULT_PROFILE, DEFAULT_PROGRESS, DEFAULT_SETTINGS, storage, type Profile, type Progress, type Settings } from './storage';
+import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { DEFAULT_PROFILE, DEFAULT_PROGRESS, DEFAULT_SETTINGS, storage, type ActiveSession, type Profile, type Progress, type Settings } from './storage';
 import type { Session } from './game/session';
 
 export type Screen =
   | { name: 'home' }
   | { name: 'online' }
+  | { name: 'clubs' }
+  | { name: 'club'; code: string }
   | { name: 'lobby' }
   | { name: 'table' }
+  | { name: 'review' }
+  | { name: 'fairness' }
   | { name: 'learn' }
   | { name: 'lesson'; id: string }
   | { name: 'drill'; kind: 'discard' | 'waits' }
+  | { name: 'daily' }
+  | { name: 'rush' }
   | { name: 'settings' };
 
 interface AppState {
   screen: Screen;
   go(screen: Screen): void;
   back(): void;
+  /** Replace the whole stack (e.g. after leaving a table). */
+  reset(screen: Screen): void;
   profile: Profile;
   setProfile(p: Profile): void;
   settings: Settings;
@@ -24,6 +32,9 @@ interface AppState {
   setProgress(p: Progress | ((prev: Progress) => Progress)): void;
   session: Session | null;
   setSession(s: Session | null): void;
+  /** Persisted pointer to a table that can be resumed after a crash/relaunch. */
+  activeSession: ActiveSession | null;
+  setActiveSession(s: ActiveSession | null): void;
   loaded: boolean;
 }
 
@@ -35,22 +46,58 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [settings, setSettingsState] = useState<Settings>(DEFAULT_SETTINGS);
   const [progress, setProgressState] = useState<Progress>(DEFAULT_PROGRESS);
   const [session, setSessionState] = useState<Session | null>(null);
+  const [activeSession, setActiveSessionState] = useState<ActiveSession | null>(null);
   const [loaded, setLoaded] = useState(false);
+  const persistTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    void Promise.all([storage.loadProfile(), storage.loadSettings(), storage.loadProgress()]).then(([p, s, pr]) => {
+    void Promise.all([storage.loadProfile(), storage.loadSettings(), storage.loadProgress(), storage.loadActiveSession()]).then(([p, s, pr, as]) => {
       setProfileState(p);
       setSettingsState(s);
       setProgressState(pr);
+      setActiveSessionState(as);
       setLoaded(true);
     });
   }, []);
+
+  // Keep the resumable-session record in sync with whatever table we are at.
+  useEffect(() => {
+    if (!session) return;
+    const save = () => {
+      const st = session.client.state;
+      if (st.matchOver) {
+        setActiveSessionState(null);
+        void storage.clearActiveSession();
+        return;
+      }
+      if (!st.token) return;
+      const record: ActiveSession =
+        session.mode === 'local'
+          ? { kind: 'local', host: session.host!.serialize(), token: st.token, name: profile.name, avatar: profile.avatar, savedAt: Date.now() }
+          : { kind: 'online', signalUrl: settings.signalUrl, roomCode: session.roomCode, token: st.token, name: profile.name, avatar: profile.avatar, clubCode: session.clubCode, savedAt: Date.now() };
+      setActiveSessionState(record);
+      void storage.saveActiveSession(record);
+    };
+    const schedule = () => {
+      if (persistTimer.current) clearTimeout(persistTimer.current);
+      persistTimer.current = setTimeout(save, 400);
+    };
+    const unsubClient = session.client.onChange(schedule);
+    const unsubHost = session.host?.onChange(schedule);
+    schedule();
+    return () => {
+      unsubClient();
+      unsubHost?.();
+      if (persistTimer.current) clearTimeout(persistTimer.current);
+    };
+  }, [session, profile.name, profile.avatar, settings.signalUrl]);
 
   const value = useMemo<AppState>(
     () => ({
       screen: stack[stack.length - 1],
       go: (screen) => setStack((st) => [...st, screen]),
       back: () => setStack((st) => (st.length > 1 ? st.slice(0, -1) : st)),
+      reset: (screen) => setStack([screen]),
       profile,
       setProfile: (p) => {
         setProfileState(p);
@@ -76,9 +123,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           return s;
         });
       },
+      activeSession,
+      setActiveSession: (s) => {
+        setActiveSessionState(s);
+        if (s) void storage.saveActiveSession(s);
+        else void storage.clearActiveSession();
+      },
       loaded,
     }),
-    [stack, profile, settings, progress, session, loaded],
+    [stack, profile, settings, progress, session, activeSession, loaded],
   );
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

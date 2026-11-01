@@ -20,6 +20,7 @@ import {
   type GameState,
   type MatchSnapshot,
   type RuleSet,
+  type BotSkill,
 } from '@mjm/engine';
 import { commitFor, deriveSeed, makeSecret, verifyReveals, type Commitment, type Reveal } from './fairness';
 import type { Audit, ClientMessage, HostMessage, SeatInfo } from './messages';
@@ -44,12 +45,48 @@ export interface HostOptions {
   intermissionSeconds?: number;
   /** Names used for bots. */
   botNames?: string[];
+  /** Strength of bots at this table (default 'club'). */
+  botSkill?: BotSkill;
+  /** Restore a previously serialised host (crash recovery). */
+  restore?: SerializedHost;
+}
+
+export interface HostEvent {
+  type: 'hand_over' | 'match_over' | 'lobby' | 'state';
+  roomCode: string;
+  matchId: string;
+  seats: SeatInfo[];
+  scores: number[];
+  handNumber: number;
+}
+
+export interface SerializedHost {
+  version: 1;
+  roomCode: string;
+  matchId: string;
+  rules: RuleSet;
+  phase: HostPhase;
+  game: GameState | null;
+  snapshot: MatchSnapshot;
+  seats: Array<Omit<SeatState, 'peerId' | 'connected'> & { peerId: null; connected: boolean }>;
+  banks: number[];
+  audits: Audit[];
+  botSkill: BotSkill;
 }
 
 interface SeatState extends SeatInfo {
   secret?: string;
   commit?: string;
   ready: boolean;
+  /** Rejoin token issued in `welcome`; lets a crashed client reclaim its seat. */
+  token?: string;
+}
+
+interface SeatClock {
+  /** When the base turn clock expires. */
+  base: number;
+  /** Clock has moved into the player's time bank. */
+  inBank: boolean;
 }
 
 /** A direct link for a client living in the same process as the host (the host's own player). */
@@ -69,7 +106,14 @@ export class TableHost {
   game: GameState | null = null;
   private snapshot: MatchSnapshot = { handNumber: 0, dealerRotations: 0, dealerSeat: 0, dealerStreak: 0, prevailingWind: 0, scores: [0, 0, 0, 0], matchOver: false };
   private seats: SeatState[] = [0, 1, 2, 3].map((seat) => ({ seat, name: '', peerId: null, isBot: false, connected: false, ready: false }));
+  /** Deadline for non-playing phases (ceremony, intermission). */
   private deadline: number | null = null;
+  /** Per-seat action clocks while playing. */
+  private clocks = new Map<number, SeatClock>();
+  /** Remaining time bank per seat (ms) for the current hand. */
+  private banks: number[] = [0, 0, 0, 0];
+  private readonly botSkill: BotSkill;
+  private readonly eventListeners = new Set<(ev: HostEvent) => void>();
   private readonly now: () => number;
   private readonly botDelayMs: number;
   private readonly schedule: (fn: () => void, ms: number) => void;
@@ -87,15 +131,17 @@ export class TableHost {
     private readonly transport: Transport,
     opts: HostOptions,
   ) {
-    this.roomCode = opts.roomCode;
-    this.rules = opts.rules ?? DEFAULT_RULES;
-    this.matchId = opts.matchId ?? randomHex(8);
+    this.roomCode = opts.restore?.roomCode ?? opts.roomCode;
+    this.rules = opts.restore?.rules ?? opts.rules ?? DEFAULT_RULES;
+    this.matchId = opts.restore?.matchId ?? opts.matchId ?? randomHex(8);
     this.now = opts.now ?? (() => Date.now());
     this.botDelayMs = opts.botDelayMs ?? 0;
     this.schedule = opts.schedule ?? ((fn, ms) => void setTimeout(fn, ms));
     this.fillWithBots = opts.fillWithBots ?? true;
     this.intermissionMs = (opts.intermissionSeconds ?? 12) * 1000;
     this.botNames = opts.botNames ?? DEFAULT_BOT_NAMES;
+    this.botSkill = opts.botSkill ?? opts.restore?.botSkill ?? 'club';
+    if (opts.restore) this.restore(opts.restore);
     this.unsubs.push(transport.onMessage((from, msg) => this.handle(from, msg as ClientMessage)));
     this.unsubs.push(
       transport.onPeer((peerId, ev) => {
@@ -111,9 +157,63 @@ export class TableHost {
     return () => this.listeners.delete(cb);
   }
 
-  seatInfo(): SeatInfo[] {
-    return this.seats.map(({ seat, name, peerId, isBot, connected, avatar }) => ({ seat, name, peerId, isBot, connected, avatar }));
+  /** Match-level events (for club standings, analytics, persistence). */
+  onEvent(cb: (ev: HostEvent) => void): Unsubscribe {
+    this.eventListeners.add(cb);
+    return () => this.eventListeners.delete(cb);
   }
+
+  private emit(type: HostEvent['type']): void {
+    if (this.eventListeners.size === 0) return;
+    const ev: HostEvent = { type, roomCode: this.roomCode, matchId: this.matchId, seats: this.seatInfo(), scores: this.match().scores, handNumber: this.match().handNumber };
+    for (const l of this.eventListeners) l(ev);
+  }
+
+  seatInfo(): SeatInfo[] {
+    return this.seats.map(({ seat, name, peerId, isBot, connected, avatar, userId }, i) => ({ seat, name, peerId, isBot, connected, avatar, userId, timeBank: Math.round(this.banks[i] / 1000) }));
+  }
+
+  /**
+   * Snapshot everything needed to resume this table after the hosting app
+   * restarts. Peers are marked disconnected; they reclaim seats with their
+   * rejoin tokens. Call after every `onChange`.
+   */
+  serialize(): SerializedHost {
+    return {
+      version: 1,
+      roomCode: this.roomCode,
+      matchId: this.matchId,
+      rules: this.rules,
+      phase: this.phase,
+      game: this.game,
+      snapshot: this.snapshot,
+      seats: this.seats.map((s) => ({ ...s, peerId: null, connected: s.isBot })),
+      banks: this.banks.slice(),
+      audits: this.audits.slice(),
+      botSkill: this.botSkill,
+    };
+  }
+
+  private restore(data: SerializedHost): void {
+    this.phase = data.phase;
+    this.game = data.game;
+    this.snapshot = data.snapshot;
+    this.seats = data.seats.map((s) => ({ ...s, peerId: null, connected: s.isBot }));
+    this.banks = data.banks.slice();
+    this.audits.push(...data.audits);
+    // Any ceremony in flight cannot continue without the peers' secrets; restart it when they return.
+    if (this.phase === 'commit' || this.phase === 'reveal') {
+      for (const s of this.seats) {
+        s.commit = undefined;
+        s.secret = undefined;
+      }
+      this.phase = 'lobby';
+      this.pendingRestart = true;
+    }
+    if (this.phase === 'playing') this.clocks.clear();
+  }
+
+  private pendingRestart = false;
 
   /** Create an in-process link so the hosting device can also play. */
   localLink(peerId = `local-${randomHex(4)}`): Link {
@@ -166,18 +266,12 @@ export class TableHost {
 
   /** Call periodically (e.g. every 500 ms) to enforce timers. */
   tick(): void {
-    if (this.deadline === null || this.now() < this.deadline) return;
     if (this.phase === 'playing' && this.game) {
-      this.deadline = null;
-      // Auto-play every human seat that still owes an action.
-      for (const seat of this.seats) {
-        if (seat.isBot) continue;
-        const actions = legalActions(this.game, seat.seat);
-        if (actions.length === 0) continue;
-        const a = chooseAction(this.game, seat.seat, { seed: `timeout:${seat.seat}` }) ?? { type: 'pass' };
-        this.apply(seat.seat, a, 'timeout');
-      }
-    } else if (this.phase === 'hand_over') {
+      this.tickClocks();
+      return;
+    }
+    if (this.deadline === null || this.now() < this.deadline) return;
+    if (this.phase === 'hand_over') {
       this.deadline = null;
       this.afterHand();
     } else if (this.phase === 'commit' || this.phase === 'reveal') {
@@ -193,6 +287,44 @@ export class TableHost {
 
   nextDeadline(): number | null {
     return this.deadline;
+  }
+
+  /** Expire base clocks into time banks, and auto-play seats whose bank is gone. */
+  private tickClocks(): void {
+    const now = this.now();
+    let changed = false;
+    for (const [seat, clock] of [...this.clocks.entries()]) {
+      if (now < clock.base) continue;
+      if (!clock.inBank && this.banks[seat] > 0) {
+        clock.inBank = true;
+        changed = true;
+        continue;
+      }
+      if (clock.inBank && now < clock.base + this.banks[seat]) continue;
+      // Out of time: the bot moves for them.
+      this.banks[seat] = 0;
+      this.clocks.delete(seat);
+      if (!this.game || legalActions(this.game, seat).length === 0) continue;
+      const a = chooseAction(this.game, seat, { seed: `timeout:${seat}`, skill: this.botSkill }) ?? { type: 'pass' };
+      this.apply(seat, a, 'timeout');
+      return; // apply() re-arms clocks and may change phase
+    }
+    if (changed) this.broadcastState();
+  }
+
+  /** Deadline (ms) shown to a seat: base clock, or base + remaining bank once in the bank. */
+  private deadlineFor(seat: number): number | null {
+    const c = this.clocks.get(seat);
+    if (!c) return null;
+    return c.inBank ? c.base + this.banks[seat] : c.base;
+  }
+
+  /** Charge the bank for time spent past the base clock when a seat acts. */
+  private settleClock(seat: number): void {
+    const c = this.clocks.get(seat);
+    if (!c) return;
+    if (c.inBank) this.banks[seat] = Math.max(0, this.banks[seat] - (this.now() - c.base));
+    this.clocks.delete(seat);
   }
 
   close(): void {
@@ -219,6 +351,7 @@ export class TableHost {
   private broadcastLobby(): void {
     this.broadcast(() => ({ t: 'lobby', seats: this.seatInfo() }));
     this.notify();
+    this.emit('lobby');
   }
 
   private notify(): void {
@@ -228,7 +361,7 @@ export class TableHost {
   private handle(from: string, msg: ClientMessage): void {
     switch (msg.t) {
       case 'join':
-        return this.onJoin(from, msg.name, msg.avatar, msg.wantSeat);
+        return this.onJoin(from, msg.name, msg.avatar, msg.wantSeat, msg.token, msg.userId);
       case 'leave':
         return this.onDisconnect(from);
       case 'ping':
@@ -272,8 +405,23 @@ export class TableHost {
     }
   }
 
-  private onJoin(from: string, name: string, avatar: string | undefined, wantSeat?: number): void {
+  private onJoin(from: string, name: string, avatar: string | undefined, wantSeat?: number, token?: string, userId?: string): void {
     let seat = this.seats.find((s) => s.peerId === from);
+    if (!seat && token) {
+      // Reconnect with the rejoin token: works even if a bot has been standing in.
+      seat = this.seats.find((s) => s.token === token);
+      if (seat) {
+        seat.peerId = from;
+        if (seat.isBot && seat.name.endsWith('(away)')) {
+          seat.isBot = false;
+          seat.name = seat.name.replace(/ \(away\)$/, '');
+        }
+      }
+    }
+    if (!seat && userId) {
+      seat = this.seats.find((s) => !s.connected && !s.isBot && s.userId === userId && s.peerId !== null);
+      if (seat) seat.peerId = from;
+    }
     if (!seat) {
       // Reconnect: a disconnected seat with the same name.
       seat = this.seats.find((s) => !s.connected && !s.isBot && s.name === name && s.peerId !== null);
@@ -293,10 +441,25 @@ export class TableHost {
     }
     seat.name = name.slice(0, 24) || `Player ${seat.seat + 1}`;
     seat.avatar = avatar;
+    seat.userId = userId ?? seat.userId;
     seat.connected = true;
-    this.sendTo(from, { t: 'welcome', seat: seat.seat, roomCode: this.roomCode, rules: this.rules, seats: this.seatInfo(), matchId: this.matchId });
+    seat.token = seat.token ?? randomHex(16);
+    this.sendTo(from, { t: 'welcome', seat: seat.seat, roomCode: this.roomCode, rules: this.rules, seats: this.seatInfo(), matchId: this.matchId, token: seat.token });
     this.broadcastLobby();
-    if (this.phase === 'playing' && this.game) this.sendTo(from, this.stateMsg(seat.seat));
+    if (this.pendingRestart && this.seats.some((s) => s.connected && !s.isBot)) {
+      this.pendingRestart = false;
+      this.beginHand();
+      return;
+    }
+    if (this.phase === 'playing' && this.game) {
+      this.armClocks();
+      this.sendTo(from, this.stateMsg(seat.seat));
+      this.runBots();
+    } else if (this.phase === 'hand_over' && this.game) {
+      const last = this.audits[this.audits.length - 1];
+      if (last) this.sendTo(from, { t: 'hand_over', result: this.game.result!, audit: last, view: viewFor(this.game, seat.seat) });
+      if (this.deadline === null) this.deadline = this.now() + this.intermissionMs;
+    }
     else if (this.phase === 'commit' && !seat.commit) this.sendTo(from, { t: 'commit_request', handNumber: this.snapshot.handNumber });
     else if (this.phase === 'reveal' && !seat.secret) this.sendTo(from, { t: 'reveal_request', handNumber: this.snapshot.handNumber });
   }
@@ -313,9 +476,11 @@ export class TableHost {
       this.checkCeremony();
     } else if (this.phase === 'playing') {
       // A bot plays for them until they come back.
+      this.settleClock(seat.seat);
       this.runBots();
-    } else if (this.phase === 'hand_over' && this.seats.every((s) => s.isBot || !s.connected || s.ready)) {
-      this.afterHand();
+    } else if (this.phase === 'hand_over') {
+      if (!this.anyHumanConnected()) this.deadline = null;
+      else if (this.seats.every((s) => s.isBot || !s.connected || s.ready)) this.afterHand();
     }
     this.broadcastLobby();
   }
@@ -343,6 +508,8 @@ export class TableHost {
 
   private beginHand(): void {
     this.phase = 'commit';
+    this.clocks.clear();
+    this.banks = [0, 1, 2, 3].map(() => this.rules.timeBankSeconds * 1000);
     for (const s of this.seats) {
       s.commit = undefined;
       s.secret = undefined;
@@ -378,7 +545,8 @@ export class TableHost {
       const seed = deriveSeed(`${this.matchId}:${this.snapshot.handNumber}`, this.reveals());
       this.game = dealFromSnapshot(this.snapshot, seed, this.rules);
       this.phase = 'playing';
-      this.armDeadline();
+      this.deadline = null;
+      this.armClocks();
       this.broadcastState();
       this.runBots();
     }
@@ -395,31 +563,46 @@ export class TableHost {
   // ----------------------------------------------------------------- playing
 
   private stateMsg(seat: number): HostMessage {
-    return { t: 'state', view: viewFor(this.game!, seat), hash: hashState(this.game!), deadline: this.deadline };
+    const clock = this.clocks.get(seat);
+    return {
+      t: 'state',
+      view: viewFor(this.game!, seat),
+      hash: hashState(this.game!),
+      deadline: this.deadlineFor(seat),
+      timeBank: Math.round(this.banks[seat] / 1000),
+      inTimeBank: clock?.inBank ?? false,
+    };
   }
 
   private broadcastState(): void {
     this.broadcast((s) => this.stateMsg(s.seat));
     this.notify();
+    this.emit('state');
   }
 
-  private armDeadline(): void {
+  /** Start a clock for every connected human who owes an action and has none; drop clocks for seats that no longer act. */
+  private armClocks(): void {
     if (!this.game || this.game.phase === 'ended') {
-      this.deadline = null;
+      this.clocks.clear();
       return;
     }
-    const humansToAct = this.seats.some((s) => !s.isBot && s.connected && legalActions(this.game!, s.seat).length > 0);
-    this.deadline = humansToAct ? this.now() + this.rules.turnSeconds * 1000 : null;
+    for (const s of this.seats) {
+      const owes = !s.isBot && s.connected && legalActions(this.game, s.seat).length > 0;
+      if (owes && !this.clocks.has(s.seat)) this.clocks.set(s.seat, { base: this.now() + this.rules.turnSeconds * 1000, inBank: false });
+      else if (!owes && this.clocks.has(s.seat)) this.settleClock(s.seat);
+    }
   }
 
-  private apply(seat: number, action: Action, _source: 'player' | 'bot' | 'timeout'): void {
+  private apply(seat: number, action: Action, source: 'player' | 'bot' | 'timeout'): void {
     if (!this.game) return;
     this.game = applyAction(this.game, seat, action);
+    if (source === 'player') this.settleClock(seat);
     if (this.game.phase === 'ended') {
+      this.clocks.clear();
       this.onHandOver();
       return;
     }
-    this.armDeadline();
+    this.armClocks();
     this.broadcastState();
     this.runBots();
   }
@@ -432,7 +615,7 @@ export class TableHost {
     const go = () => {
       this.botTimerArmed = false;
       if (this.phase !== 'playing' || !this.game) return;
-      const a = chooseAction(this.game, actor.seat, { seed: `${this.matchId}:bot${actor.seat}` });
+      const a = chooseAction(this.game, actor.seat, { seed: `${this.matchId}:bot${actor.seat}`, skill: this.botSkill });
       if (a) this.apply(actor.seat, a, 'bot');
       else this.runBots();
     };
@@ -459,7 +642,13 @@ export class TableHost {
     this.deadline = this.now() + this.intermissionMs;
     this.broadcast((s) => ({ t: 'hand_over', result: game.result!, audit, view: viewFor(game, s.seat) }));
     this.notify();
-    if (this.seats.every((s) => s.isBot || !s.connected)) this.afterHand();
+    this.emit('hand_over');
+    // Nobody human is here to press "next": pause so a returning player finds the table where they left it.
+    if (!this.anyHumanConnected()) this.deadline = null;
+  }
+
+  private anyHumanConnected(): boolean {
+    return this.seats.some((s) => !s.isBot && s.connected);
   }
 
   private afterHand(): void {
@@ -471,6 +660,7 @@ export class TableHost {
       const finalView = { ...this.game, scores: this.snapshot.scores };
       this.broadcast((s) => ({ t: 'match_over', scores: this.snapshot.scores, view: viewFor(finalView, s.seat) }));
       this.notify();
+      this.emit('match_over');
       return;
     }
     this.beginHand();

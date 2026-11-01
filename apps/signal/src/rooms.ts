@@ -3,8 +3,8 @@
  * can be unit-tested. Rooms are identified by short codes players can read out
  * loud (PokerBros-style club/table codes).
  */
-import { TableHost, type Transport, type Unsubscribe } from '@mjm/net';
-import { withRules, type RuleSet } from '@mjm/engine';
+import { TableHost, type HostEvent, type Transport, type Unsubscribe } from '@mjm/net';
+import { withRules, type BotSkill, type RuleSet } from '@mjm/engine';
 
 export interface Socket {
   send(json: string): void;
@@ -13,7 +13,7 @@ export interface Socket {
 
 export type Inbound =
   | { t: 'hello'; peerId?: string }
-  | { t: 'create'; room?: string; hosted?: boolean; rules?: Partial<RuleSet> }
+  | { t: 'create'; room?: string; hosted?: boolean; rules?: Partial<RuleSet>; botSkill?: BotSkill }
   | { t: 'join'; room: string }
   | { t: 'to'; to: string; data: unknown }
   | { t: 'leave' };
@@ -31,6 +31,13 @@ interface Room {
   createdAt: number;
   /** Present when the server itself hosts the table (neutral host mode). */
   table?: { host: TableHost; transport: ServerTransport };
+  /** Rooms created through the API stay alive without peers until this time. */
+  keepAliveUntil?: number;
+}
+
+export interface RoomEvent {
+  room: string;
+  event: HostEvent;
 }
 
 const ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -38,9 +45,36 @@ const ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 export class RoomRegistry {
   private readonly peers = new Map<string, Peer>();
   private readonly rooms = new Map<string, Room>();
+  private readonly eventHandlers = new Set<(ev: RoomEvent) => void>();
   constructor(
     private readonly opts: { allowHosted?: boolean; now?: () => number; random?: () => number } = {},
   ) {}
+
+  /** Subscribe to events from server-hosted tables (for club standings). */
+  onRoomEvent(cb: (ev: RoomEvent) => void): () => void {
+    this.eventHandlers.add(cb);
+    return () => this.eventHandlers.delete(cb);
+  }
+
+  /** Create a server-hosted room with no peers yet (e.g. a club table opened from the API). */
+  createHostedRoom(opts: { code?: string; rules?: Partial<RuleSet>; botSkill?: BotSkill; keepAliveMs?: number } = {}): string {
+    if (!this.opts.allowHosted) throw new Error('Hosted tables are disabled');
+    const code = opts.code && /^[A-Z0-9]{4,8}$/.test(opts.code) && !this.rooms.has(opts.code) ? opts.code : this.newCode();
+    const room: Room = { code, host: '', peers: new Set(), createdAt: this.now(), keepAliveUntil: this.now() + (opts.keepAliveMs ?? 15 * 60_000) };
+    this.attachTable(room, opts.rules ?? {}, opts.botSkill);
+    this.rooms.set(code, room);
+    return code;
+  }
+
+  private attachTable(room: Room, rules: Partial<RuleSet>, botSkill?: BotSkill): void {
+    const transport = new ServerTransport(this, room.code, `server-${room.code}`);
+    const host = new TableHost(transport, { roomCode: room.code, rules: withRules(rules), botDelayMs: 600, botSkill });
+    host.onEvent((event) => {
+      for (const h of this.eventHandlers) h({ room: room.code, event });
+    });
+    room.table = { host, transport };
+    room.host = transport.id;
+  }
 
   private now(): number {
     return (this.opts.now ?? Date.now)();
@@ -79,12 +113,7 @@ export class RoomRegistry {
         this.leave(peer);
         const code = msg.room && /^[A-Z0-9]{4,8}$/.test(msg.room) && !this.rooms.has(msg.room) ? msg.room : this.newCode();
         const room: Room = { code, host: peer.id, peers: new Set([peer.id]), createdAt: this.now() };
-        if (msg.hosted && this.opts.allowHosted) {
-          const transport = new ServerTransport(this, code, `server-${code}`);
-          const host = new TableHost(transport, { roomCode: code, rules: withRules(msg.rules ?? {}), botDelayMs: 600 });
-          room.table = { host, transport };
-          room.host = transport.id;
-        }
+        if (msg.hosted && this.opts.allowHosted) this.attachTable(room, msg.rules ?? {}, msg.botSkill);
         this.rooms.set(code, room);
         peer.room = code;
         this.sendRoom(peer, room);
@@ -143,8 +172,10 @@ export class RoomRegistry {
     this.broadcast(room, { t: 'peer', peerId: peer.id, event: 'leave' });
     room.table?.transport.peerLeft(peer.id);
     if (room.peers.size === 0) {
-      room.table?.host.close();
-      this.rooms.delete(room.code);
+      if (room.keepAliveUntil !== undefined && room.keepAliveUntil > this.now()) {
+        // Club table: give players time to come back (the host pauses the match for them).
+        room.keepAliveUntil = this.now() + 15 * 60_000;
+      } else this.closeRoom(room);
     } else if (room.host === peer.id) {
       room.host = [...room.peers][0];
       this.broadcast(room, { t: 'room', room: room.code, peers: [...room.peers], host: room.host });
@@ -180,9 +211,27 @@ export class RoomRegistry {
     return { peers: this.peers.size, rooms: this.rooms.size, hostedTables: hosted };
   }
 
-  /** Drive hosted tables' timers. */
+  private closeRoom(room: Room): void {
+    room.table?.host.close();
+    this.rooms.delete(room.code);
+    for (const h of this.eventHandlers) h({ room: room.code, event: { type: 'match_over', roomCode: room.code, matchId: room.table?.host.matchId ?? '', seats: room.table?.host.seatInfo() ?? [], scores: room.table?.host.match().scores ?? [], handNumber: -1 } });
+  }
+
+  /** Drive hosted tables' timers and expire abandoned API-created rooms. */
   tick(): void {
-    for (const r of this.rooms.values()) r.table?.host.tick();
+    for (const r of [...this.rooms.values()]) {
+      r.table?.host.tick();
+      if (r.peers.size === 0 && r.keepAliveUntil !== undefined && r.keepAliveUntil <= this.now()) this.closeRoom(r);
+    }
+  }
+
+  hasRoom(code: string): boolean {
+    return this.rooms.has(code.toUpperCase());
+  }
+
+  closeRoomByCode(code: string): void {
+    const room = this.rooms.get(code.toUpperCase());
+    if (room) this.closeRoom(room);
   }
 
   hostedTable(code: string): TableHost | undefined {

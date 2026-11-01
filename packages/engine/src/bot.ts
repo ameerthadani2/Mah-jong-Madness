@@ -34,13 +34,14 @@ export interface DiscardAdvice {
 }
 
 /** Rank every discard for the player whose turn it is. Highest score first. */
-export function rankDiscards(s: GameState, seat: number): DiscardAdvice[] {
+export function rankDiscards(s: GameState, seat: number, skill: BotSkill = 'club'): DiscardAdvice[] {
   const p = s.players[seat];
   const setsNeeded = TOTAL_SETS - p.melds.length;
   const counts = countsFromKinds(p.hand.map(kindOf));
   const unseen = unseenCounts(s, seat);
   const options = discardOptions(counts, setsNeeded, unseen);
-  const dangerous = dangerKinds(s, seat);
+  const dangerous = skill === 'beginner' ? new Set<Kind>() : dangerKinds(s, seat);
+  const dangerWeight = skill === 'pro' ? 120 : 40;
   const out: DiscardAdvice[] = [];
   for (const o of options) {
     const tile = p.hand.find((t) => kindOf(t) === o.kind)!;
@@ -51,7 +52,9 @@ export function rankDiscards(s: GameState, seat: number): DiscardAdvice[] {
     // Fewer unseen copies → tile is less useful to keep.
     score += (4 - unseen[o.kind]) * 1;
     // Defence: avoid feeding a player who is visibly close to winning.
-    if (dangerous.has(o.kind)) score -= 40;
+    if (dangerous.has(o.kind)) score -= dangerWeight;
+    // Pros keep value tiles (own wind, round wind, dragons) a little longer when they still have a pair chance.
+    if (skill === 'pro' && isHonorKind(o.kind) && unseen[o.kind] >= 2 && counts[o.kind] === 1 && o.shanten > 1) score -= 4;
     out.push({ tile, kind: o.kind, shanten: o.shanten, acceptance: o.acceptance, accepts: o.accepts, score });
   }
   return out.sort((a, b) => b.score - a.score || a.kind - b.kind);
@@ -112,6 +115,8 @@ function removeOne(arr: Kind[], k: Kind): Kind[] {
   return out;
 }
 
+export type BotSkill = 'beginner' | 'club' | 'pro';
+
 export interface BotOptions {
   /** Claim pongs/chis only when they reduce shanten (default true). */
   greedyClaims?: boolean;
@@ -119,7 +124,18 @@ export interface BotOptions {
   valueConcealed?: boolean;
   /** Seed for tie-breaking randomness so bots do not play identically. */
   seed?: string;
+  /**
+   * Playing strength. `beginner` adds noise and ignores defence, `club` is the
+   * plain heuristic, `pro` weighs defence and hand value more heavily.
+   */
+  skill?: BotSkill;
 }
+
+export const BOT_SKILLS: Record<BotSkill, { label: string; labelZh: string; description: string; rating: number }> = {
+  beginner: { label: 'Beginner', labelZh: '新手', description: 'Makes efficiency mistakes and never folds. Good for learning the flow.', rating: 800 },
+  club: { label: 'Club player', labelZh: '牌友', description: 'Solid tile efficiency, claims when it helps, basic defence.', rating: 1400 },
+  pro: { label: 'Pro', labelZh: '高手', description: 'Efficient, defends against ready players and chases value.', rating: 1900 },
+};
 
 /** Decide an action for `seat`, or null if it is not their move. */
 export function chooseAction(s: GameState, seat: number, opts: BotOptions = {}): Action | null {
@@ -142,17 +158,27 @@ export function chooseAction(s: GameState, seat: number, opts: BotOptions = {}):
       // `before` is measured on a 3n+2 hand; the post-kong shape is 3n+1 for one fewer set.
       if (after <= before) return a;
     }
-    const ranked = rankDiscards(s, seat);
-    const top = ranked.filter((r) => r.score >= ranked[0].score - 5);
+    const skill = opts.skill ?? 'club';
+    const ranked = rankDiscards(s, seat, skill);
+    // Beginners pick among a wider band (including real mistakes); pros pick the best.
+    const band = skill === 'beginner' ? 1200 : skill === 'club' ? 5 : 0;
+    let top = ranked.filter((r) => r.score >= ranked[0].score - band);
+    if (skill === 'beginner' && rng.next() < 0.25 && ranked.length > 1) top = ranked.slice(0, Math.min(ranked.length, 4));
     return { type: 'discard', tile: top[rng.int(top.length)].tile };
   }
 
   // Claim phase
+  const skill = opts.skill ?? 'club';
   const greedy = opts.greedyClaims ?? true;
   const before = currentShanten(s, seat);
   const p = s.players[seat];
   const concealed = p.melds.every((m) => m.concealed);
-  const valueConcealed = (opts.valueConcealed ?? true) && concealed && before <= 1;
+  const valueConcealed = (opts.valueConcealed ?? skill !== 'beginner') && concealed && before <= (skill === 'pro' ? 2 : 1);
+  // Beginners grab almost any pong/chi they can.
+  if (skill === 'beginner') {
+    const grab = actions.find((a) => a.type === 'pong' || a.type === 'kong') ?? actions.find((a) => a.type === 'chi');
+    if (grab && rng.next() < 0.8) return grab;
+  }
   let best: { action: Action; gain: number } | null = null;
   for (const a of actions) {
     if (a.type === 'pass' || a.type === 'hu') continue;

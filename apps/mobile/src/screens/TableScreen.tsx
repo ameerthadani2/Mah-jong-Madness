@@ -66,8 +66,10 @@ export function TableScreen() {
     setSelected(null);
   };
   function leave() {
+    const over = state?.matchOver ?? false;
     app.setSession(null);
-    app.go({ name: 'home' });
+    if (over || session?.mode === 'local') app.setActiveSession(null);
+    app.reset({ name: 'home' });
   }
 
   const me = view.players[mySeat];
@@ -127,7 +129,8 @@ export function TableScreen() {
           <Pill text={`莊 ${seatInfo(view.dealerSeat)?.name ?? ''}${view.dealerStreak ? ` 連${view.dealerStreak}` : ''}`} />
           <Pill text={`剩 ${view.drawsLeft} 張`} />
           {session.roomCode !== 'LOCAL' && <Pill text={session.roomCode} />}
-          {countdown !== null && myMove && <Pill text={`${countdown}s`} tone={countdown <= 5 ? 'danger' : 'neutral'} />}
+          {countdown !== null && myMove && <Pill text={state.inTimeBank ? `⏳ bank ${countdown}s` : `${countdown}s`} tone={state.inTimeBank ? 'danger' : countdown <= 5 ? 'gold' : 'neutral'} />}
+          {!myMove && state.timeBank > 0 && <Pill text={`bank ${state.timeBank}s`} />}
         </Row>
         <Row>
           <Button small kind={coachOpen ? 'primary' : 'ghost'} title={coachOpen ? 'Coach on' : 'Coach'} onPress={() => setCoachOpen((v) => !v)} />
@@ -193,7 +196,7 @@ export function TableScreen() {
         </View>
       </View>
 
-      {state.lastResult && <ResultOverlay result={state.lastResult} view={view} state={state} mySeat={mySeat} onNext={() => session.client.ready()} onLeave={leave} />}
+      {state.lastResult && <ResultOverlay result={state.lastResult} view={view} state={state} mySeat={mySeat} onNext={() => session.client.ready()} onLeave={leave} onReview={() => app.go({ name: 'review' })} onFairness={() => app.go({ name: 'fairness' })} />}
       {state.matchOver && <MatchOverOverlay state={state} onLeave={leave} />}
       {state.lastError && (
         <View style={styles.toast}>
@@ -309,7 +312,7 @@ function WinCard({ w, view, state }: { w: WinRecord; view: TableView; state: Cli
   );
 }
 
-function ResultOverlay({ result, view, state, mySeat, onNext, onLeave }: { result: HandResult; view: TableView; state: ClientState; mySeat: number; onNext: () => void; onLeave: () => void }) {
+function ResultOverlay({ result, view, state, mySeat, onNext, onLeave, onReview, onFairness }: { result: HandResult; view: TableView; state: ClientState; mySeat: number; onNext: () => void; onLeave: () => void; onReview: () => void; onFairness: () => void }) {
   const [ready, setReady] = useState(false);
   const iWon = result.wins.some((w) => w.seat === mySeat);
   const audit = state.auditStatus;
@@ -326,8 +329,11 @@ function ResultOverlay({ result, view, state, mySeat, onNext, onLeave }: { resul
             <Pill key={i} text={`${state.seats.find((x) => x.seat === i)?.name ?? i}: ${s >= 0 ? '+' : ''}${s} (${result.scoreDelta[i] >= 0 ? '+' : ''}${result.scoreDelta[i]})`} tone={i === mySeat ? 'gold' : 'neutral'} />
           ))}
         </Row>
-        <Row>
-          <Pill text={audit === 'ok' ? '✓ Shuffle & log verified' : audit === 'failed' ? '⚠ Audit failed' : 'Audit pending'} tone={audit === 'ok' ? 'ok' : audit === 'failed' ? 'danger' : 'neutral'} />
+        <Row style={{ flexWrap: 'wrap' }}>
+          <Pressable onPress={onFairness}>
+            <Pill text={audit === 'ok' ? '✓ Shuffle & log verified · details' : audit === 'failed' ? '⚠ Audit failed · details' : 'Audit pending'} tone={audit === 'ok' ? 'ok' : audit === 'failed' ? 'danger' : 'neutral'} />
+          </Pressable>
+          <Button small kind="secondary" title="Review my hand" onPress={onReview} />
           {state.auditFailures.map((f, i) => (
             <Text key={i} style={{ color: colors.danger, fontSize: 12 }}>
               {f}

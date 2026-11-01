@@ -9,3 +9,5 @@ export * from './view';
 export * from './bot';
 export * from './hints';
 export * from './lessons';
+export * from './review';
+export * from './puzzles';

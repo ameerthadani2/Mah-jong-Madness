@@ -18,6 +18,24 @@ export function LearnScreen() {
       </Row>
       <View style={styles.grid}>
         <Card style={styles.drill}>
+          <Text style={styles.icon}>🧩</Text>
+          <H2>Daily puzzle</H2>
+          <P dim style={{ fontSize: 13 }}>Same puzzle for everyone, every day. Keep the streak alive.</P>
+          <Row style={{ justifyContent: 'space-between' }}>
+            <Pill text={`🔥 ${app.progress.dailyStreak} streak`} tone={app.progress.dailyStreak > 0 ? 'gold' : 'neutral'} />
+            <Button small title="Solve" onPress={() => app.go({ name: 'daily' })} />
+          </Row>
+        </Card>
+        <Card style={styles.drill}>
+          <Text style={styles.icon}>⚡</Text>
+          <H2>Puzzle Rush</H2>
+          <P dim style={{ fontSize: 13 }}>Three minutes, three strikes, puzzles that get harder as you go.</P>
+          <Row style={{ justifyContent: 'space-between' }}>
+            <Pill text={`Best ${app.progress.rushBest} · ${app.progress.rushRuns} runs`} />
+            <Button small title="Go" onPress={() => app.go({ name: 'rush' })} />
+          </Row>
+        </Card>
+        <Card style={styles.drill}>
           <Text style={styles.icon}>🎯</Text>
           <H2>Best-discard drill</H2>
           <P dim style={{ fontSize: 13 }}>Random hands, you pick the discard. The coach grades it with shanten and acceptance.</P>

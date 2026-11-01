@@ -11,6 +11,10 @@ import { TableScreen } from './src/screens/TableScreen';
 import { LearnScreen, LessonScreen } from './src/screens/LearnScreen';
 import { DrillScreen } from './src/screens/DrillScreen';
 import { SettingsScreen } from './src/screens/SettingsScreen';
+import { ClubScreen, ClubsScreen } from './src/screens/ClubsScreen';
+import { ReviewScreen } from './src/screens/ReviewScreen';
+import { FairnessScreen } from './src/screens/FairnessScreen';
+import { DailyPuzzleScreen, PuzzleRushScreen } from './src/screens/PuzzleScreens';
 
 function Router() {
   const { screen } = useApp();
@@ -19,6 +23,18 @@ function Router() {
       return <HomeScreen />;
     case 'online':
       return <OnlineScreen />;
+    case 'clubs':
+      return <ClubsScreen />;
+    case 'club':
+      return <ClubScreen code={screen.code} />;
+    case 'review':
+      return <ReviewScreen />;
+    case 'fairness':
+      return <FairnessScreen />;
+    case 'daily':
+      return <DailyPuzzleScreen />;
+    case 'rush':
+      return <PuzzleRushScreen />;
     case 'lobby':
       return <LobbyScreen />;
     case 'table':

@@ -1,0 +1,140 @@
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { dailyPuzzle, dailySeed, rushPuzzle } from '@mjm/engine';
+import { randomHex } from '@mjm/net';
+import { useApp } from '../app-state';
+import { todayKey } from '../storage';
+import { colors, space } from '../theme';
+import { PuzzleView } from '../components/PuzzleView';
+import { Button, Card, H1, H2, P, Pill, Row } from '../components/Ui';
+
+function yesterdayKey(): string {
+  const d = new Date();
+  d.setUTCDate(d.getUTCDate() - 1);
+  return todayKey(d);
+}
+
+export function DailyPuzzleScreen() {
+  const app = useApp();
+  const today = todayKey();
+  const puzzle = useMemo(() => dailyPuzzle(new Date()), []);
+  const solvedBefore = !!app.progress.dailySolved[today];
+  const [done, setDone] = useState(solvedBefore);
+  const [wasCorrect, setWasCorrect] = useState<boolean | null>(null);
+
+  const onResult = (r: { correct: boolean }) => {
+    setDone(true);
+    setWasCorrect(r.correct);
+    app.setProgress((p) => {
+      if (p.dailySolved[today]) return p;
+      const continues = p.dailyLastDate === yesterdayKey();
+      const streak = r.correct ? (continues ? p.dailyStreak + 1 : 1) : 0;
+      return { ...p, dailySolved: { ...p.dailySolved, [today]: r.correct }, dailyStreak: streak, dailyLastDate: today, drillsPlayed: p.drillsPlayed + 1, drillsCorrect: p.drillsCorrect + (r.correct ? 1 : 0) };
+    });
+  };
+
+  return (
+    <ScrollView contentContainerStyle={styles.wrap}>
+      <Row style={{ justifyContent: 'space-between' }}>
+        <H1 style={{ fontSize: 22 }}>Daily puzzle</H1>
+        <Button small kind="ghost" title="Back" onPress={app.back} />
+      </Row>
+      <Row>
+        <Pill text={dailySeed(new Date()).replace('daily-', '')} />
+        <Pill text={`🔥 ${app.progress.dailyStreak}-day streak`} tone={app.progress.dailyStreak > 0 ? 'gold' : 'neutral'} />
+        {solvedBefore && <Pill text={app.progress.dailySolved[today] ? 'Solved today' : 'Attempted today'} tone={app.progress.dailySolved[today] ? 'ok' : 'neutral'} />}
+      </Row>
+      <Card>
+        {solvedBefore && wasCorrect === null ? (
+          <>
+            <H2>Already played today</H2>
+            <P dim>Come back tomorrow for a new one, or keep sharp with Puzzle Rush.</P>
+            <Button title="Puzzle Rush" onPress={() => app.go({ name: 'rush' })} />
+          </>
+        ) : (
+          <PuzzleView puzzle={puzzle} onResult={onResult} onNext={app.back} nextLabel={done ? 'Done' : 'Next'} />
+        )}
+      </Card>
+      <P dim style={{ fontSize: 12 }}>
+        Everyone in the world gets the same puzzle each day. Weekends are harder.
+      </P>
+    </ScrollView>
+  );
+}
+
+const RUSH_SECONDS = 180;
+const RUSH_STRIKES = 3;
+
+export function PuzzleRushScreen() {
+  const app = useApp();
+  const [runSeed] = useState(() => `rush-${randomHex(4)}`);
+  const [index, setIndex] = useState(0);
+  const [score, setScore] = useState(0);
+  const [strikes, setStrikes] = useState(0);
+  const [left, setLeft] = useState(RUSH_SECONDS);
+  const [over, setOver] = useState(false);
+  const recorded = useRef(false);
+  const puzzle = useMemo(() => rushPuzzle(runSeed, index), [runSeed, index]);
+
+  useEffect(() => {
+    if (over) return;
+    const id = setInterval(() => setLeft((l) => (l <= 1 ? 0 : l - 1)), 1000);
+    return () => clearInterval(id);
+  }, [over]);
+  useEffect(() => {
+    if ((left === 0 || strikes >= RUSH_STRIKES) && !over) setOver(true);
+  }, [left, strikes, over]);
+  useEffect(() => {
+    if (!over || recorded.current) return;
+    recorded.current = true;
+    app.setProgress((p) => ({ ...p, rushRuns: p.rushRuns + 1, rushBest: Math.max(p.rushBest, score) }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [over]);
+
+  const onResult = (r: { correct: boolean }) => {
+    if (r.correct) setScore((s) => s + 1);
+    else setStrikes((s) => s + 1);
+  };
+
+  return (
+    <ScrollView contentContainerStyle={styles.wrap}>
+      <Row style={{ justifyContent: 'space-between' }}>
+        <H1 style={{ fontSize: 22 }}>Puzzle Rush</H1>
+        <Button small kind="ghost" title="Quit" onPress={app.back} />
+      </Row>
+      <Row>
+        <Pill text={`⏱ ${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}`} tone={left <= 20 ? 'danger' : 'neutral'} />
+        <Pill text={`✓ ${score}`} tone="ok" />
+        <Pill text={`✗ ${'●'.repeat(strikes)}${'○'.repeat(RUSH_STRIKES - strikes)}`} tone={strikes > 0 ? 'danger' : 'neutral'} />
+        <Pill text={`Best ${app.progress.rushBest}`} tone="gold" />
+      </Row>
+      <Card>
+        {over ? (
+          <View style={{ gap: 8, alignItems: 'center' }}>
+            <Text style={styles.big}>{score}</Text>
+            <H2>{score > app.progress.rushBest ? 'New personal best!' : score >= app.progress.rushBest && score > 0 ? 'Matched your best' : 'Run over'}</H2>
+            <P dim>
+              {strikes >= RUSH_STRIKES ? 'Three strikes.' : 'Time is up.'} Puzzles get harder the further you go.
+            </P>
+            <Row>
+              <Button title="Play again" onPress={() => app.go({ name: 'rush' })} />
+              <Button kind="ghost" title="Back to Learn" onPress={app.back} />
+            </Row>
+          </View>
+        ) : (
+          <>
+            <P dim style={{ fontSize: 12 }}>
+              Puzzle {index + 1} · {puzzle.type === 'discard' ? 'Best discard' : 'Read the wait'}
+            </P>
+            <PuzzleView puzzle={puzzle} onResult={onResult} onNext={() => setIndex((i) => i + 1)} autoAdvance />
+          </>
+        )}
+      </Card>
+    </ScrollView>
+  );
+}
+
+const styles = StyleSheet.create({
+  wrap: { padding: space.lg, gap: space.md },
+  big: { color: colors.gold, fontSize: 64, fontWeight: '900' },
+});

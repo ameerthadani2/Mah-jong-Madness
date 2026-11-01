@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { ScrollView, StyleSheet, TextInput, View } from 'react-native';
+import { describeRules } from '@mjm/engine';
 import { useApp } from '../app-state';
 import { createOnlineSession } from '../game/session';
 import { colors, space } from '../theme';
@@ -20,10 +21,12 @@ export function OnlineScreen() {
         signalUrl: app.settings.signalUrl,
         name: app.profile.name || 'Player',
         avatar: app.profile.avatar,
+        userId: app.profile.userId,
         rules: app.settings.rules,
         action,
         code: code.trim().toUpperCase(),
         hostedByServer: hosted,
+        botSkill: app.settings.botSkill,
       });
       app.setSession(session);
       app.go({ name: 'lobby' });
@@ -37,8 +40,11 @@ export function OnlineScreen() {
   return (
     <ScrollView contentContainerStyle={styles.wrap}>
       <Row style={{ justifyContent: 'space-between' }}>
-        <H1>Club</H1>
-        <Button small kind="ghost" title="Back" onPress={app.back} />
+        <H1>Quick table</H1>
+        <Row>
+          <Button small kind="ghost" title="Clubs" onPress={() => app.go({ name: 'clubs' })} />
+          <Button small kind="ghost" title="Back" onPress={app.back} />
+        </Row>
       </Row>
       <P dim>
         Tables are hosted peer to peer: the phone that creates the table runs the game and every player audits each hand. Share the 6-letter code by any chat app.
@@ -47,7 +53,7 @@ export function OnlineScreen() {
         <Card style={styles.col}>
           <H2>Create a table</H2>
           <P dim style={{ fontSize: 13 }}>
-            底 {app.settings.rules.basePoints} / 台 {app.settings.rules.taiPoints} · {app.settings.rules.handsPerMatch} dealer rotations · {app.settings.rules.turnSeconds}s per move
+            {describeRules(app.settings.rules)}
           </P>
           <Toggle label="Neutral server hosts the table" value={hosted} onChange={setHosted} />
           <P dim style={{ fontSize: 12 }}>
