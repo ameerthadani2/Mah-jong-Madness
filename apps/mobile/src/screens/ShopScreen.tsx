@@ -16,7 +16,7 @@ type Tab = 'diamonds' | 'looks' | 'coach' | 'vip' | 'club';
 
 export function ShopScreen() {
   const app = useApp();
-  const { width } = useWindowDimensions();
+  const { width, height } = useWindowDimensions();
   const [tab, setTab] = useState<Tab>('diamonds');
   const [busy, setBusy] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
@@ -52,6 +52,7 @@ export function ShopScreen() {
   const gap = 12;
   const cardW = Math.floor((inner - gap * (cols - 1)) / cols);
   const narrowTabs = width < 500;
+  const shortScreen = height < 500;
 
   const grid = (items: React.ReactNode[]) => <View style={[styles.grid, { gap }]}>{items}</View>;
 
@@ -80,7 +81,7 @@ export function ShopScreen() {
       {tab === 'diamonds' &&
         grid(
           DIAMOND_PACKS.map((p, i) => (
-            <ProductCard key={p.id} w={cardW} p={p} busy={busy === p.id} onBuy={() => void buy(p, 'money')} art={<GemPile tier={i} width="100%" height="100%" />} bg={['#E9DBFF', '#B79BFF']} amount={p.diamonds} />
+            <ProductCard key={p.id} w={cardW} short={shortScreen} p={p} busy={busy === p.id} onBuy={() => void buy(p, 'money')} art={<GemPile tier={i} width="100%" height="100%" />} bg={['#E9DBFF', '#B79BFF']} amount={p.diamonds} />
           )),
         )}
 
@@ -159,11 +160,11 @@ export function ShopScreen() {
   );
 }
 
-function ProductCard({ p, owned, busy, onBuy, onBuyDiamonds, art, bg, w, amount }: { p: Product; owned?: boolean; busy: boolean; onBuy: () => void; onBuyDiamonds?: () => void; art: React.ReactNode; bg: readonly [string, string]; w: number; amount?: number }) {
+function ProductCard({ p, owned, busy, onBuy, onBuyDiamonds, art, bg, w, amount, short }: { p: Product; owned?: boolean; busy: boolean; onBuy: () => void; onBuyDiamonds?: () => void; art: React.ReactNode; bg: readonly [string, string]; w: number; amount?: number; short?: boolean }) {
   const price = `$${p.priceUsd.toFixed(2)}${p.period ? `/${p.period === 'year' ? 'yr' : 'mo'}` : ''}`;
   return (
     <Card style={{ width: w, padding: 8, gap: 6 }}>
-      <View style={styles.window}>
+      <View style={[styles.window, short && { height: 68 }]}>
         <LinearGradient colors={bg} style={StyleSheet.absoluteFill} />
         <View style={styles.shine} />
         <View style={{ position: 'absolute', left: 4, right: 4, top: 4, bottom: 4 }}>{art}</View>

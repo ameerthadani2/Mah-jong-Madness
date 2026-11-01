@@ -63,21 +63,42 @@ export function LearnScreen() {
 }
 
 function DrillCard({ w, icon, tint, title, text, stat, statIcon, statTone, cta, kind, onPress }: { w?: number; icon: IconName; tint: string; title: string; text: string; stat?: string; statIcon?: IconName; statTone?: 'gold' | 'neutral'; cta: string; kind: 'gold' | 'danger' | 'primary' | 'secondary'; onPress: () => void }) {
+  const plateIcon = (
+    <View style={[styles.iconPlate, { backgroundColor: tint }]}>
+      <View style={styles.iconShine} />
+      <Icon name={icon} size={40} />
+    </View>
+  );
+  const foot = (
+    <Row style={{ justifyContent: 'space-between', flexWrap: 'wrap', rowGap: 6, marginTop: 'auto' }}>
+      {stat ? <Pill text={stat} icon={statIcon} tone={statTone ?? 'neutral'} size="sm" /> : <View />}
+      <Button small kind={kind} title={cta} onPress={onPress} />
+    </Row>
+  );
+  // Narrow columns (four across on tablets) stack the card vertically.
+  if (w !== undefined && w < 320) {
+    return (
+      <Card style={{ width: w, gap: 8, padding: 12 }}>
+        <Row gap={10}>
+          {plateIcon}
+          <Text style={[styles.drillTitle, { flex: 1 }]}>{title}</Text>
+        </Row>
+        <P dim style={{ fontSize: 12, lineHeight: 16 }} numberOfLines={3}>
+          {text}
+        </P>
+        {foot}
+      </Card>
+    );
+  }
   return (
     <Card style={{ width: w, flexDirection: 'row', gap: 12, padding: 12, alignItems: 'center' }}>
-      <View style={[styles.iconPlate, { backgroundColor: tint }]}>
-        <View style={styles.iconShine} />
-        <Icon name={icon} size={40} />
-      </View>
-      <View style={{ flex: 1, gap: 4 }}>
+      {plateIcon}
+      <View style={{ flex: 1, gap: 4, alignSelf: 'stretch' }}>
         <Text style={styles.drillTitle}>{title}</Text>
         <P dim style={{ fontSize: 12, lineHeight: 16 }} numberOfLines={2}>
           {text}
         </P>
-        <Row style={{ justifyContent: 'space-between', flexWrap: 'wrap', rowGap: 6 }}>
-          {stat ? <Pill text={stat} icon={statIcon} tone={statTone ?? 'neutral'} size="sm" /> : <View />}
-          <Button small kind={kind} title={cta} onPress={onPress} />
-        </Row>
+        {foot}
       </View>
     </Card>
   );
@@ -142,7 +163,7 @@ export function LessonScreen({ id }: { id: string }) {
         {step.hand && <HandView hand={step.hand} size="md" />}
         {quiz && (
           <View style={{ gap: 8 }}>
-            <P style={{ color: colors.infoShelf, fontWeight: '800' }}>{quiz.prompt}</P>
+            <P style={{ color: colors.infoShelf, fontFamily: fonts.bodyHeavy }}>{quiz.prompt}</P>
             <HandView
               hand={quiz.hand}
               size="md"
