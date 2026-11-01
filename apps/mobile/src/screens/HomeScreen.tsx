@@ -200,23 +200,33 @@ export function HomeScreen() {
       {needsName && (
         <Card style={wide ? { flexDirection: 'row', alignItems: 'center', gap: space.lg } : undefined}>
           <Row gap={14} style={{ flexShrink: 0 }}>
-            <AvatarPlate id={app.profile.avatar} size={wide ? 72 : 60} />
-            <View>
-              <Text style={styles.welcomeTitle}>Welcome!</Text>
-              <P dim style={{ fontSize: 13 }}>
-                Pick a name and a buddy.
-              </P>
-            </View>
+            <AvatarPlate id={app.profile.avatar} size={wide ? 80 : 60} />
+            {!wide && (
+              <View>
+                <Text style={styles.welcomeTitle}>Welcome!</Text>
+                <P dim style={{ fontSize: 13 }}>
+                  Pick a name and a buddy.
+                </P>
+              </View>
+            )}
           </Row>
-          <View style={{ flex: wide ? 1 : undefined, gap: 10 }}>
+          <View style={{ flex: wide ? 1 : undefined, gap: 8 }}>
+            {wide && (
+              <Row gap={10}>
+                <Text style={styles.welcomeTitle}>Welcome!</Text>
+                <P dim style={{ fontSize: 13 }}>
+                  Pick a name and a buddy.
+                </P>
+              </Row>
+            )}
             <Row gap={10}>
-              <TextInput testID="name-input" value={name} onChangeText={setName} placeholder="Your name" placeholderTextColor="#9AA0BF" style={[styles.input, { flex: 1 }]} maxLength={24} />
+              <TextInput testID="name-input" value={name} onChangeText={setName} placeholder="Your name" placeholderTextColor="#9AA0BF" style={[styles.input, { flex: 1 }, wide && { paddingVertical: 7 }]} maxLength={24} />
               <Button testID="save-name" title="Save" onPress={saveName} disabled={!name.trim()} />
             </Row>
-            <Row style={{ flexWrap: 'wrap', rowGap: 8 }} gap={8}>
+            <Row style={{ flexWrap: 'wrap', rowGap: 8 }} gap={wide ? 4 : 8}>
               {AVATARS.map((a) => (
                 <Pressable key={a} onPress={() => app.setProfile({ ...app.profile, avatar: a })} hitSlop={2} style={[styles.pick, app.profile.avatar === a && styles.pickOn]}>
-                  <AvatarPlate id={a} size={wide ? 34 : 40} />
+                  <AvatarPlate id={a} size={wide ? 36 : 40} />
                 </Pressable>
               ))}
             </Row>
