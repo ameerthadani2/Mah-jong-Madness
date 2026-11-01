@@ -1,0 +1,25 @@
+{
+  "expo": {
+    "name": "Mahjong Madness",
+    "slug": "mahjong-madness",
+    "scheme": "mahjongmadness",
+    "version": "0.1.0",
+    "orientation": "landscape",
+    "userInterfaceStyle": "dark",
+    "newArchEnabled": true,
+    "splash": { "backgroundColor": "#0b3d2e" },
+    "ios": {
+      "bundleIdentifier": "com.mahjongmadness.app",
+      "supportsTablet": true,
+      "requireFullScreen": true
+    },
+    "android": {
+      "package": "com.mahjongmadness.app",
+      "adaptiveIcon": { "backgroundColor": "#0b3d2e" }
+    },
+    "web": { "bundler": "metro" },
+    "extra": {
+      "signalUrl": "wss://signal.mahjongmadness.example/ws"
+    }
+  }
+}
