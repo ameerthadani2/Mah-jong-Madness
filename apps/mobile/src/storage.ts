@@ -17,6 +17,7 @@ export interface Settings {
   hostedTables: boolean;
   botSkill: BotSkill;
   sound: boolean;
+  tableTheme: string;
 }
 
 export interface Progress {
@@ -46,7 +47,7 @@ const KEYS = { profile: 'mjm.profile', settings: 'mjm.settings', progress: 'mjm.
 const extra = (Constants.expoConfig?.extra ?? {}) as { signalUrl?: string };
 
 export const DEFAULT_PROFILE: Profile = { userId: '', name: '', avatar: '🀄' };
-export const DEFAULT_SETTINGS: Settings = { rules: DEFAULT_RULES, coach: true, signalUrl: extra.signalUrl ?? 'ws://localhost:8787', hostedTables: false, botSkill: 'club', sound: true };
+export const DEFAULT_SETTINGS: Settings = { rules: DEFAULT_RULES, coach: true, signalUrl: extra.signalUrl ?? 'ws://localhost:8787', hostedTables: false, botSkill: 'club', sound: true, tableTheme: 'classic' };
 export const DEFAULT_PROGRESS: Progress = {
   lessonsDone: {},
   drillsPlayed: 0,

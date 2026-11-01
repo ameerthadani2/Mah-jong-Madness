@@ -1,7 +1,8 @@
-import React from 'react';
+import React, { useContext } from 'react';
 import { Pressable, StyleSheet, Text, View, type ViewStyle } from 'react-native';
 import { kindInfo, kindOf, type Kind, type TileId } from '@mjm/engine';
 import { colors } from '../theme';
+import { TableThemeContext } from '../themes';
 
 export type TileSize = 'xs' | 'sm' | 'md' | 'lg';
 
@@ -48,6 +49,7 @@ function suitColor(suit: string): string {
 
 export const Tile = React.memo(function Tile({ tile, kind, size = 'md', faceDown, selected, dimmed, highlight, onPress, onLongPress, style, rotated }: TileProps) {
   const d = DIMS[size];
+  const theme = useContext(TableThemeContext);
   const k = kind ?? (tile !== undefined ? kindOf(tile) : undefined);
   const info = k !== undefined ? kindInfo(k) : undefined;
   const body = (
@@ -55,9 +57,9 @@ export const Tile = React.memo(function Tile({ tile, kind, size = 'md', faceDown
       testID={faceDown ? 'tile-back' : `tile-${info?.code ?? 'x'}`}
       style={[
         styles.tile,
-        { width: rotated ? d.h : d.w, height: rotated ? d.w : d.h, borderRadius: d.w * 0.16 },
-        faceDown && styles.faceDown,
-        selected && styles.selected,
+        { width: rotated ? d.h : d.w, height: rotated ? d.w : d.h, borderRadius: d.w * 0.16, backgroundColor: theme.tileFace, borderColor: theme.tileEdge },
+        faceDown && { backgroundColor: theme.tileBack, borderColor: theme.feltDark },
+        selected && [styles.selected, { borderColor: theme.accent }],
         dimmed && styles.dimmed,
         highlight === 'good' && styles.good,
         highlight === 'bad' && styles.bad,

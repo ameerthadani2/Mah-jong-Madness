@@ -46,6 +46,25 @@ tests, sim   ──┘         │
 | Host peeks at the wall (modified app) | Not prevented in pure P2P mode. Options: neutral server host (same code, run by the club), or rotate who hosts each hand. Mental-mahjong shuffle planned. |
 | Player stalls | Turn timers; bot auto-plays on timeout or disconnect; seat is reclaimable by name. |
 
+### Clocks, time banks and game speeds
+
+Each seat that owes an action gets its own clock (`TableHost.clocks`): a base turn timer (`rules.turnSeconds`) and, once that expires, a per-hand time bank (`rules.timeBankSeconds`) that drains while they think. When the bank is empty the bot plays for them with the table's bot skill. Speeds are presets over those two numbers: Relaxed 30+60, Normal 15+30, Fast 10+20, Turbo 7+10, Hyper 4+0. The client receives its own deadline, remaining bank and an `inTimeBank` flag with every state update.
+
+### Resume after a crash or disconnect
+
+* **Guest**: `welcome` carries a random rejoin token. The app persists `{signalUrl, roomCode, token}`; on relaunch Home offers *Resume*, which rejoins the room and presents the token. The host reclaims the seat even if a bot has been standing in and the name changed.
+* **Host device (offline play)**: `TableHost.serialize()` is written to storage after every change (debounced). On relaunch the host is rebuilt with `restore` and the local client rejoins with its token, landing in the same hand with the same wall.
+* **Server-hosted club tables**: the room stays alive for 15 minutes with no peers and the host pauses at the next `hand_over` when no human is connected, so a club table survives everyone dropping at once.
+* **Phone-hosted online tables** still die with the host phone; host migration is on the roadmap.
+
+### Clubs (`apps/signal/src/clubs.ts`, `api.ts`)
+
+A club is a 6-letter code with an owner, admins and members, house rules (any `RuleSet`), settings (approval required, members may open tables, neutral host) and standings. `POST /api/clubs/:code/tables` creates a server-hosted room with the club's rules and registers it; host events keep the table list live and fold `match_over` scores into member standings. Identity is a client-generated `userId` today; Sign in with Apple/Google replaces it before launch (see roadmap).
+
+### Single-player and learning
+
+`puzzles.ts` generates seeded best-discard and read-the-wait puzzles (daily = date seed, Puzzle Rush = run seed + index, difficulty ramps). `review.ts` replays a finished hand from its audit (snapshot + seed + log) and grades every decision against the pro bot. Bots come in three skills with distinct policies so a learner can climb.
+
 ### Signaling server (`apps/signal`)
 
 Stateless-ish WebSocket server: `hello`, `create`, `join`, `to` (relay), `leave`. Rooms die when empty. With `HOST_TABLES` enabled, `create {hosted:true}` instantiates a `TableHost` inside the server bound to a `ServerTransport`, so the room's host peer is the server. `/health` returns counts.

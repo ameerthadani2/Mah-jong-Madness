@@ -1,0 +1,39 @@
+/**
+ * Table cosmetics: felt + tile skins. Purely visual, never affects play.
+ * These are the first monetisable surface (see docs/MONETISATION.md): the
+ * first two are free, the rest are marked premium for the shop to gate later.
+ */
+import React from 'react';
+
+export interface TableTheme {
+  id: string;
+  name: string;
+  nameZh: string;
+  felt: string;
+  feltDark: string;
+  feltLight: string;
+  tileFace: string;
+  tileEdge: string;
+  tileBack: string;
+  accent: string;
+  premium: boolean;
+}
+
+export const TABLE_THEMES: TableTheme[] = [
+  { id: 'classic', name: 'Classic Felt', nameZh: '經典綠', felt: '#0b3d2e', feltDark: '#072a20', feltLight: '#145c45', tileFace: '#f6f1e4', tileEdge: '#d9d0bb', tileBack: '#2f6b55', accent: '#e3b341', premium: false },
+  { id: 'midnight', name: 'Midnight Blue', nameZh: '午夜藍', felt: '#122a4a', feltDark: '#0b1b31', feltLight: '#1f3f6b', tileFace: '#f7f4ec', tileEdge: '#d6d0c2', tileBack: '#3b5a88', accent: '#ffcc5c', premium: false },
+  { id: 'nightmarket', name: 'Night Market', nameZh: '夜市霓虹', felt: '#2a0f3a', feltDark: '#1a0826', feltLight: '#45195f', tileFace: '#fff7fb', tileEdge: '#e6cfe0', tileBack: '#7a2d9c', accent: '#ff5fa2', premium: true },
+  { id: 'bamboo', name: 'Bamboo Garden', nameZh: '竹林', felt: '#3e5a1f', feltDark: '#2a3f13', feltLight: '#5a7d2f', tileFace: '#fbf8ea', tileEdge: '#dfd8bd', tileBack: '#6e8f3c', accent: '#f4d35e', premium: true },
+  { id: 'imperial', name: 'Imperial Red', nameZh: '宮廷紅', felt: '#6b1414', feltDark: '#4a0d0d', feltLight: '#8f2020', tileFace: '#fff9ee', tileEdge: '#e3d6bd', tileBack: '#a63a3a', accent: '#ffd26a', premium: true },
+];
+
+export const DEFAULT_TABLE_THEME = TABLE_THEMES[0];
+
+export function themeById(id: string | undefined): TableTheme {
+  return TABLE_THEMES.find((t) => t.id === id) ?? DEFAULT_TABLE_THEME;
+}
+
+export const TableThemeContext = React.createContext<TableTheme>(DEFAULT_TABLE_THEME);
+
+export const EMOTES = ['👍', '😂', '😮', '😭', '🔥', '🙏', '💤', '🀄'];
+export const QUICK_CHATS = ['Nice!', 'Sorry 🙇', 'GG', 'Hurry up ⏰', '好牌!', '放槍了 😭', '再來一局', '快點啦'];

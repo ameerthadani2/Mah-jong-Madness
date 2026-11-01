@@ -3,6 +3,7 @@ import { ScrollView, StyleSheet, Text, TextInput } from 'react-native';
 import { BOT_SKILLS, DEFAULT_RULES, describeRules, RULE_PRESETS, rulesFromPreset, SPEED_PRESETS, withSpeed, type BotSkill, type GameSpeed } from '@mjm/engine';
 import { useApp } from '../app-state';
 import { AVATARS } from '../storage';
+import { TABLE_THEMES } from '../themes';
 import { colors, space } from '../theme';
 import { Button, Card, H1, H2, P, Row, Stepper, Toggle } from '../components/Ui';
 
@@ -28,6 +29,17 @@ export function SettingsScreen() {
             </Text>
           ))}
         </Row>
+      </Card>
+      <Card>
+        <H2>Table look</H2>
+        <Row style={{ flexWrap: 'wrap' }}>
+          {TABLE_THEMES.map((t) => (
+            <Text key={t.id} onPress={() => setSettings({ ...settings, tableTheme: t.id })} style={[styles.chip, { backgroundColor: t.felt, color: t.accent, borderWidth: 2, borderColor: settings.tableTheme === t.id ? t.accent : 'transparent' }]}>
+              {t.name} {t.premium ? '✦' : ''}
+            </Text>
+          ))}
+        </Row>
+        <P dim style={{ fontSize: 12 }}>✦ marks looks that will be part of the shop; all are unlocked in this build.</P>
       </Card>
       <Card>
         <H2>Coach & bots</H2>

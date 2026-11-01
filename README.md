@@ -46,6 +46,15 @@ npx expo install react-native-webrtc
 npx expo run:ios   # or run:android
 ```
 
+## Features at a glance
+
+* **Play anywhere**: offline vs bots (3 skill levels), quick tables by code, or clubs with your own house rules, standings and server-hosted tables.
+* **Poker-style clocks**: Relaxed / Normal / Fast / Turbo / Hyper speeds with a per-hand time bank; the bot steps in when you run out.
+* **Never lose a game**: crash, reload or switch networks and resume the same hand with a rejoin token (guests) or a saved host snapshot (offline).
+* **Learn like chess.com**: coach panel at the table, daily puzzle with streaks, Puzzle Rush, drills, 6 lessons, and a hand review that grades every decision.
+* **Provably not rigged**: commit-reveal shuffles audited by every phone, with a Fair-play screen showing the seeds and hashes.
+* **Make it yours**: avatars, table looks, emotes and quick chat.
+
 ## How a hand is kept honest
 
 1. Every seat (humans and bots) picks a random secret and publishes its SHA-256 commitment.

@@ -10,6 +10,7 @@ import { DiscardPool, MeldView, SeatBadge } from '../components/TableParts';
 import { Button, P, Pill, Row } from '../components/Ui';
 
 import * as Haptics from 'expo-haptics';
+import { EMOTES, QUICK_CHATS, TableThemeContext, themeById } from '../themes';
 
 export function TableScreen() {
   const app = useApp();
@@ -18,6 +19,14 @@ export function TableScreen() {
   const { width, height } = useWindowDimensions();
   const [selected, setSelected] = useState<TileId | null>(null);
   const [coachOpen, setCoachOpen] = useState(app.settings.coach);
+  const [emotePicker, setEmotePicker] = useState(false);
+  const theme = themeById(app.settings.tableTheme);
+  const [, forceTick] = useState(0);
+  // Re-render every second so emote bubbles and chat lines fade on time.
+  useEffect(() => {
+    const id = setInterval(() => forceTick((n) => n + 1), 1000);
+    return () => clearInterval(id);
+  }, []);
   const countdown = useCountdown(state?.deadline ?? null);
   const lastHandCounted = useRef<number>(-1);
 
@@ -97,7 +106,10 @@ export function TableScreen() {
     const vertical = r === 1 || r === 3;
     return (
       <View style={[styles.other, vertical ? styles.otherVertical : styles.otherHorizontal]} key={seat}>
-        <SeatBadge seat={seat} info={seatInfo(seat)} player={p} dealerSeat={view.dealerSeat} isTurn={view.turn === seat && view.phase === 'discard'} score={view.scores[seat]} compact viewerSeat={mySeat} />
+        <Row>
+          <SeatBadge seat={seat} info={seatInfo(seat)} player={p} dealerSeat={view.dealerSeat} isTurn={view.turn === seat && view.phase === 'discard'} score={view.scores[seat]} compact viewerSeat={mySeat} />
+          {latestEmote(seat) && <Text style={styles.emoteBubble}>{latestEmote(seat)}</Text>}
+        </Row>
         <View style={[styles.otherTiles, vertical && { flexDirection: 'column', alignItems: 'flex-start' }]}>
           <View style={{ flexDirection: 'row', gap: 1, flexWrap: 'wrap', maxWidth: vertical ? sideWidth - 16 : undefined }}>
             {Array.from({ length: Math.min(p.handCount, 17) }).map((_, i) => (
@@ -117,11 +129,18 @@ export function TableScreen() {
 
   const windName = WINDS[view.prevailingWind];
   const myInfo = seatInfo(mySeat);
+  const now = Date.now();
+  const latestEmote = (seat: number) => {
+    const e = [...state.emotes].reverse().find((x) => x.seat === seat && now - x.at < 3500);
+    return e?.emote;
+  };
+  const recentChat = state.chat.filter((c) => now - c.at < 6000).slice(-3);
   const waitKinds = new Set(hint?.waits.map((w) => w.kind) ?? []);
   const bestDiscard = hint?.bestDiscard?.tile;
 
   return (
-    <View style={styles.root}>
+    <TableThemeContext.Provider value={theme}>
+    <View style={[styles.root, { backgroundColor: theme.felt }]}>
       {/* Top bar */}
       <View style={styles.topBar}>
         <Row>
@@ -133,10 +152,47 @@ export function TableScreen() {
           {!myMove && state.timeBank > 0 && <Pill text={`bank ${state.timeBank}s`} />}
         </Row>
         <Row>
+          <Button small kind={emotePicker ? 'primary' : 'ghost'} title="😀" onPress={() => setEmotePicker((v) => !v)} />
           <Button small kind={coachOpen ? 'primary' : 'ghost'} title={coachOpen ? 'Coach on' : 'Coach'} onPress={() => setCoachOpen((v) => !v)} />
           <Button small kind="ghost" title="Leave" onPress={leave} />
         </Row>
       </View>
+      {emotePicker && (
+        <View style={styles.emoteBar}>
+          {EMOTES.map((e) => (
+            <Pressable
+              key={e}
+              onPress={() => {
+                session.client.emote(e);
+                setEmotePicker(false);
+              }}
+            >
+              <Text style={{ fontSize: 24 }}>{e}</Text>
+            </Pressable>
+          ))}
+          {QUICK_CHATS.map((q) => (
+            <Pressable
+              key={q}
+              onPress={() => {
+                session.client.chat(q);
+                setEmotePicker(false);
+              }}
+              style={styles.quickChat}
+            >
+              <Text style={{ color: colors.text, fontSize: 12, fontWeight: '700' }}>{q}</Text>
+            </Pressable>
+          ))}
+        </View>
+      )}
+      {recentChat.length > 0 && (
+        <View style={styles.chatLog}>
+          {recentChat.map((c, i) => (
+            <Text key={i} style={styles.chatLine}>
+              <Text style={{ color: colors.gold }}>{c.name}:</Text> {c.text}
+            </Text>
+          ))}
+        </View>
+      )}
 
       <View style={styles.body}>
         {/* Left: 上家 */}
@@ -168,7 +224,10 @@ export function TableScreen() {
           <ActionBar actions={actions} view={view} act={act} selected={selected} hint={hint} />
           {/* My hand */}
           <View style={styles.hand}>
-            <SeatBadge seat={mySeat} info={myInfo} player={me} dealerSeat={view.dealerSeat} isTurn={isDiscardPhase} score={view.scores[mySeat]} compact viewerSeat={mySeat} />
+            <Row>
+              <SeatBadge seat={mySeat} info={myInfo} player={me} dealerSeat={view.dealerSeat} isTurn={isDiscardPhase} score={view.scores[mySeat]} compact viewerSeat={mySeat} />
+              {latestEmote(mySeat) && <Text style={styles.emoteBubble}>{latestEmote(mySeat)}</Text>}
+            </Row>
             <View style={styles.handTiles}>
               {(me.hand ?? []).map((t, i) => {
                 const isDrawn = view.lastDrawn === t && isDiscardPhase;
@@ -205,6 +264,7 @@ export function TableScreen() {
       )}
       {pendingTile !== undefined && !view.pending && null}
     </View>
+    </TableThemeContext.Provider>
   );
 }
 
@@ -410,4 +470,9 @@ const styles = StyleSheet.create({
   itemText: { color: colors.text, fontSize: 13 },
   itemTai: { color: colors.gold, fontWeight: '800', fontSize: 13 },
   toast: { position: 'absolute', bottom: 8, alignSelf: 'center', backgroundColor: colors.panelStrong, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8 },
+  emoteBar: { position: 'absolute', top: 44, right: 12, zIndex: 20, flexDirection: 'row', flexWrap: 'wrap', gap: 8, maxWidth: 420, backgroundColor: colors.panelStrong, padding: 10, borderRadius: radius.md, borderWidth: 1, borderColor: colors.goldDim, alignItems: 'center' },
+  quickChat: { backgroundColor: colors.feltLight, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999 },
+  chatLog: { position: 'absolute', top: 44, left: '30%', right: '30%', zIndex: 10, alignItems: 'center', gap: 2 },
+  chatLine: { color: colors.text, fontSize: 12, backgroundColor: colors.panelStrong, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8, overflow: 'hidden' },
+  emoteBubble: { fontSize: 22, backgroundColor: colors.ivory, borderRadius: 14, paddingHorizontal: 6, overflow: 'hidden' },
 });
