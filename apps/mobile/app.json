@@ -7,19 +7,48 @@
     "orientation": "landscape",
     "userInterfaceStyle": "dark",
     "newArchEnabled": true,
-    "splash": { "backgroundColor": "#0b3d2e" },
+    "splash": {
+      "backgroundColor": "#0b3d2e"
+    },
     "ios": {
       "bundleIdentifier": "com.mahjongmadness.app",
       "supportsTablet": true,
-      "requireFullScreen": true
+      "requireFullScreen": true,
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false,
+        "UISupportedInterfaceOrientations": [
+          "UIInterfaceOrientationLandscapeLeft",
+          "UIInterfaceOrientationLandscapeRight"
+        ],
+        "UISupportedInterfaceOrientations~ipad": [
+          "UIInterfaceOrientationLandscapeLeft",
+          "UIInterfaceOrientationLandscapeRight"
+        ],
+        "NSLocalNetworkUsageDescription": "Mahjong Madness connects to a game host on your local network when you play with friends nearby."
+      },
+      "buildNumber": "1"
     },
     "android": {
       "package": "com.mahjongmadness.app",
-      "adaptiveIcon": { "backgroundColor": "#0b3d2e" }
+      "adaptiveIcon": {
+        "backgroundColor": "#0b3d2e"
+      },
+      "versionCode": 1
     },
-    "web": { "bundler": "metro" },
+    "web": {
+      "bundler": "metro"
+    },
     "extra": {
-      "signalUrl": "wss://signal.mahjongmadness.example/ws"
+      "signalUrl": "wss://signal.mahjongmadness.example/ws",
+      "eas": {
+        "projectId": "REPLACE_WITH_EAS_PROJECT_ID"
+      }
+    },
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/REPLACE_WITH_EAS_PROJECT_ID"
     }
   }
 }

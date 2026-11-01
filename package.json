@@ -13,7 +13,11 @@
     "lint": "npm run lint --workspaces --if-present",
     "mobile": "npm run start -w @mjm/mobile",
     "signal": "npm run start -w @mjm/signal",
-    "sim": "npm run sim -w @mjm/engine"
+    "sim": "npm run sim -w @mjm/engine",
+    "mobile:tunnel": "npm run start -w @mjm/mobile -- --tunnel",
+    "ios": "npm run ios -w @mjm/mobile",
+    "ios:build": "cd apps/mobile && eas build --platform ios --profile preview",
+    "ios:submit": "cd apps/mobile && eas submit --platform ios --latest"
   },
   "engines": {
     "node": ">=20"
