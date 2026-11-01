@@ -13,11 +13,11 @@ const KIND: Record<ButtonKind, { fill: string; shelf: string; outline: string; t
 };
 
 /** Chunky Flat-2.0 button: 3px outline, hard shelf, drops 4px when pressed. */
-export function Button({ title, onPress, kind = 'primary', disabled, style, small }: { title: string; onPress?: () => void; kind?: ButtonKind; disabled?: boolean; style?: StyleProp<ViewStyle>; small?: boolean }) {
+export function Button({ title, onPress, kind = 'primary', disabled, style, small, testID }: { title: string; onPress?: () => void; kind?: ButtonKind; disabled?: boolean; style?: StyleProp<ViewStyle>; small?: boolean; testID?: string }) {
   const k = KIND[kind];
   const shelf = small ? 4 : 6;
   return (
-    <Pressable onPress={onPress} disabled={disabled} hitSlop={small ? 6 : 2} style={({ pressed }) => [{ opacity: disabled ? 0.45 : 1, paddingBottom: pressed ? 0 : shelf, transform: [{ translateY: pressed ? shelf : 0 }] }, style]}>
+    <Pressable testID={testID} onPress={onPress} disabled={disabled} hitSlop={small ? 6 : 2} style={({ pressed }) => [{ opacity: disabled ? 0.45 : 1, paddingBottom: pressed ? 0 : shelf, transform: [{ translateY: pressed ? shelf : 0 }] }, style]}>
       {({ pressed }) => (
         <View style={[styles.btnShell, { borderColor: k.outline, backgroundColor: k.shelf, borderRadius: small ? 14 : 18 }]}>
           <View style={[styles.btnFace, { backgroundColor: k.fill, borderRadius: small ? 11 : 15, marginBottom: pressed ? 0 : shelf - 1 }, small && styles.btnFaceSmall]}>

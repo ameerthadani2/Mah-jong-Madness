@@ -1,0 +1,68 @@
+name: Web preview (GitHub Pages)
+# Publishes the web build of the app to https://<owner>.github.io/<repo>/ so it can be played
+# in plain Safari on any iPhone — no app install, no Claude app, no iOS update.
+# One-time setup (from the phone): repo Settings → Pages → Build and deployment → Source: "GitHub Actions".
+on:
+  push:
+    branches: [claude/p2p-taiwanese-mahjong-app-9lzdls, main]
+    paths: [apps/mobile/**, packages/**, .github/workflows/web-preview.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      pages_ready: ${{ steps.pages.outcome == 'success' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Export web build under the repo sub-path
+        working-directory: apps/mobile
+        env:
+          CI: 1
+          EXPO_BASE_URL: /${{ github.event.repository.name }}
+        run: |
+          npx expo export --platform web --output-dir dist-pages
+          cp dist-pages/index.html dist-pages/404.html
+          touch dist-pages/.nojekyll
+      - name: Check that Pages is enabled
+        id: pages
+        continue-on-error: true
+        uses: actions/configure-pages@v5
+      - name: Explain the one-time setup
+        if: steps.pages.outcome != 'success'
+        run: |
+          echo "## Web preview built, but GitHub Pages is not switched on yet" >> $GITHUB_STEP_SUMMARY
+          echo "On your phone: this repo → **Settings → Pages → Build and deployment → Source: GitHub Actions**. Then re-run this workflow." >> $GITHUB_STEP_SUMMARY
+          echo "::notice::Enable GitHub Pages (Settings → Pages → Source: GitHub Actions) and re-run to publish the web preview."
+      - uses: actions/upload-pages-artifact@v3
+        if: steps.pages.outcome == 'success'
+        with:
+          path: apps/mobile/dist-pages
+
+  deploy:
+    needs: build
+    if: needs.build.outputs.pages_ready == 'true'
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
+      - run: |
+          echo "## Play it" >> $GITHUB_STEP_SUMMARY
+          echo "${{ steps.deployment.outputs.page_url }}" >> $GITHUB_STEP_SUMMARY

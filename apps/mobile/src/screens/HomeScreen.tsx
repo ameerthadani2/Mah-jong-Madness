@@ -64,7 +64,7 @@ export function HomeScreen() {
       {needsName ? (
         <Card>
           <P>Pick a name and avatar</P>
-          <TextInput value={name} onChangeText={setName} placeholder="Your name" placeholderTextColor={colors.textDim} style={styles.input} maxLength={24} />
+          <TextInput testID="name-input" value={name} onChangeText={setName} placeholder="Your name" placeholderTextColor={colors.textDim} style={styles.input} maxLength={24} />
           <Row style={{ flexWrap: 'wrap' }}>
             {AVATARS.map((a) => (
               <Text key={a} onPress={() => app.setProfile({ ...app.profile, avatar: a })} style={[styles.avatar, app.profile.avatar === a && styles.avatarOn]}>
@@ -72,7 +72,7 @@ export function HomeScreen() {
               </Text>
             ))}
           </Row>
-          <Button title="Save" onPress={saveName} disabled={!name.trim()} />
+          <Button testID="save-name" title="Save" onPress={saveName} disabled={!name.trim()} />
         </Card>
       ) : (
         <Card style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -86,7 +86,7 @@ export function HomeScreen() {
             </View>
           </Row>
           <Row>
-            <Button small kind="ghost" title={`💎 ${app.wallet.diamonds + app.wallet.bonusDiamonds}`} onPress={() => app.go({ name: 'shop' })} />
+            <Button testID="open-shop" small kind="ghost" title={`💎 ${app.wallet.diamonds + app.wallet.bonusDiamonds}`} onPress={() => app.go({ name: 'shop' })} />
             <Button small kind="ghost" title="Edit" onPress={() => app.go({ name: 'settings' })} />
           </Row>
         </Card>
@@ -126,14 +126,14 @@ export function HomeScreen() {
               );
             })}
           </Row>
-          <Button title="Start match" onPress={playBots} />
+          <Button testID="start-match" title="Start match" onPress={playBots} />
         </Card>
         <Card style={styles.tile}>
           <Text style={styles.tileIcon}>👥</Text>
           <Text style={styles.tileTitle}>Clubs & Friends</Text>
           <P dim style={styles.tileText}>Create a club with your rules, or open a quick table and share the code.</P>
           <Row>
-            <Button title="My clubs" kind="secondary" onPress={() => (needsName ? saveName() : undefined) ?? app.go({ name: 'clubs' })} />
+            <Button testID="open-clubs" title="My clubs" kind="secondary" onPress={() => (needsName ? saveName() : undefined) ?? app.go({ name: 'clubs' })} />
             <Button small kind="ghost" title="Quick table" onPress={() => (needsName ? saveName() : undefined) ?? app.go({ name: 'online' })} />
           </Row>
         </Card>
@@ -152,7 +152,7 @@ export function HomeScreen() {
           <P dim style={styles.tileText}>Lessons, Puzzle Rush, drills and hand reviews{avgAccuracy !== null ? ` · ${avgAccuracy}% review accuracy` : ''}.</P>
           <Row style={{ justifyContent: 'space-between' }}>
             <Pill text={`${Object.keys(app.progress.lessonsDone).length}/6 lessons`} tone="gold" />
-            <Button small kind="secondary" title="Open" onPress={() => app.go({ name: 'learn' })} />
+            <Button testID="open-learn" small kind="secondary" title="Open" onPress={() => app.go({ name: 'learn' })} />
           </Row>
         </Card>
       </View>

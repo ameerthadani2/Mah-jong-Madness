@@ -15,7 +15,7 @@ export function LearnScreen() {
     <ScrollView contentContainerStyle={styles.wrap}>
       <Row style={{ justifyContent: 'space-between' }}>
         <H1>Learn</H1>
-        <Button small kind="ghost" title="Back" onPress={app.back} />
+        <Button testID="back" small kind="ghost" title="Back" onPress={app.back} />
       </Row>
       <View style={styles.grid}>
         <Card style={styles.drill}>

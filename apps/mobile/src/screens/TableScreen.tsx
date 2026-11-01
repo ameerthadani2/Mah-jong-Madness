@@ -156,7 +156,7 @@ export function TableScreen() {
         <Row>
           <Button small kind={emotePicker ? 'primary' : 'ghost'} title="😀" onPress={() => setEmotePicker((v) => !v)} />
           <Button small kind={coachOpen ? 'primary' : 'ghost'} title={portrait ? (coachOpen ? 'Coach ✓' : 'Coach') : coachOpen ? 'Coach on' : 'Coach'} onPress={() => setCoachOpen((v) => !v)} />
-          <Button small kind="ghost" title="Leave" onPress={leave} />
+          <Button testID="leave-table" small kind="ghost" title="Leave" onPress={leave} />
         </Row>
       </View>
       {emotePicker && (

@@ -46,7 +46,7 @@ export function ShopScreen() {
         <H1>Shop</H1>
         <Row>
           <Pill text={`💎 ${totalDiamonds(wallet)}`} tone="gold" />
-          <Button small kind="ghost" title="Back" onPress={app.back} />
+          <Button testID="back" small kind="ghost" title="Back" onPress={app.back} />
         </Row>
       </Row>
       <P dim style={{ fontSize: 12 }}>
