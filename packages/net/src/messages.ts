@@ -18,10 +18,16 @@ export interface Audit {
   matchId: string;
   handNumber: number;
   seed: string;
+  /** Seat 0–3 are players; seat 4 is the host's own committed share. */
   commits: Commitment[];
   reveals: Reveal[];
   log: LoggedAction[];
   finalHash: string;
+  /** Seed→wall construction identifier (see engine WALL_RNG_VERSION). */
+  rngVersion: string;
+  /** How many times the ceremony restarted for this hand and why (visible to players). */
+  ceremonyAttempts: number;
+  restartReasons: string[];
 }
 
 /** Client → host */

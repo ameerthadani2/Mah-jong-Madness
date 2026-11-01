@@ -1,12 +1,12 @@
 import React, { useState } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useApp } from '../app-state';
-import { CLUB_PRODUCTS, COSMETICS, DIAMOND_PACKS, SUBSCRIPTIONS, type Product } from '../monetisation/catalog';
-import { buyWithDiamonds, hasCoachPro, ownsCosmetic, store } from '../monetisation/store';
+import { CLUB_PRODUCTS, COSMETICS, DIAMOND_PACKS, SUBSCRIPTIONS, VIP_CARDS, type Product } from '../monetisation/catalog';
+import { buyWithDiamonds, coachTier, hasVip, ownsCosmetic, store, totalDiamonds } from '../monetisation/store';
 import { colors, space } from '../theme';
 import { Button, Card, H1, H2, P, Pill, Row } from '../components/Ui';
 
-type Tab = 'diamonds' | 'looks' | 'coach' | 'club';
+type Tab = 'diamonds' | 'looks' | 'coach' | 'vip' | 'club';
 
 export function ShopScreen() {
   const app = useApp();
@@ -34,16 +34,18 @@ export function ShopScreen() {
   const tabs: Array<[Tab, string]> = [
     ['looks', 'Looks'],
     ['diamonds', 'Diamonds'],
-    ['coach', 'Coach Pro'],
+    ['coach', 'Coach'],
+    ['vip', 'VIP'],
     ['club', 'Clubs'],
   ];
+  const tier = coachTier(wallet);
 
   return (
     <ScrollView contentContainerStyle={styles.wrap}>
       <Row style={{ justifyContent: 'space-between' }}>
         <H1>Shop</H1>
         <Row>
-          <Pill text={`💎 ${wallet.diamonds}`} tone="gold" />
+          <Pill text={`💎 ${totalDiamonds(wallet)}`} tone="gold" />
           <Button small kind="ghost" title="Back" onPress={app.back} />
         </Row>
       </Row>
@@ -73,14 +75,29 @@ export function ShopScreen() {
       {tab === 'coach' && (
         <>
           <Card>
-            <H2>{hasCoachPro(wallet) ? 'Coach Pro is active' : 'Coach Pro'}</H2>
+            <H2>{tier === 'free' ? 'Coaching tiers' : `Coach ${tier[0].toUpperCase()}${tier.slice(1)} is active`}</H2>
             <P dim style={{ fontSize: 13 }}>
-              Free: coach at the table, daily puzzle, 1 hand review per day, lessons 1–3, bots up to Club level.{'\n'}Pro: unlimited reviews with move-by-move explanations, every lesson, Puzzle Rush leaderboards and history, Pro bots, review export.
+              Free: coach at the table, daily puzzle, drills, lessons 1–3, 1 hand review and 1 Puzzle Rush per day, Beginner and Club bots.{'\n'}Gold: all lessons, unlimited Puzzle Rush, Pro bots, review history.{'\n'}Platinum: unlimited hand reviews, puzzle battles, luck dashboard.{'\n'}Diamond: move-by-move explanations, insights, club-table discounts.
             </P>
-            {hasCoachPro(wallet) && <Pill text={`Renews ${new Date(wallet.subscription!.until).toLocaleDateString()}`} tone="ok" />}
+            {tier !== 'free' && <Pill text={`Renews ${new Date(wallet.subscription!.until).toLocaleDateString()}`} tone="ok" />}
           </Card>
           {SUBSCRIPTIONS.map((p) => (
             <ProductRow key={p.id} p={p} busy={busy === p.id} onBuy={() => void buy(p, 'money')} />
+          ))}
+        </>
+      )}
+
+      {tab === 'vip' && (
+        <>
+          <Card>
+            <H2>{hasVip(wallet) ? 'VIP is active' : 'VIP cards'}</H2>
+            <P dim style={{ fontSize: 13 }}>
+              Prepaid, no auto-renew. Every table look while active, an emote allowance, one extra club slot and one extra review per day. Days carry over when you upgrade.
+            </P>
+            {hasVip(wallet) && <Pill text={`Until ${new Date(wallet.vip!.until).toLocaleDateString()}`} tone="ok" />}
+          </Card>
+          {VIP_CARDS.map((p) => (
+            <ProductRow key={p.id} p={p} busy={busy === p.id} onBuy={() => void buy(p, 'money')} onBuyDiamonds={p.diamondPrice ? () => void buy(p, 'diamonds') : undefined} />
           ))}
         </>
       )}
@@ -90,9 +107,9 @@ export function ShopScreen() {
           <Card>
             <H2>Club capacity</H2>
             <P dim style={{ fontSize: 13 }}>
-              Free clubs hold 12 members and one table at a time. Owners upgrade capacity with diamonds or a monthly plan. Members never pay to play in a club.
+              Starter clubs are free: 30 members, 2 managers, one live table. Owners upgrade capacity with diamonds or a 30-day plan. Members never pay to play in a club.
             </P>
-            {wallet.clubTier && <Pill text={`Active until ${new Date(wallet.clubTier.until).toLocaleDateString()}`} tone="ok" />}
+            {wallet.clubTier && <Pill text={`Club ${wallet.clubTier.capacity} until ${new Date(wallet.clubTier.until).toLocaleDateString()}`} tone="ok" />}
           </Card>
           {CLUB_PRODUCTS.map((p) => (
             <ProductRow key={p.id} p={p} busy={busy === p.id} onBuy={() => void buy(p, 'money')} onBuyDiamonds={p.diamondPrice ? () => void buy(p, 'diamonds') : undefined} />

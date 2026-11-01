@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { BOT_SKILLS, describeRules, type BotSkill } from '@mjm/engine';
+import { hasTier } from '../monetisation/store';
 import { useApp } from '../app-state';
 import { createLocalSession, createOnlineSession } from '../game/session';
 import { AVATARS, effectiveStreak, todayKey } from '../storage';
@@ -85,7 +86,7 @@ export function HomeScreen() {
             </View>
           </Row>
           <Row>
-            <Button small kind="ghost" title={`💎 ${app.wallet.diamonds}`} onPress={() => app.go({ name: 'shop' })} />
+            <Button small kind="ghost" title={`💎 ${app.wallet.diamonds + app.wallet.bonusDiamonds}`} onPress={() => app.go({ name: 'shop' })} />
             <Button small kind="ghost" title="Edit" onPress={() => app.go({ name: 'settings' })} />
           </Row>
         </Card>
@@ -115,11 +116,15 @@ export function HomeScreen() {
           <Text style={styles.tileTitle}>Play vs Bots</Text>
           <P dim style={styles.tileText}>{describeRules(app.settings.rules)}</P>
           <Row style={{ flexWrap: 'wrap' }}>
-            {(Object.keys(BOT_SKILLS) as BotSkill[]).map((k) => (
-              <Text key={k} onPress={() => app.setSettings({ ...app.settings, botSkill: k })} style={[styles.chip, app.settings.botSkill === k && styles.chipOn]}>
-                {BOT_SKILLS[k].label} · {BOT_SKILLS[k].rating}
-              </Text>
-            ))}
+            {(Object.keys(BOT_SKILLS) as BotSkill[]).map((k) => {
+              const locked = k === 'pro' && !hasTier(app.wallet, 'gold');
+              return (
+                <Text key={k} onPress={() => (locked ? app.go({ name: 'shop' }) : app.setSettings({ ...app.settings, botSkill: k }))} style={[styles.chip, app.settings.botSkill === k && styles.chipOn]}>
+                  {locked ? '🔒 ' : ''}
+                  {BOT_SKILLS[k].label} · {BOT_SKILLS[k].rating}
+                </Text>
+              );
+            })}
           </Row>
           <Button title="Start match" onPress={playBots} />
         </Card>

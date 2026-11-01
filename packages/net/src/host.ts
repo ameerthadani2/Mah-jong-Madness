@@ -72,6 +72,10 @@ export interface SerializedHost {
   banks: number[];
   audits: Audit[];
   botSkill: BotSkill;
+  hostSecret?: string;
+  hostCommit?: string;
+  ceremonyAttempts?: number;
+  restartReasons?: string[];
 }
 
 interface SeatState extends SeatInfo {
@@ -128,6 +132,11 @@ export class TableHost {
   private readonly listeners = new Set<() => void>();
   /** All audits published this match (for the host UI / export). */
   readonly audits: Audit[] = [];
+  /** The host's own share in the ceremony: a colluding table cannot bias the seed without it. */
+  private hostSecret = '';
+  private hostCommit = '';
+  private ceremonyAttempts = 0;
+  private restartReasons: string[] = [];
 
   constructor(
     private readonly transport: Transport,
@@ -193,6 +202,10 @@ export class TableHost {
       banks: this.banks.slice(),
       audits: this.audits.slice(),
       botSkill: this.botSkill,
+      hostSecret: this.hostSecret,
+      hostCommit: this.hostCommit,
+      ceremonyAttempts: this.ceremonyAttempts,
+      restartReasons: this.restartReasons.slice(),
     };
   }
 
@@ -203,6 +216,10 @@ export class TableHost {
     this.seats = data.seats.map((s) => ({ ...s, peerId: null, connected: s.isBot }));
     this.banks = data.banks.slice();
     this.audits.push(...data.audits);
+    this.hostSecret = data.hostSecret ?? '';
+    this.hostCommit = data.hostCommit ?? '';
+    this.ceremonyAttempts = data.ceremonyAttempts ?? 1;
+    this.restartReasons = data.restartReasons?.slice() ?? [];
     // Any ceremony in flight cannot continue without the peers' secrets; restart it when they return.
     if (this.phase === 'commit' || this.phase === 'reveal') {
       for (const s of this.seats) {
@@ -522,17 +539,25 @@ export class TableHost {
       }
       seat.isBot = true;
       seat.name = `${seat.name} (away)`;
-      this.phase = 'lobby';
-      this.beginHand();
+      this.beginHand(`seat ${seat.seat + 1} did not reveal`);
     }
   }
 
   // ---------------------------------------------------------------- ceremony
 
-  private beginHand(): void {
+  private beginHand(reason?: string): void {
+    if (this.phase === 'commit' || this.phase === 'reveal') {
+      this.ceremonyAttempts++;
+      if (reason) this.restartReasons.push(reason);
+    } else {
+      this.ceremonyAttempts = 1;
+      this.restartReasons = [];
+    }
     this.phase = 'commit';
     this.clocks.clear();
     this.banks = [0, 1, 2, 3].map(() => this.rules.timeBankSeconds * 1000);
+    this.hostSecret = makeSecret();
+    this.hostCommit = commitFor(this.hostSecret);
     for (const s of this.seats) {
       s.commit = undefined;
       s.secret = undefined;
@@ -576,11 +601,11 @@ export class TableHost {
   }
 
   private commits(): Commitment[] {
-    return this.seats.map((s) => ({ seat: s.seat, hash: s.commit! }));
+    return [...this.seats.map((s) => ({ seat: s.seat, hash: s.commit! })), { seat: 4, hash: this.hostCommit }];
   }
 
   private reveals(): Reveal[] {
-    return this.seats.map((s) => ({ seat: s.seat, secret: s.secret! }));
+    return [...this.seats.map((s) => ({ seat: s.seat, secret: s.secret! })), { seat: 4, secret: this.hostSecret }];
   }
 
   // ----------------------------------------------------------------- playing
@@ -658,6 +683,9 @@ export class TableHost {
       reveals: this.reveals(),
       log: game.actionLog,
       finalHash: hashState(game),
+      rngVersion: game.rngVersion,
+      ceremonyAttempts: this.ceremonyAttempts,
+      restartReasons: this.restartReasons.slice(),
     };
     this.audits.push(audit);
     this.phase = 'hand_over';

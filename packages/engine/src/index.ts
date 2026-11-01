@@ -11,3 +11,4 @@ export * from './hints';
 export * from './lessons';
 export * from './review';
 export * from './puzzles';
+export * from './sha256';

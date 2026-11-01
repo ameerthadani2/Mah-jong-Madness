@@ -58,6 +58,7 @@ export function viewToState(v: TableView): GameState {
   return {
     ...rest,
     seed: '',
+    rngVersion: rest.rngVersion,
     wall: [],
     drawIndex: 0,
     backIndex: remaining,

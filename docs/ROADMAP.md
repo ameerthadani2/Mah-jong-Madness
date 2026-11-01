@@ -1,9 +1,13 @@
 # Roadmap
 
-## v0.1 — this commit
-- Engine, scoring, bots, hints, lessons, drills, P2P protocol, signaling/relay server, Expo app skeleton with full offline play.
+## v0.1 — done
+- Engine, scoring, bots (3 skills), hints, lessons, drills, daily puzzle, Puzzle Rush, hand review, P2P protocol with time banks and crash resume, signaling/relay server with clubs API and neutral hosting, Expo app with clubs, shop scaffold, fair-play screen.
 
 ## v0.2 — "play with friends every night"
+- [ ] Sign in with Apple / Google replacing device-generated identities; account recovery.
+- [ ] Real store integration (RevenueCat or expo-iap) behind the existing StoreProvider; purchased/free currency ledgers; Restore Purchases.
+- [ ] Free-tier meters and Coach tiers as specified in docs/MONETISATION.md; VIP cards; club capacity enforcement.
+- [ ] Codigames-style restyle pass 2: display fonts (Lilita One / Fredoka / Noto Sans TC), stroked text, pre-rendered low-poly avatars, confetti and banner animations.
 - [ ] Push notifications when a table you are seated at starts (Expo Notifications).
 - [ ] Clubs: persistent club codes, member list, standings across matches (store on the club's host node or a lightweight sync service).
 - [ ] Spectator seats, emotes and voice chat (WebRTC audio track on the same peer connection).

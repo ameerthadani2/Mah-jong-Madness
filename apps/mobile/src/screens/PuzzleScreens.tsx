@@ -4,6 +4,7 @@ import { dailyPuzzle, dailySeed, rushPuzzle } from '@mjm/engine';
 import { randomHex } from '@mjm/net';
 import { useApp } from '../app-state';
 import { effectiveStreak, todayKey, yesterdayKey } from '../storage';
+import { canUse, consume } from '../monetisation/store';
 import { colors, space } from '../theme';
 import { PuzzleView } from '../components/PuzzleView';
 import { Button, Card, H1, H2, P, Pill, Row } from '../components/Ui';
@@ -61,8 +62,41 @@ const RUSH_SECONDS = 180;
 const RUSH_STRIKES = 3;
 
 export function PuzzleRushScreen() {
+  const app = useApp();
   const [run, setRun] = useState(0);
-  return <PuzzleRushRun key={run} onAgain={() => setRun((r) => r + 1)} />;
+  const [allowance, setAllowance] = useState(() => canUse(app.wallet, 'rush'));
+  useEffect(() => {
+    if (allowance.ok && allowance.limit !== null) app.setWallet(consume(app.wallet, 'rush'));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [run]);
+  if (!allowance.ok) {
+    return (
+      <ScrollView contentContainerStyle={styles.wrap}>
+        <Row style={{ justifyContent: 'space-between' }}>
+          <H1 style={{ fontSize: 22 }}>Puzzle Rush</H1>
+          <Button small kind="ghost" title="Back" onPress={app.back} />
+        </Row>
+        <Card>
+          <H2>Daily run used</H2>
+          <P dim>Free accounts get one Puzzle Rush a day. Coach Gold makes it unlimited, with history and leaderboards.</P>
+          <Row>
+            <Button title="See Coach plans" onPress={() => app.go({ name: 'shop' })} />
+            <Button kind="ghost" title="Daily puzzle instead" onPress={() => app.go({ name: 'daily' })} />
+          </Row>
+        </Card>
+      </ScrollView>
+    );
+  }
+  return (
+    <PuzzleRushRun
+      key={run}
+      onAgain={() => {
+        const next = canUse(app.wallet, 'rush');
+        setAllowance(next);
+        if (next.ok) setRun((r) => r + 1);
+      }}
+    />
+  );
 }
 
 function PuzzleRushRun({ onAgain }: { onAgain: () => void }) {

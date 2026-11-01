@@ -3,6 +3,7 @@ import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { kindInfo, kindOf, reviewHand, type MoveGrade, type ReviewedMove } from '@mjm/engine';
 import { useApp } from '../app-state';
 import { useSession } from '../game/useTable';
+import { canUse, consume } from '../monetisation/store';
 import { colors, space } from '../theme';
 import { Tile } from '../components/Tile';
 import { Button, Card, H1, H2, P, Pill, Row } from '../components/Ui';
@@ -26,8 +27,17 @@ export function ReviewScreen() {
     rules: session?.client.state.rules ?? null,
   }));
   const { audit, snapshot, seat, rules } = frozen;
+  const key = audit ? `${audit.matchId}:${audit.handNumber}` : null;
+  const alreadyReviewed = !!key && app.progress.reviewedHands.includes(key);
+  // Free tier: one full review per day (re-opening a reviewed hand is always free).
+  const [allowance] = useState(() => (alreadyReviewed ? { ok: true, left: Infinity, limit: null } : canUse(app.wallet, 'reviews')));
+  useEffect(() => {
+    if (allowance.ok && !alreadyReviewed && allowance.limit !== null) app.setWallet(consume(app.wallet, 'reviews'));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const review = useMemo(() => {
+    if (!allowance.ok) return null;
     if (!audit || !snapshot || !rules) return null;
     try {
       return reviewHand(snapshot, audit.seed, rules, audit.log, seat);
@@ -43,6 +53,20 @@ export function ReviewScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [review?.accuracy]);
 
+  if (!allowance.ok) {
+    return (
+      <View style={styles.center}>
+        <H1 style={{ fontSize: 22 }}>Daily review used</H1>
+        <P dim style={{ textAlign: 'center', maxWidth: 420 }}>
+          Free accounts get one full hand review a day. Coach Platinum reviews every hand you play, with move-by-move explanations on Diamond.
+        </P>
+        <Row>
+          <Button title="See Coach plans" onPress={() => app.go({ name: 'shop' })} />
+          <Button kind="ghost" title="Back" onPress={app.back} />
+        </Row>
+      </View>
+    );
+  }
   if (!review) {
     return (
       <View style={styles.center}>

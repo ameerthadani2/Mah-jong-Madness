@@ -84,3 +84,43 @@ export function shuffle<T>(arr: T[], rng: Rng): T[] {
   }
   return arr;
 }
+
+// ---------------------------------------------------------------------------
+// Wall RNG: a SHA-256 counter-mode DRBG keyed by the full commit-reveal seed.
+//
+// `createRng` above folds its seed to 32 bits, which is fine for bot
+// tie-breaking but would limit the shuffle to 2^32 possible walls. The wall
+// must use the whole 256-bit seed, and the construction is versioned so audits
+// written today remain verifiable after upgrades (cf. Tenhou's
+// "mt19937ar-sha512-n288" tag).
+// ---------------------------------------------------------------------------
+import { sha256Hex } from './sha256';
+
+export const WALL_RNG_VERSION = 'mjm-sha256ctr-v1';
+
+export function createWallRng(seed: string): Rng {
+  let counter = 0;
+  let words: number[] = [];
+  let idx = 0;
+  const refill = () => {
+    const hex = sha256Hex(`${WALL_RNG_VERSION}:${seed}:${counter++}`);
+    words = [];
+    for (let i = 0; i < 64; i += 8) words.push(parseInt(hex.slice(i, i + 8), 16) >>> 0);
+    idx = 0;
+  };
+  const nextU32 = (): number => {
+    if (idx >= words.length) refill();
+    return words[idx++];
+  };
+  return {
+    next: () => nextU32() / 4294967296,
+    int: (n: number) => {
+      if (n <= 0) throw new Error('int(n) requires n > 0');
+      const limit = 4294967296 - (4294967296 % n);
+      let x = nextU32();
+      while (x >= limit) x = nextU32();
+      return x % n;
+    },
+    state: () => [counter, idx, 0, 0],
+  };
+}

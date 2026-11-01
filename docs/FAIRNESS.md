@@ -23,6 +23,8 @@ seat 3 picks s3  ──▶  H(s3) published to all  ──▶  s3 revealed
 ```
 
 * `H` is SHA-256. Commitments are broadcast before any secret is revealed, so nobody can pick their secret after seeing the others.
+* The host contributes a fifth committed share, so even a fully colluding table of four cannot steer the seed, and a griefer cannot force re-rolls without it being recorded: every audit carries the ceremony attempt count and the reason for any restart.
+* The wall is produced by a SHA-256 counter-mode generator keyed by the whole 256-bit seed (`mjm-sha256ctr-v1`, stamped on every audit so old hands stay verifiable after upgrades) driving a Fisher–Yates shuffle with rejection sampling. Bots use a separate, non-security PRNG for tie-breaks.
 * Bots and stand-ins for disconnected players contribute secrets too, so a table of one human is still unpredictable to the host.
 * A seat that fails to reveal is replaced by a stand-in and the ceremony restarts; a griefer cannot bias the deal by refusing.
 * The audit (`seed`, all commitments, all secrets, the full action log, the final state hash) is sent to every player. The client checks its own commitment and secret were recorded unchanged, verifies every reveal against its commitment, re-derives the seed, replays the log through the engine and compares the final hash and its own final hand.
@@ -36,9 +38,13 @@ seat 3 picks s3  ──▶  H(s3) published to all  ──▶  s3 revealed
 | The host did not look at the wall during the hand | **Not proven** in phone-hosted tables. The hosting phone necessarily knows the seed. Mitigations: *Neutral server host* for club tables (the club's server runs the identical code and nobody at the table sees the seed), and the planned cryptographic shuffle (below). |
 | Another player did not see your hand | Proven: the host sends each seat only its own view; a malicious client gains nothing from the protocol. |
 
+## Publishing and testing the generator
+
+In priority order: a plain-language and technical spec page (this document plus `packages/engine/src/rng.ts`); a downloadable per-hand audit from the result screen; a standalone open-source verifier (CLI and browser) that rebuilds the wall from an audit, in the spirit of Tenhou's public wall reproducers; the engine and protocol under an OSI licence; and a monthly tile-statistics report (per-tile draw frequencies, dealer win rate, win-type distribution with chi-square p-values across public hands). Before buying a certificate, run and publish the open batteries on the DRBG output (Dieharder, NIST SP 800-22, TestU01 Crush/BigCrush) plus a GLI-style "range 1–144, 144 selections" draw file; then budget a GLI-19-track RNG certificate (4–8 weeks, covers the RNG/shuffle only) once revenue or any prize context justifies it.
+
 ## Roadmap to zero-trust dealing
 
-* **Mental mahjong shuffle** (v0.4): SRA commutative encryption of the 144 tiles so every draw is decrypted cooperatively and no device, host included, learns a tile before its owner. Cost: ~3 extra round-trips per draw; acceptable on LAN and most mobile links. Until then the neutral host option is the strongest setting.
+* **Mental mahjong shuffle** (later, opt-in "paranoid mode"): elliptic-curve SRA so every draw is decrypted cooperatively and no device, host included, learns a tile before its owner. Cost is roughly 430 point multiplications and ~55 KB per player per hand plus a round trip per draw, and no known protocol tolerates a player dropping mid-hand — which conflicts with crash-resume. Ship only once key escrow for disconnected players is solved. Until then the neutral server host is the default for club and stakes tables; phone-hosted play is labelled "friends mode: the host device is trusted".
 * **Third-party RNG and engine audit**: publish the engine, the seed derivation and a statistical report on millions of simulated hands (`npm run sim`) so an independent lab can certify the distribution. Simulation today: win rates by seat within noise of 25% each, draw rate ~4%, no seat bias.
 * **Signed audits**: hosts sign each audit so disputes can be settled offline by anyone with the public key.
 

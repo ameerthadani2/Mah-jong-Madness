@@ -2,7 +2,7 @@
  * Table client: joins a host, takes part in the seed ceremony, sends actions,
  * keeps the latest seat view, and verifies every hand's audit.
  */
-import { hashState, replayHand, stableStringify, viewToState, type Action, type GameState, type HandResult, type MatchSnapshot, type RuleSet, type TableView } from '@mjm/engine';
+import { hashState, replayHand, stableStringify, viewToState, WALL_RNG_VERSION, type Action, type GameState, type HandResult, type MatchSnapshot, type RuleSet, type TableView } from '@mjm/engine';
 import { commitFor, deriveSeed, makeSecret, verifyReveals, type Commitment } from './fairness';
 import type { Link } from './host';
 import type { Audit, ClientMessage, HostMessage, SeatInfo } from './messages';
@@ -255,6 +255,8 @@ export class TableClient {
     }
     const rv = verifyReveals(audit.commits, audit.reveals);
     if (!rv.ok) failures.push(`Reveals do not match commitments for seats ${rv.badSeats.join(', ')}`);
+    if (audit.commits.length !== 5 || !audit.commits.some((c) => c.seat === 4)) failures.push('Audit is missing a contributor share');
+    if (audit.rngVersion !== WALL_RNG_VERSION) failures.push(`Unknown shuffle construction ${audit.rngVersion}`);
     const seed = deriveSeed(`${this.state.matchId}:${audit.handNumber}`, audit.reveals);
     if (seed !== audit.seed) failures.push('Seed was not derived from the revealed secrets');
     const start = this.handStart && this.handStart.handNumber === audit.handNumber ? this.handStart : snapshotFromView(finalView, true);

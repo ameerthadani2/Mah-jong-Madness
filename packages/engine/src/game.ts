@@ -8,7 +8,7 @@
  */
 import { countsFromKinds, isComplete, TOTAL_SETS, waits } from './hand';
 import { type Meld } from './meld';
-import { createRng, hashString, shuffle } from './rng';
+import { createWallRng, hashString, shuffle, WALL_RNG_VERSION } from './rng';
 import { DEFAULT_RULES, type RuleSet } from './rules';
 import { computePayments, scoreWin, type Payment, type ScoreResult, type WinContext } from './scoring';
 import { fullSet, isBonusTile, kindOf, sortTiles, type Kind, type TileId } from './tiles';
@@ -88,6 +88,8 @@ export interface LoggedAction {
 export interface GameState {
   rules: RuleSet;
   seed: string;
+  /** Identifies the seed→wall construction so old audits stay verifiable. */
+  rngVersion: string;
   handNumber: number;
   /** Number of times the dealer position has rotated; match ends at rules.handsPerMatch. */
   dealerRotations: number;
@@ -131,6 +133,7 @@ export function newGame(seed: string, rules: RuleSet = DEFAULT_RULES, startDeale
   const base: GameState = {
     rules,
     seed,
+    rngVersion: WALL_RNG_VERSION,
     handNumber: 0,
     dealerRotations: 0,
     dealerSeat: startDealer,
@@ -161,7 +164,7 @@ function emptyPlayer(): PlayerState {
 export function dealHand(prev: GameState): GameState {
   const s: GameState = {
     ...prev,
-    wall: shuffle(fullSet(), createRng(`${prev.seed}:${prev.handNumber}`)),
+    wall: shuffle(fullSet(), createWallRng(`${prev.seed}:${prev.handNumber}`)),
     drawIndex: 0,
     backIndex: 144,
     players: [emptyPlayer(), emptyPlayer(), emptyPlayer(), emptyPlayer()],
@@ -708,6 +711,7 @@ export function dealFromSnapshot(snap: MatchSnapshot, seed: string, rules: RuleS
   const base: GameState = {
     rules,
     seed,
+    rngVersion: WALL_RNG_VERSION,
     ...snap,
     wall: [],
     drawIndex: 0,
