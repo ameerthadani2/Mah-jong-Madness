@@ -20,7 +20,9 @@ export function unseenCounts(s: GameState, seat: number): Counts {
     p.melds.forEach((m) => m.tiles.forEach(see));
     p.discards.forEach(see);
   }
-  if (s.pending) see(s.pending.tile);
+  // A discarded tile is already in its discarder's pool. Only an added-kong tile is newly revealed
+  // (it is still in the kong-er's hand, which other seats cannot see).
+  if (s.pending && s.pending.kind === 'addedKong' && seat !== s.pending.from) see(s.pending.tile);
   return unseen;
 }
 
@@ -83,7 +85,7 @@ export function currentShanten(s: GameState, seat: number): number {
 }
 
 /** Shanten of the hand after taking a claim and then making its best discard. */
-function shantenAfterClaim(s: GameState, seat: number, action: Action): number {
+export function shantenAfterClaim(s: GameState, seat: number, action: Action): number {
   const p = s.players[seat];
   const pending = s.pending!;
   const k = kindOf(pending.tile);

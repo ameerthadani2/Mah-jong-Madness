@@ -3,7 +3,7 @@
  * advice: what you are waiting on, how far from ready you are, which discard is
  * best and why, and what a claim would cost or gain in 台.
  */
-import { chooseAction, currentShanten, rankDiscards, unseenCounts, type DiscardAdvice } from './bot';
+import { chooseAction, currentShanten, rankDiscards, shantenAfterClaim, unseenCounts, type DiscardAdvice } from './bot';
 import { countsFromKinds, TOTAL_SETS, waits } from './hand';
 import { type Action, type GameState, legalActions, buildWinContext, waitsFor } from './game';
 import { scoreWin, seatWindKind, prevailingWindKind, type ScoreResult } from './scoring';
@@ -90,7 +90,7 @@ export function hintFor(s: GameState, seat: number): Hint {
       base.claims.push({
         action: k,
         label: `Kong ${describeKind(kindOf((k as { tile: TileId }).tile))}`,
-        recommended: chooseAction(s, seat)?.type === 'kong',
+        recommended: ((pick) => pick?.type === 'kong' && kindOf(pick.tile) === kindOf((k as { tile: TileId }).tile))(chooseAction(s, seat)),
         reason: 'A kong draws a replacement tile and can add 槓上開花 (1 台) if you win on it. Skip it if the four tiles are part of two sets.',
       });
     }
@@ -169,7 +169,11 @@ function claimReason(a: Action, s: GameState, seat: number, sh: number, recommen
   if (a.type === 'hu') return 'Take the win. Compare with your waits only if you are chasing a much bigger hand.';
   if (a.type === 'kong') return recommended ? 'Kong: adds a replacement draw and keeps all four tiles together.' : 'The kong would break up sets you are using elsewhere.';
   const breaksConcealed = concealed ? ' You would lose 門清 (1 台, or 門清自摸 3 台).' : '';
-  if (recommended) return `This claim brings you closer to ready.${breaksConcealed}`;
+  const after = shantenAfterClaim(s, seat, a);
+  const improves = after < sh;
+  const readyAfter = after === 0;
+  if (recommended) return `${readyAfter ? 'This claim makes you ready.' : 'This claim brings you closer to ready.'}${breaksConcealed}`;
+  if (improves) return `${readyAfter ? 'This claim would make you ready' : 'This claim would bring you closer to ready'}, but your concealed hand is worth more here.${breaksConcealed}`;
   if (sh === 0) return `You are already ready; claiming would not help.${breaksConcealed}`;
   return `This does not reduce your shanten count.${breaksConcealed}`;
 }

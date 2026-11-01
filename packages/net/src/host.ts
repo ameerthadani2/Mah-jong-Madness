@@ -181,7 +181,7 @@ export class TableHost {
   }
 
   seatInfo(): SeatInfo[] {
-    return this.seats.map(({ seat, name, peerId, isBot, connected, avatar, userId }, i) => ({ seat, name, peerId, isBot, connected, avatar, userId, timeBank: Math.round(this.banks[i] / 1000) }));
+    return this.seats.map(({ seat, name, peerId, isBot, connected, avatar, userId }, i) => ({ seat, name, peerId: peerId && peerId.startsWith('gone-') ? null : peerId, isBot, connected, avatar, userId, timeBank: Math.round(this.banks[i] / 1000) }));
   }
 
   /**
@@ -233,6 +233,8 @@ export class TableHost {
   }
 
   private pendingRestart = false;
+  /** Seats whose share the host supplies in the next ceremony (they missed the window; they stay human). */
+  private standInSeats = new Set<number>();
 
   /** Create an in-process link so the hosting device can also play. */
   localLink(peerId = `local-${randomHex(4)}`): Link {
@@ -294,11 +296,16 @@ export class TableHost {
       this.deadline = null;
       this.afterHand();
     } else if (this.phase === 'commit' || this.phase === 'reveal') {
-      // A peer failed the ceremony in time: treat them as disconnected and let a bot stand in.
+      // Some peers missed the ceremony window. Decide for all of them at once so a restart
+      // never gives later seats a zero-length commit window.
       this.deadline = null;
-      for (const s of this.seats) {
-        if (s.isBot) continue;
-        if ((this.phase === 'commit' && !s.commit) || (this.phase === 'reveal' && !s.secret)) this.standIn(s);
+      const phase = this.phase;
+      const late = this.seats.filter((s) => !s.isBot && (phase === 'commit' ? !s.commit : !s.secret));
+      if (phase === 'commit') {
+        for (const s of late) this.supplyShare(s);
+      } else if (late.length > 0) {
+        this.restartCeremony(late, `seat ${late.map((s) => s.seat + 1).join(', ')} did not reveal in time`);
+        return;
       }
       this.checkCeremony();
     }
@@ -410,7 +417,7 @@ export class TableHost {
         seat.secret = msg.secret;
         return this.checkCeremony();
       case 'start':
-        if (this.phase !== 'lobby') return;
+        if (this.phase !== 'lobby' || this.pendingRestart) return;
         try {
           this.start();
         } catch (e) {
@@ -418,10 +425,11 @@ export class TableHost {
         }
         return;
       case 'add_bot':
-        if (this.phase !== 'lobby') return;
+        if (this.phase !== 'lobby' || this.pendingRestart) return;
         this.addBot();
         return;
       case 'action':
+        if (seat.isBot) return;
         if (this.phase !== 'playing' || !this.game) return this.sendTo(from, { t: 'error', code: 'not_playing', message: 'No hand in progress.' });
         if (msg.seat !== seat.seat) return this.sendTo(from, { t: 'error', code: 'wrong_seat', message: 'You can only act for your own seat.' });
         try {
@@ -432,7 +440,7 @@ export class TableHost {
         }
         return;
       case 'ready':
-        if (this.phase !== 'hand_over') return;
+        if (seat.isBot || this.phase !== 'hand_over') return;
         seat.ready = true;
         if (this.seats.every((s) => s.isBot || !s.connected || s.ready)) this.afterHand();
         return;
@@ -449,6 +457,7 @@ export class TableHost {
 
   private onJoin(from: string, name: string, avatar: string | undefined, wantSeat?: number, token?: string, userId?: string): void {
     let seat = this.seats.find((s) => s.peerId === from && s.connected);
+    let newOccupant = false;
     if (!seat && token) {
       // Reconnect with the rejoin token — the only way to reclaim a seat. Names and user ids are public and never trusted.
       seat = this.seats.find((s) => s.token === token);
@@ -458,30 +467,24 @@ export class TableHost {
           this.sendTo(seat.peerId, { t: 'disconnected' });
         }
         seat.peerId = from;
-        if (seat.isBot && seat.name.endsWith('(away)')) {
-          seat.isBot = false;
-          seat.name = seat.name.replace(/ \(away\)$/, '');
-        }
       }
     }
     if (!seat) {
-      if (this.phase !== 'lobby') {
-        // Mid-match: take over a bot seat only if one was a stand-in for a departed human. The old token is retired.
-        seat = this.seats.find((s) => s.isBot && s.name.endsWith('(away)'));
-        if (!seat) return this.sendTo(from, { t: 'error', code: 'full', message: 'Match already in progress.' });
-        seat.isBot = false;
-        seat.token = undefined;
-      } else {
-        seat = (wantSeat !== undefined && this.seats[wantSeat] && !this.seats[wantSeat].peerId && !this.seats[wantSeat].isBot ? this.seats[wantSeat] : undefined) ?? this.seats.find((s) => !s.peerId && !s.isBot);
-        if (!seat) return this.sendTo(from, { t: 'error', code: 'full', message: 'Table is full.' });
-      }
+      // Mid-match (or a restored table waiting for its players) only token holders may sit.
+      if (this.phase !== 'lobby' || this.pendingRestart) return this.sendTo(from, { t: 'error', code: 'full', message: 'Match already in progress.' });
+      seat = (wantSeat !== undefined && this.seats[wantSeat] && !this.seats[wantSeat].peerId && !this.seats[wantSeat].isBot ? this.seats[wantSeat] : undefined) ?? this.seats.find((s) => !s.peerId && !s.isBot);
+      if (!seat) return this.sendTo(from, { t: 'error', code: 'full', message: 'Table is full.' });
       seat.peerId = from;
+      newOccupant = true;
     }
+    // Hosts serialised by older builds marked departed humans as bots named '… (away)'. A human binding to the seat takes it back.
+    if (seat.isBot && seat.name.endsWith('(away)')) seat.isBot = false;
     seat.name = name.slice(0, 24) || `Player ${seat.seat + 1}`;
     seat.avatar = avatar;
     seat.userId = userId ?? seat.userId;
     seat.connected = true;
-    seat.token = seat.token ?? randomHex(16);
+    // A new occupant never inherits a previous player's token (that would let the old player kick them).
+    if (newOccupant || !seat.token) seat.token = randomHex(16);
     this.sendTo(from, { t: 'welcome', seat: seat.seat, roomCode: this.roomCode, rules: this.rules, seats: this.seatInfo(), matchId: this.matchId, token: seat.token });
     this.broadcastLobby();
     if (this.pendingRestart && this.seats.some((s) => s.connected && !s.isBot)) {
@@ -498,6 +501,10 @@ export class TableHost {
       if (last) this.sendTo(from, { t: 'hand_over', result: this.game.result!, audit: last, view: viewFor(this.game, seat.seat) });
       if (this.deadline === null) this.deadline = this.now() + this.intermissionMs;
     }
+    else if (this.phase === 'match_over' && this.game) {
+      const finalView = { ...this.game, scores: this.snapshot.scores };
+      this.sendTo(from, { t: 'match_over', scores: this.snapshot.scores, view: viewFor(finalView, seat.seat) });
+    }
     else if (this.phase === 'commit' && !seat.commit) this.sendTo(from, { t: 'commit_request', handNumber: this.snapshot.handNumber });
     else if (this.phase === 'reveal' && !seat.secret) this.sendTo(from, { t: 'reveal_request', handNumber: this.snapshot.handNumber });
   }
@@ -507,11 +514,17 @@ export class TableHost {
     if (!seat) return;
     seat.connected = false;
     seat.peerId = this.phase === 'lobby' ? null : `gone-${peerId}`;
-    if (this.phase === 'lobby') {
-      seat.peerId = null;
-      seat.name = '';
-    } else if (this.phase === 'commit' || this.phase === 'reveal') {
-      this.standIn(seat);
+    if (this.phase === 'lobby' && !this.pendingRestart) {
+      // Vacated lobby seat: forget everything about the previous occupant, including the rejoin token.
+      Object.assign(seat, { peerId: null, name: '', token: undefined, ready: false, userId: undefined, avatar: undefined, commit: undefined, secret: undefined });
+    } else if (this.phase === 'commit') {
+      if (!seat.commit) this.supplyShare(seat);
+      this.checkCeremony();
+    } else if (this.phase === 'reveal') {
+      if (!seat.secret) {
+        this.restartCeremony([seat], `seat ${seat.seat + 1} disconnected before revealing`);
+        return;
+      }
       this.checkCeremony();
     } else if (this.phase === 'playing') {
       // A bot plays for them until they come back.
@@ -524,23 +537,29 @@ export class TableHost {
     this.broadcastLobby();
   }
 
-  /** Replace a non-responsive human with a bot for ceremony purposes. */
-  private standIn(seat: SeatState): void {
-    if (!seat.commit) {
-      seat.secret = makeSecret();
-      seat.commit = commitFor(seat.secret);
-      if (seat.connected && seat.peerId && !seat.isBot) this.sendTo(seat.peerId, { t: 'stand_in', handNumber: this.snapshot.handNumber });
-    } else if (!seat.secret) {
-      // They committed but never revealed: without their secret no fair seed exists.
-      // Restart the ceremony for this hand with a fresh commitment from a stand-in.
-      for (const s of this.seats) {
-        s.commit = undefined;
-        s.secret = undefined;
-      }
-      seat.isBot = true;
-      seat.name = `${seat.name} (away)`;
-      this.beginHand(`seat ${seat.seat + 1} did not reveal`);
-    }
+  /**
+   * The host supplies this seat's random share because it missed the commit window. The seat stays
+   * human and keeps playing; the audit still verifies (its own share simply was not used this hand).
+   */
+  private supplyShare(seat: SeatState, notify = true): void {
+    seat.secret = makeSecret();
+    seat.commit = commitFor(seat.secret);
+    if (notify) this.notifyStandIn(seat);
+  }
+
+  /** Tell a connected player their share was supplied. Must follow any commit_request so the client drops its own secret. */
+  private notifyStandIn(seat: SeatState): void {
+    if (seat.connected && seat.peerId && !seat.isBot && !seat.peerId.startsWith('gone-')) this.sendTo(seat.peerId, { t: 'stand_in', handNumber: this.snapshot.handNumber });
+  }
+
+  /**
+   * Seats committed but never revealed, so no fair seed exists. Restart the ceremony once; the
+   * delinquent seats get host-supplied shares so they cannot stall the table again, but they stay
+   * human and connected players keep receiving every message.
+   */
+  private restartCeremony(late: SeatState[], reason: string): void {
+    for (const s of late) this.standInSeats.add(s.seat);
+    this.beginHand(reason);
   }
 
   // ---------------------------------------------------------------- ceremony
@@ -558,6 +577,8 @@ export class TableHost {
     this.banks = [0, 1, 2, 3].map(() => this.rules.timeBankSeconds * 1000);
     this.hostSecret = makeSecret();
     this.hostCommit = commitFor(this.hostSecret);
+    const supplied = this.standInSeats;
+    this.standInSeats = new Set();
     for (const s of this.seats) {
       s.commit = undefined;
       s.secret = undefined;
@@ -565,10 +586,13 @@ export class TableHost {
       if (s.isBot || !s.connected) {
         s.secret = makeSecret();
         s.commit = commitFor(s.secret);
+      } else if (supplied.has(s.seat)) {
+        this.supplyShare(s, false);
       }
     }
     this.deadline = this.now() + 10_000;
     this.broadcast(() => ({ t: 'commit_request', handNumber: this.snapshot.handNumber }));
+    for (const n of supplied) this.notifyStandIn(this.seats[n]);
     this.notify();
     this.checkCeremony();
   }
@@ -587,7 +611,7 @@ export class TableHost {
       if (this.seats.some((s) => !s.secret)) return;
       const check = verifyReveals(this.commits(), this.reveals());
       if (!check.ok) {
-        for (const bad of check.badSeats) this.standIn(this.seats[bad]);
+        this.restartCeremony(check.badSeats.filter((b) => b < 4).map((b) => this.seats[b]), `invalid reveal from seat ${check.badSeats.map((b) => b + 1).join(', ')}`);
         return;
       }
       const seed = deriveSeed(`${this.matchId}:${this.snapshot.handNumber}`, this.reveals());
@@ -663,6 +687,11 @@ export class TableHost {
     const go = () => {
       this.botTimerArmed = false;
       if (this.phase !== 'playing' || !this.game) return;
+      // The seat may have reconnected (or acted) while the timer was pending.
+      if (!(actor.isBot || !actor.connected) || legalActions(this.game, actor.seat).length === 0) {
+        this.runBots();
+        return;
+      }
       const a = chooseAction(this.game, actor.seat, { seed: `${this.matchId}:bot${actor.seat}`, skill: this.botSkill });
       if (a) this.apply(actor.seat, a, 'bot');
       else this.runBots();

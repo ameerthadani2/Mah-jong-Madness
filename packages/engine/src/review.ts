@@ -3,7 +3,7 @@
  * each decision the reviewed seat made against the coach's recommendation,
  * producing an accuracy score and a list of mistakes with explanations.
  */
-import { chooseAction, currentShanten, rankDiscards } from './bot';
+import { chooseAction, currentShanten, rankDiscards, shantenAfterClaim } from './bot';
 import { applyAction, dealFromSnapshot, legalActions, type Action, type GameState, type LoggedAction, type MatchSnapshot } from './game';
 import { type RuleSet } from './rules';
 import { kindInfo, kindOf, type Kind, type TileId } from './tiles';
@@ -110,14 +110,31 @@ function gradeMove(s: GameState, seat: number, actual: Action, n: number): Revie
     if (legal.some((a) => a.type === 'hu') && actual.type !== 'hu') {
       return { n, phase: s.phase, actual, best: { type: 'hu' }, grade: 'blunder', shantenBefore, explanation: 'You could have won on this discard.', hand };
     }
-    if (actualIsPass === bestIsPass || actual.type === 'hu') {
+    if (actual.type === 'hu') {
+      return { n, phase: s.phase, actual, best, grade: 'best', shantenBefore, explanation: 'You took the win on the discard.', hand };
+    }
+    if (actualIsPass === bestIsPass) {
       return { n, phase: s.phase, actual, best, grade: 'best', shantenBefore, explanation: actualIsPass ? 'Passing kept your hand flexible.' : 'Calling here moved you closer to ready.', hand };
     }
     const concealed = s.players[seat].melds.every((m) => m.concealed);
-    const explanation = actualIsPass
-      ? 'Calling would have brought you closer to ready.'
-      : `This call did not improve your shanten${concealed ? ' and gave up 門清' : ''}.`;
-    return { n, phase: s.phase, actual, best, grade: actualIsPass ? 'inaccuracy' : 'mistake', shantenBefore, explanation, hand };
+    if (actualIsPass) {
+      return { n, phase: s.phase, actual, best, grade: 'inaccuracy', shantenBefore, explanation: 'Calling would have brought you closer to ready.', hand };
+    }
+    // The player called where the coach would pass. Did the call at least improve the hand?
+    const after = shantenAfterClaim(s, seat, actual);
+    if (after < shantenBefore) {
+      return {
+        n,
+        phase: s.phase,
+        actual,
+        best,
+        grade: 'inaccuracy',
+        shantenBefore,
+        explanation: `The call moved you closer to ready${concealed ? ', but gave up 門清 when staying concealed was worth more' : ', but exposed your hand for little gain'}.`,
+        hand,
+      };
+    }
+    return { n, phase: s.phase, actual, best, grade: 'mistake', shantenBefore, explanation: `This call did not improve your shanten${concealed ? ' and gave up 門清' : ''}.`, hand };
   }
 
   if (actual.type === 'kong' || actual.type === 'hu') {
