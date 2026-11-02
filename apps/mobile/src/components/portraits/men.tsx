@@ -188,6 +188,7 @@ export const student: Spec = {
   face: { top: 19, cw: 21.5, cy: 48, jw: 16, jy: 66, by: 78, bw: 6 },
   eyes: { y: 50, dx: 9.2, rx: 4.8, ry: 3.3, iris: '#3A2618', ir: 2.9, tilt: 0.3, squint: 0.2, lash: 1.05, look: -0.5 },
   brows: { y: 42.6, color: '#2A2224', th: 1.9, arch: 1.6, len: 9.8, raiseL: 0.6 },
+  smileLines: 0.22,
   nose: { y: 60, w: 4.3 },
   mouth: { y: 68.2, w: 8.8, open: 4.6, curve: 2.5, smirk: 0.6, ul: 0.9, ll: 1.7 },
   head: { tilt: 3 },
@@ -211,7 +212,7 @@ export const student: Spec = {
     <>
       <Path d={STUDENT_HAIR} fill={k.url('hair')} />
       <Path d="M30 30Q36 18 47 14M42 26Q50 17 62 14M55 27Q63 21 71 22M27 38Q28 32 31 27" stroke="#8E7E92" strokeWidth={1} strokeLinecap="round" fill="none" opacity={0.65} />
-      <Path d="M71.5 8Q69.5 12.5 70.5 15Q76 15 80 18Q76.5 21 75.5 25Q78.5 31.5 76.5 38Q75 43 74 47" stroke="#C9B8FF" strokeWidth={1} fill="none" opacity={0.45} />
+      <Path d="M70.6 10.5Q69.2 13 70 15.8Q74.5 16 77.6 18.5Q75 21 74.6 25Q77.4 31.5 75.6 38Q74.6 42 73.8 45.5" stroke="#C9B8FF" strokeWidth={1} strokeLinejoin="round" fill="none" opacity={0.45} />
     </>
   ),
 };
@@ -240,7 +241,7 @@ export const chef: Spec = {
   inFace: (k) => <Ellipse cx={50} cy={39} rx={30} ry={5} fill={k.url('shade')} />,
   front: (k) => (
     <>
-      <Path d={both('M25.8 36C25 41 25.3 46 26.3 50L28.8 49C28.3 45 28.4 40.5 29.5 36Z')} fill="#1E1410" />
+      <Path d={both('M26 35.5C25.2 39.5 25.4 44 26.4 48.5C27.2 46.5 27.9 43 29.4 39.5C29.6 38 29.8 36.8 29.9 35.6Z')} fill="#2A1C14" />
       <Path d="M28.5 28C19.5 25.5 17.5 13 25.5 7.5C29 0.5 39.5 -1 45 3C48.5 -1.5 56 -1.5 59.5 3C64.5 -1 74.5 1 75.5 8C83 13 81 25 71.5 28Z" fill={k.url('hat')} />
       <Path d="M36 27.5C35 20 36 12 38 6.5M44 28C43.5 20 44.5 10 45.5 3.5M52 28C52 20 52.5 10 52 3.5M60 27.5C61 20 61.5 12 61 5.5M67 27C68.5 20 70 14 70 8.5" stroke="#B9C0D4" strokeWidth={0.8} strokeLinecap="round" fill="none" opacity={0.8} />
       <Path d="M27.5 35C27 31 28 28 29 26.5C40 28 60 28 71 26.5C72 28 73 31 72.5 35C60 36.5 40 36.5 27.5 35Z" fill={k.url('hat')} />

@@ -70,7 +70,7 @@ export const grandma: Spec = {
   eyes: { y: 51, dx: 9.3, rx: 3.9, ry: 2.4, iris: '#4A3020', ir: 2.1, tilt: -0.4, squint: 0.6, lash: 0.9, crease: 0.6 },
   brows: { y: 44, color: '#A4A2AE', th: 1.4, arch: 2.2, len: 9.4, drop: 1.2 },
   nose: { y: 61, w: 4.8 },
-  mouth: { y: 69, w: 8.4, open: 3.4, curve: 2.4, ul: 1, ll: 1.6 },
+  mouth: { y: 69, w: 7.8, open: 2.8, curve: 2.2, ul: 1, ll: 1.6 },
   ageLines: true,
   smileLines: 0.55,
   defs: (k) => [volume(k.id('hair'), '#FFFFFF', '#D3D6DF', '#8D93A6'), volume2(k.id('cloth'), '#B697F0', '#8A63D2', '#4E2F8E')],
