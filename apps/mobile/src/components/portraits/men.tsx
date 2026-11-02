@@ -24,8 +24,7 @@ export const uncle: Spec = {
   nose: { y: 61, w: 5.6 },
   mouth: { y: 69.8, w: 9.6, open: 3.8, curve: 2, ul: 0.8, ll: 1.6 },
   ageLines: true,
-  smileLines: 0.5,
-  sheen: false,
+  smileLines: 0.45,
   defs: (k) => [volume2(k.id('cap'), '#A8987E', '#6E604E', '#352C22'), volume2(k.id('cloth'), '#B6DEFA', '#6CB0EA', '#2E6CB0')],
   body: (k) => (
     <>
@@ -38,7 +37,7 @@ export const uncle: Spec = {
   inFace: (k) => (
     <>
       <Ellipse cx={50} cy={37} rx={28} ry={4.5} fill={k.url('shade')} />
-      <Path d={STUBBLE} fill="#3C2E26" opacity={0.22} />
+      <Path d={STUBBLE} fill={k.url('shade')} />
       <Path d={speckle(11, 44, 50, 71, 20, 10, 0.2, 62)} fill="#2A201C" opacity={0.3} />
     </>
   ),
@@ -48,7 +47,6 @@ export const uncle: Spec = {
       <Path d="M22 34C20.5 23 30 12.5 51 12C70.5 12 81.5 21 78.5 34Q50 29 22 34Z" fill={k.url('cap')} />
       <Path d="M51 13C40 15 31 22 28 32M51 13C62 14.5 70 21 73 31" stroke="#4A3E32" strokeWidth={0.7} fill="none" opacity={0.8} />
       <Path d="M26.5 33C34 29.5 66 29 74 32.8C76.5 34.5 75.5 37 72.5 37.4C62 34.6 38 34.8 28 37.8C25 37.5 24.5 34.6 26.5 33Z" fill="#4A3E32" />
-      <Path d="M28 33.5C38 30.5 62 30 72.5 33" stroke="#B8A88E" strokeWidth={0.8} fill="none" opacity={0.6} />
     </>
   ),
 };
@@ -60,7 +58,7 @@ const BOSS_HAIR =
 export const boss: Spec = {
   id: 'boss',
   skin: { hi: '#FCDDBF', base: '#E7B58C', mid: '#C48862', lo: '#946042', rim: '#E4DAFF', blush: '#E07C6E', lip: '#B46450' },
-  face: { top: 18, cw: 21.5, cy: 47, jw: 18.2, jy: 68, by: 80.5, bw: 8 },
+  face: { top: 18, cw: 21.5, cy: 47, jw: 19.4, jy: 68.5, by: 80.5, bw: 9.5 },
   eyes: { y: 48.5, dx: 9.2, rx: 4.3, ry: 2.6, iris: '#2E1E14', ir: 2.3, tilt: 0.8, squint: 0.3, lash: 1, look: 0.5 },
   brows: { y: 41.8, color: '#15151C', th: 2, arch: 1.2, len: 10, drop: 0.4, raiseR: 1.8 },
   nose: { y: 59.5, w: 4.8 },
@@ -78,7 +76,7 @@ export const boss: Spec = {
   front: (k) => (
     <>
       <Path d={BOSS_HAIR} fill={k.url('hair')} />
-      <Path d="M32 33C35 23 44 16.5 57 15.5M38 29C42 22 50 18.5 62 18.5M47 26.5C53 22.5 61 22 69 25M58 26C64 25.5 69 28 72 32M37 20C43 15 52 13.5 59 14.3" stroke="#9AA8D6" strokeWidth={1.1} strokeLinecap="round" fill="none" opacity={0.7} />
+      <Path d="M33 31C36 22 45 16.5 57 15.6M40 27.5C45 21 53 18.5 63 19M50 26C56 22.5 63 22.5 70 26.5" stroke="#A8B4E0" strokeWidth={1.6} strokeLinecap="round" fill="none" opacity={0.45} />
       <Path d="M66.5 14.8C72 18 75.3 23.5 75.3 30.5C75.6 36.5 74.3 41.2 72 44.5" stroke="#C9B8FF" strokeWidth={1} fill="none" opacity={0.4} />
       <Path d={both(rr(34.4, 44.4, 46.4, 52.6, 1.6)) + 'M46.4 46.8Q50 45.2 53.6 46.8' + both('M34.4 46.5L28.5 45.8')} stroke="#16161E" strokeWidth={1.3} fill="#CFE0FF" fillOpacity={0.14} />
       <Path d="M36 51L40 45.5M38.4 51.5L41 48M54.6 51L58.6 45.5M57 51.5L59.6 48" stroke="#FFFFFF" strokeWidth={0.9} strokeLinecap="round" opacity={0.55} />
@@ -148,8 +146,7 @@ export const cowboy: Spec = {
   brows: { y: 45, color: '#5A341E', th: 2.4, arch: 0.8, len: 10.5, drop: 0.6 },
   nose: { y: 61.5, w: 5.4 },
   mouth: { y: 71.4, w: 9, open: 3.8, curve: 2.2, ul: 0, ll: 1.6 },
-  smileLines: 0.5,
-  sheen: false,
+  smileLines: 0.45,
   defs: (k) => [volume(k.id('hat'), '#D69060', '#8E4A28', '#40180A'), volume2(k.id('cloth'), '#7AA6E0', '#3A6AAE', '#1A3A6E')],
   body: (k) => (
     <>
@@ -162,13 +159,12 @@ export const cowboy: Spec = {
   inFace: (k) => (
     <>
       <Ellipse cx={50} cy={39} rx={30} ry={6} fill={k.url('shade')} />
-      <Path d={STUBBLE} fill="#5A3826" opacity={0.26} />
+      <Path d={STUBBLE} fill={k.url('shade')} opacity={0.85} />
     </>
   ),
   over: (k) => (
     <>
       <Path d={COWBOY_MOUSTACHE} fill="#6B3F22" />
-      <Path d="M47 65.5C44 65.5 40.5 66.5 38.5 68.5M53 65.5C56 65.5 59.5 66.5 61.5 68.5" stroke="#B07A50" strokeWidth={0.8} strokeLinecap="round" fill="none" opacity={0.7} />
     </>
   ),
   front: (k) => (
@@ -226,7 +222,6 @@ export const chef: Spec = {
   skin: { hi: '#EBBB92', base: '#C78A5E', mid: '#A0663E', lo: '#744425', rim: '#E2D0FF', blush: '#D85A50', lip: '#9C4F3E' },
   face: { top: 22, cw: 25, cy: 52, jw: 21, jy: 68, by: 80, bw: 10 },
   head: { dy: 3, s: 0.93 },
-  sheen: false,
   eyes: { y: 52.5, dx: 9.8, rx: 4, ry: 2.6, iris: '#2E1A10', ir: 2.3, tilt: 0.2, squint: 0.65, lash: 0.95 },
   brows: { y: 45.6, color: '#1E1410', th: 2, arch: 2.4, len: 9.6 },
   nose: { y: 62.2, w: 6 },
@@ -268,13 +263,13 @@ const GENT_MOUSTACHE = sym(66.2, [
 export const gent: Spec = {
   id: 'gent',
   skin: { hi: '#FFE3D4', base: '#EEBDA5', mid: '#CB8F77', lo: '#9E6450', rim: '#E3DAFF', blush: '#E67C80', lip: '#B5605A' },
-  face: { top: 19, cw: 21.5, cy: 47.5, jw: 17.5, jy: 67.5, by: 80, bw: 7.5 },
+  face: { top: 19, cw: 21, cy: 47.5, jw: 17, jy: 68.5, by: 81.5, bw: 7.5 },
   eyes: { y: 49.6, dx: 9.3, rx: 4, ry: 2.4, iris: '#4C7194', ir: 2.1, tilt: -0.5, squint: 0.5, lash: 0.9, crease: 0.6 },
   brows: { y: 43, color: '#B9BDCA', th: 2.5, arch: 1.6, len: 10.4, drop: 1 },
   nose: { y: 61, w: 4.9 },
   mouth: { y: 69.6, w: 8.6, open: 3.4, curve: 2.2, ul: 0.6, ll: 1.6 },
   ageLines: true,
-  smileLines: 0.5,
+  smileLines: 0.45,
   defs: (k) => [volume(k.id('hair'), '#FFFFFF', '#C9CDD8', '#80869A'), volume2(k.id('cloth'), '#DDB07E', '#A8794A', '#5E3E20')],
   body: (k) => (
     <>

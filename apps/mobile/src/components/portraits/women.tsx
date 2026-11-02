@@ -39,7 +39,6 @@ export const auntie: Spec = {
   back: (k) => (
     <>
       <Path d={AUNTIE_BACK} fill={k.url('hair')} />
-      <Path d="M68.5 18.5A7.5 7.5 0 0 1 75.5 28.5A6.5 6.5 0 0 1 78 39A5.5 5.5 0 0 1 77.5 48.5" stroke="#D8C2FF" strokeWidth={1} fill="none" opacity={0.4} />
     </>
   ),
   body: (k) => (
@@ -124,7 +123,7 @@ export const lady: Spec = {
   nose: { y: 59.5, w: 3.9 },
   mouth: { y: 67.6, w: 8.6, open: 3.8, curve: 2, ul: 1.8, ll: 2.4 },
   ears: false,
-  smileLines: 0.3,
+  smileLines: 0.22,
   defs: (k) => [volume(k.id('hair'), '#4E5A86', '#16161F', '#06060A'), volume2(k.id('cloth'), '#FFF2CF', '#EBC889', '#A67A3A')],
   back: (k) => (
     <>
@@ -144,7 +143,8 @@ export const lady: Spec = {
   front: (k) => (
     <>
       <Path d={LADY_FRONT} fill={k.url('hair')} />
-      <Path d="M29.5 27C35 19.5 41 17 46.5 16.5M50 16.5C57 16 65 19 70.5 26M25.5 45C25 60 23 75 21 90M74.5 45C75 60 77 75 79 90" stroke="#8E9CD4" strokeWidth={1.5} strokeLinecap="round" fill="none" opacity={0.55} />
+      <Ellipse cx={38} cy={21} rx={11} ry={5} transform="rotate(-28 38 21)" fill={k.url('glint')} opacity={0.4} />
+      <Path d="M26 40C25.2 56 23.5 72 21 90M28 50C27.6 64 27 78 25 96M74 40C74.8 56 76.5 72 79 90M72 52C72.4 66 73 80 75 96M44 15.5C38 17 33 21 30 27" stroke="#8E9CD4" strokeWidth={0.9} strokeLinecap="round" fill="none" opacity={0.45} />
     </>
   ),
 };
@@ -209,8 +209,7 @@ export const sporty: Spec = {
   nose: { y: 60, w: 4.4 },
   mouth: { y: 68.6, w: 9.4, open: 4.8, curve: 2.6, ul: 1.3, ll: 2 },
   head: { tilt: -3 },
-  sheen: false,
-  smileLines: 0.3,
+  smileLines: 0.22,
   defs: (k) => [
     volume(k.id('hair'), '#B07A50', '#5A3320', '#2A140A'),
     volume2(k.id('cloth'), '#8AE6F5', '#1BB4D2', '#0A6E8C'),
@@ -224,8 +223,7 @@ export const sporty: Spec = {
   body: (k) => (
     <>
       <Path d={TORSO} fill={k.url('cloth')} />
-      <Path d="M39 85C31 86.5 22 89 15 95M61 85C69 86.5 78 89 85 95" stroke="#FFFFFF" strokeWidth={2.2} fill="none" />
-      <Path d="M40 82C44 84.5 56 84.5 60 82L60.5 86C56 88.5 44 88.5 39.5 86Z" fill="#F4FBFF" />
+      <Path d="M39 85.5C31 87 22 89.5 15 95.5M61 85.5C69 87 78 89.5 85 95.5M40.5 84C44 86.8 56 86.8 59.5 84" stroke="#F4FBFF" strokeWidth={2.6} strokeLinecap="round" fill="none" />
     </>
   ),
   inFace: (k) => (
