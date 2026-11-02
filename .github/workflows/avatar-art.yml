@@ -1,6 +1,8 @@
 name: Import avatar art
-# Upload portrait images to apps/mobile/assets/avatars/ (named auntie.png, uncle.jpg, …) from the
-# GitHub website; this workflow resizes them to 384×384 PNG, wires them into the app and commits.
+# Upload portrait images (auntie.png, uncle.jpg, …) and animated clips (auntie-idle.mp4,
+# auntie-win.mp4, auntie-lose.mp4, …) to apps/mobile/assets/avatars/ from the GitHub website;
+# this workflow resizes stills to 384×384 PNG, converts clips to small looping WebP, wires them
+# into the app, commits, and rebuilds the web preview.
 on:
   push:
     paths: ['apps/mobile/assets/avatars/**']
@@ -22,8 +24,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Ensure ImageMagick
-        run: command -v convert >/dev/null || command -v magick >/dev/null || (sudo apt-get update -qq && sudo apt-get install -y -qq imagemagick)
+      - name: Ensure ImageMagick and ffmpeg
+        run: |
+          need=""
+          command -v convert >/dev/null || command -v magick >/dev/null || need="$need imagemagick"
+          command -v ffmpeg >/dev/null || need="$need ffmpeg"
+          if [ -n "$need" ]; then sudo apt-get update -qq && sudo apt-get install -y -qq $need; fi
       - name: Resize and register portraits
         id: import
         run: |

@@ -88,3 +88,26 @@ Each prompt below is complete. Copy it as is.
 4. The **Import avatar art** workflow crops each image to a square, shrinks it to 384×384, switches the app to use it, then rebuilds the web preview and the Expo Go update. Characters you haven't uploaded keep their drawn portrait, so you can upload one at a time.
 
 Upload a better version any time by uploading a file with the same name.
+
+## Animated clips (optional)
+
+The table already animates every portrait in code: breathing, a pulsing halo on your turn, call-outs (碰 吃 槓 胡牌 自摸), a sparkle burst for winners and a shake for whoever dealt in. Clips add life *inside* the portrait.
+
+Make them with any image-to-video AI (Kling, Runway, Luma Dream Machine, Hailuo, Pika, Sora, Veo): give it the finished still for a character as the start frame and use one of these prompts. 4–5 seconds is enough; the import keeps the first 4 s (idle) or 3 s (win, lose).
+
+**Idle** — save as `<id>-idle.mp4` (plays all the time in that seat, so it must loop cleanly; if the tool offers an end frame, use the same image as start and end)
+```
+The character stays exactly centred and framed as in the image. They breathe gently, blink once, and make a tiny natural head movement while keeping their friendly smile. Camera completely still, background unchanged, no zoom, no hands, seamless loop.
+```
+
+**Win** — `<id>-win.mp4` (plays when this character wins a hand)
+```
+The character bursts into a big delighted laugh: eyes squeeze with joy, head tilts back slightly, shoulders bounce with excitement, then they grin proudly at the camera. Camera completely still, framing and background unchanged, no hands in frame.
+```
+
+**Lose** — `<id>-lose.mp4` (plays when this character deals in)
+```
+The character reacts to losing with a playful groan: eyes roll up, cheeks puff out, a small head shake, then a rueful good-natured smile at the camera. Camera completely still, framing and background unchanged, no hands in frame.
+```
+
+Upload clips to the same folder as the stills. Each one becomes a small looping animation of a few hundred KB; a character can have any combination of idle, win and lose.

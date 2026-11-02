@@ -12,7 +12,10 @@ import Svg, { Circle, ClipPath, Defs, G, Image as SvgImage, Path, Polygon } from
 import { colors } from '../theme';
 import { linear, radial } from './portraits/kit';
 import { portraitArt } from './portraits';
-import { PORTRAIT_IMAGES } from './portraits/images';
+import { Image as ClipImage } from 'expo-image';
+import { PORTRAIT_CLIPS, PORTRAIT_IMAGES } from './portraits/images';
+
+export type AvatarMood = 'idle' | 'win' | 'lose';
 
 /**
  * Portrait content in a 100×100 box: the image art from assets/avatars/ when one has been imported
@@ -181,8 +184,11 @@ export const AvatarPlate = React.memo(function AvatarPlate({
   dealer,
   wind,
   offline,
+  mood,
 }: {
   id: string | undefined | null;
+  /** Which animated clip to play, if this portrait has clips (falls back to idle, then the still). */
+  mood?: AvatarMood | null;
   size?: number;
   timer?: number | null;
   timerUrgent?: boolean;
@@ -197,6 +203,8 @@ export const AvatarPlate = React.memo(function AvatarPlate({
   const frac = timer === null || timer === undefined ? null : Math.max(0, Math.min(1, timer));
   const badge = Math.max(16, Math.round(size * 0.4));
   const aid = resolveAvatar(id);
+  const clips = PORTRAIT_CLIPS[aid];
+  const clip = clips ? (mood && clips[mood]) || clips.idle : undefined;
   // Ring widths are set in pixels and converted to the 100-unit viewBox.
   const u = 100 / size;
   const ink = (size >= 44 ? 2 : 1.5) * u;
@@ -243,6 +251,22 @@ export const AvatarPlate = React.memo(function AvatarPlate({
           <Circle cx={50} cy={50} r={50 - ink - gold / 2} stroke="url(#pt-plate-gold)" strokeWidth={gold} fill="none" />
           <Circle cx={50} cy={50} r={50 - ink / 2} stroke={colors.ink} strokeWidth={ink} fill="none" />
         </Svg>
+        {clip && (
+          <View
+            pointerEvents="none"
+            style={{
+              position: 'absolute',
+              left: size / 2 - ((50 - ink - gold) / 100) * size,
+              top: size / 2 - ((50 - ink - gold) / 100) * size,
+              width: ((50 - ink - gold) / 50) * size,
+              height: ((50 - ink - gold) / 50) * size,
+              borderRadius: ((50 - ink - gold) / 100) * size,
+              overflow: 'hidden',
+            }}
+          >
+            <ClipImage source={clip as number} style={{ width: '100%', height: '100%' }} contentFit="cover" autoplay />
+          </View>
+        )}
       </View>
       {dealer && (
         <View style={[styles.badge, styles.dealer, { width: badge, height: badge, borderRadius: badge / 2, right: -badge * 0.35, top: -badge * 0.3 }]}>

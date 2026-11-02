@@ -3,3 +3,6 @@
 import type { ImageSourcePropType } from 'react-native';
 
 export const PORTRAIT_IMAGES: Partial<Record<string, ImageSourcePropType>> = {};
+
+/** Animated clips per portrait: idle loops in the seat; win and lose play on those table events. */
+export const PORTRAIT_CLIPS: Partial<Record<string, Partial<Record<'idle' | 'win' | 'lose', ImageSourcePropType>>>> = {};

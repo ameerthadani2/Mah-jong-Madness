@@ -1,4 +1,4 @@
-import React, { useContext, useState } from 'react';
+import React, { useContext, useEffect, useState } from 'react';
 import { StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
 import Svg, { Circle, Defs, G, LinearGradient, Path, RadialGradient, Rect, Stop } from 'react-native-svg';
 import { WINDS, type Meld, type PlayerView, type TileId } from '@mjm/engine';
@@ -6,7 +6,7 @@ import type { SeatInfo } from '@mjm/net';
 import { colors, fonts, nameFont } from '../theme';
 import { TableThemeContext } from '../themes';
 import { Tile, type TileSize } from './Tile';
-import { AvatarPlate, seatAvatarId } from './Avatars';
+import { AvatarPlate, seatAvatarId, type AvatarMood } from './Avatars';
 import { Emote } from './Emotes';
 import { SeatMotion, type SeatReaction } from './SeatMotion';
 
@@ -108,13 +108,23 @@ export function SeatBadge({
   const relLabel = rel === 0 ? '你' : rel === 1 ? '下家' : rel === 2 ? '對家' : '上家';
   const name = info?.name || `Seat ${seat + 1}`;
   const offline = !!info && !info.connected && !info.isBot;
+  // Win and deal-in reactions switch the portrait to its win/lose clip for a few seconds (if it has clips).
+  const [mood, setMood] = useState<AvatarMood | null>(null);
+  useEffect(() => {
+    if (!reaction) return;
+    const m: AvatarMood | null = reaction.kind === 'win' || reaction.kind === 'selfdraw' ? 'win' : reaction.kind === 'dealin' ? 'lose' : null;
+    if (!m) return;
+    setMood(m);
+    const t = setTimeout(() => setMood(null), 3200);
+    return () => clearTimeout(t);
+  }, [reaction?.key]);
   void player;
   void compact;
   return (
     <View style={[styles.seat, vertical && styles.seatVertical]}>
       <View>
         <SeatMotion size={size} seat={seat} active={isTurn && !offline} reaction={reaction}>
-          <AvatarPlate id={seatAvatarId(info, seat)} size={size} active={isTurn} timer={isTurn ? timer : null} timerUrgent={timerUrgent} dealer={seat === dealerSeat} wind={wind} offline={offline} />
+          <AvatarPlate id={seatAvatarId(info, seat)} size={size} active={isTurn} timer={isTurn ? timer : null} timerUrgent={timerUrgent} dealer={seat === dealerSeat} wind={wind} offline={offline} mood={mood} />
         </SeatMotion>
         {emote && (
           <View style={[styles.bubble, { left: size * 0.6, top: -size * 0.55 }]}>
