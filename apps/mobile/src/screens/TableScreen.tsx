@@ -17,6 +17,9 @@ import { Emote } from '../components/Emotes';
 import * as Haptics from 'expo-haptics';
 import { EMOTES, QUICK_CHATS, TableThemeContext, themeById } from '../themes';
 
+/** Hands whose result has already been celebrated (survives the table screen remounting). */
+const celebratedHands = new Set<string>();
+
 export function TableScreen() {
   const app = useApp();
   const session = app.session;
@@ -81,14 +84,21 @@ export function TableScreen() {
     meldSig.current = { hand: view.handNumber, melds, kongs };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [view]);
-  // Hold the result sheet back briefly so the win celebration is visible first.
-  const [showResult, setShowResult] = useState(false);
+  // Hold the result sheet back briefly so the win celebration is visible first — once per hand,
+  // so coming back from the review or fair-play screen shows the results straight away.
+  const resultKey = state?.lastResult && state.lastAudit ? `${state.lastAudit.matchId}:${state.lastAudit.handNumber}` : null;
+  const [showResult, setShowResult] = useState(() => resultKey !== null && celebratedHands.has(resultKey));
   useEffect(() => {
     const res = state?.lastResult;
     if (!res) {
       setShowResult(false);
       return;
     }
+    if (resultKey && celebratedHands.has(resultKey)) {
+      setShowResult(true);
+      return;
+    }
+    if (resultKey) celebratedHands.add(resultKey);
     if (res.type === 'win') {
       for (const w of res.wins) {
         fire(w.seat, w.selfDrawn ? 'selfdraw' : 'win');
