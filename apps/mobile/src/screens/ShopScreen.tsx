@@ -93,7 +93,7 @@ export function ShopScreen() {
               <ThemeScene theme={themeById(p.unlocks)} width="100%" height="100%" />
             ) : p.id.startsWith('avatars.') ? (
               <View style={styles.center}>
-                <AvatarLine ids={['tiger', 'bunny', 'pig', 'monkey']} size={Math.min(52, cardW / 3.4)} />
+                <AvatarLine ids={['cowboy', 'hoops', 'chef', 'shades']} size={Math.min(52, cardW / 3.4)} />
               </View>
             ) : (
               <View style={[styles.center, { flexDirection: 'row', gap: 4 }]}>
