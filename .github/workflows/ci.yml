@@ -16,3 +16,26 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run sim -- 5
+
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Install Chromium for Playwright
+        working-directory: apps/mobile
+        run: npx playwright install --with-deps chromium
+      - name: Play a full hand through the UI
+        working-directory: apps/mobile
+        run: npm run e2e
+      - name: Keep screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-screenshots
+          path: apps/mobile/e2e-shots
+

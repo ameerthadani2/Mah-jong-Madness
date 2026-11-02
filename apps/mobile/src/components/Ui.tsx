@@ -311,7 +311,7 @@ export function GemCounter({ amount, onPress, testID }: { amount: number; onPres
 }
 
 /** Screen title row: round back button, stroked title, optional right-hand items. */
-export function ScreenHeader({ title, onBack, backTestID, right, sub }: { title: string; onBack?: () => void; backTestID?: string; right?: React.ReactNode; sub?: React.ReactNode }) {
+export function ScreenHeader({ title, onBack, backTestID = 'back', right, sub }: { title: string; onBack?: () => void; backTestID?: string; right?: React.ReactNode; sub?: React.ReactNode }) {
   return (
     <View style={styles.header}>
       {onBack && <IconButton testID={backTestID} icon="back" kind="secondary" size={44} onPress={onBack} />}

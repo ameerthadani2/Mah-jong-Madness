@@ -8,7 +8,8 @@
     "android": "expo run:android",
     "ios": "expo run:ios",
     "web": "expo start --web",
-    "typecheck": "tsc --noEmit -p tsconfig.json"
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "e2e": "rm -rf dist-e2e && CI=1 expo export --platform web --output-dir dist-e2e && node e2e/play-hand.cjs dist-e2e e2e-shots"
   },
   "dependencies": {
     "@expo-google-fonts/baloo-2": "^0.4.2",
@@ -36,6 +37,7 @@
   },
   "devDependencies": {
     "@types/react": "~19.3",
+    "playwright": "^1.63.0",
     "typescript": "^5.6.3"
   }
 }
