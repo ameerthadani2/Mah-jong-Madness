@@ -8,10 +8,38 @@
  */
 import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
-import Svg, { Circle, ClipPath, Defs, G, Path, Polygon } from 'react-native-svg';
+import Svg, { Circle, ClipPath, Defs, G, Image as SvgImage, Path, Polygon } from 'react-native-svg';
 import { colors } from '../theme';
 import { linear, radial } from './portraits/kit';
 import { portraitArt } from './portraits';
+import { PORTRAIT_IMAGES } from './portraits/images';
+
+/**
+ * Portrait content in a 100×100 box: the image art from assets/avatars/ when one has been imported
+ * for this id (see scripts/import-avatars.cjs), otherwise the drawn SVG portrait.
+ */
+function portraitLayer(aid: AvatarId): React.ReactNode {
+  const img = PORTRAIT_IMAGES[aid];
+  if (!img) {
+    const p = portraitArt(aid);
+    return (
+      <>
+        {p.backdrop}
+        {p.art}
+      </>
+    );
+  }
+  return (
+    <>
+      <Defs>
+        <ClipPath id="pt-img-clip">
+          <Circle cx={50} cy={50} r={50} />
+        </ClipPath>
+      </Defs>
+      <SvgImage href={img} x={0} y={0} width={100} height={100} preserveAspectRatio="xMidYMid slice" clipPath="url(#pt-img-clip)" />
+    </>
+  );
+}
 
 export const AVATAR_IDS = ['auntie', 'uncle', 'grandma', 'boss', 'lady', 'shades', 'hoops', 'cowboy', 'student', 'chef', 'sporty', 'gent'] as const;
 export type AvatarId = (typeof AVATAR_IDS)[number];
@@ -101,11 +129,19 @@ export function seatAvatarId(info: { avatar?: string; isBot?: boolean; name?: st
 
 /** The portrait alone on its round backdrop (or on a flat `bg`). */
 export const Avatar = React.memo(function Avatar({ id, size = 48, bg }: { id: string | undefined | null; size?: number; bg?: string }) {
-  const p = portraitArt(resolveAvatar(id));
+  const aid = resolveAvatar(id);
+  if (bg && !PORTRAIT_IMAGES[aid]) {
+    const p = portraitArt(aid);
+    return (
+      <Svg width={size} height={size} viewBox="0 0 100 100">
+        <Circle cx={50} cy={50} r={50} fill={bg} />
+        {p.art}
+      </Svg>
+    );
+  }
   return (
     <Svg width={size} height={size} viewBox="0 0 100 100">
-      {bg ? <Circle cx={50} cy={50} r={50} fill={bg} /> : p.backdrop}
-      {p.art}
+      {portraitLayer(aid)}
     </Svg>
   );
 });
@@ -160,7 +196,7 @@ export const AvatarPlate = React.memo(function AvatarPlate({
   const C = 2 * Math.PI * ringR;
   const frac = timer === null || timer === undefined ? null : Math.max(0, Math.min(1, timer));
   const badge = Math.max(16, Math.round(size * 0.4));
-  const p = portraitArt(resolveAvatar(id));
+  const aid = resolveAvatar(id);
   // Ring widths are set in pixels and converted to the 100-unit viewBox.
   const u = 100 / size;
   const ink = (size >= 44 ? 2 : 1.5) * u;
@@ -203,10 +239,7 @@ export const AvatarPlate = React.memo(function AvatarPlate({
         <Svg width={size} height={size} viewBox="0 0 100 100">
           <Defs>{PLATE_GOLD}</Defs>
           <Circle cx={50} cy={50} r={50} fill={colors.ink} />
-          <G transform={`translate(${50 - R} ${50 - R}) scale(${R / 50})`}>
-            {p.backdrop}
-            {p.art}
-          </G>
+          <G transform={`translate(${50 - R} ${50 - R}) scale(${R / 50})`}>{portraitLayer(aid)}</G>
           <Circle cx={50} cy={50} r={50 - ink - gold / 2} stroke="url(#pt-plate-gold)" strokeWidth={gold} fill="none" />
           <Circle cx={50} cy={50} r={50 - ink / 2} stroke={colors.ink} strokeWidth={ink} fill="none" />
         </Svg>

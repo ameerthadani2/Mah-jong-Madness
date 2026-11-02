@@ -1,0 +1,51 @@
+name: Import avatar art
+# Upload portrait images to apps/mobile/assets/avatars/ (named auntie.png, uncle.jpg, …) from the
+# GitHub website; this workflow resizes them to 384×384 PNG, wires them into the app and commits.
+on:
+  push:
+    paths: ['apps/mobile/assets/avatars/**']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: avatar-art-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  import:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Ensure ImageMagick
+        run: command -v convert >/dev/null || command -v magick >/dev/null || (sudo apt-get update -qq && sudo apt-get install -y -qq imagemagick)
+      - name: Resize and register portraits
+        id: import
+        run: |
+          node apps/mobile/scripts/import-avatars.cjs | tee import.log
+          echo "## Avatar art" >> $GITHUB_STEP_SUMMARY
+          sed 's/^/    /' import.log >> $GITHUB_STEP_SUMMARY
+      - name: Commit the processed images
+        run: |
+          git add -A apps/mobile/assets/avatars apps/mobile/src/components/portraits/images.ts
+          if git diff --cached --quiet; then
+            echo "Nothing to commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Import avatar art (resized to 384x384)"
+          git push
+      - name: Rebuild the web preview and Expo Go update with the new art
+        # Pushes made with GITHUB_TOKEN do not trigger other workflows, so start them explicitly.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh workflow run web-preview.yml --ref "$GITHUB_REF_NAME" || echo "web preview not started"
+          gh workflow run expo-go-publish.yml --ref "$GITHUB_REF_NAME" || echo "Expo Go publish not started"
+
