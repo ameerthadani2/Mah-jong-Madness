@@ -103,8 +103,15 @@ export interface Link {
 }
 
 const DEFAULT_BOT_NAMES = ['阿明 (Bot)', '小美 (Bot)', '老王 (Bot)', '阿花 (Bot)'];
-/** Avatar ids handed to bots; the app draws these. A bot never takes an avatar already at the table. */
-const DEFAULT_BOT_AVATARS = ['tiger', 'fox', 'frog', 'cat', 'owl', 'bunny', 'bear', 'monkey', 'penguin', 'koala', 'pig', 'panda'];
+/** Avatar ids handed to bots; the app draws these portraits. A bot never takes an avatar already at the table. */
+const DEFAULT_BOT_AVATARS = ['shades', 'lady', 'uncle', 'auntie', 'boss', 'hoops', 'gent', 'grandma', 'cowboy', 'sporty', 'chef', 'student'];
+/** Preferred portraits per default bot name (阿明, 小美, 老王, 阿花), tried before the general list. */
+const BOT_AVATAR_PREFS = [
+  ['shades', 'boss', 'student'],
+  ['lady', 'hoops', 'sporty'],
+  ['uncle', 'gent', 'cowboy'],
+  ['auntie', 'grandma', 'chef'],
+];
 
 export class TableHost {
   readonly roomCode: string;
@@ -265,7 +272,8 @@ export class TableHost {
     free.connected = true;
     free.name = this.botNames[free.seat % this.botNames.length];
     const taken = new Set(this.seats.map((s) => s.avatar).filter((a): a is string => !!a));
-    free.avatar = DEFAULT_BOT_AVATARS.find((a) => !taken.has(a)) ?? DEFAULT_BOT_AVATARS[free.seat];
+    const prefs = BOT_AVATAR_PREFS[free.seat % BOT_AVATAR_PREFS.length];
+    free.avatar = [...prefs, ...DEFAULT_BOT_AVATARS].find((a) => !taken.has(a)) ?? DEFAULT_BOT_AVATARS[free.seat];
     this.broadcastLobby();
     return free.seat;
   }

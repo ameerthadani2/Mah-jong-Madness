@@ -65,7 +65,7 @@ describe('host hardening', () => {
 
 describe('bot avatars', () => {
   it('bots never wear an avatar a player at the table already uses', () => {
-    for (const mine of ['tiger', 'fox', 'panda', 'cat']) {
+    for (const mine of ['lady', 'uncle', 'shades', 'auntie', 'boss']) {
       const hub = new LoopbackHub();
       const host = new TableHost(hub.create('host'), { roomCode: 'AV', rules: withRules({ handsPerMatch: 1 }) });
       const c = new TableClient(transportLink(hub.create('p0'), 'host'), 'Me', mine);

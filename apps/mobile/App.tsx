@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { StatusBar } from 'expo-status-bar';
-import { StyleSheet, View } from 'react-native';
+import { Platform, StyleSheet, View } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { useFonts } from 'expo-font';
 import { LilitaOne_400Regular } from '@expo-google-fonts/lilita-one/400Regular';
@@ -27,6 +27,10 @@ import { ReviewScreen } from './src/screens/ReviewScreen';
 import { FairnessScreen } from './src/screens/FairnessScreen';
 import { DailyPuzzleScreen, PuzzleRushScreen } from './src/screens/PuzzleScreens';
 import { ShopScreen } from './src/screens/ShopScreen';
+import { AvatarGallery } from './src/screens/AvatarGallery';
+
+/** Web-only developer gallery: open the app with #avatars. */
+const SHOW_AVATAR_GALLERY = Platform.OS === 'web' && typeof window !== 'undefined' && window.location?.hash === '#avatars';
 
 function Router() {
   const { screen } = useApp();
@@ -115,7 +119,9 @@ export default function App() {
   return (
     <SafeAreaProvider>
       <StatusBar style="light" hidden />
-      {ready ? (
+      {ready && SHOW_AVATAR_GALLERY ? (
+        <AvatarGallery />
+      ) : ready ? (
         <AppProvider>
           <Shell />
         </AppProvider>
