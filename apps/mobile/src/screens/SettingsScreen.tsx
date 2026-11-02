@@ -1,12 +1,15 @@
 import React from 'react';
-import { ScrollView, StyleSheet, Text, TextInput } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { BOT_SKILLS, DEFAULT_RULES, describeRules, RULE_PRESETS, rulesFromPreset, SPEED_PRESETS, withSpeed, type BotSkill, type GameSpeed } from '@mjm/engine';
 import { useApp } from '../app-state';
 import { AVATARS } from '../storage';
 import { TABLE_THEMES } from '../themes';
 import { ownsCosmetic } from '../monetisation/store';
-import { colors, space } from '../theme';
-import { Button, Card, H1, H2, P, Row, Stepper, Toggle } from '../components/Ui';
+import { colors, fonts, space } from '../theme';
+import { Button, Card, Chip, H2, P, Row, ScreenHeader, Stepper, Toggle } from '../components/Ui';
+import { AvatarPlate } from '../components/Avatars';
+import { ThemeScene } from '../components/Scenes';
+import { Icon } from '../components/Icons';
 
 export function SettingsScreen() {
   const app = useApp();
@@ -16,48 +19,52 @@ export function SettingsScreen() {
 
   return (
     <ScrollView contentContainerStyle={styles.wrap}>
-      <Row style={{ justifyContent: 'space-between' }}>
-        <H1>Settings</H1>
-        <Button small kind="ghost" title="Done" onPress={app.back} />
-      </Row>
+      <ScreenHeader title="Settings" onBack={app.back} right={<Button small kind="primary" icon="check" title="Done" onPress={app.back} />} />
       <Card>
         <H2>Profile</H2>
-        <TextInput value={profile.name} onChangeText={(name) => setProfile({ ...profile, name })} placeholder="Name" placeholderTextColor={colors.textDim} style={styles.input} maxLength={24} />
-        <Row style={{ flexWrap: 'wrap' }}>
+        <Row gap={12}>
+          <AvatarPlate id={profile.avatar} size={56} />
+          <TextInput value={profile.name} onChangeText={(name) => setProfile({ ...profile, name })} placeholder="Name" placeholderTextColor="#9AA0BF" style={[styles.input, { flex: 1 }]} maxLength={24} />
+        </Row>
+        <Row style={{ flexWrap: 'wrap', rowGap: 8 }} gap={8}>
           {AVATARS.map((a) => (
-            <Text key={a} onPress={() => setProfile({ ...profile, avatar: a })} style={[styles.avatar, profile.avatar === a && styles.avatarOn]}>
-              {a}
-            </Text>
+            <Pressable key={a} onPress={() => setProfile({ ...profile, avatar: a })} hitSlop={2} style={[styles.pick, profile.avatar === a && styles.pickOn]}>
+              <AvatarPlate id={a} size={42} />
+            </Pressable>
           ))}
         </Row>
       </Card>
       <Card>
         <H2>Table look</H2>
-        <Row style={{ flexWrap: 'wrap' }}>
+        <Row style={{ flexWrap: 'wrap', rowGap: 10 }} gap={10}>
           {TABLE_THEMES.map((t) => {
             const locked = t.premium && !ownsCosmetic(app.wallet, t.id);
+            const on = settings.tableTheme === t.id;
             return (
-              <Text key={t.id} onPress={() => (locked ? app.go({ name: 'shop' }) : setSettings({ ...settings, tableTheme: t.id }))} style={[styles.chip, { backgroundColor: t.felt, color: t.accent, borderWidth: 2, borderColor: settings.tableTheme === t.id ? t.accent : 'transparent' }]}>
-                {locked ? '🔒 ' : ''}
-                {t.name}
-              </Text>
+              <Pressable key={t.id} onPress={() => (locked ? app.go({ name: 'shop' }) : setSettings({ ...settings, tableTheme: t.id }))} style={[styles.theme, on && styles.themeOn]}>
+                <ThemeScene theme={t} width={96} height={80} />
+                <Row gap={4}>
+                  {locked && <Icon name="lock" size={16} />}
+                  <Text style={styles.themeName} numberOfLines={1}>
+                    {t.name}
+                  </Text>
+                </Row>
+              </Pressable>
             );
           })}
         </Row>
         <Row style={{ justifyContent: 'space-between' }}>
           <P dim style={{ fontSize: 12 }}>Locked looks are unlocked in the Shop.</P>
-          <Button small kind="ghost" title="Open Shop" onPress={() => app.go({ name: 'shop' })} />
+          <Button small kind="gold" title="Open Shop" onPress={() => app.go({ name: 'shop' })} />
         </Row>
       </Card>
       <Card>
         <H2>Coach & bots</H2>
         <Toggle label="Show coach panel at the table" value={settings.coach} onChange={(coach) => setSettings({ ...settings, coach })} />
         <P dim style={{ fontSize: 12 }}>Bot strength</P>
-        <Row style={{ flexWrap: 'wrap' }}>
+        <Row style={{ flexWrap: 'wrap', rowGap: 6 }}>
           {(Object.keys(BOT_SKILLS) as BotSkill[]).map((k) => (
-            <Text key={k} onPress={() => setSettings({ ...settings, botSkill: k })} style={[styles.chip, settings.botSkill === k && styles.chipOn]}>
-              {BOT_SKILLS[k].label} ({BOT_SKILLS[k].rating})
-            </Text>
+            <Chip key={k} label={`${BOT_SKILLS[k].label} (${BOT_SKILLS[k].rating})`} selected={settings.botSkill === k} onPress={() => setSettings({ ...settings, botSkill: k })} />
           ))}
         </Row>
         <P dim style={{ fontSize: 12 }}>{BOT_SKILLS[settings.botSkill].description}</P>
@@ -66,19 +73,15 @@ export function SettingsScreen() {
         <H2>House rules (台灣麻將)</H2>
         <P dim style={{ fontSize: 13 }}>{describeRules(rules)}</P>
         <P dim style={{ fontSize: 12 }}>Presets</P>
-        <Row style={{ flexWrap: 'wrap' }}>
+        <Row style={{ flexWrap: 'wrap', rowGap: 6 }}>
           {RULE_PRESETS.map((p) => (
-            <Text key={p.id} onPress={() => setSettings({ ...settings, rules: rulesFromPreset(p.id) })} style={styles.chip}>
-              {p.name}
-            </Text>
+            <Chip key={p.id} label={p.name} onPress={() => setSettings({ ...settings, rules: rulesFromPreset(p.id) })} />
           ))}
         </Row>
         <P dim style={{ fontSize: 12 }}>Speed (seconds per move + time bank per hand)</P>
-        <Row style={{ flexWrap: 'wrap' }}>
+        <Row style={{ flexWrap: 'wrap', rowGap: 6 }}>
           {(Object.keys(SPEED_PRESETS) as GameSpeed[]).map((sp) => (
-            <Text key={sp} onPress={() => setSettings({ ...settings, rules: withSpeed(rules, sp) })} style={[styles.chip, rules.speed === sp && styles.chipOn]}>
-              {SPEED_PRESETS[sp].label} {SPEED_PRESETS[sp].turnSeconds}s+{SPEED_PRESETS[sp].timeBankSeconds}s
-            </Text>
+            <Chip key={sp} label={`${SPEED_PRESETS[sp].label} ${SPEED_PRESETS[sp].turnSeconds}s+${SPEED_PRESETS[sp].timeBankSeconds}s`} selected={rules.speed === sp} onPress={() => setSettings({ ...settings, rules: withSpeed(rules, sp) })} />
           ))}
         </Row>
         <Stepper label="底 Base points" value={rules.basePoints} step={50} min={0} max={5000} onChange={(v) => setRule('basePoints', v)} />
@@ -94,7 +97,7 @@ export function SettingsScreen() {
         <Toggle label="Multiple winners on one discard (一炮多響)" value={rules.multipleWinners} onChange={(v) => setRule('multipleWinners', v)} />
         <Toggle label="過水 (pass on a win → no ron until next draw)" value={rules.passRule} onChange={(v) => setRule('passRule', v)} />
         <Toggle label="無花 1 台" value={rules.noFlowerTai} onChange={(v) => setRule('noFlowerTai', v)} />
-        <Button small kind="ghost" title="Reset to defaults" onPress={() => setSettings({ ...settings, rules: DEFAULT_RULES })} />
+        <Button small kind="ghost" title="Reset to defaults" onPress={() => setSettings({ ...settings, rules: DEFAULT_RULES })} style={{ alignSelf: 'flex-start' }} />
       </Card>
       <Card>
         <H2>Network</H2>
@@ -110,9 +113,10 @@ export function SettingsScreen() {
 
 const styles = StyleSheet.create({
   wrap: { padding: space.lg, gap: space.md },
-  input: { backgroundColor: '#FFFFFF', color: colors.ink, borderWidth: 3, borderColor: colors.creamEdge, borderRadius: 14, paddingHorizontal: 12, paddingVertical: 10, fontSize: 16 },
-  avatar: { fontSize: 26, padding: 4, borderRadius: 8 },
-  avatarOn: { backgroundColor: colors.gold, borderWidth: 2, borderColor: colors.goldDim },
-  chip: { color: colors.ink, backgroundColor: colors.cream, borderWidth: 2, borderColor: colors.creamEdge, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 999, fontSize: 12, fontWeight: '800', overflow: 'hidden' },
-  chipOn: { backgroundColor: colors.gold, borderColor: colors.goldDim, color: colors.ink },
+  input: { backgroundColor: '#FFFFFF', color: colors.ink, borderWidth: 3, borderColor: colors.ink, borderRadius: 14, paddingHorizontal: 12, paddingVertical: 10, fontSize: 16, fontFamily: fonts.uiBold },
+  pick: { borderRadius: 999, padding: 2, borderWidth: 3, borderColor: 'transparent' },
+  pickOn: { borderColor: colors.gold, backgroundColor: colors.gold },
+  theme: { alignItems: 'center', gap: 2, padding: 4, borderRadius: 16, borderWidth: 3, borderColor: 'transparent', width: 112 },
+  themeOn: { borderColor: colors.ink, backgroundColor: colors.gold },
+  themeName: { fontFamily: fonts.uiBold, color: colors.ink, fontSize: 12, maxWidth: 90 },
 });

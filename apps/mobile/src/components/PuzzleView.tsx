@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { checkDiscardAnswer, checkWaitsAnswer, kindInfo, kindsToString, type DiscardPuzzle, type Kind, type Puzzle, type WaitsPuzzle } from '@mjm/engine';
-import { colors } from '../theme';
+import { colors, fonts } from '../theme';
 import { Tile } from './Tile';
 import { Button, H2, P, Pill, Row } from './Ui';
+import { Icon } from './Icons';
 
 export interface PuzzleResult {
   correct: boolean;
@@ -43,7 +44,10 @@ function DiscardPuzzleView({ puzzle, onResult, onNext, nextLabel, autoAdvance }:
       </View>
       {picked !== null && pickedOpt && (
         <View style={{ gap: 6 }}>
-          <H2 style={{ color: good ? colors.ok : colors.danger }}>{good ? 'Good discard!' : 'There is a better one.'}</H2>
+          <Row>
+            <Icon name={good ? 'check' : 'cross'} size={26} color={good ? colors.cta : colors.danger} />
+            <H2 style={{ color: good ? colors.okText : colors.dangerText }}>{good ? 'Good discard!' : 'There is a better one.'}</H2>
+          </Row>
           <P>
             {kindInfo(pickedOpt.kind).nameZh}: {pickedOpt.shanten <= 0 ? 'ready' : `${pickedOpt.shanten} from ready`}, {pickedOpt.accepts.length} kinds / {pickedOpt.acceptance} tiles improve you.
           </P>
@@ -95,9 +99,12 @@ function WaitsPuzzleView({ puzzle, onResult, onNext, nextLabel, autoAdvance }: {
         <Button title="Check" onPress={check} disabled={chosen.size === 0} />
       ) : (
         <View style={{ gap: 6 }}>
-          <H2 style={{ color: correct ? colors.ok : colors.danger }}>{correct ? 'Exactly right!' : 'Not all of them.'}</H2>
+          <Row>
+            <Icon name={correct ? 'check' : 'cross'} size={26} color={correct ? colors.cta : colors.danger} />
+            <H2 style={{ color: correct ? colors.okText : colors.dangerText }}>{correct ? 'Exactly right!' : 'Not all of them.'}</H2>
+          </Row>
           <Row style={{ flexWrap: 'wrap' }}>
-            <Text style={{ color: colors.ink, fontWeight: '700' }}>Waits:</Text>
+            <Text style={{ color: colors.ink, fontFamily: fonts.uiBold }}>Waits:</Text>
             {puzzle.answers.map((k) => (
               <Pill key={k} text={kindInfo(k).nameZh} tone="gold" />
             ))}
@@ -111,5 +118,5 @@ function WaitsPuzzleView({ puzzle, onResult, onNext, nextLabel, autoAdvance }: {
 
 const styles = StyleSheet.create({
   hand: { flexDirection: 'row', flexWrap: 'wrap', gap: 3, paddingVertical: 6 },
-  label: { color: colors.textDim, fontSize: 12, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 1 },
+  label: { color: colors.inkDim, fontSize: 12, fontFamily: fonts.uiBold, textTransform: 'uppercase', letterSpacing: 1 },
 });
