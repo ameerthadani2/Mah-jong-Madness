@@ -1,39 +1,61 @@
-# Visual design: "low-poly cartoon world, Flat 2.0 UI"
+# Visual design: Tycoon Parlour
 
-Direction: the approachable, chunky, saturated look of Codigames' idle tycoon games (Idle Supermarket Tycoon, Idle Theme Park Tycoon, Idle Airport Tycoon, Hotel Empire Tycoon). Note that no public Codigames style guide exists; the tokens below are derived from the genre and from the company's brand anchors, and should be validated against store screenshots.
+Mahjong Madness looks like a Codigames idle-tycoon game (Idle Supermarket Tycoon, Idle Theme Park Tycoon): bright, chunky, illustrated and friendly, and unmistakably a commercial game. Three complete directions were built and compared side by side. Tycoon Parlour won; Jade & Lacquer (deep jade felt, walnut rail, gold leaf) and Neo Arcade (navy glass cards, geometric tiles) were runners-up and are good sources for premium table themes.
 
-## One-sentence brief
-Flat-colour, big-silhouette 3D rendered as pre-baked sprites, framed by a 2D UI of rounded chunky shapes with two-tone top/bottom shading, 3–4px darker outlines, a hard bottom "shelf" shadow, and white display type with a dark stroke. Avoid Codigames' failure modes: dense HUDs, same-looking rewarded-ad buttons, booster buttons heavier than their explanation. Keep ≤ 5 primary targets per screen.
+Nothing in the UI is an emoji or a system icon. Every icon, avatar, illustration and tile face is drawn with `react-native-svg` or composed Views, so it renders the same on iOS, Android and web.
 
-## Tokens (implemented in `apps/mobile/src/theme.ts`)
+## Where things live (`apps/mobile/src`)
+
+| File | What it draws |
+| --- | --- |
+| `theme.ts` | Colour, radius, spacing and font tokens; text helpers that keep Chinese on the system CJK font |
+| `components/Ui.tsx` | Panels, two-tone pressable buttons, chips, toggles, steppers, `StrokeText` display type, screen header |
+| `components/Tile.tsx` | SVG tiles: ivory gradient face, bevel, thickness layer, suit art per kind, patterned backs, highlights |
+| `components/Avatars.tsx` | Twelve animal busts (panda, tiger, fox, frog, owl, cat, bunny, bear, monkey, penguin, pig, koala) and the seat plate with timer ring, dealer badge and seat wind |
+| `components/Scenes.tsx` | Mode-card illustrations: mahjong table, clubhouse, scroll, treasure chest, gem piles, VIP cards, coach medals |
+| `components/Icons.tsx` | About 30 drawn icons |
+| `components/Emotes.tsx` | Eight drawn emotes and the quick-chat picker |
+| `components/Backdrop.tsx`, `Logo.tsx` | Sky gradient with sunburst and clouds; the wordmark |
+| `components/TableParts.tsx` | Felt, wood rail, compass, live wall, melds, discard pools, seat badges |
+
+## Palette
+
 | Token | Value | Use |
 | --- | --- | --- |
-| ink / outline | `#10142F` | outlines, strokes, body text on cream |
-| sky top / bottom | `#5BC8F5` → `#9BEBFC` | lobby backgrounds |
-| felt | `#2F9E6A`, rim `#1E7A4F`, rail `#B5722F` / `#6E3F12` | table |
-| primary CTA | `#52C41A` fill, `#3FA011` shelf, `#2B6E0C` outline | Start, Buy, Hu |
-| info | `#2F8CFF` fill, `#1C5FCC` shelf | secondary actions, Chi |
-| gold | `#FFC53D` fill, `#E09A00` shelf, `#8A5A00` outline | chips, Kong, highlights |
-| premium | `#B35CFF` fill, `#7E3AE0` shelf, `#4E2390` outline | Diamonds, shop |
-| danger | `#FF5A5F` fill, `#C73A40` shelf | timeouts, errors |
-| cream panel | `#FFF6E5` fill, `#E6C9A0` outline | cards, keypad, result panels |
-| white | `#FFFFFF` with `#10142F` stroke | display text |
+| Sky | `#2FA8F0` → `#3DB9F5` → `#8FE3FA` → `#A8F2E6` | Lobby background gradient |
+| Ink | `#10142F` | Every outline and text stroke |
+| Cream panel | `#FFF6E5`, shelf `#E2B878` | Cards and dialogs |
+| Primary green | `#52C41A` | Main actions (Play, Buy) |
+| Blue | `#2F8CFF` | Clubs and secondary actions |
+| Gold | `#FFC53D` | Coins, highlights, the active seat |
+| Purple | `#B35CFF` | Learn |
+| Red | `#FF5A5F` | Leave, danger, low time |
+| Gem | `#38D6FF` | Premium currency |
+| Felt | radial green inside a wood rail | Table |
+| Parlour floor | `#173B5C` with faint diamond tiling | Behind the table |
 
-Rule: every fill gets a shelf ≈ 18% darker and an outline ≈ 35% darker; fills stay saturated (S 70–90%) and bright (V 75–95%).
-
-## Shapes
-* Buttons 52–64pt tall, radius 18–22 (pill 999 for action chips), 3px outline, 4–6px hard shelf (no blur) plus a soft ambient shadow. Pressed: translateY 4, shelf 0, spring scale 0.96 → 1.
-* Panels radius 24–28, 4px outline, 2px 35%-white top highlight, subtle two-stop vertical gradient.
-* Tiles are the hero: ivory `#FFF9EE` face, 2px `#D9C7A6` edge, saturated glyphs, soft inner shadow; 44×62pt in hand on phones where room allows.
+Every filled shape has the same build: a lighter top tone, the fill, a darker hard "shelf" under it, and a 3px ink outline. Buttons drop onto their shelf when pressed.
 
 ## Type
-Display and numerals: **Lilita One** (or Luckiest Guy for louder headlines), white with a 3–4px ink stroke. UI labels: **Fredoka** 600/700. Body: **Nunito** 600/700. CJK (tile names, 台 names): **Noto Sans TC** 700/900. All available as `@expo-google-fonts/*` packages under OFL/MIT. Until the native stroked-text dependency lands, use a 2px dark text shadow.
 
-## Motion and feedback
-Tile pick-up scale 1.0 → 1.12 with shadow lift; discard arc 250ms + Medium haptic; Pong/Kong banner slam (1.3 → 1.0 spring) + Rigid haptic; Hu: Success haptic, radial gold burst, confetti 1.5s, score count-up; low time: pulsing red ring + Warning haptic at 5s. Respect reduced-motion.
+* **Lilita One**: display text and numerals, white with an ink stroke (`StrokeText` layers offset copies behind the fill).
+* **Luckiest Guy**: the logo wordmark only.
+* **Fredoka** 500–700: UI labels and buttons.
+* **Nunito** 600–800: body text.
+* **Chinese**: never given a font family, so iOS uses PingFang TC and Android uses Noto Sans CJK at a heavy weight. CJK fonts are not bundled (they would add megabytes).
 
-## Avatars
-Low-poly busts (~4k tris, 512² flat texture, big heads, dot eyes, bold silhouettes) rendered to 64/128/256 PNGs with a 4px outline and rarity frames (cream/blue/purple/gold). Until 3D art exists, 2D vector in the same language reads the same at phone size. Emotes as Lottie or sprite sheets.
+Fonts load in `App.tsx` behind a branded loading screen; after three seconds the app falls back to system fonts so it never shows a blank screen.
 
-## Accessibility
-White on `#52C41A` fails 4.5:1 without the stroke — keep the stroke. 44pt minimum targets. Colour-blind safe suit cues: glyph shapes already differ; dragons distinct by shape. Test boxShadow fallbacks on Android 9.
+## Tiles
+
+Characters are heavy numerals over a red 萬. Dots are concentric rings in blue, red and green, in the traditional layouts, with an ornate one-dot. Bamboo is stick clusters with node bands; the one-bamboo is a bird on a perch. Winds are navy, 中 red, 發 green, and 白 a blue double frame. Flowers show a blossom, their number and character. Backs are a green gradient with a lattice diamond. Each kind's art is computed once and cached.
+
+## Table
+
+The felt sits inside a chunky wood rail with brass corner studs. A compass in the centre shows the round wind, the tiles left in the wall and each seat's wind, with the active seat lit gold. On tablets and in portrait the wall is drawn around the compass and empties as tiles are drawn. Your hand sits on a wooden rack: one row of 17 in landscape, two rows in portrait. Claims are large pill buttons labelled with the Chinese verb (過 吃 碰 槓 打 胡) and the tiles involved. The coach is an owl in a speech bubble.
+
+## Known gaps
+
+* Only verified in the web build; native SVG text, gradients and PingFang weights still need a device check.
+* Every tile is an SVG; profile on a low-end Android phone before launch.
+* The wall around the compass is decorative and does not track the dead wall.

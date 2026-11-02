@@ -62,3 +62,18 @@ describe('host hardening', () => {
     expect(res.failures.join(' ')).toMatch(/Announced result differs/);
   });
 });
+
+describe('bot avatars', () => {
+  it('bots never wear an avatar a player at the table already uses', () => {
+    for (const mine of ['tiger', 'fox', 'panda', 'cat']) {
+      const hub = new LoopbackHub();
+      const host = new TableHost(hub.create('host'), { roomCode: 'AV', rules: withRules({ handsPerMatch: 1 }) });
+      const c = new TableClient(transportLink(hub.create('p0'), 'host'), 'Me', mine);
+      c.join();
+      host.start();
+      const avatars = host.seatInfo().map((s) => s.avatar);
+      expect(new Set(avatars).size).toBe(4);
+      expect(avatars.filter((a) => a === mine)).toHaveLength(1);
+    }
+  });
+});
