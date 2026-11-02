@@ -111,7 +111,27 @@ export function linear(id: string, s: StopDef[], x1 = 0, y1 = 0, x2 = 0, y2 = 10
   );
 }
 
-/** Three-tone cloth / hair / hat volume lit from the upper left. */
+/** Mix two #RRGGBB colours (t = 0 gives a, 1 gives b). */
+export function mix(a: string, b: string, t: number): string {
+  const pa = [1, 3, 5].map((i) => parseInt(a.slice(i, i + 2), 16));
+  const pb = [1, 3, 5].map((i) => parseInt(b.slice(i, i + 2), 16));
+  return '#' + pa.map((v, i) => Math.round(v + (pb[i] - v) * t).toString(16).padStart(2, '0')).join('');
+}
+
+/** Cloth / cap volume lit from the upper left: like `volume` but with two stops (one element fewer). */
+export const volume2 = (id: string, hi: string, base: string, lo: string) =>
+  radial(
+    id,
+    [
+      [0, mix(hi, base, 0.3)],
+      [1, mix(base, lo, 0.75)],
+    ],
+    32,
+    18,
+    95,
+  );
+
+/** Three-tone hair / hat volume lit from the upper left. */
 export const volume = (id: string, hi: string, base: string, lo: string) =>
   radial(
     id,
@@ -217,9 +237,11 @@ export interface Spec {
   neck?: number;
   head?: { tilt?: number; dx?: number; dy?: number; s?: number };
   ears?: boolean;
-  /** Opacity of laugh lines (nose to mouth) and of age lines. */
+  /** Opacity of laugh lines (nose to mouth); `ageLines` adds wrinkles drawn with them. */
   smileLines?: number;
-  ageLines?: number;
+  ageLines?: boolean;
+  /** Forehead sheen (off under hat brims). */
+  sheen?: boolean;
   defs?: Layer;
   /** Behind everything, moves with the head (long hair, ponytails, hair volume). */
   back?: Layer;
@@ -337,15 +359,15 @@ export function buildPortrait(s: Spec): PortraitArt {
   const lowerLip = d`M${Rx} ${Ry}` + botEdge + d`C${50 - mw * 0.5} ${my + mo * 1.3 + ll * 1.5} ${50 + mw * 0.5} ${my + mo * 1.3 + ll * 1.5 - sm * 0.3} ${Rx} ${Ry}Z`;
   const lipBottom = my - c * 0.25 + mo * 0.98 + ll * 1.1;
 
-  const sl = s.smileLines ?? 0.45;
-  const smile = both(
-    d`M${50 - nw - 1.6} ${ny - 1.8}C${50 - nw - 5} ${ny + 1} ${Lx - 3.6} ${Ly - 2.6} ${Lx - 1.8} ${Ly + 2}` + d`M${Lx - 0.4} ${Ly - 1.1}Q${Lx - 1.5} ${Ly + 0.1} ${Lx - 0.5} ${Ly + 1.3}`,
-  );
-  const al = s.ageLines ?? 0;
-  const ageLines = al
-    ? both(d`M${ex - rx - 1} ${ey - 0.6}l-2.4 -1.3M${ex - rx - 0.8} ${ey + 0.8}l-2.6 0.5M${ex - rx - 0.4} ${ey + 2.1}l-2 1.6M${ex - rx * 0.7} ${ey + ry * 2.1}Q${ex} ${ey + ry * 2.9} ${ex + rx * 0.6} ${ey + ry * 2}`) +
-      d`M36 ${f.top + 8}Q50 ${f.top + 5.5} 64 ${f.top + 8}M39 ${f.top + 11.5}Q50 ${f.top + 9.5} 61 ${f.top + 11.5}`
-    : '';
+  const sl = s.smileLines ?? 0.4;
+  const lines =
+    both(d`M${50 - nw - 1.6} ${ny - 1.8}C${50 - nw - 5} ${ny + 1} ${Lx - 3.6} ${Ly - 2.6} ${Lx - 1.8} ${Ly + 2}` + d`M${Lx - 0.4} ${Ly - 1.1}Q${Lx - 1.5} ${Ly + 0.1} ${Lx - 0.5} ${Ly + 1.3}`) +
+    (s.ageLines
+      ? both(d`M${ex - rx - 1} ${ey - 0.6}l-2.4 -1.3M${ex - rx - 0.8} ${ey + 0.8}l-2.6 0.5M${ex - rx - 0.4} ${ey + 2.1}l-2 1.6M${ex - rx * 0.7} ${ey + ry * 2.1}Q${ex} ${ey + ry * 2.9} ${ex + rx * 0.6} ${ey + ry * 2}`) +
+        d`M36 ${f.top + 8}Q50 ${f.top + 5.5} 64 ${f.top + 8}M39 ${f.top + 11.5}Q50 ${f.top + 9.5} 61 ${f.top + 11.5}`
+      : '');
+  // Crisp speculars: nose tip and lower-lip gloss.
+  const speculars = ell(49.2, ny - 2.2, nw * 0.3, 0.95) + ell(48.4, my - c * 0.25 + mo * 0.98 + ll * 0.6, mw * 0.24, 0.55);
 
   const cw = f.cw;
   const ears = both(d`M${50 - cw + 1.5} ${ey - 2.5}C${50 - cw - 3} ${ey - 5.5} ${50 - cw - 5} ${ey + 2} ${50 - cw - 3} ${ey + 6.5}C${50 - cw - 2} ${ey + 9.5} ${50 - cw} ${ey + 10.5} ${50 - cw + 1.8} ${ey + 9.5}Z`);
@@ -411,21 +433,21 @@ export function buildPortrait(s: Spec): PortraitArt {
         {s.body(k)}
         <G transform={headT}>
           {s.ears !== false && <Path d={ears + earIn} fill={k.url('skin')} stroke={sk.mid} strokeWidth={0.5} />}
-          <Path d={face} fill={sk.rim} />
+          <Path d={face} fill={mix(sk.base, sk.rim, 0.6)} />
           <G clipPath={k.url('face')}>
-            <Path d={face} fill={k.url('skin')} transform="translate(-1.8 0)" />
+            <Path d={face} fill={k.url('skin')} transform="translate(-1.5 0.6)" />
+            <Ellipse cx={50 + f.cw * 0.95} cy={(f.cy + f.jy) / 2 + 3} rx={f.cw * 0.5} ry={(f.jy - f.top) * 0.42} fill={k.url('shade')} opacity={0.75} />
             <Ellipse cx={50 - e.dx - 4.5} cy={ey + 8.5} rx={6.5} ry={4.2} fill={k.url('blush')} />
             <Ellipse cx={50 + e.dx + 4.5} cy={ey + 8.5} rx={6.5} ry={4.2} fill={k.url('blush')} />
-            <Ellipse cx={50 - e.dx - 2.5} cy={ey + 7} rx={4.2} ry={2.6} fill={k.url('glint')} opacity={0.5} />
+            <Ellipse cx={50 - e.dx - 2.5} cy={ey + 7} rx={4.2} ry={2.6} fill={k.url('glint')} opacity={0.55} />
+            {s.sheen !== false && <Ellipse cx={44} cy={f.top + 10} rx={8} ry={4.5} fill={k.url('glint')} opacity={0.4} />}
             {s.inFace?.(k)}
           </G>
-          {ageLines ? <Path d={ageLines} stroke={sk.lo} strokeWidth={0.7} strokeLinecap="round" fill="none" opacity={al} /> : null}
           <Path d={noseSide} fill={sk.lo} opacity={0.28} />
           <Ellipse cx={50.6} cy={ny + 1.9} rx={nw * 0.9} ry={1.7} fill={k.url('shade')} />
           <Path d={nostrils} fill={sk.lo} opacity={0.8} />
-          <Ellipse cx={49.3} cy={ny - 2} rx={nw * 0.4} ry={1.3} fill={k.url('glint')} opacity={0.85} />
-          {sl ? <Path d={smile} stroke={sk.lo} strokeWidth={0.75} strokeLinecap="round" fill="none" opacity={sl} /> : null}
-          <Ellipse cx={50.5} cy={lipBottom + 1.3} rx={mw * 0.5} ry={1.4} fill={k.url('shade')} />
+          {sl ? <Path d={lines} stroke={sk.lo} strokeWidth={0.7} strokeLinecap="round" fill="none" opacity={sl} /> : null}
+          <Ellipse cx={50.5} cy={lipBottom + 0.8} rx={mw * 0.42} ry={1} fill={k.url('shade')} opacity={0.6} />
           <Path d={mouth} fill={CAVITY} />
           {showEyes && <Path d={both(almond)} fill={SCLERA} />}
           <G clipPath={k.url('feat')}>
@@ -442,7 +464,7 @@ export function buildPortrait(s: Spec): PortraitArt {
           </G>
           {upperLip ? <Path d={upperLip} fill={m.lip} /> : null}
           <Path d={lowerLip} fill={m.lip} />
-          <Ellipse cx={48.5} cy={my - c * 0.25 + mo * 0.98 + ll * 0.55} rx={mw * 0.3} ry={0.7} fill={k.url('glint')} opacity={0.8} />
+          <Path d={speculars} fill={WHITE} opacity={0.7} />
           {showEyes && (
             <>
               <Path d={both(lidLines)} stroke={sk.lo} strokeWidth={0.6} strokeLinecap="round" fill="none" opacity={0.55} />

@@ -3,11 +3,12 @@
  */
 import React from 'react';
 import { Ellipse, Path } from 'react-native-svg';
-import { both, circ, ell, linear, rr, speckle, star, sym, TORSO, volume, type Spec } from './kit';
+import { both, circ, ell, linear, rr, speckle, star, sym, TORSO, volume, volume2, type Spec } from './kit';
 
 /** Jacket open over a shirt (boss, gent). */
 const JACKET = 'M0 100C1 92 10 87.5 28 86C34 85.4 37.5 84.6 39.5 83L46.5 100L53.5 100L60.5 83C62.5 84.6 66 85.4 72 86C90 87.5 99 92 100 100Z';
-const SHIRT_V = 'M40.5 82.5L46 100L54 100L59.5 82.5Z';
+/** Shirt front in the jacket's V, with collar points (drawn over the jacket). */
+const SHIRT_COLLAR = 'M39.5 83L46.5 100L53.5 100L60.5 83L58.6 81.4L53.4 86.6L50 84.6L46.6 86.6L41.4 81.4Z';
 const LAPELS = both('M39.5 83L35 87.5L38.4 89.3L36 91.2L46.5 100L47.2 100Z');
 
 /** Stubble patch over the jaw, chin and upper lip. */
@@ -22,9 +23,10 @@ export const uncle: Spec = {
   brows: { y: 43.5, color: '#3A302C', th: 2.4, arch: 1.1, len: 10.5, drop: 1.2 },
   nose: { y: 61, w: 5.6 },
   mouth: { y: 69.8, w: 9.6, open: 3.8, curve: 2, ul: 0.8, ll: 1.6 },
-  ageLines: 0.4,
-  smileLines: 0.55,
-  defs: (k) => [volume(k.id('cap'), '#A8987E', '#6E604E', '#352C22'), volume(k.id('cloth'), '#B6DEFA', '#6CB0EA', '#2E6CB0')],
+  ageLines: true,
+  smileLines: 0.5,
+  sheen: false,
+  defs: (k) => [volume2(k.id('cap'), '#A8987E', '#6E604E', '#352C22'), volume2(k.id('cloth'), '#B6DEFA', '#6CB0EA', '#2E6CB0')],
   body: (k) => (
     <>
       <Path d={TORSO} fill={k.url('cloth')} />
@@ -37,13 +39,12 @@ export const uncle: Spec = {
     <>
       <Ellipse cx={50} cy={37} rx={28} ry={4.5} fill={k.url('shade')} />
       <Path d={STUBBLE} fill="#3C2E26" opacity={0.22} />
-      <Path d={speckle(11, 40, 50, 71, 20, 10, 0.32, 62)} fill="#2A201C" opacity={0.4} />
+      <Path d={speckle(11, 44, 50, 71, 20, 10, 0.2, 62)} fill="#2A201C" opacity={0.3} />
     </>
   ),
   front: (k) => (
     <>
-      <Path d={both('M25 33C23.5 38.5 24 44 25.5 48.5L28.2 47.5C27.5 42.5 27.6 37.5 29.3 33.5Z')} fill="#4D4743" />
-      <Path d={both('M25.8 36C25.4 40 25.8 43.5 26.5 46.5')} stroke="#A8A29C" strokeWidth={0.7} fill="none" />
+      <Path d={both('M25 33C23.5 38.5 24 44 25.5 48.5L28.2 47.5C27.5 42.5 27.6 37.5 29.3 33.5Z')} fill="#6A6460" />
       <Path d="M22 34C20.5 23 30 12.5 51 12C70.5 12 81.5 21 78.5 34Q50 29 22 34Z" fill={k.url('cap')} />
       <Path d="M51 13C40 15 31 22 28 32M51 13C62 14.5 70 21 73 31" stroke="#4A3E32" strokeWidth={0.7} fill="none" opacity={0.8} />
       <Path d="M26.5 33C34 29.5 66 29 74 32.8C76.5 34.5 75.5 37 72.5 37.4C62 34.6 38 34.8 28 37.8C25 37.5 24.5 34.6 26.5 33Z" fill="#4A3E32" />
@@ -64,13 +65,12 @@ export const boss: Spec = {
   brows: { y: 41.8, color: '#15151C', th: 2, arch: 1.2, len: 10, drop: 0.4, raiseR: 1.8 },
   nose: { y: 59.5, w: 4.8 },
   mouth: { y: 68.6, w: 8.6, open: 2.8, curve: 1.4, smirk: 2.2, ul: 0.8, ll: 1.5 },
-  defs: (k) => [volume(k.id('hair'), '#5A6488', '#1C1E2A', '#08080E'), volume(k.id('cloth'), '#5068A8', '#26355F', '#10162E')],
+  defs: (k) => [volume(k.id('hair'), '#5A6488', '#1C1E2A', '#08080E'), volume2(k.id('cloth'), '#5068A8', '#26355F', '#10162E')],
   body: (k) => (
     <>
-      <Path d={SHIRT_V} fill="#F6F8FC" />
       <Path d={JACKET} fill={k.url('cloth')} />
+      <Path d={SHIRT_COLLAR} fill="#F6F8FC" stroke="#B9C2D6" strokeWidth={0.5} strokeLinejoin="round" />
       <Path d={LAPELS} fill="#33467C" />
-      <Path d={both('M40.8 82.5L43.6 89.5L49.6 85.2L46.5 82.8Z')} fill="#FFFFFF" />
       <Path d="M47.6 84.6H52.4L51.6 88.4H48.4ZM48.4 88.4H51.6L53.4 99L50 101.5L46.6 99Z" fill="#D0263A" />
     </>
   ),
@@ -78,11 +78,9 @@ export const boss: Spec = {
   front: (k) => (
     <>
       <Path d={BOSS_HAIR} fill={k.url('hair')} />
-      <Path d="M32 33C35 23 44 16.5 57 15.5M38 29C42 22 50 18.5 62 18.5M47 26.5C53 22.5 61 22 69 25M58 26C64 25.5 69 28 72 32" stroke="#8C9AC8" strokeWidth={1} strokeLinecap="round" fill="none" opacity={0.7} />
-      <Path d="M36 21C42 15.5 52 13.5 60 14.5" stroke="#FFFFFF" strokeWidth={1.8} strokeLinecap="round" fill="none" opacity={0.35} />
-      <Path d="M66 14C72.5 17 76 23 76 30.5C76.3 36.5 75 41.5 72.5 45" stroke="#C9B8FF" strokeWidth={1.3} fill="none" opacity={0.5} />
-      <Path d={both(rr(34.4, 44.4, 46.4, 52.6, 1.6))} stroke="#16161E" strokeWidth={1.3} fill="#CFE0FF" fillOpacity={0.14} />
-      <Path d={'M46.4 46.8Q50 45.2 53.6 46.8' + both('M34.4 46.5L28.5 45.8')} stroke="#16161E" strokeWidth={1.2} fill="none" />
+      <Path d="M32 33C35 23 44 16.5 57 15.5M38 29C42 22 50 18.5 62 18.5M47 26.5C53 22.5 61 22 69 25M58 26C64 25.5 69 28 72 32M37 20C43 15 52 13.5 59 14.3" stroke="#9AA8D6" strokeWidth={1.1} strokeLinecap="round" fill="none" opacity={0.7} />
+      <Path d="M66.5 14.8C72 18 75.3 23.5 75.3 30.5C75.6 36.5 74.3 41.2 72 44.5" stroke="#C9B8FF" strokeWidth={1} fill="none" opacity={0.4} />
+      <Path d={both(rr(34.4, 44.4, 46.4, 52.6, 1.6)) + 'M46.4 46.8Q50 45.2 53.6 46.8' + both('M34.4 46.5L28.5 45.8')} stroke="#16161E" strokeWidth={1.3} fill="#CFE0FF" fillOpacity={0.14} />
       <Path d="M36 51L40 45.5M38.4 51.5L41 48M54.6 51L58.6 45.5M57 51.5L59.6 48" stroke="#FFFFFF" strokeWidth={0.9} strokeLinecap="round" opacity={0.55} />
     </>
   ),
@@ -104,7 +102,7 @@ export const shades: Spec = {
   head: { tilt: -3 },
   defs: (k) => [
     volume(k.id('hair'), '#7A5F55', '#231B19', '#0A0606'),
-    volume(k.id('cloth'), '#FF7A88', '#D0283E', '#7A0E1E'),
+    volume2(k.id('cloth'), '#FF7A88', '#D0283E', '#7A0E1E'),
     linear(k.id('lens'), [
       [0, '#140C2A'],
       [0.45, '#3A2A70'],
@@ -125,7 +123,7 @@ export const shades: Spec = {
       <Path d={both('M27.5 44C26.5 37 27.5 31 30.5 26.5L33 29C31 33 30 38 29.8 44Z')} fill="#3A2C26" opacity={0.7} />
       <Path d={SHADES_QUIFF} fill={k.url('hair')} />
       <Path d="M32 31C35 20 44 12.5 56 10.5M40 29C44 21 52 15.5 63 14M50 28C56 22 64 19 71 20.5M60 28.5C65 26 70 26.5 73 29" stroke="#8C6E62" strokeWidth={1} strokeLinecap="round" fill="none" opacity={0.7} />
-      <Path d="M64 7C72 9 76.5 15 76.5 21C77 27 75 32 72.5 34.5" stroke="#C9B8FF" strokeWidth={1.3} fill="none" opacity={0.5} />
+      <Path d="M64.5 7.8C71.5 9.8 75.8 15 75.8 21C76.2 27 74.4 31.6 72 34" stroke="#C9B8FF" strokeWidth={1} fill="none" opacity={0.4} />
       <Path d={both(AVIATOR)} fill={k.url('lens')} stroke="#E8C060" strokeWidth={1} />
       <Path d={'M47.2 43.6Q50 42.4 52.8 43.6M47.6 46.2Q50 45.4 52.4 46.2' + both('M30 44.6L27.6 44.2')} stroke="#E8C060" strokeWidth={0.9} fill="none" />
       <Path d="M33 52.5L39 44.5M36.5 54L41.5 47.2M53 52.5L59 44.5M56.5 54L61.5 47.2" stroke="#FFFFFF" strokeWidth={1} strokeLinecap="round" opacity={0.45} />
@@ -151,7 +149,8 @@ export const cowboy: Spec = {
   nose: { y: 61.5, w: 5.4 },
   mouth: { y: 71.4, w: 9, open: 3.8, curve: 2.2, ul: 0, ll: 1.6 },
   smileLines: 0.5,
-  defs: (k) => [volume(k.id('hat'), '#D69060', '#8E4A28', '#40180A'), volume(k.id('cloth'), '#7AA6E0', '#3A6AAE', '#1A3A6E')],
+  sheen: false,
+  defs: (k) => [volume(k.id('hat'), '#D69060', '#8E4A28', '#40180A'), volume2(k.id('cloth'), '#7AA6E0', '#3A6AAE', '#1A3A6E')],
   body: (k) => (
     <>
       <Path d={TORSO} fill={k.url('cloth')} />
@@ -174,13 +173,11 @@ export const cowboy: Spec = {
   ),
   front: (k) => (
     <>
-      <Path d={both('M26 40C25 44 25.5 48 26.5 51L29 50C28.5 47 28.5 43.5 29.5 40.5Z')} fill="#6B4127" />
-      <Path d="M31.5 31C30.5 21 32 11 38 7.5C42 9.5 46 10 50 8.5C54 10 58 9.5 62 7.5C68 11 69.5 21 68.5 31Z" fill={k.url('hat')} />
-      <Path d="M44 10C46 16 46.5 22 46 28M56 10C54 16 53.5 22 54 28" stroke="#40180A" strokeWidth={0.9} strokeLinecap="round" fill="none" opacity={0.45} />
-      <Path d="M7 25C13 30.5 22 33 32 32.5C40 34.5 60 34.5 68 32.5C78 33 87 30.5 93 25C93.5 31 87 38.5 76 40C66 41.5 34 41.5 24 40C13 38.5 6.5 31 7 25Z" fill={k.url('hat')} />
-      <Path d="M10 26.5C16 30.5 24 32.5 32 32.5C40 34.2 60 34.2 68 32.5C76 32.5 84 30.5 90 26.5" stroke="#E8A070" strokeWidth={0.9} fill="none" opacity={0.6} />
-      <Path d="M31.2 27C42 28.5 58 28.5 68.8 27L68.6 31C58 32.5 42 32.5 31.4 31Z" fill="#3A1A0E" />
-      <Path d={star(50, 20, 5.2, 2.6, 6, 0.9)} fill="#F5C842" stroke="#9A6A10" strokeWidth={0.4} />
+      <Path d="M30.5 31.5C29.5 24 30.5 16 34 12C38 9 43 11 46 13.5C48 14.6 52 14.6 54 13.5C57 11 62 9 66 12C69.5 16 70.5 24 69.5 31.5Z" fill={k.url('hat')} />
+      <Path d="M50 14.6C49.4 19 49.5 23.5 50 27M40 12.2C41.6 17 41.6 22.5 40.6 27.5M60 12.2C58.4 17 58.4 22.5 59.4 27.5" stroke="#40180A" strokeWidth={0.9} strokeLinecap="round" fill="none" opacity={0.4} />
+      <Path d="M4 22C9.5 29.5 20 33.5 31 32.5C40 34.5 60 34.5 69 32.5C80 33.5 90.5 29.5 96 22C97.5 30 91 39.5 78 41C66 43 34 43 22 41C9 39.5 2.5 30 4 22Z" fill={k.url('hat')} />
+      <Path d="M30.6 27.5C42 29 58 29 69.4 27.5L69.5 31.5C58 33 42 33 30.5 31.5Z" fill="#3A1A0E" />
+      <Path d={star(50, 20.5, 5, 2.5, 6, 0.85)} fill="#F5C842" stroke="#9A6A10" strokeWidth={0.4} />
     </>
   ),
 };
@@ -198,7 +195,7 @@ export const student: Spec = {
   nose: { y: 60, w: 4.3 },
   mouth: { y: 68.2, w: 8.8, open: 4.6, curve: 2.5, smirk: 0.6, ul: 0.9, ll: 1.7 },
   head: { tilt: 3 },
-  defs: (k) => [volume(k.id('hair'), '#6E5E70', '#2A2226', '#0C080A'), volume(k.id('cloth'), '#FFD86A', '#F0A818', '#A86A06')],
+  defs: (k) => [volume(k.id('hair'), '#6E5E70', '#2A2226', '#0C080A'), volume2(k.id('cloth'), '#FFD86A', '#F0A818', '#A86A06')],
   back: (k) => (
     <>
       <Path d="M27 89C28 80 37 76 50 76C63 76 72 80 73 89C67 85.5 58 84.5 50 84.5C42 84.5 33 85.5 27 89Z" fill={k.url('cloth')} />
@@ -208,11 +205,9 @@ export const student: Spec = {
   body: (k) => (
     <>
       <Path d="M0 100C1 92 10 87.5 28 86C35 85.4 39 84.6 41 83L50 92L59 83C61 84.6 65 85.4 72 86C90 87.5 99 92 100 100Z" fill={k.url('cloth')} />
-      <Path d="M41 83L50 92L59 83" stroke="#C88A0E" strokeWidth={2.4} strokeLinejoin="round" fill="none" />
       <Path d="M46.5 89V98.5M53.5 89V97" stroke="#FFFFFF" strokeWidth={1} strokeLinecap="round" />
       <Path d={both(ell(33.2, 88.2, 5, 6))} fill="#22222E" />
       <Path d={both(ell(33.2, 88.2, 3, 4))} fill="#E8423A" />
-      <Path d="M29.6 85.4A4.4 4.4 0 0 1 32.4 83M63 85.4A4.4 4.4 0 0 1 65.8 83" stroke="#FFFFFF" strokeWidth={0.9} strokeLinecap="round" fill="none" opacity={0.55} />
     </>
   ),
   inFace: (k) => <Path d={STUDENT_HAIR} fill={k.skin.lo} opacity={0.4} transform="translate(0.6 1.8)" />,
@@ -220,7 +215,7 @@ export const student: Spec = {
     <>
       <Path d={STUDENT_HAIR} fill={k.url('hair')} />
       <Path d="M30 30Q36 18 47 14M42 26Q50 17 62 14M55 27Q63 21 71 22M27 38Q28 32 31 27" stroke="#8E7E92" strokeWidth={1} strokeLinecap="round" fill="none" opacity={0.65} />
-      <Path d="M71.5 8Q69.5 12.5 70.5 15Q76 15 80 18Q76.5 21 75.5 25Q78.5 31.5 76.5 38Q75 43 74 47" stroke="#C9B8FF" strokeWidth={1.2} fill="none" opacity={0.5} />
+      <Path d="M71.5 8Q69.5 12.5 70.5 15Q76 15 80 18Q76.5 21 75.5 25Q78.5 31.5 76.5 38Q75 43 74 47" stroke="#C9B8FF" strokeWidth={1} fill="none" opacity={0.45} />
     </>
   ),
 };
@@ -231,12 +226,13 @@ export const chef: Spec = {
   skin: { hi: '#EBBB92', base: '#C78A5E', mid: '#A0663E', lo: '#744425', rim: '#E2D0FF', blush: '#D85A50', lip: '#9C4F3E' },
   face: { top: 22, cw: 25, cy: 52, jw: 21, jy: 68, by: 80, bw: 10 },
   head: { dy: 3, s: 0.93 },
+  sheen: false,
   eyes: { y: 52.5, dx: 9.8, rx: 4, ry: 2.6, iris: '#2E1A10', ir: 2.3, tilt: 0.2, squint: 0.65, lash: 0.95 },
   brows: { y: 45.6, color: '#1E1410', th: 2, arch: 2.4, len: 9.6 },
   nose: { y: 62.2, w: 6 },
   mouth: { y: 70.8, w: 10.6, open: 5.2, curve: 2.8, ul: 0.8, ll: 1.9 },
   smileLines: 0.55,
-  defs: (k) => [volume(k.id('hat'), '#FFFFFF', '#EEF0F7', '#A9B0C6'), volume(k.id('cloth'), '#FFFFFF', '#E9ECF4', '#9EA6BE')],
+  defs: (k) => [volume(k.id('hat'), '#FFFFFF', '#EEF0F7', '#A9B0C6'), volume2(k.id('cloth'), '#FFFFFF', '#E9ECF4', '#9EA6BE')],
   body: (k) => (
     <>
       <Path d={TORSO} fill={k.url('cloth')} />
@@ -277,18 +273,16 @@ export const gent: Spec = {
   brows: { y: 43, color: '#B9BDCA', th: 2.5, arch: 1.6, len: 10.4, drop: 1 },
   nose: { y: 61, w: 4.9 },
   mouth: { y: 69.6, w: 8.6, open: 3.4, curve: 2.2, ul: 0.6, ll: 1.6 },
-  ageLines: 0.55,
+  ageLines: true,
   smileLines: 0.5,
-  defs: (k) => [volume(k.id('hair'), '#FFFFFF', '#C9CDD8', '#80869A'), volume(k.id('cloth'), '#DDB07E', '#A8794A', '#5E3E20')],
+  defs: (k) => [volume(k.id('hair'), '#FFFFFF', '#C9CDD8', '#80869A'), volume2(k.id('cloth'), '#DDB07E', '#A8794A', '#5E3E20')],
   body: (k) => (
     <>
-      <Path d={SHIRT_V} fill="#F6F8FC" />
       <Path d={JACKET} fill={k.url('cloth')} />
+      <Path d={SHIRT_COLLAR} fill="#F6F8FC" stroke="#B9C2D6" strokeWidth={0.5} strokeLinejoin="round" />
       <Path d={LAPELS} fill="#8E6238" />
-      <Path d={both('M42 82.8L44.6 87.5L48.6 85.2Z')} fill="#FFFFFF" />
       <Path d={both('M48.6 84.8L42.5 81.2C41.2 82.5 41 86.8 42.4 88.4L48.6 85.6Z')} fill="#C2223C" />
       <Path d={ell(50, 85.2, 1.9, 2.1)} fill="#9A1630" />
-      <Path d="M66 92.5L71 91.5L70.5 94L66.5 94.8Z" fill="#C2223C" />
     </>
   ),
   inFace: (k) => <Path d={GENT_HAIR} fill={k.skin.lo} opacity={0.35} transform="translate(0.6 1.6)" />,
@@ -297,7 +291,6 @@ export const gent: Spec = {
     <>
       <Path d={GENT_HAIR} fill={k.url('hair')} />
       <Path d="M30 36C32 25 40 17 50 14.5M36 29C42 22 50 18.5 60 18M47 24C54 21 62 21.5 69 25M54 12C60 11.5 66 14 70 18" stroke="#FFFFFF" strokeWidth={1} strokeLinecap="round" fill="none" opacity={0.75} />
-      <Path d="M68 13.5C74.5 18 77 27 75.5 36.5C75 40 74 42.5 73 45" stroke="#C9B8FF" strokeWidth={1.3} fill="none" opacity={0.5} />
     </>
   ),
 };

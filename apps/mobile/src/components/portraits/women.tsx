@@ -3,7 +3,7 @@
  */
 import React from 'react';
 import { Circle, Ellipse, Path } from 'react-native-svg';
-import { both, circ, ell, flowers, linear, radial, speckle, star, sym, TORSO, volume, type Spec } from './kit';
+import { both, circ, ell, flowers, linear, radial, speckle, star, sym, TORSO, volume, volume2, type Spec } from './kit';
 
 const V_NECK = 'M0 100C1 92 10 87.5 28 86C35 85.4 39 84.6 41 83L50 94L59 83C61 84.6 65 85.4 72 86C90 87.5 99 92 100 100Z';
 
@@ -34,17 +34,12 @@ export const auntie: Spec = {
   head: { tilt: 4 },
   defs: (k) => [
     volume(k.id('hair'), '#A0624A', '#4A2A22', '#1A0D0A'),
-    volume(k.id('cloth'), '#FF9A86', '#E5484D', '#9E2232'),
-    radial(k.id('pearl'), [
-      [0, '#FFFFFF'],
-      [0.6, '#F1E9F0'],
-      [1, '#A99CB8'],
-    ], 35, 30, 65),
+    volume2(k.id('cloth'), '#FF9A86', '#E5484D', '#9E2232'),
   ],
   back: (k) => (
     <>
       <Path d={AUNTIE_BACK} fill={k.url('hair')} />
-      <Path d="M68 17.5A7.5 7.5 0 0 1 76 28A6.5 6.5 0 0 1 79 39A5.5 5.5 0 0 1 78.5 49" stroke="#D8C2FF" strokeWidth={1.3} fill="none" opacity={0.55} />
+      <Path d="M68.5 18.5A7.5 7.5 0 0 1 75.5 28.5A6.5 6.5 0 0 1 78 39A5.5 5.5 0 0 1 77.5 48.5" stroke="#D8C2FF" strokeWidth={1} fill="none" opacity={0.4} />
     </>
   ),
   body: (k) => (
@@ -52,7 +47,6 @@ export const auntie: Spec = {
       <Path d={V_NECK} fill={k.url('cloth')} />
       <Path d={AUNTIE_PETALS} fill="#FFE6EE" opacity={0.92} />
       <Path d={AUNTIE_CENTRES} fill="#FFC53D" />
-      <Path d="M41 83L50 94L59 83" stroke="#FFD3DE" strokeWidth={1.2} fill="none" strokeLinejoin="round" />
     </>
   ),
   inFace: (k) => <Path d={AUNTIE_FRINGE} fill={k.skin.lo} opacity={0.45} transform="translate(0.6 1.8)" />,
@@ -60,8 +54,7 @@ export const auntie: Spec = {
     <>
       <Path d={AUNTIE_FRINGE} fill={k.url('hair')} />
       <Path d={AUNTIE_CURLS} stroke="#C58A6C" strokeWidth={1} strokeLinecap="round" fill="none" opacity={0.75} />
-      <Circle cx={25.8} cy={61.4} r={1.9} fill={k.url('pearl')} />
-      <Circle cx={74.2} cy={61.4} r={1.9} fill={k.url('pearl')} />
+      <Path d={both(circ(25.8, 61.4, 1.9))} fill="#F6F0F6" stroke="#B4A8C8" strokeWidth={0.5} />
     </>
   ),
 };
@@ -79,9 +72,9 @@ export const grandma: Spec = {
   brows: { y: 44, color: '#A4A2AE', th: 1.4, arch: 2.2, len: 9.4, drop: 1.2 },
   nose: { y: 61, w: 4.8 },
   mouth: { y: 69, w: 8.4, open: 3.4, curve: 2.4, ul: 1, ll: 1.6 },
-  ageLines: 0.55,
+  ageLines: true,
   smileLines: 0.55,
-  defs: (k) => [volume(k.id('hair'), '#FFFFFF', '#D3D6DF', '#8D93A6'), volume(k.id('cloth'), '#B697F0', '#8A63D2', '#4E2F8E')],
+  defs: (k) => [volume(k.id('hair'), '#FFFFFF', '#D3D6DF', '#8D93A6'), volume2(k.id('cloth'), '#B697F0', '#8A63D2', '#4E2F8E')],
   back: (k) => (
     <>
       <Path d={GRANDMA_BACK} fill={k.url('hair')} />
@@ -93,7 +86,6 @@ export const grandma: Spec = {
     <>
       <Path d="M40 82L47 100L53 100L60 82Z" fill="#FFF6EA" />
       <Path d="M0 100C1 92 10 87.5 28 86C35 85.4 39 84.6 41 83L47 100L53 100L59 83C61 84.6 65 85.4 72 86C90 87.5 99 92 100 100Z" fill={k.url('cloth')} />
-      <Path d="M41 83L47 100M59 83L53 100" stroke="#6D48B8" strokeWidth={2.2} />
       <Path
         d={sym(81.5, [
           ['C', 44, 81.5, 40, 82, 39.5, 84],
@@ -104,7 +96,6 @@ export const grandma: Spec = {
         stroke="#D9CFE6"
         strokeWidth={0.5}
       />
-      <Path d={circ(55.6, 91, 1.1) + circ(56.9, 97.2, 1.1)} fill="#EBD9FF" />
     </>
   ),
   inFace: (k) => <Path d={GRANDMA_FRONT} fill={k.skin.lo} opacity={0.35} transform="translate(0.6 1.6)" />,
@@ -112,8 +103,7 @@ export const grandma: Spec = {
     <>
       <Path d={GRANDMA_FRONT} fill={k.url('hair')} />
       <Path d="M28 44C29 34 36 26 46 23.5M33 36C37 30 42 27.5 48 27M54 27C60 26 67 29 71 36M57 23C65 23.5 71 28 73.5 37M44 21C48 20 53 20 57 21M45 9C47 6 53 6 55 9" stroke="#FFFFFF" strokeWidth={0.9} strokeLinecap="round" fill="none" opacity={0.75} />
-      <Path d={both(circ(40.7, 51.3, 6.3))} stroke="#C9A04A" strokeWidth={1} fill="#FFFFFF" fillOpacity={0.1} />
-      <Path d={'M47 50.2Q50 48 53 50.2' + both('M34.4 50.6L27.6 49.4')} stroke="#C9A04A" strokeWidth={1} fill="none" />
+      <Path d={both(circ(40.7, 51.3, 6.3)) + 'M47 50.2Q50 48 53 50.2' + both('M34.4 50.6L27.6 49.4')} stroke="#C9A04A" strokeWidth={1} fill="#FFFFFF" fillOpacity={0.1} />
       <Path d="M36.4 48A5 5 0 0 1 39.6 45.6M55 48A5 5 0 0 1 58.2 45.6" stroke="#FFFFFF" strokeWidth={1.1} strokeLinecap="round" fill="none" opacity={0.75} />
     </>
   ),
@@ -122,8 +112,8 @@ export const grandma: Spec = {
 // ---------------------------------------------------------------- lady
 const LADY_BACK = 'M50 11.5C30 11.5 21.5 24 21.5 42C21.5 60 18 78 14 100L86 100C82 78 78.5 60 78.5 42C78.5 24 70 11.5 50 11.5Z';
 const LADY_FRONT =
-  'M47 13.5C36 13 26 20 24 32C22.5 45 22 62 20 76C19 86 18 94 17 100L27 100C28 92 29.5 82 30 72C30.5 62 29 52 29.5 42C30 32 37 22 47 17.5Z' +
-  'M47 13.5C60 12 74 18 76 32C77.5 45 78 62 80 76C81 86 82 94 83 100L73 100C72 92 70.5 82 70 72C69.5 62 71 52 70.5 42C70 30 62 20 47 17.5Z';
+  'M48 12.5C36 12 26 19 24 31C22.5 45 22 62 20 76C19 86 18 94 17 100L27 100C28 92 29.5 82 30 72C30.5 62 29 52 29.5 42C30 33 35 26.5 48 24Z' +
+  'M48 12.5C61 11.5 74 18 76 31C77.5 45 78 62 80 76C81 86 82 94 83 100L73 100C72 92 70.5 82 70 72C69.5 62 71 52 70.5 42C70 33 64 26.5 48 24Z';
 
 export const lady: Spec = {
   id: 'lady',
@@ -135,11 +125,11 @@ export const lady: Spec = {
   mouth: { y: 67.6, w: 8.6, open: 3.8, curve: 2, ul: 1.8, ll: 2.4 },
   ears: false,
   smileLines: 0.3,
-  defs: (k) => [volume(k.id('hair'), '#4E5A86', '#16161F', '#06060A'), volume(k.id('cloth'), '#FFF2CF', '#EBC889', '#A67A3A')],
+  defs: (k) => [volume(k.id('hair'), '#4E5A86', '#16161F', '#06060A'), volume2(k.id('cloth'), '#FFF2CF', '#EBC889', '#A67A3A')],
   back: (k) => (
     <>
       <Path d={LADY_BACK} fill={k.url('hair')} />
-      <Path d="M70 18C76 24 78.5 32 78.5 42C78.5 60 82 78 86 100" stroke="#C9B8FF" strokeWidth={1.4} fill="none" opacity={0.5} />
+      <Path d="M70 18.5C75.5 24.5 77.8 32 77.8 42C77.8 60 81.2 78 85.2 100" stroke="#C9B8FF" strokeWidth={1} fill="none" opacity={0.4} />
     </>
   ),
   body: (k) => (
@@ -154,7 +144,7 @@ export const lady: Spec = {
   front: (k) => (
     <>
       <Path d={LADY_FRONT} fill={k.url('hair')} />
-      <Path d="M30 25C37 18 43 16.2 46.5 16M51 15.5C58 15 66 18 70.5 24.5M25.5 45C25 60 23 75 21 90M74.5 45C75 60 77 75 79 90" stroke="#8E9CD4" strokeWidth={1.5} strokeLinecap="round" fill="none" opacity={0.55} />
+      <Path d="M29.5 27C35 19.5 41 17 46.5 16.5M50 16.5C57 16 65 19 70.5 26M25.5 45C25 60 23 75 21 90M74.5 45C75 60 77 75 79 90" stroke="#8E9CD4" strokeWidth={1.5} strokeLinecap="round" fill="none" opacity={0.55} />
     </>
   ),
 };
@@ -178,25 +168,23 @@ export const hoops: Spec = {
   ears: false,
   defs: (k) => [
     volume(k.id('hair'), '#7A4E34', '#2B1A12', '#120A06'),
-    volume(k.id('cloth'), '#FFC27A', '#F28A26', '#A8520E'),
+    volume2(k.id('cloth'), '#FFC27A', '#F28A26', '#A8520E'),
     linear(k.id('gold'), [
       [0, '#FFF3A8'],
-      [0.45, '#E8B23A'],
-      [0.75, '#9A6410'],
-      [1, '#F5CF60'],
+      [0.55, '#D99A20'],
+      [1, '#8A5A0C'],
     ]),
   ],
   back: (k) => (
     <>
       <Path d={HOOPS_BACK} fill={k.url('hair')} />
-      <Path d="M74 14A7.5 7.5 0 0 1 82 23A7 7 0 0 1 87 34A6.5 6.5 0 0 1 88 46A6.5 6.5 0 0 1 85.5 57" stroke="#C9A0F0" strokeWidth={1.4} fill="none" opacity={0.55} />
+      <Path d="M74.5 15A7.5 7.5 0 0 1 81.5 23.5A7 7 0 0 1 86.2 34A6.5 6.5 0 0 1 87.2 46A6.5 6.5 0 0 1 84.8 56.5" stroke="#C9A0F0" strokeWidth={1} fill="none" opacity={0.45} />
       <Path d={HOOPS_CURLS + 'M76 24a3.2 3.2 0 0 1 2.5 4M80.5 36a3 3 0 0 1 1.5 4.5M81 49a3 3 0 0 1 0 4.5'} stroke="#9A6444" strokeWidth={1.1} strokeLinecap="round" fill="none" opacity={0.75} />
     </>
   ),
   body: (k) => (
     <>
       <Path d="M0 100C1 92 10 87.5 28 86C35 85.4 38.5 84.6 40.5 83Q50 92 59.5 83C61.5 84.6 65 85.4 72 86C90 87.5 99 92 100 100Z" fill={k.url('cloth')} />
-      <Path d="M40.5 83Q50 92 59.5 83" stroke="#C0600E" strokeWidth={1.3} fill="none" />
     </>
   ),
   inFace: (k) => <Path d={HOOPS_FRONT} fill={k.skin.lo} opacity={0.5} transform="translate(0.6 1.6)" />,
@@ -221,15 +209,16 @@ export const sporty: Spec = {
   nose: { y: 60, w: 4.4 },
   mouth: { y: 68.6, w: 9.4, open: 4.8, curve: 2.6, ul: 1.3, ll: 2 },
   head: { tilt: -3 },
+  sheen: false,
+  smileLines: 0.3,
   defs: (k) => [
     volume(k.id('hair'), '#B07A50', '#5A3320', '#2A140A'),
-    volume(k.id('cloth'), '#8AE6F5', '#1BB4D2', '#0A6E8C'),
-    volume(k.id('cap'), '#FF8FB0', '#F2386B', '#9A1238'),
+    volume2(k.id('cloth'), '#8AE6F5', '#1BB4D2', '#0A6E8C'),
+    volume2(k.id('cap'), '#FF8FB0', '#F2386B', '#9A1238'),
   ],
   back: (k) => (
     <>
       <Path d="M64 30C78 27 87 36 86.5 49C86 61 80.5 71 73.5 79C76 67 76 57 72.5 49C70.5 43 68 36 64 30Z" fill={k.url('hair')} />
-      <Path d="M74 34C81 37 83 46 82 55M76.5 46C78 54 77 62 75.5 70" stroke="#D8A070" strokeWidth={1} strokeLinecap="round" fill="none" opacity={0.6} />
     </>
   ),
   body: (k) => (
@@ -237,7 +226,6 @@ export const sporty: Spec = {
       <Path d={TORSO} fill={k.url('cloth')} />
       <Path d="M39 85C31 86.5 22 89 15 95M61 85C69 86.5 78 89 85 95" stroke="#FFFFFF" strokeWidth={2.2} fill="none" />
       <Path d="M40 82C44 84.5 56 84.5 60 82L60.5 86C56 88.5 44 88.5 39.5 86Z" fill="#F4FBFF" />
-      <Path d="M50 87.5V100" stroke="#0A5E78" strokeWidth={0.9} />
     </>
   ),
   inFace: (k) => (
@@ -251,8 +239,6 @@ export const sporty: Spec = {
       <Path d={both('M26.5 38C25 44 25.5 50 27 55C28 50 28.8 44 30.5 39Z')} fill={k.url('hair')} />
       <Path d={SPORTY_CROWN} fill={k.url('cap')} />
       <Path d={SPORTY_VISOR} fill={k.url('cap')} />
-      <Path d="M23 37C32 32.5 68 32.5 77 37" stroke="#FFFFFF" strokeWidth={1} fill="none" opacity={0.4} />
-      <Path d={'M50 12V32.5'} stroke="#B81E4E" strokeWidth={0.8} />
       <Path d={star(50, 24, 3.4, 1.5, 5) + circ(50, 12, 1.6)} fill="#FFFFFF" />
     </>
   ),
