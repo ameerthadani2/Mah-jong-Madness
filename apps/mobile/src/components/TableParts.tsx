@@ -152,13 +152,13 @@ export function FeltFrame({ children, rail = 11, style }: { children: React.Reac
               <Stop offset="1" stopColor={theme.feltDark} />
             </RadialGradient>
             <LinearGradient id="railWood" x1="0" y1="0" x2="0" y2="1">
-              <Stop offset="0" stopColor={colors.railLight} />
-              <Stop offset="0.5" stopColor={colors.rail} />
-              <Stop offset="1" stopColor={colors.railEdge} />
+              <Stop offset="0" stopColor={theme.rail?.light ?? colors.railLight} />
+              <Stop offset="0.5" stopColor={theme.rail?.mid ?? colors.rail} />
+              <Stop offset="1" stopColor={theme.rail?.edge ?? colors.railEdge} />
             </LinearGradient>
           </Defs>
           {/* Shelf under the rail, then the rail itself */}
-          <Rect x={1.5} y={4} width={box.w - 3} height={box.h - 5.5} rx={R} fill={colors.railDeep} stroke={colors.ink} strokeWidth={3} />
+          <Rect x={1.5} y={4} width={box.w - 3} height={box.h - 5.5} rx={R} fill={theme.rail?.deep ?? colors.railDeep} stroke={colors.ink} strokeWidth={3} />
           <Rect x={1.5} y={1.5} width={box.w - 3} height={box.h - 6} rx={R} fill="url(#railWood)" stroke={colors.ink} strokeWidth={3} />
           <Path d={`M${R} ${4.5} H${box.w - R}`} stroke="#F4C38A" strokeWidth={2.5} strokeLinecap="round" opacity={0.9} />
           {/* Felt */}
@@ -177,7 +177,7 @@ export function FeltFrame({ children, rail = 11, style }: { children: React.Reac
             [box.w - rail * 0.5 - R * 0.35, box.h - 6 - rail * 0.5 - R * 0.35],
           ].map(([x, y], i) => (
             <G key={i}>
-              <Circle cx={x} cy={y} r={rail * 0.32} fill={colors.gold} stroke={colors.ink} strokeWidth={1.5} />
+              <Circle cx={x} cy={y} r={rail * 0.32} fill={theme.rail?.stud ?? colors.gold} stroke={colors.ink} strokeWidth={1.5} />
               <Circle cx={x - rail * 0.08} cy={y - rail * 0.08} r={rail * 0.11} fill="#FFFFFF" opacity={0.8} />
             </G>
           ))}

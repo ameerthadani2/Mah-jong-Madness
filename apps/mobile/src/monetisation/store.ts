@@ -109,7 +109,7 @@ export function hasVip(wallet: Wallet, now = Date.now()): boolean {
 }
 
 export function ownsCosmetic(wallet: Wallet, unlockId: string, now = Date.now()): boolean {
-  return wallet.owned.includes(unlockId) || (unlockId.startsWith('nightmarket') || unlockId.startsWith('bamboo') || unlockId.startsWith('imperial') ? hasVip(wallet, now) : false);
+  return wallet.owned.includes(unlockId) || (['nightmarket', 'bamboo', 'imperial', 'jade'].includes(unlockId) ? hasVip(wallet, now) : false);
 }
 
 export function totalDiamonds(wallet: Wallet): number {

@@ -44,6 +44,7 @@ export const DIAMOND_PACKS: Product[] = [
 export const COSMETICS: Product[] = [
   { id: 'theme.nightmarket', kind: 'cosmetic', title: 'Night Market table', titleZh: '夜市霓虹桌布', description: 'Neon purple felt with pink accents.', priceUsd: 2.99, diamondPrice: 300, unlocks: 'nightmarket' },
   { id: 'theme.bamboo', kind: 'cosmetic', title: 'Bamboo Garden table', titleZh: '竹林桌布', description: 'Soft green felt, ivory tiles.', priceUsd: 2.99, diamondPrice: 300, unlocks: 'bamboo' },
+  { id: 'theme.jade', kind: 'cosmetic', title: 'Jade Parlour table', titleZh: '翡翠廳桌布', description: 'Deep jade felt, walnut rail with gold studs, ivory tiles.', priceUsd: 3.99, diamondPrice: 400, unlocks: 'jade', badge: 'New' },
   { id: 'theme.imperial', kind: 'cosmetic', title: 'Imperial Red table', titleZh: '宮廷紅桌布', description: 'Lacquer red with gold trim.', priceUsd: 2.99, diamondPrice: 300, unlocks: 'imperial' },
   { id: 'avatars.zodiac', kind: 'cosmetic', title: 'Zodiac avatar pack', titleZh: '生肖頭像包', description: 'Twelve zodiac avatars with gold frames.', priceUsd: 4.99, diamondPrice: 500, unlocks: 'avatars.zodiac' },
   { id: 'emotes.taiwan', kind: 'cosmetic', title: 'Taiwan emote pack', titleZh: '台味表情包', description: '珍奶, 雞排 and friends.', priceUsd: 1.99, diamondPrice: 200, unlocks: 'emotes.taiwan' },

@@ -17,6 +17,8 @@ export interface TableTheme {
   tileBack: string;
   accent: string;
   premium: boolean;
+  /** Optional wood-rail override (defaults to the house oak). */
+  rail?: { light: string; mid: string; edge: string; deep: string; stud: string };
 }
 
 export const TABLE_THEMES: TableTheme[] = [
@@ -25,6 +27,20 @@ export const TABLE_THEMES: TableTheme[] = [
   { id: 'midnight', name: 'Midnight Blue', nameZh: '午夜藍', felt: '#122a4a', feltDark: '#0b1b31', feltLight: '#1f3f6b', tileFace: '#f7f4ec', tileEdge: '#d6d0c2', tileBack: '#3b5a88', accent: '#ffcc5c', premium: false },
   { id: 'nightmarket', name: 'Night Market', nameZh: '夜市霓虹', felt: '#2a0f3a', feltDark: '#1a0826', feltLight: '#45195f', tileFace: '#fff7fb', tileEdge: '#e6cfe0', tileBack: '#7a2d9c', accent: '#ff5fa2', premium: true },
   { id: 'bamboo', name: 'Bamboo Garden', nameZh: '竹林', felt: '#3e5a1f', feltDark: '#2a3f13', feltLight: '#5a7d2f', tileFace: '#fbf8ea', tileEdge: '#dfd8bd', tileBack: '#6e8f3c', accent: '#f4d35e', premium: true },
+  {
+    id: 'jade',
+    name: 'Jade Parlour',
+    nameZh: '翡翠廳',
+    felt: '#127556',
+    feltDark: '#063A2B',
+    feltLight: '#2AA57C',
+    tileFace: '#FFF8E7',
+    tileEdge: '#C9AE7A',
+    tileBack: '#0C5A45',
+    accent: '#F4C04E',
+    premium: true,
+    rail: { light: '#7B4A2B', mid: '#4A2716', edge: '#26120A', deep: '#1A0C06', stud: '#F4C04E' },
+  },
   { id: 'imperial', name: 'Imperial Red', nameZh: '宮廷紅', felt: '#6b1414', feltDark: '#4a0d0d', feltLight: '#8f2020', tileFace: '#fff9ee', tileEdge: '#e3d6bd', tileBack: '#a63a3a', accent: '#ffd26a', premium: true },
 ];
 
