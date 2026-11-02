@@ -51,7 +51,7 @@ const KEYS = { profile: 'mjm.profile', settings: 'mjm.settings', progress: 'mjm.
 
 const extra = (Constants.expoConfig?.extra ?? {}) as { signalUrl?: string };
 
-export const DEFAULT_PROFILE: Profile = { userId: '', userSecret: '', name: '', avatar: 'panda' };
+export const DEFAULT_PROFILE: Profile = { userId: '', userSecret: '', name: '', avatar: 'lady' };
 export const DEFAULT_SETTINGS: Settings = { rules: DEFAULT_RULES, coach: true, signalUrl: extra.signalUrl ?? 'ws://localhost:8787', hostedTables: false, botSkill: 'club', sound: true, tableTheme: 'classic' };
 export const DEFAULT_PROGRESS: Progress = {
   lessonsDone: {},
@@ -127,7 +127,7 @@ export const storage = {
 };
 
 /** Avatar ids (≤ 8 chars, the host trims longer values); drawn by components/Avatars.tsx. */
-export const AVATARS = ['panda', 'tiger', 'fox', 'frog', 'owl', 'cat', 'bunny', 'bear', 'monkey', 'penguin', 'pig', 'koala'];
+export const AVATARS = ['auntie', 'uncle', 'grandma', 'boss', 'lady', 'shades', 'hoops', 'cowboy', 'student', 'chef', 'sporty', 'gent'];
 
 export function todayKey(d = new Date()): string {
   return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
