@@ -34,6 +34,8 @@ jobs:
         env:
           CI: 1
           EXPO_BASE_URL: /${{ github.event.repository.name }}
+          # Repo variable (Settings → Secrets and variables → Actions → Variables), e.g. wss://mahjong-signal.onrender.com
+          SIGNAL_URL: ${{ vars.SIGNAL_URL }}
         run: |
           npx expo export --platform web --output-dir dist-pages
           cp dist-pages/index.html dist-pages/404.html

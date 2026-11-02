@@ -1,0 +1,19 @@
+# One-tap deploy of the signaling + club server (apps/signal) on Render.
+# From a phone: open https://render.com/deploy?repo=https://github.com/ameerthadani2/Mah-jong-Madness
+# The free plan sleeps after inactivity (first connection takes ~50 s to wake) and its disk is
+# ephemeral, so clubs reset on redeploy; switch to a paid plan + persistent disk for real use.
+services:
+  - type: web
+    name: mahjong-signal
+    runtime: node
+    plan: free
+    buildCommand: npm ci
+    startCommand: npm run signal
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: HOST_TABLES
+        value: "1"
+      - key: DATA_DIR
+        value: /tmp/mjm-data

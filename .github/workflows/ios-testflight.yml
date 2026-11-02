@@ -48,6 +48,8 @@ jobs:
           node -e "const c=require('./app.json'); if(!(c.expo.extra&&c.expo.extra.eas&&c.expo.extra.eas.projectId)){console.error('Run the Publish to Expo Go workflow once first; it links the EAS project.');process.exit(1)}"
       - name: Build (and submit) on EAS
         working-directory: apps/mobile
+        env:
+          SIGNAL_URL: ${{ vars.SIGNAL_URL }}
         run: |
           if [ "${{ github.event.inputs.submit }}" = "true" ]; then
             eas build --platform ios --profile ${{ github.event.inputs.profile }} --non-interactive --auto-submit --wait

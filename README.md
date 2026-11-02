@@ -18,6 +18,12 @@ and bots fill empty seats so a table always runs.
 | `apps/signal` | Tiny WebSocket signaling + relay server. Can also act as a neutral table host for clubs that want nobody's phone dealing. |
 | `docs/` | Architecture, rules/scoring reference, Fair Play Charter, product definition, monetisation plan, store compliance checklist, design system, roadmap. |
 
+## Try it from a phone
+
+* **Play in Safari:** enable GitHub Pages (Settings → Pages → Source: GitHub Actions), then open https://ameerthadani2.github.io/Mah-jong-Madness/
+* **Host clubs for friends:** [Deploy the club server to Render](https://render.com/deploy?repo=https://github.com/ameerthadani2/Mah-jong-Madness) and set the `SIGNAL_URL` repo variable to its `wss://` address.
+* Step-by-step: `docs/RUN_FROM_PHONE.md`. Native builds: `docs/RUN_ON_IOS.md`.
+
 ## Quick start
 
 ```bash
