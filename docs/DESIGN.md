@@ -2,6 +2,8 @@
 
 Mahjong Madness looks like a Codigames idle-tycoon game (Idle Supermarket Tycoon, Idle Theme Park Tycoon): bright, chunky, illustrated and friendly, and unmistakably a commercial game. Three complete directions were built and compared side by side. Tycoon Parlour won; Jade & Lacquer (deep jade felt, walnut rail, gold leaf) and Neo Arcade (navy glass cards, geometric tiles) were runners-up and are good sources for premium table themes.
 
+Player avatars are the exception to the cartoon style: shaded caricature portraits in the PokerBros vein (see `docs/screenshot-avatars.png`).
+
 Nothing in the UI is an emoji or a system icon. Every icon, avatar, illustration and tile face is drawn with `react-native-svg` or composed Views, so it renders the same on iOS, Android and web.
 
 ## Where things live (`apps/mobile/src`)
@@ -11,7 +13,7 @@ Nothing in the UI is an emoji or a system icon. Every icon, avatar, illustration
 | `theme.ts` | Colour, radius, spacing and font tokens; text helpers that keep Chinese on the system CJK font |
 | `components/Ui.tsx` | Panels, two-tone pressable buttons, chips, toggles, steppers, `StrokeText` display type, screen header |
 | `components/Tile.tsx` | SVG tiles: ivory gradient face, bevel, thickness layer, suit art per kind, patterned backs, highlights |
-| `components/Avatars.tsx` | Twelve animal busts (panda, tiger, fox, frog, owl, cat, bunny, bear, monkey, penguin, pig, koala) and the seat plate with timer ring, dealer badge and seat wind |
+| `components/Avatars.tsx`, `components/portraits/` | Twelve PokerBros-style caricature portraits (auntie, uncle, grandma, boss, lady, shades, hoops, cowboy, student, chef, sporty, gent) on dark violet spotlight discs, and the seat plate with a thin gold ring, turn timer, dealer badge and seat wind. Open the web build with `#avatars` for a gallery |
 | `components/Scenes.tsx` | Mode-card illustrations: mahjong table, clubhouse, scroll, treasure chest, gem piles, VIP cards, coach medals |
 | `components/Icons.tsx` | About 30 drawn icons |
 | `components/Emotes.tsx` | Eight drawn emotes and the quick-chat picker |
