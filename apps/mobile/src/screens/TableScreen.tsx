@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { hintFor, kindInfo, kindOf, legalActions, viewToState, WINDS, type Action, type GameState, type HandResult, type Hint, type TableView, type TileId, type WinRecord } from '@mjm/engine';
@@ -8,6 +8,7 @@ import { useCountdown, useSession } from '../game/useTable';
 import { colors, fonts, nameFont, space } from '../theme';
 import { Tile, HiddenHand, tileDims, type TileSize } from '../components/Tile';
 import { Compass, DiscardPool, FeltFrame, MeldsAndFlowers, MeldView, SeatBadge, WallRing } from '../components/TableParts';
+import type { SeatReaction, SeatReactionKind } from '../components/SeatMotion';
 import { Button, IconButton, P, Pill, Row, StrokeText, type ButtonKind } from '../components/Ui';
 import { Icon } from '../components/Icons';
 import { AvatarPlate, CoachOwl, seatAvatarId } from '../components/Avatars';
@@ -56,6 +57,48 @@ export function TableScreen() {
     if (myMove) void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => undefined);
     if (!myMove) setSelected(null);
   }, [myMove]);
+
+  // Table events become seat reactions: call-outs for claims, a celebration for winners, a shake for the discarder.
+  const [reactions, setReactions] = useState<Record<number, SeatReaction>>({});
+  const reactionKey = useRef(0);
+  const meldSig = useRef<{ hand: number; melds: number[]; kongs: number[] } | null>(null);
+  const fire = (seat: number, kind: SeatReactionKind) => setReactions((r) => ({ ...r, [seat]: { kind, key: ++reactionKey.current } }));
+  useEffect(() => {
+    if (!view) return;
+    const melds = view.players.map((p) => p.melds.length);
+    const kongs = view.players.map((p) => p.melds.filter((m) => m.type === 'kong').length);
+    const prev = meldSig.current;
+    if (prev && prev.hand === view.handNumber) {
+      view.players.forEach((p, seat) => {
+        if (melds[seat] > prev.melds[seat]) {
+          const m = p.melds[p.melds.length - 1];
+          fire(seat, m.type === 'chow' ? 'chow' : m.type === 'pong' ? 'pong' : 'kong');
+        } else if (kongs[seat] > prev.kongs[seat]) {
+          fire(seat, 'kong');
+        }
+      });
+    }
+    meldSig.current = { hand: view.handNumber, melds, kongs };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view]);
+  // Hold the result sheet back briefly so the win celebration is visible first.
+  const [showResult, setShowResult] = useState(false);
+  useEffect(() => {
+    const res = state?.lastResult;
+    if (!res) {
+      setShowResult(false);
+      return;
+    }
+    if (res.type === 'win') {
+      for (const w of res.wins) {
+        fire(w.seat, w.selfDrawn ? 'selfdraw' : 'win');
+        if (!w.selfDrawn && w.fromSeat !== undefined) fire(w.fromSeat, 'dealin');
+      }
+    }
+    const t = setTimeout(() => setShowResult(true), res.type === 'win' ? 1800 : 600);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state?.lastResult]);
 
   if (!session || !state) {
     return (
@@ -157,6 +200,7 @@ export function TableScreen() {
     timer: timerSeat === seat ? timerFrac : null,
     timerUrgent,
     emote: latestEmote(seat),
+    reaction: reactions[seat],
   });
 
   const topSeat = () => {
@@ -404,7 +448,7 @@ export function TableScreen() {
           </View>
         )}
 
-        {state.lastResult && <ResultOverlay result={state.lastResult} view={view} state={state} mySeat={mySeat} onNext={() => session.client.ready()} onLeave={leave} onReview={() => app.go({ name: 'review' })} onFairness={() => app.go({ name: 'fairness' })} />}
+        {state.lastResult && showResult && <ResultOverlay result={state.lastResult} view={view} state={state} mySeat={mySeat} onNext={() => session.client.ready()} onLeave={leave} onReview={() => app.go({ name: 'review' })} onFairness={() => app.go({ name: 'fairness' })} />}
         {state.matchOver && <MatchOverOverlay state={state} onLeave={leave} />}
         {state.disconnected ? (
           <View style={styles.banner}>

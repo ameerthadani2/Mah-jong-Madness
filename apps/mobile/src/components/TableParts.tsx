@@ -8,6 +8,7 @@ import { TableThemeContext } from '../themes';
 import { Tile, type TileSize } from './Tile';
 import { AvatarPlate, seatAvatarId } from './Avatars';
 import { Emote } from './Emotes';
+import { SeatMotion, type SeatReaction } from './SeatMotion';
 
 export function MeldView({ meld, size = 'sm' }: { meld: Meld; size?: TileSize | number }) {
   return (
@@ -83,6 +84,7 @@ export function SeatBadge({
   emote,
   vertical,
   maxNameWidth = 110,
+  reaction,
 }: {
   seat: number;
   info?: SeatInfo;
@@ -98,6 +100,8 @@ export function SeatBadge({
   emote?: string;
   vertical?: boolean;
   maxNameWidth?: number;
+  /** Latest table event for this seat (call-outs, win celebration, deal-in shake). */
+  reaction?: SeatReaction;
 }) {
   const wind = WINDS[(seat - dealerSeat + 4) % 4];
   const rel = (seat - viewerSeat + 4) % 4;
@@ -109,7 +113,9 @@ export function SeatBadge({
   return (
     <View style={[styles.seat, vertical && styles.seatVertical]}>
       <View>
-        <AvatarPlate id={seatAvatarId(info, seat)} size={size} active={isTurn} timer={isTurn ? timer : null} timerUrgent={timerUrgent} dealer={seat === dealerSeat} wind={wind} offline={offline} />
+        <SeatMotion size={size} seat={seat} active={isTurn && !offline} reaction={reaction}>
+          <AvatarPlate id={seatAvatarId(info, seat)} size={size} active={isTurn} timer={isTurn ? timer : null} timerUrgent={timerUrgent} dealer={seat === dealerSeat} wind={wind} offline={offline} />
+        </SeatMotion>
         {emote && (
           <View style={[styles.bubble, { left: size * 0.6, top: -size * 0.55 }]}>
             <Emote id={emote} size={Math.max(26, size * 0.7)} />
