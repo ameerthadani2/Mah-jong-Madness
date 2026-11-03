@@ -28,6 +28,9 @@
     }
   },
   "submit": {
+    "manual": {
+      "ios": {}
+    },
     "production": {
       "ios": {
         "ascApiKeyPath": "$EXPO_ASC_API_KEY_PATH",

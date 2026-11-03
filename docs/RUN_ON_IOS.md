@@ -7,7 +7,7 @@ git clone https://github.com/ameerthadani2/Mah-jong-Madness.git
 cd Mah-jong-Madness
 git checkout claude/p2p-taiwanese-mahjong-app-9lzdls
 npm install          # Node 20 or newer
-npm test             # optional sanity check: 79 tests
+npm test             # optional sanity check: 90 tests
 ```
 
 ## 1. Expo Go on your iPhone — 2 minutes, no Mac needed for the phone side
@@ -18,7 +18,7 @@ npm test             # optional sanity check: 79 tests
    npm run mobile
    ```
    Metro starts and prints a QR code.
-3. Make sure the phone and the computer are on the same Wi-Fi, then scan the QR code with the iPhone camera. Expo Go opens the app. Turn the phone sideways: the app is landscape-only.
+3. Make sure the phone and the computer are on the same Wi-Fi, then scan the QR code with the iPhone camera. Expo Go opens the app. It works upright or sideways; sideways gives the roomiest table.
 4. If the QR code does not connect (corporate Wi-Fi, hotel, phone on cellular), use a tunnel instead:
    ```bash
    npm run mobile:tunnel
@@ -55,15 +55,15 @@ eas build --platform ios --profile production
 * The cloud build takes 10–20 minutes. You can close the terminal; `eas build:list` shows status.
 
 ```bash
-eas submit --platform ios --latest
+eas submit --platform ios --latest --profile manual
 ```
-* On first run EAS asks for an App Store Connect API key or your Apple ID, and creates the App Store Connect app record if it does not exist yet (it will ask for the app name "Mahjong Madness" and the SKU).
+* `--profile manual` makes EAS ask for what it needs. (The `production` submit profile reads App Store Connect API key secrets that only the GitHub TestFlight workflow has.) On first run EAS asks for an App Store Connect API key or your Apple ID, and creates the App Store Connect app record if it does not exist yet (it will ask for the app name "Mahjong Madness" and the SKU).
 * Processing in App Store Connect takes 5–30 minutes. Then open **App Store Connect → Apps → Mahjong Madness → TestFlight**, click the build, answer "No" to the encryption question if asked (the plist already declares non-exempt encryption = false), and add yourself under **Internal Testing**. Install TestFlight on the iPhone, accept the invite, tap Install.
 * External testers (up to 10,000) need a short Beta App Review; internal testers (up to 100 people on your team) do not.
 
 Each later release:
 ```bash
-eas build --platform ios --profile production && eas submit --platform ios --latest
+eas build --platform ios --profile production && eas submit --platform ios --latest --profile manual
 ```
 The build number auto-increments (`autoIncrement` in `eas.json`); bump `version` in `app.json` when you want a new TestFlight version string.
 
@@ -104,5 +104,4 @@ With it, phones talk directly to the host phone and fall back to the relay only 
 * **"Unable to resolve @mjm/engine"** — run `npm install` from the repo root (workspaces), not inside `apps/mobile`.
 * **Blank screen or stale code in Expo Go** — shake the phone → Reload, or restart Metro with `npm run mobile -- --clear`.
 * **QR code opens Camera but nothing happens** — Expo Go must be installed first; the QR encodes an `exp://` link.
-* **App is portrait in Expo Go** — Expo Go honours the `orientation` setting after the first load; rotate the phone.
 * **Table says "Could not connect"** — the phone cannot reach the signaling URL; check the laptop firewall allows port 8787 and that you used the LAN IP, not `localhost`.
