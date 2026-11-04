@@ -18,16 +18,27 @@ import {
   viewFor,
   type Action,
   type GameState,
+  type HandResult,
   type MatchSnapshot,
   type RuleSet,
   type BotSkill,
 } from '@mjm/engine';
 import { commitFor, deriveSeed, makeSecret, verifyReveals, type Commitment, type Reveal } from './fairness';
-import type { Audit, ClientMessage, HostMessage, SeatInfo } from './messages';
+import type { Audit, CeremonyRestart, ClientMessage, HostMessage, RestartCause, SeatInfo } from './messages';
 import type { Transport, Unsubscribe } from './transport';
 import { randomHex } from './sha256';
 
 export type HostPhase = 'lobby' | 'commit' | 'reveal' | 'playing' | 'hand_over' | 'match_over';
+
+/**
+ * Most ceremonies one hand may take. An honest table needs at most 1 + the number of humans
+ * (every restart stands in at least one more human for good), so 6 is never reached honestly.
+ */
+export const MAX_CEREMONY_ATTEMPTS = 6;
+
+/** Chat: one line a second with a burst of five. Emotes: one every two seconds. */
+const CHAT_BUCKET = { capacity: 5, perSecond: 1 };
+const EMOTE_BUCKET = { capacity: 1, perSecond: 0.5 };
 
 export interface HostOptions {
   roomCode: string;
@@ -58,6 +69,10 @@ export interface HostEvent {
   seats: SeatInfo[];
   scores: number[];
   handNumber: number;
+  /** Hands won per seat this match (a shared win counts for every winner). */
+  handsWon: number[];
+  /** The hand's result, on `hand_over` events. */
+  result?: HandResult;
 }
 
 export interface SerializedHost {
@@ -76,6 +91,10 @@ export interface SerializedHost {
   hostCommit?: string;
   ceremonyAttempts?: number;
   restartReasons?: string[];
+  restarts?: CeremonyRestart[];
+  /** Hand number the ceremony counters belong to. */
+  ceremonyHand?: number;
+  handsWon?: number[];
 }
 
 interface SeatState extends SeatInfo {
@@ -145,7 +164,12 @@ export class TableHost {
   private hostSecret = '';
   private hostCommit = '';
   private ceremonyAttempts = 0;
-  private restartReasons: string[] = [];
+  private restarts: CeremonyRestart[] = [];
+  /** Hand number the attempt counter and restarts belong to; they reset only when it changes. */
+  private ceremonyHand = -1;
+  private wins: number[] = [0, 0, 0, 0];
+  /** Per-seat chat and emote allowances. */
+  private readonly buckets = new Map<string, { tokens: number; at: number }>();
 
   constructor(
     private readonly transport: Transport,
@@ -185,7 +209,16 @@ export class TableHost {
 
   private emit(type: HostEvent['type']): void {
     if (this.eventListeners.size === 0) return;
-    const ev: HostEvent = { type, roomCode: this.roomCode, matchId: this.matchId, seats: this.seatInfo(), scores: this.match().scores, handNumber: this.match().handNumber };
+    const ev: HostEvent = {
+      type,
+      roomCode: this.roomCode,
+      matchId: this.matchId,
+      seats: this.seatInfo(),
+      scores: this.match().scores,
+      handNumber: this.match().handNumber,
+      handsWon: this.wins.slice(),
+      result: type === 'hand_over' ? this.game?.result : undefined,
+    };
     for (const l of this.eventListeners) l(ev);
   }
 
@@ -214,11 +247,15 @@ export class TableHost {
       hostSecret: this.hostSecret,
       hostCommit: this.hostCommit,
       ceremonyAttempts: this.ceremonyAttempts,
-      restartReasons: this.restartReasons.slice(),
+      restartReasons: this.restarts.map(describeRestart),
+      restarts: this.restarts.map((r) => ({ ...r, seats: r.seats.slice() })),
+      ceremonyHand: this.ceremonyHand,
+      handsWon: this.wins.slice(),
     };
   }
 
   private restore(data: SerializedHost): void {
+    if (data.version !== 1) throw new Error(`Unknown table snapshot version ${String(data.version)}`);
     this.phase = data.phase;
     this.game = data.game;
     this.snapshot = data.snapshot;
@@ -228,7 +265,9 @@ export class TableHost {
     this.hostSecret = data.hostSecret ?? '';
     this.hostCommit = data.hostCommit ?? '';
     this.ceremonyAttempts = data.ceremonyAttempts ?? 1;
-    this.restartReasons = data.restartReasons?.slice() ?? [];
+    this.restarts = data.restarts?.map((r) => ({ ...r, seats: r.seats.slice() })) ?? [];
+    this.ceremonyHand = data.ceremonyHand ?? (this.phase === 'lobby' ? -1 : this.snapshot.handNumber);
+    this.wins = data.handsWon?.slice() ?? [0, 0, 0, 0];
     // Any ceremony in flight cannot continue without the peers' secrets; restart it when they return.
     if (this.phase === 'commit' || this.phase === 'reveal') {
       for (const s of this.seats) {
@@ -242,6 +281,8 @@ export class TableHost {
   }
 
   private pendingRestart = false;
+  /** True while a round of ceremony messages is going out (see `announcing`). */
+  private ceremonyBusy = false;
   /** Seats whose share the host supplies in the next ceremony (they missed the window; they stay human). */
   private standInSeats = new Set<number>();
 
@@ -317,7 +358,7 @@ export class TableHost {
       if (phase === 'commit') {
         for (const s of late) this.supplyShare(s);
       } else if (late.length > 0) {
-        this.restartCeremony(late, `seat ${late.map((s) => s.seat + 1).join(', ')} did not reveal in time`);
+        this.restartCeremony(late, 'no_reveal');
         return;
       }
       this.checkCeremony();
@@ -459,13 +500,27 @@ export class TableHost {
         return;
       case 'chat':
         if (typeof msg.text !== 'string' || !msg.text.trim()) return;
+        if (!this.takeToken(`chat:${seat.seat}`, CHAT_BUCKET)) return;
         return this.broadcast(() => ({ t: 'chat', seat: seat.seat, name: seat.name, text: msg.text.slice(0, 280) }));
       case 'emote':
         if (typeof msg.emote !== 'string') return;
+        if (!this.takeToken(`emote:${seat.seat}`, EMOTE_BUCKET)) return;
         return this.broadcast(() => ({ t: 'emote', seat: seat.seat, emote: msg.emote.slice(0, 16) }));
       default:
         return;
     }
+  }
+
+  /** Token bucket on the injected clock: false when the seat has used up its allowance. */
+  private takeToken(key: string, rate: { capacity: number; perSecond: number }): boolean {
+    const now = this.now();
+    const b = this.buckets.get(key) ?? { tokens: rate.capacity, at: now };
+    b.tokens = Math.min(rate.capacity, b.tokens + (Math.max(0, now - b.at) / 1000) * rate.perSecond);
+    b.at = now;
+    this.buckets.set(key, b);
+    if (b.tokens < 1) return false;
+    b.tokens -= 1;
+    return true;
   }
 
   private onJoin(from: string, name: string, avatar: string | undefined, wantSeat?: number, token?: string, userId?: string): void {
@@ -519,7 +574,11 @@ export class TableHost {
       this.sendTo(from, { t: 'match_over', scores: this.snapshot.scores, view: viewFor(finalView, seat.seat) });
     }
     else if (this.phase === 'commit' && !seat.commit) this.sendTo(from, { t: 'commit_request', handNumber: this.snapshot.handNumber });
-    else if (this.phase === 'reveal' && !seat.secret) this.sendTo(from, { t: 'reveal_request', handNumber: this.snapshot.handNumber });
+    else if (this.phase === 'reveal' && !seat.secret) {
+      // Clients refuse to reveal before they hold every commitment, so a returning seat gets them first.
+      this.sendTo(from, { t: 'commits', handNumber: this.snapshot.handNumber, commits: this.commits() });
+      this.sendTo(from, { t: 'reveal_request', handNumber: this.snapshot.handNumber });
+    }
   }
 
   private onDisconnect(peerId: string): void {
@@ -535,7 +594,7 @@ export class TableHost {
       this.checkCeremony();
     } else if (this.phase === 'reveal') {
       if (!seat.secret) {
-        this.restartCeremony([seat], `seat ${seat.seat + 1} disconnected before revealing`);
+        this.restartCeremony([seat], 'disconnect');
         return;
       }
       this.checkCeremony();
@@ -570,20 +629,51 @@ export class TableHost {
    * delinquent seats get host-supplied shares so they cannot stall the table again, but they stay
    * human and connected players keep receiving every message.
    */
-  private restartCeremony(late: SeatState[], reason: string): void {
+  private restartCeremony(late: SeatState[], cause: RestartCause): void {
     for (const s of late) this.standInSeats.add(s.seat);
-    this.beginHand(reason);
+    this.beginHand(cause, late.map((s) => s.seat));
+  }
+
+  /**
+   * The ceremony cannot produce a seed this host is willing to deal from. Nobody is blamed: tell
+   * the table, return to the lobby and start afresh when a player (re)joins.
+   */
+  private failCeremony(message: string): void {
+    this.broadcast(() => ({ t: 'error', code: 'ceremony_failed', message }));
+    for (const s of this.seats) {
+      s.commit = undefined;
+      s.secret = undefined;
+    }
+    this.standInSeats = new Set();
+    this.phase = 'lobby';
+    this.deadline = null;
+    this.pendingRestart = true;
+    // The next attempt starts a fresh record; clients that saw these attempts will not pass its audit.
+    this.ceremonyHand = -1;
+    this.broadcastLobby();
   }
 
   // ---------------------------------------------------------------- ceremony
 
-  private beginHand(reason?: string): void {
-    if (this.phase === 'commit' || this.phase === 'reveal') {
-      this.ceremonyAttempts++;
-      if (reason) this.restartReasons.push(reason);
-    } else {
+  /**
+   * Run the seed ceremony for the current hand. A repeat for the same hand number (a restart, or a
+   * table restored mid-ceremony) is recorded in `restarts`; the counters reset only for a new hand.
+   * Never runs while a hand is being played or after the match.
+   */
+  private beginHand(cause?: RestartCause, seats: number[] = []): void {
+    if (this.phase !== 'lobby' && this.phase !== 'hand_over' && this.phase !== 'commit' && this.phase !== 'reveal') return;
+    const hand = this.snapshot.handNumber;
+    if (hand !== this.ceremonyHand) {
+      this.ceremonyHand = hand;
       this.ceremonyAttempts = 1;
-      this.restartReasons = [];
+      this.restarts = [];
+    } else {
+      this.restarts.push({ attempt: this.ceremonyAttempts, seats, cause: cause ?? 'host_restarted' });
+      this.ceremonyAttempts++;
+    }
+    if (this.ceremonyAttempts > MAX_CEREMONY_ATTEMPTS) {
+      this.failCeremony(`The deal could not be agreed after ${MAX_CEREMONY_ATTEMPTS} attempts.`);
+      return;
     }
     this.phase = 'commit';
     this.clocks.clear();
@@ -604,33 +694,61 @@ export class TableHost {
       }
     }
     this.deadline = this.now() + 10_000;
-    this.broadcast(() => ({ t: 'commit_request', handNumber: this.snapshot.handNumber }));
-    for (const n of supplied) this.notifyStandIn(this.seats[n]);
+    this.announcing(() => {
+      this.broadcast(() => ({ t: 'commit_request', handNumber: this.snapshot.handNumber }));
+      for (const n of supplied) this.notifyStandIn(this.seats[n]);
+    });
     this.notify();
     this.checkCeremony();
   }
 
+  /**
+   * Send a round of ceremony messages without reacting to answers that arrive during it (an
+   * in-process peer answers synchronously). Every seat then sees the same order: commit_request,
+   * stand_in, commits, reveal_request.
+   */
+  private announcing(send: () => void): void {
+    this.ceremonyBusy = true;
+    try {
+      send();
+    } finally {
+      this.ceremonyBusy = false;
+    }
+  }
+
   private checkCeremony(): void {
+    if (this.ceremonyBusy) return;
     if (this.phase === 'commit') {
       if (this.seats.some((s) => !s.commit)) return;
       this.phase = 'reveal';
       this.deadline = this.now() + 10_000;
       const commits = this.commits();
-      this.broadcast(() => ({ t: 'commits', handNumber: this.snapshot.handNumber, commits }));
-      this.broadcast(() => ({ t: 'reveal_request', handNumber: this.snapshot.handNumber }));
+      this.announcing(() => {
+        this.broadcast(() => ({ t: 'commits', handNumber: this.snapshot.handNumber, commits }));
+        this.broadcast(() => ({ t: 'reveal_request', handNumber: this.snapshot.handNumber }));
+      });
       this.notify();
     }
     if (this.phase === 'reveal') {
       if (this.seats.some((s) => !s.secret)) return;
       const check = verifyReveals(this.commits(), this.reveals());
       if (!check.ok) {
-        this.restartCeremony(check.badSeats.filter((b) => b < 4).map((b) => this.seats[b]), `invalid reveal from seat ${check.badSeats.map((b) => b + 1).join(', ')}`);
+        // Human reveals are checked on receipt and the rest are the host's own, so this is a host
+        // fault: never pin it on a seat (that would let a host abort deals it dislikes).
+        console.error(`ceremony: shares for seats ${check.badSeats.join(', ')} do not match their commitments`);
+        this.failCeremony('The host could not verify its own shares for this deal.');
         return;
       }
       const seed = deriveSeed(`${this.matchId}:${this.snapshot.handNumber}`, this.reveals());
       this.game = dealFromSnapshot(this.snapshot, seed, this.rules);
       this.phase = 'playing';
       this.deadline = null;
+      // A hand can be over at the deal (a flower win): publish it straight away.
+      if (this.game.phase === 'ended') {
+        this.clocks.clear();
+        this.onHandOver();
+        return;
+      }
       this.armClocks();
       this.broadcastState();
       this.runBots();
@@ -727,9 +845,11 @@ export class TableHost {
       finalHash: hashState(game),
       rngVersion: game.rngVersion,
       ceremonyAttempts: this.ceremonyAttempts,
-      restartReasons: this.restartReasons.slice(),
+      restarts: this.restarts.map((r) => ({ ...r, seats: r.seats.slice() })),
+      restartReasons: this.restarts.map(describeRestart),
     };
     this.audits.push(audit);
+    for (const w of game.result?.wins ?? []) this.wins[w.seat]++;
     this.phase = 'hand_over';
     for (const s of this.seats) s.ready = false;
     this.deadline = this.now() + this.intermissionMs;
@@ -763,4 +883,17 @@ export class TableHost {
   match(): MatchSnapshot {
     return this.game && this.phase === 'playing' ? matchSnapshot(this.game) : this.snapshot;
   }
+
+  /** Hands won per seat so far this match (a shared win counts for every winner). */
+  handsWon(): number[] {
+    return this.wins.slice();
+  }
+}
+
+/** Display text for a restart (seats shown 1-based). */
+function describeRestart(r: CeremonyRestart): string {
+  const who = r.seats.map((s) => s + 1).join(', ');
+  if (r.cause === 'no_reveal') return `seat ${who} did not reveal in time`;
+  if (r.cause === 'disconnect') return `seat ${who} disconnected before revealing`;
+  return 'the table restarted during the deal';
 }

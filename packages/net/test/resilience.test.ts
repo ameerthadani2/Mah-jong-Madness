@@ -131,6 +131,9 @@ describe('crash recovery', () => {
     expect(host2.phase).toBe('hand_over');
     expect(c2.state.lastResult).not.toBeNull();
     // Replay from the hand snapshot must still match the host's final hash, even though this client missed the start.
-    expect(c2.state.auditStatus).toBe('ok');
+    // Its share was not part of this deal, so the hand verifies as partial rather than ok.
+    expect(c2.state.auditFailures).toEqual([]);
+    expect(c2.state.auditStatus).toBe('partial');
+    expect(c2.state.auditCaveats).toEqual(['Joined during this hand; log verified, share not used']);
   });
 });

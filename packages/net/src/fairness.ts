@@ -1,16 +1,22 @@
 /**
  * Commit–reveal shuffle seed.
  *
- * Every seat (human or bot) picks a random secret and publishes sha256(secret)
- * to everyone before the hand. The host receives the secrets privately,
- * derives seed = sha256(secret_0 | secret_1 | secret_2 | secret_3) and deals.
- * After the hand the host publishes all secrets and the action log; each client
- * checks the commits, re-derives the seed, replays the log and compares hashes.
+ * Five shares go into every deal: one per seat 0–3 and the host's own (seat 4).
+ * Each human player's client picks its secret; the host picks the bots' secrets,
+ * any stand-in shares and its own. Every commitment commitFor(secret) is
+ * published to the table, and a client reveals its secret only once it holds
+ * all five. The host then derives
+ *   seed = sha256('mjm-seed:' + matchId + ':' + hand + ':' + s0|s1|s2|s3|s4)
+ * and deals. After the hand it publishes every secret, the restarts and the
+ * action log; each client checks the commitments, re-derives the seed, replays
+ * the log and compares hashes (see TableClient.verifyAudit).
  *
- * Guarantee: no single participant — including the host — can choose or bias
- * the shuffle. Limitation: the host device learns the seed at deal time, so it
- * must be trusted not to peek (see docs/ARCHITECTURE.md for the neutral-host
- * option and the mental-mahjong roadmap).
+ * What this gives a player whose own share was used: nobody, the host included,
+ * could choose the seed after seeing that share. What it does not give: the
+ * host may restart a ceremony (every restart is published and bounded by the
+ * number of human seats), may stand in for a seat (that seat's audit is then
+ * only 'partial'), and learns the seed at deal time, so it is trusted not to
+ * look at the wall during the hand. Online tables run on the game server.
  */
 import { sha256Hex, randomHex } from './sha256';
 

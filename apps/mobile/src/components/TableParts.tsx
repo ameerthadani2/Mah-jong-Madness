@@ -1,7 +1,7 @@
 import React, { useContext, useEffect, useState } from 'react';
 import { StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
 import Svg, { Circle, Defs, G, LinearGradient, Path, RadialGradient, Rect, Stop } from 'react-native-svg';
-import { WINDS, type Meld, type PlayerView, type TileId } from '@mjm/engine';
+import { PLACEHOLDER_TILE, WINDS, type Meld, type PlayerView, type TileId } from '@mjm/engine';
 import type { SeatInfo } from '@mjm/net';
 import { colors, fonts, nameFont } from '../theme';
 import { TableThemeContext } from '../themes';
@@ -11,11 +11,13 @@ import { Emote } from './Emotes';
 import { SeatMotion, type SeatReaction } from './SeatMotion';
 
 export function MeldView({ meld, size = 'sm' }: { meld: Meld; size?: TileSize | number }) {
+  // Another seat's concealed kong arrives as placeholders until the hand ends: show all four face down.
+  const unknown = meld.concealed && meld.tiles.every((t) => t === PLACEHOLDER_TILE);
   return (
     <View style={styles.meld}>
       {meld.tiles.map((t, i) => {
-        const hidden = meld.type === 'kong' && meld.concealed && (i === 0 || i === 3);
-        return <Tile key={t} tile={t} size={size} faceDown={hidden} rotated={!meld.concealed && meld.claimed === t} />;
+        const hidden = unknown || (meld.type === 'kong' && meld.concealed && (i === 0 || i === 3));
+        return <Tile key={`${t}-${i}`} tile={t} size={size} faceDown={hidden} rotated={!meld.concealed && meld.claimed === t} />;
       })}
     </View>
   );
