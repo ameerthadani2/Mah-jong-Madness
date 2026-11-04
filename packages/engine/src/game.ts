@@ -162,9 +162,23 @@ function emptyPlayer(): PlayerState {
 
 /** Shuffle and deal a new hand on top of the match-level fields of `prev`. */
 export function dealHand(prev: GameState): GameState {
+  return dealWall(prev, shuffle(fullSet(), createWallRng(`${prev.seed}:${prev.handNumber}`)));
+}
+
+/**
+ * Deal a new hand from an explicit wall order on top of the match-level fields of
+ * `prev`. `wall` must be a permutation of `fullSet()`: tiles are dealt from the
+ * front four at a time starting with the dealer, bonus tiles are replaced from
+ * the back, then the dealer draws the 17th tile. `dealHand` calls it with the
+ * seeded shuffle; tests use it to build exact deals.
+ */
+export function dealWall(prev: GameState, wall: readonly TileId[]): GameState {
+  if (wall.length !== 144 || new Set(wall).size !== 144 || wall.some((t) => !Number.isInteger(t) || t < 0 || t >= 144)) {
+    throw new Error('dealWall: the wall must be a permutation of the 144 tiles');
+  }
   const s: GameState = {
     ...prev,
-    wall: shuffle(fullSet(), createWallRng(`${prev.seed}:${prev.handNumber}`)),
+    wall: wall.slice(),
     drawIndex: 0,
     backIndex: 144,
     players: [emptyPlayer(), emptyPlayer(), emptyPlayer(), emptyPlayer()],
@@ -250,7 +264,8 @@ function drawFromWall(s: GameState, seat: number, source: 'wall' | 'kong'): bool
       return false;
     }
     tile = s.wall[--s.backIndex];
-    src = 'flower';
+    // A flower drawn as a kong replacement keeps the kong source, so the win is 槓上開花.
+    if (source !== 'kong') src = 'flower';
   }
   p.hand.push(tile);
   p.draws++;
@@ -325,9 +340,11 @@ function buildOffers(s: GameState, from: number, tile: TileId, kind: 'discard' |
       if (hu) offers.push({ seat, hu, pong: false, kong: false, chi: [] });
       continue;
     }
-    const pong = sameKind >= 2;
-    const kong = sameKind >= 3 && canDraw(s);
-    const chi = s.rules.allowChi && i === 1 ? chiOptions(p, tile) : [];
+    // On the 河底 discard (no tile left to draw) only 胡 may be called.
+    const riverBottom = !canDraw(s);
+    const pong = sameKind >= 2 && !riverBottom;
+    const kong = sameKind >= 3 && !riverBottom;
+    const chi = s.rules.allowChi && i === 1 && !riverBottom ? chiOptions(p, tile) : [];
     if (hu || pong || kong || chi.length > 0) offers.push({ seat, hu, pong, kong, chi });
   }
   return offers;
@@ -562,6 +579,7 @@ function resolveClaims(s: GameState): void {
       s.pending = undefined;
       s.lastDrawn = undefined;
       s.drawSource = 'claim';
+      s.lastTileDrawn = false;
       s.turn = seat;
       s.phase = 'discard';
     } else {
@@ -586,6 +604,7 @@ function resolveClaims(s: GameState): void {
     s.pending = undefined;
     s.lastDrawn = undefined;
     s.drawSource = 'claim';
+    s.lastTileDrawn = false;
     s.turn = seat;
     s.phase = 'discard';
     return;
