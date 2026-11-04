@@ -10,7 +10,7 @@ import { countsFromKinds, isComplete, TOTAL_SETS, waits } from './hand';
 import { type Meld } from './meld';
 import { createWallRng, hashString, shuffle, WALL_RNG_VERSION } from './rng';
 import { DEFAULT_RULES, type RuleSet } from './rules';
-import { computePayments, scoreWin, type Payment, type ScoreResult, type WinContext } from './scoring';
+import { computePayments, DEALER_KEYS, scoreWin, type FlowerWin, type Payment, type ScoreResult, type WinContext } from './scoring';
 import { fullSet, isBonusTile, kindOf, sortTiles, type Kind, type TileId } from './tiles';
 import { canStartChow } from './hand';
 
@@ -66,7 +66,11 @@ export interface WinRecord {
   fromSeat?: number;
   score: ScoreResult;
   payments: Payment[];
-  /** Final 17-tile concealed hand (for the result screen). */
+  /**
+   * Final concealed hand including the winning tile (for the result screen). After a
+   * flower win (`score.flowerWin`) it is the hand as it stood, with no winning tile
+   * added, and `winningTile` is the bonus tile that completed the set.
+   */
   hand: TileId[];
   melds: Meld[];
   flowers: TileId[];
@@ -129,6 +133,11 @@ export class IllegalAction extends Error {
 // Construction
 // ---------------------------------------------------------------------------
 
+/**
+ * Start a match and deal its first hand. Like every deal, the result can already be
+ * over (`phase === 'ended'` with a win result) when the deal itself completes
+ * 八仙過海 or 七搶一; callers must check `phase` before waiting for an action.
+ */
 export function newGame(seed: string, rules: RuleSet = DEFAULT_RULES, startDealer = 0): GameState {
   const base: GameState = {
     rules,
@@ -160,11 +169,31 @@ function emptyPlayer(): PlayerState {
   return { hand: [], melds: [], flowers: [], discards: [], passedWin: false, draws: 0 };
 }
 
-/** Shuffle and deal a new hand on top of the match-level fields of `prev`. */
+/**
+ * Shuffle and deal a new hand on top of the match-level fields of `prev`. The new
+ * hand may already be over: see `dealWall`.
+ */
 export function dealHand(prev: GameState): GameState {
+  return dealWall(prev, shuffle(fullSet(), createWallRng(`${prev.seed}:${prev.handNumber}`)));
+}
+
+/**
+ * Deal a new hand from an explicit wall order on top of the match-level fields of
+ * `prev`. `wall` must be a permutation of `fullSet()`: tiles are dealt from the
+ * front four at a time starting with the dealer, bonus tiles are replaced from
+ * the back, then the dealer draws the 17th tile. `dealHand` calls it with the
+ * seeded shuffle; tests use it to build exact deals.
+ *
+ * The returned hand can already be over (`phase === 'ended'`, `result` set): the
+ * 補花 or the dealer's draw may complete 八仙過海 or 七搶一 (`score.flowerWin`).
+ */
+export function dealWall(prev: GameState, wall: readonly TileId[]): GameState {
+  if (wall.length !== 144 || new Set(wall).size !== 144 || wall.some((t) => !Number.isInteger(t) || t < 0 || t >= 144)) {
+    throw new Error('dealWall: the wall must be a permutation of the 144 tiles');
+  }
   const s: GameState = {
     ...prev,
-    wall: shuffle(fullSet(), createWallRng(`${prev.seed}:${prev.handNumber}`)),
+    wall: wall.slice(),
     drawIndex: 0,
     backIndex: 144,
     players: [emptyPlayer(), emptyPlayer(), emptyPlayer(), emptyPlayer()],
@@ -190,10 +219,70 @@ export function dealHand(prev: GameState): GameState {
   }
   // Replace bonus tiles (補花) in seat order.
   for (let i = 0; i < 4; i++) replaceFlowers(s, (s.dealerSeat + i) % 4);
-  // Dealer draws the 17th tile.
   for (const p of s.players) p.hand = sortTiles(p.hand);
+  // 八仙過海 / 七搶一 straight from the deal end the hand before the dealer draws.
+  if (settleDealtFlowers(s)) return s;
+  // Dealer draws the 17th tile.
   drawFromWall(s, s.dealerSeat, 'wall');
   return s;
+}
+
+/**
+ * After the deal's 補花: one seat with all eight bonus tiles wins 八仙過海; a seat
+ * with seven takes the eighth from whoever holds it for 七搶一. Returns true when
+ * the hand ended.
+ */
+function settleDealtFlowers(s: GameState): boolean {
+  const eight = s.players.findIndex((p) => p.flowers.length === 8);
+  if (eight >= 0) {
+    const p = s.players[eight];
+    finishWin(s, [{ seat: eight, tile: p.flowers[p.flowers.length - 1], selfDrawn: true, flowerWin: 'eight' }]);
+    return true;
+  }
+  const seven = s.players.findIndex((p) => p.flowers.length === 7);
+  if (seven < 0) return false;
+  for (let i = 1; i < 4; i++) {
+    const holder = (seven + i) % 4;
+    if (s.players[holder].flowers.length === 1) {
+      robEighthFlower(s, holder, seven, s.players[holder].flowers[0]);
+      return true;
+    }
+  }
+  // The eighth bonus tile is still in the wall.
+  return false;
+}
+
+/**
+ * Called whenever `seat` banks bonus tile `tile` during play: all eight in one
+ * seat is 八仙過海 (paid as a self-draw); otherwise a seat already holding seven
+ * takes this one for 七搶一 (paid by `seat` alone). Returns true when the hand ended.
+ */
+function settleBankedFlower(s: GameState, seat: number, tile: TileId): boolean {
+  const p = s.players[seat];
+  if (p.flowers.length === 8) {
+    s.turn = seat;
+    s.lastDrawn = undefined;
+    finishWin(s, [{ seat, tile, selfDrawn: true, flowerWin: 'eight' }]);
+    return true;
+  }
+  for (let i = 1; i < 4; i++) {
+    const q = (seat + i) % 4;
+    if (s.players[q].flowers.length === 7) {
+      s.turn = seat;
+      s.lastDrawn = undefined;
+      robEighthFlower(s, seat, q, tile);
+      return true;
+    }
+  }
+  return false;
+}
+
+/** 七搶一: `winner` (holding seven) takes `tile` from `holder`, who alone pays. */
+function robEighthFlower(s: GameState, holder: number, winner: number, tile: TileId): void {
+  const from = s.players[holder].flowers;
+  from.splice(from.indexOf(tile), 1);
+  s.players[winner].flowers.push(tile);
+  finishWin(s, [{ seat: winner, tile, selfDrawn: false, fromSeat: holder, flowerWin: 'sevenRob' }]);
 }
 
 // ---------------------------------------------------------------------------
@@ -233,24 +322,27 @@ function replaceFlowers(s: GameState, seat: number): void {
 
 /**
  * Draw a tile for `seat`. Bonus tiles are banked and replaced from the back.
- * Returns false (and ends the hand in a draw) when the wall is exhausted.
+ * Returns `'ended'` when the hand is over instead: the wall is exhausted (a draw)
+ * or a banked bonus tile completed 八仙過海 / 七搶一. Callers must stop then.
  */
-function drawFromWall(s: GameState, seat: number, source: 'wall' | 'kong'): boolean {
+function drawFromWall(s: GameState, seat: number, source: 'wall' | 'kong'): 'drawn' | 'ended' {
   if (!canDraw(s)) {
     endInDraw(s);
-    return false;
+    return 'ended';
   }
   const p = s.players[seat];
   let tile = source === 'wall' ? s.wall[s.drawIndex++] : s.wall[--s.backIndex];
   let src: GameState['drawSource'] = source;
   while (isBonusTile(tile)) {
     p.flowers.push(tile);
+    if (settleBankedFlower(s, seat, tile)) return 'ended';
     if (!canDraw(s)) {
       endInDraw(s);
-      return false;
+      return 'ended';
     }
     tile = s.wall[--s.backIndex];
-    src = 'flower';
+    // A flower drawn as a kong replacement keeps the kong source, so the win is 槓上開花.
+    if (source !== 'kong') src = 'flower';
   }
   p.hand.push(tile);
   p.draws++;
@@ -260,7 +352,7 @@ function drawFromWall(s: GameState, seat: number, source: 'wall' | 'kong'): bool
   s.lastTileDrawn = !canDraw(s);
   s.turn = seat;
   s.phase = 'discard';
-  return true;
+  return 'drawn';
 }
 
 function endInDraw(s: GameState): void {
@@ -325,9 +417,11 @@ function buildOffers(s: GameState, from: number, tile: TileId, kind: 'discard' |
       if (hu) offers.push({ seat, hu, pong: false, kong: false, chi: [] });
       continue;
     }
-    const pong = sameKind >= 2;
-    const kong = sameKind >= 3 && canDraw(s);
-    const chi = s.rules.allowChi && i === 1 ? chiOptions(p, tile) : [];
+    // On the 河底 discard (no tile left to draw) only 胡 may be called.
+    const riverBottom = !canDraw(s);
+    const pong = sameKind >= 2 && !riverBottom;
+    const kong = sameKind >= 3 && !riverBottom;
+    const chi = s.rules.allowChi && i === 1 && !riverBottom ? chiOptions(p, tile) : [];
     if (hu || pong || kong || chi.length > 0) offers.push({ seat, hu, pong, kong, chi });
   }
   return offers;
@@ -562,6 +656,7 @@ function resolveClaims(s: GameState): void {
       s.pending = undefined;
       s.lastDrawn = undefined;
       s.drawSource = 'claim';
+      s.lastTileDrawn = false;
       s.turn = seat;
       s.phase = 'discard';
     } else {
@@ -586,6 +681,7 @@ function resolveClaims(s: GameState): void {
     s.pending = undefined;
     s.lastDrawn = undefined;
     s.drawSource = 'claim';
+    s.lastTileDrawn = false;
     s.turn = seat;
     s.phase = 'discard';
     return;
@@ -594,16 +690,37 @@ function resolveClaims(s: GameState): void {
   advanceToNextDraw(s, from);
 }
 
-interface WinSpec {
+/** One winner of a hand, as passed to `buildWinContext` / scoring. */
+export interface WinSpec {
   seat: number;
+  /** The winning tile; for a flower win, the bonus tile that completed it. */
   tile: TileId;
   selfDrawn: boolean;
+  /** The seat that pays alone: the discarder, the robbed seat, or the 七搶一 victim. */
   fromSeat?: number;
   robbingKong?: boolean;
+  /** 八仙過海 or 七搶一: won on bonus tiles alone, with no hand shape. */
+  flowerWin?: FlowerWin;
 }
 
 export function buildWinContext(s: GameState, spec: WinSpec): WinContext {
   const p = s.players[spec.seat];
+  if (spec.flowerWin) {
+    return {
+      rules: s.rules,
+      seat: spec.seat,
+      dealerSeat: s.dealerSeat,
+      dealerStreak: s.dealerStreak,
+      prevailingWind: s.prevailingWind,
+      concealed: p.hand.map(kindOf),
+      melds: p.melds,
+      flowers: p.flowers.map(kindOf),
+      winningTile: kindOf(spec.tile),
+      selfDrawn: spec.selfDrawn,
+      fromSeat: spec.fromSeat,
+      flowerWin: spec.flowerWin,
+    };
+  }
   const concealed = spec.selfDrawn ? concealedKindsWithout(p, spec.tile) : p.hand.map(kindOf);
   const isDealer = spec.seat === s.dealerSeat;
   const noClaims = !s.anyClaimThisHand;
@@ -632,8 +749,6 @@ export function buildWinContext(s: GameState, spec: WinSpec): WinContext {
   };
 }
 
-const DEALER_KEYS = new Set(['dealer', 'dealer_streak']);
-
 function finishWin(s: GameState, specs: WinSpec[]): void {
   const wins: WinRecord[] = [];
   const delta = [0, 0, 0, 0];
@@ -647,7 +762,8 @@ function finishWin(s: GameState, specs: WinSpec[]): void {
       delta[pay.to] += pay.points;
     }
     const p = s.players[spec.seat];
-    const finalHand = spec.selfDrawn ? p.hand.slice() : [...p.hand, spec.tile];
+    // A flower win's tile is a bonus tile already banked in `flowers`, never part of the hand.
+    const finalHand = spec.flowerWin || spec.selfDrawn ? p.hand.slice() : [...p.hand, spec.tile];
     wins.push({
       seat: spec.seat,
       winningTile: spec.tile,
@@ -707,7 +823,12 @@ export function advanceMatch(prev: GameState): MatchSnapshot {
   return snap;
 }
 
-/** Deal a hand from a match snapshot with an explicit seed (used by the P2P host and by audits). */
+/**
+ * Deal a hand from a match snapshot with an explicit seed (used by the P2P host and by audits).
+ * The dealt hand may already be over (`phase === 'ended'` with a win result) when
+ * the deal completes 八仙過海 or 七搶一; a host must then settle the hand at once
+ * instead of arming turn clocks.
+ */
 export function dealFromSnapshot(snap: MatchSnapshot, seed: string, rules: RuleSet): GameState {
   const base: GameState = {
     rules,
@@ -732,6 +853,7 @@ export function dealFromSnapshot(snap: MatchSnapshot, seed: string, rules: RuleS
 
 /**
  * Start the next hand after `phase === 'ended'`. Rotates dealer / wind as needed.
+ * The new hand may already be over after its deal (see `dealFromSnapshot`).
  * Pass `seed` to use a fresh commit–reveal seed for the new hand.
  */
 export function nextHand(prev: GameState, seed?: string): GameState {

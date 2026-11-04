@@ -41,6 +41,20 @@ describe('waits', () => {
   it('returns nothing for a hand that is not ready', () => {
     expect(waits(c('13m 46m 79p 25s 8s ESW CF B'), 5)).toEqual([]);
   });
+  it('drops a wait whose four copies are blocked by the player\'s own melds', () => {
+    // 78m waits on 6m and 9m; an own kong of 9m kills the 9m wait.
+    const hand = c('123p 456p 789s 78m 55s');
+    expect(kindsToString(waits(hand, 4))).toBe('6m 9m');
+    expect(kindsToString(waits(hand, 4, c('9999m')))).toBe('6m');
+    // Three blocked copies leave one live 9m.
+    expect(kindsToString(waits(hand, 4, c('999m')))).toBe('6m 9m');
+  });
+  it('counts concealed and blocked copies together', () => {
+    // 5m pair wait with one 5m held and three more in a meld: no 5m is left.
+    const hand = c('123m 456p 789p 234s 5m');
+    expect(kindsToString(waits(hand, 4))).toBe('5m');
+    expect(waits(hand, 4, c('555m'))).toEqual([]);
+  });
 });
 
 describe('shanten', () => {
