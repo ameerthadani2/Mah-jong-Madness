@@ -386,7 +386,8 @@ export function isLegal(s: GameState, seat: number, action: Action): boolean {
   return legalActions(s, seat).some((a) => sameAction(a, canon, s, seat));
 }
 
-function sameAction(a: Action, b: Action, s: GameState, seat: number): boolean {
+/** Do two actions mean the same move for `seat` in state `s` (any physical copy of a discard kind counts)? */
+export function sameAction(a: Action, b: Action, s: GameState, seat: number): boolean {
   if (a.type !== b.type) return false;
   switch (a.type) {
     case 'discard': {

@@ -37,6 +37,56 @@ export interface RuleSet {
   timeBankSeconds: number;
   /** Points each player starts a match with (for display / club standings). */
   startingPoints: number;
+  /** 台 for 天胡 (dealer wins on the deal). Charts vary: 24 is the most cited, some tables use 16. */
+  heavenlyTai: number;
+  /** 台 for 地胡 (non-dealer self-draws on their first draw with no claims yet). */
+  earthlyTai: number;
+  /** 台 for 人胡 (win on the dealer's first discard). Some tables use 8. */
+  humanlyTai: number;
+}
+
+/** Inclusive numeric ranges a rule set must stay within; anything outside falls back to the base value. */
+export const RULE_LIMITS: Record<Exclude<keyof RuleSet, 'speed' | 'drawKeepsDealer' | 'allowChi' | 'multipleWinners' | 'passRule' | 'noFlowerTai'>, [number, number]> = {
+  basePoints: [0, 5000],
+  taiPoints: [0, 2000],
+  maxTai: [0, 64],
+  deadWallSize: [0, 32],
+  dealerTai: [0, 8],
+  dealerStreakTai: [0, 8],
+  handsPerMatch: [1, 64],
+  turnSeconds: [3, 120],
+  timeBankSeconds: [0, 300],
+  startingPoints: [0, 1_000_000],
+  heavenlyTai: [0, 64],
+  earthlyTai: [0, 64],
+  humanlyTai: [0, 64],
+};
+
+const BOOLEAN_RULES = ['drawKeepsDealer', 'allowChi', 'multipleWinners', 'passRule', 'noFlowerTai'] as const;
+
+/**
+ * Turn untrusted input (a club's saved rules, a create-table request, a host's
+ * `welcome`) into a rule set the engine can run safely: unknown keys are dropped,
+ * numbers are truncated and clamped to `RULE_LIMITS`, booleans must be real
+ * booleans, `speed` must be a known preset, and anything else keeps `base`'s value.
+ */
+export function sanitizeRules(input: unknown, base: RuleSet = DEFAULT_RULES): RuleSet {
+  const out: RuleSet = { ...base };
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return out;
+  const src = input as Record<string, unknown>;
+  for (const key of Object.keys(RULE_LIMITS) as Array<keyof typeof RULE_LIMITS>) {
+    const v = src[key];
+    if (typeof v !== 'number' || !Number.isFinite(v)) continue;
+    const [lo, hi] = RULE_LIMITS[key];
+    out[key] = Math.min(hi, Math.max(lo, Math.trunc(v)));
+  }
+  for (const key of BOOLEAN_RULES) {
+    const v = src[key];
+    if (typeof v === 'boolean') out[key] = v;
+  }
+  const speed = src.speed;
+  if (typeof speed === 'string' && Object.prototype.hasOwnProperty.call(SPEED_PRESETS, speed)) out.speed = speed as GameSpeed;
+  return out;
 }
 
 export const SPEED_PRESETS: Record<GameSpeed, { turnSeconds: number; timeBankSeconds: number; label: string; labelZh: string }> = {
@@ -64,10 +114,14 @@ export const DEFAULT_RULES: RuleSet = {
   turnSeconds: SPEED_PRESETS.normal.turnSeconds,
   timeBankSeconds: SPEED_PRESETS.normal.timeBankSeconds,
   startingPoints: 0,
+  heavenlyTai: 24,
+  earthlyTai: 16,
+  humanlyTai: 16,
 };
 
+/** Defaults with `overrides` applied, sanitised so the result is always a legal rule set. */
 export function withRules(overrides: Partial<RuleSet> = {}): RuleSet {
-  return { ...DEFAULT_RULES, ...overrides };
+  return sanitizeRules(overrides, DEFAULT_RULES);
 }
 
 /** Apply a named speed, setting the clock values it implies. */
@@ -84,14 +138,14 @@ export interface RulePreset {
   rules: Partial<RuleSet>;
 }
 
-/** Club-ready presets. Point values are abstract chips; clubs decide what a chip is worth off-platform. */
+/** Club-ready presets. Points are a score, nothing more: they have no monetary value and cannot be redeemed or transferred. */
 export const RULE_PRESETS: RulePreset[] = [
   { id: 'taiwan-standard', name: 'Taiwan Standard', nameZh: '台灣標準', description: '底100 台20, 16 rotations, normal speed. The default club game.', rules: {} },
-  { id: 'small', name: 'Small Stakes', nameZh: '小局', description: '底50 台10. Same rules, gentler swings.', rules: { basePoints: 50, taiPoints: 10 } },
-  { id: 'big', name: 'Big Stakes', nameZh: '大局', description: '底300 台100. Every 台 matters.', rules: { basePoints: 300, taiPoints: 100 } },
+  { id: 'small', name: 'Small Game', nameZh: '小局', description: '底50 台10. Same rules, gentler score swings.', rules: { basePoints: 50, taiPoints: 10 } },
+  { id: 'big', name: 'Big Game', nameZh: '大局', description: '底300 台100. Every 台 matters.', rules: { basePoints: 300, taiPoints: 100 } },
   { id: 'turbo', name: 'Turbo', nameZh: '極速局', description: '7-second turns with a 10-second bank, 8 rotations. Lunch-break mahjong.', rules: { ...speedFields('turbo'), handsPerMatch: 8 } },
   { id: 'beginner', name: 'Beginner Friendly', nameZh: '新手局', description: 'Relaxed clock, 台 capped at 8, 4 rotations.', rules: { ...speedFields('relaxed'), maxTai: 8, handsPerMatch: 4 } },
-  { id: 'purist', name: 'Purist', nameZh: '嚴格局', description: '過水 on, one winner per discard, no flower 台 bonus.', rules: { passRule: true, multipleWinners: false, noFlowerTai: false } },
+  { id: 'purist', name: 'Purist', nameZh: '嚴格局', description: '過水 on: pass on a winning discard and you must draw before winning again. One winner per discard.', rules: { passRule: true, multipleWinners: false } },
   { id: 'party', name: 'Party', nameZh: '熱鬧局', description: '一炮多響 on, 無花 1 台, fast speed.', rules: { ...speedFields('fast'), multipleWinners: true, noFlowerTai: true } },
 ];
 
@@ -102,7 +156,7 @@ function speedFields(speed: GameSpeed): Pick<RuleSet, 'speed' | 'turnSeconds' | 
 
 export function rulesFromPreset(id: string, base: RuleSet = DEFAULT_RULES): RuleSet {
   const preset = RULE_PRESETS.find((p) => p.id === id);
-  return preset ? { ...base, ...preset.rules } : base;
+  return preset ? sanitizeRules(preset.rules, sanitizeRules(base)) : sanitizeRules(base);
 }
 
 /** Human-readable one-liner, e.g. "底100 / 台20 · 16 rotations · Normal (15s + 30s bank)". */
