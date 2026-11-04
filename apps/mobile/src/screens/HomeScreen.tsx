@@ -7,7 +7,7 @@ import { useApp } from '../app-state';
 import { createLocalSession, createOnlineSession } from '../game/session';
 import { AVATARS, effectiveStreak, todayKey } from '../storage';
 import { colors, fonts, nameFont, space } from '../theme';
-import { Button, Card, Chip, GemCounter, IconButton, P, Pill, Row, StrokeText } from '../components/Ui';
+import { Button, Card, Chip, GemCounter, IconButton, P, Pill, Row } from '../components/Ui';
 import { AvatarPlate } from '../components/Avatars';
 import { ChestScene, ClubhouseScene, ScrollScene, TableScene } from '../components/Scenes';
 import { Icon } from '../components/Icons';

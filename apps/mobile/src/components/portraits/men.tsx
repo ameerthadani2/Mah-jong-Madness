@@ -162,7 +162,7 @@ export const cowboy: Spec = {
       <Path d={STUBBLE} fill={k.url('shade')} opacity={0.85} />
     </>
   ),
-  over: (k) => (
+  over: () => (
     <>
       <Path d={COWBOY_MOUSTACHE} fill="#6B3F22" />
     </>

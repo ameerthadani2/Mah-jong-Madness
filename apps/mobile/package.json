@@ -31,6 +31,7 @@
     "expo": "~58.0.22",
     "expo-blur": "~58.0.5",
     "expo-constants": "~58.0.14",
+    "expo-crypto": "~58.0.7",
     "expo-font": "~58.0.11",
     "expo-haptics": "~58.0.7",
     "expo-image": "~58.0.18",
@@ -47,6 +48,7 @@
   "devDependencies": {
     "@types/react": "~19.3",
     "playwright": "^1.63.0",
-    "typescript": "^5.6.3"
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.9"
   }
 }

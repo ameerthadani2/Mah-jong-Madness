@@ -14,8 +14,9 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run typecheck
+      - run: npm run lint
       - run: npm test
-      - run: npm run sim -- 5
+      - run: npm run sim -- 40
 
   e2e:
     runs-on: ubuntu-latest

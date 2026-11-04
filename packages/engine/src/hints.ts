@@ -45,7 +45,6 @@ export function describeKind(k: Kind): string {
 }
 
 export function hintFor(s: GameState, seat: number): Hint {
-  const p = s.players[seat];
   const actions = legalActions(s, seat);
   const valueTiles = [seatWindKind(seat, s.dealerSeat), prevailingWindKind(s.prevailingWind), 31, 32, 33];
   const base: Hint = {

@@ -3,7 +3,7 @@
  */
 import React from 'react';
 import { Circle, Ellipse, Path } from 'react-native-svg';
-import { both, circ, ell, flowers, linear, radial, speckle, star, sym, TORSO, volume, volume2, type Spec } from './kit';
+import { both, circ, ell, flowers, linear, speckle, star, sym, TORSO, volume, volume2, type Spec } from './kit';
 
 const V_NECK = 'M0 100C1 92 10 87.5 28 86C35 85.4 39 84.6 41 83L50 94L59 83C61 84.6 65 85.4 72 86C90 87.5 99 92 100 100Z';
 

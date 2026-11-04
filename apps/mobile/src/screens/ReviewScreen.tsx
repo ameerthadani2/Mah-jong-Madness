@@ -1,12 +1,11 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ScrollView, StyleSheet, View } from 'react-native';
 import { kindInfo, kindOf, reviewHand, type MoveGrade, type ReviewedMove } from '@mjm/engine';
 import { useApp } from '../app-state';
-import { useSession } from '../game/useTable';
 import { canUse, consume } from '../monetisation/store';
 import { colors, fonts, space } from '../theme';
 import { Tile } from '../components/Tile';
-import { Button, Card, H1, H2, P, Pill, Row, ScreenHeader, SectionLabel, StrokeText } from '../components/Ui';
+import { Button, Card, H1, P, Pill, Row, ScreenHeader, SectionLabel, StrokeText } from '../components/Ui';
 import { Icon, type IconName } from '../components/Icons';
 
 const GRADE_LABEL: Record<MoveGrade, { label: string; tone: 'ok' | 'gold' | 'neutral' | 'danger'; icon?: IconName; mark?: string }> = {

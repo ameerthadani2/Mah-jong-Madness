@@ -10,7 +10,7 @@
   "scripts": {
     "test": "npm run test -w @mjm/engine -w @mjm/net -w @mjm/signal",
     "typecheck": "npm run typecheck --workspaces --if-present",
-    "lint": "npm run lint --workspaces --if-present",
+    "lint": "eslint .",
     "mobile": "npm run start -w @mjm/mobile",
     "signal": "npm run start -w @mjm/signal",
     "sim": "npm run sim -w @mjm/engine",
@@ -21,5 +21,10 @@
   },
   "engines": {
     "node": ">=20"
+  },
+  "devDependencies": {
+    "eslint": "^9.39.5",
+    "eslint-plugin-react-hooks": "^5.2.0",
+    "typescript-eslint": "^8.72.1"
   }
 }
