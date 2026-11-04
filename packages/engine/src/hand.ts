@@ -135,15 +135,19 @@ function completesSets(c: Counts, from: number): boolean {
 
 /**
  * Kinds that would complete the hand if added. `counts` must hold 3n+1 tiles
- * where n = setsNeeded. Kinds already held 4 times are still reported as waits;
- * the caller can filter by visibility if desired.
+ * where n = setsNeeded. A kind already held 4 times in `counts` is skipped.
+ *
+ * `blocked` optionally lists copies of each kind that are out of play beyond
+ * `counts` (for example the player's own exposed or concealed melds); a kind is
+ * then skipped when `counts` and `blocked` together hold all four copies, so only
+ * live waits are reported. Without it the result is the pure shape answer.
  */
-export function waits(counts: Counts, setsNeeded: number): Kind[] {
+export function waits(counts: Counts, setsNeeded: number, blocked?: Counts): Kind[] {
   if (totalCount(counts) !== setsNeeded * 3 + 1) return [];
   const out: Kind[] = [];
   const c = counts.slice();
   for (let k = 0; k < NUM_PLAY_KINDS; k++) {
-    if (c[k] >= 4) continue;
+    if (c[k] + (blocked?.[k] ?? 0) >= 4) continue;
     c[k]++;
     if (isComplete(c, setsNeeded)) out.push(k);
     c[k]--;

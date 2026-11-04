@@ -10,7 +10,7 @@ import { countsFromKinds, isComplete, TOTAL_SETS, waits } from './hand';
 import { type Meld } from './meld';
 import { createWallRng, hashString, shuffle, WALL_RNG_VERSION } from './rng';
 import { DEFAULT_RULES, type RuleSet } from './rules';
-import { computePayments, scoreWin, type Payment, type ScoreResult, type WinContext } from './scoring';
+import { computePayments, DEALER_KEYS, scoreWin, type Payment, type ScoreResult, type WinContext } from './scoring';
 import { fullSet, isBonusTile, kindOf, sortTiles, type Kind, type TileId } from './tiles';
 import { canStartChow } from './hand';
 
@@ -631,8 +631,6 @@ export function buildWinContext(s: GameState, spec: WinSpec): WinContext {
     humanlyHand,
   };
 }
-
-const DEALER_KEYS = new Set(['dealer', 'dealer_streak']);
 
 function finishWin(s: GameState, specs: WinSpec[]): void {
   const wins: WinRecord[] = [];
