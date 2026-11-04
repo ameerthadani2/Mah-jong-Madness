@@ -281,6 +281,8 @@ export class TableHost {
   }
 
   private pendingRestart = false;
+  /** True while a round of ceremony messages is going out (see `announcing`). */
+  private ceremonyBusy = false;
   /** Seats whose share the host supplies in the next ceremony (they missed the window; they stay human). */
   private standInSeats = new Set<number>();
 
@@ -692,20 +694,39 @@ export class TableHost {
       }
     }
     this.deadline = this.now() + 10_000;
-    this.broadcast(() => ({ t: 'commit_request', handNumber: this.snapshot.handNumber }));
-    for (const n of supplied) this.notifyStandIn(this.seats[n]);
+    this.announcing(() => {
+      this.broadcast(() => ({ t: 'commit_request', handNumber: this.snapshot.handNumber }));
+      for (const n of supplied) this.notifyStandIn(this.seats[n]);
+    });
     this.notify();
     this.checkCeremony();
   }
 
+  /**
+   * Send a round of ceremony messages without reacting to answers that arrive during it (an
+   * in-process peer answers synchronously). Every seat then sees the same order: commit_request,
+   * stand_in, commits, reveal_request.
+   */
+  private announcing(send: () => void): void {
+    this.ceremonyBusy = true;
+    try {
+      send();
+    } finally {
+      this.ceremonyBusy = false;
+    }
+  }
+
   private checkCeremony(): void {
+    if (this.ceremonyBusy) return;
     if (this.phase === 'commit') {
       if (this.seats.some((s) => !s.commit)) return;
       this.phase = 'reveal';
       this.deadline = this.now() + 10_000;
       const commits = this.commits();
-      this.broadcast(() => ({ t: 'commits', handNumber: this.snapshot.handNumber, commits }));
-      this.broadcast(() => ({ t: 'reveal_request', handNumber: this.snapshot.handNumber }));
+      this.announcing(() => {
+        this.broadcast(() => ({ t: 'commits', handNumber: this.snapshot.handNumber, commits }));
+        this.broadcast(() => ({ t: 'reveal_request', handNumber: this.snapshot.handNumber }));
+      });
       this.notify();
     }
     if (this.phase === 'reveal') {

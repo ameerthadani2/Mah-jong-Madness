@@ -82,7 +82,7 @@ describe('ceremony robustness', () => {
     expect(honest.state.auditFailures).toEqual([]);
   });
 
-  it('a stood-in player still audits OK (its own secret is simply not checked)', () => {
+  it('a stood-in player audits as partial: every check passes but its own share did not protect the seed', () => {
     const clock = { now: 1_000_000 };
     const hub = new LoopbackHub();
     const host = makeHost(hub, clock);
@@ -109,7 +109,10 @@ describe('ceremony robustness', () => {
       const s = c.localState();
       if (s && legalActions(s, 0).length > 0) c.act(chooseAction(s, 0)!);
     }
-    expect(c.state.auditStatus).toBe('ok');
+    expect(c.state.auditStatus).toBe('partial');
+    expect(c.state.auditFailures).toEqual([]);
+    expect(c.state.auditCaveats).toEqual(["The host supplied this seat's share"]);
+    expect(c.state.audits[0].caveats).toEqual(c.state.auditCaveats);
   });
 });
 
