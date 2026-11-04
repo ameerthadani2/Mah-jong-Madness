@@ -95,6 +95,12 @@ describe('full hands with bots', () => {
         const delta = s.result!.scoreDelta.reduce((a, b) => a + b, 0);
         expect(delta).toBe(0);
         for (const w of s.result!.wins) {
+          // 八仙過海 / 七搶一 are won on bonus tiles alone: no hand shape to check.
+          if (w.score.flowerWin) {
+            expect(w.score.decomposition).toBeNull();
+            expect(w.flowers).toHaveLength(8);
+            continue;
+          }
           expect(w.score.decomposition).not.toBeNull();
           expect(w.hand.length + w.melds.length * 3).toBe(17);
         }

@@ -299,3 +299,116 @@ describe('天胡 / 地胡 / 人胡 from a real deal', () => {
     expect(keysOf(win(s).score)).toEqual(['all_chows', 'concealed']);
   });
 });
+
+describe('八仙過海 / 七搶一 (instant flower wins)', () => {
+  const SEVEN = 'f1 f2 f3 f4 f5 f6 f7';
+  /** Assert a finished flower win and return it. */
+  const flowerWin = (s: GameState, kind: 'eight' | 'sevenRob') => {
+    const w = win(s);
+    expect(s.result!.wins).toHaveLength(1);
+    expect(w.score.flowerWin).toBe(kind);
+    expect(w.score.decomposition).toBeNull();
+    expect(keysOf(w.score).filter((k) => k !== 'dealer' && k !== 'dealer_streak')).toEqual([kind === 'eight' ? 'eight_flowers' : 'seven_rob']);
+    expect(w.flowers).toHaveLength(8);
+    expect(isBonus(w.winningTile)).toBe(true);
+    expect(w.hand.every((t) => !isBonus(t))).toBe(true);
+    for (let seat = 0; seat < 4; seat++) expect(legalActions(s, seat)).toEqual([]);
+    expect(s.result!.scoreDelta.reduce((a, b) => a + b, 0)).toBe(0);
+    return w;
+  };
+  const isBonus = (t: number) => t >= 136;
+
+  it('八仙過海 at the deal: the hand ends before the dealer draws and all three pay', () => {
+    const s = dealt({}, [D1, D2, `123m 456m 78m ${SEVEN} f8`, D3], { back: ['1p', '2p', '3p', '4p', '5p', '6p', '7p', '8p'] });
+    const w = flowerWin(s, 'eight');
+    expect(w.seat).toBe(2);
+    expect(w.selfDrawn).toBe(true);
+    expect(w.hand).toHaveLength(16);
+    expect(s.players[0].hand).toHaveLength(16);
+    expect(w.payments.map((p) => [p.from, p.tai])).toEqual([
+      [0, 9],
+      [1, 8],
+      [3, 8],
+    ]);
+    expect(s.result!.dealerContinues).toBe(false);
+    expect(tileTotal(s)).toBe(144);
+  });
+
+  it('七搶一 at the deal: the seat with seven takes the eighth and only its holder pays', () => {
+    const s = dealt({}, [D1, `123m 456m 789m ${SEVEN}`, D2, 'ESWN CFB 369m 147p 25s f8'], {
+      back: ['1p', '2p', '3p', '4p', '5p', '6p', '7p', '8s'],
+    });
+    const w = flowerWin(s, 'sevenRob');
+    expect(w.seat).toBe(1);
+    expect(w.selfDrawn).toBe(false);
+    expect(w.fromSeat).toBe(3);
+    expect(w.winningTile).toBe(143);
+    expect(s.players[1].flowers).toContain(143);
+    expect(s.players[3].flowers).toEqual([]);
+    expect(w.payments).toEqual([{ from: 3, to: 1, tai: 8, points: 100 + 8 * 20 }]);
+    expect(tileTotal(s)).toBe(144);
+  });
+
+  it('七搶一 on the dealer\'s 17th tile: the deal leaves seven in one seat and the dealer draws the eighth', () => {
+    const s = dealt({}, [D1, D2, `123m 456m 789m ${SEVEN}`, D3], { front: ['f8'], back: ['1p', '2p', '3p', '4p', '5p', '6p', '7p'] });
+    const w = flowerWin(s, 'sevenRob');
+    expect(w.seat).toBe(2);
+    expect(w.fromSeat).toBe(0);
+    // The dealer pays 8 + 莊家 1.
+    expect(w.payments).toEqual([{ from: 0, to: 2, tai: 9, points: 100 + 9 * 20 }]);
+    expect(tileTotal(s)).toBe(144);
+  });
+
+  /** Seat 0 discards C; nobody can claim it, so seat 1 draws the next front tile. */
+  const midHand = (seats: { s0?: string; s1?: string }) =>
+    setup(
+      {},
+      [
+        { hand: `${D1} C`, flowers: seats.s0 },
+        { hand: D2, flowers: seats.s1 },
+        D3,
+        '147m 258m 147p 258p 147s 2s',
+      ],
+      10,
+      { front: ['f8'] },
+    );
+
+  it('八仙過海 mid-hand: drawing the eighth bonus tile wins as a self-draw paid by all three', () => {
+    let s = midHand({ s1: SEVEN });
+    const before = tileTotal(s);
+    s = discard(s, 0, 'C');
+    const w = flowerWin(s, 'eight');
+    expect(w.seat).toBe(1);
+    expect(w.selfDrawn).toBe(true);
+    expect(w.winningTile).toBe(143);
+    expect(w.payments.map((p) => [p.from, p.tai])).toEqual([
+      [0, 9],
+      [2, 8],
+      [3, 8],
+    ]);
+    expect(tileTotal(s)).toBe(before);
+  });
+
+  it('七搶一 mid-hand: the seven-holder takes the drawn eighth and only the drawer pays', () => {
+    let s = midHand({ s0: SEVEN });
+    const before = tileTotal(s);
+    s = discard(s, 0, 'C');
+    const w = flowerWin(s, 'sevenRob');
+    expect(w.seat).toBe(0);
+    expect(w.fromSeat).toBe(1);
+    expect(s.players[0].flowers).toHaveLength(8);
+    expect(s.players[1].flowers).toEqual([]);
+    expect(w.hand).toHaveLength(16);
+    // The dealer wins: 8 + 莊家 1, from the drawer alone.
+    expect(w.payments).toEqual([{ from: 1, to: 0, tai: 9, points: 100 + 9 * 20 }]);
+    expect(s.result!.dealerContinues).toBe(true);
+    expect(tileTotal(s)).toBe(before);
+  });
+
+  it('a seat with seven flowers and the eighth still in the wall plays on', () => {
+    const s = dealt({}, [D1, D2, `123m 456m 789m ${SEVEN}`, D3], { front: ['9p'], back: ['1p', '2p', '3p', '4p', '5p', '6p', '7p'] });
+    expect(s.phase).toBe('discard');
+    expect(s.players[2].flowers).toHaveLength(7);
+    expect(s.players[0].hand).toHaveLength(17);
+  });
+});
