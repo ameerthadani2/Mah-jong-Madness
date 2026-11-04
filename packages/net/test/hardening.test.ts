@@ -63,6 +63,36 @@ describe('host hardening', () => {
   });
 });
 
+describe('chat and emote limits', () => {
+  it('lets each seat chat once a second with a burst of five, and emote once every two seconds', () => {
+    const clock = { now: 1_000_000 };
+    const hub = new LoopbackHub();
+    new TableHost(hub.create('host'), { roomCode: 'CH', rules: withRules({ handsPerMatch: 1 }), now: () => clock.now });
+    const loud = new TableClient(transportLink(hub.create('p0'), 'host'), 'Loud');
+    const quiet = new TableClient(transportLink(hub.create('p1'), 'host'), 'Quiet');
+    loud.join();
+    quiet.join();
+    for (let i = 0; i < 10; i++) loud.chat(`spam ${i}`);
+    expect(quiet.state.chat.map((l) => l.text)).toEqual(['spam 0', 'spam 1', 'spam 2', 'spam 3', 'spam 4']);
+    // Another seat has its own allowance.
+    quiet.chat('hello');
+    expect(quiet.state.chat).toHaveLength(6);
+    clock.now += 1_000;
+    loud.chat('one more');
+    loud.chat('too soon');
+    expect(quiet.state.chat.map((l) => l.text).slice(-2)).toEqual(['hello', 'one more']);
+    loud.emote('wave');
+    loud.emote('wave');
+    expect(quiet.state.emotes).toHaveLength(1);
+    clock.now += 1_000;
+    loud.emote('wave');
+    expect(quiet.state.emotes).toHaveLength(1);
+    clock.now += 1_000;
+    loud.emote('wave');
+    expect(quiet.state.emotes).toHaveLength(2);
+  });
+});
+
 describe('bot avatars', () => {
   it('bots never wear an avatar a player at the table already uses', () => {
     for (const mine of ['lady', 'uncle', 'shades', 'auntie', 'boss']) {

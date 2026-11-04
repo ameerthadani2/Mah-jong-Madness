@@ -14,6 +14,18 @@ export interface SeatInfo {
   timeBank?: number;
 }
 
+/** Why a seed ceremony was run again for the same hand. */
+export type RestartCause = 'no_reveal' | 'disconnect' | 'host_restarted';
+
+export const RESTART_CAUSES: readonly RestartCause[] = ['no_reveal', 'disconnect', 'host_restarted'];
+
+/** One abandoned ceremony attempt: which attempt failed, the seats it names (0–3, humans only) and why. */
+export interface CeremonyRestart {
+  attempt: number;
+  seats: number[];
+  cause: RestartCause;
+}
+
 export interface Audit {
   matchId: string;
   handNumber: number;
@@ -25,8 +37,11 @@ export interface Audit {
   finalHash: string;
   /** Seed→wall construction identifier (see engine WALL_RNG_VERSION). */
   rngVersion: string;
-  /** How many times the ceremony restarted for this hand and why (visible to players). */
+  /** How many ceremonies were run for this hand (1 when nothing went wrong). */
   ceremonyAttempts: number;
+  /** One entry per abandoned attempt; clients verify these, never the display text. */
+  restarts: CeremonyRestart[];
+  /** Display text derived from `restarts`. */
   restartReasons: string[];
 }
 

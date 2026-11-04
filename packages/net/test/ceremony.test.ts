@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { chooseAction, legalActions, withRules } from '@mjm/engine';
-import { commitFor, LoopbackHub, makeSecret, TableClient, TableHost, transportLink, type HostMessage, type SerializedHost } from '../src/index';
+import { commitFor, LoopbackHub, makeSecret, MAX_CEREMONY_ATTEMPTS, TableClient, TableHost, transportLink, type HostEvent, type HostMessage, type SerializedHost } from '../src/index';
 
 /** A raw peer that commits but never reveals (a phone that backgrounds mid-ceremony). */
 function silentRevealer(hub: LoopbackHub, id: string, name: string) {
@@ -49,7 +49,8 @@ describe('ceremony robustness', () => {
     expect(late.received.some((m) => m.t === 'hand_over')).toBe(true);
     const audit = host.audits[host.audits.length - 1];
     expect(audit.ceremonyAttempts).toBe(2);
-    expect(audit.restartReasons[0]).toMatch(/did not reveal/);
+    expect(audit.restarts).toEqual([{ attempt: 1, seats: [0], cause: 'no_reveal' }]);
+    expect(audit.restartReasons[0]).toMatch(/seat 1 did not reveal/);
     // The hand_over intermission still expires because a human is connected.
     expect(host.nextDeadline()).not.toBeNull();
   });
@@ -112,6 +113,126 @@ describe('ceremony robustness', () => {
   });
 });
 
+/** A raw peer that commits automatically and reveals only when told to (it keeps its secret in `secret`). */
+function manualPeer(hub: LoopbackHub, id: string, name: string, opts: { autoCommit?: boolean; token?: string; secret?: string } = {}) {
+  const t = hub.create(id);
+  const received: HostMessage[] = [];
+  const peer = { t, received, secret: opts.secret ?? '', token: '' };
+  t.onMessage((_from, m) => {
+    const msg = m as HostMessage;
+    received.push(msg);
+    if (msg.t === 'welcome') peer.token = msg.token;
+    if (msg.t === 'commit_request' && opts.autoCommit !== false) {
+      peer.secret = makeSecret();
+      t.send('host', { t: 'commit', hash: commitFor(peer.secret) });
+    }
+    if (msg.t === 'reveal_request' && peer.secret) t.send('host', { t: 'reveal', secret: peer.secret });
+  });
+  t.send('host', { t: 'join', name, token: opts.token });
+  return peer;
+}
+
+describe('ceremony accounting on the host', () => {
+  it('a seat that returns during the reveal phase gets the commitments before the reveal request', () => {
+    const clock = { now: 1_000_000 };
+    const hub = new LoopbackHub();
+    const host = makeHost(hub, clock);
+    const a = manualPeer(hub, 'pa', 'A', { autoCommit: false });
+    const b = manualPeer(hub, 'pb', 'B');
+    host.start();
+    expect(host.phase).toBe('commit');
+    // B committed, then its connection dropped before the reveal phase began.
+    const bSecret = b.secret;
+    b.t.close();
+    a.secret = makeSecret();
+    a.t.send('host', { t: 'commit', hash: commitFor(a.secret) });
+    expect(host.phase).toBe('reveal');
+    const back = manualPeer(hub, 'pb2', 'B', { token: b.token, secret: bSecret });
+    const kinds = back.received.map((m) => m.t);
+    expect(kinds.indexOf('commits')).toBeGreaterThan(-1);
+    expect(kinds.indexOf('commits')).toBeLessThan(kinds.indexOf('reveal_request'));
+    expect(host.phase).toBe('playing');
+    expect(host.serialize().ceremonyAttempts).toBe(1);
+  });
+
+  it('a share that fails the host’s own check ends the ceremony without blaming any seat', () => {
+    const clock = { now: 1_000_000 };
+    const hub = new LoopbackHub();
+    const host = makeHost(hub, clock);
+    const h = host as unknown as { checkCeremony: () => void; phase: string; seats: Array<{ secret?: string }> };
+    const orig = h.checkCeremony.bind(host);
+    h.checkCeremony = () => {
+      // A host bug: a bot's stored share no longer matches its commitment.
+      if (h.phase === 'reveal' && h.seats.every((s) => s.secret)) h.seats[2].secret = makeSecret();
+      orig();
+    };
+    const p = manualPeer(hub, 'p0', 'P');
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    host.start();
+    errors.mockRestore();
+    expect(host.phase).toBe('lobby');
+    const failed = p.received.find((m) => m.t === 'error') as Extract<HostMessage, { t: 'error' }>;
+    expect(failed.code).toBe('ceremony_failed');
+    expect(p.received.filter((m) => m.t === 'commit_request')).toHaveLength(1);
+    expect(host.serialize().restarts).toEqual([]);
+  });
+
+  it(`gives up after ${MAX_CEREMONY_ATTEMPTS} attempts at one hand and returns to the lobby`, () => {
+    const clock = { now: 1_000_000 };
+    const hub = new LoopbackHub();
+    const host = makeHost(hub, clock);
+    const p = silentRevealer(hub, 'p0', 'Stuck');
+    host.start();
+    const restart = (host as unknown as { restartCeremony: (late: unknown[], cause: string) => void }).restartCeremony.bind(host);
+    for (let i = 1; i < MAX_CEREMONY_ATTEMPTS; i++) restart([], 'no_reveal');
+    expect(host.phase).toBe('reveal');
+    expect(host.serialize().ceremonyAttempts).toBe(MAX_CEREMONY_ATTEMPTS);
+    restart([], 'no_reveal');
+    expect(host.phase).toBe('lobby');
+    expect(p.received.filter((m) => m.t === 'commit_request')).toHaveLength(MAX_CEREMONY_ATTEMPTS);
+    expect(p.received.some((m) => m.t === 'error' && m.code === 'ceremony_failed')).toBe(true);
+  });
+
+  it('counts hands won per seat and reports the result on hand_over events', () => {
+    const clock = { now: 1_000_000 };
+    const hub = new LoopbackHub();
+    const host = new TableHost(hub.create('host'), { roomCode: 'HW', rules: withRules({ handsPerMatch: 2 }), now: () => clock.now, matchId: 'hw' });
+    const events: HostEvent[] = [];
+    host.onEvent((e) => events.push(e));
+    const c = new TableClient(transportLink(hub.create('p0'), 'host'), 'Watcher');
+    c.join();
+    host.start();
+    let wins = 0;
+    let guard = 0;
+    while (host.phase !== 'match_over' && guard++ < 20_000) {
+      const s = c.localState();
+      if (host.phase === 'hand_over') {
+        wins += c.state.lastResult!.wins.length;
+        c.ready();
+      } else if (s && host.phase === 'playing' && legalActions(s, 0).length > 0) c.act(chooseAction(s, 0)!);
+      else {
+        clock.now += 60_000;
+        host.tick();
+      }
+    }
+    expect(host.phase).toBe('match_over');
+    const handOvers = events.filter((e) => e.type === 'hand_over');
+    expect(handOvers.length).toBeGreaterThan(1);
+    for (const e of handOvers) expect(e.result).toBeDefined();
+    const last = events[events.length - 1];
+    expect(last.handsWon.reduce((x, y) => x + y, 0)).toBe(wins);
+    expect(host.handsWon()).toEqual(last.handsWon);
+    expect(handOvers.reduce((n, e) => n + e.result!.wins.length, 0)).toBe(wins);
+  });
+
+  it('refuses to restore a snapshot of an unknown version', () => {
+    const hub = new LoopbackHub();
+    const host = new TableHost(hub.create('host'), { roomCode: 'V', rules: withRules({ handsPerMatch: 1 }) });
+    const snap = { ...host.serialize(), version: 2 } as unknown as SerializedHost;
+    expect(() => new TableHost(new LoopbackHub().create('host'), { roomCode: 'V', restore: snap })).toThrow(/version/);
+  });
+});
+
 describe('seat ownership', () => {
   it('a vacated lobby seat gets a fresh token; the previous occupant cannot reclaim it', () => {
     const hub = new LoopbackHub();
@@ -154,6 +275,10 @@ describe('seat ownership', () => {
     owner.join();
     expect(owner.state.seat).toBe(0);
     expect(restored.phase).toBe('playing');
+    // The interrupted ceremony stays on the record for this hand.
+    const after = restored.serialize();
+    expect(after.ceremonyAttempts).toBe(2);
+    expect(after.restarts).toEqual([{ attempt: 1, seats: [], cause: 'host_restarted' }]);
   });
 
   it('rejoining after the match ended shows the final scores', () => {
