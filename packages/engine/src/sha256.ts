@@ -84,12 +84,15 @@ function rotr(x: number, n: number): number {
   return ((x >>> n) | (x << (32 - n))) >>> 0;
 }
 
-/** Random hex string using the best entropy source available. */
+/**
+ * Random hex string from the platform's secure generator. Fails closed: ceremony secrets and
+ * rejoin tokens must never come from a predictable source, so there is no fallback.
+ */
 export function randomHex(bytes = 32): string {
   const g = globalThis as unknown as { crypto?: { getRandomValues?: (a: Uint8Array) => Uint8Array } };
+  if (typeof g.crypto?.getRandomValues !== 'function') throw new Error('No secure random source');
   const buf = new Uint8Array(bytes);
-  if (g.crypto?.getRandomValues) g.crypto.getRandomValues(buf);
-  else for (let i = 0; i < bytes; i++) buf[i] = Math.floor(Math.random() * 256);
+  g.crypto.getRandomValues(buf);
   let s = '';
   for (const b of buf) s += b.toString(16).padStart(2, '0');
   return s;

@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { createWallRng, fullSet, hashString, newGame, shuffle, sha256Hex, WALL_RNG_VERSION } from '../src/index';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createWallRng, fullSet, hashString, newGame, randomHex, shuffle, sha256Hex, WALL_RNG_VERSION } from '../src/index';
 
 describe('wall RNG', () => {
   it('is deterministic and uses more than 32 bits of the seed', () => {
@@ -27,5 +27,23 @@ describe('wall RNG', () => {
   it('stamps the construction version on every game', () => {
     expect(newGame('v').rngVersion).toBe(WALL_RNG_VERSION);
     expect(WALL_RNG_VERSION).toMatch(/^mjm-sha256ctr-v\d+$/);
+  });
+});
+
+describe('randomHex', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('draws from the platform generator', () => {
+    expect(randomHex(4)).toMatch(/^[0-9a-f]{8}$/);
+    expect(randomHex()).not.toBe(randomHex());
+  });
+
+  it('fails closed when no secure random source exists', () => {
+    vi.stubGlobal('crypto', undefined);
+    expect(() => randomHex(16)).toThrow('No secure random source');
+    vi.stubGlobal('crypto', {});
+    expect(() => randomHex(16)).toThrow('No secure random source');
   });
 });
