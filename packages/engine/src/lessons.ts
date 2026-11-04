@@ -72,9 +72,9 @@ export const LESSONS: Lesson[] = [
     summary: 'Every hand pays 底 + 台 × points. Learn the common 台 and how dealer bonuses work.',
     steps: [
       { title: 'Base and 台', body: 'A hand is worth 底 (base) plus 台 × per-台 value. With 底100/台20, a 3-台 hand is 160 points per payer.' },
-      { title: 'Common 1 台', body: '自摸 self-draw, 門清 concealed, 獨聽 single wait, 正花 seat flower, 圈風/門風 wind pong, each dragon pong 中發白, 槓上開花, 海底撈月, 搶槓.' },
+      { title: 'Common 1 台', body: '自摸 self-draw, 門清 concealed, 獨聽 single wait (only one kind can still complete your hand), 正花 seat flower, 圈風/門風 wind pong, each dragon pong 中發白, 槓上開花, 海底撈月, 搶槓.' },
       { title: '2–4 台', body: '平胡 all chows (2), 三暗刻 (2), 花槓 four of a bonus set (2), 全求人 (2), 門清自摸 (3), 碰碰胡 all pongs (4), 混一色 half flush (4), 小三元 (4), 四暗刻 (5).' },
-      { title: 'Big hands', body: '清一色 full flush (8), 大三元 (8), 小四喜 (8), 五暗刻 (8), 八仙過海 all 8 bonus tiles (8), 字一色 all honors (16), 大四喜 (16), 天胡/地胡 (16).' },
+      { title: 'Big hands', body: '清一色 full flush (8), 大三元 (8), 小四喜 (8), 五暗刻 (8), 八仙過海 all 8 bonus tiles (8, instant win), 七搶一 take the eighth bonus tile from a player holding seven (8, instant win), 字一色 all honours (16), 大四喜 (16), 天胡 (24) / 地胡 (16) / 人胡 (16) by default; clubs can change the big three.' },
       { title: 'Dealer', body: 'The dealer (莊) adds 1 台 whenever they win or pay. Each consecutive dealer hand adds 連莊拉莊 (2 台 per streak).' },
     ],
   },

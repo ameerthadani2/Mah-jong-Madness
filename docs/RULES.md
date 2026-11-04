@@ -15,6 +15,7 @@
 * 自摸: each of the three others pays.
 * 放槍: only the discarder pays.
 * Dealer 台 (1) and streak 台 (2 per 連莊) apply to any payment the dealer is part of.
+* `maxTai` (封頂) caps the hand's own 台; dealer and streak 台 are added after the cap, so a capped hand still pays the dealer bonus.
 
 ## 台 table
 
@@ -23,9 +24,9 @@
 | 1 | `self_draw` | 自摸 | Win on own draw |
 | 1 | `concealed` | 門清 | No exposed sets (concealed kongs allowed), won by discard |
 | 3 | `concealed_self_draw` | 門清自摸 | Concealed and self-drawn (replaces the two above) |
-| 1 | `single_wait` | 獨聽 | Only one kind completes the hand and the shape is 單騎/邊張/嵌張 |
-| 2 | `all_chows` | 平胡 | 5 chows, non-honor pair, no flowers, not self-drawn, not a single wait |
-| 4 | `all_pongs` | 碰碰胡 | 5 pongs/kongs |
+| 1 | `single_wait` | 獨聽 | Exactly one live kind completes the hand (a kind is dead when your own concealed tiles and melds hold all four copies); not with 全求人/半求人 or a limit deal |
+| 2 | `all_chows` | 平胡 | 5 chows, non-honour pair, no flowers, not self-drawn, and the winning tile completes a two-sided (兩面) chow: no 單騎/嵌張/邊張 |
+| 4 | `all_pongs` | 碰碰胡 | 5 pongs/kongs; absorbed by 字一色 |
 | 4 | `half_flush` | 混一色 | One suit + honors |
 | 8 | `full_flush` | 清一色 | One suit only |
 | 16 | `all_honors` | 字一色 | Honors only |
@@ -39,14 +40,15 @@
 | 1 | `round_wind` | 圈風 | Pong of the prevailing wind |
 | 1 | `seat_flower` / `seat_season` | 正花 | Bonus tile matching your seat (東1 南2 西3 北4) |
 | 2 | `four_flowers` / `four_seasons` | 花槓 | All four of a bonus set |
-| 8 | `eight_flowers` | 八仙過海 | All eight bonus tiles |
-| 2 | `full_begging` | 全求人 | Five exposed sets, won on a discard for the pair |
-| 1 | `half_begging` | 半求人 | Five exposed sets, self-drawn pair |
-| 1 | `after_kong` | 槓上開花 | Win on a kong replacement tile |
+| 8 | `eight_flowers` | 八仙過海 | Instant win the moment you bank all eight bonus tiles (at the deal or mid-hand); paid as 自摸 |
+| 8 | `seven_rob` | 七搶一 | Holding seven bonus tiles, you take the eighth when another seat banks it; only that seat pays |
+| 2 | `full_begging` | 全求人 | Five exposed sets (a concealed kong does not count), won on a discard for the pair; absorbs 獨聽 |
+| 1 | `half_begging` | 半求人 | Five exposed sets, self-drawn pair; absorbs 獨聽, stacks with 自摸 |
+| 1 | `after_kong` | 槓上開花 | Win on a kong replacement tile (a flower drawn as the replacement still counts as 槓上開花) |
 | 1 | `after_flower` | 花上自摸 | Win on a flower replacement tile |
 | 1 | `rob_kong` | 搶槓 | Win on a tile added to a pong |
-| 1 | `last_tile_draw` / `last_tile_discard` | 海底撈月 / 河底撈魚 | Last drawable tile / its discard |
-| 16 | `tianhu` / `dihu` / `renhu` | 天胡 / 地胡 / 人胡 | Dealer wins on the deal / non-dealer on first draw / on dealer's first discard with no calls |
+| 1 | `last_tile_draw` / `last_tile_discard` | 海底撈月 / 河底撈魚 | Last drawable tile / its discard (the 河底 discard can only be won on, not called) |
+| 24 / 16 / 16 | `tianhu` / `dihu` / `renhu` | 天胡 / 地胡 / 人胡 | Dealer wins on the deal / non-dealer on first draw / on dealer's first discard with no calls. Values come from `heavenlyTai` / `earthlyTai` / `humanlyTai` (0 turns one off). A limit deal absorbs 門清/自摸/門清自摸, 獨聽, 平胡, 槓上開花/花上自摸 and 海底/河底; pattern hands, value pongs, flowers and dealer 台 still add |
 | 1 | `dealer` | 莊家 | Dealer involved in the payment |
 | 2×n | `dealer_streak` | 連n拉n | Dealer streak |
 | 1 | `no_flowers` | 無花 | Optional, off by default |

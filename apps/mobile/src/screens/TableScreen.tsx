@@ -633,13 +633,16 @@ function CoachPanel({ hint, waitKinds, compact }: { hint: Hint; waitKinds: Set<n
 function WinCard({ w, state }: { w: WinRecord; state: ClientState }) {
   const seatOf = (seat: number) => state.seats.find((s) => s.seat === seat);
   const name = (seat: number) => seatOf(seat)?.name ?? `Seat ${seat + 1}`;
+  // Flower wins (八仙過海 / 七搶一) end the hand on a bonus tile: the winning tile sits in the flowers row.
+  const flowerWin = w.score.flowerWin;
+  const how = flowerWin === 'eight' ? '八仙過海' : flowerWin === 'sevenRob' ? `七搶一 · ${name(w.fromSeat!)}` : w.selfDrawn ? '自摸' : `${name(w.fromSeat!)} 放槍`;
   return (
     <View style={styles.winCard}>
       <Row gap={10}>
         <AvatarPlate id={seatAvatarId(seatOf(w.seat), w.seat)} size={40} />
         <View style={{ flex: 1 }}>
           <Text style={[styles.winTitle, nameFont(name(w.seat))]}>{name(w.seat)} 胡牌</Text>
-          <Text style={styles.winSub}>{w.selfDrawn ? '自摸' : `${name(w.fromSeat!)} 放槍`}</Text>
+          <Text style={styles.winSub}>{how}</Text>
         </View>
         <View style={styles.taiBadge}>
           <StrokeText style={{ fontSize: 24 }} strokeWidth={2} drop={1.5}>
@@ -656,7 +659,7 @@ function WinCard({ w, state }: { w: WinRecord; state: ClientState }) {
           <Tile key={t} tile={t} size="sm" highlight={t === w.winningTile ? 'wait' : undefined} />
         ))}
         {w.flowers.map((f) => (
-          <Tile key={f} tile={f} size="sm" />
+          <Tile key={f} tile={f} size="sm" highlight={flowerWin && f === w.winningTile ? 'wait' : undefined} />
         ))}
       </Row>
       <View style={styles.items}>
@@ -730,14 +733,26 @@ function ResultOverlay({ result, view, state, mySeat, onNext, onLeave, onReview,
       })}
     </View>
   );
+  // 'partial': the shuffle log and result replayed correctly, but this seat's own share did not protect the seed
+  // (it was stood in, or it joined mid-hand). Amber, never green: a host can always claim a seat was late.
+  const auditText =
+    audit === 'ok' ? (twoCol ? 'Verified · details' : 'Shuffle & log verified · details')
+    : audit === 'partial' ? (twoCol ? 'Verified (log only)' : 'Verified (log only) · details')
+    : audit === 'failed' ? 'Audit failed · details'
+    : 'Audit pending';
   const auditRow = (
     <Row style={{ flexWrap: 'wrap', rowGap: 8 }}>
-      <Pressable onPress={onFairness}>
-        <Pill size={twoCol ? 'sm' : 'md'} text={audit === 'ok' ? (twoCol ? 'Verified · details' : 'Shuffle & log verified · details') : audit === 'failed' ? 'Audit failed · details' : 'Audit pending'} icon={audit === 'ok' ? 'shield' : audit === 'failed' ? 'warning' : 'hourglass'} tone={audit === 'ok' ? 'ok' : audit === 'failed' ? 'danger' : 'neutral'} />
+      <Pressable onPress={onFairness} testID="audit-status">
+        <Pill size={twoCol ? 'sm' : 'md'} text={auditText} icon={audit === 'ok' || audit === 'partial' ? 'shield' : audit === 'failed' ? 'warning' : 'hourglass'} tone={audit === 'ok' ? 'ok' : audit === 'partial' ? 'gold' : audit === 'failed' ? 'danger' : 'neutral'} />
       </Pressable>
       {state.auditFailures.map((f, i) => (
-        <Text key={i} style={{ color: colors.dangerText, fontSize: 12 }}>
+        <Text key={`f${i}`} style={{ color: colors.dangerText, fontSize: 12 }}>
           {f}
+        </Text>
+      ))}
+      {state.auditCaveats.map((c, i) => (
+        <Text key={`c${i}`} style={{ color: colors.goldDim, fontSize: 12 }}>
+          {c}
         </Text>
       ))}
     </Row>

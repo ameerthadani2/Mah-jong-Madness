@@ -49,7 +49,7 @@ rooms.onRoomEvent(({ room, event }) => {
   if (!club) return;
   const players = event.seats.map((s) => ({ seat: s.seat, name: s.name, userId: s.userId, isBot: s.isBot, connected: s.connected }));
   if (event.type === 'match_over' && event.handNumber >= 0) {
-    clubs.recordMatch(club.code, event.seats.map((s) => ({ userId: s.userId, points: event.scores[s.seat] ?? 0, handsWon: 0 })));
+    clubs.recordMatch(club.code, event.seats.map((s) => ({ userId: s.userId, points: event.scores[s.seat] ?? 0, handsWon: event.handsWon[s.seat] ?? 0 })));
     clubs.updateTable(club.code, room, { status: 'finished', players, scores: event.scores });
   } else if (event.type === 'match_over') {
     // Room closed (expired or everyone left for good).

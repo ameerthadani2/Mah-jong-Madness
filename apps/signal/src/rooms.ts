@@ -222,7 +222,7 @@ export class RoomRegistry {
   private closeRoom(room: Room): void {
     room.table?.host.close();
     this.rooms.delete(room.code);
-    for (const h of this.eventHandlers) h({ room: room.code, event: { type: 'match_over', roomCode: room.code, matchId: room.table?.host.matchId ?? '', seats: room.table?.host.seatInfo() ?? [], scores: room.table?.host.match().scores ?? [], handNumber: -1 } });
+    for (const h of this.eventHandlers) h({ room: room.code, event: { type: 'match_over', roomCode: room.code, matchId: room.table?.host.matchId ?? '', seats: room.table?.host.seatInfo() ?? [], scores: room.table?.host.match().scores ?? [], handNumber: -1, handsWon: room.table?.host.handsWon() ?? [0, 0, 0, 0] } });
   }
 
   /** Drive hosted tables' timers and expire abandoned API-created rooms. */
