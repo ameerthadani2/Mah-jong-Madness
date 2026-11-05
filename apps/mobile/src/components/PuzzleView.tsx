@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { checkDiscardAnswer, checkWaitsAnswer, kindInfo, kindsToString, type DiscardPuzzle, type Kind, type Puzzle, type WaitsPuzzle } from '@mjm/engine';
+import { puzzleStatus } from '../logic/puzzle';
 import { colors, fonts } from '../theme';
 import { Tile } from './Tile';
 import { Button, H2, P, Pill, Row } from './Ui';
@@ -36,7 +37,7 @@ function DiscardPuzzleView({ puzzle, onResult, onNext, nextLabel, autoAdvance }:
   const good = picked !== null && checkDiscardAnswer(puzzle, puzzle.hand[picked]);
   return (
     <View style={{ gap: 8 }}>
-      <P dim>You just drew. {puzzle.currentShanten <= 0 ? 'The hand is ready.' : `${puzzle.currentShanten} from ready.`} Which tile do you discard?</P>
+      <P dim>You just drew. {puzzleStatus(puzzle.currentShanten)} Which tile do you discard?</P>
       <View style={styles.hand}>
         {puzzle.hand.map((k, i) => (
           <Tile key={i} kind={k} size="md" onPress={() => pick(i)} selected={picked === i} highlight={picked !== null ? (puzzle.answers.includes(k) ? 'good' : picked === i ? 'bad' : undefined) : undefined} />

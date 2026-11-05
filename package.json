@@ -8,7 +8,7 @@
     "apps/*"
   ],
   "scripts": {
-    "test": "npm run test -w @mjm/engine -w @mjm/net -w @mjm/signal",
+    "test": "npm run test -w @mjm/engine -w @mjm/net -w @mjm/signal -w @mjm/mobile",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "lint": "eslint .",
     "mobile": "npm run start -w @mjm/mobile",
