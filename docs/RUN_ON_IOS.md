@@ -31,7 +31,7 @@ Everything offline works in Expo Go: play vs bots, coach, daily puzzle, Puzzle R
 ```bash
 npm run signal            # on your laptop, port 8787
 ```
-Find the laptop's LAN address (macOS: System Settings → Wi-Fi → Details; or `ipconfig getifaddr en0`) and in the app go to **Settings → Network** and set the URL to `ws://<laptop-ip>:8787`. Create a table on one phone, join by code on another. For friends outside your Wi-Fi, deploy `apps/signal` to any Node host (Fly.io, Render, a small VPS) with TLS and use `wss://…`.
+Find the laptop's LAN address (macOS: System Settings → Wi-Fi → Details; or `ipconfig getifaddr en0`) and in the app go to **Settings → Network** and set the URL to `ws://<laptop-ip>:8787`. Create a table on one phone, join by code on another. For friends outside your Wi-Fi, deploy `apps/signal` as described in `docs/DEPLOY.md` (Fly.io + Neon) and use its `wss://…` address.
 
 Limitation in Expo Go: haptics work only on a physical device. (The Settings → Network card only exists in development builds; release builds read the server address from the `SIGNAL_URL` repository variable.)
 

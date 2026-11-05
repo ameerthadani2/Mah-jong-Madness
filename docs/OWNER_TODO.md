@@ -32,6 +32,7 @@ Step-by-step setup (Fly app, Neon project, `fly secrets set`) is in [`DEPLOY.md`
 | `GOOGLE_CLIENT_IDS` | server secret | Google sign-in is hidden | The iOS, Android and web OAuth client ids from Google Cloud Console, comma-separated. |
 | `CORS_ORIGINS` | server secret | browsers on other origins cannot call the API (native apps are unaffected) | The web preview's origin(s), comma-separated. |
 | `TRUST_PROXY` | server variable | `1`, already set in `fly.toml` | The number of proxies in front of the server, so per-IP limits see the real client address. Change it only if you add or remove a proxy. |
+| `EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID`, `EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID`, `EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID` | repo variables | the Google button is hidden | The same OAuth client ids, for the app's sign-in flow; the iOS/Android ids also register `<bundle id>:/oauthredirect` as the redirect in `app.config.js`. |
 | `SIGNAL_URL` | repo variable | `ws://localhost:8787`; the deploy health check is skipped | The server address (`wss://<app>.fly.dev`); builds use it, and the deploy workflow checks `/health` there after each deploy. |
 
 ## Phase 4 — store and legal

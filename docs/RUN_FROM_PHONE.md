@@ -12,9 +12,8 @@ Every push to the branch republishes it. Offline play, the coach, puzzles, lesso
 
 ## Step 1 — host the club server (5 minutes, free)
 
-1. Open **https://render.com/deploy?repo=https://github.com/ameerthadani2/Mah-jong-Madness** and sign in with GitHub.
-2. Render reads `render.yaml` and proposes one free web service, `mahjong-signal`. Tap **Apply**. The first build takes a few minutes.
-3. Copy the service address, e.g. `https://mahjong-signal.onrender.com`.
+1. Follow `docs/DEPLOY.md` from a laptop once (Fly.io app + Neon database; about 20 minutes). The deploy workflow then redeploys on every push.
+2. The server address is `https://<your-fly-app>.fly.dev`.
 4. GitHub → **Settings → Secrets and variables → Actions → Variables → New repository variable**: name `SIGNAL_URL`, value the same address with `wss://` instead of `https://`.
 5. Re-run **Web preview (GitHub Pages)**. The website now creates and joins clubs on your server; send friends the Safari link and a club code.
 

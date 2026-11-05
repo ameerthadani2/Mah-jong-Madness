@@ -68,6 +68,17 @@ Merge rules: (1) identity unlinked → linked to the current user, who becomes `
 
 All `/api/clubs*` routes take the bearer session instead of the trust-on-first-use `user` field; member lists and standings are members-only; non-members get the public view `{ code, name, description, memberCount, joinRequiresApproval }`.
 
+## Implementation notes (where the server differs from the text above)
+
+- `createSignalServer` is async (it loads clubs, restores tables, then listens).
+- The hello reply is `{ "t": "hello", "id", "userId", "peerId" }`; `peerId` duplicates `id` for older clients.
+- `GET /api/clubs/:code/standings` answers `403 forbidden` ("Join the club first") to non-members rather than the public view; `GET /api/clubs/:code` gives the public view.
+- `/api/me.identities` lists provider identities only (never `guest`); `User.avatar` and `User.locale` are `null` when unset.
+- The `email` field in `POST /api/auth/link` is ignored; only a provider-verified email is stored.
+- Auth `429` responses carry `retry-after: 12`.
+- `/health` also reports `storage` (`memory` | `pg`) and, on Postgres, `db: ok | down`.
+- `GET /api/users/:userId/clubs` only serves the caller's own id (or `me`); others get `403`.
+
 ## Environment (server)
 
 `DATABASE_URL` (absent → in-memory repos, guest-only), `DATABASE_URL_DIRECT`, `MIGRATE_ON_BOOT`, `AUTH_PEPPER` (+ `AUTH_PEPPER_PREVIOUS`), `APPLE_CLIENT_ID`, `GOOGLE_CLIENT_IDS` (comma-separated), `FACEBOOK_APP_ID`, `CORS_ORIGINS`, `TRUST_PROXY`, `MAX_HOSTED_TABLES`, `PORT`. See `apps/signal/README.md` and `docs/DEPLOY.md`.

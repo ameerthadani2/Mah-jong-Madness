@@ -168,7 +168,7 @@ export function connectSignaling(url: string, auth: string | undefined, webSocke
     };
     return proxy;
   };
-  return { signaling: new SignalingClient(url, wrapped), closeCode: () => lastCode };
+  return { signaling: new SignalingClient(url, { auth, webSocket: wrapped }), closeCode: () => lastCode };
 }
 
 /**

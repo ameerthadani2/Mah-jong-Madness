@@ -22,7 +22,7 @@ empty seats so a table always runs; offline you play the same engine against bot
 ## Try it from a phone
 
 * **Play in Safari:** enable GitHub Pages (Settings → Pages → Source: GitHub Actions), then open https://ameerthadani2.github.io/Mah-jong-Madness/
-* **Host clubs for friends:** [Deploy the club server to Render](https://render.com/deploy?repo=https://github.com/ameerthadani2/Mah-jong-Madness) and set the `SIGNAL_URL` repo variable to its `wss://` address.
+* **Host clubs for friends:** deploy the game server to Fly.io with Neon Postgres (`docs/DEPLOY.md`) and set the `SIGNAL_URL` repo variable to its `wss://` address.
 * Step-by-step: `docs/RUN_FROM_PHONE.md`. Native builds: `docs/RUN_ON_IOS.md`.
 
 ## Quick start
