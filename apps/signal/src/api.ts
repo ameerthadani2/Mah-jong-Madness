@@ -8,10 +8,12 @@
  * a 500. Errors are `{ error: <code>, message }`: AuthError carries its own status, ClubError
  * maps through STATUS, and rate limits answer 429 `rate_limited`.
  *
- * Every route except `/health`, `/api/config` and the guest bootstrap routes takes
- * `Authorization: Bearer <session token>`. Club members are identified by the session's user id,
- * and their name and avatar come from the user record.
+ * Every route except `/health`, `/api/config`, the guest bootstrap routes and the store webhook
+ * takes `Authorization: Bearer <session token>` (the webhook takes the vendor's shared secret).
+ * Club members are identified by the session's user id, and their name and avatar come from the
+ * user record.
  */
+import { randomUUID } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { sanitizeRules } from '@mjm/engine';
 import {
@@ -32,8 +34,13 @@ import {
 import { ClubError, ClubRegistry, type Club, type Identity } from './clubs';
 import { LIMITS, type SignalConfig } from './config';
 import { BucketTable, clientIp } from './limits';
-import type { Repos, UserRecord } from './repos/types';
+import type { LatencyWindow } from './metrics';
+import { NO_ANALYTICS, reportError, type Analytics } from './observability';
+import { EXPO_PUSH_TOKEN, type PushService } from './push';
+import { REPORT_REASONS, type ReportReason, type Repos, type UserRecord } from './repos/types';
+import { parseRevenueCatWebhook, webhookAuthorised } from './revenuecat';
 import { isBotSkill, RoomLimitError, type RoomRegistry } from './rooms';
+import { WalletError, WalletService } from './wallet';
 
 export interface ApiDeps {
   clubs: ClubRegistry;
@@ -42,8 +49,16 @@ export interface ApiDeps {
   sessions: SessionService;
   /** Sign-in providers; absent or empty means guest accounts only. */
   providers?: ProviderConfig;
-  /** What `GET /api/config` reports beyond the providers. */
-  config?: Partial<Pick<SignalConfig, 'minBuild' | 'maintenance'>>;
+  /** What `GET /api/config` reports beyond the providers, and the store webhook secret (absent: store off). */
+  config?: Partial<Pick<SignalConfig, 'minBuild' | 'maintenance' | 'revenueCatWebhookSecret'>>;
+  /** Diamonds, purchases and entitlements (default: a WalletService over `repos`). */
+  wallet?: WalletService;
+  /** Push notifications (absent: push off). */
+  push?: PushService;
+  /** Server-side product events (absent: none). */
+  analytics?: Analytics;
+  /** Action-to-state latency of hosted tables, for `/health`. */
+  actionLatency?: LatencyWindow;
   /** `memory` or `pg`, shown on `/health`. */
   storage?: Repos['kind'];
   /** Database check for `/health` (absent: not reported). */
@@ -130,6 +145,10 @@ export function memberIdentity(u: UserRecord): Identity {
 
 const isObject = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
 
+const DAY_MS = 86_400_000;
+const ROOM_CODE = /^[A-Z0-9]{4,8}$/;
+const PUSH_PLATFORMS = ['ios', 'android'] as const;
+
 /** The `device` object of an auth body; anything that is not an object reads as no device. */
 function deviceOf(body: Record<string, unknown>): Record<string, unknown> {
   return isObject(body.device) ? body.device : {};
@@ -145,6 +164,10 @@ function optionalText(v: unknown, field: string, max: number): string | undefine
 export function buildRoutes(deps: ApiDeps): Route[] {
   const { clubs, rooms, repos, sessions } = deps;
   const now = deps.now ?? Date.now;
+  const analytics = deps.analytics ?? NO_ANALYTICS;
+  const wallet = deps.wallet ?? new WalletService(repos, { now, analytics });
+  const webhookSecret = deps.config?.revenueCatWebhookSecret ?? null;
+  const storeEnabled = webhookSecret !== null;
   const providers = deps.providers ?? {};
   const peppers: Peppers = { current: sessions.pepper, previous: sessions.previousPepper };
 
@@ -175,12 +198,22 @@ export function buildRoutes(deps: ApiDeps): Route[] {
   return [
     r('GET', '/health', async () => {
       const db = deps.healthy ? await deps.healthy().then((ok) => (ok ? 'ok' : 'down'), () => 'down') : undefined;
-      return { ok: true, ...rooms.stats(), storage: deps.storage ?? repos.kind, ...(db ? { db } : {}) };
+      const stats = rooms.stats();
+      return {
+        ok: true,
+        ...stats,
+        tables: stats.hostedTables,
+        actionLatency: deps.actionLatency?.summary() ?? null,
+        pushEnabled: deps.push?.enabled ?? false,
+        storeEnabled,
+        storage: deps.storage ?? repos.kind,
+        ...(db ? { db } : {}),
+      };
     }),
     r('GET', '/api/config', () => ({
       authProviders: enabledProviders(providers),
-      storeEnabled: false,
-      pushEnabled: false,
+      storeEnabled,
+      pushEnabled: deps.push?.enabled ?? false,
       minBuild: deps.config?.minBuild ?? 0,
       maintenance: deps.config?.maintenance ?? null,
       serverNow: iso(now()),
@@ -284,11 +317,14 @@ export function buildRoutes(deps: ApiDeps): Route[] {
     ),
     r('GET', '/api/me', async (ctx) => {
       const me = await ctx.caller();
-      const [wallet, entitlements, identities] = await Promise.all([repos.wallet.get(me.userId), repos.wallet.getEntitlements(me.userId), repos.identities.listForUser(me.userId)]);
+      const [summary, identities] = await Promise.all([wallet.summary(me.userId), repos.identities.listForUser(me.userId)]);
       return {
         user: userJson(me.user),
-        wallet: { diamonds: wallet.diamonds, bonusDiamonds: wallet.bonusDiamonds },
-        entitlements: entitlements.map((e) => ({ entitlement: e.entitlement, expiresAt: e.expiresAt === null ? null : iso(e.expiresAt) })),
+        wallet: summary.wallet,
+        entitlements: summary.entitlements.map((e) => ({ entitlement: e.entitlement, expiresAt: e.expiresAt === null ? null : iso(e.expiresAt), active: e.active })),
+        cosmetics: summary.cosmetics,
+        coachTier: summary.coachTier,
+        storeEnabled,
         identities: identities.filter((i) => i.provider !== 'guest').map((i) => (i.email ? { provider: i.provider, email: i.email } : { provider: i.provider })),
         serverNow: iso(now()),
       };
@@ -322,6 +358,68 @@ export function buildRoutes(deps: ApiDeps): Route[] {
       return new Reply(204);
     }),
 
+    // ------------------------------------------------------------------ store and wallet
+    r('POST', '/api/webhooks/revenuecat', async (ctx) => {
+      if (!webhookSecret) throw new HttpError(503, 'unavailable', 'The store is not configured on this server');
+      if (!webhookAuthorised(ctx.req.headers.authorization, webhookSecret)) throw new HttpError(401, 'unauthorised', 'Bad webhook secret');
+      const event = parseRevenueCatWebhook(ctx.body);
+      if (!event) throw new HttpError(400, 'invalid', 'Not a RevenueCat webhook event');
+      const result = await wallet.applyStoreEvent(event);
+      return { ok: true, outcome: result.outcome, duplicate: result.duplicate };
+    }),
+    r('POST', '/api/wallet/spend', async (ctx) => {
+      const me = await ctx.caller();
+      const res = await wallet.spend(me.userId, ctx.body.productId);
+      const summary = await wallet.summary(me.userId);
+      return { spent: res.spent, entitlement: res.entitlement, wallet: summary.wallet, cosmetics: summary.cosmetics };
+    }),
+
+    // ------------------------------------------------------------------ reports and push
+    r('POST', '/api/reports', async (ctx) => {
+      const me = await ctx.caller();
+      const { reportedUserId, roomCode, reason, details } = ctx.body;
+      if (typeof reportedUserId !== 'string' || !reportedUserId) throw new HttpError(400, 'invalid', 'reportedUserId is required');
+      if (reportedUserId === me.userId) throw new HttpError(400, 'invalid', 'You cannot report yourself');
+      if (typeof reason !== 'string' || !(REPORT_REASONS as readonly string[]).includes(reason)) throw new HttpError(400, 'invalid', `reason must be one of ${REPORT_REASONS.join(', ')}`);
+      let room: string | null = null;
+      if (roomCode !== undefined && roomCode !== null) {
+        if (typeof roomCode !== 'string' || !ROOM_CODE.test(roomCode.trim().toUpperCase())) throw new HttpError(400, 'invalid', 'roomCode must be a table code');
+        room = roomCode.trim().toUpperCase();
+      }
+      const text = details === undefined || details === null ? null : optionalText(details, 'details', 1000) || null;
+      const target = await repos.users.get(reportedUserId);
+      if (!target) throw new HttpError(404, 'not_found', 'No such player');
+      const at = now();
+      if ((await repos.reports.countByReporterSince(me.userId, at - DAY_MS)) >= LIMITS.reportsPerDay) {
+        throw new HttpError(429, 'rate_limited', `You can file at most ${LIMITS.reportsPerDay} reports a day`);
+      }
+      const report = await repos.reports.create({ reporterId: me.userId, reportedUserId: target.id, roomCode: room, reason: reason as ReportReason, details: text, createdAt: at });
+      analytics.capture(me.userId, 'report_filed', { reason, hasRoom: room !== null, hasDetails: text !== null });
+      return new Reply(201, { id: report.id, status: report.status, createdAt: iso(report.createdAt) });
+    }),
+    r('POST', '/api/push/token', async (ctx) => {
+      const me = await ctx.caller();
+      const { token, platform } = ctx.body;
+      if (token !== null && (typeof token !== 'string' || !EXPO_PUSH_TOKEN.test(token))) throw new HttpError(400, 'invalid', 'token must be an Expo push token, or null to stop notifications');
+      if (token !== null && !(PUSH_PLATFORMS as readonly string[]).includes(platform as string)) throw new HttpError(400, 'invalid', `platform must be one of ${PUSH_PLATFORMS.join(', ')}`);
+      const at = now();
+      const devices = await repos.devices.listForUser(me.userId);
+      // This session's device, or (for a session without one) the device that already holds the token.
+      let device = (me.deviceId ? devices.find((d) => d.id === me.deviceId) : undefined) ?? (token ? devices.find((d) => d.pushToken === token) : undefined);
+      if (token === null) {
+        if (device) await repos.devices.update(device.id, { pushToken: null, lastSeenAt: at });
+        return new Reply(204);
+      }
+      if (!device) {
+        device = { id: randomUUID(), userId: me.userId, platform: platform as string, appBuild: null, pushToken: null, locale: me.user.locale, createdAt: at, lastSeenAt: at };
+        await repos.devices.create(device);
+      }
+      // A token belongs to one installation: drop it from any other device (an account switch on the same phone).
+      await repos.devices.clearPushToken(token, device.id);
+      await repos.devices.update(device.id, { pushToken: token, platform: platform as string, lastSeenAt: at });
+      return new Reply(204);
+    }),
+
     // ------------------------------------------------------------------ clubs
     r('POST', '/api/clubs', async (ctx) => clubs.createClub(await member(ctx), ctx.body.name ?? '', ctx.body.rules ?? {}, ctx.body.settings ?? {})),
     r('GET', '/api/clubs/:code', async (ctx) => view(clubs.club(ctx.params.code), (await ctx.caller()).userId)),
@@ -352,6 +450,10 @@ export function buildRoutes(deps: ApiDeps): Route[] {
       const club = clubs.club(ctx.params.code);
       if (!clubs.isMember(club.code, me.userId)) throw new ClubError('forbidden', 'Join the club first');
       return clubs.standings(club.code);
+    }),
+    r('POST', '/api/clubs/:code/season', async (ctx) => {
+      const me = await member(ctx);
+      return clubs.startSeason(ctx.params.code, me.userId);
     }),
     r('GET', '/api/users/:userId/clubs', async (ctx) => {
       const me = await ctx.caller();
@@ -478,6 +580,7 @@ export function createApiHandler(deps: ApiDeps, opts: ApiOptions = {}): (req: In
       } catch (e) {
         if (e instanceof AuthError) return send(res, e.status, { error: e.code, message: e.message });
         if (e instanceof ClubError) return send(res, STATUS[e.code] ?? 400, { error: e.code, message: e.message });
+        if (e instanceof WalletError) return send(res, e.status, { error: e.code, message: e.message });
         if (e instanceof HttpError) {
           if (e.status === 429) res.setHeader('retry-after', '12');
           return send(res, e.status, { error: e.code, message: e.message });
@@ -486,6 +589,7 @@ export function createApiHandler(deps: ApiDeps, opts: ApiOptions = {}): (req: In
           return send(res, 400, { error: 'invalid', message: 'Malformed request' });
         }
         console.error('[signal] api error', (e as Error).message);
+        reportError(e, { route: `${route.method} ${route.pattern.source}` });
         return send(res, 500, { error: 'internal', message: 'Internal error' });
       }
     }

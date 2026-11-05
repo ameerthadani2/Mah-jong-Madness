@@ -82,3 +82,100 @@ All `/api/clubs*` routes take the bearer session instead of the trust-on-first-u
 ## Environment (server)
 
 `DATABASE_URL` (absent → in-memory repos, guest-only), `DATABASE_URL_DIRECT`, `MIGRATE_ON_BOOT`, `AUTH_PEPPER` (+ `AUTH_PEPPER_PREVIOUS`), `APPLE_CLIENT_ID`, `GOOGLE_CLIENT_IDS` (comma-separated), `FACEBOOK_APP_ID`, `CORS_ORIGINS`, `TRUST_PROXY`, `MAX_HOSTED_TABLES`, `PORT`. See `apps/signal/README.md` and `docs/DEPLOY.md`.
+
+## Store, wallet and entitlements (Phase 4)
+
+Entitlements are decided by the server from store notifications; the app never grants anything itself and only reads `GET /api/me`. The app configures RevenueCat with the server user id as the RevenueCat **app user id** (call `Purchases.logIn(userId)` after the guest bootstrap or a sign-in), and must re-read `/api/me` after a purchase or a Restore (the webhook usually lands within a few seconds; poll `/api/me` for up to ~10 s).
+
+`GET /api/config.storeEnabled` is `true` only when the server has `REVENUECAT_WEBHOOK_SECRET`. When it is `false` the app shows "Store unavailable" and offers no purchase.
+
+`GET /api/me` also returns:
+
+```json
+{
+  "entitlements": [{ "entitlement": "coach.gold", "expiresAt": "<ISO>" | null, "active": true }],
+  "cosmetics": ["theme.jade"],
+  "coachTier": "free" | "gold" | "platinum",
+  "storeEnabled": true
+}
+```
+
+`active` is computed on the server clock (`serverNow`), so a device clock rolled back changes nothing. `cosmetics` lists the table looks the user owns (product ids; the app maps them to `unlocks` through its catalogue).
+
+### Catalogue (server side: `apps/signal/src/catalog.ts`)
+
+| Product id | Kind | Grants |
+| --- | --- | --- |
+| `diamonds.60`, `diamonds.300`, `diamonds.600` | consumable | 60 / 300 / 600 diamonds |
+| `diamonds.1300`, `diamonds.3450`, `diamonds.7500` | consumable | 1,200 + 100 bonus / 3,000 + 450 bonus (15 %) / 6,000 + 1,500 bonus (25 %) |
+| `coach.gold.month`, `coach.gold.year` | auto-renewing | entitlement `coach.gold` until the store's expiry |
+| `coach.platinum.month`, `coach.platinum.year` | auto-renewing | entitlement `coach.platinum` until the store's expiry |
+| `theme.nightmarket`, `theme.bamboo`, `theme.imperial` (300 💎), `theme.jade` (400 💎) | diamonds only | permanent entitlement with the product id |
+
+App Store product ids are these ids. A Google Play subscription arrives as `<subscription>:<base plan>`, so create the Play subscriptions `coach.gold` and `coach.platinum` with base plans `month` and `year`. Anything else (avatar and emote packs, VIP cards, club tiers, Coach Diamond, Table Pass) is not sold: events and spends for it grant nothing.
+
+### `POST /api/wallet/spend` (bearer)
+
+Body `{ "productId": "theme.jade" }` → `200 { "spent": 400, "entitlement": "theme.jade", "wallet": { "diamonds", "bonusDiamonds" }, "cosmetics": [...] }`. The debit and the grant are one transaction; bonus diamonds are spent first.
+
+| `error` | Status | Meaning |
+| --- | --- | --- |
+| `insufficient` | 409 | Not enough diamonds; nothing changed |
+| `owned` | 409 | The user already owns it; nothing charged |
+| `not_for_sale` | 404 | Not a product sold for diamonds |
+
+### `POST /api/webhooks/revenuecat` (RevenueCat only)
+
+Header `Authorization: Bearer <REVENUECAT_WEBHOOK_SECRET>` (set exactly that as the Authorization value in the RevenueCat dashboard). Body: a RevenueCat v1 webhook (`{ "api_version": "1.0", "event": { "id", "type", "app_user_id", "product_id", "transaction_id", "expiration_at_ms", "store", "environment", … } }`).
+
+- `503 unavailable` when the secret is unset; `401 unauthorised` for a missing or wrong secret; `400 invalid` for a body without `event.id` and `event.type`.
+- Otherwise `200 { "ok": true, "outcome": "<what happened>", "duplicate": boolean }`. The raw body is stored in `store_events`; a redelivered event id answers `duplicate: true` and changes nothing. Unknown users (for example RevenueCat anonymous ids) and unknown products are stored and acknowledged with 200 so RevenueCat stops retrying. A 500 means nothing was applied and RevenueCat will retry.
+- `app_user_id` (then `original_app_user_id`, then `aliases`) names the account; a merged guest's events go to the account it was merged into.
+
+| Event type | Effect |
+| --- | --- |
+| `INITIAL_PURCHASE`, `RENEWAL` | Subscription: entitlement until `expiration_at_ms` (never shortened by a late, older event); purchase row recorded. A consumable sent as `INITIAL_PURCHASE` is credited like `NON_RENEWING_PURCHASE` |
+| `NON_RENEWING_PURCHASE` | Diamond pack credited (diamonds + bonus), once per `transaction_id` |
+| `CANCELLATION` | Auto-renew off: nothing changes until expiry. `cancel_reason: CUSTOMER_SUPPORT` (a refund): subscription ends now; for a diamond pack what is left of it is taken back (never below zero) |
+| `UNCANCELLATION`, `SUBSCRIPTION_EXTENDED` | Entitlement carried to `expiration_at_ms` if that is later |
+| `EXPIRATION` | Entitlement ends (ignored when a later renewal already extended it) |
+| `BILLING_ISSUE`, `PRODUCT_CHANGE`, `SUBSCRIPTION_PAUSED` | Recorded only (the store retries billing; the new product arrives with its `RENEWAL`; a pause ends with an `EXPIRATION`) |
+| `TRANSFER` | Store-granted entitlements move from `transferred_from` to the first known `transferred_to` account (later expiry wins); diamonds stay |
+| `TEST` | Recorded only |
+
+`outcome` is one of `credited`, `entitled`, `extended`, `expired`, `refunded`, `transferred`, `recorded`, `test`, `duplicate`, `ignored_unknown_user`, `ignored_unknown_product`, `ignored_stale`, `ignored_type`.
+
+## Reports (Phase 4)
+
+`POST /api/reports` (bearer) body `{ "reportedUserId": "<uuid>", "roomCode"?: "AB12CD", "reason": "cheating" | "collusion" | "abusive_chat" | "offensive_name" | "stalling" | "other", "details"?: "<up to 1,000 characters>" }` → `201 { "id", "status": "open", "createdAt" }`.
+
+`400 invalid` (missing or unknown field values, reporting yourself), `404 not_found` (no such player), `429 rate_limited` after 10 reports by the same user in 24 hours. Reports are kept when either account is deleted. There is no moderation UI yet: reports are read from the `reports` table (`status` open / actioned / dismissed).
+
+## Club seasons (Phase 4)
+
+- `POST /api/clubs/:code/season` (bearer, owner only) → `200 { "club": Club, "archived": { "season", "startedAt", "endedAt", "standings": [{ "userId", "name", "points" }] } }`. Archives the season's standings in `club.seasons` (the latest 24 are kept), resets every member's season points to 0 and starts the next season. Lifetime points and match counts stay. `403 forbidden` for anyone but the owner.
+- `Club` (members' view) gains `season` (from 1), `seasonStartedAt` (ms) and `seasons` (finished seasons, oldest first); each member gains `seasonPoints`.
+- `GET /api/clubs/:code/standings` rows are members ranked by season points, each with `seasonPoints`, `lifetimePoints` (the same as `points`) and `season`.
+- Points have no monetary value; standings are points only.
+
+## Push notifications (Phase 6)
+
+`POST /api/push/token` (bearer) body `{ "token": "ExponentPushToken[…]", "platform": "ios" | "android" }` → `204`. The token is stored on this session's device (a device row is created for sessions without one) and removed from every other device that had it, so an account switch on one phone moves it. `{ "token": null }` stops notifications for this device. `400 invalid` for anything that is not an Expo push token or a known platform.
+
+`GET /api/config.pushEnabled` is `true` only when the server has `EXPO_ACCESS_TOKEN`; without it no push is sent. Notifications (each at most once a minute per user and kind; `data.kind` tells the app where to go):
+
+| `data.kind` | When | `data` |
+| --- | --- | --- |
+| `club_table_opened` | A member opens a club table (everyone else in the club with a token) | `{ club, room }` |
+| `join_approved` | An owner or admin approves your join request | `{ club }` |
+| `table_waiting` | You have been disconnected for 30 s while a hand is in play at a server table (a bot is playing your seat) | `{ room, club? }` |
+
+Copy is English, or Traditional Chinese when the device locale starts with `zh`. Tokens Expo reports as `DeviceNotRegistered` are cleared.
+
+## Health (Phase 6)
+
+`GET /health` → `{ "ok": true, "peers", "rooms", "hostedTables", "tables", "actionLatency": { "samples", "p50Ms", "p95Ms", "maxMs", "windowSeconds": 300 } | null, "pushEnabled", "storeEnabled", "storage": "memory" | "pg", "db"?: "ok" | "down" }`. `actionLatency` is the time from a player's action frame reaching a hosted table to the resulting state having been sent, over the last five minutes. See `docs/OBSERVABILITY.md`.
+
+## Environment (server, Phases 4 and 6)
+
+`REVENUECAT_WEBHOOK_SECRET` (absent → webhook 503, `storeEnabled: false`), `EXPO_ACCESS_TOKEN` (absent → no push, `pushEnabled: false`), `SENTRY_DSN` (+ optional `SENTRY_ENVIRONMENT`, `SENTRY_RELEASE`; absent → errors only logged), `POSTHOG_KEY` (+ optional `POSTHOG_HOST`; absent → no server events).

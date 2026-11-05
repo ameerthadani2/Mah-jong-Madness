@@ -17,7 +17,10 @@ import type { ProviderConfig, SessionService } from './auth';
 import { ClubRegistry, clubGate } from './clubs';
 import { LIMITS, type SignalConfig } from './config';
 import { BucketTable } from './limits';
+import { LatencyWindow } from './metrics';
+import { NO_ANALYTICS, reportError, type Analytics } from './observability';
 import { TablePersister } from './persist';
+import { PushService, SeatWatcher } from './push';
 import type { RepoHandle } from './repos';
 import { RoomRegistry, type RoomEvent } from './rooms';
 import { createSocketServer, type SocketLimits } from './sockets';
@@ -39,6 +42,12 @@ export interface SignalServerOptions {
   /** Socket limits (default `LIMITS`). */
   socketLimits?: SocketLimits;
   log?: (line: string) => void;
+  /** Push notifications (default: off). */
+  push?: PushService;
+  /** Server-side product analytics (default: none). */
+  analytics?: Analytics;
+  /** How long a seated human may be disconnected mid-hand before "your table is waiting" (default 30 s). */
+  tableWaitingMs?: number;
 }
 
 export interface SignalServer {
@@ -47,6 +56,9 @@ export interface SignalServer {
   rooms: RoomRegistry;
   clubs: ClubRegistry;
   persister: TablePersister;
+  push: PushService;
+  /** Action-to-state latency of hosted tables (on `/health`). */
+  actionLatency: LatencyWindow;
   api: ReturnType<typeof createApiHandler>;
   address(): { port: number };
   /** Write every table, stop accepting traffic and close every socket. Tables stay restorable. */
@@ -63,7 +75,11 @@ export async function createSignalServer(opts: SignalServerOptions): Promise<Sig
 
   const clubs = new ClubRegistry({ store: repos.repos.clubs, now });
   await clubs.load();
+  const actionLatency = new LatencyWindow({ now });
+  const push = opts.push ?? new PushService({ devices: repos.repos.devices, client: null, now, log });
+  const analytics = opts.analytics ?? NO_ANALYTICS;
   const rooms = new RoomRegistry({
+    actionLatency,
     allowHosted: config.hostTables,
     allowP2P: config.p2pRooms,
     maxHostedTables: config.maxHostedTables,
@@ -100,8 +116,25 @@ export async function createSignalServer(opts: SignalServerOptions): Promise<Sig
   };
   const offRoomEvents = rooms.onRoomEvent(onRoomEvent);
 
+  // Push: club tables opened and join requests approved; "your table is waiting" from the tick.
+  const offClubEvents = clubs.onEvent((ev) => void push.onClubEvent(ev));
+  const seats = new SeatWatcher(rooms, (userId, room, club) => void push.tableWaiting(userId, room, club), { now, thresholdMs: opts.tableWaitingMs });
+
   const api = createApiHandler(
-    { clubs, rooms, repos: repos.repos, sessions, providers: opts.providers, config, storage: repos.kind, healthy: repos.kind === 'pg' ? () => repos.healthy() : undefined, now },
+    {
+      clubs,
+      rooms,
+      repos: repos.repos,
+      sessions,
+      providers: opts.providers,
+      config,
+      storage: repos.kind,
+      healthy: repos.kind === 'pg' ? () => repos.healthy() : undefined,
+      now,
+      push,
+      analytics,
+      actionLatency,
+    },
     { corsOrigins: config.corsOrigins, limiter: new BucketTable<string>(LIMITS.httpBurst, LIMITS.httpPerSec, { now }), trustProxy: config.trustProxy },
   );
 
@@ -115,6 +148,7 @@ export async function createSignalServer(opts: SignalServerOptions): Promise<Sig
       })
       .catch((e: Error) => {
         console.error('[signal] api error', e.message);
+        reportError(e, { where: 'http' });
         if (!res.headersSent) res.writeHead(500, { 'content-type': 'application/json' });
         res.end(JSON.stringify({ error: 'internal', message: 'Internal error' }));
       });
@@ -125,10 +159,15 @@ export async function createSignalServer(opts: SignalServerOptions): Promise<Sig
   const ticker = setInterval(() => {
     try {
       rooms.tick();
+      seats.tick();
     } catch (e) {
       console.error('[signal] tick error', (e as Error).message);
+      reportError(e, { where: 'tick' });
     }
   }, 500);
+  // Expo keeps receipts for a day and suggests reading them about 15 minutes after sending.
+  const receipts = setInterval(() => void push.checkReceipts(), 15 * 60_000);
+  receipts.unref();
   const pruner = setInterval(() => {
     clubs.pruneFinishedTables(now() - DAY_MS);
     persister.prune().catch((e: Error) => console.error('[signal] snapshot prune failed', e.message));
@@ -152,6 +191,8 @@ export async function createSignalServer(opts: SignalServerOptions): Promise<Sig
     (closing ??= (async () => {
       clearInterval(ticker);
       clearInterval(pruner);
+      clearInterval(receipts);
+      offClubEvents();
       // Write the tables as they are, then stop every table without reporting it finished, so
       // club listings stay open and the next process restores them.
       await persister.flush();
@@ -171,6 +212,8 @@ export async function createSignalServer(opts: SignalServerOptions): Promise<Sig
     rooms,
     clubs,
     persister,
+    push,
+    actionLatency,
     api,
     address: () => ({ port: (http.address() as AddressInfo).port }),
     close,

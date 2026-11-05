@@ -4,7 +4,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { createApiHandler, type ApiDeps, type ApiOptions } from '../src/api';
 import { SessionService } from '../src/auth';
 import { ClubRegistry } from '../src/clubs';
-import { createMemoryRepos } from '../src/repos';
+import { createMemoryRepos, type Repos } from '../src/repos';
 import { RoomRegistry, type RoomRegistryOptions } from '../src/rooms';
 
 export const PEPPER = 'test-pepper-0123456789abcdef';
@@ -55,14 +55,15 @@ export interface Guest {
  * the auth rate limits stay out of the way; pass `ip` to `call` to test them.
  */
 export function apiFixture(
-  opts: { api?: ApiOptions; rooms?: RoomRegistryOptions; deps?: Partial<ApiDeps>; now?: () => number } = {},
+  opts: { api?: ApiOptions; rooms?: RoomRegistryOptions; deps?: Partial<ApiDeps> | ((repos: Repos, clubs: ClubRegistry) => Partial<ApiDeps>); now?: () => number } = {},
 ) {
   const now = opts.now ?? Date.now;
   const repos = createMemoryRepos();
   const sessions = new SessionService(repos, { pepper: PEPPER, now });
   const clubs = new ClubRegistry({ store: repos.clubs, now });
   const rooms = new RoomRegistry({ allowHosted: true, now, ...opts.rooms });
-  const handler = createApiHandler({ clubs, rooms, repos, sessions, now, ...opts.deps }, opts.api);
+  const deps = typeof opts.deps === 'function' ? opts.deps(repos, clubs) : opts.deps;
+  const handler = createApiHandler({ clubs, rooms, repos, sessions, now, ...deps }, opts.api);
   let n = 0;
   const call = (method: string, url: string, body?: unknown, headers: Record<string, string> = {}, ip?: string) =>
     request(handler, method, url, body, headers, ip ?? `10.1.${Math.floor(++n / 250)}.${n % 250}`);
@@ -72,5 +73,5 @@ export function apiFixture(
     const token = (res.json.session as { token: string }).token;
     return { userId: res.json.userId as string, guestSecret: res.json.guestSecret as string, token, auth: { authorization: `Bearer ${token}` } };
   };
-  return { repos, sessions, clubs, rooms, handler, call, guest };
+  return { repos, sessions, clubs, rooms, handler, call, guest, deps: deps ?? {} };
 }

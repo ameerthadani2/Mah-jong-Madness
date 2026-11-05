@@ -17,6 +17,7 @@ import type { Duplex } from 'node:stream';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { LIMITS, type SignalConfig } from './config';
 import { clientIp, TokenBucket } from './limits';
+import { reportError } from './observability';
 import type { Inbound, RoomRegistry } from './rooms';
 
 /** Largest frame accepted, far above any legitimate game message. `ws` closes the socket with 1009 when a frame is bigger. */
@@ -101,6 +102,7 @@ export function attachSocketHandlers(
       } catch (e) {
         // One peer's bad frame must never bring the server down.
         console.error('[signal] handle error', (e as Error).message);
+        reportError(e, { where: 'socket', frame: msg.t });
       }
     };
     const authenticate = (msg: Inbound) => {

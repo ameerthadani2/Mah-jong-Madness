@@ -22,7 +22,7 @@ const T0 = Date.UTC(2026, 0, 1, 8, 0, 0);
 const code = (prefix: string) => prefix + randomHex(4).toUpperCase();
 
 function member(u: UserRecord, role: ClubMember['role'], joinedAt: number, points = 0): ClubMember {
-  return { userId: u.id, name: u.displayName, role, joinedAt, points, matchesPlayed: points ? 1 : 0, matchesWon: points > 0 ? 1 : 0, handsWon: 0 };
+  return { userId: u.id, name: u.displayName, role, joinedAt, points, seasonPoints: points, matchesPlayed: points ? 1 : 0, matchesWon: points > 0 ? 1 : 0, handsWon: 0 };
 }
 
 function clubFixture(owner: UserRecord, extra: Partial<Club> = {}): Club {
@@ -37,6 +37,9 @@ function clubFixture(owner: UserRecord, extra: Partial<Club> = {}): Club {
     members: [member(owner, 'owner', T0)],
     pending: [],
     tables: [],
+    season: 1,
+    seasonStartedAt: T0,
+    seasons: [],
     ...extra,
   };
 }
@@ -258,6 +261,76 @@ function contract(name: string, setup: () => Promise<Repos>, teardown: () => Pro
       expect((await repos.clubs.get(zPending.code))!.pending).toEqual([]);
     });
 
+    it('devices: a push token lives on one device; push targets list the users\' tokens', async () => {
+      const u = await user();
+      const v = await user();
+      const dev = (userId: string, n: number, pushToken: string | null) => ({ id: randomUUID(), userId, platform: n % 2 ? 'ios' : 'android', appBuild: null, pushToken, locale: n === 2 ? 'zh-TW' : null, createdAt: T0 + n, lastSeenAt: T0 + n });
+      const token = 'ExponentPushToken[' + randomHex(8) + ']';
+      const a = dev(u.id, 1, token);
+      const b = dev(v.id, 2, token);
+      const c = dev(v.id, 3, 'ExponentPushToken[other' + randomHex(4) + ']');
+      for (const d of [a, b, c]) await repos.devices.create(d);
+      expect(await repos.devices.clearPushToken(token, b.id)).toBe(1);
+      expect((await repos.devices.get(a.id))?.pushToken).toBeNull();
+      expect((await repos.devices.get(b.id))?.pushToken).toBe(token);
+      expect(await repos.devices.pushTargets([u.id, v.id, 'not-a-uuid'])).toEqual([
+        { userId: v.id, deviceId: b.id, token, platform: 'android', locale: 'zh-TW' },
+        { userId: v.id, deviceId: c.id, token: c.pushToken, platform: 'ios', locale: null },
+      ]);
+      expect(await repos.devices.clearPushToken(token)).toBe(1);
+      expect(await repos.devices.pushTargets([u.id])).toEqual([]);
+      expect(await repos.devices.pushTargets([])).toEqual([]);
+    });
+
+    it('wallet: an entitlement can be removed', async () => {
+      const u = await user();
+      await repos.wallet.setEntitlement({ userId: u.id, entitlement: 'coach.gold', expiresAt: T0 + 5, source: 'store', updatedAt: T0 });
+      expect(await repos.wallet.deleteEntitlement(u.id, 'coach.gold')).toBe(true);
+      expect(await repos.wallet.deleteEntitlement(u.id, 'coach.gold')).toBe(false);
+      expect(await repos.wallet.getEntitlements(u.id)).toEqual([]);
+    });
+
+    it('store events: recorded once by event id, with an outcome, and forgettable', async () => {
+      const u = await user();
+      const e = { eventId: 'evt-' + randomHex(6), vendor: 'revenuecat', type: 'RENEWAL', userId: null, productId: 'coach.gold.month', environment: 'SANDBOX', outcome: 'received', raw: { event: { id: 'x', n: [1] } }, receivedAt: T0 };
+      expect(await repos.storeEvents.record(e)).toBe(true);
+      expect(await repos.storeEvents.record({ ...e, type: 'EXPIRATION' })).toBe(false);
+      await repos.storeEvents.setOutcome(e.eventId, 'entitled', u.id);
+      expect(await repos.storeEvents.get(e.eventId)).toEqual({ ...e, outcome: 'entitled', userId: u.id });
+      expect(await repos.storeEvents.get('missing-' + e.eventId)).toBeNull();
+      expect(await repos.storeEvents.delete(e.eventId)).toBe(true);
+      expect(await repos.storeEvents.get(e.eventId)).toBeNull();
+    });
+
+    it('reports: create, count a reporter\'s recent reports, list reports about a player', async () => {
+      const u = await user();
+      const v = await user();
+      const r1 = await repos.reports.create({ reporterId: u.id, reportedUserId: v.id, roomCode: 'AB12CD', reason: 'abusive_chat', details: 'Rude in chat', createdAt: T0 });
+      expect(r1).toMatchObject({ reporterId: u.id, reportedUserId: v.id, roomCode: 'AB12CD', reason: 'abusive_chat', details: 'Rude in chat', status: 'open', createdAt: T0 });
+      expect(typeof r1.id).toBe('number');
+      await repos.reports.create({ reporterId: u.id, reportedUserId: v.id, roomCode: null, reason: 'stalling', details: null, createdAt: T0 + 1000 });
+      expect(await repos.reports.countByReporterSince(u.id, T0)).toBe(2);
+      expect(await repos.reports.countByReporterSince(u.id, T0 + 1)).toBe(1);
+      expect(await repos.reports.countByReporterSince(v.id, T0)).toBe(0);
+      expect((await repos.reports.listAbout(v.id)).map((r) => r.reason)).toEqual(['stalling', 'abusive_chat']);
+    });
+
+    it('clubs: the season, its start and the archived seasons round trip, with season points apart from lifetime', async () => {
+      const owner = await user('account', 'Ah-Hua');
+      const m = await user('guest', 'Bao');
+      const club = clubFixture(owner, {
+        members: [member(owner, 'owner', T0, 500), { ...member(m, 'member', T0 + 1, 200), seasonPoints: -40 }],
+        season: 3,
+        seasonStartedAt: T0 + 7_000,
+        seasons: [
+          { season: 1, startedAt: T0, endedAt: T0 + 3_000, standings: [{ userId: owner.id, name: 'Ah-Hua', points: 300 }] },
+          { season: 2, startedAt: T0 + 3_000, endedAt: T0 + 7_000, standings: [{ userId: m.id, name: 'Bao', points: 240 }, { userId: owner.id, name: 'Ah-Hua', points: 0 }] },
+        ],
+      });
+      await repos.clubs.save(club);
+      expect(normalise(await repos.clubs.get(club.code))).toEqual(normalise(club));
+    });
+
     it('table snapshots: upsert, active list, prune finished, delete', async () => {
       const open = { roomCode: code('S'), clubCode: null, status: 'playing' as const, snapshot: { version: 1, seats: [1, 2] }, updatedAt: T0 };
       const done = { roomCode: code('S'), clubCode: 'CLUB01', status: 'finished' as const, snapshot: { version: 1 }, updatedAt: T0 };
@@ -330,7 +403,7 @@ describe.skipIf(!PG_URL)('postgres', () => {
       await admin.query('CREATE SCHEMA ' + schema);
       pool = createPool(PG_URL!, { options: '-c search_path=' + schema });
       expect(await ping(pool)).toBe(true);
-      expect(await migrate(pool)).toEqual(['0001_init']);
+      expect(await migrate(pool)).toEqual(['0001_init', '0002_store_reports_seasons']);
       expect(await migrate(pool)).toEqual([]);
       return createPgRepos(pool);
     },

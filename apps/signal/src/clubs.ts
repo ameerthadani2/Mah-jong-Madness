@@ -36,6 +36,8 @@ export interface ClubMember extends Identity {
   joinedAt: number;
   /** Lifetime points across club tables. */
   points: number;
+  /** Points this season; `startSeason` archives and resets them. Absent in rows written before seasons existed (read as `points`). */
+  seasonPoints?: number;
   matchesPlayed: number;
   matchesWon: number;
   handsWon: number;
@@ -79,7 +81,25 @@ export interface Club {
   members: ClubMember[];
   pending: Identity[];
   tables: ClubTable[];
+  /** The current season number (from 1). Absent in clubs stored before seasons existed (read as 1). */
+  season?: number;
+  seasonStartedAt?: number;
+  /** Finished seasons, oldest first (at most `CLUB_LIMITS.seasonsKept`). */
+  seasons?: SeasonRecord[];
 }
+
+/** A finished season: its final standings by season points. Points only; they have no monetary value. */
+export interface SeasonRecord {
+  season: number;
+  startedAt: number;
+  endedAt: number;
+  standings: Array<{ userId: string; name: string; points: number }>;
+}
+
+/** Something a club did that other parts of the server react to (push notifications). */
+export type ClubEvent =
+  | { type: 'table_opened'; club: Club; table: ClubTable; by: string }
+  | { type: 'member_approved'; club: Club; userId: string; by: string };
 
 /** Per-club persistence (the shape of `ClubsRepo`). */
 export interface ClubStore {
@@ -123,6 +143,8 @@ export const CLUB_LIMITS = {
   labelLength: 40,
   /** Finished tables stay in a club's listing for this long. */
   finishedTableMs: DAY_MS,
+  /** Finished seasons kept in a club's history. */
+  seasonsKept: 24,
 } as const;
 
 /** Keep only the known settings, and only when they are real booleans; anything else keeps `base`'s value. */
@@ -149,8 +171,14 @@ function normalise(c: Club): Club {
   c.pending = Array.isArray(c.pending) ? c.pending : [];
   c.tables = Array.isArray(c.tables) ? c.tables : [];
   c.description = typeof c.description === 'string' ? c.description : '';
+  c.season = Number.isInteger(c.season) && (c.season as number) >= 1 ? c.season : 1;
+  c.seasonStartedAt = typeof c.seasonStartedAt === 'number' ? c.seasonStartedAt : c.createdAt;
+  c.seasons = Array.isArray(c.seasons) ? c.seasons : [];
+  for (const m of c.members) if (typeof m.seasonPoints !== 'number') m.seasonPoints = m.points;
   return c;
 }
+
+const newMember = (user: Identity, role: ClubRole, at: number): ClubMember => ({ ...user, role, joinedAt: at, points: 0, seasonPoints: 0, matchesPlayed: 0, matchesWon: 0, handsWon: 0 });
 
 export class ClubRegistry {
   private clubs = new Map<string, Club>();
@@ -163,11 +191,28 @@ export class ClubRegistry {
   private readonly queued = new Set<string>();
   /** Number of writes requested (tests use it to check that no-op updates write nothing). */
   writeCount = 0;
+  private readonly listeners = new Set<(ev: ClubEvent) => void>();
 
   constructor(opts: { store?: ClubStore; now?: () => number; randomHex?: HexSource } = {}) {
     this.now = opts.now ?? Date.now;
     this.hex = opts.randomHex ?? randomHex;
     this.store = opts.store ?? null;
+  }
+
+  /** Subscribe to club events (a table opened, a join request approved). Listeners must not throw. */
+  onEvent(cb: (ev: ClubEvent) => void): () => void {
+    this.listeners.add(cb);
+    return () => this.listeners.delete(cb);
+  }
+
+  private emit(ev: ClubEvent): void {
+    for (const l of this.listeners) {
+      try {
+        l(ev);
+      } catch (e) {
+        console.error('[signal] club event listener failed', (e as Error).message);
+      }
+    }
   }
 
   /** Read every club from the store (once, at boot, before the registry is used). */
@@ -315,9 +360,12 @@ export class ClubRegistry {
       createdAt: this.now(),
       rules: sanitizeRules(rules),
       settings: sanitizeSettings(settings),
-      members: [{ ...owner, role: 'owner', joinedAt: this.now(), points: 0, matchesPlayed: 0, matchesWon: 0, handsWon: 0 }],
+      members: [newMember(owner, 'owner', this.now())],
       pending: [],
       tables: [],
+      season: 1,
+      seasonStartedAt: this.now(),
+      seasons: [],
     };
     this.clubs.set(club.code, club);
     this.persist(club);
@@ -336,7 +384,7 @@ export class ClubRegistry {
       return { club, status: 'pending' };
     }
     this.requireMemberRoom(club);
-    club.members.push({ ...user, role: 'member', joinedAt: this.now(), points: 0, matchesPlayed: 0, matchesWon: 0, handsWon: 0 });
+    club.members.push(newMember(user, 'member', this.now()));
     this.persist(club);
     return { club, status: 'joined' };
   }
@@ -348,8 +396,9 @@ export class ClubRegistry {
     if (idx < 0) throw new ClubError('not_found', 'No pending request for that user');
     this.requireMemberRoom(club);
     const [user] = club.pending.splice(idx, 1);
-    club.members.push({ ...user, role: 'member', joinedAt: this.now(), points: 0, matchesPlayed: 0, matchesWon: 0, handsWon: 0 });
+    club.members.push(newMember(user, 'member', this.now()));
     this.persist(club);
+    this.emit({ type: 'member_approved', club, userId, by: actorId });
     return club;
   }
 
@@ -445,6 +494,7 @@ export class ClubRegistry {
     };
     club.tables.push(t);
     this.persist(club);
+    this.emit({ type: 'table_opened', club, table: t, by: actorId });
     return t;
   }
 
@@ -511,6 +561,7 @@ export class ClubRegistry {
       const m = this.member(club, r.userId);
       if (!m) continue;
       m.points += r.points;
+      m.seasonPoints = (m.seasonPoints ?? 0) + r.points;
       m.matchesPlayed++;
       m.handsWon += r.handsWon;
       if (r.points === best && best > 0) m.matchesWon++;
@@ -518,9 +569,37 @@ export class ClubRegistry {
     this.persist(club);
   }
 
-  standings(code: string): ClubMember[] {
+  /**
+   * Members ranked by this season's points (then lifetime points, wins, seniority). Each row
+   * carries both `seasonPoints` and `points` (lifetime) and the season number.
+   */
+  standings(code: string): Array<ClubMember & { seasonPoints: number; lifetimePoints: number; season: number }> {
     const club = this.get(code);
-    return [...club.members].sort((a, b) => b.points - a.points || b.matchesWon - a.matchesWon || a.joinedAt - b.joinedAt);
+    const season = club.season ?? 1;
+    return club.members
+      .map((m) => ({ ...m, seasonPoints: m.seasonPoints ?? m.points, lifetimePoints: m.points, season }))
+      .sort((a, b) => b.seasonPoints - a.seasonPoints || b.points - a.points || b.matchesWon - a.matchesWon || a.joinedAt - b.joinedAt);
+  }
+
+  /**
+   * Owner only: archive this season's standings in the club's history, reset every member's
+   * season points to zero and start the next season. Lifetime points and match counts stay.
+   */
+  startSeason(code: string, actorId: string): { club: Club; archived: SeasonRecord } {
+    const club = this.get(code);
+    this.requireRole(club, actorId, ['owner']);
+    const archived: SeasonRecord = {
+      season: club.season ?? 1,
+      startedAt: club.seasonStartedAt ?? club.createdAt,
+      endedAt: this.now(),
+      standings: this.standings(club.code).map((m) => ({ userId: m.userId, name: m.name, points: m.seasonPoints })),
+    };
+    club.seasons = [...(club.seasons ?? []), archived].slice(-CLUB_LIMITS.seasonsKept);
+    for (const m of club.members) m.seasonPoints = 0;
+    club.season = archived.season + 1;
+    club.seasonStartedAt = archived.endedAt;
+    this.persist(club);
+    return { club, archived };
   }
 
   /** What anyone may see of a club: no member list, standings or tables. */

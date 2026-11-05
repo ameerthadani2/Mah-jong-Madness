@@ -7,7 +7,7 @@
  * Ids that are uuid columns are checked before they reach SQL, so a malformed id from a client
  * reads as "not found" rather than a database error.
  */
-import type { Club, ClubMember, ClubSettings, ClubTable, Identity } from '../clubs';
+import type { Club, ClubMember, ClubSettings, ClubTable, Identity, SeasonRecord } from '../clubs';
 import type { Pool, Queryable } from '../db';
 import {
   DELETED_PLAYER_NAME,
@@ -24,11 +24,17 @@ import {
   type MatchResultRecord,
   type MatchResultsRepo,
   type PurchaseRecord,
+  type PushTarget,
   type PuzzleResultRecord,
   type PuzzleResultsRepo,
+  type ReportReason,
+  type ReportRecord,
+  type ReportsRepo,
   type Repos,
   type SessionRecord,
   type SessionsRepo,
+  type StoreEventRecord,
+  type StoreEventsRepo,
   type TableSnapshotRecord,
   type TableSnapshotsRepo,
   type TableStatus,
@@ -353,6 +359,118 @@ function pgDevices(q: Queryable): DevicesRepo {
       const res = await q.query('DELETE FROM devices WHERE user_id = $1', [userId]);
       return res.rowCount ?? 0;
     },
+    async clearPushToken(token, exceptDeviceId) {
+      const except = isUuid(exceptDeviceId) ? exceptDeviceId : null;
+      const res = await q.query('UPDATE devices SET push_token = NULL WHERE push_token = $1 AND ($2::uuid IS NULL OR id <> $2::uuid)', [token, except]);
+      return res.rowCount ?? 0;
+    },
+    async pushTargets(userIds) {
+      const ids = userIds.filter(isUuid);
+      if (!ids.length) return [];
+      const res = await q.query<{ user_id: string; id: string; push_token: string; platform: string; locale: string | null }>(
+        'SELECT user_id, id, push_token, platform, locale FROM devices WHERE user_id = ANY($1::uuid[]) AND push_token IS NOT NULL ORDER BY created_at, id',
+        [ids],
+      );
+      return res.rows.map((r): PushTarget => ({ userId: r.user_id, deviceId: r.id, token: r.push_token, platform: r.platform, locale: r.locale }));
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------------------------
+
+interface StoreEventRow {
+  event_id: string;
+  vendor: string;
+  type: string;
+  user_id: string | null;
+  product_id: string | null;
+  environment: string | null;
+  outcome: string;
+  raw: unknown;
+  received_at: Date;
+}
+
+const storeEventFromRow = (r: StoreEventRow): StoreEventRecord => ({
+  eventId: r.event_id,
+  vendor: r.vendor,
+  type: r.type,
+  userId: r.user_id,
+  productId: r.product_id,
+  environment: r.environment,
+  outcome: r.outcome,
+  raw: r.raw,
+  receivedAt: r.received_at.getTime(),
+});
+
+function pgStoreEvents(q: Queryable): StoreEventsRepo {
+  const COLS = 'event_id, vendor, type, user_id, product_id, environment, outcome, raw, received_at';
+  return {
+    async record(e) {
+      const res = await q.query(
+        'INSERT INTO store_events (' + COLS + ') VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9) ON CONFLICT (event_id) DO NOTHING',
+        [e.eventId, e.vendor, e.type, isUuid(e.userId) ? e.userId : null, e.productId, e.environment, e.outcome, json(e.raw), toDate(e.receivedAt)],
+      );
+      return (res.rowCount ?? 0) > 0;
+    },
+    async get(eventId) {
+      const res = await q.query<StoreEventRow>('SELECT ' + COLS + ' FROM store_events WHERE event_id = $1', [eventId]);
+      return res.rows[0] ? storeEventFromRow(res.rows[0]) : null;
+    },
+    async setOutcome(eventId, outcome, userId) {
+      await q.query('UPDATE store_events SET outcome = $2, user_id = $3 WHERE event_id = $1', [eventId, outcome, isUuid(userId) ? userId : null]);
+    },
+    async delete(eventId) {
+      const res = await q.query('DELETE FROM store_events WHERE event_id = $1', [eventId]);
+      return (res.rowCount ?? 0) > 0;
+    },
+  };
+}
+
+interface ReportRow {
+  id: string | number;
+  reporter_id: string;
+  reported_user_id: string;
+  room_code: string | null;
+  reason: ReportReason;
+  details: string | null;
+  status: ReportRecord['status'];
+  created_at: Date;
+}
+
+const reportFromRow = (r: ReportRow): ReportRecord => ({
+  id: Number(r.id),
+  reporterId: r.reporter_id,
+  reportedUserId: r.reported_user_id,
+  roomCode: r.room_code,
+  reason: r.reason,
+  details: r.details,
+  status: r.status,
+  createdAt: r.created_at.getTime(),
+});
+
+function pgReports(q: Queryable): ReportsRepo {
+  const COLS = 'id, reporter_id, reported_user_id, room_code, reason, details, status, created_at';
+  return {
+    async create(r) {
+      const res = await q.query<ReportRow>(
+        'INSERT INTO reports (reporter_id, reported_user_id, room_code, reason, details, created_at) VALUES ($1, $2, $3, $4, $5, $6) RETURNING ' + COLS,
+        [r.reporterId, r.reportedUserId, r.roomCode, r.reason, r.details, toDate(r.createdAt)],
+      );
+      return reportFromRow(res.rows[0]);
+    },
+    async countByReporterSince(reporterId, since) {
+      if (!isUuid(reporterId)) return 0;
+      const res = await q.query<{ n: string }>('SELECT count(*) AS n FROM reports WHERE reporter_id = $1 AND created_at >= $2', [reporterId, toDate(since)]);
+      return Number(res.rows[0]?.n ?? 0);
+    },
+    async listAbout(reportedUserId, limit = 100) {
+      if (!isUuid(reportedUserId)) return [];
+      const res = await q.query<ReportRow>('SELECT ' + COLS + ' FROM reports WHERE reported_user_id = $1 ORDER BY created_at DESC, id DESC LIMIT $2', [
+        reportedUserId,
+        Math.max(1, Math.min(1000, Math.floor(limit))),
+      ]);
+      return res.rows.map(reportFromRow);
+    },
   };
 }
 
@@ -490,6 +608,11 @@ function pgWallet(q: Queryable, tx: Tx): WalletRepo {
         [e.userId, e.entitlement, toDate(e.expiresAt), e.source, toDate(e.updatedAt)],
       );
     },
+    async deleteEntitlement(userId, entitlement) {
+      if (!isUuid(userId)) return false;
+      const res = await q.query('DELETE FROM entitlements WHERE user_id = $1 AND entitlement = $2', [userId, entitlement]);
+      return (res.rowCount ?? 0) > 0;
+    },
     async mergeInto(fromUserId, toUserId, at) {
       if (!isUuid(fromUserId) || !isUuid(toUserId)) return;
       await tx(async (c) => {
@@ -532,6 +655,9 @@ interface ClubRow {
   rules: Club['rules'];
   settings: ClubSettings;
   created_at: Date;
+  season: number;
+  season_started_at: Date | null;
+  season_history: SeasonRecord[] | null;
 }
 interface MemberRow {
   club_code: string;
@@ -541,6 +667,7 @@ interface MemberRow {
   display_name: string;
   avatar: string | null;
   joined_at: Date;
+  season_points: number;
   lifetime_points: number;
   matches_played: number;
   matches_won: number;
@@ -575,6 +702,9 @@ function assembleClubs(clubs: ClubRow[], members: MemberRow[], tables: TableRow[
       members: [],
       pending: [],
       tables: [],
+      season: c.season,
+      seasonStartedAt: (c.season_started_at ?? c.created_at).getTime(),
+      seasons: Array.isArray(c.season_history) ? c.season_history : [],
     });
   }
   for (const m of members) {
@@ -587,6 +717,7 @@ function assembleClubs(clubs: ClubRow[], members: MemberRow[], tables: TableRow[
         role: m.role,
         joinedAt: m.joined_at.getTime(),
         points: m.lifetime_points,
+        seasonPoints: m.season_points,
         matchesPlayed: m.matches_played,
         matchesWon: m.matches_won,
         handsWon: m.hands_won,
@@ -611,8 +742,8 @@ function assembleClubs(clubs: ClubRow[], members: MemberRow[], tables: TableRow[
 }
 
 function pgClubs(q: Queryable, tx: Tx): ClubsRepo {
-  const CLUB_COLS = 'code, owner_id, name, description, rules, settings, created_at';
-  const MEMBER_COLS = 'club_code, user_id, role, status, display_name, avatar, joined_at, lifetime_points, matches_played, matches_won, hands_won';
+  const CLUB_COLS = 'code, owner_id, name, description, rules, settings, created_at, season, season_started_at, season_history';
+  const MEMBER_COLS = 'club_code, user_id, role, status, display_name, avatar, joined_at, season_points, lifetime_points, matches_played, matches_won, hands_won';
   const TABLE_COLS = 'code, club_code, label, rules, created_by, status, state, created_at';
   const load = async (c: Queryable, codes: string[] | null): Promise<Club[]> => {
     const clubs = await c.query<ClubRow>('SELECT ' + CLUB_COLS + ' FROM clubs WHERE ($1::text[] IS NULL OR code = ANY($1::text[])) ORDER BY created_at, code', [codes]);
@@ -633,6 +764,7 @@ function pgClubs(q: Queryable, tx: Tx): ClubsRepo {
           avatar: m.avatar ?? null,
           joined_at: m.joinedAt,
           points: m.points,
+          season_points: m.seasonPoints ?? m.points,
           matches_played: m.matchesPlayed,
           matches_won: m.matchesWon,
           hands_won: m.handsWon,
@@ -645,6 +777,7 @@ function pgClubs(q: Queryable, tx: Tx): ClubsRepo {
           avatar: p.avatar ?? null,
           joined_at: null,
           points: 0,
+          season_points: 0,
           matches_played: 0,
           matches_won: 0,
           hands_won: 0,
@@ -661,23 +794,35 @@ function pgClubs(q: Queryable, tx: Tx): ClubsRepo {
       }));
       await tx(async (c) => {
         await c.query(
-          `INSERT INTO clubs (code, owner_id, name, description, rules, settings, created_at, updated_at)
-           VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7, now())
+          `INSERT INTO clubs (code, owner_id, name, description, rules, settings, created_at, updated_at, season, season_started_at, season_history)
+           VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7, now(), $8, $9, $10::jsonb)
            ON CONFLICT (code) DO UPDATE SET owner_id = excluded.owner_id, name = excluded.name, description = excluded.description,
-             rules = excluded.rules, settings = excluded.settings, updated_at = now()`,
-          [club.code, club.ownerId, club.name, club.description, json(club.rules), json(club.settings), toDate(club.createdAt)],
+             rules = excluded.rules, settings = excluded.settings, updated_at = now(), season = excluded.season,
+             season_started_at = excluded.season_started_at, season_history = excluded.season_history`,
+          [
+            club.code,
+            club.ownerId,
+            club.name,
+            club.description,
+            json(club.rules),
+            json(club.settings),
+            toDate(club.createdAt),
+            club.season ?? 1,
+            toDate(club.seasonStartedAt ?? club.createdAt),
+            json(club.seasons ?? []),
+          ],
         );
         await c.query('DELETE FROM club_members WHERE club_code = $1 AND NOT (user_id = ANY($2::uuid[]))', [club.code, rows.map((r) => r.user_id)]);
         await c.query(
-          `INSERT INTO club_members (club_code, user_id, role, status, display_name, avatar, joined_at, lifetime_points, matches_played, matches_won, hands_won)
+          `INSERT INTO club_members (club_code, user_id, role, status, display_name, avatar, joined_at, season_points, lifetime_points, matches_played, matches_won, hands_won)
            SELECT $1, r.user_id, r.role, r.status, r.display_name, r.avatar, COALESCE(to_timestamp(r.joined_at / 1000.0), now()),
-                  r.points, r.matches_played, r.matches_won, r.hands_won
+                  r.season_points, r.points, r.matches_played, r.matches_won, r.hands_won
            FROM jsonb_to_recordset($2::jsonb) AS r(user_id uuid, role text, status text, display_name text, avatar text,
-                joined_at double precision, points integer, matches_played integer, matches_won integer, hands_won integer)
+                joined_at double precision, season_points integer, points integer, matches_played integer, matches_won integer, hands_won integer)
            ON CONFLICT (club_code, user_id) DO UPDATE SET role = excluded.role, status = excluded.status,
              display_name = excluded.display_name, avatar = excluded.avatar,
              joined_at = CASE WHEN excluded.status = 'member' THEN excluded.joined_at ELSE club_members.joined_at END,
-             lifetime_points = excluded.lifetime_points, matches_played = excluded.matches_played,
+             season_points = excluded.season_points, lifetime_points = excluded.lifetime_points, matches_played = excluded.matches_played,
              matches_won = excluded.matches_won, hands_won = excluded.hands_won`,
           [club.code, json(rows)],
         );
@@ -897,6 +1042,8 @@ function build(q: Queryable, tx: Tx, transaction: Repos['transaction']): Repos {
     sessions: pgSessions(q),
     devices: pgDevices(q),
     wallet: pgWallet(q, tx),
+    storeEvents: pgStoreEvents(q),
+    reports: pgReports(q),
     clubs: pgClubs(q, tx),
     tableSnapshots: pgTableSnapshots(q),
     matchResults: pgMatchResults(q),

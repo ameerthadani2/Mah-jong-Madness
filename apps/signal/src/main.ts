@@ -8,12 +8,16 @@
  * Everything is optional. Without DATABASE_URL the server keeps its state in memory (lost on
  * restart); without AUTH_PEPPER it uses a random pepper for this process (sessions end on
  * restart); without provider ids only guest accounts exist. Each case logs a warning.
+ * Without REVENUECAT_WEBHOOK_SECRET the store webhook answers 503; without EXPO_ACCESS_TOKEN no
+ * push is sent; without SENTRY_DSN errors are only logged; without POSTHOG_KEY no server events.
  * Migrations prefer DATABASE_URL_DIRECT (Neon's direct, unpooled string) over DATABASE_URL.
  */
 import { SessionService } from './auth';
 import { loadConfig, pepperFromEnv, providersFromEnv } from './config';
 import { createPool } from './db';
 import { migrate } from './migrate';
+import { createAnalytics, initSentry, reportError } from './observability';
+import { pushClientFromEnv, PushService } from './push';
 import { createRepos } from './repos';
 import { createSignalServer } from './server';
 
@@ -40,6 +44,8 @@ async function main(): Promise<void> {
     return;
   }
   const env = process.env;
+  // First, so that a failure from here on is reported.
+  const sentry = await initSentry(env);
   if (flag(env.MIGRATE_ON_BOOT)) await runMigrations();
   const warn = (line: string) => console.warn(line);
   const config = loadConfig(env);
@@ -48,11 +54,13 @@ async function main(): Promise<void> {
   if (repos.kind === 'memory') warn('[signal] DATABASE_URL is not set: accounts, clubs and tables are kept in memory and lost on restart');
   const sessions = new SessionService(repos.repos, pepperFromEnv(env, warn));
   const providers = providersFromEnv(env);
-  const server = await createSignalServer({ port: config.port, repos, sessions, providers, config });
+  const push = new PushService({ devices: repos.repos.devices, client: await pushClientFromEnv(env) });
+  const analytics = await createAnalytics(env);
+  const server = await createSignalServer({ port: config.port, repos, sessions, providers, config, push, analytics });
 
   const enabled = Object.keys(providers);
   console.log(
-    `[signal] listening on :${server.address().port} (storage ${repos.kind}, sign-in ${['guest', ...enabled].join(' ')}, hosted tables ${config.hostTables ? `enabled, up to ${config.maxHostedTables}` : 'disabled'}, relay-only rooms ${config.p2pRooms ? 'enabled' : 'disabled'}, CORS ${config.corsOrigins.length ? config.corsOrigins.join(' ') : 'same origin only'})`,
+    `[signal] listening on :${server.address().port} (storage ${repos.kind}, sign-in ${['guest', ...enabled].join(' ')}, hosted tables ${config.hostTables ? `enabled, up to ${config.maxHostedTables}` : 'disabled'}, relay-only rooms ${config.p2pRooms ? 'enabled' : 'disabled'}, CORS ${config.corsOrigins.length ? config.corsOrigins.join(' ') : 'same origin only'}, store ${config.revenueCatWebhookSecret ? 'on' : 'off'}, push ${push.enabled ? 'on' : 'off'}, Sentry ${sentry ? 'on' : 'off'}, PostHog ${analytics.enabled ? 'on' : 'off'})`,
   );
 
   let stopping = false;
@@ -62,6 +70,8 @@ async function main(): Promise<void> {
     console.log(`[signal] ${signal}: saving tables and shutting down`);
     server
       .close()
+      .then(() => analytics.shutdown().catch(() => {}))
+      .then(() => sentry?.flush(2000))
       .then(() => repos.close())
       .then(
         () => process.exit(0),
@@ -77,5 +87,6 @@ async function main(): Promise<void> {
 
 main().catch((e: Error) => {
   console.error('[signal] fatal', e.message);
+  reportError(e, { where: 'boot' });
   process.exit(1);
 });

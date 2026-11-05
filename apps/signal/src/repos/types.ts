@@ -117,6 +117,18 @@ export interface DevicesRepo {
   listForUser(userId: string): Promise<DeviceRecord[]>;
   moveToUser(fromUserId: string, toUserId: string): Promise<number>;
   deleteForUser(userId: string): Promise<number>;
+  /** Clears this push token from every device holding it (except `exceptDeviceId`); returns how many. */
+  clearPushToken(token: string, exceptDeviceId?: string): Promise<number>;
+  /** Devices of these users that have a push token, oldest first. */
+  pushTargets(userIds: string[]): Promise<PushTarget[]>;
+}
+
+export interface PushTarget {
+  userId: string;
+  deviceId: string;
+  token: string;
+  platform: string;
+  locale: string | null;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -182,11 +194,64 @@ export interface WalletRepo {
   listPurchases(userId: string): Promise<PurchaseRecord[]>;
   getEntitlements(userId: string): Promise<EntitlementRecord[]>;
   setEntitlement(entitlement: EntitlementRecord): Promise<void>;
+  deleteEntitlement(userId: string, entitlement: string): Promise<boolean>;
   /**
    * Account merge: sums the balances into `toUserId`, re-points the ledger and purchases, and
    * unions entitlements (the later expiry wins; no expiry beats any expiry).
    */
   mergeInto(fromUserId: string, toUserId: string, at: number): Promise<void>;
+}
+
+/** One store notification (a RevenueCat webhook event), kept raw; the event id makes processing idempotent. */
+export interface StoreEventRecord {
+  eventId: string;
+  vendor: string;
+  type: string;
+  /** Our user the event was applied to; null when it named no user we know. */
+  userId: string | null;
+  productId: string | null;
+  environment: string | null;
+  /** What processing did (`credited`, `entitled`, `ignored_unknown_user`, …). */
+  outcome: string;
+  raw: unknown;
+  receivedAt: number;
+}
+
+export interface StoreEventsRepo {
+  /** Inserts the event; false (and nothing written) when its id was seen before. */
+  record(event: StoreEventRecord): Promise<boolean>;
+  get(eventId: string): Promise<StoreEventRecord | null>;
+  setOutcome(eventId: string, outcome: string, userId: string | null): Promise<void>;
+  /** Forgets an event whose processing failed, so a redelivery is processed (memory only needs it: Postgres rolls back). */
+  delete(eventId: string): Promise<boolean>;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Player reports
+// ---------------------------------------------------------------------------------------------
+
+export const REPORT_REASONS = ['cheating', 'collusion', 'abusive_chat', 'offensive_name', 'stalling', 'other'] as const;
+export type ReportReason = (typeof REPORT_REASONS)[number];
+
+export interface ReportRecord {
+  id: number;
+  reporterId: string;
+  reportedUserId: string;
+  roomCode: string | null;
+  reason: ReportReason;
+  details: string | null;
+  status: 'open' | 'actioned' | 'dismissed';
+  createdAt: number;
+}
+
+export type NewReport = Omit<ReportRecord, 'id' | 'status'>;
+
+export interface ReportsRepo {
+  create(report: NewReport): Promise<ReportRecord>;
+  /** Reports filed by this user at or after `since`. */
+  countByReporterSince(reporterId: string, since: number): Promise<number>;
+  /** Reports about this user, newest first (for moderation). */
+  listAbout(reportedUserId: string, limit?: number): Promise<ReportRecord[]>;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -292,6 +357,8 @@ export interface Repos {
   sessions: SessionsRepo;
   devices: DevicesRepo;
   wallet: WalletRepo;
+  storeEvents: StoreEventsRepo;
+  reports: ReportsRepo;
   clubs: ClubsRepo;
   tableSnapshots: TableSnapshotsRepo;
   matchResults: MatchResultsRepo;
