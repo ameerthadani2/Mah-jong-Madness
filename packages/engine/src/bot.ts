@@ -197,7 +197,7 @@ export interface BotOptions {
 export const BOT_SKILLS: Record<BotSkill, { label: string; labelZh: string; description: string; rating: number }> = {
   beginner: { label: 'Beginner', labelZh: '新手', description: 'Makes efficiency mistakes and never folds. Good for learning the flow.', rating: 800 },
   club: { label: 'Club player', labelZh: '牌友', description: 'Solid tile efficiency, claims when it helps, basic defence.', rating: 1400 },
-  pro: { label: 'Pro', labelZh: '高手', description: 'Efficient, folds against ready players and chases value.', rating: 1900 },
+  pro: { label: 'Pro', labelZh: '高手', description: 'Fast and efficient, folds against ready players and keeps scoring tiles.', rating: 1900 },
 };
 
 /** Decide an action for `seat`, or null if it is not their move. */
@@ -236,7 +236,10 @@ export function chooseAction(s: GameState, seat: number, opts: BotOptions = {}):
   const before = currentShanten(s, seat);
   const p = s.players[seat];
   const concealed = p.melds.every((m) => m.concealed);
-  const valueConcealed = (opts.valueConcealed ?? skill !== 'beginner') && concealed && before <= 1;
+  // Stay concealed (門清) instead of calling when already this close: Club at one from ready, Pro only
+  // once ready. Speed is worth more than the 門清 台 before that (ladder: Pro at 0 beats Club by about
+  // 5 points a hand; at 1 it only draws level, at 2 it loses about 10).
+  const valueConcealed = (opts.valueConcealed ?? skill !== 'beginner') && concealed && before <= (skill === 'pro' ? 0 : 1);
   // Beginners often grab a pong/chi, as long as it does not set them back.
   if (skill === 'beginner') {
     const harmless = (a: Action) => before - shantenAfterClaim(s, seat, a) >= 0;
