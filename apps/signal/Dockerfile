@@ -4,6 +4,9 @@
 #   docker build -f apps/signal/Dockerfile -t mahjong-signal .
 #   docker run --rm -p 8787:8787 mahjong-signal
 #
+# The container keeps nothing on disk: with DATABASE_URL every account, club and table snapshot
+# lives in Postgres; without it the server runs on in-memory storage (lost on restart).
+#
 # Stage 1 installs only the workspaces the server needs and bundles src/main.ts with esbuild
 # into one CommonJS file. Stage 2 is a plain node:22-slim with that file and the SQL
 # migrations: no node_modules, no tsx, no source.
@@ -26,11 +29,10 @@ COPY apps/signal/migrations apps/signal/migrations
 RUN npm run build --workspace @mjm/signal
 
 FROM node:22-slim AS runtime
-ENV NODE_ENV=production PORT=8787 DATA_DIR=/app/data
+ENV NODE_ENV=production PORT=8787
 WORKDIR /app
 COPY --from=build --chown=node:node /repo/apps/signal/dist ./dist
 COPY --from=build --chown=node:node /repo/apps/signal/migrations ./migrations
-RUN mkdir -p /app/data && chown node:node /app/data
 # The image's built-in unprivileged user.
 USER node
 EXPOSE 8787

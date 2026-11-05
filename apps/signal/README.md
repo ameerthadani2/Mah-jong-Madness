@@ -1,22 +1,60 @@
 # @mjm/signal
 
-The WebSocket relay and club server for Mahjong Madness. By default every table runs on the server, which acts as a neutral host, and players connect to it through the relay.
+The game server for Mahjong Madness. Every online table runs on the server, which acts as a neutral host; players connect to it over one WebSocket each. The same process serves the accounts, sessions, configuration and clubs HTTP API. The contract with the app is [`docs/API.md`](../../docs/API.md); deployment is in [`docs/DEPLOY.md`](../../docs/DEPLOY.md).
 
 ```bash
-PORT=8787 npm start
+npm run signal                 # from the repository root (tsx src/main.ts), port 8787
+npm run build -w @mjm/signal   # esbuild bundle: dist/server.cjs
+node dist/server.cjs migrate   # apply pending migrations and exit
 ```
+
+With no environment at all the server runs: accounts, clubs and tables are kept in memory, sign-in is guest-only and a random session pepper is used (each logs a warning). Tests run that way.
+
+## Layout
+
+| File | Purpose |
+| --- | --- |
+| `src/main.ts` | Entry point: reads the environment, builds the repositories, the session service and the providers, calls `createSignalServer`, saves tables on SIGTERM |
+| `src/server.ts` | `createSignalServer({ port, repos, sessions, providers, config })` → `{ http, wss, rooms, clubs, persister, api, address(), close() }`. Nothing runs at import time |
+| `src/api.ts` | The HTTP routes below |
+| `src/sockets.ts` | WebSocket limits, the `hello` session handshake, heartbeat, routing into the room registry |
+| `src/rooms.ts` | Rooms, hosted tables, the club table gate, keep-alive |
+| `src/clubs.ts` | Clubs, members, standings, table listings; writes each changed club through `repos.clubs` |
+| `src/persist.ts` | Table snapshots: debounced writes, restore at boot, pruning |
+| `src/auth/*` | Guest accounts, session tokens, provider token verification, link/merge/deletion |
+| `src/repos/*` | Storage: memory, or Postgres when `DATABASE_URL` is set |
+| `migrations/*.sql` | The Postgres schema, applied in order by `src/migrate.ts` |
 
 ## Configuration (environment variables)
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `PORT` | `8787` | TCP port for both HTTP and WebSocket traffic |
+| `DATABASE_URL` | none | Pooled Postgres connection string (Neon: the `-pooler` host, `?sslmode=require`). Absent: in-memory storage, lost on restart |
+| `DATABASE_URL_DIRECT` | `DATABASE_URL` | Direct (unpooled) string, used by migrations only |
+| `MIGRATE_ON_BOOT` | off | `1` applies pending migrations before the server starts (`fly.toml` also runs them as the release command) |
+| `AUTH_PEPPER` | random per process | Secret mixed into every stored session and guest-secret hash. Without it every session ends when the process stops. Keep a copy: losing it signs every player out |
+| `AUTH_PEPPER_PREVIOUS` | none | The old pepper during a rotation; tokens hashed with it keep working and are re-hashed on first use |
+| `APPLE_CLIENT_ID` | none | Sign in with Apple: the bundle id (and Services ID), comma-separated. Absent: Apple sign-in is off and hidden in the app |
+| `GOOGLE_CLIENT_IDS` | none | Google OAuth client ids (iOS, Android, web), comma-separated. Absent: Google sign-in is off |
+| `FACEBOOK_APP_ID` | none | Facebook Limited Login. Absent: off |
 | `HOST_TABLES` | on | Set to `0` to stop the server hosting tables. A hosted `create` is then refused with `Hosted tables are disabled` (never turned into a relay-only room) |
-| `DATA_DIR` | `./data` | Directory that holds `clubs.json`. Tables do not survive a restart, so club tables still open or playing at shutdown are marked finished when the file is loaded |
-| `TRUST_PROXY` | `0` (off) | The number of reverse proxies you run in front of the server. The client IP is then the `x-forwarded-for` entry that many places from the right: `1` takes the rightmost entry (the address your proxy appended), `2` the one before it, and so on. Entries further left are written by the client and are never used. Set it to exactly the number of proxies; with `0` the header is ignored and the TCP peer address is used. `true`/`on` still mean `1` |
-| `CORS_ORIGINS` | none | Comma-separated list of browser origins allowed to call the HTTP API. With no list, CORS headers are never sent, so only same-origin pages (and native apps, which are not subject to CORS) can call it. For the Expo web preview use `CORS_ORIGINS=http://localhost:8081`. `*` allows any origin |
 | `MAX_HOSTED_TABLES` | `500` | Maximum number of tables the server hosts at once |
+| `TRUST_PROXY` | `0` (off) | The number of reverse proxies you run in front of the server. The client IP is then the `x-forwarded-for` entry that many places from the right: `1` takes the rightmost entry (the address your proxy appended), `2` the one before it, and so on. Entries further left are written by the client and are never used. Set it to exactly the number of proxies; with `0` the header is ignored and the TCP peer address is used. `true`/`on` still mean `1`. Fly: `1` |
+| `CORS_ORIGINS` | none | Comma-separated list of browser origins allowed to call the HTTP API. With no list, CORS headers are never sent, so only same-origin pages (and native apps, which are not subject to CORS) can call it. For the Expo web preview use `CORS_ORIGINS=http://localhost:8081`. `*` allows any origin |
+| `MIN_BUILD` | `0` | Oldest app build allowed online, reported as `GET /api/config.minBuild` |
+| `MAINTENANCE_MESSAGE` | none | Reported as `GET /api/config.maintenance`; the app shows it instead of online play |
 | `P2P_ROOMS` | off | Set to `1` to allow relay-only rooms in which a player's device is the host. For development only |
+| `DATABASE_URL_TEST` | none | Tests only: a database the Postgres repository and migration tests may create and drop schemas in. Absent: those tests are skipped |
+| `DATA_DIR` | — | No longer read (clubs used to live in `clubs.json`); the server warns if it is still set |
+
+## Persistence
+
+- **Clubs** live in memory for fast reads and membership checks; each change writes that one club behind it through `repos.clubs` (writes for a club run in order, and a burst of changes becomes one write). Every club is loaded at boot.
+- **Tables**: every hosted table is written to `table_snapshots` (`host.serialize()`) 500 ms after it last changed, and at once at the end of each hand and of the match. At boot every snapshot that has not finished is restored under its own code; players reclaim their seats with their rejoin tokens (bots play for them meanwhile). SIGTERM and `close()` write every table one last time without finishing it. Finished snapshots are pruned after 24 hours.
+- **Club listings** of restored tables stay open; listings whose table did not come back (ghosts) are removed at boot so they no longer count against the open-table cap; finished listings are dropped after 24 hours.
+- **Keep-alive**: a table with nobody connected is kept for 15 minutes after its last activity while a human holds a seat. A table opened over the socket closes as soon as its lobby empties; one opened through the API or restored waits 15 minutes for its first player.
+- **Results**: `match_results` gets a row at every `match_over`; club standings are updated from the same event.
 
 ## Limits
 
@@ -25,7 +63,9 @@ PORT=8787 npm start
 | WebSockets per IP | 20 at once | The extra socket is closed with 1008 `Too many connections` |
 | Messages per socket | 30/s, burst 60 | The socket is closed with 1008 `Rate limit exceeded` |
 | Message size | 64 KiB | The socket is closed with 1009 (message too big). A malformed frame closes it with 1002 (or 1007 for text that is not UTF-8). Other sockets are unaffected |
+| Session handshake | first frame, within 10 s | Closed with 4401 `Unauthorised` |
 | HTTP requests per IP | 10/s, burst 30 | `429 {error:"rate_limited"}` with `retry-after: 1` |
+| `/api/auth/*` requests | 5 a minute per IP and 5 a minute per user | `429 {error:"rate_limited"}` with `retry-after: 12` |
 | HTTP body | 64 KiB (bytes) | `400 {error:"invalid"}` |
 | Room creation | 1 per 10 s per connection | `{t:"error", message:"Please wait a few seconds before creating another room"}` |
 | Join attempts | 5 per 10 s per connection (refills at one every 2 s) | `{t:"error", message:"Too many join attempts; please wait a few seconds"}` |
@@ -34,21 +74,51 @@ PORT=8787 npm start
 | Clubs per user | 10 (owned, joined or pending) | `409 {error:"limit"}` |
 | Members per club | 200 (pending requests have the same cap) | `409 {error:"limit"}` |
 | Open tables per club | 5 (finished tables do not count) | `409 {error:"limit"}` |
-| Stored identities | 50,000 | The least recently used identity that belongs to no club is forgotten. A user's secret is stored only after a successful create or join; requests that fail, or leave the user in no club, store nothing |
 
 Room codes, club codes and peer ids come from the platform's secure random source. Each random byte is masked with `& 31` to index a 32-character alphabet, which avoids modulo bias.
 
 Every rule set received from a client (WebSocket `create`, club create/update, table create) goes through `sanitizeRules`. Unknown keys are dropped, numbers are clamped to `RULE_LIMITS`, and booleans must be real booleans. Club settings keep only the two known booleans. A field that has the wrong type returns `400`, never `500`.
 
-## Protocol (JSON frames)
+## HTTP API
+
+JSON in and out. Errors are `{ "error": "<code>", "message": "<English sentence>" }`; the codes and statuses are listed in `docs/API.md`. "Bearer" means `Authorization: Bearer mjs_<64 hex>` is required (`401 invalid_session` / `session_expired` / `session_revoked` otherwise).
+
+| Route | Auth | Body | Answer |
+| --- | --- | --- | --- |
+| `GET /health` | none | | `{ ok, peers, rooms, hostedTables, storage: "memory"\|"pg", db?: "ok"\|"down" }` |
+| `GET /api/config` | none | | `{ authProviders, storeEnabled, pushEnabled, minBuild, maintenance, serverNow }` |
+| `POST /api/auth/guest` | none | `{ device: { id, platform, appBuild, locale }, displayName?, avatar? }` | `201 { userId, guestSecret, session: { token, expiresAt }, user }` |
+| `POST /api/auth/guest/login` | none | `{ userId, guestSecret, device }` | `{ session, user }` or `401 invalid_credentials` |
+| `POST /api/auth/refresh` | bearer | | `{ session }`; the old token works for 5 more minutes and cannot be refreshed again (`401 session_rotated`) |
+| `POST /api/auth/logout` | bearer | | `204`; this session only |
+| `POST /api/auth/link` | bearer | `{ provider, token, nonce, email? }` | `{ session, user, merged }`; `409 identity_in_use`, `401 invalid_token`, `404 provider_disabled` |
+| `POST /api/auth/login` | none (or a guest bearer) | `{ provider, token, nonce, device }` | `{ session, user }` or `404 not_linked` |
+| `DELETE /api/auth/identities/:provider` | bearer | | `204`, `409 last_identity` or `404 not_found` |
+| `GET /api/me` | bearer | | `{ user, wallet: { diamonds, bonusDiamonds }, entitlements: [{ entitlement, expiresAt }], identities: [{ provider, email? }], serverNow }` |
+| `PATCH /api/me` | bearer | `{ displayName?, avatar?, locale?, birthYear? }` | `{ user }`; the new name and avatar are written into every club the user is in |
+| `DELETE /api/me` | bearer | | `204`; soft delete, every session ends, club rows become "Deleted player" |
+| `POST /api/clubs` | bearer | `{ name, rules?, settings? }` | the club; the caller is its owner |
+| `GET /api/clubs/:code` | bearer | | members: the club; anyone else: `{ code, name, description, memberCount, joinRequiresApproval }` |
+| `PATCH /api/clubs/:code` | bearer (owner/admin) | `{ name?, description?, rules?, settings? }` | the club |
+| `POST /api/clubs/:code/join` | bearer | | `{ club, status: "joined"\|"pending"\|"already" }` (`club` is the public view until membership) |
+| `POST /api/clubs/:code/members/:userId/approve` | bearer (owner/admin) | | the club |
+| `POST /api/clubs/:code/members/:userId/role` | bearer (owner) | `{ role }` | the club |
+| `DELETE /api/clubs/:code/members/:userId` | bearer (self, owner or admin) | | the club (public view after leaving) |
+| `GET /api/clubs/:code/standings` | bearer (member) | | members by points; `403` for non-members |
+| `GET /api/users/:userId/clubs` | bearer (self; `me` works) | | the caller's clubs and pending requests |
+| `POST /api/clubs/:code/tables` | bearer (member; admins only if the club says so) | `{ label?, rules?, botSkill? }` | the listed table; its room is a hosted club table |
+
+Club members are identified by the session's user id; their name and avatar come from the user record (a guest without a name shows as `Player XXXX`).
+
+## WebSocket protocol (JSON frames)
 
 Client → server
 | Message | Purpose |
 | --- | --- |
-| `{t:"hello"}` | Identify. The server replies `{t:"hello", peerId}`; the id is assigned by the server and never changes |
-| `{t:"create", hosted:true, rules?, botSkill?}` | Create a room whose table the server hosts. `botSkill` is `beginner`, `club` or `pro`. Without `hosted:true` the request is refused unless `P2P_ROOMS=1`; with `hosted:true` and `HOST_TABLES=0` it is refused with `Hosted tables are disabled` |
-| `{t:"join", room}` | Join by code (case-insensitive) |
-| `{t:"to", to, data}` | Relay `data` to a peer in the same room |
+| `{t:"hello", auth}` | Must be the first frame. `auth` is the session token. The server replies `{t:"hello", id, userId}` (`peerId`, the same as `id`, is kept for older clients); the id is assigned by the server and never changes. A missing or rejected token closes the socket with 4401 |
+| `{t:"create", hosted:true, rules?, botSkill?, club?}` | Create a room whose table the server hosts. `botSkill` is `beginner`, `club` or `pro`. With `club` it is a club table: only full members may open one (`Join the club first` otherwise) and it is listed in the club. Without `hosted:true` (and no `club`) the request is refused unless `P2P_ROOMS=1`; with `HOST_TABLES=0` it is refused with `Hosted tables are disabled` |
+| `{t:"join", room}` | Join by code (case-insensitive). A club table admits full members only |
+| `{t:"to", to, data}` | Relay `data` to a peer in the same room. A game `join` sent to the hosted table always carries the verified `userId`, whatever the client put there |
 | `{t:"leave"}` | Leave the room |
 
 Server → client
@@ -62,6 +132,8 @@ Server → client
 
 The host role never moves: a relay-only room closes when its host leaves, because a guest promoted to host would hold none of the table's state.
 
-Game traffic is wrapped as `{ch:"game", msg}`, so other channels can share the same socket.
+Game traffic is wrapped as `{ch:"game", msg}`, so other channels can share the same socket. On a dropped socket the app reconnects with backoff, sends `hello` and `join` again and rejoins its seat with the rejoin token from `welcome`.
 
-`GET /health` returns `{ ok, peers, rooms, hostedTables }`.
+## Tests
+
+`npm test -w @mjm/signal`. `test/e2e.test.ts` runs the real server on port 0 with memory repositories and two `ws` clients through `SignalingClient`: full hands with verified audits, a dropped socket rejoining, the club gate, the flood limit, and a restart over the same repositories that restores a table mid-hand. The Postgres cases in `repos.test.ts` and `migrate.test.ts` run when `DATABASE_URL_TEST` is set (CI sets it).

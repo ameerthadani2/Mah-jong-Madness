@@ -241,6 +241,8 @@ export function buildRoutes(deps: ApiDeps): Route[] {
         const { provider, token, nonce } = ctx.body;
         if (nonce !== undefined && typeof nonce !== 'string') throw new AuthError('invalid', 'nonce must be text');
         const identity = await verifyProviderToken(provider, token, { ...providers, nonce });
+        // A merge rewrites club rows in the repositories: let the registry's queued writes land first.
+        await clubs.flush();
         const result = await link(repos, me.userId, identity, { sessions, currentSessionId: me.sessionId, deviceId: me.deviceId, now });
         if (result.affectedClubs.length) await clubs.reload(result.affectedClubs);
         const user = await liveUser(result.userId);
@@ -314,6 +316,7 @@ export function buildRoutes(deps: ApiDeps): Route[] {
     }),
     r('DELETE', '/api/me', async (ctx) => {
       const me = await ctx.caller();
+      await clubs.flush();
       const { affectedClubs } = await deleteAccount(repos, me.userId, { now });
       if (affectedClubs.length) await clubs.reload(affectedClubs);
       return new Reply(204);

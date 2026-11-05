@@ -305,7 +305,17 @@ export class RoomRegistry {
         if (hosted) this.attachTable(room, rules, msg.botSkill);
         this.rooms.set(code, room);
         peer.room = code;
-        if (club !== undefined && peer.userId && room.table) this.opts.clubs?.tableOpened(club, code, peer.userId, room.table.host.rules);
+        if (club !== undefined && peer.userId && room.table) {
+          try {
+            this.opts.clubs?.tableOpened(club, code, peer.userId, room.table.host.rules);
+          } catch (e) {
+            // The club refused the listing after all (a cap reached in the meantime): no unlisted club table is left open.
+            peer.room = null;
+            this.closeRoom(room);
+            this.error(peer, (e as Error).message);
+            return peer.id;
+          }
+        }
         this.sendRoom(peer, room);
         return peer.id;
       }

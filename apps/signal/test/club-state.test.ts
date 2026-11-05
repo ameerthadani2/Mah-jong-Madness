@@ -163,4 +163,19 @@ describe('the club table gate', () => {
     rooms.handle(stranger.id, { t: 'join', room: apiRoom });
     expect(stranger.last()).toEqual({ t: 'error', message: CLUB_MEMBERS_ONLY });
   });
+
+  it('closes the new room again when the club refuses to list it', () => {
+    const gate = {
+      openTable: () => ({ rules: {} as never }),
+      mayJoin: () => true,
+      tableOpened: () => {
+        throw new Error('This club already has 5 open tables; finish one first');
+      },
+    };
+    const rooms = new RoomRegistry({ allowHosted: true, clubs: gate });
+    const a = peerAs(rooms, alice.userId);
+    rooms.handle(a.id, { t: 'create', club: 'CLUB01' });
+    expect(a.last()).toEqual({ t: 'error', message: 'This club already has 5 open tables; finish one first' });
+    expect(rooms.stats().rooms).toBe(0);
+  });
 });
