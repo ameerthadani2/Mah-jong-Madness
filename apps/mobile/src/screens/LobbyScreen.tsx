@@ -28,12 +28,11 @@ export function LobbyScreen() {
     );
   }
 
-  const isHost = session.mode === 'host';
-  // Server-hosted tables have no host player: any seated human may start or add bots.
-  const canControl = isHost || session.mode === 'guest';
+  // Online tables run on the game server and have no host player, so every seated human may start or add bots.
+  const localHost = session.mode === 'local' ? session.host : null;
   const humans = state.seats.filter((s) => s.peerId && !s.isBot).length;
-  const addBot = () => (isHost ? session.host!.addBot() : session.client.requestBot());
-  const start = () => (isHost ? session.host!.start() : session.client.requestStart());
+  const addBot = () => (localHost ? localHost.addBot() : session.client.requestBot());
+  const start = () => (localHost ? localHost.start() : session.client.requestStart());
 
   const leave = () => {
     app.setSession(null);
@@ -54,8 +53,7 @@ export function LobbyScreen() {
           </View>
           <Row style={{ flexWrap: 'wrap', justifyContent: 'center', rowGap: 6 }}>
             <Button small kind="secondary" icon="share" title="Share" onPress={() => void Share.share({ message: `Join my Mahjong Madness table: ${session.roomCode}` })} />
-            <Pill text={session.transportKind === 'webrtc' ? 'Direct P2P' : session.transportKind === 'relay' ? 'Relay' : 'Local'} />
-            <Pill text={session.mode === 'guest' ? 'Hosted elsewhere' : 'You host'} tone="gold" />
+            <Pill text={session.mode === 'online' ? 'Server table' : 'On this device'} icon="shield" tone="gold" />
           </Row>
         </Card>
         <Card style={styles.col}>
@@ -76,29 +74,19 @@ export function LobbyScreen() {
                 </Text>
                 {s.isBot && <Icon name="bot" size={22} />}
                 {s.seat === state.seat && <Pill text="you" tone="gold" size="sm" />}
-                {s.isBot && isHost && <Button small kind="ghost" title="Remove" onPress={() => session.host!.removeBot(s.seat)} />}
+                {s.isBot && localHost && <Button small kind="ghost" title="Remove" onPress={() => localHost.removeBot(s.seat)} />}
               </Row>
             );
           })}
-          {canControl && (
-            <Row style={{ flexWrap: 'wrap', rowGap: 6 }}>
-              <Button small kind="secondary" icon="bot" title="Add bot" onPress={addBot} />
-              <P dim style={{ fontSize: 12, flexShrink: 1 }}>
-                Empty seats are filled with bots when you start.
-              </P>
-            </Row>
-          )}
+          <Row style={{ flexWrap: 'wrap', rowGap: 6 }}>
+            <Button small kind="secondary" icon="bot" title="Add bot" onPress={addBot} />
+            <P dim style={{ fontSize: 12, flexShrink: 1 }}>
+              Empty seats are filled with bots when you start.
+            </P>
+          </Row>
         </Card>
       </View>
-      {canControl ? (
-        <Button large title={humans > 1 ? 'Start match' : 'Start (bots fill empty seats)'} icon="play" onPress={start} style={{ alignSelf: 'center' }} />
-      ) : (
-        <Card style={{ alignItems: 'center' }}>
-          <P dim style={{ textAlign: 'center' }}>
-            Waiting for the host to start…
-          </P>
-        </Card>
-      )}
+      <Button large title={humans > 1 ? 'Start match' : 'Start (bots fill empty seats)'} icon="play" onPress={start} style={{ alignSelf: 'center' }} />
       {state.disconnected && <Pill tone="danger" icon="warning" text="Connection lost. Go back to Home and tap Resume." />}
       {state.lastError && <Pill tone="danger" icon="warning" text={state.lastError} />}
     </ScrollView>

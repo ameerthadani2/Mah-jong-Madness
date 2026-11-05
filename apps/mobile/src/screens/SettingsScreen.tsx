@@ -2,9 +2,10 @@ import React from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, TextInput } from 'react-native';
 import { BOT_SKILLS, DEFAULT_RULES, describeRules, RULE_PRESETS, rulesFromPreset, SPEED_PRESETS, withSpeed, type BotSkill, type GameSpeed } from '@mjm/engine';
 import { useApp } from '../app-state';
+import { BUILD_SIGNAL_URL } from '../config';
 import { AVATARS } from '../storage';
 import { TABLE_THEMES } from '../themes';
-import { ownsCosmetic } from '../monetisation/store';
+import { hasTier, ownsCosmetic } from '../monetisation/store';
 import { colors, fonts, space } from '../theme';
 import { Button, Card, Chip, H2, P, Row, ScreenHeader, Stepper, Toggle } from '../components/Ui';
 import { AvatarPlate } from '../components/Avatars';
@@ -60,12 +61,14 @@ export function SettingsScreen() {
       </Card>
       <Card>
         <H2>Coach & bots</H2>
-        <Toggle label="Show coach panel at the table" value={settings.coach} onChange={(coach) => setSettings({ ...settings, coach })} />
+        <Toggle label="Show the coach at bot tables (never online)" value={settings.coach} onChange={(coach) => setSettings({ ...settings, coach })} />
         <P dim style={{ fontSize: 12 }}>Bot strength</P>
         <Row style={{ flexWrap: 'wrap', rowGap: 6 }}>
-          {(Object.keys(BOT_SKILLS) as BotSkill[]).map((k) => (
-            <Chip key={k} label={`${BOT_SKILLS[k].label} (${BOT_SKILLS[k].rating})`} selected={settings.botSkill === k} onPress={() => setSettings({ ...settings, botSkill: k })} />
-          ))}
+          {(Object.keys(BOT_SKILLS) as BotSkill[]).map((k) => {
+            // Same lock as the Home screen: Pro bots come with Coach Gold.
+            const locked = k === 'pro' && !hasTier(app.wallet, 'gold');
+            return <Chip key={k} label={BOT_SKILLS[k].label} selected={settings.botSkill === k} locked={locked} onPress={() => (locked ? app.go({ name: 'shop' }) : setSettings({ ...settings, botSkill: k }))} />;
+          })}
         </Row>
         <P dim style={{ fontSize: 12 }}>{BOT_SKILLS[settings.botSkill].description}</P>
       </Card>
@@ -99,14 +102,16 @@ export function SettingsScreen() {
         <Toggle label="無花 1 台" value={rules.noFlowerTai} onChange={(v) => setRule('noFlowerTai', v)} />
         <Button small kind="ghost" title="Reset to defaults" onPress={() => setSettings({ ...settings, rules: DEFAULT_RULES })} style={{ alignSelf: 'flex-start' }} />
       </Card>
-      <Card>
-        <H2>Network</H2>
-        <P dim style={{ fontSize: 13 }}>
-          Signaling server (WebSocket). Only used to exchange room codes and connection details; the game itself runs between the phones.
-        </P>
-        <TextInput value={settings.signalUrl} onChangeText={(signalUrl) => setSettings({ ...settings, signalUrl })} autoCapitalize="none" autoCorrect={false} style={styles.input} />
-        <Toggle label="Prefer neutral server-hosted tables" value={settings.hostedTables} onChange={(hostedTables) => setSettings({ ...settings, hostedTables })} />
-      </Card>
+      {__DEV__ && (
+        <Card>
+          <H2>Network (development builds)</H2>
+          <P dim style={{ fontSize: 13 }}>
+            Game server for online tables and clubs. Leave empty to use this build's server ({BUILD_SIGNAL_URL}). Release builds always use the build's server.
+          </P>
+          <TextInput value={settings.devSignalUrl ?? ''} onChangeText={(v) => setSettings({ ...settings, devSignalUrl: v })} placeholder={BUILD_SIGNAL_URL} placeholderTextColor="#9AA0BF" autoCapitalize="none" autoCorrect={false} style={styles.input} />
+          <P dim style={{ fontSize: 12 }}>Now using {app.signalUrl}</P>
+        </Card>
+      )}
     </ScrollView>
   );
 }

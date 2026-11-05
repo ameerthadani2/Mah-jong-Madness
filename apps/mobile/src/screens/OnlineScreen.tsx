@@ -3,8 +3,9 @@ import { ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { describeRules } from '@mjm/engine';
 import { useApp } from '../app-state';
 import { createOnlineSession } from '../game/session';
+import { friendlyError } from '../logic/errors';
 import { colors, fonts, space } from '../theme';
-import { Button, Card, H2, P, Row, ScreenHeader, Toggle } from '../components/Ui';
+import { Button, Card, H2, P, Row, ScreenHeader } from '../components/Ui';
 import { Icon } from '../components/Icons';
 
 export function OnlineScreen() {
@@ -12,27 +13,25 @@ export function OnlineScreen() {
   const [code, setCode] = useState('');
   const [busy, setBusy] = useState<'create' | 'join' | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [hosted, setHosted] = useState(app.settings.hostedTables);
 
   const run = async (action: 'create' | 'join') => {
     setBusy(action);
     setError(null);
     try {
       const session = await createOnlineSession({
-        signalUrl: app.settings.signalUrl,
+        signalUrl: app.signalUrl,
         name: app.profile.name || 'Player',
         avatar: app.profile.avatar,
         userId: app.profile.userId,
         rules: app.settings.rules,
         action,
         code: code.trim().toUpperCase(),
-        hostedByServer: hosted,
         botSkill: app.settings.botSkill,
       });
       app.setSession(session);
       app.go({ name: 'lobby' });
     } catch (e) {
-      setError((e as Error).message || 'Could not connect');
+      setError(friendlyError(e));
     } finally {
       setBusy(null);
     }
@@ -44,7 +43,7 @@ export function OnlineScreen() {
       <View style={styles.note}>
         <Icon name="shield" size={20} />
         <P style={{ flex: 1, fontSize: 13, lineHeight: 18 }}>
-          Tables are hosted peer to peer: the phone that creates the table runs the game and every player audits each hand. Share the 6-letter code by any chat app.
+          Tables run on the game server; every player verifies each hand. Share the table code by any chat app.
         </P>
       </View>
       <View style={styles.cols}>
@@ -54,10 +53,7 @@ export function OnlineScreen() {
             <H2>Create a table</H2>
           </Row>
           <P dim style={{ fontSize: 13 }}>{describeRules(app.settings.rules)}</P>
-          <Toggle label="Neutral server hosts the table" value={hosted} onChange={setHosted} />
-          <P dim style={{ fontSize: 12 }}>
-            {hosted ? 'The signaling server deals and referees; no player can peek at the wall.' : 'Your phone deals and referees. Fastest, works on a shared Wi-Fi.'}
-          </P>
+          <P dim style={{ fontSize: 12 }}>The server deals and referees, so no player can see the wall. Empty seats can be filled with bots.</P>
           <Button title={busy === 'create' ? 'Creating…' : 'Create table'} onPress={() => void run('create')} disabled={busy !== null} />
         </Card>
         <Card style={styles.col}>
@@ -75,9 +71,11 @@ export function OnlineScreen() {
             <Icon name="warning" size={24} />
             <P style={{ flex: 1 }}>{error}</P>
           </Row>
-          <P dim style={{ fontSize: 12 }}>
-            Signaling server: {app.settings.signalUrl}. Change it in Settings, or run `npm run signal` on a laptop on the same network.
-          </P>
+          {__DEV__ && (
+            <P dim style={{ fontSize: 12 }}>
+              Game server: {app.signalUrl}. Development builds can change it in Settings.
+            </P>
+          )}
         </Card>
       )}
     </ScrollView>

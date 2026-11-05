@@ -1,7 +1,8 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { DEFAULT_RULES, type BotSkill, type RuleSet } from '@mjm/engine';
+import { DEFAULT_RULES, sanitizeRules, type BotSkill, type RuleSet } from '@mjm/engine';
 import { randomHex, type SerializedHost } from '@mjm/net';
-import Constants from 'expo-constants';
+import { effectiveStreak as streakOn } from './logic/daily';
+import { localDateKey, previousDateKey } from './logic/dates';
 
 export interface Profile {
   /** Stable, client-generated id used by clubs until real sign-in lands. */
@@ -15,8 +16,11 @@ export interface Profile {
 export interface Settings {
   rules: RuleSet;
   coach: boolean;
-  signalUrl: string;
-  hostedTables: boolean;
+  /**
+   * Development builds only: a signalling server to use instead of the build's own.
+   * Release builds ignore it; the build's server address is never stored.
+   */
+  devSignalUrl?: string;
   botSkill: BotSkill;
   sound: boolean;
   tableTheme: string;
@@ -28,7 +32,7 @@ export interface Progress {
   drillsCorrect: number;
   handsPlayed: number;
   handsWon: number;
-  /** Daily puzzle: one attempt per UTC day, recorded as correct or wrong. */
+  /** Daily puzzle: one attempt per local calendar day, recorded as correct or wrong. */
   dailySolved: Record<string, 'correct' | 'wrong'>;
   dailyStreak: number;
   dailyLastDate: string | null;
@@ -49,10 +53,8 @@ export type ActiveSession =
 
 const KEYS = { profile: 'mjm.profile', settings: 'mjm.settings', progress: 'mjm.progress', session: 'mjm.activeSession' } as const;
 
-const extra = (Constants.expoConfig?.extra ?? {}) as { signalUrl?: string };
-
 export const DEFAULT_PROFILE: Profile = { userId: '', userSecret: '', name: '', avatar: 'lady' };
-export const DEFAULT_SETTINGS: Settings = { rules: DEFAULT_RULES, coach: true, signalUrl: extra.signalUrl ?? 'ws://localhost:8787', hostedTables: false, botSkill: 'club', sound: true, tableTheme: 'classic' };
+export const DEFAULT_SETTINGS: Settings = { rules: DEFAULT_RULES, coach: true, botSkill: 'beginner', sound: true, tableTheme: 'classic' };
 export const DEFAULT_PROGRESS: Progress = {
   lessonsDone: {},
   drillsPlayed: 0,
@@ -98,8 +100,9 @@ export const storage = {
   },
   saveProfile: (p: Profile) => save(KEYS.profile, p),
   loadSettings: async (): Promise<Settings> => {
-    const s = await load(KEYS.settings, DEFAULT_SETTINGS);
-    return { ...s, rules: { ...DEFAULT_RULES, ...s.rules } };
+    // Older builds saved `signalUrl` (which froze the server address) and `hostedTables`; drop both.
+    const { signalUrl: _signalUrl, hostedTables: _hostedTables, ...s } = (await load(KEYS.settings, DEFAULT_SETTINGS)) as Settings & { signalUrl?: unknown; hostedTables?: unknown };
+    return { ...s, rules: sanitizeRules(s.rules) };
   },
   saveSettings: (s: Settings) => save(KEYS.settings, s),
   loadProgress: () => load(KEYS.progress, DEFAULT_PROGRESS),
@@ -129,17 +132,16 @@ export const storage = {
 /** Avatar ids (≤ 8 chars, the host trims longer values); drawn by components/Avatars.tsx. */
 export const AVATARS = ['auntie', 'uncle', 'grandma', 'boss', 'lady', 'shades', 'hoops', 'cowboy', 'student', 'chef', 'sporty', 'gent'];
 
+/** Local calendar date key (`YYYY-MM-DD`): daily puzzles and streaks roll over at local midnight. */
 export function todayKey(d = new Date()): string {
-  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
+  return localDateKey(d);
 }
 
 export function yesterdayKey(d = new Date()): string {
-  const y = new Date(d.getTime() - 86400_000);
-  return todayKey(y);
+  return previousDateKey(localDateKey(d));
 }
 
 /** Streak as it should be displayed: it dies once a day has been missed. */
 export function effectiveStreak(p: Progress, d = new Date()): number {
-  if (!p.dailyLastDate) return 0;
-  return p.dailyLastDate === todayKey(d) || p.dailyLastDate === yesterdayKey(d) ? p.dailyStreak : 0;
+  return streakOn(p, localDateKey(d));
 }

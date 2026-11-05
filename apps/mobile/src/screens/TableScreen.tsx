@@ -5,6 +5,7 @@ import { hintFor, kindInfo, kindOf, legalActions, viewToState, WINDS, type Actio
 import type { ClientState } from '@mjm/net';
 import { useApp } from '../app-state';
 import { useCountdown, useSession } from '../game/useTable';
+import { nextFadeDelay } from '../logic/fade';
 import { colors, fonts, nameFont, space } from '../theme';
 import { Tile, HiddenHand, tileDims, type TileSize } from '../components/Tile';
 import { Compass, DiscardPool, FeltFrame, MeldsAndFlowers, MeldView, SeatBadge, WallRing } from '../components/TableParts';
@@ -17,6 +18,10 @@ import { Emote } from '../components/Emotes';
 import * as Haptics from 'expo-haptics';
 import { EMOTES, QUICK_CHATS, TableThemeContext, themeById } from '../themes';
 
+/** How long an emote bubble and a chat line stay on screen. */
+const EMOTE_MS = 3500;
+const CHAT_MS = 6000;
+
 /** Hands whose result has already been celebrated (survives the table screen remounting). */
 const celebratedHands = new Set<string>();
 
@@ -28,15 +33,23 @@ export function TableScreen() {
   const insets = useSafeAreaInsets();
   const width = winW - insets.left - insets.right;
   const [selected, setSelected] = useState<TileId | null>(null);
-  const [coachOpen, setCoachOpen] = useState(app.settings.coach);
+  // The coach is a practice aid: offline bot tables only, never at an online table with other people.
+  const coachAllowed = session?.mode === 'local';
+  const [coachWanted, setCoachOpen] = useState(app.settings.coach);
+  const coachOpen = coachAllowed && coachWanted;
   const [emotePicker, setEmotePicker] = useState(false);
   const theme = themeById(app.settings.tableTheme);
-  const [, forceTick] = useState(0);
-  // Re-render every second so emote bubbles and chat lines fade on time.
+  // Re-render once when the next emote bubble or chat line is due to fade, rather than on a fixed tick.
+  const [fadeTick, forceTick] = useState(0);
   useEffect(() => {
-    const id = setInterval(() => forceTick((n) => n + 1), 1000);
-    return () => clearInterval(id);
-  }, []);
+    const delay = nextFadeDelay(Date.now(), [
+      { at: (state?.emotes ?? []).map((e) => e.at), ttl: EMOTE_MS },
+      { at: (state?.chat ?? []).map((c) => c.at), ttl: CHAT_MS },
+    ]);
+    if (delay === null) return;
+    const id = setTimeout(() => forceTick((n) => n + 1), delay + 20);
+    return () => clearTimeout(id);
+  }, [state?.emotes, state?.chat, fadeTick]);
   const countdown = useCountdown(state?.deadline ?? null);
 
   const view = state?.view ?? null;
@@ -82,7 +95,6 @@ export function TableScreen() {
       });
     }
     meldSig.current = { hand: view.handNumber, melds, kongs };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [view]);
   // Hold the result sheet back briefly so the win celebration is visible first — once per hand,
   // so coming back from the review or fair-play screen shows the results straight away.
@@ -191,7 +203,7 @@ export function TableScreen() {
   const latestDiscard = view.lastDiscard?.tile;
   const now = Date.now();
   const latestEmote = (seat: number) => {
-    const e = [...state.emotes].reverse().find((x) => x.seat === seat && now - x.at < 3500);
+    const e = [...state.emotes].reverse().find((x) => x.seat === seat && now - x.at < EMOTE_MS);
     return e?.emote;
   };
   const rules = state.rules;
@@ -241,7 +253,7 @@ export function TableScreen() {
     );
   };
 
-  const recentChat = state.chat.filter((c) => now - c.at < 6000).slice(-3);
+  const recentChat = state.chat.filter((c) => now - c.at < CHAT_MS).slice(-3);
   const waitKinds = new Set(hint?.waits.map((w) => w.kind) ?? []);
   const bestDiscard = hint?.bestDiscard?.tile;
   const relWind = (r: number) => WINDS[(seatAt(r) - view.dealerSeat + 4) % 4];
@@ -330,7 +342,7 @@ export function TableScreen() {
           </Row>
           <Row gap={8}>
             <IconButton icon="smile" kind={emotePicker ? 'gold' : 'ghost'} size={38} onPress={() => setEmotePicker((v) => !v)} />
-            <IconButton icon="cap" kind={coachOpen ? 'primary' : 'ghost'} size={38} onPress={() => setCoachOpen((v) => !v)} />
+            {coachAllowed && <IconButton icon="cap" kind={coachOpen ? 'primary' : 'ghost'} size={38} onPress={() => setCoachOpen((v) => !v)} />}
             <IconButton testID="leave-table" icon="exit" kind="danger" size={38} onPress={leave} />
           </Row>
         </View>

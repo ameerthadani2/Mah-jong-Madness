@@ -3,7 +3,10 @@ import { ScrollView, StyleSheet, View } from 'react-native';
 import { dailyPuzzle, dailySeed, rushPuzzle } from '@mjm/engine';
 import { randomHex } from '@mjm/net';
 import { useApp } from '../app-state';
-import { effectiveStreak, todayKey, yesterdayKey } from '../storage';
+import { effectiveStreak, todayKey } from '../storage';
+import { nextDailyProgress } from '../logic/daily';
+import { localDayAsUtc } from '../logic/dates';
+import { rushOutcome } from '../logic/rush';
 import { canUse, consume } from '../monetisation/store';
 import { colors, fonts, space } from '../theme';
 import { PuzzleView } from '../components/PuzzleView';
@@ -12,8 +15,10 @@ import { Icon } from '../components/Icons';
 
 export function DailyPuzzleScreen() {
   const app = useApp();
-  const today = todayKey();
-  const puzzle = useMemo(() => dailyPuzzle(new Date()), []);
+  // One puzzle per local calendar day, recorded under the same local date key.
+  const [day] = useState(() => new Date());
+  const today = todayKey(day);
+  const puzzle = useMemo(() => dailyPuzzle(localDayAsUtc(day)), [day]);
   const attemptedBefore = app.progress.dailySolved[today] !== undefined;
   const [done, setDone] = useState(attemptedBefore);
   const [wasCorrect, setWasCorrect] = useState<boolean | null>(null);
@@ -23,10 +28,8 @@ export function DailyPuzzleScreen() {
     setDone(true);
     setWasCorrect(r.correct);
     app.setProgress((p) => {
-      if (p.dailySolved[today] !== undefined) return p;
-      const continues = effectiveStreak(p) > 0 && p.dailyLastDate === yesterdayKey();
-      const nextStreak = r.correct ? (continues ? p.dailyStreak + 1 : 1) : 0;
-      return { ...p, dailySolved: { ...p.dailySolved, [today]: r.correct ? 'correct' : 'wrong' }, dailyStreak: nextStreak, dailyLastDate: today, drillsPlayed: p.drillsPlayed + 1, drillsCorrect: p.drillsCorrect + (r.correct ? 1 : 0) };
+      const next = nextDailyProgress(p, r.correct, today);
+      return next === p ? p : { ...next, drillsPlayed: p.drillsPlayed + 1, drillsCorrect: p.drillsCorrect + (r.correct ? 1 : 0) };
     });
   };
 
@@ -34,7 +37,7 @@ export function DailyPuzzleScreen() {
     <ScrollView contentContainerStyle={styles.wrap}>
       <ScreenHeader title="Daily puzzle" onBack={app.back} />
       <Row style={{ flexWrap: 'wrap', rowGap: 6 }}>
-        <Pill icon="scroll" text={dailySeed(new Date()).replace('daily-', '')} />
+        <Pill icon="scroll" text={dailySeed(localDayAsUtc(day)).replace('daily-', '')} />
         <Pill icon="flame" text={`${streak}-day streak`} tone={streak > 0 ? 'gold' : 'neutral'} />
         {attemptedBefore && <Pill text={app.progress.dailySolved[today] === 'correct' ? 'Solved today' : 'Attempted today'} tone={app.progress.dailySolved[today] === 'correct' ? 'ok' : 'neutral'} />}
       </Row>
@@ -53,7 +56,7 @@ export function DailyPuzzleScreen() {
         )}
       </Card>
       <P style={{ fontSize: 12 }}>
-        Everyone in the world gets the same puzzle each day. Weekends are harder.
+        Everyone gets the same puzzle on the same date, and a new one at local midnight. Weekends are harder. Any attempt keeps your streak going.
       </P>
     </ScrollView>
   );
@@ -103,6 +106,8 @@ export function PuzzleRushScreen() {
 function PuzzleRushRun({ onAgain }: { onAgain: () => void }) {
   const app = useApp();
   const [runSeed] = useState(() => `rush-${randomHex(4)}`);
+  // The saved best is raised as soon as the run ends, so judge the run against the best from before it.
+  const [prevBest] = useState(() => app.progress.rushBest);
   const [index, setIndex] = useState(0);
   const [score, setScore] = useState(0);
   const [strikes, setStrikes] = useState(0);
@@ -152,7 +157,7 @@ function PuzzleRushRun({ onAgain }: { onAgain: () => void }) {
             <StrokeText style={styles.big} strokeWidth={3} drop={3}>
               {String(score)}
             </StrokeText>
-            <H2>{score > app.progress.rushBest ? 'New personal best!' : score >= app.progress.rushBest && score > 0 ? 'Matched your best' : 'Run over'}</H2>
+            <H2>{rushOutcome(prevBest, score).title}</H2>
             <P dim>
               {strikes >= RUSH_STRIKES ? 'Three strikes.' : 'Time is up.'} Puzzles get harder the further you go.
             </P>

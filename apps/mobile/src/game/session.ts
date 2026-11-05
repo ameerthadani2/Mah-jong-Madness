@@ -1,29 +1,20 @@
 /**
  * Creates a playable table session: either fully local (this device hosts and
- * plays against bots) or online (this device hosts for friends, or joins a
- * host — another phone or a neutral server).
+ * plays against bots, offline) or online (the game server hosts the table and
+ * every player, this device included, verifies each hand).
  */
 import { type BotSkill, type RuleSet } from '@mjm/engine';
-import {
-  LoopbackHub,
-  RelayTransport,
-  SignalingClient,
-  TableClient,
-  TableHost,
-  WebRTCTransport,
-  transportLink,
-  type PeerConnectionFactory,
-  type SerializedHost,
-  type Transport,
-} from '@mjm/net';
+import { LoopbackHub, RelayTransport, SignalingClient, TableClient, TableHost, transportLink, type RoomInfo, type SerializedHost } from '@mjm/net';
 
 export interface Session {
   client: TableClient;
-  /** Present when this device is the host. */
+  /** Present only for local play, where this device runs the table. */
   host: TableHost | null;
   roomCode: string;
-  mode: 'local' | 'host' | 'guest';
-  transportKind: 'loopback' | 'relay' | 'webrtc';
+  mode: 'local' | 'online';
+  transportKind: 'loopback' | 'relay';
+  /** Online only: the game server this table lives on (a resume must go back to it). */
+  serverUrl?: string;
   clubCode?: string;
   close(): void;
 }
@@ -59,97 +50,52 @@ export function createLocalSession(name: string, avatar: string, rules: RuleSet,
   };
 }
 
-let registeredFactory: PeerConnectionFactory | null = null;
-
-/**
- * Register a WebRTC implementation for direct peer-to-peer data channels.
- * In a dev-client / EAS build with `react-native-webrtc` installed, call this
- * once at startup (see index.js):
- *
- *   import { RTCPeerConnection } from 'react-native-webrtc';
- *   registerPeerConnectionFactory((cfg) => new RTCPeerConnection(cfg));
- *
- * Without it (e.g. Expo Go) the app falls back to the relay transport, which
- * works everywhere at the cost of a hop through the signaling server.
- */
-export function registerPeerConnectionFactory(factory: PeerConnectionFactory): void {
-  registeredFactory = factory;
-}
-
-function findPeerConnection(): PeerConnectionFactory | null {
-  if (registeredFactory) return registeredFactory;
-  const g = globalThis as unknown as { RTCPeerConnection?: new (cfg: unknown) => unknown };
-  if (typeof g.RTCPeerConnection === 'function') {
-    const Ctor = g.RTCPeerConnection;
-    return (cfg) => new Ctor(cfg) as ReturnType<PeerConnectionFactory>;
-  }
-  return null;
-}
-
 export interface OnlineOptions {
   signalUrl: string;
   name: string;
   avatar: string;
   userId?: string;
   rules: RuleSet;
-  /** 'create' hosts a new table; 'join' joins by code. */
+  /** 'create' asks the game server for a new table; 'join' joins one by code. */
   action: 'create' | 'join';
   code?: string;
-  /** Ask the signaling server to host the table as a neutral party. */
-  hostedByServer?: boolean;
   botSkill?: BotSkill;
-  preferWebRTC?: boolean;
   /** Rejoin token from a previous session at this table. */
   token?: string;
   clubCode?: string;
+}
+
+/**
+ * Asks the game server to host a new table with these rules. The only place that
+ * reaches past the public SignalingClient API; swap the body for
+ * `signaling.createHostedRoom(rules, botSkill)` once that method exists.
+ */
+export function requestHostedRoom(signaling: SignalingClient, rules: RuleSet, botSkill: BotSkill | undefined): Promise<RoomInfo> {
+  const raw = signaling as unknown as { roomRequest: (m: unknown) => Promise<RoomInfo> };
+  return raw.roomRequest({ t: 'create', hosted: true, rules, botSkill });
 }
 
 export async function createOnlineSession(opts: OnlineOptions): Promise<Session> {
   const signaling = new SignalingClient(opts.signalUrl);
   await signaling.connect();
   try {
-    return await buildOnlineSession(signaling, opts);
+    const transport = new RelayTransport(signaling, 'game');
+    const room = opts.action === 'create' ? await requestHostedRoom(signaling, opts.rules, opts.botSkill) : await signaling.joinRoom(opts.code ?? '');
+    const client = new TableClient(transportLink(transport, room.host), opts.name, opts.avatar, { token: opts.token, userId: opts.userId });
+    client.join();
+    return {
+      client,
+      host: null,
+      roomCode: room.room,
+      mode: 'online',
+      transportKind: 'relay',
+      serverUrl: opts.signalUrl,
+      clubCode: opts.clubCode,
+      // Leaving closes the relay transport, which closes the signalling socket.
+      close: () => client.leave(),
+    };
   } catch (e) {
     signaling.close();
     throw e;
   }
-}
-
-async function buildOnlineSession(signaling: SignalingClient, opts: OnlineOptions): Promise<Session> {
-  const pcFactory = opts.preferWebRTC === false ? null : findPeerConnection();
-  const transport: Transport = pcFactory ? new WebRTCTransport(signaling, pcFactory) : new RelayTransport(signaling, 'game');
-  const transportKind = pcFactory ? 'webrtc' : 'relay';
-  const identity = { token: opts.token, userId: opts.userId };
-
-  if (opts.action === 'create') {
-    const room = await (opts.hostedByServer
-      ? (signaling as unknown as { roomRequest: (m: unknown) => Promise<{ room: string; host: string }> }).roomRequest({ t: 'create', hosted: true, rules: opts.rules, botSkill: opts.botSkill })
-      : signaling.createRoom());
-    if (opts.hostedByServer) {
-      const client = new TableClient(transportLink(transport, room.host), opts.name, opts.avatar, identity);
-      client.join();
-      return { client, host: null, roomCode: room.room, mode: 'guest', transportKind, clubCode: opts.clubCode, close: () => client.leave() };
-    }
-    const host = new TableHost(transport, { roomCode: room.room, rules: opts.rules, botDelayMs: 650, botSkill: opts.botSkill });
-    const client = new TableClient(host.localLink('me'), opts.name, opts.avatar, identity);
-    client.join();
-    return {
-      client,
-      host,
-      roomCode: room.room,
-      mode: 'host',
-      transportKind,
-      clubCode: opts.clubCode,
-      close: () => {
-        client.leave();
-        host.close();
-      },
-    };
-  }
-
-  const room = await signaling.joinRoom(opts.code ?? '');
-  if (transport instanceof WebRTCTransport) void transport.connectAll();
-  const client = new TableClient(transportLink(transport, room.host), opts.name, opts.avatar, identity);
-  client.join();
-  return { client, host: null, roomCode: room.room, mode: 'guest', transportKind, clubCode: opts.clubCode, close: () => client.leave() };
 }

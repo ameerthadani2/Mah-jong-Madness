@@ -4,6 +4,7 @@ import { describeRules, RULE_PRESETS, rulesFromPreset, SPEED_PRESETS, withSpeed,
 import { useApp } from '../app-state';
 import { clubsApi, httpBase, type Club } from '../api/clubs';
 import { createOnlineSession } from '../game/session';
+import { friendlyError } from '../logic/errors';
 import { colors, fonts, nameFont, space } from '../theme';
 import { Button, Card, Chip, H2, P, Pill, Row, ScreenHeader, SectionLabel, Toggle } from '../components/Ui';
 import { AvatarPlate } from '../components/Avatars';
@@ -11,7 +12,7 @@ import { Icon } from '../components/Icons';
 
 export function ClubsScreen() {
   const app = useApp();
-  const base = httpBase(app.settings.signalUrl);
+  const base = httpBase(app.signalUrl);
   const user = { userId: app.profile.userId, name: app.profile.name || 'Player', avatar: app.profile.avatar, secret: app.profile.userSecret };
   const [clubs, setClubs] = useState<Club[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -26,7 +27,7 @@ export function ClubsScreen() {
       setClubs(await clubsApi.mine(base, user.userId));
       setError(null);
     } catch (e) {
-      setError((e as Error).message);
+      setError(friendlyError(e));
     }
   }, [base, user.userId]);
   useEffect(() => {
@@ -41,7 +42,7 @@ export function ClubsScreen() {
       await refresh();
       app.go({ name: 'club', code: club.code });
     } catch (e) {
-      setError((e as Error).message);
+      setError(friendlyError(e));
     }
   };
   const join = async () => {
@@ -52,7 +53,7 @@ export function ClubsScreen() {
       if (r.status === 'pending') setError('Request sent — an admin must approve you.');
       else app.go({ name: 'club', code: r.club.code });
     } catch (e) {
-      setError((e as Error).message);
+      setError(friendlyError(e));
     }
   };
 
@@ -128,7 +129,7 @@ export function ClubsScreen() {
 
 export function ClubScreen({ code }: { code: string }) {
   const app = useApp();
-  const base = httpBase(app.settings.signalUrl);
+  const base = httpBase(app.signalUrl);
   const user = { userId: app.profile.userId, name: app.profile.name || 'Player', avatar: app.profile.avatar, secret: app.profile.userSecret };
   const [club, setClub] = useState<Club | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -140,7 +141,7 @@ export function ClubScreen({ code }: { code: string }) {
       setClub(await clubsApi.get(base, code));
       setError(null);
     } catch (e) {
-      setError((e as Error).message);
+      setError(friendlyError(e));
     }
   }, [base, code]);
   useEffect(() => {
@@ -167,7 +168,7 @@ export function ClubScreen({ code }: { code: string }) {
       const t = await clubsApi.openTable(base, club.code, user, { label: `${user.name}'s table`, botSkill: app.settings.botSkill });
       await joinTable(t.code);
     } catch (e) {
-      setError((e as Error).message);
+      setError(friendlyError(e));
     } finally {
       setBusy(false);
     }
@@ -175,11 +176,11 @@ export function ClubScreen({ code }: { code: string }) {
   const joinTable = async (tableCode: string) => {
     setBusy(true);
     try {
-      const session = await createOnlineSession({ signalUrl: app.settings.signalUrl, name: user.name, avatar: user.avatar, userId: user.userId, rules: club.rules, action: 'join', code: tableCode, clubCode: club.code });
+      const session = await createOnlineSession({ signalUrl: app.signalUrl, name: user.name, avatar: user.avatar, userId: user.userId, rules: club.rules, action: 'join', code: tableCode, clubCode: club.code });
       app.setSession(session);
       app.go({ name: 'lobby' });
     } catch (e) {
-      setError((e as Error).message);
+      setError(friendlyError(e));
     } finally {
       setBusy(false);
     }
@@ -188,7 +189,7 @@ export function ClubScreen({ code }: { code: string }) {
     try {
       setClub(await clubsApi.update(base, club.code, user, { rules }));
     } catch (e) {
-      setError((e as Error).message);
+      setError(friendlyError(e));
     }
   };
 
@@ -244,7 +245,7 @@ export function ClubScreen({ code }: { code: string }) {
                     <AvatarPlate id={p.avatar} size={34} />
                     <P>{p.name}</P>
                   </Row>
-                  <Button small title="Approve" onPress={() => void clubsApi.approve(base, club.code, user, p.userId).then(setClub).catch((e: Error) => setError(e.message))} />
+                  <Button small title="Approve" onPress={() => void clubsApi.approve(base, club.code, user, p.userId).then(setClub).catch((e: unknown) => setError(friendlyError(e)))} />
                 </Row>
               ))}
             </Card>

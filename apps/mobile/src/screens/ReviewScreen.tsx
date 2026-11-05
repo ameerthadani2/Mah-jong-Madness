@@ -3,6 +3,7 @@ import { ScrollView, StyleSheet, View } from 'react-native';
 import { kindInfo, kindOf, reviewHand, type MoveGrade, type ReviewedMove } from '@mjm/engine';
 import { useApp } from '../app-state';
 import { canUse, consume } from '../monetisation/store';
+import { rollingAccuracy } from '../logic/accuracy';
 import { colors, fonts, space } from '../theme';
 import { Tile } from '../components/Tile';
 import { Button, Card, H1, P, Pill, Row, ScreenHeader, SectionLabel, StrokeText } from '../components/Ui';
@@ -79,6 +80,7 @@ export function ReviewScreen() {
     );
   }
   const mistakes = review.moves.filter((m) => m.grade !== 'best' && m.grade !== 'good');
+  const rolling = rollingAccuracy(app.progress.reviewAccuracies);
   return (
     <ScrollView contentContainerStyle={styles.wrap}>
       <ScreenHeader title="Hand review" onBack={app.back} />
@@ -89,6 +91,11 @@ export function ReviewScreen() {
           </StrokeText>
         </View>
         <P dim>accuracy over {review.moves.length} decisions</P>
+        {rolling !== null && (
+          <P dim style={{ fontSize: 12 }}>
+            Your average over the last {app.progress.reviewAccuracies.length} reviewed {app.progress.reviewAccuracies.length === 1 ? 'hand' : 'hands'}: {rolling}%
+          </P>
+        )}
         <Row style={{ flexWrap: 'wrap', justifyContent: 'center', rowGap: 6 }}>
           {(Object.keys(GRADE_LABEL) as MoveGrade[]).map((g) => (
             <Pill key={g} icon={GRADE_LABEL[g].icon} text={`${GRADE_LABEL[g].label} ${review.counts[g]}`} tone={review.counts[g] ? GRADE_LABEL[g].tone : 'neutral'} />

@@ -1,8 +1,10 @@
 import React, { useState } from 'react';
 import { ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
-import { kindsFromString, LESSONS, kindFromCode, type LessonStep } from '@mjm/engine';
+import { kindsFromString, LESSONS, type LessonStep } from '@mjm/engine';
 import { useApp } from '../app-state';
 import { effectiveStreak } from '../storage';
+import { rollingAccuracy } from '../logic/accuracy';
+import { lessonAnswers, lessonComplete } from '../logic/lesson';
 import { colors, fonts, space } from '../theme';
 import { Tile } from '../components/Tile';
 import { Button, Card, H2, P, Pill, Row, ScreenHeader, SectionLabel, StrokeText } from '../components/Ui';
@@ -20,6 +22,7 @@ export function LearnScreen() {
   const drillW = Math.floor((width - pad * 2 - space.md * (cols - 1)) / cols);
   const lessonW = Math.floor((width - pad * 2 - space.md * (lessonCols - 1)) / lessonCols);
   const lessonsDone = Object.keys(done).length;
+  const reviewAcc = rollingAccuracy(app.progress.reviewAccuracies);
   return (
     <ScrollView contentContainerStyle={[styles.wrap, { padding: pad }]}>
       <ScreenHeader title="Learn" onBack={app.back} backTestID="back" right={<Pill text={`${lessonsDone}/${LESSONS.length} lessons`} icon="book" tone="gold" />} />
@@ -29,6 +32,9 @@ export function LearnScreen() {
         <DrillCard w={drillW} icon="target" tint={colors.cta} title="Best discard" text="Random hands; pick the discard. The coach grades shanten and acceptance." stat={acc === null ? 'No drills yet' : `${acc}% · ${app.progress.drillsPlayed} played`} statIcon="check" cta="Train" kind="primary" onPress={() => app.go({ name: 'drill', kind: 'discard' })} />
         <DrillCard w={drillW} icon="magnifier" tint={colors.info} title="Read the wait" text="A ready hand is shown. Which tiles complete it? Spot every 聽." cta="Train" kind="secondary" onPress={() => app.go({ name: 'drill', kind: 'waits' })} />
       </View>
+      <Row style={{ flexWrap: 'wrap', rowGap: 6 }}>
+        <Pill icon="magnifier" text={reviewAcc === null ? 'Review a hand after a game to track your accuracy' : `Hand review accuracy ${reviewAcc}% · last ${app.progress.reviewAccuracies.length} reviewed`} tone={reviewAcc === null ? 'neutral' : 'ok'} />
+      </Row>
       <SectionLabel>Lessons</SectionLabel>
       <View style={styles.grid}>
         {LESSONS.map((l, i) => (
@@ -133,20 +139,24 @@ export function LessonScreen({ id }: { id: string }) {
   const app = useApp();
   const lesson = LESSONS.find((l) => l.id === id)!;
   const [i, setI] = useState(0);
-  const [answer, setAnswer] = useState<string | null>(null);
+  // The tile last picked for each quiz step, so going back and forth keeps the answers.
+  const [picks, setPicks] = useState<Record<number, string>>({});
   const step: LessonStep = lesson.steps[i];
   const last = i === lesson.steps.length - 1;
   const quiz = step.quiz;
-  const correct = quiz && answer !== null && kindFromCode(answer) === kindFromCode(quiz.answer);
+  const answer = picks[i] ?? null;
+  const answers = lessonAnswers(lesson.steps, picks);
+  const correct = answers[i] === 'correct';
+  const complete = lessonComplete(answers);
 
   const next = () => {
     if (last) {
-      app.setProgress((p) => ({ ...p, lessonsDone: { ...p.lessonsDone, [lesson.id]: true } }));
+      // Only a lesson whose every quiz was answered correctly counts as done.
+      if (complete) app.setProgress((p) => ({ ...p, lessonsDone: { ...p.lessonsDone, [lesson.id]: true } }));
       app.back();
       return;
     }
     setI(i + 1);
-    setAnswer(null);
   };
 
   return (
@@ -167,22 +177,24 @@ export function LessonScreen({ id }: { id: string }) {
             <HandView
               hand={quiz.hand}
               size="md"
-              onPress={(code) => setAnswer(code)}
+              onPress={(code) => setPicks((p) => ({ ...p, [i]: code }))}
               selected={answer}
-              highlight={answer !== null ? { [quiz.answer]: 'good', ...(correct ? {} : { [answer]: 'bad' }) } : undefined}
+              // A wrong pick is marked but the answer stays hidden, so the player can try again.
+              highlight={answer !== null ? (correct ? { [quiz.answer]: 'good' } : { [answer]: 'bad' }) : undefined}
             />
             {answer !== null && (
               <P style={{ color: correct ? colors.okText : colors.dangerText }}>
-                {correct ? 'Correct! ' : 'Not quite. '}
-                <Text style={{ color: colors.ink }}>{quiz.explanation}</Text>
+                {correct ? 'Correct! ' : 'Not quite: tap another tile to try again. '}
+                {correct && <Text style={{ color: colors.ink }}>{quiz.explanation}</Text>}
               </P>
             )}
           </View>
         )}
       </Card>
+      {last && !complete && <Pill icon="warning" text="Answer every quiz correctly to mark this lesson done." />}
       <Row style={{ justifyContent: 'space-between' }}>
         <Button kind="ghost" title="Previous" disabled={i === 0} onPress={() => setI(i - 1)} />
-        <Button title={last ? 'Finish lesson' : 'Next'} disabled={!!quiz && answer === null} onPress={next} />
+        <Button title={last ? (complete ? 'Finish lesson' : 'Leave lesson') : 'Next'} disabled={!!quiz && answer === null} onPress={next} />
       </Row>
     </ScrollView>
   );
