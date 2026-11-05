@@ -289,6 +289,36 @@ describe('seat ownership', () => {
     expect(after.restarts).toEqual([{ attempt: 1, seats: [], cause: 'host_restarted' }]);
   });
 
+  it('a table restored twice while waiting to deal again still admits only token holders', () => {
+    const clock = { now: 1_000_000 };
+    const hub = new LoopbackHub();
+    const host = makeHost(hub, clock);
+    const late = silentRevealer(hub, 'p0', 'Owner');
+    host.start();
+    expect(host.phase).toBe('reveal');
+    const welcome = late.received.find((m) => m.t === 'welcome') as Extract<HostMessage, { t: 'welcome' }>;
+    const first: SerializedHost = JSON.parse(JSON.stringify(host.serialize()));
+    host.close();
+    // Restart one: nobody comes back before the next deploy writes the table again.
+    const hub2 = new LoopbackHub();
+    const once = new TableHost(hub2.create('host'), { roomCode: 'x', restore: first, now: () => clock.now });
+    expect(once.phase).toBe('lobby');
+    const second: SerializedHost = JSON.parse(JSON.stringify(once.serialize()));
+    expect(second.pendingRestart).toBe(true);
+    once.close();
+    // Restart two: the snapshot says 'lobby', but the table is still waiting for its players.
+    const hub3 = new LoopbackHub();
+    const twice = new TableHost(hub3.create('host'), { roomCode: 'x', restore: second, now: () => clock.now });
+    const stranger = new TableClient(transportLink(hub3.create('s'), 'host'), 'Stranger');
+    stranger.join();
+    expect(stranger.state.seat).toBeNull();
+    expect(twice.seatInfo()[0].name).toBe('Owner');
+    const owner = new TableClient(transportLink(hub3.create('o'), 'host'), 'Owner', undefined, { token: welcome.token });
+    owner.join();
+    expect(owner.state.seat).toBe(0);
+    expect(twice.phase).toBe('playing');
+  });
+
   it('rejoining after the match ended shows the final scores', () => {
     const hub = new LoopbackHub();
     const host = new TableHost(hub.create('host'), { roomCode: 'END', rules: withRules({ handsPerMatch: 1 }) });

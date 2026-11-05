@@ -12,6 +12,8 @@ export interface SeatInfo {
   userId?: string;
   /** Remaining time bank in seconds for the current hand. */
   timeBank?: number;
+  /** The player left the table on purpose mid-match (a bot plays until they return); not a lost connection. */
+  left?: boolean;
 }
 
 /** Why a seed ceremony was run again for the same hand. */

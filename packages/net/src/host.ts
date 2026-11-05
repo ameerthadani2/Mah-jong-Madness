@@ -103,6 +103,8 @@ export interface SerializedHost {
   /** Seats blamed for a restart of `ceremonyHand`; the host supplies their shares until the hand changes. */
   standIns?: number[];
   handsWon?: number[];
+  /** The table is in the lobby only because a ceremony was interrupted: only token holders may sit until it is dealt again. */
+  pendingRestart?: boolean;
 }
 
 interface SeatState extends SeatInfo {
@@ -232,7 +234,17 @@ export class TableHost {
   }
 
   seatInfo(): SeatInfo[] {
-    return this.seats.map(({ seat, name, peerId, isBot, connected, avatar, userId }, i) => ({ seat, name, peerId: peerId && peerId.startsWith('gone-') ? null : peerId, isBot, connected, avatar, userId, timeBank: Math.round(this.banks[i] / 1000) }));
+    return this.seats.map(({ seat, name, peerId, isBot, connected, avatar, userId, left }, i) => ({
+      seat,
+      name,
+      peerId: peerId && peerId.startsWith('gone-') ? null : peerId,
+      isBot,
+      connected,
+      avatar,
+      userId,
+      timeBank: Math.round(this.banks[i] / 1000),
+      ...(left ? { left: true } : {}),
+    }));
   }
 
   /**
@@ -261,6 +273,7 @@ export class TableHost {
       ceremonyHand: this.ceremonyHand,
       standIns: [...this.standInSeats],
       handsWon: this.wins.slice(),
+      pendingRestart: this.pendingRestart,
     };
   }
 
@@ -279,6 +292,8 @@ export class TableHost {
     this.ceremonyHand = data.ceremonyHand ?? (this.phase === 'lobby' ? -1 : this.snapshot.handNumber);
     this.standInSeats = new Set((data.standIns ?? []).filter((s) => Number.isInteger(s) && s >= 0 && s <= 3));
     this.wins = data.handsWon?.slice() ?? [0, 0, 0, 0];
+    // A table written while it waited to deal again (a restart during a restart) is still waiting.
+    this.pendingRestart = data.pendingRestart === true;
     // Any ceremony in flight cannot continue without the peers' secrets; restart it when they return.
     if (this.phase === 'commit' || this.phase === 'reveal') {
       for (const s of this.seats) {
@@ -471,7 +486,7 @@ export class TableHost {
         return this.onJoin(from, name, avatar, wantSeat, token, userId);
       }
       case 'leave':
-        return this.onDisconnect(from);
+        return this.onLeave(from);
       case 'ping':
         return this.sendTo(from, { t: 'pong', at: msg.at, now: this.now() });
       default:
@@ -578,6 +593,7 @@ export class TableHost {
     seat.avatar = avatar;
     seat.userId = userId ?? seat.userId;
     seat.connected = true;
+    seat.left = undefined;
     // A new occupant never inherits a previous player's token (that would let the old player kick them).
     if (newOccupant || !seat.token) seat.token = randomHex(16);
     this.sendTo(from, { t: 'welcome', seat: seat.seat, roomCode: this.roomCode, rules: this.rules, seats: this.seatInfo(), matchId: this.matchId, token: seat.token });
@@ -605,6 +621,17 @@ export class TableHost {
       this.sendTo(from, { t: 'commits', handNumber: this.snapshot.handNumber, commits: this.commits() });
       this.sendTo(from, { t: 'reveal_request', handNumber: this.snapshot.handNumber });
     }
+  }
+
+  /**
+   * A deliberate `leave`: the same as a lost connection, except the seat is marked as left on
+   * purpose, so nobody tells the player their table is waiting for them.
+   */
+  private onLeave(peerId: string): void {
+    const seat = this.seats.find((s) => s.peerId === peerId);
+    if (!seat) return;
+    if (this.phase !== 'lobby' || this.pendingRestart) seat.left = true;
+    this.onDisconnect(peerId);
   }
 
   private onDisconnect(peerId: string): void {

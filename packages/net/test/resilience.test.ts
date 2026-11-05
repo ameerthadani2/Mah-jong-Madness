@@ -103,6 +103,33 @@ describe('crash recovery', () => {
     expect(['hand_over', 'match_over']).toContain(host.phase);
   });
 
+  it('a deliberate leave mid-hand marks the seat as left (a lost connection does not), until the player returns', () => {
+    const hub = new LoopbackHub();
+    const host = new TableHost(hub.create('host'), { roomCode: 'LV', rules: withRules({ handsPerMatch: 2 }), botDelayMs: 600_000, schedule: () => undefined });
+    const t0 = hub.create('p0');
+    const c0 = new TableClient(transportLink(t0, 'host'), 'Alice');
+    c0.join();
+    host.start();
+    expect(host.phase).toBe('playing');
+    const token = c0.state.token!;
+    c0.leave();
+    const seat = host.seatInfo()[0];
+    expect(seat).toMatchObject({ connected: false, isBot: false, left: true, name: 'Alice' });
+    // The flag survives a restart of the hosting process.
+    const snapshot: SerializedHost = JSON.parse(JSON.stringify(host.serialize()));
+    const restored = new TableHost(new LoopbackHub().create('host'), { roomCode: 'x', restore: snapshot });
+    expect(restored.seatInfo()[0].left).toBe(true);
+    // Coming back clears it; a dropped socket afterwards is an ordinary disconnection.
+    const t1 = hub.create('p1');
+    const back = new TableClient(transportLink(t1, 'host'), 'Alice', undefined, { token });
+    back.join();
+    expect(host.seatInfo()[0].connected).toBe(true);
+    expect(host.seatInfo()[0].left).toBeUndefined();
+    t1.close();
+    expect(host.seatInfo()[0].connected).toBe(false);
+    expect(host.seatInfo()[0].left).toBeUndefined();
+  });
+
   it('the host can be serialised mid-hand and restored in a new process; the audit still verifies', () => {
     const hub = new LoopbackHub();
     const host = new TableHost(hub.create('host'), { roomCode: 'SR', rules: withRules({ handsPerMatch: 1 }), matchId: 'persist' });
