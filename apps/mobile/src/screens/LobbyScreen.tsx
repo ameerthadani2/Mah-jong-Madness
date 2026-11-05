@@ -90,8 +90,22 @@ export function LobbyScreen() {
         </Card>
       </View>
       <Button large title={humans > 1 ? t('lobby.start') : t('lobby.startWithBots')} icon="play" onPress={start} style={{ alignSelf: 'center' }} />
-      {state.disconnected && <Pill tone="danger" icon="warning" text={t('lobby.connectionLost')} />}
-      {state.lastError && <Pill tone="danger" icon="warning" text={friendlyError(new Error(state.lastError), t)} />}
+      {state.disconnected ? (
+        // Leaving via the header would forget the table; this path keeps the saved record so Home can resume it.
+        <Row style={{ flexWrap: 'wrap', rowGap: 6, alignItems: 'center' }} gap={8}>
+          <Pill tone="danger" icon="warning" text={t('lobby.connectionLost')} />
+          <Button
+            small
+            title={t('lobby.reconnect')}
+            onPress={() => {
+              app.setSession(null);
+              app.reset({ name: 'home' });
+            }}
+          />
+        </Row>
+      ) : (
+        state.lastError && <Pill tone="danger" icon="warning" text={friendlyError(new Error(state.lastError), t)} />
+      )}
     </ScrollView>
   );
 }

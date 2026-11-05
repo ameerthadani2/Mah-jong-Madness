@@ -25,6 +25,23 @@ export function nextDailyProgress<T extends DailyProgress>(p: T, correct: boolea
   };
 }
 
+/**
+ * Repairs a save made when daily keys were UTC dates: a player west of UTC could have an
+ * attempt recorded under tomorrow's local date. Anything after `today` is pulled back so the
+ * streak shows again and today's puzzle is playable. Idempotent.
+ */
+export function clampDailyToToday<T extends DailyProgress>(p: T, today: string): T {
+  const future = Object.keys(p.dailySolved).filter((k) => k > today);
+  if (future.length === 0 && !(p.dailyLastDate && p.dailyLastDate > today)) return p;
+  const dailySolved = { ...p.dailySolved };
+  for (const k of future) {
+    // Keep the attempt under today unless today already has one.
+    if (dailySolved[today] === undefined) dailySolved[today] = dailySolved[k];
+    delete dailySolved[k];
+  }
+  return { ...p, dailySolved, dailyLastDate: p.dailyLastDate && p.dailyLastDate > today ? today : p.dailyLastDate };
+}
+
 /** The streak as it should be shown today: it lapses once a whole day has been missed. */
 export function effectiveStreak(p: DailyProgress, today: string): number {
   if (!p.dailyLastDate) return 0;

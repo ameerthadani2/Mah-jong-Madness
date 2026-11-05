@@ -14,5 +14,6 @@
   "fillHint": "Empty seats are filled with bots when you start.",
   "start": "Start match",
   "startWithBots": "Start (bots fill empty seats)",
-  "connectionLost": "Connection lost. Go back to Home and tap Resume."
+  "connectionLost": "Connection lost.",
+  "reconnect": "Reconnect"
 }

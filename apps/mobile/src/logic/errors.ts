@@ -103,11 +103,13 @@ export function friendlyErrorMessage(e: unknown): Message {
   if (coded) return coded;
   const msg = field(e, 'message').trim();
   if (!msg) return GENERIC;
-  for (const r of RULES) if (r.test.test(msg)) return { key: r.key };
+  // A sentence we know from the server wins over the generic patterns: "too many pending requests" is a club
+  // limit, not throttling.
   for (const k of KNOWN) {
     const m = msg.match(k.test);
     if (m) return k.params ? { key: k.key, params: k.params(m) } : { key: k.key };
   }
+  for (const r of RULES) if (r.test.test(msg)) return { key: r.key };
   if (name === 'SyntaxError' || name === 'TypeError' || name === 'ReferenceError') return GENERIC;
   if (msg.length > 120 || TECHNICAL.test(msg)) return GENERIC;
   return { key: 'errors.passthrough', params: { message: /[.!?]$/.test(msg) ? msg : `${msg}.` } };

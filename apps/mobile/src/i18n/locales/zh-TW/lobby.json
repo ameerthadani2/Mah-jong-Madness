@@ -14,5 +14,6 @@
   "fillHint": "開始時空位會由電腦補上。",
   "start": "開始牌局",
   "startWithBots": "開始（空位由電腦補上）",
-  "connectionLost": "連線中斷。請回到首頁點「繼續」。"
+  "connectionLost": "連線中斷。",
+  "reconnect": "重新連線"
 }

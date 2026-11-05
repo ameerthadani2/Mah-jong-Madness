@@ -1,7 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { DEFAULT_RULES, type BotSkill, type RuleSet } from '@mjm/engine';
 import { randomHex, type SerializedHost } from '@mjm/net';
-import { effectiveStreak as streakOn } from './logic/daily';
+import { clampDailyToToday, effectiveStreak as streakOn } from './logic/daily';
 import { localDateKey, previousDateKey } from './logic/dates';
 import { migrateSettings } from './logic/settings';
 import type { LocalePreference } from './i18n/resolve';
@@ -106,7 +106,7 @@ export const storage = {
   // Older saves are migrated (see logic/settings.ts): stale fields dropped, rules sanitised, locale defaulted.
   loadSettings: async (): Promise<Settings> => migrateSettings(await load(KEYS.settings, DEFAULT_SETTINGS), DEFAULT_SETTINGS),
   saveSettings: (s: Settings) => save(KEYS.settings, s),
-  loadProgress: () => load(KEYS.progress, DEFAULT_PROGRESS),
+  loadProgress: async (): Promise<Progress> => clampDailyToToday(await load(KEYS.progress, DEFAULT_PROGRESS), todayKey()),
   saveProgress: (p: Progress) => save(KEYS.progress, p),
   loadActiveSession: async (): Promise<ActiveSession | null> => {
     try {

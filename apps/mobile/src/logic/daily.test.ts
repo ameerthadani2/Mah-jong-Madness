@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { effectiveStreak, nextDailyProgress, type DailyProgress } from './daily';
+import { effectiveStreak, nextDailyProgress, type DailyProgress, clampDailyToToday } from './daily';
 
 const fresh = (): DailyProgress => ({ dailySolved: {}, dailyStreak: 0, dailyLastDate: null });
 
@@ -60,5 +60,25 @@ describe('effectiveStreak', () => {
 
   it('is zero before any attempt', () => {
     expect(effectiveStreak(fresh(), '2026-11-05')).toBe(0);
+  });
+});
+
+describe('clampDailyToToday', () => {
+  const base = { dailySolved: {} as Record<string, 'correct' | 'wrong'>, dailyStreak: 0, dailyLastDate: null as string | null };
+  it('leaves a sane save untouched', () => {
+    const p = { ...base, dailySolved: { '2026-11-04': 'correct' as const }, dailyStreak: 1, dailyLastDate: '2026-11-04' };
+    expect(clampDailyToToday(p, '2026-11-05')).toBe(p);
+  });
+  it('pulls an attempt saved under tomorrow back to today and keeps the streak visible', () => {
+    const p = { ...base, dailySolved: { '2026-11-05': 'wrong' as const, '2026-11-06': 'correct' as const }, dailyStreak: 2, dailyLastDate: '2026-11-06' };
+    const out = clampDailyToToday(p, '2026-11-05');
+    expect(out.dailySolved).toEqual({ '2026-11-05': 'wrong' });
+    expect(out.dailyLastDate).toBe('2026-11-05');
+    expect(out.dailyStreak).toBe(2);
+    expect(clampDailyToToday(out, '2026-11-05')).toBe(out);
+  });
+  it('moves a lone future attempt onto today', () => {
+    const out = clampDailyToToday({ ...base, dailySolved: { '2026-11-06': 'correct' as const }, dailyStreak: 1, dailyLastDate: '2026-11-06' }, '2026-11-05');
+    expect(out.dailySolved).toEqual({ '2026-11-05': 'correct' });
   });
 });
