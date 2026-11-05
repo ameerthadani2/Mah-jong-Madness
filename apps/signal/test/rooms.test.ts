@@ -262,6 +262,97 @@ describe('RoomRegistry', () => {
   });
 });
 
+describe('accounts on the relay', () => {
+  type Frame = Out & { id?: string; peerId?: string; userId?: string; data?: { msg?: { t?: string } } };
+
+  it('answers hello with the peer id and the verified user, and binds that user to the table seat whatever the client claims', () => {
+    const reg = new RoomRegistry({ allowHosted: true });
+    const socket = fakeSocket();
+    const id = reg.hello(reg.connect(socket), 'user-real-1');
+    expect(socket.out[0]).toEqual({ t: 'hello', id, peerId: id, userId: 'user-real-1' });
+    expect(reg.peerUser(id)).toBe('user-real-1');
+    // A second hello changes nothing.
+    expect(reg.handle(id, { t: 'hello' })).toBe(id);
+    expect(last(socket)).toEqual({ t: 'hello', id, peerId: id, userId: 'user-real-1' });
+    reg.handle(id, { t: 'create', hosted: true });
+    const room = socket.out.find((m) => m.t === 'room')!;
+    reg.handle(id, { t: 'to', to: room.host!, data: { ch: 'game', msg: { t: 'join', name: 'Alice', userId: 'user-someone-else' } } });
+    expect(reg.hostedTable(room.room!)!.seatInfo()[0].userId).toBe('user-real-1');
+    // Without a session (relay-only tests), a claimed user id is dropped rather than trusted.
+    const anon = fakeSocket();
+    const anonId = reg.handle(reg.connect(anon), { t: 'hello' });
+    expect((anon.out[0] as Frame).userId).toBeUndefined();
+    reg.handle(anonId, { t: 'join', room: room.room! });
+    reg.handle(anonId, { t: 'to', to: room.host!, data: { ch: 'game', msg: { t: 'join', name: 'Bob', userId: 'user-real-1' } } });
+    expect(reg.hostedTable(room.room!)!.seatInfo()[1]).toMatchObject({ name: 'Bob', userId: undefined });
+  });
+
+  it('keeps a table alive for 15 minutes after the last activity while a human holds a seat', () => {
+    const { reg, clock, peer } = setup({ allowHosted: true, botDelayMs: 0 });
+    const a = peer();
+    reg.handle(a.id, { t: 'create', hosted: true });
+    const room = a.socket.out.find((m) => m.t === 'room')!;
+    reg.handle(a.id, { t: 'to', to: room.host!, data: { ch: 'game', msg: { t: 'join', name: 'Alice' } } });
+    reg.hostedTable(room.room!)!.start();
+    expect(reg.keepAliveUntil(room.room!)).toBe(15 * 60_000);
+    // Activity later moves the deadline forward.
+    clock.now = 60_000;
+    reg.handle(a.id, { t: 'to', to: room.host!, data: { ch: 'game', msg: { t: 'chat', text: 'hi' } } });
+    reg.handle(a.id, { t: 'to', to: room.host!, data: { ch: 'game', msg: { t: 'add_bot' } } });
+    reg.hostedTable(room.room!)!.tick();
+    // Alice drops mid-hand: her seat is kept, and so is the room.
+    reg.disconnect(a.id);
+    expect(reg.hasRoom(room.room!)).toBe(true);
+    const until = reg.keepAliveUntil(room.room!)!;
+    expect(until).toBeGreaterThanOrEqual(60_000 + 15 * 60_000);
+    clock.now = until - 1;
+    reg.tick();
+    expect(reg.hasRoom(room.room!)).toBe(true);
+    clock.now = until;
+    reg.tick();
+    expect(reg.hasRoom(room.room!)).toBe(false);
+  });
+
+  it('closes a socket-created table as soon as its lobby empties', () => {
+    const { reg, peer } = setup({ allowHosted: true });
+    const a = peer();
+    reg.handle(a.id, { t: 'create', hosted: true });
+    const room = a.socket.out.find((m) => m.t === 'room')!;
+    reg.handle(a.id, { t: 'to', to: room.host!, data: { ch: 'game', msg: { t: 'join', name: 'Alice' } } });
+    expect(reg.keepAliveUntil(room.room!)).toBeDefined();
+    reg.handle(a.id, { t: 'leave' });
+    expect(reg.hasRoom(room.room!)).toBe(false);
+  });
+
+  it('restores a table under its own code and refuses to restore over a live one', () => {
+    const reg = new RoomRegistry({ allowHosted: true });
+    const code = reg.createHostedRoom({ rules: { handsPerMatch: 2 } });
+    const snapshot = JSON.parse(JSON.stringify(reg.hostedTable(code)!.serialize()));
+    expect(() => reg.createHostedRoom({ restore: snapshot })).toThrow(/in use/);
+    const other = new RoomRegistry({ allowHosted: true });
+    expect(other.createHostedRoom({ restore: snapshot, clubCode: 'club01' })).toBe(code);
+    expect(other.clubOf(code)).toBe('CLUB01');
+    expect(other.hostedTable(code)!.rules.handsPerMatch).toBe(2);
+    expect(() => other.createHostedRoom({ restore: { ...snapshot, roomCode: 'bad code' } })).toThrow(/malformed/);
+  });
+
+  it('shuts down without reporting any table finished, and ignores frames afterwards', () => {
+    const { reg, peer } = setup({ allowHosted: true });
+    const events: string[] = [];
+    reg.onRoomEvent(({ event }) => events.push(`${event.type}:${event.handNumber}`));
+    const a = peer();
+    reg.handle(a.id, { t: 'create', hosted: true });
+    reg.createHostedRoom();
+    events.length = 0;
+    reg.shutdown();
+    expect(reg.stats().hostedTables).toBe(0);
+    reg.disconnect(a.id);
+    reg.handle(a.id, { t: 'create', hosted: true });
+    expect(events).toEqual([]);
+    expect(reg.stats().rooms).toBe(0);
+  });
+});
+
 describe('room codes', () => {
   it('map every byte value onto the alphabet exactly evenly (no modulo bias)', () => {
     const counts = new Map<string, number>();

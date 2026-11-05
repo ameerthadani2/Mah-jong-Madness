@@ -137,7 +137,7 @@ describe('provider id tokens', () => {
 
   it('refuses providers that are unknown or not configured', async () => {
     await rejectsWith(verifyProviderToken('myspace', await googleToken(), cfg), 'invalid', 400);
-    await rejectsWith(verifyProviderToken('facebook', await googleToken(), cfg), 'provider_disabled', 400);
+    await rejectsWith(verifyProviderToken('facebook', await googleToken(), cfg), 'provider_disabled', 404);
     await rejectsWith(verifyProviderToken('google', 123, cfg), 'invalid');
     expect(enabledProviders(cfg)).toEqual(['apple', 'google']);
     expect(enabledProviders({ google: { clientIds: [' '] }, facebook: { appId: '42' } })).toEqual(['facebook']);

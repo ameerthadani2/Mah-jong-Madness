@@ -1,11 +1,12 @@
 # Deploying the signal server
 
-The signal server (`apps/signal`) hosts tables, relays WebSocket traffic, runs the club API and,
-from Phase 3, owns accounts. It runs on **Fly.io** in Singapore (`sin`) as one always-on machine,
+The signal server (`apps/signal`) hosts tables, relays WebSocket traffic, runs the club API and
+owns accounts and sessions. It runs on **Fly.io** in Singapore (`sin`) as one always-on machine,
 with **Neon** Postgres in `ap-southeast-1` (also Singapore) for durable state.
 
 Nothing here is required for local development: with no environment set, `npm run signal` uses
-in-memory storage and guest-only sign-in.
+in-memory storage, guest-only sign-in and a random per-process session pepper (each with a
+warning). `apps/signal/README.md` lists every variable and route.
 
 ## What is in the repository
 
@@ -37,11 +38,12 @@ in-memory storage and guest-only sign-in.
    fly tokens create deploy -a <name>     # copy the whole output, including "FlyV1 "
    ```
    Secret name: `FLY_API_TOKEN`.
-6. Optional: add the repository **variable** `SIGNAL_URL` = `https://<name>.fly.dev`. The workflow
-   then checks `/health` after each deploy, and the mobile build can point at it.
+6. Optional: add the repository **variable** `SIGNAL_URL` = `wss://<name>.fly.dev`. The mobile
+   build points at it, and the workflow checks `https://<name>.fly.dev/health` after each deploy.
 
 The first deploy works at this point, before any database exists: the server falls back to
-in-memory storage and logs a warning.
+in-memory storage and logs a warning (accounts, clubs and tables then last only until the next
+restart).
 
 ### 2. Neon Postgres
 
@@ -83,7 +85,10 @@ and are re-hashed with the new one on first use. Remove `AUTH_PEPPER_PREVIOUS` a
 (the session lifetime).
 
 `fly.toml` already sets `PORT=8787`, `HOST_TABLES=1`, `TRUST_PROXY=1` (Fly's proxy supplies
-`x-forwarded-for`) and `NODE_ENV=production`; `apps/signal/.env.example` lists the rest.
+`x-forwarded-for`) and `NODE_ENV=production`; `apps/signal/.env.example` lists the rest
+(`MAX_HOSTED_TABLES`, `MIN_BUILD`, `MAINTENANCE_MESSAGE`, `MIGRATE_ON_BOOT`). Without
+`AUTH_PEPPER` the server picks a random pepper at every start, so every player is signed out by
+each deploy: set it before inviting anyone.
 
 ## What a deploy does
 
@@ -101,8 +106,12 @@ in the Actions tab.
    - the machine is replaced (rolling), and Fly waits for `/health` to pass.
 3. If `SIGNAL_URL` is set, the workflow polls `${SIGNAL_URL}/health` for up to a minute.
 
-Hosted tables live in memory until table snapshots are wired in (Phase 3), so a deploy during a
-hand ends that table for now; afterwards tables are restored from `table_snapshots`.
+**Tables survive a deploy.** On SIGTERM (Fly sends it, then waits `kill_timeout = 30s`) the
+server writes every hosted table to `table_snapshots` and closes the sockets without finishing
+any table. The new machine restores every unfinished table at boot under its own code; the apps
+reconnect with backoff and reclaim their seats with their rejoin tokens, and bots play for anyone
+not back yet. A restored table waits 15 minutes for its players. (With in-memory storage there is
+nothing to restore from, so a deploy ends every table.)
 
 ## By hand
 
@@ -140,12 +149,15 @@ Postgres works:
 DATABASE_URL_TEST=postgres://user:pass@localhost:5432/mjm_test npm test -w @mjm/signal
 ```
 
-A Postgres service container in CI (`.github/workflows/ci.yml`) and a `docker build` job are a
-later step.
+CI (`.github/workflows/ci.yml`) runs them against a `postgres:16` service container
+(`DATABASE_URL_TEST=postgres://postgres:postgres@localhost:5432/postgres`, health-checked), and a
+`docker` job builds `apps/signal/Dockerfile` and checks that the image answers `/health` with no
+environment.
 
-## Moving off Render
+## Other hosts
 
-`render.yaml` describes the previous free Render service, whose disk was wiped on every deploy.
-It is no longer used once Fly is live and will be removed. The same Dockerfile would also run on
-Render, Railway or any container host: set the environment variables above, expose port 8787 and
-point the health check at `/health`.
+The image keeps nothing on disk, so any container host works the same way: build
+`apps/signal/Dockerfile` from the repository root, set the environment variables above (and
+`TRUST_PROXY` to the number of proxies in front of it), expose port 8787, point the health check
+at `/health`, keep one instance always running (WebSockets must not sleep), and give it time to
+save tables on SIGTERM. Run `node dist/server.cjs migrate` before each release.

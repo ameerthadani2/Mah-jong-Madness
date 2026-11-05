@@ -10,12 +10,17 @@ import type { Transport, Unsubscribe } from './transport';
 /** How long `connect()` and each room request wait for the server before giving up. */
 export const SIGNALING_TIMEOUT_MS = 10_000;
 export const SIGNALING_TIMEOUT_MESSAGE = 'The game server did not answer in time. Check your connection and try again.';
+/** Close code the server uses when the session token in `hello` is missing or not accepted. */
+export const UNAUTHORISED_CLOSE_CODE = 4401;
+/** `connect()` rejects with a message starting with this when the server closes with 4401. */
+export const UNAUTHORISED_MESSAGE = 'Unauthorised: the game server did not accept this session. Sign in again and retry.';
 
 export interface WebSocketLike {
   readyState: number;
   send(data: string): void;
   close(): void;
   onopen: ((ev: unknown) => void) | null;
+  /** Browsers, React Native and `ws` all pass a CloseEvent carrying the close `code`. */
   onclose: ((ev: unknown) => void) | null;
   onerror: ((ev: unknown) => void) | null;
   onmessage: ((ev: { data: unknown }) => void) | null;
@@ -24,16 +29,19 @@ export interface WebSocketLike {
 export type WebSocketFactory = (url: string) => WebSocketLike;
 
 export type ServerMessage =
-  | { t: 'hello'; peerId: string }
+  /** `id` is the peer id (older servers sent it as `peerId`); `userId` is the account the session proved. */
+  | { t: 'hello'; id?: string; peerId?: string; userId?: string }
   | { t: 'room'; room: string; peers: string[]; host: string }
   | { t: 'peer'; peerId: string; event: 'join' | 'leave' }
   | { t: 'from'; from: string; data: unknown }
-  | { t: 'error'; message: string };
+  /** In reply to a refused create or join; with `code: 'closed'`, sent unprompted when the room has closed. */
+  | { t: 'error'; message: string; code?: string };
 
 export type ClientToServer =
-  | { t: 'hello' }
-  /** `hosted: true` asks the server to run the table itself; the server sanitises `rules` and `botSkill`. */
-  | { t: 'create'; room?: string; hosted?: boolean; rules?: Partial<RuleSet>; botSkill?: BotSkill }
+  /** `auth` is the session token; the server closes the socket with 4401 without a valid one. */
+  | { t: 'hello'; auth?: string }
+  /** `hosted: true` asks the server to run the table itself; the server sanitises `rules` and `botSkill`. `club` opens it as a club table (members only). */
+  | { t: 'create'; room?: string; hosted?: boolean; rules?: Partial<RuleSet>; botSkill?: BotSkill; club?: string }
   | { t: 'join'; room: string }
   | { t: 'to'; to: string; data: unknown }
   | { t: 'leave' };
@@ -44,9 +52,23 @@ export interface RoomInfo {
   host: string;
 }
 
+export interface SignalingOptions {
+  /** Session token sent in `hello`. */
+  auth?: string;
+  /** Builds the socket (default: the platform's global WebSocket). Tests and Node pass `ws`. */
+  webSocket?: WebSocketFactory;
+  timeoutMs?: number;
+}
+
+const defaultSocket: WebSocketFactory = (u) => new (globalThis as unknown as { WebSocket: new (u: string) => WebSocketLike }).WebSocket(u);
+
 export class SignalingClient {
   peerId: string | null = null;
+  /** The account the server verified from the session token (absent on servers without accounts). */
+  userId: string | null = null;
   room: RoomInfo | null = null;
+  /** Close code of the last connection that ended (4401: the session was not accepted). */
+  lastCloseCode: number | null = null;
   private ws: WebSocketLike | null = null;
   private readonly msgHandlers = new Set<(m: ServerMessage) => void>();
   private readonly closeHandlers = new Set<() => void>();
@@ -60,13 +82,26 @@ export class SignalingClient {
    */
   private staleReplies = 0;
   private readonly timeoutMs: number;
+  private readonly makeSocket: WebSocketFactory;
+  private auth: string | undefined;
 
+  /**
+   * `options` may also be a bare WebSocketFactory (the older form), with the timeout in `legacy`.
+   */
   constructor(
     private readonly url: string,
-    private readonly makeSocket: WebSocketFactory = (u) => new (globalThis as unknown as { WebSocket: new (u: string) => WebSocketLike }).WebSocket(u),
-    opts: { timeoutMs?: number } = {},
+    options: SignalingOptions | WebSocketFactory = {},
+    legacy: { timeoutMs?: number } = {},
   ) {
-    this.timeoutMs = opts.timeoutMs ?? SIGNALING_TIMEOUT_MS;
+    const opts: SignalingOptions = typeof options === 'function' ? { webSocket: options, timeoutMs: legacy.timeoutMs } : options;
+    this.makeSocket = opts.webSocket ?? defaultSocket;
+    this.timeoutMs = opts.timeoutMs ?? legacy.timeoutMs ?? SIGNALING_TIMEOUT_MS;
+    this.auth = opts.auth;
+  }
+
+  /** Use a new session token from the next `connect()` (after a refresh or a sign-in). */
+  setAuth(token: string | undefined): void {
+    this.auth = token;
   }
 
   /** Open the socket and wait for the server's `hello`. Rejects on error, early close or after `timeoutMs`. */
@@ -94,11 +129,13 @@ export class SignalingClient {
         }
         settle(new Error(SIGNALING_TIMEOUT_MESSAGE));
       }, this.timeoutMs);
-      ws.onopen = () => ws.send(JSON.stringify({ t: 'hello' } satisfies ClientToServer));
+      ws.onopen = () => ws.send(JSON.stringify((this.auth ? { t: 'hello', auth: this.auth } : { t: 'hello' }) satisfies ClientToServer));
       ws.onerror = () => settle(new Error('Signaling connection failed'));
-      ws.onclose = () => {
+      ws.onclose = (ev) => {
         if (this.ws === ws) this.ws = null;
-        settle(new Error('Connection closed'));
+        const code = typeof (ev as { code?: unknown } | null)?.code === 'number' ? (ev as { code: number }).code : null;
+        this.lastCloseCode = code;
+        settle(new Error(code === UNAUTHORISED_CLOSE_CODE ? UNAUTHORISED_MESSAGE : 'Connection closed'));
         if (!this.closedLocally) for (const h of this.closeHandlers) h();
         const pending = this.pendingRoom;
         this.pendingRoom = [];
@@ -113,14 +150,21 @@ export class SignalingClient {
           return;
         }
         if (m.t === 'hello') {
-          this.peerId = m.peerId;
-          for (const p of this.pendingHello) p(m.peerId);
+          const id = m.id ?? m.peerId;
+          if (typeof id !== 'string') return;
+          this.peerId = id;
+          this.userId = typeof m.userId === 'string' ? m.userId : null;
+          for (const p of this.pendingHello) p(id);
           this.pendingHello = [];
-          settle(null, m.peerId);
+          settle(null, id);
         } else if (m.t === 'room') {
           this.room = { room: m.room, peers: m.peers, host: m.host };
           const p = this.nextPending();
           p?.resolve(this.room);
+        } else if (m.t === 'error' && m.code === 'closed') {
+          // Unprompted: the room has closed under us. It answers no request, so nothing pending is consumed.
+          this.room = null;
+          for (const h of this.closeHandlers) h();
         } else if (m.t === 'error') {
           const p = this.nextPending();
           p?.reject(new Error(m.message));
@@ -141,10 +185,11 @@ export class SignalingClient {
     return this.roomRequest({ t: 'join', room: room.toUpperCase() });
   }
 
-  /** Ask the server to open a table it hosts itself. This is how online games are created. */
-  createHostedRoom(rules: Partial<RuleSet>, botSkill?: BotSkill): Promise<RoomInfo> {
-    return this.roomRequest({ t: 'create', hosted: true, rules, botSkill });
+  /** Ask the server to open a table it hosts itself. This is how online games are created. `club` makes it a club table (members only). */
+  createHostedRoom(rules: Partial<RuleSet>, botSkill?: BotSkill, opts: { club?: string } = {}): Promise<RoomInfo> {
+    return this.roomRequest(opts.club ? { t: 'create', hosted: true, rules, botSkill, club: opts.club } : { t: 'create', hosted: true, rules, botSkill });
   }
+
 
   private nextPending(): { resolve: (r: RoomInfo) => void; reject: (e: Error) => void } | undefined {
     if (this.staleReplies > 0) {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { BucketTable, clientIp, TokenBucket } from '../src/limits';
-import { LIMITS, loadConfig } from '../src/config';
+import { LIMITS, loadConfig, pepperFromEnv, providersFromEnv } from '../src/config';
 
 describe('TokenBucket', () => {
   it('allows a burst up to capacity, then refuses until tokens refill', () => {
@@ -131,14 +131,15 @@ describe('clientIp', () => {
 
 describe('loadConfig', () => {
   it('has safe defaults', () => {
-    const c = loadConfig({}, '/srv');
-    expect(c).toEqual({ port: 8787, hostTables: true, dataDir: '/srv/data', trustProxy: 0, corsOrigins: [], maxHostedTables: 500, p2pRooms: false });
+    const c = loadConfig({});
+    expect(c).toEqual({ port: 8787, hostTables: true, dataDir: null, trustProxy: 0, corsOrigins: [], maxHostedTables: 500, p2pRooms: false, minBuild: 0, maintenance: null });
   });
 
   it('parses every variable and rejects nonsense numbers', () => {
-    const c = loadConfig({ PORT: '9000', HOST_TABLES: '0', DATA_DIR: '/data', TRUST_PROXY: '1', CORS_ORIGINS: 'http://localhost:8081, https://play.example ', MAX_HOSTED_TABLES: '20', P2P_ROOMS: 'true' }, '/srv');
-    expect(c).toEqual({ port: 9000, hostTables: false, dataDir: '/data', trustProxy: 1, corsOrigins: ['http://localhost:8081', 'https://play.example'], maxHostedTables: 20, p2pRooms: true });
-    const bad = loadConfig({ PORT: '99999', MAX_HOSTED_TABLES: '-3', TRUST_PROXY: '0', P2P_ROOMS: 'nope' }, '/srv');
+    const c = loadConfig({ PORT: '9000', HOST_TABLES: '0', DATA_DIR: '/data', TRUST_PROXY: '1', CORS_ORIGINS: 'http://localhost:8081, https://play.example ', MAX_HOSTED_TABLES: '20', P2P_ROOMS: 'true', MIN_BUILD: '42', MAINTENANCE_MESSAGE: ' Back at 10:00 ' });
+    expect(c).toEqual({ port: 9000, hostTables: false, dataDir: '/data', trustProxy: 1, corsOrigins: ['http://localhost:8081', 'https://play.example'], maxHostedTables: 20, p2pRooms: true, minBuild: 42, maintenance: 'Back at 10:00' });
+    const bad = loadConfig({ PORT: '99999', MAX_HOSTED_TABLES: '-3', TRUST_PROXY: '0', P2P_ROOMS: 'nope', MIN_BUILD: 'soon' });
+    expect(bad.minBuild).toBe(0);
     expect(bad.port).toBe(8787);
     expect(bad.maxHostedTables).toBe(500);
     expect(bad.trustProxy).toBe(0);
@@ -146,7 +147,7 @@ describe('loadConfig', () => {
   });
 
   it('reads TRUST_PROXY as a hop count (0 = off)', () => {
-    const hops = (v: string) => loadConfig({ TRUST_PROXY: v }, '/srv').trustProxy;
+    const hops = (v: string) => loadConfig({ TRUST_PROXY: v }).trustProxy;
     expect(hops('2')).toBe(2);
     expect(hops(' 1 ')).toBe(1);
     expect(hops('0')).toBe(0);
@@ -155,5 +156,28 @@ describe('loadConfig', () => {
     expect(hops('-1')).toBe(0);
     expect(hops('1.5')).toBe(0);
     expect(hops('lots')).toBe(0);
+  });
+});
+
+describe('accounts configuration', () => {
+  it('enables only the providers whose ids are set, splitting GOOGLE_CLIENT_IDS on commas', () => {
+    expect(providersFromEnv({})).toEqual({});
+    expect(providersFromEnv({ APPLE_CLIENT_ID: ' com.example.app ', GOOGLE_CLIENT_IDS: 'ios.apps, android.apps,, web.apps ', FACEBOOK_APP_ID: '' })).toEqual({
+      apple: { clientIds: ['com.example.app'] },
+      google: { clientIds: ['ios.apps', 'android.apps', 'web.apps'] },
+    });
+    expect(providersFromEnv({ FACEBOOK_APP_ID: '123' })).toEqual({ facebook: { appId: '123' } });
+  });
+
+  it('uses AUTH_PEPPER, or a random per-process pepper with a warning', () => {
+    const warnings: string[] = [];
+    expect(pepperFromEnv({ AUTH_PEPPER: 'p1', AUTH_PEPPER_PREVIOUS: 'p0' }, (w) => warnings.push(w))).toEqual({ pepper: 'p1', previousPepper: 'p0' });
+    expect(warnings).toEqual([]);
+    const a = pepperFromEnv({}, (w) => warnings.push(w));
+    const b = pepperFromEnv({ AUTH_PEPPER: '  ' }, (w) => warnings.push(w));
+    expect(a.pepper).toMatch(/^[0-9a-f]{64}$/);
+    expect(b.pepper).not.toBe(a.pepper);
+    expect(warnings).toHaveLength(2);
+    expect(warnings[0]).toMatch(/AUTH_PEPPER is not set/);
   });
 });

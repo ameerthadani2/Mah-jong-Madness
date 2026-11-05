@@ -5,8 +5,8 @@
   "description": "Game server for Mahjong Madness: hosts every online table, relays the players' sockets and runs the clubs and accounts API.",
   "type": "module",
   "scripts": {
-    "start": "tsx src/server.ts",
-    "dev": "tsx watch src/server.ts",
+    "start": "tsx src/main.ts",
+    "dev": "tsx watch src/main.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
     "migrate": "tsx src/main.ts migrate",

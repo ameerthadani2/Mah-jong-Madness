@@ -7,6 +7,10 @@
  * or malformed frame by emitting `'error'` on the socket, and Node treats an
  * `'error'` event with no listener as an uncaught exception, so every socket,
  * the socket server and the HTTP server each get an error listener.
+ *
+ * With a session verifier (the real server), the first frame must be `{t:'hello', auth}`; until
+ * the token is verified nothing else is routed (frames sent meanwhile wait, in order), and a
+ * missing or rejected token closes the socket with 4401.
  */
 import type { IncomingMessage, Server } from 'node:http';
 import type { Duplex } from 'node:stream';
@@ -19,9 +23,25 @@ import type { Inbound, RoomRegistry } from './rooms';
 export const MAX_FRAME_BYTES = 64 * 1024;
 /** WebSocket close code 1008 means "policy violation". */
 export const POLICY_VIOLATION = 1008;
+/** Application close code for a missing, malformed or rejected session token in the first frame. */
+export const UNAUTHORISED = 4401;
 const HEARTBEAT_MS = 30_000;
+/** How long a new socket has to send a verified `hello` before it is closed with 4401. */
+const HELLO_TIMEOUT_MS = 10_000;
+/** Frames a client may send while its token is still being checked; they are handled in order once it passes. */
+const MAX_QUEUED_FRAMES = 16;
 
 export type SocketLimits = Pick<typeof LIMITS, 'socketsPerIp' | 'messagesPerSec' | 'messageBurst'>;
+
+export interface SocketAuthOptions {
+  /**
+   * Resolve the session token in the first frame (`{t:'hello', auth}`) to its user id, or reject.
+   * When set, every socket must authenticate before anything else; when absent (unit tests of the
+   * relay alone), `hello` needs no token and peers have no user.
+   */
+  verify?: (token: unknown) => Promise<string>;
+  helloTimeoutMs?: number;
+}
 
 /** Attach the connection handler to `wss`. Returns a function that reports open sockets per IP (for tests and health checks). */
 export function attachSocketHandlers(
@@ -29,6 +49,7 @@ export function attachSocketHandlers(
   rooms: RoomRegistry,
   config: Pick<SignalConfig, 'trustProxy'>,
   limits: SocketLimits = LIMITS,
+  auth: SocketAuthOptions = {},
 ): () => ReadonlyMap<string, number> {
   /** Open sockets per client IP. */
   const socketsByIp = new Map<string, number>();
@@ -64,6 +85,39 @@ export function attachSocketHandlers(
     let peerId = rooms.connect({ send: (json) => ws.readyState === ws.OPEN && ws.send(json), close: () => ws.close() });
     const bucket = new TokenBucket(limits.messageBurst, limits.messagesPerSec);
     let alive = true;
+    let closed = false;
+    ws.on('close', () => (closed = true));
+    // Without a verifier the socket starts out ready; with one it must first prove a session.
+    let stage: 'hello' | 'verifying' | 'ready' = auth.verify ? 'hello' : 'ready';
+    const queued: Inbound[] = [];
+    const unauthorised = () => {
+      if (!closed) ws.close(UNAUTHORISED, 'Unauthorised');
+    };
+    const helloTimer = auth.verify ? setTimeout(() => stage !== 'ready' && unauthorised(), auth.helloTimeoutMs ?? HELLO_TIMEOUT_MS) : null;
+    ws.on('close', () => helloTimer && clearTimeout(helloTimer));
+    const dispatch = (msg: Inbound) => {
+      try {
+        peerId = rooms.handle(peerId, msg);
+      } catch (e) {
+        // One peer's bad frame must never bring the server down.
+        console.error('[signal] handle error', (e as Error).message);
+      }
+    };
+    const authenticate = (msg: Inbound) => {
+      const token = (msg as { auth?: unknown }).auth;
+      if (msg.t !== 'hello' || typeof token !== 'string' || !token) return unauthorised();
+      stage = 'verifying';
+      auth.verify!(token).then(
+        (userId) => {
+          if (closed) return;
+          stage = 'ready';
+          if (helloTimer) clearTimeout(helloTimer);
+          peerId = rooms.hello(peerId, userId);
+          for (const m of queued.splice(0)) dispatch(m);
+        },
+        () => unauthorised(),
+      );
+    };
     ws.on('pong', () => (alive = true));
     ws.on('message', (raw) => {
       if (!bucket.take()) {
@@ -78,12 +132,13 @@ export function attachSocketHandlers(
         return;
       }
       if (!msg || typeof msg !== 'object' || typeof (msg as { t?: unknown }).t !== 'string') return;
-      try {
-        peerId = rooms.handle(peerId, msg);
-      } catch (e) {
-        // One peer's bad frame must never bring the server down.
-        console.error('[signal] handle error', (e as Error).message);
+      if (stage === 'hello') return authenticate(msg);
+      if (stage === 'verifying') {
+        if (queued.length >= MAX_QUEUED_FRAMES) ws.close(POLICY_VIOLATION, 'Rate limit exceeded');
+        else queued.push(msg);
+        return;
       }
+      dispatch(msg);
     });
     ws.on('close', () => rooms.disconnect(peerId));
     const hb = setInterval(() => {
@@ -118,9 +173,11 @@ export function createSocketServer(
   rooms: RoomRegistry,
   config: Pick<SignalConfig, 'trustProxy'>,
   limits: SocketLimits = LIMITS,
+  auth: SocketAuthOptions = {},
 ): WebSocketServer {
   guardHttpServer(http);
   const wss = new WebSocketServer({ server: http, maxPayload: MAX_FRAME_BYTES });
-  attachSocketHandlers(wss, rooms, config, limits);
+  attachSocketHandlers(wss, rooms, config, limits, auth);
   return wss;
 }
+

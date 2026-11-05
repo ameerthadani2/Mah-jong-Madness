@@ -1,50 +1,16 @@
 /**
- * Club table state across restarts and room events, and the size of the identity table.
- * Ported from the review probes `verify-signal/probe.ts` (stale tables after a restart),
- * `signal/finished.ts` (finished table reopened by a disconnect) and `signal/rooms.ts`
- * (credentials written for every junk userId).
+ * Club table state across restarts and room events, and the membership gate on club tables.
+ * Ported from the review probes `verify-signal/probe.ts` (stale tables after a restart) and
+ * `signal/finished.ts` (finished table reopened by a disconnect).
  */
 import { describe, expect, it } from 'vitest';
 import type { HostEvent, SeatInfo } from '@mjm/net';
-import { CLUB_LIMITS, ClubRegistry, type Club, type ClubData, type ClubStore } from '../src/clubs';
-import { RoomRegistry, type Socket } from '../src/rooms';
-import { buildRoutes } from '../src/api';
+import { CLUB_LIMITS, ClubRegistry, clubGate } from '../src/clubs';
+import { createMemoryRepos } from '../src/repos';
+import { CLUB_MEMBERS_ONLY, RoomRegistry, type Socket } from '../src/rooms';
 
 const alice = { userId: 'user-alice-1', name: 'Alice' };
-const creds = (userId: string, secret = `${userId}-secret-0123456789`) => ({ userId, name: userId.slice(0, 8), secret });
-
-/** A store that round-trips through JSON, like the file store, and counts writes. */
-function memoryStore(initial: ClubData = { clubs: [], credentials: {} }) {
-  let saved = JSON.parse(JSON.stringify(initial)) as ClubData;
-  const store = {
-    saves: 0,
-    load: (): ClubData => JSON.parse(JSON.stringify(saved)) as ClubData,
-    save: (d: ClubData) => {
-      store.saves++;
-      saved = JSON.parse(JSON.stringify(d)) as ClubData;
-    },
-    get data(): ClubData {
-      return saved;
-    },
-  };
-  return store satisfies ClubStore;
-}
-
-/** Call a route handler directly, the way the HTTP layer does. */
-function caller(clubs: ClubRegistry, rooms = new RoomRegistry({ allowHosted: true })) {
-  const routes = buildRoutes({ clubs, rooms });
-  return (method: string, path: string, body: Record<string, unknown> = {}): unknown => {
-    for (const r of routes) {
-      const m = r.pattern.exec(path);
-      if (r.method === method && m) {
-        const params: Record<string, string> = {};
-        r.keys.forEach((k, i) => (params[k] = m[i + 1]));
-        return r.handler(params, body, {} as never);
-      }
-    }
-    throw new Error(`no route ${method} ${path}`);
-  };
-}
+const bob = { userId: 'user-bob-22', name: 'Bob' };
 
 const seat = (n: number, connected = true): SeatInfo => ({ seat: n, name: `P${n}`, peerId: null, userId: n === 0 ? alice.userId : undefined, isBot: n !== 0, connected });
 const event = (type: HostEvent['type'], handNumber: number, connected = true): HostEvent => ({
@@ -57,24 +23,49 @@ const event = (type: HostEvent['type'], handNumber: number, connected = true): H
   handsWon: [1, 0, 0, 0],
 });
 
+type Out = { t: string; host?: string; room?: string; message?: string };
+
+/** A peer that has said hello as `userId` (as the socket layer does after verifying a session). */
+function peerAs(rooms: RoomRegistry, userId?: string) {
+  const out: Out[] = [];
+  const socket: Socket = { send: (j) => out.push(JSON.parse(j) as Out), close: () => undefined };
+  const id = rooms.hello(rooms.connect(socket), userId);
+  return { id, out, last: () => out[out.length - 1] };
+}
+
 describe('club tables across a restart', () => {
-  it('finishes tables that were open or playing at shutdown, so they no longer use up the cap', () => {
-    const store = memoryStore();
-    const before = new ClubRegistry({ store });
+  it('keeps listings whose table was restored, clears ghost listings, and prunes old finished ones', async () => {
+    let now = 10 * 86_400_000;
+    const store = createMemoryRepos().clubs;
+    const before = new ClubRegistry({ store, now: () => now });
     const club = before.createClub(alice, 'Club');
     for (let i = 0; i < CLUB_LIMITS.openTablesPerClub; i++) before.addTable(club.code, alice.userId, { code: `T${i}` });
     before.updateTable(club.code, 'T0', { status: 'playing', players: [{ seat: 0, name: 'Alice', userId: alice.userId, isBot: false, connected: true }], handNumber: 2 });
     expect(() => before.assertCanOpenTable(club.code, alice.userId)).toThrow(/5 open tables/);
+    before.updateTable(club.code, 'T4', { status: 'finished' });
+    await before.flush();
 
-    const after = new ClubRegistry({ store }); // the restart
-    expect(after.club(club.code).tables.map((t) => t.status)).toEqual(Array(CLUB_LIMITS.openTablesPerClub).fill('finished'));
-    expect(after.club(club.code).tables[0].players[0].connected).toBe(false);
+    // The restart: T0 came back from its snapshot, T1-T3 did not (ghosts), T4 finished earlier.
+    const after = new ClubRegistry({ store, now: () => now });
+    await after.load();
+    after.reconcileTables((code) => code === 'T0');
+    const tables = after.club(club.code).tables;
+    expect(tables.map((t) => [t.code, t.status])).toEqual([
+      ['T0', 'playing'],
+      ['T4', 'finished'],
+    ]);
+    expect(tables[0].players[0].connected).toBe(false);
     expect(() => after.assertCanOpenTable(club.code, alice.userId)).not.toThrow();
-    // The cleaned-up state is written back, and a clean store is not rewritten on load.
-    expect(store.data.clubs[0].tables.every((t) => t.status === 'finished')).toBe(true);
-    const saves = store.saves;
-    new ClubRegistry({ store });
-    expect(store.saves).toBe(saves);
+    // The cleaned-up state is written back, and a clean registry is not rewritten.
+    await after.flush();
+    expect((await store.get(club.code))!.tables.map((t) => t.code)).toEqual(['T0', 'T4']);
+    const writes = after.writeCount;
+    after.reconcileTables((code) => code === 'T0');
+    expect(after.writeCount).toBe(writes);
+    // A day later the finished listing goes.
+    now += 86_400_000 + 1;
+    after.pruneFinishedTables(now - CLUB_LIMITS.finishedTableMs);
+    expect(after.club(club.code).tables.map((t) => t.code)).toEqual(['T0']);
   });
 });
 
@@ -118,76 +109,73 @@ describe('club table status from room events', () => {
   });
 
   it('tracks a real hosted club table from the room registry', () => {
-    const rooms = new RoomRegistry({ allowHosted: true });
     const clubs = new ClubRegistry();
+    const rooms = new RoomRegistry({ allowHosted: true, clubs: clubGate(clubs) });
     rooms.onRoomEvent(({ room, event: ev }) => clubs.applyRoomEvent(room, ev));
-    const call = caller(clubs, rooms);
-    const club = call('POST', '/api/clubs', { user: creds(alice.userId), name: 'Live' }) as Club;
-    const table = call('POST', `/api/clubs/${club.code}/tables`, { user: creds(alice.userId) }) as { code: string };
-    const out: Array<{ t: string; host?: string }> = [];
-    const socket: Socket = { send: (j) => out.push(JSON.parse(j) as { t: string }), close: () => undefined };
-    const id = rooms.handle(rooms.connect(socket), { t: 'hello' });
-    rooms.handle(id, { t: 'join', room: table.code });
-    const host = out.find((m) => m.t === 'room')!.host!;
-    rooms.handle(id, { t: 'to', to: host, data: { ch: 'game', msg: { t: 'join', name: 'Alice', userId: alice.userId } } });
+    const club = clubs.createClub(alice, 'Live');
+    const a = peerAs(rooms, alice.userId);
+    rooms.handle(a.id, { t: 'create', hosted: true, club: club.code.toLowerCase() });
+    const room = a.out.find((m) => m.t === 'room')!;
+    expect(rooms.clubOf(room.room!)).toBe(club.code);
+    // The client claims to be someone else; the table binds the verified user.
+    rooms.handle(a.id, { t: 'to', to: room.host!, data: { ch: 'game', msg: { t: 'join', name: 'Alice', userId: 'user-mallory-9' } } });
     const listed = clubs.club(club.code).tables[0];
+    expect(listed.code).toBe(room.room);
     expect(listed.status).toBe('open');
-    expect(listed.players.some((p) => !p.isBot && p.connected)).toBe(true);
-    rooms.closeRoomByCode(table.code);
+    expect(listed.players.find((p) => !p.isBot && p.connected)?.userId).toBe(alice.userId);
+    expect(rooms.hostedTable(room.room!)!.seatInfo()[0].userId).toBe(alice.userId);
+    rooms.closeRoomByCode(room.room!);
     expect(clubs.club(club.code).tables).toHaveLength(0);
   });
 });
 
-describe('identity binding', () => {
-  it('stores nothing for requests that fail or create no membership (probe: 1000 failed joins)', () => {
-    const store = memoryStore();
-    const clubs = new ClubRegistry({ store });
-    const call = caller(clubs);
-    for (let i = 0; i < 1000; i++) expect(() => call('POST', '/api/clubs/NOPE00/join', { user: creds(`junkuser${i}`) })).toThrow(/Club not found/);
-    expect(store.saves).toBe(0);
-    expect(clubs.credentialCount()).toBe(0);
-    // A refused create (bad name) binds nothing either.
-    expect(() => call('POST', '/api/clubs', { user: creds('user-nobody'), name: '' })).toThrow(/required/);
-    expect(clubs.credentialCount()).toBe(0);
-    // A request that succeeds but leaves the user in no club (leaving a club you never joined) binds nothing.
-    const club = clubs.createClub(alice, 'Somewhere');
-    for (let i = 0; i < 20; i++) call('DELETE', `/api/clubs/${club.code}/members/junkuser${i}`, { user: creds(`junkuser${i}`) });
-    expect(clubs.credentialCount()).toBe(0);
+describe('the club table gate', () => {
+  it('lets only full members open or join a club table', () => {
+    const clubs = new ClubRegistry();
+    const rooms = new RoomRegistry({ allowHosted: true, clubs: clubGate(clubs) });
+    const club = clubs.createClub(alice, 'Members');
+    clubs.update(club.code, alice.userId, { settings: { joinRequiresApproval: true } });
+    clubs.joinClub(club.code, bob); // pending
+    const a = peerAs(rooms, alice.userId);
+    const b = peerAs(rooms, bob.userId);
+    const stranger = peerAs(rooms, 'user-stranger-1');
+    const anonymous = peerAs(rooms);
+    for (const p of [b, stranger, anonymous]) {
+      rooms.handle(p.id, { t: 'create', hosted: true, club: club.code });
+      expect(p.last()).toEqual({ t: 'error', message: CLUB_MEMBERS_ONLY });
+    }
+    // Unknown clubs are refused too, and a refusal does not start the create cooldown.
+    rooms.handle(a.id, { t: 'create', hosted: true, club: 'NOPE99' });
+    expect(a.last()).toEqual({ t: 'error', message: 'Club not found' });
+    rooms.handle(a.id, { t: 'create', club: club.code });
+    const code = a.out.find((m) => m.t === 'room')!.room!;
+    for (const p of [b, stranger, anonymous]) {
+      rooms.handle(p.id, { t: 'join', room: code });
+      expect(p.last()).toEqual({ t: 'error', message: CLUB_MEMBERS_ONLY });
+    }
+    expect(rooms.roomPeers(code)).toEqual([a.id]);
+    // Once approved, Bob may join.
+    clubs.approve(club.code, alice.userId, bob.userId);
+    rooms.handle(b.id, { t: 'join', room: code });
+    expect(b.last()!.t).toBe('room');
+    // A table opened through the API is gated the same way.
+    const apiRoom = rooms.createHostedRoom({ clubCode: club.code });
+    rooms.handle(stranger.id, { t: 'join', room: apiRoom });
+    expect(stranger.last()).toEqual({ t: 'error', message: CLUB_MEMBERS_ONLY });
   });
 
-  it('binds on a successful create or join, then rejects a different secret for that user', () => {
-    const store = memoryStore();
-    const clubs = new ClubRegistry({ store });
-    const call = caller(clubs);
-    const club = call('POST', '/api/clubs', { user: creds(alice.userId), name: 'Bound' }) as Club;
-    call('POST', `/api/clubs/${club.code}/join`, { user: creds('user-bob-22') });
-    expect(Object.keys(store.data.credentials).sort()).toEqual([alice.userId, 'user-bob-22']);
-    expect(() => call('POST', `/api/clubs/${club.code}/join`, { user: creds('user-bob-22', 'not-bobs-secret-0123') })).toThrow(/Identity check/);
-    expect(() => call('PATCH', `/api/clubs/${club.code}`, { user: creds(alice.userId, 'not-alices-secret-01'), name: 'Mine' })).toThrow(/Identity check/);
-    // A pending request also binds, so a stranger cannot cancel it with another secret.
-    call('PATCH', `/api/clubs/${club.code}`, { user: creds(alice.userId), settings: { joinRequiresApproval: true } });
-    expect((call('POST', `/api/clubs/${club.code}/join`, { user: creds('user-carol-3') }) as { status: string }).status).toBe('pending');
-    expect(() => call('DELETE', `/api/clubs/${club.code}/members/user-carol-3`, { user: creds('user-carol-3', 'stranger-secret-0123') })).toThrow(/Identity check/);
-  });
-
-  it('caps the identity table, evicting the least recently used identity that holds no membership', () => {
-    const store = memoryStore();
-    const clubs = new ClubRegistry({ store, maxCredentials: 3 });
-    const call = caller(clubs);
-    const club = call('POST', '/api/clubs', { user: creds(alice.userId), name: 'Small' }) as Club;
-    call('POST', `/api/clubs/${club.code}/join`, { user: creds('user-bob-22') });
-    call('POST', `/api/clubs/${club.code}/join`, { user: creds('user-carol-3') });
-    call('DELETE', `/api/clubs/${club.code}/members/user-carol-3`, { user: creds('user-carol-3') }); // Carol leaves
-    call('POST', `/api/clubs/${club.code}/join`, { user: creds('user-dave-44') });
-    expect(clubs.credentialCount()).toBe(3);
-    expect(Object.keys(store.data.credentials).sort()).toEqual([alice.userId, 'user-bob-22', 'user-dave-44']);
-    // Members are never evicted: with everyone still in the club the table may exceed the cap.
-    call('POST', `/api/clubs/${club.code}/join`, { user: creds('user-erin-55') });
-    expect(clubs.credentialCount()).toBe(4);
-    expect(() => call('PATCH', `/api/clubs/${club.code}`, { user: creds(alice.userId, 'not-alices-secret-01'), name: 'X' })).toThrow(/Identity check/);
-  });
-
-  it('defaults to a cap of 50,000 identities', () => {
-    expect(CLUB_LIMITS.identities).toBe(50_000);
+  it('closes the new room again when the club refuses to list it', () => {
+    const gate = {
+      openTable: () => ({ rules: {} as never }),
+      mayJoin: () => true,
+      tableOpened: () => {
+        throw new Error('This club already has 5 open tables; finish one first');
+      },
+    };
+    const rooms = new RoomRegistry({ allowHosted: true, clubs: gate });
+    const a = peerAs(rooms, alice.userId);
+    rooms.handle(a.id, { t: 'create', club: 'CLUB01' });
+    expect(a.last()).toEqual({ t: 'error', message: 'This club already has 5 open tables; finish one first' });
+    expect(rooms.stats().rooms).toBe(0);
   });
 });

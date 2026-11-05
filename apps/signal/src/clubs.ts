@@ -1,34 +1,27 @@
 /**
  * Club registry: PokerBros-style private clubs, each with a code, an owner,
- * members, house rules, open tables and standings. It holds data and logic only.
- * Persistence is injected so the registry can be unit-tested and later backed by a database.
+ * members, house rules, open tables and standings.
+ *
+ * The registry keeps every club in memory (reads and membership checks are synchronous) and
+ * writes each changed club behind it through the injected store, one club at a time and in order
+ * (`repos.clubs` in the server: memory or Postgres). `load()` reads every club at boot; `flush()`
+ * waits for the writes still in flight.
+ *
+ * A member's identity is the account id from their session; their name and avatar come from the
+ * user record and are refreshed whenever their membership changes (and when they edit their profile).
  *
  * Every value that arrives from the API is typed `unknown` here and checked
  * before it is stored, so a malformed request becomes a `ClubError` (HTTP 4xx), not a crash.
  */
 import { randomHex, sanitizeRules, type RuleSet } from '@mjm/engine';
-import { sha256Hex, type HostEvent } from '@mjm/net';
+import type { HostEvent } from '@mjm/net';
 import { uniqueCode, type HexSource } from './codes';
+import type { ClubGate } from './rooms';
 
 export interface Identity {
   userId: string;
   name: string;
   avatar?: string;
-}
-
-/** What a client presents: its identity plus a secret held on the device. */
-export interface Credentials extends Identity {
-  secret: string;
-}
-
-export interface ClubData {
-  clubs: Club[];
-  /**
-   * Maps userId to sha256(secret). A user's secret is bound by their first successful request
-   * that leaves them holding a membership or a pending request. Oldest first, so the oldest
-   * unused entry is evicted when the table is full.
-   */
-  credentials: Record<string, string>;
 }
 
 export const CLUB_ROLES = ['owner', 'admin', 'member'] as const;
@@ -88,10 +81,24 @@ export interface Club {
   tables: ClubTable[];
 }
 
+/** Per-club persistence (the shape of `ClubsRepo`). */
 export interface ClubStore {
-  load(): ClubData;
-  save(data: ClubData): void;
+  save(club: Club): Promise<void>;
+  delete(code: string): Promise<boolean>;
+  get(code: string): Promise<Club | null>;
+  loadAll(): Promise<Club[]>;
 }
+
+/** What a non-member may see of a club. */
+export interface ClubPublicView {
+  code: string;
+  name: string;
+  description: string;
+  memberCount: number;
+  joinRequiresApproval: boolean;
+}
+
+const DAY_MS = 86_400_000;
 
 export class ClubError extends Error {
   constructor(
@@ -114,13 +121,8 @@ export const CLUB_LIMITS = {
   nameLength: 40,
   descriptionLength: 280,
   labelLength: 40,
-  /**
-   * Bound identities kept in the store. Past this, the least recently used identity that holds
-   * no membership or pending request is forgotten (its next request binds it afresh).
-   * Identities still in a club are never evicted, so the table can exceed this only by as
-   * many users as the clubs themselves hold.
-   */
-  identities: 50_000,
+  /** Finished tables stay in a club's listing for this long. */
+  finishedTableMs: DAY_MS,
 } as const;
 
 /** Keep only the known settings, and only when they are real booleans; anything else keeps `base`'s value. */
@@ -139,107 +141,135 @@ function textField(v: unknown, field: string, max: number): string {
   return v.trim().slice(0, max);
 }
 
+/** Clean up a club read from storage: older rows may hold unchecked rules or the retired `neutralHost` setting. */
+function normalise(c: Club): Club {
+  c.rules = sanitizeRules(c.rules);
+  c.settings = sanitizeSettings(c.settings);
+  c.members = Array.isArray(c.members) ? c.members : [];
+  c.pending = Array.isArray(c.pending) ? c.pending : [];
+  c.tables = Array.isArray(c.tables) ? c.tables : [];
+  c.description = typeof c.description === 'string' ? c.description : '';
+  return c;
+}
+
 export class ClubRegistry {
   private clubs = new Map<string, Club>();
-  private credentials = new Map<string, string>();
   private readonly now: () => number;
   private readonly hex: HexSource;
   private readonly store: ClubStore | null;
-  private readonly maxCredentials: number;
+  /** The write chain per club; each link writes the club as it is when the link runs. */
+  private readonly writes = new Map<string, Promise<void>>();
+  /** Clubs with a write queued that has not started yet (further changes ride along with it). */
+  private readonly queued = new Set<string>();
+  /** Number of writes requested (tests use it to check that no-op updates write nothing). */
+  writeCount = 0;
 
-  constructor(opts: { store?: ClubStore; now?: () => number; randomHex?: HexSource; maxCredentials?: number } = {}) {
+  constructor(opts: { store?: ClubStore; now?: () => number; randomHex?: HexSource } = {}) {
     this.now = opts.now ?? Date.now;
     this.hex = opts.randomHex ?? randomHex;
     this.store = opts.store ?? null;
-    this.maxCredentials = opts.maxCredentials ?? CLUB_LIMITS.identities;
-    if (this.store) {
-      const data = this.store.load();
-      let closedStale = false;
-      for (const c of data.clubs) {
-        // Older stores may hold unchecked rules or the retired `neutralHost` setting.
-        c.rules = sanitizeRules(c.rules);
-        c.settings = sanitizeSettings(c.settings);
-        c.tables = Array.isArray(c.tables) ? c.tables : [];
-        // Hosted rooms live only in memory, so no table survives a restart and no event will ever
-        // arrive to close one. Left as 'open' or 'playing', they would count against the club's
-        // open-table cap for good.
-        for (const t of c.tables) {
-          if (t.status === 'finished') continue;
-          t.status = 'finished';
-          t.players = (t.players ?? []).map((p) => ({ ...p, connected: false }));
-          closedStale = true;
+  }
+
+  /** Read every club from the store (once, at boot, before the registry is used). */
+  async load(): Promise<void> {
+    if (!this.store) return;
+    for (const c of await this.store.loadAll()) this.clubs.set(c.code, normalise(c));
+  }
+
+  /**
+   * Reconcile club table listings with the tables actually running after a boot: a table whose
+   * room was restored stays listed (its players shown as disconnected until they return); one
+   * that was not finished but has no room is a ghost and is removed, so it no longer uses up the
+   * club's open-table cap. Finished tables older than `finishedTableMs` are dropped as well.
+   */
+  reconcileTables(isLive: (roomCode: string) => boolean): void {
+    const cutoff = this.now() - CLUB_LIMITS.finishedTableMs;
+    for (const club of this.clubs.values()) {
+      const before = JSON.stringify(club.tables);
+      club.tables = club.tables
+        .filter((t) => (t.status === 'finished' ? t.createdAt >= cutoff : isLive(t.code)))
+        .map((t) => (t.status === 'finished' ? t : { ...t, players: (t.players ?? []).map((p) => ({ ...p, connected: false })) }));
+      if (JSON.stringify(club.tables) !== before) this.persist(club);
+    }
+  }
+
+  /** Drop finished table listings created before `before` (run daily). */
+  pruneFinishedTables(before: number): void {
+    for (const club of this.clubs.values()) {
+      const kept = club.tables.filter((t) => t.status !== 'finished' || t.createdAt >= before);
+      if (kept.length === club.tables.length) continue;
+      club.tables = kept;
+      this.persist(club);
+    }
+  }
+
+  /** Queue a write of this club. Writes for one club run in order; a burst of changes becomes one write. */
+  private persist(club: Club): void {
+    this.writeCount++;
+    const store = this.store;
+    if (!store) return;
+    const code = club.code;
+    if (this.queued.has(code)) return;
+    this.queued.add(code);
+    const prev = this.writes.get(code) ?? Promise.resolve();
+    const next = prev
+      .then(async () => {
+        this.queued.delete(code);
+        const current = this.clubs.get(code);
+        if (current) await store.save(structuredClone(current));
+        else await store.delete(code);
+      })
+      .catch((e: Error) => console.error(`[signal] club ${code} not saved:`, e.message));
+    this.writes.set(code, next);
+    void next.then(() => {
+      if (this.writes.get(code) === next) this.writes.delete(code);
+    });
+  }
+
+  /** Wait until every queued club write has reached the store. */
+  async flush(): Promise<void> {
+    while (this.writes.size > 0) await Promise.all([...this.writes.values()]);
+  }
+
+  /**
+   * Re-read clubs that changed underneath the registry (an account merge or deletion rewrites
+   * club rows in the repositories directly).
+   */
+  async reload(codes: Iterable<string>): Promise<void> {
+    if (!this.store) return;
+    await this.flush();
+    for (const code of new Set(codes)) {
+      const club = await this.store.get(code);
+      if (club) this.clubs.set(code, normalise(club));
+      else this.clubs.delete(code);
+    }
+  }
+
+  /**
+   * Write a user's current name and avatar over their rows in every club (members and pending
+   * requests), so standings show what the user record says. Only clubs that change are written.
+   */
+  refreshMember(user: Identity): void {
+    for (const club of this.clubs.values()) {
+      let changed = false;
+      for (const row of [...club.members, ...club.pending]) {
+        if (row.userId !== user.userId) continue;
+        if (row.name !== user.name || row.avatar !== user.avatar) {
+          row.name = user.name;
+          if (user.avatar === undefined) delete row.avatar;
+          else row.avatar = user.avatar;
+          changed = true;
         }
-        this.clubs.set(c.code, c);
       }
-      for (const [k, v] of Object.entries(data.credentials ?? {})) this.credentials.set(k, v);
-      if (closedStale) this.persist();
+      if (changed) this.persist(club);
     }
   }
 
-  private persist(): void {
-    this.store?.save({ clubs: [...this.clubs.values()], credentials: Object.fromEntries(this.credentials) });
-  }
-
-  private credentialHash(creds: Credentials): string {
-    if (!creds.userId || typeof creds.secret !== 'string' || creds.secret.length < 16 || creds.secret.length > 128) throw new ClubError('invalid', 'Credentials required');
-    return sha256Hex(`mjm-user:${creds.userId}:${creds.secret}`);
-  }
-
-  /**
-   * Trust-on-first-use authentication: a bound userId must present the same secret again.
-   * An unbound userId passes but is not bound here; call `bindCredential` once the request
-   * has succeeded, so failed or junk requests never grow the store. Replace this with Sign
-   * in with Apple or Google tokens before launch; it only stops casual impersonation of
-   * visible user ids.
-   */
-  authenticate(creds: Credentials): Identity {
-    const hash = this.credentialHash(creds);
-    const known = this.credentials.get(creds.userId);
-    if (known && known !== hash) throw new ClubError('forbidden', 'Identity check failed for this user id');
-    if (known) {
-      // Keep the map in least-recently-used order for eviction. Not worth a write on its own.
-      this.credentials.delete(creds.userId);
-      this.credentials.set(creds.userId, known);
-    }
-    return { userId: creds.userId, name: creds.name, avatar: creds.avatar };
-  }
-
-  /**
-   * Bind an unbound userId to its secret after a successful request, but only when the user
-   * now holds a membership or a pending request (creating or joining a club). Anyone else has
-   * nothing to protect, so nothing is stored. Returns true when a new binding was written.
-   */
-  bindCredential(creds: Credentials): boolean {
-    if (this.credentials.has(creds.userId)) return false;
-    if (!this.holdsMembership(creds.userId)) return false;
-    this.credentials.set(creds.userId, this.credentialHash(creds));
-    this.evictCredentials();
-    this.persist();
-    return true;
-  }
-
-  /** Number of bound identities. */
-  credentialCount(): number {
-    return this.credentials.size;
-  }
-
-  private holdsMembership(userId: string): boolean {
-    for (const c of this.clubs.values()) if (c.members.some((m) => m.userId === userId) || c.pending.some((p) => p.userId === userId)) return true;
-    return false;
-  }
-
-  /** Forget the least recently used identities that hold no membership until the table is back under its cap. */
-  private evictCredentials(): void {
-    if (this.credentials.size <= this.maxCredentials) return;
-    const inUse = new Set<string>();
-    for (const c of this.clubs.values()) {
-      for (const m of c.members) inUse.add(m.userId);
-      for (const p of c.pending) inUse.add(p.userId);
-    }
-    for (const userId of this.credentials.keys()) {
-      if (this.credentials.size <= this.maxCredentials) break;
-      if (!inUse.has(userId)) this.credentials.delete(userId);
-    }
+  /** True when the user is a full member (pending requests do not count). */
+  isMember(code: string, userId: string | undefined): boolean {
+    if (!userId) return false;
+    const club = this.clubs.get(code.toUpperCase());
+    return !!club && club.members.some((m) => m.userId === userId);
   }
 
   private newCode(): string {
@@ -290,7 +320,7 @@ export class ClubRegistry {
       tables: [],
     };
     this.clubs.set(club.code, club);
-    this.persist();
+    this.persist(club);
     return club;
   }
 
@@ -302,12 +332,12 @@ export class ClubRegistry {
     if (club.settings.joinRequiresApproval) {
       if (club.pending.length >= CLUB_LIMITS.membersPerClub) throw new ClubError('limit', 'This club has too many pending requests; try again later');
       club.pending.push(user);
-      this.persist();
+      this.persist(club);
       return { club, status: 'pending' };
     }
     this.requireMemberRoom(club);
     club.members.push({ ...user, role: 'member', joinedAt: this.now(), points: 0, matchesPlayed: 0, matchesWon: 0, handsWon: 0 });
-    this.persist();
+    this.persist(club);
     return { club, status: 'joined' };
   }
 
@@ -319,7 +349,7 @@ export class ClubRegistry {
     this.requireMemberRoom(club);
     const [user] = club.pending.splice(idx, 1);
     club.members.push({ ...user, role: 'member', joinedAt: this.now(), points: 0, matchesPlayed: 0, matchesWon: 0, handsWon: 0 });
-    this.persist();
+    this.persist(club);
     return club;
   }
 
@@ -329,7 +359,7 @@ export class ClubRegistry {
     if (userId === club.ownerId) throw new ClubError('forbidden', 'The owner cannot leave; transfer ownership first');
     club.members = club.members.filter((m) => m.userId !== userId);
     club.pending = club.pending.filter((p) => p.userId !== userId);
-    this.persist();
+    this.persist(club);
     return club;
   }
 
@@ -347,7 +377,7 @@ export class ClubRegistry {
       club.ownerId = userId;
     }
     m.role = role;
-    this.persist();
+    this.persist(club);
     return club;
   }
 
@@ -361,7 +391,7 @@ export class ClubRegistry {
     if (description !== undefined) club.description = description;
     if (patch.rules !== undefined) club.rules = sanitizeRules(patch.rules, club.rules);
     if (patch.settings !== undefined) club.settings = sanitizeSettings(patch.settings, club.settings);
-    this.persist();
+    this.persist(club);
     return club;
   }
 
@@ -414,7 +444,7 @@ export class ClubRegistry {
       scores: [0, 0, 0, 0],
     };
     club.tables.push(t);
-    this.persist();
+    this.persist(club);
     return t;
   }
 
@@ -433,7 +463,7 @@ export class ClubRegistry {
     const changed = keys.some((k) => JSON.stringify(t[k]) !== JSON.stringify(patch[k]));
     if (!changed) return t;
     Object.assign(t, patch);
-    this.persist();
+    this.persist(club!);
     return t;
   }
 
@@ -465,8 +495,10 @@ export class ClubRegistry {
   removeTable(code: string, tableCode: string): void {
     const club = this.clubs.get(code.toUpperCase());
     if (!club) return;
-    club.tables = club.tables.filter((t) => t.code !== tableCode);
-    this.persist();
+    const kept = club.tables.filter((t) => t.code !== tableCode);
+    if (kept.length === club.tables.length) return;
+    club.tables = kept;
+    this.persist(club);
   }
 
   /** Add a finished match to member standings. `results` carry each seat's final points. */
@@ -483,7 +515,7 @@ export class ClubRegistry {
       m.handsWon += r.handsWon;
       if (r.points === best && best > 0) m.matchesWon++;
     }
-    this.persist();
+    this.persist(club);
   }
 
   standings(code: string): ClubMember[] {
@@ -491,8 +523,29 @@ export class ClubRegistry {
     return [...club.members].sort((a, b) => b.points - a.points || b.matchesWon - a.matchesWon || a.joinedAt - b.joinedAt);
   }
 
-  /** Public projection for API responses. Nothing is secret yet, but this keeps redaction in one place. */
-  static publicView(club: Club): Club {
-    return club;
+  /** What anyone may see of a club: no member list, standings or tables. */
+  static publicView(club: Club): ClubPublicView {
+    return { code: club.code, name: club.name, description: club.description, memberCount: club.members.length, joinRequiresApproval: club.settings.joinRequiresApproval };
   }
 }
+
+/** The room registry's view of the clubs: who may open and join club tables over the socket. */
+export function clubGate(clubs: ClubRegistry): ClubGate {
+  return {
+    openTable(clubCode, userId, rules) {
+      if (!userId) return { error: 'Join the club first' };
+      try {
+        clubs.assertCanOpenTable(clubCode, userId);
+        return { rules: sanitizeRules(rules, clubs.club(clubCode).rules) };
+      } catch (e) {
+        if (e instanceof ClubError) return { error: e.message };
+        throw e;
+      }
+    },
+    tableOpened(clubCode, roomCode, userId, rules) {
+      clubs.addTable(clubCode, userId, { code: roomCode, rules });
+    },
+    mayJoin: (clubCode, userId) => clubs.isMember(clubCode, userId),
+  };
+}
+
