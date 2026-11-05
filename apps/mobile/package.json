@@ -11,6 +11,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
     "e2e": "rm -rf dist-e2e && CI=1 expo export --platform web --output-dir dist-e2e && node e2e/play-hand.cjs dist-e2e e2e-shots",
+    "e2e:screens": "rm -rf dist-e2e && CI=1 expo export --platform web --output-dir dist-e2e && node e2e/screens.cjs dist-e2e e2e-shots",
     "i18n:check": "node scripts/check-locales.cjs"
   },
   "dependencies": {

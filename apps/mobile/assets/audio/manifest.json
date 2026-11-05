@@ -1,0 +1,26 @@
+{
+  "_about": "Every sound the app can play. The app looks cues up by id; replace a file by dropping a recording at the same path and setting placeholder to false (see docs/CREDITS.md). Then run: node scripts/gen-audio.cjs (it regenerates placeholders and src/audio/sources.ts).",
+  "version": 1,
+  "maxBytes": 20480,
+  "sampleRate": 16000,
+  "cues": [
+    { "id": "sfx.draw", "file": "sfx/draw.wav", "volume": 0.5, "placeholder": true, "describe": "Your own draw from the wall: a soft tile slide." },
+    { "id": "sfx.discard", "file": "sfx/discard.wav", "volume": 0.8, "placeholder": true, "describe": "Any discard landing in a pond: a wooden clack." },
+    { "id": "sfx.drawGame", "file": "sfx/draw-game.wav", "volume": 0.7, "placeholder": true, "describe": "流局: the wall ran out with no winner, a falling two-note sigh." },
+    { "id": "sfx.fanfare", "file": "sfx/fanfare.wav", "volume": 0.8, "placeholder": true, "describe": "You won the hand: a short rising fanfare under the 胡 call." },
+    { "id": "sfx.tick", "file": "sfx/tick.wav", "volume": 0.6, "placeholder": true, "describe": "Clock tick each second for the last 5 seconds of your turn." },
+    { "id": "sfx.tap", "file": "sfx/tap.wav", "volume": 0.4, "placeholder": true, "describe": "UI tap: picking a tile, pressing a claim button." },
+
+    { "id": "voice.mandarin.chi", "file": "voice/mandarin/chi.wav", "volume": 1, "placeholder": true, "describe": "Mandarin call 吃 (chī) when any seat claims a chow." },
+    { "id": "voice.mandarin.pong", "file": "voice/mandarin/pong.wav", "volume": 1, "placeholder": true, "describe": "Mandarin call 碰 (pèng) for a pong." },
+    { "id": "voice.mandarin.kong", "file": "voice/mandarin/kong.wav", "volume": 1, "placeholder": true, "describe": "Mandarin call 槓 (gàng) for any kong." },
+    { "id": "voice.mandarin.hu", "file": "voice/mandarin/hu.wav", "volume": 1, "placeholder": true, "describe": "Mandarin call 胡 (hú) for a win off a discard." },
+    { "id": "voice.mandarin.selfdraw", "file": "voice/mandarin/selfdraw.wav", "volume": 1, "placeholder": true, "describe": "Mandarin call 自摸 (zìmō) for a self-drawn win." },
+
+    { "id": "voice.taiwanese.chi", "file": "voice/taiwanese/chi.wav", "volume": 1, "placeholder": false, "describe": "Taiwanese Hokkien call for 吃. Not recorded yet: the call shows as a banner only." },
+    { "id": "voice.taiwanese.pong", "file": "voice/taiwanese/pong.wav", "volume": 1, "placeholder": false, "describe": "Taiwanese Hokkien call for 碰. Not recorded yet." },
+    { "id": "voice.taiwanese.kong", "file": "voice/taiwanese/kong.wav", "volume": 1, "placeholder": false, "describe": "Taiwanese Hokkien call for 槓. Not recorded yet." },
+    { "id": "voice.taiwanese.hu", "file": "voice/taiwanese/hu.wav", "volume": 1, "placeholder": false, "describe": "Taiwanese Hokkien call for 胡. Not recorded yet." },
+    { "id": "voice.taiwanese.selfdraw", "file": "voice/taiwanese/selfdraw.wav", "volume": 1, "placeholder": false, "describe": "Taiwanese Hokkien call for 自摸. Not recorded yet." }
+  ]
+}

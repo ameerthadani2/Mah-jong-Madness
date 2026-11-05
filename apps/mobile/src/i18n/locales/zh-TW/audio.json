@@ -1,1 +1,13 @@
-{}
+{
+  "_review": "first pass, needs native review",
+  "title": "音效",
+  "sound": "音效與喊牌",
+  "voiceLabel": "喊牌語音（吃 碰 槓 胡 自摸）",
+  "voice": {
+    "mandarin": "國語",
+    "taiwanese": "台語",
+    "off": "關閉"
+  },
+  "voiceMissing": "這組語音尚未錄製，喊牌暫時只以橫幅顯示。",
+  "test": "試聽"
+}
