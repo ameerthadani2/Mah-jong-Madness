@@ -34,7 +34,7 @@ export interface Club {
   ownerId: string;
   createdAt: number;
   rules: RuleSet;
-  settings: { membersCanOpenTables: boolean; joinRequiresApproval: boolean; neutralHost: boolean };
+  settings: { membersCanOpenTables: boolean; joinRequiresApproval: boolean };
   members: ClubMember[];
   pending: Array<{ userId: string; name: string; avatar?: string }>;
   tables: ClubTable[];
@@ -53,16 +53,39 @@ export function httpBase(signalUrl: string): string {
   return signalUrl.replace(/^ws(s?):\/\//, 'http$1://').replace(/\/ws\/?$/, '').replace(/\/$/, '');
 }
 
+/** How long a club request may take before it is abandoned. */
+export const CLUB_REQUEST_TIMEOUT_MS = 15_000;
+
 async function call<T>(base: string, method: string, path: string, body?: unknown): Promise<T> {
-  const res = await fetch(`${base}${path}`, {
-    method,
-    headers: { 'content-type': 'application/json' },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
-  const text = await res.text();
-  const data = text ? (JSON.parse(text) as T & { error?: string; message?: string }) : ({} as T);
-  if (!res.ok) throw new Error((data as { message?: string }).message ?? `Request failed (${res.status})`);
-  return data;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), CLUB_REQUEST_TIMEOUT_MS);
+  let res: Response;
+  let text: string;
+  try {
+    res = await fetch(`${base}${path}`, {
+      method,
+      headers: { 'content-type': 'application/json' },
+      body: body === undefined ? undefined : JSON.stringify(body),
+      signal: controller.signal,
+    });
+    text = await res.text();
+  } catch (e) {
+    if (controller.signal.aborted) throw new Error('The club server did not respond within 15 seconds. Check your connection and try again.');
+    throw new Error(`Could not reach the club server (${(e as Error).message || 'network error'}).`);
+  } finally {
+    clearTimeout(timer);
+  }
+  let data: unknown;
+  try {
+    data = text ? JSON.parse(text) : {};
+  } catch {
+    throw new Error(`The club server sent an unreadable reply (${res.status}).`);
+  }
+  if (!res.ok) {
+    const message = (data as { message?: unknown } | null)?.message;
+    throw new Error(typeof message === 'string' && message ? message : `Request failed (${res.status})`);
+  }
+  return data as T;
 }
 
 export const clubsApi = {
