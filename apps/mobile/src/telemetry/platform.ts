@@ -7,7 +7,11 @@ import type React from 'react';
 import type { AnalyticsSink, CrashSink } from './client';
 
 export interface TelemetryPlatform {
-  /** Starts crash reporting when a DSN is set; `allowed` is asked before each report leaves the device. */
+  /**
+   * The crash reporter when a DSN is set. It does not start here: the Telemetry client calls its
+   * `start` once the stored consent allows crash reports and `stop` when they are turned off, so the
+   * native crash handler runs only with consent. `allowed` is asked again before each JS report leaves.
+   */
   createCrash(dsn: string | undefined, allowed: () => boolean): CrashSink | null;
   /** A factory for the analytics client when a key is set (it is only called once analytics are allowed). */
   createAnalytics(key: string | undefined, host: string): (() => AnalyticsSink) | null;

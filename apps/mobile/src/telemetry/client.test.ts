@@ -93,6 +93,53 @@ describe('telemetry client', () => {
     expect(captured).toHaveLength(1);
   });
 
+  it('holds crash reports until the stored consent loads, then sends or drops them', async () => {
+    const run = async (stored: string | null) => {
+      const consent = new ConsentStore(kv(stored));
+      const captured: unknown[] = [];
+      const crash: CrashSink = { capture: (e) => captured.push(e) };
+      const tel = new Telemetry({ consent, crash });
+      const boom = new Error('boot error');
+      tel.captureError(boom, 'boot', true);
+      // Nothing leaves, and Sentry's own handlers are told no, before the choice is known.
+      expect(captured).toEqual([]);
+      expect(tel.crashAllowed()).toBe(false);
+      await consent.load();
+      return captured;
+    };
+    expect(await run(JSON.stringify({ v: 1, given: true, crash: false }))).toEqual([]);
+    expect((await run(given)).map((e) => (e as Error).message)).toEqual(['boot error']);
+    expect((await run(null)).map((e) => (e as Error).message)).toEqual(['boot error']);
+  });
+
+  it('starts the crash reporter only once consent allows it, and stops it when the toggle goes off', async () => {
+    const log: string[] = [];
+    const crash: CrashSink = { capture: () => log.push('capture'), start: () => log.push('start'), stop: () => void log.push('stop') };
+    const consentOff = new ConsentStore(kv(JSON.stringify({ v: 1, given: true, crash: false })));
+    const off = new Telemetry({ consent: consentOff, crash });
+    await consentOff.load();
+    expect(log).toEqual([]);
+    consentOff.dispatch({ type: 'crash', on: true });
+    expect(log).toEqual(['start']);
+    off.captureError(new Error('x'), 'caught');
+    expect(log).toEqual(['start', 'capture']);
+    consentOff.dispatch({ type: 'crash', on: false });
+    expect(log).toEqual(['start', 'capture', 'stop']);
+    // Unrelated consent changes do not restart it; turning it back on does.
+    consentOff.dispatch({ type: 'analytics', on: false });
+    expect(log).toEqual(['start', 'capture', 'stop']);
+    consentOff.dispatch({ type: 'crash', on: true });
+    expect(log).toEqual(['start', 'capture', 'stop', 'start']);
+
+    // Stored consent that allows crash reports starts the reporter as soon as it has loaded, not at construction.
+    const log2: string[] = [];
+    const consentOn = new ConsentStore(kv(given));
+    new Telemetry({ consent: consentOn, crash: { capture: () => undefined, start: () => log2.push('start') } });
+    expect(log2).toEqual([]);
+    await consentOn.load();
+    expect(log2).toEqual(['start']);
+  });
+
   it('never lets a failing service break the app', async () => {
     const consent = new ConsentStore(kv(given));
     await consent.load();

@@ -16,22 +16,38 @@ interface ErrorUtilsLike {
 export const telemetryPlatform: TelemetryPlatform = {
   createCrash(dsn, allowed) {
     if (!dsn) return null;
-    try {
+    // Sentry starts only from `start()`: once the stored consent has loaded with crash reports on. The JS
+    // `beforeSend` below never reaches the native SDK (it is stripped before initNativeSdk), so native crash
+    // handling and auto sessions can only be switched off by not initialising, and `stop()` closes the SDK
+    // when the player turns the toggle off.
+    const start = () => {
+      if (sentryStarted) return;
       Sentry.init({
         dsn,
         environment: __DEV__ ? 'development' : 'production',
         // No IP addresses, user names or request bodies: reports identify a build, not a player.
         sendDefaultPii: false,
         tracesSampleRate: 0,
-        // Checked for every report, including the ones Sentry's own handlers catch, so the toggle is immediate.
+        // Sessions are usage telemetry, not crash data: never tracked.
+        enableAutoSessionTracking: false,
+        // A second check for the JS-side reports (Sentry's own handlers included) in case the toggle flips mid-flight.
         beforeSend: (event) => (allowed() ? event : null),
         beforeBreadcrumb: (crumb) => (crumb.category === 'console' ? null : crumb),
       });
       sentryStarted = true;
-    } catch {
-      return null;
-    }
-    return { capture: (e, context) => void Sentry.captureException(e, { tags: context }) };
+    };
+    const stop = async () => {
+      if (!sentryStarted) return;
+      sentryStarted = false;
+      await Sentry.close();
+    };
+    return {
+      capture: (e, context) => {
+        if (sentryStarted) Sentry.captureException(e, { tags: context });
+      },
+      start,
+      stop,
+    };
   },
 
   createAnalytics(key, host) {
