@@ -1,0 +1,15 @@
+{
+  "common": {
+    "ok": "確定",
+    "cancel": "取消",
+    "back": "返回",
+    "save": "儲存",
+    "close": "關閉",
+    "retry": "再試一次",
+    "loading": "載入中…"
+  },
+  "settings": {
+    "language": "語言",
+    "languageAuto": "跟隨裝置"
+  }
+}

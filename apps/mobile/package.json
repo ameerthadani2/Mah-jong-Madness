@@ -10,7 +10,8 @@
     "web": "expo start --web",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
-    "e2e": "rm -rf dist-e2e && CI=1 expo export --platform web --output-dir dist-e2e && node e2e/play-hand.cjs dist-e2e e2e-shots"
+    "e2e": "rm -rf dist-e2e && CI=1 expo export --platform web --output-dir dist-e2e && node e2e/play-hand.cjs dist-e2e e2e-shots",
+    "i18n:check": "node scripts/check-locales.cjs"
   },
   "dependencies": {
     "@expo-google-fonts/baloo-2": "^0.4.2",
@@ -37,8 +38,10 @@
     "expo-haptics": "~58.0.7",
     "expo-image": "~58.0.18",
     "expo-linear-gradient": "~58.0.3",
+    "expo-localization": "~58.0.5",
     "expo-status-bar": "~58.0.4",
     "expo-updates": "~58.0.20",
+    "i18n-js": "^4.5.4",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
     "react-native": "^0.88.1",

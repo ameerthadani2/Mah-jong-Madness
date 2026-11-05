@@ -17,7 +17,8 @@
     "mobile:tunnel": "npm run start -w @mjm/mobile -- --tunnel",
     "ios": "npm run ios -w @mjm/mobile",
     "ios:build": "cd apps/mobile && eas build --platform ios --profile preview",
-    "ios:submit": "cd apps/mobile && eas submit --platform ios --latest"
+    "ios:submit": "cd apps/mobile && eas submit --platform ios --latest",
+    "i18n:check": "npm run i18n:check -w @mjm/mobile"
   },
   "engines": {
     "node": ">=20"
