@@ -1,1 +1,40 @@
-{}
+{
+  "_review": "n/a",
+  "engineReason": "%{text}",
+  "title": "Hand review",
+  "grade": {
+    "best": "Best",
+    "good": "Good",
+    "inaccuracy": "Inaccuracy ?!",
+    "mistake": "Mistake ?",
+    "blunder": "Blunder ??"
+  },
+  "gradeCount": "%{label} %{n}",
+  "dailyUsedTitle": "Daily review used",
+  "dailyUsedText": "Free accounts get one full hand review a day. Coach Platinum reviews every hand you play, with move-by-move explanations on Diamond.",
+  "seePlans": "See Coach plans",
+  "back": "Back",
+  "nothing": "Nothing to review yet. Finish a hand first.",
+  "accuracyOver": "accuracy over %{n} decisions",
+  "rolling": {
+    "one": "Your average over the last %{count} reviewed hand: %{pct}%",
+    "other": "Your average over the last %{count} reviewed hands: %{pct}%"
+  },
+  "keyMoments": "Key moments",
+  "clean": "Clean hand — every decision matched the coach",
+  "allDecisions": "All decisions",
+  "moveMeta": "move %{n} · %{phase}",
+  "onDiscard": "on a discard",
+  "yourTurn": "your turn",
+  "you": "You: %{move}",
+  "best": " · Best: %{move}",
+  "action": {
+    "none": "—",
+    "discard": "Discard %{tile}",
+    "chi": "Chi %{tiles}",
+    "kong": "Kong %{tile}",
+    "hu": "Win",
+    "pong": "Pong",
+    "pass": "pass"
+  }
+}

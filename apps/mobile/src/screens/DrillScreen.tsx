@@ -5,9 +5,11 @@ import { useApp } from '../app-state';
 import { space } from '../theme';
 import { PuzzleView } from '../components/PuzzleView';
 import { Card, Chip, Pill, Row, ScreenHeader } from '../components/Ui';
+import { useT } from '../i18n';
 
 export function DrillScreen({ kind }: { kind: 'discard' | 'waits' }) {
   const app = useApp();
+  const { t } = useT();
   const [n, setN] = useState(0);
   const [difficulty, setDifficulty] = useState<1 | 2 | 3>(2);
   // Seed is fixed for the life of this screen so answering never remounts the puzzle.
@@ -17,19 +19,19 @@ export function DrillScreen({ kind }: { kind: 'discard' | 'waits' }) {
   const acc = app.progress.drillsPlayed ? Math.round((app.progress.drillsCorrect / app.progress.drillsPlayed) * 100) : null;
   return (
     <ScrollView contentContainerStyle={styles.wrap}>
-      <ScreenHeader title={kind === 'discard' ? 'Best discard' : 'Read the wait'} onBack={app.back} />
+      <ScreenHeader title={t(kind === 'discard' ? 'learn.discard.title' : 'learn.waits.title')} onBack={app.back} />
       <Row style={{ flexWrap: 'wrap', rowGap: 6 }}>
         {([1, 2, 3] as const).map((d) => (
-          <Chip key={d} label={d === 1 ? 'Easy' : d === 2 ? 'Medium' : 'Hard'} selected={difficulty === d} onPress={() => setDifficulty(d)} />
+          <Chip key={d} label={t(d === 1 ? 'learn.difficulty.easy' : d === 2 ? 'learn.difficulty.medium' : 'learn.difficulty.hard')} selected={difficulty === d} onPress={() => setDifficulty(d)} />
         ))}
-        {acc !== null && <Pill icon="target" text={`${acc}% · ${app.progress.drillsPlayed} played`} />}
+        {acc !== null && <Pill icon="target" text={t('learn.discard.stat', { pct: acc, n: app.progress.drillsPlayed })} />}
       </Row>
       <Card>
         <PuzzleView
           puzzle={puzzle}
           onResult={(r) => app.setProgress((p) => ({ ...p, drillsPlayed: p.drillsPlayed + 1, drillsCorrect: p.drillsCorrect + (r.correct ? 1 : 0) }))}
           onNext={() => setN(n + 1)}
-          nextLabel="Next hand"
+          nextLabel={t('learn.nextHand')}
         />
       </Card>
     </ScrollView>

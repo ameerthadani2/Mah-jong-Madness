@@ -1,1 +1,106 @@
-{}
+{
+  "_review": "first pass, needs native review",
+  "noTable": "沒有牌桌",
+  "home": "首頁",
+  "shuffling": "洗牌中…",
+  "ceremony": {
+    "idle": "等待玩家",
+    "committed": "已封存你的隨機碼",
+    "revealed": "已公開"
+  },
+  "leave": "離開",
+  "roundChip": "風 · 第%{hand}局",
+  "dealerStreak": " · 連%{n}",
+  "timeBank": "備用 %{s}秒",
+  "seconds": "%{s}秒",
+  "status": {
+    "discarded": "%{name} 打出 %{tile}",
+    "addedKong": "（加槓）",
+    "turn": "輪到 %{name}"
+  },
+  "tapHint": "點一張牌，再點一次打出",
+  "claim": {
+    "pass": "過",
+    "chi": "吃",
+    "pong": "碰",
+    "kong": "槓",
+    "discard": "打",
+    "selfDrawWin": "自摸 胡!",
+    "win": "胡!"
+  },
+  "coach": {
+    "title": "教練",
+    "waits": "聽",
+    "taiItem": "%{name} %{tai}",
+    "winPreview": "%{items} = %{tai} 台",
+    "claimLine": "%{label}：%{reason}",
+    "remaining": "×%{n}"
+  },
+  "connection": {
+    "lostTitle": "連線中斷",
+    "lostText": "你的座位會保留，回來之前由電腦代打。",
+    "reconnect": "重新連線"
+  },
+  "seat": "%{n} 號位",
+  "relSeat": {
+    "me": "你",
+    "right": "下家",
+    "across": "對家",
+    "left": "上家"
+  },
+  "offline": "離線",
+  "win": {
+    "title": "%{name} 胡牌",
+    "selfDrawn": "自摸",
+    "dealtIn": "%{name} 放槍",
+    "eightFlowers": "八仙過海",
+    "sevenRob": "七搶一 · %{name}",
+    "taiLabel": "台",
+    "tai": "%{tai} 台",
+    "payment": "%{from} → %{to}：%{points}（%{tai} 台，含莊家）"
+  },
+  "result": {
+    "drawTitle": "流局",
+    "drawSub": "",
+    "wonTitle": "你胡了!",
+    "wonSub": "",
+    "overTitle": "本局結束",
+    "overSub": "",
+    "drawKeeps": "牌摸完了，流局。莊家連莊。",
+    "drawPasses": "牌摸完了，流局。莊家下莊。",
+    "nextHand": "下一局",
+    "waiting": "等待其他玩家…",
+    "review": "複盤",
+    "reviewMyHand": "複盤這一局",
+    "leaveTable": "離開牌桌"
+  },
+  "audit": {
+    "okShort": "已驗證 · 詳情",
+    "ok": "洗牌與紀錄已驗證 · 詳情",
+    "partialShort": "已驗證（僅紀錄）",
+    "partial": "已驗證（僅紀錄）· 詳情",
+    "failed": "驗證失敗 · 詳情",
+    "pending": "驗證中"
+  },
+  "matchOver": "比賽結束",
+  "backHome": "回首頁",
+  "quickChat": {
+    "nice": "讚喔!",
+    "sorry": "歹勢!",
+    "gg": "GG",
+    "hurry": "快一點!",
+    "goodHand": "好牌!",
+    "dealtIn": "放槍了…",
+    "oneMore": "再來一局",
+    "faster": "快點啦"
+  },
+  "themes": {
+    "classic": "經典綠",
+    "deep": "墨綠",
+    "midnight": "午夜藍",
+    "nightmarket": "夜市霓虹",
+    "bamboo": "竹林",
+    "jade": "翡翠廳",
+    "imperial": "宮廷紅"
+  }
+}

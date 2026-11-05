@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
-import { kindsFromString, LESSONS, type LessonStep } from '@mjm/engine';
+import { kindsFromString, LESSONS, type Lesson, type LessonStep } from '@mjm/engine';
 import { useApp } from '../app-state';
 import { effectiveStreak } from '../storage';
 import { rollingAccuracy } from '../logic/accuracy';
@@ -9,9 +9,36 @@ import { colors, fonts, space } from '../theme';
 import { Tile } from '../components/Tile';
 import { Button, Card, H2, P, Pill, Row, ScreenHeader, SectionLabel, StrokeText } from '../components/Ui';
 import { Icon, type IconName } from '../components/Icons';
+import { useT, type Locale } from '../i18n';
+
+/**
+ * Lesson copy lives in the engine. Traditional Chinese versions arrive as optional `…Zh` fields next to the
+ * English ones (titleZh, bodyZh, summaryZh, promptZh, explanationZh); until a field exists the English is shown.
+ */
+interface ZhFields {
+  titleZh?: string;
+  bodyZh?: string;
+  summaryZh?: string;
+  promptZh?: string;
+  explanationZh?: string;
+}
+
+/** Type guard: does this lesson, step or quiz carry a non-empty Chinese version of `field`? */
+function hasZh<K extends keyof ZhFields>(source: object | undefined, field: K): source is Record<K, string> {
+  const v = source ? (source as Record<string, unknown>)[field] : undefined;
+  return typeof v === 'string' && v.length > 0;
+}
+
+function localised<K extends keyof ZhFields>(locale: Locale, source: object | undefined, en: string, zhKey: K): string {
+  return locale === 'zh-TW' && hasZh(source, zhKey) ? source[zhKey] : en;
+}
+
+const lessonTitle = (l: Lesson, locale: Locale) => (locale === 'zh-TW' ? l.titleZh : l.title);
+const lessonSummary = (l: Lesson, locale: Locale) => localised(locale, l, l.summary, 'summaryZh');
 
 export function LearnScreen() {
   const app = useApp();
+  const { t, locale } = useT();
   const { width } = useWindowDimensions();
   const done = app.progress.lessonsDone;
   const acc = app.progress.drillsPlayed ? Math.round((app.progress.drillsCorrect / app.progress.drillsPlayed) * 100) : null;
@@ -25,17 +52,17 @@ export function LearnScreen() {
   const reviewAcc = rollingAccuracy(app.progress.reviewAccuracies);
   return (
     <ScrollView contentContainerStyle={[styles.wrap, { padding: pad }]}>
-      <ScreenHeader title="Learn" onBack={app.back} backTestID="back" right={<Pill text={`${lessonsDone}/${LESSONS.length} lessons`} icon="book" tone="gold" />} />
+      <ScreenHeader title={t('learn.title')} onBack={app.back} backTestID="back" right={<Pill text={t('learn.lessonsCount', { done: lessonsDone, total: LESSONS.length })} icon="book" tone="gold" />} />
       <View style={styles.grid}>
-        <DrillCard w={drillW} icon="scroll" tint={colors.gold} title="Daily puzzle" text="Same puzzle for everyone, every day. Keep the streak alive." stat={`${streak} day streak`} statIcon="flame" statTone={streak > 0 ? 'gold' : 'neutral'} cta="Solve" kind="gold" onPress={() => app.go({ name: 'daily' })} />
-        <DrillCard w={drillW} icon="bolt" tint={colors.danger} title="Puzzle Rush" text="Three minutes, three strikes, puzzles that get harder." stat={`Best ${app.progress.rushBest} · ${app.progress.rushRuns} runs`} statIcon="trophy" cta="Go" kind="danger" onPress={() => app.go({ name: 'rush' })} />
-        <DrillCard w={drillW} icon="target" tint={colors.cta} title="Best discard" text="Random hands; pick the discard. The coach grades shanten and acceptance." stat={acc === null ? 'No drills yet' : `${acc}% · ${app.progress.drillsPlayed} played`} statIcon="check" cta="Train" kind="primary" onPress={() => app.go({ name: 'drill', kind: 'discard' })} />
-        <DrillCard w={drillW} icon="magnifier" tint={colors.info} title="Read the wait" text="A ready hand is shown. Which tiles complete it? Spot every 聽." cta="Train" kind="secondary" onPress={() => app.go({ name: 'drill', kind: 'waits' })} />
+        <DrillCard w={drillW} icon="scroll" tint={colors.gold} title={t('learn.daily.title')} text={t('learn.daily.text')} stat={t('learn.daily.streak', { n: streak })} statIcon="flame" statTone={streak > 0 ? 'gold' : 'neutral'} cta={t('learn.daily.cta')} kind="gold" onPress={() => app.go({ name: 'daily' })} />
+        <DrillCard w={drillW} icon="bolt" tint={colors.danger} title={t('learn.rush.title')} text={t('learn.rush.text')} stat={t('learn.rush.stat', { best: app.progress.rushBest, runs: app.progress.rushRuns })} statIcon="trophy" cta={t('learn.rush.cta')} kind="danger" onPress={() => app.go({ name: 'rush' })} />
+        <DrillCard w={drillW} icon="target" tint={colors.cta} title={t('learn.discard.title')} text={t('learn.discard.text')} stat={acc === null ? t('learn.discard.none') : t('learn.discard.stat', { pct: acc, n: app.progress.drillsPlayed })} statIcon="check" cta={t('learn.discard.cta')} kind="primary" onPress={() => app.go({ name: 'drill', kind: 'discard' })} />
+        <DrillCard w={drillW} icon="magnifier" tint={colors.info} title={t('learn.waits.title')} text={t('learn.waits.text')} cta={t('learn.waits.cta')} kind="secondary" onPress={() => app.go({ name: 'drill', kind: 'waits' })} />
       </View>
       <Row style={{ flexWrap: 'wrap', rowGap: 6 }}>
-        <Pill icon="magnifier" text={reviewAcc === null ? 'Review a hand after a game to track your accuracy' : `Hand review accuracy ${reviewAcc}% · last ${app.progress.reviewAccuracies.length} reviewed`} tone={reviewAcc === null ? 'neutral' : 'ok'} />
+        <Pill icon="magnifier" text={reviewAcc === null ? t('learn.reviewAccNone') : t('learn.reviewAcc', { pct: reviewAcc, n: app.progress.reviewAccuracies.length })} tone={reviewAcc === null ? 'neutral' : 'ok'} />
       </Row>
-      <SectionLabel>Lessons</SectionLabel>
+      <SectionLabel>{t('learn.lessons')}</SectionLabel>
       <View style={styles.grid}>
         {LESSONS.map((l, i) => (
           <Card key={l.id} style={{ width: lessonW, flexDirection: 'row', alignItems: 'center', gap: space.md, padding: 12 }}>
@@ -50,16 +77,17 @@ export function LearnScreen() {
             </View>
             <View style={{ flex: 1, gap: 2 }}>
               <Row gap={6} style={{ flexWrap: 'wrap' }}>
-                <Text style={styles.title}>{l.title}</Text>
-                <Text style={styles.titleZh}>{l.titleZh}</Text>
+                <Text style={styles.title}>{lessonTitle(l, locale)}</Text>
+                {/* English shows the Chinese name alongside; in zh-TW the title already is the Chinese name. */}
+                {locale !== 'zh-TW' && <Text style={styles.titleZh}>{l.titleZh}</Text>}
               </Row>
               <P dim style={{ fontSize: 12, lineHeight: 16 }} numberOfLines={2}>
-                {l.summary}
+                {lessonSummary(l, locale)}
               </P>
             </View>
             <View style={{ alignItems: 'flex-end', gap: 6 }}>
-              {done[l.id] ? <Pill text="Done" tone="ok" size="sm" /> : <Pill text={`${l.minutes} min`} icon="clock" size="sm" />}
-              <Button small kind={done[l.id] ? 'ghost' : 'secondary'} title={done[l.id] ? 'Review' : 'Start'} onPress={() => app.go({ name: 'lesson', id: l.id })} />
+              {done[l.id] ? <Pill text={t('learn.done')} tone="ok" size="sm" /> : <Pill text={t('learn.minutes', { n: l.minutes })} icon="clock" size="sm" />}
+              <Button small kind={done[l.id] ? 'ghost' : 'secondary'} title={t(done[l.id] ? 'learn.review' : 'learn.start')} onPress={() => app.go({ name: 'lesson', id: l.id })} />
             </View>
           </Card>
         ))}
@@ -137,6 +165,7 @@ function codeOf(kind: number): string {
 
 export function LessonScreen({ id }: { id: string }) {
   const app = useApp();
+  const { t, locale } = useT();
   const lesson = LESSONS.find((l) => l.id === id)!;
   const [i, setI] = useState(0);
   // The tile last picked for each quiz step, so going back and forth keeps the answers.
@@ -161,19 +190,19 @@ export function LessonScreen({ id }: { id: string }) {
 
   return (
     <ScrollView contentContainerStyle={styles.wrap}>
-      <ScreenHeader title={lesson.title} onBack={app.back} sub={<Text style={styles.headerZh}>{lesson.titleZh}</Text>} />
+      <ScreenHeader title={lessonTitle(lesson, locale)} onBack={app.back} sub={locale !== 'zh-TW' ? <Text style={styles.headerZh}>{lesson.titleZh}</Text> : undefined} />
       <Row gap={6}>
         {lesson.steps.map((_, j) => (
           <View key={j} style={[styles.dot, j <= i && { backgroundColor: colors.gold }]} />
         ))}
       </Row>
       <Card>
-        <H2>{step.title}</H2>
-        <P>{step.body}</P>
+        <H2>{localised(locale, step, step.title, 'titleZh')}</H2>
+        <P>{localised(locale, step, step.body, 'bodyZh')}</P>
         {step.hand && <HandView hand={step.hand} size="md" />}
         {quiz && (
           <View style={{ gap: 8 }}>
-            <P style={{ color: colors.infoShelf, fontFamily: fonts.bodyHeavy }}>{quiz.prompt}</P>
+            <P style={{ color: colors.infoShelf, fontFamily: fonts.bodyHeavy }}>{localised(locale, quiz, quiz.prompt, 'promptZh')}</P>
             <HandView
               hand={quiz.hand}
               size="md"
@@ -184,17 +213,17 @@ export function LessonScreen({ id }: { id: string }) {
             />
             {answer !== null && (
               <P style={{ color: correct ? colors.okText : colors.dangerText }}>
-                {correct ? 'Correct! ' : 'Not quite: tap another tile to try again. '}
-                {correct && <Text style={{ color: colors.ink }}>{quiz.explanation}</Text>}
+                {t(correct ? 'learn.correct' : 'learn.notQuite')}
+                {correct && <Text style={{ color: colors.ink }}>{localised(locale, quiz, quiz.explanation, 'explanationZh')}</Text>}
               </P>
             )}
           </View>
         )}
       </Card>
-      {last && !complete && <Pill icon="warning" text="Answer every quiz correctly to mark this lesson done." />}
+      {last && !complete && <Pill icon="warning" text={t('learn.answerAll')} />}
       <Row style={{ justifyContent: 'space-between' }}>
-        <Button kind="ghost" title="Previous" disabled={i === 0} onPress={() => setI(i - 1)} />
-        <Button title={last ? (complete ? 'Finish lesson' : 'Leave lesson') : 'Next'} disabled={!!quiz && answer === null} onPress={next} />
+        <Button kind="ghost" title={t('learn.previous')} disabled={i === 0} onPress={() => setI(i - 1)} />
+        <Button title={t(last ? (complete ? 'learn.finish' : 'learn.leaveLesson') : 'learn.next')} disabled={!!quiz && answer === null} onPress={next} />
       </Row>
     </ScrollView>
   );

@@ -1,1 +1,106 @@
-{}
+{
+  "_review": "n/a",
+  "noTable": "No table",
+  "home": "Home",
+  "shuffling": "Shuffling…",
+  "ceremony": {
+    "idle": "Waiting for players",
+    "committed": "Sealed your random share",
+    "revealed": "Revealed"
+  },
+  "leave": "Leave",
+  "roundChip": "風 · 第%{hand}局",
+  "dealerStreak": " · 連%{n}",
+  "timeBank": "bank %{s}s",
+  "seconds": "%{s}s",
+  "status": {
+    "discarded": "%{name} 打出 %{tile}",
+    "addedKong": "（加槓）",
+    "turn": "輪到 %{name}"
+  },
+  "tapHint": "Tap a tile, tap again to discard",
+  "claim": {
+    "pass": "過",
+    "chi": "吃",
+    "pong": "碰",
+    "kong": "槓",
+    "discard": "打",
+    "selfDrawWin": "自摸 胡!",
+    "win": "胡!"
+  },
+  "coach": {
+    "title": "Coach",
+    "waits": "聽",
+    "taiItem": "%{name} %{tai}",
+    "winPreview": "%{items} = %{tai} 台",
+    "claimLine": "%{label}: %{reason}",
+    "remaining": "×%{n}"
+  },
+  "connection": {
+    "lostTitle": "Connection lost",
+    "lostText": "Your seat is saved. A bot plays for you until you are back.",
+    "reconnect": "Reconnect"
+  },
+  "seat": "Seat %{n}",
+  "relSeat": {
+    "me": "你",
+    "right": "下家",
+    "across": "對家",
+    "left": "上家"
+  },
+  "offline": "離線",
+  "win": {
+    "title": "%{name} 胡牌",
+    "selfDrawn": "自摸",
+    "dealtIn": "%{name} 放槍",
+    "eightFlowers": "八仙過海",
+    "sevenRob": "七搶一 · %{name}",
+    "taiLabel": "台",
+    "tai": "%{tai} 台",
+    "payment": "%{from} → %{to}: %{points} (%{tai} 台 incl. dealer)"
+  },
+  "result": {
+    "drawTitle": "流局",
+    "drawSub": "Draw",
+    "wonTitle": "你胡了!",
+    "wonSub": "You won the hand!",
+    "overTitle": "本局結束",
+    "overSub": "Hand over",
+    "drawKeeps": "Wall exhausted. Dealer keeps the deal (連莊).",
+    "drawPasses": "Wall exhausted. Dealer passes.",
+    "nextHand": "Next hand",
+    "waiting": "Waiting for others…",
+    "review": "Review",
+    "reviewMyHand": "Review my hand",
+    "leaveTable": "Leave table"
+  },
+  "audit": {
+    "okShort": "Verified · details",
+    "ok": "Shuffle & log verified · details",
+    "partialShort": "Verified (log only)",
+    "partial": "Verified (log only) · details",
+    "failed": "Audit failed · details",
+    "pending": "Audit pending"
+  },
+  "matchOver": "Match over",
+  "backHome": "Back to home",
+  "quickChat": {
+    "nice": "Nice!",
+    "sorry": "Sorry!",
+    "gg": "GG",
+    "hurry": "Hurry up!",
+    "goodHand": "好牌!",
+    "dealtIn": "放槍了…",
+    "oneMore": "再來一局",
+    "faster": "快點啦"
+  },
+  "themes": {
+    "classic": "Classic Felt",
+    "deep": "Deep Green",
+    "midnight": "Midnight Blue",
+    "nightmarket": "Night Market",
+    "bamboo": "Bamboo Garden",
+    "jade": "Jade Parlour",
+    "imperial": "Imperial Red"
+  }
+}

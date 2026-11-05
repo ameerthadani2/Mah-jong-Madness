@@ -4,6 +4,7 @@
  * first two are free, the rest are marked premium for the shop to gate later.
  */
 import React from 'react';
+import { t } from './i18n';
 
 export interface TableTheme {
   id: string;
@@ -50,8 +51,19 @@ export function themeById(id: string | undefined): TableTheme {
   return TABLE_THEMES.find((t) => t.id === id) ?? DEFAULT_TABLE_THEME;
 }
 
+/** The theme's display name in the current locale (`table.themes.<id>`), falling back to its English name. */
+export function themeName(theme: TableTheme): string {
+  return t(`table.themes.${theme.id}`, { defaultValue: theme.name });
+}
+
 export const TableThemeContext = React.createContext<TableTheme>(DEFAULT_TABLE_THEME);
 
 /** Emote ids, drawn by components/Emotes.tsx. */
 export const EMOTES = ['thumbs', 'lol', 'wow', 'cry', 'fire', 'love', 'zzz', 'hu'];
-export const QUICK_CHATS = ['Nice!', 'Sorry!', 'GG', 'Hurry up!', '好牌!', '放槍了…', '再來一局', '快點啦'];
+/** Quick-chat ids; the text (`table.quickChat.<id>`) is sent in the sender's language. */
+export const QUICK_CHATS = ['nice', 'sorry', 'gg', 'hurry', 'goodHand', 'dealtIn', 'oneMore', 'faster'] as const;
+export type QuickChatId = (typeof QUICK_CHATS)[number];
+
+export function quickChatText(id: QuickChatId): string {
+  return t(`table.quickChat.${id}`);
+}

@@ -1,1 +1,22 @@
-{}
+{
+  "_review": "first pass, needs native review",
+  "names": {
+    "auntie": "阿姨",
+    "uncle": "阿伯",
+    "grandma": "阿嬤",
+    "boss": "大老闆",
+    "lady": "女主角",
+    "shades": "酷哥",
+    "hoops": "籃球少年",
+    "cowboy": "警長",
+    "student": "學生",
+    "chef": "主廚",
+    "sporty": "運動咖",
+    "gent": "紳士"
+  },
+  "gallery": {
+    "portraits": "頭像",
+    "plates": "牌桌上的座位牌",
+    "small": "小尺寸（房間列表、結果）"
+  }
+}

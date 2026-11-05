@@ -5,30 +5,32 @@
  */
 import React from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
-import { Avatar, AvatarPlate, AVATAR_IDS, AVATAR_NAMES } from '../components/Avatars';
+import { Avatar, AvatarPlate, AVATAR_IDS, avatarName } from '../components/Avatars';
+import { useT } from '../i18n';
 import { colors } from '../theme';
 
 export function AvatarGallery() {
+  const { t } = useT();
   return (
     <ScrollView style={styles.root} contentContainerStyle={styles.content}>
-      <Text style={styles.h}>Portraits</Text>
+      <Text style={styles.h}>{t('avatars.gallery.portraits')}</Text>
       <View style={styles.grid}>
         {AVATAR_IDS.map((id) => (
           <View key={id} style={styles.cell}>
             <Avatar id={id} size={150} />
             <Text style={styles.label}>
-              {AVATAR_NAMES[id]} · {id}
+              {avatarName(id)} · {id}
             </Text>
           </View>
         ))}
       </View>
-      <Text style={styles.h}>Seat plates on the felt</Text>
+      <Text style={styles.h}>{t('avatars.gallery.plates')}</Text>
       <View style={[styles.grid, styles.felt]}>
         {AVATAR_IDS.map((id, i) => (
           <AvatarPlate key={id} id={id} size={56} active={i % 4 === 0} timer={i % 4 === 0 ? 0.6 : null} timerUrgent={i === 8} dealer={i === 1} wind={['東', '南', '西', '北'][i % 4]} offline={i === 11} />
         ))}
       </View>
-      <Text style={styles.h}>Small sizes (lobby lists, results)</Text>
+      <Text style={styles.h}>{t('avatars.gallery.small')}</Text>
       <View style={[styles.grid, styles.sky]}>
         {AVATAR_IDS.map((id) => (
           <View key={id} style={{ alignItems: 'center', gap: 4 }}>

@@ -12,9 +12,11 @@ import { colors, fonts, space } from '../theme';
 import { PuzzleView } from '../components/PuzzleView';
 import { Button, Card, H2, P, Pill, Row, ScreenHeader, StrokeText } from '../components/Ui';
 import { Icon } from '../components/Icons';
+import { useT } from '../i18n';
 
 export function DailyPuzzleScreen() {
   const app = useApp();
+  const { t } = useT();
   // One puzzle per local calendar day, recorded under the same local date key.
   const [day] = useState(() => new Date());
   const today = todayKey(day);
@@ -35,29 +37,27 @@ export function DailyPuzzleScreen() {
 
   return (
     <ScrollView contentContainerStyle={styles.wrap}>
-      <ScreenHeader title="Daily puzzle" onBack={app.back} />
+      <ScreenHeader title={t('puzzles.daily.title')} onBack={app.back} />
       <Row style={{ flexWrap: 'wrap', rowGap: 6 }}>
         <Pill icon="scroll" text={dailySeed(localDayAsUtc(day)).replace('daily-', '')} />
-        <Pill icon="flame" text={`${streak}-day streak`} tone={streak > 0 ? 'gold' : 'neutral'} />
-        {attemptedBefore && <Pill text={app.progress.dailySolved[today] === 'correct' ? 'Solved today' : 'Attempted today'} tone={app.progress.dailySolved[today] === 'correct' ? 'ok' : 'neutral'} />}
+        <Pill icon="flame" text={t('puzzles.daily.streak', { n: streak })} tone={streak > 0 ? 'gold' : 'neutral'} />
+        {attemptedBefore && <Pill text={t(app.progress.dailySolved[today] === 'correct' ? 'puzzles.daily.solvedToday' : 'puzzles.daily.attemptedToday')} tone={app.progress.dailySolved[today] === 'correct' ? 'ok' : 'neutral'} />}
       </Row>
       <Card>
         {attemptedBefore && wasCorrect === null ? (
           <>
             <Row>
               <Icon name="check" size={30} color={colors.cta} />
-              <H2>Already played today</H2>
+              <H2>{t('puzzles.daily.alreadyTitle')}</H2>
             </Row>
-            <P dim>Come back tomorrow for a new one, or keep sharp with Puzzle Rush.</P>
-            <Button title="Puzzle Rush" onPress={() => app.go({ name: 'rush' })} />
+            <P dim>{t('puzzles.daily.alreadyText')}</P>
+            <Button title={t('puzzles.daily.rush')} onPress={() => app.go({ name: 'rush' })} />
           </>
         ) : (
-          <PuzzleView puzzle={puzzle} onResult={onResult} onNext={app.back} nextLabel={done ? 'Done' : 'Next'} />
+          <PuzzleView puzzle={puzzle} onResult={onResult} onNext={app.back} nextLabel={t(done ? 'puzzles.daily.done' : 'puzzles.daily.next')} />
         )}
       </Card>
-      <P style={{ fontSize: 12 }}>
-        Everyone gets the same puzzle on the same date, and a new one at local midnight. Weekends are harder. Any attempt keeps your streak going.
-      </P>
+      <P style={{ fontSize: 12 }}>{t('puzzles.daily.about')}</P>
     </ScrollView>
   );
 }
@@ -67,6 +67,7 @@ const RUSH_STRIKES = 3;
 
 export function PuzzleRushScreen() {
   const app = useApp();
+  const { t } = useT();
   const [run, setRun] = useState(0);
   const [allowance, setAllowance] = useState(() => canUse(app.wallet, 'rush'));
   useEffect(() => {
@@ -76,16 +77,16 @@ export function PuzzleRushScreen() {
   if (!allowance.ok) {
     return (
       <ScrollView contentContainerStyle={styles.wrap}>
-        <ScreenHeader title="Puzzle Rush" onBack={app.back} />
+        <ScreenHeader title={t('puzzles.rush.title')} onBack={app.back} />
         <Card>
           <Row>
             <Icon name="lock" size={30} />
-            <H2>Daily run used</H2>
+            <H2>{t('puzzles.rush.usedTitle')}</H2>
           </Row>
-          <P dim>Free accounts get one Puzzle Rush a day. Coach Gold makes it unlimited, with history and leaderboards.</P>
+          <P dim>{t('puzzles.rush.usedText')}</P>
           <Row>
-            <Button title="See Coach plans" onPress={() => app.go({ name: 'shop' })} />
-            <Button kind="ghost" title="Daily puzzle instead" onPress={() => app.go({ name: 'daily' })} />
+            <Button title={t('puzzles.rush.seePlans')} onPress={() => app.go({ name: 'shop' })} />
+            <Button kind="ghost" title={t('puzzles.rush.dailyInstead')} onPress={() => app.go({ name: 'daily' })} />
           </Row>
         </Card>
       </ScrollView>
@@ -105,6 +106,7 @@ export function PuzzleRushScreen() {
 
 function PuzzleRushRun({ onAgain }: { onAgain: () => void }) {
   const app = useApp();
+  const { t } = useT();
   const [runSeed] = useState(() => `rush-${randomHex(4)}`);
   // The saved best is raised as soon as the run ends, so judge the run against the best from before it.
   const [prevBest] = useState(() => app.progress.rushBest);
@@ -138,7 +140,7 @@ function PuzzleRushRun({ onAgain }: { onAgain: () => void }) {
 
   return (
     <ScrollView contentContainerStyle={styles.wrap}>
-      <ScreenHeader title="Puzzle Rush" onBack={app.back} />
+      <ScreenHeader title={t('puzzles.rush.title')} onBack={app.back} />
       <Row style={{ flexWrap: 'wrap', rowGap: 6 }}>
         <Pill icon="clock" text={`${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}`} tone={left <= 20 ? 'danger' : 'neutral'} />
         <Pill icon="check" text={`${score}`} tone="ok" />
@@ -149,7 +151,7 @@ function PuzzleRushRun({ onAgain }: { onAgain: () => void }) {
             </View>
           ))}
         </View>
-        <Pill icon="trophy" text={`Best ${app.progress.rushBest}`} tone="gold" />
+        <Pill icon="trophy" text={t('puzzles.rush.best', { n: app.progress.rushBest })} tone="gold" />
       </Row>
       <Card>
         {over ? (
@@ -157,19 +159,17 @@ function PuzzleRushRun({ onAgain }: { onAgain: () => void }) {
             <StrokeText style={styles.big} strokeWidth={3} drop={3}>
               {String(score)}
             </StrokeText>
-            <H2>{rushOutcome(prevBest, score).title}</H2>
-            <P dim>
-              {strikes >= RUSH_STRIKES ? 'Three strikes.' : 'Time is up.'} Puzzles get harder the further you go.
-            </P>
+            <H2>{t(`puzzles.rush.outcome.${rushOutcome(prevBest, score).kind}`)}</H2>
+            <P dim>{t(strikes >= RUSH_STRIKES ? 'puzzles.rush.endStrikes' : 'puzzles.rush.endTime')}</P>
             <Row>
-              <Button title="Play again" onPress={onAgain} />
-              <Button kind="ghost" title="Back to Learn" onPress={app.back} />
+              <Button title={t('puzzles.rush.playAgain')} onPress={onAgain} />
+              <Button kind="ghost" title={t('puzzles.rush.backToLearn')} onPress={app.back} />
             </Row>
           </View>
         ) : (
           <>
             <P dim style={{ fontSize: 12 }}>
-              Puzzle {index + 1} · {puzzle.type === 'discard' ? 'Best discard' : 'Read the wait'}
+              {t('puzzles.rush.progress', { n: index + 1, type: t(puzzle.type === 'discard' ? 'puzzles.rush.typeDiscard' : 'puzzles.rush.typeWaits') })}
             </P>
             <PuzzleView puzzle={puzzle} onResult={onResult} onNext={() => setIndex((i) => i + 1)} autoAdvance />
           </>
