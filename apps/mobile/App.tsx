@@ -35,6 +35,7 @@ import { captureError } from './src/telemetry';
 import { RemoteConfigProvider, useRemoteConfig } from './src/telemetry/RemoteConfig';
 import { MaintenanceBanner, UpdateRequired } from './src/telemetry/UpdateGate';
 import { PushBridge } from './src/push';
+import { DisplayScaleProvider } from './src/display/DisplayScale';
 
 /** Web-only developer gallery: open the app with #avatars. */
 const SHOW_AVATAR_GALLERY = Platform.OS === 'web' && typeof window !== 'undefined' && window.location?.hash === '#avatars';
@@ -172,14 +173,14 @@ export default function App() {
       {ready && SHOW_AVATAR_GALLERY ? (
         <AvatarGallery />
       ) : ready ? (
-        <AppProvider>
+        <DisplayScaleProvider><AppProvider>
           <RemoteConfigProvider>
             <AuthProvider>
               <Shell />
               <PushBridge />
             </AuthProvider>
           </RemoteConfigProvider>
-        </AppProvider>
+        </AppProvider></DisplayScaleProvider>
       ) : (
         <Loading />
       )}

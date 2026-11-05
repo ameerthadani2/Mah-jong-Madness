@@ -4,6 +4,8 @@ import { colors, fonts, hasCJK, radius, space } from '../theme';
 import { Icon, type IconName } from './Icons';
 import { slopFor } from './table/layout';
 import { t } from '../i18n';
+import { useDisplayScale } from '../display/DisplayScale';
+import { scaleTextStyle } from '../display/scale';
 
 /** Screen-reader name for an icon-only button, when the caller gives none. */
 function iconLabel(icon: IconName): string {
@@ -240,12 +242,22 @@ export function H1({ children, style }: { children: React.ReactNode; style?: Sty
 export function H2({ children, style }: { children: React.ReactNode; style?: StyleProp<TextStyle> }) {
   return <Text style={[styles.h2, fontFor(children, fonts.uiBold), style]}>{children}</Text>;
 }
+/** Body text. It follows Settings → Display → Text (never below the OS text size); callers' sizes scale too. */
 export function P({ children, dim, style, numberOfLines }: { children: React.ReactNode; dim?: boolean; style?: StyleProp<TextStyle>; numberOfLines?: number }) {
+  const { fontFactor } = useDisplayScale();
+  const sized = fontFactor === 1 ? null : scaledType(style, fontFactor);
   return (
-    <Text numberOfLines={numberOfLines} style={[styles.p, fontFor(children, fonts.body, '700'), dim && { color: colors.inkDim }, style]}>
+    <Text numberOfLines={numberOfLines} style={[styles.p, fontFor(children, fonts.body, '700'), dim && { color: colors.inkDim }, style, sized]}>
       {children}
     </Text>
   );
+}
+
+/** Body type's size under a text factor: the caller's fontSize / lineHeight, or the body defaults. */
+function scaledType(style: StyleProp<TextStyle>, factor: number): TextStyle {
+  const flat = StyleSheet.flatten([styles.p, style]) ?? {};
+  const base: TextStyle = typeof flat.lineHeight === 'number' ? { fontSize: flat.fontSize ?? 15, lineHeight: flat.lineHeight } : { fontSize: flat.fontSize ?? 15 };
+  return scaleTextStyle(base, factor);
 }
 
 export type PillTone = 'neutral' | 'gold' | 'ok' | 'danger' | 'premium' | 'info' | 'dark';

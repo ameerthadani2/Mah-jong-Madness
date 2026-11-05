@@ -6,7 +6,9 @@ import React from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import type { Hint, PlayerView, TableView, TileId } from '@mjm/engine';
 import { DiscardPool, FeltFrame, MeldsAndFlowers, SeatBadge, WallRing } from '../TableParts';
-import { HiddenHand } from '../Tile';
+import { HiddenHand, scaledTile } from '../Tile';
+import { useDisplayScale } from '../../display/DisplayScale';
+import { fitPools } from '../../display/tableFit';
 import { Row } from '../Ui';
 import { CoachPanel } from './CoachPanel';
 import { slideFrom } from './feel';
@@ -40,7 +42,13 @@ export function Felt({
   /** Centre call-out and winner reveal, drawn over everything on the felt. */
   overlay?: React.ReactNode;
 }) {
-  const { portrait, tablet, plate, pool, sideWidth, centerPerRow, sidePerRow } = L;
+  const { portrait, tablet, plate, sideWidth } = L;
+  // Settings → Display → Tiles grows the ponds and the opponents' melds (rows recomputed so they still fit).
+  const { tileScale } = useDisplayScale();
+  const { tile: pool, centerPerRow, sidePerRow, myPerRow, meldScale } = fitPools(L, tileScale);
+  const meldSize = (size: 'xs' | 'sm') => scaledTile(size, meldScale);
+  // A side seat's kong (four tiles) must still fit its column.
+  const sideMeld = meldScale === 1 ? 'xs' : Math.max(20, Math.min(Math.round(20 * meldScale), Math.floor(sideWidth / 4) - 1));
   const seatAt = (r: number) => (mySeat + r) % 4;
   const latestFor = (seat: number): TileId | undefined => (view.lastDiscard && view.lastDiscard.seat === seat ? view.lastDiscard.tile : undefined);
   const waitKinds = new Set(hint?.waits.map((w) => w.kind) ?? []);
@@ -63,9 +71,9 @@ export function Felt({
           <SeatBadge {...plateProps(seat)} size={plate} maxNameWidth={portrait ? 80 : 120} />
           <HiddenHand count={p.handCount} tileW={tablet ? 15 : portrait ? 9 : 11} tileH={tablet ? 24 : portrait ? 15 : 17} />
           {/* Landscape has the width for melds on the same line; portrait gives them their own line so they never run over the side plates. */}
-          {!portrait && <MeldsAndFlowers player={p} size={tablet ? 'sm' : 'xs'} />}
+          {!portrait && <MeldsAndFlowers player={p} size={meldSize(tablet ? 'sm' : 'xs')} />}
         </Row>
-        {portrait && <MeldsAndFlowers player={p} size="xs" style={styles.topMeldsPortrait} />}
+        {portrait && <MeldsAndFlowers player={p} size={meldSize('xs')} style={styles.topMeldsPortrait} />}
         <DiscardPool tiles={p.discards} size={pool} perRow={centerPerRow} align="center" latest={latestFor(seat)} enterFrom={slideFrom(2)} />
       </View>
     );
@@ -79,7 +87,7 @@ export function Felt({
       <View style={[styles.sideSeat, { width: sideWidth }, r === 1 && { alignItems: 'flex-end' }]} key={seat}>
         <SeatBadge {...plateProps(seat)} size={plate} vertical={portrait} maxNameWidth={portrait ? sideWidth : sideWidth - plate - 12} />
         <HiddenHand count={p.handCount} tileW={slim} tileH={tablet ? 22 : 15} />
-        <MeldsAndFlowers player={p} size="xs" style={[{ maxWidth: sideWidth }, r === 1 ? { justifyContent: 'flex-end' } : undefined]} />
+        <MeldsAndFlowers player={p} size={sideMeld} style={[{ maxWidth: sideWidth }, r === 1 ? { justifyContent: 'flex-end' } : undefined]} />
         <DiscardPool tiles={p.discards} size={pool} perRow={sidePerRow} align={r === 1 ? 'flex-end' : 'flex-start'} latest={latestFor(seat)} enterFrom={slideFrom(r)} />
       </View>
     );
@@ -111,7 +119,7 @@ export function Felt({
           </View>
           <View style={{ flex: 1, minWidth: 0, justifyContent: 'space-between', gap: 4 }}>
             {coach && L.coach === 'center' ? <CoachPanel hint={coach} waitKinds={waitKinds} compact lines={4} /> : <View />}
-            {myPond(L.myPerRow)}
+            {myPond(myPerRow)}
           </View>
         </View>
       ) : (

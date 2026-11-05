@@ -12,3 +12,9 @@ export const TILE_DIMS: Record<TileSize, { w: number; h: number }> = {
 export function tileDims(size: TileSize | number): { w: number; h: number } {
   return typeof size === 'number' ? { w: size, h: Math.round(size * 1.4) } : TILE_DIMS[size];
 }
+
+/** A tile size grown by a display scale (Settings → Display), as an explicit width; scale 1 keeps the size as given. */
+export function scaledTile(size: TileSize | number, scale: number): TileSize | number {
+  if (!Number.isFinite(scale) || scale <= 0 || scale === 1) return size;
+  return Math.round(tileDims(size).w * scale);
+}
