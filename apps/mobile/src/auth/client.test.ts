@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { FetchLike } from '../api/http';
 import { clubsApi } from '../api/clubs';
-import { ApiError, AuthClient, authStorageKey, REFRESH_AFTER_MS } from './client';
+import { ApiError, AuthClient, authStorageKey, REFRESH_AFTER_MS, SignedOutError } from './client';
 import { memoryStore } from './store';
 import type { DeviceInfo, StoredAuth } from './types';
 
@@ -109,11 +109,77 @@ describe('AuthClient: bootstrap and sessions', () => {
     expect(s.calls[1].body).toEqual({ userId: 'u-guest', guestSecret: 'a'.repeat(64), device: DEVICE });
   });
 
-  it('logs the guest in when the token is gone, and starts a new guest when the old one no longer exists', async () => {
+  it('logs the guest in when the token is gone; a refused guest login signs the device out instead of minting a new guest', async () => {
     const s = setup({ 'POST /api/auth/guest/login': [{ status: 401, body: { error: 'invalid_credentials' } }], 'POST /api/auth/guest': [guestReply] }, storedGuest({ userId: 'u-gone', session: null }));
-    expect(await s.client.ensureSession()).toBe('mjs_guest1');
-    expect(s.calls.map((c) => c.path)).toEqual(['/api/auth/guest/login', '/api/auth/guest']);
-    expect((await s.saved())!.userId).toBe('u-guest');
+    await expect(s.client.ensureSession()).rejects.toBeInstanceOf(SignedOutError);
+    expect(s.calls.map((c) => c.path)).toEqual(['/api/auth/guest/login']);
+    // The record and its secret stay: nothing silently overwrites the only way back into that guest.
+    expect(await s.saved()).toMatchObject({ userId: 'u-gone', guestSecret: 'a'.repeat(64), session: null, signedOut: true });
+    expect(s.client.snapshot()).toMatchObject({ status: 'signed_out', userId: 'u-gone', kind: 'guest', hasSession: false });
+    // Starting fresh is the player's call: the old record is kept aside, then a new guest is made.
+    await s.client.startFresh();
+    expect(s.client.snapshot()).toMatchObject({ status: 'guest', userId: 'u-guest', hasSession: true });
+    expect(JSON.parse((await s.store.getItem(`${KEY}.previous`))!)).toMatchObject({ userId: 'u-gone', guestSecret: 'a'.repeat(64) });
+  });
+
+  it('never replaces a signed-in account with a new guest when its session is refused', async () => {
+    // A merged account has no guest secret; a day later its refresh is refused (the server rotated the token).
+    const s = setup(
+      {
+        'POST /api/auth/link': [{ status: 200, body: { session: session('mjs_v'), user: user('u-v', 'account'), merged: true } }],
+        'POST /api/auth/refresh': [{ status: 401, body: { error: 'session_rotated' } }],
+        'POST /api/auth/guest': [guestReply],
+      },
+      storedGuest(),
+    );
+    await s.client.link('google', 'id-token', 'n');
+    s.now.t = T0 + REFRESH_AFTER_MS + 1;
+    await expect(s.client.ensureSession()).rejects.toMatchObject({ code: 'signed_out' });
+    expect(s.calls.map((c) => c.path)).toEqual(['/api/auth/link', '/api/auth/refresh']);
+    expect(await s.saved()).toMatchObject({ userId: 'u-v', kind: 'account', displayName: 'Tester', session: null, signedOut: true });
+    expect(s.client.snapshot()).toMatchObject({ status: 'signed_out', userId: 'u-v', kind: 'account', displayName: 'Tester' });
+    // An authorised call for a stored account whose server session was revoked ends the same way.
+    const r = setup({ 'GET /api/me': [{ status: 401, body: { error: 'session_revoked' } }], 'POST /api/auth/guest': [guestReply] }, storedGuest({ userId: 'u-v', guestSecret: null, kind: 'account' }));
+    await expect(r.client.getMe()).rejects.toMatchObject({ code: 'signed_out' });
+    expect(r.calls.map((c) => c.path)).toEqual(['/api/me']);
+    expect(r.client.snapshot()).toMatchObject({ status: 'signed_out', userId: 'u-v' });
+    // A provider sign-in brings the account back.
+    r.routes['POST /api/auth/login'] = [{ status: 200, body: { session: session('mjs_back'), user: user('u-v', 'account') } }];
+    await r.client.loginWithProvider('google', 't', 'n');
+    expect(r.client.snapshot()).toMatchObject({ status: 'account', userId: 'u-v', hasSession: true });
+  });
+
+  it('keeps a rotated guest secret the server returns with a link', async () => {
+    const s = setup({ 'POST /api/auth/link': [{ status: 200, body: { session: session('mjs_up'), user: user('u-guest', 'account'), merged: false, guestSecret: 'b'.repeat(64) } }] }, storedGuest());
+    await s.client.link('google', 'id-token', 'n');
+    expect(await s.saved()).toMatchObject({ userId: 'u-guest', kind: 'account', guestSecret: 'b'.repeat(64) });
+  });
+
+  it('a sign-out during an in-flight refresh wins: the rotated token is revoked, not stored', async () => {
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    const calls: Call[] = [];
+    const fetch: FetchLike = async (url, init) => {
+      const path = url.slice(BASE.length);
+      calls.push({ method: init.method, path, auth: init.headers.authorization });
+      if (path === '/api/auth/refresh') {
+        await held;
+        return { ok: true, status: 200, text: async () => JSON.stringify({ session: session('mjs_rotated') }) };
+      }
+      return { ok: true, status: 204, text: async () => '' };
+    };
+    const store = memoryStore({ [KEY]: JSON.stringify(storedGuest({ kind: 'account', guestSecret: null, session: { token: 'mjs_old', expiresAt: '2026-12-31T00:00:00Z', refreshedAt: T0 - REFRESH_AFTER_MS - 1 } })) });
+    const client = new AuthClient({ base: BASE, store, fetch, device: () => DEVICE, now: () => T0 });
+    const inflight = client.ensureSession();
+    await new Promise((r) => setTimeout(r, 0));
+    await client.logout();
+    expect(client.snapshot().status).toBe('offline');
+    release();
+    await expect(inflight).rejects.toMatchObject({ code: 'signed_out' });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(client.snapshot()).toMatchObject({ status: 'offline', hasSession: false });
+    expect(await store.getItem(KEY)).toBeNull();
+    expect(calls.filter((c) => c.path === '/api/auth/logout').map((c) => c.auth)).toEqual(['Bearer mjs_old', 'Bearer mjs_rotated']);
   });
 
   it('surfaces a network failure without wiping the stored guest', async () => {
@@ -203,7 +269,7 @@ describe('AuthClient: providers, sign-out and deletion', () => {
     s.routes['DELETE /api/me'] = [{ status: 204 }];
     await s.client.deleteAccount();
     expect(await s.saved()).toBeNull();
-    expect(s.client.snapshot()).toEqual({ status: 'offline', userId: null, displayName: null, hasSession: false });
+    expect(s.client.snapshot()).toEqual({ status: 'offline', userId: null, displayName: null, kind: null, hasSession: false });
   });
 
   it('PATCH /api/me sends only the changed fields', async () => {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { allowedBotSkill, canAfford, canUse, coachRenewal, coachTier, consume, EMPTY_WALLET, hasTier, migrateWallet, mirrorMe, ownsCosmetic, showsPurchase, totalDiamonds, trustedNow, type MeWallet } from './wallet';
+import { allowedBotSkill, canAfford, canUse, coachRenewal, coachTier, consume, EMPTY_WALLET, hasTier, migrateWallet, mirrorMe, ownsCosmetic, showsPurchase, totalDiamonds, trustedNow, walletForUser, type MeWallet } from './wallet';
 
 const DAY = 86400_000;
 const SERVER_NOW = '2026-11-05T12:00:00.000Z';
@@ -14,6 +14,23 @@ const me = (over: Partial<MeWallet> = {}): MeWallet => ({
 });
 
 describe('wallet mirror', () => {
+  it('drops another account’s mirror (tier, themes, balance) after a sign-out, a deletion or an account switch, keeping the meters', () => {
+    const meters = { day: '2026-11-5', reviews: 2, rush: 1 };
+    const w = mirrorMe({ ...EMPTY_WALLET, meters }, me({ entitlements: [{ entitlement: 'coach.platinum', expiresAt: '2026-12-05T12:00:00.000Z' }, { entitlement: 'theme.jade', expiresAt: null }] }), S);
+    expect(hasTier(w, 'gold', S)).toBe(true);
+    // Signed out (no account) or deleted: nothing of u-1 stays on the device but today's meters.
+    const out = walletForUser(w, null);
+    expect(out).toEqual({ ...EMPTY_WALLET, meters });
+    expect(hasTier(out, 'gold', S)).toBe(false);
+    expect(ownsCosmetic(out, 'jade')).toBe(false);
+    expect(totalDiamonds(out)).toBe(0);
+    // Another account on the same phone starts empty too.
+    expect(walletForUser(w, 'u-2')).toEqual({ ...EMPTY_WALLET, meters });
+    // The owner keeps it, and a never-synced mirror waits for whoever syncs first.
+    expect(walletForUser(w, 'u-1')).toBe(w);
+    expect(walletForUser(EMPTY_WALLET, 'u-2')).toBe(EMPTY_WALLET);
+  });
+
   it('copies balances, entitlements and cosmetics from /api/me and keeps this device’s meters', () => {
     const before = { ...EMPTY_WALLET, meters: { day: '2026-11-5', reviews: 1, rush: 0 } };
     const w = mirrorMe(

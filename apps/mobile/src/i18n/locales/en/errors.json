@@ -47,6 +47,8 @@
   "lastIdentity": "Link another sign-in method before removing this one.",
   "unavailable": "The game server is at capacity or partly down. Please try again in a few minutes.",
   "unauthorised": "The game server did not accept your session. Go back and try again.",
+  "signedOut": "You are signed out of your account on this device. Sign in again to play online.",
+  "tableGone": "This table is over or no longer exists on the game server.",
   "limit": "A limit was reached. Leave or finish something first.",
   "notFound": "That could not be found.",
   "invalidRequest": "The game server could not use that request."

@@ -42,6 +42,12 @@ export function AccountCard() {
         </>
       )}
       {auth.status === 'account' && <Pill text={t('settings.account.signedIn')} icon="check" tone="ok" style={{ alignSelf: 'flex-start' }} />}
+      {auth.status === 'signed_out' && (
+        <>
+          <Pill text={t('settings.account.signedOut')} icon="warning" tone="gold" style={{ alignSelf: 'flex-start' }} />
+          <P dim style={styles.small}>{t('settings.account.signedOutBody', { name: auth.user?.displayName || t('common.player') })}</P>
+        </>
+      )}
       {auth.user && <P dim style={styles.tiny}>{t('settings.account.id', { id: auth.user.id })}</P>}
 
       <Row style={{ flexWrap: 'wrap', rowGap: 8 }} gap={8}>

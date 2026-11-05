@@ -108,6 +108,10 @@ function fromCode(e: unknown): Message | null {
     case 'session_revoked':
     case 'session_rotated':
       return { key: 'errors.sessionExpired' };
+    case 'signed_out':
+      return { key: 'errors.signedOut' };
+    case 'room_unavailable':
+      return { key: 'errors.roomUnavailable' };
     case 'invalid_token':
       return { key: 'errors.invalidToken' };
     case 'provider_disabled':

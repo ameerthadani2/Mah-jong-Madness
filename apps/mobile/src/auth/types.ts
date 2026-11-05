@@ -62,6 +62,11 @@ export interface StoredAuth {
   session: { token: string; expiresAt: string; refreshedAt: number } | null;
   /** The server said the token expired: try a refresh before anything else. */
   expired?: boolean;
+  /**
+   * The server refused this identity's session and (for a guest) its secret: it stays here, under
+   * the player's name, until they sign in again or choose to start fresh. Never replaced on its own.
+   */
+  signedOut?: boolean;
 }
 
 /** Key-value secure storage (expo-secure-store on native, AsyncStorage on web; an in-memory map in tests). */

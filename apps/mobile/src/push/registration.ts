@@ -28,6 +28,8 @@ export interface PushRegistrarOptions {
   auth: Authoriser;
   /** True once this device has a server session; nothing here creates one. */
   hasSession(): boolean;
+  /** The account the session belongs to: a token is registered per account, so a new account re-sends it. */
+  userId?(): string | null;
   /** The server's `pushEnabled` from `/api/config`; null while unknown. */
   pushEnabled(): boolean | null;
   devicePlatform: 'ios' | 'android' | 'web';
@@ -46,12 +48,14 @@ interface PushRecord {
   v: 1;
   /** The last token the server accepted. */
   token: string | null;
+  /** The account it was registered for (null when unknown: an older record, or no account). */
+  userId: string | null;
   registeredAt: number;
   /** The permission prompt has been shown once from the club flow. */
   asked: boolean;
 }
 
-const EMPTY: PushRecord = { v: 1, token: null, registeredAt: 0, asked: false };
+const EMPTY: PushRecord = { v: 1, token: null, userId: null, registeredAt: 0, asked: false };
 
 /** One record per game server, like the session itself. */
 export function pushStorageKey(base: string): string {
@@ -107,11 +111,21 @@ export class PushRegistrar {
     });
   }
 
+  /** The account signed out or was deleted: its registration is forgotten here (the permission answer is kept). */
+  async forget(): Promise<void> {
+    await this.serial(async () => {
+      await this.save({ ...(await this.load()), token: null, userId: null, registeredAt: 0 });
+      return 'unchanged';
+    });
+  }
+
   private async registerCurrent(force: boolean): Promise<PushResult> {
     const token = await this.safe(() => this.o.platform.getToken(), null);
     if (!token) return 'no-token';
     const rec = await this.load();
-    if (!force && rec.token === token && this.now() - rec.registeredAt < REREGISTER_AFTER_MS) return 'unchanged';
+    const userId = this.o.userId?.() ?? null;
+    // The same token registered for another account counts as changed: the server keeps one account per device.
+    if (!force && rec.token === token && rec.userId === userId && this.now() - rec.registeredAt < REREGISTER_AFTER_MS) return 'unchanged';
     try {
       await authorisedJson<unknown>(this.o.auth, {
         fetch: this.fetch,
@@ -126,7 +140,7 @@ export class PushRegistrar {
     } catch {
       return 'failed';
     }
-    await this.save({ ...(await this.load()), token, registeredAt: this.now() });
+    await this.save({ ...(await this.load()), token, userId, registeredAt: this.now() });
     return 'registered';
   }
 
@@ -151,7 +165,7 @@ export class PushRegistrar {
     try {
       const raw = await this.o.kv.getItem(this.key);
       const o = raw ? (JSON.parse(raw) as Partial<PushRecord>) : null;
-      if (o && o.v === 1) rec = { v: 1, token: typeof o.token === 'string' ? o.token : null, registeredAt: typeof o.registeredAt === 'number' ? o.registeredAt : 0, asked: o.asked === true };
+      if (o && o.v === 1) rec = { v: 1, token: typeof o.token === 'string' ? o.token : null, userId: typeof o.userId === 'string' ? o.userId : null, registeredAt: typeof o.registeredAt === 'number' ? o.registeredAt : 0, asked: o.asked === true };
     } catch {
       /* unreadable: start again */
     }

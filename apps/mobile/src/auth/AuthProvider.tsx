@@ -10,6 +10,8 @@ import { useApp } from '../app-state';
 import { httpBase } from '../api/http';
 import { GOOGLE_CLIENT_ID } from '../config';
 import { visibleProviders, type SignInProvider } from '../logic/auth-config';
+import { walletForUser } from '../monetisation/wallet';
+import { forgetPushRegistration } from '../push/hub';
 import { ApiError, AuthClient, type AuthSnapshot, type AuthStatus } from './client';
 import { appleAvailable, deviceInfo, platformStore, signInWithApple, signInWithGoogle, type ProviderCredential } from './platform';
 import type { Me, ServerConfig } from './types';
@@ -40,6 +42,8 @@ export interface AuthContextValue {
   unlink(provider: SignInProvider): Promise<boolean>;
   signOut(): Promise<boolean>;
   deleteAccount(): Promise<boolean>;
+  /** With status 'signed_out': leave the remembered identity behind and start a new guest (the player's choice). */
+  startFresh(): Promise<boolean>;
   /** Re-read the server config and, when signed in, the account. */
   refresh(): Promise<void>;
   /** Push the local name and avatar to the server (debounced; skipped offline). */
@@ -86,6 +90,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const id = snap.userId ?? '';
     if (id !== profile.userId) setProfile({ ...profile, userId: id });
   }, [loaded, authLoaded, snap.userId, profile, setProfile]);
+
+  // The cached wallet belongs to one account: another user on this device (or none, after a
+  // sign-out or deletion) must not inherit its tier, themes or balance. Today's meters stay.
+  const { wallet, setWallet } = app;
+  useEffect(() => {
+    if (!loaded || !authLoaded) return;
+    const next = walletForUser(wallet, snap.userId);
+    if (next !== wallet) setWallet(next);
+  }, [loaded, authLoaded, snap.userId, wallet, setWallet]);
 
   const loadConfig = useCallback(async () => {
     try {
@@ -134,13 +147,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
-  /** Guests link (an existing account absorbs the guest); a device with no account yet tries signing in first. */
+  /**
+   * Guests link (an existing account absorbs the guest); a device with no account yet, or one whose
+   * stored identity is signed out, tries signing in first. A provider nobody has linked yet gets a
+   * new guest to link to (for a signed-out device that is the player's choice to start fresh).
+   */
   const signIn = useCallback(
     (provider: SignInProvider, get: () => Promise<ProviderCredential | null>) =>
       run(async () => {
         const cred = await get();
         if (!cred) return;
-        if (client.snapshot().status === 'offline') {
+        const status = client.snapshot().status;
+        if (status === 'offline' || status === 'signed_out') {
           try {
             await client.loginWithProvider(provider, cred.token, cred.nonce);
             setMe(await client.getMe());
@@ -148,7 +166,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           } catch (e) {
             if (!(e instanceof ApiError && e.code === 'not_linked')) throw e;
           }
-          await client.ensureSession();
+          if (status === 'signed_out') await client.startFresh();
+          else await client.ensureSession();
         }
         await client.link(provider, cred.token, cred.nonce, cred.email);
         setMe(await client.getMe());
@@ -161,7 +180,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const providers = visibleProviders({ serverProviders: config?.authProviders ?? null, appleAvailable: apple, googleClientId: GOOGLE_CLIENT_ID }).map((id) => ({ id, linked: linked.has(id) }));
     return {
       status: snap.status,
-      user: snap.userId ? { id: snap.userId, displayName: snap.displayName, kind: snap.status === 'account' ? 'account' : 'guest' } : null,
+      user: snap.userId ? { id: snap.userId, displayName: snap.displayName, kind: snap.kind ?? 'guest' } : null,
       providers,
       linkedCount: linked.size,
       busy,
@@ -181,11 +200,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         run(async () => {
           await client.logout();
           setMe(null);
+          await forgetPushRegistration();
         }),
       deleteAccount: () =>
         run(async () => {
           await client.deleteAccount();
           setMe(null);
+          await forgetPushRegistration();
+        }),
+      startFresh: () =>
+        run(async () => {
+          await client.startFresh();
+          setMe(null);
+          await forgetPushRegistration();
+          void loadConfig();
         }),
       syncProfile: (displayName, avatar) => {
         if (syncTimer.current) clearTimeout(syncTimer.current);
@@ -195,7 +223,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }, 800);
       },
     };
-  }, [snap, me, config, apple, busy, error, client, ensure, refresh, signIn, run]);
+  }, [snap, me, config, apple, busy, error, client, ensure, refresh, signIn, run, loadConfig]);
 
   useEffect(
     () => () => {
