@@ -56,7 +56,11 @@ describe('coach accuracy', () => {
           if (after < h.shanten) {
             improving++;
             expect(c.reason).not.toMatch(/does not reduce/);
-          } else expect(c.reason).toMatch(/does not reduce|already ready/);
+            expect(c.reasonKey).not.toMatch(/noGain/);
+          } else {
+            expect(c.reason).toMatch(/does not reduce|already ready/);
+            expect(c.reasonKey).toMatch(/^hint\.claim\.(noGain|alreadyReady)/);
+          }
         }
       }
     }
@@ -116,6 +120,7 @@ describe('coach accuracy', () => {
       const huMove = review.moves.find((m) => m.actual.type === 'hu');
       expect(huMove).toBeDefined();
       expect(huMove!.explanation).toMatch(/win/i);
+      expect(huMove!.reasonKey).toMatch(/^review\.(call\.tookWin|turn\.win)$/);
     }
     expect(found).toBe(true);
   });
