@@ -89,11 +89,15 @@ describe('locale keys', () => {
     });
   }
 
-  it('zh-TW strings use the same placeholders as en', () => {
+  it('zh-TW strings use no placeholder that en does not supply', () => {
+    // A zh-TW string may leave a parameter out (e.g. shop.productSub drops the Chinese title it already shows),
+    // but a placeholder en never fills would render as a missing-value marker.
     const mismatched = leaves(en)
       .filter(([k, s]) => {
         const other = lookup(zhTW, k);
-        return typeof other === 'string' && placeholders(other).join(',') !== placeholders(s).join(',');
+        if (typeof other !== 'string') return false;
+        const allowed = new Set(placeholders(s));
+        return placeholders(other).some((p) => !allowed.has(p));
       })
       .map(([k]) => k);
     expect(mismatched).toEqual([]);

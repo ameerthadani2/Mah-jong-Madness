@@ -592,19 +592,19 @@ function ActionBar({ actions, act, selected, hint, view, big }: { actions: Actio
 
 function CoachPanel({ hint, waitKinds, compact }: { hint: Hint; waitKinds: Set<number>; compact?: boolean }) {
   const { t } = useT();
-  // Coach sentences come from the engine in English for now; review.engineReason is the one place to swap them for reason codes.
-  const engine = (text: string) => t('review.engineReason', { text });
+  // Coach sentences are engine reason keys rendered in the current locale (see src/i18n/index.ts).
+  const engine = (key: string, params?: Record<string, string | number>) => t(`engine.${key}`, params);
   const preview = hint.winPreview ? t('table.coach.winPreview', { items: hint.winPreview.items.map((i) => t('table.coach.taiItem', { name: i.nameZh, tai: i.tai })).join(' · '), tai: hint.winPreview.tai }) : null;
   if (compact) {
     // One or two lines: status + the single most useful piece of advice.
-    const reason = hint.discardReason ?? hint.claims.find((c) => c.recommended)?.reason;
-    const line = preview ?? (reason ? engine(reason) : '');
+    const rec = hint.claims.find((c) => c.recommended);
+    const line = preview ?? (hint.discardReasonKey ? engine(hint.discardReasonKey, hint.discardReasonParams) : rec ? engine(rec.reasonKey, rec.reasonParams) : '');
     return (
       <View style={[styles.coach, styles.coachCompact]}>
         <CoachOwl size={34} />
         <View style={{ flex: 1, minWidth: 0, flexShrink: 1, overflow: 'hidden' }}>
           <Text style={styles.coachStatus} numberOfLines={1}>
-            {engine(hint.status)}
+            {engine(hint.statusKey, hint.statusParams)}
           </Text>
           {!!line && (
             <Text style={styles.coachLine} numberOfLines={2}>
@@ -628,9 +628,9 @@ function CoachPanel({ hint, waitKinds, compact }: { hint: Hint; waitKinds: Set<n
         <CoachOwl size={36} />
         <Text style={styles.coachTitle}>{t('table.coach.title')}</Text>
       </Row>
-      <Text style={styles.coachStatus}>{engine(hint.status)}</Text>
+      <Text style={styles.coachStatus}>{engine(hint.statusKey, hint.statusParams)}</Text>
       {preview && <Text style={styles.coachLine}>{preview}</Text>}
-      {hint.discardReason && <Text style={styles.coachLine}>{engine(hint.discardReason)}</Text>}
+      {hint.discardReasonKey && <Text style={styles.coachLine}>{engine(hint.discardReasonKey, hint.discardReasonParams)}</Text>}
       {hint.waits.length > 0 && (
         <Row style={{ flexWrap: 'wrap' }} gap={4}>
           <Text style={styles.coachLabel}>{t('table.coach.waits')}</Text>
@@ -646,7 +646,7 @@ function CoachPanel({ hint, waitKinds, compact }: { hint: Hint; waitKinds: Set<n
         <Row key={i} gap={4} style={{ alignItems: 'flex-start' }}>
           {c.recommended ? <Icon name="check" size={16} color={colors.cta} /> : <View style={styles.coachDot} />}
           <Text style={[styles.coachLine, { flex: 1 }, c.recommended && { color: colors.okText }]}>
-            {t('table.coach.claimLine', { label: engine(c.label), reason: engine(c.reason) })}
+            {t('table.coach.claimLine', { label: engine(c.labelKey, c.labelParams), reason: engine(c.reasonKey, c.reasonParams) })}
           </Text>
         </Row>
       ))}

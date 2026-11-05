@@ -160,7 +160,7 @@ function MoveCard({ move, compact }: { move: ReviewedMove; compact?: boolean }) 
               <Tile key={`${t}-${i}`} tile={t} size="sm" highlight={move.highlightBest === kindOf(t) ? 'good' : move.highlightActual === kindOf(t) ? 'bad' : undefined} />
             ))}
           </View>
-          <P style={{ fontSize: 13 }}>{t('review.engineReason', { text: move.explanation })}</P>
+          <P style={{ fontSize: 13 }}>{t(`engine.${move.reasonKey}`, move.reasonParams)}</P>
         </>
       )}
     </Card>

@@ -109,6 +109,8 @@ export const REVIEW_REASON_KEYS = {
 
   'review.turn.win': { en: 'You took the win.', 'zh-TW': '你胡牌了。' },
   'review.turn.kong': { en: 'Kong for a replacement draw.', 'zh-TW': '開槓補牌。' },
+  'review.turn.kongOverWin': { en: 'You declared a kong instead of taking the win.', 'zh-TW': '可以胡牌卻選擇開槓。' },
+  'review.turn.kongNotBest': { en: 'The coach would not kong here (%{best} instead): it changes the shape or costs 門清.', 'zh-TW': '教練這裡不會開槓（建議 %{best}）：會改變牌型或失去門清。' },
 } satisfies Record<string, ReasonTemplate>;
 
 export type ReviewReasonKey = keyof typeof REVIEW_REASON_KEYS;
@@ -278,8 +280,18 @@ function gradeMove(s: GameState, seat: number, actual: Action, n: number): Revie
     return move('mistake', concealed ? 'review.call.noGainConcealed' : 'review.call.noGain', best, { shantenBefore, shantenAfter: after });
   }
 
-  if (actual.type === 'kong' || actual.type === 'hu') {
-    return { n, phase: s.phase, actual, best, grade: 'best', shantenBefore, ...explained(reason(actual.type === 'hu' ? 'review.turn.win' : 'review.turn.kong')), hand };
+  if (actual.type === 'hu') {
+    return { n, phase: s.phase, actual, best, grade: 'best', shantenBefore, ...explained(reason('review.turn.win')), hand };
+  }
+  if (actual.type === 'kong') {
+    // A kong is only 'best' when the coach would also declare it; declaring one over a win is a blunder,
+    // and one the coach would not make (it damages the shape or costs 門清) is an inaccuracy.
+    if (best && best.type === 'hu') return { n, phase: s.phase, actual, best, grade: 'blunder', shantenBefore, ...explained(reason('review.turn.kongOverWin')), hand };
+    if (best && !sameAction(best, actual, s, seat)) {
+      const bestCode = best.type === 'discard' ? kindInfo(kindOf(best.tile)).code : best.type;
+      return { n, phase: s.phase, actual, best, grade: 'inaccuracy', shantenBefore, ...explained(reason('review.turn.kongNotBest', { best: bestCode })), hand };
+    }
+    return { n, phase: s.phase, actual, best, grade: 'best', shantenBefore, ...explained(reason('review.turn.kong')), hand };
   }
   return null;
 }

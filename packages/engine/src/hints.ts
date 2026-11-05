@@ -94,6 +94,9 @@ export const HINT_REASON_KEYS = {
   'hint.claim.hu': { en: 'Take the win. Compare with your waits only if you are chasing a much bigger hand.', 'zh-TW': '胡下去吧。只有在做更大的牌時，才需要跟你聽的牌比較。' },
   'hint.claim.kongGood': { en: 'Kong: adds a replacement draw and keeps all four tiles together.', 'zh-TW': '槓：多補一張牌，四張也留在一起。' },
   'hint.claim.kongBad': { en: 'The kong would break up sets you are using elsewhere.', 'zh-TW': '槓了會拆散你別處要用的面子。' },
+  'hint.claim.kongBreaksConcealed': { en: 'An exposed kong would cost you 門清 on a hand that is already ready.', 'zh-TW': '已經聽牌了，明槓會失去門清。' },
+  'hint.claim.takeWin': { en: 'Take the win instead.', 'zh-TW': '直接胡牌就好。' },
+  'hint.claim.coachPrefers': { en: 'The coach prefers %{label}, which leaves the hand in the same shape.', 'zh-TW': '教練比較建議%{label}，牌型一樣好。' },
   ...withConcealedVariant('hint.claim.recommendedReady', 'This claim makes you ready.', '吃碰這張就能聽牌。'),
   ...withConcealedVariant('hint.claim.recommendedCloser', 'This claim brings you closer to ready.', '吃碰這張能讓你更接近聽牌。'),
   ...withConcealedVariant('hint.claim.improvesReady', 'This claim would make you ready, but your concealed hand is worth more here.', '吃碰這張雖然能聽牌，但這裡保持門清更有價值。'),
@@ -114,6 +117,10 @@ function reason(key: HintReasonKey, params: ReasonParams = {}): Reason {
 
 function englishOf(r: Reason): string {
   return fillTemplate(HINT_REASON_KEYS[r.key as HintReasonKey].en, r.params);
+}
+
+function chineseOf(r: Reason): string {
+  return fillTemplate(HINT_REASON_KEYS[r.key as HintReasonKey]['zh-TW'], r.params);
 }
 
 export interface WaitInfo {
@@ -252,7 +259,7 @@ export function hintFor(s: GameState, seat: number): Hint {
     for (const a of actions) {
       if (a.type === 'pass') continue;
       const recommended = botPick !== null && sameAction(a, botPick, s, seat);
-      base.claims.push(claimAdvice(a, claimLabel(a, s), recommended, claimReason(a, s, seat, sh, recommended)));
+      base.claims.push(claimAdvice(a, claimLabel(a, s), recommended, claimReason(a, s, seat, sh, recommended, botPick)));
     }
     if (canHu) setStatus(base, reason('hint.status.canWinDiscard', { tai: base.winPreview!.tai }));
     return base;
@@ -328,15 +335,26 @@ function claimLabel(a: Action, s: GameState): Reason {
   }
 }
 
-function claimReason(a: Action, s: GameState, seat: number, sh: number, recommended: boolean): Reason {
+function claimReason(a: Action, s: GameState, seat: number, sh: number, recommended: boolean, coachPick: Action | null): Reason {
   const p = s.players[seat];
   const concealed = p.melds.every((m) => m.concealed);
   if (a.type === 'hu') return reason('hint.claim.hu');
-  if (a.type === 'kong') return reason(recommended ? 'hint.claim.kongGood' : 'hint.claim.kongBad');
+  // The coach's own choice explains a rejected claim better than a generic line.
+  if (!recommended && coachPick?.type === 'hu') return reason('hint.claim.takeWin');
+  if (a.type === 'kong') {
+    if (recommended) return reason('hint.claim.kongGood');
+    if (concealed && sh === 0) return reason('hint.claim.kongBreaksConcealed');
+    return reason('hint.claim.kongBad');
+  }
   const after = shantenAfterClaim(s, seat, a);
   const improves = after < sh;
   const readyAfter = after === 0;
   const params: ReasonParams = { shanten: sh, shantenAfter: after };
+  if (!recommended && coachPick && coachPick.type !== 'pass' && improves) {
+    const other = claimLabel(coachPick, s);
+    // The label is the Chinese claim text (碰 五筒 …), which the English UI already uses on its claim buttons.
+    return reason('hint.claim.coachPrefers', { ...params, label: chineseOf(other) });
+  }
   // Each reason has a twin that adds the 門清 warning when the hand is still concealed.
   const pick = (k: 'recommendedReady' | 'recommendedCloser' | 'improvesReady' | 'improvesCloser' | 'alreadyReady' | 'noGain'): Reason =>
     reason(`hint.claim.${k}${concealed ? 'Concealed' : ''}`, params);

@@ -9,12 +9,15 @@
 import { useSyncExternalStore } from 'react';
 import { I18n, type TranslateOptions } from 'i18n-js';
 import { getLocales } from 'expo-localization';
+import { engineReasonTranslations } from '@mjm/engine';
 import { en, zhTW } from './locales';
 import { type Locale, type LocalePreference, resolveLocale } from './resolve';
 
 export { type Locale, type LocalePreference, SUPPORTED_LOCALES, LOCALE_NAMES, resolveLocale, isLocale } from './resolve';
 
-const i18n = new I18n({ en, 'zh-TW': zhTW });
+// The engine's coach and review sentences are templates it exports per locale; they live under 'engine.' so
+// they cannot collide with the app's own keys. Render them as t('engine.' + reasonKey, reasonParams).
+const i18n = new I18n({ en: { ...en, engine: engineReasonTranslations('en') }, 'zh-TW': { ...zhTW, engine: engineReasonTranslations('zh-TW') } });
 i18n.defaultLocale = 'en';
 i18n.enableFallback = true;
 // A missing key shows its path rather than an i18n-js diagnostic, so a gap is visible but never ugly.
