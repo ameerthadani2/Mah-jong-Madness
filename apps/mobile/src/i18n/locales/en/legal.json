@@ -1,1 +1,39 @@
-{}
+{
+  "_review": "n/a",
+  "terms": "Terms of Service",
+  "privacy": "Privacy Policy",
+  "draftBanner": "DRAFT — pending counsel review. This text is not yet in force.",
+  "version": "Version: %{version}",
+  "close": "Close",
+  "noValue": "Diamonds and points have no monetary value and cannot be redeemed or transferred.",
+  "agree": "By continuing you agree to the Terms of Service and have read the Privacy Policy.",
+  "age": {
+    "title": "Before you play",
+    "body": "This game includes simulated gambling and is for players aged %{age} and over. What year were you born?",
+    "placeholder": "YYYY",
+    "continue": "Continue",
+    "invalid": "Enter your birth year as four digits, for example 1990.",
+    "note": "Only the year is kept: on this device, and with your account once you play online.",
+    "blockedTitle": "Sorry, not yet",
+    "blockedBody": "This game is for players aged %{age} and over, so it is not available to you yet. You are welcome back from 1 January %{year}.",
+    "back": "Back"
+  },
+  "report": {
+    "title": "Report %{name}",
+    "body": "Moderators review every report with the table's hand records. False reports can lead to action against the reporter.",
+    "reasons": {
+      "cheating": "Cheating",
+      "collusion": "Playing as a team",
+      "abuse": "Abuse or harassment",
+      "name": "Offensive name or avatar",
+      "stalling": "Stalling the game",
+      "other": "Something else"
+    },
+    "notePlaceholder": "Anything moderators should know (optional)",
+    "send": "Send report",
+    "sending": "Sending…",
+    "sent": "Thank you. Moderators will review it.",
+    "cancel": "Cancel",
+    "done": "Done"
+  }
+}

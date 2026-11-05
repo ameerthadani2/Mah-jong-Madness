@@ -6,6 +6,7 @@ import { localDateKey, previousDateKey } from './logic/dates';
 import { migrateSettings } from './logic/settings';
 import { DEFAULT_PROFILE, migrateProfile, type Profile } from './logic/profile';
 import type { LocalePreference } from './i18n/resolve';
+import { migrateAgeRecord, type AgeRecord } from './legal/age';
 
 export { DEFAULT_PROFILE, type Profile } from './logic/profile';
 
@@ -49,7 +50,7 @@ export type ActiveSession =
   | { kind: 'online'; signalUrl: string; roomCode: string; token: string; name: string; avatar: string; clubCode?: string; savedAt: number }
   | { kind: 'local'; host: SerializedHost; token: string; name: string; avatar: string; savedAt: number };
 
-const KEYS = { profile: 'mjm.profile', settings: 'mjm.settings', progress: 'mjm.progress', session: 'mjm.activeSession' } as const;
+const KEYS = { profile: 'mjm.profile', settings: 'mjm.settings', progress: 'mjm.progress', session: 'mjm.activeSession', age: 'mjm.age' } as const;
 
 export const DEFAULT_SETTINGS: Settings = { rules: DEFAULT_RULES, coach: true, botSkill: 'beginner', sound: true, tableTheme: 'classic', locale: 'auto' };
 export const DEFAULT_PROGRESS: Progress = {
@@ -107,6 +108,16 @@ export const storage = {
     }
   },
   saveActiveSession: (s: ActiveSession) => save(KEYS.session, s),
+  /** The age gate's answer (src/legal/age.ts); null until the player has given a birth year. */
+  loadAgeRecord: async (): Promise<AgeRecord | null> => {
+    try {
+      const raw = await AsyncStorage.getItem(KEYS.age);
+      return raw ? migrateAgeRecord(JSON.parse(raw)) : null;
+    } catch {
+      return null;
+    }
+  },
+  saveAgeRecord: (r: AgeRecord) => save(KEYS.age, r),
   clearActiveSession: async () => {
     try {
       await AsyncStorage.removeItem(KEYS.session);

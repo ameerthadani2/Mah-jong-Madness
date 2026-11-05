@@ -3,6 +3,7 @@
  */
 import type { BotSkill, RuleSet } from '@mjm/engine';
 import { authorisedJson, globalFetch, type Authoriser, type FetchLike } from './http';
+import type { ReportPayload } from '../legal/reports';
 
 export { ApiError as ClubApiError, httpBase } from './http';
 
@@ -12,7 +13,12 @@ export interface ClubMember {
   avatar?: string;
   role: 'owner' | 'admin' | 'member';
   joinedAt: number;
+  /** All-time points (older servers send only this). */
   points: number;
+  /** Points this season (since the owner last started a new season). */
+  seasonPoints?: number;
+  /** All-time points, when the server keeps seasons. */
+  lifetimePoints?: number;
   matchesPlayed: number;
   matchesWon: number;
   handsWon: number;
@@ -41,6 +47,8 @@ export interface Club {
   description: string;
   ownerId?: string;
   createdAt?: number;
+  /** Current season number (1 until the owner starts a new one). */
+  season?: number;
   rules: RuleSet;
   settings: { membersCanOpenTables: boolean; joinRequiresApproval: boolean };
   memberCount?: number;
@@ -83,4 +91,8 @@ export const clubsApi = {
   remove: (ctx: ClubContext, code: string, userId: string) => call<Club>(ctx, 'DELETE', `/api/clubs/${enc(code)}/members/${enc(userId)}`, {}),
   openTable: (ctx: ClubContext, code: string, opts: { label?: string; rules?: Partial<RuleSet>; botSkill?: BotSkill }) => call<ClubTable>(ctx, 'POST', `/api/clubs/${enc(code)}/tables`, opts),
   standings: (ctx: ClubContext, code: string) => call<ClubMember[]>(ctx, 'GET', `/api/clubs/${enc(code)}/standings`),
+  /** Owner only: archive this season's points and start the next season from zero. */
+  startSeason: (ctx: ClubContext, code: string) => call<Club>(ctx, 'POST', `/api/clubs/${enc(code)}/season`, {}),
+  /** Report a player to moderation (any signed-in player; see src/legal/reports.ts). */
+  report: (ctx: ClubContext, payload: ReportPayload) => call<{ id?: string }>(ctx, 'POST', '/api/reports', payload),
 };

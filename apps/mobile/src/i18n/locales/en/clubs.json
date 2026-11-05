@@ -61,5 +61,14 @@
     "body": "Clubs live on the game server, so they need an account. The app makes a guest account for you when it can reach the server; bots and lessons work offline meanwhile.",
     "retry": "Connect",
     "connecting": "Connecting…"
-  }
+  },
+  "season": {
+    "current": "Season %{n}",
+    "lifetime": "All time",
+    "start": "Start new season",
+    "confirmBody": "Start season %{n}? This season's points are archived and everyone starts again from zero. All-time points are kept.",
+    "confirm": "Start season %{n}",
+    "started": "Season %{n} has started."
+  },
+  "report": "Report"
 }

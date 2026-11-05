@@ -1,43 +1,106 @@
 {
   "_review": "n/a",
   "title": "Shop",
-  "trust": "Cosmetics, coaching and club capacity only. Nothing here changes the tiles you draw.",
+  "trust": "Table looks and coaching only. Nothing here changes the tiles you draw, and clubs are free.",
   "tabs": {
-    "diamonds": "Gems",
+    "diamonds": "Diamonds",
     "looks": "Looks",
-    "coach": "Coach",
-    "vip": "VIP",
-    "club": "Clubs"
+    "coach": "Coach"
   },
-  "purchaseFailed": "Purchase failed",
-  "notForDiamonds": "Not purchasable with diamonds",
-  "needDiamonds": "Need %{n} more diamonds",
+  "purchaseFailed": "The purchase did not go through. Nothing was charged by the app; try again.",
+  "needDiamonds": "You need %{n} more diamonds",
   "unlocked": "Unlocked %{title}",
+  "pending": "Payment received. It can take a minute to reach your account and will appear on its own.",
   "owned": "Owned",
   "perYear": "/yr",
   "perMonth": "/mo",
   "productSub": "%{zh} · %{description}",
+  "notOnSale": "Not on sale",
+  "priceLoading": "…",
+  "diamondsUse": "Diamonds buy table looks. Bonus diamonds are spent first.",
   "tiers": {
     "gold": "Gold",
-    "platinum": "Platinum",
-    "diamond": "Diamond"
+    "platinum": "Platinum"
   },
   "coach": {
-    "tiers": "Coaching tiers",
+    "tiers": "Coaching plans",
     "active": "Coach %{tier} is active",
-    "body": "Free: coach at the table, daily puzzle, drills, lessons 1–3, 1 hand review and 1 Puzzle Rush per day, Beginner and Club bots.\nGold: all lessons, unlimited Puzzle Rush, Pro bots, review history.\nPlatinum: unlimited hand reviews, puzzle battles, luck dashboard.\nDiamond: move-by-move explanations, insights, club-table discounts.",
-    "renews": "Renews %{date}"
+    "body": "Free: the coach at bot tables, the daily puzzle, drills, every lesson, 1 hand review and 1 Puzzle Rush a day, Beginner and Club bots.\nGold: Pro bots and unlimited Puzzle Rush.\nPlatinum: everything in Gold plus unlimited hand reviews.",
+    "renews": "Renews or ends %{date}"
   },
-  "vip": {
-    "active": "VIP is active",
-    "cards": "VIP cards",
-    "body": "Prepaid, no auto-renew. Every table look while active, an emote allowance, one extra club slot and one extra review per day. Days carry over when you upgrade.",
-    "until": "Until %{date}"
+  "unavailable": {
+    "title": "Store unavailable on this build",
+    "body": "Purchases are switched off here, so nothing can be bought or granted. Looks and plans you already own still work."
   },
-  "club": {
-    "title": "Club capacity",
-    "body": "Starter clubs are free: 30 members, 2 managers, one live table. Owners upgrade capacity with diamonds or a 30-day plan. Members never pay to play in a club.",
-    "tier": "Club %{capacity} until %{date}"
+  "mock": "Development build: a test store. Purchases are instant, free and stay on this device until the next sync with the server.",
+  "offline": "Offline: showing your balance from the last time the app reached the server.",
+  "restore": "Restore purchases",
+  "restoring": "Restoring…",
+  "restored": "Purchases restored.",
+  "errors": {
+    "store_product_missing": "This item is not on sale in your store yet.",
+    "store_not_signed_in": "Connect to the game server first, so the purchase reaches your account.",
+    "store_unavailable": "The store is not available on this build."
   },
-  "foot": "Prices shown are placeholder USD tiers; your store shows local pricing at checkout. Subscriptions renew until cancelled in your store account settings. This build uses a mock store: purchases are instant and free."
+  "foot": "Prices come from your App Store or Google Play region. Subscriptions renew automatically unless you cancel them in your store account settings at least 24 hours before the renewal date. Restore purchases brings back plans and looks bought with the same store account.",
+  "products": {
+    "diamonds_60": {
+      "title": "60 Diamonds",
+      "description": "A small top-up."
+    },
+    "diamonds_300": {
+      "title": "300 Diamonds",
+      "description": "Enough for a table look, with some to spare."
+    },
+    "diamonds_600": {
+      "title": "600 Diamonds",
+      "description": "Enough for three table looks."
+    },
+    "diamonds_1320": {
+      "title": "1,320 Diamonds",
+      "description": "1,200 plus a 10% bonus.",
+      "badge": "+10%"
+    },
+    "diamonds_3450": {
+      "title": "3,450 Diamonds",
+      "description": "3,000 plus a 15% bonus.",
+      "badge": "+15%"
+    },
+    "diamonds_7500": {
+      "title": "7,500 Diamonds",
+      "description": "6,000 plus a 25% bonus.",
+      "badge": "+25%"
+    },
+    "theme_nightmarket": {
+      "title": "Night Market table",
+      "description": "Neon purple felt with pink accents."
+    },
+    "theme_bamboo": {
+      "title": "Bamboo Garden table",
+      "description": "Soft green felt, ivory tiles."
+    },
+    "theme_jade": {
+      "title": "Jade Parlour table",
+      "description": "Deep jade felt, walnut rail with gold studs, ivory tiles.",
+      "badge": "New"
+    },
+    "theme_imperial": {
+      "title": "Imperial Red table",
+      "description": "Lacquer red with gold trim."
+    },
+    "coach_gold_month": {
+      "title": "Coach Gold",
+      "description": "Pro bots and unlimited Puzzle Rush."
+    },
+    "coach_gold_year": {
+      "title": "Coach Gold (yearly)",
+      "description": "Coach Gold for a year, billed once.",
+      "badge": "Yearly"
+    },
+    "coach_platinum_month": {
+      "title": "Coach Platinum",
+      "description": "Everything in Gold plus unlimited hand reviews.",
+      "badge": "Best for improvers"
+    }
+  }
 }

@@ -68,5 +68,9 @@
     "deleted": "Your account has been deleted.",
     "cancel": "Cancel",
     "busy": "Working…"
+  },
+  "legal": {
+    "title": "Legal",
+    "body": "The terms you play under and how your data is used. You can delete your account under Account above."
   }
 }
