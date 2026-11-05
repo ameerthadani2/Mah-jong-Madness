@@ -1,12 +1,12 @@
-import { createServer, type IncomingMessage } from 'node:http';
+import { createServer } from 'node:http';
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { WebSocketServer, type WebSocket } from 'ws';
 import { createApiHandler } from './api';
 import { ClubRegistry, type ClubData, type ClubStore } from './clubs';
 import { LIMITS, loadConfig } from './config';
-import { BucketTable, clientIp, TokenBucket } from './limits';
-import { RoomRegistry, type Inbound } from './rooms';
+import { BucketTable } from './limits';
+import { RoomRegistry } from './rooms';
+import { createSocketServer } from './sockets';
 
 const config = loadConfig();
 
@@ -76,67 +76,13 @@ const http = createServer((req, res) => {
     });
 });
 
-// 64 KiB is far larger than any legitimate game frame; ws drops bigger payloads.
-const wss = new WebSocketServer({ server: http, maxPayload: 64 * 1024 });
-/** Open sockets per client IP. */
-const socketsByIp = new Map<string, number>();
-/** WebSocket close code 1008 means "policy violation". */
-const POLICY_VIOLATION = 1008;
-
-wss.on('connection', (ws: WebSocket, req: IncomingMessage) => {
-  const ip = clientIp(req, config.trustProxy);
-  const open = (socketsByIp.get(ip) ?? 0) + 1;
-  socketsByIp.set(ip, open);
-  let counted = true;
-  const release = () => {
-    if (!counted) return;
-    counted = false;
-    const left = (socketsByIp.get(ip) ?? 1) - 1;
-    if (left > 0) socketsByIp.set(ip, left);
-    else socketsByIp.delete(ip);
-  };
-  ws.on('close', release);
-  if (open > LIMITS.socketsPerIp) {
-    ws.close(POLICY_VIOLATION, 'Too many connections');
-    return;
-  }
-
-  let peerId = rooms.connect({ send: (json) => ws.readyState === ws.OPEN && ws.send(json), close: () => ws.close() });
-  const bucket = new TokenBucket(LIMITS.messageBurst, LIMITS.messagesPerSec);
-  let alive = true;
-  ws.on('pong', () => (alive = true));
-  ws.on('message', (raw) => {
-    if (!bucket.take()) {
-      // A client that floods the relay is dropped, not slowed down: honest clients stay far below the limit.
-      ws.close(POLICY_VIOLATION, 'Rate limit exceeded');
-      return;
-    }
-    let msg: Inbound;
-    try {
-      msg = JSON.parse(raw.toString()) as Inbound;
-    } catch {
-      return;
-    }
-    if (!msg || typeof msg !== 'object' || typeof (msg as { t?: unknown }).t !== 'string') return;
-    try {
-      peerId = rooms.handle(peerId, msg);
-    } catch (e) {
-      // One peer's bad frame must never bring the server down.
-      console.error('[signal] handle error', (e as Error).message);
-    }
-  });
-  ws.on('close', () => rooms.disconnect(peerId));
-  const hb = setInterval(() => {
-    if (!alive) {
-      clearInterval(hb);
-      ws.terminate();
-      return;
-    }
-    alive = false;
-    ws.ping();
-  }, 30_000);
-  ws.on('close', () => clearInterval(hb));
+// A failure to listen (port in use, no permission) is fatal; anything else a client does is not.
+http.on('error', (e: Error) => {
+  console.error('[signal] http server error', e.message);
+  if (!http.listening) process.exit(1);
 });
+// Frames over 64 KiB close the socket with 1009; a malformed frame closes it with 1002.
+createSocketServer(http, rooms, config);
 
 setInterval(() => {
   try {
