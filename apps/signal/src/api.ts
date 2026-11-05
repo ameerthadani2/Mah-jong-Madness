@@ -21,8 +21,8 @@ export interface ApiOptions {
   corsOrigins?: string[];
   /** Per-IP request bucket. When it runs dry the request gets a 429. */
   limiter?: BucketTable<string>;
-  /** Take the client IP from `x-forwarded-for` (only behind a trusted proxy). */
-  trustProxy?: boolean;
+  /** Number of trusted reverse proxies; the client IP is that many `x-forwarded-for` entries from the right (see `clientIp`). */
+  trustProxy?: number | boolean;
 }
 
 type Handler = (params: Record<string, string>, body: Record<string, unknown>, req: IncomingMessage) => unknown;
@@ -111,7 +111,7 @@ export function createApiHandler(deps: ApiDeps, opts: ApiOptions = {}): (req: In
   const routes = buildRoutes(deps);
   const origins = opts.corsOrigins ?? [];
   return async (req, res) => {
-    if (opts.limiter && !opts.limiter.take(clientIp(req, opts.trustProxy ?? false))) {
+    if (opts.limiter && !opts.limiter.take(clientIp(req, opts.trustProxy ?? 0))) {
       res.setHeader('retry-after', '1');
       return send(res, 429, { error: 'rate_limited', message: 'Too many requests; please slow down' });
     }
