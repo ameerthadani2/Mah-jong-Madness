@@ -2,6 +2,7 @@ import React, { createContext, useContext, useEffect, useMemo, useRef, useState 
 import { BackHandler } from 'react-native';
 import { DEFAULT_PROFILE, DEFAULT_PROGRESS, DEFAULT_SETTINGS, storage, type ActiveSession, type Profile, type Progress, type Settings } from './storage';
 import type { Session } from './game/session';
+import { resolveSignalUrl } from './config';
 import { EMPTY_WALLET, loadWallet, saveWallet, type Wallet } from './monetisation/store';
 
 export type Screen =
@@ -31,6 +32,8 @@ interface AppState {
   setProfile(p: Profile): void;
   settings: Settings;
   setSettings(s: Settings): void;
+  /** The game server for this launch (from the build, or a development override). */
+  signalUrl: string;
   progress: Progress;
   setProgress(p: Progress | ((prev: Progress) => Progress)): void;
   session: Session | null;
@@ -55,6 +58,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [wallet, setWalletState] = useState<Wallet>(EMPTY_WALLET);
   const [loaded, setLoaded] = useState(false);
   const persistTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const signalUrl = resolveSignalUrl(settings.devSignalUrl);
 
   useEffect(() => {
     void Promise.all([storage.loadProfile(), storage.loadSettings(), storage.loadProgress(), storage.loadActiveSession(), loadWallet()]).then(([p, s, pr, as, w]) => {
@@ -94,7 +98,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const record: ActiveSession =
         session.mode === 'local'
           ? { kind: 'local', host: session.host!.serialize(), token: st.token, name: profile.name, avatar: profile.avatar, savedAt: Date.now() }
-          : { kind: 'online', signalUrl: settings.signalUrl, roomCode: session.roomCode, token: st.token, name: profile.name, avatar: profile.avatar, clubCode: session.clubCode, savedAt: Date.now() };
+          : { kind: 'online', signalUrl: session.serverUrl ?? signalUrl, roomCode: session.roomCode, token: st.token, name: profile.name, avatar: profile.avatar, clubCode: session.clubCode, savedAt: Date.now() };
       setActiveSessionState(record);
       void storage.saveActiveSession(record);
     };
@@ -110,7 +114,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       unsubHost?.();
       if (persistTimer.current) clearTimeout(persistTimer.current);
     };
-  }, [session, profile.name, profile.avatar, settings.signalUrl]);
+  }, [session, profile.name, profile.avatar, signalUrl]);
 
   const value = useMemo<AppState>(
     () => ({
@@ -128,6 +132,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         setSettingsState(s);
         void storage.saveSettings(s);
       },
+      signalUrl,
       progress,
       setProgress: (p) => {
         setProgressState((prev) => {
@@ -156,7 +161,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       },
       loaded,
     }),
-    [stack, profile, settings, progress, session, activeSession, wallet, loaded],
+    [stack, profile, settings, signalUrl, progress, session, activeSession, wallet, loaded],
   );
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

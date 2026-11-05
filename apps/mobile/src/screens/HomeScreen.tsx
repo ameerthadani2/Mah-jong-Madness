@@ -6,6 +6,7 @@ import { hasTier } from '../monetisation/store';
 import { useApp } from '../app-state';
 import { createLocalSession, createOnlineSession } from '../game/session';
 import { AVATARS, effectiveStreak, todayKey } from '../storage';
+import { friendlyError } from '../logic/errors';
 import { colors, fonts, nameFont, space } from '../theme';
 import { Button, Card, Chip, GemCounter, IconButton, P, Pill, Row } from '../components/Ui';
 import { AvatarPlate } from '../components/Avatars';
@@ -57,7 +58,7 @@ export function HomeScreen() {
         app.go({ name: 'lobby' });
       }
     } catch (e) {
-      setResumeError((e as Error).message || 'Could not reconnect');
+      setResumeError(friendlyError(e));
     } finally {
       setResuming(false);
     }
