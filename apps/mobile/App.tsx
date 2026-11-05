@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { StatusBar } from 'expo-status-bar';
-import { Platform, StyleSheet, View } from 'react-native';
+import { Platform, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { useFonts } from 'expo-font';
 import { LilitaOne_400Regular } from '@expo-google-fonts/lilita-one/400Regular';
@@ -11,6 +11,7 @@ import { Fredoka_700Bold } from '@expo-google-fonts/fredoka/700Bold';
 import { Nunito_600SemiBold } from '@expo-google-fonts/nunito/600SemiBold';
 import { Nunito_700Bold } from '@expo-google-fonts/nunito/700Bold';
 import { Nunito_800ExtraBold } from '@expo-google-fonts/nunito/800ExtraBold';
+import { randomHex } from '@mjm/net';
 import { AppProvider, useApp } from './src/app-state';
 import { colors, fonts } from './src/theme';
 import { SkyBackdrop, TableBackdrop } from './src/components/Backdrop';
@@ -98,7 +99,33 @@ function Loading() {
   );
 }
 
+/**
+ * Shuffle shares and rejoin tokens need a secure random source (installed by
+ * src/polyfills.ts on native). Without one the game cannot be fair, so the app
+ * stops here instead of failing mid-hand.
+ */
+function secureRandomError(): string | null {
+  try {
+    randomHex(1);
+    return null;
+  } catch (e) {
+    return e instanceof Error ? e.message : String(e);
+  }
+}
+
+/** Plain, font-independent error screen for a device that cannot run the app. */
+function BootError({ detail }: { detail: string }) {
+  return (
+    <View style={[styles.root, styles.center, styles.errorWrap]}>
+      <Text style={styles.errorTitle}>This device cannot run fair games</Text>
+      <Text style={styles.errorBody}>Mahjong Madness needs the system's secure random number generator to shuffle fairly, and it is not available here. Please update the app or your device's system software.</Text>
+      <Text style={styles.errorDetail}>{detail}</Text>
+    </View>
+  );
+}
+
 export default function App() {
+  const [rngError] = useState(secureRandomError);
   const [fontsLoaded, fontError] = useFonts({
     [fonts.display]: LilitaOne_400Regular,
     [fonts.logo]: LuckiestGuy_400Regular,
@@ -116,6 +143,7 @@ export default function App() {
     return () => clearTimeout(id);
   }, []);
   const ready = fontsLoaded || !!fontError || timedOut;
+  if (rngError) return <BootError detail={rngError} />;
   return (
     <SafeAreaProvider>
       <StatusBar style="light" hidden />
@@ -138,4 +166,8 @@ const styles = StyleSheet.create({
   center: { alignItems: 'center', justifyContent: 'center', gap: 24 },
   dots: { flexDirection: 'row', gap: 10 },
   dot: { width: 16, height: 16, borderRadius: 8, borderWidth: 3, borderColor: colors.ink },
+  errorWrap: { padding: 24, gap: 12 },
+  errorTitle: { color: colors.ink, fontSize: 22, fontWeight: '800', textAlign: 'center' },
+  errorBody: { color: colors.ink, fontSize: 16, lineHeight: 22, textAlign: 'center', maxWidth: 480 },
+  errorDetail: { color: colors.inkDim, fontSize: 12, textAlign: 'center' },
 });

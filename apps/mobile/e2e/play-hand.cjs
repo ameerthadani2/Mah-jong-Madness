@@ -5,7 +5,8 @@
  *   CI=1 npx expo export --platform web --output-dir dist-e2e   (from apps/mobile)
  *   node e2e/play-hand.cjs dist-e2e [screenshot-dir]
  *
- * Exits non-zero if the hand does not finish, a screen fails to open, or the page throws.
+ * Exits non-zero if the hand does not finish, the hand's audit is not verified, a screen fails
+ * to open, or the page throws.
  */
 const http = require('http');
 const fs = require('fs');
@@ -73,7 +74,19 @@ const visible = async (page, sel) => {
   await page.screenshot({ path: path.join(out, 'result.png') });
   let reviewOk = false;
   let fairOk = false;
+  let auditOk = false;
+  let auditText = '';
   if (finished) {
+    // The result sheet's audit pill must report the hand as verified (it reads
+    // "Shuffle & log verified · details", or "Verified (log only)" for a partial audit).
+    const auditStarted = Date.now();
+    while (Date.now() - auditStarted < 15000) {
+      const pill = await page.$('[data-testid="audit-status"]');
+      auditText = pill ? ((await pill.innerText().catch(() => '')) || '').trim() : '';
+      if (/verified/i.test(auditText)) break;
+      await page.waitForTimeout(300);
+    }
+    auditOk = /verified/i.test(auditText);
     const rv = (await visible(page, 'text=Review my hand')) || (await visible(page, 'text="Review"'));
     if (rv) {
       await tap(page, rv);
@@ -83,7 +96,7 @@ const visible = async (page, sel) => {
       await page.click('[data-testid="back"]');
       await page.waitForTimeout(800);
     }
-    const fp = await visible(page, 'text=/verified/i');
+    const fp = await visible(page, '[data-testid="audit-status"]');
     if (fp) {
       await tap(page, fp);
       await page.waitForTimeout(1000);
@@ -91,11 +104,11 @@ const visible = async (page, sel) => {
       fairOk = !!(await visible(page, 'text=/seed/'));
     }
   }
-  const summary = { finished, reviewOk, fairOk, stats, seconds: Math.round((Date.now() - started) / 1000), errors };
+  const summary = { finished, auditOk, auditText, reviewOk, fairOk, stats, seconds: Math.round((Date.now() - started) / 1000), errors };
   console.log(JSON.stringify(summary));
   await browser.close();
   server.close();
-  const ok = finished && reviewOk && fairOk && stats.discards > 0 && errors.length === 0;
+  const ok = finished && auditOk && reviewOk && fairOk && stats.discards > 0 && errors.length === 0;
   process.exit(ok ? 0 : 1);
 })().catch((e) => {
   console.error('E2E FAIL', e.message);

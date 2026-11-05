@@ -33,12 +33,12 @@ export interface Product {
 }
 
 export const DIAMOND_PACKS: Product[] = [
-  { id: 'diamonds.60', kind: 'diamonds', title: '60 Diamonds', titleZh: '60 鑽石', description: 'Enough for an emote pack.', priceUsd: 0.99, diamonds: 60 },
+  { id: 'diamonds.60', kind: 'diamonds', title: '60 Diamonds', titleZh: '60 鑽石', description: 'A small top-up towards a table look or emote pack.', priceUsd: 0.99, diamonds: 60 },
   { id: 'diamonds.300', kind: 'diamonds', title: '300 Diamonds', titleZh: '300 鑽石', description: 'A table look, or a Bronze VIP month.', priceUsd: 4.99, diamonds: 300 },
   { id: 'diamonds.600', kind: 'diamonds', title: '600 Diamonds', titleZh: '600 鑽石', description: 'Most popular.', priceUsd: 9.99, diamonds: 600, badge: 'Popular' },
   { id: 'diamonds.1300', kind: 'diamonds', title: '1,300 Diamonds', titleZh: '1,300 鑽石', description: 'Runs a 100-member club for a month.', priceUsd: 19.99, diamonds: 1300, badge: 'Clubs' },
-  { id: 'diamonds.3000', kind: 'diamonds', title: '3,000 Diamonds', titleZh: '3,000 鑽石', description: '+15% bonus.', priceUsd: 49.99, diamonds: 3000, badge: '+15%' },
-  { id: 'diamonds.6500', kind: 'diamonds', title: '6,500 Diamonds', titleZh: '6,500 鑽石', description: '+25% bonus. Club owners’ pick.', priceUsd: 99.99, diamonds: 6500, badge: '+25%' },
+  { id: 'diamonds.3450', kind: 'diamonds', title: '3,450 Diamonds', titleZh: '3,450 鑽石', description: '3,000 + 15% bonus.', priceUsd: 49.99, diamonds: 3450, badge: '+15%' },
+  { id: 'diamonds.7500', kind: 'diamonds', title: '7,500 Diamonds', titleZh: '7,500 鑽石', description: '6,000 + 25% bonus. Club owners’ pick.', priceUsd: 99.99, diamonds: 7500, badge: '+25%' },
 ];
 
 export const COSMETICS: Product[] = [
@@ -68,7 +68,7 @@ export const VIP_CARDS: Product[] = [
 
 export const CLUB_PRODUCTS: Product[] = [
   { id: 'club.100', kind: 'club', capacity: 100, title: 'Club 100', titleZh: '俱樂部 100 人', description: '30 days · up to 100 members, 3 live tables, 5 admins.', priceUsd: 19.99, diamondPrice: 1300, period: 'month' },
-  { id: 'club.300', kind: 'club', capacity: 300, title: 'Club 300', titleZh: '俱樂部 300 人', description: '30 days · 300 members, 10 live tables, approval queue, neutral host.', priceUsd: 49.99, diamondPrice: 3000, period: 'month' },
+  { id: 'club.300', kind: 'club', capacity: 300, title: 'Club 300', titleZh: '俱樂部 300 人', description: '30 days · 300 members, 10 live tables, approval queue.', priceUsd: 49.99, diamondPrice: 3000, period: 'month' },
   { id: 'club.1000', kind: 'club', capacity: 1000, title: 'Club 1,000', titleZh: '俱樂部 1000 人', description: '30 days · 1,000 members, unlimited tables, unions, exports.', priceUsd: 129.99, diamondPrice: 8000, period: 'month' },
 ];
 

@@ -27,8 +27,7 @@
           "UIInterfaceOrientationPortraitUpsideDown",
           "UIInterfaceOrientationLandscapeLeft",
           "UIInterfaceOrientationLandscapeRight"
-        ],
-        "NSLocalNetworkUsageDescription": "Mahjong Madness connects to a game host on your local network when you play with friends nearby."
+        ]
       },
       "buildNumber": "1",
       "icon": "./assets/icon.png"
@@ -48,7 +47,7 @@
       "signalUrl": "wss://signal.mahjongmadness.example/ws"
     },
     "icon": "./assets/icon.png",
-    "description": "Peer-to-peer Taiwanese 16-tile Mahjong with private clubs, provably fair shuffles and a built-in coach.",
+    "description": "Taiwanese 16-tile Mahjong against bots or friends, with private clubs, shuffles every player verifies and a built-in coach.",
     "primaryColor": "#5BC8F5",
     "runtimeVersion": {
       "policy": "sdkVersion"
