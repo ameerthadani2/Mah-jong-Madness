@@ -209,61 +209,84 @@ function groupCombos(counts: Counts, from: number, to: number, honor: boolean): 
   const cached = comboCache.get(key);
   if (cached) return cached;
   const c = counts.slice(from, to);
-  const found = new Map<number, Combo>();
-  groupSearch(c, 0, honor, 0, 0, 0, found);
-  const result = pareto([...found.values()]);
+  const result = searchFrom(c, 0, honor, 0);
   if (comboCache.size > COMBO_CACHE_LIMIT) comboCache.clear();
   comboCache.set(key, result);
   return result;
 }
 
-function groupSearch(c: number[], i: number, honor: boolean, m: number, t: number, h: number, out: Map<number, Combo>): void {
+/**
+ * Sub-states of the group search, keyed by the remaining counts from `i` and the pair flag.
+ * A 17-tile single-suit hand has millions of decompositions but only a few thousand distinct
+ * sub-states, so this turns a 20 ms worst case into well under a millisecond.
+ */
+const subCache = new Map<string, Combo[]>();
+const SUB_CACHE_LIMIT = 400000;
+
+/** Pareto front of (melds, partials, pair) achievable from position `i` of `c`, given the pair flag `h`. */
+function searchFrom(c: number[], i: number, honor: boolean, h: number): Combo[] {
   const n = c.length;
   while (i < n && c[i] === 0) i++;
-  if (i >= n) {
-    out.set(m * 100 + t * 10 + h, [m, t, h]);
-    return;
-  }
+  if (i >= n) return [[0, 0, 0]];
+  let key = (honor ? 'h' : 's') + i + ':' + h + ':';
+  for (let k = i; k < n; k++) key += c[k];
+  const hit = subCache.get(key);
+  if (hit) return hit;
+  const found = new Map<number, Combo>();
+  const add = (dm: number, dt: number, dh: number, sub: Combo[]) => {
+    for (const [a, b, p] of sub) {
+      const m = a + dm;
+      const t = b + dt;
+      const hh = p + dh;
+      found.set(m * 100 + t * 10 + hh, [m, t, hh]);
+    }
+  };
   if (c[i] >= 3) {
     c[i] -= 3;
-    groupSearch(c, i, honor, m + 1, t, h, out);
+    add(1, 0, 0, searchFrom(c, i, honor, h));
     c[i] += 3;
   }
   if (!honor && i + 2 < n && c[i + 1] > 0 && c[i + 2] > 0) {
     c[i]--;
     c[i + 1]--;
     c[i + 2]--;
-    groupSearch(c, i, honor, m + 1, t, h, out);
+    add(1, 0, 0, searchFrom(c, i, honor, h));
     c[i]++;
     c[i + 1]++;
     c[i + 2]++;
   }
   if (c[i] >= 2) {
     c[i] -= 2;
-    if (h === 0) groupSearch(c, i, honor, m, t, 1, out);
-    groupSearch(c, i, honor, m, t + 1, h, out);
+    if (h === 0) add(0, 0, 1, searchFrom(c, i, honor, 1));
+    add(0, 1, 0, searchFrom(c, i, honor, h));
     c[i] += 2;
   }
   if (!honor) {
     if (i + 1 < n && c[i + 1] > 0) {
       c[i]--;
       c[i + 1]--;
-      groupSearch(c, i, honor, m, t + 1, h, out);
+      add(0, 1, 0, searchFrom(c, i, honor, h));
       c[i]++;
       c[i + 1]++;
     }
     if (i + 2 < n && c[i + 2] > 0) {
       c[i]--;
       c[i + 2]--;
-      groupSearch(c, i, honor, m, t + 1, h, out);
+      add(0, 1, 0, searchFrom(c, i, honor, h));
       c[i]++;
       c[i + 2]++;
     }
   }
   // Leave one copy isolated.
   c[i]--;
-  groupSearch(c, i, honor, m, t, h, out);
+  add(0, 0, 0, searchFrom(c, i, honor, h));
   c[i]++;
+  // Melds, partials and the pair each only ever lower the shanten count (after clipping), so
+  // dominated triples can be dropped at every level without changing the result.
+  const result = pareto([...found.values()]);
+  if (subCache.size > SUB_CACHE_LIMIT) subCache.clear();
+  subCache.set(key, result);
+  return result;
 }
 
 function pareto(list: Combo[]): Combo[] {
