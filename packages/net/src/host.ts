@@ -15,6 +15,7 @@ import {
   hashState,
   legalActions,
   matchSnapshot,
+  sanitizeRules,
   viewFor,
   type Action,
   type GameState,
@@ -23,7 +24,7 @@ import {
   type RuleSet,
   type BotSkill,
 } from '@mjm/engine';
-import { commitFor, deriveSeed, makeSecret, verifyReveals, type Commitment, type Reveal } from './fairness';
+import { commitFor, deriveSeed, isSecret, makeSecret, verifyReveals, type Commitment, type Reveal } from './fairness';
 import type { Audit, CeremonyRestart, ClientMessage, HostMessage, RestartCause, SeatInfo } from './messages';
 import type { Transport, Unsubscribe } from './transport';
 import { randomHex } from './sha256';
@@ -31,10 +32,15 @@ import { randomHex } from './sha256';
 export type HostPhase = 'lobby' | 'commit' | 'reveal' | 'playing' | 'hand_over' | 'match_over';
 
 /**
- * Most ceremonies one hand may take. An honest table needs at most 1 + the number of humans
- * (every restart stands in at least one more human for good), so 6 is never reached honestly.
+ * Most ceremonies one hand may take. Every restart names at least one human seat that had not been
+ * blamed yet, and a blamed seat gets a host-supplied share for every later attempt at that hand
+ * (it can never be blamed again), so an honest table needs at most 1 + the number of humans ≤ 5
+ * attempts and 6 is never reached honestly.
  */
 export const MAX_CEREMONY_ATTEMPTS = 6;
+
+/** After a failed ceremony, how long the table waits before trying the hand again (ms). */
+const CEREMONY_RETRY_MS = 5_000;
 
 /** Chat: one line a second with a burst of five. Emotes: one every two seconds. */
 const CHAT_BUCKET = { capacity: 5, perSecond: 1 };
@@ -94,6 +100,8 @@ export interface SerializedHost {
   restarts?: CeremonyRestart[];
   /** Hand number the ceremony counters belong to. */
   ceremonyHand?: number;
+  /** Seats blamed for a restart of `ceremonyHand`; the host supplies their shares until the hand changes. */
+  standIns?: number[];
   handsWon?: number[];
 }
 
@@ -176,7 +184,8 @@ export class TableHost {
     opts: HostOptions,
   ) {
     this.roomCode = opts.restore?.roomCode ?? opts.roomCode;
-    this.rules = opts.restore?.rules ?? opts.rules ?? DEFAULT_RULES;
+    // Clients sanitise the rules they are sent and replay with them, so the host must deal with the same set.
+    this.rules = sanitizeRules(opts.restore?.rules ?? opts.rules ?? DEFAULT_RULES);
     this.matchId = opts.restore?.matchId ?? opts.matchId ?? randomHex(8);
     this.now = opts.now ?? (() => Date.now());
     this.botDelayMs = opts.botDelayMs ?? 0;
@@ -250,6 +259,7 @@ export class TableHost {
       restartReasons: this.restarts.map(describeRestart),
       restarts: this.restarts.map((r) => ({ ...r, seats: r.seats.slice() })),
       ceremonyHand: this.ceremonyHand,
+      standIns: [...this.standInSeats],
       handsWon: this.wins.slice(),
     };
   }
@@ -267,6 +277,7 @@ export class TableHost {
     this.ceremonyAttempts = data.ceremonyAttempts ?? 1;
     this.restarts = data.restarts?.map((r) => ({ ...r, seats: r.seats.slice() })) ?? [];
     this.ceremonyHand = data.ceremonyHand ?? (this.phase === 'lobby' ? -1 : this.snapshot.handNumber);
+    this.standInSeats = new Set((data.standIns ?? []).filter((s) => Number.isInteger(s) && s >= 0 && s <= 3));
     this.wins = data.handsWon?.slice() ?? [0, 0, 0, 0];
     // Any ceremony in flight cannot continue without the peers' secrets; restart it when they return.
     if (this.phase === 'commit' || this.phase === 'reveal') {
@@ -283,7 +294,11 @@ export class TableHost {
   private pendingRestart = false;
   /** True while a round of ceremony messages is going out (see `announcing`). */
   private ceremonyBusy = false;
-  /** Seats whose share the host supplies in the next ceremony (they missed the window; they stay human). */
+  /**
+   * Seats blamed for a restart of the current hand's ceremony. The host supplies their shares in
+   * every later attempt at this hand (they stay human), so no seat is blamed twice. Cleared only
+   * when the hand changes.
+   */
   private standInSeats = new Set<number>();
 
   /** Create an in-process link so the hosting device can also play. */
@@ -346,6 +361,11 @@ export class TableHost {
       return;
     }
     if (this.deadline === null || this.now() < this.deadline) return;
+    if (this.phase === 'lobby') {
+      // A failed ceremony: try the hand again while a player is still here (otherwise a returning one restarts it).
+      if (this.pendingRestart && this.anyHumanConnected()) this.retryCeremony();
+      return;
+    }
     if (this.phase === 'hand_over') {
       this.deadline = null;
       this.afterHand();
@@ -467,12 +487,18 @@ export class TableHost {
         return this.checkCeremony();
       case 'reveal':
         if (this.phase !== 'reveal' || seat.secret) return;
-        if (typeof msg.secret !== 'string' || msg.secret.length > 128) return;
+        // Only hex secrets go into a seed (see deriveSeed); anything else is refused here, never at the deal.
+        if (!isSecret(msg.secret)) return this.sendTo(from, { t: 'error', code: 'bad_reveal', message: 'A secret must be lowercase hex.' });
         if (commitFor(msg.secret) !== seat.commit) return this.sendTo(from, { t: 'error', code: 'bad_reveal', message: 'Secret does not match your commitment.' });
         seat.secret = msg.secret;
         return this.checkCeremony();
       case 'start':
-        if (this.phase !== 'lobby' || this.pendingRestart) return;
+        if (this.phase !== 'lobby') return;
+        if (this.pendingRestart) {
+          // The table is waiting to deal its current hand again (a failed ceremony): a seated player may restart it.
+          if (seat.connected && !seat.isBot) this.retryCeremony();
+          return;
+        }
         try {
           this.start();
         } catch (e) {
@@ -556,9 +582,8 @@ export class TableHost {
     if (newOccupant || !seat.token) seat.token = randomHex(16);
     this.sendTo(from, { t: 'welcome', seat: seat.seat, roomCode: this.roomCode, rules: this.rules, seats: this.seatInfo(), matchId: this.matchId, token: seat.token });
     this.broadcastLobby();
-    if (this.pendingRestart && this.seats.some((s) => s.connected && !s.isBot)) {
-      this.pendingRestart = false;
-      this.beginHand();
+    if (this.pendingRestart && this.anyHumanConnected()) {
+      this.retryCeremony();
       return;
     }
     if (this.phase === 'playing' && this.game) {
@@ -626,18 +651,32 @@ export class TableHost {
   }
 
   /**
-   * Seats committed but never revealed, so no fair seed exists. Restart the ceremony once; the
-   * delinquent seats get host-supplied shares so they cannot stall the table again, but they stay
-   * human and connected players keep receiving every message.
+   * Seats committed but never revealed, so no fair seed exists. Restart the ceremony; the
+   * delinquent seats get host-supplied shares for the rest of this hand so they cannot stall the
+   * table again, but they stay human and connected players keep receiving every message.
    */
   private restartCeremony(late: SeatState[], cause: RestartCause): void {
+    // Seats register before beginHand so the next attempt already supplies their shares.
+    this.prepareHandRecord();
     for (const s of late) this.standInSeats.add(s.seat);
     this.beginHand(cause, late.map((s) => s.seat));
   }
 
+  /** Reset the per-hand ceremony record when the hand to deal is not the one it belongs to. */
+  private prepareHandRecord(): boolean {
+    const hand = this.snapshot.handNumber;
+    if (hand === this.ceremonyHand) return false;
+    this.ceremonyHand = hand;
+    this.ceremonyAttempts = 0;
+    this.restarts = [];
+    this.standInSeats = new Set();
+    return true;
+  }
+
   /**
    * The ceremony cannot produce a seed this host is willing to deal from. Nobody is blamed: tell
-   * the table, return to the lobby and start afresh when a player (re)joins.
+   * the table and return to the lobby. The hand is tried again on a 'start' from a seated player,
+   * on the next tick after a short pause while a player is connected, or when a player rejoins.
    */
   private failCeremony(message: string): void {
     this.broadcast(() => ({ t: 'error', code: 'ceremony_failed', message }));
@@ -645,13 +684,19 @@ export class TableHost {
       s.commit = undefined;
       s.secret = undefined;
     }
-    this.standInSeats = new Set();
     this.phase = 'lobby';
-    this.deadline = null;
     this.pendingRestart = true;
+    this.deadline = this.now() + CEREMONY_RETRY_MS;
     // The next attempt starts a fresh record; clients that saw these attempts will not pass its audit.
     this.ceremonyHand = -1;
     this.broadcastLobby();
+  }
+
+  /** Deal the waiting hand again after a failed or interrupted ceremony. */
+  private retryCeremony(): void {
+    this.pendingRestart = false;
+    this.deadline = null;
+    this.beginHand();
   }
 
   // ---------------------------------------------------------------- ceremony
@@ -663,15 +708,10 @@ export class TableHost {
    */
   private beginHand(cause?: RestartCause, seats: number[] = []): void {
     if (this.phase !== 'lobby' && this.phase !== 'hand_over' && this.phase !== 'commit' && this.phase !== 'reveal') return;
-    const hand = this.snapshot.handNumber;
-    if (hand !== this.ceremonyHand) {
-      this.ceremonyHand = hand;
-      this.ceremonyAttempts = 1;
-      this.restarts = [];
-    } else {
+    if (!this.prepareHandRecord() && this.ceremonyAttempts > 0) {
       this.restarts.push({ attempt: this.ceremonyAttempts, seats, cause: cause ?? 'host_restarted' });
-      this.ceremonyAttempts++;
     }
+    this.ceremonyAttempts++;
     if (this.ceremonyAttempts > MAX_CEREMONY_ATTEMPTS) {
       this.failCeremony(`The deal could not be agreed after ${MAX_CEREMONY_ATTEMPTS} attempts.`);
       return;
@@ -682,7 +722,6 @@ export class TableHost {
     this.hostSecret = makeSecret();
     this.hostCommit = commitFor(this.hostSecret);
     const supplied = this.standInSeats;
-    this.standInSeats = new Set();
     for (const s of this.seats) {
       s.commit = undefined;
       s.secret = undefined;

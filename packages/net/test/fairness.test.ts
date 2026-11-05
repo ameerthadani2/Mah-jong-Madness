@@ -21,9 +21,40 @@ describe('commit-reveal', () => {
     expect(verifyReveals(commits, bad)).toEqual({ ok: false, badSeats: [2] });
   });
   it('derives the same seed regardless of reveal order', () => {
-    const a = deriveSeed('m:0', [{ seat: 0, secret: 'x' }, { seat: 1, secret: 'y' }]);
-    const b = deriveSeed('m:0', [{ seat: 1, secret: 'y' }, { seat: 0, secret: 'x' }]);
+    const a = deriveSeed('m:0', five);
+    const b = deriveSeed('m:0', [...five].reverse());
     expect(a).toBe(b);
-    expect(deriveSeed('m:1', [{ seat: 0, secret: 'x' }, { seat: 1, secret: 'y' }])).not.toBe(a);
+    expect(deriveSeed('m:1', five)).not.toBe(a);
+    // The seed is bound to the versioned, seat-labelled formula.
+    expect(a).toBe(sha256Hex(`mjm-seed-v2:m:0:${five.map((r) => `${r.seat}=${r.secret}`).join('|')}`));
+  });
+
+  it('binds each secret to its seat', () => {
+    const swapped = five.map((r) => (r.seat === 0 ? { ...r, secret: five[1].secret } : r.seat === 1 ? { ...r, secret: five[0].secret } : r));
+    expect(deriveSeed('m:0', swapped)).not.toBe(deriveSeed('m:0', five));
+  });
+
+  it('takes exactly one share per seat 0–4 and rejects extras, duplicates, gaps and non-hex secrets', () => {
+    // Port of ceremony/p1_extra_reveal.ts and verify-ceremony/probe.test.ts: a sixth share the host
+    // picks after seeing every reveal must never move the seed.
+    const extra = 'ab'.repeat(32);
+    expect(() => deriveSeed('m:0', [...five, { seat: 9, secret: extra }])).toThrow(/exactly 5 shares/);
+    expect(() => deriveSeed('m:0', [...five, { seat: 0, secret: extra }])).toThrow(/exactly 5 shares/);
+    expect(() => deriveSeed('m:0', [...five, { seat: 4, secret: extra }])).toThrow(/exactly 5 shares/);
+    expect(() => deriveSeed('m:0', five.slice(0, 4))).toThrow(/exactly 5 shares/);
+    expect(() => deriveSeed('m:0', [...five.slice(0, 4), { seat: 0, secret: extra }])).toThrow(/Two shares for seat 0/);
+    expect(() => deriveSeed('m:0', [...five.slice(0, 4), { seat: 5, secret: extra }])).toThrow(/out of range/);
+    expect(() => deriveSeed('m:0', [...five.slice(0, 4), { seat: 4, secret: 'x|5=y' }])).toThrow(/not a hex secret/);
+  });
+
+  it('verifyReveals wants exactly one matching reveal per commitment and nothing else', () => {
+    const commits = five.map((r) => ({ seat: r.seat, hash: commitFor(r.secret) }));
+    expect(verifyReveals(commits, five)).toEqual({ ok: true, badSeats: [] });
+    expect(verifyReveals(commits, [...five, { seat: 9, secret: 'ab' }])).toEqual({ ok: false, badSeats: [9] });
+    expect(verifyReveals(commits, [...five, { seat: 4, secret: 'ab' }])).toEqual({ ok: false, badSeats: [4] });
+    expect(verifyReveals(commits, five.slice(1))).toEqual({ ok: false, badSeats: [0] });
   });
 });
+
+/** Five hex shares, one per seat 0–4. */
+const five = [0, 1, 2, 3, 4].map((seat) => ({ seat, secret: sha256Hex(`share-${seat}`) }));
