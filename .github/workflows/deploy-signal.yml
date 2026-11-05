@@ -1,0 +1,90 @@
+name: Deploy signal server
+# Builds apps/signal/Dockerfile on Fly's remote builder and rolls it out with fly.toml.
+# Needs one repository secret, FLY_API_TOKEN; without it the run is skipped with a summary of
+# what to set up (see docs/DEPLOY.md). Optional repository variable SIGNAL_URL (e.g.
+# https://mahjong-signal.fly.dev) enables the post-deploy health check.
+on:
+  push:
+    branches: [main, claude/p2p-taiwanese-mahjong-app-9lzdls]
+    paths:
+      - apps/signal/**
+      - packages/engine/**
+      - packages/net/**
+      - package-lock.json
+      - fly.toml
+      - .github/workflows/deploy-signal.yml
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-signal
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      ready: ${{ steps.gate.outputs.ready }}
+    steps:
+      - id: gate
+        env:
+          HAS_TOKEN: ${{ secrets.FLY_API_TOKEN != '' }}
+        run: |
+          echo "ready=$HAS_TOKEN" >> "$GITHUB_OUTPUT"
+          if [ "$HAS_TOKEN" != "true" ]; then
+            {
+              echo "## Signal server not deployed: the FLY_API_TOKEN secret is missing"
+              echo ""
+              echo "1. Install flyctl and sign in: \`fly auth login\`."
+              echo "2. Create the app once: \`fly apps create <name>\` (and put that name in \`fly.toml\`)."
+              echo "3. Create a deploy token: \`fly tokens create deploy -a <name>\`."
+              echo "4. GitHub → Settings → Secrets and variables → Actions → New repository secret: \`FLY_API_TOKEN\`."
+              echo "5. Optional: set the database and auth secrets with \`fly secrets set\` (see docs/DEPLOY.md), and the repository variable \`SIGNAL_URL\`."
+              echo "6. Re-run this workflow."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::notice::FLY_API_TOKEN secret missing; skipping the deploy (the job summary lists the setup steps)"
+          fi
+
+  deploy:
+    needs: check
+    if: needs.check.outputs.ready == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install the server's workspaces
+        run: npm ci --workspace @mjm/signal --workspace @mjm/engine --workspace @mjm/net
+      - name: Typecheck and test before shipping
+        run: |
+          npm run typecheck --workspace @mjm/signal
+          npm test --workspace @mjm/signal
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+      - name: Deploy
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: flyctl deploy --remote-only --config fly.toml
+      - name: Health check
+        if: vars.SIGNAL_URL != ''
+        env:
+          SIGNAL_URL: ${{ vars.SIGNAL_URL }}
+        run: |
+          for i in 1 2 3 4 5 6; do
+            if curl -fsS "${SIGNAL_URL%/}/health"; then echo; exit 0; fi
+            sleep 10
+          done
+          echo "::error::${SIGNAL_URL%/}/health did not answer after the deploy"
+          exit 1
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "## Signal server deploy"
+            echo "- Commit: \`${GITHUB_SHA::7}\`"
+            echo "- Config: \`fly.toml\` (region sin, one machine always on)"
+            if [ -n "${{ vars.SIGNAL_URL }}" ]; then echo "- Health: ${{ vars.SIGNAL_URL }}/health"; fi
+          } >> "$GITHUB_STEP_SUMMARY"
