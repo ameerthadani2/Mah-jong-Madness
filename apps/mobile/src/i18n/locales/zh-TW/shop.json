@@ -17,7 +17,7 @@
   "productSub": "%{description}",
   "notOnSale": "尚未販售",
   "priceLoading": "…",
-  "diamondsUse": "鑽石可以購買桌布。會優先使用贈送的鑽石。",
+  "diamondsUse": "鑽石可以購買桌布（每款 300 或 400）。會優先使用贈送的鑽石。",
   "tiers": {
     "gold": "金",
     "platinum": "白金"
@@ -50,25 +50,25 @@
     },
     "diamonds_300": {
       "title": "300 鑽石",
-      "description": "足夠買一款桌布，還有剩。"
+      "description": "足夠買一款桌布。"
     },
     "diamonds_600": {
       "title": "600 鑽石",
-      "description": "足夠買三款桌布。"
+      "description": "足夠買兩款桌布。"
     },
-    "diamonds_1320": {
-      "title": "1,320 鑽石",
-      "description": "1,200 再加贈 10%。",
-      "badge": "+10%"
+    "diamonds_1300": {
+      "title": "1,300 鑽石",
+      "description": "1,200 再加贈 100。",
+      "badge": "+8%"
     },
     "diamonds_3450": {
       "title": "3,450 鑽石",
-      "description": "3,000 再加贈 15%。",
+      "description": "3,000 再加贈 450。",
       "badge": "+15%"
     },
     "diamonds_7500": {
       "title": "7,500 鑽石",
-      "description": "6,000 再加贈 25%。",
+      "description": "6,000 再加贈 1,500。",
       "badge": "+25%"
     },
     "theme_nightmarket": {
@@ -101,6 +101,11 @@
       "title": "教練 白金",
       "description": "金的全部內容，加上無限複盤。",
       "badge": "進步首選"
+    },
+    "coach_platinum_year": {
+      "title": "教練 白金 年繳",
+      "description": "一次付清，使用一年教練 白金。",
+      "badge": "年繳"
     }
   }
 }

@@ -24,8 +24,8 @@
     "reasons": {
       "cheating": "作弊",
       "collusion": "串通打牌",
-      "abuse": "辱罵或騷擾",
-      "name": "不當名稱或頭像",
+      "abusive_chat": "辱罵或騷擾的表情、訊息",
+      "offensive_name": "不當名稱或頭像",
       "stalling": "故意拖延",
       "other": "其他"
     },

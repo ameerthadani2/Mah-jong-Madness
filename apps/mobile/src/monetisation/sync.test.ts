@@ -23,8 +23,7 @@ function deps(answers: Array<Partial<MeWallet> | Error>, extra: Partial<WalletDe
       if (a instanceof Error) throw a;
       return { user: { id: 'u-1' }, wallet: { diamonds: 0, bonusDiamonds: 0 }, entitlements: [], serverNow: new Date(NOW).toISOString(), ...a };
     },
-    spend: async (productId, requestId) => void log.push(`spend ${productId} ${requestId}`),
-    requestId: () => 'req-1',
+    spend: async (productId) => void log.push(`spend ${productId}`),
     now: () => NOW,
     sleep: async () => void log.push('sleep'),
     ...extra,
@@ -59,9 +58,9 @@ describe('buying with money', () => {
 
   it('a purchase the server has not seen yet stays pending and grants nothing on the device', async () => {
     const { d } = deps([{}]);
-    const r = await buyWithMoney(productById('theme.jade')!, EMPTY_WALLET, storeThat({ status: 'purchased' }), d);
+    const r = await buyWithMoney(productById('coach.platinum.month')!, EMPTY_WALLET, storeThat({ status: 'purchased' }), d);
     expect(r.status).toBe('pending');
-    expect(ownsCosmetic(r.wallet, 'jade')).toBe(false);
+    expect(r.wallet.entitlements).toEqual([]);
   });
 
   it('with no store nothing is attempted or granted', async () => {
@@ -106,15 +105,15 @@ describe('spending diamonds', () => {
   it('the server debits and grants; the app mirrors /api/me', async () => {
     const { d, log } = deps([{ wallet: { diamonds: 120, bonusDiamonds: 0 }, cosmetics: ['jade'] }]);
     const r = await buyWithDiamonds(productById('theme.jade')!, EMPTY_WALLET, d);
-    expect(log).toEqual(['ensure', 'spend theme.jade req-1', 'me']);
+    expect(log).toEqual(['ensure', 'spend theme.jade', 'me']);
     expect(r.status).toBe('credited');
     expect(ownsCosmetic(r.wallet, 'jade')).toBe(true);
   });
 
   it('too few diamonds on the server says how many more are needed', async () => {
-    const { d } = deps([{ wallet: { diamonds: 100, bonusDiamonds: 20 } }], { spend: async () => Promise.reject(new ApiError('Not enough diamonds', 'insufficient_diamonds', 409)) });
+    const { d } = deps([{ wallet: { diamonds: 100, bonusDiamonds: 20 } }], { spend: async () => Promise.reject(new ApiError('Not enough diamonds', 'insufficient', 409)) });
     const r = await buyWithDiamonds(productById('theme.jade')!, EMPTY_WALLET, d);
-    expect(r.status === 'need_diamonds' && r.short).toBe(120);
+    expect(r.status === 'need_diamonds' && r.short).toBe(280);
   });
 
   it('a product with no diamond price is refused without a request', async () => {

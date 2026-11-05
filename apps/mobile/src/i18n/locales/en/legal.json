@@ -24,8 +24,8 @@
     "reasons": {
       "cheating": "Cheating",
       "collusion": "Playing as a team",
-      "abuse": "Abuse or harassment",
-      "name": "Offensive name or avatar",
+      "abusive_chat": "Abusive emotes or chat",
+      "offensive_name": "Offensive name or avatar",
       "stalling": "Stalling the game",
       "other": "Something else"
     },

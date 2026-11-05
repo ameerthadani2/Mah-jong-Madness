@@ -12,8 +12,9 @@ export interface WalletContext {
 }
 
 export interface SpendReply {
+  spent?: number;
+  entitlement?: string;
   wallet: { diamonds: number; bonusDiamonds: number };
-  entitlements?: Array<{ entitlement: string; expiresAt: string | null }>;
   cosmetics?: string[];
 }
 
@@ -21,17 +22,16 @@ export const WALLET_REQUEST_TIMEOUT_MS = 15_000;
 
 export const walletApi = {
   /**
-   * Spend diamonds on a catalogue item. `requestId` makes a retry safe: the server applies a
-   * given id at most once. Errors: `insufficient_diamonds` (409), `already_owned` (409),
-   * `not_for_diamonds` (400).
+   * Spend diamonds on a table look. A repeat is safe: an owned look answers `409 owned`.
+   * Errors: `insufficient` (409), `owned` (409), `not_for_sale` (400).
    */
-  spend: (ctx: WalletContext, productId: string, requestId: string) =>
+  spend: (ctx: WalletContext, productId: string) =>
     authorisedJson<SpendReply>(ctx.auth, {
       fetch: ctx.fetch ?? globalFetch,
       base: ctx.base,
       method: 'POST',
       path: '/api/wallet/spend',
-      body: { productId, requestId },
+      body: { productId },
       timeoutMs: WALLET_REQUEST_TIMEOUT_MS,
       scope: 'auth',
       label: 'game server',

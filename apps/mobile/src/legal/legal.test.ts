@@ -102,14 +102,14 @@ describe('reports', () => {
   it('needs a known reason and someone other than yourself', () => {
     expect(buildReport(target, null, '', 'u-1')).toBeNull();
     expect(buildReport(target, 'bogus' as never, '', 'u-1')).toBeNull();
-    expect(buildReport(target, 'abuse', '', 'u-2')).toBeNull();
-    expect(buildReport({ ...target, userId: '' }, 'abuse', '', 'u-1')).toBeNull();
-    expect(buildReport(target, 'abuse', '  ', 'u-1')).toEqual({ reportedUserId: 'u-2', reason: 'abuse', roomCode: 'ROOM1' });
+    expect(buildReport(target, 'abusive_chat', '', 'u-2')).toBeNull();
+    expect(buildReport({ ...target, userId: '' }, 'abusive_chat', '', 'u-1')).toBeNull();
+    expect(buildReport(target, 'abusive_chat', '  ', 'u-1')).toEqual({ reportedUserId: 'u-2', reason: 'abusive_chat', roomCode: 'ROOM1' });
   });
 
   it('trims and caps the note', () => {
     const r = buildReport(target, 'other', `  ${'x'.repeat(REPORT_NOTE_MAX + 50)}  `, null)!;
-    expect(r.note!.length).toBe(REPORT_NOTE_MAX);
+    expect(r.details!.length).toBe(REPORT_NOTE_MAX);
   });
 
   it('every reason has copy in both languages', () => {

@@ -23,8 +23,9 @@ function fakeSdk(catalogue: StoreProductLike[], opts: { purchaseError?: unknown 
 
 const STORE: StoreProductLike[] = [
   { identifier: 'diamonds.600', priceString: 'NT$330' },
-  { identifier: 'coach.gold.month:monthly', priceString: 'NT$230' },
-  { identifier: 'theme.jade', priceString: 'NT$120' },
+  // Google Play reports a subscription with its base plan.
+  { identifier: 'coach.gold:month', priceString: 'NT$230' },
+  { identifier: 'coach.platinum.year', priceString: 'NT$2,690' },
   { identifier: 'someone.elses.product', priceString: '$1' },
 ];
 
@@ -41,8 +42,8 @@ describe('RevenueCat store provider', () => {
   it('prices come only from the store, keyed by catalogue id, for subscriptions and one-off products', async () => {
     const { sdk, calls } = fakeSdk(STORE);
     const store = new RevenueCatStoreProvider(sdk, 'k');
-    expect(await store.prices()).toEqual({ 'diamonds.600': 'NT$330', 'coach.gold.month': 'NT$230', 'theme.jade': 'NT$120' });
-    expect(calls).toEqual(['configure k anon', 'getProducts SUBSCRIPTION 3', 'getProducts NON_SUBSCRIPTION 10']);
+    expect(await store.prices()).toEqual({ 'diamonds.600': 'NT$330', 'coach.gold.month': 'NT$230', 'coach.platinum.year': 'NT$2,690' });
+    expect(calls).toEqual(['configure k anon', 'getProducts SUBSCRIPTION 6', 'getProducts NON_SUBSCRIPTION 6']);
     // Logged in afterwards: the anonymous configure is followed by logIn, so purchases reach the account.
     await store.identify('u-1');
     expect(calls.at(-1)).toBe('logIn u-1');
@@ -63,7 +64,7 @@ describe('RevenueCat store provider', () => {
     await store.identify('u-1');
     const r = await store.purchase(productById('coach.gold.month')!);
     expect(r).toEqual({ status: 'purchased' });
-    expect(calls).toContain('purchase coach.gold.month:monthly');
+    expect(calls).toContain('purchase coach.gold:month');
   });
 
   it('a product the store does not sell is reported, not bought', async () => {
@@ -77,10 +78,10 @@ describe('RevenueCat store provider', () => {
   it('a cancelled sheet is a cancel, any other failure a failure', async () => {
     const cancel = new RevenueCatStoreProvider(fakeSdk(STORE, { purchaseError: { code: '1', userCancelled: true } }).sdk, 'k');
     await cancel.identify('u');
-    expect(await cancel.purchase(productById('theme.jade')!)).toEqual({ status: 'cancelled' });
+    expect(await cancel.purchase(productById('diamonds.600')!)).toEqual({ status: 'cancelled' });
     const broken = new RevenueCatStoreProvider(fakeSdk(STORE, { purchaseError: { code: '2', message: 'store problem' } }).sdk, 'k');
     await broken.identify('u');
-    expect((await broken.purchase(productById('theme.jade')!)).status).toBe('failed');
+    expect((await broken.purchase(productById('diamonds.600')!)).status).toBe('failed');
     expect(isStoreCancel({ code: 1 })).toBe(true);
     expect(isStoreCancel(new Error('x'))).toBe(false);
   });

@@ -13,8 +13,7 @@ export interface WalletDeps {
   ensureUser(): Promise<string>;
   fetchMe(): Promise<MeWallet>;
   /** POST /api/wallet/spend. */
-  spend(productId: string, requestId: string): Promise<unknown>;
-  requestId(): string;
+  spend(productId: string): Promise<unknown>;
   now(): number;
   sleep(ms: number): Promise<void>;
 }
@@ -79,14 +78,14 @@ export async function buyWithDiamonds(product: Product, wallet: Wallet, deps: Wa
   if (!product.diamondPrice) return { status: 'failed', wallet, error: new Error('not_for_diamonds') };
   try {
     await deps.ensureUser();
-    await deps.spend(product.id, deps.requestId());
+    await deps.spend(product.id);
   } catch (error) {
     const code = errorCode(error);
-    if (code === 'insufficient_diamonds') {
+    if (code === 'insufficient') {
       const fresh = await syncWallet(wallet, deps).catch(() => wallet);
       return { status: 'need_diamonds', wallet: fresh, short: Math.max(1, product.diamondPrice - fresh.diamonds - fresh.bonusDiamonds) };
     }
-    if (code === 'already_owned') return { status: 'credited', wallet: await syncWallet(wallet, deps).catch(() => wallet) };
+    if (code === 'owned') return { status: 'credited', wallet: await syncWallet(wallet, deps).catch(() => wallet) };
     return { status: 'failed', wallet, error };
   }
   return { status: 'credited', wallet: await syncWallet(wallet, deps).catch(() => wallet) };

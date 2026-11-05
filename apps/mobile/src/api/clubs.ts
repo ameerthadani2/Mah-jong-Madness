@@ -91,8 +91,8 @@ export const clubsApi = {
   remove: (ctx: ClubContext, code: string, userId: string) => call<Club>(ctx, 'DELETE', `/api/clubs/${enc(code)}/members/${enc(userId)}`, {}),
   openTable: (ctx: ClubContext, code: string, opts: { label?: string; rules?: Partial<RuleSet>; botSkill?: BotSkill }) => call<ClubTable>(ctx, 'POST', `/api/clubs/${enc(code)}/tables`, opts),
   standings: (ctx: ClubContext, code: string) => call<ClubMember[]>(ctx, 'GET', `/api/clubs/${enc(code)}/standings`),
-  /** Owner only: archive this season's points and start the next season from zero. */
-  startSeason: (ctx: ClubContext, code: string) => call<Club>(ctx, 'POST', `/api/clubs/${enc(code)}/season`, {}),
+  /** Owner only: archive this season's points and start the next season from zero (re-read the club afterwards). */
+  startSeason: (ctx: ClubContext, code: string) => call<{ club?: Partial<Club> }>(ctx, 'POST', `/api/clubs/${enc(code)}/season`, {}),
   /** Report a player to moderation (any signed-in player; see src/legal/reports.ts). */
   report: (ctx: ClubContext, payload: ReportPayload) => call<{ id?: string }>(ctx, 'POST', '/api/reports', payload),
 };

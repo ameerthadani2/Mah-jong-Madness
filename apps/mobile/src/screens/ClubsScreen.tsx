@@ -266,7 +266,8 @@ export function ClubScreen({ code }: { code: string }) {
   const startSeason = async () => {
     setBusy(true);
     try {
-      const next = await clubsApi.startSeason(ctx, club.code);
+      await clubsApi.startSeason(ctx, club.code);
+      const next = await clubsApi.get(ctx, club.code);
       setClub(next);
       setConfirmSeason(false);
       setView('season');
@@ -364,7 +365,7 @@ export function ClubScreen({ code }: { code: string }) {
                   {standingPoints(m, view) >= 0 ? '+' : ''}
                   {standingPoints(m, view)}
                 </Text>
-                {m.userId !== user.userId && <Button small kind="ghost" title={t('clubs.report')} onPress={() => setReporting({ userId: m.userId, name: m.name, clubCode: club.code })} />}
+                {m.userId !== user.userId && <Button small kind="ghost" title={t('clubs.report')} onPress={() => setReporting({ userId: m.userId, name: m.name })} />}
               </Row>
             ))}
           {canStartSeason(me?.role) &&

@@ -170,10 +170,8 @@ export function ShopScreen() {
               key={p.id}
               w={cardW}
               p={p}
-              price={priceLabel(p)}
               owned={p.unlocks ? ownsCosmetic(wallet, p.unlocks) : false}
               busy={busy === p.id}
-              onBuy={() => void buy(p)}
               onBuyDiamonds={p.diamondPrice ? () => void spend(p) : undefined}
               art={<ThemeScene theme={themeById(p.unlocks)} width="100%" height="100%" />}
               bg={['#D5F7E3', '#8FE0B0']}
@@ -221,10 +219,11 @@ function ProductCard({
   short,
 }: {
   p: Product;
-  price: { label: string; sellable: boolean };
+  /** For products sold for money: the store's price, or why there is none. */
+  price?: { label: string; sellable: boolean };
   owned?: boolean;
   busy: boolean;
-  onBuy: () => void;
+  onBuy?: () => void;
   onBuyDiamonds?: () => void;
   art: React.ReactNode;
   bg: readonly [string, string];
@@ -271,8 +270,8 @@ function ProductCard({
         </View>
       ) : (
         <View style={{ gap: 6 }}>
-          <Button small testID={`buy-${p.id}`} title={busy ? '…' : price.label} onPress={onBuy} disabled={busy || !price.sellable} />
-          {onBuyDiamonds && <Button small testID={`spend-${p.id}`} kind="secondary" icon="gem" title={String(p.diamondPrice)} onPress={onBuyDiamonds} disabled={busy} />}
+          {price && onBuy && <Button small testID={`buy-${p.id}`} title={busy ? '…' : price.label} onPress={onBuy} disabled={busy || !price.sellable} />}
+          {onBuyDiamonds && <Button small testID={`spend-${p.id}`} icon="gem" title={busy ? '…' : (p.diamondPrice ?? 0).toLocaleString()} onPress={onBuyDiamonds} disabled={busy} />}
         </View>
       )}
     </Card>

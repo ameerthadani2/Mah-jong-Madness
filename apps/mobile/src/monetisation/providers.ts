@@ -6,7 +6,7 @@
  * Pure TypeScript: the RevenueCat SDK is injected as `PurchasesLike`, so the provider is
  * tested with a fake (./revenuecat-native.ts adapts the real `react-native-purchases`).
  */
-import { ALL_PRODUCTS, productByStoreId, type Product } from './catalog';
+import { productByStoreId, STORE_PRODUCTS, type Product } from './catalog';
 import type { DevBuildProof, UnavailableReason } from './store-mode';
 import type { Wallet } from './wallet';
 
@@ -74,7 +74,7 @@ export class MockStoreProvider implements StoreProvider {
   constructor(_proof: DevBuildProof) {}
   async identify(): Promise<void> {}
   async prices(): Promise<Record<string, string>> {
-    return Object.fromEntries(ALL_PRODUCTS.map((p) => [p.id, `$${p.priceUsd.toFixed(2)}`]));
+    return Object.fromEntries(STORE_PRODUCTS.map((p) => [p.id, `$${p.priceUsd.toFixed(2)}`]));
   }
   async purchase(product: Product): Promise<PurchaseOutcome> {
     await new Promise((r) => setTimeout(r, 250));
@@ -95,6 +95,15 @@ export interface PurchasesLike {
   getProducts(ids: string[], category: 'SUBSCRIPTION' | 'NON_SUBSCRIPTION'): Promise<StoreProductLike[]>;
   purchaseStoreProduct(product: StoreProductLike): Promise<unknown>;
   restorePurchases(): Promise<unknown>;
+}
+
+/**
+ * The identifiers to ask the store for. App Store subscriptions are `coach.gold.month`; a Play
+ * subscription is `coach.gold` with base plans, so both forms are asked for (unknown ids are ignored).
+ */
+export function storeQueryIds(): { subscriptions: string[]; other: string[] } {
+  const subs = STORE_PRODUCTS.filter((p) => p.kind === 'subscription').flatMap((p) => [p.storeId!, p.storeId!.replace(/\.[^.]+$/, '')]);
+  return { subscriptions: [...new Set(subs)], other: STORE_PRODUCTS.filter((p) => p.kind !== 'subscription').map((p) => p.storeId!) };
 }
 
 /** RevenueCat reports a cancelled sheet with `userCancelled` or error code "1". */
@@ -133,9 +142,8 @@ export class RevenueCatStoreProvider implements StoreProvider {
   private load(): Promise<void> {
     this.loading ??= (async () => {
       this.configure(this.userId);
-      const subs = ALL_PRODUCTS.filter((p) => p.kind === 'subscription').map((p) => p.storeId);
-      const other = ALL_PRODUCTS.filter((p) => p.kind !== 'subscription').map((p) => p.storeId);
-      const found = await Promise.all([this.sdk.getProducts(subs, 'SUBSCRIPTION'), this.sdk.getProducts(other, 'NON_SUBSCRIPTION')]);
+      const ids = storeQueryIds();
+      const found = await Promise.all([this.sdk.getProducts(ids.subscriptions, 'SUBSCRIPTION'), this.sdk.getProducts(ids.other, 'NON_SUBSCRIPTION')]);
       for (const sp of found.flat()) {
         const p = productByStoreId(sp.identifier);
         if (p && typeof sp.priceString === 'string' && sp.priceString) this.products.set(p.id, sp);
@@ -160,7 +168,7 @@ export class RevenueCatStoreProvider implements StoreProvider {
       return { status: 'failed', error: e };
     }
     const sp = this.products.get(product.id);
-    if (!sp) return { status: 'failed', error: new StoreError('store_product_missing', `${product.storeId} is not on sale in this store`) };
+    if (!sp) return { status: 'failed', error: new StoreError('store_product_missing', `${product.storeId ?? product.id} is not on sale in this store`) };
     try {
       await this.sdk.purchaseStoreProduct(sp);
       return { status: 'purchased' };

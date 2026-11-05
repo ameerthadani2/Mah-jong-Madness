@@ -4,7 +4,6 @@
  * The flows themselves are in ./sync.ts (pure, tested).
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { randomHex } from '@mjm/net';
 import { useApp } from '../app-state';
 import { useAuth } from '../auth/AuthProvider';
 import { httpBase } from '../api/http';
@@ -47,8 +46,7 @@ export function useWallet(options: { loadPrices?: boolean } = {}): {
         return id;
       },
       fetchMe: () => client.getMe(),
-      spend: (productId, requestId) => walletApi.spend({ base, auth: client }, productId, requestId),
-      requestId: () => randomHex(16),
+      spend: (productId) => walletApi.spend({ base, auth: client }, productId),
       now: () => Date.now(),
       sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
     }),

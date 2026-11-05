@@ -17,7 +17,7 @@
   "productSub": "%{zh} · %{description}",
   "notOnSale": "Not on sale",
   "priceLoading": "…",
-  "diamondsUse": "Diamonds buy table looks. Bonus diamonds are spent first.",
+  "diamondsUse": "Diamonds buy table looks (300 or 400 each). Bonus diamonds are spent first.",
   "tiers": {
     "gold": "Gold",
     "platinum": "Platinum"
@@ -50,25 +50,25 @@
     },
     "diamonds_300": {
       "title": "300 Diamonds",
-      "description": "Enough for a table look, with some to spare."
+      "description": "Enough for a table look."
     },
     "diamonds_600": {
       "title": "600 Diamonds",
-      "description": "Enough for three table looks."
+      "description": "Enough for two table looks."
     },
-    "diamonds_1320": {
-      "title": "1,320 Diamonds",
-      "description": "1,200 plus a 10% bonus.",
-      "badge": "+10%"
+    "diamonds_1300": {
+      "title": "1,300 Diamonds",
+      "description": "1,200 plus 100 bonus.",
+      "badge": "+8%"
     },
     "diamonds_3450": {
       "title": "3,450 Diamonds",
-      "description": "3,000 plus a 15% bonus.",
+      "description": "3,000 plus 450 bonus.",
       "badge": "+15%"
     },
     "diamonds_7500": {
       "title": "7,500 Diamonds",
-      "description": "6,000 plus a 25% bonus.",
+      "description": "6,000 plus 1,500 bonus.",
       "badge": "+25%"
     },
     "theme_nightmarket": {
@@ -101,6 +101,11 @@
       "title": "Coach Platinum",
       "description": "Everything in Gold plus unlimited hand reviews.",
       "badge": "Best for improvers"
+    },
+    "coach_platinum_year": {
+      "title": "Coach Platinum (yearly)",
+      "description": "Coach Platinum for a year, billed once.",
+      "badge": "Yearly"
     }
   }
 }

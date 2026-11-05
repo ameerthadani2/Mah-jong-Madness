@@ -2,24 +2,24 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 import { describe, expect, it } from 'vitest';
 import { translator } from '../logic/translator.fixture';
-import { ALL_PRODUCTS, COSMETICS, DIAMOND_PACKS, DIAMONDS_PER_DOLLAR, productByStoreId, productText, SELLABLE_PRODUCTS, SUBSCRIPTIONS } from './catalog';
+import { ALL_PRODUCTS, COSMETICS, DIAMOND_PACKS, DIAMONDS_PER_DOLLAR, productByStoreId, productText, SELLABLE_PRODUCTS, STORE_PRODUCTS, SUBSCRIPTIONS } from './catalog';
+import { storeQueryIds } from './providers';
 
 const en = translator('en');
 const zh = translator('zh-TW');
 
 describe('launch catalogue', () => {
-  it('sells only what ships: diamond packs, the four table looks, Coach Gold monthly and yearly, Coach Platinum', () => {
-    expect(ALL_PRODUCTS.map((p) => p.kind).sort()).toEqual([...Array(6).fill('diamonds'), ...Array(4).fill('cosmetic'), ...Array(3).fill('subscription')].sort());
+  it('sells only what ships: diamond packs, the four table looks, Coach Gold and Coach Platinum', () => {
+    expect(ALL_PRODUCTS.map((p) => p.kind).sort()).toEqual([...Array(6).fill('diamonds'), ...Array(4).fill('cosmetic'), ...Array(4).fill('subscription')].sort());
     expect(COSMETICS.map((p) => p.unlocks).sort()).toEqual(['bamboo', 'imperial', 'jade', 'nightmarket']);
-    expect(SUBSCRIPTIONS.map((p) => `${p.tier}/${p.period}`)).toEqual(['gold/month', 'gold/year', 'platinum/month']);
+    expect(SUBSCRIPTIONS.map((p) => `${p.tier}/${p.period}`)).toEqual(['gold/month', 'gold/year', 'platinum/month', 'platinum/year']);
     // Removed until built: Diamond tier, Table Pass, zodiac avatars, Taiwan emotes, VIP cards, club tiers.
     for (const gone of [/coach\.diamond/, /tablepass/, /avatars\./, /emotes\./, /^vip\./, /^club\./]) {
       expect(ALL_PRODUCTS.filter((p) => gone.test(p.id)), String(gone)).toEqual([]);
     }
   });
 
-  it('every sellable product has copy in both locales and a unique store id', () => {
-    const ids = new Set<string>();
+  it('every product the Shop shows has copy in both locales', () => {
     for (const p of SELLABLE_PRODUCTS) {
       const e = productText(p, en);
       const z = productText(p, zh);
@@ -28,17 +28,33 @@ describe('launch catalogue', () => {
       expect(z.title, p.id).toBe(p.titleZh);
       expect(z.description, p.id).toMatch(/[一-鿿]/);
       expect(Boolean(z.badge), p.id).toBe(Boolean(p.badge));
-      // App Store and Google Play both accept lowercase letters, digits, dots and underscores.
-      expect(p.storeId, p.id).toMatch(/^[a-z0-9][a-z0-9._]*$/);
-      expect(ids.has(p.storeId), p.storeId).toBe(false);
-      ids.add(p.storeId);
-      expect(productByStoreId(p.storeId)).toBe(p);
     }
   });
 
-  it('maps a Google Play `product:basePlan` identifier back to the product', () => {
-    expect(productByStoreId('coach.gold.month:monthly')?.id).toBe('coach.gold.month');
-    expect(productByStoreId('nope')).toBeUndefined();
+  it('everything sold for money has a unique store id; table looks are diamonds-only', () => {
+    expect(STORE_PRODUCTS.map((p) => p.kind).sort()).toEqual([...DIAMOND_PACKS, ...SUBSCRIPTIONS].map((p) => p.kind).sort());
+    const ids = new Set<string>();
+    for (const p of STORE_PRODUCTS) {
+      // App Store and Google Play both accept lowercase letters, digits, dots and underscores.
+      expect(p.storeId, p.id).toMatch(/^[a-z0-9][a-z0-9._]*$/);
+      expect(ids.has(p.storeId!), p.storeId).toBe(false);
+      ids.add(p.storeId!);
+      expect(productByStoreId(p.storeId!)).toBe(p);
+    }
+    for (const p of COSMETICS) {
+      expect(p.storeId, p.id).toBeUndefined();
+      expect(p.diamondPrice, p.id).toBeGreaterThan(0);
+    }
+  });
+
+  it('maps a Google Play `subscription:basePlan` identifier back to the product, and asks the store for both forms', () => {
+    expect(productByStoreId('coach.gold:month')?.id).toBe('coach.gold.month');
+    expect(productByStoreId('coach.platinum:year')?.id).toBe('coach.platinum.year');
+    expect(productByStoreId('coach.gold:weekly')).toBeUndefined();
+    expect(productByStoreId('theme.jade')).toBeUndefined();
+    const q = storeQueryIds();
+    expect(q.subscriptions).toEqual(expect.arrayContaining(['coach.gold.month', 'coach.gold', 'coach.platinum']));
+    expect(q.other).toEqual(DIAMOND_PACKS.map((p) => p.storeId));
   });
 
   it('diamond bonuses are exactly what the badge says, over the 60-per-dollar base', () => {
@@ -46,10 +62,10 @@ describe('launch catalogue', () => {
     for (const p of DIAMOND_PACKS) {
       const base = Math.round((p.priceUsd + 0.01) * DIAMONDS_PER_DOLLAR);
       expect(p.baseDiamonds, p.id).toBe(base);
-      expect(p.diamonds, p.id).toBe(Math.round(base * (1 + (p.bonusPercent ?? 0) / 100)));
-      if (p.bonusPercent) {
-        expect(p.badge, p.id).toBe(`+${p.bonusPercent}%`);
-        expect(p.description, p.id).toContain(`${p.bonusPercent}% bonus`);
+      expect(p.diamonds, p.id).toBe(base + (p.bonusDiamonds ?? 0));
+      if (p.bonusDiamonds) {
+        expect(p.badge, p.id).toBe(`+${Math.round((p.bonusDiamonds / base) * 100)}%`);
+        expect(p.description, p.id).toContain(`plus ${p.bonusDiamonds.toLocaleString('en')} bonus`);
       } else expect(p.badge ?? '', p.id).not.toMatch(/%/);
       const rate = (p.diamonds ?? 0) / p.priceUsd;
       expect(rate, p.id).toBeGreaterThanOrEqual(lastRate - 0.5);
@@ -57,16 +73,10 @@ describe('launch catalogue', () => {
     }
   });
 
-  it('a diamond price never costs more than paying cash for the same look', () => {
-    for (const p of COSMETICS) {
-      expect(p.diamondPrice, p.id).toBeDefined();
-      expect(p.diamondPrice! / DIAMONDS_PER_DOLLAR, p.id).toBeLessThanOrEqual(p.priceUsd + 0.01);
-    }
-  });
-
-  it('pack copy only promises what diamonds buy (the cheapest look is affordable from the 300 pack)', () => {
+  it('pack copy only promises what diamonds buy', () => {
     const cheapest = Math.min(...COSMETICS.map((p) => p.diamondPrice!));
     expect(DIAMOND_PACKS.find((p) => p.id === 'diamonds.300')!.diamonds).toBeGreaterThanOrEqual(cheapest);
+    expect(DIAMOND_PACKS.find((p) => p.id === 'diamonds.600')!.diamonds).toBeGreaterThanOrEqual(2 * cheapest);
     for (const p of DIAMOND_PACKS) expect(p.description, p.id).not.toMatch(/emote|VIP|club/i);
   });
 
