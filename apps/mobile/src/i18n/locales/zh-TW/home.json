@@ -17,7 +17,8 @@
     "lessons": "%{done}/%{total} 課",
     "streak": "連續 %{days} 天",
     "dailyDone": "今日已完成",
-    "daily": "每日謎題"
+    "daily": "每日謎題",
+    "rating": "積分 %{n}"
   },
   "shop": {
     "title": "商店",

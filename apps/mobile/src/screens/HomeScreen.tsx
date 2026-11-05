@@ -155,6 +155,7 @@ export function HomeScreen() {
         <Row style={{ flexWrap: 'wrap', rowGap: 6 }} gap={6}>
           <Pill text={t('home.learn.lessons', { done: lessonsDone, total: 6 })} icon="book" size="sm" />
           <Pill text={t('home.learn.streak', { days: streak })} icon="flame" tone={streak > 0 ? 'gold' : 'neutral'} size="sm" />
+          <Pill text={t('home.learn.rating', { n: app.progress.puzzleRating })} icon="target" tone="info" size="sm" />
         </Row>
       )}
       <View style={styles.cardFoot}>

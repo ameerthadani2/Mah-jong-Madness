@@ -1,15 +1,18 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ScrollView, StyleSheet, View } from 'react-native';
-import { dailyPuzzle, dailySeed, rushPuzzle } from '@mjm/engine';
+import { dailyPuzzle, dailySeed, rushScore } from '@mjm/engine';
 import { randomHex } from '@mjm/net';
 import { useApp } from '../app-state';
 import { effectiveStreak, todayKey } from '../storage';
 import { nextDailyProgress } from '../logic/daily';
 import { localDayAsUtc } from '../logic/dates';
-import { rushOutcome } from '../logic/rush';
+import { dailyDifficulty, puzzleDifficultyOf, PUZZLE_TYPE_KEYS, type PuzzleResult } from '../logic/puzzle';
+import { rateAnswer, recordRush } from '../logic/rating';
+import { rushDifficulty, rushOutcome, rushPuzzleAt } from '../logic/rush';
 import { canUse, consume } from '../monetisation/store';
 import { colors, fonts, space } from '../theme';
 import { PuzzleView } from '../components/PuzzleView';
+import { RatingPill } from '../components/puzzles/RatingPill';
 import { Button, Card, H2, P, Pill, Row, ScreenHeader, StrokeText } from '../components/Ui';
 import { Icon } from '../components/Icons';
 import { useT } from '../i18n';
@@ -21,17 +24,19 @@ export function DailyPuzzleScreen() {
   const [day] = useState(() => new Date());
   const today = todayKey(day);
   const puzzle = useMemo(() => dailyPuzzle(localDayAsUtc(day)), [day]);
+  const difficulty = dailyDifficulty(localDayAsUtc(day));
   const attemptedBefore = app.progress.dailySolved[today] !== undefined;
   const [done, setDone] = useState(attemptedBefore);
   const [wasCorrect, setWasCorrect] = useState<boolean | null>(null);
   const streak = effectiveStreak(app.progress);
 
-  const onResult = (r: { correct: boolean }) => {
+  const onResult = (r: PuzzleResult) => {
     setDone(true);
     setWasCorrect(r.correct);
+    // Only the day's first attempt counts, for the streak and for the rating alike.
     app.setProgress((p) => {
       const next = nextDailyProgress(p, r.correct, today);
-      return next === p ? p : { ...next, drillsPlayed: p.drillsPlayed + 1, drillsCorrect: p.drillsCorrect + (r.correct ? 1 : 0) };
+      return next === p ? p : rateAnswer({ ...next, drillsPlayed: p.drillsPlayed + 1, drillsCorrect: p.drillsCorrect + (r.correct ? 1 : 0) }, 'discard', difficulty, r.correct, Date.now());
     });
   };
 
@@ -41,6 +46,7 @@ export function DailyPuzzleScreen() {
       <Row style={{ flexWrap: 'wrap', rowGap: 6 }}>
         <Pill icon="scroll" text={dailySeed(localDayAsUtc(day)).replace('daily-', '')} />
         <Pill icon="flame" text={t('puzzles.daily.streak', { n: streak })} tone={streak > 0 ? 'gold' : 'neutral'} />
+        <RatingPill rating={app.progress.puzzleRating} history={app.progress.ratingHistory} showChange={wasCorrect !== null} />
         {attemptedBefore && <Pill text={t(app.progress.dailySolved[today] === 'correct' ? 'puzzles.daily.solvedToday' : 'puzzles.daily.attemptedToday')} tone={app.progress.dailySolved[today] === 'correct' ? 'ok' : 'neutral'} />}
       </Row>
       <Card>
@@ -109,14 +115,18 @@ function PuzzleRushRun({ onAgain }: { onAgain: () => void }) {
   const { t } = useT();
   const [runSeed] = useState(() => `rush-${randomHex(4)}`);
   // The saved best is raised as soon as the run ends, so judge the run against the best from before it.
-  const [prevBest] = useState(() => app.progress.rushBest);
+  const [prevBest] = useState(() => app.progress.rushBestScore);
   const [index, setIndex] = useState(0);
   const [score, setScore] = useState(0);
   const [strikes, setStrikes] = useState(0);
   const [left, setLeft] = useState(RUSH_SECONDS);
   const [over, setOver] = useState(false);
   const recorded = useRef(false);
-  const puzzle = useMemo(() => rushPuzzle(runSeed, index), [runSeed, index]);
+  const puzzle = useMemo(() => rushPuzzleAt(runSeed, index), [runSeed, index]);
+  const [answeredOnce, setAnsweredOnce] = useState(false);
+  // Seconds played so far: the clock stops when the run ends, so this is the run's time once over.
+  const elapsed = RUSH_SECONDS - left;
+  const points = rushScore(score, elapsed);
 
   useEffect(() => {
     if (over) return;
@@ -129,13 +139,16 @@ function PuzzleRushRun({ onAgain }: { onAgain: () => void }) {
   useEffect(() => {
     if (!over || recorded.current) return;
     recorded.current = true;
-    app.setProgress((p) => ({ ...p, rushRuns: p.rushRuns + 1, rushBest: Math.max(p.rushBest, score) }));
+    app.setProgress((p) => recordRush(p, score, elapsed).progress);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [over]);
 
-  const onResult = (r: { correct: boolean }) => {
+  const onResult = (r: PuzzleResult) => {
     if (r.correct) setScore((s) => s + 1);
     else setStrikes((s) => s + 1);
+    setAnsweredOnce(true);
+    const difficulty = r.difficulty ?? puzzleDifficultyOf(puzzle, rushDifficulty(index));
+    app.setProgress((p) => rateAnswer(p, r.type, difficulty, r.correct, Date.now()));
   };
 
   return (
@@ -151,15 +164,17 @@ function PuzzleRushRun({ onAgain }: { onAgain: () => void }) {
             </View>
           ))}
         </View>
-        <Pill icon="trophy" text={t('puzzles.rush.best', { n: app.progress.rushBest })} tone="gold" />
+        <Pill icon="trophy" text={t('puzzles.rush.bestScore', { n: app.progress.rushBestScore })} tone="gold" />
+        <RatingPill rating={app.progress.puzzleRating} history={app.progress.ratingHistory} showChange={answeredOnce} />
       </Row>
       <Card>
         {over ? (
           <View style={{ gap: 8, alignItems: 'center' }}>
             <StrokeText style={styles.big} strokeWidth={3} drop={3}>
-              {String(score)}
+              {String(points)}
             </StrokeText>
-            <H2>{t(`puzzles.rush.outcome.${rushOutcome(prevBest, score).kind}`)}</H2>
+            <Pill icon="check" text={t('puzzles.rush.solved', { n: score })} tone="ok" />
+            <H2>{t(`puzzles.rush.outcome.${rushOutcome(prevBest, points).kind}`)}</H2>
             <P dim>{t(strikes >= RUSH_STRIKES ? 'puzzles.rush.endStrikes' : 'puzzles.rush.endTime')}</P>
             <Row>
               <Button title={t('puzzles.rush.playAgain')} onPress={onAgain} />
@@ -169,7 +184,7 @@ function PuzzleRushRun({ onAgain }: { onAgain: () => void }) {
         ) : (
           <>
             <P dim style={{ fontSize: 12 }}>
-              {t('puzzles.rush.progress', { n: index + 1, type: t(puzzle.type === 'discard' ? 'puzzles.rush.typeDiscard' : 'puzzles.rush.typeWaits') })}
+              {t('puzzles.rush.progress', { n: index + 1, type: t(PUZZLE_TYPE_KEYS[puzzle.type]) })}
             </P>
             <PuzzleView puzzle={puzzle} onResult={onResult} onNext={() => setIndex((i) => i + 1)} autoAdvance />
           </>

@@ -17,7 +17,8 @@
     "lessons": "%{done}/%{total} lessons",
     "streak": "%{days} day streak",
     "dailyDone": "Daily done",
-    "daily": "Daily puzzle"
+    "daily": "Daily puzzle",
+    "rating": "Rating %{n}"
   },
   "shop": {
     "title": "Shop",

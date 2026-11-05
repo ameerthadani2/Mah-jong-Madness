@@ -29,8 +29,8 @@
     "playAgain": "再玩一次",
     "backToLearn": "回到學習",
     "progress": "第 %{n} 題 · %{type}",
-    "typeDiscard": "最佳打牌",
-    "typeWaits": "看聽牌"
+    "solved": "解開 %{n} 題",
+    "bestScore": "最佳 %{n} 分"
   },
   "view": {
     "next": "下一題",
@@ -52,5 +52,74 @@
     "exact": "完全正確！",
     "notAll": "沒有全部選對。",
     "waits": "聽："
+  },
+  "types": {
+    "discard": "最佳打牌",
+    "waits": "看聽牌",
+    "defence": "防守",
+    "claim": "吃碰判斷",
+    "value": "保住台數"
+  },
+  "seat": {
+    "left": "上家",
+    "opposite": "對家",
+    "right": "下家"
+  },
+  "reason": {
+    "defenceTheirDiscard": "熟張",
+    "defenceDeadHonour": "絕張字牌",
+    "defenceLastHonour": "字牌只剩一張",
+    "defenceHonour": "字牌比較安全",
+    "defenceTerminal": "么九牌比較安全",
+    "claimHu": "胡牌",
+    "claimPassReady": "保持門清",
+    "claimPassNoGain": "吃碰沒好處，不要",
+    "claimKong": "槓牌多補一張",
+    "claimReady": "吃碰後聽牌",
+    "claimCloser": "吃碰後更接近聽牌",
+    "valueKeepPattern": "保住牌型",
+    "valueTradeSpeed": "慢一點也值得"
+  },
+  "defence": {
+    "intro": "有人看起來快胡了。在保持牌型的前提下，打哪一張最安全？",
+    "threatFour": "亮了 %{n} 組：只差一步",
+    "threatThree": "亮了 %{n} 組，打了很多張",
+    "danger": "危險",
+    "discards": "打過的牌",
+    "yourDiscards": "你打過的牌",
+    "noMelds": "沒有亮牌",
+    "safe": "最安全的牌！",
+    "unsafe": "還有更安全的牌。",
+    "answer": "最安全：%{tile}"
+  },
+  "claim": {
+    "intro": "%{seat}打出%{tile}，你要怎麼做？",
+    "yourHand": "你的手牌",
+    "yourMelds": "你的面子",
+    "pass": "不要",
+    "chi": "用%{a}%{b}吃%{tile}",
+    "pong": "碰%{tile}",
+    "kong": "槓%{tile}",
+    "hu": "胡%{tile}",
+    "right": "判斷正確！",
+    "wrong": "教練會有不同的選擇。",
+    "answer": "最佳：%{label}"
+  },
+  "value": {
+    "intro": "兩種打法都能聽牌，哪一張能保住大牌？",
+    "yourMelds": "你的面子",
+    "seatWind": "門風 %{wind}",
+    "roundWind": "圈風 %{wind}",
+    "good": "保住大牌了！",
+    "bad": "這張會丟掉台數。",
+    "projections": "胡牌時的台數",
+    "discard": "打%{tile}",
+    "tai": "%{n} 台",
+    "noLive": "沒有活的聽牌",
+    "waits": "%{kinds} 種 / %{tiles} 張"
+  },
+  "rating": {
+    "pill": "積分 %{n}",
+    "after": "積分 %{n}（%{delta}）"
   }
 }

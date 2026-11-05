@@ -1,82 +1,77 @@
 import React, { useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
-import { checkDiscardAnswer, checkWaitsAnswer, kindInfo, kindsToString, type DiscardPuzzle, type Kind, type Puzzle, type WaitsPuzzle } from '@mjm/engine';
+import { kindsToString, type AnyPuzzle, type DiscardPuzzle, type Kind, type WaitsPuzzle } from '@mjm/engine';
 import { colors, fonts } from '../theme';
-import { t as translate, useT } from '../i18n';
+import { useT } from '../i18n';
+import { checkPuzzleAnswer, puzzleStatus, tileName, type PuzzleResult } from '../logic/puzzle';
 import { Tile } from './Tile';
-import { Button, H2, P, Pill, Row } from './Ui';
-import { Icon } from './Icons';
+import { Button, P, Pill, Row } from './Ui';
+import { NextButton, partStyles, useAnswer, Verdict, type ThemeViewProps } from './puzzles/PuzzleParts';
+import { DefencePuzzleView } from './puzzles/DefencePuzzleView';
+import { ClaimPuzzleView } from './puzzles/ClaimPuzzleView';
+import { ValuePuzzleView } from './puzzles/ValuePuzzleView';
 
-export interface PuzzleResult {
-  correct: boolean;
-  /** Milliseconds from mount to answer. */
-  ms: number;
-}
+export type { PuzzleResult } from '../logic/puzzle';
 
-/**
- * Status line for a best-discard puzzle (same cases as logic/puzzle.ts `puzzleStatus`): `shanten17` is the
- * shanten of the 17-tile hand before discarding; 0 means the right discard leaves the hand ready (聽).
- */
-function discardStatus(shanten17: number): string {
-  if (shanten17 < 0) return translate('puzzles.view.status.complete');
-  if (shanten17 === 0) return translate('puzzles.view.status.oneFromReady');
-  return translate('puzzles.view.status.leaves', { n: shanten17 });
-}
-
-/** Renders a discard or waits puzzle and reports the result once answered. */
-export function PuzzleView({ puzzle, onResult, onNext, nextLabel, autoAdvance }: { puzzle: Puzzle; onResult: (r: PuzzleResult) => void; onNext?: () => void; nextLabel?: string; autoAdvance?: boolean }) {
+/** Renders a puzzle of any of the five themes and reports the result once answered. */
+export function PuzzleView({ puzzle, onResult, onNext, nextLabel, autoAdvance }: { puzzle: AnyPuzzle; onResult: (r: PuzzleResult) => void; onNext?: () => void; nextLabel?: string; autoAdvance?: boolean }) {
   const { t } = useT();
-  const label = nextLabel ?? t('puzzles.view.next');
-  return puzzle.type === 'discard' ? (
-    <DiscardPuzzleView key={puzzle.seed} puzzle={puzzle} onResult={onResult} onNext={onNext} nextLabel={label} autoAdvance={autoAdvance} />
-  ) : (
-    <WaitsPuzzleView key={puzzle.seed} puzzle={puzzle} onResult={onResult} onNext={onNext} nextLabel={label} autoAdvance={autoAdvance} />
-  );
+  const props = { onResult, onNext, nextLabel: nextLabel ?? t('puzzles.view.next'), autoAdvance };
+  // Keyed by seed and theme so the next puzzle always mounts fresh.
+  const key = `${puzzle.type}:${puzzle.seed}`;
+  switch (puzzle.type) {
+    case 'discard':
+      return <DiscardPuzzleView key={key} puzzle={puzzle} {...props} />;
+    case 'waits':
+      return <WaitsPuzzleView key={key} puzzle={puzzle} {...props} />;
+    case 'defence':
+      return <DefencePuzzleView key={key} puzzle={puzzle} {...props} />;
+    case 'claim':
+      return <ClaimPuzzleView key={key} puzzle={puzzle} {...props} />;
+    case 'value':
+      return <ValuePuzzleView key={key} puzzle={puzzle} {...props} />;
+  }
 }
 
-function DiscardPuzzleView({ puzzle, onResult, onNext, nextLabel, autoAdvance }: { puzzle: DiscardPuzzle; onResult: (r: PuzzleResult) => void; onNext?: () => void; nextLabel: string; autoAdvance?: boolean }) {
-  const { t } = useT();
+function DiscardPuzzleView({ puzzle, onResult, onNext, nextLabel, autoAdvance }: ThemeViewProps<DiscardPuzzle>) {
+  const { t, locale } = useT();
   const [picked, setPicked] = useState<number | null>(null);
-  const [started] = useState(() => Date.now());
+  const { answered, report } = useAnswer('discard', undefined, onResult, onNext, autoAdvance);
   const pick = (i: number) => {
-    if (picked !== null) return;
+    if (answered !== null) return;
     setPicked(i);
-    const correct = checkDiscardAnswer(puzzle, puzzle.hand[i]);
-    onResult({ correct, ms: Date.now() - started });
-    if (autoAdvance && onNext) setTimeout(onNext, correct ? 600 : 1800);
+    report(checkPuzzleAnswer(puzzle, puzzle.hand[i]));
   };
   const pickedOpt = picked !== null ? puzzle.options.find((o) => o.kind === puzzle.hand[picked]) : null;
   const bestOpt = puzzle.options.find((o) => o.kind === puzzle.best)!;
-  const good = picked !== null && checkDiscardAnswer(puzzle, puzzle.hand[picked]);
+  const good = answered === true;
   const shape = (shanten: number) => (shanten <= 0 ? t('puzzles.view.ready') : t('puzzles.view.fromReady', { n: shanten }));
+  const status = puzzleStatus(puzzle.currentShanten);
   return (
     <View style={{ gap: 8 }}>
-      <P dim>{t('puzzles.view.discardIntro', { status: discardStatus(puzzle.currentShanten) })}</P>
-      <View style={styles.hand}>
+      <P dim>{t('puzzles.view.discardIntro', { status: t(status.key, status.params) })}</P>
+      <View style={partStyles.hand}>
         {puzzle.hand.map((k, i) => (
-          <Tile key={i} kind={k} size="md" onPress={() => pick(i)} selected={picked === i} highlight={picked !== null ? (puzzle.answers.includes(k) ? 'good' : picked === i ? 'bad' : undefined) : undefined} />
+          <Tile key={i} kind={k} size="md" onPress={() => pick(i)} selected={picked === i} highlight={answered !== null ? (puzzle.answers.includes(k) ? 'good' : picked === i ? 'bad' : undefined) : undefined} accessibilityLabel={tileName(k, locale)} />
         ))}
       </View>
-      {picked !== null && pickedOpt && (
+      {answered !== null && pickedOpt && (
         <View style={{ gap: 6 }}>
-          <Row>
-            <Icon name={good ? 'check' : 'cross'} size={26} color={good ? colors.cta : colors.danger} />
-            <H2 style={{ color: good ? colors.okText : colors.dangerText }}>{t(good ? 'puzzles.view.good' : 'puzzles.view.better')}</H2>
-          </Row>
-          <P>{t('puzzles.view.picked', { tile: kindInfo(pickedOpt.kind).nameZh, shape: shape(pickedOpt.shanten), kinds: pickedOpt.accepts.length, tiles: pickedOpt.acceptance })}</P>
-          {!good && <P>{t('puzzles.view.best', { tile: kindInfo(bestOpt.kind).nameZh, shape: shape(bestOpt.shanten), kinds: bestOpt.accepts.length, tiles: bestOpt.acceptance, list: kindsToString(bestOpt.accepts) })}</P>}
-          {onNext && !autoAdvance && <Button title={nextLabel} onPress={onNext} />}
+          <Verdict good={good} goodKey="puzzles.view.good" badKey="puzzles.view.better" />
+          <P>{t('puzzles.view.picked', { tile: tileName(pickedOpt.kind, 'zh-TW'), shape: shape(pickedOpt.shanten), kinds: pickedOpt.accepts.length, tiles: pickedOpt.acceptance })}</P>
+          {!good && <P>{t('puzzles.view.best', { tile: tileName(bestOpt.kind, 'zh-TW'), shape: shape(bestOpt.shanten), kinds: bestOpt.accepts.length, tiles: bestOpt.acceptance, list: kindsToString(bestOpt.accepts) })}</P>}
+          <NextButton onNext={onNext} autoAdvance={autoAdvance} label={nextLabel} />
         </View>
       )}
     </View>
   );
 }
 
-function WaitsPuzzleView({ puzzle, onResult, onNext, nextLabel, autoAdvance }: { puzzle: WaitsPuzzle; onResult: (r: PuzzleResult) => void; onNext?: () => void; nextLabel: string; autoAdvance?: boolean }) {
+function WaitsPuzzleView({ puzzle, onResult, onNext, nextLabel, autoAdvance }: ThemeViewProps<WaitsPuzzle>) {
   const { t } = useT();
   const [chosen, setChosen] = useState<Set<Kind>>(new Set());
-  const [checked, setChecked] = useState(false);
-  const [started] = useState(() => Date.now());
+  const { answered, report } = useAnswer('waits', undefined, onResult, onNext, autoAdvance);
+  const checked = answered !== null;
   const toggle = (k: Kind) => {
     if (checked) return;
     const next = new Set(chosen);
@@ -84,42 +79,32 @@ function WaitsPuzzleView({ puzzle, onResult, onNext, nextLabel, autoAdvance }: {
     else next.add(k);
     setChosen(next);
   };
-  const correct = checked && checkWaitsAnswer(puzzle, [...chosen]);
-  const check = () => {
-    setChecked(true);
-    const ok = checkWaitsAnswer(puzzle, [...chosen]);
-    onResult({ correct: ok, ms: Date.now() - started });
-    if (autoAdvance && onNext) setTimeout(onNext, ok ? 600 : 1800);
-  };
   return (
     <View style={{ gap: 8 }}>
       <P dim>{t('puzzles.view.waitsIntro')}</P>
-      <View style={styles.hand}>
+      <View style={partStyles.hand}>
         {puzzle.hand.map((k, i) => (
           <Tile key={i} kind={k} size="md" />
         ))}
       </View>
       <Text style={styles.label}>{t('puzzles.view.candidates')}</Text>
-      <View style={styles.hand}>
+      <View style={partStyles.hand}>
         {puzzle.candidates.map((k) => (
           <Tile key={k} kind={k} size="sm" onPress={() => toggle(k)} selected={chosen.has(k)} highlight={checked ? (puzzle.answers.includes(k) ? 'good' : chosen.has(k) ? 'bad' : undefined) : undefined} />
         ))}
       </View>
       {!checked ? (
-        <Button title={t('puzzles.view.check')} onPress={check} disabled={chosen.size === 0} />
+        <Button title={t('puzzles.view.check')} onPress={() => report(checkPuzzleAnswer(puzzle, [...chosen]))} disabled={chosen.size === 0} />
       ) : (
         <View style={{ gap: 6 }}>
-          <Row>
-            <Icon name={correct ? 'check' : 'cross'} size={26} color={correct ? colors.cta : colors.danger} />
-            <H2 style={{ color: correct ? colors.okText : colors.dangerText }}>{t(correct ? 'puzzles.view.exact' : 'puzzles.view.notAll')}</H2>
-          </Row>
+          <Verdict good={answered === true} goodKey="puzzles.view.exact" badKey="puzzles.view.notAll" />
           <Row style={{ flexWrap: 'wrap' }}>
             <Text style={{ color: colors.ink, fontFamily: fonts.uiBold }}>{t('puzzles.view.waits')}</Text>
             {puzzle.answers.map((k) => (
-              <Pill key={k} text={kindInfo(k).nameZh} tone="gold" />
+              <Pill key={k} text={tileName(k, 'zh-TW')} tone="gold" />
             ))}
           </Row>
-          {onNext && !autoAdvance && <Button title={nextLabel} onPress={onNext} />}
+          <NextButton onNext={onNext} autoAdvance={autoAdvance} label={nextLabel} />
         </View>
       )}
     </View>
@@ -127,6 +112,5 @@ function WaitsPuzzleView({ puzzle, onResult, onNext, nextLabel, autoAdvance }: {
 }
 
 const styles = StyleSheet.create({
-  hand: { flexDirection: 'row', flexWrap: 'wrap', gap: 3, paddingVertical: 6 },
   label: { color: colors.inkDim, fontSize: 12, fontFamily: fonts.uiBold, textTransform: 'uppercase', letterSpacing: 1 },
 });

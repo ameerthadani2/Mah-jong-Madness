@@ -7,6 +7,7 @@ import { migrateSettings } from './logic/settings';
 import { DEFAULT_PROFILE, migrateProfile, type Profile } from './logic/profile';
 import type { LocalePreference } from './i18n/resolve';
 import { migrateAgeRecord, type AgeRecord } from './legal/age';
+import { DEFAULT_PUZZLE_RATING, migratePuzzleProgress, type RatingEntry } from './logic/rating';
 
 export { DEFAULT_PROFILE, type Profile } from './logic/profile';
 
@@ -35,9 +36,13 @@ export interface Progress {
   dailySolved: Record<string, 'correct' | 'wrong'>;
   dailyStreak: number;
   dailyLastDate: string | null;
-  /** Puzzle rush */
+  /** Puzzle rush: most puzzles solved in one run, runs played, and the best run's `rushScore`. */
   rushBest: number;
   rushRuns: number;
+  rushBestScore: number;
+  /** Elo-style puzzle rating (logic/rating.ts) and the last answers that moved it, newest last. */
+  puzzleRating: number;
+  ratingHistory: RatingEntry[];
   /** Rolling review accuracy (last 20 reviewed hands). */
   reviewAccuracies: number[];
   /** `${matchId}:${handNumber}` keys already counted / reviewed, so remounts never double-count. */
@@ -64,6 +69,9 @@ export const DEFAULT_PROGRESS: Progress = {
   dailyLastDate: null,
   rushBest: 0,
   rushRuns: 0,
+  rushBestScore: 0,
+  puzzleRating: DEFAULT_PUZZLE_RATING,
+  ratingHistory: [],
   reviewAccuracies: [],
   lastCountedHand: null,
   reviewedHands: [],
@@ -93,7 +101,8 @@ export const storage = {
   // Older saves are migrated (see logic/settings.ts): stale fields dropped, rules sanitised, locale defaulted.
   loadSettings: async (): Promise<Settings> => migrateSettings(await load(KEYS.settings, DEFAULT_SETTINGS), DEFAULT_SETTINGS),
   saveSettings: (s: Settings) => save(KEYS.settings, s),
-  loadProgress: async (): Promise<Progress> => clampDailyToToday(await load(KEYS.progress, DEFAULT_PROGRESS), todayKey()),
+  // Saves from before the puzzle rating read with its defaults (and damaged rating fields are repaired).
+  loadProgress: async (): Promise<Progress> => migratePuzzleProgress(clampDailyToToday(await load(KEYS.progress, DEFAULT_PROGRESS), todayKey())),
   saveProgress: (p: Progress) => save(KEYS.progress, p),
   loadActiveSession: async (): Promise<ActiveSession | null> => {
     try {

@@ -29,8 +29,8 @@
     "playAgain": "Play again",
     "backToLearn": "Back to Learn",
     "progress": "Puzzle %{n} · %{type}",
-    "typeDiscard": "Best discard",
-    "typeWaits": "Read the wait"
+    "solved": "%{n} solved",
+    "bestScore": "Best %{n} points"
   },
   "view": {
     "next": "Next",
@@ -52,5 +52,74 @@
     "exact": "Exactly right!",
     "notAll": "Not all of them.",
     "waits": "Waits:"
+  },
+  "types": {
+    "discard": "Best discard",
+    "waits": "Read the wait",
+    "defence": "Defence",
+    "claim": "Claim or pass",
+    "value": "Keep the 台"
+  },
+  "seat": {
+    "left": "上家 (left)",
+    "opposite": "對家 (opposite)",
+    "right": "下家 (right)"
+  },
+  "reason": {
+    "defenceTheirDiscard": "Their own discard (熟張)",
+    "defenceDeadHonour": "A dead honour",
+    "defenceLastHonour": "The last honour",
+    "defenceHonour": "An honour is safer",
+    "defenceTerminal": "A terminal is safer",
+    "claimHu": "Win: call 胡",
+    "claimPassReady": "Stay concealed",
+    "claimPassNoGain": "No gain, so pass",
+    "claimKong": "槓 for the extra draw",
+    "claimReady": "The claim makes you ready",
+    "claimCloser": "The claim gets you closer",
+    "valueKeepPattern": "Keep the pattern",
+    "valueTradeSpeed": "Worth a slower wait"
+  },
+  "defence": {
+    "intro": "Someone looks close to winning. Keep your shape, but which discard is safest?",
+    "threatFour": "%{n} sets exposed: one step from winning",
+    "threatThree": "%{n} sets exposed and a long discard row",
+    "danger": "Danger",
+    "discards": "Discards",
+    "yourDiscards": "Your discards",
+    "noMelds": "No exposed sets",
+    "safe": "Safest tile!",
+    "unsafe": "There is a safer tile.",
+    "answer": "Safest: %{tile}"
+  },
+  "claim": {
+    "intro": "%{seat} discards %{tile}. What do you do?",
+    "yourHand": "Your hand",
+    "yourMelds": "Your sets",
+    "pass": "Pass",
+    "chi": "吃 %{tile} with %{a} and %{b}",
+    "pong": "碰 %{tile}",
+    "kong": "槓 %{tile}",
+    "hu": "胡 on %{tile}",
+    "right": "Right call!",
+    "wrong": "The coach would do something else.",
+    "answer": "Best: %{label}"
+  },
+  "value": {
+    "intro": "Either of two discards leaves you ready. Which one keeps the bigger hand?",
+    "yourMelds": "Your sets",
+    "seatWind": "Seat: %{wind}",
+    "roundWind": "Round: %{wind}",
+    "good": "Big hand kept!",
+    "bad": "That one gives up 台.",
+    "projections": "台 if you win",
+    "discard": "Discard %{tile}",
+    "tai": "%{n} 台",
+    "noLive": "No live winning tile",
+    "waits": "%{kinds} kinds / %{tiles} tiles"
+  },
+  "rating": {
+    "pill": "Rating %{n}",
+    "after": "Rating %{n} (%{delta})"
   }
 }
