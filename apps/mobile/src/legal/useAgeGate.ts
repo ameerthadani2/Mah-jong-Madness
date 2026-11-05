@@ -28,6 +28,24 @@ const subscribe = (l: () => void) => {
 };
 const snapshot = () => state;
 
+/** The gate's answer outside a render (a deep link or notification handler): loads it if nothing has yet. */
+export function ageGateState(): { loaded: boolean; status: AgeStatus } {
+  ensureLoaded();
+  return { loaded: state.loaded, status: ageStatus(state.record, new Date().getFullYear()) };
+}
+
+/** Resolves once the stored answer has been read (at once when it already has). */
+export function ageGateLoaded(): Promise<{ loaded: boolean; status: AgeStatus }> {
+  ensureLoaded();
+  return loading!.then(ageGateState);
+}
+
+/** For tests: forget the loaded answer so the next read starts again from storage. */
+export function resetAgeGateForTests(): void {
+  state = { loaded: false, record: null };
+  loading = null;
+}
+
 export function useAgeGate(): { loaded: boolean; record: AgeRecord | null; status: AgeStatus; confirm(birthYear: number): void } {
   const s = useSyncExternalStore(subscribe, snapshot, snapshot);
   const auth = useAuth();

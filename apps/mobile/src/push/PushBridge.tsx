@@ -15,6 +15,8 @@ import { httpBase } from '../api/http';
 import { APP_SCHEMES } from '../config';
 import { createOnlineSession } from '../game/session';
 import { currentLocale, t } from '../i18n';
+import { gatingScreen, onlineEntry } from '../legal/online';
+import { ageGateLoaded, useAgeGate } from '../legal/useAgeGate';
 import { useRemoteConfig } from '../telemetry/RemoteConfig';
 import { linkFromNotificationData, parseDeepLink, planLink, presentInForeground, type DeepLink } from './deeplink';
 import { attachRegistrar } from './hub';
@@ -26,13 +28,16 @@ const devicePlatform = Platform.OS === 'ios' ? 'ios' : Platform.OS === 'android'
 export function PushBridge() {
   const app = useApp();
   const auth = useAuth();
-  const { config } = useRemoteConfig();
+  const { config, gate } = useRemoteConfig();
+  const age = useAgeGate();
   const appRef = useRef(app);
   appRef.current = app;
   const authRef = useRef(auth);
   authRef.current = auth;
   const configRef = useRef(config);
   configRef.current = config;
+  const gateRef = useRef(gate);
+  gateRef.current = gate;
   const pending = useRef<DeepLink[]>([]);
   const base = httpBase(app.signalUrl);
   const client = auth.client;
@@ -45,6 +50,7 @@ export function PushBridge() {
         base,
         auth: client,
         hasSession: () => client.snapshot().hasSession,
+        userId: () => client.snapshot().userId,
         pushEnabled: () => configRef.current?.pushEnabled ?? null,
         devicePlatform,
         locale: currentLocale,
@@ -61,6 +67,17 @@ export function PushBridge() {
     const plan = planLink(l, { roomCode: a.session?.roomCode ?? null });
     if (plan.kind === 'show-table') {
       if (a.screen.name !== 'table' && a.screen.name !== 'lobby') a.go({ name: 'table' });
+      return;
+    }
+    // The same gate as every screen that goes online (src/legal/online.ts): a tap or a link never seats a player
+    // the age gate has not let in, never acts behind the 'Update required' screen, and never bootstraps a guest
+    // for a signed-out account. The link waits until the gate opens (the effect below follows it then).
+    const ageNow = await ageGateLoaded();
+    const entry = onlineEntry({ ageLoaded: ageNow.loaded, ageStatus: ageNow.status, gateKind: gateRef.current.kind, authStatus: authRef.current.status });
+    if (entry !== 'ok') {
+      pending.current.push(l);
+      const screen = gatingScreen(entry, plan.kind === 'open-club' ? 'club' : 'table');
+      if (screen && appRef.current.screen.name !== screen) appRef.current.go({ name: screen });
       return;
     }
     if (plan.kind === 'open-club') {
@@ -90,13 +107,15 @@ export function PushBridge() {
     }
   }).current;
 
-  // Links that arrived before the saved state loaded (a cold start from a notification).
+  // Links that arrived before the saved state loaded (a cold start from a notification), or while the age gate,
+  // the update screen or a sign-in stood in the way: followed once the way is clear.
+  const entryNow = onlineEntry({ ageLoaded: age.loaded, ageStatus: age.status, gateKind: gate.kind, authStatus: auth.status });
   useEffect(() => {
-    if (!app.loaded || !pending.current.length) return;
+    if (!app.loaded || entryNow !== 'ok' || !pending.current.length) return;
     const queued = pending.current;
     pending.current = [];
     for (const l of queued) void follow(l);
-  }, [app.loaded, follow]);
+  }, [app.loaded, entryNow, follow]);
 
   useEffect(() => {
     if (!pushDevice.supported) return;

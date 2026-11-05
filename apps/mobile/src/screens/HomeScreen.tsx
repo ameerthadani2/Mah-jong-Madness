@@ -5,7 +5,7 @@ import { BOT_SKILLS, type BotSkill } from '@mjm/engine';
 import { allowedBotSkill, hasTier, totalDiamonds } from '../monetisation/wallet';
 import { useWallet } from '../monetisation/useWallet';
 import { gateFor } from '../legal/age';
-import { useAgeGate } from '../legal/useAgeGate';
+import { useOnlineGuard } from '../legal/useOnlineGuard';
 import { AgeBlocked, AgeGate } from '../components/AgeGate';
 import { useApp } from '../app-state';
 import { createLocalSession, createOnlineSession } from '../game/session';
@@ -43,8 +43,8 @@ export function HomeScreen() {
   const [resuming, setResuming] = useState(false);
   const [resumeError, setResumeError] = useState<string | null>(null);
 
-  // The age gate comes first on a fresh install (src/legal/age.ts, gateFor).
-  const gate = useAgeGate();
+  // The age gate comes first on a fresh install (src/legal/age.ts, gateFor); `entry` guards the online resume.
+  const { entry, gate } = useOnlineGuard();
   // Mirror the server wallet when this device already has a session (never bootstraps one).
   const { refresh: refreshWallet } = useWallet({ loadPrices: false });
   const accountId = auth.user?.id;
@@ -70,6 +70,9 @@ export function HomeScreen() {
         const session = createLocalSession(rec.name, rec.avatar, rec.host.rules, { restore: { host: rec.host, token: rec.token } });
         app.setSession(session);
         app.go({ name: 'table' });
+      } else if (entry !== 'ok') {
+        // An install with no age answer (or a signed-out account) is gated on the Online screen before anything reaches the server.
+        app.go({ name: 'online' });
       } else {
         // Back to the server the table lives on (the stored serverUrl), with this player's session.
         const session = await createOnlineSession({ signalUrl: rec.signalUrl, name: rec.name, avatar: rec.avatar, userId: app.profile.userId || undefined, rules: app.settings.rules, action: 'join', code: rec.roomCode, token: rec.token, clubCode: rec.clubCode, ...auth.tableAuth });
