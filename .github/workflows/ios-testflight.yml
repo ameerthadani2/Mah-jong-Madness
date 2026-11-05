@@ -7,6 +7,12 @@ name: iOS TestFlight build
 #   ASC_KEY_P8            full contents of the downloaded AuthKey_XXXX.p8 file
 #   APPLE_TEAM_ID         10-character team id (developer.apple.com → Membership)
 #   ASC_APP_ID            (optional) numeric App Store Connect app id, once the app record exists
+# Optional repository variables, copied into the build (all absent -> that feature is off; see docs/OWNER_TODO.md):
+#   SIGNAL_URL, APP_STORE_ID, EXPO_PUBLIC_SENTRY_DSN, EXPO_PUBLIC_POSTHOG_KEY, EXPO_PUBLIC_POSTHOG_HOST,
+#   SENTRY_ORG, SENTRY_PROJECT. SENTRY_AUTH_TOKEN and google-services.json belong in EAS environment
+#   variables (secret / file), never here.
+# The app uses native modules (notifications, Sentry, purchases), so it runs only in builds like this one
+# or a development build; Expo Go cannot open it any more.
 on:
   workflow_dispatch:
     inputs:
@@ -23,6 +29,8 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -42,14 +50,49 @@ jobs:
           echo "EXPO_ASC_ISSUER_ID=${{ secrets.ASC_ISSUER_ID }}" >> $GITHUB_ENV
           echo "EXPO_APPLE_TEAM_ID=${{ secrets.APPLE_TEAM_ID }}" >> $GITHUB_ENV
           echo "EXPO_APPLE_TEAM_TYPE=COMPANY_OR_ORGANIZATION" >> $GITHUB_ENV
-      - name: Ensure the EAS project is linked
+      - name: Create or link the EAS project (first run only)
         working-directory: apps/mobile
         run: |
-          node -e "const c=require('./app.json'); if(!(c.expo.extra&&c.expo.extra.eas&&c.expo.extra.eas.projectId)){console.error('Run the Publish to Expo Go workflow once first; it links the EAS project.');process.exit(1)}"
-      - name: Build (and submit) on EAS
+          if node -e "const c=require('./app.json'); process.exit(c.expo.extra && c.expo.extra.eas && c.expo.extra.eas.projectId ? 0 : 1)"; then
+            echo "EAS project already linked"
+          else
+            eas init --force --non-interactive
+          fi
+      - name: Commit the EAS project id back to the branch (first run only)
+        run: |
+          if ! git diff --quiet -- apps/mobile/app.json; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add apps/mobile/app.json
+            git commit -m "Link EAS project (automated)"
+            git push
+          fi
+      - name: Pass build-time variables to the EAS build profile
+        # EAS cloud builds do not inherit this job's environment; the profile's env does reach them.
+        # Only public values go here (they end up in the app bundle anyway). The edit is not committed.
         working-directory: apps/mobile
         env:
+          PROFILE: ${{ github.event.inputs.profile }}
           SIGNAL_URL: ${{ vars.SIGNAL_URL }}
+          APP_STORE_ID: ${{ vars.APP_STORE_ID }}
+          EXPO_PUBLIC_SENTRY_DSN: ${{ vars.EXPO_PUBLIC_SENTRY_DSN }}
+          EXPO_PUBLIC_POSTHOG_KEY: ${{ vars.EXPO_PUBLIC_POSTHOG_KEY }}
+          EXPO_PUBLIC_POSTHOG_HOST: ${{ vars.EXPO_PUBLIC_POSTHOG_HOST }}
+          SENTRY_ORG: ${{ vars.SENTRY_ORG }}
+          SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
+        run: |
+          node -e "
+            const fs = require('fs');
+            const eas = JSON.parse(fs.readFileSync('eas.json', 'utf8'));
+            const keys = ['SIGNAL_URL', 'APP_STORE_ID', 'EXPO_PUBLIC_SENTRY_DSN', 'EXPO_PUBLIC_POSTHOG_KEY', 'EXPO_PUBLIC_POSTHOG_HOST', 'SENTRY_ORG', 'SENTRY_PROJECT'];
+            const profile = eas.build[process.env.PROFILE];
+            profile.env = { ...(profile.env || {}) };
+            for (const k of keys) if (process.env[k]) profile.env[k] = process.env[k];
+            fs.writeFileSync('eas.json', JSON.stringify(eas, null, 2));
+            console.log('Build variables set: ' + (Object.keys(profile.env).join(', ') || 'none'));
+          "
+      - name: Build (and submit) on EAS
+        working-directory: apps/mobile
         run: |
           if [ "${{ github.event.inputs.submit }}" = "true" ]; then
             eas build --platform ios --profile ${{ github.event.inputs.profile }} --non-interactive --auto-submit --wait

@@ -71,6 +71,22 @@ What each signal means and where to look is in [`OBSERVABILITY.md`](OBSERVABILIT
 | Uptime alert | Fly dashboard or an uptime monitor | you learn about outages from players | Alert on `https://<app>.fly.dev/health` failing, and in Sentry on new issues. |
 | `MIN_BUILD` | server variable | `0`: every build may play online | Raise it to turn away builds older than a given release (reported as `/api/config.minBuild`, which the app reads to ask for an update). |
 
+### Phase 6 — app
+
+The app reads these at build time. EAS cloud builds do not see your shell or GitHub environment, so set them as **EAS environment variables** (expo.dev → project → Environment variables, for the `preview` and `production` environments); the TestFlight workflow also copies the non-secret ones from repository variables into the build profile.
+
+| Item | Type | Default while absent | Why |
+| --- | --- | --- | --- |
+| `EXPO_PUBLIC_SENTRY_DSN` | repo variable + EAS variable | no crash reports; the "Send crash reports" toggle is hidden | Sentry → Project settings → Client keys (DSN). Public by design. |
+| `SENTRY_AUTH_TOKEN` | EAS secret | the Sentry build plugin is left out, so builds succeed but crashes show minified stacks | Sentry → Settings → Auth tokens (scope `project:releases`). Uploads source maps and iOS/Android debug symbols during the EAS build. Never put it in a repository variable. |
+| `SENTRY_ORG`, `SENTRY_PROJECT` | repo variables + EAS variables | as above (all three are needed for upload) | The organisation and project slugs from the Sentry URL. For an over-the-air update, upload its maps with `npx sentry-expo-upload-sourcemaps dist` after `eas update`. |
+| `EXPO_PUBLIC_POSTHOG_KEY` | repo variable + EAS variable | no analytics; the "Share usage statistics" toggle is hidden | PostHog → Project settings → Project API key (public). Analytics stay off until the first-run age gate records consent, and off by default for minors. |
+| `EXPO_PUBLIC_POSTHOG_HOST` | repo variable + EAS variable | `https://us.i.posthog.com` | Use `https://eu.i.posthog.com` for an EU project. |
+| EAS project id | `eas init` (the TestFlight workflow runs it once) | no push token, so push stays off | Expo push tokens are issued per EAS project (`extra.eas.projectId` in `app.json`). |
+| APNs key | EAS credentials | iOS push not delivered | `eas credentials` → iOS → Push Notifications: let EAS create the key, or upload your `.p8`. |
+| `GOOGLE_SERVICES_JSON` | EAS file variable | Android push not delivered | Firebase project → Android app (package = `APP_BUNDLE_ID`) → download `google-services.json`; add it as a file variable named `GOOGLE_SERVICES_JSON`, and upload the FCM V1 service-account key with `eas credentials` → Android. |
+| `APP_STORE_ID` | repo variable + EAS variable | the "Update required" screen links to a placeholder App Store page | The numeric id from App Store Connect (App information → Apple ID) once the app record exists. The Google Play link is derived from `APP_BUNDLE_ID`. |
+
 ## Phase 7 — device QA and listings
 
 A native zh-TW reviewer for `apps/mobile/src/i18n/zh-TW.json`; store listing copy in both languages; a low-end Android phone; EAS credentials (`EXPO_TOKEN`, `ASC_KEY_ID`, `ASC_ISSUER_ID`, `ASC_KEY_P8`, `APPLE_TEAM_ID`).
