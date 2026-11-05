@@ -3,7 +3,7 @@
  * can be unit-tested. Rooms are identified by short codes players can read out
  * loud (PokerBros-style club/table codes).
  */
-import { TableHost, type HostEvent, type Transport, type Unsubscribe } from '@mjm/net';
+import { TableHost, type HostEvent, type SerializedHost, type Transport, type Unsubscribe } from '@mjm/net';
 import { BOT_SKILLS, randomHex, sanitizeRules, type BotSkill, type RuleSet } from '@mjm/engine';
 import { uniqueCode, type HexSource } from './codes';
 import { LIMITS } from './config';
@@ -15,8 +15,8 @@ export interface Socket {
 }
 
 export type Inbound =
-  | { t: 'hello' }
-  | { t: 'create'; room?: string; hosted?: boolean; rules?: Partial<RuleSet>; botSkill?: BotSkill | string }
+  | { t: 'hello'; auth?: unknown }
+  | { t: 'create'; room?: string; hosted?: boolean; rules?: Partial<RuleSet>; botSkill?: BotSkill | string; club?: string }
   | { t: 'join'; room: string }
   | { t: 'to'; to: string; data: unknown }
   | { t: 'leave' };
@@ -25,6 +25,8 @@ interface Peer {
   id: string;
   socket: Socket;
   room: string | null;
+  /** The account behind the socket, verified from its session token in `hello` (absent only without auth). */
+  userId?: string;
   /** Allows one room per `LIMITS.createCooldownMs`. */
   creates: TokenBucket;
   /** Allows `LIMITS.joinsPerWindow` join attempts per `LIMITS.joinWindowMs`, so codes cannot be guessed quickly. */
@@ -38,8 +40,25 @@ interface Room {
   createdAt: number;
   /** Present when the server itself hosts the table (neutral host mode). */
   table?: { host: TableHost; transport: ServerTransport };
-  /** Rooms created through the API stay alive without peers until this time. */
+  /** A room with no peers stays alive until this time (refreshed while a human holds a seat). */
   keepAliveUntil?: number;
+  /** Opened through the API or restored from a snapshot: kept alive even before anyone has sat down. */
+  pinned?: boolean;
+  /** The club this table belongs to; only its members may join. */
+  clubCode?: string;
+}
+
+/**
+ * Membership checks for club tables, supplied by the server (the registry knows nothing of clubs).
+ * Every method is synchronous because the club registry keeps its clubs in memory.
+ */
+export interface ClubGate {
+  /** The rules a new table for this club should use, or the reason the user may not open one. */
+  openTable(clubCode: string, userId: string | undefined, rules: unknown): { rules: RuleSet } | { error: string };
+  /** Called once the room exists, to list the table in the club. */
+  tableOpened(clubCode: string, roomCode: string, userId: string, rules: RuleSet): void;
+  /** True when the user is a full member of the club (pending requests do not count). */
+  mayJoin(clubCode: string, userId: string | undefined): boolean;
 }
 
 export interface RoomEvent {
@@ -57,6 +76,11 @@ export const ROOM_CLOSED = 'The host left, so the room has closed';
 export const CREATE_COOLDOWN = 'Please wait a few seconds before creating another room';
 export const JOIN_THROTTLED = 'Too many join attempts; please wait a few seconds';
 export const SERVER_FULL = 'The server is full right now; please try again in a few minutes';
+/** Sent when a user who is not a full member of the club tries to open or join one of its tables. */
+export const CLUB_MEMBERS_ONLY = 'Join the club first';
+
+/** How long a table with nobody connected is kept after its last activity while a human holds a seat. */
+export const KEEP_ALIVE_MS = 15 * 60_000;
 
 /** Most peers one room can hold: the four seats plus spare places for players who drop out and rejoin. */
 const MAX_ROOM_PEERS = 12;
@@ -83,13 +107,30 @@ export interface RoomRegistryOptions {
   now?: () => number;
   /** Secure random source for room codes and peer ids. Injected in tests. */
   randomHex?: HexSource;
+  /** Delay before a hosted table's bot acts (default 600 ms; 0 in tests). */
+  botDelayMs?: number;
+  /** Membership checks for club tables. Without it, a `create` naming a club is refused. */
+  clubs?: ClubGate;
+}
+
+export interface HostedRoomOptions {
+  code?: string;
+  rules?: unknown;
+  botSkill?: unknown;
+  keepAliveMs?: number;
+  /** The club the table belongs to. */
+  clubCode?: string;
+  /** Resume a table from its snapshot (after a restart). The room keeps the snapshot's code. */
+  restore?: SerializedHost;
 }
 
 export class RoomRegistry {
   private readonly peers = new Map<string, Peer>();
   private readonly rooms = new Map<string, Room>();
   private readonly eventHandlers = new Set<(ev: RoomEvent) => void>();
+  private readonly changeHandlers = new Set<(room: string) => void>();
   private readonly hex: HexSource;
+  private closed = false;
   constructor(private readonly opts: RoomRegistryOptions = {}) {
     this.hex = opts.randomHex ?? randomHex;
   }
@@ -100,23 +141,51 @@ export class RoomRegistry {
     return () => this.eventHandlers.delete(cb);
   }
 
-  /** Create a server-hosted room with no peers yet (e.g. a club table opened from the API). */
-  createHostedRoom(opts: { code?: string; rules?: unknown; botSkill?: unknown; keepAliveMs?: number } = {}): string {
+  /** Subscribe to every state change of a hosted table (for snapshots). Fires synchronously, often. */
+  onTableChange(cb: (room: string) => void): () => void {
+    this.changeHandlers.add(cb);
+    return () => this.changeHandlers.delete(cb);
+  }
+
+  /**
+   * Create a server-hosted room with no peers yet: a club table opened from the API, or a table
+   * restored from its snapshot after a restart. A restored table keeps its code; if that code is
+   * malformed or already live, this throws rather than resume the table under another code.
+   */
+  createHostedRoom(opts: HostedRoomOptions = {}): string {
     if (!this.opts.allowHosted) throw new RoomLimitError(HOSTED_DISABLED);
     if (this.hostedCount() >= this.maxHostedTables()) throw new RoomLimitError(SERVER_FULL);
-    const code = opts.code && /^[A-Z0-9]{4,8}$/.test(opts.code) && !this.rooms.has(opts.code) ? opts.code : this.newCode();
-    const room: Room = { code, host: '', peers: new Set(), createdAt: this.now(), keepAliveUntil: this.now() + (opts.keepAliveMs ?? 15 * 60_000) };
-    this.attachTable(room, opts.rules, opts.botSkill);
+    const wanted = opts.restore ? opts.restore.roomCode : opts.code;
+    const usable = typeof wanted === 'string' && /^[A-Z0-9]{4,8}$/.test(wanted) && !this.rooms.has(wanted);
+    if (opts.restore && !usable) throw new Error(`Cannot restore table ${String(wanted)}: the code is malformed or in use`);
+    const code = usable ? wanted : this.newCode();
+    const room: Room = { code, host: '', peers: new Set(), createdAt: this.now(), keepAliveUntil: this.now() + (opts.keepAliveMs ?? KEEP_ALIVE_MS), pinned: true };
+    if (opts.clubCode) room.clubCode = opts.clubCode.toUpperCase();
+    this.attachTable(room, opts.rules, opts.botSkill, opts.restore);
     this.rooms.set(code, room);
     return code;
   }
 
   /** Rules and bot skill come in from the network, so both are sanitised before the table sees them. */
-  private attachTable(room: Room, rules: unknown, botSkill: unknown): void {
+  private attachTable(room: Room, rules: unknown, botSkill: unknown, restore?: SerializedHost): void {
     const transport = new ServerTransport(this, room.code, `server-${room.code}`);
-    const host = new TableHost(transport, { roomCode: room.code, rules: sanitizeRules(rules), botDelayMs: 600, botSkill: isBotSkill(botSkill) ? botSkill : undefined });
+    const host = new TableHost(transport, {
+      roomCode: room.code,
+      rules: sanitizeRules(rules),
+      botDelayMs: this.opts.botDelayMs ?? 600,
+      botSkill: isBotSkill(botSkill) ? botSkill : undefined,
+      now: this.opts.now,
+      restore,
+    });
     host.onEvent((event) => {
+      // While a human holds a seat (connected or not) the table lives 15 minutes past its last activity.
+      // A room opened over the socket with nobody seated any more closes as soon as its last peer leaves.
+      if (event.seats.some((s) => !s.isBot && s.name !== '')) room.keepAliveUntil = this.now() + KEEP_ALIVE_MS;
+      else if (!room.pinned) room.keepAliveUntil = undefined;
       for (const h of this.eventHandlers) h({ room: room.code, event });
+    });
+    host.onChange(() => {
+      for (const h of this.changeHandlers) h(room.code);
     });
     room.table = { host, transport };
     room.host = transport.id;
@@ -163,28 +232,44 @@ export class RoomRegistry {
     peer.socket.send(JSON.stringify({ t: 'error', message }));
   }
 
+  /**
+   * Assign the peer its permanent id (once) and bind the account its session token proved. The
+   * socket layer calls this after verifying `{t:'hello', auth}`; without auth, `handle` calls it
+   * with no user. Ids are always server-assigned and never change for the life of the socket, so
+   * a peer cannot impersonate a departed player or the server-side host ('server-…').
+   */
+  hello(peerId: string, userId?: string): string {
+    const peer = this.peers.get(peerId);
+    if (!peer) return peerId;
+    if (peerId.startsWith('tmp-')) {
+      const id = this.newPeerId('p-');
+      this.peers.delete(peerId);
+      peer.id = id;
+      this.peers.set(id, peer);
+      if (userId) peer.userId = userId;
+    }
+    // `peerId` is the older name of `id`, kept for clients built before accounts.
+    peer.socket.send(JSON.stringify({ t: 'hello', id: peer.id, peerId: peer.id, userId: peer.userId }));
+    return peer.id;
+  }
+
+  /** The verified account behind a peer, if any. */
+  peerUser(peerId: string): string | undefined {
+    return this.peers.get(peerId)?.userId;
+  }
+
   /** Handle one inbound message from the peer currently known as `peerId`. Returns the (possibly renamed) peer id. */
   handle(peerId: string, msg: Inbound): string {
     const peer = this.peers.get(peerId);
-    if (!peer) return peerId;
+    if (!peer || this.closed) return peerId;
     switch (msg.t) {
-      case 'hello': {
-        // Ids are always server-assigned and never change for the life of the socket, so a peer cannot
-        // impersonate a departed player or the server-side host ('server-…') by choosing its own id.
-        if (!peerId.startsWith('tmp-')) {
-          peer.socket.send(JSON.stringify({ t: 'hello', peerId }));
-          return peerId;
-        }
-        const id = this.newPeerId('p-');
-        this.peers.delete(peerId);
-        peer.id = id;
-        this.peers.set(id, peer);
-        peer.socket.send(JSON.stringify({ t: 'hello', peerId: id }));
-        return id;
-      }
+      case 'hello':
+        return this.hello(peerId);
       case 'create': {
         if (peer.id.startsWith('tmp-')) return peer.id;
-        const hosted = msg.hosted === true;
+        const club = typeof msg.club === 'string' && msg.club ? msg.club.toUpperCase().slice(0, 8) : undefined;
+        // A club table is always hosted by the server.
+        const hosted = msg.hosted === true || club !== undefined;
         // A hosted request is never downgraded to a relay-only room the creator would host.
         if (hosted && !this.opts.allowHosted) {
           this.error(peer, HOSTED_DISABLED);
@@ -198,6 +283,16 @@ export class RoomRegistry {
           this.error(peer, SERVER_FULL);
           return peer.id;
         }
+        let rules: unknown = msg.rules;
+        if (club !== undefined) {
+          // Checked before the cooldown, so a refusal does not cost the peer its next create.
+          const gate = this.opts.clubs?.openTable(club, peer.userId, msg.rules) ?? { error: CLUB_MEMBERS_ONLY };
+          if ('error' in gate) {
+            this.error(peer, gate.error);
+            return peer.id;
+          }
+          rules = gate.rules;
+        }
         if (!peer.creates.take()) {
           this.error(peer, CREATE_COOLDOWN);
           return peer.id;
@@ -206,9 +301,11 @@ export class RoomRegistry {
         const wanted = typeof msg.room === 'string' ? msg.room : undefined;
         const code = wanted && /^[A-Z0-9]{4,8}$/.test(wanted) && !this.rooms.has(wanted) ? wanted : this.newCode();
         const room: Room = { code, host: peer.id, peers: new Set([peer.id]), createdAt: this.now() };
-        if (hosted) this.attachTable(room, msg.rules, msg.botSkill);
+        if (club !== undefined) room.clubCode = club;
+        if (hosted) this.attachTable(room, rules, msg.botSkill);
         this.rooms.set(code, room);
         peer.room = code;
+        if (club !== undefined && peer.userId && room.table) this.opts.clubs?.tableOpened(club, code, peer.userId, room.table.host.rules);
         this.sendRoom(peer, room);
         return peer.id;
       }
@@ -223,6 +320,10 @@ export class RoomRegistry {
           this.error(peer, ROOM_UNAVAILABLE);
           return peer.id;
         }
+        if (room.clubCode && !(this.opts.clubs?.mayJoin(room.clubCode, peer.userId) ?? false)) {
+          this.error(peer, CLUB_MEMBERS_ONLY);
+          return peer.id;
+        }
         this.leave(peer);
         room.peers.add(peer.id);
         peer.room = room.code;
@@ -235,7 +336,7 @@ export class RoomRegistry {
         if (!room || typeof msg.to !== 'string') return peer.id;
         const to = msg.to;
         if (room.table && to === room.table.transport.id) {
-          room.table.transport.receive(peer.id, msg.data);
+          room.table.transport.receive(peer.id, bindUser(msg.data, peer.userId));
           return peer.id;
         }
         if (!room.peers.has(to)) return peer.id;
@@ -282,8 +383,8 @@ export class RoomRegistry {
     }
     if (room.peers.size === 0) {
       if (room.keepAliveUntil !== undefined && room.keepAliveUntil > this.now()) {
-        // Club table: give players time to come back (the host pauses the match for them).
-        room.keepAliveUntil = this.now() + 15 * 60_000;
+        // Give players time to come back (bots play for them, or the table pauses between hands).
+        room.keepAliveUntil = this.now() + KEEP_ALIVE_MS;
       } else this.closeRoom(room);
     }
   }
@@ -341,7 +442,50 @@ export class RoomRegistry {
   hostedTable(code: string): TableHost | undefined {
     return this.rooms.get(code)?.table?.host;
   }
+
+  /** The club a room belongs to, if any. */
+  clubOf(code: string): string | undefined {
+    return this.rooms.get(code)?.clubCode;
+  }
+
+  /** Codes of every table the server is hosting. */
+  hostedRooms(): string[] {
+    return [...this.rooms.values()].filter((r) => r.table).map((r) => r.code);
+  }
+
+  /** When an empty room will be closed (for tests and diagnostics). */
+  keepAliveUntil(code: string): number | undefined {
+    return this.rooms.get(code)?.keepAliveUntil;
+  }
+
+  /**
+   * Stop for a restart: close every table without reporting it as finished (the snapshots stay
+   * restorable and club listings stay open), and ignore everything that arrives afterwards.
+   */
+  shutdown(): void {
+    this.closed = true;
+    const rooms = [...this.rooms.values()];
+    this.rooms.clear();
+    for (const peer of this.peers.values()) peer.room = null;
+    for (const r of rooms) r.table?.host.close();
+  }
 }
+
+/**
+ * The table's `join` carries the verified account, never the one the client claims, so the host
+ * (which reads `msg.userId`) binds the seat to the user the session proved. An unauthenticated
+ * peer's claim is dropped.
+ */
+function bindUser(data: unknown, userId: string | undefined): unknown {
+  const env = data as { ch?: unknown; msg?: unknown } | null;
+  if (!env || typeof env !== 'object' || env.ch !== 'game' || !env.msg || typeof env.msg !== 'object') return data;
+  if ((env.msg as { t?: unknown }).t !== 'join') return data;
+  const msg: Record<string, unknown> = { ...(env.msg as Record<string, unknown>) };
+  if (userId) msg.userId = userId;
+  else delete msg.userId;
+  return { ...env, msg };
+}
+
 
 /** Transport for a table hosted by the server itself: a virtual peer inside the room. */
 export class ServerTransport implements Transport {

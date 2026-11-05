@@ -5,8 +5,8 @@
 export const AUTH_ERRORS = {
   /** Malformed input (missing field, wrong type). */
   invalid: 400,
-  /** The provider is not configured on this server. */
-  provider_disabled: 400,
+  /** The provider is not configured on this server (`GET /api/config` lists the enabled ones). */
+  provider_disabled: 404,
   /** Guest id and secret do not match. */
   invalid_credentials: 401,
   /** A provider id token failed verification (signature, issuer, audience, expiry or nonce). */

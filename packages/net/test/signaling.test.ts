@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { SIGNALING_TIMEOUT_MESSAGE, SIGNALING_TIMEOUT_MS, SignalingClient, type WebSocketLike } from '../src/signaling';
+import { SIGNALING_TIMEOUT_MESSAGE, SIGNALING_TIMEOUT_MS, SignalingClient, UNAUTHORISED_CLOSE_CODE, type WebSocketLike } from '../src/signaling';
 
 /** A scriptable stand-in for the browser WebSocket, handed to SignalingClient through its factory. */
 class FakeSocket implements WebSocketLike {
@@ -23,9 +23,9 @@ class FakeSocket implements WebSocketLike {
   serverSays(msg: unknown): void {
     this.onmessage?.({ data: JSON.stringify(msg) });
   }
-  drop(): void {
+  drop(code?: number): void {
     this.readyState = 3;
-    this.onclose?.({});
+    this.onclose?.(code === undefined ? {} : { code });
   }
 }
 
@@ -145,5 +145,64 @@ describe('SignalingClient', () => {
     const assertion = expect(p).rejects.toThrow(SIGNALING_TIMEOUT_MESSAGE);
     await vi.advanceTimersByTimeAsync(500);
     await assertion;
+  });
+
+  it('takes an options object: the session token goes in hello and the server-verified user is kept', async () => {
+    const sockets: FakeSocket[] = [];
+    const c = new SignalingClient('ws://test', { auth: 'mjs_token', webSocket: () => (sockets.push(new FakeSocket()), sockets[sockets.length - 1]) });
+    const p = c.connect();
+    sockets[0].open();
+    expect(sockets[0].sent[0]).toEqual({ t: 'hello', auth: 'mjs_token' });
+    // The current server names the id `id`; `peerId` is the older spelling, still read.
+    sockets[0].serverSays({ t: 'hello', id: 'p-9', userId: 'user-1' });
+    await expect(p).resolves.toBe('p-9');
+    expect(c.userId).toBe('user-1');
+    // A refreshed token is used for the next connection.
+    c.setAuth('mjs_next');
+    const again = c.connect();
+    sockets[1].open();
+    expect(sockets[1].sent[0]).toEqual({ t: 'hello', auth: 'mjs_next' });
+    sockets[1].serverSays({ t: 'hello', peerId: 'p-10' });
+    await expect(again).resolves.toBe('p-10');
+    expect(c.userId).toBeNull();
+  });
+
+  it('rejects connect with an Unauthorised error when the server closes with 4401', async () => {
+    const { c, socket } = client();
+    const closes = vi.fn();
+    c.onClose(closes);
+    const p = c.connect();
+    socket().open();
+    socket().drop(UNAUTHORISED_CLOSE_CODE);
+    await expect(p).rejects.toThrow(/^Unauthorised/);
+    expect(c.lastCloseCode).toBe(4401);
+    expect(vi.getTimerCount()).toBe(0);
+    // Any other close is still a plain closed connection.
+    const second = client();
+    const q = second.c.connect();
+    second.socket().drop(1006);
+    await expect(q).rejects.toThrow('Connection closed');
+  });
+
+  it('treats an unprompted closed error as the room ending: it clears the room and fires close handlers without consuming a pending request', async () => {
+    const { c, ws } = await connected();
+    const joined = c.joinRoom('ABC234');
+    ws.serverSays({ t: 'room', room: 'ABC234', peers: ['p-1', 'p-2'], host: 'p-2' });
+    await joined;
+    const closes = vi.fn();
+    c.onClose(closes);
+    const next = c.createHostedRoom({}, 'club');
+    ws.serverSays({ t: 'error', code: 'closed', message: 'The host left, so the room has closed' });
+    expect(c.room).toBeNull();
+    expect(closes).toHaveBeenCalledTimes(1);
+    // The pending create still waits for its own answer.
+    ws.serverSays({ t: 'room', room: 'NEW234', peers: ['p-1', 'server-NEW234'], host: 'server-NEW234' });
+    await expect(next).resolves.toMatchObject({ room: 'NEW234' });
+  });
+
+  it('sends the club code with a club table create', async () => {
+    const { c, ws } = await connected();
+    void c.createHostedRoom({ handsPerMatch: 4 }, 'pro', { club: 'CLUB22' });
+    expect(ws.sent[1]).toEqual({ t: 'create', hosted: true, rules: { handsPerMatch: 4 }, botSkill: 'pro', club: 'CLUB22' });
   });
 });

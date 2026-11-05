@@ -137,3 +137,66 @@ describe('socket server resilience', () => {
     expect(() => wss.emit('error', new Error('boom'))).not.toThrow();
   });
 });
+
+describe('session handshake', () => {
+  /** A second server on the same registry whose sockets must prove a session; 'good' is the only valid token. */
+  async function authServer(helloTimeoutMs = 10_000) {
+    const http2 = createServer();
+    const verify = vi.fn(async (token: unknown) => {
+      await new Promise((r) => setTimeout(r, 20)); // a database round trip
+      if (token !== 'good') throw new Error('bad token');
+      return 'user-verified-1';
+    });
+    const wss2 = createSocketServer(http2, rooms, { trustProxy: 0 }, undefined, { verify, helloTimeoutMs });
+    await new Promise<void>((resolve) => http2.listen(0, '127.0.0.1', resolve));
+    const url2 = `ws://127.0.0.1:${(http2.address() as AddressInfo).port}`;
+    const stop = async () => {
+      for (const c of wss2.clients) c.terminate();
+      await new Promise<void>((resolve) => wss2.close(() => resolve()));
+      await new Promise<void>((resolve) => http2.close(() => resolve()));
+    };
+    return { url2, verify, stop };
+  }
+
+  it('closes with 4401 unless the first frame is a hello with a valid token, and handles frames sent during the check in order', async () => {
+    const { url2, verify, stop } = await authServer();
+    try {
+      const attempt = (frames: unknown[]) =>
+        new Promise<{ code: number; frames: Frame[] }>((resolve) => {
+          const ws = new WebSocket(url2);
+          clients.push(ws);
+          const got: Frame[] = [];
+          ws.on('error', () => undefined);
+          ws.on('message', (raw) => got.push(JSON.parse(String(raw)) as Frame));
+          ws.on('open', () => frames.forEach((f) => ws.send(JSON.stringify(f))));
+          ws.on('close', (code) => resolve({ code, frames: got }));
+          // A socket that stays open is closed by the test once it has had its answers.
+          setTimeout(() => ws.close(), 300);
+        });
+      expect((await attempt([{ t: 'hello' }])).code).toBe(4401);
+      expect((await attempt([{ t: 'create', hosted: true }])).code).toBe(4401);
+      expect((await attempt([{ t: 'hello', auth: 'bad' }])).code).toBe(4401);
+      expect(verify).toHaveBeenCalledTimes(1); // only a hello with a token reaches the verifier
+      // A valid token: the create sent before the answer is handled after the hello, as this user.
+      const ok = await attempt([{ t: 'hello', auth: 'good' }, { t: 'create', hosted: true }]);
+      expect(ok.code).toBe(1005);
+      expect(ok.frames.map((f) => f.t)).toEqual(['hello', 'room']);
+      expect(ok.frames[0]).toMatchObject({ userId: 'user-verified-1' });
+      expect((ok.frames[0] as { id?: string }).id).toBe(ok.frames[0].peerId);
+    } finally {
+      await stop();
+    }
+  });
+
+  it('closes a socket that never says hello', async () => {
+    const { url2, stop } = await authServer(50);
+    try {
+      const ws = new WebSocket(url2);
+      clients.push(ws);
+      ws.on('error', () => undefined);
+      expect(await closed(ws)).toBe(4401);
+    } finally {
+      await stop();
+    }
+  });
+});

@@ -2,15 +2,19 @@
  * Server configuration read from the environment once and turned into a typed
  * object with safe defaults. Every setting an operator can tune is here (see the README).
  */
-import { join } from 'node:path';
+import { randomBytes } from 'node:crypto';
+import type { ProviderConfig } from './auth/providers';
 
 export interface SignalConfig {
   /** TCP port for both HTTP and WebSocket traffic (`PORT`, default 8787). */
   port: number;
   /** Whether the server may host tables itself (`HOST_TABLES`; on unless set to `0`). */
   hostTables: boolean;
-  /** Directory that holds the club store (`DATA_DIR`, default `./data`). */
-  dataDir: string;
+  /**
+   * `DATA_DIR`: no longer used (clubs and tables are stored through the repositories). Kept only so
+   * the server can warn when it is still set; null when unset.
+   */
+  dataDir: string | null;
   /**
    * Number of reverse proxies you run in front of the server (`TRUST_PROXY`, default 0 = none).
    * The client IP is the `x-forwarded-for` entry this many places from the right (1 = the rightmost).
@@ -23,6 +27,10 @@ export interface SignalConfig {
   maxHostedTables: number;
   /** Allow rooms the server only relays (`P2P_ROOMS=1`). Off by default; intended for development only. */
   p2pRooms: boolean;
+  /** Oldest app build allowed to play (`MIN_BUILD`, default 0); `GET /api/config` reports it so older apps can ask to update. */
+  minBuild: number;
+  /** A notice the app shows instead of online play (`MAINTENANCE_MESSAGE`); null when unset. */
+  maintenance: string | null;
 }
 
 /** Fixed abuse limits. They are set generously for real play and cannot yet be configured per deployment. */
@@ -40,6 +48,8 @@ export const LIMITS = {
   /** Join attempts allowed per peer within each `joinWindowMs`. */
   joinsPerWindow: 5,
   joinWindowMs: 10_000,
+  /** `/api/auth/*` requests per minute, per IP and per user. Exceeding either returns 429. */
+  authPerMinute: 5,
 } as const;
 
 type Env = Record<string, string | undefined>;
@@ -65,11 +75,11 @@ function positiveInt(v: string | undefined, fallback: number, max = Number.MAX_S
   return Number.isInteger(n) && n > 0 && n <= max ? n : fallback;
 }
 
-export function loadConfig(env: Env = process.env, cwd: string = process.cwd()): SignalConfig {
+export function loadConfig(env: Env = process.env): SignalConfig {
   return {
     port: positiveInt(env.PORT, 8787, 65_535),
     hostTables: env.HOST_TABLES === undefined ? true : env.HOST_TABLES.trim() !== '0',
-    dataDir: env.DATA_DIR && env.DATA_DIR.trim() ? env.DATA_DIR : join(cwd, 'data'),
+    dataDir: env.DATA_DIR && env.DATA_DIR.trim() ? env.DATA_DIR.trim() : null,
     trustProxy: hopCount(env.TRUST_PROXY, 0, 10),
     corsOrigins: (env.CORS_ORIGINS ?? '')
       .split(',')
@@ -77,5 +87,34 @@ export function loadConfig(env: Env = process.env, cwd: string = process.cwd()):
       .filter(Boolean),
     maxHostedTables: positiveInt(env.MAX_HOSTED_TABLES, 500),
     p2pRooms: flag(env.P2P_ROOMS, false),
+    minBuild: env.MIN_BUILD && /^\d+$/.test(env.MIN_BUILD.trim()) ? Number(env.MIN_BUILD.trim()) : 0,
+    maintenance: env.MAINTENANCE_MESSAGE && env.MAINTENANCE_MESSAGE.trim() ? env.MAINTENANCE_MESSAGE.trim().slice(0, 500) : null,
   };
+}
+
+const list = (v: string | undefined) =>
+  (v ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+/** Sign-in providers from APPLE_CLIENT_ID, GOOGLE_CLIENT_IDS and FACEBOOK_APP_ID; an unset variable leaves that provider off. */
+export function providersFromEnv(env: Env): ProviderConfig {
+  const cfg: ProviderConfig = {};
+  const apple = list(env.APPLE_CLIENT_ID);
+  const google = list(env.GOOGLE_CLIENT_IDS);
+  const facebook = (env.FACEBOOK_APP_ID ?? '').trim();
+  if (apple.length) cfg.apple = { clientIds: apple };
+  if (google.length) cfg.google = { clientIds: google };
+  if (facebook) cfg.facebook = { appId: facebook };
+  return cfg;
+}
+
+/** The session pepper: AUTH_PEPPER, or a random one for this process only (with a warning). */
+export function pepperFromEnv(env: Env, warn: (line: string) => void): { pepper: string; previousPepper?: string } {
+  const pepper = (env.AUTH_PEPPER ?? '').trim();
+  const previous = (env.AUTH_PEPPER_PREVIOUS ?? '').trim() || undefined;
+  if (pepper) return { pepper, previousPepper: previous };
+  warn('[signal] AUTH_PEPPER is not set: using a random pepper, so every session ends when this process stops');
+  return { pepper: randomBytes(32).toString('hex'), previousPepper: previous };
 }

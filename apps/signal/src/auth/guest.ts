@@ -27,7 +27,12 @@ export interface GuestOptions {
   sessions?: SessionService;
   now?: () => number;
   displayName?: string;
+  avatar?: string;
+  /** The id the app generated for this install; used when it is a UUID not yet registered, otherwise a new one is assigned. */
+  deviceId?: unknown;
 }
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export interface GuestCreated {
   userId: string;
@@ -53,11 +58,12 @@ export async function createGuest(repos: Repos, pepper: Peppers, device: GuestDe
   const now = (opts.now ?? Date.now)();
   const { current } = pepperSet(pepper);
   const userId = randomUUID();
-  const deviceId = randomUUID();
+  const wanted = typeof opts.deviceId === 'string' && UUID.test(opts.deviceId) ? opts.deviceId.toLowerCase() : null;
+  const deviceId = wanted && !(await repos.devices.get(wanted)) ? wanted : randomUUID();
   const guestSecret = randomHex(32);
   const locale = text(device.locale, 16);
   await repos.transaction(async (tx) => {
-    await tx.users.create({ id: userId, kind: 'guest', displayName: opts.displayName?.trim().slice(0, 40) ?? '', locale, createdAt: now });
+    await tx.users.create({ id: userId, kind: 'guest', displayName: opts.displayName?.trim().slice(0, 40) ?? '', avatar: text(opts.avatar, 16), locale, createdAt: now });
     await tx.devices.create({
       id: deviceId,
       userId,

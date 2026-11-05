@@ -1,21 +1,17 @@
-import { Readable } from 'node:stream';
-import type { IncomingMessage, ServerResponse } from 'node:http';
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_RULES, RULE_LIMITS } from '@mjm/engine';
-import { CLUB_LIMITS, ClubError, ClubRegistry, sanitizeSettings, type Club, type ClubData } from '../src/clubs';
-import { RoomRegistry } from '../src/rooms';
-import { buildRoutes, createApiHandler, type ApiOptions } from '../src/api';
+import { CLUB_LIMITS, ClubError, ClubRegistry, sanitizeSettings, type Club, type ClubStore } from '../src/clubs';
+import { createMemoryRepos } from '../src/repos';
+import type { ApiOptions } from '../src/api';
 import { BucketTable } from '../src/limits';
+import { apiFixture, request } from './helpers';
 
 const alice = { userId: 'user-alice-1', name: 'Alice', avatar: '🐼' };
 const bob = { userId: 'user-bob-22', name: 'Bob' };
-const aliceCreds = { ...alice, secret: 'alice-secret-0123456789' };
-const bobCreds = { ...bob, secret: 'bob-secret-0123456789abc' };
 
 describe('ClubRegistry', () => {
-  it('creates, joins, sets rules, opens tables and ranks standings; persists through the store', () => {
-    let saved: ClubData = { clubs: [], credentials: {} };
-    const store = { load: () => saved, save: (c: ClubData) => (saved = JSON.parse(JSON.stringify(c))) };
+  it('creates, joins, sets rules, opens tables and ranks standings; persists club by club through the store', async () => {
+    const store = createMemoryRepos().clubs;
     const reg = new ClubRegistry({ store, now: () => 1000 });
     const club = reg.createClub(alice, 'Taipei Tigers', { basePoints: 300, taiPoints: 100 });
     expect(club.code).toMatch(/^[A-Z2-9]{6}$/);
@@ -35,47 +31,90 @@ describe('ClubRegistry', () => {
     const st = reg.standings(club.code);
     expect(st[0].userId).toBe(alice.userId);
     expect(st[0].matchesWon).toBe(1);
-    // Reload from the store
+    // Reload from the store once the writes behind the registry have landed.
+    await reg.flush();
     const reg2 = new ClubRegistry({ store });
+    await reg2.load();
     expect(reg2.club(club.code).members.find((m) => m.userId === bob.userId)!.points).toBe(-400);
     expect(reg2.clubsForUser(bob.userId)).toHaveLength(1);
+    expect(reg2.club(club.code).tables.map((t) => t.code)).toEqual(['ROOM01']);
+  });
+
+  it('writes each club in order and folds a burst of changes into one write', async () => {
+    const saved: string[] = [];
+    const inner = createMemoryRepos().clubs;
+    const store: ClubStore = { ...inner, save: async (c) => (saved.push(`${c.code}:${c.name}`), inner.save(c)) };
+    const reg = new ClubRegistry({ store });
+    const a = reg.createClub(alice, 'One');
+    for (let i = 0; i < 10; i++) reg.update(a.code, alice.userId, { name: `One ${i}` });
+    await reg.flush();
+    // The writes run behind the registry, so the create and the ten renames become one write.
+    expect(saved).toEqual([`${a.code}:One 9`]);
+    reg.update(a.code, alice.userId, { name: 'Two' });
+    reg.update(a.code, alice.userId, { description: 'later' });
+    await reg.flush();
+    expect(saved).toEqual([`${a.code}:One 9`, `${a.code}:Two`]);
+    expect(await inner.get(a.code)).toMatchObject({ name: 'Two', description: 'later' });
   });
 });
 
 describe('API routes + hosted club tables', () => {
-  it('opens a server-hosted table for a club and tracks it through host events', () => {
+  it('opens a server-hosted table for a club and tracks it through host events', async () => {
     let now = 0;
-    const rooms = new RoomRegistry({ allowHosted: true, now: () => now });
-    const clubs = new ClubRegistry({ now: () => now });
-    const routes = buildRoutes({ clubs, rooms });
-    const call = (method: string, path: string, body: Record<string, unknown> = {}) => {
-      for (const r of routes) {
-        const m = r.pattern.exec(path);
-        if (r.method === method && m) {
-          const params: Record<string, string> = {};
-          r.keys.forEach((k, i) => (params[k] = m[i + 1]));
-          return r.handler(params, body, {} as never) as never;
-        }
-      }
-      throw new Error(`no route ${method} ${path}`);
-    };
-    const club = call('POST', '/api/clubs', { user: aliceCreds, name: 'API Club', rules: { handsPerMatch: 4 } }) as Club;
-    // Same user id with a different secret is rejected; missing secret is rejected
-    expect(() => call('POST', `/api/clubs/${club.code}/join`, { user: { ...alice, secret: 'wrong-secret-0123456789' } })).toThrow(/Identity check/);
-    expect(() => call('POST', `/api/clubs/${club.code}/join`, { user: bob })).toThrow(ClubError);
-    expect((call('POST', `/api/clubs/${club.code}/join`, { user: bobCreds }) as { status: string }).status).toBe('joined');
-    const table = call('POST', `/api/clubs/${club.code}/tables`, { user: aliceCreds, label: 'Friday' }) as { code: string; rules: { handsPerMatch: number } };
+    const { call, guest, rooms } = apiFixture({ now: () => now });
+    const a = await guest('Alice');
+    const b = await guest('Bob');
+    const created = await call('POST', '/api/clubs', { name: 'API Club', rules: { handsPerMatch: 4 } }, a.auth);
+    expect(created.status).toBe(200);
+    const club = created.json as unknown as Club;
+    expect(club.ownerId).toBe(a.userId);
+    expect(club.members[0]).toMatchObject({ userId: a.userId, name: 'Alice' });
+    // Without a session, or with a bad one, nothing happens.
+    expect((await call('POST', `/api/clubs/${club.code}/join`, {})).status).toBe(401);
+    expect((await call('POST', `/api/clubs/${club.code}/join`, {}, { authorization: `Bearer mjs_${'0'.repeat(64)}` })).json.error).toBe('invalid_session');
+    expect((await call('POST', `/api/clubs/${club.code}/join`, {}, b.auth)).json.status).toBe('joined');
+    const table = (await call('POST', `/api/clubs/${club.code}/tables`, { label: 'Friday' }, a.auth)).json as { code: string; rules: { handsPerMatch: number } };
     expect(table.rules.handsPerMatch).toBe(4);
     expect(rooms.hasRoom(table.code)).toBe(true);
-    expect((call('GET', `/api/clubs/${club.code}`) as Club).tables[0].label).toBe('Friday');
+    expect(rooms.clubOf(table.code)).toBe(club.code);
+    expect(((await call('GET', `/api/clubs/${club.code}`, undefined, a.auth)).json as unknown as Club).tables[0].label).toBe('Friday');
     // A room with no peers survives ticks until keep-alive expires
     rooms.tick();
     expect(rooms.hasRoom(table.code)).toBe(true);
     now += 16 * 60_000;
     rooms.tick();
     expect(rooms.hasRoom(table.code)).toBe(false);
-    // Unknown club → 404-type error
-    expect(() => call('GET', '/api/clubs/NOPE99')).toThrow(ClubError);
+    // Unknown club → 404
+    expect((await call('GET', '/api/clubs/NOPE99', undefined, a.auth)).status).toBe(404);
+  });
+
+  it('shows members the whole club and everyone else the public view; standings are members-only', async () => {
+    const { call, guest } = apiFixture();
+    const a = await guest('Alice');
+    const c = await guest('Carol');
+    const club = (await call('POST', '/api/clubs', { name: 'Private', settings: { joinRequiresApproval: true } }, a.auth)).json as unknown as Club;
+    await call('PATCH', `/api/clubs/${club.code}`, { description: 'Fridays' }, a.auth);
+    const outsider = await call('GET', `/api/clubs/${club.code}`, undefined, c.auth);
+    expect(outsider.json).toEqual({ code: club.code, name: 'Private', description: 'Fridays', memberCount: 1, joinRequiresApproval: true });
+    expect((await call('GET', `/api/clubs/${club.code}/standings`, undefined, c.auth)).status).toBe(403);
+    // A pending request is not membership.
+    const join = await call('POST', `/api/clubs/${club.code}/join`, {}, c.auth);
+    expect(join.json.status).toBe('pending');
+    expect(join.json.club).toEqual(outsider.json);
+    expect((await call('GET', `/api/clubs/${club.code}/standings`, undefined, c.auth)).status).toBe(403);
+    expect((await call('GET', `/api/users/${c.userId}/clubs`, undefined, c.auth)).json).toEqual([outsider.json]);
+    // Nobody can list someone else's clubs.
+    expect((await call('GET', `/api/users/${a.userId}/clubs`, undefined, c.auth)).status).toBe(403);
+    // Carol renames herself before she is approved: the club shows her current name.
+    await call('PATCH', '/api/me', { displayName: 'Carol W' }, c.auth);
+    const approved = (await call('POST', `/api/clubs/${club.code}/members/${c.userId}/approve`, {}, a.auth)).json as unknown as Club;
+    expect(approved.members.find((m) => m.userId === c.userId)!.name).toBe('Carol W');
+    const standings = (await call('GET', `/api/clubs/${club.code}/standings`, undefined, c.auth)).json as unknown as Array<{ userId: string }>;
+    expect(standings.map((s) => s.userId).sort()).toEqual([a.userId, c.userId].sort());
+    // A later profile change reaches every club row.
+    await call('PATCH', '/api/me', { displayName: 'Carol X', avatar: 'chef' }, c.auth);
+    const full = (await call('GET', `/api/clubs/${club.code}`, undefined, a.auth)).json as unknown as Club;
+    expect(full.members.find((m) => m.userId === c.userId)).toMatchObject({ name: 'Carol X', avatar: 'chef' });
   });
 });
 
@@ -188,84 +227,72 @@ describe('ClubRegistry validation and limits', () => {
   });
 
   it('does not rewrite the store for table updates that change nothing', () => {
-    let saves = 0;
-    const store = { load: (): ClubData => ({ clubs: [], credentials: {} }), save: () => void saves++ };
-    const reg = new ClubRegistry({ store });
+    const reg = new ClubRegistry({ store: createMemoryRepos().clubs });
     const club = reg.createClub(alice, 'Quiet');
     reg.addTable(club.code, alice.userId, { code: 'T1' });
-    const before = saves;
+    const before = reg.writeCount;
     const patch = { status: 'playing' as const, players: [{ seat: 0, name: 'Alice', isBot: false, connected: true }], handNumber: 1, scores: [0, 0, 0, 0] };
     reg.updateTable(club.code, 'T1', patch);
-    expect(saves).toBe(before + 1);
+    expect(reg.writeCount).toBe(before + 1);
     for (let i = 0; i < 50; i++) reg.updateTable(club.code, 'T1', JSON.parse(JSON.stringify(patch)));
-    expect(saves).toBe(before + 1);
+    expect(reg.writeCount).toBe(before + 1);
     reg.updateTable(club.code, 'T1', { ...patch, scores: [10, -10, 0, 0] });
-    expect(saves).toBe(before + 2);
+    expect(reg.writeCount).toBe(before + 2);
   });
 
-  it('cleans up legacy store data on load', () => {
-    const legacy = { clubs: [{ ...new ClubRegistry().createClub(alice, 'Old'), rules: { basePoints: 'x' }, settings: { membersCanOpenTables: false, joinRequiresApproval: false, neutralHost: true } }], credentials: {} } as unknown as ClubData;
-    const reg = new ClubRegistry({ store: { load: () => legacy, save: () => undefined } });
+  it('cleans up legacy store data on load', async () => {
+    const legacy = [{ ...new ClubRegistry().createClub(alice, 'Old'), rules: { basePoints: 'x' }, settings: { membersCanOpenTables: false, joinRequiresApproval: false, neutralHost: true } }] as unknown as Club[];
+    const store = createMemoryRepos().clubs;
+    const reg = new ClubRegistry({ store: { ...store, loadAll: async () => legacy } });
+    await reg.load();
     const c = reg.all()[0];
     expect(c.settings).toEqual({ membersCanOpenTables: false, joinRequiresApproval: false });
     expect(c.rules.basePoints).toBe(DEFAULT_RULES.basePoints);
   });
 });
 
-/** Run the real HTTP handler against an in-memory request and response. */
-async function http(handler: ReturnType<typeof createApiHandler>, method: string, url: string, body?: unknown, headers: Record<string, string> = {}) {
-  const req = Readable.from(body === undefined ? [] : [Buffer.from(typeof body === 'string' ? body : JSON.stringify(body))]) as unknown as IncomingMessage;
-  Object.assign(req, { method, url, headers, socket: { remoteAddress: '10.0.0.1' } });
-  const out = { status: 0, headers: {} as Record<string, string>, body: '' };
-  const res = {
-    headersSent: false,
-    setHeader: (k: string, v: string) => (out.headers[k.toLowerCase()] = v),
-    writeHead: (status: number, h: Record<string, string> = {}) => {
-      out.status = status;
-      for (const [k, v] of Object.entries(h)) out.headers[k.toLowerCase()] = v;
-    },
-    end: (b?: string) => (out.body = b ?? ''),
-  } as unknown as ServerResponse;
-  const handled = await handler(req, res);
-  return { handled, ...out, json: out.body ? (JSON.parse(out.body) as Record<string, unknown>) : {} };
-}
+const http = (handler: ReturnType<typeof apiFixture>['handler'], method: string, url: string, body?: unknown, headers: Record<string, string> = {}) =>
+  request(handler, method, url, body, headers);
 
 function api(opts: ApiOptions = {}) {
-  const rooms = new RoomRegistry({ allowHosted: true, maxHostedTables: 3 });
-  const clubs = new ClubRegistry();
-  return { rooms, clubs, handler: createApiHandler({ clubs, rooms }, opts) };
+  return apiFixture({ api: opts, rooms: { maxHostedTables: 3 } });
 }
 
 describe('club HTTP API', () => {
   it('answers bad field types with 400, not 500', async () => {
-    const { handler } = api();
-    expect((await http(handler, 'POST', '/api/clubs', { user: aliceCreds, name: 5 })).status).toBe(400);
-    const created = await http(handler, 'POST', '/api/clubs', { user: aliceCreds, name: 'HTTP' });
+    const { handler, guest } = api();
+    const a = (await guest('Alice')).auth;
+    expect((await http(handler, 'POST', '/api/clubs', { name: 5 }, a)).status).toBe(400);
+    const created = await http(handler, 'POST', '/api/clubs', { name: 'HTTP' }, a);
     expect(created.status).toBe(200);
     const code = created.json.code as string;
-    expect((await http(handler, 'PATCH', `/api/clubs/${code}`, { user: aliceCreds, name: { trim: 1 } })).status).toBe(400);
-    expect((await http(handler, 'PATCH', `/api/clubs/${code}`, { user: aliceCreds, description: [] })).status).toBe(400);
-    expect((await http(handler, 'POST', `/api/clubs/${code}/tables`, { user: aliceCreds, label: 42 })).status).toBe(400);
-    expect((await http(handler, 'POST', `/api/clubs/${code}/tables`, { user: aliceCreds, botSkill: 'grandmaster' })).status).toBe(400);
-    expect((await http(handler, 'POST', `/api/clubs/${code}/members/${alice.userId}/role`, { user: aliceCreds, role: 'god' })).status).toBe(400);
-    expect((await http(handler, 'POST', '/api/clubs', { user: 'nope' })).status).toBe(400);
-    expect((await http(handler, 'POST', '/api/clubs', '{not json')).status).toBe(400);
+    const me = (created.json as unknown as Club).ownerId;
+    expect((await http(handler, 'PATCH', `/api/clubs/${code}`, { name: { trim: 1 } }, a)).status).toBe(400);
+    expect((await http(handler, 'PATCH', `/api/clubs/${code}`, { description: [] }, a)).status).toBe(400);
+    expect((await http(handler, 'POST', `/api/clubs/${code}/tables`, { label: 42 }, a)).status).toBe(400);
+    expect((await http(handler, 'POST', `/api/clubs/${code}/tables`, { botSkill: 'grandmaster' }, a)).status).toBe(400);
+    expect((await http(handler, 'POST', `/api/clubs/${code}/members/${me}/role`, { role: 'god' }, a)).status).toBe(400);
+    expect((await http(handler, 'POST', '/api/clubs', '{not json', a)).status).toBe(400);
+    // The old trust-on-first-use body is not a credential any more.
+    expect((await http(handler, 'POST', '/api/clubs', { user: { userId: 'user-alice-1', name: 'A', secret: 'x'.repeat(20) }, name: 'X' })).status).toBe(401);
   });
 
   it('refuses a table before creating a room, and maps a full server to 503', async () => {
-    const { handler, rooms } = api();
-    const code = (await http(handler, 'POST', '/api/clubs', { user: aliceCreds, name: 'Rooms', settings: { membersCanOpenTables: false } })).json.code as string;
-    await http(handler, 'POST', `/api/clubs/${code}/join`, { user: bobCreds });
+    const { handler, rooms, guest } = api();
+    const a = (await guest('Alice')).auth;
+    const b = (await guest('Bob')).auth;
+    const code = (await http(handler, 'POST', '/api/clubs', { name: 'Rooms', settings: { membersCanOpenTables: false } }, a)).json.code as string;
+    await http(handler, 'POST', `/api/clubs/${code}/join`, {}, b);
     // Bob may not open tables, and no room is left behind.
-    expect((await http(handler, 'POST', `/api/clubs/${code}/tables`, { user: bobCreds })).status).toBe(403);
+    expect((await http(handler, 'POST', `/api/clubs/${code}/tables`, {}, b)).status).toBe(403);
     expect(rooms.stats().hostedTables).toBe(0);
-    const ok = await http(handler, 'POST', `/api/clubs/${code}/tables`, { user: aliceCreds, botSkill: 'pro', rules: { basePoints: -5 } });
+    const ok = await http(handler, 'POST', `/api/clubs/${code}/tables`, { botSkill: 'pro', rules: { basePoints: -5 } }, a);
     expect(ok.status).toBe(200);
     expect((ok.json.rules as { basePoints: number }).basePoints).toBe(0);
     expect(rooms.hostedTable(ok.json.code as string)!.rules.basePoints).toBe(0);
     rooms.createHostedRoom();
     rooms.createHostedRoom();
-    const full = await http(handler, 'POST', `/api/clubs/${code}/tables`, { user: aliceCreds });
+    const full = await http(handler, 'POST', `/api/clubs/${code}/tables`, {}, a);
     expect(full.status).toBe(503);
     expect(full.json.error).toBe('unavailable');
   });
@@ -299,9 +326,11 @@ describe('club HTTP API', () => {
   });
 
   it('rejects bodies over 64 KiB counted in bytes', async () => {
-    const { handler } = api();
-    const big = JSON.stringify({ user: aliceCreds, name: 'x', description: '麻'.repeat(23_000) }); // about 69 KB of UTF-8 but only about 23 K characters
+    const { handler, guest } = api();
+    const a = (await guest('Alice')).auth;
+    const big = JSON.stringify({ name: 'x', description: '麻'.repeat(23_000) }); // about 69 KB of UTF-8 but only about 23 K characters
     expect(big.length).toBeLessThan(64 * 1024);
-    expect((await http(handler, 'POST', '/api/clubs', big)).status).toBe(400);
+    expect((await http(handler, 'POST', '/api/clubs', big, a)).status).toBe(400);
   });
+
 });
