@@ -1,1 +1,43 @@
-{}
+{
+  "_review": "n/a",
+  "title": "Shop",
+  "trust": "Cosmetics, coaching and club capacity only. Nothing here changes the tiles you draw.",
+  "tabs": {
+    "diamonds": "Gems",
+    "looks": "Looks",
+    "coach": "Coach",
+    "vip": "VIP",
+    "club": "Clubs"
+  },
+  "purchaseFailed": "Purchase failed",
+  "notForDiamonds": "Not purchasable with diamonds",
+  "needDiamonds": "Need %{n} more diamonds",
+  "unlocked": "Unlocked %{title}",
+  "owned": "Owned",
+  "perYear": "/yr",
+  "perMonth": "/mo",
+  "productSub": "%{zh} · %{description}",
+  "tiers": {
+    "gold": "Gold",
+    "platinum": "Platinum",
+    "diamond": "Diamond"
+  },
+  "coach": {
+    "tiers": "Coaching tiers",
+    "active": "Coach %{tier} is active",
+    "body": "Free: coach at the table, daily puzzle, drills, lessons 1–3, 1 hand review and 1 Puzzle Rush per day, Beginner and Club bots.\nGold: all lessons, unlimited Puzzle Rush, Pro bots, review history.\nPlatinum: unlimited hand reviews, puzzle battles, luck dashboard.\nDiamond: move-by-move explanations, insights, club-table discounts.",
+    "renews": "Renews %{date}"
+  },
+  "vip": {
+    "active": "VIP is active",
+    "cards": "VIP cards",
+    "body": "Prepaid, no auto-renew. Every table look while active, an emote allowance, one extra club slot and one extra review per day. Days carry over when you upgrade.",
+    "until": "Until %{date}"
+  },
+  "club": {
+    "title": "Club capacity",
+    "body": "Starter clubs are free: 30 members, 2 managers, one live table. Owners upgrade capacity with diamonds or a 30-day plan. Members never pay to play in a club.",
+    "tier": "Club %{capacity} until %{date}"
+  },
+  "foot": "Prices shown are placeholder USD tiers; your store shows local pricing at checkout. Subscriptions renew until cancelled in your store account settings. This build uses a mock store: purchases are instant and free."
+}

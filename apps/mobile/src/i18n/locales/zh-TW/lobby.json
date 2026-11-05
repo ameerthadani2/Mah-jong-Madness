@@ -1,1 +1,18 @@
-{}
+{
+  "_review": "first pass, needs native review",
+  "noTable": "沒有牌桌",
+  "title": "牌桌 %{code}",
+  "shareCode": "分享這個代碼",
+  "share": "分享",
+  "shareMessage": "來我的 Mahjong Madness 牌桌打牌：%{code}",
+  "serverTable": "伺服器牌桌",
+  "onDevice": "在這台裝置上",
+  "seats": "座位",
+  "emptySeat": "空位 — 等待牌友",
+  "remove": "移除",
+  "addBot": "加入電腦",
+  "fillHint": "開始時空位會由電腦補上。",
+  "start": "開始牌局",
+  "startWithBots": "開始（空位由電腦補上）",
+  "connectionLost": "連線中斷。請回到首頁點「繼續」。"
+}

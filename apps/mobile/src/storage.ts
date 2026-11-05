@@ -1,8 +1,10 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { DEFAULT_RULES, sanitizeRules, type BotSkill, type RuleSet } from '@mjm/engine';
+import { DEFAULT_RULES, type BotSkill, type RuleSet } from '@mjm/engine';
 import { randomHex, type SerializedHost } from '@mjm/net';
 import { effectiveStreak as streakOn } from './logic/daily';
 import { localDateKey, previousDateKey } from './logic/dates';
+import { migrateSettings } from './logic/settings';
+import type { LocalePreference } from './i18n/resolve';
 
 export interface Profile {
   /** Stable, client-generated id used by clubs until real sign-in lands. */
@@ -24,6 +26,8 @@ export interface Settings {
   botSkill: BotSkill;
   sound: boolean;
   tableTheme: string;
+  /** UI language: 'auto' follows the device; saved settings from before this field read as 'auto'. */
+  locale: LocalePreference;
 }
 
 export interface Progress {
@@ -54,7 +58,7 @@ export type ActiveSession =
 const KEYS = { profile: 'mjm.profile', settings: 'mjm.settings', progress: 'mjm.progress', session: 'mjm.activeSession' } as const;
 
 export const DEFAULT_PROFILE: Profile = { userId: '', userSecret: '', name: '', avatar: 'lady' };
-export const DEFAULT_SETTINGS: Settings = { rules: DEFAULT_RULES, coach: true, botSkill: 'beginner', sound: true, tableTheme: 'classic' };
+export const DEFAULT_SETTINGS: Settings = { rules: DEFAULT_RULES, coach: true, botSkill: 'beginner', sound: true, tableTheme: 'classic', locale: 'auto' };
 export const DEFAULT_PROGRESS: Progress = {
   lessonsDone: {},
   drillsPlayed: 0,
@@ -99,11 +103,8 @@ export const storage = {
     return p;
   },
   saveProfile: (p: Profile) => save(KEYS.profile, p),
-  loadSettings: async (): Promise<Settings> => {
-    // Older builds saved `signalUrl` (which froze the server address) and `hostedTables`; drop both.
-    const { signalUrl: _signalUrl, hostedTables: _hostedTables, ...s } = (await load(KEYS.settings, DEFAULT_SETTINGS)) as Settings & { signalUrl?: unknown; hostedTables?: unknown };
-    return { ...s, rules: sanitizeRules(s.rules) };
-  },
+  // Older saves are migrated (see logic/settings.ts): stale fields dropped, rules sanitised, locale defaulted.
+  loadSettings: async (): Promise<Settings> => migrateSettings(await load(KEYS.settings, DEFAULT_SETTINGS), DEFAULT_SETTINGS),
   saveSettings: (s: Settings) => save(KEYS.settings, s),
   loadProgress: () => load(KEYS.progress, DEFAULT_PROGRESS),
   saveProgress: (p: Progress) => save(KEYS.progress, p),

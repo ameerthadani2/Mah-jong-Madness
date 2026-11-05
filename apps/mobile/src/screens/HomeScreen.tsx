@@ -1,14 +1,16 @@
 import React, { useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { BOT_SKILLS, describeRules, type BotSkill } from '@mjm/engine';
+import { BOT_SKILLS, type BotSkill } from '@mjm/engine';
 import { hasTier } from '../monetisation/store';
 import { useApp } from '../app-state';
 import { createLocalSession, createOnlineSession } from '../game/session';
 import { AVATARS, effectiveStreak, todayKey } from '../storage';
 import { friendlyError } from '../logic/errors';
+import { botLabel, rulesSummary } from '../logic/rules-text';
+import { useT } from '../i18n';
 import { colors, fonts, nameFont, space } from '../theme';
-import { Button, Card, Chip, GemCounter, IconButton, P, Pill, Row } from '../components/Ui';
+import { Button, Card, Chip, fontFor, GemCounter, IconButton, P, Pill, Row } from '../components/Ui';
 import { AvatarPlate } from '../components/Avatars';
 import { ChestScene, ClubhouseScene, ScrollScene, TableScene } from '../components/Scenes';
 import { Icon } from '../components/Icons';
@@ -23,20 +25,21 @@ const WINDOWS = {
 
 export function HomeScreen() {
   const app = useApp();
+  const { t, locale } = useT();
   const { width, height } = useWindowDimensions();
   const [name, setName] = useState(app.profile.name);
   const needsName = !app.profile.name;
   const wide = width >= 700;
   const tablet = width >= 1000 && height >= 700;
 
-  const saveName = () => app.setProfile({ ...app.profile, name: name.trim() || 'Player' });
+  const saveName = () => app.setProfile({ ...app.profile, name: name.trim() || t('common.player') });
 
   const [resuming, setResuming] = useState(false);
   const [resumeError, setResumeError] = useState<string | null>(null);
 
   const playBots = () => {
     if (needsName) saveName();
-    const session = createLocalSession(app.profile.name || name.trim() || 'Player', app.profile.avatar, app.settings.rules, { botSkill: app.settings.botSkill });
+    const session = createLocalSession(app.profile.name || name.trim() || t('common.player'), app.profile.avatar, app.settings.rules, { botSkill: app.settings.botSkill });
     app.setSession(session);
     session.host!.start();
     app.go({ name: 'table' });
@@ -58,7 +61,7 @@ export function HomeScreen() {
         app.go({ name: 'lobby' });
       }
     } catch (e) {
-      setResumeError(friendlyError(e));
+      setResumeError(friendlyError(e, t));
     } finally {
       setResuming(false);
     }
@@ -86,36 +89,36 @@ export function HomeScreen() {
     <Row style={{ flexWrap: 'wrap', rowGap: 6 }} gap={6}>
       {(Object.keys(BOT_SKILLS) as BotSkill[]).map((k) => {
         const locked = k === 'pro' && !hasTier(app.wallet, 'gold');
-        return <Chip key={k} label={BOT_SKILLS[k].label.replace(' player', '')} selected={app.settings.botSkill === k} locked={locked} onPress={() => (locked ? app.go({ name: 'shop' }) : app.setSettings({ ...app.settings, botSkill: k }))} />;
+        return <Chip key={k} label={botLabel(k, locale, true)} selected={app.settings.botSkill === k} locked={locked} onPress={() => (locked ? app.go({ name: 'shop' }) : app.setSettings({ ...app.settings, botSkill: k }))} />;
       })}
     </Row>
   );
 
   const playCard = (
-    <ModeCard key="play" colorsPair={WINDOWS.play} windowH={windowH} scene={<TableScene width="100%" height="100%" />} title="Play vs Bots" style={wide ? { flex: 1.55 } : undefined} horizontal={!wide}>
+    <ModeCard key="play" colorsPair={WINDOWS.play} windowH={windowH} scene={<TableScene width="100%" height="100%" />} title={t('home.play.title')} style={wide ? { flex: 1.55 } : undefined} horizontal={!wide}>
       <P dim style={styles.cardText} numberOfLines={phoneLand ? 1 : 2}>
-        {describeRules(app.settings.rules)}
+        {rulesSummary(app.settings.rules, t, locale)}
       </P>
       {skillChips}
       <View style={styles.cardFoot}>
-        <Button testID="start-match" title="Play now" icon="play" large={tablet} onPress={playBots} />
+        <Button testID="start-match" title={t('home.play.start')} icon="play" large={tablet} onPress={playBots} />
       </View>
     </ModeCard>
   );
   const compact = !wide;
   const clubsCard = (
-    <ModeCard key="clubs" colorsPair={WINDOWS.clubs} windowH={smallWindow} scene={<ClubhouseScene width="100%" height="100%" />} title={tablet ? 'Clubs & Friends' : 'Clubs'} compact={compact} style={{ flex: 1 }}>
+    <ModeCard key="clubs" colorsPair={WINDOWS.clubs} windowH={smallWindow} scene={<ClubhouseScene width="100%" height="100%" />} title={tablet ? t('home.clubs.titleWide') : t('home.clubs.title')} compact={compact} style={{ flex: 1 }}>
       {!compact && (
         <P dim style={styles.cardText} numberOfLines={2}>
-          Your rules, your members. Share a code and play anywhere.
+          {t('home.clubs.blurb')}
         </P>
       )}
       <View style={styles.cardFoot}>
-        <Button testID="open-clubs" title="My clubs" kind="secondary" small={compact} large={tablet} onPress={goClubs} />
+        <Button testID="open-clubs" title={t('home.clubs.open')} kind="secondary" small={compact} large={tablet} onPress={goClubs} />
         {!compact && (
           <Pressable onPress={goOnline} hitSlop={6} style={styles.link}>
             <Icon name="users" size={18} />
-            <Text style={styles.linkText}>Quick table</Text>
+            <Text style={[styles.linkText, fontFor(t('home.clubs.quickTable'), fonts.uiBold)]}>{t('home.clubs.quickTable')}</Text>
           </Pressable>
         )}
       </View>
@@ -127,37 +130,37 @@ export function HomeScreen() {
       colorsPair={WINDOWS.learn}
       windowH={smallWindow}
       scene={<ScrollScene width="100%" height="100%" />}
-      title="Learn"
+      title={t('home.learn.title')}
       compact={compact}
       style={{ flex: 1 }}
       badge={!dailyDone ? <View style={styles.notify}><Text style={styles.notifyText}>!</Text></View> : undefined}
     >
       {!compact && (
         <Row style={{ flexWrap: 'wrap', rowGap: 6 }} gap={6}>
-          <Pill text={`${lessonsDone}/6 lessons`} icon="book" size="sm" />
-          <Pill text={`${streak} day streak`} icon="flame" tone={streak > 0 ? 'gold' : 'neutral'} size="sm" />
+          <Pill text={t('home.learn.lessons', { done: lessonsDone, total: 6 })} icon="book" size="sm" />
+          <Pill text={t('home.learn.streak', { days: streak })} icon="flame" tone={streak > 0 ? 'gold' : 'neutral'} size="sm" />
         </Row>
       )}
       <View style={styles.cardFoot}>
-        <Button testID="open-learn" title="Learn" kind="premium" small={compact} large={tablet} onPress={() => app.go({ name: 'learn' })} />
+        <Button testID="open-learn" title={t('home.learn.open')} kind="premium" small={compact} large={tablet} onPress={() => app.go({ name: 'learn' })} />
         {!compact && (
           <Pressable onPress={() => app.go({ name: 'daily' })} hitSlop={6} style={styles.link}>
             <Icon name={dailyDone ? 'check' : 'scroll'} size={18} color={colors.cta} />
-            <Text style={styles.linkText}>{dailyDone ? 'Daily done' : 'Daily puzzle'}</Text>
+            <Text style={[styles.linkText, fontFor(t('home.learn.daily'), fonts.uiBold)]}>{dailyDone ? t('home.learn.dailyDone') : t('home.learn.daily')}</Text>
           </Pressable>
         )}
       </View>
     </ModeCard>
   );
   const shopCard = (
-    <ModeCard key="shop" colorsPair={WINDOWS.shop} windowH={smallWindow} scene={<ChestScene width="100%" height="100%" />} title="Shop" compact={compact} style={{ flex: 1 }}>
+    <ModeCard key="shop" colorsPair={WINDOWS.shop} windowH={smallWindow} scene={<ChestScene width="100%" height="100%" />} title={t('home.shop.title')} compact={compact} style={{ flex: 1 }}>
       {!compact && (
         <P dim style={styles.cardText} numberOfLines={2}>
-          Table looks, coaching and gems. Never luck.
+          {t('home.shop.blurb')}
         </P>
       )}
       <View style={styles.cardFoot}>
-        <Button title="Open" kind="gold" small={compact} large={tablet} onPress={() => app.go({ name: 'shop' })} />
+        <Button title={t('home.shop.open')} kind="gold" small={compact} large={tablet} onPress={() => app.go({ name: 'shop' })} />
       </View>
     </ModeCard>
   );
@@ -176,7 +179,7 @@ export function HomeScreen() {
                 {app.profile.name}
               </Text>
               <Text numberOfLines={1} style={styles.profileMeta}>
-                {app.progress.handsPlayed} hands · {winRate === null ? 'no wins yet' : `${winRate}% wins`}
+                {t('home.profile.meta', { hands: app.progress.handsPlayed, wins: winRate === null ? t('home.profile.noWins') : t('home.profile.winRate', { rate: winRate }) })}
               </Text>
             </View>
           </Pressable>
@@ -204,9 +207,9 @@ export function HomeScreen() {
             <AvatarPlate id={app.profile.avatar} size={wide ? 80 : 60} />
             {!wide && (
               <View>
-                <Text style={styles.welcomeTitle}>Welcome!</Text>
+                <Text style={[styles.welcomeTitle, fontFor(t('home.welcome.title'), fonts.display)]}>{t('home.welcome.title')}</Text>
                 <P dim style={{ fontSize: 13 }}>
-                  Pick a name and a buddy.
+                  {t('home.welcome.sub')}
                 </P>
               </View>
             )}
@@ -214,15 +217,15 @@ export function HomeScreen() {
           <View style={{ flex: wide ? 1 : undefined, gap: 8 }}>
             {wide && (
               <Row gap={10}>
-                <Text style={styles.welcomeTitle}>Welcome!</Text>
+                <Text style={[styles.welcomeTitle, fontFor(t('home.welcome.title'), fonts.display)]}>{t('home.welcome.title')}</Text>
                 <P dim style={{ fontSize: 13 }}>
-                  Pick a name and a buddy.
+                  {t('home.welcome.sub')}
                 </P>
               </Row>
             )}
             <Row gap={10}>
-              <TextInput testID="name-input" value={name} onChangeText={setName} placeholder="Your name" placeholderTextColor="#9AA0BF" style={[styles.input, { flex: 1 }, wide && { paddingVertical: 7 }]} maxLength={24} />
-              <Button testID="save-name" title="Save" onPress={saveName} disabled={!name.trim()} />
+              <TextInput testID="name-input" value={name} onChangeText={setName} placeholder={t('home.welcome.namePlaceholder')} placeholderTextColor="#9AA0BF" style={[styles.input, { flex: 1 }, wide && { paddingVertical: 7 }]} maxLength={24} />
+              <Button testID="save-name" title={t('common.save')} onPress={saveName} disabled={!name.trim()} />
             </Row>
             <Row style={{ flexWrap: 'wrap', rowGap: 8 }} gap={wide ? 4 : 8}>
               {AVATARS.map((a) => (
@@ -239,14 +242,16 @@ export function HomeScreen() {
         <Card tone="gold" style={{ flexDirection: 'row', alignItems: 'center', gap: space.md }}>
           <Icon name="hourglass" size={34} />
           <View style={{ flex: 1 }}>
-            <Text style={styles.resumeTitle}>Table in progress</Text>
+            <Text style={[styles.resumeTitle, fontFor(t('home.resume.title'), fonts.display)]}>{t('home.resume.title')}</Text>
             <P dim style={{ fontSize: 13 }} numberOfLines={2}>
-              {app.activeSession.kind === 'local' ? `Offline match vs bots · hand ${app.activeSession.host.snapshot.handNumber + 1}` : `Online table ${app.activeSession.roomCode}${app.activeSession.clubCode ? ` · club ${app.activeSession.clubCode}` : ''}`}
+              {app.activeSession.kind === 'local'
+                ? t('home.resume.local', { hand: app.activeSession.host.snapshot.handNumber + 1 })
+                : `${t('home.resume.online', { code: app.activeSession.roomCode })}${app.activeSession.clubCode ? t('home.resume.club', { code: app.activeSession.clubCode }) : ''}`}
             </P>
             {resumeError && <P style={{ color: colors.dangerText, fontSize: 12 }}>{resumeError}</P>}
           </View>
-          <Button title={resuming ? 'Reconnecting…' : 'Resume'} onPress={() => void resume()} disabled={resuming} />
-          <Button small kind="ghost" title="Discard" onPress={() => app.setActiveSession(null)} />
+          <Button title={resuming ? t('home.resume.reconnecting') : t('home.resume.resume')} onPress={() => void resume()} disabled={resuming} />
+          <Button small kind="ghost" title={t('home.resume.discard')} onPress={() => app.setActiveSession(null)} />
         </Card>
       )}
 
@@ -305,7 +310,7 @@ function ModeCard({
     <Card style={[{ padding: compact ? 8 : 10, gap: compact ? 6 : 8 }, horizontal && { flexDirection: 'row', gap: 12 }, style]}>
       {window}
       <View style={{ flex: 1, gap: compact ? 6 : 8, paddingHorizontal: compact ? 0 : 4, paddingBottom: 2 }}>
-        <Text numberOfLines={1} style={[styles.cardTitle, compact && { fontSize: 18, textAlign: 'center' }]}>
+        <Text numberOfLines={1} style={[styles.cardTitle, fontFor(title, fonts.display), compact && { fontSize: 18, textAlign: 'center' }]}>
           {title}
         </Text>
         {children}

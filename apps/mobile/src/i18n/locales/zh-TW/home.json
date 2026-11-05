@@ -1,1 +1,46 @@
-{}
+{
+  "_review": "first pass, needs native review",
+  "play": {
+    "title": "與電腦對戰",
+    "start": "開始打牌"
+  },
+  "clubs": {
+    "title": "俱樂部",
+    "titleWide": "俱樂部與牌友",
+    "blurb": "你的規則、你的成員。分享代碼，隨時隨地開打。",
+    "open": "我的俱樂部",
+    "quickTable": "快速開桌"
+  },
+  "learn": {
+    "title": "學習",
+    "open": "學習",
+    "lessons": "%{done}/%{total} 課",
+    "streak": "連續 %{days} 天",
+    "dailyDone": "今日已完成",
+    "daily": "每日謎題"
+  },
+  "shop": {
+    "title": "商店",
+    "blurb": "桌布、教練和鑽石。絕不賣運氣。",
+    "open": "逛逛"
+  },
+  "profile": {
+    "meta": "%{hands} 局 · %{wins}",
+    "noWins": "還沒胡過",
+    "winRate": "胡牌率 %{rate}%"
+  },
+  "welcome": {
+    "title": "歡迎！",
+    "sub": "取個名字，挑個夥伴。",
+    "namePlaceholder": "你的名字"
+  },
+  "resume": {
+    "title": "牌局進行中",
+    "local": "離線電腦對戰 · 第 %{hand} 局",
+    "online": "線上牌桌 %{code}",
+    "club": " · 俱樂部 %{code}",
+    "resume": "繼續",
+    "reconnecting": "重新連線中…",
+    "discard": "放棄"
+  }
+}

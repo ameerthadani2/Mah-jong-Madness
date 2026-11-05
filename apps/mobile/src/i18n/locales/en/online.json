@@ -1,1 +1,18 @@
-{}
+{
+  "_review": "n/a",
+  "title": "Quick table",
+  "clubs": "Clubs",
+  "note": "Tables run on the game server; every player verifies each hand. Share the table code by any chat app.",
+  "create": {
+    "title": "Create a table",
+    "body": "The server deals and referees, so no player can see the wall. Empty seats can be filled with bots.",
+    "busy": "Creating…",
+    "button": "Create table"
+  },
+  "join": {
+    "title": "Join with a code",
+    "busy": "Joining…",
+    "button": "Join table"
+  },
+  "devServer": "Game server: %{url}. Development builds can change it in Settings."
+}

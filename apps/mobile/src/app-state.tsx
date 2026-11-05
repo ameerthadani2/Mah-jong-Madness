@@ -4,6 +4,7 @@ import { DEFAULT_PROFILE, DEFAULT_PROGRESS, DEFAULT_SETTINGS, storage, type Acti
 import type { Session } from './game/session';
 import { resolveSignalUrl } from './config';
 import { EMPTY_WALLET, loadWallet, saveWallet, type Wallet } from './monetisation/store';
+import { setLocalePreference } from './i18n';
 
 export type Screen =
   | { name: 'home' }
@@ -63,6 +64,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     void Promise.all([storage.loadProfile(), storage.loadSettings(), storage.loadProgress(), storage.loadActiveSession(), loadWallet()]).then(([p, s, pr, as, w]) => {
       setProfileState(p);
+      // Apply the saved language before the first loaded render so the UI never flips.
+      setLocalePreference(s.locale);
       setSettingsState(s);
       setProgressState(pr);
       setActiveSessionState(as);
@@ -129,6 +132,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       },
       settings,
       setSettings: (s) => {
+        if (s.locale !== settings.locale) setLocalePreference(s.locale);
         setSettingsState(s);
         void storage.saveSettings(s);
       },

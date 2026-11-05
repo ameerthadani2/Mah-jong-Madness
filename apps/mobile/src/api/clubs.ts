@@ -56,6 +56,24 @@ export function httpBase(signalUrl: string): string {
 /** How long a club request may take before it is abandoned. */
 export const CLUB_REQUEST_TIMEOUT_MS = 15_000;
 
+/**
+ * A failed club request. `message` is English for logs; screens show
+ * `friendlyError(e, t)`, which reads `code` (client-side failures) or maps the
+ * server's message to translated copy (src/logic/errors.ts).
+ */
+export class ClubApiError extends Error {
+  constructor(
+    message: string,
+    /** 'club_timeout' | 'club_unreachable' | 'club_bad_reply' from this client, else the server's error code. */
+    readonly code?: string,
+    readonly status?: number,
+    readonly seconds?: number,
+  ) {
+    super(message);
+    this.name = 'ClubApiError';
+  }
+}
+
 async function call<T>(base: string, method: string, path: string, body?: unknown): Promise<T> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), CLUB_REQUEST_TIMEOUT_MS);
@@ -70,8 +88,9 @@ async function call<T>(base: string, method: string, path: string, body?: unknow
     });
     text = await res.text();
   } catch (e) {
-    if (controller.signal.aborted) throw new Error('The club server did not respond within 15 seconds. Check your connection and try again.');
-    throw new Error(`Could not reach the club server (${(e as Error).message || 'network error'}).`);
+    const seconds = Math.round(CLUB_REQUEST_TIMEOUT_MS / 1000);
+    if (controller.signal.aborted) throw new ClubApiError(`The club server did not respond within ${seconds} seconds. Check your connection and try again.`, 'club_timeout', undefined, seconds);
+    throw new ClubApiError(`Could not reach the club server (${(e as Error).message || 'network error'}).`, 'club_unreachable');
   } finally {
     clearTimeout(timer);
   }
@@ -79,11 +98,11 @@ async function call<T>(base: string, method: string, path: string, body?: unknow
   try {
     data = text ? JSON.parse(text) : {};
   } catch {
-    throw new Error(`The club server sent an unreadable reply (${res.status}).`);
+    throw new ClubApiError(`The club server sent an unreadable reply (${res.status}).`, 'club_bad_reply', res.status);
   }
   if (!res.ok) {
-    const message = (data as { message?: unknown } | null)?.message;
-    throw new Error(typeof message === 'string' && message ? message : `Request failed (${res.status})`);
+    const { message, error } = (data ?? {}) as { message?: unknown; error?: unknown };
+    throw new ClubApiError(typeof message === 'string' && message ? message : `Request failed (${res.status})`, typeof error === 'string' ? error : undefined, res.status);
   }
   return data as T;
 }

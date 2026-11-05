@@ -2,8 +2,10 @@ import React, { useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useApp } from '../app-state';
-import { CLUB_PRODUCTS, COSMETICS, DIAMOND_PACKS, SUBSCRIPTIONS, VIP_CARDS, type Product } from '../monetisation/catalog';
-import { buyWithDiamonds, coachTier, hasVip, ownsCosmetic, store, totalDiamonds } from '../monetisation/store';
+import { CLUB_PRODUCTS, COSMETICS, DIAMOND_PACKS, productText, SUBSCRIPTIONS, VIP_CARDS, type Product } from '../monetisation/catalog';
+import { buyWithDiamonds, coachTier, hasVip, ownsCosmetic, store, totalDiamonds, type PurchaseResult } from '../monetisation/store';
+import { useT } from '../i18n';
+import type { Translate } from '../logic/translate';
 import { colors, fonts, space } from '../theme';
 import { themeById } from '../themes';
 import { Button, Card, fontFor, GemCounter, H2, P, Pill, Row, ScreenHeader, StrokeText } from '../components/Ui';
@@ -14,8 +16,15 @@ import { Emote } from '../components/Emotes';
 
 type Tab = 'diamonds' | 'looks' | 'coach' | 'vip' | 'club';
 
+function purchaseError(r: PurchaseResult, t: Translate): string {
+  if (r.reason === 'not_for_diamonds') return t('shop.notForDiamonds');
+  if (r.reason === 'need_diamonds') return t('shop.needDiamonds', { n: r.short ?? 0 });
+  return t('shop.purchaseFailed');
+}
+
 export function ShopScreen() {
   const app = useApp();
+  const { t } = useT();
   const { width, height } = useWindowDimensions();
   const [tab, setTab] = useState<Tab>('diamonds');
   const [busy, setBusy] = useState<string | null>(null);
@@ -27,10 +36,10 @@ export function ShopScreen() {
     setMsg(null);
     try {
       const result = via === 'diamonds' ? buyWithDiamonds(wallet, p) : await store.purchase(p, wallet);
-      if (!result.ok) setMsg(result.message ?? 'Purchase failed');
+      if (!result.ok) setMsg(purchaseError(result, t));
       else {
         app.setWallet(result.wallet);
-        setMsg(`Unlocked ${p.title}`);
+        setMsg(t('shop.unlocked', { title: productText(p, t).title }));
         if (p.kind === 'cosmetic' && p.unlocks && p.id.startsWith('theme.')) app.setSettings({ ...app.settings, tableTheme: p.unlocks });
       }
     } finally {
@@ -39,11 +48,11 @@ export function ShopScreen() {
   };
 
   const tabs: Array<[Tab, string, IconName]> = [
-    ['diamonds', 'Gems', 'gem'],
-    ['looks', 'Looks', 'star'],
-    ['coach', 'Coach', 'cap'],
-    ['vip', 'VIP', 'crown'],
-    ['club', 'Clubs', 'users'],
+    ['diamonds', t('shop.tabs.diamonds'), 'gem'],
+    ['looks', t('shop.tabs.looks'), 'star'],
+    ['coach', t('shop.tabs.coach'), 'cap'],
+    ['vip', t('shop.tabs.vip'), 'crown'],
+    ['club', t('shop.tabs.club'), 'users'],
   ];
   const tier = coachTier(wallet);
   const pad = width >= 1000 ? 28 : space.lg;
@@ -58,20 +67,20 @@ export function ShopScreen() {
 
   return (
     <ScrollView contentContainerStyle={[styles.wrap, { padding: pad }]}>
-      <ScreenHeader title="Shop" onBack={app.back} backTestID="back" right={<GemCounter amount={totalDiamonds(wallet)} onPress={() => setTab('diamonds')} />} />
+      <ScreenHeader title={t('shop.title')} onBack={app.back} backTestID="back" right={<GemCounter amount={totalDiamonds(wallet)} onPress={() => setTab('diamonds')} />} />
       <View style={styles.trust}>
         <Icon name="shield" size={20} />
         <Text style={styles.trustText} numberOfLines={2}>
-          Cosmetics, coaching and club capacity only. Nothing here changes the tiles you draw.
+          {t('shop.trust')}
         </Text>
       </View>
       <View style={[styles.tabs, narrowTabs && { alignSelf: 'stretch', gap: 2 }]}>
-        {tabs.map(([t, label, icon]) => {
-          const on = tab === t;
+        {tabs.map(([id, label, icon]) => {
+          const on = tab === id;
           return (
-            <Pressable key={t} onPress={() => setTab(t)} style={[styles.tab, on && styles.tabOn, narrowTabs && styles.tabNarrow]}>
+            <Pressable key={id} onPress={() => setTab(id)} style={[styles.tab, on && styles.tabOn, narrowTabs && styles.tabNarrow]}>
               <Icon name={icon} size={narrowTabs ? 20 : 22} />
-              <Text style={[styles.tabText, on && { color: colors.ink }, narrowTabs && { fontSize: 13 }]}>{label}</Text>
+              <Text style={[styles.tabText, fontFor(label, fonts.display), on && { color: colors.ink }, narrowTabs && { fontSize: 13 }]}>{label}</Text>
             </Pressable>
           );
         })}
@@ -111,11 +120,11 @@ export function ShopScreen() {
           <Card style={{ flexDirection: 'row', gap: space.md, alignItems: 'flex-start' }}>
             <Icon name="cap" size={40} />
             <View style={{ flex: 1, gap: 4 }}>
-              <H2>{tier === 'free' ? 'Coaching tiers' : `Coach ${tier[0].toUpperCase()}${tier.slice(1)} is active`}</H2>
+              <H2>{tier === 'free' ? t('shop.coach.tiers') : t('shop.coach.active', { tier: t(`shop.tiers.${tier}`) })}</H2>
               <P dim style={{ fontSize: 13, lineHeight: 18 }}>
-                Free: coach at the table, daily puzzle, drills, lessons 1–3, 1 hand review and 1 Puzzle Rush per day, Beginner and Club bots.{'\n'}Gold: all lessons, unlimited Puzzle Rush, Pro bots, review history.{'\n'}Platinum: unlimited hand reviews, puzzle battles, luck dashboard.{'\n'}Diamond: move-by-move explanations, insights, club-table discounts.
+                {t('shop.coach.body')}
               </P>
-              {tier !== 'free' && <Pill text={`Renews ${new Date(wallet.subscription!.until).toLocaleDateString()}`} tone="ok" />}
+              {tier !== 'free' && <Pill text={t('shop.coach.renews', { date: new Date(wallet.subscription!.until).toLocaleDateString() })} tone="ok" />}
             </View>
           </Card>
           {grid(SUBSCRIPTIONS.map((p) => <ProductCard key={p.id} w={cardW} p={p} busy={busy === p.id} onBuy={() => void buy(p, 'money')} art={<MedalScene tier={p.tier === 'platinum' ? 'platinum' : p.tier === 'diamond' ? 'diamond' : 'gold'} width="100%" height="100%" />} bg={['#FFF3C4', '#FFD36B']} />))}
@@ -127,11 +136,11 @@ export function ShopScreen() {
           <Card style={{ flexDirection: 'row', gap: space.md, alignItems: 'flex-start' }}>
             <Icon name="crown" size={40} />
             <View style={{ flex: 1, gap: 4 }}>
-              <H2>{hasVip(wallet) ? 'VIP is active' : 'VIP cards'}</H2>
+              <H2>{hasVip(wallet) ? t('shop.vip.active') : t('shop.vip.cards')}</H2>
               <P dim style={{ fontSize: 13, lineHeight: 18 }}>
-                Prepaid, no auto-renew. Every table look while active, an emote allowance, one extra club slot and one extra review per day. Days carry over when you upgrade.
+                {t('shop.vip.body')}
               </P>
-              {hasVip(wallet) && <Pill text={`Until ${new Date(wallet.vip!.until).toLocaleDateString()}`} tone="ok" />}
+              {hasVip(wallet) && <Pill text={t('shop.vip.until', { date: new Date(wallet.vip!.until).toLocaleDateString() })} tone="ok" />}
             </View>
           </Card>
           {grid(VIP_CARDS.map((p, i) => <ProductCard key={p.id} w={cardW} p={p} busy={busy === p.id} onBuy={() => void buy(p, 'money')} onBuyDiamonds={p.diamondPrice ? () => void buy(p, 'diamonds') : undefined} art={<VipCardScene tier={i === 0 ? 'bronze' : i === 1 ? 'silver' : 'gold'} width="100%" height="100%" />} bg={['#FFE6D1', '#FFB98A']} />))}
@@ -143,25 +152,26 @@ export function ShopScreen() {
           <Card style={{ flexDirection: 'row', gap: space.md, alignItems: 'flex-start' }}>
             <Icon name="users" size={40} />
             <View style={{ flex: 1, gap: 4 }}>
-              <H2>Club capacity</H2>
+              <H2>{t('shop.club.title')}</H2>
               <P dim style={{ fontSize: 13, lineHeight: 18 }}>
-                Starter clubs are free: 30 members, 2 managers, one live table. Owners upgrade capacity with diamonds or a 30-day plan. Members never pay to play in a club.
+                {t('shop.club.body')}
               </P>
-              {wallet.clubTier && <Pill text={`Club ${wallet.clubTier.capacity} until ${new Date(wallet.clubTier.until).toLocaleDateString()}`} tone="ok" />}
+              {wallet.clubTier && <Pill text={t('shop.club.tier', { capacity: wallet.clubTier.capacity, date: new Date(wallet.clubTier.until).toLocaleDateString() })} tone="ok" />}
             </View>
           </Card>
           {grid(CLUB_PRODUCTS.map((p) => <ProductCard key={p.id} w={cardW} p={p} busy={busy === p.id} onBuy={() => void buy(p, 'money')} onBuyDiamonds={p.diamondPrice ? () => void buy(p, 'diamonds') : undefined} art={<ClubhouseScene width="100%" height="100%" />} bg={['#C9F1FF', '#83D6FF']} />))}
         </>
       )}
-      <Text style={styles.foot}>
-        Prices shown are placeholder USD tiers; your store shows local pricing at checkout. Subscriptions renew until cancelled in your store account settings. This build uses a mock store: purchases are instant and free.
-      </Text>
+      <Text style={styles.foot}>{t('shop.foot')}</Text>
     </ScrollView>
   );
 }
 
 function ProductCard({ p, owned, busy, onBuy, onBuyDiamonds, art, bg, w, amount, short }: { p: Product; owned?: boolean; busy: boolean; onBuy: () => void; onBuyDiamonds?: () => void; art: React.ReactNode; bg: readonly [string, string]; w: number; amount?: number; short?: boolean }) {
-  const price = `$${p.priceUsd.toFixed(2)}${p.period ? `/${p.period === 'year' ? 'yr' : 'mo'}` : ''}`;
+  const { t } = useT();
+  const text = productText(p, t);
+  const price = `$${p.priceUsd.toFixed(2)}${p.period ? t(p.period === 'year' ? 'shop.perYear' : 'shop.perMonth') : ''}`;
+  const sub = amount !== undefined ? text.description : t('shop.productSub', { zh: p.titleZh, description: text.description });
   return (
     <Card style={{ width: w, padding: 8, gap: 6 }}>
       <View style={[styles.window, short && { height: 68 }]}>
@@ -169,9 +179,9 @@ function ProductCard({ p, owned, busy, onBuy, onBuyDiamonds, art, bg, w, amount,
         <View style={styles.shine} />
         <View style={{ position: 'absolute', left: 4, right: 4, top: 4, bottom: 4 }}>{art}</View>
       </View>
-      {p.badge && (
+      {text.badge && (
         <View style={styles.ribbon}>
-          <Text style={styles.ribbonText}>{p.badge}</Text>
+          <Text style={[styles.ribbonText, fontFor(text.badge, fonts.display)]}>{text.badge}</Text>
         </View>
       )}
       <View style={{ paddingHorizontal: 4, gap: 2, flex: 1 }}>
@@ -183,18 +193,18 @@ function ProductCard({ p, owned, busy, onBuy, onBuyDiamonds, art, bg, w, amount,
             </StrokeText>
           </Row>
         ) : (
-          <Text style={styles.title} numberOfLines={2}>
-            {p.title}
+          <Text style={[styles.title, fontFor(text.title, fonts.uiBold)]} numberOfLines={2}>
+            {text.title}
           </Text>
         )}
-        <Text style={[styles.sub, fontFor(amount !== undefined ? p.description : p.titleZh, fonts.body, '700'), amount !== undefined && { textAlign: 'center' }]} numberOfLines={2}>
-          {amount !== undefined ? p.description : `${p.titleZh} · ${p.description}`}
+        <Text style={[styles.sub, fontFor(sub, fonts.body, '700'), amount !== undefined && { textAlign: 'center' }]} numberOfLines={2}>
+          {sub}
         </Text>
       </View>
       {owned ? (
         <View style={styles.owned}>
           <Icon name="check" size={20} color={colors.cta} />
-          <Text style={styles.ownedText}>Owned</Text>
+          <Text style={[styles.ownedText, fontFor(t('shop.owned'), fonts.display)]}>{t('shop.owned')}</Text>
         </View>
       ) : (
         <View style={{ gap: 6 }}>

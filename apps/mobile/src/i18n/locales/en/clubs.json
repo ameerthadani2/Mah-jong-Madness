@@ -1,1 +1,59 @@
-{}
+{
+  "_review": "n/a",
+  "title": "Clubs",
+  "quickTable": "Quick table",
+  "note": "A club is your private room: your rules, your members, your standings. Share the code and play from anywhere.",
+  "join": {
+    "title": "Join a club",
+    "placeholder": "CLUB CODE",
+    "button": "Join",
+    "requestSent": "Request sent — an admin must approve you."
+  },
+  "create": {
+    "title": "Create a club",
+    "new": "New club",
+    "namePlaceholder": "Club name",
+    "preset": "House rules preset",
+    "approval": "Approve members before they join",
+    "button": "Create"
+  },
+  "mine": "My clubs",
+  "none": "You are not in any club yet.",
+  "summary": "%{members} members · %{tables} tables open · %{stakes}",
+  "pending": "Pending approval",
+  "open": "Open",
+  "loadingClub": "Loading club…",
+  "tableLabel": "%{name}'s table",
+  "code": "Code %{code}",
+  "members": "%{n} members",
+  "tabs": {
+    "tables": "Tables (%{n})",
+    "standings": "Standings",
+    "rules": "Rules"
+  },
+  "tables": {
+    "opening": "Opening…",
+    "open": "Open a table",
+    "none": "No open tables.",
+    "noneCanOpen": "No open tables. Open one and share the club code.",
+    "waiting": "Waiting",
+    "hand": "Hand %{n}",
+    "away": "%{name} (away)",
+    "seats": "%{n} seats",
+    "join": "Join table",
+    "pendingRequests": "Pending requests",
+    "approve": "Approve"
+  },
+  "standing": "%{played} matches · %{won} wins",
+  "rules": {
+    "presets": "Presets",
+    "speed": "Speed",
+    "speedChip": "%{label} %{turn}s",
+    "membersCanOpen": "Members can open tables",
+    "approveNew": "Approve new members",
+    "multipleWinners": "一炮多響 multiple winners",
+    "passRule": "過水 pass rule",
+    "allowChi": "Allow chi",
+    "adminOnly": "Only the owner and admins can change rules."
+  }
+}

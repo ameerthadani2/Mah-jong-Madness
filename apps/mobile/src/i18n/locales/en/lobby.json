@@ -1,1 +1,18 @@
-{}
+{
+  "_review": "n/a",
+  "noTable": "No table",
+  "title": "Table %{code}",
+  "shareCode": "Share this code",
+  "share": "Share",
+  "shareMessage": "Join my Mahjong Madness table: %{code}",
+  "serverTable": "Server table",
+  "onDevice": "On this device",
+  "seats": "Seats",
+  "emptySeat": "Empty — waiting for a friend",
+  "remove": "Remove",
+  "addBot": "Add bot",
+  "fillHint": "Empty seats are filled with bots when you start.",
+  "start": "Start match",
+  "startWithBots": "Start (bots fill empty seats)",
+  "connectionLost": "Connection lost. Go back to Home and tap Resume."
+}
