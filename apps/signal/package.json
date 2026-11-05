@@ -2,7 +2,7 @@
   "name": "@mjm/signal",
   "version": "0.1.0",
   "private": true,
-  "description": "Tiny WebSocket signaling + relay server for Mahjong Madness rooms. Optionally hosts tables as a neutral party.",
+  "description": "Game server for Mahjong Madness: hosts every online table, relays the players' sockets and runs the clubs and accounts API.",
   "type": "module",
   "scripts": {
     "start": "tsx src/server.ts",
