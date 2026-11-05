@@ -45,5 +45,24 @@
     "medium": "Medium",
     "hard": "Hard"
   },
-  "nextHand": "Next hand"
+  "nextHand": "Next hand",
+  "trackProgress": "%{done}/%{total} done",
+  "trackComplete": "Track complete",
+  "upNext": "Up next",
+  "minutesLeft": "%{n} min to go",
+  "empty": {
+    "title": "Welcome to the mahjong school",
+    "body": "Six short tracks take you from your first tile to reading the whole table. Each lesson takes a few minutes and ends with a quick quiz.",
+    "cta": "First lesson: %{title}"
+  },
+  "allDone": "Every lesson finished. Keep sharp with the daily puzzle and Puzzle Rush.",
+  "end": {
+    "title": "Lesson complete!",
+    "progress": "That's %{done} of %{total} in %{track}.",
+    "nextInTrack": "Up next in %{track}",
+    "trackDone": "You've finished %{track}! Next track: %{next}",
+    "allDone": "That was the last lesson: you've finished every track. The daily puzzle has a new hand every day.",
+    "nextCta": "Next lesson",
+    "back": "Back to Learn"
+  }
 }

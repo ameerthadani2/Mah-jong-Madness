@@ -1,10 +1,12 @@
 import React, { useState } from 'react';
 import { ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
-import { kindInfo, kindsFromString, LESSONS, type Lesson, type LessonStep } from '@mjm/engine';
+import { kindInfo, kindsFromString, LESSON_TRACKS, LESSONS, type Lesson, type LessonStep } from '@mjm/engine';
 import { useApp } from '../app-state';
 import { effectiveStreak } from '../storage';
 import { rollingAccuracy } from '../logic/accuracy';
 import { lessonAnswers, lessonComplete } from '../logic/lesson';
+import { groupByTrack, learnSummary, nextLesson, trackTitle, type TrackGroup } from '../logic/learn';
+import { useDisplayScale } from '../display/DisplayScale';
 import { colors, fonts, space } from '../theme';
 import { Tile, tileDims } from '../components/Tile';
 import { fitTile } from '../components/table/layout';
@@ -49,11 +51,35 @@ export function LearnScreen() {
   const pad = width >= 1000 ? 28 : space.lg;
   const drillW = Math.floor((width - pad * 2 - space.md * (cols - 1)) / cols);
   const lessonW = Math.floor((width - pad * 2 - space.md * (lessonCols - 1)) / lessonCols);
-  const lessonsDone = Object.keys(done).length;
+  const groups = groupByTrack(LESSONS, LESSON_TRACKS, done);
+  const summary = learnSummary(LESSONS, LESSON_TRACKS, done);
+  const first = summary.startId ? LESSONS.find((l) => l.id === summary.startId) : undefined;
   const reviewAcc = rollingAccuracy(app.progress.reviewAccuracies);
   return (
     <ScrollView contentContainerStyle={[styles.wrap, { padding: pad }]}>
-      <ScreenHeader title={t('learn.title')} onBack={app.back} backTestID="back" right={<Pill text={t('learn.lessonsCount', { done: lessonsDone, total: LESSONS.length })} icon="book" tone="gold" />} />
+      <ScreenHeader title={t('learn.title')} onBack={app.back} backTestID="back" right={<Pill text={t('learn.lessonsCount', { done: summary.done, total: summary.total })} icon="book" tone="gold" />} />
+      {summary.empty && first && (
+        // A new player: a friendly welcome and one obvious place to begin.
+        <Card tone="sky" testID="learn-welcome" style={{ flexDirection: 'row', alignItems: 'center', gap: space.md, padding: 14 }}>
+          <View style={[styles.iconPlate, { backgroundColor: colors.premium }]}>
+            <View style={styles.iconShine} />
+            <Icon name="book" size={40} />
+          </View>
+          <View style={{ flex: 1, gap: 6 }}>
+            <Text style={styles.drillTitle}>{t('learn.empty.title')}</Text>
+            <P dim>{t('learn.empty.body')}</P>
+            <Row>
+              <Button small kind="primary" title={t('learn.empty.cta', { title: lessonTitle(first, locale) })} onPress={() => app.go({ name: 'lesson', id: first.id })} />
+            </Row>
+          </View>
+        </Card>
+      )}
+      {summary.allDone && (
+        <Card tone="gold" testID="learn-all-done" style={{ flexDirection: 'row', alignItems: 'center', gap: space.md, padding: 12 }}>
+          <Icon name="trophy" size={36} />
+          <P style={{ flex: 1 }}>{t('learn.allDone')}</P>
+        </Card>
+      )}
       <View style={styles.grid}>
         <DrillCard w={drillW} icon="scroll" tint={colors.gold} title={t('learn.daily.title')} text={t('learn.daily.text')} stat={t('learn.daily.streak', { n: streak })} statIcon="flame" statTone={streak > 0 ? 'gold' : 'neutral'} cta={t('learn.daily.cta')} kind="gold" onPress={() => app.go({ name: 'daily' })} />
         <DrillCard w={drillW} icon="bolt" tint={colors.danger} title={t('learn.rush.title')} text={t('learn.rush.text')} stat={t('learn.rush.stat', { best: app.progress.rushBest, runs: app.progress.rushRuns })} statIcon="trophy" cta={t('learn.rush.cta')} kind="danger" onPress={() => app.go({ name: 'rush' })} />
@@ -64,36 +90,73 @@ export function LearnScreen() {
         <Pill icon="magnifier" text={reviewAcc === null ? t('learn.reviewAccNone') : t('learn.reviewAcc', { pct: reviewAcc, n: app.progress.reviewAccuracies.length })} tone={reviewAcc === null ? 'neutral' : 'ok'} />
       </Row>
       <SectionLabel>{t('learn.lessons')}</SectionLabel>
+      {groups.map((g) => (
+        <TrackSection key={g.track.id} group={g} width={lessonW} done={done} onOpen={(id) => app.go({ name: 'lesson', id })} />
+      ))}
+    </ScrollView>
+  );
+}
+
+/** One curriculum track: its name in both languages, done/total and minutes to go, then its lesson cards. */
+function TrackSection({ group: g, width, done, onOpen }: { group: TrackGroup<Lesson, (typeof LESSON_TRACKS)[number]>; width: number; done: Record<string, boolean>; onOpen: (id: string) => void }) {
+  const { t, locale } = useT();
+  const title = trackTitle(g.track, locale);
+  return (
+    <View style={{ gap: space.sm }} testID={`track-${g.track.id}`}>
+      <Row gap={8} style={{ flexWrap: 'wrap', rowGap: 4 }}>
+        <StrokeText style={{ fontSize: 18 }} strokeWidth={1.8} drop={1.5}>
+          {title.main}
+        </StrokeText>
+        {title.aside && (
+          <StrokeText style={{ fontSize: 15 }} strokeWidth={1.5} drop={1}>
+            {title.aside}
+          </StrokeText>
+        )}
+        <Pill size="sm" tone={g.complete ? 'ok' : 'neutral'} icon={g.complete ? 'check' : undefined} text={g.complete ? t('learn.trackComplete') : t('learn.trackProgress', { done: g.done, total: g.total })} />
+        {!g.complete && <Pill size="sm" tone="dark" icon="clock" text={t('learn.minutesLeft', { n: g.minutesLeft })} />}
+      </Row>
+      <View style={styles.trackBar} accessible accessibilityRole="progressbar" accessibilityValue={{ min: 0, max: g.total, now: g.done }} accessibilityLabel={title.main}>
+        <View style={[styles.trackFill, { width: `${Math.round((g.done / Math.max(1, g.total)) * 100)}%` }]} />
+      </View>
       <View style={styles.grid}>
-        {LESSONS.map((l, i) => (
-          <Card key={l.id} style={{ width: lessonW, flexDirection: 'row', alignItems: 'center', gap: space.md, padding: 12 }}>
-            <View style={[styles.medal, done[l.id] && { backgroundColor: colors.cta }]}>
-              {done[l.id] ? (
-                <Icon name="check" size={28} />
-              ) : (
-                <StrokeText style={{ fontSize: 22 }} strokeWidth={1.8} drop={1.5}>
-                  {i + 1}
-                </StrokeText>
-              )}
-            </View>
-            <View style={{ flex: 1, gap: 2 }}>
-              <Row gap={6} style={{ flexWrap: 'wrap' }}>
-                <Text style={styles.title}>{lessonTitle(l, locale)}</Text>
-                {/* English shows the Chinese name alongside; in zh-TW the title already is the Chinese name. */}
-                {locale !== 'zh-TW' && <Text style={styles.titleZh}>{l.titleZh}</Text>}
-              </Row>
-              <P dim style={{ fontSize: 12, lineHeight: 16 }} numberOfLines={2}>
-                {lessonSummary(l, locale)}
-              </P>
-            </View>
-            <View style={{ alignItems: 'flex-end', gap: 6 }}>
-              {done[l.id] ? <Pill text={t('learn.done')} tone="ok" size="sm" /> : <Pill text={t('learn.minutes', { n: l.minutes })} icon="clock" size="sm" />}
-              <Button small kind={done[l.id] ? 'ghost' : 'secondary'} title={t(done[l.id] ? 'learn.review' : 'learn.start')} onPress={() => app.go({ name: 'lesson', id: l.id })} />
-            </View>
-          </Card>
+        {g.lessons.map((l, i) => (
+          <LessonCard key={l.id} lesson={l} n={i + 1} width={width} done={!!done[l.id]} next={g.nextId === l.id} onOpen={() => onOpen(l.id)} />
         ))}
       </View>
-    </ScrollView>
+    </View>
+  );
+}
+
+/** A lesson: number (a tick once done), title, summary, minutes; the track's first unfinished lesson is highlighted. */
+function LessonCard({ lesson: l, n, width, done, next, onOpen }: { lesson: Lesson; n: number; width: number; done: boolean; next: boolean; onOpen: () => void }) {
+  const { t, locale } = useT();
+  return (
+    <Card tone={next ? 'gold' : 'cream'} testID={next ? 'lesson-next' : undefined} style={{ width, flexDirection: 'row', alignItems: 'center', gap: space.md, padding: 12 }}>
+      <View style={[styles.medal, done && { backgroundColor: colors.cta }]} accessible accessibilityLabel={done ? t('learn.done') : String(n)}>
+        {done ? (
+          <Icon name="check" size={28} />
+        ) : (
+          <StrokeText style={{ fontSize: 22 }} strokeWidth={1.8} drop={1.5}>
+            {n}
+          </StrokeText>
+        )}
+      </View>
+      <View style={{ flex: 1, gap: 2 }}>
+        <Row gap={6} style={{ flexWrap: 'wrap' }}>
+          <Text style={styles.title}>{lessonTitle(l, locale)}</Text>
+          {/* English shows the Chinese name alongside; in zh-TW the title already is the Chinese name. */}
+          {locale !== 'zh-TW' && <Text style={styles.titleZh}>{l.titleZh}</Text>}
+        </Row>
+        <P dim style={{ fontSize: 12, lineHeight: 16 }} numberOfLines={2}>
+          {lessonSummary(l, locale)}
+        </P>
+      </View>
+      <View style={{ alignItems: 'flex-end', gap: 6 }}>
+        {next && <Pill text={t('learn.upNext')} tone="premium" size="sm" />}
+        <Pill text={t('learn.minutes', { n: l.minutes })} icon={done ? 'check' : 'clock'} tone={done ? 'ok' : 'neutral'} size="sm" />
+        <Button small kind={done ? 'ghost' : next ? 'primary' : 'secondary'} title={t(done ? 'learn.review' : 'learn.start')} onPress={onOpen} />
+      </View>
+    </Card>
   );
 }
 
@@ -144,7 +207,10 @@ export function HandView({ hand, size = 'sm', onPress, selected, highlight }: { 
   // Shrink the tiles until the longest group fits the card, so a run of nine (九萬) is never clipped on a phone.
   const [room, setRoom] = useState<number | null>(null);
   const longest = Math.max(1, ...groups.map((g) => g.length));
-  const tile = room === null ? tileDims(size).w : fitTile(room, longest, tileDims(size).w);
+  // Settings → Display → Tiles raises the largest size; the fit still shrinks it so nothing is clipped.
+  const { tileScale } = useDisplayScale();
+  const max = Math.round(tileDims(size).w * tileScale);
+  const tile = room === null ? max : fitTile(room, longest, max);
   return (
     <View style={styles.handRow} onLayout={(e) => setRoom(Math.floor(e.nativeEvent.layout.width))}>
       {groups.map((kinds, gi) => (
@@ -165,11 +231,18 @@ function codeOf(kind: number): string {
   return codes[kind];
 }
 
+/** Keyed by lesson, so moving on to the next lesson starts it from its first step. */
 export function LessonScreen({ id }: { id: string }) {
+  return <LessonBody key={id} id={id} />;
+}
+
+function LessonBody({ id }: { id: string }) {
   const app = useApp();
   const { t, locale } = useT();
   const lesson = LESSONS.find((l) => l.id === id)!;
   const [i, setI] = useState(0);
+  // Shown after the last step of a lesson passed in full: what was finished and what comes next.
+  const [finished, setFinished] = useState(false);
   // The tile last picked for each quiz step, so going back and forth keeps the answers.
   const [picks, setPicks] = useState<Record<number, string>>({});
   const step: LessonStep = lesson.steps[i];
@@ -183,12 +256,20 @@ export function LessonScreen({ id }: { id: string }) {
   const next = () => {
     if (last) {
       // Only a lesson whose every quiz was answered correctly counts as done.
-      if (complete) app.setProgress((p) => ({ ...p, lessonsDone: { ...p.lessonsDone, [lesson.id]: true } }));
+      if (complete) {
+        app.setProgress((p) => ({ ...p, lessonsDone: { ...p.lessonsDone, [lesson.id]: true } }));
+        setFinished(true);
+        return;
+      }
       app.back();
       return;
     }
     setI(i + 1);
   };
+
+  if (finished) {
+    return <LessonEnd lesson={lesson} done={{ ...app.progress.lessonsDone, [lesson.id]: true }} />;
+  }
 
   return (
     <ScrollView contentContainerStyle={styles.wrap}>
@@ -231,17 +312,82 @@ export function LessonScreen({ id }: { id: string }) {
   );
 }
 
+/** The lesson end screen: a cheer, progress in the track, and the next lesson (or the next track). */
+function LessonEnd({ lesson, done }: { lesson: Lesson; done: Record<string, boolean> }) {
+  const app = useApp();
+  const { t, locale } = useT();
+  const track = LESSON_TRACKS.find((x) => x.id === lesson.track) ?? LESSON_TRACKS[0];
+  const group = groupByTrack(LESSONS, [track], done)[0];
+  const next = nextLesson(LESSONS, LESSON_TRACKS, lesson.id, done);
+  const trackName = trackTitle(track, locale).main;
+  const nextTrack = next.kind === 'newTrack' ? LESSON_TRACKS.find((x) => x.id === next.trackId) : undefined;
+  const lead = next.kind === 'track' ? t('learn.end.nextInTrack', { track: trackName }) : next.kind === 'newTrack' && nextTrack ? t('learn.end.trackDone', { track: trackName, next: trackTitle(nextTrack, locale).main }) : t('learn.end.allDone');
+  return (
+    <ScrollView contentContainerStyle={styles.wrap}>
+      <ScreenHeader title={lessonTitle(lesson, locale)} onBack={app.back} sub={locale !== 'zh-TW' ? <Text style={styles.headerZh}>{lesson.titleZh}</Text> : undefined} />
+      <Card tone="gold" testID="lesson-end" style={{ alignItems: 'center', gap: space.md }}>
+        <View style={[styles.medal, styles.bigMedal]}>
+          <Icon name="check" size={40} />
+        </View>
+        <StrokeText style={{ fontSize: 28 }} strokeWidth={2.2} drop={2}>
+          {t('learn.end.title')}
+        </StrokeText>
+        {group && <P style={{ textAlign: 'center' }}>{t('learn.end.progress', { done: group.done, total: group.total, track: trackName })}</P>}
+        {group && (
+          <View style={[styles.trackBar, { alignSelf: 'stretch' }]}>
+            <View style={[styles.trackFill, { width: `${Math.round((group.done / Math.max(1, group.total)) * 100)}%` }]} />
+          </View>
+        )}
+      </Card>
+      <StrokeText style={{ fontSize: 18 }} strokeWidth={1.8} drop={1.5}>
+        {lead}
+      </StrokeText>
+      {next.kind !== 'none' && (
+        <Card style={{ flexDirection: 'row', alignItems: 'center', gap: space.md, padding: 12 }}>
+          <View style={{ flex: 1, gap: 2 }}>
+            <Row gap={6} style={{ flexWrap: 'wrap' }}>
+              <Text style={styles.title}>{lessonTitle(next.lesson, locale)}</Text>
+              {locale !== 'zh-TW' && <Text style={styles.titleZh}>{next.lesson.titleZh}</Text>}
+            </Row>
+            <P dim style={{ fontSize: 12, lineHeight: 16 }} numberOfLines={2}>
+              {lessonSummary(next.lesson, locale)}
+            </P>
+          </View>
+          <Pill text={t('learn.minutes', { n: next.lesson.minutes })} icon="clock" size="sm" />
+        </Card>
+      )}
+      <Row style={{ justifyContent: 'space-between', flexWrap: 'wrap', rowGap: 8 }}>
+        <Button kind="ghost" title={t('learn.end.back')} testID="lesson-end-back" onPress={app.back} />
+        {next.kind !== 'none' && (
+          <Button
+            title={t('learn.end.nextCta')}
+            testID="lesson-end-next"
+            onPress={() => {
+              // Replace this lesson on the stack, so Back from the next one returns to Learn.
+              app.back();
+              app.go({ name: 'lesson', id: next.lesson.id });
+            }}
+          />
+        )}
+      </Row>
+    </ScrollView>
+  );
+}
+
 const styles = StyleSheet.create({
   wrap: { padding: space.lg, gap: space.md },
   grid: { flexDirection: 'row', flexWrap: 'wrap', gap: space.md },
   iconPlate: { width: 64, height: 64, borderRadius: 20, borderWidth: 3, borderColor: colors.ink, alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
   iconShine: { position: 'absolute', top: 0, left: 0, right: 0, height: '45%', backgroundColor: 'rgba(255,255,255,0.3)' },
   drillTitle: { fontFamily: fonts.display, color: colors.ink, fontSize: 19 },
+  bigMedal: { width: 72, height: 72, borderRadius: 36, backgroundColor: colors.cta },
   medal: { width: 46, height: 46, borderRadius: 23, backgroundColor: colors.gold, borderWidth: 3, borderColor: colors.ink, alignItems: 'center', justifyContent: 'center' },
   title: { color: colors.ink, fontSize: 16, fontFamily: fonts.uiBold },
   titleZh: { color: colors.inkDim, fontSize: 14, fontWeight: '900' },
   headerZh: { color: colors.ink, fontSize: 15, fontWeight: '900' },
   handRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, paddingVertical: 8 },
   group: { flexDirection: 'row', gap: 2 },
+  trackBar: { height: 10, borderRadius: 5, borderWidth: 2.5, borderColor: colors.ink, backgroundColor: colors.creamDeep, overflow: 'hidden' },
+  trackFill: { height: '100%', backgroundColor: colors.cta },
   dot: { width: 14, height: 14, borderRadius: 7, backgroundColor: colors.cream, borderWidth: 2.5, borderColor: colors.ink },
 });
