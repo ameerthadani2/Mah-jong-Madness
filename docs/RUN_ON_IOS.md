@@ -1,6 +1,6 @@
 # Running Mahjong Madness on iOS
 
-Three routes, from fastest to most permanent. All of them start with:
+Three routes, from quickest to most permanent. All of them start with:
 
 ```bash
 git clone https://github.com/ameerthadani2/Mah-jong-Madness.git
@@ -10,30 +10,41 @@ npm install          # Node 20 or newer
 npm test             # optional sanity check: 90 tests
 ```
 
-## 1. Expo Go on your iPhone — 2 minutes, no Mac needed for the phone side
+## 1. A development build on your iPhone — about 20 minutes the first time
 
-1. Install **Expo Go** from the App Store on the iPhone or iPad.
-2. On your computer (Mac, Windows or Linux), in the repo root:
+**Expo Go no longer runs this app.** It now uses native modules that Expo Go does not contain (push notifications, Sentry crash reports, in-app purchases), so the phone needs a *development build*: your own copy of the app's native shell, which then loads the JavaScript from your computer exactly as Expo Go used to. You build it once; after that, code changes reload instantly as before.
+
+1. One-time setup on your computer (Mac, Windows or Linux):
    ```bash
-   npm run mobile
+   npm install -g eas-cli
+   cd apps/mobile
+   eas login                 # free Expo account
+   eas init                  # first time only: creates the EAS project
+   eas device:create         # sends a link; open it on the iPhone to register it
+   eas build --platform ios --profile development
    ```
-   Metro starts and prints a QR code.
-3. Make sure the phone and the computer are on the same Wi-Fi, then scan the QR code with the iPhone camera. Expo Go opens the app. It works upright or sideways; sideways gives the roomiest table.
-4. If the QR code does not connect (corporate Wi-Fi, hotel, phone on cellular), use a tunnel instead:
+   The cloud build takes 10–20 minutes. EAS prints a QR code when it finishes; scan it with the iPhone camera to install the development build. (No iPhone? `--profile simulator` builds one for the iOS Simulator on a Mac.)
+2. Each session, from `apps/mobile`:
    ```bash
-   npm run mobile:tunnel
+   npx expo start --dev-client
    ```
-   This needs an Expo account the first time (`npx expo login`, free).
+   Metro starts and prints a QR code. Keep the phone and the computer on the same Wi-Fi, scan the QR code with the camera, and the development build opens the app. It works upright or sideways; sideways gives the roomiest table.
+3. If the QR code does not connect (corporate Wi-Fi, hotel, phone on cellular), use a tunnel instead:
+   ```bash
+   npx expo start --dev-client --tunnel
+   ```
 
-Everything offline works in Expo Go: play vs bots, coach, daily puzzle, Puzzle Rush, drills, lessons, hand review, shop (mock purchases), settings.
+Rebuild the development build (step 1's last command) only when a native module or `app.config.js` changes; JavaScript changes never need one.
 
-**To play online from Expo Go** you also need the signaling server running somewhere the phone can reach:
+Everything offline works in a development build: play vs bots, coach, daily puzzle, Puzzle Rush, drills, lessons, hand review, settings.
+
+**To play online from a development build** you also need the signalling server running somewhere the phone can reach:
 ```bash
 npm run signal            # on your laptop, port 8787
 ```
 Find the laptop's LAN address (macOS: System Settings → Wi-Fi → Details; or `ipconfig getifaddr en0`) and in the app go to **Settings → Network** and set the URL to `ws://<laptop-ip>:8787`. Create a table on one phone, join by code on another. For friends outside your Wi-Fi, deploy `apps/signal` as described in `docs/DEPLOY.md` (Fly.io + Neon) and use its `wss://…` address.
 
-Limitation in Expo Go: haptics work only on a physical device. (The Settings → Network card only exists in development builds; release builds read the server address from the `SIGNAL_URL` repository variable.)
+(The Settings → Network card only exists in development builds; release builds read the server address from the `SIGNAL_URL` repository variable.) Push notifications need a physical device and the push credentials in `docs/OWNER_TODO.md` (Phase 6 — app); without them the app simply never asks.
 
 ## 2. TestFlight with EAS — you have an Apple Developer membership, so this is the route
 
@@ -89,6 +100,7 @@ This generates the `ios/` folder (git-ignored), installs CocoaPods and launches.
 
 ## Troubleshooting
 * **"Unable to resolve @mjm/engine"** — run `npm install` from the repo root (workspaces), not inside `apps/mobile`.
-* **Blank screen or stale code in Expo Go** — shake the phone → Reload, or restart Metro with `npm run mobile -- --clear`.
-* **QR code opens Camera but nothing happens** — Expo Go must be installed first; the QR encodes an `exp://` link.
+* **Blank screen or stale code** — shake the phone → Reload, or restart Metro with `npx expo start --dev-client --clear` (from `apps/mobile`).
+* **QR code opens Camera but nothing happens** — the development build must be installed first (step 1); the QR encodes a link only it can open.
+* **"Cannot find native module" or a red screen naming RNSentry, ExpoNotifications or RNPurchases** — the app was opened in Expo Go or in a development build older than the native change; rebuild the development build.
 * **Table says "Could not connect"** — the phone cannot reach the signaling URL; check the laptop firewall allows port 8787 and that you used the LAN IP, not `localhost`.
