@@ -111,15 +111,29 @@ export interface RequestLike {
 }
 
 /**
- * Returns the client's IP address. Behind a trusted proxy this is the first hop
- * of `x-forwarded-for`. Without one, the client controls that header, so it is ignored.
+ * Returns the client's IP address.
+ *
+ * `trustProxy` is the number of reverse proxies you run in front of the server
+ * (0 or `false`: none). Each proxy appends the address it received the request
+ * from to `x-forwarded-for`, so the entries a client writes itself are always on
+ * the left and only the rightmost `trustProxy` entries can be trusted. The client
+ * address is therefore the `trustProxy`-th entry from the right: with one proxy,
+ * the rightmost entry. Taking the leftmost entry would let a client choose its own
+ * address and escape every per-IP limit.
+ *
+ * Without a trusted proxy the client controls that header, so it is ignored. When
+ * the header holds fewer entries than expected, the leftmost one is used.
  */
-export function clientIp(req: RequestLike, trustProxy: boolean): string {
-  if (trustProxy) {
+export function clientIp(req: RequestLike, trustProxy: number | boolean): string {
+  const hops = trustProxy === true ? 1 : trustProxy === false ? 0 : Math.max(0, Math.floor(trustProxy));
+  if (hops > 0) {
     const raw = req.headers['x-forwarded-for'];
-    const header = Array.isArray(raw) ? raw[0] : raw;
-    const first = header?.split(',')[0]?.trim();
-    if (first) return first;
+    const header = Array.isArray(raw) ? raw.join(',') : raw;
+    const entries = (header ?? '')
+      .split(',')
+      .map((h) => h.trim())
+      .filter(Boolean);
+    if (entries.length > 0) return entries[Math.max(0, entries.length - hops)];
   }
   return req.socket?.remoteAddress ?? 'unknown';
 }

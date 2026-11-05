@@ -100,30 +100,60 @@ describe('clientIp', () => {
 
   it('ignores x-forwarded-for unless the proxy is trusted', () => {
     expect(clientIp(req('1.2.3.4'), false)).toBe('10.0.0.9');
+    expect(clientIp(req('1.2.3.4'), 0)).toBe('10.0.0.9');
   });
 
-  it('takes the first hop behind a trusted proxy', () => {
-    expect(clientIp(req('1.2.3.4, 5.6.7.8'), true)).toBe('1.2.3.4');
-    expect(clientIp(req(['9.9.9.9, 1.1.1.1', '2.2.2.2']), true)).toBe('9.9.9.9');
-    expect(clientIp(req(undefined), true)).toBe('10.0.0.9');
-    expect(clientIp(req(' , '), true)).toBe('10.0.0.9');
-    expect(clientIp({ headers: {} }, true)).toBe('unknown');
+  it('takes the hop TRUST_PROXY places from the right, never the client-written left end', () => {
+    // One proxy (TRUST_PROXY=1): the rightmost entry is the one the proxy appended.
+    expect(clientIp(req('1.2.3.4, 5.6.7.8'), 1)).toBe('5.6.7.8');
+    expect(clientIp(req('1.2.3.4, 5.6.7.8'), true)).toBe('5.6.7.8');
+    // Two proxies (e.g. a CDN in front of a load balancer): the second from the right.
+    expect(clientIp(req('6.6.6.6, 1.2.3.4, 5.6.7.8'), 2)).toBe('1.2.3.4');
+    // Repeated headers are read as one list, in order.
+    expect(clientIp(req(['9.9.9.9, 1.1.1.1', '2.2.2.2']), 1)).toBe('2.2.2.2');
+    // Fewer entries than proxies: the leftmost one there is.
+    expect(clientIp(req('5.6.7.8'), 3)).toBe('5.6.7.8');
+    expect(clientIp(req(undefined), 1)).toBe('10.0.0.9');
+    expect(clientIp(req(' , '), 1)).toBe('10.0.0.9');
+    expect(clientIp({ headers: {} }, 1)).toBe('unknown');
+  });
+
+  it('gives a client that forges the first hop the same key every time (probe verify-signal/xff.ts)', () => {
+    const seen = new Set<string>();
+    for (let i = 0; i < 50; i++) seen.add(clientIp(req(`10.0.${i}.1, 203.0.113.7`), 1));
+    expect([...seen]).toEqual(['203.0.113.7']);
+    // ...so the per-IP HTTP bucket runs dry however the header is varied.
+    const table = new BucketTable<string>(LIMITS.httpBurst, LIMITS.httpPerSec, { now: () => 0 });
+    const allowed = Array.from({ length: 100 }, (_, i) => table.take(clientIp(req(`198.51.${i}.9, 203.0.113.7`), 1))).filter(Boolean).length;
+    expect(allowed).toBe(LIMITS.httpBurst);
   });
 });
 
 describe('loadConfig', () => {
   it('has safe defaults', () => {
     const c = loadConfig({}, '/srv');
-    expect(c).toEqual({ port: 8787, hostTables: true, dataDir: '/srv/data', trustProxy: false, corsOrigins: [], maxHostedTables: 500, p2pRooms: false });
+    expect(c).toEqual({ port: 8787, hostTables: true, dataDir: '/srv/data', trustProxy: 0, corsOrigins: [], maxHostedTables: 500, p2pRooms: false });
   });
 
   it('parses every variable and rejects nonsense numbers', () => {
     const c = loadConfig({ PORT: '9000', HOST_TABLES: '0', DATA_DIR: '/data', TRUST_PROXY: '1', CORS_ORIGINS: 'http://localhost:8081, https://play.example ', MAX_HOSTED_TABLES: '20', P2P_ROOMS: 'true' }, '/srv');
-    expect(c).toEqual({ port: 9000, hostTables: false, dataDir: '/data', trustProxy: true, corsOrigins: ['http://localhost:8081', 'https://play.example'], maxHostedTables: 20, p2pRooms: true });
+    expect(c).toEqual({ port: 9000, hostTables: false, dataDir: '/data', trustProxy: 1, corsOrigins: ['http://localhost:8081', 'https://play.example'], maxHostedTables: 20, p2pRooms: true });
     const bad = loadConfig({ PORT: '99999', MAX_HOSTED_TABLES: '-3', TRUST_PROXY: '0', P2P_ROOMS: 'nope' }, '/srv');
     expect(bad.port).toBe(8787);
     expect(bad.maxHostedTables).toBe(500);
-    expect(bad.trustProxy).toBe(false);
+    expect(bad.trustProxy).toBe(0);
     expect(bad.p2pRooms).toBe(false);
+  });
+
+  it('reads TRUST_PROXY as a hop count (0 = off)', () => {
+    const hops = (v: string) => loadConfig({ TRUST_PROXY: v }, '/srv').trustProxy;
+    expect(hops('2')).toBe(2);
+    expect(hops(' 1 ')).toBe(1);
+    expect(hops('0')).toBe(0);
+    expect(hops('true')).toBe(1);
+    expect(hops('off')).toBe(0);
+    expect(hops('-1')).toBe(0);
+    expect(hops('1.5')).toBe(0);
+    expect(hops('lots')).toBe(0);
   });
 });

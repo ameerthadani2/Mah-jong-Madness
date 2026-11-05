@@ -11,8 +11,12 @@ export interface SignalConfig {
   hostTables: boolean;
   /** Directory that holds the club store (`DATA_DIR`, default `./data`). */
   dataDir: string;
-  /** Take the client IP from the first `x-forwarded-for` hop (`TRUST_PROXY=1`). Enable this only behind a proxy you run. */
-  trustProxy: boolean;
+  /**
+   * Number of reverse proxies you run in front of the server (`TRUST_PROXY`, default 0 = none).
+   * The client IP is the `x-forwarded-for` entry this many places from the right (1 = the rightmost).
+   * Set it only behind proxies you run, and to exactly how many there are.
+   */
+  trustProxy: number;
   /** Origins allowed to call the HTTP API from a browser (`CORS_ORIGINS`, comma-separated). Empty means same origin only; `*` means any origin. */
   corsOrigins: string[];
   /** Maximum number of tables the server hosts at once (`MAX_HOSTED_TABLES`, default 500). */
@@ -45,6 +49,16 @@ function flag(v: string | undefined, fallback: boolean): boolean {
   return ['1', 'true', 'yes', 'on'].includes(v.trim().toLowerCase());
 }
 
+/** A whole number from 0 to `max`. `true`/`yes`/`on` mean 1 (the old on/off form); anything else is `fallback`. */
+function hopCount(v: string | undefined, fallback: number, max: number): number {
+  if (v === undefined || v.trim() === '') return fallback;
+  const t = v.trim().toLowerCase();
+  if (['true', 'yes', 'on'].includes(t)) return 1;
+  if (['false', 'no', 'off'].includes(t)) return 0;
+  const n = Number(t);
+  return Number.isInteger(n) && n >= 0 && n <= max ? n : fallback;
+}
+
 function positiveInt(v: string | undefined, fallback: number, max = Number.MAX_SAFE_INTEGER): number {
   if (v === undefined || v.trim() === '') return fallback;
   const n = Number(v);
@@ -56,7 +70,7 @@ export function loadConfig(env: Env = process.env, cwd: string = process.cwd()):
     port: positiveInt(env.PORT, 8787, 65_535),
     hostTables: env.HOST_TABLES === undefined ? true : env.HOST_TABLES.trim() !== '0',
     dataDir: env.DATA_DIR && env.DATA_DIR.trim() ? env.DATA_DIR : join(cwd, 'data'),
-    trustProxy: flag(env.TRUST_PROXY, false),
+    trustProxy: hopCount(env.TRUST_PROXY, 0, 10),
     corsOrigins: (env.CORS_ORIGINS ?? '')
       .split(',')
       .map((s) => s.trim())
