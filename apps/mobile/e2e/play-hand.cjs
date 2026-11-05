@@ -86,7 +86,8 @@ const visible = async (page, sel) => {
       if (/verified/i.test(auditText)) break;
       await page.waitForTimeout(300);
     }
-    auditOk = /verified/i.test(auditText);
+    // A local table has one human whose share is always used, so anything less than a full 'Verified' is a regression.
+    auditOk = /verified/i.test(auditText) && !/log only/i.test(auditText);
     const rv = (await visible(page, 'text=Review my hand')) || (await visible(page, 'text="Review"'));
     if (rv) {
       await tap(page, rv);

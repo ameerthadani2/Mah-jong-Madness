@@ -43,9 +43,7 @@
     "web": {
       "bundler": "metro"
     },
-    "extra": {
-      "signalUrl": "wss://signal.mahjongmadness.example/ws"
-    },
+    "extra": {},
     "icon": "./assets/icon.png",
     "description": "Taiwanese 16-tile Mahjong against bots or friends, with private clubs, shuffles every player verifies and a built-in coach.",
     "primaryColor": "#5BC8F5",

@@ -26,7 +26,9 @@ module.exports = ({ config }) => {
     android: { ...(config.android || {}), package: bundleId },
     extra: { ...(config.extra || {}) },
   };
-  if (process.env.SIGNAL_URL) out.extra.signalUrl = process.env.SIGNAL_URL;
-  if (process.env.EXPO_BASE_URL) out.experiments = { ...(config.experiments || {}), baseUrl: process.env.EXPO_BASE_URL };
+  const signalUrl = env('SIGNAL_URL', undefined);
+  if (signalUrl) out.extra.signalUrl = signalUrl;
+  const baseUrl = env('EXPO_BASE_URL', undefined);
+  if (baseUrl) out.experiments = { ...(config.experiments || {}), baseUrl };
   return out;
 };

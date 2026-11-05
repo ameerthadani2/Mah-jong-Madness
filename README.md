@@ -1,10 +1,11 @@
 # Mahjong Madness 🀄
 
-**Peer-to-peer Taiwanese 16-tile Mahjong (台灣麻將) for iOS and Android, with a coach that teaches you while you play.**
+**Taiwanese 16-tile Mahjong (台灣麻將) for iOS and Android: verifiable online tables, clubs with house rules, and a coach that teaches you while you play.**
 
 Think PokerBros for Mahjong: create a private table, share a six-letter code, and play with friends anywhere.
-The game runs on the players' own phones. No company server deals the tiles, every player can audit every hand,
-and bots fill empty seats so a table always runs.
+Online tables run on the game server, but the server cannot choose the deal: every seat and the server commit
+to a secret before any tile is dealt, and every phone re-derives the seed and replays the hand afterwards. Bots fill
+empty seats so a table always runs; offline you play the same engine against bots on your own phone.
 
 ![Table screen with coach panel](docs/screenshot-table.png)
 
@@ -28,7 +29,7 @@ and bots fill empty seats so a table always runs.
 
 ```bash
 npm install            # Node ≥ 20
-npm test               # engine + net tests
+npm test               # every workspace
 npm run typecheck      # every workspace
 npm run sim -- 50      # 50 bot-vs-bot matches, prints win/draw stats
 npm run signal         # signaling server on :8787
@@ -51,16 +52,19 @@ Settings → Network — on a laptop on the same Wi-Fi, `ws://<laptop-ip>:8787`.
 
 ## How a hand is kept honest
 
-1. Every seat (humans and bots) picks a random secret and publishes its SHA-256 commitment.
-2. Secrets go to the host; the seed is `sha256(matchId:hand:secret0|…|secret3)`. Nobody can bias the deal.
-3. The host deals and referees with the deterministic engine, sending each player only their own view.
-4. When the hand ends the host publishes all secrets and the action log. Each phone checks the commitments,
-   re-derives the seed, replays the log and compares the state hash. The result screen shows the verdict.
+1. Every seat (humans and bots) and the server each pick a random secret and publish its SHA-256 commitment.
+2. Only after every commitment is published do the secrets go to the server; the seed is a hash of all five
+   shares bound to their seats, so nobody who has seen the others' secrets can still change it.
+3. The server deals and referees with the deterministic engine, sending each player only their own view.
+4. When the hand ends the server publishes all secrets and the action log. Each phone checks the commitments it
+   saw, re-derives the seed, replays the log and compares the state hash, scores and result. The result screen
+   shows **Verified**, **Verified (log only)** when your own share was not used (you were stood in or joined
+   mid-hand), or **Audit failed**.
 
-The host also contributes a committed share, the wall comes from a SHA-256 counter generator keyed by the whole
-256-bit seed, and every audit records the construction version plus any ceremony restarts. The host device does
-learn the seed at deal time, so a host running a modified app could peek; clubs tick **Neutral server hosts the
-table** and the signaling server runs the identical `TableHost` code. See `docs/FAIRNESS.md`.
+The wall comes from a SHA-256 counter generator keyed by the whole 256-bit seed, and every audit records the
+construction version plus any ceremony restarts, which clients check against what they saw. What the protocol
+does not prevent is the server reading the wall after the deal; that is why online tables run only on the
+game server, never on a player's phone. See `docs/FAIRNESS.md`.
 
 ## Rules implemented
 
