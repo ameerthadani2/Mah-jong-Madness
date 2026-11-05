@@ -1,15 +1,17 @@
 import React, { useState } from 'react';
 import { ScrollView, StyleSheet, TextInput, View } from 'react-native';
-import { describeRules } from '@mjm/engine';
 import { useApp } from '../app-state';
 import { createOnlineSession } from '../game/session';
 import { friendlyError } from '../logic/errors';
+import { rulesSummary } from '../logic/rules-text';
+import { useT } from '../i18n';
 import { colors, fonts, space } from '../theme';
 import { Button, Card, H2, P, Row, ScreenHeader } from '../components/Ui';
 import { Icon } from '../components/Icons';
 
 export function OnlineScreen() {
   const app = useApp();
+  const { t, locale } = useT();
   const [code, setCode] = useState('');
   const [busy, setBusy] = useState<'create' | 'join' | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -20,7 +22,7 @@ export function OnlineScreen() {
     try {
       const session = await createOnlineSession({
         signalUrl: app.signalUrl,
-        name: app.profile.name || 'Player',
+        name: app.profile.name || t('common.player'),
         avatar: app.profile.avatar,
         userId: app.profile.userId,
         rules: app.settings.rules,
@@ -31,7 +33,7 @@ export function OnlineScreen() {
       app.setSession(session);
       app.go({ name: 'lobby' });
     } catch (e) {
-      setError(friendlyError(e));
+      setError(friendlyError(e, t));
     } finally {
       setBusy(null);
     }
@@ -39,30 +41,30 @@ export function OnlineScreen() {
 
   return (
     <ScrollView contentContainerStyle={styles.wrap}>
-      <ScreenHeader title="Quick table" onBack={app.back} right={<Button small kind="ghost" icon="users" title="Clubs" onPress={() => app.go({ name: 'clubs' })} />} />
+      <ScreenHeader title={t('online.title')} onBack={app.back} right={<Button small kind="ghost" icon="users" title={t('online.clubs')} onPress={() => app.go({ name: 'clubs' })} />} />
       <View style={styles.note}>
         <Icon name="shield" size={20} />
         <P style={{ flex: 1, fontSize: 13, lineHeight: 18 }}>
-          Tables run on the game server; every player verifies each hand. Share the table code by any chat app.
+          {t('online.note')}
         </P>
       </View>
       <View style={styles.cols}>
         <Card style={styles.col}>
           <Row>
             <Icon name="play" size={26} color={colors.cta} />
-            <H2>Create a table</H2>
+            <H2>{t('online.create.title')}</H2>
           </Row>
-          <P dim style={{ fontSize: 13 }}>{describeRules(app.settings.rules)}</P>
-          <P dim style={{ fontSize: 12 }}>The server deals and referees, so no player can see the wall. Empty seats can be filled with bots.</P>
-          <Button title={busy === 'create' ? 'Creating…' : 'Create table'} onPress={() => void run('create')} disabled={busy !== null} />
+          <P dim style={{ fontSize: 13 }}>{rulesSummary(app.settings.rules, t, locale)}</P>
+          <P dim style={{ fontSize: 12 }}>{t('online.create.body')}</P>
+          <Button title={busy === 'create' ? t('online.create.busy') : t('online.create.button')} onPress={() => void run('create')} disabled={busy !== null} />
         </Card>
         <Card style={styles.col}>
           <Row>
             <Icon name="users" size={26} />
-            <H2>Join with a code</H2>
+            <H2>{t('online.join.title')}</H2>
           </Row>
-          <TextInput value={code} onChangeText={(t) => setCode(t.toUpperCase())} autoCapitalize="characters" placeholder="ABC123" placeholderTextColor="#9AA0BF" style={styles.input} maxLength={8} />
-          <Button title={busy === 'join' ? 'Joining…' : 'Join table'} kind="secondary" onPress={() => void run('join')} disabled={busy !== null || code.trim().length < 4} />
+          <TextInput value={code} onChangeText={(v) => setCode(v.toUpperCase())} autoCapitalize="characters" placeholder="ABC123" placeholderTextColor="#9AA0BF" style={styles.input} maxLength={8} />
+          <Button title={busy === 'join' ? t('online.join.busy') : t('online.join.button')} kind="secondary" onPress={() => void run('join')} disabled={busy !== null || code.trim().length < 4} />
         </Card>
       </View>
       {error && (
@@ -73,7 +75,7 @@ export function OnlineScreen() {
           </Row>
           {__DEV__ && (
             <P dim style={{ fontSize: 12 }}>
-              Game server: {app.signalUrl}. Development builds can change it in Settings.
+              {t('online.devServer', { url: app.signalUrl })}
             </P>
           )}
         </Card>

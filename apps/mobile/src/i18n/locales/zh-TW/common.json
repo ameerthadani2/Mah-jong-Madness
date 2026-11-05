@@ -1,9 +1,33 @@
 {
+  "_review": "first pass, needs native review",
   "ok": "確定",
   "cancel": "取消",
   "back": "返回",
   "save": "儲存",
   "close": "關閉",
   "retry": "再試一次",
-  "loading": "載入中…"
+  "loading": "載入中…",
+  "done": "完成",
+  "open": "開啟",
+  "player": "玩家",
+  "bot": "電腦",
+  "you": "你",
+  "roles": {
+    "owner": "會長",
+    "admin": "管理員",
+    "member": "成員",
+    "guest": "訪客"
+  },
+  "bots": {
+    "beginner": "常打錯效率牌，從不棄胡防守。適合熟悉牌局流程。",
+    "club": "牌效扎實，該吃碰才吃碰，有基本防守。",
+    "pro": "出牌快又有效率，遇到聽牌的對手會棄胡防守，並留住能加台的牌。"
+  },
+  "boot": {
+    "title": "這台裝置無法進行公平的牌局",
+    "body": "Mahjong Madness 需要系統的安全亂數產生器才能公平洗牌，但這台裝置上無法使用。請更新 App 或裝置的系統軟體。"
+  },
+  "rules": {
+    "summary": "底%{base} / 台%{tai} · %{hands} 局 · %{speed}（每手 %{turn} 秒 + 備用 %{bank} 秒）"
+  }
 }

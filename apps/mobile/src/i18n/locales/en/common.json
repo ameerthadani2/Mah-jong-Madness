@@ -1,9 +1,33 @@
 {
+  "_review": "n/a",
   "ok": "OK",
   "cancel": "Cancel",
   "back": "Back",
   "save": "Save",
   "close": "Close",
   "retry": "Try again",
-  "loading": "Loading…"
+  "loading": "Loading…",
+  "done": "Done",
+  "open": "Open",
+  "player": "Player",
+  "bot": "Bot",
+  "you": "you",
+  "roles": {
+    "owner": "owner",
+    "admin": "admin",
+    "member": "member",
+    "guest": "guest"
+  },
+  "bots": {
+    "beginner": "Makes efficiency mistakes and never folds. Good for learning the flow.",
+    "club": "Solid tile efficiency, claims when it helps, basic defence.",
+    "pro": "Fast and efficient, folds against ready players and keeps scoring tiles."
+  },
+  "boot": {
+    "title": "This device cannot run fair games",
+    "body": "Mahjong Madness needs the system's secure random number generator to shuffle fairly, and it is not available here. Please update the app or your device's system software."
+  },
+  "rules": {
+    "summary": "底%{base} / 台%{tai} · %{hands} rotations · %{speed} (%{turn}s + %{bank}s bank)"
+  }
 }

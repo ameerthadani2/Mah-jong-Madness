@@ -2,6 +2,8 @@ import React, { useEffect } from 'react';
 import { ScrollView, Share, StyleSheet, Text, View } from 'react-native';
 import { useApp } from '../app-state';
 import { useSession } from '../game/useTable';
+import { useT } from '../i18n';
+import { friendlyError } from '../logic/errors';
 import { colors, fonts, nameFont, space } from '../theme';
 import { Button, Card, H2, P, Pill, Row, ScreenHeader, StrokeText } from '../components/Ui';
 import { AvatarPlate, seatAvatarId } from '../components/Avatars';
@@ -9,6 +11,7 @@ import { Icon } from '../components/Icons';
 
 export function LobbyScreen() {
   const app = useApp();
+  const { t } = useT();
   const session = app.session;
   const state = useSession(session);
 
@@ -21,8 +24,8 @@ export function LobbyScreen() {
     return (
       <View style={styles.center}>
         <Card style={{ alignItems: 'center' }}>
-          <H2>No table</H2>
-          <Button title="Back" onPress={app.back} />
+          <H2>{t('lobby.noTable')}</H2>
+          <Button title={t('common.back')} onPress={app.back} />
         </Card>
       </View>
     );
@@ -42,22 +45,22 @@ export function LobbyScreen() {
 
   return (
     <ScrollView contentContainerStyle={styles.wrap}>
-      <ScreenHeader title={`Table ${session.roomCode}`} onBack={leave} />
+      <ScreenHeader title={t('lobby.title', { code: session.roomCode })} onBack={leave} />
       <View style={styles.cols}>
         <Card style={[styles.col, { alignItems: 'center' }]}>
-          <P dim>Share this code</P>
+          <P dim>{t('lobby.shareCode')}</P>
           <View style={styles.codeBox}>
             <StrokeText style={styles.code} strokeWidth={2.5} drop={2.5}>
               {session.roomCode}
             </StrokeText>
           </View>
           <Row style={{ flexWrap: 'wrap', justifyContent: 'center', rowGap: 6 }}>
-            <Button small kind="secondary" icon="share" title="Share" onPress={() => void Share.share({ message: `Join my Mahjong Madness table: ${session.roomCode}` })} />
-            <Pill text={session.mode === 'online' ? 'Server table' : 'On this device'} icon="shield" tone="gold" />
+            <Button small kind="secondary" icon="share" title={t('lobby.share')} onPress={() => void Share.share({ message: t('lobby.shareMessage', { code: session.roomCode }) })} />
+            <Pill text={session.mode === 'online' ? t('lobby.serverTable') : t('lobby.onDevice')} icon="shield" tone="gold" />
           </Row>
         </Card>
         <Card style={styles.col}>
-          <H2>Seats</H2>
+          <H2>{t('lobby.seats')}</H2>
           {state.seats.map((s) => {
             const empty = !s.peerId && !s.isBot;
             return (
@@ -69,26 +72,26 @@ export function LobbyScreen() {
                 ) : (
                   <AvatarPlate id={seatAvatarId(s, s.seat)} size={40} />
                 )}
-                <Text style={[styles.seatName, nameFont(s.name || 'Bot'), empty && { color: colors.inkDim }]} numberOfLines={1}>
-                  {s.name || (s.isBot ? 'Bot' : 'Empty — waiting for a friend')}
+                <Text style={[styles.seatName, nameFont(s.name || (s.isBot ? t('common.bot') : t('lobby.emptySeat'))), empty && { color: colors.inkDim }]} numberOfLines={1}>
+                  {s.name || (s.isBot ? t('common.bot') : t('lobby.emptySeat'))}
                 </Text>
                 {s.isBot && <Icon name="bot" size={22} />}
-                {s.seat === state.seat && <Pill text="you" tone="gold" size="sm" />}
-                {s.isBot && localHost && <Button small kind="ghost" title="Remove" onPress={() => localHost.removeBot(s.seat)} />}
+                {s.seat === state.seat && <Pill text={t('common.you')} tone="gold" size="sm" />}
+                {s.isBot && localHost && <Button small kind="ghost" title={t('lobby.remove')} onPress={() => localHost.removeBot(s.seat)} />}
               </Row>
             );
           })}
           <Row style={{ flexWrap: 'wrap', rowGap: 6 }}>
-            <Button small kind="secondary" icon="bot" title="Add bot" onPress={addBot} />
+            <Button small kind="secondary" icon="bot" title={t('lobby.addBot')} onPress={addBot} />
             <P dim style={{ fontSize: 12, flexShrink: 1 }}>
-              Empty seats are filled with bots when you start.
+              {t('lobby.fillHint')}
             </P>
           </Row>
         </Card>
       </View>
-      <Button large title={humans > 1 ? 'Start match' : 'Start (bots fill empty seats)'} icon="play" onPress={start} style={{ alignSelf: 'center' }} />
-      {state.disconnected && <Pill tone="danger" icon="warning" text="Connection lost. Go back to Home and tap Resume." />}
-      {state.lastError && <Pill tone="danger" icon="warning" text={state.lastError} />}
+      <Button large title={humans > 1 ? t('lobby.start') : t('lobby.startWithBots')} icon="play" onPress={start} style={{ alignSelf: 'center' }} />
+      {state.disconnected && <Pill tone="danger" icon="warning" text={t('lobby.connectionLost')} />}
+      {state.lastError && <Pill tone="danger" icon="warning" text={friendlyError(new Error(state.lastError), t)} />}
     </ScrollView>
   );
 }

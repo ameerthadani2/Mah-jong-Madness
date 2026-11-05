@@ -13,6 +13,7 @@ import { Nunito_700Bold } from '@expo-google-fonts/nunito/700Bold';
 import { Nunito_800ExtraBold } from '@expo-google-fonts/nunito/800ExtraBold';
 import { randomHex } from '@mjm/net';
 import { AppProvider, useApp } from './src/app-state';
+import { t } from './src/i18n';
 import { colors, fonts } from './src/theme';
 import { SkyBackdrop, TableBackdrop } from './src/components/Backdrop';
 import { Logo } from './src/components/Logo';
@@ -113,12 +114,12 @@ function secureRandomError(): string | null {
   }
 }
 
-/** Plain, font-independent error screen for a device that cannot run the app. */
+/** Plain, font-independent error screen for a device that cannot run the app (shown before settings load, so in the device language). */
 function BootError({ detail }: { detail: string }) {
   return (
     <View style={[styles.root, styles.center, styles.errorWrap]}>
-      <Text style={styles.errorTitle}>This device cannot run fair games</Text>
-      <Text style={styles.errorBody}>Mahjong Madness needs the system's secure random number generator to shuffle fairly, and it is not available here. Please update the app or your device's system software.</Text>
+      <Text style={styles.errorTitle}>{t('common.boot.title')}</Text>
+      <Text style={styles.errorBody}>{t('common.boot.body')}</Text>
       <Text style={styles.errorDetail}>{detail}</Text>
     </View>
   );

@@ -1,1 +1,46 @@
-{}
+{
+  "_review": "n/a",
+  "play": {
+    "title": "Play vs Bots",
+    "start": "Play now"
+  },
+  "clubs": {
+    "title": "Clubs",
+    "titleWide": "Clubs & Friends",
+    "blurb": "Your rules, your members. Share a code and play anywhere.",
+    "open": "My clubs",
+    "quickTable": "Quick table"
+  },
+  "learn": {
+    "title": "Learn",
+    "open": "Learn",
+    "lessons": "%{done}/%{total} lessons",
+    "streak": "%{days} day streak",
+    "dailyDone": "Daily done",
+    "daily": "Daily puzzle"
+  },
+  "shop": {
+    "title": "Shop",
+    "blurb": "Table looks, coaching and gems. Never luck.",
+    "open": "Open"
+  },
+  "profile": {
+    "meta": "%{hands} hands · %{wins}",
+    "noWins": "no wins yet",
+    "winRate": "%{rate}% wins"
+  },
+  "welcome": {
+    "title": "Welcome!",
+    "sub": "Pick a name and a buddy.",
+    "namePlaceholder": "Your name"
+  },
+  "resume": {
+    "title": "Table in progress",
+    "local": "Offline match vs bots · hand %{hand}",
+    "online": "Online table %{code}",
+    "club": " · club %{code}",
+    "resume": "Resume",
+    "reconnecting": "Reconnecting…",
+    "discard": "Discard"
+  }
+}

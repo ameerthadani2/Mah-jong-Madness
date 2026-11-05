@@ -1,1 +1,59 @@
-{}
+{
+  "_review": "first pass, needs native review",
+  "title": "俱樂部",
+  "quickTable": "快速開桌",
+  "note": "俱樂部就是你的私人房間：你的規則、你的成員、你的排行榜。分享代碼，隨時隨地開打。",
+  "join": {
+    "title": "加入俱樂部",
+    "placeholder": "俱樂部代碼",
+    "button": "加入",
+    "requestSent": "已送出申請 — 需等管理員核准。"
+  },
+  "create": {
+    "title": "建立俱樂部",
+    "new": "新俱樂部",
+    "namePlaceholder": "俱樂部名稱",
+    "preset": "預設規則",
+    "approval": "成員加入前需要核准",
+    "button": "建立"
+  },
+  "mine": "我的俱樂部",
+  "none": "你還沒有加入任何俱樂部。",
+  "summary": "%{members} 位成員 · %{tables} 張牌桌開放中 · %{stakes}",
+  "pending": "等待核准",
+  "open": "進入",
+  "loadingClub": "載入俱樂部中…",
+  "tableLabel": "%{name} 的牌桌",
+  "code": "代碼 %{code}",
+  "members": "%{n} 位成員",
+  "tabs": {
+    "tables": "牌桌（%{n}）",
+    "standings": "排行榜",
+    "rules": "規則"
+  },
+  "tables": {
+    "opening": "開桌中…",
+    "open": "開一張牌桌",
+    "none": "目前沒有開放的牌桌。",
+    "noneCanOpen": "目前沒有開放的牌桌。開一桌並分享俱樂部代碼吧。",
+    "waiting": "等待中",
+    "hand": "第 %{n} 局",
+    "away": "%{name}（離開）",
+    "seats": "%{n} 個空位",
+    "join": "加入牌桌",
+    "pendingRequests": "待審申請",
+    "approve": "核准"
+  },
+  "standing": "%{played} 場 · %{won} 勝",
+  "rules": {
+    "presets": "預設規則",
+    "speed": "速度",
+    "speedChip": "%{label} %{turn}秒",
+    "membersCanOpen": "成員可以開桌",
+    "approveNew": "新成員需要核准",
+    "multipleWinners": "一炮多響",
+    "passRule": "過水",
+    "allowChi": "可以吃",
+    "adminOnly": "只有會長和管理員可以修改規則。"
+  }
+}

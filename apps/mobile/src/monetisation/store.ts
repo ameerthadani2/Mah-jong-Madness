@@ -24,7 +24,11 @@ export const EMPTY_WALLET: Wallet = { diamonds: 0, bonusDiamonds: 0, owned: [], 
 
 export interface PurchaseResult {
   ok: boolean;
+  /** English, for logs; screens translate `reason` (falling back to a generic failure line). */
   message?: string;
+  reason?: 'not_for_diamonds' | 'need_diamonds';
+  /** For `need_diamonds`: how many more diamonds the purchase needs. */
+  short?: number;
   wallet: Wallet;
 }
 
@@ -86,9 +90,9 @@ export function applyGrant(wallet: Wallet, product: Product, via: Wallet['histor
 
 /** Spend diamonds (bonus ledger first) on an item that has a diamond price. */
 export function buyWithDiamonds(wallet: Wallet, product: Product): PurchaseResult {
-  if (!product.diamondPrice) return { ok: false, message: 'Not purchasable with diamonds', wallet };
+  if (!product.diamondPrice) return { ok: false, reason: 'not_for_diamonds', message: 'Not purchasable with diamonds', wallet };
   const total = wallet.diamonds + wallet.bonusDiamonds;
-  if (total < product.diamondPrice) return { ok: false, message: `Need ${product.diamondPrice - total} more diamonds`, wallet };
+  if (total < product.diamondPrice) return { ok: false, reason: 'need_diamonds', short: product.diamondPrice - total, message: `Need ${product.diamondPrice - total} more diamonds`, wallet };
   const fromBonus = Math.min(wallet.bonusDiamonds, product.diamondPrice);
   const next = applyGrant({ ...wallet, bonusDiamonds: wallet.bonusDiamonds - fromBonus, diamonds: wallet.diamonds - (product.diamondPrice - fromBonus) }, product, 'diamonds');
   return { ok: true, wallet: next };

@@ -4,7 +4,13 @@
  * Pricing follows docs/MONETISATION.md: a PokerBros-style Diamond ladder
  * (~60 per USD) and chess.com-style coaching tiers. Store SDKs supply the
  * localised price strings at runtime; USD here are tier placeholders.
+ *
+ * `title` / `description` / `badge` here are the English source copy; screens show
+ * `productText(p, t)`, which reads `catalog.<id with dots as underscores>.*` so
+ * every language (English included) comes from the locale files.
  */
+import type { Translate } from '../logic/translate';
+
 export type ProductKind = 'diamonds' | 'cosmetic' | 'subscription' | 'club' | 'vip';
 export type CoachTier = 'free' | 'gold' | 'platinum' | 'diamond';
 
@@ -83,3 +89,14 @@ export const FREE_CLUB_LIMITS = { members: 30, managers: 2, concurrentTables: 1 
 
 /** Daily meters for the free tier (reset at local midnight). */
 export const FREE_METERS = { reviewsPerDay: 1, rushPerDay: 1 };
+
+/** Locale key prefix for a product: `diamonds.60` → `catalog.diamonds_60`. */
+export function productKey(p: Pick<Product, 'id'>): string {
+  return `catalog.${p.id.replace(/\./g, '_')}`;
+}
+
+/** A product's player-facing copy in the current language. */
+export function productText(p: Product, t: Translate): { title: string; description: string; badge?: string } {
+  const k = productKey(p);
+  return { title: t(`${k}.title`), description: t(`${k}.description`), badge: p.badge ? t(`${k}.badge`) : undefined };
+}
