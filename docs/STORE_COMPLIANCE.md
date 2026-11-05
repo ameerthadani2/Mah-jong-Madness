@@ -1,32 +1,86 @@
-# Store compliance checklist
+# Store compliance
 
-Verified against Apple's App Review Guidelines and Developer Program License Agreement during research (November 2026). Google Play's "Real-Money Gambling, Games, and Contests" policy and the IARC "simulated gambling" descriptor could not be read in that session and must be checked before submission.
+What the app does today, measured against the store rules, and the answers to give at submission. Apple rules were checked against the App Review Guidelines and the Developer Program License Agreement (November 2026). Google Play's policy text and the IARC questionnaire could not be read in that research session: every Play and IARC item below is marked **verify** and must be checked against the live pages before submission. Nothing here is legal advice; the Terms of Service and Privacy Policy in the app are DRAFTS pending counsel review.
 
-## Apple (verified)
+## What exists in the app
 
-| Rule | What it means for us | Status |
+| Surface | Where | State |
 | --- | --- | --- |
-| 5.3.3 — no IAP for real-money gaming currency | Chips must never be cashable or exchangeable; the moment they are, our Diamond shop itself violates policy. | Designed in: no cash-out, no transfers, no settlement features. |
-| 5.3.4 — real-money gaming needs licences, geo-restriction, free listing | Stay firmly in "simulated gambling": chips have no value. | Designed in. |
-| 3.1.1 — currency via IAP, purchased currency never expires, restore mechanism, loot-box odds | Diamonds/chips never expire; separate expiring ledger for free grants; Restore Purchases; no loot boxes. | Catalogue follows; implement ledgers before release. |
-| 3.1.1 — gifting allowed, exchange/refund-to-recipient not | Club owners may allocate chips they bought; players cannot exchange them. | Designed in. |
-| 3.1.2 — subscriptions may bundle consumables; ≥ 7 days; cross-device | Coach tiers and club tiers qualify. | OK. |
-| 3.1.3(b) — items bought elsewhere usable on iOS only if also sold via IAP | Same SKUs on web/Android and iOS. | Plan. |
-| 3.1.1(a) — no external purchase links outside the US storefront without entitlement | Do not link to a web shop from the app in non-US storefronts. | Plan. |
-| 3.2.1(vii) — no in-app peer-to-peer money tied to digital content | No tipping/settlement tied to chips. | Designed in. |
-| 5.3.1/5.3.2 and DPLA 3.3.4 — contests sponsored solely by the developer, rules in-app | Club events award only in-game items; any real-prize event is ours alone. | Policy in docs. |
-| 5.1.1(ix) — regulated fields need a legal entity | Publish from a company account. | To do. |
-| 2.3.6 / 2.3.8 — honest age rating; 4+ metadata | Answer Simulated Gambling = Frequent, Contests = Frequent, Chat = Yes. Expect 17+/18+. | To do at submission. |
-| DPLA Attachment 2 — no transferable "Currency" | Chips are club-scoped allocations, not a balance that moves between users. | Designed in. |
-| Age assurance (Texas 4 Jun 2026, Utah 6 May 2026, Louisiana 1 Jul 2026; adult download gating in Singapore/Australia/Brazil) | Implement Declared Age Range API and an in-app age gate before US launch. | To do. |
-| Commission | 30% standard / 15% Small Business Program; 26% Taiwan storefront from 31 Oct 2026. | Modelled in docs/MONETISATION.md. |
+| Store | `apps/mobile/src/monetisation/` | RevenueCat (`react-native-purchases`) when `EXPO_PUBLIC_REVENUECAT_IOS_KEY` / `_ANDROID_KEY` is set; otherwise the Shop says "Store unavailable on this build" and grants nothing. The mock store exists only in development builds with `EXPO_PUBLIC_STORE_MODE=mock`. |
+| Entitlements | server `entitlements` table, read by the app from `GET /api/me` | The app never grants anything itself; a tampered local cache is overwritten on the next sync. Expiry is judged by the server clock. |
+| Restore Purchases | Shop, under the products | Calls the store's restore, then re-reads `/api/me`. |
+| Catalogue | `catalog.ts`, `docs/MONETISATION.md` | Diamond packs and Coach Gold / Coach Platinum (monthly and yearly) through the store; four table looks bought with diamonds only. No loot boxes, no randomised items, nothing that changes play. |
+| "No monetary value" | Shop, Clubs list, club standings, Settings | "Diamonds and points have no monetary value and cannot be redeemed or transferred." Also in the Terms, section 4. |
+| Terms of Service, Privacy Policy | Settings → Legal, the first-run age gate, the Shop | Bundled DRAFT text (en, zh-TW) under a "DRAFT — pending counsel review" banner, or the published page in the browser when `EXPO_PUBLIC_TERMS_URL` / `EXPO_PUBLIC_PRIVACY_URL` is set (https only). |
+| Age gate | first run (fresh install), else before the first visit to the Shop or Clubs | Birth year only; under **17** sees a polite blocked screen with the year they may return. With no birthday the gate assumes the latest one, so a player counts as 17 from 1 January of the year they turn 18. The answer is stored on the device and sent with `PATCH /api/me` (`users.birth_year`) once there is a session. The limit is `AGE_LIMIT` in `apps/mobile/src/legal/age.ts`; raise it if the store rating comes out higher. The web e2e (`apps/mobile/e2e/play-hand.cjs`) seeds a saved profile, so it runs as an older install: Home is not gated and the run never opens the Shop or Clubs. |
+| Account deletion | Settings → Account → Delete account | `DELETE /api/me` (soft delete, scrub after 30 days, purchase records kept). |
+| Report player | club standings (and the table once wired) | `ReportPlayerSheet` → `POST /api/reports` with a fixed reason list and an optional note. Reports are reviewed by a person; there is no automated detection yet. |
+| Clubs | free | Points-only standings with seasons ("Start new season" for owners archives the season and keeps all-time totals). No chips, no stakes, no settlement features, no transfers between players. |
 
-## Google Play (to verify)
-* Real-Money Gambling, Games, and Contests policy text and the simulated-gambling content descriptor.
-* How PokerBros, PPPoker and ClubGG are listed and whether any have been removed.
+Not yet in the app (owner or other tracks): the iOS privacy manifest (`ios.privacyManifests` in `app.config.js`), a web page or form for account deletion requests (Play requires one), Apple's Declared Age Range API, the support email in the legal texts, counsel-approved legal texts.
 
-## Jurisdictions (to verify with counsel before enabling club chips)
-Taiwan Criminal Code art. 266 (2022 online-gambling amendment) and drop-rate disclosure rules; Hong Kong Gambling Ordinance Cap. 148; Singapore Gambling Control Act 2022 ("money or money's worth"); Malaysia Common Gaming Houses Act 1953; US *Kater v. Churchill Downs* (9th Cir. 2018) and Washington RCW 9.46.0285 ("thing of value" risk for play-chip apps — always keep a free-play path so chips are never required to keep playing); mainland China NPPA ISBN requirement (exclude until confirmed).
+## Apple App Review Guidelines
 
-## App Review notes to include
-Chips and Diamonds have no monetary value and cannot be redeemed; there is no cash-out; club owners purchase via IAP only; terms prohibit chip sales or agent settlement and are enforced; the shuffle is provably fair (commit–reveal, audited per hand); no tile-counting assistance is shown during live chip play.
+| Rule | What it means here | Status |
+| --- | --- | --- |
+| 5.3.3 — no IAP for real-money gaming currency | Diamonds buy only table looks; nothing is cashable or exchangeable. | Met. |
+| 5.3.4 — real-money gaming needs licences | We are simulated gambling only: no stakes, no prizes, no cash-out. | Met. |
+| 3.1.1 — digital content via IAP; purchased currency never expires; restore; loot-box odds | All sales through the store SDK; purchased diamonds never expire (bonus diamonds are a separate ledger); Restore Purchases in the Shop; no loot boxes. | Met. |
+| 3.1.1 — no gifting or transfer of currency between users | No transfers exist. | Met. |
+| 3.1.2 — subscriptions: ongoing value, at least 7 days, terms shown near the purchase | Coach plans unlock Pro bots, unlimited Puzzle Rush and (Platinum) unlimited reviews; the Shop states auto-renewal and cancellation and links the Terms and Privacy Policy. | Met (copy). |
+| 3.1.3(b) — items bought elsewhere usable on iOS only if also sold via IAP | Same store ids on iOS and Android; no web shop. | Met. |
+| 3.1.1(a) — no external purchase links | None. | Met. |
+| 5.1.1(i) — privacy policy link in the app and in App Store Connect | In the app: yes (DRAFT). App Store Connect: owner, once published. | Partly. |
+| 5.1.1(v) — account deletion in the app if accounts can be created | Settings → Account → Delete account. | Met. |
+| 1.2 — user-generated content needs reporting and blocking | Report player exists; blocking does not yet. Display names, club names and descriptions are the only free text other players see (no free chat). | Partly (blocking to do). |
+| 5.1.1(ix) — regulated fields need a legal entity | Publish from a company account. | Owner. |
+| 2.3.6 — honest age rating | Answers below. | At submission. |
+| Age assurance laws (Texas 1 Jan 2026, Utah 7 May 2026, Louisiana 1 Jul 2026 as researched) | In-app birth-year gate exists; the Declared Age Range API is not yet integrated. | Partly. |
+
+## Age rating answers
+
+**Apple questionnaire.** Simulated Gambling: **Frequent/Intense**. Contests: None (no prizes). Unrestricted web access: No. User-generated content: Yes (display names, club names and descriptions; no free chat). Messaging and chat: No free text (fixed emotes and quick phrases only). In-app purchases: Yes. Advertising: No. Expect the highest band Apple assigns for frequent simulated gambling (17+ under the older scale; check how the current bands map before submission). The in-app gate must be at least the rating.
+
+**Google Play / IARC (verify).** Simulated gambling: Yes. Real-money gambling: No. Users interact: Yes (shared tables and clubs, no free chat). Shares location: No. Digital purchases: Yes. Expected outcome: a teen-or-higher rating with a "Simulated Gambling" descriptor that varies by region; Taiwan's 遊戲軟體分級 is planned as 輔15 (counsel to confirm). The in-app gate stays at 17 whatever the regional rating.
+
+## Google Play Data Safety answers (verify against the live form)
+
+Collected and linked to the account; not sold; not shared beyond service providers (hosting, database, RevenueCat for purchases, and crash reporting / analytics only when switched on in the build). Data is encrypted in transit (https / wss). Users can delete their account in the app; Play also needs a web deletion URL (owner).
+
+| Play category | Data | Required? | Purpose |
+| --- | --- | --- | --- |
+| Personal info → Name | display name (chosen by the player) | Required for online play | App functionality |
+| Personal info → Email address | only when Sign in with Apple/Google shares a verified email | Optional | Account management |
+| Personal info → User IDs | server account id; Apple/Google subject id when linked | Required online | App functionality, account management |
+| Personal info → Other info | birth year | Required | Legal compliance (age gate) |
+| Financial info → Purchase history | product, transaction id, price, currency (from the store via RevenueCat) | Only for buyers | App functionality (delivering purchases) |
+| App activity → In-app actions / other | tables joined, hands (shuffle log), results, standings, reports filed | Required online | App functionality, fraud prevention |
+| App info and performance → Crash logs, diagnostics | only when the build carries a Sentry DSN / analytics key | Optional | Analytics, app functionality |
+| Device or other IDs | random device id made by the app, platform, app build | Required online | App functionality |
+
+Not collected: location, contacts, photos, messages, health, payment card details (the store handles payment), advertising id.
+
+**Apple App Privacy ("nutrition label").** Data linked to you: Contact info (email, only via Sign in), Identifiers (user id, device id), Purchases, Usage data (gameplay), Diagnostics (only when enabled), Other data (birth year). Tracking: No.
+
+## Google Play (verify)
+
+- Real-Money Gambling, Games, and Contests policy: confirm that a simulated-gambling title with no prizes and no cash value falls under "simulated gambling" and what listing disclosures it needs.
+- How the major club-poker apps are listed and whether any were removed, as a guide to what reviewers accept.
+
+## Jurisdictions (counsel before clubs are promoted publicly)
+
+Taiwan Criminal Code art. 266 (2022 online-gambling amendment) and the game rating rules; Hong Kong Gambling Ordinance Cap. 148; Singapore Gambling Control Act 2022 ("money or money's worth"); Malaysia Common Gaming Houses Act 1953; US *Kater v. Churchill Downs* (9th Cir. 2018) and Washington RCW 9.46.0285 ("thing of value" risk for play-currency apps: a free path to keep playing always exists here, and diamonds never affect play); mainland China NPPA ISBN requirement (excluded until confirmed). Clubs ship points-only (docs/MONETISATION.md, decision 1).
+
+## App Review notes (paste at submission, adjusted to the build)
+
+> This is a Taiwanese 16-tile mahjong game with simulated gambling and no real-money play. Diamonds and points have no monetary value and cannot be redeemed or transferred; there is no cash-out, no prizes and no way to move anything between players. Diamonds buy only table looks (cosmetic). Coach Gold and Coach Platinum are auto-renewing subscriptions that unlock stronger practice bots, unlimited Puzzle Rush and unlimited hand reviews; nothing sold changes the tiles dealt, what a player can see at the table, or the clock. Clubs are free and keep points-only standings. Purchases are restored from the Shop ("Restore purchases"). Players must be 17 or older: the app asks for a birth year on first launch. Accounts can be deleted in Settings → Account. Players can be reported from club standings; reports are reviewed by a person. Every online hand's shuffle is seeded by all seats and verified by the app after the hand ("Fair play"). Demo account: [reviewer account details].
+
+## Submission checklist (store and legal items)
+
+- [ ] RevenueCat keys in the build; products in App Store Connect and Play with the `catalog.ts` store ids; server webhook secret set (`storeEnabled: true`).
+- [ ] No `EXPO_PUBLIC_STORE_MODE` in release profiles (a release build ignores it anyway).
+- [ ] Counsel-approved Terms and Privacy published; `EXPO_PUBLIC_TERMS_URL`, `EXPO_PUBLIC_PRIVACY_URL` set; the same URLs in App Store Connect and Play; `[Company name]`, `[support email]`, `[jurisdiction]` filled in.
+- [ ] Age rating questionnaires answered as above; `AGE_LIMIT` not below the resulting rating.
+- [ ] Privacy manifest, App Privacy label and Data Safety form match the tables above (and the build's telemetry settings).
+- [ ] Play account-deletion web URL.
+- [ ] Review notes and a reviewer demo account.

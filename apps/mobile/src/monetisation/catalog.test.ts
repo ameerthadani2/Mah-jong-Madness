@@ -80,6 +80,23 @@ describe('launch catalogue', () => {
     for (const p of DIAMOND_PACKS) expect(p.description, p.id).not.toMatch(/emote|VIP|club/i);
   });
 
+  it('docs/MONETISATION.md lists the same catalogue', () => {
+    const doc = readFileSync(join(__dirname, '..', '..', '..', '..', 'docs', 'MONETISATION.md'), 'utf8');
+    const section = doc.slice(doc.indexOf('## Catalogue'), doc.indexOf('## Compliance guardrails'));
+    for (const p of DIAMOND_PACKS) {
+      const row = section.split('\n').find((l) => l.startsWith(`| \`${p.storeId}\``));
+      expect(row, p.id).toBeDefined();
+      const cells = row!.split('|').map((c) => c.trim());
+      expect(cells.slice(2, 5), p.id).toEqual([`$${p.priceUsd}`, p.diamonds!.toLocaleString('en'), p.bonusDiamonds!.toLocaleString('en')]);
+      expect(cells[5], p.id).toBe(p.badge ?? '');
+    }
+    for (const p of COSMETICS) expect(section, p.id).toContain(`${p.title.replace(/ table$/, '')} ${p.diamondPrice}`);
+    for (const p of SUBSCRIPTIONS) {
+      expect(section, p.id).toContain(`\`${p.storeId}\``);
+      expect(section, p.id).toContain(`$${p.priceUsd}`);
+    }
+  });
+
   it('every look unlocks a premium table theme that exists', () => {
     const themes = readFileSync(join(__dirname, '..', 'themes.ts'), 'utf8');
     for (const p of COSMETICS) expect(themes, p.id).toMatch(new RegExp(`id: '${p.unlocks}'[\\s\\S]*?premium: true`));
