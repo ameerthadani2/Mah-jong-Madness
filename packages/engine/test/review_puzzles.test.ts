@@ -63,6 +63,7 @@ describe('bot skills', () => {
         for (const m of review.moves) {
           expect(['best', 'good', 'inaccuracy', 'mistake', 'blunder']).toContain(m.grade);
           expect(m.explanation.length).toBeGreaterThan(0);
+          expect(m.reasonKey).toMatch(/^review\./);
         }
       }
     }
