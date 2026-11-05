@@ -8,7 +8,9 @@ import { useT } from '../../i18n';
 import { AvatarPlate, seatAvatarId } from '../Avatars';
 import { Icon } from '../Icons';
 import { MeldView } from '../TableParts';
-import { Tile } from '../Tile';
+import { scaledTile, Tile } from '../Tile';
+import { useDisplayScale } from '../../display/DisplayScale';
+import { scaleTextStyle } from '../../display/scale';
 import { Button, P, Pill, Row, StrokeText } from '../Ui';
 import { resultLayout } from './layout';
 import { useRollUp } from './Motion';
@@ -20,6 +22,13 @@ function WinCard({ w, state }: { w: WinRecord; state: ClientState }) {
   const seatOf = (seat: number) => state.seats.find((s) => s.seat === seat);
   const name = (seat: number) => seatOf(seat)?.name ?? t('table.seat', { n: seat + 1 });
   const tai = useRollUp(w.score.tai);
+  // Settings → Display: the winning hand grows with the tile size (the row wraps), the 台 list with the text size.
+  const { tileScale, fontFactor } = useDisplayScale();
+  const tileSize = scaledTile('sm', tileScale);
+  const itemText = scaleTextStyle(styles.itemText, fontFactor);
+  const itemEn = scaleTextStyle(styles.itemEn, fontFactor);
+  const itemTai = scaleTextStyle(styles.itemTai, fontFactor);
+  const payment = scaleTextStyle(styles.payment, fontFactor);
   // Flower wins (八仙過海 / 七搶一) end the hand on a bonus tile: the winning tile sits in the flowers row.
   const flowerWin = w.score.flowerWin;
   const how = flowerWin === 'eight' ? t('table.win.eightFlowers') : flowerWin === 'sevenRob' ? t('table.win.sevenRob', { name: name(w.fromSeat!) }) : w.selfDrawn ? t('table.win.selfDrawn') : t('table.win.dealtIn', { name: name(w.fromSeat!) });
@@ -40,26 +49,26 @@ function WinCard({ w, state }: { w: WinRecord; state: ClientState }) {
       </Row>
       <Row style={{ flexWrap: 'wrap', rowGap: 4 }} gap={2}>
         {w.melds.map((m, i) => (
-          <MeldView key={i} meld={m} size="sm" />
+          <MeldView key={i} meld={m} size={tileSize} />
         ))}
         {w.hand.map((tile) => (
-          <Tile key={tile} tile={tile} size="sm" highlight={tile === w.winningTile ? 'wait' : undefined} />
+          <Tile key={tile} tile={tile} size={tileSize} highlight={tile === w.winningTile ? 'wait' : undefined} />
         ))}
         {w.flowers.map((f) => (
-          <Tile key={f} tile={f} size="sm" highlight={flowerWin && f === w.winningTile ? 'wait' : undefined} />
+          <Tile key={f} tile={f} size={tileSize} highlight={flowerWin && f === w.winningTile ? 'wait' : undefined} />
         ))}
       </Row>
       <View style={styles.items}>
         {w.score.items.map((it) => (
           <Row key={it.key} style={styles.itemRow}>
-            <Text style={[styles.itemText, { flex: 1 }]}>
-              {it.nameZh} <Text style={styles.itemEn}>{it.nameEn}</Text>
+            <Text style={[itemText, { flex: 1 }]}>
+              {it.nameZh} <Text style={itemEn}>{it.nameEn}</Text>
             </Text>
-            <Text style={styles.itemTai}>{t('table.win.tai', { tai: it.tai })}</Text>
+            <Text style={itemTai}>{t('table.win.tai', { tai: it.tai })}</Text>
           </Row>
         ))}
         {w.payments.map((p, i) => (
-          <Text key={i} style={styles.payment}>
+          <Text key={i} style={payment}>
             {t('table.win.payment', { from: name(p.from), to: name(p.to), points: p.points, tai: p.tai })}
           </Text>
         ))}

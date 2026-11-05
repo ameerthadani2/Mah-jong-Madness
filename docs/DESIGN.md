@@ -21,6 +21,7 @@ Nothing in the UI is an emoji or a system icon. Every icon, avatar, illustration
 | `components/TableParts.tsx` | Felt, wood rail, compass, live wall, melds, discard pools, seat badges |
 | `components/table/` | The table screen's parts: `TableHud`, `Felt`, `HandRail`, `ActionBar`, `CoachPanel`, `CallBanner` (call-outs and the winner reveal), `ResultSheet`, `Motion` (slide, flip, roll-up). `layout.ts` holds the geometry and `feel.ts` the timings, both pure and unit-tested |
 | `components/SoundSettings.tsx` | Settings → Sound: master switch and the voice for calls |
+| `components/DisplaySettings.tsx`, `display/` | Settings → Display: tile and text size, the provider and the scaled table geometry |
 | `audio/` | Sound: which table events make which sound (`cues.ts`), the player (`engine.ts`), the voice choice, and the hooks. Files and names: `assets/audio/manifest.json`, see `docs/CREDITS.md` |
 
 ## Palette
@@ -69,6 +70,23 @@ Run `npm run e2e:screens` in `apps/mobile` to capture every main screen at those
 * **Result sheet**: two columns on short landscape with a 2×2 score grid and a scrolling right column; on phones under 480 px wide the buttons stack, Next hand full width and the other two sharing a row at equal widths.
 * **Portrait**: the across seat's melds get their own line so they never run over the side name plates.
 * **Lessons**: tiles shrink until the longest group fits the card.
+* **Learn**: lessons are grouped by track (`LESSON_TRACKS` order), each with its name in both languages (zh-TW shows only the Chinese), done/total, minutes to go and a progress bar. Cards show minutes and a tick once done; the first unfinished lesson of each track is gold with an "Up next" tag. A new player sees a welcome card with one button into the first lesson; finishing a lesson shows an end screen with the next lesson in the track, or the next track. The rules are `src/logic/learn.ts`.
+
+## Display scale (Settings → Display)
+
+Two settings, each Normal / Large / Extra large, saved under their own key (`mjm.display`, see `src/display/`), so the saved Settings shape is unchanged. `DisplayScaleProvider` (wrapping the app in `App.tsx`) offers them through `useDisplayScale()`; without a provider everything is Normal.
+
+| | Normal | Large | Extra large |
+| --- | --- | --- | --- |
+| Tiles (`tileScale`) | 1 | 1.25 | 1.5 |
+| Text (`textScale`) | 1 | 1.15 | 1.3 |
+
+* **Tiles** grow in the hand rail, my melds, every pond, the opponents' melds, the result sheet and lesson hands. The geometry is `src/display/tableFit.ts`, pure and unit-tested; at Normal it returns exactly what `components/table/layout.ts` gives.
+  * Portrait: the hand still fits 17 tiles at 390 px. At Large and Extra large it wraps into a third row (never more: past three rows the tiles shrink instead). The felt above is a scroll view, so it gives up the height.
+  * Landscape: the hand stays one row, at most a fifth of the screen tall. When the row is wider than the rail, the rail scrolls sideways and keeps the drawn tile (at the end) in view. My melds grow only while they take under 40 % of the width.
+  * Ponds keep at least three tiles a row on a side seat and five in the centre; short landscape phones (under 420 px tall) stop at Large so the side ponds stay on the felt. A side seat's melds are capped so a kong fits its column.
+* **Text**: body text (`P` in `components/Ui.tsx`, which lessons, puzzles and the settings cards use) and the result sheet's 台 list scale with `textScale`; headings, buttons, pills and the table's labels do not, since they sit in fixed-size shapes. The OS text size is the floor: React Native already applies `PixelRatio.getFontScale()`, so the app adds only `max(1, textScale / osScale)` (`textFactor` in `src/display/scale.ts`). Picking Normal never undoes a large system font, and the card says so when the OS size is above 100 %.
+* Checked with Playwright at 390×844 and 844×390 for every step, and at 667×375, 360×740 and 1024×768 for Large and Extra large.
 
 ## Motion and sound
 
@@ -93,4 +111,4 @@ All motion is React Native `Animated` (no extra library); on web it runs without
 * Every tile is an SVG; profile on a low-end Android phone before launch.
 * The wall around the compass is decorative and does not track the dead wall.
 * Hand tiles in portrait are about 36 px wide (17 tiles across two rows on a 360 px phone); their touch area reaches 44 pt only vertically.
-* A large-tiles / large-text setting is still to come.
+* Large and Extra large text scale body text only; headings and buttons keep their size.

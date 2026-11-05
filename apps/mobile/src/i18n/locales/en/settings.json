@@ -72,5 +72,17 @@
   "legal": {
     "title": "Legal",
     "body": "The terms you play under and how your data is used. You can delete your account under Account above."
+  },
+  "display": {
+    "title": "Display",
+    "tiles": "Tile size",
+    "tilesHelp": "Your hand, melds, ponds and the results. Extra large wraps the portrait hand into three rows; in landscape the hand scrolls sideways.",
+    "text": "Text size",
+    "textHelp": "Lessons, puzzles and other reading text.",
+    "normal": "Normal",
+    "large": "Large",
+    "xl": "Extra large",
+    "sample": "Sample: the 一萬 to 九萬 run, then 東 南 西 北.",
+    "osFloor": "Your device text size (%{pct}%) is always the minimum."
   }
 }

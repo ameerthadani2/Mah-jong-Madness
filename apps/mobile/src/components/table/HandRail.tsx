@@ -1,6 +1,6 @@
 /** My seat under the table: plate, flowers, the hand on its wooden rack, and my melds. */
-import React from 'react';
-import { StyleSheet, View } from 'react-native';
+import React, { useRef } from 'react';
+import { ScrollView, StyleSheet, View } from 'react-native';
 import type { PlayerView, TileId } from '@mjm/engine';
 import { colors } from '../../theme';
 import { useT } from '../../i18n';
@@ -17,6 +17,8 @@ export function HandRail({
   plate,
   handTile,
   plateW,
+  meldTile = 28,
+  scroll = false,
   selected,
   canDiscard,
   drawn,
@@ -28,6 +30,10 @@ export function HandRail({
   plate: PlateProps;
   handTile: number;
   plateW: number;
+  /** My melds' tile width (grows with Settings → Display → Tiles). */
+  meldTile?: number;
+  /** Landscape at a large tile size: the hand is wider than the rail and scrolls sideways. */
+  scroll?: boolean;
   selected: TileId | null;
   canDiscard: boolean;
   /** The tile just drawn (set apart at the end of the hand), if it is mine to discard. */
@@ -40,12 +46,31 @@ export function HandRail({
   const { portrait, tablet } = L;
   const myPlate = <SeatBadge {...plate} size={tablet ? 54 : portrait ? 36 : 40} vertical={!portrait} maxNameWidth={portrait ? 120 : plateW - 4} />;
   const hand = me.hand ?? [];
+  const scroller = useRef<React.ComponentRef<typeof ScrollView>>(null);
+  const tiles = (
+    <View style={[styles.handTiles, portrait && { flexWrap: 'wrap', rowGap: 6, justifyContent: 'center' }]} accessibilityRole="list" accessibilityLabel={t('table.a11y.hand', { n: hand.length })}>
+      {hand.map((tile, i) => (
+        <Tile
+          key={tile}
+          tile={tile}
+          size={handTile}
+          selected={selected === tile}
+          dimmed={canDiscard ? false : undefined}
+          highlight={best === tile && canDiscard ? 'good' : undefined}
+          onPress={() => onTile(tile)}
+          accessibilityLabel={selected === tile ? t('table.a11y.tileSelected', { tile: tileName(tile, locale) }) : tileName(tile, locale)}
+          accessibilityHint={canDiscard ? t(selected === tile ? 'table.a11y.tapToDiscard' : 'table.a11y.tapToSelect') : undefined}
+          style={drawn === tile && i === hand.length - 1 ? { marginLeft: 10 } : undefined}
+        />
+      ))}
+    </View>
+  );
   return (
     <View style={[styles.footer, portrait && { paddingTop: 4 }]}>
       {portrait && (
         <Row gap={10} style={{ paddingHorizontal: 4, marginBottom: 2 }}>
           {myPlate}
-          <MeldsAndFlowers player={me} size="sm" style={{ flex: 1 }} />
+          <MeldsAndFlowers player={me} size={meldTile} style={{ flex: 1 }} />
         </Row>
       )}
       <View style={styles.handRow}>
@@ -68,27 +93,19 @@ export function HandRail({
           <View style={[styles.rack, { height: Math.round(handTile * 0.42) }]}>
             <View style={styles.rackTop} />
           </View>
-          <View style={[styles.handTiles, portrait && { flexWrap: 'wrap', rowGap: 6, justifyContent: 'center' }]} accessibilityRole="list" accessibilityLabel={t('table.a11y.hand', { n: hand.length })}>
-            {hand.map((tile, i) => (
-              <Tile
-                key={tile}
-                tile={tile}
-                size={handTile}
-                selected={selected === tile}
-                dimmed={canDiscard ? false : undefined}
-                highlight={best === tile && canDiscard ? 'good' : undefined}
-                onPress={() => onTile(tile)}
-                accessibilityLabel={selected === tile ? t('table.a11y.tileSelected', { tile: tileName(tile, locale) }) : tileName(tile, locale)}
-                accessibilityHint={canDiscard ? t(selected === tile ? 'table.a11y.tapToDiscard' : 'table.a11y.tapToSelect') : undefined}
-                style={drawn === tile && i === hand.length - 1 ? { marginLeft: 10 } : undefined}
-              />
-            ))}
-          </View>
+          {scroll ? (
+            // The drawn tile sits at the end of the row: keep it in view as the hand changes.
+            <ScrollView ref={scroller} horizontal showsHorizontalScrollIndicator={false} onContentSizeChange={() => scroller.current?.scrollToEnd({ animated: false })} testID="hand-scroll">
+              {tiles}
+            </ScrollView>
+          ) : (
+            tiles
+          )}
         </View>
         {!portrait && me.melds.length > 0 && (
           <View style={styles.myMelds}>
             {me.melds.map((m, i) => (
-              <MeldView key={i} meld={m} size="sm" />
+              <MeldView key={i} meld={m} size={meldTile} />
             ))}
           </View>
         )}

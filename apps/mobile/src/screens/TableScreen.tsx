@@ -21,7 +21,9 @@ import { ActionBar } from '../components/table/ActionBar';
 import { CallBanner, WinReveal, type Callout } from '../components/table/CallBanner';
 import { Felt, type PlateProps } from '../components/table/Felt';
 import { HandRail } from '../components/table/HandRail';
-import { ACTION_STRIP_H, handLayout, tableLayout } from '../components/table/layout';
+import { ACTION_STRIP_H, tableLayout } from '../components/table/layout';
+import { fitHand } from '../display/tableFit';
+import { useDisplayScale } from '../display/DisplayScale';
 import { RESULT_HOLD_MS } from '../components/table/feel';
 import { MatchOverSheet, ResultSheet } from '../components/table/ResultSheet';
 import { TableHud } from '../components/table/TableHud';
@@ -49,6 +51,7 @@ export function TableScreen() {
   const state = useSession(session);
   const conn = useConnection(session);
   const sfx = useSfx();
+  const { tileScale } = useDisplayScale();
   const { width: winW, height } = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const width = winW - insets.left - insets.right;
@@ -191,7 +194,8 @@ export function TableScreen() {
 
   // ---- Layout -------------------------------------------------------
   const L = tableLayout(width, height);
-  const hand = handLayout(width, L, (me.hand ?? []).length, me.melds.reduce((n, m) => n + m.tiles.length, 0), me.melds.length);
+  // Settings → Display → Tiles grows the hand and my melds; portrait wraps into more rows, landscape scrolls the rail.
+  const hand = fitHand(width, height, L, (me.hand ?? []).length, me.melds.reduce((n, m) => n + m.tiles.length, 0), me.melds.length, tileScale);
 
   const seatAt = (r: number) => (mySeat + r) % 4;
   const seatInfo = (seat: number) => state.seats.find((s) => s.seat === seat);
@@ -294,6 +298,8 @@ export function TableScreen() {
           plate={plateProps(mySeat)}
           handTile={hand.tile}
           plateW={hand.plateW}
+          meldTile={hand.meldTile}
+          scroll={hand.scroll}
           selected={selected}
           canDiscard={canDiscard}
           drawn={isDiscardPhase && view.lastDrawn != null ? view.lastDrawn : null}

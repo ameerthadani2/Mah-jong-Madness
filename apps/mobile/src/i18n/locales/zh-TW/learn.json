@@ -45,5 +45,24 @@
     "medium": "中等",
     "hard": "困難"
   },
-  "nextHand": "下一題"
+  "nextHand": "下一題",
+  "trackProgress": "完成 %{done}/%{total}",
+  "trackComplete": "已完成本單元",
+  "upNext": "下一課",
+  "minutesLeft": "還要 %{n} 分鐘",
+  "empty": {
+    "title": "歡迎來到麻將教室",
+    "body": "六個短單元，從認識第一張牌一路學到看懂整張牌桌。每堂課只要幾分鐘，最後有個小測驗。",
+    "cta": "第一課：%{title}"
+  },
+  "allDone": "所有課程都完成了！每日謎題和謎題衝刺可以讓你保持手感。",
+  "end": {
+    "title": "課程完成！",
+    "progress": "「%{track}」已完成 %{done}/%{total} 課。",
+    "nextInTrack": "「%{track}」的下一課",
+    "trackDone": "「%{track}」全部完成！下一個單元：%{next}",
+    "allDone": "這是最後一課，所有單元都完成了。每日謎題每天都有新的一手牌。",
+    "nextCta": "下一課",
+    "back": "回到學習"
+  }
 }

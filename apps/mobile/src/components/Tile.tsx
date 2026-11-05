@@ -7,7 +7,7 @@ import { TableThemeContext, type TableTheme } from '../themes';
 
 import { tileDims, type TileSize } from './tileDims';
 
-export { tileDims, type TileSize } from './tileDims';
+export { scaledTile, tileDims, type TileSize } from './tileDims';
 
 const CN_NUM = ['一', '二', '三', '四', '五', '六', '七', '八', '九'];
 
