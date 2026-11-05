@@ -3,8 +3,8 @@
  * each decision the reviewed seat made against the coach's recommendation,
  * producing an accuracy score and a list of mistakes with explanations.
  */
-import { chooseAction, currentShanten, rankDiscards, shantenAfterClaim } from './bot';
-import { applyAction, dealFromSnapshot, legalActions, type Action, type GameState, type LoggedAction, type MatchSnapshot } from './game';
+import { coachAction, COACH_SKILL, currentShanten, rankDiscards, shantenAfterClaim } from './bot';
+import { applyAction, dealFromSnapshot, legalActions, sameAction, type Action, type GameState, type LoggedAction, type MatchSnapshot } from './game';
 import { type RuleSet } from './rules';
 import { kindInfo, kindOf, type Kind, type TileId } from './tiles';
 
@@ -61,30 +61,35 @@ function gradeMove(s: GameState, seat: number, actual: Action, n: number): Revie
   const legal = legalActions(s, seat);
   if (legal.length <= 1) return null; // forced
   const hand = s.players[seat].hand.slice();
-  const best = chooseAction(s, seat, { skill: 'pro', seed: 'review' });
+  const best = coachAction(s, seat);
   const shantenBefore = safeShanten(s, seat);
 
   if (s.phase === 'discard' && actual.type === 'discard') {
     if (best && best.type === 'hu') {
       return { n, phase: s.phase, actual, best, grade: 'blunder', shantenBefore, explanation: 'You had a winning hand and discarded instead of declaring 胡.', hand, highlightActual: kindOf(actual.tile) };
     }
-    const ranked = rankDiscards(s, seat, 'pro');
+    const ranked = rankDiscards(s, seat, COACH_SKILL);
     const top = ranked[0];
     const mine = ranked.find((r) => r.kind === kindOf(actual.tile));
     if (!top || !mine) return null;
     const dShanten = mine.shanten - top.shanten;
     const accRatio = top.acceptance > 0 ? mine.acceptance / top.acceptance : 1;
+    // The coach folded (gave up shanten for a safer tile) and the player pushed a riskier one instead.
+    const pushed = dShanten < 0 && mine.danger > top.danger;
     let grade: MoveGrade;
-    if (mine.kind === top.kind || (dShanten === 0 && accRatio >= 0.95)) grade = 'best';
-    else if (dShanten === 0 && accRatio >= 0.7) grade = 'good';
-    else if (dShanten === 0) grade = 'inaccuracy';
+    if (mine.kind === top.kind || (dShanten === 0 && accRatio >= 0.95 && mine.danger <= top.danger)) grade = 'best';
+    else if (pushed) grade = 'inaccuracy';
+    else if (dShanten <= 0 && accRatio >= 0.7) grade = 'good';
+    else if (dShanten <= 0) grade = 'inaccuracy';
     else if (dShanten === 1) grade = 'mistake';
     else grade = 'blunder';
     const bestName = kindInfo(top.kind).nameZh;
     const mineName = kindInfo(mine.kind).nameZh;
     let explanation: string;
     if (grade === 'best') explanation = `Discarding ${mineName} was the most efficient choice.`;
-    else if (dShanten === 0) explanation = `${mineName} keeps the same shanten but accepts ${mine.acceptance} tiles; ${bestName} accepts ${top.acceptance}.`;
+    else if (pushed) explanation = `An opponent looked ready. ${mineName} kept you closer to ready, but ${bestName} was the safer discard.`;
+    else if (dShanten === 0 && mine.danger > top.danger) explanation = `${mineName} keeps the same shanten, but ${bestName} was safer against an opponent who looked ready.`;
+    else if (dShanten <= 0) explanation = `${mineName} keeps the same shanten but accepts ${mine.acceptance} tiles; ${bestName} accepts ${top.acceptance}.`;
     else explanation = `${mineName} leaves you ${mine.shanten} from ready; ${bestName} would leave you ${top.shanten}.`;
     return {
       n,
@@ -113,8 +118,16 @@ function gradeMove(s: GameState, seat: number, actual: Action, n: number): Revie
     if (actual.type === 'hu') {
       return { n, phase: s.phase, actual, best, grade: 'best', shantenBefore, explanation: 'You took the win on the discard.', hand };
     }
-    if (actualIsPass === bestIsPass) {
-      return { n, phase: s.phase, actual, best, grade: 'best', shantenBefore, explanation: actualIsPass ? 'Passing kept your hand flexible.' : 'Calling here moved you closer to ready.', hand };
+    if (actualIsPass && bestIsPass) {
+      return { n, phase: s.phase, actual, best, grade: 'best', shantenBefore, explanation: 'Passing kept your hand flexible.', hand };
+    }
+    if (!actualIsPass && !bestIsPass) {
+      // Both called: the same call is best; a different call is judged by where it leaves the hand.
+      if (sameAction(best!, actual, s, seat)) return { n, phase: s.phase, actual, best, grade: 'best', shantenBefore, explanation: 'Calling here moved you closer to ready.', hand };
+      const mineAfter = shantenAfterClaim(s, seat, actual);
+      const bestAfter = shantenAfterClaim(s, seat, best!);
+      if (mineAfter <= bestAfter) return { n, phase: s.phase, actual, best, grade: 'good', shantenBefore, explanation: 'Calling was right; the coach preferred a different call that leaves the same shape.', hand };
+      return { n, phase: s.phase, actual, best, grade: 'inaccuracy', shantenBefore, explanation: `Calling was right, but a different call would have left you ${bestAfter} from ready instead of ${mineAfter}.`, hand };
     }
     const concealed = s.players[seat].melds.every((m) => m.concealed);
     if (actualIsPass) {

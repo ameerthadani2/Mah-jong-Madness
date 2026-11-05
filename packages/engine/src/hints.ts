@@ -3,10 +3,10 @@
  * advice: what you are waiting on, how far from ready you are, which discard is
  * best and why, and what a claim would cost or gain in 台.
  */
-import { chooseAction, currentShanten, rankDiscards, shantenAfterClaim, unseenCounts, type DiscardAdvice } from './bot';
+import { coachAction, COACH_SKILL, currentShanten, rankDiscards, shantenAfterClaim, unseenCounts, valueKinds, type DiscardAdvice } from './bot';
 import { countsFromKinds, TOTAL_SETS, waits } from './hand';
-import { type Action, type GameState, legalActions, buildWinContext, waitsFor } from './game';
-import { scoreWin, seatWindKind, prevailingWindKind, type ScoreResult } from './scoring';
+import { type Action, type GameState, legalActions, buildWinContext, sameAction, waitsFor } from './game';
+import { scoreWin, type ScoreResult } from './scoring';
 import { kindInfo, kindOf, type Kind, type TileId } from './tiles';
 
 export interface WaitInfo {
@@ -46,7 +46,7 @@ export function describeKind(k: Kind): string {
 
 export function hintFor(s: GameState, seat: number): Hint {
   const actions = legalActions(s, seat);
-  const valueTiles = [seatWindKind(seat, s.dealerSeat), prevailingWindKind(s.prevailingWind), 31, 32, 33];
+  const valueTiles = [...valueKinds(s, seat)];
   const base: Hint = {
     seat,
     phase: s.phase,
@@ -73,7 +73,7 @@ export function hintFor(s: GameState, seat: number): Hint {
   if (s.phase === 'discard' && s.turn === seat) {
     const sh = currentShanten(s, seat);
     base.shanten = sh;
-    base.discards = rankDiscards(s, seat);
+    base.discards = rankDiscards(s, seat, COACH_SKILL);
     base.bestDiscard = base.discards[0];
     if (canHu) {
       base.status = `You can win now (${selfDrawLabel(s)}) for ${base.winPreview!.tai} 台.`;
@@ -81,15 +81,16 @@ export function hintFor(s: GameState, seat: number): Hint {
       const d = base.bestDiscard;
       const afterWaits = d.shanten === 0 ? waitsAfterDiscard(s, seat, d.tile, unseen) : [];
       base.waits = afterWaits;
-      base.discardReason = explainDiscard(d, afterWaits);
+      base.discardReason = explainDiscard(d, afterWaits, base.discards);
       base.status = statusText(d.shanten);
     }
     const kongs = actions.filter((a) => a.type === 'kong');
+    const pick = kongs.length > 0 ? coachAction(s, seat) : null;
     for (const k of kongs) {
       base.claims.push({
         action: k,
         label: `Kong ${describeKind(kindOf((k as { tile: TileId }).tile))}`,
-        recommended: ((pick) => pick?.type === 'kong' && kindOf(pick.tile) === kindOf((k as { tile: TileId }).tile))(chooseAction(s, seat)),
+        recommended: pick !== null && sameAction(k, pick, s, seat),
         reason: 'A kong draws a replacement tile and can add 槓上開花 (1 台) if you win on it. Skip it if the four tiles are part of two sets.',
       });
     }
@@ -101,11 +102,11 @@ export function hintFor(s: GameState, seat: number): Hint {
     base.shanten = sh;
     base.waits = waitsFor(s, seat).map((k) => ({ kind: k, remaining: unseen[k] }));
     base.status = sh === 0 ? `Ready — waiting on ${base.waits.length} kind(s).` : statusText(sh);
-    const botPick = chooseAction(s, seat);
+    const botPick = coachAction(s, seat);
     for (const a of actions) {
       if (a.type === 'pass') continue;
       const label = claimLabel(a, s);
-      const recommended = botPick !== null && JSON.stringify(botPick) === JSON.stringify(a);
+      const recommended = botPick !== null && sameAction(a, botPick, s, seat);
       base.claims.push({ action: a, label, recommended, reason: claimReason(a, s, seat, sh, recommended) });
     }
     if (canHu) base.status = `You can win on this discard for ${base.winPreview!.tai} 台.`;
@@ -135,8 +136,12 @@ function waitsAfterDiscard(s: GameState, seat: number, tile: TileId, unseen: num
   return waits(countsFromKinds(rest), TOTAL_SETS - p.melds.length).map((k) => ({ kind: k, remaining: unseen[k] }));
 }
 
-function explainDiscard(d: DiscardAdvice, afterWaits: WaitInfo[]): string {
+function explainDiscard(d: DiscardAdvice, afterWaits: WaitInfo[], all: readonly DiscardAdvice[]): string {
   const name = describeKind(d.kind);
+  // The coach gave up speed for safety: say so rather than calling the tile efficient.
+  if (all.some((o) => o.shanten < d.shanten && o.danger > d.danger)) {
+    return `An opponent looks ready. Discard ${name}, a safer tile, rather than pushing a dangerous one: losing this hand costs less than paying for theirs.`;
+  }
   if (d.shanten === 0) {
     const w = afterWaits.map((x) => `${kindInfo(x.kind).nameZh}×${x.remaining}`).join(', ');
     return `Discard ${name} to be ready, waiting on ${w || 'nothing visible'}.`;

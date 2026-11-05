@@ -42,7 +42,7 @@ export const LESSONS: Lesson[] = [
     steps: [
       { title: 'Five sets + a pair', body: 'A set is a chow (三張連號 123) or a pong (三張相同). You hold 16 tiles and win with a 17th that completes 5 sets + 1 pair.', hand: '123m 456m 789p 234s EEE CC' },
       { title: 'Draw and discard', body: 'On your turn draw one tile from the wall, then discard one. Your hand is always 16 tiles between turns.' },
-      { title: 'Self-draw vs discard', body: 'Winning on your own draw is 自摸 (everyone pays). Winning on someone’s discard is 放槍 (only they pay).' },
+      { title: 'Self-draw vs discard', body: 'Winning on your own draw is 自摸 (everyone pays). Winning on someone’s discard means only the discarder pays; throwing the tile that lets someone win is called 放槍 (dealing in).' },
       {
         title: 'Spot the wait',
         body: 'With 16 tiles you are 聽牌 (ready) when one more tile completes the hand.',
@@ -95,7 +95,7 @@ export const LESSONS: Lesson[] = [
       {
         title: 'Practice 2',
         body: 'Edge shapes are weaker than open shapes.',
-        quiz: { prompt: 'Best discard?', hand: '12m 345m 456p 678p 999s 56s EE', answer: '1m', explanation: 'The 12m edge wait only completes with 3m. Discarding 1m leaves 2m to pair with something more flexible, while 56s stays as a two-sided wait.' },
+        quiz: { prompt: 'Best discard?', hand: '1222m 567m 789m 345p 45p 67s', answer: '1m', explanation: '222m is already a set, so 1m only adds the edge shape 12m, which completes with 3m alone. Discard it and keep the two-sided 45p (3p or 6p) and 67s (5s or 8s): more tiles help you.' },
       },
     ],
   },
@@ -106,9 +106,9 @@ export const LESSONS: Lesson[] = [
     minutes: 4,
     summary: 'Avoid 放槍 when an opponent is clearly ready.',
     steps: [
-      { title: 'Read the table', body: 'Four exposed sets means a player only needs one tile. Treat their remaining wait as live.' },
-      { title: 'Safe tiles', body: 'Tiles a ready player has already discarded cannot usually be their wait shape in practice; copies already visible four times are completely safe.' },
-      { title: 'Fold when behind', body: 'If you are 3+ shanten and someone looks ready, prioritise safe discards over speed. Losing 1 台 is better than paying 8.' },
+      { title: 'Read the table', body: 'A winning hand needs five sets and a pair. A player with four exposed sets has only one set or the pair left to finish, so treat them as close to ready; three exposed sets late in the hand is a warning too.' },
+      { title: 'Safe tiles', body: 'Taiwanese rules have no furiten: a player may win on a tile they threw earlier. Still, players rarely wait on what they discarded, so their own discards are your safest choice. When you can see every other copy of an honour, nobody can pair or pong it, so it is completely safe. Suited tiles never are: an opponent can wait on one to finish a chow without holding a copy.' },
+      { title: 'Fold when behind', body: 'If you are two or more tiles from ready and someone looks ready, prioritise safe discards over speed. Giving up a slow hand costs nothing; paying for theirs can cost 8 台.' },
     ],
   },
 ];
