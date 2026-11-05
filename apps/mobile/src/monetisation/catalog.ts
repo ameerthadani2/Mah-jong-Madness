@@ -1,98 +1,114 @@
 /**
- * In-app purchase catalog. Everything sold here is cosmetic, coaching or club
- * capacity — nothing changes tile odds, information or clocks at the table.
- * Pricing follows docs/MONETISATION.md: a PokerBros-style Diamond ladder
- * (~60 per USD) and chess.com-style coaching tiers. Store SDKs supply the
- * localised price strings at runtime; USD here are tier placeholders.
+ * The launch catalogue: only what ships (docs/MONETISATION.md, "Catalogue").
  *
- * `title` / `description` / `badge` here are the English source copy; screens show
- * `productText(p, t)`, which reads `catalog.<id with dots as underscores>.*` so
- * every language (English included) comes from the locale files.
+ * Everything sold here is cosmetic or coaching: nothing changes tile odds, information or
+ * clocks at the table, and clubs are free. Diamond packs carry honest bonuses (the badge is
+ * the bonus as a share of the 60-per-dollar base, rounded), and table looks are bought with
+ * diamonds only (POST /api/wallet/spend).
+ *
+ * The server keeps the same table (apps/signal/src/catalog.ts; its test reads this file):
+ * same ids, kinds, price tiers, diamonds and diamond prices. `storeId` is the identifier in
+ * App Store Connect and RevenueCat for products sold for money; a Google Play subscription is
+ * `coach.<tier>` with base plans `month` / `year`, reported as `coach.gold:month`.
+ * `priceUsd` is the planning tier only: the Shop shows the price string the store SDK returns.
+ *
+ * `title` / `description` / `badge` are the English source copy; screens show
+ * `productText(p, t)`, which reads `shop.products.<id with dots as underscores>.*` so every
+ * language (English included) comes from the locale files.
  */
 import type { Translate } from '../logic/translate';
 
-export type ProductKind = 'diamonds' | 'cosmetic' | 'subscription' | 'club' | 'vip';
-export type CoachTier = 'free' | 'gold' | 'platinum' | 'diamond';
+export type ProductKind = 'diamonds' | 'cosmetic' | 'subscription';
+export type CoachTier = 'free' | 'gold' | 'platinum';
 
 export interface Product {
   id: string;
   kind: ProductKind;
+  /** Identifier in the stores and RevenueCat, for products sold for money (looks are diamonds-only). */
+  storeId?: string;
   title: string;
   titleZh: string;
   description: string;
+  /** Planning price tier in US dollars; never shown (the store's localised price is). */
   priceUsd: number;
-  /** For `diamonds`: diamonds granted including bonus. */
+  /** For `diamonds`: the base amount at the 60-per-dollar rate. */
+  baseDiamonds?: number;
+  /** For `diamonds`: bonus diamonds on top of the base (0 for none). */
+  bonusDiamonds?: number;
+  /** For `diamonds`: diamonds granted, bonus included. */
   diamonds?: number;
-  /** Items purchasable with diamonds instead of money. */
+  /** For `cosmetic`: the price in diamonds (bought through POST /api/wallet/spend). */
   diamondPrice?: number;
-  /** For `cosmetic`: theme/avatar/emote pack id unlocked. */
+  /** For `cosmetic`: the table theme id unlocked (src/themes.ts). */
   unlocks?: string;
-  /** For `subscription` / `club`: billing period. */
+  /** For `subscription`: billing period. */
   period?: 'month' | 'year';
   /** For `subscription`: the coaching tier granted. */
-  tier?: CoachTier;
-  /** For `vip`: days of VIP. */
-  days?: number;
-  /** For `club`: member capacity. */
-  capacity?: number;
+  tier?: Exclude<CoachTier, 'free'>;
   badge?: string;
 }
 
+/** Diamonds per US dollar tier step (60 for the $0.99 tier). */
+export const DIAMONDS_PER_DOLLAR = 60;
+
 export const DIAMOND_PACKS: Product[] = [
-  { id: 'diamonds.60', kind: 'diamonds', title: '60 Diamonds', titleZh: '60 鑽石', description: 'A small top-up towards a table look or emote pack.', priceUsd: 0.99, diamonds: 60 },
-  { id: 'diamonds.300', kind: 'diamonds', title: '300 Diamonds', titleZh: '300 鑽石', description: 'A table look, or a Bronze VIP month.', priceUsd: 4.99, diamonds: 300 },
-  { id: 'diamonds.600', kind: 'diamonds', title: '600 Diamonds', titleZh: '600 鑽石', description: 'Most popular.', priceUsd: 9.99, diamonds: 600, badge: 'Popular' },
-  { id: 'diamonds.1300', kind: 'diamonds', title: '1,300 Diamonds', titleZh: '1,300 鑽石', description: 'Runs a 100-member club for a month.', priceUsd: 19.99, diamonds: 1300, badge: 'Clubs' },
-  { id: 'diamonds.3450', kind: 'diamonds', title: '3,450 Diamonds', titleZh: '3,450 鑽石', description: '3,000 + 15% bonus.', priceUsd: 49.99, diamonds: 3450, badge: '+15%' },
-  { id: 'diamonds.7500', kind: 'diamonds', title: '7,500 Diamonds', titleZh: '7,500 鑽石', description: '6,000 + 25% bonus. Club owners’ pick.', priceUsd: 99.99, diamonds: 7500, badge: '+25%' },
+  { id: 'diamonds.60', storeId: 'diamonds.60', kind: 'diamonds', title: '60 Diamonds', titleZh: '60 鑽石', description: 'A small top-up.', priceUsd: 0.99, baseDiamonds: 60, bonusDiamonds: 0, diamonds: 60 },
+  { id: 'diamonds.300', storeId: 'diamonds.300', kind: 'diamonds', title: '300 Diamonds', titleZh: '300 鑽石', description: 'Enough for a table look.', priceUsd: 4.99, baseDiamonds: 300, bonusDiamonds: 0, diamonds: 300 },
+  { id: 'diamonds.600', storeId: 'diamonds.600', kind: 'diamonds', title: '600 Diamonds', titleZh: '600 鑽石', description: 'Enough for two table looks.', priceUsd: 9.99, baseDiamonds: 600, bonusDiamonds: 0, diamonds: 600 },
+  { id: 'diamonds.1300', storeId: 'diamonds.1300', kind: 'diamonds', title: '1,300 Diamonds', titleZh: '1,300 鑽石', description: '1,200 plus 100 bonus.', priceUsd: 19.99, baseDiamonds: 1200, bonusDiamonds: 100, diamonds: 1300, badge: '+8%' },
+  { id: 'diamonds.3450', storeId: 'diamonds.3450', kind: 'diamonds', title: '3,450 Diamonds', titleZh: '3,450 鑽石', description: '3,000 plus 450 bonus.', priceUsd: 49.99, baseDiamonds: 3000, bonusDiamonds: 450, diamonds: 3450, badge: '+15%' },
+  { id: 'diamonds.7500', storeId: 'diamonds.7500', kind: 'diamonds', title: '7,500 Diamonds', titleZh: '7,500 鑽石', description: '6,000 plus 1,500 bonus.', priceUsd: 99.99, baseDiamonds: 6000, bonusDiamonds: 1500, diamonds: 7500, badge: '+25%' },
 ];
 
+/** Bought with diamonds only; owned for good once bought. */
 export const COSMETICS: Product[] = [
   { id: 'theme.nightmarket', kind: 'cosmetic', title: 'Night Market table', titleZh: '夜市霓虹桌布', description: 'Neon purple felt with pink accents.', priceUsd: 2.99, diamondPrice: 300, unlocks: 'nightmarket' },
   { id: 'theme.bamboo', kind: 'cosmetic', title: 'Bamboo Garden table', titleZh: '竹林桌布', description: 'Soft green felt, ivory tiles.', priceUsd: 2.99, diamondPrice: 300, unlocks: 'bamboo' },
   { id: 'theme.jade', kind: 'cosmetic', title: 'Jade Parlour table', titleZh: '翡翠廳桌布', description: 'Deep jade felt, walnut rail with gold studs, ivory tiles.', priceUsd: 3.99, diamondPrice: 400, unlocks: 'jade', badge: 'New' },
   { id: 'theme.imperial', kind: 'cosmetic', title: 'Imperial Red table', titleZh: '宮廷紅桌布', description: 'Lacquer red with gold trim.', priceUsd: 2.99, diamondPrice: 300, unlocks: 'imperial' },
-  { id: 'avatars.zodiac', kind: 'cosmetic', title: 'Zodiac avatar pack', titleZh: '生肖頭像包', description: 'Twelve zodiac avatars with gold frames.', priceUsd: 4.99, diamondPrice: 500, unlocks: 'avatars.zodiac' },
-  { id: 'emotes.taiwan', kind: 'cosmetic', title: 'Taiwan emote pack', titleZh: '台味表情包', description: '珍奶, 雞排 and friends.', priceUsd: 1.99, diamondPrice: 200, unlocks: 'emotes.taiwan' },
 ];
 
 export const SUBSCRIPTIONS: Product[] = [
-  { id: 'coach.gold.month', kind: 'subscription', tier: 'gold', title: 'Coach Gold', titleZh: '教練 金', description: 'All lessons, unlimited Puzzle Rush, Pro bots, review history.', priceUsd: 6.99, period: 'month' },
-  { id: 'coach.gold.year', kind: 'subscription', tier: 'gold', title: 'Coach Gold (yearly)', titleZh: '教練 金 年繳', description: 'Save 40%.', priceUsd: 49.99, period: 'year', badge: 'Save 40%' },
-  { id: 'coach.platinum.month', kind: 'subscription', tier: 'platinum', title: 'Coach Platinum', titleZh: '教練 白金', description: 'Gold + unlimited hand reviews, puzzle battles, luck dashboard.', priceUsd: 10.99, period: 'month', badge: 'Best for improvers' },
-  { id: 'coach.platinum.year', kind: 'subscription', tier: 'platinum', title: 'Coach Platinum (yearly)', titleZh: '教練 白金 年繳', description: 'Save 39%.', priceUsd: 79.99, period: 'year' },
-  { id: 'coach.diamond.month', kind: 'subscription', tier: 'diamond', title: 'Coach Diamond', titleZh: '教練 鑽石', description: 'Platinum + move-by-move explanations, insights, club-table discounts.', priceUsd: 16.99, period: 'month' },
-  { id: 'coach.diamond.year', kind: 'subscription', tier: 'diamond', title: 'Coach Diamond (yearly)', titleZh: '教練 鑽石 年繳', description: 'Save 41%.', priceUsd: 119.99, period: 'year' },
-  { id: 'coach.tablepass.year', kind: 'subscription', tier: 'diamond', title: 'Table Pass (6 seats)', titleZh: '牌桌通行證（6人）', description: 'Coach Diamond for six club members. One bill for the whole table.', priceUsd: 199.99, period: 'year', badge: '6 seats' },
+  { id: 'coach.gold.month', storeId: 'coach.gold.month', kind: 'subscription', tier: 'gold', title: 'Coach Gold', titleZh: '教練 金', description: 'Pro bots and unlimited Puzzle Rush.', priceUsd: 6.99, period: 'month' },
+  { id: 'coach.gold.year', storeId: 'coach.gold.year', kind: 'subscription', tier: 'gold', title: 'Coach Gold (yearly)', titleZh: '教練 金 年繳', description: 'Coach Gold for a year, billed once.', priceUsd: 49.99, period: 'year', badge: 'Yearly' },
+  { id: 'coach.platinum.month', storeId: 'coach.platinum.month', kind: 'subscription', tier: 'platinum', title: 'Coach Platinum', titleZh: '教練 白金', description: 'Everything in Gold plus unlimited hand reviews.', priceUsd: 10.99, period: 'month', badge: 'Best for improvers' },
+  { id: 'coach.platinum.year', storeId: 'coach.platinum.year', kind: 'subscription', tier: 'platinum', title: 'Coach Platinum (yearly)', titleZh: '教練 白金 年繳', description: 'Coach Platinum for a year, billed once.', priceUsd: 79.99, period: 'year', badge: 'Yearly' },
 ];
 
-export const VIP_CARDS: Product[] = [
-  { id: 'vip.bronze.30', kind: 'vip', days: 30, title: 'Bronze VIP · 30 days', titleZh: '銅卡 30天', description: 'All table looks, 50 emotes, +1 club slot, +1 review/day.', priceUsd: 4.99, diamondPrice: 300 },
-  { id: 'vip.silver.90', kind: 'vip', days: 90, title: 'Silver VIP · 90 days', titleZh: '銀卡 90天', description: 'Bronze perks for three months.', priceUsd: 12.99, diamondPrice: 800 },
-  { id: 'vip.gold.365', kind: 'vip', days: 365, title: 'Gold VIP · 365 days', titleZh: '金卡 365天', description: 'Bronze perks all year plus a yearly exclusive look.', priceUsd: 39.99, diamondPrice: 2500, badge: 'Best value' },
-];
+export const ALL_PRODUCTS: Product[] = [...DIAMOND_PACKS, ...COSMETICS, ...SUBSCRIPTIONS];
 
-export const CLUB_PRODUCTS: Product[] = [
-  { id: 'club.100', kind: 'club', capacity: 100, title: 'Club 100', titleZh: '俱樂部 100 人', description: '30 days · up to 100 members, 3 live tables, 5 admins.', priceUsd: 19.99, diamondPrice: 1300, period: 'month' },
-  { id: 'club.300', kind: 'club', capacity: 300, title: 'Club 300', titleZh: '俱樂部 300 人', description: '30 days · 300 members, 10 live tables, approval queue.', priceUsd: 49.99, diamondPrice: 3000, period: 'month' },
-  { id: 'club.1000', kind: 'club', capacity: 1000, title: 'Club 1,000', titleZh: '俱樂部 1000 人', description: '30 days · 1,000 members, unlimited tables, unions, exports.', priceUsd: 129.99, diamondPrice: 8000, period: 'month' },
-];
+/** The launch catalogue the Shop shows (the server's test checks it sells every one). */
+export const SELLABLE_PRODUCTS: Product[] = ALL_PRODUCTS;
 
-export const ALL_PRODUCTS: Product[] = [...DIAMOND_PACKS, ...COSMETICS, ...SUBSCRIPTIONS, ...VIP_CARDS, ...CLUB_PRODUCTS];
+/** Products sold for money through the store SDK (diamond packs and coaching plans). */
+export const STORE_PRODUCTS: Product[] = ALL_PRODUCTS.filter((p) => !!p.storeId);
 
 export function productById(id: string): Product | undefined {
   return ALL_PRODUCTS.find((p) => p.id === id);
 }
 
-/** Free club tier: what you get without paying. */
-export const FREE_CLUB_LIMITS = { members: 30, managers: 2, concurrentTables: 1 };
+/**
+ * The catalogue product for a store identifier as the SDK reports it: the App Store id as it
+ * is, or a Google Play `subscription:basePlan` (`coach.gold:month` → `coach.gold.month`).
+ */
+export function productByStoreId(storeId: string): Product | undefined {
+  const direct = STORE_PRODUCTS.find((p) => p.storeId === storeId);
+  if (direct) return direct;
+  const [sub, basePlan] = storeId.split(':');
+  return basePlan ? STORE_PRODUCTS.find((p) => p.storeId === `${sub}.${basePlan}`) : undefined;
+}
 
-/** Daily meters for the free tier (reset at local midnight). */
+/** Server entitlement name for a coaching tier (docs/API.md, "Wallet"). */
+export function tierEntitlement(tier: Exclude<CoachTier, 'free'>): string {
+  return `coach.${tier}`;
+}
+
+/** Daily meters for the free tier (reset at local midnight, by the server's clock when known). */
 export const FREE_METERS = { reviewsPerDay: 1, rushPerDay: 1 };
 
-/** Locale key prefix for a product: `diamonds.60` → `catalog.diamonds_60`. */
+/** Locale key prefix for a product: `diamonds.60` → `shop.products.diamonds_60`. */
 export function productKey(p: Pick<Product, 'id'>): string {
-  return `catalog.${p.id.replace(/\./g, '_')}`;
+  return `shop.products.${p.id.replace(/\./g, '_')}`;
 }
 
 /** A product's player-facing copy in the current language. */

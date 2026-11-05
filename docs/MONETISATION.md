@@ -1,6 +1,6 @@
 # Monetisation
 
-**Principle:** we sell convenience, cosmetics, coaching and club capacity. We never sell luck, information or time that other players at the table do not have. Everything below was designed against two reference businesses: PokerBros (club economy) and chess.com (learning subscriptions). Figures for those companies come from a research sweep that could only read search-engine extracts of the primary pages (the session's network policy blocked direct reads), so they are marked *reported* and must be re-verified from the live pricing pages before launch. Store-policy constraints come from Apple's own guidelines and are verified.
+**Principle:** we sell cosmetics and coaching (clubs are free at launch). We never sell luck, information or time that other players at the table do not have. Everything below was designed against two reference businesses: PokerBros (club economy) and chess.com (learning subscriptions). Figures for those companies come from a research sweep that could only read search-engine extracts of the primary pages (the session's network policy blocked direct reads), so they are marked *reported* and must be re-verified from the live pricing pages before launch. Store-policy constraints come from Apple's own guidelines and are verified.
 
 ## How the references make money
 
@@ -23,58 +23,69 @@ PokerBros takes no rake; clubs set and keep it. Public estimates put it at a few
 
 ## What we will and will not copy
 
-| PokerBros mechanic | Mahjong Madness |
+Decided for launch (plan Phase 4): we ship the coaching subscriptions, diamonds and cosmetics only. The club economy stays free and points-only until it has been reviewed by counsel in each launch market.
+
+| PokerBros mechanic | Mahjong Madness at launch |
 | --- | --- |
-| Premium currency ladder | **Yes.** Diamonds at ~60/USD anchor with bonus on big packs. |
-| Club renewals by capacity | **Yes.** Free Starter club; paid capacity tiers, payable in Diamonds or as a subscription. |
-| Owner-minted club chips | **Yes, as in-game allocation only.** Chips are per-club, non-transferable between players, never redeemable, never expire if purchased. No agent ledgers, settlement tabs or cash-equivalent naming. |
-| Time banks for sale | **No.** Time bank is a table rule, identical for all seats. Selling time changes outcomes. |
+| Premium currency ladder | **Yes.** Diamonds at 60 per dollar tier, with the bonus on bigger packs stated exactly. |
+| Club renewals by capacity | **No.** Clubs are free, with the server's fair-use caps. Revisit only once clubs show demand. |
+| Owner-minted club chips | **No.** Standings are points only (open decision 1 settled: points-only). Points have no monetary value and cannot be redeemed or transferred. |
+| Time banks for sale | **No.** The time bank is a table rule, identical for all seats. Selling time changes outcomes. |
 | Insurance / run-it-twice analogues | **No.** Nothing that alters payouts. |
-| Rabbit hunt (reveal what you would have drawn) | **Yes, post-hand only**, as a cosmetic/curiosity item — the full wall is already in the audit. |
-| VIP cards | **Yes**, prepaid non-renewing bundles of cosmetics, emotes, extra club slot, review credits. |
-| Offline protection behind VIP | **No — free for everyone.** Crash/disconnect resume is a core promise. |
+| Rabbit hunt | **Not at launch.** |
+| VIP cards | **Not at launch.** Nothing a VIP card would bundle exists yet. |
+| Offline protection behind VIP | **No: free for everyone.** Crash and disconnect resume is a core promise. |
 
-| chess.com mechanic | Mahjong Madness |
+| chess.com mechanic | Mahjong Madness at launch |
 | --- | --- |
-| Metered free taster | **Yes.** 1 full hand review/day, 1 Puzzle Rush/day, daily puzzle free, drills free, first two bot levels free. |
-| Three coaching tiers | **Yes** (below). |
-| Family bundle | **Yes**: Table Pass, 6 seats of the top tier for a club at a steep discount. |
-| Free clubs and club matches | **Yes.** Members never pay to play in a club. |
-| Celebrity coach personas | Later: coach voice/persona packs as cosmetics. |
+| Metered free taster | **Yes.** 1 full hand review a day, 1 Puzzle Rush a day; daily puzzle, drills, every lesson, Beginner and Club bots free. Meters reset at local midnight by the server's clock once the app has seen it. |
+| Coaching tiers | **Two** (below). A third tier waits until move-by-move explanations exist. |
+| Family / club bundle | **Not at launch** (the old "Table Pass" granted one seat, not six). |
+| Free clubs and club matches | **Yes.** |
+| Celebrity coach personas | Later: coach voice or persona packs as cosmetics. |
 
-## Catalogue (implemented in `apps/mobile/src/monetisation/catalog.ts`)
+## Catalogue (implemented in `apps/mobile/src/monetisation/catalog.ts` and `apps/signal/src/catalog.ts`)
 
-**Diamonds** (consumable, never expire): 60 / $0.99 · 300 / $4.99 · 600 / $9.99 · 1,300 / $19.99 · 3,450 (+15%) / $49.99 · 7,500 (+25%) / $99.99.
+The two files list the same products (the server's `test/catalog.test.ts` reads the app's file). The server decides every grant from store webhooks and diamond spends; the app only reads `GET /api/me`. Prices below are US dollar planning tiers: the Shop only ever shows the localised price string the store returns, and regional pricing uses the stores' tiers.
 
-**Coach subscriptions** (auto-renewing, 7-day trial, cross-device):
+**Diamonds** (consumable; purchased diamonds never expire; bonus diamonds are kept on a separate ledger and spent first). The badge is the bonus as a share of the 60-per-dollar base, rounded.
 
-| Tier | Monthly | Yearly | Adds |
-| --- | --- | --- | --- |
-| Free | — | — | Coach at the table, daily puzzle, drills, lessons 1–3, 1 hand review/day, 1 Puzzle Rush/day, Beginner and Club bots |
-| Coach Gold | $6.99 | $49.99 | No ads (if ever added), all lessons, unlimited Puzzle Rush, Pro bots, review history |
-| Coach Platinum | $10.99 | $79.99 | Unlimited hand reviews, puzzle battles vs friends, luck statistics dashboard |
-| Coach Diamond | $16.99 | $119.99 | Move-by-move coach explanations in review, insights, club-table discounts |
-| Table Pass | — | $199.99 | Coach Diamond for 6 named club members |
+| Store id | Price tier | Diamonds | Of which bonus | Badge |
+| --- | --- | --- | --- | --- |
+| `diamonds.60` | $0.99 | 60 | 0 | |
+| `diamonds.300` | $4.99 | 300 | 0 | |
+| `diamonds.600` | $9.99 | 600 | 0 | |
+| `diamonds.1300` | $19.99 | 1,300 | 100 | +8% |
+| `diamonds.3450` | $49.99 | 3,450 | 450 | +15% |
+| `diamonds.7500` | $99.99 | 7,500 | 1,500 | +25% |
 
-**Club capacity** (30-day, Diamonds or subscription): Starter free (30 members, 2 managers, 1 live table) · Club 100: 1,300💎 or $19.99 · Club 300: 3,000💎 or $49.99 · Club 1,000: 8,000💎 or $129.99. Clubs that lapse get a 14-day grace period, then tables close but data is kept.
+**Table looks** (cosmetic, owned for good; bought with diamonds only through `POST /api/wallet/spend`, so there is no cash price to undercut): Night Market 300, Bamboo Garden 300, Jade Parlour 400, Imperial Red 300. The three free felts (Classic, Deep Green, Midnight Blue) stay free.
 
-**Cosmetics** (direct purchase, no loot boxes): table looks 300💎 / $2.99, avatar packs 500💎 / $4.99, emote packs 200💎 / $1.99, seasonal drops (農曆新年, 中秋) as limited direct-purchase sets.
+**Coaching** (auto-renewing subscriptions, cross-device through the account; Google Play: subscription `coach.gold` / `coach.platinum` with base plans `month` and `year`):
 
-**VIP cards** (prepaid, non-renewing): Bronze 30d 300💎, Silver 90d 800💎, Gold 365d 2,500💎 — all table looks for the period, emote allowance, +1 club creation slot, 1 extra review/day.
+| Plan | Store ids | Monthly | Yearly | What it unlocks today |
+| --- | --- | --- | --- | --- |
+| Free | | | | Coach at bot tables, daily puzzle, drills, every lesson, 1 hand review and 1 Puzzle Rush a day, Beginner and Club bots |
+| Coach Gold | `coach.gold.month`, `coach.gold.year` | $6.99 | $49.99 | Pro bots, unlimited Puzzle Rush |
+| Coach Platinum | `coach.platinum.month`, `coach.platinum.year` | $10.99 | $79.99 | Everything in Gold plus unlimited hand reviews |
 
-**Club chips**: owner mints from Diamonds at 2.5💎 per 100 chips (configurable server-side). Chips are an allocation to the club's bankroll; standings are kept in points regardless.
+The Shop copy lists only these unlocks. Removed until built: Coach Diamond, Table Pass, zodiac avatars, Taiwan emotes, VIP cards and club capacity tiers. Trials and introductory offers are set in the stores, not in the app.
+
+**Builds without keys.** With no `EXPO_PUBLIC_REVENUECAT_IOS_KEY` / `_ANDROID_KEY` the Shop says "Store unavailable on this build", shows no prices and grants nothing; table looks can still be bought with diamonds the server already holds. `EXPO_PUBLIC_STORE_MODE=mock` gives a development build an instant, free test store whose grants live only on the device until the next sync; a release build cannot select it.
 
 ## Compliance guardrails (see `docs/STORE_COMPLIANCE.md`)
-* Chips and Diamonds have no monetary value, are non-redeemable and are never transferable between players. Purchased currency never expires; free daily grants live on a separate expiring ledger.
+* "Diamonds and points have no monetary value and cannot be redeemed or transferred": shown on the Shop, Clubs, standings and Settings, and in the Terms.
+* Purchased diamonds never expire; nothing moves between players; no cash-out, prizes or settlement features.
 * No loot boxes. If a randomised item is ever added, odds are disclosed before purchase.
-* Club-run events award only in-game items. Any real-prize event is run solely by the company with official rules in-app.
-* Age rating answers: Simulated Gambling = Frequent → expect 17+/18+. Metadata stays 4+-appropriate.
-* Restore Purchases for every non-consumable; identical SKUs on every platform where they are usable.
+* Nothing sold changes the tiles, what a player sees at the table, or the clock.
+* Age gate at 17 (birth year); age rating answers in `docs/STORE_COMPLIANCE.md`.
+* Restore Purchases in the Shop; the same store ids on every platform.
 
 ## Revenue model sketch (for planning only)
-Assume 10,000 monthly actives after a Taiwan + diaspora launch. If 3% subscribe at a blended $9/month (≈ $2.7k), 1% of actives own or admin a paid club at a blended $35/month (≈ $3.5k), and cosmetics/Diamonds average $0.40 per active (≈ $4k), monthly gross is ≈ $10k before store fees (30%, 15% under the Small Business Program, 26% on the Taiwan storefront from 31 Oct 2026). The club layer is the lever: every paid club brings 30–300 players who are also prospects for coaching and cosmetics.
+Assume 10,000 monthly actives after a Taiwan + diaspora launch. If 3% subscribe at a blended $8/month (≈ $2.4k) and diamonds average $0.25 per active (≈ $2.5k), monthly gross is ≈ $5k before store fees (30%, 15% under the Small Business Program, 26% on the Taiwan storefront from 31 Oct 2026). Clubs earn nothing directly at launch; they are the acquisition and retention layer (every active club brings players who are prospects for coaching). Rebuild this from observed conversion after the beta (plan Phase 8).
 
 ## Open decisions
-1. Whether to allow owner-minted club chips at all at launch, or ship points-only standings first and add chips once legal review per launch market is done.
-2. Regional price tiers (Taiwan, Hong Kong, Singapore, Malaysia, US, Australia, UK/EU) — use store tiering, not flat USD.
-3. Ads: none planned. Revisit only if free-tier costs demand it, and then rewarded-only with a permanent No-Ads SKU.
+1. ~~Club chips at launch~~: settled, points-only standings at launch; chips only after per-market legal review, if ever.
+2. Regional price tiers (Taiwan, Hong Kong, Singapore, Malaysia, US, Australia, UK/EU): set in the stores, not flat USD.
+3. Ads: none planned. Revisit only if free-tier costs demand it, and then rewarded-only with a permanent No-Ads purchase.
+4. Paid club capacity: only if clubs outgrow the free caps and counsel is comfortable with it.

@@ -11,12 +11,13 @@ import { localized } from '../logic/translate';
 import { BUILD_SIGNAL_URL } from '../config';
 import { AVATARS } from '../storage';
 import { TABLE_THEMES } from '../themes';
-import { hasTier, ownsCosmetic } from '../monetisation/store';
+import { hasTier, ownsCosmetic } from '../monetisation/wallet';
 import { colors, fonts, space } from '../theme';
 import { Button, Card, Chip, fontFor, H2, P, Row, ScreenHeader, Stepper, Toggle } from '../components/Ui';
 import { AvatarPlate } from '../components/Avatars';
 import { ThemeScene } from '../components/Scenes';
 import { Icon } from '../components/Icons';
+import { LegalLinks, NoValueNotice } from '../components/LegalLinks';
 
 export function SettingsScreen() {
   const app = useApp();
@@ -125,6 +126,14 @@ export function SettingsScreen() {
         <Toggle label={t('settings.passRule')} value={rules.passRule} onChange={(v) => setRule('passRule', v)} />
         <Toggle label={t('settings.noFlowerTai')} value={rules.noFlowerTai} onChange={(v) => setRule('noFlowerTai', v)} />
         <Button small kind="ghost" title={t('settings.reset')} onPress={() => setSettings({ ...settings, rules: DEFAULT_RULES })} style={{ alignSelf: 'flex-start' }} />
+      </Card>
+      <Card testID="settings-legal">
+        <H2>{t('settings.legal.title')}</H2>
+        <P dim style={{ fontSize: 13 }}>
+          {t('settings.legal.body')}
+        </P>
+        <LegalLinks style={{ justifyContent: 'flex-start' }} />
+        <NoValueNotice />
       </Card>
       {__DEV__ && (
         <Card>

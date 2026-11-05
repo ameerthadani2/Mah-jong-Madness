@@ -13,6 +13,13 @@ import { colors, fonts, nameFont, space } from '../theme';
 import { Button, Card, Chip, H2, P, Pill, Row, ScreenHeader, SectionLabel, Toggle } from '../components/Ui';
 import { AvatarPlate } from '../components/Avatars';
 import { Icon } from '../components/Icons';
+import { AgeBlocked, AgeGate } from '../components/AgeGate';
+import { NoValueNotice } from '../components/LegalLinks';
+import { ReportPlayerSheet } from '../components/ReportPlayerSheet';
+import { gateFor } from '../legal/age';
+import type { ReportTarget } from '../legal/reports';
+import { canStartSeason, sortStandings, standingPoints, type StandingsView } from '../legal/standings';
+import { useAgeGate } from '../legal/useAgeGate';
 
 const roleName = (role: ClubMember['role'] | 'guest', t: Translate) => t(`common.roles.${role}`);
 
@@ -37,9 +44,12 @@ export function ClubsScreen() {
     setConnection('checking');
     setConnection((await ensure()) ? 'ready' : 'offline');
   }, [ensure]);
+  // Nothing reaches the server (no guest account is made) until the age gate has been passed.
+  const gate = useAgeGate();
+  const ageOk = gate.status === 'allowed';
   useEffect(() => {
-    void connect();
-  }, [connect]);
+    if (ageOk) void connect();
+  }, [connect, ageOk]);
   const [clubs, setClubs] = useState<Club[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [joinCode, setJoinCode] = useState('');
@@ -84,6 +94,10 @@ export function ClubsScreen() {
     }
   };
 
+  const gateState = gateFor('clubs', gate.status, false);
+  if (gate.loaded && gateState === 'blocked') return <AgeBlocked onBack={app.back} />;
+  if (gate.loaded && gateState === 'ask') return <AgeGate onBack={app.back} />;
+
   if (connection !== 'ready') {
     return (
       <ScrollView contentContainerStyle={styles.wrap}>
@@ -110,6 +124,7 @@ export function ClubsScreen() {
         <Icon name="users" size={22} />
         <P style={{ flex: 1, fontSize: 13, lineHeight: 18 }}>{t('clubs.note')}</P>
       </View>
+      <NoValueNotice />
       {error && <Pill tone="gold" icon="warning" text={error} />}
       <View style={styles.cols}>
         <Card style={styles.col}>
@@ -183,6 +198,10 @@ export function ClubScreen({ code }: { code: string }) {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [tab, setTab] = useState<'tables' | 'standings' | 'rules'>('tables');
+  const [view, setView] = useState<StandingsView>('season');
+  const [confirmSeason, setConfirmSeason] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [reporting, setReporting] = useState<ReportTarget | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -243,6 +262,23 @@ export function ClubScreen({ code }: { code: string }) {
     }
   };
 
+  const season = club.season ?? 1;
+  const startSeason = async () => {
+    setBusy(true);
+    try {
+      await clubsApi.startSeason(ctx, club.code);
+      const next = await clubsApi.get(ctx, club.code);
+      setClub(next);
+      setConfirmSeason(false);
+      setView('season');
+      setNotice(t('clubs.season.started', { n: next.season ?? season + 1 }));
+    } catch (e) {
+      setError(friendlyError(e, t));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const live = (club.tables ?? []).filter((t) => t.status !== 'finished');
   return (
     <ScrollView contentContainerStyle={styles.wrap}>
@@ -258,6 +294,7 @@ export function ClubScreen({ code }: { code: string }) {
         }
       />
       {error && <Pill tone="danger" icon="warning" text={error} />}
+      {notice && <Pill tone="ok" icon="check" text={notice} />}
       <Row>
         {(['tables', 'standings', 'rules'] as const).map((id) => (
           <Chip key={id} label={id === 'tables' ? t('clubs.tabs.tables', { n: live.length }) : id === 'standings' ? t('clubs.tabs.standings') : t('clubs.tabs.rules')} selected={tab === id} onPress={() => setTab(id)} />
@@ -305,9 +342,12 @@ export function ClubScreen({ code }: { code: string }) {
 
       {tab === 'standings' && (
         <Card>
-          {[...members]
-            .sort((a, b) => b.points - a.points)
-            .map((m, i) => (
+          <Row style={{ flexWrap: 'wrap', rowGap: 6 }}>
+            <Chip label={t('clubs.season.current', { n: season })} selected={view === 'season'} onPress={() => setView('season')} />
+            <Chip label={t('clubs.season.lifetime')} selected={view === 'lifetime'} onPress={() => setView('lifetime')} />
+          </Row>
+          <NoValueNotice />
+          {sortStandings(members, view).map((m, i) => (
               <Row key={m.userId} style={styles.standing}>
                 <View style={[styles.rankBadge, i === 0 && { backgroundColor: colors.gold }]}>
                   <Text style={styles.rank}>{i + 1}</Text>
@@ -321,14 +361,28 @@ export function ClubScreen({ code }: { code: string }) {
                     {t('clubs.standing', { played: m.matchesPlayed, won: m.matchesWon })}
                   </P>
                 </View>
-                <Text style={{ color: m.points >= 0 ? colors.okText : colors.dangerText, fontFamily: fonts.display, fontSize: 18 }}>
-                  {m.points >= 0 ? '+' : ''}
-                  {m.points}
+                <Text style={{ color: standingPoints(m, view) >= 0 ? colors.okText : colors.dangerText, fontFamily: fonts.display, fontSize: 18 }}>
+                  {standingPoints(m, view) >= 0 ? '+' : ''}
+                  {standingPoints(m, view)}
                 </Text>
+                {m.userId !== user.userId && <Button small kind="ghost" title={t('clubs.report')} onPress={() => setReporting({ userId: m.userId, name: m.name })} />}
               </Row>
+            ))}
+          {canStartSeason(me?.role) &&
+            (confirmSeason ? (
+              <Card tone="gold" style={{ gap: 8 }}>
+                <P style={{ fontSize: 13, lineHeight: 18 }}>{t('clubs.season.confirmBody', { n: season + 1 })}</P>
+                <Row>
+                  <Button small testID="season-confirm" kind="danger" title={busy ? '…' : t('clubs.season.confirm', { n: season + 1 })} onPress={() => void startSeason()} disabled={busy} />
+                  <Button small kind="ghost" title={t('common.cancel')} onPress={() => setConfirmSeason(false)} />
+                </Row>
+              </Card>
+            ) : (
+              <Button small testID="season-start" kind="secondary" title={t('clubs.season.start')} onPress={() => setConfirmSeason(true)} style={{ alignSelf: 'flex-start' }} />
             ))}
         </Card>
       )}
+      <ReportPlayerSheet visible={reporting !== null} target={reporting} onClose={() => setReporting(null)} />
 
       {tab === 'rules' && (
         <Card>

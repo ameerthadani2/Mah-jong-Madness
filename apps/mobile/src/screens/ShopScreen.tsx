@@ -1,60 +1,116 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useApp } from '../app-state';
-import { CLUB_PRODUCTS, COSMETICS, DIAMOND_PACKS, productText, SUBSCRIPTIONS, VIP_CARDS, type Product } from '../monetisation/catalog';
-import { buyWithDiamonds, coachTier, hasVip, ownsCosmetic, store, totalDiamonds, type PurchaseResult } from '../monetisation/store';
+import { useAuth } from '../auth/AuthProvider';
+import { COSMETICS, DIAMOND_PACKS, productText, SUBSCRIPTIONS, type Product } from '../monetisation/catalog';
+import { coachRenewal, coachTier, ownsCosmetic, totalDiamonds } from '../monetisation/wallet';
+import { StoreError } from '../monetisation/providers';
+import { useWallet } from '../monetisation/useWallet';
+import { ApiError } from '../api/http';
+import { friendlyError } from '../logic/errors';
 import { useT } from '../i18n';
 import type { Translate } from '../logic/translate';
+import { gateFor } from '../legal/age';
+import { useAgeGate } from '../legal/useAgeGate';
 import { colors, fonts, space } from '../theme';
 import { themeById } from '../themes';
 import { Button, Card, fontFor, GemCounter, H2, P, Pill, Row, ScreenHeader, StrokeText } from '../components/Ui';
 import { Icon, type IconName } from '../components/Icons';
-import { ClubhouseScene, GemPile, MedalScene, ThemeScene, VipCardScene } from '../components/Scenes';
-import { AvatarLine } from '../components/Avatars';
-import { Emote } from '../components/Emotes';
+import { GemPile, MedalScene, ThemeScene } from '../components/Scenes';
+import { AgeBlocked, AgeGate } from '../components/AgeGate';
+import { LegalLinks, NoValueNotice } from '../components/LegalLinks';
 
-type Tab = 'diamonds' | 'looks' | 'coach' | 'vip' | 'club';
+type Tab = 'diamonds' | 'looks' | 'coach';
 
-function purchaseError(r: PurchaseResult, t: Translate): string {
-  if (r.reason === 'not_for_diamonds') return t('shop.notForDiamonds');
-  if (r.reason === 'need_diamonds') return t('shop.needDiamonds', { n: r.short ?? 0 });
+function shopError(e: unknown, t: Translate): string {
+  if (e instanceof StoreError) return t(`shop.errors.${e.code}`);
+  if (e instanceof ApiError) return friendlyError(e, t);
   return t('shop.purchaseFailed');
 }
 
 export function ShopScreen() {
   const app = useApp();
+  const gate = useAgeGate();
   const { t } = useT();
   const { width, height } = useWindowDimensions();
+  const shop = useWallet();
   const [tab, setTab] = useState<Tab>('diamonds');
   const [busy, setBusy] = useState<string | null>(null);
-  const [msg, setMsg] = useState<string | null>(null);
-  const wallet = app.wallet;
+  const [msg, setMsg] = useState<{ text: string; tone: 'gold' | 'ok' | 'danger' } | null>(null);
+  const [offline, setOffline] = useState(false);
+  const wallet = shop.wallet;
+  const { refresh } = shop;
+  const accountId = useAuth().user?.id;
 
-  const buy = async (p: Product, via: 'money' | 'diamonds') => {
+  useEffect(() => {
+    void refresh().then((r) => setOffline(r === 'offline'));
+  }, [refresh, accountId]);
+
+  const gateState = gateFor('shop', gate.status, false);
+  if (gate.loaded && gateState === 'blocked') return <AgeBlocked onBack={app.back} />;
+  if (gate.loaded && gateState === 'ask') return <AgeGate onBack={app.back} />;
+
+  const unlocked = (p: Product) => {
+    setMsg({ text: t('shop.unlocked', { title: productText(p, t).title }), tone: 'ok' });
+    if (p.kind === 'cosmetic' && p.unlocks) app.setSettings({ ...app.settings, tableTheme: p.unlocks });
+  };
+
+  const buy = async (p: Product) => {
     setBusy(p.id);
     setMsg(null);
     try {
-      const result = via === 'diamonds' ? buyWithDiamonds(wallet, p) : await store.purchase(p, wallet);
-      if (!result.ok) setMsg(purchaseError(result, t));
-      else {
-        app.setWallet(result.wallet);
-        setMsg(t('shop.unlocked', { title: productText(p, t).title }));
-        if (p.kind === 'cosmetic' && p.unlocks && p.id.startsWith('theme.')) app.setSettings({ ...app.settings, tableTheme: p.unlocks });
-      }
+      const r = await shop.buy(p);
+      if (r.status === 'credited') unlocked(p);
+      else if (r.status === 'pending') setMsg({ text: t('shop.pending'), tone: 'gold' });
+      else if (r.status === 'unavailable') setMsg({ text: t('shop.errors.store_unavailable'), tone: 'danger' });
+      else if (r.status === 'failed') setMsg({ text: shopError(r.error, t), tone: 'danger' });
     } finally {
       setBusy(null);
     }
+  };
+
+  const spend = async (p: Product) => {
+    setBusy(p.id);
+    setMsg(null);
+    try {
+      const r = await shop.spend(p);
+      if (r.status === 'credited') unlocked(p);
+      else if (r.status === 'need_diamonds') {
+        setMsg({ text: t('shop.needDiamonds', { n: r.short }), tone: 'gold' });
+      } else setMsg({ text: shopError(r.error, t), tone: 'danger' });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const restore = async () => {
+    setBusy('restore');
+    setMsg(null);
+    try {
+      const r = await shop.restore();
+      setMsg(r.ok ? { text: t('shop.restored'), tone: 'ok' } : { text: shopError(r.error, t), tone: 'danger' });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  /** The store's own price string, or why there is none. */
+  const priceLabel = (p: Product): { label: string; sellable: boolean } => {
+    if (shop.storeKind === 'unavailable') return { label: t('shop.notOnSale'), sellable: false };
+    if (!shop.pricesLoaded) return { label: t('shop.priceLoading'), sellable: false };
+    const price = shop.prices[p.id];
+    if (!price) return { label: t('shop.notOnSale'), sellable: false };
+    return { label: `${price}${p.period ? t(p.period === 'year' ? 'shop.perYear' : 'shop.perMonth') : ''}`, sellable: true };
   };
 
   const tabs: Array<[Tab, string, IconName]> = [
     ['diamonds', t('shop.tabs.diamonds'), 'gem'],
     ['looks', t('shop.tabs.looks'), 'star'],
     ['coach', t('shop.tabs.coach'), 'cap'],
-    ['vip', t('shop.tabs.vip'), 'crown'],
-    ['club', t('shop.tabs.club'), 'users'],
   ];
   const tier = coachTier(wallet);
+  const renewal = coachRenewal(wallet);
   const pad = width >= 1000 ? 28 : space.lg;
   const inner = width - pad * 2;
   const cols = Math.max(2, Math.min(6, Math.floor(inner / 182)));
@@ -66,7 +122,7 @@ export function ShopScreen() {
   const grid = (items: React.ReactNode[]) => <View style={[styles.grid, { gap }]}>{items}</View>;
 
   return (
-    <ScrollView contentContainerStyle={[styles.wrap, { padding: pad }]}>
+    <ScrollView contentContainerStyle={[styles.wrap, { padding: pad }]} testID="shop">
       <ScreenHeader title={t('shop.title')} onBack={app.back} backTestID="back" right={<GemCounter amount={totalDiamonds(wallet)} onPress={() => setTab('diamonds')} />} />
       <View style={styles.trust}>
         <Icon name="shield" size={20} />
@@ -74,45 +130,53 @@ export function ShopScreen() {
           {t('shop.trust')}
         </Text>
       </View>
+      {shop.storeKind === 'unavailable' && (
+        <Card tone="gold" testID="store-unavailable" style={{ flexDirection: 'row', gap: space.md, alignItems: 'center' }}>
+          <Icon name="lock" size={30} />
+          <View style={{ flex: 1, gap: 2 }}>
+            <H2>{t('shop.unavailable.title')}</H2>
+            <P dim style={{ fontSize: 13, lineHeight: 18 }}>
+              {t('shop.unavailable.body')}
+            </P>
+          </View>
+        </Card>
+      )}
+      {shop.storeKind === 'mock' && <Pill tone="premium" icon="warning" text={t('shop.mock')} />}
+      {offline && <Pill icon="warning" text={t('shop.offline')} />}
       <View style={[styles.tabs, narrowTabs && { alignSelf: 'stretch', gap: 2 }]}>
         {tabs.map(([id, label, icon]) => {
           const on = tab === id;
           return (
-            <Pressable key={id} onPress={() => setTab(id)} style={[styles.tab, on && styles.tabOn, narrowTabs && styles.tabNarrow]}>
+            <Pressable key={id} testID={`shop-tab-${id}`} accessibilityRole="tab" accessibilityState={{ selected: on }} onPress={() => setTab(id)} style={[styles.tab, on && styles.tabOn, narrowTabs && styles.tabNarrow]}>
               <Icon name={icon} size={narrowTabs ? 20 : 22} />
               <Text style={[styles.tabText, fontFor(label, fonts.display), on && { color: colors.ink }, narrowTabs && { fontSize: 13 }]}>{label}</Text>
             </Pressable>
           );
         })}
       </View>
-      {msg && <Pill text={msg} tone="gold" icon="check" />}
+      {msg && <Pill text={msg.text} tone={msg.tone} icon={msg.tone === 'ok' ? 'check' : 'warning'} />}
 
-      {tab === 'diamonds' &&
-        grid(
-          DIAMOND_PACKS.map((p, i) => (
-            <ProductCard key={p.id} w={cardW} short={shortScreen} p={p} busy={busy === p.id} onBuy={() => void buy(p, 'money')} art={<GemPile tier={i} width="100%" height="100%" />} bg={['#E9DBFF', '#B79BFF']} amount={p.diamonds} />
-          )),
-        )}
+      {tab === 'diamonds' && (
+        <>
+          <P style={styles.note}>{t('shop.diamondsUse')}</P>
+          {grid(DIAMOND_PACKS.map((p, i) => <ProductCard key={p.id} w={cardW} short={shortScreen} p={p} price={priceLabel(p)} busy={busy === p.id} onBuy={() => void buy(p)} art={<GemPile tier={i} width="100%" height="100%" />} bg={['#E9DBFF', '#B79BFF']} amount={p.diamonds} />))}
+        </>
+      )}
 
       {tab === 'looks' &&
         grid(
-          COSMETICS.map((p) => {
-            const owned = p.unlocks ? ownsCosmetic(wallet, p.unlocks) : false;
-            const art = p.id.startsWith('theme.') ? (
-              <ThemeScene theme={themeById(p.unlocks)} width="100%" height="100%" />
-            ) : p.id.startsWith('avatars.') ? (
-              <View style={styles.center}>
-                <AvatarLine ids={['cowboy', 'hoops', 'chef', 'shades']} size={Math.min(52, cardW / 3.4)} />
-              </View>
-            ) : (
-              <View style={[styles.center, { flexDirection: 'row', gap: 4 }]}>
-                <Emote id="lol" size={44} />
-                <Emote id="love" size={44} />
-                <Emote id="fire" size={44} />
-              </View>
-            );
-            return <ProductCard key={p.id} w={cardW} p={p} owned={owned} busy={busy === p.id} onBuy={() => void buy(p, 'money')} onBuyDiamonds={p.diamondPrice ? () => void buy(p, 'diamonds') : undefined} art={art} bg={['#D5F7E3', '#8FE0B0']} />;
-          }),
+          COSMETICS.map((p) => (
+            <ProductCard
+              key={p.id}
+              w={cardW}
+              p={p}
+              owned={p.unlocks ? ownsCosmetic(wallet, p.unlocks) : false}
+              busy={busy === p.id}
+              onBuyDiamonds={p.diamondPrice ? () => void spend(p) : undefined}
+              art={<ThemeScene theme={themeById(p.unlocks)} width="100%" height="100%" />}
+              bg={['#D5F7E3', '#8FE0B0']}
+            />
+          )),
         )}
 
       {tab === 'coach' && (
@@ -124,56 +188,54 @@ export function ShopScreen() {
               <P dim style={{ fontSize: 13, lineHeight: 18 }}>
                 {t('shop.coach.body')}
               </P>
-              {tier !== 'free' && <Pill text={t('shop.coach.renews', { date: new Date(wallet.subscription!.until).toLocaleDateString() })} tone="ok" />}
+              {tier !== 'free' && renewal !== null && <Pill text={t('shop.coach.renews', { date: new Date(renewal).toLocaleDateString() })} tone="ok" />}
             </View>
           </Card>
-          {grid(SUBSCRIPTIONS.map((p) => <ProductCard key={p.id} w={cardW} p={p} busy={busy === p.id} onBuy={() => void buy(p, 'money')} art={<MedalScene tier={p.tier === 'platinum' ? 'platinum' : p.tier === 'diamond' ? 'diamond' : 'gold'} width="100%" height="100%" />} bg={['#FFF3C4', '#FFD36B']} />))}
+          {grid(SUBSCRIPTIONS.map((p) => <ProductCard key={p.id} w={cardW} p={p} price={priceLabel(p)} busy={busy === p.id} onBuy={() => void buy(p)} art={<MedalScene tier={p.tier === 'platinum' ? 'platinum' : 'gold'} width="100%" height="100%" />} bg={['#FFF3C4', '#FFD36B']} />))}
         </>
       )}
 
-      {tab === 'vip' && (
-        <>
-          <Card style={{ flexDirection: 'row', gap: space.md, alignItems: 'flex-start' }}>
-            <Icon name="crown" size={40} />
-            <View style={{ flex: 1, gap: 4 }}>
-              <H2>{hasVip(wallet) ? t('shop.vip.active') : t('shop.vip.cards')}</H2>
-              <P dim style={{ fontSize: 13, lineHeight: 18 }}>
-                {t('shop.vip.body')}
-              </P>
-              {hasVip(wallet) && <Pill text={t('shop.vip.until', { date: new Date(wallet.vip!.until).toLocaleDateString() })} tone="ok" />}
-            </View>
-          </Card>
-          {grid(VIP_CARDS.map((p, i) => <ProductCard key={p.id} w={cardW} p={p} busy={busy === p.id} onBuy={() => void buy(p, 'money')} onBuyDiamonds={p.diamondPrice ? () => void buy(p, 'diamonds') : undefined} art={<VipCardScene tier={i === 0 ? 'bronze' : i === 1 ? 'silver' : 'gold'} width="100%" height="100%" />} bg={['#FFE6D1', '#FFB98A']} />))}
-        </>
-      )}
-
-      {tab === 'club' && (
-        <>
-          <Card style={{ flexDirection: 'row', gap: space.md, alignItems: 'flex-start' }}>
-            <Icon name="users" size={40} />
-            <View style={{ flex: 1, gap: 4 }}>
-              <H2>{t('shop.club.title')}</H2>
-              <P dim style={{ fontSize: 13, lineHeight: 18 }}>
-                {t('shop.club.body')}
-              </P>
-              {wallet.clubTier && <Pill text={t('shop.club.tier', { capacity: wallet.clubTier.capacity, date: new Date(wallet.clubTier.until).toLocaleDateString() })} tone="ok" />}
-            </View>
-          </Card>
-          {grid(CLUB_PRODUCTS.map((p) => <ProductCard key={p.id} w={cardW} p={p} busy={busy === p.id} onBuy={() => void buy(p, 'money')} onBuyDiamonds={p.diamondPrice ? () => void buy(p, 'diamonds') : undefined} art={<ClubhouseScene width="100%" height="100%" />} bg={['#C9F1FF', '#83D6FF']} />))}
-        </>
+      <NoValueNotice />
+      {shop.storeKind !== 'unavailable' && (
+        <Button testID="restore-purchases" small kind="ghost" icon="check" title={busy === 'restore' ? t('shop.restoring') : t('shop.restore')} onPress={() => void restore()} disabled={busy !== null} style={{ alignSelf: 'flex-start' }} />
       )}
       <Text style={styles.foot}>{t('shop.foot')}</Text>
+      <LegalLinks style={{ justifyContent: 'flex-start' }} />
     </ScrollView>
   );
 }
 
-function ProductCard({ p, owned, busy, onBuy, onBuyDiamonds, art, bg, w, amount, short }: { p: Product; owned?: boolean; busy: boolean; onBuy: () => void; onBuyDiamonds?: () => void; art: React.ReactNode; bg: readonly [string, string]; w: number; amount?: number; short?: boolean }) {
+function ProductCard({
+  p,
+  price,
+  owned,
+  busy,
+  onBuy,
+  onBuyDiamonds,
+  art,
+  bg,
+  w,
+  amount,
+  short,
+}: {
+  p: Product;
+  /** For products sold for money: the store's price, or why there is none. */
+  price?: { label: string; sellable: boolean };
+  owned?: boolean;
+  busy: boolean;
+  onBuy?: () => void;
+  onBuyDiamonds?: () => void;
+  art: React.ReactNode;
+  bg: readonly [string, string];
+  w: number;
+  amount?: number;
+  short?: boolean;
+}) {
   const { t } = useT();
   const text = productText(p, t);
-  const price = `$${p.priceUsd.toFixed(2)}${p.period ? t(p.period === 'year' ? 'shop.perYear' : 'shop.perMonth') : ''}`;
   const sub = amount !== undefined ? text.description : t('shop.productSub', { zh: p.titleZh, description: text.description });
   return (
-    <Card style={{ width: w, padding: 8, gap: 6 }}>
+    <Card style={{ width: w, padding: 8, gap: 6 }} testID={`product-${p.id}`}>
       <View style={[styles.window, short && { height: 68 }]}>
         <LinearGradient colors={bg} style={StyleSheet.absoluteFill} />
         <View style={styles.shine} />
@@ -208,8 +270,8 @@ function ProductCard({ p, owned, busy, onBuy, onBuyDiamonds, art, bg, w, amount,
         </View>
       ) : (
         <View style={{ gap: 6 }}>
-          <Button small title={busy ? '…' : price} onPress={onBuy} disabled={busy} />
-          {onBuyDiamonds && <Button small kind="secondary" icon="gem" title={String(p.diamondPrice)} onPress={onBuyDiamonds} disabled={busy} />}
+          {price && onBuy && <Button small testID={`buy-${p.id}`} title={busy ? '…' : price.label} onPress={onBuy} disabled={busy || !price.sellable} />}
+          {onBuyDiamonds && <Button small testID={`spend-${p.id}`} icon="gem" title={busy ? '…' : (p.diamondPrice ?? 0).toLocaleString()} onPress={onBuyDiamonds} disabled={busy} />}
         </View>
       )}
     </Card>
@@ -218,11 +280,11 @@ function ProductCard({ p, owned, busy, onBuy, onBuyDiamonds, art, bg, w, amount,
 
 const styles = StyleSheet.create({
   wrap: { gap: space.md },
-  center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   trust: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: 'rgba(255,255,255,0.75)', borderWidth: 2, borderColor: colors.ink, borderRadius: 14, paddingHorizontal: 10, paddingVertical: 6 },
   trustText: { flex: 1, fontFamily: fonts.bodyBold, color: colors.ink, fontSize: 12 },
+  note: { color: '#FFFFFF', fontSize: 13, fontFamily: fonts.bodyBold },
   tabs: { flexDirection: 'row', gap: 6, backgroundColor: 'rgba(16,20,47,0.55)', borderRadius: 18, borderWidth: 3, borderColor: colors.ink, padding: 4, alignSelf: 'flex-start', maxWidth: '100%' },
-  tab: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 12 },
+  tab: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 12, minHeight: 44 },
   tabNarrow: { flex: 1, flexDirection: 'column', gap: 0, paddingHorizontal: 2, paddingVertical: 4, justifyContent: 'center' },
   tabOn: { backgroundColor: colors.gold, borderWidth: 2, borderColor: colors.ink, borderBottomWidth: 4, paddingVertical: 4 },
   tabText: { fontFamily: fonts.display, color: '#FFFFFF', fontSize: 16 },

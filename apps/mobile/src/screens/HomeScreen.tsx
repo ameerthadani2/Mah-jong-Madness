@@ -1,8 +1,12 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BOT_SKILLS, type BotSkill } from '@mjm/engine';
-import { hasTier } from '../monetisation/store';
+import { allowedBotSkill, hasTier, totalDiamonds } from '../monetisation/wallet';
+import { useWallet } from '../monetisation/useWallet';
+import { gateFor } from '../legal/age';
+import { useAgeGate } from '../legal/useAgeGate';
+import { AgeBlocked, AgeGate } from '../components/AgeGate';
 import { useApp } from '../app-state';
 import { createLocalSession, createOnlineSession } from '../game/session';
 import { useAuth } from '../auth/AuthProvider';
@@ -39,9 +43,18 @@ export function HomeScreen() {
   const [resuming, setResuming] = useState(false);
   const [resumeError, setResumeError] = useState<string | null>(null);
 
+  // The age gate comes first on a fresh install (src/legal/age.ts, gateFor).
+  const gate = useAgeGate();
+  // Mirror the server wallet when this device already has a session (never bootstraps one).
+  const { refresh: refreshWallet } = useWallet({ loadPrices: false });
+  const accountId = auth.user?.id;
+  useEffect(() => {
+    if (app.loaded && accountId) void refreshWallet();
+  }, [app.loaded, accountId, refreshWallet]);
+
   const playBots = () => {
     if (needsName) saveName();
-    const session = createLocalSession(app.profile.name || name.trim() || t('common.player'), app.profile.avatar, app.settings.rules, { botSkill: app.settings.botSkill });
+    const session = createLocalSession(app.profile.name || name.trim() || t('common.player'), app.profile.avatar, app.settings.rules, { botSkill: allowedBotSkill(app.settings.botSkill, app.wallet) });
     app.setSession(session);
     session.host!.start();
     app.go({ name: 'table' });
@@ -74,7 +87,7 @@ export function HomeScreen() {
   const dailyDone = app.progress.dailySolved[todayKey()] !== undefined;
   const streak = effectiveStreak(app.progress);
   const lessonsDone = Object.keys(app.progress.lessonsDone).length;
-  const gems = app.wallet.diamonds + app.wallet.bonusDiamonds;
+  const gems = totalDiamonds(app.wallet);
   const goClubs = () => {
     if (needsName) saveName();
     app.go({ name: 'clubs' });
@@ -92,7 +105,7 @@ export function HomeScreen() {
     <Row style={{ flexWrap: 'wrap', rowGap: 6 }} gap={6}>
       {(Object.keys(BOT_SKILLS) as BotSkill[]).map((k) => {
         const locked = k === 'pro' && !hasTier(app.wallet, 'gold');
-        return <Chip key={k} label={botLabel(k, locale, true)} selected={app.settings.botSkill === k} locked={locked} onPress={() => (locked ? app.go({ name: 'shop' }) : app.setSettings({ ...app.settings, botSkill: k }))} />;
+        return <Chip key={k} label={botLabel(k, locale, true)} selected={allowedBotSkill(app.settings.botSkill, app.wallet) === k} locked={locked} onPress={() => (locked ? app.go({ name: 'shop' }) : app.setSettings({ ...app.settings, botSkill: k }))} />;
       })}
     </Row>
   );
@@ -167,6 +180,12 @@ export function HomeScreen() {
       </View>
     </ModeCard>
   );
+
+  // Wait for the saved profile and the age answer before choosing what to show.
+  if (!app.loaded || !gate.loaded) return null;
+  const gateState = gateFor('home', gate.status, needsName);
+  if (gateState === 'blocked') return <AgeBlocked />;
+  if (gateState === 'ask') return <AgeGate />;
 
   return (
     <ScrollView contentContainerStyle={[styles.wrap, wide && { paddingTop: 8 }, tablet && { padding: 28, gap: 22 }]}>
