@@ -1,0 +1,308 @@
+/**
+ * Repository interfaces: the only way server code reads or writes durable state. Two
+ * implementations exist, `memory.ts` (tests, and servers without DATABASE_URL) and `pg.ts`.
+ * Both must pass the same contract in `test/repos.test.ts`.
+ *
+ * Conventions: every method is async; times are epoch milliseconds; a missing row is `null`
+ * (never an exception); records returned are copies, so mutating one changes nothing stored.
+ */
+import type { Club, Identity } from '../clubs';
+
+// ---------------------------------------------------------------------------------------------
+// Users and sign-in
+// ---------------------------------------------------------------------------------------------
+
+export type UserKind = 'guest' | 'account';
+
+export interface UserRecord {
+  id: string;
+  kind: UserKind;
+  displayName: string;
+  avatar: string | null;
+  email: string | null;
+  birthYear: number | null;
+  locale: string | null;
+  createdAt: number;
+  lastSeenAt: number;
+  deletedAt: number | null;
+  mergedInto: string | null;
+}
+
+export interface NewUser {
+  id: string;
+  kind: UserKind;
+  displayName?: string;
+  avatar?: string | null;
+  email?: string | null;
+  birthYear?: number | null;
+  locale?: string | null;
+  createdAt: number;
+}
+
+export type UserPatch = Partial<Omit<UserRecord, 'id' | 'createdAt'>>;
+
+export interface UsersRepo {
+  create(user: NewUser): Promise<UserRecord>;
+  get(id: string): Promise<UserRecord | null>;
+  /** Applies the patch and returns the updated row, or null when there is no such user. */
+  update(id: string, patch: UserPatch): Promise<UserRecord | null>;
+}
+
+export const IDENTITY_PROVIDERS = ['guest', 'apple', 'google', 'facebook'] as const;
+export type IdentityProvider = (typeof IDENTITY_PROVIDERS)[number];
+
+export interface IdentityRecord {
+  provider: IdentityProvider;
+  subject: string;
+  userId: string;
+  /** Peppered hash of the guest secret; null for the external providers. */
+  secretHash: string | null;
+  email: string | null;
+  createdAt: number;
+}
+
+export interface IdentitiesRepo {
+  get(provider: IdentityProvider, subject: string): Promise<IdentityRecord | null>;
+  listForUser(userId: string): Promise<IdentityRecord[]>;
+  /** Inserts the identity; false (and nothing written) when (provider, subject) already exists. */
+  create(identity: IdentityRecord): Promise<boolean>;
+  updateSecretHash(provider: IdentityProvider, subject: string, secretHash: string): Promise<void>;
+  delete(provider: IdentityProvider, subject: string): Promise<boolean>;
+  deleteForUser(userId: string): Promise<number>;
+}
+
+export interface SessionRecord {
+  id: string;
+  userId: string;
+  deviceId: string | null;
+  tokenHash: string;
+  createdAt: number;
+  expiresAt: number;
+  rotatedFrom: string | null;
+  /** When the session stops working. A time in the future marks the grace window after a rotation. */
+  revokedAt: number | null;
+}
+
+export type SessionPatch = Partial<Pick<SessionRecord, 'expiresAt' | 'revokedAt' | 'tokenHash'>>;
+
+export interface SessionsRepo {
+  create(session: SessionRecord): Promise<void>;
+  get(id: string): Promise<SessionRecord | null>;
+  findByHash(tokenHash: string): Promise<SessionRecord | null>;
+  update(id: string, patch: SessionPatch): Promise<void>;
+  /** Sets revoked_at only if it is still null; true when this call won (used to rotate exactly once). */
+  revokeIfActive(id: string, at: number): Promise<boolean>;
+  /** Ends every session of the user at `at` (including ones in a grace window), except `exceptId`. */
+  revokeAllForUser(userId: string, at: number, exceptId?: string): Promise<number>;
+  deleteForUser(userId: string): Promise<number>;
+}
+
+export interface DeviceRecord {
+  id: string;
+  userId: string;
+  platform: string;
+  appBuild: string | null;
+  pushToken: string | null;
+  locale: string | null;
+  createdAt: number;
+  lastSeenAt: number;
+}
+
+export type DevicePatch = Partial<Pick<DeviceRecord, 'platform' | 'appBuild' | 'pushToken' | 'locale' | 'lastSeenAt'>>;
+
+export interface DevicesRepo {
+  create(device: DeviceRecord): Promise<void>;
+  get(id: string): Promise<DeviceRecord | null>;
+  update(id: string, patch: DevicePatch): Promise<void>;
+  listForUser(userId: string): Promise<DeviceRecord[]>;
+  moveToUser(fromUserId: string, toUserId: string): Promise<number>;
+  deleteForUser(userId: string): Promise<number>;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Wallet, purchases and entitlements
+// ---------------------------------------------------------------------------------------------
+
+export interface WalletRecord {
+  userId: string;
+  diamonds: number;
+  bonusDiamonds: number;
+  updatedAt: number;
+}
+
+export interface LedgerEntry {
+  id: number;
+  userId: string;
+  /** Change to purchased diamonds. */
+  delta: number;
+  /** Change to bonus diamonds. */
+  bonus: number;
+  reason: string;
+  ref: string | null;
+  createdAt: number;
+}
+
+export type NewLedgerEntry = Omit<LedgerEntry, 'id' | 'bonus' | 'ref'> & { bonus?: number; ref?: string | null };
+
+export interface PurchaseRecord {
+  id: number;
+  userId: string;
+  store: string;
+  transactionId: string;
+  productId: string;
+  price: number | null;
+  currency: string | null;
+  eventId: string | null;
+  raw: unknown;
+  createdAt: number;
+}
+
+export type NewPurchase = Omit<PurchaseRecord, 'id'>;
+
+export interface EntitlementRecord {
+  userId: string;
+  entitlement: string;
+  /** null means it does not expire. */
+  expiresAt: number | null;
+  source: string;
+  updatedAt: number;
+}
+
+export interface WalletRepo {
+  /** The user's balances; zero balances when the user has never had a wallet. */
+  get(userId: string): Promise<WalletRecord>;
+  /**
+   * Appends a ledger entry and moves the balances by it, atomically. Returns null (and writes
+   * nothing) when either balance would go below zero.
+   */
+  apply(entry: NewLedgerEntry): Promise<{ wallet: WalletRecord; entry: LedgerEntry } | null>;
+  listLedger(userId: string): Promise<LedgerEntry[]>;
+  /** Idempotent on transaction id and event id: a repeat returns the stored row with inserted false. */
+  recordPurchase(purchase: NewPurchase): Promise<{ purchase: PurchaseRecord; inserted: boolean }>;
+  listPurchases(userId: string): Promise<PurchaseRecord[]>;
+  getEntitlements(userId: string): Promise<EntitlementRecord[]>;
+  setEntitlement(entitlement: EntitlementRecord): Promise<void>;
+  /**
+   * Account merge: sums the balances into `toUserId`, re-points the ledger and purchases, and
+   * unions entitlements (the later expiry wins; no expiry beats any expiry).
+   */
+  mergeInto(fromUserId: string, toUserId: string, at: number): Promise<void>;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Clubs, tables and results
+// ---------------------------------------------------------------------------------------------
+
+export interface ClubMembership {
+  clubCode: string;
+  role: Club['members'][number]['role'];
+  status: 'member' | 'pending';
+}
+
+export interface ClubsRepo {
+  /** Writes one club in full (row, members, pending requests, tables); rows no longer present are removed. */
+  save(club: Club): Promise<void>;
+  delete(code: string): Promise<boolean>;
+  get(code: string): Promise<Club | null>;
+  loadAll(): Promise<Club[]>;
+  /** True when the user is a full member (not merely pending). */
+  isMember(clubCode: string, userId: string): Promise<boolean>;
+  clubsForUser(userId: string): Promise<ClubMembership[]>;
+  /**
+   * Account merge: moves `fromUserId`'s memberships and pending requests to `to`. Where both have
+   * a row the stronger one stays (member beats pending; on a tie `to`'s row is kept); clubs
+   * owned by `fromUserId` transfer to `to`. Returns the codes of every club changed, so a
+   * cache such as ClubRegistry can reload them.
+   */
+  moveMemberships(fromUserId: string, to: Identity): Promise<string[]>;
+  /** Account deletion: renames the user's rows to "Deleted player", clears avatars, drops pending requests. Returns the clubs changed. */
+  anonymiseUser(userId: string): Promise<string[]>;
+}
+
+export type TableStatus = 'open' | 'playing' | 'finished';
+
+export interface TableSnapshotRecord {
+  roomCode: string;
+  clubCode: string | null;
+  status: TableStatus;
+  /** The serialised host (SerializedHost); stored as opaque JSON. */
+  snapshot: unknown;
+  updatedAt: number;
+}
+
+export interface TableSnapshotsRepo {
+  save(snapshot: TableSnapshotRecord): Promise<void>;
+  get(roomCode: string): Promise<TableSnapshotRecord | null>;
+  /** Every snapshot whose table has not finished, to restore at boot. */
+  listActive(): Promise<TableSnapshotRecord[]>;
+  delete(roomCode: string): Promise<boolean>;
+  /** Removes finished snapshots last written before `before`. */
+  pruneFinished(before: number): Promise<number>;
+}
+
+export interface MatchPlayer {
+  seat: number;
+  name: string;
+  userId: string | null;
+  isBot: boolean;
+}
+
+export interface MatchResultRecord {
+  id: number;
+  roomCode: string;
+  clubCode: string | null;
+  handCount: number;
+  scores: number[];
+  players: MatchPlayer[];
+  handsWon: number[];
+  finishedAt: number;
+}
+
+export interface MatchResultsRepo {
+  record(result: Omit<MatchResultRecord, 'id'>): Promise<MatchResultRecord>;
+  /** Newest first. */
+  listForClub(clubCode: string, limit?: number): Promise<MatchResultRecord[]>;
+  listForRoom(roomCode: string): Promise<MatchResultRecord[]>;
+}
+
+export interface PuzzleResultRecord {
+  id: number;
+  userId: string;
+  kind: string;
+  puzzleKey: string;
+  correct: boolean;
+  seconds: number;
+  ratingAfter: number | null;
+  createdAt: number;
+}
+
+export interface PuzzleResultsRepo {
+  record(result: Omit<PuzzleResultRecord, 'id'>): Promise<PuzzleResultRecord>;
+  /** Oldest first. */
+  listForUser(userId: string, limit?: number): Promise<PuzzleResultRecord[]>;
+  moveToUser(fromUserId: string, toUserId: string): Promise<number>;
+}
+
+// ---------------------------------------------------------------------------------------------
+
+export interface Repos {
+  readonly kind: 'memory' | 'pg';
+  users: UsersRepo;
+  identities: IdentitiesRepo;
+  sessions: SessionsRepo;
+  devices: DevicesRepo;
+  wallet: WalletRepo;
+  clubs: ClubsRepo;
+  tableSnapshots: TableSnapshotsRepo;
+  matchResults: MatchResultsRepo;
+  puzzleResults: PuzzleResultsRepo;
+  /**
+   * Runs `fn` with repositories that share one transaction (pg: BEGIN/COMMIT, ROLLBACK on a
+   * throw; nested calls join the outer transaction). The memory implementation runs `fn`
+   * directly and cannot roll back.
+   */
+  transaction<T>(fn: (tx: Repos) => Promise<T>): Promise<T>;
+}
+
+/** Display name written over a deleted user's club rows and profile. */
+export const DELETED_PLAYER_NAME = 'Deleted player';
