@@ -50,6 +50,10 @@ export interface RoomEvent {
 /** Sent whether a code does not exist or the room is full, so the reply does not reveal which codes are live. */
 export const ROOM_UNAVAILABLE = 'Room not found or full';
 export const HOSTED_ONLY = 'Only server-hosted tables can be created';
+/** Sent for a hosted create while `HOST_TABLES=0`, instead of quietly opening a relay-only room. */
+export const HOSTED_DISABLED = 'Hosted tables are disabled';
+/** Sent to the peers left in a relay-only room when its host leaves, as `{t:'error', code:'closed', message}`. */
+export const ROOM_CLOSED = 'The host left, so the room has closed';
 export const CREATE_COOLDOWN = 'Please wait a few seconds before creating another room';
 export const JOIN_THROTTLED = 'Too many join attempts; please wait a few seconds';
 export const SERVER_FULL = 'The server is full right now; please try again in a few minutes';
@@ -98,7 +102,7 @@ export class RoomRegistry {
 
   /** Create a server-hosted room with no peers yet (e.g. a club table opened from the API). */
   createHostedRoom(opts: { code?: string; rules?: unknown; botSkill?: unknown; keepAliveMs?: number } = {}): string {
-    if (!this.opts.allowHosted) throw new RoomLimitError('Hosted tables are disabled');
+    if (!this.opts.allowHosted) throw new RoomLimitError(HOSTED_DISABLED);
     if (this.hostedCount() >= this.maxHostedTables()) throw new RoomLimitError(SERVER_FULL);
     const code = opts.code && /^[A-Z0-9]{4,8}$/.test(opts.code) && !this.rooms.has(opts.code) ? opts.code : this.newCode();
     const room: Room = { code, host: '', peers: new Set(), createdAt: this.now(), keepAliveUntil: this.now() + (opts.keepAliveMs ?? 15 * 60_000) };
@@ -180,7 +184,12 @@ export class RoomRegistry {
       }
       case 'create': {
         if (peer.id.startsWith('tmp-')) return peer.id;
-        const hosted = msg.hosted === true && this.opts.allowHosted === true;
+        const hosted = msg.hosted === true;
+        // A hosted request is never downgraded to a relay-only room the creator would host.
+        if (hosted && !this.opts.allowHosted) {
+          this.error(peer, HOSTED_DISABLED);
+          return peer.id;
+        }
         if (!hosted && !this.opts.allowP2P) {
           this.error(peer, HOSTED_ONLY);
           return peer.id;
@@ -257,7 +266,20 @@ export class RoomRegistry {
     this.broadcast(room, { t: 'peer', peerId: peer.id, event: 'leave' });
     room.table?.transport.peerLeft(peer.id);
     // The host role never passes to another peer. A guest promoted to host would hold none of
-    // the table's state and could rewrite the game. A relay-only room closes when its host leaves.
+    // the table's state and could rewrite the game. A relay-only room closes when its host leaves,
+    // and the peers still in it are told so and released to create or join another room.
+    if (!room.table && peer.id === room.host) {
+      const closed = JSON.stringify({ t: 'error', code: 'closed', message: ROOM_CLOSED });
+      for (const id of room.peers) {
+        const other = this.peers.get(id);
+        if (!other) continue;
+        other.room = null;
+        other.socket.send(closed);
+      }
+      room.peers.clear();
+      this.closeRoom(room);
+      return;
+    }
     if (room.peers.size === 0) {
       if (room.keepAliveUntil !== undefined && room.keepAliveUntil > this.now()) {
         // Club table: give players time to come back (the host pauses the match for them).

@@ -1,9 +1,21 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_RULES, RULE_LIMITS } from '@mjm/engine';
 import { CODE_ALPHABET, codeFromHex } from '../src/codes';
-import { CREATE_COOLDOWN, HOSTED_ONLY, JOIN_THROTTLED, ROOM_UNAVAILABLE, RoomLimitError, RoomRegistry, SERVER_FULL, type RoomRegistryOptions, type Socket } from '../src/rooms';
+import {
+  CREATE_COOLDOWN,
+  HOSTED_DISABLED,
+  HOSTED_ONLY,
+  JOIN_THROTTLED,
+  ROOM_CLOSED,
+  ROOM_UNAVAILABLE,
+  RoomLimitError,
+  RoomRegistry,
+  SERVER_FULL,
+  type RoomRegistryOptions,
+  type Socket,
+} from '../src/rooms';
 
-type Out = { t: string; message?: string; room?: string; host?: string; peers?: string[]; event?: string };
+type Out = { t: string; code?: string; message?: string; room?: string; host?: string; peers?: string[]; event?: string };
 
 function fakeSocket(): Socket & { out: Out[] } {
   const out: Out[] = [];
@@ -50,18 +62,48 @@ describe('RoomRegistry', () => {
     expect(reg.stats().peers).toBe(1);
   });
 
-  it('never hands the host role to a guest when a relay-only host leaves', () => {
+  it('closes a relay-only room when its host leaves instead of handing the host role to a guest (probe signal/rooms.ts)', () => {
+    for (const how of ['leave', 'disconnect'] as const) {
+      const { reg, clock, peer } = setup({ allowP2P: true });
+      const a = peer();
+      const b = peer();
+      const c = peer();
+      reg.handle(a.id, { t: 'create' });
+      const code = a.socket.out.find((m) => m.t === 'room')!.room!;
+      reg.handle(b.id, { t: 'join', room: code });
+      reg.handle(c.id, { t: 'join', room: code });
+      const before = b.socket.out.length;
+      if (how === 'leave') reg.handle(a.id, { t: 'leave' });
+      else reg.disconnect(a.id);
+      const after = b.socket.out.slice(before);
+      expect(after).toEqual([
+        { t: 'peer', peerId: a.id, event: 'leave' },
+        { t: 'error', code: 'closed', message: ROOM_CLOSED },
+      ]);
+      expect(last(c.socket)).toEqual({ t: 'error', code: 'closed', message: ROOM_CLOSED });
+      expect(reg.hasRoom(code)).toBe(false);
+      expect(reg.roomPeers(code)).toEqual([]);
+      // The guests are free: relaying to the old host goes nowhere, and they can open a room of their own.
+      const quiet = b.socket.out.length;
+      reg.handle(b.id, { t: 'to', to: c.id, data: { hi: 1 } });
+      expect(c.socket.out.some((m) => m.t === 'from')).toBe(false);
+      expect(b.socket.out.length).toBe(quiet);
+      clock.now += 10_000;
+      reg.handle(b.id, { t: 'create' });
+      expect(last(b.socket)!.t).toBe('room');
+    }
+  });
+
+  it('keeps a relay-only room open when a guest leaves', () => {
     const { reg, peer } = setup({ allowP2P: true });
     const a = peer();
     const b = peer();
     reg.handle(a.id, { t: 'create' });
     const code = a.socket.out.find((m) => m.t === 'room')!.room!;
     reg.handle(b.id, { t: 'join', room: code });
-    const before = b.socket.out.length;
-    reg.handle(a.id, { t: 'leave' });
-    const after = b.socket.out.slice(before);
-    expect(after).toEqual([{ t: 'peer', peerId: a.id, event: 'leave' }]);
-    expect(after.some((m) => m.t === 'room')).toBe(false);
+    reg.handle(b.id, { t: 'leave' });
+    expect(reg.roomPeers(code)).toEqual([a.id]);
+    expect(last(a.socket)).toEqual({ t: 'peer', peerId: b.id, event: 'leave' });
   });
 
   it('hosts a table on the server when asked', () => {
@@ -92,12 +134,16 @@ describe('RoomRegistry', () => {
       expect(a.socket.out.slice(1)).toEqual([{ t: 'error', message: HOSTED_ONLY }]);
       expect(reg.stats().rooms).toBe(0);
     }
-    // With hosting disabled, a hosted request is not quietly downgraded to a relay-only room.
-    const { reg, peer } = setup({ allowHosted: false });
-    const a = peer();
-    reg.handle(a.id, { t: 'create', hosted: true });
-    expect(last(a.socket)).toEqual({ t: 'error', message: HOSTED_ONLY });
-    expect(reg.stats().rooms).toBe(0);
+    // With hosting disabled, a hosted request is not quietly downgraded to a relay-only room,
+    // even when relay-only rooms are allowed (HOST_TABLES=0, P2P_ROOMS=1; probe signal/rooms.ts).
+    for (const opts of [{ allowHosted: false }, { allowHosted: false, allowP2P: true }]) {
+      const { reg, peer } = setup(opts);
+      const a = peer();
+      reg.handle(a.id, { t: 'create', hosted: true });
+      expect(last(a.socket)).toEqual({ t: 'error', message: HOSTED_DISABLED });
+      expect(reg.stats().rooms).toBe(0);
+      expect(() => reg.createHostedRoom()).toThrow(HOSTED_DISABLED);
+    }
   });
 
   it('sanitises the rules and bot skill of a hosted create (the probe payload)', () => {
