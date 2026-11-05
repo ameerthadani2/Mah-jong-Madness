@@ -37,7 +37,20 @@ Step-by-step setup (Fly app, Neon project, `fly secrets set`) is in [`DEPLOY.md`
 
 ## Phase 4 — store and legal
 
-Apple Developer (company account), Google Play Console, D-U-N-S, bank and tax forms; IAP vendor account, products and webhook secret; counsel-approved terms and privacy policy (`TERMS_URL`, `PRIVACY_URL`); support email.
+The server decides every entitlement from RevenueCat's webhook (`docs/API.md` → Store); the product ids are in `apps/signal/src/catalog.ts`.
+
+| Item | Type | Default while absent | Why |
+| --- | --- | --- | --- |
+| Apple Developer (company account), Google Play Console, D-U-N-S, bank and tax forms | accounts | no store builds | Paid apps and in-app purchases need the agreements signed and a legal entity (`STORE_COMPLIANCE.md` 5.1.1(ix)). |
+| In-app products | App Store Connect / Play Console | nothing to buy | Create exactly these ids. App Store: consumables `diamonds.60`, `diamonds.300`, `diamonds.600`, `diamonds.1300`, `diamonds.3450`, `diamonds.7500`; auto-renewing subscriptions `coach.gold.month`, `coach.gold.year`, `coach.platinum.month`, `coach.platinum.year` (one subscription group, Platinum ranked above Gold). Play: the same consumables; subscriptions `coach.gold` and `coach.platinum`, each with base plans `month` and `year`. Price tiers are in the catalogue (USD 0.99 … 99.99; Gold 6.99/49.99, Platinum 10.99/79.99). Table looks are bought with diamonds and need no store product. |
+| RevenueCat project | account | store off | Add the App Store and Play apps, import the products above, and make one offering with them. RevenueCat's public SDK keys go to the app (mobile rows below). |
+| `REVENUECAT_WEBHOOK_SECRET` | server secret | `POST /api/webhooks/revenuecat` answers 503 and `/api/config.storeEnabled` is false, so the app shows "Store unavailable" | Generate one (`openssl rand -hex 32`), `fly secrets set REVENUECAT_WEBHOOK_SECRET=…`, then in RevenueCat → Integrations → Webhooks set the URL to `https://<app>.fly.dev/api/webhooks/revenuecat` and the Authorization header to `Bearer <the same value>`. Send RevenueCat's test event: the server answers `{"outcome":"test"}`. |
+| RevenueCat public SDK keys (iOS and Android) | repo variables (`EXPO_PUBLIC_…`; the names are listed in the mobile app's store module) | the app cannot start a purchase | RevenueCat → Project → API keys; the public keys are meant to ship in the app. |
+| `EXPO_PUBLIC_STORE_MODE=mock` | repo variable (development builds only) | real store | Lets development builds use the mock store; release builds ignore it. |
+| `TERMS_URL`, `PRIVACY_URL` | repo variables | bundled screens marked DRAFT | Counsel-approved terms of service and privacy policy, hosted on your domain. |
+| Support email | decision | none shown | Shown in Settings and on the store listings. |
+| Moderation | process | reports pile up unread | Player reports land in the `reports` table (`status = 'open'`); decide who reads them and how often. |
+
 
 ## Phase 5 — audio
 
@@ -45,7 +58,18 @@ Sound effects and Mandarin (ideally also Taiwanese) voice calls dropped into `ap
 
 ## Phase 6 — observability and push
 
-Sentry and PostHog accounts (`SENTRY_DSN`, `EXPO_PUBLIC_SENTRY_DSN`, `POSTHOG_KEY`, `EXPO_PUBLIC_POSTHOG_KEY`); APNs key and FCM credentials uploaded to EAS; `EXPO_ACCESS_TOKEN`.
+What each signal means and where to look is in [`OBSERVABILITY.md`](OBSERVABILITY.md).
+
+| Item | Type | Default while absent | Why |
+| --- | --- | --- | --- |
+| `EXPO_ACCESS_TOKEN` | server secret | no push is sent; `/api/config.pushEnabled` is false | Expo → Account settings → Access tokens. The server sends "club table opened", "join request approved" and "your table is waiting" through Expo. |
+| APNs key and FCM credentials | EAS credentials | push cannot reach phones even with the token | Upload an APNs auth key (Apple Developer → Keys) and the FCM v1 service-account JSON (Firebase console) with `eas credentials`. |
+| `SENTRY_DSN` | server secret | server errors are only logged | Sentry project for the server (Node). Optional `SENTRY_ENVIRONMENT` (default `production`). |
+| `EXPO_PUBLIC_SENTRY_DSN`, `SENTRY_AUTH_TOKEN`, `SENTRY_ORG`, `SENTRY_PROJECT` | repo variable / secrets | app crashes are not reported; no source maps | A second Sentry project for the app; the auth token uploads source maps from the EAS build. |
+| `POSTHOG_KEY` | server secret | no server events (`purchase_credited`, `report_filed`) | PostHog project key. Optional `POSTHOG_HOST` (`https://eu.i.posthog.com` for an EU project). |
+| `EXPO_PUBLIC_POSTHOG_KEY`, `EXPO_PUBLIC_POSTHOG_HOST` | repo variables | no app funnel events | The same PostHog project, so app and server events join on the user id. |
+| Uptime alert | Fly dashboard or an uptime monitor | you learn about outages from players | Alert on `https://<app>.fly.dev/health` failing, and in Sentry on new issues. |
+| `MIN_BUILD` | server variable | `0`: every build may play online | Raise it to turn away builds older than a given release (reported as `/api/config.minBuild`, which the app reads to ask for an update). |
 
 ## Phase 7 — device QA and listings
 
