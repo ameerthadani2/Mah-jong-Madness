@@ -20,6 +20,7 @@ import { Icon } from '../components/Icons';
 import { LegalLinks, NoValueNotice } from '../components/LegalLinks';
 import { SoundSettings } from '../components/SoundSettings';
 import { PrivacyToggles } from '../components/PrivacyToggles';
+import { DisplaySettings } from '../components/DisplaySettings';
 
 export function SettingsScreen() {
   const app = useApp();
@@ -55,6 +56,7 @@ export function SettingsScreen() {
       <AccountCard />
       <SoundSettings />
       <PrivacyToggles />
+      <DisplaySettings />
       <Card>
         <H2>{t('settings.language')}</H2>
         <Row style={{ flexWrap: 'wrap', rowGap: 6 }}>

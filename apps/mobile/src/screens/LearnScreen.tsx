@@ -12,6 +12,7 @@ import { Tile, tileDims } from '../components/Tile';
 import { fitTile } from '../components/table/layout';
 import { Button, Card, H2, P, Pill, Row, ScreenHeader, SectionLabel, StrokeText } from '../components/Ui';
 import { Icon, type IconName } from '../components/Icons';
+import { RatingPill } from '../components/puzzles/RatingPill';
 import { useT, type Locale } from '../i18n';
 
 /**
@@ -81,6 +82,7 @@ export function LearnScreen() {
         </Card>
       )}
       <View style={styles.grid}>
+        <RatingPill rating={app.progress.puzzleRating} history={app.progress.ratingHistory} />
         <DrillCard w={drillW} icon="scroll" tint={colors.gold} title={t('learn.daily.title')} text={t('learn.daily.text')} stat={t('learn.daily.streak', { n: streak })} statIcon="flame" statTone={streak > 0 ? 'gold' : 'neutral'} cta={t('learn.daily.cta')} kind="gold" onPress={() => app.go({ name: 'daily' })} />
         <DrillCard w={drillW} icon="bolt" tint={colors.danger} title={t('learn.rush.title')} text={t('learn.rush.text')} stat={t('learn.rush.stat', { best: app.progress.rushBest, runs: app.progress.rushRuns })} statIcon="trophy" cta={t('learn.rush.cta')} kind="danger" onPress={() => app.go({ name: 'rush' })} />
         <DrillCard w={drillW} icon="target" tint={colors.cta} title={t('learn.discard.title')} text={t('learn.discard.text')} stat={acc === null ? t('learn.discard.none') : t('learn.discard.stat', { pct: acc, n: app.progress.drillsPlayed })} statIcon="check" cta={t('learn.discard.cta')} kind="primary" onPress={() => app.go({ name: 'drill', kind: 'discard' })} />
