@@ -33,7 +33,7 @@ npm run signal            # on your laptop, port 8787
 ```
 Find the laptop's LAN address (macOS: System Settings → Wi-Fi → Details; or `ipconfig getifaddr en0`) and in the app go to **Settings → Network** and set the URL to `ws://<laptop-ip>:8787`. Create a table on one phone, join by code on another. For friends outside your Wi-Fi, deploy `apps/signal` to any Node host (Fly.io, Render, a small VPS) with TLS and use `wss://…`.
 
-Limitations in Expo Go: no WebRTC (tables relay through the signaling server, which is fine), and haptics work only on a physical device.
+Limitation in Expo Go: haptics work only on a physical device. (The Settings → Network card only exists in development builds; release builds read the server address from the `SIGNAL_URL` repository variable.)
 
 ## 2. TestFlight with EAS — you have an Apple Developer membership, so this is the route
 
@@ -86,19 +86,6 @@ npx expo run:ios            # simulator
 npx expo run:ios --device   # a plugged-in iPhone (needs a free Apple ID signing team in Xcode)
 ```
 This generates the `ios/` folder (git-ignored), installs CocoaPods and launches. Use this route when adding native modules.
-
-### Optional: true device-to-device WebRTC
-Expo Go cannot load `react-native-webrtc`; a dev-client build can:
-```bash
-cd apps/mobile
-npx expo install react-native-webrtc
-# index.js, before registerRootComponent:
-#   import { RTCPeerConnection } from 'react-native-webrtc';
-#   import { registerPeerConnectionFactory } from './src/game/session';
-#   registerPeerConnectionFactory((cfg) => new RTCPeerConnection(cfg));
-eas build --platform ios --profile development      # or npx expo run:ios --device
-```
-With it, phones talk directly to the host phone and fall back to the relay only when NAT blocks them.
 
 ## Troubleshooting
 * **"Unable to resolve @mjm/engine"** — run `npm install` from the repo root (workspaces), not inside `apps/mobile`.

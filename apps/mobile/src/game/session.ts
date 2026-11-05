@@ -71,8 +71,7 @@ export interface OnlineOptions {
  * `signaling.createHostedRoom(rules, botSkill)` once that method exists.
  */
 export function requestHostedRoom(signaling: SignalingClient, rules: RuleSet, botSkill: BotSkill | undefined): Promise<RoomInfo> {
-  const raw = signaling as unknown as { roomRequest: (m: unknown) => Promise<RoomInfo> };
-  return raw.roomRequest({ t: 'create', hosted: true, rules, botSkill });
+  return signaling.createHostedRoom(rules, botSkill);
 }
 
 export async function createOnlineSession(opts: OnlineOptions): Promise<Session> {

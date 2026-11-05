@@ -1,7 +1,7 @@
 {
   "name": "@mjm/net",
   "version": "0.1.0",
-  "description": "P2P table protocol for Mahjong Madness: commit-reveal shuffle, host-authoritative lockstep, per-seat views, post-hand audit, WebRTC/relay transports.",
+  "description": "Table protocol for Mahjong Madness: commit-reveal shuffle, host-authoritative lockstep, per-seat views, post-hand audit, relay and loopback transports.",
   "type": "module",
   "main": "./src/index.ts",
   "types": "./src/index.ts",

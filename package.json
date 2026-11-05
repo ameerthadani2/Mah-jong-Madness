@@ -2,7 +2,7 @@
   "name": "mahjong-madness",
   "private": true,
   "version": "0.1.0",
-  "description": "P2P Taiwanese (16-tile) Mahjong for iOS and Android with a built-in coach.",
+  "description": "Taiwanese (16-tile) Mahjong for iOS and Android with verifiable server-hosted tables and a built-in coach.",
   "workspaces": [
     "packages/*",
     "apps/*"

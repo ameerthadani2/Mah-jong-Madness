@@ -1,7 +1,6 @@
 /**
- * Signaling / relay client over WebSocket. Used for two things:
- *   1. exchanging WebRTC offers/answers/ICE candidates between peers, and
- *   2. relaying game messages when a direct data channel cannot be established.
+ * Client for the game server's WebSocket endpoint: creates or joins a room and
+ * relays every game message between this device and the server-hosted table.
  *
  * The protocol is tiny and documented in apps/signal/README.md.
  */
@@ -207,7 +206,7 @@ export class SignalingClient {
   }
 }
 
-/** Transport that relays every message through the signaling server. Always works; higher latency than WebRTC. */
+/** Transport that relays every message through the game server's WebSocket. */
 export class RelayTransport implements Transport {
   private readonly msgHandlers = new Set<(from: string, msg: unknown) => void>();
   private readonly peerHandlers = new Set<(peerId: string, event: 'join' | 'leave') => void>();
@@ -215,7 +214,7 @@ export class RelayTransport implements Transport {
 
   constructor(
     private readonly signaling: SignalingClient,
-    /** Channel tag so WebRTC signaling and game traffic can share one socket. */
+    /** Channel tag so several kinds of traffic can share one socket. */
     private readonly channel = 'game',
   ) {
     this.unsub = signaling.onMessage((m) => {

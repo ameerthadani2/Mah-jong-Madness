@@ -11,7 +11,7 @@
 
 ### Play
 * **Clubs**: create by code, roles (owner/admin/member), approval queue, house rules (底/台, speed, 連莊, 一炮多響, 過水, flowers), server-hosted tables, standings, LINE/WhatsApp invite links (roadmap), inter-club matches (roadmap).
-* **Quick table**: a 6-letter code, phone-hosted or neutral-server hosted.
+* **Quick table**: a 6-letter code; every online table is hosted by the game server and verified by every player.
 * **Vs bots**: three skill levels with distinct policies; a rated ladder (roadmap).
 * **Speeds**: Relaxed / Normal / Fast / Turbo / Hyper with per-hand time banks; the bot plays for you when you run out; disconnect protection is free.
 
@@ -28,7 +28,7 @@
 * Commit–reveal shuffle with a host share, SHA-256 counter DRBG keyed by the full seed, per-hand audit verified on every phone, Fair-play screen, neutral-server hosting for clubs. See `docs/FAIRNESS.md`.
 
 ## Platforms
-Expo / React Native: iOS (iPhone, iPad), Android (phones, tablets), web. Landscape table that fits 17 tiles on an iPhone SE; lobby screens responsive. True device-to-device WebRTC via a dev-client build; relay fallback everywhere.
+Expo / React Native: iOS (iPhone, iPad), Android (phones, tablets), web. Landscape table that fits 17 tiles on an iPhone SE; lobby screens responsive. Online play goes through the game server over WebSocket.
 
 ## Free vs paid (summary — details in `docs/MONETISATION.md`)
 Everything needed to play with friends is free: clubs, tables, all speeds, resume, coach at the table, daily puzzle, drills, lessons 1–3, two bot levels, one review and one Puzzle Rush per day. Paid: coaching tiers, club capacity, cosmetics, VIP cards.

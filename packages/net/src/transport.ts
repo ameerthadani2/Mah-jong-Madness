@@ -1,7 +1,7 @@
 /**
  * Transport abstraction. Everything above this line is transport-agnostic:
- * the same host and client code runs over WebRTC data channels, a WebSocket
- * relay, or the in-memory loopback used for tests and offline play.
+ * the same host and client code runs over the WebSocket relay to the game
+ * server, or the in-memory loopback used for tests and offline play.
  */
 export type Unsubscribe = () => void;
 

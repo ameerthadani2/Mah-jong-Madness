@@ -1,6 +1,6 @@
 /**
- * Authoritative table host. Runs on one player's phone (pure P2P) or on a
- * club-operated node (neutral host) — the code is identical.
+ * Authoritative table host. Online tables run it on the game server; offline
+ * play against bots runs the same code on the player's own device.
  *
  * Responsibilities: seating, commit–reveal seed ceremony, validating actions,
  * broadcasting per-seat views, auto-playing bots / disconnected / timed-out
@@ -385,7 +385,8 @@ export class TableHost {
       this.banks[seat] = 0;
       this.clocks.delete(seat);
       if (!this.game || legalActions(this.game, seat).length === 0) continue;
-      const a = chooseAction(this.game, seat, { seed: `timeout:${seat}`, skill: this.botSkill }) ?? { type: 'pass' };
+      // A timed-out human is auto-played at Club strength at least, so a Beginner table never punishes a lost connection with 1%-win play.
+      const a = chooseAction(this.game, seat, { seed: `timeout:${seat}`, skill: this.botSkill === 'beginner' ? 'club' : this.botSkill }) ?? { type: 'pass' };
       this.apply(seat, a, 'timeout');
       return; // apply() re-arms clocks and may change phase
     }

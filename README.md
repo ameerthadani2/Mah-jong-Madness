@@ -12,10 +12,10 @@ and bots fill empty seats so a table always runs.
 
 | Path | What it is |
 | --- | --- |
-| `packages/engine` | Pure TypeScript rules engine: 144 tiles, 16-tile hands, chi/pong/kong (incl. 加槓 robbing), flowers, dead wall, dealer rotation, full 台 scoring with an itemised breakdown, deterministic replay, bots, and the coaching/learning layer. No dependencies. 42 tests. |
-| `packages/net` | P2P table protocol: commit–reveal shuffle seed, host-authoritative lock-step, hidden-information views, per-hand audit, timers/auto-play, reconnection. Transports: WebRTC data channels, WebSocket relay, in-memory loopback. 8 tests. |
+| `packages/engine` | Pure TypeScript rules engine: 144 tiles, 16-tile hands, chi/pong/kong (incl. 加槓 robbing), flowers and instant flower wins, dead wall, dealer rotation, full 台 scoring with an itemised breakdown, deterministic replay, bots, and the coaching/learning layer. No dependencies. |
+| `packages/net` | Table protocol: commit–reveal shuffle seed with a five-share ceremony, host-authoritative lock-step, hidden-information views, per-hand audit that every client verifies, timers/auto-play, rejoin tokens. Transports: WebSocket relay to the game server, in-memory loopback. |
 | `apps/mobile` | Expo / React Native app (iOS, Android, web): home, club (create/join by code), lobby, landscape table with coach panel, result and audit screens, Learn (6 lessons + 2 drills), house-rule settings. |
-| `apps/signal` | Tiny WebSocket signaling + relay server. Can also act as a neutral table host for clubs that want nobody's phone dealing. |
+| `apps/signal` | The game server: hosts every online table, relays the players' sockets, and runs the clubs API. Rate-limited and input-validated. |
 | `docs/` | Architecture, rules/scoring reference, Fair Play Charter, product definition, monetisation plan, store compliance checklist, design system, roadmap. |
 
 ## Try it from a phone
@@ -35,22 +35,9 @@ npm run signal         # signaling server on :8787
 npm run mobile         # Expo dev server; press i / a / w
 ```
 
-Playing against bots needs nothing else. For online tables point the app at your signaling server
-(Settings → Network) — on a laptop on the same Wi-Fi, `ws://<laptop-ip>:8787`.
-
-### Direct peer-to-peer (WebRTC) on device
-
-Expo Go has no WebRTC, so the app uses the relay transport there. For true device-to-device data channels build a dev client:
-
-```bash
-cd apps/mobile
-npx expo install react-native-webrtc
-# in index.js, before registerRootComponent:
-#   import { RTCPeerConnection } from 'react-native-webrtc';
-#   import { registerPeerConnectionFactory } from './src/game/session';
-#   registerPeerConnectionFactory((cfg) => new RTCPeerConnection(cfg));
-npx expo run:ios   # or run:android
-```
+Playing against bots needs nothing else. Online tables always run on the game server: builds read its
+address from the `SIGNAL_URL` repository variable, and development builds can override it under
+Settings → Network — on a laptop on the same Wi-Fi, `ws://<laptop-ip>:8787`.
 
 ## Features at a glance
 

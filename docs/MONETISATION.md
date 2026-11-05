@@ -44,7 +44,7 @@ PokerBros takes no rake; clubs set and keep it. Public estimates put it at a few
 
 ## Catalogue (implemented in `apps/mobile/src/monetisation/catalog.ts`)
 
-**Diamonds** (consumable, never expire): 60 / $0.99 · 300 / $4.99 · 600 / $9.99 · 1,300 / $19.99 · 3,000 (+15%) / $49.99 · 6,500 (+25%) / $99.99.
+**Diamonds** (consumable, never expire): 60 / $0.99 · 300 / $4.99 · 600 / $9.99 · 1,300 / $19.99 · 3,450 (+15%) / $49.99 · 7,500 (+25%) / $99.99.
 
 **Coach subscriptions** (auto-renewing, 7-day trial, cross-device):
 
