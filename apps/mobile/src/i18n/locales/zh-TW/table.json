@@ -140,6 +140,7 @@
     "tileSelected": "%{tile}，已選取",
     "tapToDiscard": "再點一次打出",
     "tapToSelect": "點一下選取要打的牌",
-    "emote": "送出表情 %{name}"
+    "emote": "送出表情 %{name}",
+    "reportHint": "長按即可檢舉這位玩家"
   }
 }

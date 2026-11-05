@@ -18,6 +18,8 @@ import { AvatarPlate } from '../components/Avatars';
 import { ThemeScene } from '../components/Scenes';
 import { Icon } from '../components/Icons';
 import { LegalLinks, NoValueNotice } from '../components/LegalLinks';
+import { SoundSettings } from '../components/SoundSettings';
+import { PrivacyToggles } from '../components/PrivacyToggles';
 
 export function SettingsScreen() {
   const app = useApp();
@@ -51,6 +53,8 @@ export function SettingsScreen() {
         </Row>
       </Card>
       <AccountCard />
+      <SoundSettings />
+      <PrivacyToggles />
       <Card>
         <H2>{t('settings.language')}</H2>
         <Row style={{ flexWrap: 'wrap', rowGap: 6 }}>

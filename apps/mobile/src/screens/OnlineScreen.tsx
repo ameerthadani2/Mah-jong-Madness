@@ -6,6 +6,8 @@ import { useAuth } from '../auth/AuthProvider';
 import { friendlyError } from '../logic/errors';
 import { rulesSummary } from '../logic/rules-text';
 import { useT } from '../i18n';
+import { useAgeGate } from '../legal/useAgeGate';
+import { AgeBlocked, AgeGate } from '../components/AgeGate';
 import { colors, fonts, space } from '../theme';
 import { Button, Card, H2, P, Row, ScreenHeader } from '../components/Ui';
 import { Icon } from '../components/Icons';
@@ -14,6 +16,7 @@ export function OnlineScreen() {
   const app = useApp();
   const auth = useAuth();
   const { t, locale } = useT();
+  const gate = useAgeGate();
   const [code, setCode] = useState('');
   // Opening Online is the first moment the app needs the server: bootstrap the guest now (quietly; failures show below).
   const { ensure } = auth;
@@ -48,6 +51,8 @@ export function OnlineScreen() {
     }
   };
 
+  // Installs that predate the age gate are asked before their first online table.
+  if (gate.loaded && gate.status !== 'allowed') return gate.status === 'blocked' ? <AgeBlocked onBack={app.back} /> : <AgeGate onBack={app.back} />;
   return (
     <ScrollView contentContainerStyle={styles.wrap}>
       <ScreenHeader title={t('online.title')} onBack={app.back} right={<Button small kind="ghost" icon="users" title={t('online.clubs')} onPress={() => app.go({ name: 'clubs' })} />} />

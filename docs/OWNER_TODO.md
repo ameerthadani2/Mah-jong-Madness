@@ -51,6 +51,11 @@ The server decides every entitlement from RevenueCat's webhook (`docs/API.md` â†
 | Support email | decision | none shown | Shown in Settings and on the store listings. |
 | Moderation | process | reports pile up unread | Player reports land in the `reports` table (`status = 'open'`); decide who reads them and how often. |
 
+| Item (app) | Type | Default while absent | Why |
+| --- | --- | --- | --- |
+| `EXPO_PUBLIC_REVENUECAT_IOS_KEY`, `EXPO_PUBLIC_REVENUECAT_ANDROID_KEY` | repo variables | the Shop shows "Store unavailable on this build" and sells nothing | RevenueCat public SDK keys; products in App Store Connect / Play must use the ids in `apps/mobile/src/monetisation/catalog.ts`. |
+| `EXPO_PUBLIC_STORE_MODE` | repo variable (development builds only) | the real store | `mock` lets a development build grant purchases locally; release builds ignore it. |
+| `EXPO_PUBLIC_TERMS_URL`, `EXPO_PUBLIC_PRIVACY_URL` | repo variables | the bundled DRAFT texts open in-app | Hosted, counsel-approved documents. Also replace `[Company name]`, `[support email]` and `[jurisdiction]` in `apps/mobile/src/legal/documents.ts`. |
 
 ## Phase 5 â€” audio
 

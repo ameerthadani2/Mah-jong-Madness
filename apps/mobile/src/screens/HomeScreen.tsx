@@ -213,7 +213,7 @@ export function HomeScreen() {
         )}
         <Row gap={10} style={wide ? { flex: needsName ? 1 : undefined, justifyContent: 'flex-end' } : undefined}>
           <GemCounter testID="open-shop" amount={gems} onPress={() => app.go({ name: 'shop' })} />
-          <IconButton icon="cog" kind="ghost" size={42} onPress={() => app.go({ name: 'settings' })} />
+          <IconButton icon="cog" kind="ghost" size={42} testID="open-settings" onPress={() => app.go({ name: 'settings' })} />
         </Row>
       </View>
 
@@ -261,9 +261,9 @@ export function HomeScreen() {
       )}
 
       {app.activeSession && !app.session && (
-        <Card tone="gold" style={{ flexDirection: 'row', alignItems: 'center', gap: space.md }}>
+        <Card tone="gold" style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: space.md }}>
           <Icon name="hourglass" size={34} />
-          <View style={{ flex: 1 }}>
+          <View style={{ flex: 1, minWidth: 170 }}>
             <Text style={[styles.resumeTitle, fontFor(t('home.resume.title'), fonts.display)]}>{t('home.resume.title')}</Text>
             <P dim style={{ fontSize: 13 }} numberOfLines={2}>
               {app.activeSession.kind === 'local'

@@ -30,6 +30,8 @@ import { useSfx, type TableEvent } from '../audio';
 import * as Haptics from 'expo-haptics';
 import { EMOTES, QUICK_CHATS, quickChatText, TableThemeContext, themeById } from '../themes';
 import { useT } from '../i18n';
+import { ReportPlayerSheet } from '../components/ReportPlayerSheet';
+import type { ReportTarget } from '../legal/reports';
 
 /** How long an emote bubble and a chat line stay on screen. */
 const EMOTE_MS = 3500;
@@ -53,6 +55,8 @@ export function TableScreen() {
   const [selected, setSelected] = useState<TileId | null>(null);
   // The coach is a practice aid: offline bot tables only, never at an online table with other people.
   const coachAllowed = session?.mode === 'local';
+  // Online only: a long press on an opponent's portrait opens the report sheet (bots and the local table have no one to report).
+  const [reporting, setReporting] = useState<ReportTarget | null>(null);
   const [coachWanted, setCoachOpen] = useState(app.settings.coach);
   const coachOpen = coachAllowed && coachWanted;
   const [emotePicker, setEmotePicker] = useState(false);
@@ -213,6 +217,11 @@ export function TableScreen() {
     timer: timerSeat === seat ? timerFrac : null,
     timerUrgent,
     emote: latestEmote(seat),
+    onLongPress:
+      session.mode === 'online' && seat !== mySeat && seatInfo(seat)?.userId && !seatInfo(seat)?.isBot
+        ? () => setReporting({ userId: seatInfo(seat)!.userId!, name: seatInfo(seat)!.name, roomCode: session.roomCode })
+        : undefined,
+    onLongPressHint: t('table.a11y.reportHint'),
     reaction: reactions[seat],
   });
 
@@ -260,6 +269,7 @@ export function TableScreen() {
           onLeave={leave}
         />
 
+        <ReportPlayerSheet visible={reporting !== null} target={reporting} onClose={() => setReporting(null)} />
         <Felt
           view={view}
           mySeat={mySeat}

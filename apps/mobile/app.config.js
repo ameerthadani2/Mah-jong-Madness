@@ -10,6 +10,9 @@
 //   src/config.ts at bundle time (absent → that service is off and its privacy toggle hidden).
 // - SENTRY_AUTH_TOKEN, SENTRY_ORG, SENTRY_PROJECT: source map and debug symbol upload during EAS builds. The Sentry
 //   config plugin is added only when all three are set, because its upload step fails a build without them.
+// - EXPO_PUBLIC_REVENUECAT_IOS_KEY, EXPO_PUBLIC_REVENUECAT_ANDROID_KEY: store SDK keys (absent → 'Store unavailable').
+// - EXPO_PUBLIC_STORE_MODE=mock: development builds only; release builds ignore it.
+// - EXPO_PUBLIC_TERMS_URL, EXPO_PUBLIC_PRIVACY_URL: hosted legal texts (absent → the bundled DRAFT texts).
 // - APP_STORE_ID: the numeric App Store id, for the 'Update required' link (the Play link comes from the bundle id).
 // - GOOGLE_SERVICES_JSON: path to google-services.json (an EAS file variable), needed for Android push (FCM).
 // Push notifications need the EAS project id (extra.eas.projectId, written by `eas init`); without it there is no token.

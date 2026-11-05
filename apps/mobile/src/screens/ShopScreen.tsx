@@ -1,3 +1,4 @@
+import { track } from '../telemetry';
 import React, { useEffect, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -60,8 +61,12 @@ export function ShopScreen() {
     setBusy(p.id);
     setMsg(null);
     try {
+      track('purchase_start', { product: p.id });
       const r = await shop.buy(p);
-      if (r.status === 'credited') unlocked(p);
+      if (r.status === 'credited') {
+        track('purchase_success', { product: p.id });
+        unlocked(p);
+      }
       else if (r.status === 'pending') setMsg({ text: t('shop.pending'), tone: 'gold' });
       else if (r.status === 'unavailable') setMsg({ text: t('shop.errors.store_unavailable'), tone: 'danger' });
       else if (r.status === 'failed') setMsg({ text: shopError(r.error, t), tone: 'danger' });

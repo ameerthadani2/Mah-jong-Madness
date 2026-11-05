@@ -90,6 +90,10 @@ The app side lives in `apps/mobile/src/monetisation/` (store and wallet), `apps/
 - `/health` also reports `storage` (`memory` | `pg`) and, on Postgres, `db: ok | down`.
 - `GET /api/users/:userId/clubs` only serves the caller's own id (or `me`); others get `403`.
 
+## Push notifications
+
+`POST /api/push/token` (bearer) body `{ "token": "ExponentPushToken[…]" | null, "platform": "ios" | "android", "locale"?: "en" | "zh-TW" }` → `204`; `null` stops notifications. Notification `data` carries `kind` (`club_table_opened` | `join_approved` | `table_waiting`), `type` (`club` | `table`) and the `club` / `room` codes for the deep link.
+
 ## Environment (server)
 
 `DATABASE_URL` (absent → in-memory repos, guest-only), `DATABASE_URL_DIRECT`, `MIGRATE_ON_BOOT`, `AUTH_PEPPER` (+ `AUTH_PEPPER_PREVIOUS`), `APPLE_CLIENT_ID`, `GOOGLE_CLIENT_IDS` (comma-separated), `FACEBOOK_APP_ID`, `CORS_ORIGINS`, `TRUST_PROXY`, `MAX_HOSTED_TABLES`, `PORT`. See `apps/signal/README.md` and `docs/DEPLOY.md`.

@@ -75,6 +75,7 @@ export function ClubsScreen() {
     try {
       const club = await clubsApi.create(ctx, name, rulesFromPreset(presetId), { joinRequiresApproval: approval });
       setCreating(false);
+      app.clubJoined('create');
       setName('');
       await refresh();
       app.go({ name: 'club', code: club.code });
@@ -86,6 +87,7 @@ export function ClubsScreen() {
     try {
       const r = await clubsApi.join(ctx, joinCode.trim().toUpperCase());
       setJoinCode('');
+      app.clubJoined('join', r.status);
       await refresh();
       if (r.status === 'pending') setError(t('clubs.join.requestSent'));
       else app.go({ name: 'club', code: r.club.code });

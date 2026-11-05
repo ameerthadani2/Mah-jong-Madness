@@ -3,6 +3,7 @@
  * record loads once from storage; `confirm` saves it and, when the device has a server
  * session, sends it with PATCH /api/me (retried by `syncToServer` on later visits).
  */
+import { markConsentGiven } from '../telemetry';
 import { useCallback, useEffect, useSyncExternalStore } from 'react';
 import { useAuth } from '../auth/AuthProvider';
 import { storage } from '../storage';
@@ -60,6 +61,8 @@ export function useAgeGate(): { loaded: boolean; record: AgeRecord | null; statu
     status: ageStatus(s.record, new Date().getFullYear()),
     confirm: (birthYear) => {
       const record: AgeRecord = { birthYear, at: Date.now(), synced: false };
+      // Analytics may start only after this answer; under-18s keep it off by default.
+      markConsentGiven({ minor: new Date().getFullYear() - birthYear < 18 });
       set({ loaded: true, record });
       void storage.saveAgeRecord(record).then(() => syncToServer(record));
     },

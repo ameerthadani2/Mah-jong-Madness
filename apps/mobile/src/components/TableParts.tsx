@@ -1,5 +1,5 @@
 import React, { useContext, useEffect, useState } from 'react';
-import { StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
+import { Pressable, StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
 import Svg, { Circle, Defs, G, LinearGradient, Path, RadialGradient, Rect, Stop } from 'react-native-svg';
 import { PLACEHOLDER_TILE, WINDS, type Meld, type PlayerView, type TileId } from '@mjm/engine';
 import type { SeatInfo } from '@mjm/net';
@@ -96,6 +96,8 @@ export function SeatBadge({
   vertical,
   maxNameWidth = 110,
   reaction,
+  onLongPress,
+  onLongPressHint,
 }: {
   seat: number;
   info?: SeatInfo;
@@ -113,6 +115,9 @@ export function SeatBadge({
   maxNameWidth?: number;
   /** Latest table event for this seat (call-outs, win celebration, deal-in shake). */
   reaction?: SeatReaction;
+  /** Long-press action on the portrait (online tables: report this player). */
+  onLongPress?: () => void;
+  onLongPressHint?: string;
 }) {
   const wind = WINDS[(seat - dealerSeat + 4) % 4];
   const rel = (seat - viewerSeat + 4) % 4;
@@ -134,7 +139,7 @@ export function SeatBadge({
   void compact;
   return (
     <View style={[styles.seat, vertical && styles.seatVertical]}>
-      <View>
+      <Pressable onLongPress={onLongPress} disabled={!onLongPress} accessibilityRole={onLongPress ? 'button' : undefined} accessibilityLabel={name} accessibilityHint={onLongPress ? onLongPressHint : undefined}>
         <SeatMotion size={size} seat={seat} active={isTurn && !offline} reaction={reaction}>
           <AvatarPlate id={seatAvatarId(info, seat)} size={size} active={isTurn} timer={isTurn ? timer : null} timerUrgent={timerUrgent} dealer={seat === dealerSeat} wind={wind} offline={offline} mood={mood} />
         </SeatMotion>
@@ -143,7 +148,7 @@ export function SeatBadge({
             <Emote id={emote} size={Math.max(26, size * 0.7)} />
           </View>
         )}
-      </View>
+      </Pressable>
       <View style={[styles.tag, vertical && { alignItems: 'center', marginTop: 4 }, { maxWidth: maxNameWidth }]}>
         <Text numberOfLines={1} style={[styles.tagName, nameFont(name)]}>
           {name}

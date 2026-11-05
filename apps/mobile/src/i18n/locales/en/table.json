@@ -140,6 +140,7 @@
     "tileSelected": "%{tile}, selected",
     "tapToDiscard": "Tap again to discard",
     "tapToSelect": "Tap to select for discard",
-    "emote": "Send emote %{name}"
+    "emote": "Send emote %{name}",
+    "reportHint": "Long press to report this player"
   }
 }

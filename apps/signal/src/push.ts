@@ -142,7 +142,8 @@ export class PushService {
       const batch: PushTarget[] = targets.filter((t) => allowed.has(t.userId) && EXPO_PUSH_TOKEN.test(t.token) && !seen.has(t.token) && seen.add(t.token));
       const messages: ExpoPushMessage[] = batch.map((t) => {
         const { title, body } = COPY[kind][langOf(t.locale)](params);
-        return { to: t.token, title, body, data: { kind, ...data }, sound: 'default', priority: kind === 'table_waiting' ? 'high' : 'default', channelId: 'default' };
+        // `type` is what the app's deep-link handler reads (club → the club screen; table → that table).
+        return { to: t.token, title, body, data: { kind, type: kind === 'join_approved' ? 'club' : 'table', ...data }, sound: 'default', priority: kind === 'table_waiting' ? 'high' : 'default', channelId: 'default' };
       });
       for (let i = 0; i < messages.length; i += CHUNK) {
         const chunk = messages.slice(i, i + CHUNK);

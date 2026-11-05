@@ -399,7 +399,7 @@ export function buildRoutes(deps: ApiDeps): Route[] {
     }),
     r('POST', '/api/push/token', async (ctx) => {
       const me = await ctx.caller();
-      const { token, platform } = ctx.body;
+      const { token, platform, locale } = ctx.body;
       if (token !== null && (typeof token !== 'string' || !EXPO_PUSH_TOKEN.test(token))) throw new HttpError(400, 'invalid', 'token must be an Expo push token, or null to stop notifications');
       if (token !== null && !(PUSH_PLATFORMS as readonly string[]).includes(platform as string)) throw new HttpError(400, 'invalid', `platform must be one of ${PUSH_PLATFORMS.join(', ')}`);
       const at = now();
@@ -416,7 +416,7 @@ export function buildRoutes(deps: ApiDeps): Route[] {
       }
       // A token belongs to one installation: drop it from any other device (an account switch on the same phone).
       await repos.devices.clearPushToken(token, device.id);
-      await repos.devices.update(device.id, { pushToken: token, platform: platform as string, lastSeenAt: at });
+      await repos.devices.update(device.id, { pushToken: token, platform: platform as string, lastSeenAt: at, ...(typeof locale === 'string' && /^[a-z]{2}(-[A-Za-z]{2,4})?$/.test(locale) ? { locale } : {}) });
       return new Reply(204);
     }),
 

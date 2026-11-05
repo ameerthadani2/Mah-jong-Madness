@@ -45,6 +45,7 @@ Simulated gambling: frequent (mahjong with scores). No real-money play, no chips
 - Identifiers: user ID, device ID — app functionality.
 - Usage data: product interaction (if analytics are enabled) — analytics, not linked to identity for advertising.
 - Purchases: purchase history — app functionality.
+- Diagnostics: crash data (only if crash reports are on) — app functionality, not linked to identity.
 No tracking across apps. Data is not sold.
 
 ## Review notes
