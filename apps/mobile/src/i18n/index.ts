@@ -9,8 +9,7 @@
 import { useSyncExternalStore } from 'react';
 import { I18n, type TranslateOptions } from 'i18n-js';
 import { getLocales } from 'expo-localization';
-import en from './locales/en.json';
-import zhTW from './locales/zh-TW.json';
+import { en, zhTW } from './locales';
 import { type Locale, type LocalePreference, resolveLocale } from './resolve';
 
 export { type Locale, type LocalePreference, SUPPORTED_LOCALES, LOCALE_NAMES, resolveLocale, isLocale } from './resolve';
