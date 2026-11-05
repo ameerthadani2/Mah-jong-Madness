@@ -19,12 +19,17 @@ import {
   type MatchResultRecord,
   type MatchResultsRepo,
   type PurchaseRecord,
+  type PushTarget,
   type PuzzleResultRecord,
   type PuzzleResultsRepo,
+  type ReportRecord,
+  type ReportsRepo,
   type Repos,
   type SessionPatch,
   type SessionRecord,
   type SessionsRepo,
+  type StoreEventRecord,
+  type StoreEventsRepo,
   type TableSnapshotRecord,
   type TableSnapshotsRepo,
   type UserPatch,
@@ -178,6 +183,66 @@ function memoryDevices(): DevicesRepo {
       for (const [id, r] of rows) if (r.userId === userId && rows.delete(id)) n++;
       return n;
     },
+    async clearPushToken(token, exceptDeviceId) {
+      let n = 0;
+      for (const r of rows.values()) {
+        if (r.pushToken !== token || r.id === exceptDeviceId) continue;
+        r.pushToken = null;
+        n++;
+      }
+      return n;
+    },
+    async pushTargets(userIds) {
+      const wanted = new Set(userIds);
+      return [...rows.values()]
+        .filter((r) => wanted.has(r.userId) && r.pushToken)
+        .sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id))
+        .map((r): PushTarget => ({ userId: r.userId, deviceId: r.id, token: r.pushToken as string, platform: r.platform, locale: r.locale }));
+    },
+  };
+}
+
+function memoryStoreEvents(): StoreEventsRepo {
+  const rows = new Map<string, StoreEventRecord>();
+  return {
+    async record(e) {
+      if (rows.has(e.eventId)) return false;
+      rows.set(e.eventId, copy(e));
+      return true;
+    },
+    async get(eventId) {
+      const row = rows.get(eventId);
+      return row ? copy(row) : null;
+    },
+    async setOutcome(eventId, outcome, userId) {
+      const row = rows.get(eventId);
+      if (row) Object.assign(row, { outcome, userId });
+    },
+    async delete(eventId) {
+      return rows.delete(eventId);
+    },
+  };
+}
+
+function memoryReports(): ReportsRepo {
+  const rows: ReportRecord[] = [];
+  let nextId = 0;
+  return {
+    async create(r) {
+      const row: ReportRecord = { ...copy(r), id: ++nextId, status: 'open' };
+      rows.push(row);
+      return copy(row);
+    },
+    async countByReporterSince(reporterId, since) {
+      return rows.filter((r) => r.reporterId === reporterId && r.createdAt >= since).length;
+    },
+    async listAbout(reportedUserId, limit = 100) {
+      return rows
+        .filter((r) => r.reportedUserId === reportedUserId)
+        .sort((a, b) => b.createdAt - a.createdAt || b.id - a.id)
+        .slice(0, limit)
+        .map(copy);
+    },
   };
 }
 
@@ -222,6 +287,9 @@ function memoryWallet(): WalletRepo {
     },
     async setEntitlement(e) {
       entitlements.set(entKey(e.userId, e.entitlement), copy(e));
+    },
+    async deleteEntitlement(userId, entitlement) {
+      return entitlements.delete(entKey(userId, entitlement));
     },
     async mergeInto(fromUserId, toUserId, at) {
       const from = wallets.get(fromUserId);
@@ -409,6 +477,8 @@ export function createMemoryRepos(): Repos {
     sessions: memorySessions(),
     devices: memoryDevices(),
     wallet: memoryWallet(),
+    storeEvents: memoryStoreEvents(),
+    reports: memoryReports(),
     clubs: memoryClubs(),
     tableSnapshots: memoryTableSnapshots(),
     matchResults: memoryMatchResults(),

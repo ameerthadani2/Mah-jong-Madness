@@ -132,12 +132,12 @@ describe('clientIp', () => {
 describe('loadConfig', () => {
   it('has safe defaults', () => {
     const c = loadConfig({});
-    expect(c).toEqual({ port: 8787, hostTables: true, dataDir: null, trustProxy: 0, corsOrigins: [], maxHostedTables: 500, p2pRooms: false, minBuild: 0, maintenance: null });
+    expect(c).toEqual({ port: 8787, hostTables: true, dataDir: null, trustProxy: 0, corsOrigins: [], maxHostedTables: 500, p2pRooms: false, minBuild: 0, maintenance: null, revenueCatWebhookSecret: null });
   });
 
   it('parses every variable and rejects nonsense numbers', () => {
-    const c = loadConfig({ PORT: '9000', HOST_TABLES: '0', DATA_DIR: '/data', TRUST_PROXY: '1', CORS_ORIGINS: 'http://localhost:8081, https://play.example ', MAX_HOSTED_TABLES: '20', P2P_ROOMS: 'true', MIN_BUILD: '42', MAINTENANCE_MESSAGE: ' Back at 10:00 ' });
-    expect(c).toEqual({ port: 9000, hostTables: false, dataDir: '/data', trustProxy: 1, corsOrigins: ['http://localhost:8081', 'https://play.example'], maxHostedTables: 20, p2pRooms: true, minBuild: 42, maintenance: 'Back at 10:00' });
+    const c = loadConfig({ PORT: '9000', HOST_TABLES: '0', DATA_DIR: '/data', TRUST_PROXY: '1', CORS_ORIGINS: 'http://localhost:8081, https://play.example ', MAX_HOSTED_TABLES: '20', P2P_ROOMS: 'true', MIN_BUILD: '42', MAINTENANCE_MESSAGE: ' Back at 10:00 ', REVENUECAT_WEBHOOK_SECRET: ' rc-secret ' });
+    expect(c).toEqual({ port: 9000, hostTables: false, dataDir: '/data', trustProxy: 1, corsOrigins: ['http://localhost:8081', 'https://play.example'], maxHostedTables: 20, p2pRooms: true, minBuild: 42, maintenance: 'Back at 10:00', revenueCatWebhookSecret: 'rc-secret' });
     const bad = loadConfig({ PORT: '99999', MAX_HOSTED_TABLES: '-3', TRUST_PROXY: '0', P2P_ROOMS: 'nope', MIN_BUILD: 'soon' });
     expect(bad.minBuild).toBe(0);
     expect(bad.port).toBe(8787);

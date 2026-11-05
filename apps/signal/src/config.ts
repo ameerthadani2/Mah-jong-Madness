@@ -31,6 +31,11 @@ export interface SignalConfig {
   minBuild: number;
   /** A notice the app shows instead of online play (`MAINTENANCE_MESSAGE`); null when unset. */
   maintenance: string | null;
+  /**
+   * The Authorization secret RevenueCat sends with each webhook (`REVENUECAT_WEBHOOK_SECRET`).
+   * Null: the webhook answers 503 and `/api/config` reports `storeEnabled: false`.
+   */
+  revenueCatWebhookSecret: string | null;
 }
 
 /** Fixed abuse limits. They are set generously for real play and cannot yet be configured per deployment. */
@@ -50,6 +55,8 @@ export const LIMITS = {
   joinWindowMs: 10_000,
   /** `/api/auth/*` requests per minute, per IP and per user. Exceeding either returns 429. */
   authPerMinute: 5,
+  /** Player reports one user may file in 24 hours. */
+  reportsPerDay: 10,
 } as const;
 
 type Env = Record<string, string | undefined>;
@@ -89,6 +96,7 @@ export function loadConfig(env: Env = process.env): SignalConfig {
     p2pRooms: flag(env.P2P_ROOMS, false),
     minBuild: env.MIN_BUILD && /^\d+$/.test(env.MIN_BUILD.trim()) ? Number(env.MIN_BUILD.trim()) : 0,
     maintenance: env.MAINTENANCE_MESSAGE && env.MAINTENANCE_MESSAGE.trim() ? env.MAINTENANCE_MESSAGE.trim().slice(0, 500) : null,
+    revenueCatWebhookSecret: (env.REVENUECAT_WEBHOOK_SECRET ?? '').trim() || null,
   };
 }
 

@@ -28,6 +28,8 @@ const PLANNED_TABLES = [
   'table_snapshots',
   'puzzle_results',
   'schema_migrations',
+  'store_events',
+  'reports',
 ];
 
 describe('migration files', () => {
@@ -41,11 +43,18 @@ describe('migration files', () => {
     }
   });
 
-  it('finds the shipped migrations by default, and 0001_init creates every planned table', () => {
+  it('finds the shipped migrations by default, and together they create every planned table', () => {
     const files = listMigrations(defaultMigrationsDir());
-    expect(files[0]?.version).toBe('0001_init');
-    const sql = readFileSync(files[0].path, 'utf8');
+    expect(files.map((f) => f.version)).toEqual(['0001_init', '0002_store_reports_seasons']);
+    const sql = files.map((f) => readFileSync(f.path, 'utf8')).join('\n');
     for (const table of PLANNED_TABLES) expect(sql).toMatch(new RegExp('CREATE TABLE (IF NOT EXISTS )?' + table + ' \\('));
+  });
+
+  it('0002 adds the season columns and copies lifetime points into the current season', () => {
+    const sql = readFileSync(listMigrations(defaultMigrationsDir())[1].path, 'utf8');
+    expect(sql).toMatch(/ALTER TABLE clubs ADD COLUMN season_history jsonb/);
+    expect(sql).toMatch(/ALTER TABLE clubs ADD COLUMN season_started_at timestamptz/);
+    expect(sql).toMatch(/UPDATE club_members SET season_points = lifetime_points/);
   });
 });
 
@@ -72,7 +81,7 @@ describe.skipIf(!PG_URL)('migrate() against Postgres', () => {
     const pool = await freshPool();
     try {
       const lines: string[] = [];
-      expect(await migrate(pool, { log: (l) => lines.push(l) })).toEqual(['0001_init']);
+      expect(await migrate(pool, { log: (l) => lines.push(l) })).toEqual(['0001_init', '0002_store_reports_seasons']);
       expect(await appliedMigrations(pool)).toEqual(['0001_init']);
       const tables = await pool.query<{ table_name: string }>('SELECT table_name FROM information_schema.tables WHERE table_schema = current_schema()');
       expect(tables.rows.map((r) => r.table_name).sort()).toEqual([...PLANNED_TABLES].sort());
@@ -106,7 +115,7 @@ describe.skipIf(!PG_URL)('migrate() against Postgres', () => {
     const pool = await freshPool();
     try {
       const [a, b] = await Promise.all([migrate(pool), migrate(pool)]);
-      expect([...a, ...b]).toEqual(['0001_init']);
+      expect([...a, ...b].sort()).toEqual(['0001_init', '0002_store_reports_seasons']);
     } finally {
       await pool.end();
     }

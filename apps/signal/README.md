@@ -8,7 +8,7 @@ npm run build -w @mjm/signal   # esbuild bundle: dist/server.cjs
 node dist/server.cjs migrate   # apply pending migrations and exit
 ```
 
-With no environment at all the server runs: accounts, clubs and tables are kept in memory, sign-in is guest-only and a random session pepper is used (each logs a warning). Tests run that way.
+With no environment at all the server runs: accounts, clubs and tables are kept in memory, sign-in is guest-only and a random session pepper is used (each logs a warning). The store webhook answers 503, no push is sent, and errors and events go nowhere but the log. Tests run that way.
 
 ## Layout
 
@@ -19,7 +19,13 @@ With no environment at all the server runs: accounts, clubs and tables are kept 
 | `src/api.ts` | The HTTP routes below |
 | `src/sockets.ts` | WebSocket limits, the `hello` session handshake, heartbeat, routing into the room registry |
 | `src/rooms.ts` | Rooms, hosted tables, the club table gate, keep-alive |
-| `src/clubs.ts` | Clubs, members, standings, table listings; writes each changed club through `repos.clubs` |
+| `src/clubs.ts` | Clubs, members, standings and seasons, table listings; writes each changed club through `repos.clubs`; emits `table_opened` / `member_approved` for push |
+| `src/catalog.ts` | The server's product table (diamond packs, Coach Gold/Platinum, table looks); ids match `apps/mobile/src/monetisation/catalog.ts` |
+| `src/wallet.ts` | `WalletService`: credits, diamond spends, store events applied once (idempotent on the event id) |
+| `src/revenuecat.ts` | RevenueCat webhook authentication and payload mapping to a vendor-neutral `StoreEvent` |
+| `src/push.ts` | `PushService` over `expo-server-sdk` (rate limits, receipts) and `SeatWatcher` ("your table is waiting") |
+| `src/metrics.ts` | The action-latency window behind `/health` |
+| `src/observability.ts` | Optional Sentry (`reportError`) and PostHog (`purchase_credited`, `report_filed`) |
 | `src/persist.ts` | Table snapshots: debounced writes, restore at boot, pruning |
 | `src/auth/*` | Guest accounts, session tokens, provider token verification, link/merge/deletion |
 | `src/repos/*` | Storage: memory, or Postgres when `DATABASE_URL` is set |
@@ -45,6 +51,10 @@ With no environment at all the server runs: accounts, clubs and tables are kept 
 | `MIN_BUILD` | `0` | Oldest app build allowed online, reported as `GET /api/config.minBuild` |
 | `MAINTENANCE_MESSAGE` | none | Reported as `GET /api/config.maintenance`; the app shows it instead of online play |
 | `P2P_ROOMS` | off | Set to `1` to allow relay-only rooms in which a player's device is the host. For development only |
+| `REVENUECAT_WEBHOOK_SECRET` | none | The value RevenueCat sends as `Authorization: Bearer <secret>` on its webhook (set the header to `Bearer <secret>` in the RevenueCat dashboard). Absent: `POST /api/webhooks/revenuecat` answers 503 and `/api/config.storeEnabled` is false |
+| `EXPO_ACCESS_TOKEN` | none | Expo access token for push (`expo-server-sdk`). Absent: no push is sent and `/api/config.pushEnabled` is false |
+| `SENTRY_DSN` | none | Sentry project DSN for server errors. Absent: errors are only logged. `SENTRY_ENVIRONMENT` (default `production`) and `SENTRY_RELEASE` (default `FLY_IMAGE_REF`) are optional |
+| `POSTHOG_KEY` | none | PostHog project key for the server events `purchase_credited` and `report_filed`. Absent: none are sent. `POSTHOG_HOST` is optional (PostHog's US cloud by default; `https://eu.i.posthog.com` for the EU) |
 | `DATABASE_URL_TEST` | none | Tests only: a database the Postgres repository and migration tests may create and drop schemas in. Absent: those tests are skipped |
 | `DATA_DIR` | — | No longer read (clubs used to live in `clubs.json`); the server warns if it is still set |
 
@@ -74,6 +84,9 @@ With no environment at all the server runs: accounts, clubs and tables are kept 
 | Clubs per user | 10 (owned, joined or pending) | `409 {error:"limit"}` |
 | Members per club | 200 (pending requests have the same cap) | `409 {error:"limit"}` |
 | Open tables per club | 5 (finished tables do not count) | `409 {error:"limit"}` |
+| Player reports | 10 per reporter in any 24 hours | `429 {error:"rate_limited"}` |
+| Push notifications | 1 a minute per user for each kind | Skipped (not queued) |
+| Archived club seasons | the latest 24 | The oldest is dropped |
 
 Room codes, club codes and peer ids come from the platform's secure random source. Each random byte is masked with `& 31` to index a 32-character alphabet, which avoids modulo bias.
 
@@ -85,7 +98,7 @@ JSON in and out. Errors are `{ "error": "<code>", "message": "<English sentence>
 
 | Route | Auth | Body | Answer |
 | --- | --- | --- | --- |
-| `GET /health` | none | | `{ ok, peers, rooms, hostedTables, storage: "memory"\|"pg", db?: "ok"\|"down" }` |
+| `GET /health` | none | | `{ ok, peers, rooms, hostedTables, tables, actionLatency: { samples, p50Ms, p95Ms, maxMs, windowSeconds } \| null, pushEnabled, storeEnabled, storage: "memory"\|"pg", db?: "ok"\|"down" }` (see `docs/OBSERVABILITY.md`) |
 | `GET /api/config` | none | | `{ authProviders, storeEnabled, pushEnabled, minBuild, maintenance, serverNow }` |
 | `POST /api/auth/guest` | none | `{ device: { id, platform, appBuild, locale }, displayName?, avatar? }` | `201 { userId, guestSecret, session: { token, expiresAt }, user }` |
 | `POST /api/auth/guest/login` | none | `{ userId, guestSecret, device }` | `{ session, user }` or `401 invalid_credentials` |
@@ -94,7 +107,7 @@ JSON in and out. Errors are `{ "error": "<code>", "message": "<English sentence>
 | `POST /api/auth/link` | bearer | `{ provider, token, nonce, email? }` | `{ session, user, merged }`; `409 identity_in_use`, `401 invalid_token`, `404 provider_disabled` |
 | `POST /api/auth/login` | none (or a guest bearer) | `{ provider, token, nonce, device }` | `{ session, user }` or `404 not_linked` |
 | `DELETE /api/auth/identities/:provider` | bearer | | `204`, `409 last_identity` or `404 not_found` |
-| `GET /api/me` | bearer | | `{ user, wallet: { diamonds, bonusDiamonds }, entitlements: [{ entitlement, expiresAt }], identities: [{ provider, email? }], serverNow }` |
+| `GET /api/me` | bearer | | `{ user, wallet: { diamonds, bonusDiamonds }, entitlements: [{ entitlement, expiresAt, active }], cosmetics: ["theme.jade", …], coachTier: "free"\|"gold"\|"platinum", storeEnabled, identities: [{ provider, email? }], serverNow }` |
 | `PATCH /api/me` | bearer | `{ displayName?, avatar?, locale?, birthYear? }` | `{ user }`; the new name and avatar are written into every club the user is in |
 | `DELETE /api/me` | bearer | | `204`; soft delete, every session ends, club rows become "Deleted player" |
 | `POST /api/clubs` | bearer | `{ name, rules?, settings? }` | the club; the caller is its owner |
@@ -104,11 +117,24 @@ JSON in and out. Errors are `{ "error": "<code>", "message": "<English sentence>
 | `POST /api/clubs/:code/members/:userId/approve` | bearer (owner/admin) | | the club |
 | `POST /api/clubs/:code/members/:userId/role` | bearer (owner) | `{ role }` | the club |
 | `DELETE /api/clubs/:code/members/:userId` | bearer (self, owner or admin) | | the club (public view after leaving) |
-| `GET /api/clubs/:code/standings` | bearer (member) | | members by points; `403` for non-members |
+| `GET /api/clubs/:code/standings` | bearer (member) | | members by season points, each with `seasonPoints`, `lifetimePoints` (also `points`) and `season`; `403` for non-members |
+| `POST /api/clubs/:code/season` | bearer (owner) | | `{ club, archived: { season, startedAt, endedAt, standings } }`; season points reset to 0, lifetime points kept |
 | `GET /api/users/:userId/clubs` | bearer (self; `me` works) | | the caller's clubs and pending requests |
-| `POST /api/clubs/:code/tables` | bearer (member; admins only if the club says so) | `{ label?, rules?, botSkill? }` | the listed table; its room is a hosted club table |
+| `POST /api/clubs/:code/tables` | bearer (member; admins only if the club says so) | `{ label?, rules?, botSkill? }` | the listed table; its room is a hosted club table. Members with push tokens (not the opener) are notified |
+| `POST /api/wallet/spend` | bearer | `{ productId }` | `{ spent, entitlement, wallet, cosmetics }`; `409 insufficient`, `409 owned`, `404 not_for_sale` |
+| `POST /api/webhooks/revenuecat` | `Bearer <REVENUECAT_WEBHOOK_SECRET>` | RevenueCat v1 event | `{ ok, outcome, duplicate }`; `401` bad secret, `503` secret unset, `400` not an event |
+| `POST /api/reports` | bearer | `{ reportedUserId, roomCode?, reason, details? }` | `201 { id, status, createdAt }`; `404` unknown player; `429` after 10 a day |
+| `POST /api/push/token` | bearer | `{ token: "ExponentPushToken[…]", platform: "ios"\|"android" }` or `{ token: null }` | `204`; stored on this session's device (and removed from any other device that had it) |
 
 Club members are identified by the session's user id; their name and avatar come from the user record (a guest without a name shows as `Player XXXX`).
+
+## Store, wallet and entitlements
+
+Entitlements are decided here, never on the phone. The app buys through RevenueCat with our user id as the RevenueCat app user id; RevenueCat calls `POST /api/webhooks/revenuecat`; `WalletService` writes the event to `store_events` (raw, keyed by event id) in the same transaction as its effects, so a redelivered event changes nothing. Diamond packs credit purchased diamonds plus the pack's bonus once per store transaction; Coach Gold and Platinum set `coach.gold` / `coach.platinum` until the store's expiry (late or out-of-order events never shorten it); a refund (`CANCELLATION` with `cancel_reason: CUSTOMER_SUPPORT`) ends a subscription or takes back what is left of a pack; `EXPIRATION` ends it; `TRANSFER` moves store entitlements to the new account. `BILLING_ISSUE`, `PRODUCT_CHANGE`, `SUBSCRIPTION_PAUSED` and `TEST` are recorded only. Events for an unknown user or a product the catalogue does not sell are recorded and acknowledged (200) so RevenueCat stops retrying. Table looks are bought with diamonds through `POST /api/wallet/spend` (bonus diamonds are spent first) and never expire. Diamonds have no monetary value and cannot be redeemed or transferred.
+
+## Push
+
+`PushService` sends through Expo when `EXPO_ACCESS_TOKEN` is set: *club table opened* (to members with tokens, not the opener), *join request approved*, and *your table is waiting* (a seated human disconnected for 30 s while a hand is in play, noticed by `SeatWatcher` on the server tick). Each kind reaches a user at most once a minute. Copy is English, or Traditional Chinese for a device whose locale starts with `zh`. Tickets and, 15 minutes later, receipts reporting `DeviceNotRegistered` clear that token.
 
 ## WebSocket protocol (JSON frames)
 
@@ -136,4 +162,4 @@ Game traffic is wrapped as `{ch:"game", msg}`, so other channels can share the s
 
 ## Tests
 
-`npm test -w @mjm/signal`. `test/e2e.test.ts` runs the real server on port 0 with memory repositories and two `ws` clients through `SignalingClient`: full hands with verified audits, a dropped socket rejoining, the club gate, the flood limit, and a restart over the same repositories that restores a table mid-hand. The Postgres cases in `repos.test.ts` and `migrate.test.ts` run when `DATABASE_URL_TEST` is set (CI sets it).
+`npm test -w @mjm/signal`. `catalog.test.ts` checks the product table against the app's catalogue; `wallet.test.ts`, `webhook.test.ts` (recorded-style RevenueCat payloads, replays, bad and unset secrets), `reports-seasons.test.ts`, `push.test.ts` (a fake Expo client) and `health.test.ts` cover Phases 4 and 6. `test/e2e.test.ts` runs the real server on port 0 with memory repositories and two `ws` clients through `SignalingClient`: full hands with verified audits, a dropped socket rejoining, the club gate, the flood limit, and a restart over the same repositories that restores a table mid-hand. The Postgres cases in `repos.test.ts` and `migrate.test.ts` run when `DATABASE_URL_TEST` is set (CI sets it).

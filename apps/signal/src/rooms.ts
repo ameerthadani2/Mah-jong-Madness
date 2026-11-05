@@ -8,6 +8,7 @@ import { BOT_SKILLS, randomHex, sanitizeRules, type BotSkill, type RuleSet } fro
 import { uniqueCode, type HexSource } from './codes';
 import { LIMITS } from './config';
 import { TokenBucket } from './limits';
+import type { LatencyWindow } from './metrics';
 
 export interface Socket {
   send(json: string): void;
@@ -111,6 +112,13 @@ export interface RoomRegistryOptions {
   botDelayMs?: number;
   /** Membership checks for club tables. Without it, a `create` naming a club is refused. */
   clubs?: ClubGate;
+  /**
+   * Records how long a hosted table takes from a player's action arriving to the resulting state
+   * having been sent (the host handles an action and broadcasts synchronously). Shown on `/health`.
+   */
+  actionLatency?: LatencyWindow;
+  /** High-resolution clock in milliseconds for `actionLatency` (default `performance.now`). */
+  perfNow?: () => number;
 }
 
 export interface HostedRoomOptions {
@@ -193,6 +201,10 @@ export class RoomRegistry {
 
   private now(): number {
     return (this.opts.now ?? Date.now)();
+  }
+
+  private perfNow(): number {
+    return (this.opts.perfNow ?? (() => performance.now()))();
   }
 
   private maxHostedTables(): number {
@@ -346,7 +358,10 @@ export class RoomRegistry {
         if (!room || typeof msg.to !== 'string') return peer.id;
         const to = msg.to;
         if (room.table && to === room.table.transport.id) {
+          const timed = this.opts.actionLatency && isAction(msg.data);
+          const t0 = timed ? this.perfNow() : 0;
           room.table.transport.receive(peer.id, bindUser(msg.data, peer.userId));
+          if (timed) this.opts.actionLatency!.record(this.perfNow() - t0);
           return peer.id;
         }
         if (!room.peers.has(to)) return peer.id;
@@ -479,6 +494,12 @@ export class RoomRegistry {
     for (const peer of this.peers.values()) peer.room = null;
     for (const r of rooms) r.table?.host.close();
   }
+}
+
+/** A game action for the table (`{ch:'game', msg:{t:'action'}}`). */
+function isAction(data: unknown): boolean {
+  const env = data as { ch?: unknown; msg?: { t?: unknown } } | null;
+  return !!env && typeof env === 'object' && env.ch === 'game' && !!env.msg && typeof env.msg === 'object' && env.msg.t === 'action';
 }
 
 /**

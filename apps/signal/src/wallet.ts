@@ -1,0 +1,372 @@
+/**
+ * WalletService: every change to a player's diamonds and entitlements goes through here, over
+ * `repos.wallet` (balances, ledger, purchases, entitlements) and `repos.storeEvents`.
+ *
+ * - `credit` adds diamonds with a ledger entry.
+ * - `spend` buys a cosmetic with diamonds: an atomic debit plus a permanent entitlement, or
+ *   `409 insufficient` / `409 owned`. Bonus diamonds are spent before purchased ones.
+ * - `applyStoreEvent` turns a vendor-neutral store notification (see revenuecat.ts) into grants.
+ *   It is idempotent on the event id: the event row is written first, in the same transaction as
+ *   its effects, so a redelivered event changes nothing. Diamond credits are additionally keyed
+ *   on the store transaction id (purchases.transaction_id is unique), so one purchase is never
+ *   credited twice even under two event ids.
+ *
+ * Diamonds and entitlements have no monetary value and cannot be redeemed or transferred between
+ * players. Work for one user is serialised in this process (one game server machine), and on
+ * Postgres every operation is one transaction.
+ */
+import { COACH_ENTITLEMENTS, COSMETIC_ENTITLEMENTS, PERIOD_MS, productForStoreId, serverProduct, type ServerProduct } from './catalog';
+import { NO_ANALYTICS, type Analytics } from './observability';
+import type { EntitlementRecord, Repos, UserRecord, WalletRecord } from './repos/types';
+
+export type WalletErrorCode = 'insufficient' | 'owned' | 'not_for_sale' | 'invalid';
+
+/** A refused wallet operation, with the HTTP status the API answers. */
+export class WalletError extends Error {
+  readonly status: number;
+  constructor(
+    readonly code: WalletErrorCode,
+    message: string,
+  ) {
+    super(message);
+    this.name = 'WalletError';
+    this.status = code === 'not_for_sale' ? 404 : code === 'invalid' ? 400 : 409;
+  }
+}
+
+/** The store notifications we act on (RevenueCat's event types; another vendor maps onto these). */
+export const STORE_EVENT_TYPES = [
+  'INITIAL_PURCHASE',
+  'RENEWAL',
+  'NON_RENEWING_PURCHASE',
+  'CANCELLATION',
+  'UNCANCELLATION',
+  'EXPIRATION',
+  'BILLING_ISSUE',
+  'PRODUCT_CHANGE',
+  'TRANSFER',
+  'SUBSCRIPTION_PAUSED',
+  'SUBSCRIPTION_EXTENDED',
+  'TEST',
+] as const;
+export type StoreEventType = (typeof STORE_EVENT_TYPES)[number];
+
+/** A store notification after the vendor's payload has been read (revenuecat.ts builds these). */
+export interface StoreEvent {
+  vendor: string;
+  eventId: string;
+  /** A type we do not know is stored and acknowledged, with no effect. */
+  type: StoreEventType | string;
+  /** Candidate user ids, most specific first (app user id, original id, aliases). */
+  userIds: string[];
+  /** The store's product id (`coach.gold.month`, or Play's `coach.gold:month`). */
+  storeProductId: string | null;
+  transactionId: string | null;
+  /** Subscription end as the store reports it (ms), when given. */
+  expiresAt: number | null;
+  purchasedAt: number | null;
+  price: number | null;
+  currency: string | null;
+  /** `app_store`, `play_store`, … */
+  store: string;
+  environment: string | null;
+  /** CANCELLATION reason; `CUSTOMER_SUPPORT` means a refund. */
+  cancelReason: string | null;
+  transferredFrom: string[];
+  transferredTo: string[];
+  raw: unknown;
+}
+
+export type StoreOutcome =
+  | 'credited'
+  | 'entitled'
+  | 'extended'
+  | 'expired'
+  | 'refunded'
+  | 'transferred'
+  | 'recorded'
+  | 'test'
+  | 'duplicate'
+  | 'ignored_unknown_user'
+  | 'ignored_unknown_product'
+  | 'ignored_stale'
+  | 'ignored_type';
+
+export interface StoreResult {
+  outcome: StoreOutcome;
+  userId: string | null;
+  duplicate: boolean;
+}
+
+export interface WalletSummary {
+  wallet: { diamonds: number; bonusDiamonds: number };
+  entitlements: Array<{ entitlement: string; expiresAt: number | null; active: boolean }>;
+  /** Product ids of the cosmetics the user owns (`theme.jade`). */
+  cosmetics: string[];
+  /** The highest coaching tier currently live. */
+  coachTier: 'free' | 'gold' | 'platinum';
+}
+
+export interface WalletServiceOptions {
+  now?: () => number;
+  analytics?: Analytics;
+  log?: (line: string) => void;
+}
+
+/** Source written on entitlements granted by store events (TRANSFER moves only these). */
+export const STORE_SOURCE = 'store';
+const SPEND_SOURCE = 'diamonds';
+
+const isLive = (e: Pick<EntitlementRecord, 'expiresAt'>, at: number) => e.expiresAt === null || e.expiresAt > at;
+
+export class WalletService {
+  private readonly now: () => number;
+  private readonly analytics: Analytics;
+  private readonly log: (line: string) => void;
+  /** One chain per user, so two spends from one player cannot both pass the ownership check. */
+  private readonly locks = new Map<string, Promise<unknown>>();
+
+  constructor(
+    private readonly repos: Repos,
+    opts: WalletServiceOptions = {},
+  ) {
+    this.now = opts.now ?? Date.now;
+    this.analytics = opts.analytics ?? NO_ANALYTICS;
+    this.log = opts.log ?? ((line) => console.log(line));
+  }
+
+  private serialise<T>(keys: string[], fn: () => Promise<T>): Promise<T> {
+    const unique = [...new Set(keys)].sort();
+    const before = Promise.all(unique.map((k) => this.locks.get(k)?.catch(() => {}) ?? Promise.resolve()));
+    const run = before.then(fn);
+    const settled = run.catch(() => {});
+    for (const k of unique) this.locks.set(k, settled);
+    void settled.then(() => {
+      for (const k of unique) if (this.locks.get(k) === settled) this.locks.delete(k);
+    });
+    return run;
+  }
+
+  async summary(userId: string): Promise<WalletSummary> {
+    const [w, ents] = await Promise.all([this.repos.wallet.get(userId), this.repos.wallet.getEntitlements(userId)]);
+    const at = this.now();
+    const live = ents.filter((e) => isLive(e, at));
+    const coach = COACH_ENTITLEMENTS.find((c) => live.some((e) => e.entitlement === c));
+    return {
+      wallet: { diamonds: w.diamonds, bonusDiamonds: w.bonusDiamonds },
+      entitlements: ents.map((e) => ({ entitlement: e.entitlement, expiresAt: e.expiresAt, active: isLive(e, at) })),
+      cosmetics: live.filter((e) => COSMETIC_ENTITLEMENTS.has(e.entitlement)).map((e) => e.entitlement).sort(),
+      coachTier: coach === 'coach.platinum' ? 'platinum' : coach === 'coach.gold' ? 'gold' : 'free',
+    };
+  }
+
+  /** Add diamonds (and optionally bonus diamonds) with a ledger entry. */
+  async credit(userId: string, diamonds: number, reason: string, ref: string | null = null, bonus = 0): Promise<WalletRecord> {
+    if (!Number.isInteger(diamonds) || !Number.isInteger(bonus) || diamonds < 0 || bonus < 0 || diamonds + bonus === 0) {
+      throw new WalletError('invalid', 'A credit must be a positive whole number of diamonds');
+    }
+    return this.serialise([userId], async () => {
+      const res = await this.repos.wallet.apply({ userId, delta: diamonds, bonus, reason, ref, createdAt: this.now() });
+      if (!res) throw new WalletError('invalid', 'Credit refused');
+      return res.wallet;
+    });
+  }
+
+  /** Buy a cosmetic with diamonds: debit and permanent entitlement together, or neither. */
+  async spend(userId: string, productId: unknown): Promise<{ wallet: WalletRecord; entitlement: string; spent: number }> {
+    const product = serverProduct(productId);
+    if (!product || product.kind !== 'cosmetic') throw new WalletError('not_for_sale', 'That item is not sold for diamonds');
+    return this.serialise([userId], () =>
+      this.repos.transaction(async (tx) => {
+        const owned = (await tx.wallet.getEntitlements(userId)).some((e) => e.entitlement === product.entitlement && isLive(e, this.now()));
+        if (owned) throw new WalletError('owned', 'You already own that item');
+        const w = await tx.wallet.get(userId);
+        const price = product.diamondPrice;
+        if (w.diamonds + w.bonusDiamonds < price) throw new WalletError('insufficient', 'Not enough diamonds');
+        const fromBonus = Math.min(w.bonusDiamonds, price);
+        const at = this.now();
+        const res = await tx.wallet.apply({ userId, delta: -(price - fromBonus), bonus: -fromBonus, reason: 'spend', ref: product.id, createdAt: at });
+        if (!res) throw new WalletError('insufficient', 'Not enough diamonds');
+        await tx.wallet.setEntitlement({ userId, entitlement: product.entitlement, expiresAt: null, source: SPEND_SOURCE, updatedAt: at });
+        return { wallet: res.wallet, entitlement: product.entitlement, spent: price };
+      }),
+    );
+  }
+
+  /** The live account a store user id refers to (following merges), or null. */
+  private async resolveUser(candidates: string[]): Promise<UserRecord | null> {
+    for (const id of candidates) {
+      let user = await this.repos.users.get(id);
+      for (let hops = 0; user && user.mergedInto && hops < 5; hops++) user = await this.repos.users.get(user.mergedInto);
+      if (user && user.deletedAt === null) return user;
+    }
+    return null;
+  }
+
+  /** Apply a store notification once. A redelivery answers `duplicate` and changes nothing. */
+  async applyStoreEvent(e: StoreEvent): Promise<StoreResult> {
+    const seen = await this.repos.storeEvents.get(e.eventId);
+    if (seen) return { outcome: 'duplicate', userId: seen.userId, duplicate: true };
+    const product = productForStoreId(e.storeProductId);
+    const user = e.type === 'TRANSFER' ? null : await this.resolveUser(e.userIds);
+    const keys = [user?.id ?? '', ...e.transferredFrom, ...e.transferredTo].filter(Boolean);
+    try {
+      return await this.serialise(keys, () =>
+        this.repos.transaction(async (tx) => {
+          const fresh = await tx.storeEvents.record({
+            eventId: e.eventId,
+            vendor: e.vendor,
+            type: e.type,
+            userId: user?.id ?? null,
+            productId: product?.id ?? e.storeProductId,
+            environment: e.environment,
+            outcome: 'received',
+            raw: e.raw,
+            receivedAt: this.now(),
+          });
+          if (!fresh) return { outcome: 'duplicate' as const, userId: user?.id ?? null, duplicate: true };
+          const { outcome, userId } = await this.applyEffects(tx, e, product, user);
+          await tx.storeEvents.setOutcome(e.eventId, outcome, userId);
+          return { outcome, userId, duplicate: false };
+        }),
+      );
+    } catch (err) {
+      // Postgres rolled the event row back with everything else; memory cannot, so forget it here
+      // and let the store's retry process the event again.
+      if (this.repos.kind === 'memory') await this.repos.storeEvents.delete(e.eventId);
+      throw err;
+    }
+  }
+
+  private async applyEffects(tx: Repos, e: StoreEvent, product: ServerProduct | undefined, user: UserRecord | null): Promise<{ outcome: StoreOutcome; userId: string | null }> {
+    const at = this.now();
+    if (e.type === 'TEST') return { outcome: 'test', userId: user?.id ?? null };
+    if (e.type === 'TRANSFER') return this.transfer(tx, e, at);
+    if (!(STORE_EVENT_TYPES as readonly string[]).includes(e.type)) return { outcome: 'ignored_type', userId: user?.id ?? null };
+    if (!user) {
+      this.log(`[signal] store event ${e.eventId} (${e.type}) names no account we know; recorded only`);
+      return { outcome: 'ignored_unknown_user', userId: null };
+    }
+    const userId = user.id;
+    if (!product) {
+      this.log(`[signal] store event ${e.eventId} (${e.type}) is for ${String(e.storeProductId)}, which the catalogue does not sell; recorded only`);
+      return { outcome: 'ignored_unknown_product', userId };
+    }
+    const transactionId = e.transactionId ?? `${e.vendor}:${e.eventId}`;
+
+    if (product.kind === 'diamonds') {
+      if (e.type === 'CANCELLATION') return { outcome: await this.refundDiamonds(tx, userId, product, transactionId, at), userId };
+      if (e.type !== 'NON_RENEWING_PURCHASE' && e.type !== 'INITIAL_PURCHASE') return { outcome: 'recorded', userId };
+      if ((await tx.wallet.listPurchases(userId)).some((p) => p.transactionId === transactionId)) return { outcome: 'duplicate', userId };
+      // Credit first, then record the purchase: if the credit fails nothing is written, even in memory.
+      const res = await tx.wallet.apply({ userId, delta: product.diamonds, bonus: product.bonus, reason: 'purchase', ref: `${e.store}:${transactionId}`, createdAt: at });
+      if (!res) throw new Error('Diamond credit refused');
+      const { inserted } = await this.recordPurchase(tx, e, userId, product.id, transactionId, at);
+      // Another delivery recorded this transaction meanwhile: roll back (Postgres) and let the retry see it.
+      if (!inserted) throw new Error(`Transaction ${transactionId} was recorded concurrently`);
+      this.analytics.capture(userId, 'purchase_credited', { productId: product.id, diamonds: product.diamonds + product.bonus, store: e.store, environment: e.environment });
+      return { outcome: 'credited', userId };
+    }
+
+    if (product.kind === 'cosmetic') {
+      // Cosmetics are sold for diamonds only; a store purchase of one is not a product we sell.
+      return { outcome: 'ignored_unknown_product', userId };
+    }
+
+    // Subscriptions.
+    const ents = await tx.wallet.getEntitlements(userId);
+    const current = ents.find((x) => x.entitlement === product.entitlement) ?? null;
+    switch (e.type) {
+      case 'INITIAL_PURCHASE':
+      case 'RENEWAL':
+      case 'UNCANCELLATION':
+      case 'SUBSCRIPTION_EXTENDED': {
+        const until = e.expiresAt ?? (e.purchasedAt ?? at) + PERIOD_MS[product.period];
+        if (e.type === 'INITIAL_PURCHASE' || e.type === 'RENEWAL') await this.recordPurchase(tx, e, userId, product.id, transactionId, at);
+        // Events can arrive out of order: never shorten a subscription that a later event extended.
+        if (current && current.expiresAt !== null && current.expiresAt >= until) return { outcome: 'ignored_stale', userId };
+        await tx.wallet.setEntitlement({ userId, entitlement: product.entitlement, expiresAt: until, source: STORE_SOURCE, updatedAt: at });
+        if (e.type === 'INITIAL_PURCHASE' || e.type === 'RENEWAL') {
+          this.analytics.capture(userId, 'purchase_credited', { productId: product.id, entitlement: product.entitlement, store: e.store, environment: e.environment });
+        }
+        return { outcome: current && isLive(current, at) ? 'extended' : 'entitled', userId };
+      }
+      case 'CANCELLATION': {
+        // Auto-renew off: access continues to the end of the period. A refund ends it now.
+        if (e.cancelReason !== 'CUSTOMER_SUPPORT' || !current) return { outcome: 'recorded', userId };
+        const end = Math.min(e.expiresAt ?? at, at);
+        await tx.wallet.setEntitlement({ ...current, expiresAt: end, updatedAt: at });
+        return { outcome: 'refunded', userId };
+      }
+      case 'EXPIRATION': {
+        if (!current) return { outcome: 'recorded', userId };
+        const end = e.expiresAt ?? at;
+        // A renewal processed earlier already carried the entitlement past this expiry.
+        if (current.expiresAt !== null && current.expiresAt > end) return { outcome: 'ignored_stale', userId };
+        await tx.wallet.setEntitlement({ ...current, expiresAt: Math.min(end, at), updatedAt: at });
+        return { outcome: 'expired', userId };
+      }
+      // BILLING_ISSUE (the store retries; a grace period arrives as a later event), PRODUCT_CHANGE
+      // (the new product is granted by the RENEWAL that follows) and SUBSCRIPTION_PAUSED (it
+      // takes effect at the period's end, reported by EXPIRATION) change nothing now.
+      default:
+        return { outcome: 'recorded', userId };
+    }
+  }
+
+  private recordPurchase(tx: Repos, e: StoreEvent, userId: string, productId: string, transactionId: string, at: number) {
+    const currency = e.currency && /^[A-Z]{3}$/.test(e.currency) ? e.currency : null;
+    return tx.wallet.recordPurchase({
+      userId,
+      store: e.store,
+      transactionId,
+      productId,
+      price: e.price,
+      currency: e.price === null ? null : currency,
+      eventId: `${e.vendor}:${e.eventId}`,
+      raw: e.raw,
+      createdAt: at,
+    });
+  }
+
+  /** A refunded diamond pack: take back what is left of it (balances never go below zero). */
+  private async refundDiamonds(tx: Repos, userId: string, product: Extract<ServerProduct, { kind: 'diamonds' }>, transactionId: string, at: number): Promise<StoreOutcome> {
+    const credited = (await tx.wallet.listPurchases(userId)).some((p) => p.transactionId === transactionId);
+    if (!credited) return 'recorded';
+    const ref = `refund:${transactionId}`;
+    if ((await tx.wallet.listLedger(userId)).some((l) => l.ref === ref)) return 'duplicate';
+    const w = await tx.wallet.get(userId);
+    const delta = -Math.min(w.diamonds, product.diamonds);
+    const bonus = -Math.min(w.bonusDiamonds, product.bonus);
+    if (delta === 0 && bonus === 0) return 'refunded';
+    await tx.wallet.apply({ userId, delta, bonus, reason: 'refund', ref, createdAt: at });
+    return 'refunded';
+  }
+
+  /**
+   * The store moved purchases between app user ids (a Restore signed into another account).
+   * Store-granted entitlements move to the first known recipient, the later expiry winning;
+   * diamonds already credited stay where they were spent or credited.
+   */
+  private async transfer(tx: Repos, e: StoreEvent, at: number): Promise<{ outcome: StoreOutcome; userId: string | null }> {
+    const to = await this.resolveUser(e.transferredTo);
+    if (!to) return { outcome: 'ignored_unknown_user', userId: null };
+    const theirs = new Map((await tx.wallet.getEntitlements(to.id)).map((x) => [x.entitlement, x]));
+    let moved = 0;
+    for (const fromId of e.transferredFrom) {
+      const from = await this.resolveUser([fromId]);
+      if (!from || from.id === to.id) continue;
+      for (const ent of await tx.wallet.getEntitlements(from.id)) {
+        if (ent.source !== STORE_SOURCE) continue;
+        const mine = theirs.get(ent.entitlement);
+        const expiresAt = !mine ? ent.expiresAt : mine.expiresAt === null || ent.expiresAt === null ? null : Math.max(mine.expiresAt, ent.expiresAt);
+        const next: EntitlementRecord = { userId: to.id, entitlement: ent.entitlement, expiresAt, source: STORE_SOURCE, updatedAt: at };
+        await tx.wallet.setEntitlement(next);
+        theirs.set(ent.entitlement, next);
+        await tx.wallet.deleteEntitlement(from.id, ent.entitlement);
+        moved++;
+      }
+    }
+    return { outcome: moved ? 'transferred' : 'recorded', userId: to.id };
+  }
+}
