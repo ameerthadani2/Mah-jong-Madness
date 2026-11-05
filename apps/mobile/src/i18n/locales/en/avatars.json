@@ -1,1 +1,22 @@
-{}
+{
+  "_review": "n/a",
+  "names": {
+    "auntie": "Auntie",
+    "uncle": "Uncle",
+    "grandma": "Grandma",
+    "boss": "The Boss",
+    "lady": "Leading Lady",
+    "shades": "Mr Cool",
+    "hoops": "Hoops",
+    "cowboy": "Sheriff",
+    "student": "Student",
+    "chef": "Chef",
+    "sporty": "Sporty",
+    "gent": "Gentleman"
+  },
+  "gallery": {
+    "portraits": "Portraits",
+    "plates": "Seat plates on the felt",
+    "small": "Small sizes (lobby lists, results)"
+  }
+}

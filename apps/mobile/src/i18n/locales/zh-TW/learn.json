@@ -1,1 +1,49 @@
-{}
+{
+  "_review": "first pass, needs native review",
+  "title": "學習",
+  "lessonsCount": "課程 %{done}/%{total}",
+  "daily": {
+    "title": "每日謎題",
+    "text": "每天大家都是同一題，保持連續天數吧。",
+    "streak": "連續 %{n} 天",
+    "cta": "解題"
+  },
+  "rush": {
+    "title": "謎題衝刺",
+    "text": "三分鐘、三次機會，題目越來越難。",
+    "stat": "最佳 %{best} · 已玩 %{runs} 次",
+    "cta": "開始"
+  },
+  "discard": {
+    "title": "最佳打牌",
+    "text": "隨機手牌，選出要打的牌。教練會依向聽數和進張數評分。",
+    "none": "還沒有練習紀錄",
+    "stat": "%{pct}% · 已練 %{n} 題",
+    "cta": "練習"
+  },
+  "waits": {
+    "title": "看聽牌",
+    "text": "這是一副聽牌的手牌，哪些牌可以胡？把每一張聽的牌都找出來。",
+    "cta": "練習"
+  },
+  "reviewAccNone": "打完一局後複盤，就能追蹤你的準確率",
+  "reviewAcc": "複盤準確率 %{pct}% · 最近 %{n} 局",
+  "lessons": "課程",
+  "done": "完成",
+  "minutes": "%{n} 分鐘",
+  "review": "複習",
+  "start": "開始",
+  "correct": "答對了！",
+  "notQuite": "不太對，再點另一張牌試試看。",
+  "answerAll": "每一題都答對，這堂課才算完成。",
+  "previous": "上一步",
+  "next": "下一步",
+  "finish": "完成課程",
+  "leaveLesson": "離開課程",
+  "difficulty": {
+    "easy": "簡單",
+    "medium": "中等",
+    "hard": "困難"
+  },
+  "nextHand": "下一題"
+}

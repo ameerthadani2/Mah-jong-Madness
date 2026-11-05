@@ -8,17 +8,20 @@ import { colors, fonts, space } from '../theme';
 import { Tile } from '../components/Tile';
 import { Button, Card, H1, P, Pill, Row, ScreenHeader, SectionLabel, StrokeText } from '../components/Ui';
 import { Icon, type IconName } from '../components/Icons';
+import { useT } from '../i18n';
 
-const GRADE_LABEL: Record<MoveGrade, { label: string; tone: 'ok' | 'gold' | 'neutral' | 'danger'; icon?: IconName; mark?: string }> = {
-  best: { label: 'Best', tone: 'ok', icon: 'star' },
-  good: { label: 'Good', tone: 'ok', icon: 'check' },
-  inaccuracy: { label: 'Inaccuracy ?!', tone: 'gold' },
-  mistake: { label: 'Mistake ?', tone: 'danger' },
-  blunder: { label: 'Blunder ??', tone: 'danger' },
+/** How each grade looks; its label is `review.grade.<grade>`. */
+const GRADE_STYLE: Record<MoveGrade, { tone: 'ok' | 'gold' | 'neutral' | 'danger'; icon?: IconName }> = {
+  best: { tone: 'ok', icon: 'star' },
+  good: { tone: 'ok', icon: 'check' },
+  inaccuracy: { tone: 'gold' },
+  mistake: { tone: 'danger' },
+  blunder: { tone: 'danger' },
 };
 
 export function ReviewScreen() {
   const app = useApp();
+  const { t } = useT();
   const session = app.session;
   // Freeze the hand being reviewed at mount so an intermission ending mid-review cannot swap it.
   const [frozen] = useState(() => ({
@@ -57,13 +60,11 @@ export function ReviewScreen() {
   if (!allowance.ok) {
     return (
       <View style={styles.center}>
-        <H1 style={{ fontSize: 26 }}>Daily review used</H1>
-        <P style={{ textAlign: 'center', maxWidth: 420 }}>
-          Free accounts get one full hand review a day. Coach Platinum reviews every hand you play, with move-by-move explanations on Diamond.
-        </P>
+        <H1 style={{ fontSize: 26 }}>{t('review.dailyUsedTitle')}</H1>
+        <P style={{ textAlign: 'center', maxWidth: 420 }}>{t('review.dailyUsedText')}</P>
         <Row>
-          <Button title="See Coach plans" onPress={() => app.go({ name: 'shop' })} />
-          <Button kind="ghost" title="Back" onPress={app.back} />
+          <Button title={t('review.seePlans')} onPress={() => app.go({ name: 'shop' })} />
+          <Button kind="ghost" title={t('review.back')} onPress={app.back} />
         </Row>
       </View>
     );
@@ -73,8 +74,8 @@ export function ReviewScreen() {
       <View style={styles.center}>
         <Card style={{ alignItems: 'center' }}>
           <Icon name="magnifier" size={40} />
-          <P>Nothing to review yet. Finish a hand first.</P>
-          <Button title="Back" onPress={app.back} />
+          <P>{t('review.nothing')}</P>
+          <Button title={t('review.back')} onPress={app.back} />
         </Card>
       </View>
     );
@@ -83,30 +84,30 @@ export function ReviewScreen() {
   const rolling = rollingAccuracy(app.progress.reviewAccuracies);
   return (
     <ScrollView contentContainerStyle={styles.wrap}>
-      <ScreenHeader title="Hand review" onBack={app.back} />
+      <ScreenHeader title={t('review.title')} onBack={app.back} />
       <Card style={{ alignItems: 'center' }}>
         <View style={styles.accuracyBadge}>
           <StrokeText style={styles.accuracy} strokeWidth={3} drop={3}>
             {`${review.accuracy}%`}
           </StrokeText>
         </View>
-        <P dim>accuracy over {review.moves.length} decisions</P>
+        <P dim>{t('review.accuracyOver', { n: review.moves.length })}</P>
         {rolling !== null && (
           <P dim style={{ fontSize: 12 }}>
-            Your average over the last {app.progress.reviewAccuracies.length} reviewed {app.progress.reviewAccuracies.length === 1 ? 'hand' : 'hands'}: {rolling}%
+            {t('review.rolling', { count: app.progress.reviewAccuracies.length, pct: rolling })}
           </P>
         )}
         <Row style={{ flexWrap: 'wrap', justifyContent: 'center', rowGap: 6 }}>
-          {(Object.keys(GRADE_LABEL) as MoveGrade[]).map((g) => (
-            <Pill key={g} icon={GRADE_LABEL[g].icon} text={`${GRADE_LABEL[g].label} ${review.counts[g]}`} tone={review.counts[g] ? GRADE_LABEL[g].tone : 'neutral'} />
+          {(Object.keys(GRADE_STYLE) as MoveGrade[]).map((g) => (
+            <Pill key={g} icon={GRADE_STYLE[g].icon} text={t('review.gradeCount', { label: t(`review.grade.${g}`), n: review.counts[g] })} tone={review.counts[g] ? GRADE_STYLE[g].tone : 'neutral'} />
           ))}
         </Row>
       </Card>
-      <SectionLabel>{mistakes.length ? 'Key moments' : 'Clean hand — every decision matched the coach'}</SectionLabel>
+      <SectionLabel>{t(mistakes.length ? 'review.keyMoments' : 'review.clean')}</SectionLabel>
       {mistakes.map((m) => (
         <MoveCard key={m.n} move={m} />
       ))}
-      {mistakes.length > 0 && <SectionLabel>All decisions</SectionLabel>}
+      {mistakes.length > 0 && <SectionLabel>{t('review.allDecisions')}</SectionLabel>}
       {review.moves
         .filter((m) => m.grade === 'best' || m.grade === 'good')
         .map((m) => (
@@ -117,36 +118,39 @@ export function ReviewScreen() {
 }
 
 function MoveCard({ move, compact }: { move: ReviewedMove; compact?: boolean }) {
-  const g = GRADE_LABEL[move.grade];
+  const { t } = useT();
+  const g = GRADE_STYLE[move.grade];
+  const label = t(`review.grade.${move.grade}`);
   const describe = (a: ReviewedMove['actual'] | null) => {
-    if (!a) return '—';
+    if (!a) return t('review.action.none');
     switch (a.type) {
       case 'discard':
-        return `Discard ${kindInfo(kindOf(a.tile)).nameZh}`;
+        return t('review.action.discard', { tile: kindInfo(kindOf(a.tile)).nameZh });
       case 'chi':
-        return `Chi ${a.tiles.map((t) => kindInfo(kindOf(t)).nameZh).join('')}`;
+        return t('review.action.chi', { tiles: a.tiles.map((tile) => kindInfo(kindOf(tile)).nameZh).join('') });
       case 'kong':
-        return `Kong ${kindInfo(kindOf(a.tile)).nameZh}`;
+        return t('review.action.kong', { tile: kindInfo(kindOf(a.tile)).nameZh });
       case 'hu':
-        return 'Win';
+        return t('review.action.hu');
       case 'pong':
-        return 'Pong';
+        return t('review.action.pong');
       default:
-        return a.type;
+        // The only action left is a pass.
+        return t('review.action.pass');
     }
   };
   return (
     <Card style={{ gap: 6 }}>
       <Row style={{ justifyContent: 'space-between' }}>
         <Row>
-          <Pill icon={g.icon} text={g.label} tone={g.tone} />
+          <Pill icon={g.icon} text={label} tone={g.tone} />
           <P dim style={{ fontSize: 12 }}>
-            move {move.n + 1} · {move.phase === 'claim' ? 'on a discard' : 'your turn'}
+            {t('review.moveMeta', { n: move.n + 1, phase: t(move.phase === 'claim' ? 'review.onDiscard' : 'review.yourTurn') })}
           </P>
         </Row>
         <P style={{ fontSize: 13 }}>
-          You: {describe(move.actual)}
-          {move.best && move.grade !== 'best' ? ` · Best: ${describe(move.best)}` : ''}
+          {t('review.you', { move: describe(move.actual) })}
+          {move.best && move.grade !== 'best' ? t('review.best', { move: describe(move.best) }) : ''}
         </P>
       </Row>
       {!compact && (
@@ -156,7 +160,7 @@ function MoveCard({ move, compact }: { move: ReviewedMove; compact?: boolean }) 
               <Tile key={`${t}-${i}`} tile={t} size="sm" highlight={move.highlightBest === kindOf(t) ? 'good' : move.highlightActual === kindOf(t) ? 'bad' : undefined} />
             ))}
           </View>
-          <P style={{ fontSize: 13 }}>{move.explanation}</P>
+          <P style={{ fontSize: 13 }}>{t('review.engineReason', { text: move.explanation })}</P>
         </>
       )}
     </Card>

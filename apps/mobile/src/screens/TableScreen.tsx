@@ -16,7 +16,8 @@ import { AvatarPlate, CoachOwl, seatAvatarId } from '../components/Avatars';
 import { Emote } from '../components/Emotes';
 
 import * as Haptics from 'expo-haptics';
-import { EMOTES, QUICK_CHATS, TableThemeContext, themeById } from '../themes';
+import { EMOTES, QUICK_CHATS, quickChatText, TableThemeContext, themeById } from '../themes';
+import { useT } from '../i18n';
 
 /** How long an emote bubble and a chat line stay on screen. */
 const EMOTE_MS = 3500;
@@ -27,6 +28,7 @@ const celebratedHands = new Set<string>();
 
 export function TableScreen() {
   const app = useApp();
+  const { t } = useT();
   const session = app.session;
   const state = useSession(session);
   const { width: winW, height } = useWindowDimensions();
@@ -117,8 +119,8 @@ export function TableScreen() {
         if (!w.selfDrawn && w.fromSeat !== undefined) fire(w.fromSeat, 'dealin');
       }
     }
-    const t = setTimeout(() => setShowResult(true), res.type === 'win' ? 1800 : 600);
-    return () => clearTimeout(t);
+    const timer = setTimeout(() => setShowResult(true), res.type === 'win' ? 1800 : 600);
+    return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state?.lastResult]);
 
@@ -126,8 +128,8 @@ export function TableScreen() {
     return (
       <View style={styles.center}>
         <View style={styles.notice}>
-          <Text style={styles.noticeTitle}>No table</Text>
-          <Button title="Home" onPress={() => app.go({ name: 'home' })} />
+          <Text style={styles.noticeTitle}>{t('table.noTable')}</Text>
+          <Button title={t('table.home')} onPress={() => app.go({ name: 'home' })} />
         </View>
       </View>
     );
@@ -141,11 +143,11 @@ export function TableScreen() {
             <Tile faceDown size="md" />
             <Tile kind={9} size="md" />
           </View>
-          <Text style={styles.noticeTitle}>Shuffling…</Text>
+          <Text style={styles.noticeTitle}>{t('table.shuffling')}</Text>
           <P dim style={{ textAlign: 'center' }}>
-            {state.ceremony === 'idle' ? 'Waiting for players' : state.ceremony === 'committed' ? 'Sealed your random share' : 'Revealed'}
+            {t(state.ceremony === 'idle' ? 'table.ceremony.idle' : state.ceremony === 'committed' ? 'table.ceremony.committed' : 'table.ceremony.revealed')}
           </P>
-          <Button kind="ghost" title="Leave" onPress={leave} />
+          <Button kind="ghost" title={t('table.leave')} onPress={leave} />
         </View>
       </View>
     );
@@ -165,10 +167,10 @@ export function TableScreen() {
   const me = view.players[mySeat];
   const isDiscardPhase = view.phase === 'discard' && view.turn === mySeat;
   const canDiscard = isDiscardPhase && actions.some((a) => a.type === 'discard');
-  const onTile = (t: TileId) => {
+  const onTile = (tile: TileId) => {
     if (!canDiscard) return;
-    if (selected === t) act({ type: 'discard', tile: t });
-    else setSelected(t);
+    if (selected === tile) act({ type: 'discard', tile });
+    else setSelected(tile);
   };
 
   // ---- Layout -------------------------------------------------------
@@ -262,7 +264,11 @@ export function TableScreen() {
   const showWall = tablet || portrait;
   const wallSize = tablet ? Math.min(centerW - 24, 300) : Math.max(120, Math.min(centerW - 4, 220));
   const compass = <Compass prevailing={WINDS[view.prevailingWind]} drawsLeft={view.drawsLeft} seatWinds={[relWind(0), relWind(1), relWind(2), relWind(3)]} active={activeRel} size={tablet ? 96 : portrait ? Math.min(66, Math.round(wallSize * 0.42)) : 74} />;
-  const statusLine = view.pending ? `${seatInfo(view.pending.from)?.name ?? ''} 打出 ${kindInfo(kindOf(view.pending.tile)).nameZh}${view.pending.kind === 'addedKong' ? '（加槓）' : ''}` : !view.pending && view.phase === 'discard' && view.turn !== mySeat ? `輪到 ${seatInfo(view.turn)?.name ?? ''}` : null;
+  const statusLine = view.pending
+    ? t('table.status.discarded', { name: seatInfo(view.pending.from)?.name ?? '', tile: kindInfo(kindOf(view.pending.tile)).nameZh }) + (view.pending.kind === 'addedKong' ? t('table.status.addedKong') : '')
+    : !view.pending && view.phase === 'discard' && view.turn !== mySeat
+      ? t('table.status.turn', { name: seatInfo(view.turn)?.name ?? '' })
+      : null;
   const status = statusLine ? (
     <View style={styles.status}>
       <Text numberOfLines={1} style={styles.statusText}>
@@ -315,7 +321,8 @@ export function TableScreen() {
             <View style={styles.roundChip}>
               <Text style={styles.roundWind}>{WINDS[view.prevailingWind]}</Text>
               <Text style={styles.roundText}>
-                風 · 第{view.handNumber + 1}局{view.dealerStreak ? ` · 連${view.dealerStreak}` : ''}
+                {t('table.roundChip', { hand: view.handNumber + 1 })}
+                {view.dealerStreak ? t('table.dealerStreak', { n: view.dealerStreak }) : ''}
               </Text>
             </View>
             <View style={styles.hudChip}>
@@ -330,13 +337,13 @@ export function TableScreen() {
             {countdown !== null && myMove && (
               <View style={[styles.hudChip, timerUrgent && { backgroundColor: colors.danger }]}>
                 <Icon name={state.inTimeBank ? 'hourglass' : 'clock'} size={18} />
-                <Text style={styles.hudChipText}>{state.inTimeBank ? `bank ${countdown}s` : `${countdown}s`}</Text>
+                <Text style={styles.hudChipText}>{state.inTimeBank ? t('table.timeBank', { s: countdown }) : t('table.seconds', { s: countdown })}</Text>
               </View>
             )}
             {!myMove && state.timeBank > 0 && !portrait && (
               <View style={styles.hudChip}>
                 <Icon name="hourglass" size={18} />
-                <Text style={styles.hudChipText}>{state.timeBank}s</Text>
+                <Text style={styles.hudChipText}>{t('table.seconds', { s: state.timeBank })}</Text>
               </View>
             )}
           </Row>
@@ -400,17 +407,17 @@ export function TableScreen() {
                 <View style={styles.rackTop} />
               </View>
               <View style={[styles.handTiles, portrait && { flexWrap: 'wrap', rowGap: 6, justifyContent: 'center' }]}>
-                {(me.hand ?? []).map((t, i) => {
-                  const isDrawn = view.lastDrawn === t && isDiscardPhase;
+                {(me.hand ?? []).map((tile, i) => {
+                  const isDrawn = view.lastDrawn === tile && isDiscardPhase;
                   return (
                     <Tile
-                      key={t}
-                      tile={t}
+                      key={tile}
+                      tile={tile}
                       size={handTile}
-                      selected={selected === t}
+                      selected={selected === tile}
                       dimmed={canDiscard ? false : undefined}
-                      highlight={bestDiscard === t && canDiscard ? 'good' : undefined}
-                      onPress={() => onTile(t)}
+                      highlight={bestDiscard === tile && canDiscard ? 'good' : undefined}
+                      onPress={() => onTile(tile)}
                       style={isDrawn && i === (me.hand?.length ?? 0) - 1 ? { marginLeft: 10 } : undefined}
                     />
                   );
@@ -444,18 +451,21 @@ export function TableScreen() {
               ))}
             </View>
             <View style={styles.quickWrap}>
-              {QUICK_CHATS.map((q) => (
-                <Pressable
-                  key={q}
-                  onPress={() => {
-                    session.client.chat(q);
-                    setEmotePicker(false);
-                  }}
-                  style={({ pressed }) => [styles.quickChat, pressed && { transform: [{ translateY: 1 }] }]}
-                >
-                  <Text style={[styles.quickText, nameFont(q, fonts.uiBold)]}>{q}</Text>
-                </Pressable>
-              ))}
+              {QUICK_CHATS.map((id) => {
+                const q = quickChatText(id);
+                return (
+                  <Pressable
+                    key={id}
+                    onPress={() => {
+                      session.client.chat(q);
+                      setEmotePicker(false);
+                    }}
+                    style={({ pressed }) => [styles.quickChat, pressed && { transform: [{ translateY: 1 }] }]}
+                  >
+                    <Text style={[styles.quickText, nameFont(q, fonts.uiBold)]}>{q}</Text>
+                  </Pressable>
+                );
+              })}
             </View>
           </View>
         )}
@@ -476,12 +486,12 @@ export function TableScreen() {
           <View style={styles.banner}>
             <Icon name="warning" size={28} />
             <View style={{ flex: 1 }}>
-              <Text style={styles.bannerTitle}>Connection lost</Text>
-              <Text style={styles.bannerText}>Your seat is saved. A bot plays for you until you are back.</Text>
+              <Text style={styles.bannerTitle}>{t('table.connection.lostTitle')}</Text>
+              <Text style={styles.bannerText}>{t('table.connection.lostText')}</Text>
             </View>
             <Button
               small
-              title="Reconnect"
+              title={t('table.connection.reconnect')}
               onPress={() => {
                 app.setSession(null);
                 app.reset({ name: 'home' });
@@ -548,6 +558,7 @@ function ClaimButton({ label, tiles, kind, onPress, big }: { label: string; tile
 }
 
 function ActionBar({ actions, act, selected, hint, view, big }: { actions: Action[]; act: (a: Action) => void; selected: TileId | null; hint: Hint | null; view: TableView; big?: boolean }) {
+  const { t } = useT();
   if (actions.length === 0) return null;
   const hu = actions.find((a) => a.type === 'hu');
   const kongs = actions.filter((a) => a.type === 'kong');
@@ -562,33 +573,38 @@ function ActionBar({ actions, act, selected, hint, view, big }: { actions: Actio
       {canDiscard && selected === null && !hu && kongs.length === 0 && (
         <View style={styles.tapHint}>
           <Icon name="play" size={14} />
-          <Text style={styles.tapHintText}>Tap a tile, tap again to discard</Text>
+          <Text style={styles.tapHintText}>{t('table.tapHint')}</Text>
         </View>
       )}
-      {pass && <ClaimButton kind="ghost" label="過" onPress={() => act(pass)} big={big} />}
+      {pass && <ClaimButton kind="ghost" label={t('table.claim.pass')} onPress={() => act(pass)} big={big} />}
       {chis.map((c, i) => (
-        <ClaimButton key={i} kind={recommended(c) ? 'primary' : 'secondary'} label="吃" tiles={(c as { tiles: TileId[] }).tiles} onPress={() => act(c)} big={big} />
+        <ClaimButton key={i} kind={recommended(c) ? 'primary' : 'secondary'} label={t('table.claim.chi')} tiles={(c as { tiles: TileId[] }).tiles} onPress={() => act(c)} big={big} />
       ))}
-      {pong && <ClaimButton kind={recommended(pong) ? 'primary' : 'secondary'} label="碰" tiles={pendingTile !== undefined ? [pendingTile] : undefined} onPress={() => act(pong)} big={big} />}
+      {pong && <ClaimButton kind={recommended(pong) ? 'primary' : 'secondary'} label={t('table.claim.pong')} tiles={pendingTile !== undefined ? [pendingTile] : undefined} onPress={() => act(pong)} big={big} />}
       {kongs.map((k, i) => (
-        <ClaimButton key={i} kind={recommended(k) ? 'primary' : 'premium'} label="槓" tiles={[(k as { tile: TileId }).tile]} onPress={() => act(k)} big={big} />
+        <ClaimButton key={i} kind={recommended(k) ? 'primary' : 'premium'} label={t('table.claim.kong')} tiles={[(k as { tile: TileId }).tile]} onPress={() => act(k)} big={big} />
       ))}
-      {canDiscard && selected !== null && <ClaimButton kind="danger" label="打" tiles={[selected]} onPress={() => act({ type: 'discard', tile: selected })} big={big} />}
-      {hu && <ClaimButton kind="gold" label={view.phase === 'discard' ? '自摸 胡!' : '胡!'} onPress={() => act(hu)} big />}
+      {canDiscard && selected !== null && <ClaimButton kind="danger" label={t('table.claim.discard')} tiles={[selected]} onPress={() => act({ type: 'discard', tile: selected })} big={big} />}
+      {hu && <ClaimButton kind="gold" label={t(view.phase === 'discard' ? 'table.claim.selfDrawWin' : 'table.claim.win')} onPress={() => act(hu)} big />}
     </View>
   );
 }
 
 function CoachPanel({ hint, waitKinds, compact }: { hint: Hint; waitKinds: Set<number>; compact?: boolean }) {
+  const { t } = useT();
+  // Coach sentences come from the engine in English for now; review.engineReason is the one place to swap them for reason codes.
+  const engine = (text: string) => t('review.engineReason', { text });
+  const preview = hint.winPreview ? t('table.coach.winPreview', { items: hint.winPreview.items.map((i) => t('table.coach.taiItem', { name: i.nameZh, tai: i.tai })).join(' · '), tai: hint.winPreview.tai }) : null;
   if (compact) {
     // One or two lines: status + the single most useful piece of advice.
-    const line = hint.winPreview ? `${hint.winPreview.items.map((i) => `${i.nameZh} ${i.tai}`).join(' · ')} = ${hint.winPreview.tai} 台` : hint.discardReason ?? hint.claims.find((c) => c.recommended)?.reason ?? '';
+    const reason = hint.discardReason ?? hint.claims.find((c) => c.recommended)?.reason;
+    const line = preview ?? (reason ? engine(reason) : '');
     return (
       <View style={[styles.coach, styles.coachCompact]}>
         <CoachOwl size={34} />
         <View style={{ flex: 1, minWidth: 0, flexShrink: 1, overflow: 'hidden' }}>
           <Text style={styles.coachStatus} numberOfLines={1}>
-            {hint.status}
+            {engine(hint.status)}
           </Text>
           {!!line && (
             <Text style={styles.coachLine} numberOfLines={2}>
@@ -610,22 +626,18 @@ function CoachPanel({ hint, waitKinds, compact }: { hint: Hint; waitKinds: Set<n
     <View style={styles.coach}>
       <Row gap={8}>
         <CoachOwl size={36} />
-        <Text style={styles.coachTitle}>Coach</Text>
+        <Text style={styles.coachTitle}>{t('table.coach.title')}</Text>
       </Row>
-      <Text style={styles.coachStatus}>{hint.status}</Text>
-      {hint.winPreview && (
-        <Text style={styles.coachLine}>
-          {hint.winPreview.items.map((i) => `${i.nameZh} ${i.tai}`).join(' · ')} = {hint.winPreview.tai} 台
-        </Text>
-      )}
-      {hint.discardReason && <Text style={styles.coachLine}>{hint.discardReason}</Text>}
+      <Text style={styles.coachStatus}>{engine(hint.status)}</Text>
+      {preview && <Text style={styles.coachLine}>{preview}</Text>}
+      {hint.discardReason && <Text style={styles.coachLine}>{engine(hint.discardReason)}</Text>}
       {hint.waits.length > 0 && (
         <Row style={{ flexWrap: 'wrap' }} gap={4}>
-          <Text style={styles.coachLabel}>聽</Text>
+          <Text style={styles.coachLabel}>{t('table.coach.waits')}</Text>
           {hint.waits.map((w) => (
             <View key={w.kind} style={{ alignItems: 'center' }}>
               <Tile kind={w.kind} size="xs" highlight={waitKinds.has(w.kind) ? 'wait' : undefined} />
-              <Text style={styles.coachCount}>×{w.remaining}</Text>
+              <Text style={styles.coachCount}>{t('table.coach.remaining', { n: w.remaining })}</Text>
             </View>
           ))}
         </Row>
@@ -634,7 +646,7 @@ function CoachPanel({ hint, waitKinds, compact }: { hint: Hint; waitKinds: Set<n
         <Row key={i} gap={4} style={{ alignItems: 'flex-start' }}>
           {c.recommended ? <Icon name="check" size={16} color={colors.cta} /> : <View style={styles.coachDot} />}
           <Text style={[styles.coachLine, { flex: 1 }, c.recommended && { color: colors.okText }]}>
-            {c.label}: {c.reason}
+            {t('table.coach.claimLine', { label: engine(c.label), reason: engine(c.reason) })}
           </Text>
         </Row>
       ))}
@@ -643,32 +655,33 @@ function CoachPanel({ hint, waitKinds, compact }: { hint: Hint; waitKinds: Set<n
 }
 
 function WinCard({ w, state }: { w: WinRecord; state: ClientState }) {
+  const { t } = useT();
   const seatOf = (seat: number) => state.seats.find((s) => s.seat === seat);
-  const name = (seat: number) => seatOf(seat)?.name ?? `Seat ${seat + 1}`;
+  const name = (seat: number) => seatOf(seat)?.name ?? t('table.seat', { n: seat + 1 });
   // Flower wins (八仙過海 / 七搶一) end the hand on a bonus tile: the winning tile sits in the flowers row.
   const flowerWin = w.score.flowerWin;
-  const how = flowerWin === 'eight' ? '八仙過海' : flowerWin === 'sevenRob' ? `七搶一 · ${name(w.fromSeat!)}` : w.selfDrawn ? '自摸' : `${name(w.fromSeat!)} 放槍`;
+  const how = flowerWin === 'eight' ? t('table.win.eightFlowers') : flowerWin === 'sevenRob' ? t('table.win.sevenRob', { name: name(w.fromSeat!) }) : w.selfDrawn ? t('table.win.selfDrawn') : t('table.win.dealtIn', { name: name(w.fromSeat!) });
   return (
     <View style={styles.winCard}>
       <Row gap={10}>
         <AvatarPlate id={seatAvatarId(seatOf(w.seat), w.seat)} size={40} />
         <View style={{ flex: 1 }}>
-          <Text style={[styles.winTitle, nameFont(name(w.seat))]}>{name(w.seat)} 胡牌</Text>
+          <Text style={[styles.winTitle, nameFont(name(w.seat))]}>{t('table.win.title', { name: name(w.seat) })}</Text>
           <Text style={styles.winSub}>{how}</Text>
         </View>
         <View style={styles.taiBadge}>
           <StrokeText style={{ fontSize: 24 }} strokeWidth={2} drop={1.5}>
             {w.score.tai}
           </StrokeText>
-          <Text style={styles.taiLabel}>台</Text>
+          <Text style={styles.taiLabel}>{t('table.win.taiLabel')}</Text>
         </View>
       </Row>
       <Row style={{ flexWrap: 'wrap', rowGap: 4 }} gap={2}>
         {w.melds.map((m, i) => (
           <MeldView key={i} meld={m} size="sm" />
         ))}
-        {w.hand.map((t) => (
-          <Tile key={t} tile={t} size="sm" highlight={t === w.winningTile ? 'wait' : undefined} />
+        {w.hand.map((tile) => (
+          <Tile key={tile} tile={tile} size="sm" highlight={tile === w.winningTile ? 'wait' : undefined} />
         ))}
         {w.flowers.map((f) => (
           <Tile key={f} tile={f} size="sm" highlight={flowerWin && f === w.winningTile ? 'wait' : undefined} />
@@ -680,12 +693,12 @@ function WinCard({ w, state }: { w: WinRecord; state: ClientState }) {
             <Text style={styles.itemText}>
               {it.nameZh} <Text style={styles.itemEn}>{it.nameEn}</Text>
             </Text>
-            <Text style={styles.itemTai}>{it.tai} 台</Text>
+            <Text style={styles.itemTai}>{t('table.win.tai', { tai: it.tai })}</Text>
           </Row>
         ))}
         {w.payments.map((p, i) => (
           <Text key={i} style={styles.payment}>
-            {name(p.from)} → {name(p.to)}: {p.points} ({p.tai} 台 incl. dealer)
+            {t('table.win.payment', { from: name(p.from), to: name(p.to), points: p.points, tai: p.tai })}
           </Text>
         ))}
       </View>
@@ -694,14 +707,16 @@ function WinCard({ w, state }: { w: WinRecord; state: ClientState }) {
 }
 
 function ResultOverlay({ result, view, state, mySeat, onNext, onLeave, onReview, onFairness }: { result: HandResult; view: TableView; state: ClientState; mySeat: number; onNext: () => void; onLeave: () => void; onReview: () => void; onFairness: () => void }) {
+  const { t } = useT();
   const [ready, setReady] = useState(false);
   const { width, height } = useWindowDimensions();
   // Short landscape phones: results on the left, scores and buttons on the right, so nothing needs scrolling to act.
   const twoCol = width > height && height < 560;
   const iWon = result.wins.some((w) => w.seat === mySeat);
   const audit = state.auditStatus;
-  const title = result.type === 'draw' ? '流局' : iWon ? '你胡了!' : '本局結束';
-  const sub = result.type === 'draw' ? 'Draw' : iWon ? 'You won the hand!' : 'Hand over';
+  // Each locale decides whether the ribbon carries a subtitle (en: an English line under the Chinese; zh-TW: none).
+  const title = t(result.type === 'draw' ? 'table.result.drawTitle' : iWon ? 'table.result.wonTitle' : 'table.result.overTitle');
+  const sub = t(result.type === 'draw' ? 'table.result.drawSub' : iWon ? 'table.result.wonSub' : 'table.result.overSub');
   const ribbon = result.type === 'draw' ? colors.info : iWon ? colors.gold : colors.premium;
   const ribbonView = (
     <View style={[styles.ribbon, { backgroundColor: ribbon }, twoCol && { alignSelf: 'flex-start', paddingVertical: 3 }]}>
@@ -709,9 +724,11 @@ function ResultOverlay({ result, view, state, mySeat, onNext, onLeave, onReview,
       <StrokeText style={{ fontSize: twoCol ? 24 : 30, lineHeight: twoCol ? 30 : 36 }} strokeWidth={2.5} drop={2}>
         {title}
       </StrokeText>
-      <StrokeText style={{ fontSize: twoCol ? 15 : 18 }} strokeWidth={2} drop={1.5}>
-        {sub}
-      </StrokeText>
+      {!!sub && (
+        <StrokeText style={{ fontSize: twoCol ? 15 : 18 }} strokeWidth={2} drop={1.5}>
+          {sub}
+        </StrokeText>
+      )}
       {iWon && <Icon name="star" size={twoCol ? 24 : 30} />}
     </View>
   );
@@ -720,7 +737,7 @@ function ResultOverlay({ result, view, state, mySeat, onNext, onLeave, onReview,
       {result.wins.map((w) => (
         <WinCard key={w.seat} w={w} state={state} />
       ))}
-      {result.type === 'draw' && <P>Wall exhausted. Dealer {result.dealerContinues ? 'keeps the deal (連莊).' : 'passes.'}</P>}
+      {result.type === 'draw' && <P>{t(result.dealerContinues ? 'table.result.drawKeeps' : 'table.result.drawPasses')}</P>}
     </>
   );
   const scores = (
@@ -747,11 +764,12 @@ function ResultOverlay({ result, view, state, mySeat, onNext, onLeave, onReview,
   );
   // 'partial': the shuffle log and result replayed correctly, but this seat's own share did not protect the seed
   // (it was stood in, or it joined mid-hand). Amber, never green: a host can always claim a seat was late.
-  const auditText =
-    audit === 'ok' ? (twoCol ? 'Verified · details' : 'Shuffle & log verified · details')
-    : audit === 'partial' ? (twoCol ? 'Verified (log only)' : 'Verified (log only) · details')
-    : audit === 'failed' ? 'Audit failed · details'
-    : 'Audit pending';
+  const auditText = t(
+    audit === 'ok' ? (twoCol ? 'table.audit.okShort' : 'table.audit.ok')
+    : audit === 'partial' ? (twoCol ? 'table.audit.partialShort' : 'table.audit.partial')
+    : audit === 'failed' ? 'table.audit.failed'
+    : 'table.audit.pending',
+  );
   const auditRow = (
     <Row style={{ flexWrap: 'wrap', rowGap: 8 }}>
       <Pressable onPress={onFairness} testID="audit-status">
@@ -759,12 +777,12 @@ function ResultOverlay({ result, view, state, mySeat, onNext, onLeave, onReview,
       </Pressable>
       {state.auditFailures.map((f, i) => (
         <Text key={`f${i}`} style={{ color: colors.dangerText, fontSize: 12 }}>
-          {f}
+          {t('fairness.note', { text: f })}
         </Text>
       ))}
       {state.auditCaveats.map((c, i) => (
         <Text key={`c${i}`} style={{ color: colors.goldDim, fontSize: 12 }}>
-          {c}
+          {t('fairness.note', { text: c })}
         </Text>
       ))}
     </Row>
@@ -772,7 +790,7 @@ function ResultOverlay({ result, view, state, mySeat, onNext, onLeave, onReview,
   const next = (
     <Button
       large={!twoCol}
-      title={ready ? 'Waiting for others…' : 'Next hand'}
+      title={t(ready ? 'table.result.waiting' : 'table.result.nextHand')}
       disabled={ready}
       onPress={() => {
         setReady(true);
@@ -794,8 +812,8 @@ function ResultOverlay({ result, view, state, mySeat, onNext, onLeave, onReview,
             <View style={{ gap: 6 }}>
               {next}
               <Row gap={6}>
-                <Button small kind="secondary" title="Review" onPress={onReview} style={{ flex: 1 }} />
-                <Button small kind="ghost" title="Leave table" onPress={onLeave} style={{ flex: 1 }} />
+                <Button small kind="secondary" title={t('table.result.review')} onPress={onReview} style={{ flex: 1 }} />
+                <Button small kind="ghost" title={t('table.result.leaveTable')} onPress={onLeave} style={{ flex: 1 }} />
               </Row>
             </View>
           </View>
@@ -813,8 +831,8 @@ function ResultOverlay({ result, view, state, mySeat, onNext, onLeave, onReview,
           {auditRow}
           <Row style={{ flexWrap: 'wrap', rowGap: 8 }}>
             {next}
-            <Button kind="secondary" title="Review my hand" onPress={onReview} />
-            <Button kind="ghost" title="Leave table" onPress={onLeave} />
+            <Button kind="secondary" title={t('table.result.reviewMyHand')} onPress={onReview} />
+            <Button kind="ghost" title={t('table.result.leaveTable')} onPress={onLeave} />
           </Row>
         </View>
       </ScrollView>
@@ -823,6 +841,7 @@ function ResultOverlay({ result, view, state, mySeat, onNext, onLeave, onReview,
 }
 
 function MatchOverOverlay({ state, onLeave }: { state: ClientState; onLeave: () => void }) {
+  const { t } = useT();
   const scores = state.finalScores ?? [];
   const order = scores.map((s, i) => ({ s, i })).sort((a, b) => b.s - a.s);
   return (
@@ -831,7 +850,7 @@ function MatchOverOverlay({ state, onLeave }: { state: ClientState; onLeave: () 
         <View style={[styles.ribbon, { backgroundColor: colors.gold }]}>
           <Icon name="trophy" size={34} />
           <StrokeText style={{ fontSize: 28 }} strokeWidth={2.5} drop={2}>
-            Match over
+            {t('table.matchOver')}
           </StrokeText>
         </View>
         {order.map(({ s, i }, rank) => {
@@ -850,7 +869,7 @@ function MatchOverOverlay({ state, onLeave }: { state: ClientState; onLeave: () 
             </Row>
           );
         })}
-        <Button large title="Back to home" onPress={onLeave} />
+        <Button large title={t('table.backHome')} onPress={onLeave} />
       </View>
     </View>
   );

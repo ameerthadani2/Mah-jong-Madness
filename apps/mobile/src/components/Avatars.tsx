@@ -10,6 +10,7 @@ import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import Svg, { Circle, ClipPath, Defs, G, Image as SvgImage, Path, Polygon } from 'react-native-svg';
 import { colors } from '../theme';
+import { t } from '../i18n';
 import { linear, radial } from './portraits/kit';
 import { portraitArt } from './portraits';
 import { Image as ClipImage } from 'expo-image';
@@ -47,20 +48,16 @@ function portraitLayer(aid: AvatarId): React.ReactNode {
 export const AVATAR_IDS = ['auntie', 'uncle', 'grandma', 'boss', 'lady', 'shades', 'hoops', 'cowboy', 'student', 'chef', 'sporty', 'gent'] as const;
 export type AvatarId = (typeof AVATAR_IDS)[number];
 
-export const AVATAR_NAMES: Record<AvatarId, string> = {
-  auntie: 'Auntie',
-  uncle: 'Uncle',
-  grandma: 'Grandma',
-  boss: 'The Boss',
-  lady: 'Leading Lady',
-  shades: 'Mr Cool',
-  hoops: 'Hoops',
-  cowboy: 'Sheriff',
-  student: 'Student',
-  chef: 'Chef',
-  sporty: 'Sporty',
-  gent: 'Gentleman',
-};
+/** An avatar's display name in the current locale (`avatars.names.<id>`). */
+export function avatarName(id: AvatarId): string {
+  return t(`avatars.names.${id}`);
+}
+
+/** Display names by id, read in the current locale on each access (prefer `avatarName`). */
+export const AVATAR_NAMES: Readonly<Record<AvatarId, string>> = Object.defineProperties(
+  {} as Record<AvatarId, string>,
+  Object.fromEntries(AVATAR_IDS.map((id) => [id, { get: () => avatarName(id), enumerable: true }])),
+);
 
 /** Avatar ids from the animal era, each mapped to the portrait that took its place. */
 const ANIMALS: Record<string, AvatarId> = {

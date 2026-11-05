@@ -1,1 +1,49 @@
-{}
+{
+  "_review": "n/a",
+  "title": "Learn",
+  "lessonsCount": "%{done}/%{total} lessons",
+  "daily": {
+    "title": "Daily puzzle",
+    "text": "Same puzzle for everyone, every day. Keep the streak alive.",
+    "streak": "%{n} day streak",
+    "cta": "Solve"
+  },
+  "rush": {
+    "title": "Puzzle Rush",
+    "text": "Three minutes, three strikes, puzzles that get harder.",
+    "stat": "Best %{best} · %{runs} runs",
+    "cta": "Go"
+  },
+  "discard": {
+    "title": "Best discard",
+    "text": "Random hands; pick the discard. The coach grades shanten and acceptance.",
+    "none": "No drills yet",
+    "stat": "%{pct}% · %{n} played",
+    "cta": "Train"
+  },
+  "waits": {
+    "title": "Read the wait",
+    "text": "A ready hand is shown. Which tiles complete it? Spot every 聽.",
+    "cta": "Train"
+  },
+  "reviewAccNone": "Review a hand after a game to track your accuracy",
+  "reviewAcc": "Hand review accuracy %{pct}% · last %{n} reviewed",
+  "lessons": "Lessons",
+  "done": "Done",
+  "minutes": "%{n} min",
+  "review": "Review",
+  "start": "Start",
+  "correct": "Correct! ",
+  "notQuite": "Not quite: tap another tile to try again. ",
+  "answerAll": "Answer every quiz correctly to mark this lesson done.",
+  "previous": "Previous",
+  "next": "Next",
+  "finish": "Finish lesson",
+  "leaveLesson": "Leave lesson",
+  "difficulty": {
+    "easy": "Easy",
+    "medium": "Medium",
+    "hard": "Hard"
+  },
+  "nextHand": "Next hand"
+}

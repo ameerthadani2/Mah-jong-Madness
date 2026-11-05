@@ -1,1 +1,40 @@
-{}
+{
+  "_review": "first pass, needs native review",
+  "engineReason": "%{text}",
+  "title": "複盤",
+  "grade": {
+    "best": "最佳",
+    "good": "不錯",
+    "inaccuracy": "欠佳 ?!",
+    "mistake": "失誤 ?",
+    "blunder": "大失誤 ??"
+  },
+  "gradeCount": "%{label} %{n}",
+  "dailyUsedTitle": "今日複盤次數已用完",
+  "dailyUsedText": "免費帳號每天可以完整複盤一局。白金教練方案每一局都幫你複盤，鑽石方案還有逐步講解。",
+  "seePlans": "查看教練方案",
+  "back": "返回",
+  "nothing": "還沒有可以複盤的牌局，先打完一局吧。",
+  "accuracyOver": "%{n} 次決策的準確率",
+  "rolling": {
+    "one": "最近 %{count} 局複盤的平均準確率：%{pct}%",
+    "other": "最近 %{count} 局複盤的平均準確率：%{pct}%"
+  },
+  "keyMoments": "關鍵時刻",
+  "clean": "漂亮的一局：每個決策都和教練一致",
+  "allDecisions": "所有決策",
+  "moveMeta": "第 %{n} 手 · %{phase}",
+  "onDiscard": "別人打牌時",
+  "yourTurn": "輪到你",
+  "you": "你：%{move}",
+  "best": " · 最佳：%{move}",
+  "action": {
+    "none": "—",
+    "discard": "打 %{tile}",
+    "chi": "吃 %{tiles}",
+    "kong": "槓 %{tile}",
+    "hu": "胡",
+    "pong": "碰",
+    "pass": "過"
+  }
+}

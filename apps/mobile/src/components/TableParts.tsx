@@ -5,6 +5,7 @@ import { PLACEHOLDER_TILE, WINDS, type Meld, type PlayerView, type TileId } from
 import type { SeatInfo } from '@mjm/net';
 import { colors, fonts, nameFont } from '../theme';
 import { TableThemeContext } from '../themes';
+import { useT } from '../i18n';
 import { Tile, type TileSize } from './Tile';
 import { AvatarPlate, seatAvatarId, type AvatarMood } from './Avatars';
 import { Emote } from './Emotes';
@@ -107,8 +108,9 @@ export function SeatBadge({
 }) {
   const wind = WINDS[(seat - dealerSeat + 4) % 4];
   const rel = (seat - viewerSeat + 4) % 4;
-  const relLabel = rel === 0 ? '你' : rel === 1 ? '下家' : rel === 2 ? '對家' : '上家';
-  const name = info?.name || `Seat ${seat + 1}`;
+  const { t } = useT();
+  const relLabel = t(rel === 0 ? 'table.relSeat.me' : rel === 1 ? 'table.relSeat.right' : rel === 2 ? 'table.relSeat.across' : 'table.relSeat.left');
+  const name = info?.name || t('table.seat', { n: seat + 1 });
   const offline = !!info && !info.connected && !info.isBot;
   // Win and deal-in reactions switch the portrait to its win/lose clip for a few seconds (if it has clips).
   const [mood, setMood] = useState<AvatarMood | null>(null);
@@ -117,8 +119,8 @@ export function SeatBadge({
     const m: AvatarMood | null = reaction.kind === 'win' || reaction.kind === 'selfdraw' ? 'win' : reaction.kind === 'dealin' ? 'lose' : null;
     if (!m) return;
     setMood(m);
-    const t = setTimeout(() => setMood(null), 3200);
-    return () => clearTimeout(t);
+    const id = setTimeout(() => setMood(null), 3200);
+    return () => clearTimeout(id);
   }, [reaction?.key]);
   void player;
   void compact;
@@ -144,7 +146,7 @@ export function SeatBadge({
             {score >= 0 ? '+' : ''}
             {score}
           </Text>
-          {offline && <Text style={styles.offline}>離線</Text>}
+          {offline && <Text style={styles.offline}>{t('table.offline')}</Text>}
         </View>
       </View>
     </View>

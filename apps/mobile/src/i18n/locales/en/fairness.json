@@ -1,1 +1,27 @@
-{}
+{
+  "_review": "n/a",
+  "title": "Fair play",
+  "howTitle": "How the deal works",
+  "step1": "1. Before each hand your phone picks a secret, and so does every other player. The table server adds a fifth secret of its own and picks the bots' secrets.",
+  "step2": "2. All five SHA-256 fingerprints are published before anyone reveals. Your phone only reveals its secret once it holds all five, so no one can pick a secret after seeing yours. The shuffle seed is the hash of all five secrets together.",
+  "step3": "3. When the hand ends, the secrets, any restarts of the deal and the full action log are published. Your phone checks the fingerprints, re-derives the seed, replays the hand and compares the result.",
+  "partialBefore": "A hand marked ",
+  "partialLabel": "Verified (log only)",
+  "partialAfter": " checked out in every way, but your own secret was not part of its deal (the server stood in for you, or you joined mid-hand), so that shuffle rests on the server alone.",
+  "trust": "The server learns the seed when it deals, so it is trusted not to look at the wall during the hand. There is no \"luck balancing\", no streak engine, no hidden weights. The engine is deterministic and open; the only randomness is the seed above.",
+  "sessionHands": "This session's hands",
+  "none": "No hands finished yet.",
+  "hand": "Hand %{n}",
+  "status": {
+    "ok": "Verified",
+    "partial": "Verified (log only)",
+    "failed": "Failed",
+    "unverified": "Unverified"
+  },
+  "seed": "seed %{seed}",
+  "server": "server",
+  "seat": "seat %{n}",
+  "commit": "%{who} commit %{hash}… secret %{secret}…",
+  "log": "%{n} actions · final hash %{hash}",
+  "note": "%{text}"
+}

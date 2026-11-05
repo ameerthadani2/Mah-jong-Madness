@@ -1,1 +1,56 @@
-{}
+{
+  "_review": "n/a",
+  "daily": {
+    "title": "Daily puzzle",
+    "streak": "%{n}-day streak",
+    "solvedToday": "Solved today",
+    "attemptedToday": "Attempted today",
+    "alreadyTitle": "Already played today",
+    "alreadyText": "Come back tomorrow for a new one, or keep sharp with Puzzle Rush.",
+    "rush": "Puzzle Rush",
+    "done": "Done",
+    "next": "Next",
+    "about": "Everyone gets the same puzzle on the same date, and a new one at local midnight. Weekends are harder. Any attempt keeps your streak going."
+  },
+  "rush": {
+    "title": "Puzzle Rush",
+    "usedTitle": "Daily run used",
+    "usedText": "Free accounts get one Puzzle Rush a day. Coach Gold makes it unlimited, with history and leaderboards.",
+    "seePlans": "See Coach plans",
+    "dailyInstead": "Daily puzzle instead",
+    "best": "Best %{n}",
+    "outcome": {
+      "best": "New personal best!",
+      "matched": "Matched your best",
+      "over": "Run over"
+    },
+    "endStrikes": "Three strikes. Puzzles get harder the further you go.",
+    "endTime": "Time is up. Puzzles get harder the further you go.",
+    "playAgain": "Play again",
+    "backToLearn": "Back to Learn",
+    "progress": "Puzzle %{n} · %{type}",
+    "typeDiscard": "Best discard",
+    "typeWaits": "Read the wait"
+  },
+  "view": {
+    "next": "Next",
+    "discardIntro": "You just drew. %{status} Which tile do you discard?",
+    "status": {
+      "complete": "The hand is already complete.",
+      "oneFromReady": "One discard from ready.",
+      "leaves": "The best discard leaves you %{n} from ready."
+    },
+    "good": "Good discard!",
+    "better": "There is a better one.",
+    "ready": "ready",
+    "fromReady": "%{n} from ready",
+    "picked": "%{tile}: %{shape}, %{kinds} kinds / %{tiles} tiles improve you.",
+    "best": "Best is %{tile}: %{shape}, %{kinds} kinds / %{tiles} tiles (%{list}).",
+    "waitsIntro": "This 16-tile hand is ready. Select every tile that completes it.",
+    "candidates": "Candidates",
+    "check": "Check",
+    "exact": "Exactly right!",
+    "notAll": "Not all of them.",
+    "waits": "Waits:"
+  }
+}

@@ -1,1 +1,56 @@
-{}
+{
+  "_review": "first pass, needs native review",
+  "daily": {
+    "title": "每日謎題",
+    "streak": "連續 %{n} 天",
+    "solvedToday": "今天已解開",
+    "attemptedToday": "今天已作答",
+    "alreadyTitle": "今天已經玩過了",
+    "alreadyText": "明天再來挑戰新題目，或是玩謎題衝刺保持手感。",
+    "rush": "謎題衝刺",
+    "done": "完成",
+    "next": "下一步",
+    "about": "同一天大家拿到同一題，當地午夜換新題。週末比較難。只要作答就能維持連續天數。"
+  },
+  "rush": {
+    "title": "謎題衝刺",
+    "usedTitle": "今日次數已用完",
+    "usedText": "免費帳號每天可以玩一次謎題衝刺。黃金教練方案不限次數，還有歷史紀錄和排行榜。",
+    "seePlans": "查看教練方案",
+    "dailyInstead": "改玩每日謎題",
+    "best": "最佳 %{n}",
+    "outcome": {
+      "best": "刷新個人紀錄！",
+      "matched": "追平個人紀錄",
+      "over": "本輪結束"
+    },
+    "endStrikes": "三次失誤。越後面的題目越難。",
+    "endTime": "時間到。越後面的題目越難。",
+    "playAgain": "再玩一次",
+    "backToLearn": "回到學習",
+    "progress": "第 %{n} 題 · %{type}",
+    "typeDiscard": "最佳打牌",
+    "typeWaits": "看聽牌"
+  },
+  "view": {
+    "next": "下一題",
+    "discardIntro": "你剛摸完牌。%{status}要打哪一張？",
+    "status": {
+      "complete": "這副牌已經胡了。",
+      "oneFromReady": "打對一張就聽牌。",
+      "leaves": "最佳打法打完後還差 %{n} 向聽。"
+    },
+    "good": "打得好！",
+    "better": "還有更好的選擇。",
+    "ready": "聽牌",
+    "fromReady": "%{n} 向聽",
+    "picked": "%{tile}：%{shape}，%{kinds} 種 / %{tiles} 張進張。",
+    "best": "最佳是 %{tile}：%{shape}，%{kinds} 種 / %{tiles} 張進張（%{list}）。",
+    "waitsIntro": "這副 16 張的手牌已經聽牌，把能胡的牌全部選出來。",
+    "candidates": "候選牌",
+    "check": "確認",
+    "exact": "完全正確！",
+    "notAll": "沒有全部選對。",
+    "waits": "聽："
+  }
+}
