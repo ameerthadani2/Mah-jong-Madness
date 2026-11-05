@@ -7,7 +7,7 @@
  * before it is stored, so a malformed request becomes a `ClubError` (HTTP 4xx), not a crash.
  */
 import { randomHex, sanitizeRules, type RuleSet } from '@mjm/engine';
-import { sha256Hex } from '@mjm/net';
+import { sha256Hex, type HostEvent } from '@mjm/net';
 import { uniqueCode, type HexSource } from './codes';
 
 export interface Identity {
@@ -23,7 +23,11 @@ export interface Credentials extends Identity {
 
 export interface ClubData {
   clubs: Club[];
-  /** Maps userId to sha256(secret), bound on first use. */
+  /**
+   * Maps userId to sha256(secret). A user's secret is bound by their first successful request
+   * that leaves them holding a membership or a pending request. Oldest first, so the oldest
+   * unused entry is evicted when the table is full.
+   */
   credentials: Record<string, string>;
 }
 
@@ -110,6 +114,13 @@ export const CLUB_LIMITS = {
   nameLength: 40,
   descriptionLength: 280,
   labelLength: 40,
+  /**
+   * Bound identities kept in the store. Past this, the least recently used identity that holds
+   * no membership or pending request is forgotten (its next request binds it afresh).
+   * Identities still in a club are never evicted, so the table can exceed this only by as
+   * many users as the clubs themselves hold.
+   */
+  identities: 50_000,
 } as const;
 
 /** Keep only the known settings, and only when they are real booleans; anything else keeps `base`'s value. */
@@ -134,20 +145,34 @@ export class ClubRegistry {
   private readonly now: () => number;
   private readonly hex: HexSource;
   private readonly store: ClubStore | null;
+  private readonly maxCredentials: number;
 
-  constructor(opts: { store?: ClubStore; now?: () => number; randomHex?: HexSource } = {}) {
+  constructor(opts: { store?: ClubStore; now?: () => number; randomHex?: HexSource; maxCredentials?: number } = {}) {
     this.now = opts.now ?? Date.now;
     this.hex = opts.randomHex ?? randomHex;
     this.store = opts.store ?? null;
+    this.maxCredentials = opts.maxCredentials ?? CLUB_LIMITS.identities;
     if (this.store) {
       const data = this.store.load();
+      let closedStale = false;
       for (const c of data.clubs) {
         // Older stores may hold unchecked rules or the retired `neutralHost` setting.
         c.rules = sanitizeRules(c.rules);
         c.settings = sanitizeSettings(c.settings);
+        c.tables = Array.isArray(c.tables) ? c.tables : [];
+        // Hosted rooms live only in memory, so no table survives a restart and no event will ever
+        // arrive to close one. Left as 'open' or 'playing', they would count against the club's
+        // open-table cap for good.
+        for (const t of c.tables) {
+          if (t.status === 'finished') continue;
+          t.status = 'finished';
+          t.players = (t.players ?? []).map((p) => ({ ...p, connected: false }));
+          closedStale = true;
+        }
         this.clubs.set(c.code, c);
       }
       for (const [k, v] of Object.entries(data.credentials ?? {})) this.credentials.set(k, v);
+      if (closedStale) this.persist();
     }
   }
 
@@ -155,21 +180,66 @@ export class ClubRegistry {
     this.store?.save({ clubs: [...this.clubs.values()], credentials: Object.fromEntries(this.credentials) });
   }
 
+  private credentialHash(creds: Credentials): string {
+    if (!creds.userId || typeof creds.secret !== 'string' || creds.secret.length < 16 || creds.secret.length > 128) throw new ClubError('invalid', 'Credentials required');
+    return sha256Hex(`mjm-user:${creds.userId}:${creds.secret}`);
+  }
+
   /**
-   * Trust-on-first-use authentication: the first request for a userId binds its secret,
-   * and later requests must present the same secret. Replace this with Sign in with Apple
-   * or Google tokens before launch; it only stops casual impersonation of visible user ids.
+   * Trust-on-first-use authentication: a bound userId must present the same secret again.
+   * An unbound userId passes but is not bound here; call `bindCredential` once the request
+   * has succeeded, so failed or junk requests never grow the store. Replace this with Sign
+   * in with Apple or Google tokens before launch; it only stops casual impersonation of
+   * visible user ids.
    */
   authenticate(creds: Credentials): Identity {
-    if (!creds.userId || typeof creds.secret !== 'string' || creds.secret.length < 16 || creds.secret.length > 128) throw new ClubError('invalid', 'Credentials required');
-    const hash = sha256Hex(`mjm-user:${creds.userId}:${creds.secret}`);
+    const hash = this.credentialHash(creds);
     const known = this.credentials.get(creds.userId);
     if (known && known !== hash) throw new ClubError('forbidden', 'Identity check failed for this user id');
-    if (!known) {
-      this.credentials.set(creds.userId, hash);
-      this.persist();
+    if (known) {
+      // Keep the map in least-recently-used order for eviction. Not worth a write on its own.
+      this.credentials.delete(creds.userId);
+      this.credentials.set(creds.userId, known);
     }
     return { userId: creds.userId, name: creds.name, avatar: creds.avatar };
+  }
+
+  /**
+   * Bind an unbound userId to its secret after a successful request, but only when the user
+   * now holds a membership or a pending request (creating or joining a club). Anyone else has
+   * nothing to protect, so nothing is stored. Returns true when a new binding was written.
+   */
+  bindCredential(creds: Credentials): boolean {
+    if (this.credentials.has(creds.userId)) return false;
+    if (!this.holdsMembership(creds.userId)) return false;
+    this.credentials.set(creds.userId, this.credentialHash(creds));
+    this.evictCredentials();
+    this.persist();
+    return true;
+  }
+
+  /** Number of bound identities. */
+  credentialCount(): number {
+    return this.credentials.size;
+  }
+
+  private holdsMembership(userId: string): boolean {
+    for (const c of this.clubs.values()) if (c.members.some((m) => m.userId === userId) || c.pending.some((p) => p.userId === userId)) return true;
+    return false;
+  }
+
+  /** Forget the least recently used identities that hold no membership until the table is back under its cap. */
+  private evictCredentials(): void {
+    if (this.credentials.size <= this.maxCredentials) return;
+    const inUse = new Set<string>();
+    for (const c of this.clubs.values()) {
+      for (const m of c.members) inUse.add(m.userId);
+      for (const p of c.pending) inUse.add(p.userId);
+    }
+    for (const userId of this.credentials.keys()) {
+      if (this.credentials.size <= this.maxCredentials) break;
+      if (!inUse.has(userId)) this.credentials.delete(userId);
+    }
   }
 
   private newCode(): string {
@@ -356,12 +426,40 @@ export class ClubRegistry {
     const club = this.clubs.get(code.toUpperCase());
     const t = club?.tables.find((x) => x.code === tableCode);
     if (!t) return undefined;
+    // A finished table stays finished. Events after match_over (a player dropping or leaving)
+    // must not turn it back into 'playing', where it would count against the open-table cap again.
+    if (t.status === 'finished' && patch.status !== 'finished') return t;
     const keys = Object.keys(patch) as Array<keyof typeof patch>;
     const changed = keys.some((k) => JSON.stringify(t[k]) !== JSON.stringify(patch[k]));
     if (!changed) return t;
     Object.assign(t, patch);
     this.persist();
     return t;
+  }
+
+  /**
+   * Keep a club's table listing in step with its hosted table, and add a finished match to the
+   * standings. Events from rooms that belong to no club are ignored.
+   */
+  applyRoomEvent(roomCode: string, event: HostEvent): void {
+    const club = this.clubForTable(roomCode);
+    if (!club) return;
+    const players = event.seats.map((s) => ({ seat: s.seat, name: s.name, userId: s.userId, isBot: s.isBot, connected: s.connected }));
+    if (event.type === 'match_over' && event.handNumber >= 0) {
+      const table = club.tables.find((t) => t.code === roomCode);
+      // A match is counted once, however many times its end is reported.
+      if (table?.status !== 'finished') {
+        this.recordMatch(club.code, event.seats.map((s) => ({ userId: s.userId, points: event.scores[s.seat] ?? 0, handsWon: event.handsWon[s.seat] ?? 0 })));
+      }
+      this.updateTable(club.code, roomCode, { status: 'finished', players, scores: event.scores });
+    } else if (event.type === 'match_over') {
+      // The room closed: it expired, or every player left for good.
+      this.removeTable(club.code, roomCode);
+    } else {
+      // updateTable ignores these once the table has finished.
+      const playing = event.type === 'state' || event.type === 'hand_over' || event.handNumber > 0;
+      this.updateTable(club.code, roomCode, { status: playing ? 'playing' : 'open', players, handNumber: event.handNumber, scores: event.scores });
+    }
   }
 
   removeTable(code: string, tableCode: string): void {

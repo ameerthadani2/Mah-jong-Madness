@@ -45,21 +45,7 @@ const httpLimiter = new BucketTable<string>(LIMITS.httpBurst, LIMITS.httpPerSec)
 const api = createApiHandler({ clubs, rooms }, { corsOrigins: config.corsOrigins, limiter: httpLimiter, trustProxy: config.trustProxy });
 
 // Keep club table listings in step with the hosted tables, and add results to the standings.
-rooms.onRoomEvent(({ room, event }) => {
-  const club = clubs.clubForTable(room);
-  if (!club) return;
-  const players = event.seats.map((s) => ({ seat: s.seat, name: s.name, userId: s.userId, isBot: s.isBot, connected: s.connected }));
-  if (event.type === 'match_over' && event.handNumber >= 0) {
-    clubs.recordMatch(club.code, event.seats.map((s) => ({ userId: s.userId, points: event.scores[s.seat] ?? 0, handsWon: event.handsWon[s.seat] ?? 0 })));
-    clubs.updateTable(club.code, room, { status: 'finished', players, scores: event.scores });
-  } else if (event.type === 'match_over') {
-    // The room closed: it expired, or every player left for good.
-    clubs.removeTable(club.code, room);
-  } else {
-    const playing = event.type === 'state' || event.type === 'hand_over' || event.handNumber > 0;
-    clubs.updateTable(club.code, room, { status: playing ? 'playing' : 'open', players, handNumber: event.handNumber, scores: event.scores });
-  }
-});
+rooms.onRoomEvent(({ room, event }) => clubs.applyRoomEvent(room, event));
 
 const http = createServer((req, res) => {
   api(req, res)

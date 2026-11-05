@@ -44,7 +44,17 @@ function parseUser(body: Record<string, unknown>): { userId: string; name: strin
 
 export function buildRoutes(deps: ApiDeps): Route[] {
   const { clubs, rooms } = deps;
-  const identity = (body: Record<string, unknown>): Identity => clubs.authenticate(parseUser(body));
+  /**
+   * Run `fn` as the user named in the body. A new user's secret is bound only after `fn`
+   * succeeds, and only if the user then holds a membership or a pending request (create or
+   * join), so failed and junk requests never write to the store.
+   */
+  const asUser = <T>(body: Record<string, unknown>, fn: (user: Identity) => T): T => {
+    const creds = parseUser(body);
+    const result = fn(clubs.authenticate(creds));
+    clubs.bindCredential(creds);
+    return result;
+  };
   const r = (method: string, path: string, handler: Handler): Route => {
     const keys: string[] = [];
     const pattern = new RegExp('^' + path.replace(/:(\w+)/g, (_, k: string) => (keys.push(k), '([^/]+)')) + '/?$');
@@ -52,36 +62,39 @@ export function buildRoutes(deps: ApiDeps): Route[] {
   };
   return [
     r('GET', '/health', () => ({ ok: true, ...rooms.stats() })),
-    r('POST', '/api/clubs', (_p, body) => clubs.createClub(identity(body), body.name ?? '', body.rules ?? {}, body.settings ?? {})),
+    r('POST', '/api/clubs', (_p, body) => asUser(body, (user) => clubs.createClub(user, body.name ?? '', body.rules ?? {}, body.settings ?? {}))),
     r('GET', '/api/clubs/:code', (p) => clubs.club(p.code)),
-    r('POST', '/api/clubs/:code/join', (p, body) => clubs.joinClub(p.code, identity(body))),
-    r('PATCH', '/api/clubs/:code', (p, body) => clubs.update(p.code, identity(body).userId, { name: body.name, description: body.description, rules: body.rules, settings: body.settings })),
-    r('POST', '/api/clubs/:code/members/:userId/approve', (p, body) => clubs.approve(p.code, identity(body).userId, p.userId)),
-    r('POST', '/api/clubs/:code/members/:userId/role', (p, body) => clubs.setRole(p.code, identity(body).userId, p.userId, body.role)),
-    r('DELETE', '/api/clubs/:code/members/:userId', (p, body) => clubs.removeMember(p.code, identity(body).userId, p.userId)),
+    r('POST', '/api/clubs/:code/join', (p, body) => asUser(body, (user) => clubs.joinClub(p.code, user))),
+    r('PATCH', '/api/clubs/:code', (p, body) =>
+      asUser(body, (user) => clubs.update(p.code, user.userId, { name: body.name, description: body.description, rules: body.rules, settings: body.settings })),
+    ),
+    r('POST', '/api/clubs/:code/members/:userId/approve', (p, body) => asUser(body, (user) => clubs.approve(p.code, user.userId, p.userId))),
+    r('POST', '/api/clubs/:code/members/:userId/role', (p, body) => asUser(body, (user) => clubs.setRole(p.code, user.userId, p.userId, body.role))),
+    r('DELETE', '/api/clubs/:code/members/:userId', (p, body) => asUser(body, (user) => clubs.removeMember(p.code, user.userId, p.userId))),
     r('GET', '/api/clubs/:code/standings', (p) => clubs.standings(p.code)),
     r('GET', '/api/users/:userId/clubs', (p) => clubs.clubsForUser(p.userId)),
-    r('POST', '/api/clubs/:code/tables', (p, body) => {
-      const user = identity(body);
-      if (body.botSkill !== undefined && !isBotSkill(body.botSkill)) throw new ClubError('invalid', 'Unknown bot skill');
-      if (body.label !== undefined && typeof body.label !== 'string') throw new ClubError('invalid', 'Table label must be text');
-      // Check permission and the open-table cap before a room exists, so a refusal leaves nothing behind.
-      clubs.assertCanOpenTable(p.code, user.userId);
-      const rules = sanitizeRules(body.rules, clubs.club(p.code).rules);
-      let code: string;
-      try {
-        code = rooms.createHostedRoom({ rules, botSkill: body.botSkill });
-      } catch (e) {
-        if (e instanceof RoomLimitError) throw new ClubError('unavailable', e.message);
-        throw e;
-      }
-      try {
-        return clubs.addTable(p.code, user.userId, { code, label: body.label, rules });
-      } catch (e) {
-        rooms.closeRoomByCode(code);
-        throw e;
-      }
-    }),
+    r('POST', '/api/clubs/:code/tables', (p, body) =>
+      asUser(body, (user) => {
+        if (body.botSkill !== undefined && !isBotSkill(body.botSkill)) throw new ClubError('invalid', 'Unknown bot skill');
+        if (body.label !== undefined && typeof body.label !== 'string') throw new ClubError('invalid', 'Table label must be text');
+        // Check permission and the open-table cap before a room exists, so a refusal leaves nothing behind.
+        clubs.assertCanOpenTable(p.code, user.userId);
+        const rules = sanitizeRules(body.rules, clubs.club(p.code).rules);
+        let code: string;
+        try {
+          code = rooms.createHostedRoom({ rules, botSkill: body.botSkill });
+        } catch (e) {
+          if (e instanceof RoomLimitError) throw new ClubError('unavailable', e.message);
+          throw e;
+        }
+        try {
+          return clubs.addTable(p.code, user.userId, { code, label: body.label, rules });
+        } catch (e) {
+          rooms.closeRoomByCode(code);
+          throw e;
+        }
+      }),
+    ),
   ];
 }
 
