@@ -212,6 +212,26 @@ describe('online reconnect', () => {
     s.close();
   });
 
+  it('stops at once when the server answers the rejoin with "Room not found or full", with or without a code', async () => {
+    for (const reply of [{ t: 'error', message: 'Room not found or full', code: 'room_unavailable' }, { t: 'error', message: 'Room not found or full' }]) {
+      FakeSocket.all = [];
+      FakeSocket.reply = roomReply;
+      const { s, statuses, first } = await open();
+      // The table ended (or was reaped) while the phone was offline.
+      FakeSocket.reply = (f) => (f.t === 'join' ? reply : null);
+      first.serverClose(1006);
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(s.status, JSON.stringify(reply)).toBe('lost');
+      expect(s.lostReason).toBe('gone');
+      expect(statuses).toEqual(['reconnecting:1', 'lost:1']);
+      // No further attempts, and the refused socket was closed.
+      await vi.advanceTimersByTimeAsync(10 * 60_000);
+      expect(FakeSocket.all).toHaveLength(2);
+      expect(FakeSocket.all[1].closed).toBe(true);
+      s.close();
+    }
+  });
+
   it('"Retry now" skips the wait', async () => {
     const { s, first } = await open();
     first.serverClose(1006);

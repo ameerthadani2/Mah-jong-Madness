@@ -10,6 +10,7 @@
  */
 import { type BotSkill, type RuleSet } from '@mjm/engine';
 import {
+  isRoomUnavailable,
   LoopbackHub,
   RelayTransport,
   SignalingClient,
@@ -331,7 +332,9 @@ class OnlineSession implements Session {
     }
     const unauthorised = isUnauthorised(failure);
     if (unauthorised) void this.opts.onUnauthorised?.();
-    this.step({ type: 'failed', unauthorised });
+    // 'Room not found or full' is the server's final word (the table ended or was reaped while we were away):
+    // stop at once instead of showing 'Reconnecting' through ten more attempts.
+    this.step({ type: 'failed', unauthorised, gone: isRoomUnavailable(failure) });
   }
 
   close(): void {

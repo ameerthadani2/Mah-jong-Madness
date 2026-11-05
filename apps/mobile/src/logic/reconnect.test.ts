@@ -49,6 +49,13 @@ describe('reconnectStep', () => {
     expect(run([{ type: 'unauthorised' }])).toMatchObject({ status: 'lost', reason: 'unauthorised' });
   });
 
+  it('gives up at once when the server says the room is gone, instead of backing off ten times', () => {
+    const lost = run([{ type: 'closed' }, { type: 'failed', gone: true }]);
+    expect(lost).toEqual({ status: 'lost', attempt: 1, reason: 'gone' });
+    expect(nextDelayMs(lost)).toBeNull();
+    expect(run([{ type: 'closed' }, { type: 'failed' }, { type: 'failed', gone: true }])).toMatchObject({ status: 'lost', attempt: 2, reason: 'gone' });
+  });
+
   it('ignores events that do not apply', () => {
     expect(reconnectStep(CONNECTED, { type: 'failed' })).toBe(CONNECTED);
     expect(reconnectStep(CONNECTED, { type: 'succeeded' })).toBe(CONNECTED);
