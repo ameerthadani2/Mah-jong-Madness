@@ -1,18 +1,18 @@
-import { createServer } from 'node:http';
+import { createServer, type IncomingMessage } from 'node:http';
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { createApiHandler } from './api';
 import { ClubRegistry, type ClubData, type ClubStore } from './clubs';
+import { LIMITS, loadConfig } from './config';
+import { BucketTable, clientIp, TokenBucket } from './limits';
 import { RoomRegistry, type Inbound } from './rooms';
 
-const PORT = Number(process.env.PORT ?? 8787);
-const ALLOW_HOSTED = process.env.HOST_TABLES !== '0';
-const DATA_DIR = process.env.DATA_DIR ?? join(process.cwd(), 'data');
+const config = loadConfig();
 
 /**
- * JSON-file persistence; swap for a database when clubs outgrow one node.
- * Writes are atomic (temp file + rename) and a corrupt file is set aside rather
+ * Persistence to a JSON file; replace it with a database once clubs outgrow a single node.
+ * Writes are atomic (temp file then rename). A corrupt file is moved aside rather
  * than silently replaced by an empty registry.
  */
 function fileStore(path: string): ClubStore {
@@ -39,11 +39,12 @@ function fileStore(path: string): ClubStore {
   };
 }
 
-const rooms = new RoomRegistry({ allowHosted: ALLOW_HOSTED });
-const clubs = new ClubRegistry({ store: fileStore(join(DATA_DIR, 'clubs.json')) });
-const api = createApiHandler({ clubs, rooms });
+const rooms = new RoomRegistry({ allowHosted: config.hostTables, allowP2P: config.p2pRooms, maxHostedTables: config.maxHostedTables });
+const clubs = new ClubRegistry({ store: fileStore(join(config.dataDir, 'clubs.json')) });
+const httpLimiter = new BucketTable<string>(LIMITS.httpBurst, LIMITS.httpPerSec);
+const api = createApiHandler({ clubs, rooms }, { corsOrigins: config.corsOrigins, limiter: httpLimiter, trustProxy: config.trustProxy });
 
-// Keep club table listings in sync with the hosted tables and fold results into standings.
+// Keep club table listings in step with the hosted tables, and add results to the standings.
 rooms.onRoomEvent(({ room, event }) => {
   const club = clubs.clubForTable(room);
   if (!club) return;
@@ -52,7 +53,7 @@ rooms.onRoomEvent(({ room, event }) => {
     clubs.recordMatch(club.code, event.seats.map((s) => ({ userId: s.userId, points: event.scores[s.seat] ?? 0, handsWon: event.handsWon[s.seat] ?? 0 })));
     clubs.updateTable(club.code, room, { status: 'finished', players, scores: event.scores });
   } else if (event.type === 'match_over') {
-    // Room closed (expired or everyone left for good).
+    // The room closed: it expired, or every player left for good.
     clubs.removeTable(club.code, room);
   } else {
     const playing = event.type === 'state' || event.type === 'hand_over' || event.handNumber > 0;
@@ -75,14 +76,41 @@ const http = createServer((req, res) => {
     });
 });
 
-// 64 KiB is far above any legitimate game frame; larger payloads are dropped by ws.
+// 64 KiB is far larger than any legitimate game frame; ws drops bigger payloads.
 const wss = new WebSocketServer({ server: http, maxPayload: 64 * 1024 });
+/** Open sockets per client IP. */
+const socketsByIp = new Map<string, number>();
+/** WebSocket close code 1008 means "policy violation". */
+const POLICY_VIOLATION = 1008;
 
-wss.on('connection', (ws: WebSocket) => {
+wss.on('connection', (ws: WebSocket, req: IncomingMessage) => {
+  const ip = clientIp(req, config.trustProxy);
+  const open = (socketsByIp.get(ip) ?? 0) + 1;
+  socketsByIp.set(ip, open);
+  let counted = true;
+  const release = () => {
+    if (!counted) return;
+    counted = false;
+    const left = (socketsByIp.get(ip) ?? 1) - 1;
+    if (left > 0) socketsByIp.set(ip, left);
+    else socketsByIp.delete(ip);
+  };
+  ws.on('close', release);
+  if (open > LIMITS.socketsPerIp) {
+    ws.close(POLICY_VIOLATION, 'Too many connections');
+    return;
+  }
+
   let peerId = rooms.connect({ send: (json) => ws.readyState === ws.OPEN && ws.send(json), close: () => ws.close() });
+  const bucket = new TokenBucket(LIMITS.messageBurst, LIMITS.messagesPerSec);
   let alive = true;
   ws.on('pong', () => (alive = true));
   ws.on('message', (raw) => {
+    if (!bucket.take()) {
+      // A client that floods the relay is dropped, not slowed down: honest clients stay far below the limit.
+      ws.close(POLICY_VIOLATION, 'Rate limit exceeded');
+      return;
+    }
     let msg: Inbound;
     try {
       msg = JSON.parse(raw.toString()) as Inbound;
@@ -93,7 +121,7 @@ wss.on('connection', (ws: WebSocket) => {
     try {
       peerId = rooms.handle(peerId, msg);
     } catch (e) {
-      // One peer's bad frame must never take the server down.
+      // One peer's bad frame must never bring the server down.
       console.error('[signal] handle error', (e as Error).message);
     }
   });
@@ -118,6 +146,8 @@ setInterval(() => {
   }
 }, 500);
 
-http.listen(PORT, () => {
-  console.log(`[signal] listening on :${PORT} (hosted tables ${ALLOW_HOSTED ? 'enabled' : 'disabled'}, data in ${DATA_DIR})`);
+http.listen(config.port, () => {
+  console.log(
+    `[signal] listening on :${config.port} (hosted tables ${config.hostTables ? `enabled, up to ${config.maxHostedTables}` : 'disabled'}, relay-only rooms ${config.p2pRooms ? 'enabled' : 'disabled'}, CORS ${config.corsOrigins.length ? config.corsOrigins.join(' ') : 'same origin only'}, data in ${config.dataDir})`,
+  );
 });
