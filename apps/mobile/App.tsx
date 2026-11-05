@@ -31,6 +31,10 @@ import { FairnessScreen } from './src/screens/FairnessScreen';
 import { DailyPuzzleScreen, PuzzleRushScreen } from './src/screens/PuzzleScreens';
 import { ShopScreen } from './src/screens/ShopScreen';
 import { AvatarGallery } from './src/screens/AvatarGallery';
+import { captureError } from './src/telemetry';
+import { RemoteConfigProvider, useRemoteConfig } from './src/telemetry/RemoteConfig';
+import { MaintenanceBanner, UpdateRequired } from './src/telemetry/UpdateGate';
+import { PushBridge } from './src/push';
 
 /** Web-only developer gallery: open the app with #avatars. */
 const SHOW_AVATAR_GALLERY = Platform.OS === 'web' && typeof window !== 'undefined' && window.location?.hash === '#avatars';
@@ -73,14 +77,26 @@ function Router() {
   }
 }
 
-/** Sky lobby everywhere except the table, which sits on the parlour floor. */
+/**
+ * Sky lobby everywhere except the table, which sits on the parlour floor. A build the server no
+ * longer serves sees only the update screen; a maintenance message sits above Home.
+ */
 function Shell() {
   const { screen } = useApp();
+  const { gate } = useRemoteConfig();
+  const blocked = gate.kind === 'update';
   return (
     <View style={styles.root}>
-      {screen.name === 'table' ? <TableBackdrop /> : <SkyBackdrop />}
+      {screen.name === 'table' && !blocked ? <TableBackdrop /> : <SkyBackdrop />}
       <SafeAreaView style={styles.safe} edges={['left', 'right', 'top', 'bottom']}>
-        <Router />
+        {blocked ? (
+          <UpdateRequired />
+        ) : (
+          <>
+            {gate.maintenance && screen.name === 'home' ? <MaintenanceBanner message={gate.maintenance} /> : null}
+            <Router />
+          </>
+        )}
       </SafeAreaView>
     </View>
   );
@@ -128,6 +144,10 @@ function BootError({ detail }: { detail: string }) {
 
 export default function App() {
   const [rngError] = useState(secureRandomError);
+  // The device cannot run a fair game: report it (crash reports, if allowed) before showing the error screen.
+  useEffect(() => {
+    if (rngError) captureError(new Error(rngError), 'boot', true);
+  }, [rngError]);
   const [fontsLoaded, fontError] = useFonts({
     [fonts.display]: LilitaOne_400Regular,
     [fonts.logo]: LuckiestGuy_400Regular,
@@ -153,9 +173,12 @@ export default function App() {
         <AvatarGallery />
       ) : ready ? (
         <AppProvider>
-          <AuthProvider>
-            <Shell />
-          </AuthProvider>
+          <RemoteConfigProvider>
+            <AuthProvider>
+              <Shell />
+              <PushBridge />
+            </AuthProvider>
+          </RemoteConfigProvider>
         </AppProvider>
       ) : (
         <Loading />

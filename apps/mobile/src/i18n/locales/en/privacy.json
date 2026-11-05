@@ -1,1 +1,21 @@
-{}
+{
+  "_review": "n/a",
+  "title": "Privacy",
+  "analytics": "Share usage statistics",
+  "analyticsHelp": "Which screens and features are used, so we know what to improve. Not linked to your name and never used for advertising.",
+  "crash": "Send crash reports",
+  "crashHelp": "When the app fails, a technical report of what went wrong (device model, app version, the failing code).",
+  "never": "We never sell data or track you across other apps. Chat, names and club details are never included.",
+  "update": {
+    "title": "Update required",
+    "body": "This version of the app no longer works with the game server. Install the latest version to keep playing; your progress and account are kept.",
+    "appStore": "Open the App Store",
+    "playStore": "Open Google Play"
+  },
+  "maintenance": {
+    "title": "Server notice:"
+  },
+  "push": {
+    "channel": "Club tables and invitations"
+  }
+}

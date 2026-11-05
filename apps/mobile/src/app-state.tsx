@@ -1,10 +1,13 @@
 import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { BackHandler } from 'react-native';
+import { BackHandler, Platform } from 'react-native';
 import { DEFAULT_PROFILE, DEFAULT_PROGRESS, DEFAULT_SETTINGS, storage, type ActiveSession, type Profile, type Progress, type Settings } from './storage';
 import type { Session } from './game/session';
-import { resolveSignalUrl } from './config';
+import { APP_BUILD, resolveSignalUrl } from './config';
 import { EMPTY_WALLET, loadWallet, saveWallet, type Wallet } from './monetisation/store';
-import { setLocalePreference } from './i18n';
+import { currentLocale, setLocalePreference } from './i18n';
+import { track, trackAll } from './telemetry';
+import { EMPTY_TABLE_WATCH, matchMode, matchStartEvent, progressEvents, screenEvents, tableEvents } from './telemetry/events';
+import { requestPushAfterClub } from './push/hub';
 
 export type Screen =
   | { name: 'home' }
@@ -44,6 +47,12 @@ interface AppState {
   setActiveSession(s: ActiveSession | null): void;
   wallet: Wallet;
   setWallet(w: Wallet): void;
+  /**
+   * The player just created or joined a club (call it after the server said yes, including a
+   * join waiting for approval): counts the funnel step and, the first time, asks for
+   * notification permission so they hear about tables and approvals.
+   */
+  clubJoined(kind: 'create' | 'join', status?: 'joined' | 'pending' | 'already'): void;
   loaded: boolean;
 }
 
@@ -73,6 +82,36 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setLoaded(true);
     });
   }, []);
+
+  // Funnel: one app_open per launch, once the saved language is known.
+  useEffect(() => {
+    if (loaded) track('app_open', { platform: Platform.OS, build: APP_BUILD, locale: currentLocale() });
+  }, [loaded]);
+
+  // Funnel: lessons finished and puzzles answered, from each progress change after the saved progress loaded.
+  const lastProgress = useRef<Progress | null>(null);
+  useEffect(() => {
+    if (!loaded) return;
+    const prev = lastProgress.current;
+    lastProgress.current = progress;
+    if (prev && prev !== progress) trackAll(progressEvents(prev, progress));
+  }, [loaded, progress]);
+
+  // Funnel: match_start for each new table, then hand_over and audit_failed as it plays.
+  const botSkill = useRef(settings.botSkill);
+  botSkill.current = settings.botSkill;
+  useEffect(() => {
+    if (!session) return;
+    trackAll([matchStartEvent(session, botSkill.current)]);
+    const mode = matchMode(session);
+    // A resumed table already shows its last result: start from it without reporting it again.
+    let watch = tableEvents(EMPTY_TABLE_WATCH, session.client.state, mode).watch;
+    return session.onChange((st) => {
+      const r = tableEvents(watch, st, mode);
+      watch = r.watch;
+      trackAll(r.events);
+    });
+  }, [session]);
 
   // Android hardware back pops the screen stack instead of leaving the app.
   useEffect(() => {
@@ -123,9 +162,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const value = useMemo<AppState>(
     () => ({
       screen: stack[stack.length - 1],
-      go: (screen) => setStack((st) => [...st, screen]),
+      go: (screen) => {
+        trackAll(screenEvents(screen, stack[stack.length - 1]));
+        setStack((st) => [...st, screen]);
+      },
       back: () => setStack((st) => (st.length > 1 ? st.slice(0, -1) : st)),
-      reset: (screen) => setStack([screen]),
+      reset: (screen) => {
+        trackAll(screenEvents(screen, stack[stack.length - 1]));
+        setStack([screen]);
+      },
       profile,
       setProfile: (p) => {
         setProfileState(p);
@@ -163,6 +208,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setWallet: (w) => {
         setWalletState(w);
         void saveWallet(w);
+      },
+      clubJoined: (kind, status = 'joined') => {
+        if (kind === 'create') track('club_create', {});
+        else track('club_join', { status });
+        void requestPushAfterClub();
       },
       loaded,
     }),
