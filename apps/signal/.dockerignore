@@ -1,0 +1,21 @@
+# Paths are relative to the build context, which is the repository root (see fly.toml's
+# [build] ignorefile). The Dockerfile copies only what it names, so this file only keeps the
+# upload to the builder small and keeps secrets out of it.
+**/node_modules
+**/dist
+**/dist-e2e
+**/.expo
+**/e2e-shots
+**/coverage
+**/*.log
+**/.DS_Store
+**/.env
+**/.env.*
+!**/.env.example
+.git
+.github
+.claude
+docs
+apps/mobile/*
+!apps/mobile/package.json
+apps/signal/data

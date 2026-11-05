@@ -1,0 +1,46 @@
+# Fly.io configuration for the signal server (apps/signal). See docs/DEPLOY.md.
+# `app` is a placeholder: change it to the name you create with `fly apps create`.
+app = "mahjong-signal"
+primary_region = "sin"
+kill_signal = "SIGTERM"
+kill_timeout = "30s"
+
+[build]
+  dockerfile = "apps/signal/Dockerfile"
+  ignorefile = "apps/signal/.dockerignore"
+
+[deploy]
+  # Applies pending migrations in a temporary machine before the new version starts.
+  # Without DATABASE_URL it prints a note and succeeds, so the first deploys work before Neon exists.
+  release_command = "node dist/server.cjs migrate"
+  strategy = "rolling"
+
+[env]
+  PORT = "8787"
+  HOST_TABLES = "1"
+  TRUST_PROXY = "1"
+  NODE_ENV = "production"
+
+[http_service]
+  internal_port = 8787
+  force_https = true
+  # A WebSocket server must not sleep: keep one machine running at all times.
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [http_service.concurrency]
+    type = "connections"
+    soft_limit = 800
+    hard_limit = 1000
+
+  [[http_service.checks]]
+    grace_period = "15s"
+    interval = "15s"
+    method = "GET"
+    path = "/health"
+    timeout = "5s"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
