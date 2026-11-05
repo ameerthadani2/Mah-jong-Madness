@@ -44,5 +44,29 @@
     "title": "網路（開發版）",
     "body": "線上牌桌與俱樂部使用的遊戲伺服器。留空則使用這個版本內建的伺服器（%{url}）。正式版一律使用內建伺服器。",
     "using": "目前使用 %{url}"
+  },
+  "account": {
+    "title": "帳號",
+    "offline": "尚未連上遊戲伺服器。進行線上牌局或打開俱樂部時會建立訪客帳號；登入後換裝置也不會遺失。",
+    "guest": "訪客帳號",
+    "guestBody": "你的進度和俱樂部綁定在這台裝置上。登入後，就算裝置遺失或更換也能保留。",
+    "signedIn": "已登入",
+    "id": "玩家編號：%{id}",
+    "apple": "使用 Apple 登入",
+    "google": "使用 Google 登入",
+    "linkedApple": "已連結 Apple",
+    "linkedGoogle": "已連結 Google",
+    "unlink": "移除",
+    "noProviders": "這個伺服器目前還不提供 Apple 或 Google 登入。",
+    "signOut": "登出",
+    "signOutGuestWarning": "登出不會刪除伺服器上的資料，但之後就無法再找回這個訪客帳號，它的進度和俱樂部都會遺失。請先登入以保留。",
+    "signOutConfirm": "仍要登出",
+    "delete": "刪除帳號",
+    "deleteBody": "這會從伺服器移除你的帳號、名字和俱樂部成員資格。購買紀錄會保留。請輸入 %{word} 確認。",
+    "deleteWord": "DELETE",
+    "deleteConfirm": "永久刪除",
+    "deleted": "你的帳號已刪除。",
+    "cancel": "取消",
+    "busy": "處理中…"
   }
 }

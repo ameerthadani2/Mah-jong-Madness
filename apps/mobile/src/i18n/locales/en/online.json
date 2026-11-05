@@ -14,5 +14,7 @@
     "busy": "Joining…",
     "button": "Join table"
   },
-  "devServer": "Game server: %{url}. Development builds can change it in Settings."
+  "devServer": "Game server: %{url}. Development builds can change it in Settings.",
+  "connecting": "Connecting to the game server…",
+  "retry": "Try again"
 }

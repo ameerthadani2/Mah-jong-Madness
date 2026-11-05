@@ -109,7 +109,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       if (persistTimer.current) clearTimeout(persistTimer.current);
       persistTimer.current = setTimeout(save, 400);
     };
-    const unsubClient = session.client.onChange(schedule);
+    // The session forwards state from whichever client is current (a reconnect swaps it).
+    const unsubClient = session.onChange(schedule);
     const unsubHost = session.host?.onChange(schedule);
     schedule();
     return () => {

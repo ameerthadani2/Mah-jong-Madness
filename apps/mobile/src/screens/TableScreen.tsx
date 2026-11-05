@@ -4,7 +4,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { hintFor, kindInfo, kindOf, legalActions, viewToState, WINDS, type Action, type GameState, type HandResult, type Hint, type TableView, type TileId, type WinRecord } from '@mjm/engine';
 import type { ClientState } from '@mjm/net';
 import { useApp } from '../app-state';
-import { useCountdown, useSession } from '../game/useTable';
+import { useConnection, useCountdown, useSession } from '../game/useTable';
 import { nextFadeDelay } from '../logic/fade';
 import { colors, fonts, nameFont, space } from '../theme';
 import { Tile, HiddenHand, tileDims, type TileSize } from '../components/Tile';
@@ -31,6 +31,7 @@ export function TableScreen() {
   const { t } = useT();
   const session = app.session;
   const state = useSession(session);
+  const conn = useConnection(session);
   const { width: winW, height } = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const width = winW - insets.left - insets.right;
@@ -482,7 +483,18 @@ export function TableScreen() {
 
         {state.lastResult && showResult && <ResultOverlay result={state.lastResult} view={view} state={state} mySeat={mySeat} onNext={() => session.client.ready()} onLeave={leave} onReview={() => app.go({ name: 'review' })} onFairness={() => app.go({ name: 'fairness' })} />}
         {state.matchOver && <MatchOverOverlay state={state} onLeave={leave} />}
-        {state.disconnected ? (
+        {conn.status === 'reconnecting' && !state.matchOver ? (
+          // The session is rejoining on its own (1, 2, 4 … 60 s); the player may skip the wait.
+          <View style={styles.banner}>
+            <Icon name="hourglass" size={28} />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.bannerTitle}>{t('table.connection.reconnectingTitle')}</Text>
+              <Text style={styles.bannerText}>{t('table.connection.reconnectingText', { n: conn.attempt })}</Text>
+            </View>
+            <Button small title={t('table.connection.retryNow')} onPress={() => session.retryNow()} />
+          </View>
+        ) : !state.matchOver && (conn.status === 'lost' || state.disconnected) ? (
+          // Only after ten failed attempts, a refused session (4401) or the seat opening elsewhere.
           <View style={styles.banner}>
             <Icon name="warning" size={28} />
             <View style={{ flex: 1 }}>

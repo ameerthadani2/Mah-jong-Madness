@@ -1,19 +1,13 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { DEFAULT_RULES, type BotSkill, type RuleSet } from '@mjm/engine';
-import { randomHex, type SerializedHost } from '@mjm/net';
+import type { SerializedHost } from '@mjm/net';
 import { clampDailyToToday, effectiveStreak as streakOn } from './logic/daily';
 import { localDateKey, previousDateKey } from './logic/dates';
 import { migrateSettings } from './logic/settings';
+import { DEFAULT_PROFILE, migrateProfile, type Profile } from './logic/profile';
 import type { LocalePreference } from './i18n/resolve';
 
-export interface Profile {
-  /** Stable, client-generated id used by clubs until real sign-in lands. */
-  userId: string;
-  /** Device-held secret that proves ownership of userId to the club API (trust on first use). */
-  userSecret: string;
-  name: string;
-  avatar: string;
-}
+export { DEFAULT_PROFILE, type Profile } from './logic/profile';
 
 export interface Settings {
   rules: RuleSet;
@@ -57,7 +51,6 @@ export type ActiveSession =
 
 const KEYS = { profile: 'mjm.profile', settings: 'mjm.settings', progress: 'mjm.progress', session: 'mjm.activeSession' } as const;
 
-export const DEFAULT_PROFILE: Profile = { userId: '', userSecret: '', name: '', avatar: 'lady' };
 export const DEFAULT_SETTINGS: Settings = { rules: DEFAULT_RULES, coach: true, botSkill: 'beginner', sound: true, tableTheme: 'classic', locale: 'auto' };
 export const DEFAULT_PROGRESS: Progress = {
   lessonsDone: {},
@@ -93,15 +86,8 @@ async function save<T>(key: string, value: T): Promise<void> {
 }
 
 export const storage = {
-  loadProfile: async (): Promise<Profile> => {
-    const p = await load(KEYS.profile, DEFAULT_PROFILE);
-    if (!p.userId || !p.userSecret) {
-      p.userId = p.userId || `user-${randomHex(12)}`;
-      p.userSecret = p.userSecret || randomHex(24);
-      await save(KEYS.profile, p);
-    }
-    return p;
-  },
+  // The server account id arrives with the first guest bootstrap (src/auth); older client-made ids are dropped.
+  loadProfile: async (): Promise<Profile> => migrateProfile(await load<Profile>(KEYS.profile, DEFAULT_PROFILE)),
   saveProfile: (p: Profile) => save(KEYS.profile, p),
   // Older saves are migrated (see logic/settings.ts): stale fields dropped, rules sanitised, locale defaulted.
   loadSettings: async (): Promise<Settings> => migrateSettings(await load(KEYS.settings, DEFAULT_SETTINGS), DEFAULT_SETTINGS),

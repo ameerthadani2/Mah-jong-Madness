@@ -13,6 +13,7 @@ import { Nunito_700Bold } from '@expo-google-fonts/nunito/700Bold';
 import { Nunito_800ExtraBold } from '@expo-google-fonts/nunito/800ExtraBold';
 import { randomHex } from '@mjm/net';
 import { AppProvider, useApp } from './src/app-state';
+import { AuthProvider } from './src/auth/AuthProvider';
 import { t } from './src/i18n';
 import { colors, fonts } from './src/theme';
 import { SkyBackdrop, TableBackdrop } from './src/components/Backdrop';
@@ -152,7 +153,9 @@ export default function App() {
         <AvatarGallery />
       ) : ready ? (
         <AppProvider>
-          <Shell />
+          <AuthProvider>
+            <Shell />
+          </AuthProvider>
         </AppProvider>
       ) : (
         <Loading />

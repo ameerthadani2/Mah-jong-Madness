@@ -1,7 +1,7 @@
 import React, { useEffect } from 'react';
 import { ScrollView, Share, StyleSheet, Text, View } from 'react-native';
 import { useApp } from '../app-state';
-import { useSession } from '../game/useTable';
+import { useConnection, useSession } from '../game/useTable';
 import { useT } from '../i18n';
 import { friendlyError } from '../logic/errors';
 import { colors, fonts, nameFont, space } from '../theme';
@@ -14,6 +14,7 @@ export function LobbyScreen() {
   const { t } = useT();
   const session = app.session;
   const state = useSession(session);
+  const conn = useConnection(session);
 
   useEffect(() => {
     if (state?.view) app.go({ name: 'table' });
@@ -90,7 +91,12 @@ export function LobbyScreen() {
         </Card>
       </View>
       <Button large title={humans > 1 ? t('lobby.start') : t('lobby.startWithBots')} icon="play" onPress={start} style={{ alignSelf: 'center' }} />
-      {state.disconnected ? (
+      {conn.status === 'reconnecting' ? (
+        <Row style={{ flexWrap: 'wrap', rowGap: 6, alignItems: 'center' }} gap={8}>
+          <Pill tone="gold" icon="hourglass" text={t('lobby.reconnecting', { n: conn.attempt })} />
+          <Button small title={t('lobby.retryNow')} onPress={() => session.retryNow()} />
+        </Row>
+      ) : conn.status === 'lost' || state.disconnected ? (
         // Leaving via the header would forget the table; this path keeps the saved record so Home can resume it.
         <Row style={{ flexWrap: 'wrap', rowGap: 6, alignItems: 'center' }} gap={8}>
           <Pill tone="danger" icon="warning" text={t('lobby.connectionLost')} />

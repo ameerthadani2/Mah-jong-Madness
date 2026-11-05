@@ -36,6 +36,7 @@ const KNOWN: ReadonlyArray<{ test: RegExp; key: string; params?: (m: RegExpMatch
   { test: /^hosted tables are disabled/i, key: 'errors.hostedDisabled' },
   { test: /^please wait a few seconds before creating another room/i, key: 'errors.createCooldown' },
   { test: /^the game server did not answer in time/i, key: 'errors.noAnswer' },
+  { test: /^unauthori[sz]ed/i, key: 'errors.unauthorised' },
   // Table host (packages/net/src/host.ts) and table client.
   { test: /^table is full/i, key: 'errors.tableFull' },
   { test: /^match already in progress/i, key: 'errors.matchInProgress' },
@@ -82,15 +83,59 @@ function numberField(e: unknown, key: string): number | undefined {
   return undefined;
 }
 
-/** Failures the clubs client (src/api/clubs.ts) marks with its own `code`. */
-function fromClientCode(e: unknown): Message | null {
+/**
+ * Failures the HTTP clients (src/api/http.ts) mark with their own `code`, and the account
+ * API's error codes (docs/API.md) that always mean the same thing whatever the message says.
+ */
+function fromCode(e: unknown): Message | null {
+  if (numberField(e, 'code') === 4401) return { key: 'errors.unauthorised' };
   switch (field(e, 'code')) {
     case 'club_timeout':
       return { key: 'errors.clubTimeout', params: { seconds: numberField(e, 'seconds') ?? 15 } };
+    case 'auth_timeout':
+      return { key: 'errors.authTimeout', params: { seconds: numberField(e, 'seconds') ?? 15 } };
     case 'club_unreachable':
+    case 'auth_unreachable':
       return { key: 'errors.unreachable' };
     case 'club_bad_reply':
       return { key: 'errors.clubBadReply', params: { status: numberField(e, 'status') ?? 0 } };
+    case 'auth_bad_reply':
+      return { key: 'errors.authBadReply', params: { status: numberField(e, 'status') ?? 0 } };
+    case 'invalid_credentials':
+      return { key: 'errors.invalidCredentials' };
+    case 'invalid_session':
+    case 'session_expired':
+    case 'session_revoked':
+    case 'session_rotated':
+      return { key: 'errors.sessionExpired' };
+    case 'invalid_token':
+      return { key: 'errors.invalidToken' };
+    case 'provider_disabled':
+      return { key: 'errors.providerDisabled' };
+    case 'not_linked':
+      return { key: 'errors.notLinked' };
+    case 'identity_in_use':
+      return { key: 'errors.identityInUse' };
+    case 'last_identity':
+      return { key: 'errors.lastIdentity' };
+    case 'rate_limited':
+      return { key: 'errors.rateLimited' };
+    case 'unavailable':
+      return { key: 'errors.unavailable' };
+    default:
+      return null;
+  }
+}
+
+/** Codes whose server message is usually more specific (a club cap names its number): used only when no message matched. */
+function fallbackFromCode(e: unknown): Message | null {
+  switch (field(e, 'code')) {
+    case 'limit':
+      return { key: 'errors.limit' };
+    case 'not_found':
+      return { key: 'errors.notFound' };
+    case 'invalid':
+      return { key: 'errors.invalidRequest' };
     default:
       return null;
   }
@@ -99,10 +144,10 @@ function fromClientCode(e: unknown): Message | null {
 export function friendlyErrorMessage(e: unknown): Message {
   const name = field(e, 'name');
   if (name === 'AbortError' || name === 'TimeoutError') return TIMEOUT;
-  const coded = fromClientCode(e);
+  const coded = fromCode(e);
   if (coded) return coded;
   const msg = field(e, 'message').trim();
-  if (!msg) return GENERIC;
+  if (!msg) return fallbackFromCode(e) ?? GENERIC;
   // A sentence we know from the server wins over the generic patterns: "too many pending requests" is a club
   // limit, not throttling.
   for (const k of KNOWN) {
@@ -110,6 +155,8 @@ export function friendlyErrorMessage(e: unknown): Message {
     if (m) return k.params ? { key: k.key, params: k.params(m) } : { key: k.key };
   }
   for (const r of RULES) if (r.test.test(msg)) return { key: r.key };
+  const fallback = fallbackFromCode(e);
+  if (fallback) return fallback;
   if (name === 'SyntaxError' || name === 'TypeError' || name === 'ReferenceError') return GENERIC;
   if (msg.length > 120 || TECHNICAL.test(msg)) return GENERIC;
   return { key: 'errors.passthrough', params: { message: /[.!?]$/.test(msg) ? msg : `${msg}.` } };

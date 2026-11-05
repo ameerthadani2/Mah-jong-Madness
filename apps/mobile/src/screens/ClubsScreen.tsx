@@ -1,8 +1,9 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { RULE_PRESETS, rulesFromPreset, SPEED_PRESETS, withSpeed, type GameSpeed, type RuleSet } from '@mjm/engine';
 import { useApp } from '../app-state';
-import { clubsApi, httpBase, type Club, type ClubMember } from '../api/clubs';
+import { clubsApi, httpBase, type Club, type ClubContext, type ClubMember } from '../api/clubs';
+import { useAuth } from '../auth/AuthProvider';
 import { createOnlineSession } from '../game/session';
 import { friendlyError } from '../logic/errors';
 import { presetName, rulesStakes, rulesSummary, speedLabel } from '../logic/rules-text';
@@ -15,11 +16,30 @@ import { Icon } from '../components/Icons';
 
 const roleName = (role: ClubMember['role'] | 'guest', t: Translate) => t(`common.roles.${role}`);
 
+/** Club calls authenticated with the signed-in session. */
+function useClubContext(): ClubContext {
+  const app = useApp();
+  const auth = useAuth();
+  const base = httpBase(app.signalUrl);
+  return useMemo(() => ({ base, auth: auth.client }), [base, auth.client]);
+}
+
 export function ClubsScreen() {
   const app = useApp();
+  const auth = useAuth();
   const { t, locale } = useT();
-  const base = httpBase(app.signalUrl);
-  const user = { userId: app.profile.userId, name: app.profile.name || t('common.player'), avatar: app.profile.avatar, secret: app.profile.userSecret };
+  const ctx = useClubContext();
+  const user = { userId: auth.user?.id ?? '', name: app.profile.name || t('common.player'), avatar: app.profile.avatar };
+  // Clubs need the server: the guest account is made here the first time, never at launch.
+  const [connection, setConnection] = useState<'checking' | 'ready' | 'offline'>('checking');
+  const { ensure } = auth;
+  const connect = useCallback(async () => {
+    setConnection('checking');
+    setConnection((await ensure()) ? 'ready' : 'offline');
+  }, [ensure]);
+  useEffect(() => {
+    void connect();
+  }, [connect]);
   const [clubs, setClubs] = useState<Club[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [joinCode, setJoinCode] = useState('');
@@ -29,20 +49,21 @@ export function ClubsScreen() {
   const [approval, setApproval] = useState(false);
 
   const refresh = useCallback(async () => {
+    if (connection !== 'ready' || !user.userId) return;
     try {
-      setClubs(await clubsApi.mine(base, user.userId));
+      setClubs(await clubsApi.mine(ctx, user.userId));
       setError(null);
     } catch (e) {
       setError(friendlyError(e, t));
     }
-  }, [base, user.userId, t]);
+  }, [ctx, connection, user.userId, t]);
   useEffect(() => {
     void refresh();
   }, [refresh]);
 
   const create = async () => {
     try {
-      const club = await clubsApi.create(base, user, name, rulesFromPreset(presetId), { joinRequiresApproval: approval });
+      const club = await clubsApi.create(ctx, name, rulesFromPreset(presetId), { joinRequiresApproval: approval });
       setCreating(false);
       setName('');
       await refresh();
@@ -53,7 +74,7 @@ export function ClubsScreen() {
   };
   const join = async () => {
     try {
-      const r = await clubsApi.join(base, joinCode.trim().toUpperCase(), user);
+      const r = await clubsApi.join(ctx, joinCode.trim().toUpperCase());
       setJoinCode('');
       await refresh();
       if (r.status === 'pending') setError(t('clubs.join.requestSent'));
@@ -62,6 +83,25 @@ export function ClubsScreen() {
       setError(friendlyError(e, t));
     }
   };
+
+  if (connection !== 'ready') {
+    return (
+      <ScrollView contentContainerStyle={styles.wrap}>
+        <ScreenHeader title={t('clubs.title')} onBack={app.back} />
+        <Card>
+          <Row>
+            <Icon name="users" size={26} />
+            <H2>{t('clubs.signIn.title')}</H2>
+          </Row>
+          <P dim style={{ fontSize: 13 }}>
+            {t('clubs.signIn.body')}
+          </P>
+          {connection === 'offline' && auth.error ? <Pill tone="gold" icon="warning" text={friendlyError(auth.error, t)} /> : null}
+          <Button title={connection === 'checking' ? t('clubs.signIn.connecting') : t('clubs.signIn.retry')} onPress={() => void connect()} disabled={connection === 'checking'} />
+        </Card>
+      </ScrollView>
+    );
+  }
 
   return (
     <ScrollView contentContainerStyle={styles.wrap}>
@@ -108,7 +148,7 @@ export function ClubsScreen() {
       {clubs === null && !error && <Pill text={t('common.loading')} icon="hourglass" />}
       {clubs?.length === 0 && <Pill text={t('clubs.none')} icon="users" />}
       {clubs?.map((c) => {
-        const me = c.members.find((m) => m.userId === user.userId);
+        const me = (c.members ?? []).find((m) => m.userId === user.userId);
         const pending = !me;
         return (
           <Card key={c.code} style={{ flexDirection: 'row', alignItems: 'center', gap: space.md }}>
@@ -121,7 +161,7 @@ export function ClubsScreen() {
                 <Pill text={c.code} size="sm" />
               </Row>
               <P dim style={{ fontSize: 12 }}>
-                {t('clubs.summary', { members: c.members.length, tables: c.tables.filter((tb) => tb.status !== 'finished').length, stakes: rulesStakes(c.rules) })}
+                {t('clubs.summary', { members: c.members?.length ?? c.memberCount ?? 0, tables: (c.tables ?? []).filter((tb) => tb.status !== 'finished').length, stakes: rulesStakes(c.rules) })}
               </P>
             </View>
             {pending ? <Pill text={t('clubs.pending')} /> : <Pill text={roleName(me.role, t)} tone={me.role === 'owner' ? 'gold' : 'neutral'} />}
@@ -135,9 +175,10 @@ export function ClubsScreen() {
 
 export function ClubScreen({ code }: { code: string }) {
   const app = useApp();
+  const auth = useAuth();
   const { t, locale } = useT();
-  const base = httpBase(app.signalUrl);
-  const user = { userId: app.profile.userId, name: app.profile.name || t('common.player'), avatar: app.profile.avatar, secret: app.profile.userSecret };
+  const ctx = useClubContext();
+  const user = { userId: auth.user?.id ?? '', name: app.profile.name || t('common.player'), avatar: app.profile.avatar };
   const [club, setClub] = useState<Club | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -145,12 +186,12 @@ export function ClubScreen({ code }: { code: string }) {
 
   const refresh = useCallback(async () => {
     try {
-      setClub(await clubsApi.get(base, code));
+      setClub(await clubsApi.get(ctx, code));
       setError(null);
     } catch (e) {
       setError(friendlyError(e, t));
     }
-  }, [base, code, t]);
+  }, [ctx, code, t]);
   useEffect(() => {
     void refresh();
     const id = setInterval(() => void refresh(), 5000);
@@ -165,14 +206,16 @@ export function ClubScreen({ code }: { code: string }) {
       </View>
     );
   }
-  const me = club.members.find((m) => m.userId === user.userId);
+  const members = club.members ?? [];
+  const pendingList = club.pending ?? [];
+  const me = members.find((m) => m.userId === user.userId);
   const isAdmin = me?.role === 'owner' || me?.role === 'admin';
   const canOpen = !!me && (isAdmin || club.settings.membersCanOpenTables);
 
   const openTable = async () => {
     setBusy(true);
     try {
-      const table = await clubsApi.openTable(base, club.code, user, { label: t('clubs.tableLabel', { name: user.name }), botSkill: app.settings.botSkill });
+      const table = await clubsApi.openTable(ctx, club.code, { label: t('clubs.tableLabel', { name: user.name }), botSkill: app.settings.botSkill });
       await joinTable(table.code);
     } catch (e) {
       setError(friendlyError(e, t));
@@ -183,7 +226,7 @@ export function ClubScreen({ code }: { code: string }) {
   const joinTable = async (tableCode: string) => {
     setBusy(true);
     try {
-      const session = await createOnlineSession({ signalUrl: app.signalUrl, name: user.name, avatar: user.avatar, userId: user.userId, rules: club.rules, action: 'join', code: tableCode, clubCode: club.code });
+      const session = await createOnlineSession({ signalUrl: app.signalUrl, name: user.name, avatar: user.avatar, userId: user.userId, rules: club.rules, action: 'join', code: tableCode, clubCode: club.code, ...auth.tableAuth });
       app.setSession(session);
       app.go({ name: 'lobby' });
     } catch (e) {
@@ -194,13 +237,13 @@ export function ClubScreen({ code }: { code: string }) {
   };
   const setRules = async (rules: Partial<RuleSet>) => {
     try {
-      setClub(await clubsApi.update(base, club.code, user, { rules }));
+      setClub(await clubsApi.update(ctx, club.code, { rules }));
     } catch (e) {
       setError(friendlyError(e, t));
     }
   };
 
-  const live = club.tables.filter((t) => t.status !== 'finished');
+  const live = (club.tables ?? []).filter((t) => t.status !== 'finished');
   return (
     <ScrollView contentContainerStyle={styles.wrap}>
       <ScreenHeader
@@ -209,7 +252,7 @@ export function ClubScreen({ code }: { code: string }) {
         sub={
           <Row gap={6} style={{ marginTop: 2 }}>
             <Pill text={t('clubs.code', { code: club.code })} tone="gold" size="sm" />
-            <Pill text={t('clubs.members', { n: club.members.length })} icon="users" size="sm" />
+            <Pill text={t('clubs.members', { n: club.members?.length ?? club.memberCount ?? 0 })} icon="users" size="sm" />
             <Pill text={roleName(me ? me.role : 'guest', t)} size="sm" />
           </Row>
         }
@@ -243,16 +286,16 @@ export function ClubScreen({ code }: { code: string }) {
               <Button small kind="secondary" title={busy ? '…' : t('clubs.tables.join')} onPress={() => void joinTable(table.code)} disabled={busy || !me} />
             </Card>
           ))}
-          {club.pending.length > 0 && isAdmin && (
+          {pendingList.length > 0 && isAdmin && (
             <Card>
               <H2>{t('clubs.tables.pendingRequests')}</H2>
-              {club.pending.map((p) => (
+              {pendingList.map((p) => (
                 <Row key={p.userId} style={{ justifyContent: 'space-between' }}>
                   <Row>
                     <AvatarPlate id={p.avatar} size={34} />
                     <P>{p.name}</P>
                   </Row>
-                  <Button small title={t('clubs.tables.approve')} onPress={() => void clubsApi.approve(base, club.code, user, p.userId).then(setClub).catch((e: unknown) => setError(friendlyError(e, t)))} />
+                  <Button small title={t('clubs.tables.approve')} onPress={() => void clubsApi.approve(ctx, club.code, p.userId).then(setClub).catch((e: unknown) => setError(friendlyError(e, t)))} />
                 </Row>
               ))}
             </Card>
@@ -262,7 +305,7 @@ export function ClubScreen({ code }: { code: string }) {
 
       {tab === 'standings' && (
         <Card>
-          {[...club.members]
+          {[...members]
             .sort((a, b) => b.points - a.points)
             .map((m, i) => (
               <Row key={m.userId} style={styles.standing}>
@@ -308,8 +351,8 @@ export function ClubScreen({ code }: { code: string }) {
                   <Chip key={sp} label={t('clubs.rules.speedChip', { label: speedLabel(sp, locale), turn: SPEED_PRESETS[sp].turnSeconds })} selected={club.rules.speed === sp} onPress={() => void setRules(withSpeed(club.rules, sp))} />
                 ))}
               </Row>
-              <Toggle label={t('clubs.rules.membersCanOpen')} value={club.settings.membersCanOpenTables} onChange={(v) => void clubsApi.update(base, club.code, user, { settings: { membersCanOpenTables: v } }).then(setClub)} />
-              <Toggle label={t('clubs.rules.approveNew')} value={club.settings.joinRequiresApproval} onChange={(v) => void clubsApi.update(base, club.code, user, { settings: { joinRequiresApproval: v } }).then(setClub)} />
+              <Toggle label={t('clubs.rules.membersCanOpen')} value={club.settings.membersCanOpenTables} onChange={(v) => void clubsApi.update(ctx, club.code, { settings: { membersCanOpenTables: v } }).then(setClub)} />
+              <Toggle label={t('clubs.rules.approveNew')} value={club.settings.joinRequiresApproval} onChange={(v) => void clubsApi.update(ctx, club.code, { settings: { joinRequiresApproval: v } }).then(setClub)} />
               <Toggle label={t('clubs.rules.multipleWinners')} value={club.rules.multipleWinners} onChange={(v) => void setRules({ multipleWinners: v })} />
               <Toggle label={t('clubs.rules.passRule')} value={club.rules.passRule} onChange={(v) => void setRules({ passRule: v })} />
               <Toggle label={t('clubs.rules.allowChi')} value={club.rules.allowChi} onChange={(v) => void setRules({ allowChi: v })} />

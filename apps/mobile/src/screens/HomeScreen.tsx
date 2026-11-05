@@ -5,6 +5,7 @@ import { BOT_SKILLS, type BotSkill } from '@mjm/engine';
 import { hasTier } from '../monetisation/store';
 import { useApp } from '../app-state';
 import { createLocalSession, createOnlineSession } from '../game/session';
+import { useAuth } from '../auth/AuthProvider';
 import { AVATARS, effectiveStreak, todayKey } from '../storage';
 import { friendlyError } from '../logic/errors';
 import { botLabel, rulesSummary } from '../logic/rules-text';
@@ -25,6 +26,7 @@ const WINDOWS = {
 
 export function HomeScreen() {
   const app = useApp();
+  const auth = useAuth();
   const { t, locale } = useT();
   const { width, height } = useWindowDimensions();
   const [name, setName] = useState(app.profile.name);
@@ -56,7 +58,8 @@ export function HomeScreen() {
         app.setSession(session);
         app.go({ name: 'table' });
       } else {
-        const session = await createOnlineSession({ signalUrl: rec.signalUrl, name: rec.name, avatar: rec.avatar, userId: app.profile.userId, rules: app.settings.rules, action: 'join', code: rec.roomCode, token: rec.token, clubCode: rec.clubCode });
+        // Back to the server the table lives on (the stored serverUrl), with this player's session.
+        const session = await createOnlineSession({ signalUrl: rec.signalUrl, name: rec.name, avatar: rec.avatar, userId: app.profile.userId || undefined, rules: app.settings.rules, action: 'join', code: rec.roomCode, token: rec.token, clubCode: rec.clubCode, ...auth.tableAuth });
         app.setSession(session);
         app.go({ name: 'lobby' });
       }

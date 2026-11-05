@@ -35,5 +35,19 @@
   "clubTablesFull": "This club already has %{max} open tables; finish one first.",
   "credentialsRequired": "Credentials required.",
   "identityFailed": "Identity check failed for this user id.",
-  "passthrough": "%{message}"
+  "passthrough": "%{message}",
+  "authTimeout": "The game server did not respond within %{seconds} seconds. Check your connection and try again.",
+  "authBadReply": "The game server sent an unreadable reply (%{status}).",
+  "invalidCredentials": "This device’s guest account could not be found on the server.",
+  "sessionExpired": "Your session has expired. Please try again.",
+  "invalidToken": "The sign-in could not be verified. Please try again.",
+  "providerDisabled": "That sign-in method is not available on this server.",
+  "notLinked": "That sign-in is not linked to an account yet.",
+  "identityInUse": "That sign-in already belongs to another account. Sign out first to use it.",
+  "lastIdentity": "Link another sign-in method before removing this one.",
+  "unavailable": "The game server is at capacity or partly down. Please try again in a few minutes.",
+  "unauthorised": "The game server did not accept your session. Go back and try again.",
+  "limit": "A limit was reached. Leave or finish something first.",
+  "notFound": "That could not be found.",
+  "invalidRequest": "The game server could not use that request."
 }

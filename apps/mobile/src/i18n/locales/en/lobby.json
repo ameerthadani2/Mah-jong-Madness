@@ -15,5 +15,7 @@
   "start": "Start match",
   "startWithBots": "Start (bots fill empty seats)",
   "connectionLost": "Connection lost.",
-  "reconnect": "Reconnect"
+  "reconnect": "Reconnect",
+  "reconnecting": "Reconnecting… (attempt %{n})",
+  "retryNow": "Retry now"
 }
