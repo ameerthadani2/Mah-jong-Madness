@@ -39,7 +39,10 @@
   "connection": {
     "lostTitle": "連線中斷",
     "lostText": "你的座位會保留，回來之前由電腦代打。",
-    "reconnect": "重新連線"
+    "reconnect": "重新連線",
+    "reconnectingTitle": "重新連線中…",
+    "reconnectingText": "第 %{n} 次嘗試。你的座位會保留，回來之前由電腦代打。",
+    "retryNow": "立即重試"
   },
   "seat": "%{n} 號位",
   "relSeat": {

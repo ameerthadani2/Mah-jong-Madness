@@ -55,5 +55,11 @@
     "passRule": "過水 pass rule",
     "allowChi": "Allow chi",
     "adminOnly": "Only the owner and admins can change rules."
+  },
+  "signIn": {
+    "title": "Sign in to use clubs",
+    "body": "Clubs live on the game server, so they need an account. The app makes a guest account for you when it can reach the server; bots and lessons work offline meanwhile.",
+    "retry": "Connect",
+    "connecting": "Connecting…"
   }
 }

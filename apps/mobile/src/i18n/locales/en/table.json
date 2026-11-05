@@ -39,7 +39,10 @@
   "connection": {
     "lostTitle": "Connection lost",
     "lostText": "Your seat is saved. A bot plays for you until you are back.",
-    "reconnect": "Reconnect"
+    "reconnect": "Reconnect",
+    "reconnectingTitle": "Reconnecting…",
+    "reconnectingText": "Attempt %{n}. Your seat is saved; a bot plays for you until you are back.",
+    "retryNow": "Retry now"
   },
   "seat": "Seat %{n}",
   "relSeat": {

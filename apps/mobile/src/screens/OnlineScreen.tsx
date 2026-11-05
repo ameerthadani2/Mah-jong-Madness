@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { useApp } from '../app-state';
 import { createOnlineSession } from '../game/session';
+import { useAuth } from '../auth/AuthProvider';
 import { friendlyError } from '../logic/errors';
 import { rulesSummary } from '../logic/rules-text';
 import { useT } from '../i18n';
@@ -11,8 +12,15 @@ import { Icon } from '../components/Icons';
 
 export function OnlineScreen() {
   const app = useApp();
+  const auth = useAuth();
   const { t, locale } = useT();
   const [code, setCode] = useState('');
+  // Opening Online is the first moment the app needs the server: bootstrap the guest now (quietly; failures show below).
+  const { ensure } = auth;
+  const [checking, setChecking] = useState(true);
+  useEffect(() => {
+    void ensure().finally(() => setChecking(false));
+  }, [ensure]);
   const [busy, setBusy] = useState<'create' | 'join' | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -24,11 +32,12 @@ export function OnlineScreen() {
         signalUrl: app.signalUrl,
         name: app.profile.name || t('common.player'),
         avatar: app.profile.avatar,
-        userId: app.profile.userId,
+        userId: auth.user?.id || app.profile.userId || undefined,
         rules: app.settings.rules,
         action,
         code: code.trim().toUpperCase(),
         botSkill: app.settings.botSkill,
+        ...auth.tableAuth,
       });
       app.setSession(session);
       app.go({ name: 'lobby' });
@@ -67,6 +76,16 @@ export function OnlineScreen() {
           <Button title={busy === 'join' ? t('online.join.busy') : t('online.join.button')} kind="secondary" onPress={() => void run('join')} disabled={busy !== null || code.trim().length < 4} />
         </Card>
       </View>
+      {checking && auth.status === 'offline' && <P dim style={{ fontSize: 12 }}>{t('online.connecting')}</P>}
+      {!error && !checking && auth.status === 'offline' && auth.error ? (
+        <Card tone="danger">
+          <Row>
+            <Icon name="warning" size={24} />
+            <P style={{ flex: 1 }}>{friendlyError(auth.error, t)}</P>
+            <Button small kind="secondary" title={t('online.retry')} onPress={() => void ensure()} disabled={auth.busy} />
+          </Row>
+        </Card>
+      ) : null}
       {error && (
         <Card tone="danger">
           <Row>

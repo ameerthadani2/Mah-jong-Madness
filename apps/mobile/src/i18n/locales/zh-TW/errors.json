@@ -35,5 +35,19 @@
   "clubTablesFull": "這個俱樂部已有 %{max} 張開放中的牌桌；請先打完一桌。",
   "credentialsRequired": "需要驗證身分。",
   "identityFailed": "這個使用者的身分驗證失敗。",
-  "passthrough": "%{message}"
+  "passthrough": "%{message}",
+  "authTimeout": "遊戲伺服器在 %{seconds} 秒內沒有回應。請檢查網路連線後再試一次。",
+  "authBadReply": "遊戲伺服器傳回無法讀取的回應（%{status}）。",
+  "invalidCredentials": "伺服器上找不到這台裝置的訪客帳號。",
+  "sessionExpired": "登入已過期，請再試一次。",
+  "invalidToken": "無法驗證這次登入，請再試一次。",
+  "providerDisabled": "這個伺服器不提供這種登入方式。",
+  "notLinked": "這個登入方式還沒有連結任何帳號。",
+  "identityInUse": "這個登入方式已屬於另一個帳號。請先登出再使用。",
+  "lastIdentity": "請先連結另一種登入方式，再移除這一個。",
+  "unavailable": "遊戲伺服器目前已滿或部分故障，請幾分鐘後再試。",
+  "unauthorised": "遊戲伺服器不接受你的登入狀態。請返回後再試一次。",
+  "limit": "已達上限。請先離開或結束其中一項。",
+  "notFound": "找不到這個項目。",
+  "invalidRequest": "遊戲伺服器無法處理這個要求。"
 }

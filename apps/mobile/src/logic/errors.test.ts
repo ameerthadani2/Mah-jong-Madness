@@ -107,3 +107,47 @@ describe('friendlyErrorMessage', () => {
     expect(friendlyError(new Error('Room not found or full'), zh)).toBe('找不到這個代碼的牌桌。請確認代碼；牌桌也可能已經滿了。');
   });
 });
+
+describe('friendlyError for the account API (docs/API.md codes)', () => {
+  const coded = (code: string, message = 'x', extra: Record<string, unknown> = {}) => Object.assign(new Error(message), { code, ...extra });
+
+  it('maps every account error code to translated copy, whatever the server message', () => {
+    expect(friendlyErrorMessage(coded('invalid_credentials', 'Guest id or secret does not match'))).toEqual({ key: 'errors.invalidCredentials' });
+    for (const c of ['invalid_session', 'session_expired', 'session_revoked', 'session_rotated']) expect(friendlyErrorMessage(coded(c))).toEqual({ key: 'errors.sessionExpired' });
+    expect(friendlyErrorMessage(coded('invalid_token', 'apple token rejected: nonce mismatch'))).toEqual({ key: 'errors.invalidToken' });
+    expect(friendlyErrorMessage(coded('provider_disabled'))).toEqual({ key: 'errors.providerDisabled' });
+    expect(friendlyErrorMessage(coded('not_linked'))).toEqual({ key: 'errors.notLinked' });
+    expect(friendlyErrorMessage(coded('identity_in_use'))).toEqual({ key: 'errors.identityInUse' });
+    expect(friendlyErrorMessage(coded('last_identity'))).toEqual({ key: 'errors.lastIdentity' });
+    expect(friendlyErrorMessage(coded('rate_limited'))).toEqual({ key: 'errors.rateLimited' });
+    expect(friendlyErrorMessage(coded('unavailable'))).toEqual({ key: 'errors.unavailable' });
+  });
+
+  it('reads the account client’s own failure codes', () => {
+    expect(say(coded('auth_timeout', 'x', { seconds: 15 }))).toBe('The game server did not respond within 15 seconds. Check your connection and try again.');
+    expect(say(coded('auth_unreachable'))).toBe(UNREACHABLE);
+    expect(say(coded('auth_bad_reply', 'x', { status: 502 }))).toBe('The game server sent an unreadable reply (502).');
+  });
+
+  it('prefers a known club sentence for limit and not_found, with a coded fallback', () => {
+    expect(say(coded('limit', 'This club is full (200 members)'))).toBe('This club is full (200 members).');
+    expect(friendlyErrorMessage(coded('limit', 'cap_hit'))).toEqual({ key: 'errors.limit' });
+    expect(say(coded('not_found', 'Club not found'))).toBe('Club not found.');
+    expect(friendlyErrorMessage(coded('not_found', ''))).toEqual({ key: 'errors.notFound' });
+    expect(friendlyErrorMessage(coded('invalid', 'bad_body'))).toEqual({ key: 'errors.invalidRequest' });
+  });
+
+  it('explains a refused table socket (4401)', () => {
+    expect(friendlyErrorMessage(Object.assign(new Error('x'), { code: 4401 }))).toEqual({ key: 'errors.unauthorised' });
+    expect(friendlyErrorMessage(new Error('Unauthorised: the game server did not accept this session.'))).toEqual({ key: 'errors.unauthorised' });
+  });
+
+  it('renders the new keys in Traditional Chinese', () => {
+    for (const c of ['invalid_credentials', 'session_expired', 'invalid_token', 'provider_disabled', 'not_linked', 'identity_in_use', 'last_identity', 'unavailable', 'auth_unreachable']) {
+      const text = friendlyError(coded(c), zh);
+      expect(text, c).toMatch(/[一-鿿]/);
+    }
+    expect(friendlyError(coded('auth_timeout', 'x', { seconds: 9 }), zh)).toContain('9');
+    expect(friendlyError(Object.assign(new Error('x'), { code: 4401 }), zh)).toMatch(/[一-鿿]/);
+  });
+});

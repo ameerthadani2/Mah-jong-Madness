@@ -44,5 +44,29 @@
     "title": "Network (development builds)",
     "body": "Game server for online tables and clubs. Leave empty to use this build's server (%{url}). Release builds always use the build's server.",
     "using": "Now using %{url}"
+  },
+  "account": {
+    "title": "Account",
+    "offline": "Not connected to the game server yet. Playing online or opening Clubs creates a guest account; signing in keeps it safe across devices.",
+    "guest": "Guest account",
+    "guestBody": "Your progress and clubs are tied to this device. Sign in to keep them if you lose or replace it.",
+    "signedIn": "Signed in",
+    "id": "Player id: %{id}",
+    "apple": "Sign in with Apple",
+    "google": "Sign in with Google",
+    "linkedApple": "Apple linked",
+    "linkedGoogle": "Google linked",
+    "unlink": "Remove",
+    "noProviders": "Sign-in with Apple or Google is not available on this server yet.",
+    "signOut": "Sign out",
+    "signOutGuestWarning": "Signing out deletes nothing on the server, but this guest cannot be recovered afterwards: its progress and clubs will be lost to you. Sign in first to keep them.",
+    "signOutConfirm": "Sign out anyway",
+    "delete": "Delete account",
+    "deleteBody": "This removes your account, name and club memberships from the server. Purchase records are kept. Type %{word} to confirm.",
+    "deleteWord": "DELETE",
+    "deleteConfirm": "Delete for good",
+    "deleted": "Your account has been deleted.",
+    "cancel": "Cancel",
+    "busy": "Working…"
   }
 }

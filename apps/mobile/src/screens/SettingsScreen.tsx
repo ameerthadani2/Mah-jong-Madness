@@ -2,6 +2,9 @@ import React from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, TextInput } from 'react-native';
 import { BOT_SKILLS, DEFAULT_RULES, RULE_PRESETS, rulesFromPreset, SPEED_PRESETS, withSpeed, type BotSkill, type GameSpeed } from '@mjm/engine';
 import { useApp } from '../app-state';
+import { useAuth } from '../auth/AuthProvider';
+import type { Profile } from '../storage';
+import { AccountCard } from './AccountCard';
 import { LOCALE_NAMES, SUPPORTED_LOCALES, useT, type LocalePreference } from '../i18n';
 import { botDescription, botLabel, presetName, rulesSummary, speedLabel } from '../logic/rules-text';
 import { localized } from '../logic/translate';
@@ -17,7 +20,13 @@ import { Icon } from '../components/Icons';
 
 export function SettingsScreen() {
   const app = useApp();
-  const { settings, setSettings, profile, setProfile } = app;
+  const { settings, setSettings, profile } = app;
+  const auth = useAuth();
+  // Name and avatar stay local; when the device has a server session they are also sent with PATCH /api/me.
+  const setProfile = (p: Profile) => {
+    app.setProfile(p);
+    if (p.name !== profile.name || p.avatar !== profile.avatar) auth.syncProfile(p.name, p.avatar);
+  };
   const { t, locale } = useT();
   const rules = settings.rules;
   const languages: Array<[LocalePreference, string]> = [['auto', t('settings.languageAuto')], ...SUPPORTED_LOCALES.map((l): [LocalePreference, string] => [l, LOCALE_NAMES[l]])];
@@ -40,6 +49,7 @@ export function SettingsScreen() {
           ))}
         </Row>
       </Card>
+      <AccountCard />
       <Card>
         <H2>{t('settings.language')}</H2>
         <Row style={{ flexWrap: 'wrap', rowGap: 6 }}>
