@@ -5,7 +5,12 @@
  *
  * The protocol is tiny and documented in apps/signal/README.md.
  */
+import type { BotSkill, RuleSet } from '@mjm/engine';
 import type { Transport, Unsubscribe } from './transport';
+
+/** How long `connect()` and each room request wait for the server before giving up. */
+export const SIGNALING_TIMEOUT_MS = 10_000;
+export const SIGNALING_TIMEOUT_MESSAGE = 'The game server did not answer in time. Check your connection and try again.';
 
 export interface WebSocketLike {
   readyState: number;
@@ -28,7 +33,8 @@ export type ServerMessage =
 
 export type ClientToServer =
   | { t: 'hello' }
-  | { t: 'create'; room?: string }
+  /** `hosted: true` asks the server to run the table itself; the server sanitises `rules` and `botSkill`. */
+  | { t: 'create'; room?: string; hosted?: boolean; rules?: Partial<RuleSet>; botSkill?: BotSkill }
   | { t: 'join'; room: string }
   | { t: 'to'; to: string; data: unknown }
   | { t: 'leave' };
@@ -48,23 +54,57 @@ export class SignalingClient {
   private closedLocally = false;
   private pendingHello: Array<(id: string) => void> = [];
   private pendingRoom: Array<{ resolve: (r: RoomInfo) => void; reject: (e: Error) => void }> = [];
+  /**
+   * Room replies still due for requests that already timed out. The server answers every
+   * create/join with exactly one `room` or `error`, in order, so the next replies belong to
+   * those abandoned requests and must not resolve a newer one.
+   */
+  private staleReplies = 0;
+  private readonly timeoutMs: number;
 
   constructor(
     private readonly url: string,
     private readonly makeSocket: WebSocketFactory = (u) => new (globalThis as unknown as { WebSocket: new (u: string) => WebSocketLike }).WebSocket(u),
-  ) {}
+    opts: { timeoutMs?: number } = {},
+  ) {
+    this.timeoutMs = opts.timeoutMs ?? SIGNALING_TIMEOUT_MS;
+  }
 
+  /** Open the socket and wait for the server's `hello`. Rejects on error, early close or after `timeoutMs`. */
   connect(): Promise<string> {
     return new Promise((resolve, reject) => {
       const ws = this.makeSocket(this.url);
       this.ws = ws;
+      let settled = false;
+      const settle = (err: Error | null, id?: string) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        if (err) reject(err);
+        else resolve(id!);
+      };
+      const timer = setTimeout(() => {
+        if (settled) return;
+        // The connection never got going: drop it quietly, without firing close handlers.
+        ws.onopen = ws.onclose = ws.onerror = ws.onmessage = null;
+        if (this.ws === ws) this.ws = null;
+        try {
+          ws.close();
+        } catch {
+          /* already closed */
+        }
+        settle(new Error(SIGNALING_TIMEOUT_MESSAGE));
+      }, this.timeoutMs);
       ws.onopen = () => ws.send(JSON.stringify({ t: 'hello' } satisfies ClientToServer));
-      ws.onerror = () => reject(new Error('Signaling connection failed'));
+      ws.onerror = () => settle(new Error('Signaling connection failed'));
       ws.onclose = () => {
-        this.ws = null;
+        if (this.ws === ws) this.ws = null;
+        settle(new Error('Connection closed'));
         if (!this.closedLocally) for (const h of this.closeHandlers) h();
-        for (const p of this.pendingRoom) p.reject(new Error('Connection closed'));
+        const pending = this.pendingRoom;
         this.pendingRoom = [];
+        this.staleReplies = 0;
+        for (const p of pending) p.reject(new Error('Connection closed'));
       };
       ws.onmessage = (ev) => {
         let m: ServerMessage;
@@ -77,13 +117,13 @@ export class SignalingClient {
           this.peerId = m.peerId;
           for (const p of this.pendingHello) p(m.peerId);
           this.pendingHello = [];
-          resolve(m.peerId);
+          settle(null, m.peerId);
         } else if (m.t === 'room') {
           this.room = { room: m.room, peers: m.peers, host: m.host };
-          const p = this.pendingRoom.shift();
+          const p = this.nextPending();
           p?.resolve(this.room);
         } else if (m.t === 'error') {
-          const p = this.pendingRoom.shift();
+          const p = this.nextPending();
           p?.reject(new Error(m.message));
         } else if (m.t === 'peer' && this.room) {
           if (m.event === 'join' && !this.room.peers.includes(m.peerId)) this.room.peers.push(m.peerId);
@@ -102,11 +142,42 @@ export class SignalingClient {
     return this.roomRequest({ t: 'join', room: room.toUpperCase() });
   }
 
+  /** Ask the server to open a table it hosts itself. This is how online games are created. */
+  createHostedRoom(rules: Partial<RuleSet>, botSkill?: BotSkill): Promise<RoomInfo> {
+    return this.roomRequest({ t: 'create', hosted: true, rules, botSkill });
+  }
+
+  private nextPending(): { resolve: (r: RoomInfo) => void; reject: (e: Error) => void } | undefined {
+    if (this.staleReplies > 0) {
+      this.staleReplies--;
+      return undefined;
+    }
+    return this.pendingRoom.shift();
+  }
+
   private roomRequest(msg: ClientToServer): Promise<RoomInfo> {
     return new Promise((resolve, reject) => {
-      if (!this.ws) return reject(new Error('Not connected'));
-      this.pendingRoom.push({ resolve, reject });
-      this.ws.send(JSON.stringify(msg));
+      const ws = this.ws;
+      if (!ws) return reject(new Error('Not connected'));
+      const entry = {
+        resolve: (r: RoomInfo) => {
+          clearTimeout(timer);
+          resolve(r);
+        },
+        reject: (e: Error) => {
+          clearTimeout(timer);
+          reject(e);
+        },
+      };
+      const timer = setTimeout(() => {
+        const i = this.pendingRoom.indexOf(entry);
+        if (i < 0) return;
+        this.pendingRoom.splice(i, 1);
+        this.staleReplies++;
+        reject(new Error(SIGNALING_TIMEOUT_MESSAGE));
+      }, this.timeoutMs);
+      this.pendingRoom.push(entry);
+      ws.send(JSON.stringify(msg));
     });
   }
 
