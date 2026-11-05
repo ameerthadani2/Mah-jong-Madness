@@ -33,3 +33,37 @@ describe('lesson quizzes', () => {
     });
   }
 });
+
+/** Han characters: a Traditional Chinese field must contain some, not only tile codes and numbers. */
+const HAN = /[一-鿿]/;
+
+describe('lesson translations', () => {
+  const pairs: Array<[string, string, string]> = [];
+  for (const l of LESSONS) {
+    pairs.push([`${l.id} title`, l.title, l.titleZh], [`${l.id} summary`, l.summary, l.summaryZh]);
+    l.steps.forEach((st, i) => {
+      pairs.push([`${l.id}[${i}] title`, st.title, st.titleZh], [`${l.id}[${i}] body`, st.body, st.bodyZh]);
+      if (st.quiz) pairs.push([`${l.id}[${i}] quiz prompt`, st.quiz.prompt, st.quiz.promptZh], [`${l.id}[${i}] quiz explanation`, st.quiz.explanation, st.quiz.explanationZh]);
+    });
+  }
+
+  it('every lesson, step and quiz has Chinese text that differs from the English', () => {
+    expect(pairs.length).toBeGreaterThan(LESSONS.length * 4);
+    for (const [where, en, zh] of pairs) {
+      expect(typeof zh, where).toBe('string');
+      expect(zh.trim().length, where).toBeGreaterThan(0);
+      expect(zh, where).not.toBe(en);
+      expect(zh, where).toMatch(HAN);
+    }
+  });
+
+  it('the Chinese explanations keep the tile codes the English ones use', () => {
+    const codes = (s: string) => (s.match(/\d+[mps]/g) ?? []).sort();
+    for (const l of LESSONS) {
+      for (const st of l.steps) {
+        if (!st.quiz) continue;
+        expect(codes(st.quiz.explanationZh), `${l.id} ${st.title}`).toEqual(codes(st.quiz.explanation));
+      }
+    }
+  });
+});
