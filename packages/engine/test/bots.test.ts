@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { applyAction, chooseAction, isLegal, kindOf, kindsFromString, newGame, rankDiscards, threats, unseenCounts, type BotSkill, type GameState } from '../src/index';
-import { setup, tileTotal } from './helpers/state';
+import { applyAction, chooseAction, hintFor, isLegal, kindOf, kindsFromString, newGame, rankDiscards, threats, unseenCounts, type BotSkill, type GameState } from '../src/index';
+import { coachAction, currentShanten } from '../src/bot';
+import { discard, offers, setup, tileTotal } from './helpers/state';
 
 interface Tally {
   seatHands: number;
@@ -44,8 +45,25 @@ function ladder(skill: BotSkill, hands: number): { test: Tally; club: Tally } {
   return { test, club };
 }
 
+/**
+ * Paired (common random numbers) comparison, as `simulate.ts --ladder`: each seed is played twice,
+ * once with `skill` in the rotating test seat and once with Club there, and the test seat's
+ * score difference is taken hand by hand.
+ */
+function pairedLadder(skill: BotSkill, hands: number, prefix: string): { mean: number; se: number } {
+  const diffs: number[] = [];
+  for (let h = 0; h < hands; h++) {
+    const testSeat = h % 4;
+    const withSkill = playHand(newGame(`${prefix}-${h}`), [0, 1, 2, 3].map((seat): BotSkill => (seat === testSeat ? skill : 'club'))).result!;
+    const baseline = playHand(newGame(`${prefix}-${h}`), ['club', 'club', 'club', 'club']).result!;
+    diffs.push(withSkill.scoreDelta[testSeat] - baseline.scoreDelta[testSeat]);
+  }
+  const mean = diffs.reduce((a, b) => a + b, 0) / hands;
+  const variance = diffs.reduce((a, b) => a + (b - mean) ** 2, 0) / (hands - 1);
+  return { mean, se: Math.sqrt(variance / hands) };
+}
+
 const winRate = (t: Tally) => t.wins / t.seatHands;
-const perHand = (t: Tally) => t.points / t.seatHands;
 
 /**
  * Seat 0 (dealer, East; East round) to discard. Seat 1 has four exposed pongs, so it looks ready,
@@ -111,6 +129,60 @@ describe('bot decisions', () => {
     expect(pick(s, 'pro').shanten).toBe(best);
   });
 
+  it('a ready concealed hand passes on a claimed kong rather than lose 門清 (Club, Pro and the coach)', () => {
+    // From the bots review probe (kongclaim): seat 2 is ready and concealed with 555p; seat 0 throws 5p.
+    const s = discard(setup({}, ['5p 456s 789s 123p 78p NN SS W', '', '123m 456m 789m 555p 23s EE', ''], 30), 0, '5p');
+    expect(offers(s)[2]).toMatchObject({ pong: true, kong: true, hu: false });
+    expect(currentShanten(s, 2)).toBe(0);
+    for (const skill of ['club', 'pro'] as const) expect(chooseAction(s, 2, { skill, seed: 'k' })).toEqual({ type: 'pass' });
+    expect(coachAction(s, 2)).toEqual({ type: 'pass' });
+    // Once the hand is open there is no 門清 to keep, and the kong is taken.
+    const open = discard(setup({}, ['5p 456s 789s 123p 78p NN SS W', '', { hand: '123m 456m 555p 23s EE', melds: [{ type: 'pong', tiles: '999m' }] }, ''], 30), 0, '5p');
+    expect(currentShanten(open, 2)).toBe(0);
+    for (const skill of ['club', 'pro'] as const) expect(chooseAction(open, 2, { skill, seed: 'k' })?.type).toBe('kong');
+  });
+
+  it('a fully dead honour carries no deal-in risk', () => {
+    // Seat 0 holds the last 北: the other three are in seat 2's discards.
+    const s = threatened('24677m 3568p 24578s 2m 5p N', '6p');
+    const north = kindsFromString('N')[0];
+    s.players[2].discards = [north * 4 + 1, north * 4 + 2, north * 4 + 3];
+    expect(unseenCounts(s, 0)[north]).toBe(0);
+    for (const skill of ['club', 'pro'] as const) expect(rankDiscards(s, 0, skill).find((r) => r.kind === north)!.danger).toBe(0);
+    // With one copy still unseen it is nearly, not completely, safe.
+    s.players[2].discards.pop();
+    expect(rankDiscards(s, 0, 'pro').find((r) => r.kind === north)!.danger).toBeGreaterThan(0);
+  });
+
+  it('Pro and the coach always throw the top-ranked tile, so the hint and the coach agree', () => {
+    // From the bots review probe (diff): ties used to be broken by the RNG on about 8% of turns.
+    let turns = 0;
+    for (let g = 0; turns < 100; g++) {
+      let s = newGame(`det-${g}`);
+      for (let step = 0; step < 3000 && s.phase !== 'ended' && turns < 100; step++) {
+        if (s.phase === 'discard') {
+          const seat = s.turn;
+          const coach = coachAction(s, seat)!;
+          if (coach.type === 'discard') {
+            turns++;
+            const top = rankDiscards(s, seat, 'pro')[0];
+            expect(coach.tile).toBe(top.tile);
+            expect(kindOf(coach.tile)).toBe(hintFor(s, seat).bestDiscard!.kind);
+            expect(chooseAction(s, seat, { skill: 'pro', seed: 'another' })).toEqual(coach);
+          }
+        }
+        for (let seat = 0; seat < 4; seat++) {
+          const a = chooseAction(s, seat, { seed: `p${seat}`, skill: 'pro' });
+          if (a) {
+            s = applyAction(s, seat, a);
+            break;
+          }
+        }
+      }
+    }
+    expect(turns).toBe(100);
+  });
+
   it('Pro keeps pushing when one from ready', () => {
     const s = threatened('234m 567m 3568p 24578s 5p 3s', '5m');
     const best = Math.min(...rankDiscards(s, 0, 'pro').map((r) => r.shanten));
@@ -135,10 +207,14 @@ describe('bot strength ladder (fixed seeds)', () => {
     expect(draws / hands).toBeLessThan(0.5);
   }, 120_000);
 
-  it('Pro scores at least as well as Club, within a small margin', () => {
-    const { test: pro, club } = ladder('pro', 120);
-    expect(perHand(pro)).toBeGreaterThanOrEqual(perHand(club) - 2);
-  }, 120_000);
+  it('Pro is not measurably worse than Club in a paired comparison on the same seeds', () => {
+    // A hand's score swings by about 180 points, so 60 paired hands cannot show a small edge either
+    // way. What they can show is that Pro is not clearly worse: the 95% interval for Pro minus Club
+    // must reach -1 pt/hand. A Pro regression of tens of points a hand fails this.
+    const { mean, se } = pairedLadder('pro', 60, 'paired');
+    expect(se).toBeGreaterThan(0);
+    expect(mean + 1.96 * se).toBeGreaterThanOrEqual(-1);
+  }, 30_000);
 
   it('no skill ever makes an illegal move or loses a tile', () => {
     const lineups: BotSkill[][] = [

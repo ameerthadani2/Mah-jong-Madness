@@ -7,6 +7,10 @@
  *   tsx scripts/simulate.ts --ladder <skill> <hands>  one bot of <skill> (rotating seats) against three
  *                                                     Club bots; prints win %, points per hand and
  *                                                     deal-in % for the test skill and for Club.
+ *                                                     Each seed is also played with Club in the test
+ *                                                     seat (common random numbers), and the paired
+ *                                                     per-hand difference is printed with its
+ *                                                     standard error and a 95% interval.
  */
 import { applyAction, chooseAction, hashState, newGame, nextHand, tilesRemaining, type BotSkill, type GameState } from '../src/index';
 
@@ -45,15 +49,28 @@ interface Tally {
 const pct = (n: number, d: number): string => `${((n / Math.max(1, d)) * 100).toFixed(1)}%`;
 const perHand = (t: Tally): number => t.points / Math.max(1, t.seatHands);
 
+/** Mean, standard error and normal 95% interval of a sample. */
+function meanInterval(xs: readonly number[]): { mean: number; se: number; low: number; high: number } {
+  const n = xs.length;
+  const mean = xs.reduce((a, b) => a + b, 0) / Math.max(1, n);
+  const variance = n > 1 ? xs.reduce((a, b) => a + (b - mean) ** 2, 0) / (n - 1) : 0;
+  const se = Math.sqrt(variance / Math.max(1, n));
+  return { mean, se, low: mean - 1.96 * se, high: mean + 1.96 * se };
+}
+
 function runLadder(skill: BotSkill, hands: number): void {
   const test: Tally = { seatHands: 0, wins: 0, dealIns: 0, points: 0 };
   const club: Tally = { seatHands: 0, wins: 0, dealIns: 0, points: 0 };
+  // Paired: the test seat's score with `skill` there minus its score on the same seed with Club there.
+  const paired: number[] = [];
   let draws = 0;
   const started = Date.now();
   for (let h = 0; h < hands; h++) {
     const testSeat = h % 4;
     const skills = [0, 1, 2, 3].map((seat): BotSkill => (seat === testSeat ? skill : 'club'));
     const r = playHand(newGame(`ladder-${h}`), skills).result!;
+    const baseline = skill === 'club' ? r : playHand(newGame(`ladder-${h}`), ['club', 'club', 'club', 'club']).result!;
+    paired.push(r.scoreDelta[testSeat] - baseline.scoreDelta[testSeat]);
     if (r.type !== 'win') draws++;
     for (let seat = 0; seat < 4; seat++) {
       const t = seat === testSeat ? test : club;
@@ -68,7 +85,10 @@ function runLadder(skill: BotSkill, hands: number): void {
   console.log(`ladder ${skill} vs 3 club: hands=${hands} draws=${draws} (${pct(draws, hands)})`);
   console.log(line(skill, test));
   console.log(line('club', club));
-  console.log(`${skill} minus club: ${(perHand(test) - perHand(club)).toFixed(2)} pts/hand; ${(ms / hands).toFixed(1)} ms per hand`);
+  console.log(`${skill} minus club (unpaired): ${(perHand(test) - perHand(club)).toFixed(2)} pts/hand; ${(ms / hands).toFixed(1)} ms per hand`);
+  const p = meanInterval(paired);
+  console.log(`${skill} minus club (paired, same seeds and seat): ${p.mean.toFixed(2)} pts/hand, se ${p.se.toFixed(2)}, 95% interval [${p.low.toFixed(2)}, ${p.high.toFixed(2)}]`);
+  if (skill !== 'club') console.log(p.low > 0 ? `${skill} is ahead of club at 95%` : p.high < 0 ? `${skill} is behind club at 95%` : `no clear difference from club at 95%`);
 }
 
 function runMatches(matches: number): void {
