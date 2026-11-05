@@ -74,7 +74,8 @@ export function dealInDanger(s: GameState, seat: number, kind: Kind, levels: rea
     if (i === seat || levels[i] === 0) continue;
     if (s.players[i].discards.some((t) => kindOf(t) === kind)) continue;
     let risk: number;
-    if (isHonorKind(kind)) risk = unseen[kind] <= 1 ? 0.1 : 0.3;
+    // A fully dead honour (every copy visible) cannot complete anything: no risk at all.
+    if (isHonorKind(kind)) risk = unseen[kind] === 0 ? 0 : unseen[kind] === 1 ? 0.1 : 0.3;
     else if (rankOfKind(kind) === 1 || rankOfKind(kind) === 9) risk = 0.6;
     else risk = 1;
     total += levels[i] * risk;
@@ -223,8 +224,10 @@ export function chooseAction(s: GameState, seat: number, opts: BotOptions = {}):
     }
     const skill = opts.skill ?? 'club';
     const ranked = rankDiscards(s, seat, skill);
-    // Beginners pick among a wider band (acceptance mistakes rather than shanten ones); pros pick the best.
+    // Beginners pick among a wider band (acceptance mistakes rather than shanten ones). Pros always
+    // take the top-ranked tile, with no random tie-break, so the coach's discard is the hint's best discard.
     const band = skill === 'beginner' ? 150 : skill === 'club' ? 5 : 0;
+    if (band === 0) return { type: 'discard', tile: ranked[0].tile };
     let top = ranked.filter((r) => r.score >= ranked[0].score - band);
     if (skill === 'beginner' && rng.next() < 0.25 && ranked.length > 1) top = ranked.slice(0, Math.min(ranked.length, 4));
     return { type: 'discard', tile: top[rng.int(top.length)].tile };
@@ -237,8 +240,10 @@ export function chooseAction(s: GameState, seat: number, opts: BotOptions = {}):
   const p = s.players[seat];
   const concealed = p.melds.every((m) => m.concealed);
   // Stay concealed (門清) instead of calling when already this close: Club at one from ready, Pro only
-  // once ready. Speed is worth more than the 門清 台 before that (ladder: Pro at 0 beats Club by about
-  // 5 points a hand; at 1 it only draws level, at 2 it loses about 10).
+  // once ready. The earlier unpaired figures behind choosing 0 over 1 for Pro were within noise and
+  // were not re-measured. The paired ladder (`simulate.ts --ladder pro 4000`, each seed also played
+  // with Club in the test seat) puts Pro ahead of Club by 8.4 pts/hand, standard error 3.0, with a
+  // 95% interval of [2.5, 14.3]; that is clearly positive.
   const valueConcealed = (opts.valueConcealed ?? skill !== 'beginner') && concealed && before <= (skill === 'pro' ? 0 : 1);
   // Beginners often grab a pong/chi, as long as it does not set them back.
   if (skill === 'beginner') {
@@ -252,7 +257,8 @@ export function chooseAction(s: GameState, seat: number, opts: BotOptions = {}):
     const after = shantenAfterClaim(s, seat, a);
     let gain = before - after;
     if (a.type === 'kong') gain += 0.5; // extra tai and a replacement draw
-    if (valueConcealed && a.type !== 'kong') gain -= 1;
+    // Kongs included: a claimed kong (明槓) exposes the hand just as a pong does and loses 門清.
+    if (valueConcealed) gain -= 1;
     if (!greedy || gain > 0) {
       if (!best || gain > best.gain) best = { action: a, gain };
     }

@@ -44,6 +44,20 @@ describe('台 scoring', () => {
     const r = scoreWin(ctx({ concealed: '123m 456m 789p 234s 678s 2p', win: '2p' }));
     expect(keys(r)).toEqual(['concealed', 'single_wait']);
   });
+  it('a two-sided shape whose other side is dead counts 獨聽, not 平胡 as well', () => {
+    // From the engine review probe (score2): 45m waits on 3m or 6m, but the player's own tiles hold
+    // all four 3m (three in exposed chows, one concealed), so only 6m is live.
+    const chow = (code: string, copy: number): Meld => {
+      const k = kindFromCode(code);
+      return { type: 'chow', tiles: [k * 4 + copy, (k + 1) * 4 + copy, (k + 2) * 4 + copy], concealed: false, from: 2 };
+    };
+    const dead = scoreWin(ctx({ concealed: '34545m 22p', win: '6m', melds: [chow('1m', 0), chow('2m', 1), chow('3m', 2)] }));
+    expect(keys(dead)).toEqual(['single_wait']);
+    expect(dead.tai).toBe(1);
+    // The same shape with 3m live is a plain two-sided wait: 平胡 and no 獨聽.
+    const live = scoreWin(ctx({ concealed: '34545m 22p', win: '6m', melds: [chow('1p', 0), chow('2s', 1), chow('3s', 2)] }));
+    expect(keys(live)).toEqual(['all_chows']);
+  });
   it('門清自摸 is 3 台 and excludes 平胡', () => {
     const r = scoreWin(ctx({ concealed: '123m 456m 789p 45s 678s 22p', win: '3s', selfDrawn: true, fromSeat: undefined }));
     expect(keys(r)).toEqual(['concealed_self_draw']);

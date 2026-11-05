@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applyAction, legalActions, type GameState } from '../src/index';
+import { applyAction, hashState, legalActions, matchSnapshot, newGame, replayHand, type Action, type GameState } from '../src/index';
 import { dealt, discard, keysOf, nonDiscard, offers, respond, setup, tileTotal } from './helpers/state';
 
 /** Hands that can never claim, win or form a pair: seven honours and nine spaced suited tiles. */
@@ -410,5 +410,48 @@ describe('八仙過海 / 七搶一 (instant flower wins)', () => {
     expect(s.phase).toBe('discard');
     expect(s.players[2].flowers).toHaveLength(7);
     expect(s.players[0].hand).toHaveLength(17);
+  });
+
+  it('the action log of a mid-hand flower win reapplies to the same state hash', () => {
+    for (const holder of ['s0', 's1'] as const) {
+      const start = midHand({ [holder]: SEVEN });
+      const end = discard(start, 0, 'C');
+      flowerWin(end, holder === 's0' ? 'sevenRob' : 'eight');
+      let again = midHand({ [holder]: SEVEN });
+      for (const e of end.actionLog) again = applyAction(again, e.seat, e.action);
+      expect(hashState(again)).toBe(hashState(end));
+    }
+  });
+
+  /** Pass every claim, never declare, throw the drawn tile: the hand depends on the deal alone. */
+  const drift = (s: GameState): GameState => {
+    for (let steps = 0; s.phase !== 'ended'; steps++) {
+      expect(steps).toBeLessThan(3000);
+      const seat = [0, 1, 2, 3].find((i) => legalActions(s, i).length > 0)!;
+      const acts = legalActions(s, seat);
+      const pick: Action = acts.find((a) => a.type === 'pass') ?? acts.find((a) => a.type === 'discard' && a.tile === s.lastDrawn) ?? acts.find((a) => a.type === 'discard')!;
+      s = applyAction(s, seat, pick);
+    }
+    return s;
+  };
+
+  it('replayHand reproduces the state hash of seeded hands that end in a flower win', () => {
+    // fw60070 ends at the deal (七搶一); in fw46247 a seat holds seven bonus tiles after the deal and
+    // takes the eighth when another seat draws it mid-hand.
+    for (const [seed, atDeal] of [
+      ['fw60070', true],
+      ['fw46247', false],
+    ] as const) {
+      const start = newGame(seed);
+      // The snapshot from before the deal: a hand won at the deal has already been settled into `scores`.
+      const snap = { ...matchSnapshot(start), scores: [0, 0, 0, 0] };
+      const end = drift(start);
+      expect(end.result!.wins[0].score.flowerWin).toBe('sevenRob');
+      expect(end.actionLog.length === 0).toBe(atDeal);
+      expect(tileTotal(end)).toBe(144);
+      const replayed = replayHand(snap, seed, start.rules, end.actionLog);
+      expect(hashState(replayed)).toBe(hashState(end));
+      expect(replayed.result).toEqual(end.result);
+    }
   });
 });

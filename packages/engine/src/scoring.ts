@@ -250,8 +250,11 @@ function scoreDecomposition(ctx: WinContext, d: Decomposition, setsNeeded: numbe
   if (singleWait) items.push(T('single_wait', '獨聽', 'Single Wait', 1));
 
   // ---- 平胡: all chows, non-honour pair, two-sided wait, no flowers, not self-drawn ----
+  // The usual chart reading: a two-sided shape whose other side is dead (all four copies in the
+  // player's own tiles) is a one-kind wait, so the hand counts 獨聽 and not 平胡; the two never stack.
   if (
     !limitDeal &&
+    !singleWait &&
     chows.length === TOTAL_SETS &&
     !isHonorKind(d.pair) &&
     ctx.flowers.length === 0 &&
