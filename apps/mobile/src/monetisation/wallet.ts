@@ -11,6 +11,7 @@
  *
  * Pure TypeScript (no React Native), so it is unit-tested directly.
  */
+import type { BotSkill } from '@mjm/engine';
 import { COSMETICS, FREE_METERS, productById, type CoachTier } from './catalog';
 
 export interface WalletEntitlement {
@@ -183,6 +184,11 @@ const TIER_RANK: Record<CoachTier, number> = { free: 0, gold: 1, platinum: 2 };
 
 export function hasTier(wallet: Wallet, tier: CoachTier, now: number = trustedNow(wallet)): boolean {
   return TIER_RANK[coachTier(wallet, now)] >= TIER_RANK[tier];
+}
+
+/** Pro bots come with Coach Gold: a saved 'pro' choice without it (lapsed, or from an old mock grant) plays as 'club'. */
+export function allowedBotSkill(skill: BotSkill, wallet: Wallet, now: number = trustedNow(wallet)): BotSkill {
+  return skill === 'pro' && !hasTier(wallet, 'gold', now) ? 'club' : skill;
 }
 
 export function ownsCosmetic(wallet: Wallet, unlockId: string): boolean {

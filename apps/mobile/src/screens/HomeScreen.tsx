@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BOT_SKILLS, type BotSkill } from '@mjm/engine';
-import { hasTier, totalDiamonds } from '../monetisation/wallet';
+import { allowedBotSkill, hasTier, totalDiamonds } from '../monetisation/wallet';
 import { useWallet } from '../monetisation/useWallet';
 import { gateFor } from '../legal/age';
 import { useAgeGate } from '../legal/useAgeGate';
@@ -54,7 +54,7 @@ export function HomeScreen() {
 
   const playBots = () => {
     if (needsName) saveName();
-    const session = createLocalSession(app.profile.name || name.trim() || t('common.player'), app.profile.avatar, app.settings.rules, { botSkill: app.settings.botSkill });
+    const session = createLocalSession(app.profile.name || name.trim() || t('common.player'), app.profile.avatar, app.settings.rules, { botSkill: allowedBotSkill(app.settings.botSkill, app.wallet) });
     app.setSession(session);
     session.host!.start();
     app.go({ name: 'table' });
@@ -105,7 +105,7 @@ export function HomeScreen() {
     <Row style={{ flexWrap: 'wrap', rowGap: 6 }} gap={6}>
       {(Object.keys(BOT_SKILLS) as BotSkill[]).map((k) => {
         const locked = k === 'pro' && !hasTier(app.wallet, 'gold');
-        return <Chip key={k} label={botLabel(k, locale, true)} selected={app.settings.botSkill === k} locked={locked} onPress={() => (locked ? app.go({ name: 'shop' }) : app.setSettings({ ...app.settings, botSkill: k }))} />;
+        return <Chip key={k} label={botLabel(k, locale, true)} selected={allowedBotSkill(app.settings.botSkill, app.wallet) === k} locked={locked} onPress={() => (locked ? app.go({ name: 'shop' }) : app.setSettings({ ...app.settings, botSkill: k }))} />;
       })}
     </Row>
   );

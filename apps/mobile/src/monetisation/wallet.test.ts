@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { canAfford, canUse, coachRenewal, coachTier, consume, EMPTY_WALLET, hasTier, migrateWallet, mirrorMe, ownsCosmetic, showsPurchase, totalDiamonds, trustedNow, type MeWallet } from './wallet';
+import { allowedBotSkill, canAfford, canUse, coachRenewal, coachTier, consume, EMPTY_WALLET, hasTier, migrateWallet, mirrorMe, ownsCosmetic, showsPurchase, totalDiamonds, trustedNow, type MeWallet } from './wallet';
 
 const DAY = 86400_000;
 const SERVER_NOW = '2026-11-05T12:00:00.000Z';
@@ -118,5 +118,16 @@ describe('purchase detection and affordability', () => {
     const w = mirrorMe(EMPTY_WALLET, me({ wallet: { diamonds: 150, bonusDiamonds: 30 } }), S);
     expect(canAfford(w, 180)).toEqual({ ok: true, short: 0 });
     expect(canAfford(w, 240)).toEqual({ ok: false, short: 60 });
+  });
+});
+
+describe('Pro bots', () => {
+  it('a saved Pro choice plays as Club without Coach Gold, and as Pro with it', () => {
+    const free = mirrorMe(EMPTY_WALLET, me(), S);
+    expect(allowedBotSkill('pro', free, S)).toBe('club');
+    expect(allowedBotSkill('beginner', free, S)).toBe('beginner');
+    const gold = mirrorMe(EMPTY_WALLET, me({ entitlements: [{ entitlement: 'coach.gold', expiresAt: '2026-12-01T00:00:00.000Z' }] }), S);
+    expect(allowedBotSkill('pro', gold, S)).toBe('pro');
+    expect(allowedBotSkill('pro', gold, Date.parse('2027-01-01T00:00:00.000Z'))).toBe('club');
   });
 });
