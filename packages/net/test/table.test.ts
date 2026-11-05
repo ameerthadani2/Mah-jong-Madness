@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { chooseAction, legalActions, withRules } from '@mjm/engine';
+import { chooseAction, legalActions, sanitizeRules, withRules, type RuleSet } from '@mjm/engine';
 import { LoopbackHub, TableClient, TableHost, transportLink } from '../src/index';
 
 function makeTable(humans: number, opts: { latency?: number; handsPerMatch?: number } = {}) {
@@ -137,5 +137,20 @@ describe('P2P table over loopback', () => {
     const c1b = new TableClient(transportLink(hub.create('p1b'), 'host'), 'Player 1', undefined, { token });
     c1b.join();
     expect(c1b.state.seat).toBe(1);
+  });
+
+  it('a host given unsanitised rules deals with the same rule set its clients replay with', () => {
+    // Port of integration/oldrules.ts: a rule set saved by an older build (no 天/地/人胡 values) plus junk.
+    const { heavenlyTai: _h, earthlyTai: _e, humanlyTai: _u, ...old } = withRules({ handsPerMatch: 1, turnSeconds: 5 });
+    void [_h, _e, _u];
+    const hub = new LoopbackHub();
+    const host = new TableHost(hub.create('host'), { roomCode: 'OLD', rules: { ...old, evil: true } as unknown as RuleSet, matchId: 'm' });
+    const c = new TableClient(transportLink(hub.create('p0'), 'host'), 'Me');
+    c.join();
+    expect(host.rules).toEqual(sanitizeRules({ ...old, evil: true }));
+    expect(c.state.rules).toEqual(host.rules);
+    host.start();
+    autoplayHand(host, [c]);
+    expect([c.state.auditStatus, c.state.auditFailures]).toEqual(['ok', []]);
   });
 });

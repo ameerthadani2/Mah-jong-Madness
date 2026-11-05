@@ -2,7 +2,9 @@
  * Per-seat views of the table. The host strips hidden information before
  * sending state to a client so a modified client cannot see other hands, the
  * wall order, another seat's freshly drawn tile, another seat's claim options
- * or answers, or the tiles inside another seat's concealed kong.
+ * or answers (including whether it has any: `pending.awaiting` lists every
+ * other non-discarding seat until the window closes), or the tiles inside
+ * another seat's concealed kong.
  */
 import { type ClaimOffer, type ClaimResponse, type GameState, type PendingClaim, type PlayerState, tilesRemaining, drawsLeft } from './game';
 import { type Meld } from './meld';
@@ -26,7 +28,11 @@ export interface PendingView extends Omit<PendingClaim, 'offers' | 'responses'> 
   offers: ClaimOffer[];
   /** The viewer's own answer only. */
   responses: Record<number, ClaimResponse>;
-  /** Seats that still owe an answer, so the table can show who it is waiting on. */
+  /**
+   * Seats the table may still be waiting on, so it can show "waiting on seat N". Independent of who
+   * holds a claim option: every seat except the discarder is listed while the window is open, apart
+   * from the viewer itself once it has answered (or when it has nothing to answer).
+   */
   awaiting: number[];
 }
 
@@ -47,14 +53,16 @@ function hideMeld(m: Meld): Meld {
 function pendingFor(p: PendingClaim, seat: number): PendingView {
   const { offers, responses, ...rest } = p;
   const mine = responses[seat];
+  const own = offers.filter((o) => o.seat === seat);
+  // Who holds an option, and who has answered, would tell the viewer which seats can pong, kong or
+  // win on this tile. So every other non-discarding seat is listed until the window closes; only the
+  // viewer's own entry follows what the viewer already knows (it drops out once it owes nothing).
+  const viewerOwes = own.length > 0 && mine === undefined;
   return {
     ...rest,
-    offers: offers.filter((o) => o.seat === seat),
+    offers: own,
     responses: mine === undefined ? {} : { [seat]: mine },
-    awaiting: offers
-      .filter((o) => responses[o.seat] === undefined)
-      .map((o) => o.seat)
-      .sort((a, b) => a - b),
+    awaiting: [0, 1, 2, 3].filter((s) => s !== p.from && (s !== seat || viewerOwes)),
   };
 }
 

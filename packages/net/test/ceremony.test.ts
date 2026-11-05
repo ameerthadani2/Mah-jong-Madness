@@ -180,7 +180,7 @@ describe('ceremony accounting on the host', () => {
     expect(host.serialize().restarts).toEqual([]);
   });
 
-  it(`gives up after ${MAX_CEREMONY_ATTEMPTS} attempts at one hand and returns to the lobby`, () => {
+  it(`gives up after ${MAX_CEREMONY_ATTEMPTS} attempts at one hand, returns to the lobby, and a seated player's start deals again`, () => {
     const clock = { now: 1_000_000 };
     const hub = new LoopbackHub();
     const host = makeHost(hub, clock);
@@ -194,6 +194,11 @@ describe('ceremony accounting on the host', () => {
     expect(host.phase).toBe('lobby');
     expect(p.received.filter((m) => m.t === 'commit_request')).toHaveLength(MAX_CEREMONY_ATTEMPTS);
     expect(p.received.some((m) => m.t === 'error' && m.code === 'ceremony_failed')).toBe(true);
+    // The table is not stuck there: the seated player asks to start and the hand is dealt afresh.
+    p.t.send('host', { t: 'start' });
+    expect(host.phase).toBe('reveal');
+    expect(p.received.filter((m) => m.t === 'commit_request')).toHaveLength(MAX_CEREMONY_ATTEMPTS + 1);
+    expect(host.serialize().ceremonyAttempts).toBe(1);
   });
 
   it('counts hands won per seat and reports the result on hand_over events', () => {

@@ -89,8 +89,6 @@ describe('client hardening', () => {
       { t: 'hand_over' },
       { t: 'hand_over', view, result: {}, audit: { commits: 5 } },
       { t: 'hand_over', view, result: {}, audit: { handNumber: 0, seed: 's', commits: [], reveals: null, log: [] } },
-      // Passes the shape guard but throws inside the verifier: caught by the message handler.
-      { t: 'hand_over', view, result: {}, audit: { handNumber: 0, seed: 's', commits: [null], reveals: [null], log: [] } },
       { t: 'commits', handNumber: 0, commits: 'x' },
       { t: 'commits', handNumber: 0, commits: [{ seat: 0, hash: 'zz' }, 1, 2, 3, 4] },
       { t: 'match_over', view: 7, scores: [0, 0, 0, 0] },
@@ -111,6 +109,11 @@ describe('client hardening', () => {
     // A malformed audit handed to the verifier is a failure, not an exception.
     const bad = c.verifyAudit({ handNumber: 0 } as unknown as Audit, view as unknown as TableView);
     expect(bad.status).toBe('failed');
+    // An audit that passes the shape guard but holds junk share lists is checked (not thrown on) and fails.
+    expect(() => fake.send('p0', { t: 'hand_over', view, result: {}, audit: { handNumber: 0, seed: 's', commits: [null], reveals: [null], log: [] } })).not.toThrow();
+    expect(c.state.auditStatus).toBe('failed');
+    expect(c.state.auditFailures).toContain('Audit must list exactly one commitment for each of seats 0–4');
+    expect(c.state.auditFailures).toContain('Audit must list exactly one secret for each of seats 0–4');
   });
 
   it('a client notices when its own transport closes', () => {

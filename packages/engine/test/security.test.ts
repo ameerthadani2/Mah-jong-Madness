@@ -135,8 +135,13 @@ describe('seat views do not leak hidden information', () => {
             expect(p.kind).toBe(s.pending.kind);
             expect(p.offers.every((o) => o.seat === seat)).toBe(true);
             expect(Object.keys(p.responses).every((k) => Number(k) === seat)).toBe(true);
-            const owed = s.pending.offers.filter((o) => s.pending!.responses[o.seat] === undefined).map((o) => o.seat);
-            expect(p.awaiting).toEqual(owed.sort((a, b) => a - b));
+            // `awaiting` must not betray who holds a claim option (verify-ceremony/p.ts): every other
+            // non-discarding seat is listed whatever its offers and answers; only the viewer's own entry
+            // follows the viewer's own offer.
+            const others = [0, 1, 2, 3].filter((x) => x !== s.pending!.from && x !== seat);
+            expect(p.awaiting.filter((x) => x !== seat)).toEqual(others);
+            const owes = s.pending.offers.some((o) => o.seat === seat) && s.pending.responses[seat] === undefined;
+            expect(p.awaiting.includes(seat)).toBe(owes);
             if (s.pending.offers.some((o) => o.seat !== seat)) seen.claimsWithOthers++;
           } else expect(v.pending).toBeUndefined();
           let placeholders = 0;
@@ -174,6 +179,32 @@ describe('seat views do not leak hidden information', () => {
     expect(seen.claimsWithOthers).toBeGreaterThan(0);
     expect(seen.otherConcealedKongs).toBeGreaterThan(0);
     expect(seen.endedKongsRevealed).toBeGreaterThan(0);
+  });
+
+  it('pending.awaiting reads the same whether or not another seat can pong, kong or win', () => {
+    // Port of verify-ceremony/p.ts: a seat listed in `awaiting` that is not next after the
+    // discarder used to mean it held a pong, kong or win on the discard.
+    let windows = 0;
+    let withNonNextOffer = 0;
+    for (let i = 0; i < 20; i++) {
+      let s = newGame(`leak-${i}`);
+      for (let guard = 0; guard < 3000 && s.phase !== 'ended'; guard++) {
+        if (s.pending) {
+          windows++;
+          const next = (s.pending.from + 1) % 4;
+          if (s.pending.offers.some((o) => o.seat !== next)) withNonNextOffer++;
+          for (let viewer = 0; viewer < 4; viewer++) {
+            const listed = viewFor(s, viewer).pending!.awaiting.filter((x) => x !== viewer);
+            expect(listed).toEqual([0, 1, 2, 3].filter((x) => x !== s.pending!.from && x !== viewer));
+          }
+        }
+        const step = nextAction(s);
+        if (!step) break;
+        s = applyAction(s, step.seat, step.action);
+      }
+    }
+    expect(windows).toBeGreaterThan(0);
+    expect(withNonNextOffer).toBeGreaterThan(0);
   });
 
   it('過水 is visible only to its own seat while the hand runs', () => {

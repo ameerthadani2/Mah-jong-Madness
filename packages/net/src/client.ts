@@ -4,11 +4,12 @@
  *
  * The client never takes the host's word for how the ceremony went: it records
  * what it saw itself (which hands it was asked to commit to, how many attempts,
- * whether it was stood in, whether the commitments arrived before it revealed)
- * and checks the audit against that record.
+ * whether it was stood in, whether the commitments arrived before it revealed,
+ * whether it revealed in each attempt, whether its link dropped, and where the
+ * previous hand left the match) and checks the audit against that record.
  */
-import { hashState, replayHand, sanitizeRules, stableStringify, viewToState, WALL_RNG_VERSION, type Action, type GameState, type HandResult, type MatchSnapshot, type RuleSet, type TableView } from '@mjm/engine';
-import { commitFor, deriveSeed, makeSecret, verifyReveals, type Commitment } from './fairness';
+import { advanceMatch, hashState, replayHand, sanitizeRules, stableStringify, viewToState, WALL_RNG_VERSION, type Action, type GameState, type HandResult, type MatchSnapshot, type RuleSet, type TableView } from '@mjm/engine';
+import { commitFor, deriveSeed, makeSecret, SHARE_SEATS, verifyReveals, type Commitment, type Reveal } from './fairness';
 import type { Link } from './host';
 import { RESTART_CAUSES, type Audit, type ClientMessage, type HostMessage, type SeatInfo } from './messages';
 import type { Transport, Unsubscribe } from './transport';
@@ -99,14 +100,47 @@ function isAudit(a: unknown): a is Audit {
 
 /** Five commitments, one per seat 0–4, each a SHA-256 hex digest. */
 function isCommitSet(c: unknown): c is Commitment[] {
-  if (!Array.isArray(c) || c.length !== 5) return false;
+  if (!Array.isArray(c) || c.length !== SHARE_SEATS) return false;
   const seats = new Set<number>();
   for (const x of c) {
-    if (!isObject(x) || !isInt(x.seat) || x.seat < 0 || x.seat > 4 || typeof x.hash !== 'string' || !HEX64.test(x.hash)) return false;
+    if (!isObject(x) || !isInt(x.seat) || x.seat < 0 || x.seat >= SHARE_SEATS || typeof x.hash !== 'string' || !HEX64.test(x.hash)) return false;
     seats.add(x.seat);
   }
-  return seats.size === 5;
+  return seats.size === SHARE_SEATS;
 }
+
+/**
+ * Five reveals, one per seat 0–4: nothing extra for the seed to absorb. Whether each secret matches
+ * its commitment (and is hex, as deriveSeed requires) is checked separately.
+ */
+function isRevealSet(r: unknown): r is Reveal[] {
+  if (!Array.isArray(r) || r.length !== SHARE_SEATS) return false;
+  const seats = new Set<number>();
+  for (const x of r) {
+    if (!isObject(x) || !isInt(x.seat) || x.seat < 0 || x.seat >= SHARE_SEATS || typeof x.secret !== 'string') return false;
+    seats.add(x.seat);
+  }
+  return seats.size === SHARE_SEATS;
+}
+
+/** The same commitments, whatever their order. */
+function sameCommitSet(a: Commitment[], b: Commitment[]): boolean {
+  const key = (set: Commitment[]) => set.map((c) => `${c.seat}=${c.hash}`).sort().join('|');
+  return key(a) === key(b);
+}
+
+/** What this client saw of one ceremony attempt. */
+interface AttemptRecord {
+  /** We sent a commitment for this attempt. */
+  committed: boolean;
+  /** We sent our secret in this attempt. */
+  revealed: boolean;
+  /** The host told us it supplied our share in this attempt. */
+  stoodIn: boolean;
+}
+
+/** Match fields a hand must start from, as the previous hand left them. */
+const CHAINED_FIELDS = ['scores', 'dealerSeat', 'dealerStreak', 'dealerRotations', 'prevailingWind'] as const;
 
 export class TableClient {
   state: ClientState = {
@@ -162,6 +196,17 @@ export class TableClient {
   private readonly tamper = new Map<number, string[]>();
   /** Match snapshot at the start of the current hand, needed to replay the audit. */
   private handStart: MatchSnapshot | null = null;
+  /**
+   * Every attempt at the current hand's ceremony this client was asked to commit to, in order
+   * (one entry per `commit_request`), and whether its link dropped while that hand was dealt.
+   */
+  private record: { hand: number; attempts: AttemptRecord[]; linkLost: boolean } | null = null;
+  /** This client's link to the host dropped (or the seat was opened elsewhere). */
+  private linkLost = false;
+  /** Where the last verified hand left the match: the next hand must start exactly there. */
+  private expected: MatchSnapshot | null = null;
+  /** Hand number already compared against `expected`. */
+  private chainChecked: number | null = null;
   private readonly listeners = new Set<(s: ClientState) => void>();
   private readonly unsub: Unsubscribe;
 
@@ -178,7 +223,10 @@ export class TableClient {
         this.update({ lastError: `Ignored a malformed message from the table (${(e as Error).message}).` });
       }
     });
-    link.onClose?.(() => this.update({ connected: false, disconnected: true, lastError: 'Connection to the table was lost.' }));
+    link.onClose?.(() => {
+      this.noteLinkLost();
+      this.update({ connected: false, disconnected: true, lastError: 'Connection to the table was lost.' });
+    });
     if (identity.token) this.state = { ...this.state, token: identity.token };
   }
 
@@ -261,6 +309,39 @@ export class TableClient {
     if (this.commitHand !== hand) this.joinedHand = hand;
   }
 
+  private noteLinkLost(): void {
+    this.linkLost = true;
+    if (this.record) this.record.linkLost = true;
+  }
+
+  /** The attempt the host is currently running for `hand`, as this client recorded it. */
+  private currentAttempt(hand: number): AttemptRecord | null {
+    if (!this.record || this.record.hand !== hand) return null;
+    return this.record.attempts[this.record.attempts.length - 1] ?? null;
+  }
+
+  /**
+   * A hand must start where the previous verified hand left the match (advanceMatch of its replay):
+   * same scores, dealer, streak, rotations and wind, and the next hand number. Skipped for the first
+   * hand this client sees (it joined mid-match or the match just began).
+   */
+  private checkChain(start: MatchSnapshot): void {
+    const e = this.expected;
+    const h = start.handNumber;
+    if (!e || this.chainChecked === h) return;
+    this.chainChecked = h;
+    if (e.matchOver) {
+      this.flag(h, 'Host dealt another hand after the match was over');
+      return;
+    }
+    if (h !== e.handNumber) {
+      this.flag(h, 'Host dealt a hand out of turn');
+      return;
+    }
+    const changed = CHAINED_FIELDS.filter((k) => stableStringify(start[k]) !== stableStringify(e[k]));
+    if (changed.length > 0) this.flag(h, `Hand started with ${changed.join(', ')} different from where the previous hand left them`);
+  }
+
   private onMessage(m: HostMessage): void {
     if (!isObject(m) || typeof m.t !== 'string') return;
     switch (m.t) {
@@ -279,7 +360,15 @@ export class TableClient {
           this.flag(h, 'Host re-dealt a hand in progress');
           return;
         }
+        // Hands follow one another: never one already played, and only the one the last hand leads to.
+        if ([...this.handsEnded].some((e) => e >= h)) {
+          this.flag(h, 'Host asked to deal a hand that was already played');
+          if (this.expected && this.expected.handNumber !== h) this.flag(this.expected.handNumber, 'Host asked to deal a hand that was already played');
+        } else if (this.expected?.matchOver) this.flag(h, 'Host dealt another hand after the match was over');
+        else if (this.expected && h !== this.expected.handNumber) this.flag(h, 'Host dealt a hand out of turn');
         if (this.firstHand === null) this.firstHand = h;
+        if (!this.record || this.record.hand !== h) this.record = { hand: h, attempts: [], linkLost: this.linkLost };
+        this.record.attempts.push({ committed: true, revealed: false, stoodIn: false });
         this.attemptsSeen.set(h, (this.attemptsSeen.get(h) ?? 0) + 1);
         this.humansAt.set(h, Math.max(this.humansAt.get(h) ?? 0, this.state.seats.filter((s) => !s.isBot).length));
         this.secret = makeSecret();
@@ -297,9 +386,14 @@ export class TableClient {
         // kept: the audit must still show it was not used.
         if (m.handNumber !== this.commitHand || this.state.ceremony !== 'committed') return;
         this.standInHand = m.handNumber;
+        {
+          const attempt = this.currentAttempt(m.handNumber);
+          if (attempt) attempt.stoodIn = true;
+        }
         this.update({ standIn: true });
         return;
       case 'disconnected':
+        this.noteLinkLost();
         this.update({ connected: false, disconnected: true, lastError: 'This seat was opened on another device.' });
         return;
       case 'commits': {
@@ -308,6 +402,13 @@ export class TableClient {
         if (!isCommitSet(m.commits)) {
           this.flag(h, 'Host published a malformed set of commitments');
           this.update({ lastError: 'The table sent a malformed set of commitments.' });
+          return;
+        }
+        if (this.commits && this.commitsHand === h) {
+          // Published once per attempt; only a new commit_request opens the next set. An honest host
+          // re-sends the same set (to a returning seat); a different one would let it re-pick its
+          // own share after seeing ours.
+          if (!sameCommitSet(this.commits, m.commits)) this.flag(h, 'Host changed the commitments after publishing them');
           return;
         }
         if (this.secret && this.commitHand === h && this.standInHand !== h) {
@@ -330,6 +431,10 @@ export class TableClient {
           this.flag(h, 'Host asked for my secret before publishing all commitments');
           return;
         }
+        {
+          const attempt = this.currentAttempt(h);
+          if (attempt) attempt.revealed = true;
+        }
         this.send({ t: 'reveal', secret: this.secret });
         this.update({ ceremony: 'revealed' });
         return;
@@ -341,7 +446,10 @@ export class TableClient {
         }
         this.noteHand(m.view.handNumber);
         const first = !this.state.view || this.state.view.handNumber !== m.view.handNumber || this.state.lastResult !== null;
-        if (first || !this.handStart) this.handStart = snapshotFromView(m.view);
+        if (first || !this.handStart) {
+          this.handStart = snapshotFromView(m.view);
+          this.checkChain(this.handStart);
+        }
         this.update({ view: m.view, stateHash: m.hash, deadline: m.deadline, timeBank: m.timeBank, inTimeBank: m.inTimeBank, lastResult: null, lastError: null, ceremony: 'idle' });
         return;
       }
@@ -351,9 +459,16 @@ export class TableClient {
           return;
         }
         this.noteHand(m.audit.handNumber);
+        // A hand that ended at the deal sends no state first: check where it started from its end.
+        if (!this.handStart || this.handStart.handNumber !== m.audit.handNumber) this.checkChain(snapshotFromView(m.view, true));
         this.handsEnded.add(m.audit.handNumber);
-        const { status, failures, caveats } = this.verifyAudit(m.audit, m.view, m.result);
-        const audits = this.state.audits.some((a) => a.audit.handNumber === m.audit.handNumber && a.audit.matchId === m.audit.matchId)
+        const { check, replayed } = this.runAudit(m.audit, m.view, m.result);
+        const { status, failures, caveats } = check;
+        // The next hand must start where this one, as replayed, left the match.
+        this.expected = replayed && hashState(replayed) === m.audit.finalHash ? nextHand(replayed) : null;
+        this.chainChecked = null;
+        // An honest host re-sends the same audit to a returning seat; a different audit for the same hand stays on the record.
+        const audits = this.state.audits.some((a) => a.audit.handNumber === m.audit.handNumber && a.audit.matchId === m.audit.matchId && stableStringify(a.audit) === stableStringify(m.audit))
           ? this.state.audits
           : [...this.state.audits, { audit: m.audit, status, failures, caveats }];
         this.update({ view: m.view, lastResult: m.result, lastAudit: m.audit, auditStatus: status, auditFailures: failures, auditCaveats: caveats, deadline: null, audits });
@@ -391,50 +506,68 @@ export class TableClient {
    * a replay of the log, and the ceremony accounting.
    */
   verifyAudit(audit: Audit, finalView: TableView, announced?: HandResult): AuditCheck {
+    return this.runAudit(audit, finalView, announced).check;
+  }
+
+  /** verifyAudit, plus the replayed final state when the replay ran (to chain the next hand onto). */
+  private runAudit(audit: Audit, finalView: TableView, announced?: HandResult): { check: AuditCheck; replayed: GameState | null } {
     const failures: string[] = [];
     const caveats: string[] = [];
-    if (!this.state.rules || !this.state.matchId) return { status: 'unverified', failures: ['No match context'], caveats };
-    if (!isAudit(audit) || !isView(finalView)) return { status: 'failed', failures: ['The audit is malformed'], caveats };
+    let replayed: GameState | null = null;
+    if (!this.state.rules || !this.state.matchId) return { check: { status: 'unverified', failures: ['No match context'], caveats }, replayed };
+    if (!isAudit(audit) || !isView(finalView)) return { check: { status: 'failed', failures: ['The audit is malformed'], caveats }, replayed };
     const h = audit.handNumber;
     const me = this.state.seat;
 
     // 1. Anything the host did wrong while the hand was under way.
     failures.push(...(this.tamper.get(h) ?? []));
 
-    // 2. Participation.
+    // 2. Exactly one commitment and one secret per seat 0–4: an extra share would let the host move the seed.
+    const commitsOk = isCommitSet(audit.commits);
+    const revealsOk = isRevealSet(audit.reveals);
+    if (!commitsOk) failures.push('Audit must list exactly one commitment for each of seats 0–4');
+    if (!revealsOk) failures.push('Audit must list exactly one secret for each of seats 0–4');
+
+    // 3. Participation.
     const tookPart = this.commitHand === h;
     const stoodIn = this.standInHand === h;
     const joined = !tookPart && this.joinedHand === h;
     if (joined) caveats.push('Joined during this hand; log verified, share not used');
     else if (!tookPart) failures.push('Host never asked this seat to commit');
 
-    // 3. Our own share.
+    // 4. Our own share.
     if (tookPart && stoodIn) caveats.push("The host supplied this seat's share");
     else if (tookPart && this.secret) {
-      const mine = audit.commits.find((c) => c.seat === me);
+      const mine = commitsOk ? audit.commits.find((c) => c.seat === me) : undefined;
       if (!mine || mine.hash !== commitFor(this.secret)) failures.push('Host altered my commitment');
-      const myReveal = audit.reveals.find((r) => r.seat === me);
+      const myReveal = revealsOk ? audit.reveals.find((r) => r.seat === me) : undefined;
       if (!myReveal || myReveal.secret !== this.secret) failures.push('Host altered my secret');
     }
 
-    // 4. The commitments we were shown before revealing.
+    // 5. The commitments we were shown before revealing.
     if (this.commits && this.commitsHand === h) {
       for (const c of this.commits) {
-        const a = audit.commits.find((x) => x.seat === c.seat);
+        const a = commitsOk ? audit.commits.find((x) => x.seat === c.seat) : undefined;
         if (!a || a.hash !== c.hash) failures.push(`Commitment for seat ${c.seat} changed after the fact`);
       }
     } else if (tookPart) failures.push('The commitments for this hand never arrived');
 
-    // 5. Reveals, seed and replay.
-    const rv = verifyReveals(audit.commits, audit.reveals);
-    if (!rv.ok) failures.push(`Reveals do not match commitments for seats ${rv.badSeats.join(', ')}`);
-    if (audit.commits.length !== 5 || !audit.commits.some((c) => c.seat === 4)) failures.push('Audit is missing a contributor share');
+    // 6. Reveals, seed and replay.
+    if (commitsOk && revealsOk) {
+      const rv = verifyReveals(audit.commits, audit.reveals);
+      if (!rv.ok) failures.push(`Reveals do not match commitments for seats ${rv.badSeats.join(', ')}`);
+      let seed: string | null = null;
+      try {
+        seed = deriveSeed(`${this.state.matchId}:${h}`, audit.reveals);
+      } catch {
+        seed = null;
+      }
+      if (seed !== audit.seed) failures.push('Seed was not derived from the revealed secrets');
+    }
     if (audit.rngVersion !== WALL_RNG_VERSION) failures.push(`Unknown shuffle construction ${audit.rngVersion}`);
-    const seed = deriveSeed(`${this.state.matchId}:${h}`, audit.reveals);
-    if (seed !== audit.seed) failures.push('Seed was not derived from the revealed secrets');
     const start = this.handStart && this.handStart.handNumber === h ? this.handStart : snapshotFromView(finalView, true);
     try {
-      const replayed = replayHand(start, audit.seed, this.state.rules, audit.log);
+      replayed = replayHand(start, audit.seed, this.state.rules, audit.log);
       if (hashState(replayed) !== audit.finalHash) failures.push('Replaying the action log does not reproduce the final state');
       // The result and scores the host announced must be the ones the replay produces.
       if (announced && stableStringify(replayed.result) !== stableStringify(announced)) failures.push('Announced result differs from the replayed hand');
@@ -449,11 +582,11 @@ export class TableClient {
       failures.push(`Replay failed: ${(e as Error).message}`);
     }
 
-    // 6. Ceremony accounting: restarts must be the ones an honest table could produce.
+    // 7. Ceremony accounting: restarts must be the ones an honest table could produce.
     failures.push(...this.checkAccounting(audit));
 
     const status: AuditStatus = failures.length > 0 ? 'failed' : caveats.length > 0 ? 'partial' : 'ok';
-    return { status, failures, caveats };
+    return { check: { status, failures, caveats }, replayed };
   }
 
   private checkAccounting(audit: Audit): string[] {
@@ -476,12 +609,56 @@ export class TableClient {
         else if (this.state.seats[s]?.isBot) failures.push(`Restart ${i + 1} blames seat ${s + 1}, which is a bot`);
       }
     });
+    // A blamed seat gets a host-supplied share for the rest of the hand, so it is never the reason
+    // for a second restart.
+    const blamed = new Set<number>();
+    restarts.forEach((r, i) => {
+      if (!isObject(r) || !Array.isArray(r.seats)) return;
+      const named = r.seats.filter(isInt);
+      for (const s of named) if (blamed.has(s)) failures.push(`Restart ${i + 1} blames seat ${s + 1} again after the host had stood it in`);
+      for (const s of named) blamed.add(s);
+    });
     const seen = this.attemptsSeen.get(h) ?? 0;
     // Without a rejoin we saw every attempt; after one we may have missed earlier attempts of the first hand.
     const sawFirstAttempt = !this.rejoined || this.handsEnded.has(h - 1);
     if (sawFirstAttempt && seen > 0 && attempts !== seen) failures.push(`Audit reports ${attempts} ceremony attempts but this seat was asked to commit ${seen} times`);
     else if (attempts < seen) failures.push(`Audit reports ${attempts} ceremony attempts but this seat was asked to commit ${seen} times`);
+    failures.push(...this.checkOwnAttempts(h, attempts, restarts, sawFirstAttempt));
     return failures;
+  }
+
+  /**
+   * Compare the restarts with what this client saw of every attempt itself. Only when it saw them
+   * all (no rejoin) and never lost its link: then a restart with nobody to blame cannot be honest
+   * (only a host that crashed restarts that way, and that drops every link), and a restart that
+   * blames this seat must follow an attempt it did not reveal in, or be followed by a stand-in.
+   * Otherwise a host could re-deal after seeing this seat's secret.
+   */
+  private checkOwnAttempts(h: number, attempts: number, restarts: unknown[], sawFirstAttempt: boolean): string[] {
+    const rec = this.record && this.record.hand === h ? this.record : null;
+    if (!rec || !sawFirstAttempt || rec.linkLost || rec.attempts.length !== attempts) return [];
+    const me = this.state.seat;
+    const failures: string[] = [];
+    restarts.forEach((r, i) => {
+      if (!isObject(r) || !Array.isArray(r.seats)) return;
+      if (r.seats.length === 0 || r.cause === 'host_restarted') failures.push(`Restart ${i + 1} blames no seat, yet this seat saw every attempt without losing its link`);
+      if (me === null || !r.seats.includes(me)) return;
+      const at = rec.attempts[i];
+      const next = rec.attempts[i + 1];
+      if (at?.stoodIn) failures.push(`Restart ${i + 1} blames this seat although the host had stood it in`);
+      else if (at?.revealed && !next?.stoodIn) failures.push(`Restart ${i + 1} blames this seat although it revealed, and the host then asked it for a new share instead of standing it in`);
+    });
+    return failures;
+  }
+}
+
+/** The match state the hand after `prev` starts from, or null when there is none. */
+function nextHand(prev: GameState): MatchSnapshot | null {
+  if (prev.phase !== 'ended' || !prev.result) return null;
+  try {
+    return advanceMatch(prev);
+  } catch {
+    return null;
   }
 }
 
