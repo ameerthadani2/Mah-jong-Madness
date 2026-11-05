@@ -1,19 +1,31 @@
+/**
+ * The table. This screen owns the state (session, selection, reactions, call-outs, the result hold) and
+ * composes the pieces in components/table: TableHud, Felt, HandRail, ActionBar, CoachPanel, CallBanner
+ * and ResultSheet. Layout rules live in components/table/layout.ts; sounds in src/audio.
+ */
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import { Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { hintFor, kindInfo, kindOf, legalActions, viewToState, WINDS, type Action, type GameState, type HandResult, type Hint, type TableView, type TileId, type WinRecord } from '@mjm/engine';
-import type { ClientState } from '@mjm/net';
+import { hintFor, kindInfo, kindOf, legalActions, viewToState, WINDS, type Action, type GameState, type Hint, type TileId } from '@mjm/engine';
 import { useApp } from '../app-state';
-import { useConnection, useCountdown, useSession } from '../game/useTable';
+import { useClockTick, useConnection, useCountdown, useSession, useTableEvents } from '../game/useTable';
 import { nextFadeDelay } from '../logic/fade';
-import { colors, fonts, nameFont, space } from '../theme';
-import { Tile, HiddenHand, tileDims, type TileSize } from '../components/Tile';
-import { Compass, DiscardPool, FeltFrame, MeldsAndFlowers, MeldView, SeatBadge, WallRing } from '../components/TableParts';
+import { colors, fonts, nameFont } from '../theme';
+import { Tile } from '../components/Tile';
+import { Compass } from '../components/TableParts';
 import type { SeatReaction, SeatReactionKind } from '../components/SeatMotion';
-import { Button, IconButton, P, Pill, Row, StrokeText, type ButtonKind } from '../components/Ui';
+import { Button, P } from '../components/Ui';
 import { Icon } from '../components/Icons';
-import { AvatarPlate, CoachOwl, seatAvatarId } from '../components/Avatars';
 import { Emote } from '../components/Emotes';
+import { ActionBar } from '../components/table/ActionBar';
+import { CallBanner, WinReveal, type Callout } from '../components/table/CallBanner';
+import { Felt, type PlateProps } from '../components/table/Felt';
+import { HandRail } from '../components/table/HandRail';
+import { ACTION_STRIP_H, handLayout, tableLayout } from '../components/table/layout';
+import { RESULT_HOLD_MS } from '../components/table/feel';
+import { MatchOverSheet, ResultSheet } from '../components/table/ResultSheet';
+import { TableHud } from '../components/table/TableHud';
+import { useSfx, type TableEvent } from '../audio';
 
 import * as Haptics from 'expo-haptics';
 import { EMOTES, QUICK_CHATS, quickChatText, TableThemeContext, themeById } from '../themes';
@@ -26,12 +38,15 @@ const CHAT_MS = 6000;
 /** Hands whose result has already been celebrated (survives the table screen remounting). */
 const celebratedHands = new Set<string>();
 
+const REACTION: Record<'chi' | 'pong' | 'kong', SeatReactionKind> = { chi: 'chow', pong: 'pong', kong: 'kong' };
+
 export function TableScreen() {
   const app = useApp();
   const { t } = useT();
   const session = app.session;
   const state = useSession(session);
   const conn = useConnection(session);
+  const sfx = useSfx();
   const { width: winW, height } = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const width = winW - insets.left - insets.right;
@@ -77,29 +92,21 @@ export function TableScreen() {
     if (!myMove) setSelected(null);
   }, [myMove]);
 
-  // Table events become seat reactions: call-outs for claims, a celebration for winners, a shake for the discarder.
+  // Table events: sounds, the centre call-out and the seat reactions (call-outs for claims, a celebration
+  // for winners, a shake for the discarder).
   const [reactions, setReactions] = useState<Record<number, SeatReaction>>({});
   const reactionKey = useRef(0);
-  const meldSig = useRef<{ hand: number; melds: number[]; kongs: number[] } | null>(null);
   const fire = (seat: number, kind: SeatReactionKind) => setReactions((r) => ({ ...r, [seat]: { kind, key: ++reactionKey.current } }));
-  useEffect(() => {
-    if (!view) return;
-    const melds = view.players.map((p) => p.melds.length);
-    const kongs = view.players.map((p) => p.melds.filter((m) => m.type === 'kong').length);
-    const prev = meldSig.current;
-    if (prev && prev.hand === view.handNumber) {
-      view.players.forEach((p, seat) => {
-        if (melds[seat] > prev.melds[seat]) {
-          const m = p.melds[p.melds.length - 1];
-          fire(seat, m.type === 'chow' ? 'chow' : m.type === 'pong' ? 'pong' : 'kong');
-        } else if (kongs[seat] > prev.kongs[seat]) {
-          fire(seat, 'kong');
-        }
-      });
-    }
-    meldSig.current = { hand: view.handNumber, melds, kongs };
-  }, [view]);
-  // Hold the result sheet back briefly so the win celebration is visible first — once per hand,
+  const [callout, setCallout] = useState<Callout | null>(null);
+  useTableEvents(state, (events: TableEvent[]) => {
+    sfx.playEvents(events);
+    for (const e of events) if (e.type === 'call' && e.call !== 'hu' && e.call !== 'selfdraw') fire(e.seat, REACTION[e.call]);
+    const last = [...events].reverse().find((e) => e.type === 'call');
+    if (last && last.type === 'call') setCallout({ call: last.call, seat: last.seat, key: ++reactionKey.current });
+  });
+  useClockTick(countdown, myMove, () => sfx.sfx('tick'));
+
+  // Hold the result sheet back so the call-out and the winner's face-up hand are seen first — once per hand,
   // so coming back from the review or fair-play screen shows the results straight away.
   const resultKey = state?.lastResult && state.lastAudit ? `${state.lastAudit.matchId}:${state.lastAudit.handNumber}` : null;
   const [showResult, setShowResult] = useState(() => resultKey !== null && celebratedHands.has(resultKey));
@@ -120,7 +127,7 @@ export function TableScreen() {
         if (!w.selfDrawn && w.fromSeat !== undefined) fire(w.fromSeat, 'dealin');
       }
     }
-    const timer = setTimeout(() => setShowResult(true), res.type === 'win' ? 1800 : 600);
+    const timer = setTimeout(() => setShowResult(true), res.type === 'win' ? RESULT_HOLD_MS.win : RESULT_HOLD_MS.draw);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state?.lastResult]);
@@ -155,6 +162,7 @@ export function TableScreen() {
   }
 
   const act = (a: Action) => {
+    if (a.type !== 'discard') sfx.sfx('tap');
     session.client.act(a);
     setSelected(null);
   };
@@ -171,39 +179,19 @@ export function TableScreen() {
   const onTile = (tile: TileId) => {
     if (!canDiscard) return;
     if (selected === tile) act({ type: 'discard', tile });
-    else setSelected(tile);
+    else {
+      sfx.sfx('tap');
+      setSelected(tile);
+    }
   };
 
   // ---- Layout -------------------------------------------------------
-  const portrait = height > width;
-  const tablet = Math.min(width, height) >= 680;
-  const compact = height < 420;
-  // On short screens the side columns have no room under the opponent panel: show the coach in the centre instead.
-  const coachInCenter = portrait || height < 520;
-  const sideWidth = portrait ? Math.max(84, Math.min(110, Math.floor(width * 0.24))) : width >= 1000 ? 214 : width >= 760 ? 150 : 128;
-  const plate = tablet ? 50 : portrait ? 34 : 32;
-  const pool: TileSize = tablet ? 'sm' : 'xs';
-  const poolW = tileDims(pool).w + 2;
-  const rail = tablet ? 15 : 11;
-  const feltInnerW = width - 16 - (rail + 3) * 2;
-  const centerW = feltInnerW - sideWidth * 2 - 16;
-  const centerPerRow = Math.max(5, Math.min(portrait ? 8 : 12, Math.floor(centerW / poolW)));
-  const sidePerRow = Math.max(3, Math.min(7, Math.floor((sideWidth - 4) / poolW)));
-
-  // The hand spans the full width under the table, so 17 tiles + the drawn-tile gap always fit.
-  const smW = tileDims('sm').w;
-  // Landscape: my melds sit right of the hand; my flowers sit under my avatar.
-  const meldW = me.melds.reduce((acc, m) => acc + m.tiles.length * (smW + 1) + 8, 0);
-  const myPlateW = portrait ? 0 : tablet ? 124 : 82;
-  // Slots for a full hand (16 − 3 per meld, +1 drawn) so the tile size does not jump between turns.
-  const slots = Math.max((me.hand ?? []).length, 17 - 3 * me.melds.length, 2);
-  const handRoom = width - 24 - myPlateW - (portrait ? 0 : meldW + (meldW ? 10 : 0)) - 12;
-  // Portrait (phone held upright, e.g. the web preview): the hand wraps into two rows of nine.
-  const handTile = portrait ? Math.max(28, Math.min(48, Math.floor((handRoom - 4) / 9.4))) : Math.max(24, Math.min(compact ? 42 : tablet ? 60 : 50, Math.floor((handRoom - 10) / slots) - 2));
+  const L = tableLayout(width, height);
+  const hand = handLayout(width, L, (me.hand ?? []).length, me.melds.reduce((n, m) => n + m.tiles.length, 0), me.melds.length);
 
   const seatAt = (r: number) => (mySeat + r) % 4;
   const seatInfo = (seat: number) => state.seats.find((s) => s.seat === seat);
-  const latestDiscard = view.lastDiscard?.tile;
+  const seatName = (seat: number) => seatInfo(seat)?.name ?? t('table.seat', { n: seat + 1 });
   const now = Date.now();
   const latestEmote = (seat: number) => {
     const e = [...state.emotes].reverse().find((x) => x.seat === seat && now - x.at < EMOTE_MS);
@@ -214,7 +202,7 @@ export function TableScreen() {
   const timerSeat = myMove ? mySeat : turnSeat;
   const timerFrac = countdown !== null && rules ? countdown / Math.max(1, state.inTimeBank ? rules.timeBankSeconds || 1 : rules.turnSeconds || 1) : null;
   const timerUrgent = state.inTimeBank || (countdown !== null && countdown <= 5);
-  const plateProps = (seat: number) => ({
+  const plateProps = (seat: number): PlateProps => ({
     seat,
     info: seatInfo(seat),
     player: view.players[seat],
@@ -228,212 +216,80 @@ export function TableScreen() {
     reaction: reactions[seat],
   });
 
-  const topSeat = () => {
-    const seat = seatAt(2);
-    const p = view.players[seat];
-    return (
-      <View style={styles.topSeat}>
-        <Row gap={10} style={{ justifyContent: 'center', flexWrap: 'wrap', rowGap: 4 }}>
-          <SeatBadge {...plateProps(seat)} size={plate} maxNameWidth={portrait ? 80 : 120} />
-          <HiddenHand count={p.handCount} tileW={tablet ? 15 : portrait ? 9 : 11} tileH={tablet ? 24 : portrait ? 15 : 17} />
-          <MeldsAndFlowers player={p} size={tablet ? 'sm' : 'xs'} />
-        </Row>
-        <DiscardPool tiles={p.discards} size={pool} perRow={centerPerRow} align="center" latest={latestDiscard && view.lastDiscard?.seat === seat ? latestDiscard : undefined} />
-      </View>
-    );
-  };
-  const sideSeat = (r: 1 | 3) => {
-    const seat = seatAt(r);
-    const p = view.players[seat];
-    const slim = Math.max(5, Math.min(11, Math.floor((sideWidth - 6) / Math.max(1, p.handCount)) + 1));
-    return (
-      <View style={[styles.sideSeat, { width: sideWidth }, r === 1 && { alignItems: 'flex-end' }]} key={seat}>
-        <SeatBadge {...plateProps(seat)} size={plate} vertical={portrait} maxNameWidth={portrait ? sideWidth : sideWidth - plate - 12} />
-        <HiddenHand count={p.handCount} tileW={slim} tileH={tablet ? 22 : 15} />
-        <MeldsAndFlowers player={p} size="xs" style={r === 1 ? { justifyContent: 'flex-end' } : undefined} />
-        <DiscardPool tiles={p.discards} size={pool} perRow={sidePerRow} align={r === 1 ? 'flex-end' : 'flex-start'} latest={latestDiscard && view.lastDiscard?.seat === seat ? latestDiscard : undefined} />
-      </View>
-    );
-  };
-
   const recentChat = state.chat.filter((c) => now - c.at < CHAT_MS).slice(-3);
-  const waitKinds = new Set(hint?.waits.map((w) => w.kind) ?? []);
-  const bestDiscard = hint?.bestDiscard?.tile;
   const relWind = (r: number) => WINDS[(seatAt(r) - view.dealerSeat + 4) % 4];
-  const activeRel = turnSeat === null ? (view.pending ? null : null) : (turnSeat - mySeat + 4) % 4;
-  // Where there is room (tablet, portrait) the live wall is drawn around the compass.
-  const showWall = tablet || portrait;
-  const wallSize = tablet ? Math.min(centerW - 24, 300) : Math.max(120, Math.min(centerW - 4, 220));
-  const compass = <Compass prevailing={WINDS[view.prevailingWind]} drawsLeft={view.drawsLeft} seatWinds={[relWind(0), relWind(1), relWind(2), relWind(3)]} active={activeRel} size={tablet ? 96 : portrait ? Math.min(66, Math.round(wallSize * 0.42)) : 74} />;
+  const activeRel = turnSeat === null ? null : (turnSeat - mySeat + 4) % 4;
+  const compass = <Compass prevailing={WINDS[view.prevailingWind]} drawsLeft={view.drawsLeft} seatWinds={[relWind(0), relWind(1), relWind(2), relWind(3)]} active={activeRel} size={L.compassSize} />;
   const statusLine = view.pending
     ? t('table.status.discarded', { name: seatInfo(view.pending.from)?.name ?? '', tile: kindInfo(kindOf(view.pending.tile)).nameZh }) + (view.pending.kind === 'addedKong' ? t('table.status.addedKong') : '')
-    : !view.pending && view.phase === 'discard' && view.turn !== mySeat
+    : view.phase === 'discard' && view.turn !== mySeat
       ? t('table.status.turn', { name: seatInfo(view.turn)?.name ?? '' })
       : null;
-  const status = statusLine ? (
-    <View style={styles.status}>
-      <Text numberOfLines={1} style={styles.statusText}>
-        {statusLine}
-      </Text>
-    </View>
-  ) : null;
 
-  const centerColumn = (
-    <View style={styles.centerCol}>
-      {topSeat()}
-      {showWall ? (
-        <View style={[styles.middle, { flexDirection: 'column', gap: 6 }]}>
-          <WallRing remaining={view.tilesRemaining} size={wallSize}>
-            {compass}
-            {tablet && status && <View style={{ marginTop: 22 }}>{status}</View>}
-          </WallRing>
-          {!tablet && status}
-        </View>
-      ) : (
-        <View style={styles.middle}>
-          <View style={{ alignItems: 'center', gap: 16, paddingVertical: 12, paddingHorizontal: 12 }}>
-            {compass}
-            {status}
-          </View>
-          {coachOpen && hint && coachInCenter && <CoachPanel hint={hint} waitKinds={waitKinds} compact />}
-        </View>
-      )}
-      <DiscardPool tiles={me.discards} size={pool} perRow={centerPerRow} align="center" latest={latestDiscard && view.lastDiscard?.seat === mySeat ? latestDiscard : undefined} />
-    </View>
-  );
+  // During the hold after a win: the call-out and the winner's hand face up in the middle of the felt.
+  const holding = !!state.lastResult && !showResult;
+  const revealWin = holding && state.lastResult?.type === 'win' ? state.lastResult.wins[0] : null;
+  const overlay =
+    callout || revealWin ? (
+      <>
+        {callout && <CallBanner small={L.compact || (L.portrait && width < 420)} callout={callout} name={seatName(callout.seat)} onDone={() => setCallout((c) => (c && c.key === callout.key ? null : c))} />}
+        {revealWin && <WinReveal win={revealWin} tileSize={L.tablet ? 34 : L.compact ? 22 : 26} />}
+      </>
+    ) : null;
 
-  const myPlate = (
-    <SeatBadge {...plateProps(mySeat)} size={tablet ? 54 : portrait ? 36 : 40} vertical={!portrait} maxNameWidth={portrait ? 120 : myPlateW - 4} />
-  );
-  const myFlowers = !portrait && me.flowers.length > 0 && (
-    <View style={styles.myFlowers}>
-      {me.flowers.map((f) => (
-        <Tile key={f} tile={f} size={tablet ? 20 : 16} />
-      ))}
-    </View>
-  );
+  const actionBar = <ActionBar actions={actions} act={act} selected={selected} hint={hint} view={view} big={L.tablet} align={L.actions === 'center' ? 'center' : 'flex-end'} />;
 
   return (
     <TableThemeContext.Provider value={theme}>
       <View style={styles.root}>
-        {/* HUD */}
-        <View style={styles.hud}>
-          <Row gap={6} style={{ flexShrink: 1, flexWrap: 'wrap', rowGap: 4 }}>
-            <View style={styles.roundChip}>
-              <Text style={styles.roundWind}>{WINDS[view.prevailingWind]}</Text>
-              <Text style={styles.roundText}>
-                {t('table.roundChip', { hand: view.handNumber + 1 })}
-                {view.dealerStreak ? t('table.dealerStreak', { n: view.dealerStreak }) : ''}
-              </Text>
-            </View>
-            <View style={styles.hudChip}>
-              <Icon name="wall" size={18} />
-              <Text style={styles.hudChipText}>{view.drawsLeft}</Text>
-            </View>
-            {session.roomCode !== 'LOCAL' && !portrait && (
-              <View style={styles.hudChip}>
-                <Text style={styles.hudChipText}>{session.roomCode}</Text>
-              </View>
-            )}
-            {countdown !== null && myMove && (
-              <View style={[styles.hudChip, timerUrgent && { backgroundColor: colors.danger }]}>
-                <Icon name={state.inTimeBank ? 'hourglass' : 'clock'} size={18} />
-                <Text style={styles.hudChipText}>{state.inTimeBank ? t('table.timeBank', { s: countdown }) : t('table.seconds', { s: countdown })}</Text>
-              </View>
-            )}
-            {!myMove && state.timeBank > 0 && !portrait && (
-              <View style={styles.hudChip}>
-                <Icon name="hourglass" size={18} />
-                <Text style={styles.hudChipText}>{t('table.seconds', { s: state.timeBank })}</Text>
-              </View>
-            )}
-          </Row>
-          <Row gap={8}>
-            <IconButton icon="smile" kind={emotePicker ? 'gold' : 'ghost'} size={38} onPress={() => setEmotePicker((v) => !v)} />
-            {coachAllowed && <IconButton icon="cap" kind={coachOpen ? 'primary' : 'ghost'} size={38} onPress={() => setCoachOpen((v) => !v)} />}
-            <IconButton testID="leave-table" icon="exit" kind="danger" size={38} onPress={leave} />
-          </Row>
-        </View>
+        <TableHud
+          view={view}
+          roomCode={session.roomCode}
+          portrait={L.portrait}
+          countdown={countdown}
+          myMove={myMove}
+          inTimeBank={state.inTimeBank}
+          timeBank={state.timeBank}
+          timerUrgent={timerUrgent}
+          status={L.statusInHud ? statusLine : null}
+          emotesOpen={emotePicker}
+          onEmotes={() => setEmotePicker((v) => !v)}
+          coachAllowed={coachAllowed}
+          coachOpen={coachOpen}
+          onCoach={() => setCoachOpen((v) => !v)}
+          onLeave={leave}
+        />
 
-        {/* Table */}
-        <FeltFrame rail={rail} style={{ marginHorizontal: 8 }}>
-          {portrait ? (
-            <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.portraitBody}>
-              <View style={styles.cross}>
-                {sideSeat(3)}
-                {centerColumn}
-                {sideSeat(1)}
-              </View>
-              {coachOpen && hint && <CoachPanel hint={hint} waitKinds={waitKinds} compact />}
-            </ScrollView>
-          ) : (
-            <View style={styles.cross}>
-              {sideSeat(3)}
-              {centerColumn}
-              <View style={{ gap: 8, flexShrink: 1 }}>
-                {sideSeat(1)}
-                {coachOpen && hint && !coachInCenter && (
-                  <View style={{ width: sideWidth }}>
-                    <CoachPanel hint={hint} waitKinds={waitKinds} />
-                  </View>
-                )}
-              </View>
-            </View>
-          )}
-          <View style={styles.actionSpot} pointerEvents="box-none">
-            <ActionBar actions={actions} act={act} selected={selected} hint={hint} view={view} big={tablet} />
+        <Felt
+          view={view}
+          mySeat={mySeat}
+          layout={L}
+          plateProps={plateProps}
+          compass={compass}
+          status={L.statusInHud ? null : statusLine}
+          hint={hint}
+          coachOpen={coachOpen}
+          actions={L.actions === 'center' ? actionBar : null}
+          overlay={overlay}
+        />
+        {L.actions === 'strip' && (
+          <View style={styles.actionStrip} testID="action-strip">
+            {actionBar}
           </View>
-        </FeltFrame>
+        )}
 
-        {/* My seat: plate, hand on a wooden rack, melds */}
-        <View style={[styles.footer, portrait && { paddingTop: 4 }]}>
-          {portrait && (
-            <Row gap={10} style={{ paddingHorizontal: 4, marginBottom: 2 }}>
-              {myPlate}
-              <MeldsAndFlowers player={me} size="sm" style={{ flex: 1 }} />
-            </Row>
-          )}
-          <View style={styles.handRow}>
-            {!portrait && (
-              <View style={{ width: myPlateW }}>
-                {/* Grows upward so my avatar overlaps the rail instead of stealing height from the felt. */}
-                <View style={[styles.myPlateCol, { width: myPlateW }]}>
-                  {myFlowers}
-                  {myPlate}
-                </View>
-              </View>
-            )}
-            <View style={{ flex: 1 }}>
-              <View style={[styles.rack, { height: Math.round(handTile * 0.42) }]}>
-                <View style={styles.rackTop} />
-              </View>
-              <View style={[styles.handTiles, portrait && { flexWrap: 'wrap', rowGap: 6, justifyContent: 'center' }]}>
-                {(me.hand ?? []).map((tile, i) => {
-                  const isDrawn = view.lastDrawn === tile && isDiscardPhase;
-                  return (
-                    <Tile
-                      key={tile}
-                      tile={tile}
-                      size={handTile}
-                      selected={selected === tile}
-                      dimmed={canDiscard ? false : undefined}
-                      highlight={bestDiscard === tile && canDiscard ? 'good' : undefined}
-                      onPress={() => onTile(tile)}
-                      style={isDrawn && i === (me.hand?.length ?? 0) - 1 ? { marginLeft: 10 } : undefined}
-                    />
-                  );
-                })}
-              </View>
-            </View>
-            {!portrait && meldW > 0 && (
-              <View style={styles.myMelds}>
-                {me.melds.map((m, i) => (
-                  <MeldView key={i} meld={m} size="sm" />
-                ))}
-              </View>
-            )}
-          </View>
-        </View>
+        <HandRail
+          me={me}
+          layout={L}
+          plate={plateProps(mySeat)}
+          handTile={hand.tile}
+          plateW={hand.plateW}
+          selected={selected}
+          canDiscard={canDiscard}
+          drawn={isDiscardPhase && view.lastDrawn != null ? view.lastDrawn : null}
+          best={hint?.bestDiscard?.tile}
+          onTile={onTile}
+        />
 
         {emotePicker && (
           <View style={styles.emotePanel}>
@@ -441,6 +297,8 @@ export function TableScreen() {
               {EMOTES.map((e) => (
                 <Pressable
                   key={e}
+                  accessibilityRole="button"
+                  accessibilityLabel={t('table.a11y.emote', { name: e })}
                   onPress={() => {
                     session.client.emote(e);
                     setEmotePicker(false);
@@ -457,6 +315,9 @@ export function TableScreen() {
                 return (
                   <Pressable
                     key={id}
+                    accessibilityRole="button"
+                    accessibilityLabel={q}
+                    hitSlop={8}
                     onPress={() => {
                       session.client.chat(q);
                       setEmotePicker(false);
@@ -471,7 +332,7 @@ export function TableScreen() {
           </View>
         )}
         {recentChat.length > 0 && (
-          <View style={styles.chatLog} pointerEvents="none">
+          <View style={styles.chatLog} pointerEvents="none" accessibilityLiveRegion="polite">
             {recentChat.map((c, i) => (
               <View key={i} style={styles.chatBubble}>
                 <Text style={[styles.chatName, nameFont(c.name)]}>{c.name}</Text>
@@ -481,11 +342,11 @@ export function TableScreen() {
           </View>
         )}
 
-        {state.lastResult && showResult && <ResultOverlay result={state.lastResult} view={view} state={state} mySeat={mySeat} onNext={() => session.client.ready()} onLeave={leave} onReview={() => app.go({ name: 'review' })} onFairness={() => app.go({ name: 'fairness' })} />}
-        {state.matchOver && <MatchOverOverlay state={state} onLeave={leave} />}
+        {state.lastResult && showResult && <ResultSheet result={state.lastResult} view={view} state={state} mySeat={mySeat} onNext={() => session.client.ready()} onLeave={leave} onReview={() => app.go({ name: 'review' })} onFairness={() => app.go({ name: 'fairness' })} />}
+        {state.matchOver && <MatchOverSheet state={state} onLeave={leave} />}
         {conn.status === 'reconnecting' && !state.matchOver ? (
           // The session is rejoining on its own (1, 2, 4 … 60 s); the player may skip the wait.
-          <View style={styles.banner}>
+          <View style={styles.banner} accessibilityLiveRegion="polite">
             <Icon name="hourglass" size={28} />
             <View style={{ flex: 1 }}>
               <Text style={styles.bannerTitle}>{t('table.connection.reconnectingTitle')}</Text>
@@ -495,7 +356,7 @@ export function TableScreen() {
           </View>
         ) : !state.matchOver && (conn.status === 'lost' || state.disconnected) ? (
           // Only after ten failed attempts, a refused session (4401) or the seat opening elsewhere.
-          <View style={styles.banner}>
+          <View style={styles.banner} accessibilityLiveRegion="assertive">
             <Icon name="warning" size={28} />
             <View style={{ flex: 1 }}>
               <Text style={styles.bannerTitle}>{t('table.connection.lostTitle')}</Text>
@@ -512,7 +373,7 @@ export function TableScreen() {
           </View>
         ) : (
           state.lastError && (
-            <View style={styles.toast}>
+            <View style={styles.toast} accessibilityLiveRegion="polite">
               <Text style={[styles.toastText, nameFont(state.lastError, fonts.bodyBold)]}>{state.lastError}</Text>
             </View>
           )
@@ -530,430 +391,12 @@ function safeHint(s: GameState, seat: number): Hint | null {
   }
 }
 
-/** Chunky claim button: a big CJK verb plus the tiles it would take. */
-function ClaimButton({ label, tiles, kind, onPress, big }: { label: string; tiles?: TileId[]; kind: ButtonKind; onPress: () => void; big?: boolean }) {
-  const pal: Record<ButtonKind, [string, string, string]> = {
-    primary: [colors.cta, colors.ctaLight, colors.ctaShelf],
-    secondary: [colors.info, colors.infoLight, colors.infoShelf],
-    danger: [colors.danger, colors.dangerLight, colors.dangerShelf],
-    gold: [colors.gold, colors.goldLight, colors.goldShelf],
-    premium: [colors.premium, colors.premiumLight, colors.premiumShelf],
-    ghost: [colors.creamDeep, colors.creamLight, colors.creamShelf],
-  };
-  const [fill, light, shelf] = pal[kind];
-  const h = big ? 60 : 50;
-  return (
-    <Pressable onPress={onPress} hitSlop={4}>
-      {({ pressed }) => (
-        <View style={[styles.claimShell, { backgroundColor: shelf, height: h, borderRadius: h / 2, paddingBottom: pressed ? 0 : 5, paddingTop: pressed ? 5 : 0 }]}>
-          <View style={[styles.claimFace, { backgroundColor: fill, borderRadius: h / 2 }]}>
-            <View style={[styles.claimTop, { backgroundColor: light }]} />
-            {kind === 'ghost' ? (
-              <Text style={[styles.claimGhost, { fontSize: big ? 24 : 21 }]}>{label}</Text>
-            ) : (
-              <StrokeText style={{ fontSize: big ? 26 : 22, lineHeight: big ? 32 : 27 }} strokeWidth={2} drop={1.5}>
-                {label}
-              </StrokeText>
-            )}
-            {tiles && tiles.length > 0 && (
-              <View style={{ flexDirection: 'row', gap: 1 }}>
-                {tiles.map((t) => (
-                  <Tile key={t} tile={t} size={big ? 24 : 20} />
-                ))}
-              </View>
-            )}
-          </View>
-        </View>
-      )}
-    </Pressable>
-  );
-}
-
-function ActionBar({ actions, act, selected, hint, view, big }: { actions: Action[]; act: (a: Action) => void; selected: TileId | null; hint: Hint | null; view: TableView; big?: boolean }) {
-  const { t } = useT();
-  if (actions.length === 0) return null;
-  const hu = actions.find((a) => a.type === 'hu');
-  const kongs = actions.filter((a) => a.type === 'kong');
-  const pong = actions.find((a) => a.type === 'pong');
-  const chis = actions.filter((a) => a.type === 'chi');
-  const pass = actions.find((a) => a.type === 'pass');
-  const canDiscard = actions.some((a) => a.type === 'discard');
-  const recommended = (a: Action) => hint?.claims.find((c) => JSON.stringify(c.action) === JSON.stringify(a))?.recommended;
-  const pendingTile = view.pending?.tile;
-  return (
-    <View style={styles.actionBar}>
-      {canDiscard && selected === null && !hu && kongs.length === 0 && (
-        <View style={styles.tapHint}>
-          <Icon name="play" size={14} />
-          <Text style={styles.tapHintText}>{t('table.tapHint')}</Text>
-        </View>
-      )}
-      {pass && <ClaimButton kind="ghost" label={t('table.claim.pass')} onPress={() => act(pass)} big={big} />}
-      {chis.map((c, i) => (
-        <ClaimButton key={i} kind={recommended(c) ? 'primary' : 'secondary'} label={t('table.claim.chi')} tiles={(c as { tiles: TileId[] }).tiles} onPress={() => act(c)} big={big} />
-      ))}
-      {pong && <ClaimButton kind={recommended(pong) ? 'primary' : 'secondary'} label={t('table.claim.pong')} tiles={pendingTile !== undefined ? [pendingTile] : undefined} onPress={() => act(pong)} big={big} />}
-      {kongs.map((k, i) => (
-        <ClaimButton key={i} kind={recommended(k) ? 'primary' : 'premium'} label={t('table.claim.kong')} tiles={[(k as { tile: TileId }).tile]} onPress={() => act(k)} big={big} />
-      ))}
-      {canDiscard && selected !== null && <ClaimButton kind="danger" label={t('table.claim.discard')} tiles={[selected]} onPress={() => act({ type: 'discard', tile: selected })} big={big} />}
-      {hu && <ClaimButton kind="gold" label={t(view.phase === 'discard' ? 'table.claim.selfDrawWin' : 'table.claim.win')} onPress={() => act(hu)} big />}
-    </View>
-  );
-}
-
-function CoachPanel({ hint, waitKinds, compact }: { hint: Hint; waitKinds: Set<number>; compact?: boolean }) {
-  const { t } = useT();
-  // Coach sentences are engine reason keys rendered in the current locale (see src/i18n/index.ts).
-  const engine = (key: string, params?: Record<string, string | number>) => t(`engine.${key}`, params);
-  const preview = hint.winPreview ? t('table.coach.winPreview', { items: hint.winPreview.items.map((i) => t('table.coach.taiItem', { name: i.nameZh, tai: i.tai })).join(' · '), tai: hint.winPreview.tai }) : null;
-  if (compact) {
-    // One or two lines: status + the single most useful piece of advice.
-    const rec = hint.claims.find((c) => c.recommended);
-    const line = preview ?? (hint.discardReasonKey ? engine(hint.discardReasonKey, hint.discardReasonParams) : rec ? engine(rec.reasonKey, rec.reasonParams) : '');
-    return (
-      <View style={[styles.coach, styles.coachCompact]}>
-        <CoachOwl size={34} />
-        <View style={{ flex: 1, minWidth: 0, flexShrink: 1, overflow: 'hidden' }}>
-          <Text style={styles.coachStatus} numberOfLines={1}>
-            {engine(hint.statusKey, hint.statusParams)}
-          </Text>
-          {!!line && (
-            <Text style={styles.coachLine} numberOfLines={2}>
-              {line}
-            </Text>
-          )}
-        </View>
-        {hint.waits.length > 0 && (
-          <Row gap={2}>
-            {hint.waits.slice(0, 5).map((w) => (
-              <Tile key={w.kind} kind={w.kind} size="xs" highlight={waitKinds.has(w.kind) ? 'wait' : undefined} />
-            ))}
-          </Row>
-        )}
-      </View>
-    );
-  }
-  return (
-    <View style={styles.coach}>
-      <Row gap={8}>
-        <CoachOwl size={36} />
-        <Text style={styles.coachTitle}>{t('table.coach.title')}</Text>
-      </Row>
-      <Text style={styles.coachStatus}>{engine(hint.statusKey, hint.statusParams)}</Text>
-      {preview && <Text style={styles.coachLine}>{preview}</Text>}
-      {hint.discardReasonKey && <Text style={styles.coachLine}>{engine(hint.discardReasonKey, hint.discardReasonParams)}</Text>}
-      {hint.waits.length > 0 && (
-        <Row style={{ flexWrap: 'wrap' }} gap={4}>
-          <Text style={styles.coachLabel}>{t('table.coach.waits')}</Text>
-          {hint.waits.map((w) => (
-            <View key={w.kind} style={{ alignItems: 'center' }}>
-              <Tile kind={w.kind} size="xs" highlight={waitKinds.has(w.kind) ? 'wait' : undefined} />
-              <Text style={styles.coachCount}>{t('table.coach.remaining', { n: w.remaining })}</Text>
-            </View>
-          ))}
-        </Row>
-      )}
-      {hint.claims.map((c, i) => (
-        <Row key={i} gap={4} style={{ alignItems: 'flex-start' }}>
-          {c.recommended ? <Icon name="check" size={16} color={colors.cta} /> : <View style={styles.coachDot} />}
-          <Text style={[styles.coachLine, { flex: 1 }, c.recommended && { color: colors.okText }]}>
-            {t('table.coach.claimLine', { label: engine(c.labelKey, c.labelParams), reason: engine(c.reasonKey, c.reasonParams) })}
-          </Text>
-        </Row>
-      ))}
-    </View>
-  );
-}
-
-function WinCard({ w, state }: { w: WinRecord; state: ClientState }) {
-  const { t } = useT();
-  const seatOf = (seat: number) => state.seats.find((s) => s.seat === seat);
-  const name = (seat: number) => seatOf(seat)?.name ?? t('table.seat', { n: seat + 1 });
-  // Flower wins (八仙過海 / 七搶一) end the hand on a bonus tile: the winning tile sits in the flowers row.
-  const flowerWin = w.score.flowerWin;
-  const how = flowerWin === 'eight' ? t('table.win.eightFlowers') : flowerWin === 'sevenRob' ? t('table.win.sevenRob', { name: name(w.fromSeat!) }) : w.selfDrawn ? t('table.win.selfDrawn') : t('table.win.dealtIn', { name: name(w.fromSeat!) });
-  return (
-    <View style={styles.winCard}>
-      <Row gap={10}>
-        <AvatarPlate id={seatAvatarId(seatOf(w.seat), w.seat)} size={40} />
-        <View style={{ flex: 1 }}>
-          <Text style={[styles.winTitle, nameFont(name(w.seat))]}>{t('table.win.title', { name: name(w.seat) })}</Text>
-          <Text style={styles.winSub}>{how}</Text>
-        </View>
-        <View style={styles.taiBadge}>
-          <StrokeText style={{ fontSize: 24 }} strokeWidth={2} drop={1.5}>
-            {w.score.tai}
-          </StrokeText>
-          <Text style={styles.taiLabel}>{t('table.win.taiLabel')}</Text>
-        </View>
-      </Row>
-      <Row style={{ flexWrap: 'wrap', rowGap: 4 }} gap={2}>
-        {w.melds.map((m, i) => (
-          <MeldView key={i} meld={m} size="sm" />
-        ))}
-        {w.hand.map((tile) => (
-          <Tile key={tile} tile={tile} size="sm" highlight={tile === w.winningTile ? 'wait' : undefined} />
-        ))}
-        {w.flowers.map((f) => (
-          <Tile key={f} tile={f} size="sm" highlight={flowerWin && f === w.winningTile ? 'wait' : undefined} />
-        ))}
-      </Row>
-      <View style={styles.items}>
-        {w.score.items.map((it) => (
-          <Row key={it.key} style={styles.itemRow}>
-            <Text style={styles.itemText}>
-              {it.nameZh} <Text style={styles.itemEn}>{it.nameEn}</Text>
-            </Text>
-            <Text style={styles.itemTai}>{t('table.win.tai', { tai: it.tai })}</Text>
-          </Row>
-        ))}
-        {w.payments.map((p, i) => (
-          <Text key={i} style={styles.payment}>
-            {t('table.win.payment', { from: name(p.from), to: name(p.to), points: p.points, tai: p.tai })}
-          </Text>
-        ))}
-      </View>
-    </View>
-  );
-}
-
-function ResultOverlay({ result, view, state, mySeat, onNext, onLeave, onReview, onFairness }: { result: HandResult; view: TableView; state: ClientState; mySeat: number; onNext: () => void; onLeave: () => void; onReview: () => void; onFairness: () => void }) {
-  const { t } = useT();
-  const [ready, setReady] = useState(false);
-  const { width, height } = useWindowDimensions();
-  // Short landscape phones: results on the left, scores and buttons on the right, so nothing needs scrolling to act.
-  const twoCol = width > height && height < 560;
-  const iWon = result.wins.some((w) => w.seat === mySeat);
-  const audit = state.auditStatus;
-  // Each locale decides whether the ribbon carries a subtitle (en: an English line under the Chinese; zh-TW: none).
-  const title = t(result.type === 'draw' ? 'table.result.drawTitle' : iWon ? 'table.result.wonTitle' : 'table.result.overTitle');
-  const sub = t(result.type === 'draw' ? 'table.result.drawSub' : iWon ? 'table.result.wonSub' : 'table.result.overSub');
-  const ribbon = result.type === 'draw' ? colors.info : iWon ? colors.gold : colors.premium;
-  const ribbonView = (
-    <View style={[styles.ribbon, { backgroundColor: ribbon }, twoCol && { alignSelf: 'flex-start', paddingVertical: 3 }]}>
-      {iWon && <Icon name="star" size={twoCol ? 24 : 30} />}
-      <StrokeText style={{ fontSize: twoCol ? 24 : 30, lineHeight: twoCol ? 30 : 36 }} strokeWidth={2.5} drop={2}>
-        {title}
-      </StrokeText>
-      {!!sub && (
-        <StrokeText style={{ fontSize: twoCol ? 15 : 18 }} strokeWidth={2} drop={1.5}>
-          {sub}
-        </StrokeText>
-      )}
-      {iWon && <Icon name="star" size={twoCol ? 24 : 30} />}
-    </View>
-  );
-  const results = (
-    <>
-      {result.wins.map((w) => (
-        <WinCard key={w.seat} w={w} state={state} />
-      ))}
-      {result.type === 'draw' && <P>{t(result.dealerContinues ? 'table.result.drawKeeps' : 'table.result.drawPasses')}</P>}
-    </>
-  );
-  const scores = (
-    <View style={[styles.scoreRow, twoCol && { flexDirection: 'column', flexWrap: 'nowrap', gap: 5 }]}>
-      {view.scores.map((s, i) => {
-        const info = state.seats.find((x) => x.seat === i);
-        const d = result.scoreDelta[i];
-        return (
-          <View key={i} style={[styles.scoreChip, i === mySeat && { backgroundColor: '#FFF1C4' }, twoCol && { alignSelf: 'stretch' }]}>
-            <AvatarPlate id={seatAvatarId(info, i)} size={twoCol ? 26 : 30} />
-            <View style={{ flexShrink: 1 }}>
-              <Text numberOfLines={1} style={[styles.scoreName, nameFont(info?.name ?? String(i))]}>
-                {info?.name ?? i}
-              </Text>
-              <Text style={styles.scoreNum}>
-                {s >= 0 ? '+' : ''}
-                {s} <Text style={{ color: d >= 0 ? colors.okText : colors.dangerText }}>({d >= 0 ? '+' : ''}{d})</Text>
-              </Text>
-            </View>
-          </View>
-        );
-      })}
-    </View>
-  );
-  // 'partial': the shuffle log and result replayed correctly, but this seat's own share did not protect the seed
-  // (it was stood in, or it joined mid-hand). Amber, never green: a host can always claim a seat was late.
-  const auditText = t(
-    audit === 'ok' ? (twoCol ? 'table.audit.okShort' : 'table.audit.ok')
-    : audit === 'partial' ? (twoCol ? 'table.audit.partialShort' : 'table.audit.partial')
-    : audit === 'failed' ? 'table.audit.failed'
-    : 'table.audit.pending',
-  );
-  const auditRow = (
-    <Row style={{ flexWrap: 'wrap', rowGap: 8 }}>
-      <Pressable onPress={onFairness} testID="audit-status">
-        <Pill size={twoCol ? 'sm' : 'md'} text={auditText} icon={audit === 'ok' || audit === 'partial' ? 'shield' : audit === 'failed' ? 'warning' : 'hourglass'} tone={audit === 'ok' ? 'ok' : audit === 'partial' ? 'gold' : audit === 'failed' ? 'danger' : 'neutral'} />
-      </Pressable>
-      {state.auditFailures.map((f, i) => (
-        <Text key={`f${i}`} style={{ color: colors.dangerText, fontSize: 12 }}>
-          {t('fairness.note', { text: f })}
-        </Text>
-      ))}
-      {state.auditCaveats.map((c, i) => (
-        <Text key={`c${i}`} style={{ color: colors.goldDim, fontSize: 12 }}>
-          {t('fairness.note', { text: c })}
-        </Text>
-      ))}
-    </Row>
-  );
-  const next = (
-    <Button
-      large={!twoCol}
-      title={t(ready ? 'table.result.waiting' : 'table.result.nextHand')}
-      disabled={ready}
-      onPress={() => {
-        setReady(true);
-        onNext();
-      }}
-    />
-  );
-  if (twoCol) {
-    return (
-      <View style={styles.overlay}>
-        <View style={[styles.overlayCard, styles.overlayWide]}>
-          <ScrollView style={{ flex: 1.45 }} contentContainerStyle={{ gap: 8 }}>
-            {ribbonView}
-            {results}
-          </ScrollView>
-          <View style={{ flex: 1, gap: 8, justifyContent: 'space-between' }}>
-            {scores}
-            {auditRow}
-            <View style={{ gap: 6 }}>
-              {next}
-              <Row gap={6}>
-                <Button small kind="secondary" title={t('table.result.review')} onPress={onReview} style={{ flex: 1 }} />
-                <Button small kind="ghost" title={t('table.result.leaveTable')} onPress={onLeave} style={{ flex: 1 }} />
-              </Row>
-            </View>
-          </View>
-        </View>
-      </View>
-    );
-  }
-  return (
-    <View style={styles.overlay}>
-      <ScrollView style={{ width: '100%' }} contentContainerStyle={styles.overlayScroll}>
-        <View style={styles.overlayCard}>
-          {ribbonView}
-          {results}
-          {scores}
-          {auditRow}
-          <Row style={{ flexWrap: 'wrap', rowGap: 8 }}>
-            {next}
-            <Button kind="secondary" title={t('table.result.reviewMyHand')} onPress={onReview} />
-            <Button kind="ghost" title={t('table.result.leaveTable')} onPress={onLeave} />
-          </Row>
-        </View>
-      </ScrollView>
-    </View>
-  );
-}
-
-function MatchOverOverlay({ state, onLeave }: { state: ClientState; onLeave: () => void }) {
-  const { t } = useT();
-  const scores = state.finalScores ?? [];
-  const order = scores.map((s, i) => ({ s, i })).sort((a, b) => b.s - a.s);
-  return (
-    <View style={styles.overlay}>
-      <View style={[styles.overlayCard, { maxWidth: 460 }]}>
-        <View style={[styles.ribbon, { backgroundColor: colors.gold }]}>
-          <Icon name="trophy" size={34} />
-          <StrokeText style={{ fontSize: 28 }} strokeWidth={2.5} drop={2}>
-            {t('table.matchOver')}
-          </StrokeText>
-        </View>
-        {order.map(({ s, i }, rank) => {
-          const info = state.seats.find((x) => x.seat === i);
-          return (
-            <Row key={i} style={styles.rankRow}>
-              <View style={[styles.rankNum, rank === 0 && { backgroundColor: colors.gold }]}>
-                <Text style={styles.rankNumText}>{rank + 1}</Text>
-              </View>
-              <AvatarPlate id={seatAvatarId(info, i)} size={34} />
-              <Text style={[styles.itemText, { flex: 1 }, nameFont(info?.name)]}>{info?.name}</Text>
-              <Text style={[styles.rankScore, { color: s >= 0 ? colors.okText : colors.dangerText }]}>
-                {s >= 0 ? '+' : ''}
-                {s}
-              </Text>
-            </Row>
-          );
-        })}
-        <Button large title={t('table.backHome')} onPress={onLeave} />
-      </View>
-    </View>
-  );
-}
-
 const styles = StyleSheet.create({
   root: { flex: 1 },
+  actionStrip: { height: ACTION_STRIP_H, justifyContent: 'center', paddingHorizontal: 12 },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12 },
   notice: { backgroundColor: colors.cream, borderWidth: 3, borderColor: colors.ink, borderRadius: 24, padding: 20, alignItems: 'center', gap: 10, borderBottomWidth: 8 },
   noticeTitle: { fontFamily: fonts.display, fontSize: 26, color: colors.ink },
-  hud: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 10, paddingTop: 4, paddingBottom: 6, gap: 8 },
-  roundChip: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: colors.gold, borderWidth: 2.5, borderColor: colors.ink, borderRadius: 999, paddingLeft: 4, paddingRight: 10, height: 30 },
-  roundWind: { width: 22, height: 22, borderRadius: 11, backgroundColor: colors.ink, color: colors.gold, textAlign: 'center', fontWeight: '900', fontSize: 14, lineHeight: 22, overflow: 'hidden' },
-  roundText: { color: colors.ink, fontWeight: '900', fontSize: 13 },
-  hudChip: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: 'rgba(16,20,47,0.7)', borderWidth: 2.5, borderColor: colors.ink, borderRadius: 999, paddingLeft: 5, paddingRight: 10, height: 30 },
-  hudChipText: { color: '#FFFFFF', fontFamily: fonts.display, fontSize: 15 },
-  cross: { flex: 1, flexDirection: 'row', gap: 8, padding: 6 },
-  portraitBody: { flexGrow: 1, paddingBottom: 70 },
-  sideSeat: { gap: 6 },
-  centerCol: { flex: 1, alignItems: 'center', gap: 6, minWidth: 0 },
-  topSeat: { alignItems: 'center', gap: 6 },
-  middle: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, alignSelf: 'stretch', flexGrow: 1 },
-  status: { backgroundColor: 'rgba(16,20,47,0.6)', borderRadius: 999, paddingHorizontal: 10, paddingVertical: 2, maxWidth: 220 },
-  statusText: { color: '#FFFFFF', fontSize: 12, fontWeight: '900' },
-  actionSpot: { position: 'absolute', right: 8, bottom: 8, left: 8, alignItems: 'flex-end' },
-  actionBar: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, alignItems: 'center', justifyContent: 'flex-end' },
-  tapHint: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'rgba(16,20,47,0.78)', borderWidth: 2, borderColor: colors.ink, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 5 },
-  tapHintText: { color: '#FFFFFF', fontFamily: fonts.uiBold, fontSize: 13 },
-  claimShell: { borderWidth: 3, borderColor: colors.ink, overflow: 'hidden', minWidth: 60 },
-  claimFace: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingHorizontal: 16, overflow: 'hidden' },
-  claimTop: { position: 'absolute', top: 0, left: 0, right: 0, height: '50%' },
-  claimGhost: { color: colors.ink, fontWeight: '900' },
-  footer: { paddingHorizontal: 12, paddingBottom: 4, paddingTop: 2 },
-  handRow: { flexDirection: 'row', alignItems: 'flex-end' },
-  myPlateCol: { position: 'absolute', left: 0, bottom: 4, alignItems: 'center', gap: 4 },
-  myFlowers: { flexDirection: 'row', flexWrap: 'wrap', gap: 1, justifyContent: 'center' },
-  myMelds: { flexDirection: 'row', alignItems: 'flex-end', marginLeft: 10, paddingBottom: 7 },
-  rack: { position: 'absolute', left: -6, right: -6, bottom: 0, backgroundColor: colors.rail, borderWidth: 3, borderColor: colors.ink, borderRadius: 10, overflow: 'hidden' },
-  rackTop: { position: 'absolute', top: 0, left: 0, right: 0, height: 5, backgroundColor: colors.railLight },
-  handTiles: { flexDirection: 'row', alignItems: 'flex-end', gap: 2, paddingTop: 12, paddingBottom: 7, paddingHorizontal: 4 },
-  coach: { backgroundColor: colors.cream, borderRadius: 16, padding: 8, gap: 4, borderWidth: 3, borderColor: colors.ink, flexShrink: 1, overflow: 'hidden' },
-  coachCompact: { flexDirection: 'row', alignItems: 'center', gap: 8, minWidth: 0, maxWidth: 460, flexShrink: 1, paddingVertical: 5 },
-  coachTitle: { color: colors.ink, fontFamily: fonts.display, fontSize: 18 },
-  coachStatus: { color: colors.ink, fontFamily: fonts.uiBold, fontSize: 13 },
-  coachLine: { color: colors.inkDim, fontSize: 11, lineHeight: 15, fontWeight: '700' },
-  coachLabel: { color: colors.ink, fontWeight: '900', fontSize: 13 },
-  coachCount: { color: colors.inkDim, fontSize: 9, fontWeight: '800' },
-  coachDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: colors.inkDim, marginTop: 5, marginHorizontal: 5 },
-  overlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(16,20,47,0.72)', alignItems: 'center', justifyContent: 'center', padding: space.md, zIndex: 40 },
-  overlayScroll: { flexGrow: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 16 },
-  overlayCard: { backgroundColor: colors.cream, borderRadius: 26, padding: space.lg, paddingTop: 10, gap: space.md, width: '100%', maxWidth: 720, borderWidth: 3, borderColor: colors.ink, borderBottomWidth: 8 },
-  overlayWide: { flexDirection: 'row', maxWidth: 860, flex: 1, padding: 12, paddingTop: 10, gap: 12 },
-  ribbon: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, borderWidth: 3, borderColor: colors.ink, borderRadius: 18, paddingVertical: 6, paddingHorizontal: 16, alignSelf: 'center', marginTop: -2, flexWrap: 'wrap' },
-  winCard: { gap: 8, backgroundColor: '#FFFFFF', borderWidth: 2.5, borderColor: colors.ink, borderRadius: 18, padding: 12 },
-  winTitle: { color: colors.ink, fontSize: 17 },
-  winSub: { color: colors.inkDim, fontSize: 13, fontWeight: '900' },
-  taiBadge: { flexDirection: 'row', alignItems: 'center', gap: 2, backgroundColor: colors.danger, borderWidth: 2.5, borderColor: colors.ink, borderRadius: 14, paddingHorizontal: 10, paddingVertical: 2 },
-  taiLabel: { color: '#FFFFFF', fontWeight: '900', fontSize: 15 },
-  items: { gap: 3 },
-  itemRow: { justifyContent: 'space-between', borderBottomWidth: 1.5, borderBottomColor: colors.creamDeep, paddingVertical: 2 },
-  itemText: { color: colors.ink, fontSize: 14, fontWeight: '800' },
-  itemEn: { color: colors.inkDim, fontWeight: '600', fontSize: 12 },
-  itemTai: { color: colors.goldDim, fontWeight: '900', fontSize: 14 },
-  payment: { color: colors.inkDim, fontSize: 12, fontWeight: '700' },
-  scoreRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  scoreChip: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: '#FFFFFF', borderWidth: 2, borderColor: colors.ink, borderRadius: 999, paddingLeft: 3, paddingRight: 12, paddingVertical: 3 },
-  scoreName: { color: colors.ink, fontSize: 12, maxWidth: 110 },
-  scoreNum: { color: colors.ink, fontFamily: fonts.display, fontSize: 13 },
-  rankRow: { paddingVertical: 4, borderBottomWidth: 2, borderBottomColor: colors.creamDeep },
-  rankNum: { width: 30, height: 30, borderRadius: 15, borderWidth: 2.5, borderColor: colors.ink, backgroundColor: colors.creamDeep, alignItems: 'center', justifyContent: 'center' },
-  rankNumText: { fontFamily: fonts.display, color: colors.ink, fontSize: 16 },
-  rankScore: { fontFamily: fonts.display, fontSize: 20 },
   toast: { position: 'absolute', bottom: 12, alignSelf: 'center', backgroundColor: colors.cream, borderWidth: 2.5, borderColor: colors.ink, paddingHorizontal: 14, paddingVertical: 7, borderRadius: 14, zIndex: 30 },
   toastText: { color: colors.ink, fontSize: 13 },
   banner: { position: 'absolute', top: 48, left: '15%', right: '15%', zIndex: 50, flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: '#FFE3E1', borderWidth: 3, borderColor: colors.ink, borderRadius: 18, padding: 10 },

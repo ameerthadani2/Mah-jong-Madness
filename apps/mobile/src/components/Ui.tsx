@@ -2,6 +2,13 @@ import React from 'react';
 import { Pressable, StyleSheet, Text, View, type StyleProp, type TextStyle, type ViewStyle } from 'react-native';
 import { colors, fonts, hasCJK, radius, space } from '../theme';
 import { Icon, type IconName } from './Icons';
+import { slopFor } from './table/layout';
+import { t } from '../i18n';
+
+/** Screen-reader name for an icon-only button, when the caller gives none. */
+function iconLabel(icon: IconName): string {
+  return t(`table.a11y.icon.${icon}`, { defaultValue: icon });
+}
 
 /* ------------------------------------------------------------------ */
 /* Stroked display text                                                */
@@ -105,6 +112,7 @@ export function Button({
   large,
   testID,
   icon,
+  accessibilityLabel,
 }: {
   title: string;
   onPress?: () => void;
@@ -115,6 +123,8 @@ export function Button({
   large?: boolean;
   testID?: string;
   icon?: IconName;
+  /** Screen-reader name, when the visible title is not enough on its own. */
+  accessibilityLabel?: string;
 }) {
   const k = KIND[kind];
   const shelf = small ? 4 : large ? 7 : 5;
@@ -122,7 +132,16 @@ export function Button({
   const fontSize = small ? 15 : large ? 24 : 19;
   const minHeight = small ? 32 : large ? 54 : 42;
   return (
-    <Pressable testID={testID} onPress={onPress} disabled={disabled} hitSlop={small ? 6 : 2} style={[{ opacity: disabled ? 0.5 : 1 }, style]}>
+    <Pressable
+      testID={testID}
+      onPress={onPress}
+      disabled={disabled}
+      hitSlop={slopFor(minHeight + shelf, 2)}
+      accessibilityRole="button"
+      accessibilityLabel={accessibilityLabel ?? title}
+      accessibilityState={{ disabled: !!disabled }}
+      style={[{ opacity: disabled ? 0.5 : 1 }, style]}
+    >
       {({ pressed }) => (
         <View style={{ paddingTop: pressed ? shelf : 0 }}>
           <View style={[styles.btnShell, { borderRadius: r, backgroundColor: k.shelf, paddingBottom: pressed ? 0 : shelf }]}>
@@ -150,11 +169,20 @@ export function Button({
 }
 
 /** Round chunky icon button (back, settings, emotes...). */
-export function IconButton({ icon, onPress, kind = 'secondary', size = 44, testID, disabled, badge }: { icon: IconName; onPress?: () => void; kind?: ButtonKind; size?: number; testID?: string; disabled?: boolean; badge?: React.ReactNode }) {
+export function IconButton({ icon, onPress, kind = 'secondary', size = 44, testID, disabled, badge, label, selected }: { icon: IconName; onPress?: () => void; kind?: ButtonKind; size?: number; testID?: string; disabled?: boolean; badge?: React.ReactNode; label?: string; selected?: boolean }) {
   const k = KIND[kind];
   const shelf = size >= 44 ? 5 : 4;
   return (
-    <Pressable testID={testID} onPress={onPress} disabled={disabled} hitSlop={6} style={{ opacity: disabled ? 0.5 : 1 }}>
+    <Pressable
+      testID={testID}
+      onPress={onPress}
+      disabled={disabled}
+      hitSlop={slopFor(size, 6)}
+      accessibilityRole="button"
+      accessibilityLabel={label ?? iconLabel(icon)}
+      accessibilityState={{ disabled: !!disabled, selected: selected ?? undefined }}
+      style={{ opacity: disabled ? 0.5 : 1 }}
+    >
       {({ pressed }) => (
         <View>
           <View style={[styles.btnShell, { width: size, height: size, borderRadius: size / 2, backgroundColor: k.shelf, paddingBottom: pressed ? 0 : shelf, paddingTop: pressed ? shelf : 0 }]}>
@@ -254,7 +282,7 @@ export function Row({ children, style, gap = space.sm }: { children: React.React
 
 export function Toggle({ label, value, onChange }: { label: string; value: boolean; onChange: (v: boolean) => void }) {
   return (
-    <Pressable onPress={() => onChange(!value)} style={styles.toggleRow} hitSlop={4}>
+    <Pressable onPress={() => onChange(!value)} style={styles.toggleRow} hitSlop={4} accessibilityRole="switch" accessibilityLabel={label} accessibilityState={{ checked: value }}>
       <Text style={[styles.p, fontFor(label, fonts.bodyBold, '700'), { flex: 1 }]}>{label}</Text>
       <View style={[styles.toggle, value && { backgroundColor: colors.cta }]}>
         <View style={[styles.toggleTop, value && { backgroundColor: colors.ctaLight }]} />
@@ -269,9 +297,9 @@ export function Stepper({ label, value, onChange, step = 1, min = 0, max = 9999,
     <View style={styles.toggleRow}>
       <Text style={[styles.p, fontFor(label, fonts.bodyBold, '700'), { flex: 1 }]}>{label}</Text>
       <Row>
-        <IconButton size={34} kind="ghost" icon="minus" onPress={() => onChange(Math.max(min, value - step))} />
+        <IconButton size={34} kind="ghost" icon="minus" label={`${label} −`} onPress={() => onChange(Math.max(min, value - step))} />
         <Text style={[styles.stepValue, fontFor(format ? format(value) : String(value), fonts.display)]}>{format ? format(value) : value}</Text>
-        <IconButton size={34} kind="ghost" icon="plus" onPress={() => onChange(Math.min(max, value + step))} />
+        <IconButton size={34} kind="ghost" icon="plus" label={`${label} +`} onPress={() => onChange(Math.min(max, value + step))} />
       </Row>
     </View>
   );
@@ -280,7 +308,7 @@ export function Stepper({ label, value, onChange, step = 1, min = 0, max = 9999,
 /** Selectable chip (filters, presets). */
 export function Chip({ label, selected, onPress, locked, dark }: { label: string; selected?: boolean; onPress?: () => void; locked?: boolean; dark?: boolean }) {
   return (
-    <Pressable onPress={onPress} hitSlop={4} style={({ pressed }) => [styles.chip, dark && styles.chipDark, selected && styles.chipOn, pressed && { transform: [{ translateY: 1 }] }]}>
+    <Pressable onPress={onPress} hitSlop={slopFor(34, 4)} accessibilityRole="button" accessibilityLabel={label} accessibilityState={{ selected: !!selected, disabled: !!locked }} style={({ pressed }) => [styles.chip, dark && styles.chipDark, selected && styles.chipOn, pressed && { transform: [{ translateY: 1 }] }]}>
       {locked && <Icon name="lock" size={15} />}
       <Text numberOfLines={1} style={[styles.chipText, fontFor(label, fonts.uiBold), dark && !selected && { color: '#FFFFFF' }]}>
         {label}
@@ -292,7 +320,7 @@ export function Chip({ label, selected, onPress, locked, dark }: { label: string
 /** Gem balance capsule with a green "+" (opens the shop). */
 export function GemCounter({ amount, onPress, testID }: { amount: number; onPress?: () => void; testID?: string }) {
   return (
-    <Pressable testID={testID} onPress={onPress} hitSlop={6} style={({ pressed }) => [styles.gemWrap, pressed && { transform: [{ translateY: 2 }] }]}>
+    <Pressable testID={testID} onPress={onPress} hitSlop={6} accessibilityRole="button" accessibilityLabel={t('table.a11y.gems', { n: amount })} style={({ pressed }) => [styles.gemWrap, pressed && { transform: [{ translateY: 2 }] }]}>
       <View style={styles.gemPill}>
         <StrokeText style={{ fontSize: 17 }} strokeWidth={1.5} drop={1}>
           {amount.toLocaleString()}

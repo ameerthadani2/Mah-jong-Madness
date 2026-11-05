@@ -5,14 +5,9 @@ import { kindInfo, kindOf, type Kind, type TileId } from '@mjm/engine';
 import { colors } from '../theme';
 import { TableThemeContext, type TableTheme } from '../themes';
 
-export type TileSize = 'xs' | 'sm' | 'md' | 'lg';
+import { tileDims, type TileSize } from './tileDims';
 
-const DIMS: Record<TileSize, { w: number; h: number }> = {
-  xs: { w: 20, h: 28 },
-  sm: { w: 28, h: 39 },
-  md: { w: 40, h: 56 },
-  lg: { w: 50, h: 70 },
-};
+export { tileDims, type TileSize } from './tileDims';
 
 const CN_NUM = ['一', '二', '三', '四', '五', '六', '七', '八', '九'];
 
@@ -30,10 +25,9 @@ export interface TileProps {
   style?: ViewStyle;
   /** Rotate 90° to show a claimed tile in a meld. */
   rotated?: boolean;
-}
-
-export function tileDims(size: TileSize | number): { w: number; h: number } {
-  return typeof size === 'number' ? { w: size, h: Math.round(size * 1.4) } : DIMS[size];
+  /** Screen-reader name for a pressable tile (defaults to the tile's English name). */
+  accessibilityLabel?: string;
+  accessibilityHint?: string;
 }
 
 /* ------------------------------------------------------------------ */
@@ -265,6 +259,33 @@ function zh(text: string, y: number, size: number, fill: string) {
   );
 }
 
+/**
+ * Colour-blind-safe suit mark: a small ink shape in the top-right corner that names the suit without
+ * relying on colour (萬 square, 筒 ring, 條 bar). Honours and flowers need none: their faces are words.
+ * Drawn only on tiles at least 26 px wide, where it is legible.
+ */
+const MARKS = new Map<Kind, React.ReactElement | null>();
+export const SUIT_MARK_SHAPE = { m: 'square', p: 'ring', s: 'bar' } as const;
+
+function suitMark(kind: Kind): React.ReactElement | null {
+  if (MARKS.has(kind)) return MARKS.get(kind)!;
+  const suit = kindInfo(kind).suit;
+  // An ivory backing keeps the mark readable where the suit art reaches the corner.
+  const shape =
+    suit === 'm' ? <Rect x={84.5} y={4.5} width={7} height={7} rx={1.2} fill={INK} />
+    : suit === 'p' ? <Circle cx={88} cy={8} r={3.6} fill="none" stroke={INK} strokeWidth={2.2} />
+    : suit === 's' ? <Rect x={86.5} y={3.5} width={3} height={9} rx={1.5} fill={INK} />
+    : null;
+  const mark = shape && (
+    <G opacity={0.6}>
+      <Circle cx={88} cy={8} r={6.8} fill={IVORY} opacity={0.9} />
+      {shape}
+    </G>
+  );
+  MARKS.set(kind, mark);
+  return mark;
+}
+
 const ART = new Map<Kind, React.ReactElement>();
 
 function artFor(kind: Kind): React.ReactElement {
@@ -357,7 +378,12 @@ function TileSvg({ w, h, kind, faceDown, theme }: { w: number; h: number; kind?:
           <Circle cx={50} cy={63} r={8} fill="#FFFFFF" fillOpacity={0.45} />
         </G>
       ) : (
-        kind !== undefined && <G transform={`translate(${sw / 2} ${sw / 2 + (unitsH - 126) * scale * 0.5}) scale(${scale})`}>{artFor(kind)}</G>
+        kind !== undefined && (
+          <G transform={`translate(${sw / 2} ${sw / 2 + (unitsH - 126) * scale * 0.5}) scale(${scale})`}>
+            {artFor(kind)}
+            {w >= 26 && suitMark(kind)}
+          </G>
+        )
       )}
     </Svg>
   );
@@ -365,7 +391,7 @@ function TileSvg({ w, h, kind, faceDown, theme }: { w: number; h: number; kind?:
 
 const RING: Record<'good' | 'bad' | 'wait' | 'selected', string> = { good: '#35D04A', bad: colors.danger, wait: colors.gold, selected: colors.gold };
 
-export const Tile = React.memo(function Tile({ tile, kind, size = 'md', faceDown, selected, dimmed, highlight, onPress, onLongPress, style, rotated }: TileProps) {
+export const Tile = React.memo(function Tile({ tile, kind, size = 'md', faceDown, selected, dimmed, highlight, onPress, onLongPress, style, rotated, accessibilityLabel, accessibilityHint }: TileProps) {
   const { w, h } = tileDims(size);
   const theme = useContext(TableThemeContext);
   const k = kind ?? (tile !== undefined ? kindOf(tile) : undefined);
@@ -394,7 +420,17 @@ export const Tile = React.memo(function Tile({ tile, kind, size = 'md', faceDown
   );
   if (!onPress && !onLongPress) return body;
   return (
-    <Pressable onPress={onPress} onLongPress={onLongPress} hitSlop={2} style={({ pressed }) => pressed && { opacity: 0.85 }}>
+    // Neighbouring tiles sit 2 px apart, so the extra touch area goes above and below (hand tiles are 39+ px tall).
+    <Pressable
+      onPress={onPress}
+      onLongPress={onLongPress}
+      hitSlop={{ top: Math.max(4, Math.ceil((44 - h) / 2)), bottom: Math.max(4, Math.ceil((44 - h) / 2)), left: 1, right: 1 }}
+      accessibilityRole="button"
+      accessibilityLabel={accessibilityLabel ?? (faceDown ? undefined : info?.nameEn)}
+      accessibilityHint={accessibilityHint}
+      accessibilityState={{ selected: !!selected }}
+      style={({ pressed }) => pressed && { opacity: 0.85 }}
+    >
       {body}
     </Pressable>
   );

@@ -10,6 +10,7 @@ import { Tile, type TileSize } from './Tile';
 import { AvatarPlate, seatAvatarId, type AvatarMood } from './Avatars';
 import { Emote } from './Emotes';
 import { SeatMotion, type SeatReaction } from './SeatMotion';
+import { SlideIn } from './table/Motion';
 
 export function MeldView({ meld, size = 'sm' }: { meld: Meld; size?: TileSize | number }) {
   // Another seat's concealed kong arrives as placeholders until the hand ends: show all four face down.
@@ -54,7 +55,8 @@ export function TileStrip({ tiles, size = 'xs', max = 20 }: { tiles: TileId[]; s
   );
 }
 
-export function DiscardPool({ tiles, size = 'xs', perRow = 8, latest, align = 'flex-start' }: { tiles: TileId[]; size?: TileSize | number; perRow?: number; latest?: TileId; align?: 'flex-start' | 'center' | 'flex-end' }) {
+/** A seat's pond. The latest discard is ringed and, when `enterFrom` is given, slides in from that side. */
+export function DiscardPool({ tiles, size = 'xs', perRow = 8, latest, align = 'flex-start', enterFrom }: { tiles: TileId[]; size?: TileSize | number; perRow?: number; latest?: TileId; align?: 'flex-start' | 'center' | 'flex-end'; enterFrom?: { x: number; y: number } }) {
   const rows: TileId[][] = [];
   const n = Math.max(1, perRow);
   for (let i = 0; i < tiles.length; i += n) rows.push(tiles.slice(i, i + n));
@@ -62,9 +64,15 @@ export function DiscardPool({ tiles, size = 'xs', perRow = 8, latest, align = 'f
     <View style={{ gap: 2, alignItems: align }}>
       {rows.map((row, i) => (
         <View key={i} style={{ flexDirection: 'row', gap: 2 }}>
-          {row.map((t) => (
-            <Tile key={t} tile={t} size={size} highlight={t === latest ? 'wait' : undefined} />
-          ))}
+          {row.map((t) =>
+            t === latest && enterFrom ? (
+              <SlideIn key={t} from={enterFrom}>
+                <Tile tile={t} size={size} highlight="wait" />
+              </SlideIn>
+            ) : (
+              <Tile key={t} tile={t} size={size} highlight={t === latest ? 'wait' : undefined} />
+            ),
+          )}
         </View>
       ))}
     </View>
@@ -262,7 +270,7 @@ export function Compass({ prevailing, drawsLeft, seatWinds, active, size = 72 }:
       <View style={[styles.compassInner, { borderRadius: size * 0.2 }]} />
       <Text style={[styles.compassMain, { fontSize: size * 0.34, lineHeight: size * 0.42 }]}>{prevailing}</Text>
       <View style={styles.compassCountWrap}>
-        <Text style={[styles.compassCount, { fontSize: size * 0.17 }]}>{drawsLeft}</Text>
+        <Text style={[styles.compassCount, { fontSize: Math.max(11, size * 0.17) }]}>{drawsLeft}</Text>
       </View>
       {seatWinds.map((w, i) => (
         <View key={i} pointerEvents="none" style={[styles.compassWind, pos[i], { width: b, height: b, borderRadius: b / 2 }, active === i && styles.compassWindOn]}>
@@ -283,9 +291,9 @@ const styles = StyleSheet.create({
   tag: { backgroundColor: 'rgba(16,20,47,0.78)', borderWidth: 2, borderColor: colors.ink, borderRadius: 10, paddingHorizontal: 7, paddingVertical: 2, minWidth: 0 },
   tagName: { color: '#FFFFFF', fontSize: 12 },
   tagRow: { flexDirection: 'row', alignItems: 'center', gap: 5 },
-  tagRel: { color: '#B9C6E4', fontSize: 10, fontWeight: '900' },
+  tagRel: { color: '#B9C6E4', fontSize: 11, fontWeight: '900' },
   tagScore: { color: colors.gold, fontFamily: fonts.display, fontSize: 12 },
-  offline: { color: colors.danger, fontSize: 10, fontWeight: '900' },
+  offline: { color: colors.danger, fontSize: 11, fontWeight: '900' },
   bubble: { position: 'absolute', backgroundColor: '#FFFFFF', borderWidth: 2.5, borderColor: colors.ink, borderRadius: 999, padding: 3, zIndex: 5 },
   compass: { backgroundColor: '#14204A', borderWidth: 3, borderColor: colors.ink, alignItems: 'center', justifyContent: 'center' },
   compassInner: { position: 'absolute', top: 4, left: 4, right: 4, bottom: 4, borderWidth: 1.5, borderColor: 'rgba(255,197,61,0.5)' },

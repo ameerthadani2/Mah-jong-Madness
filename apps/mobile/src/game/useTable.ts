@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { ClientState } from '@mjm/net';
+import { shouldTick, tableEvents, type CueState, type TableEvent } from '../audio/cues';
 import type { ReconnectState } from '../logic/reconnect';
 import type { Session } from './session';
 
@@ -43,4 +44,31 @@ export function useCountdown(deadline: number | null): number | null {
     return () => clearInterval(id);
   }, []);
   return deadline === null ? null : left;
+}
+
+/**
+ * Table events (discards, calls, results) for each new client state, handed to `onEvents` once each. The
+ * first state after mounting only sets the baseline, so returning to the table never replays old calls.
+ */
+export function useTableEvents(state: ClientState | null, onEvents: (events: TableEvent[]) => void): void {
+  const prev = useRef<CueState | null>(null);
+  const cb = useRef(onEvents);
+  cb.current = onEvents;
+  useEffect(() => {
+    const next: CueState | null = state ? { view: state.view, lastResult: state.lastResult, lastAudit: state.lastAudit, seat: state.seat } : null;
+    const events = tableEvents(prev.current, next);
+    prev.current = next;
+    if (events.length) cb.current(events);
+  }, [state]);
+}
+
+/** Calls `onTick` once per second for the last five seconds of my own move. */
+export function useClockTick(countdown: number | null, myMove: boolean, onTick: () => void): void {
+  const prev = useRef<number | null>(null);
+  const cb = useRef(onTick);
+  cb.current = onTick;
+  useEffect(() => {
+    if (shouldTick(prev.current, countdown, myMove)) cb.current();
+    prev.current = countdown;
+  }, [countdown, myMove]);
 }

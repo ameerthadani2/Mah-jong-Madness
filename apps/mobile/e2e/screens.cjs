@@ -7,7 +7,7 @@
  *   npm run e2e:screens                                           (both steps)
  *
  * Writes <dir>/<width>x<height>-<screen>.png for home, table-mid, table-selected, table-claim (when a claim
- * came up), result, review, learn, lesson, shop and settings. Each viewport plays one hand against bots in
+ * came up), callout and win-hold (when they came up), result, review, learn, lesson, shop and settings. Each viewport plays one hand against bots in
  * its own browser context, all in parallel. Set SCREENS_SIZES=390x844,667x375 to capture a subset.
  * Exits non-zero if a viewport cannot reach the result sheet or the page throws.
  */
@@ -81,6 +81,9 @@ async function run(browser, port, [w, h]) {
   const started = Date.now();
   while (Date.now() - started < 240000) {
     if (await visible(page, 'text=Next hand')) break;
+    // The feel: a call-out banner, and the winner's hand face up during the hold before the result sheet.
+    if (!done.has('win-hold') && (await visible(page, '[data-testid="win-reveal"]'))) { done.add('win-hold'); await page.waitForTimeout(700); await shot('win-hold'); }
+    if (!done.has('callout') && (await visible(page, '[data-testid="call-banner"]'))) { done.add('callout'); await shot('callout'); }
     let el;
     if ((el = await visible(page, 'text=/胡!/'))) { await tap(page, el); await page.waitForTimeout(400); continue; }
     if ((el = await visible(page, 'text="過"'))) {
@@ -144,7 +147,7 @@ async function run(browser, port, [w, h]) {
   } else notes.push('no settings button');
 
   await ctx.close();
-  return { size: tag, finished, discards, claim: done.has('claim'), notes, errors };
+  return { size: tag, finished, discards, shots: [...done], notes, errors };
 }
 
 (async () => {
