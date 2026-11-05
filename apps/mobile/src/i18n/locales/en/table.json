@@ -105,5 +105,41 @@
     "bamboo": "Bamboo Garden",
     "jade": "Jade Parlour",
     "imperial": "Imperial Red"
+  },
+  "callout": {
+    "chi": "吃",
+    "pong": "碰",
+    "kong": "槓",
+    "hu": "胡",
+    "selfdraw": "自摸"
+  },
+  "a11y": {
+    "icon": {
+      "smile": "Emotes and quick chat",
+      "cap": "Coach",
+      "exit": "Leave table",
+      "back": "Back",
+      "cog": "Settings",
+      "plus": "Increase",
+      "minus": "Decrease",
+      "share": "Share",
+      "pencil": "Edit"
+    },
+    "gems": "%{n} diamonds, open the shop",
+    "claimWith": "%{verb}: %{tiles}",
+    "pass": "Pass",
+    "chi": "Chow",
+    "pong": "Pong",
+    "kong": "Kong",
+    "discard": "Discard",
+    "win": "Win (hu)",
+    "selfDrawWin": "Self-drawn win (zimo)",
+    "callout": "%{name}: %{call}",
+    "drawsLeft": "%{n} tiles left in the wall",
+    "hand": "Your hand, %{n} tiles",
+    "tileSelected": "%{tile}, selected",
+    "tapToDiscard": "Tap again to discard",
+    "tapToSelect": "Tap to select for discard",
+    "emote": "Send emote %{name}"
   }
 }

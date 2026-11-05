@@ -1,1 +1,13 @@
-{}
+{
+  "_review": "n/a",
+  "title": "Sound",
+  "sound": "Sound effects and calls",
+  "voiceLabel": "Voice for calls (吃 碰 槓 胡 自摸)",
+  "voice": {
+    "mandarin": "Mandarin",
+    "taiwanese": "Taiwanese",
+    "off": "Off"
+  },
+  "voiceMissing": "This voice is not recorded yet, so calls show as banners only.",
+  "test": "Test sound"
+}

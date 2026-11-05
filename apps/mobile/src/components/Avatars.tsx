@@ -198,7 +198,7 @@ export const AvatarPlate = React.memo(function AvatarPlate({
   const box = size + 14;
   const C = 2 * Math.PI * ringR;
   const frac = timer === null || timer === undefined ? null : Math.max(0, Math.min(1, timer));
-  const badge = Math.max(16, Math.round(size * 0.4));
+  const badge = Math.max(19, Math.round(size * 0.4));
   const aid = resolveAvatar(id);
   const clips = PORTRAIT_CLIPS[aid];
   const clip = clips ? (mood && clips[mood]) || clips.idle : undefined;
@@ -267,12 +267,12 @@ export const AvatarPlate = React.memo(function AvatarPlate({
       </View>
       {dealer && (
         <View style={[styles.badge, styles.dealer, { width: badge, height: badge, borderRadius: badge / 2, right: -badge * 0.35, top: -badge * 0.3 }]}>
-          <Text style={[styles.badgeText, { fontSize: badge * 0.58 }]}>莊</Text>
+          <Text style={[styles.badgeText, { fontSize: Math.max(11, badge * 0.58) }]}>莊</Text>
         </View>
       )}
       {wind && (
         <View style={[styles.badge, styles.wind, { width: badge, height: badge, borderRadius: badge / 2, left: -badge * 0.35, bottom: -badge * 0.25 }]}>
-          <Text style={[styles.badgeText, { fontSize: badge * 0.58, color: '#FFFFFF' }]}>{wind}</Text>
+          <Text style={[styles.badgeText, { fontSize: Math.max(11, badge * 0.58), color: '#FFFFFF' }]}>{wind}</Text>
         </View>
       )}
     </View>

@@ -105,5 +105,41 @@
     "bamboo": "竹林",
     "jade": "翡翠廳",
     "imperial": "宮廷紅"
+  },
+  "callout": {
+    "chi": "吃",
+    "pong": "碰",
+    "kong": "槓",
+    "hu": "胡",
+    "selfdraw": "自摸"
+  },
+  "a11y": {
+    "icon": {
+      "smile": "表情與快速聊天",
+      "cap": "教練",
+      "exit": "離開牌桌",
+      "back": "返回",
+      "cog": "設定",
+      "plus": "增加",
+      "minus": "減少",
+      "share": "分享",
+      "pencil": "編輯"
+    },
+    "gems": "%{n} 顆鑽石，開啟商店",
+    "claimWith": "%{verb}：%{tiles}",
+    "pass": "過",
+    "chi": "吃",
+    "pong": "碰",
+    "kong": "槓",
+    "discard": "打出",
+    "win": "胡牌",
+    "selfDrawWin": "自摸胡牌",
+    "callout": "%{name}：%{call}",
+    "drawsLeft": "牌牆剩 %{n} 張",
+    "hand": "你的手牌，共 %{n} 張",
+    "tileSelected": "%{tile}，已選取",
+    "tapToDiscard": "再點一次打出",
+    "tapToSelect": "點一下選取要打的牌",
+    "emote": "送出表情 %{name}"
   }
 }

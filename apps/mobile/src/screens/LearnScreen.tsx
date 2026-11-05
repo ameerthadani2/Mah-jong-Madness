@@ -1,12 +1,13 @@
 import React, { useState } from 'react';
 import { ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
-import { kindsFromString, LESSONS, type Lesson, type LessonStep } from '@mjm/engine';
+import { kindInfo, kindsFromString, LESSONS, type Lesson, type LessonStep } from '@mjm/engine';
 import { useApp } from '../app-state';
 import { effectiveStreak } from '../storage';
 import { rollingAccuracy } from '../logic/accuracy';
 import { lessonAnswers, lessonComplete } from '../logic/lesson';
 import { colors, fonts, space } from '../theme';
-import { Tile } from '../components/Tile';
+import { Tile, tileDims } from '../components/Tile';
+import { fitTile } from '../components/table/layout';
 import { Button, Card, H2, P, Pill, Row, ScreenHeader, SectionLabel, StrokeText } from '../components/Ui';
 import { Icon, type IconName } from '../components/Icons';
 import { useT, type Locale } from '../i18n';
@@ -139,20 +140,21 @@ function DrillCard({ w, icon, tint, title, text, stat, statIcon, statTone, cta, 
 }
 
 export function HandView({ hand, size = 'sm', onPress, selected, highlight }: { hand: string; size?: 'xs' | 'sm' | 'md'; onPress?: (code: string, index: number) => void; selected?: string | null; highlight?: Record<string, 'good' | 'bad' | 'wait'> }) {
-  const groups = hand.trim().split(/\s+/);
+  const groups = hand.trim().split(/\s+/).map((g) => kindsFromString(g));
+  // Shrink the tiles until the longest group fits the card, so a run of nine (九萬) is never clipped on a phone.
+  const [room, setRoom] = useState<number | null>(null);
+  const longest = Math.max(1, ...groups.map((g) => g.length));
+  const tile = room === null ? tileDims(size).w : fitTile(room, longest, tileDims(size).w);
   return (
-    <View style={styles.handRow}>
-      {groups.map((g, gi) => {
-        const kinds = kindsFromString(g);
-        return (
-          <View key={gi} style={styles.group}>
-            {kinds.map((k, i) => {
-              const code = codeOf(k);
-              return <Tile key={`${gi}-${i}`} kind={k} size={size} selected={selected === code} highlight={highlight?.[code]} onPress={onPress ? () => onPress(code, i) : undefined} />;
-            })}
-          </View>
-        );
-      })}
+    <View style={styles.handRow} onLayout={(e) => setRoom(Math.floor(e.nativeEvent.layout.width))}>
+      {groups.map((kinds, gi) => (
+        <View key={gi} style={styles.group}>
+          {kinds.map((k, i) => {
+            const code = codeOf(k);
+            return <Tile key={`${gi}-${i}`} kind={k} size={tile} selected={selected === code} highlight={highlight?.[code]} onPress={onPress ? () => onPress(code, i) : undefined} accessibilityLabel={kindInfo(k).nameEn} />;
+          })}
+        </View>
+      ))}
     </View>
   );
 }
