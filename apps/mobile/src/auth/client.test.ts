@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { FetchLike } from '../api/http';
 import { clubsApi } from '../api/clubs';
 import { ApiError, AuthClient, authStorageKey, REFRESH_AFTER_MS, SignedOutError } from './client';
+import { EMPTY_WALLET, walletForUser } from '../monetisation/wallet';
 import { memoryStore } from './store';
 import type { DeviceInfo, StoredAuth } from './types';
 
@@ -270,6 +271,21 @@ describe('AuthClient: providers, sign-out and deletion', () => {
     await s.client.deleteAccount();
     expect(await s.saved()).toBeNull();
     expect(s.client.snapshot()).toEqual({ status: 'offline', userId: null, displayName: null, kind: null, hasSession: false });
+  });
+
+  it('after a sign-out or a deletion the cached wallet belongs to nobody on the device, so its tier, themes and balance go', async () => {
+    const synced = { ...EMPTY_WALLET, userId: 'u-guest', diamonds: 50, entitlements: [{ entitlement: 'coach.gold', expiresAt: null }], meters: { day: '2026-6-1', reviews: 1, rush: 0 } };
+    expect(walletForUser(synced, 'u-guest')).toBe(synced);
+    const out = setup({ 'POST /api/auth/logout': [{ status: 204 }] }, storedGuest({ kind: 'account' }));
+    await out.client.logout();
+    expect(walletForUser(synced, out.client.snapshot().userId)).toEqual({ ...EMPTY_WALLET, meters: synced.meters });
+    const del = setup({ 'DELETE /api/me': [{ status: 204 }] }, storedGuest());
+    await del.client.deleteAccount();
+    expect(walletForUser(synced, del.client.snapshot().userId)).toEqual({ ...EMPTY_WALLET, meters: synced.meters });
+    // The next guest on the phone does not inherit it either.
+    const next = setup({ 'POST /api/auth/guest': [{ status: 201, body: { userId: 'u-next', guestSecret: 'b'.repeat(64), session: session('mjs_next'), user: user('u-next') } }] });
+    await next.client.ensureSession();
+    expect(walletForUser(synced, next.client.snapshot().userId)).toEqual({ ...EMPTY_WALLET, meters: synced.meters });
   });
 
   it('PATCH /api/me sends only the changed fields', async () => {
