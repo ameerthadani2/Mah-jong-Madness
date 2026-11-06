@@ -57,6 +57,8 @@ export const LIMITS = {
   authPerMinute: 5,
   /** Player reports one user may file in 24 hours. */
   reportsPerDay: 10,
+  /** Player reports one IP address may file in 24 hours, whatever the accounts (guests are free to make). */
+  reportsPerDayPerIp: 30,
 } as const;
 
 type Env = Record<string, string | undefined>;

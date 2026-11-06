@@ -4,6 +4,8 @@
  */
 export type Clock = () => number;
 
+export const DAY_MS = 86_400_000;
+
 /** Classic token bucket: holds at most `capacity` tokens and refills continuously at `refillPerSec`. */
 export class TokenBucket {
   private tokens: number;

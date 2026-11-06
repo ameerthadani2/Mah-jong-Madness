@@ -10,7 +10,9 @@
  *
  * With a session verifier (the real server), the first frame must be `{t:'hello', auth}`; until
  * the token is verified nothing else is routed (frames sent meanwhile wait, in order), and a
- * missing or rejected token closes the socket with 4401.
+ * missing or rejected token closes the socket with 4401. The token is checked again before every
+ * `create` and `join`, so a session that has since expired or been revoked cannot open or enter a
+ * table; a revocation also closes the socket at once through `RoomRegistry.endSessions`.
  */
 import type { IncomingMessage, Server } from 'node:http';
 import type { Duplex } from 'node:stream';
@@ -18,14 +20,14 @@ import { WebSocketServer, type WebSocket } from 'ws';
 import { LIMITS, type SignalConfig } from './config';
 import { clientIp, TokenBucket } from './limits';
 import { reportError } from './observability';
-import type { Inbound, RoomRegistry } from './rooms';
+import { SESSION_ENDED, type Inbound, type RoomRegistry } from './rooms';
 
 /** Largest frame accepted, far above any legitimate game message. `ws` closes the socket with 1009 when a frame is bigger. */
 export const MAX_FRAME_BYTES = 64 * 1024;
 /** WebSocket close code 1008 means "policy violation". */
 export const POLICY_VIOLATION = 1008;
-/** Application close code for a missing, malformed or rejected session token in the first frame. */
-export const UNAUTHORISED = 4401;
+/** Application close code for a missing, malformed or rejected session token in the first frame (and for a session that ends later). */
+export const UNAUTHORISED = SESSION_ENDED;
 const HEARTBEAT_MS = 30_000;
 /** How long a new socket has to send a verified `hello` before it is closed with 4401. */
 const HELLO_TIMEOUT_MS = 10_000;
@@ -34,15 +36,22 @@ const MAX_QUEUED_FRAMES = 16;
 
 export type SocketLimits = Pick<typeof LIMITS, 'socketsPerIp' | 'messagesPerSec' | 'messageBurst'>;
 
+/** What a verifier says about a session token: the user, and the session itself when known. */
+export type VerifiedToken = string | { userId: string; sessionId?: string };
+
 export interface SocketAuthOptions {
   /**
-   * Resolve the session token in the first frame (`{t:'hello', auth}`) to its user id, or reject.
-   * When set, every socket must authenticate before anything else; when absent (unit tests of the
-   * relay alone), `hello` needs no token and peers have no user.
+   * Resolve the session token in the first frame (`{t:'hello', auth}`) to its user id (and session
+   * id), or reject. When set, every socket must authenticate before anything else, and the token
+   * is checked again before each `create` or `join`; when absent (unit tests of the relay alone),
+   * `hello` needs no token and peers have no user.
    */
-  verify?: (token: unknown) => Promise<string>;
+  verify?: (token: unknown) => Promise<VerifiedToken>;
   helloTimeoutMs?: number;
 }
+
+/** Frames that open or enter a table: the session is verified again before each one. */
+const RECHECKED = new Set<string>(['create', 'join']);
 
 /** Attach the connection handler to `wss`. Returns a function that reports open sockets per IP (for tests and health checks). */
 export function attachSocketHandlers(
@@ -83,7 +92,7 @@ export function attachSocketHandlers(
       return;
     }
 
-    let peerId = rooms.connect({ send: (json) => ws.readyState === ws.OPEN && ws.send(json), close: () => ws.close() });
+    let peerId = rooms.connect({ send: (json) => ws.readyState === ws.OPEN && ws.send(json), close: (code, reason) => ws.close(code, reason) });
     const bucket = new TokenBucket(limits.messageBurst, limits.messagesPerSec);
     let alive = true;
     let closed = false;
@@ -105,16 +114,33 @@ export function attachSocketHandlers(
         reportError(e, { where: 'socket', frame: msg.t });
       }
     };
+    /** The token the socket proved in `hello`, checked again before each create or join. */
+    let sessionToken: string | null = null;
     const authenticate = (msg: Inbound) => {
       const token = (msg as { auth?: unknown }).auth;
       if (msg.t !== 'hello' || typeof token !== 'string' || !token) return unauthorised();
       stage = 'verifying';
       auth.verify!(token).then(
-        (userId) => {
+        (verified) => {
           if (closed) return;
           stage = 'ready';
+          sessionToken = token;
           if (helloTimer) clearTimeout(helloTimer);
-          peerId = rooms.hello(peerId, userId);
+          const { userId, sessionId } = typeof verified === 'string' ? { userId: verified, sessionId: undefined } : verified;
+          peerId = rooms.hello(peerId, userId, sessionId);
+          for (const m of queued.splice(0)) dispatch(m);
+        },
+        () => unauthorised(),
+      );
+    };
+    /** Check the session still stands before a create or join; the frame (and any that follow) waits for the answer. */
+    const recheck = (msg: Inbound) => {
+      stage = 'verifying';
+      queued.push(msg);
+      auth.verify!(sessionToken).then(
+        () => {
+          if (closed) return;
+          stage = 'ready';
           for (const m of queued.splice(0)) dispatch(m);
         },
         () => unauthorised(),
@@ -140,6 +166,7 @@ export function attachSocketHandlers(
         else queued.push(msg);
         return;
       }
+      if (sessionToken !== null && RECHECKED.has(msg.t)) return recheck(msg);
       dispatch(msg);
     });
     ws.on('close', () => rooms.disconnect(peerId));

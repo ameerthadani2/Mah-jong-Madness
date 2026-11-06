@@ -226,12 +226,13 @@ export class PushService {
 }
 
 /**
- * Notices a human who has been disconnected from a hand in progress for `thresholdMs` (30 s) at
- * a server-hosted table, and calls `onWaiting` once per disconnection. Driven by `tick()`.
+ * Notices a human who has been disconnected from a hand in progress for `thresholdMs` (30 s of
+ * play) at a server-hosted table, and calls `onWaiting` once per disconnection. A player who
+ * left the table on purpose (`seat.left`) is not told it is waiting for them. Driven by `tick()`.
  */
 export class SeatWatcher {
-  /** `room:userId` → when the seat was first seen disconnected, and whether we already called. */
-  private readonly since = new Map<string, { at: number; notified: boolean }>();
+  /** `room:userId` → the last tick the seat was seen, how long it has been away while a hand was in play, and whether we already called. */
+  private readonly since = new Map<string, { at: number; playedMs: number; notified: boolean }>();
   constructor(
     private readonly rooms: Pick<RoomRegistry, 'hostedRooms' | 'hostedTable' | 'clubOf'>,
     private readonly onWaiting: (userId: string, room: string, clubCode?: string) => void,
@@ -247,18 +248,26 @@ export class SeatWatcher {
       if (!host) continue;
       const playing = host.phase === 'playing';
       for (const seat of host.seatInfo()) {
-        if (seat.isBot || seat.connected || !seat.userId) continue;
+        if (seat.isBot || seat.connected || !seat.userId || seat.left) continue;
         const key = `${room}:${seat.userId}`;
-        // Between hands the clock pauses, but someone already being watched stays watched (one
-        // notification per disconnection, not one per hand).
+        // Between hands the clock pauses (only time in play counts), but someone already being
+        // watched stays watched: one notification per disconnection, not one per hand.
+        const entry = this.since.get(key);
         if (!playing) {
-          if (this.since.has(key)) live.add(key);
+          if (entry) {
+            entry.at = at;
+            live.add(key);
+          }
           continue;
         }
         live.add(key);
-        const entry = this.since.get(key) ?? { at, notified: false };
-        this.since.set(key, entry);
-        if (!entry.notified && at - entry.at >= threshold) {
+        if (!entry) {
+          this.since.set(key, { at, playedMs: 0, notified: false });
+          continue;
+        }
+        entry.playedMs += Math.max(0, at - entry.at);
+        entry.at = at;
+        if (!entry.notified && entry.playedMs >= threshold) {
           entry.notified = true;
           this.onWaiting(seat.userId, room, this.rooms.clubOf(room));
         }

@@ -13,7 +13,7 @@ import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import type { WebSocketServer } from 'ws';
 import { createApiHandler } from './api';
-import type { ProviderConfig, SessionService } from './auth';
+import { purgeDeletedUsers, type ProviderConfig, type SessionService } from './auth';
 import { ClubRegistry, clubGate } from './clubs';
 import { LIMITS, type SignalConfig } from './config';
 import { BucketTable } from './limits';
@@ -154,7 +154,12 @@ export async function createSignalServer(opts: SignalServerOptions): Promise<Sig
       });
   });
   // Frames over 64 KiB close the socket with 1009; a malformed frame closes it with 1002; a bad session 4401.
-  const wss = createSocketServer(http, rooms, config, opts.socketLimits ?? LIMITS, { verify: async (token) => (await sessions.verify(token)).userId });
+  const wss = createSocketServer(http, rooms, config, opts.socketLimits ?? LIMITS, {
+    verify: async (token) => {
+      const s = await sessions.verify(token);
+      return { userId: s.userId, sessionId: s.sessionId };
+    },
+  });
 
   const ticker = setInterval(() => {
     try {
@@ -171,6 +176,12 @@ export async function createSignalServer(opts: SignalServerOptions): Promise<Sig
   const pruner = setInterval(() => {
     clubs.pruneFinishedTables(now() - DAY_MS);
     persister.prune().catch((e: Error) => console.error('[signal] snapshot prune failed', e.message));
+    // The hard delete promised at soft deletion (30 days), and sessions that have ended.
+    purgeDeletedUsers(repos.repos, { now })
+      .then(({ users, sessions: ended }) => {
+        if (users || ended) log(`[signal] purged ${users} deleted account(s) and ${ended} ended session(s)`);
+      })
+      .catch((e: Error) => console.error('[signal] account purge failed', e.message));
   }, HOUR_MS);
   ticker.unref();
   pruner.unref();
@@ -193,8 +204,11 @@ export async function createSignalServer(opts: SignalServerOptions): Promise<Sig
       clearInterval(pruner);
       clearInterval(receipts);
       offClubEvents();
-      // Write the tables as they are, then stop every table without reporting it finished, so
-      // club listings stay open and the next process restores them.
+      // Stop taking game input first: a move that arrived during the final write would be
+      // acknowledged to its player but missing from the snapshot the next process restores.
+      // Then write the tables as they are and stop every table without reporting it finished,
+      // so club listings stay open and the next process restores them.
+      rooms.freeze();
       await persister.flush();
       persister.stop();
       offRoomEvents();

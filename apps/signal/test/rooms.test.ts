@@ -57,7 +57,7 @@ describe('RoomRegistry', () => {
     expect(() => reg.handle(b.id, { t: 'join', room: {} as unknown as string })).not.toThrow();
     expect(() => reg.handle(b.id, { t: 'create', room: 7 as unknown as string })).not.toThrow();
     reg.handle(b.id, { t: 'join', room: 'NOPE' });
-    expect(last(b.socket)).toEqual({ t: 'error', message: ROOM_UNAVAILABLE });
+    expect(last(b.socket)).toEqual({ t: 'error', code: 'room_unavailable', message: ROOM_UNAVAILABLE });
     reg.disconnect(a.id);
     expect(reg.stats().peers).toBe(1);
   });
@@ -214,7 +214,7 @@ describe('RoomRegistry', () => {
     const guesser = peer();
     for (let i = 0; i < 5; i++) {
       reg.handle(guesser.id, { t: 'join', room: `GUESS${i}` });
-      expect(last(guesser.socket)).toEqual({ t: 'error', message: ROOM_UNAVAILABLE });
+      expect(last(guesser.socket)).toEqual({ t: 'error', code: 'room_unavailable', message: ROOM_UNAVAILABLE });
     }
     // The sixth attempt is refused even with the right code.
     reg.handle(guesser.id, { t: 'join', room: code });
@@ -241,7 +241,7 @@ describe('RoomRegistry', () => {
     const missing = last(late.socket);
     reg.handle(late.id, { t: 'join', room: 'X'.repeat(5000) });
     const huge = last(late.socket);
-    expect(full).toEqual({ t: 'error', message: ROOM_UNAVAILABLE });
+    expect(full).toEqual({ t: 'error', code: 'room_unavailable', message: ROOM_UNAVAILABLE });
     expect(missing).toEqual(full);
     expect(huge).toEqual(full);
   });

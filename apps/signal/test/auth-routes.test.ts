@@ -168,6 +168,36 @@ describe('the profile', () => {
     expect((await call('GET', '/api/me', undefined, g.auth)).status).toBe(401);
     expect((await call('POST', '/api/auth/guest/login', { userId: g.userId, guestSecret: g.guestSecret })).json.error).toBe('invalid_credentials');
     expect(clubs.club(club.code).members.find((m) => m.userId === g.userId)!.name).toBe('Deleted player');
+    // Nothing personal is left on the row; the record is kept until the purge.
+    expect(await repos.users.get(g.userId)).toMatchObject({ displayName: 'Deleted player', avatar: null, email: null, birthYear: null, locale: null });
+    await clubs.flush();
+    expect((await repos.clubs.get(club.code))!.members.find((m) => m.userId === g.userId)!.name).toBe('Deleted player');
+  });
+
+  it("deleting a club owner's account hands the club to its senior admin, and dissolves a club nobody else is in", async () => {
+    const { call, guest, clubs, repos } = apiFixture();
+    const owner = await guest('Owner');
+    const admin = await guest('Admin');
+    const member = await guest('Mem');
+    const club = (await call('POST', '/api/clubs', { name: 'Handover', settings: { joinRequiresApproval: true } }, owner.auth)).json as unknown as Club;
+    for (const who of [member, admin]) {
+      await call('POST', `/api/clubs/${club.code}/join`, {}, who.auth);
+      await call('POST', `/api/clubs/${club.code}/members/${who.userId}/approve`, {}, owner.auth);
+    }
+    await call('POST', `/api/clubs/${club.code}/members/${admin.userId}/role`, { role: 'admin' }, owner.auth);
+    const solo = (await call('POST', '/api/clubs', { name: 'Just me' }, owner.auth)).json as unknown as Club;
+    const newbie = await guest('Newbie');
+    await call('POST', `/api/clubs/${club.code}/join`, {}, newbie.auth);
+    expect((await call('DELETE', '/api/me', undefined, owner.auth)).status).toBe(204);
+    const after = clubs.club(club.code);
+    expect(after.ownerId).toBe(admin.userId);
+    expect(after.members.map((m) => [m.userId, m.role])).toEqual(expect.arrayContaining([[admin.userId, 'owner'], [owner.userId, 'member'], [member.userId, 'member']]));
+    // The new owner can run the club: the pending request can be approved.
+    expect((await call('POST', `/api/clubs/${club.code}/members/${newbie.userId}/approve`, {}, admin.auth)).status).toBe(200);
+    expect((await call('GET', `/api/clubs/${solo.code}`, undefined, admin.auth)).status).toBe(404);
+    await clubs.flush();
+    expect((await repos.clubs.get(club.code))!.ownerId).toBe(admin.userId);
+    expect(await repos.clubs.get(solo.code)).toBeNull();
   });
 });
 
@@ -182,6 +212,12 @@ describe('provider sign-in', () => {
     expect((linked.json.user as { kind: string }).kind).toBe('account');
     expect((linked.json.session as { token: string }).token).toBe(g.token);
     expect(((await call('GET', '/api/me', undefined, g.auth)).json.identities)).toEqual([{ provider: 'apple', email: 'lee@example.com' }]);
+    // The guest secret has been replaced: the response carries the new one for this device, the old one is dead.
+    const rotated = linked.json.guestSecret as string;
+    expect(rotated).toMatch(/^[0-9a-f]{64}$/);
+    expect(rotated).not.toBe(g.guestSecret);
+    expect((await call('POST', '/api/auth/guest/login', { userId: g.userId, guestSecret: g.guestSecret })).status).toBe(401);
+    expect((await call('POST', '/api/auth/guest/login', { userId: g.userId, guestSecret: rotated })).status).toBe(200);
 
     const n2 = 'second-nonce-0123456789';
     const signedIn = await call('POST', '/api/auth/login', { provider: 'apple', token: await idToken('apple', 'apple-sub-1', n2), nonce: n2, device: device() });
@@ -253,11 +289,16 @@ describe('provider sign-in', () => {
       [{ provider: 'myspace', token: 'x'.repeat(40), nonce }, 400, 'invalid'],
       [{ provider: 'facebook', token: 'x'.repeat(40), nonce }, 404, 'provider_disabled'],
       [{ provider: 'apple', token: 'x'.repeat(40), nonce: 42 }, 400, 'invalid'],
+      // The nonce is not optional: a token that was never bound to one is refused, on link and on login.
+      [{ provider: 'apple', token: await idToken('apple', 'apple-sub-4', nonce) }, 400, 'invalid'],
+      [{ provider: 'apple', token: await idToken('apple', 'apple-sub-4', nonce), nonce: '' }, 400, 'invalid'],
     ];
     for (const [body, status, error] of cases) {
       const res = await call('POST', '/api/auth/link', body, g.auth);
       expect([res.status, res.json.error]).toEqual([status, error]);
     }
+    const noNonce = await call('POST', '/api/auth/login', { provider: 'apple', token: await idToken('apple', 'apple-sub-4', nonce), device: device() });
+    expect([noNonce.status, noNonce.json.error]).toEqual([400, 'invalid']);
     // Without any provider configured (no secrets set), every provider is disabled.
     const bare = apiFixture();
     const h = await bare.guest('Bare');
@@ -290,12 +331,85 @@ describe('configuration and rate limits', () => {
   });
 
   it('allows five auth requests a minute per user, from any IP', async () => {
-    const { call, guest } = apiFixture();
+    const { call, guest, repos } = apiFixture();
     const g = await guest('Busy');
     const statuses: number[] = [];
     for (let i = 0; i < 6; i++) statuses.push((await call('POST', '/api/auth/guest/login', { userId: g.userId, guestSecret: g.guestSecret })).status);
     expect(statuses).toEqual([200, 200, 200, 200, 200, 429]);
     // The bearer routes count against the same user.
     expect((await call('POST', '/api/auth/refresh', undefined, g.auth)).json.error).toBe('rate_limited');
+    // The refused sign-in issued no session (the bootstrap's plus five): the limit is spent once the secret is proven, before one is made.
+    expect(await repos.sessions.revokeAllForUser(g.userId, Date.now())).toBe(6);
+  });
+
+  it("a stranger's failed guest sign-ins with your id cannot lock you out of your own session", async () => {
+    let now = Date.UTC(2026, 10, 5);
+    const { call, guest } = apiFixture({ now: () => now, deps: { providers } });
+    const victim = await guest('Victim');
+    // Five bad guesses from one address: refused, and that address is done guessing this id for a while.
+    for (let i = 0; i < 5; i++) expect((await call('POST', '/api/auth/guest/login', { userId: victim.userId, guestSecret: 'nope' }, {}, '203.0.113.9')).status).toBe(401);
+    expect((await call('POST', '/api/auth/guest/login', { userId: victim.userId, guestSecret: 'nope' }, {}, '203.0.113.9')).status).toBe(429);
+    // The victim, elsewhere, is unaffected on every authenticated auth route and on guest sign-in.
+    expect((await call('POST', '/api/auth/refresh', undefined, victim.auth, '198.51.100.1')).status).toBe(200);
+    expect((await call('POST', '/api/auth/guest/login', { userId: victim.userId, guestSecret: victim.guestSecret }, {}, '198.51.100.2')).status).toBe(200);
+    const nonce = 'victim-nonce-0123456789';
+    expect((await call('POST', '/api/auth/link', { provider: 'google', token: await idToken('google', 'google-sub-v', nonce), nonce }, victim.auth, '198.51.100.3')).status).toBe(200);
+    // Kept up for two minutes, one guess every twelve seconds, it still changes nothing for the victim.
+    for (let i = 0; i < 10; i++) {
+      now += 12_000;
+      await call('POST', '/api/auth/guest/login', { userId: victim.userId, guestSecret: 'nope' }, {}, '203.0.113.9');
+      expect((await call('POST', '/api/auth/logout', undefined, victim.auth, '198.51.100.' + (10 + i))).status).not.toBe(429);
+    }
+  });
+});
+
+describe('sessions and sockets', () => {
+  /** A peer connected to the registry as a verified socket, recording how it is closed. */
+  function socket(fixture: ReturnType<typeof apiFixture>, userId: string, sessionId: string) {
+    const closes: Array<[number | undefined, string | undefined]> = [];
+    const id = fixture.rooms.hello(fixture.rooms.connect({ send: () => undefined, close: (code, reason) => closes.push([code, reason]) }), userId, sessionId);
+    return { id, closes };
+  }
+
+  it('logging out, deleting the account and linking close the sockets those sessions opened with 4401', async () => {
+    const f = apiFixture({ deps: { providers } });
+    const g = await f.guest('Sock');
+    const mine = socket(f, g.userId, (await f.sessions.verify(g.token)).sessionId);
+    const other = (await f.call('POST', '/api/auth/guest/login', { userId: g.userId, guestSecret: g.guestSecret })).json.session as { token: string };
+    const theirs = socket(f, g.userId, (await f.sessions.verify(other.token)).sessionId);
+    // Logout ends this session's socket only.
+    expect((await f.call('POST', '/api/auth/logout', undefined, bearer(other.token))).status).toBe(204);
+    expect(theirs.closes).toEqual([[4401, 'Session ended']]);
+    expect(mine.closes).toEqual([]);
+    // Linking a provider ends every other session of the user, sockets included, but not the caller's.
+    const third = (await f.call('POST', '/api/auth/guest/login', { userId: g.userId, guestSecret: g.guestSecret })).json.session as { token: string };
+    const again = socket(f, g.userId, (await f.sessions.verify(third.token)).sessionId);
+    const nonce = 'socket-nonce-0123456789';
+    expect((await f.call('POST', '/api/auth/link', { provider: 'apple', token: await idToken('apple', 'apple-sub-s', nonce), nonce }, g.auth)).status).toBe(200);
+    expect(again.closes).toEqual([[4401, 'Session ended']]);
+    expect(mine.closes).toEqual([]);
+    // Deleting the account ends all of them.
+    expect((await f.call('DELETE', '/api/me', undefined, g.auth)).status).toBe(204);
+    expect(mine.closes).toEqual([[4401, 'Session ended']]);
+    expect(f.rooms.peerUser(mine.id)).toBe(g.userId); // the socket layer removes the peer when the close lands
+  });
+
+  it('merging a guest into an account ends the guest\'s sockets and moves its reports', async () => {
+    const f = apiFixture({ deps: { providers } });
+    const owner = await f.guest('Account');
+    const n1 = 'merge-sock-nonce-0001';
+    await f.call('POST', '/api/auth/link', { provider: 'google', token: await idToken('google', 'google-sub-m', n1), nonce: n1 }, owner.auth);
+    const phone = await f.guest('Phone');
+    const reporter = await f.guest('Reporter');
+    expect((await f.call('POST', '/api/reports', { reportedUserId: phone.userId, reason: 'cheating' }, reporter.auth)).status).toBe(201);
+    const s = socket(f, phone.userId, (await f.sessions.verify(phone.token)).sessionId);
+    const n2 = 'merge-sock-nonce-0002';
+    const merged = await f.call('POST', '/api/auth/link', { provider: 'google', token: await idToken('google', 'google-sub-m', n2), nonce: n2 }, phone.auth);
+    expect(merged.json.merged).toBe(true);
+    expect(s.closes).toEqual([[4401, 'Session ended']]);
+    expect((await f.repos.reports.listAbout(owner.userId)).map((r) => r.reporterId)).toEqual([reporter.userId]);
+    expect(await f.repos.reports.listAbout(phone.userId)).toEqual([]);
+    // The merged-away guest row keeps nothing personal.
+    expect(await f.repos.users.get(phone.userId)).toMatchObject({ displayName: '', locale: null, mergedInto: owner.userId });
   });
 });

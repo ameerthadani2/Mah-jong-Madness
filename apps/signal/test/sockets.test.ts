@@ -188,6 +188,54 @@ describe('session handshake', () => {
     }
   });
 
+  it('checks the session again before a create or join, and ends a verified socket with 4401 once its session is revoked', async () => {
+    const http2 = createServer();
+    // 'good' verifies while `valid` holds; the verifier also names the session so the registry can end it.
+    let valid = true;
+    const verify = vi.fn(async (token: unknown) => {
+      await new Promise((r) => setTimeout(r, 5));
+      if (token !== 'good' || !valid) throw new Error('bad token');
+      return { userId: 'user-verified-2', sessionId: 'session-2' };
+    });
+    const wss2 = createSocketServer(http2, rooms, { trustProxy: 0 }, undefined, { verify });
+    await new Promise<void>((resolve) => http2.listen(0, '127.0.0.1', resolve));
+    const url2 = `ws://127.0.0.1:${(http2.address() as AddressInfo).port}`;
+    try {
+      const connect = async () => {
+        const ws = new WebSocket(url2);
+        clients.push(ws);
+        ws.on('error', () => undefined);
+        const frames: Frame[] = [];
+        ws.on('message', (raw) => frames.push(JSON.parse(String(raw)) as Frame));
+        const done = closed(ws);
+        await new Promise<void>((resolve) => ws.once('open', () => resolve()));
+        ws.send(JSON.stringify({ t: 'hello', auth: 'good' }));
+        await vi.waitFor(() => expect(frames.some((f) => f.t === 'hello')).toBe(true));
+        return { ws, frames, done };
+      };
+      // A live session creates a table (the token is checked again for it).
+      const a = await connect();
+      a.ws.send(JSON.stringify({ t: 'create', hosted: true }));
+      await vi.waitFor(() => expect(a.frames.some((f) => f.t === 'room')).toBe(true));
+      expect(verify).toHaveBeenCalledTimes(2);
+      // The session ends on the API side: the registry closes its socket at once.
+      expect(rooms.endSessions({ sessionId: 'session-2' })).toBe(1);
+      expect(await a.done).toBe(4401);
+      // A session that expired quietly: the next create is refused and the socket closed, nothing is opened.
+      const b = await connect();
+      valid = false;
+      const before = rooms.stats().rooms;
+      b.ws.send(JSON.stringify({ t: 'create', hosted: true }));
+      expect(await b.done).toBe(4401);
+      expect(b.frames.map((f) => f.t)).toEqual(['hello']);
+      expect(rooms.stats().rooms).toBe(before);
+    } finally {
+      for (const c of wss2.clients) c.terminate();
+      await new Promise<void>((resolve) => wss2.close(() => resolve()));
+      await new Promise<void>((resolve) => http2.close(() => resolve()));
+    }
+  });
+
   it('closes a socket that never says hello', async () => {
     const { url2, stop } = await authServer(50);
     try {

@@ -12,7 +12,8 @@ import type { LatencyWindow } from './metrics';
 
 export interface Socket {
   send(json: string): void;
-  close(): void;
+  /** Close the connection; `code` and `reason` go out in the close frame when given. */
+  close(code?: number, reason?: string): void;
 }
 
 export type Inbound =
@@ -28,6 +29,8 @@ interface Peer {
   room: string | null;
   /** The account behind the socket, verified from its session token in `hello` (absent only without auth). */
   userId?: string;
+  /** The session that proved `userId`; a logout or revocation of it closes the socket (see `endSessions`). */
+  sessionId?: string;
   /** Allows one room per `LIMITS.createCooldownMs`. */
   creates: TokenBucket;
   /** Allows `LIMITS.joinsPerWindow` join attempts per `LIMITS.joinWindowMs`, so codes cannot be guessed quickly. */
@@ -69,6 +72,10 @@ export interface RoomEvent {
 
 /** Sent whether a code does not exist or the room is full, so the reply does not reveal which codes are live. */
 export const ROOM_UNAVAILABLE = 'Room not found or full';
+/** The `code` on the error frame carrying `ROOM_UNAVAILABLE`, so a client can tell a dead table from a transient failure. */
+export const ROOM_UNAVAILABLE_CODE = 'room_unavailable';
+/** WebSocket close code for a socket whose session has ended (logout, revocation, deletion, expiry); the same code a bad `hello` gets. */
+export const SESSION_ENDED = 4401;
 export const HOSTED_ONLY = 'Only server-hosted tables can be created';
 /** Sent for a hosted create while `HOST_TABLES=0`, instead of quietly opening a relay-only room. */
 export const HOSTED_DISABLED = 'Hosted tables are disabled';
@@ -240,8 +247,8 @@ export class RoomRegistry {
     return id;
   }
 
-  private error(peer: Peer, message: string): void {
-    peer.socket.send(JSON.stringify({ t: 'error', message }));
+  private error(peer: Peer, message: string, code?: string): void {
+    peer.socket.send(JSON.stringify(code ? { t: 'error', code, message } : { t: 'error', message }));
   }
 
   /**
@@ -250,7 +257,7 @@ export class RoomRegistry {
    * with no user. Ids are always server-assigned and never change for the life of the socket, so
    * a peer cannot impersonate a departed player or the server-side host ('server-…').
    */
-  hello(peerId: string, userId?: string): string {
+  hello(peerId: string, userId?: string, sessionId?: string): string {
     const peer = this.peers.get(peerId);
     if (!peer) return peerId;
     if (peerId.startsWith('tmp-')) {
@@ -259,6 +266,7 @@ export class RoomRegistry {
       peer.id = id;
       this.peers.set(id, peer);
       if (userId) peer.userId = userId;
+      if (sessionId) peer.sessionId = sessionId;
     }
     // `peerId` is the older name of `id`, kept for clients built before accounts.
     peer.socket.send(JSON.stringify({ t: 'hello', id: peer.id, peerId: peer.id, userId: peer.userId }));
@@ -268,6 +276,26 @@ export class RoomRegistry {
   /** The verified account behind a peer, if any. */
   peerUser(peerId: string): string | undefined {
     return this.peers.get(peerId)?.userId;
+  }
+
+  /**
+   * Close every socket whose session has ended (code 4401), so a logout, a revocation, an account
+   * deletion or a merge takes effect at the table as well as on the API: by session, or every
+   * session of a user except `exceptSessionId` (the caller's own, after a link). Returns how many
+   * sockets were closed. The seats stay as they are: a player who signs in again reclaims one
+   * with the rejoin token like any other reconnect.
+   */
+  endSessions(which: { sessionId?: string; userId?: string; exceptSessionId?: string }): number {
+    let n = 0;
+    for (const peer of [...this.peers.values()]) {
+      if (!peer.sessionId && !peer.userId) continue;
+      const bySession = which.sessionId !== undefined && peer.sessionId === which.sessionId;
+      const byUser = which.userId !== undefined && peer.userId === which.userId && peer.sessionId !== which.exceptSessionId;
+      if (!bySession && !byUser) continue;
+      peer.socket.close(SESSION_ENDED, 'Session ended');
+      n++;
+    }
+    return n;
   }
 
   /** Handle one inbound message from the peer currently known as `peerId`. Returns the (possibly renamed) peer id. */
@@ -339,7 +367,7 @@ export class RoomRegistry {
         }
         const room = msg.room.length <= 8 ? this.rooms.get(msg.room.toUpperCase()) : undefined;
         if (!room || (room.peers.size >= MAX_ROOM_PEERS && !room.peers.has(peer.id))) {
-          this.error(peer, ROOM_UNAVAILABLE);
+          this.error(peer, ROOM_UNAVAILABLE, ROOM_UNAVAILABLE_CODE);
           return peer.id;
         }
         if (room.clubCode && !(this.opts.clubs?.mayJoin(room.clubCode, peer.userId) ?? false)) {
@@ -481,6 +509,15 @@ export class RoomRegistry {
   /** When an empty room will be closed (for tests and diagnostics). */
   keepAliveUntil(code: string): number | undefined {
     return this.rooms.get(code)?.keepAliveUntil;
+  }
+
+  /**
+   * Stop taking input for a restart: every frame that arrives from now on is dropped (never
+   * acknowledged), while the tables stay as they are so they can be written one last time.
+   * `shutdown()` then closes them.
+   */
+  freeze(): void {
+    this.closed = true;
   }
 
   /**

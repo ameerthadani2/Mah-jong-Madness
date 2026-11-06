@@ -124,6 +124,24 @@ describe('push triggers', () => {
     expect(f.client!.sent[0]).toMatchObject({ to: token('chen'), title: 'Tea House', body: 'Your request to join has been approved. Welcome to the club!', data: { kind: 'join_approved', club: code } });
   });
 
+  it('signing out takes the push token off that device, so the next club event does not reach the phone', async () => {
+    const f = fixture();
+    const { owner, members, code } = await club(f);
+    const alice = members[0];
+    await f.register(alice, token('alice'));
+    expect((await f.call('POST', '/api/auth/logout', undefined, alice.auth)).status).toBe(204);
+    expect((await f.repos.devices.listForUser(alice.userId)).map((d) => d.pushToken)).toEqual([null]);
+    await f.call('POST', `/api/clubs/${code}/tables`, { label: 'After' }, owner.auth);
+    await new Promise((r) => setTimeout(r, 30));
+    expect(f.client!.sent).toEqual([]);
+    // Signing in again on the phone registers the token afresh and the pushes resume.
+    const back = (await f.call('POST', '/api/auth/guest/login', { userId: alice.userId, guestSecret: alice.guestSecret })).json.session as { token: string };
+    await f.call('POST', '/api/push/token', { token: token('alice'), platform: 'ios' }, { authorization: `Bearer ${back.token}` });
+    await f.call('POST', `/api/clubs/${code}/tables`, { label: 'Later' }, owner.auth);
+    await vi.waitFor(() => expect(f.client!.sent).toHaveLength(1));
+    expect(f.client!.sent[0].to).toBe(token('alice'));
+  });
+
   it('sends each kind at most once a minute per user', async () => {
     let t = 1_000_000;
     const client = new FakeExpo();
@@ -228,6 +246,53 @@ describe('SeatWatcher ("your table is waiting")', () => {
     t += 30_000;
     watcher.tick();
     expect(waiting).toHaveLength(2);
+  });
+
+  it('counts only time while a hand is in play: the clock really pauses between hands', () => {
+    let t = 0;
+    let phase = 'playing';
+    // A fake table: one human seat, gone the whole time; the phase is driven by the test.
+    const seat = { seat: 0, name: 'Alice', peerId: null, isBot: false, connected: false, userId: 'user-alice-1' };
+    const fake = { hostedRooms: () => ['ROOM01'], hostedTable: () => ({ phase, seatInfo: () => [seat] }) as never, clubOf: () => undefined };
+    const waiting: string[] = [];
+    const watcher = new SeatWatcher(fake, (userId) => waiting.push(userId), { now: () => t });
+    watcher.tick();
+    t += 10_000;
+    watcher.tick();
+    // Hand over: a long intermission and a ceremony pass while nobody is playing.
+    phase = 'hand_over';
+    t += 50_000;
+    watcher.tick();
+    phase = 'commit';
+    t += 10_000;
+    watcher.tick();
+    expect(waiting).toEqual([]);
+    // Back in play: only 10 s of play have passed, so another 20 s are needed.
+    phase = 'playing';
+    t += 19_999;
+    watcher.tick();
+    expect(waiting).toEqual([]);
+    t += 1;
+    watcher.tick();
+    expect(waiting).toEqual(['user-alice-1']);
+  });
+
+  it('does not chase a player who left the table on purpose', () => {
+    let t = 0;
+    const rooms = new RoomRegistry({ allowHosted: true, botDelayMs: 600_000, now: () => t });
+    const code = rooms.createHostedRoom();
+    const alice = seat(rooms, code, 'user-alice-1');
+    const waiting: string[] = [];
+    const watcher = new SeatWatcher(rooms, (userId) => waiting.push(userId), { now: () => t });
+    rooms.hostedTable(code)!.start();
+    expect(rooms.hostedTable(code)!.phase).toBe('playing');
+    alice.client.leave();
+    expect(rooms.hostedTable(code)!.seatInfo()[0]).toMatchObject({ connected: false, left: true });
+    for (let i = 0; i < 4; i++) {
+      t += 30_000;
+      watcher.tick();
+    }
+    expect(waiting).toEqual([]);
   });
 
   it('ignores the lobby (nobody is waiting before the hand starts)', () => {

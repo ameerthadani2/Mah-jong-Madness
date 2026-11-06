@@ -32,6 +32,7 @@ import {
   type SessionService,
 } from './auth';
 import { ClubError, ClubRegistry, type Club, type Identity } from './clubs';
+import { DAY_MS } from './limits';
 import { LIMITS, type SignalConfig } from './config';
 import { BucketTable, clientIp } from './limits';
 import type { LatencyWindow } from './metrics';
@@ -75,6 +76,8 @@ export interface ApiOptions {
   authIpLimiter?: BucketTable<string>;
   /** Per-user bucket for the `/api/auth/*` routes (default 5 a minute). */
   authUserLimiter?: BucketTable<string>;
+  /** Per-IP bucket for `POST /api/reports` (default `LIMITS.reportsPerDayPerIp` a day). */
+  reportIpLimiter?: BucketTable<string>;
   /** Number of trusted reverse proxies; the client IP is that many `x-forwarded-for` entries from the right (see `clientIp`). */
   trustProxy?: number | boolean;
 }
@@ -113,6 +116,8 @@ interface Ctx {
   params: Record<string, string>;
   body: Record<string, unknown>;
   req: IncomingMessage;
+  /** The client address (see `clientIp`). */
+  ip: string;
   /** Verify the bearer token (once per request); throws a 401 AuthError. */
   caller(): Promise<Caller>;
   /** Spend from this user's auth bucket; throws 429 when it is empty. */
@@ -145,7 +150,6 @@ export function memberIdentity(u: UserRecord): Identity {
 
 const isObject = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
 
-const DAY_MS = 86_400_000;
 const ROOM_CODE = /^[A-Z0-9]{4,8}$/;
 const PUSH_PLATFORMS = ['ios', 'android'] as const;
 
@@ -161,9 +165,10 @@ function optionalText(v: unknown, field: string, max: number): string | undefine
   return v.trim().slice(0, max);
 }
 
-export function buildRoutes(deps: ApiDeps): Route[] {
+export function buildRoutes(deps: ApiDeps, opts: Pick<ApiOptions, 'reportIpLimiter'> = {}): Route[] {
   const { clubs, rooms, repos, sessions } = deps;
   const now = deps.now ?? Date.now;
+  const reportsByIp = opts.reportIpLimiter ?? new BucketTable<string>(LIMITS.reportsPerDayPerIp, LIMITS.reportsPerDayPerIp / (DAY_MS / 1000), { now, idleMs: DAY_MS });
   const analytics = deps.analytics ?? NO_ANALYTICS;
   const wallet = deps.wallet ?? new WalletService(repos, { now, analytics });
   const webhookSecret = deps.config?.revenueCatWebhookSecret ?? null;
@@ -237,8 +242,11 @@ export function buildRoutes(deps: ApiDeps): Route[] {
       'POST',
       '/api/auth/guest/login',
       async (ctx) => {
-        if (typeof ctx.body.userId === 'string') ctx.limitUser(ctx.body.userId);
-        const g = await loginGuest(repos, peppers, ctx.body.userId, ctx.body.guestSecret, { sessions, now, deviceId: deviceOf(ctx.body).id });
+        // The body names any user id, so it must not be able to spend that user's shared auth
+        // bucket: attempts count against this IP and id, and the user's own bucket only once the
+        // secret has been proven (before a session is issued).
+        if (typeof ctx.body.userId === 'string') ctx.limitUser(`guest:${ctx.ip}:${ctx.body.userId}`);
+        const g = await loginGuest(repos, peppers, ctx.body.userId, ctx.body.guestSecret, { sessions, now, deviceId: deviceOf(ctx.body).id, verified: (userId) => ctx.limitUser(userId) });
         return { session: await sessionJson(g.token, g.sessionId), user: userJson(await liveUser(g.userId)) };
       },
       true,
@@ -261,6 +269,9 @@ export function buildRoutes(deps: ApiDeps): Route[] {
         const me = await ctx.caller();
         ctx.limitUser(me.userId);
         await sessions.revoke(me.sessionId);
+        // The phone is no longer this account's: stop its notifications, and end the table socket this session opened.
+        if (me.deviceId) await repos.devices.update(me.deviceId, { pushToken: null, lastSeenAt: now() });
+        rooms.endSessions({ sessionId: me.sessionId });
         return new Reply(204);
       },
       true,
@@ -272,16 +283,24 @@ export function buildRoutes(deps: ApiDeps): Route[] {
         const me = await ctx.caller();
         ctx.limitUser(me.userId);
         const { provider, token, nonce } = ctx.body;
-        if (nonce !== undefined && typeof nonce !== 'string') throw new AuthError('invalid', 'nonce must be text');
+        if (typeof nonce !== 'string' || !nonce) throw new AuthError('invalid', 'nonce is required');
         const identity = await verifyProviderToken(provider, token, { ...providers, nonce });
         // A merge rewrites club rows in the repositories: let the registry's queued writes land first.
         await clubs.flush();
-        const result = await link(repos, me.userId, identity, { sessions, currentSessionId: me.sessionId, deviceId: me.deviceId, now });
-        if (result.affectedClubs.length) await clubs.reload(result.affectedClubs);
+        // Under the wallet's per-user lock, so a store event for the guest cannot credit it while it is being merged away.
+        const result = await wallet.exclusive([me.userId], () => link(repos, me.userId, identity, { sessions, currentSessionId: me.sessionId, deviceId: me.deviceId, now }));
         const user = await liveUser(result.userId);
+        if (result.merged && result.mergedFrom) {
+          // The registry applies the same move to its clubs and writes them itself, so a club write
+          // queued meanwhile cannot put the guest's rows back (see ClubRegistry.moveMemberships).
+          clubs.moveMemberships(result.mergedFrom, memberIdentity(user));
+          rooms.endSessions({ userId: result.mergedFrom });
+        } else {
+          rooms.endSessions({ userId: me.userId, exceptSessionId: me.sessionId });
+        }
         clubs.refreshMember(memberIdentity(user));
         const session = result.token && result.sessionId ? await sessionJson(result.token, result.sessionId) : { token: me.token, expiresAt: iso(me.expiresAt) };
-        return { session, user: userJson(user), merged: result.merged };
+        return { session, user: userJson(user), merged: result.merged, ...(result.guestSecret ? { guestSecret: result.guestSecret } : {}) };
       },
       true,
     ),
@@ -295,7 +314,7 @@ export function buildRoutes(deps: ApiDeps): Route[] {
           if (guest) ctx.limitUser(guest.userId);
         }
         const { provider, token, nonce } = ctx.body;
-        if (nonce !== undefined && typeof nonce !== 'string') throw new AuthError('invalid', 'nonce must be text');
+        if (typeof nonce !== 'string' || !nonce) throw new AuthError('invalid', 'nonce is required');
         const identity = await verifyProviderToken(provider, token, { ...providers, nonce });
         ctx.limitUser(`${identity.provider}:${identity.subject}`);
         const result = await login(repos, identity, { sessions, deviceId: typeof deviceOf(ctx.body).id === 'string' ? (deviceOf(ctx.body).id as string) : null, now });
@@ -353,8 +372,11 @@ export function buildRoutes(deps: ApiDeps): Route[] {
     r('DELETE', '/api/me', async (ctx) => {
       const me = await ctx.caller();
       await clubs.flush();
-      const { affectedClubs } = await deleteAccount(repos, me.userId, { now });
-      if (affectedClubs.length) await clubs.reload(affectedClubs);
+      await deleteAccount(repos, me.userId, { now });
+      // The registry anonymises its own copy and writes it, so a club write queued during the
+      // deletion cannot bring the name back (see ClubRegistry.anonymiseMember).
+      clubs.anonymiseMember(me.userId);
+      rooms.endSessions({ userId: me.userId });
       return new Reply(204);
     }),
 
@@ -393,6 +415,8 @@ export function buildRoutes(deps: ApiDeps): Route[] {
       if ((await repos.reports.countByReporterSince(me.userId, at - DAY_MS)) >= LIMITS.reportsPerDay) {
         throw new HttpError(429, 'rate_limited', `You can file at most ${LIMITS.reportsPerDay} reports a day`);
       }
+      // Guest accounts are free, so the daily allowance is also counted per address.
+      if (!reportsByIp.take(ctx.ip)) throw new HttpError(429, 'rate_limited', `Too many reports from this address today`);
       const report = await repos.reports.create({ reporterId: me.userId, reportedUserId: target.id, roomCode: room, reason: reason as ReportReason, details: text, createdAt: at });
       analytics.capture(me.userId, 'report_filed', { reason, hasRoom: room !== null, hasDetails: text !== null });
       return new Reply(201, { id: report.id, status: report.status, createdAt: iso(report.createdAt) });
@@ -523,7 +547,7 @@ export const perMinute = (perMinute: number, now?: () => number) => new BucketTa
 const RATE_LIMITED = 'Too many requests; please slow down';
 
 export function createApiHandler(deps: ApiDeps, opts: ApiOptions = {}): (req: IncomingMessage, res: ServerResponse) => Promise<boolean> {
-  const routes = buildRoutes(deps);
+  const routes = buildRoutes(deps, opts);
   const origins = opts.corsOrigins ?? [];
   const authIp = opts.authIpLimiter ?? perMinute(LIMITS.authPerMinute, deps.now);
   const authUser = opts.authUserLimiter ?? perMinute(LIMITS.authPerMinute, deps.now);
@@ -562,6 +586,7 @@ export function createApiHandler(deps: ApiDeps, opts: ApiOptions = {}): (req: In
           params,
           body,
           req,
+          ip,
           caller: () => (caller ??= verifyCaller(deps, req)),
           limitUser: (key) => {
             if (!authUser.take(key)) throw new HttpError(429, 'rate_limited', RATE_LIMITED);

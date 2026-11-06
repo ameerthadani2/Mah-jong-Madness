@@ -144,6 +144,38 @@ describe('TablePersister', () => {
   });
 });
 
+describe('createSignalServer shutdown', () => {
+  it('stops taking moves before the final write, so nothing acknowledged is missing from the restored table', async () => {
+    const repos = createRepos();
+    const snaps = repos.repos.tableSnapshots;
+    let slow = 0;
+    const save = snaps.save.bind(snaps);
+    snaps.save = async (s) => {
+      if (slow) await new Promise((r) => setTimeout(r, slow));
+      return save(s);
+    };
+    const sessions = new SessionService(repos.repos, { pepper: 'stop-pepper-0123456789' });
+    const server = await createSignalServer({ port: 0, host: '127.0.0.1', repos, sessions, providers: {}, config: loadConfig({}), log: () => undefined, botDelayMs: 0 });
+    const code = server.rooms.createHostedRoom({ rules: { handsPerMatch: 4 } });
+    const alice = seat(server.rooms, code);
+    alice.requestStart();
+    const host = server.rooms.hostedTable(code)!;
+    await vi.waitFor(() => expect(host.phase === 'playing' && legalActions(alice.localState()!, 0).length > 0).toBe(true));
+    await server.persister.flush();
+    // SIGTERM: the final write takes 50 ms; a move arrives 10 ms into it.
+    slow = 50;
+    const closing = server.close();
+    await new Promise((r) => setTimeout(r, 10));
+    const before = host.serialize().game!.actionLog.length;
+    alice.act(chooseAction(alice.localState()!, 0)!);
+    await closing;
+    const saved = ((await snaps.get(code))!.snapshot as SerializedHost).game!.actionLog.length;
+    // The move was dropped, not acknowledged: the live table and the snapshot agree.
+    expect(host.serialize().game!.actionLog.length).toBe(before);
+    expect(saved).toBe(before);
+  });
+});
+
 describe('createSignalServer boot', () => {
   it('reopens club tables whose rooms were restored and clears ghost listings', async () => {
     const repos = createRepos();

@@ -142,16 +142,24 @@ export class TablePersister {
     return t.chain;
   }
 
-  /** Write every hosted table now (including ones with nothing pending) and wait for all writes. */
+  /**
+   * Write every hosted table now (including ones with nothing pending) and wait for all writes.
+   * A table that changed again while its write was in flight (a bot's move, say) is written once
+   * more, so nothing the players saw is missing from what the next process restores.
+   */
   async flush(): Promise<void> {
     for (const code of this.rooms.hostedRooms()) this.track(code);
-    const pending: Promise<void>[] = [];
-    for (const [code, t] of this.tables) {
-      if (t.timer) clearTimeout(t.timer);
-      t.timer = null;
-      pending.push(this.enqueue(code, t));
+    for (let round = 0; round < 3; round++) {
+      const pending: Promise<void>[] = [];
+      for (const [code, t] of this.tables) {
+        if (round > 0 && !t.timer && !t.queued) continue;
+        if (t.timer) clearTimeout(t.timer);
+        t.timer = null;
+        pending.push(this.enqueue(code, t));
+      }
+      await Promise.all(pending);
+      if (![...this.tables.values()].some((t) => t.timer || t.queued)) return;
     }
-    await Promise.all(pending);
   }
 
   /**
