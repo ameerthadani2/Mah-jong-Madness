@@ -112,7 +112,7 @@ export function ClubsScreen() {
           <P dim style={{ fontSize: 13 }}>
             {t('clubs.signIn.body')}
           </P>
-          {connection === 'offline' && auth.error ? <Pill tone="gold" icon="warning" text={friendlyError(auth.error, t)} /> : null}
+          {connection === 'offline' && auth.error ? <Pill tone="gold" icon="warning" wrap text={friendlyError(auth.error, t)} /> : null}
           <Button title={connection === 'checking' ? t('clubs.signIn.connecting') : t('clubs.signIn.retry')} onPress={() => void connect()} disabled={connection === 'checking'} />
         </Card>
       </ScrollView>
@@ -127,7 +127,7 @@ export function ClubsScreen() {
         <P style={{ flex: 1, fontSize: 13, lineHeight: 18 }}>{t('clubs.note')}</P>
       </View>
       <NoValueNotice />
-      {error && <Pill tone="gold" icon="warning" text={error} />}
+      {error && <Pill tone="gold" icon="warning" wrap text={error} />}
       <View style={styles.cols}>
         <Card style={styles.col}>
           <H2>{t('clubs.join.title')}</H2>

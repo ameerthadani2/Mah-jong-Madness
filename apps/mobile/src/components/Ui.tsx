@@ -271,13 +271,17 @@ const PILL: Record<PillTone, { bg: string; fg: string }> = {
   dark: { bg: 'rgba(16,20,47,0.72)', fg: '#FFFFFF' },
 };
 
-export function Pill({ text, tone = 'neutral', icon, style, size = 'md' }: { text: string; tone?: PillTone; icon?: IconName; style?: StyleProp<ViewStyle>; size?: 'sm' | 'md' }) {
+/**
+ * A short label. `wrap` lets a sentence (an error, a notice) break onto further lines instead of being
+ * clipped at the card's edge: the pill then grows down, never past its container.
+ */
+export function Pill({ text, tone = 'neutral', icon, style, size = 'md', wrap }: { text: string; tone?: PillTone; icon?: IconName; style?: StyleProp<ViewStyle>; size?: 'sm' | 'md'; wrap?: boolean }) {
   const p = PILL[tone];
   const fs = size === 'sm' ? 11 : 13;
   return (
-    <View style={[styles.pill, { backgroundColor: p.bg }, size === 'sm' && { paddingHorizontal: 7, paddingVertical: 1 }, icon && { paddingLeft: 4 }, style]}>
+    <View style={[styles.pill, { backgroundColor: p.bg }, size === 'sm' && { paddingHorizontal: 7, paddingVertical: 1 }, icon && { paddingLeft: 4 }, wrap && styles.pillWrap, style]}>
       {icon && <Icon name={icon} size={size === 'sm' ? 14 : 17} />}
-      <Text numberOfLines={1} style={[{ color: p.fg, fontSize: fs }, fontFor(text, fonts.uiBold)]}>
+      <Text numberOfLines={wrap ? undefined : 1} style={[{ color: p.fg, fontSize: fs }, wrap && { flexShrink: 1, lineHeight: 18 }, fontFor(text, fonts.uiBold)]}>
         {text}
       </Text>
     </View>
@@ -399,6 +403,7 @@ const styles = StyleSheet.create({
   h2: { color: colors.ink, fontSize: 19 },
   p: { color: colors.ink, fontSize: 15, lineHeight: 21 },
   pill: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10, paddingVertical: 3, borderRadius: 999, borderWidth: 2, borderColor: colors.ink, alignSelf: 'flex-start' },
+  pillWrap: { maxWidth: '100%', borderRadius: 14, alignItems: 'flex-start', paddingVertical: 5 },
   toggleRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 6, gap: 8 },
   toggle: { width: 56, height: 32, borderRadius: 16, backgroundColor: '#C9CFE3', borderWidth: 3, borderColor: colors.ink, padding: 2, justifyContent: 'center', overflow: 'hidden' },
   toggleTop: { position: 'absolute', top: 0, left: 0, right: 0, height: '45%', backgroundColor: '#DDE2F0' },

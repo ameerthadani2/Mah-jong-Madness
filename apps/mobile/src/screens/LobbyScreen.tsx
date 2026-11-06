@@ -112,7 +112,7 @@ export function LobbyScreen() {
           />
         </Row>
       ) : (
-        state.lastError && <Pill tone="danger" icon="warning" text={friendlyError(new Error(state.lastError), t)} />
+        state.lastError && <Pill tone="danger" icon="warning" wrap text={friendlyError(new Error(state.lastError), t)} />
       )}
     </ScrollView>
   );
