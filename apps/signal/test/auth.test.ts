@@ -125,7 +125,10 @@ describe('provider id tokens', () => {
     await rejectsWith(verifyProviderToken('apple', await appleToken(), { ...cfg, nonce: 'another-nonce' }), 'invalid_token');
     await rejectsWith(verifyProviderToken('apple', await appleToken({ nonce: 'raw-nonce' }), { ...cfg, nonce: 'raw-nonce' }), 'invalid_token');
     await rejectsWith(verifyProviderToken('google', await googleToken({ nonce: 'x' }), { ...cfg, nonce: 'raw-nonce' }), 'invalid_token');
-    await rejectsWith(verifyProviderToken('google', await googleToken(), cfg), 'invalid_token');
+    // A token with no nonce claim is never accepted, and a request without a nonce is malformed (400).
+    await rejectsWith(verifyProviderToken('google', await googleToken({ nonce: undefined }), { ...cfg, nonce: 'raw-nonce' }), 'invalid_token');
+    await rejectsWith(verifyProviderToken('google', await googleToken(), cfg), 'invalid', 400);
+    await rejectsWith(verifyProviderToken('google', await googleToken(), { ...cfg, nonce: '' }), 'invalid', 400);
   });
 
   it('rejects a token signed by the wrong key, an unsigned token, and a token for the wrong provider', async () => {
@@ -303,13 +306,19 @@ describe('link, login, merge, unlink and deletion', () => {
     const g = await guest();
     const other = await loginGuest(repos, PEPPER, g.userId, g.guestSecret, { sessions });
     const result = await link(repos, g.userId, apple('a-1'), opts(g));
-    expect(result).toEqual({ userId: g.userId, merged: false, affectedClubs: [] });
+    expect(result).toMatchObject({ userId: g.userId, merged: false, affectedClubs: [] });
     expect(await repos.users.get(g.userId)).toMatchObject({ kind: 'account', email: 'a-1@privaterelay.appleid.com' });
     expect(await repos.identities.get('apple', 'a-1')).toMatchObject({ userId: g.userId, secretHash: null });
     await expect(sessions.verify(g.token)).resolves.toMatchObject({ userId: g.userId });
     await rejectsWith(sessions.verify(other.token), 'session_revoked');
-    // Linking the same identity again changes nothing.
-    expect(await link(repos, g.userId, apple('a-1'), opts(g))).toMatchObject({ userId: g.userId, merged: false });
+    // The guest secret is replaced: a device that kept the old one cannot sign back into the account; the linking device gets the new one.
+    expect(result.guestSecret).toMatch(/^[0-9a-f]{64}$/);
+    await rejectsWith(loginGuest(repos, PEPPER, g.userId, g.guestSecret, { sessions }), 'invalid_credentials');
+    await expect(loginGuest(repos, PEPPER, g.userId, result.guestSecret!, { sessions })).resolves.toMatchObject({ userId: g.userId });
+    // Linking the same identity again changes nothing (and does not rotate the secret again).
+    const again = await link(repos, g.userId, apple('a-1'), opts(g));
+    expect(again).toMatchObject({ userId: g.userId, merged: false });
+    expect(again.guestSecret).toBeUndefined();
     // And signing in with it now finds the account.
     const signedIn = await login(repos, apple('a-1'), { sessions, now, deviceId: g.deviceId });
     expect(await sessions.verify(signedIn.token)).toMatchObject({ userId: g.userId, deviceId: g.deviceId });

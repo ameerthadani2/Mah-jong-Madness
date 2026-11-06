@@ -144,6 +144,11 @@ function pgUsers(q: Queryable): UsersRepo {
       );
       return res.rows[0] ? userFromRow(res.rows[0]) : null;
     },
+    async purgeDeleted(before) {
+      // Everything that references the row cascades (0001_init); a club owner is never deleted (clubs.owner_id has no cascade).
+      const res = await q.query('DELETE FROM users u WHERE u.deleted_at IS NOT NULL AND u.deleted_at < $1 AND NOT EXISTS (SELECT 1 FROM clubs c WHERE c.owner_id = u.id)', [toDate(before)]);
+      return res.rowCount ?? 0;
+    },
   };
 }
 
@@ -272,6 +277,10 @@ function pgSessions(q: Queryable): SessionsRepo {
     async deleteForUser(userId) {
       if (!isUuid(userId)) return 0;
       const res = await q.query('DELETE FROM sessions WHERE user_id = $1', [userId]);
+      return res.rowCount ?? 0;
+    },
+    async pruneEnded(at) {
+      const res = await q.query('DELETE FROM sessions WHERE expires_at <= $1 OR (revoked_at IS NOT NULL AND revoked_at <= $1)', [toDate(at)]);
       return res.rowCount ?? 0;
     },
   };
@@ -448,7 +457,7 @@ const reportFromRow = (r: ReportRow): ReportRecord => ({
   createdAt: r.created_at.getTime(),
 });
 
-function pgReports(q: Queryable): ReportsRepo {
+function pgReports(q: Queryable, tx: Tx): ReportsRepo {
   const COLS = 'id, reporter_id, reported_user_id, room_code, reason, details, status, created_at';
   return {
     async create(r) {
@@ -470,6 +479,16 @@ function pgReports(q: Queryable): ReportsRepo {
         Math.max(1, Math.min(1000, Math.floor(limit))),
       ]);
       return res.rows.map(reportFromRow);
+    },
+    async moveToUser(fromUserId, toUserId) {
+      if (!isUuid(fromUserId) || !isUuid(toUserId)) return 0;
+      return tx(async (c) => {
+        // A report between the two accounts would name one user twice (reporter <> reported): drop it.
+        const dropped = await c.query('DELETE FROM reports WHERE (reporter_id = $1 AND reported_user_id = $2) OR (reporter_id = $2 AND reported_user_id = $1)', [fromUserId, toUserId]);
+        const filed = await c.query('UPDATE reports SET reporter_id = $2 WHERE reporter_id = $1', [fromUserId, toUserId]);
+        const about = await c.query('UPDATE reports SET reported_user_id = $2 WHERE reported_user_id = $1', [fromUserId, toUserId]);
+        return (dropped.rowCount ?? 0) + (filed.rowCount ?? 0) + (about.rowCount ?? 0);
+      });
     },
   };
 }
@@ -884,10 +903,29 @@ function pgClubs(q: Queryable, tx: Tx): ClubsRepo {
     async anonymiseUser(userId) {
       if (!isUuid(userId)) return [];
       return tx(async (c) => {
-        const touched = await c.query<{ club_code: string }>('SELECT club_code FROM club_members WHERE user_id = $1 ORDER BY club_code', [userId]);
+        const touched = await c.query<{ code: string }>(
+          'SELECT club_code AS code FROM club_members WHERE user_id = $1 UNION SELECT code FROM clubs WHERE owner_id = $1 ORDER BY code',
+          [userId],
+        );
         await c.query("DELETE FROM club_members WHERE user_id = $1 AND status = 'pending'", [userId]);
         await c.query('UPDATE club_members SET display_name = $2, avatar = NULL WHERE user_id = $1', [userId, DELETED_PLAYER_NAME]);
-        return touched.rows.map((r) => r.club_code);
+        // A club the user owned passes to its senior admin, else its earliest member (the same rule as anonymiseUserIn).
+        const passed = await c.query<{ code: string; user_id: string }>(
+          `UPDATE clubs c SET owner_id = s.user_id, updated_at = now()
+           FROM (SELECT DISTINCT ON (m.club_code) m.club_code, m.user_id
+                 FROM club_members m JOIN clubs o ON o.code = m.club_code
+                 WHERE o.owner_id = $1 AND m.user_id <> $1 AND m.status = 'member'
+                 ORDER BY m.club_code, (m.role = 'admin') DESC, m.joined_at, m.user_id) s
+           WHERE c.code = s.club_code RETURNING c.code, s.user_id`,
+          [userId],
+        );
+        if (passed.rows.length) {
+          await c.query("UPDATE club_members m SET role = 'owner' FROM clubs c WHERE c.code = m.club_code AND c.owner_id = m.user_id AND m.club_code = ANY($1::text[])", [passed.rows.map((r) => r.code)]);
+          await c.query("UPDATE club_members SET role = 'member' WHERE user_id = $1 AND role = 'owner'", [userId]);
+        }
+        // Nobody else was in it: the club is dissolved (members and tables cascade).
+        await c.query('DELETE FROM clubs WHERE owner_id = $1', [userId]);
+        return touched.rows.map((r) => r.code);
       });
     },
   };
@@ -1043,7 +1081,7 @@ function build(q: Queryable, tx: Tx, transaction: Repos['transaction']): Repos {
     devices: pgDevices(q),
     wallet: pgWallet(q, tx),
     storeEvents: pgStoreEvents(q),
-    reports: pgReports(q),
+    reports: pgReports(q, tx),
     clubs: pgClubs(q, tx),
     tableSnapshots: pgTableSnapshots(q),
     matchResults: pgMatchResults(q),

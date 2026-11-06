@@ -2,10 +2,14 @@
  * In-memory repositories: used by the tests and by a server started without DATABASE_URL
  * (development, or a single machine whose clubs live in the JSON file). Every read and write
  * copies, so callers can never mutate stored state by accident. Nothing here survives a restart.
+ *
+ * All state lives in one `MemoryState` record so that `transaction()` can behave like Postgres:
+ * transactions run one at a time, a snapshot is taken before `fn`, and a throw restores it. The
+ * repositories always read the state through `s.<field>`, never through a captured reference,
+ * so a restore (which replaces the fields) is visible to every one of them.
  */
-import type { Club, ClubMember, Identity } from '../clubs';
+import { anonymiseUserIn, moveMembershipsIn, type Club } from '../clubs';
 import {
-  DELETED_PLAYER_NAME,
   type ClubMembership,
   type ClubsRepo,
   type DevicePatch,
@@ -41,11 +45,55 @@ import {
 
 const copy = <T>(v: T): T => structuredClone(v);
 
-function memoryUsers(): UsersRepo {
-  const rows = new Map<string, UserRecord>();
+/** Everything the memory repositories hold. Cloneable as one value (`structuredClone`). */
+interface MemoryState {
+  users: Map<string, UserRecord>;
+  identities: Map<string, IdentityRecord>;
+  sessions: Map<string, SessionRecord>;
+  devices: Map<string, DeviceRecord>;
+  storeEvents: Map<string, StoreEventRecord>;
+  reports: ReportRecord[];
+  reportSeq: number;
+  wallets: Map<string, WalletRecord>;
+  ledger: LedgerEntry[];
+  ledgerSeq: number;
+  purchases: PurchaseRecord[];
+  purchaseSeq: number;
+  entitlements: Map<string, EntitlementRecord>;
+  clubs: Map<string, Club>;
+  snapshots: Map<string, TableSnapshotRecord>;
+  matches: MatchResultRecord[];
+  matchSeq: number;
+  puzzles: PuzzleResultRecord[];
+  puzzleSeq: number;
+}
+
+const emptyState = (): MemoryState => ({
+  users: new Map(),
+  identities: new Map(),
+  sessions: new Map(),
+  devices: new Map(),
+  storeEvents: new Map(),
+  reports: [],
+  reportSeq: 0,
+  wallets: new Map(),
+  ledger: [],
+  ledgerSeq: 0,
+  purchases: [],
+  purchaseSeq: 0,
+  entitlements: new Map(),
+  clubs: new Map(),
+  snapshots: new Map(),
+  matches: [],
+  matchSeq: 0,
+  puzzles: [],
+  puzzleSeq: 0,
+});
+
+function memoryUsers(s: MemoryState): UsersRepo {
   return {
     async create(u) {
-      if (rows.has(u.id)) throw new Error(`User ${u.id} already exists`);
+      if (s.users.has(u.id)) throw new Error(`User ${u.id} already exists`);
       const row: UserRecord = {
         id: u.id,
         kind: u.kind,
@@ -59,82 +107,101 @@ function memoryUsers(): UsersRepo {
         deletedAt: null,
         mergedInto: null,
       };
-      rows.set(row.id, row);
+      s.users.set(row.id, row);
       return copy(row);
     },
     async get(id) {
-      const row = rows.get(id);
+      const row = s.users.get(id);
       return row ? copy(row) : null;
     },
     async update(id, patch: UserPatch) {
-      const row = rows.get(id);
+      const row = s.users.get(id);
       if (!row) return null;
       Object.assign(row, copy(patch));
       return copy(row);
     },
-  };
-}
-
-function memoryIdentities(): IdentitiesRepo {
-  const rows = new Map<string, IdentityRecord>();
-  const key = (provider: IdentityProvider, subject: string) => `${provider}\u0000${subject}`;
-  return {
-    async get(provider, subject) {
-      const row = rows.get(key(provider, subject));
-      return row ? copy(row) : null;
-    },
-    async listForUser(userId) {
-      return [...rows.values()].filter((r) => r.userId === userId).map(copy);
-    },
-    async create(identity) {
-      const k = key(identity.provider, identity.subject);
-      if (rows.has(k)) return false;
-      rows.set(k, copy(identity));
-      return true;
-    },
-    async updateSecretHash(provider, subject, secretHash) {
-      const row = rows.get(key(provider, subject));
-      if (row) row.secretHash = secretHash;
-    },
-    async delete(provider, subject) {
-      return rows.delete(key(provider, subject));
-    },
-    async deleteForUser(userId) {
+    async purgeDeleted(before) {
       let n = 0;
-      for (const [k, r] of rows) if (r.userId === userId && rows.delete(k)) n++;
+      for (const [id, u] of [...s.users]) {
+        if (u.deletedAt === null || u.deletedAt >= before) continue;
+        if ([...s.clubs.values()].some((c) => c.ownerId === id)) continue;
+        s.users.delete(id);
+        for (const [k, r] of [...s.identities]) if (r.userId === id) s.identities.delete(k);
+        for (const [k, r] of [...s.sessions]) if (r.userId === id) s.sessions.delete(k);
+        for (const [k, r] of [...s.devices]) if (r.userId === id) s.devices.delete(k);
+        s.wallets.delete(id);
+        for (const [k, e] of [...s.entitlements]) if (e.userId === id) s.entitlements.delete(k);
+        s.puzzles = s.puzzles.filter((p) => p.userId !== id);
+        for (const u2 of s.users.values()) if (u2.mergedInto === id) u2.mergedInto = null;
+        for (const club of s.clubs.values()) {
+          club.members = club.members.filter((m) => m.userId !== id);
+          club.pending = club.pending.filter((p) => p.userId !== id);
+        }
+        n++;
+      }
       return n;
     },
   };
 }
 
-function memorySessions(): SessionsRepo {
-  const rows = new Map<string, SessionRecord>();
+function memoryIdentities(s: MemoryState): IdentitiesRepo {
+  const key = (provider: IdentityProvider, subject: string) => `${provider}\u0000${subject}`;
+  return {
+    async get(provider, subject) {
+      const row = s.identities.get(key(provider, subject));
+      return row ? copy(row) : null;
+    },
+    async listForUser(userId) {
+      return [...s.identities.values()].filter((r) => r.userId === userId).map(copy);
+    },
+    async create(identity) {
+      const k = key(identity.provider, identity.subject);
+      if (s.identities.has(k)) return false;
+      s.identities.set(k, copy(identity));
+      return true;
+    },
+    async updateSecretHash(provider, subject, secretHash) {
+      const row = s.identities.get(key(provider, subject));
+      if (row) row.secretHash = secretHash;
+    },
+    async delete(provider, subject) {
+      return s.identities.delete(key(provider, subject));
+    },
+    async deleteForUser(userId) {
+      let n = 0;
+      for (const [k, r] of [...s.identities]) if (r.userId === userId && s.identities.delete(k)) n++;
+      return n;
+    },
+  };
+}
+
+function memorySessions(s: MemoryState): SessionsRepo {
   return {
     async create(session) {
-      if (rows.has(session.id) || [...rows.values()].some((r) => r.tokenHash === session.tokenHash)) throw new Error('Duplicate session');
-      rows.set(session.id, copy(session));
+      if (s.sessions.has(session.id) || [...s.sessions.values()].some((r) => r.tokenHash === session.tokenHash)) throw new Error('Duplicate session');
+      s.sessions.set(session.id, copy(session));
     },
     async get(id) {
-      const row = rows.get(id);
+      const row = s.sessions.get(id);
       return row ? copy(row) : null;
     },
     async findByHash(tokenHash) {
-      for (const r of rows.values()) if (r.tokenHash === tokenHash) return copy(r);
+      for (const r of s.sessions.values()) if (r.tokenHash === tokenHash) return copy(r);
       return null;
     },
     async update(id, patch: SessionPatch) {
-      const row = rows.get(id);
+      const row = s.sessions.get(id);
       if (row) Object.assign(row, copy(patch));
     },
     async revokeIfActive(id, at) {
-      const row = rows.get(id);
+      const row = s.sessions.get(id);
       if (!row || row.revokedAt !== null) return false;
       row.revokedAt = at;
       return true;
     },
     async revokeAllForUser(userId, at, exceptId) {
       let n = 0;
-      for (const r of rows.values()) {
+      for (const r of s.sessions.values()) {
         if (r.userId !== userId || r.id === exceptId) continue;
         if (r.revokedAt === null || r.revokedAt > at) {
           r.revokedAt = at;
@@ -145,33 +212,37 @@ function memorySessions(): SessionsRepo {
     },
     async deleteForUser(userId) {
       let n = 0;
-      for (const [id, r] of rows) if (r.userId === userId && rows.delete(id)) n++;
+      for (const [id, r] of [...s.sessions]) if (r.userId === userId && s.sessions.delete(id)) n++;
+      return n;
+    },
+    async pruneEnded(at) {
+      let n = 0;
+      for (const [id, r] of [...s.sessions]) if ((r.expiresAt <= at || (r.revokedAt !== null && r.revokedAt <= at)) && s.sessions.delete(id)) n++;
       return n;
     },
   };
 }
 
-function memoryDevices(): DevicesRepo {
-  const rows = new Map<string, DeviceRecord>();
+function memoryDevices(s: MemoryState): DevicesRepo {
   return {
     async create(device) {
-      if (rows.has(device.id)) throw new Error(`Device ${device.id} already exists`);
-      rows.set(device.id, copy(device));
+      if (s.devices.has(device.id)) throw new Error(`Device ${device.id} already exists`);
+      s.devices.set(device.id, copy(device));
     },
     async get(id) {
-      const row = rows.get(id);
+      const row = s.devices.get(id);
       return row ? copy(row) : null;
     },
     async update(id, patch: DevicePatch) {
-      const row = rows.get(id);
+      const row = s.devices.get(id);
       if (row) Object.assign(row, copy(patch));
     },
     async listForUser(userId) {
-      return [...rows.values()].filter((r) => r.userId === userId).map(copy);
+      return [...s.devices.values()].filter((r) => r.userId === userId).map(copy);
     },
     async moveToUser(fromUserId, toUserId) {
       let n = 0;
-      for (const r of rows.values()) {
+      for (const r of s.devices.values()) {
         if (r.userId !== fromUserId) continue;
         r.userId = toUserId;
         n++;
@@ -180,12 +251,12 @@ function memoryDevices(): DevicesRepo {
     },
     async deleteForUser(userId) {
       let n = 0;
-      for (const [id, r] of rows) if (r.userId === userId && rows.delete(id)) n++;
+      for (const [id, r] of [...s.devices]) if (r.userId === userId && s.devices.delete(id)) n++;
       return n;
     },
     async clearPushToken(token, exceptDeviceId) {
       let n = 0;
-      for (const r of rows.values()) {
+      for (const r of s.devices.values()) {
         if (r.pushToken !== token || r.id === exceptDeviceId) continue;
         r.pushToken = null;
         n++;
@@ -194,7 +265,7 @@ function memoryDevices(): DevicesRepo {
     },
     async pushTargets(userIds) {
       const wanted = new Set(userIds);
-      return [...rows.values()]
+      return [...s.devices.values()]
         .filter((r) => wanted.has(r.userId) && r.pushToken)
         .sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id))
         .map((r): PushTarget => ({ userId: r.userId, deviceId: r.id, token: r.pushToken as string, platform: r.platform, locale: r.locale }));
@@ -202,59 +273,62 @@ function memoryDevices(): DevicesRepo {
   };
 }
 
-function memoryStoreEvents(): StoreEventsRepo {
-  const rows = new Map<string, StoreEventRecord>();
+function memoryStoreEvents(s: MemoryState): StoreEventsRepo {
   return {
     async record(e) {
-      if (rows.has(e.eventId)) return false;
-      rows.set(e.eventId, copy(e));
+      if (s.storeEvents.has(e.eventId)) return false;
+      s.storeEvents.set(e.eventId, copy(e));
       return true;
     },
     async get(eventId) {
-      const row = rows.get(eventId);
+      const row = s.storeEvents.get(eventId);
       return row ? copy(row) : null;
     },
     async setOutcome(eventId, outcome, userId) {
-      const row = rows.get(eventId);
+      const row = s.storeEvents.get(eventId);
       if (row) Object.assign(row, { outcome, userId });
     },
     async delete(eventId) {
-      return rows.delete(eventId);
+      return s.storeEvents.delete(eventId);
     },
   };
 }
 
-function memoryReports(): ReportsRepo {
-  const rows: ReportRecord[] = [];
-  let nextId = 0;
+function memoryReports(s: MemoryState): ReportsRepo {
   return {
     async create(r) {
-      const row: ReportRecord = { ...copy(r), id: ++nextId, status: 'open' };
-      rows.push(row);
+      const row: ReportRecord = { ...copy(r), id: ++s.reportSeq, status: 'open' };
+      s.reports.push(row);
       return copy(row);
     },
     async countByReporterSince(reporterId, since) {
-      return rows.filter((r) => r.reporterId === reporterId && r.createdAt >= since).length;
+      return s.reports.filter((r) => r.reporterId === reporterId && r.createdAt >= since).length;
     },
     async listAbout(reportedUserId, limit = 100) {
-      return rows
+      return s.reports
         .filter((r) => r.reportedUserId === reportedUserId)
         .sort((a, b) => b.createdAt - a.createdAt || b.id - a.id)
         .slice(0, limit)
         .map(copy);
     },
+    async moveToUser(fromUserId, toUserId) {
+      const before = s.reports.length;
+      s.reports = s.reports.filter((r) => !((r.reporterId === fromUserId && r.reportedUserId === toUserId) || (r.reporterId === toUserId && r.reportedUserId === fromUserId)));
+      let n = before - s.reports.length;
+      for (const r of s.reports) {
+        if (r.reporterId !== fromUserId && r.reportedUserId !== fromUserId) continue;
+        if (r.reporterId === fromUserId) r.reporterId = toUserId;
+        if (r.reportedUserId === fromUserId) r.reportedUserId = toUserId;
+        n++;
+      }
+      return n;
+    },
   };
 }
 
-function memoryWallet(): WalletRepo {
-  const wallets = new Map<string, WalletRecord>();
-  const ledger: LedgerEntry[] = [];
-  const purchases: PurchaseRecord[] = [];
-  const entitlements = new Map<string, EntitlementRecord>();
-  let ledgerId = 0;
-  let purchaseId = 0;
+function memoryWallet(s: MemoryState): WalletRepo {
   const entKey = (userId: string, entitlement: string) => `${userId}\u0000${entitlement}`;
-  const wallet = (userId: string): WalletRecord => wallets.get(userId) ?? { userId, diamonds: 0, bonusDiamonds: 0, updatedAt: 0 };
+  const wallet = (userId: string): WalletRecord => s.wallets.get(userId) ?? { userId, diamonds: 0, bonusDiamonds: 0, updatedAt: 0 };
   return {
     async get(userId) {
       return copy(wallet(userId));
@@ -264,194 +338,142 @@ function memoryWallet(): WalletRepo {
       const bonus = e.bonus ?? 0;
       if (w.diamonds + e.delta < 0 || w.bonusDiamonds + bonus < 0) return null;
       const next: WalletRecord = { userId: e.userId, diamonds: w.diamonds + e.delta, bonusDiamonds: w.bonusDiamonds + bonus, updatedAt: e.createdAt };
-      const entry: LedgerEntry = { id: ++ledgerId, userId: e.userId, delta: e.delta, bonus, reason: e.reason, ref: e.ref ?? null, createdAt: e.createdAt };
-      wallets.set(e.userId, next);
-      ledger.push(entry);
+      const entry: LedgerEntry = { id: ++s.ledgerSeq, userId: e.userId, delta: e.delta, bonus, reason: e.reason, ref: e.ref ?? null, createdAt: e.createdAt };
+      s.wallets.set(e.userId, next);
+      s.ledger.push(entry);
       return { wallet: copy(next), entry: copy(entry) };
     },
     async listLedger(userId) {
-      return ledger.filter((l) => l.userId === userId).map(copy);
+      return s.ledger.filter((l) => l.userId === userId).map(copy);
     },
     async recordPurchase(p) {
-      const existing = purchases.find((x) => x.transactionId === p.transactionId || (p.eventId !== null && x.eventId === p.eventId));
+      const existing = s.purchases.find((x) => x.transactionId === p.transactionId || (p.eventId !== null && x.eventId === p.eventId));
       if (existing) return { purchase: copy(existing), inserted: false };
-      const row: PurchaseRecord = { ...copy(p), id: ++purchaseId };
-      purchases.push(row);
+      const row: PurchaseRecord = { ...copy(p), id: ++s.purchaseSeq };
+      s.purchases.push(row);
       return { purchase: copy(row), inserted: true };
     },
     async listPurchases(userId) {
-      return purchases.filter((p) => p.userId === userId).map(copy);
+      return s.purchases.filter((p) => p.userId === userId).map(copy);
     },
     async getEntitlements(userId) {
-      return [...entitlements.values()].filter((e) => e.userId === userId).map(copy);
+      return [...s.entitlements.values()].filter((e) => e.userId === userId).map(copy);
     },
     async setEntitlement(e) {
-      entitlements.set(entKey(e.userId, e.entitlement), copy(e));
+      s.entitlements.set(entKey(e.userId, e.entitlement), copy(e));
     },
     async deleteEntitlement(userId, entitlement) {
-      return entitlements.delete(entKey(userId, entitlement));
+      return s.entitlements.delete(entKey(userId, entitlement));
     },
     async mergeInto(fromUserId, toUserId, at) {
-      const from = wallets.get(fromUserId);
+      const from = s.wallets.get(fromUserId);
       if (from) {
         const to = wallet(toUserId);
-        wallets.set(toUserId, { userId: toUserId, diamonds: to.diamonds + from.diamonds, bonusDiamonds: to.bonusDiamonds + from.bonusDiamonds, updatedAt: at });
-        wallets.delete(fromUserId);
+        s.wallets.set(toUserId, { userId: toUserId, diamonds: to.diamonds + from.diamonds, bonusDiamonds: to.bonusDiamonds + from.bonusDiamonds, updatedAt: at });
+        s.wallets.delete(fromUserId);
       }
-      for (const l of ledger) if (l.userId === fromUserId) l.userId = toUserId;
-      for (const p of purchases) if (p.userId === fromUserId) p.userId = toUserId;
-      for (const [k, e] of [...entitlements]) {
+      for (const l of s.ledger) if (l.userId === fromUserId) l.userId = toUserId;
+      for (const p of s.purchases) if (p.userId === fromUserId) p.userId = toUserId;
+      for (const [k, e] of [...s.entitlements]) {
         if (e.userId !== fromUserId) continue;
-        entitlements.delete(k);
-        const theirs = entitlements.get(entKey(toUserId, e.entitlement));
+        s.entitlements.delete(k);
+        const theirs = s.entitlements.get(entKey(toUserId, e.entitlement));
         const expiresAt = !theirs ? e.expiresAt : theirs.expiresAt === null || e.expiresAt === null ? null : Math.max(theirs.expiresAt, e.expiresAt);
         const source = !theirs || (e.expiresAt !== null && theirs.expiresAt !== null && e.expiresAt > theirs.expiresAt) || (e.expiresAt === null && theirs.expiresAt !== null) ? e.source : theirs.source;
-        entitlements.set(entKey(toUserId, e.entitlement), { userId: toUserId, entitlement: e.entitlement, expiresAt, source, updatedAt: at });
+        s.entitlements.set(entKey(toUserId, e.entitlement), { userId: toUserId, entitlement: e.entitlement, expiresAt, source, updatedAt: at });
       }
     },
   };
 }
 
-function memoryClubs(): ClubsRepo {
-  const rows = new Map<string, Club>();
+function memoryClubs(s: MemoryState): ClubsRepo {
   return {
     async save(club) {
-      rows.set(club.code, copy(club));
+      s.clubs.set(club.code, copy(club));
     },
     async delete(code) {
-      return rows.delete(code);
+      return s.clubs.delete(code);
     },
     async get(code) {
-      const club = rows.get(code);
+      const club = s.clubs.get(code);
       return club ? copy(club) : null;
     },
     async loadAll() {
-      return [...rows.values()].map(copy);
+      return [...s.clubs.values()].map(copy);
     },
     async isMember(clubCode, userId) {
-      return rows.get(clubCode)?.members.some((m) => m.userId === userId) ?? false;
+      return s.clubs.get(clubCode)?.members.some((m) => m.userId === userId) ?? false;
     },
     async clubsForUser(userId) {
       const out: ClubMembership[] = [];
-      for (const club of rows.values()) {
+      for (const club of s.clubs.values()) {
         const m = club.members.find((x) => x.userId === userId);
         if (m) out.push({ clubCode: club.code, role: m.role, status: 'member' });
         else if (club.pending.some((p) => p.userId === userId)) out.push({ clubCode: club.code, role: 'member', status: 'pending' });
       }
       return out;
     },
-    async moveMemberships(fromUserId, to: Identity) {
-      const changed: string[] = [];
-      const rename = (x: Identity) => {
-        x.userId = to.userId;
-        x.name = to.name;
-        if (to.avatar === undefined) delete x.avatar;
-        else x.avatar = to.avatar;
-      };
-      for (const club of rows.values()) {
-        const fromMember = club.members.find((m) => m.userId === fromUserId);
-        const fromPending = club.pending.find((p) => p.userId === fromUserId);
-        const ownsIt = club.ownerId === fromUserId;
-        if (!fromMember && !fromPending && !ownsIt) continue;
-        changed.push(club.code);
-        const toMember = club.members.find((m) => m.userId === to.userId);
-        if (fromMember) {
-          if (toMember) club.members = club.members.filter((m) => m !== fromMember);
-          else {
-            rename(fromMember);
-            club.pending = club.pending.filter((p) => p.userId !== to.userId);
-          }
-        }
-        if (fromPending) {
-          const toHasRow = club.members.some((m) => m.userId === to.userId) || club.pending.some((p) => p !== fromPending && p.userId === to.userId);
-          if (toHasRow) club.pending = club.pending.filter((p) => p !== fromPending);
-          else rename(fromPending);
-        }
-        if (ownsIt) {
-          club.ownerId = to.userId;
-          const owner = club.members.find((m) => m.userId === to.userId) as ClubMember | undefined;
-          if (owner) owner.role = 'owner';
-        }
-        for (const t of club.tables) if (t.createdBy === fromUserId) t.createdBy = to.userId;
-      }
-      return changed;
+    async moveMemberships(fromUserId, to) {
+      return moveMembershipsIn(s.clubs.values(), fromUserId, to);
     },
     async anonymiseUser(userId) {
-      const changed: string[] = [];
-      for (const club of rows.values()) {
-        let touched = false;
-        for (const m of club.members) {
-          if (m.userId !== userId) continue;
-          m.name = DELETED_PLAYER_NAME;
-          delete m.avatar;
-          touched = true;
-        }
-        const before = club.pending.length;
-        club.pending = club.pending.filter((p) => p.userId !== userId);
-        if (touched || club.pending.length !== before) changed.push(club.code);
-      }
-      return changed;
+      return anonymiseUserIn(s.clubs, userId);
     },
   };
 }
 
-function memoryTableSnapshots(): TableSnapshotsRepo {
-  const rows = new Map<string, TableSnapshotRecord>();
+function memoryTableSnapshots(s: MemoryState): TableSnapshotsRepo {
   return {
-    async save(s) {
-      rows.set(s.roomCode, copy(s));
+    async save(snapshot) {
+      s.snapshots.set(snapshot.roomCode, copy(snapshot));
     },
     async get(roomCode) {
-      const row = rows.get(roomCode);
+      const row = s.snapshots.get(roomCode);
       return row ? copy(row) : null;
     },
     async listActive() {
-      return [...rows.values()].filter((r) => r.status !== 'finished').map(copy);
+      return [...s.snapshots.values()].filter((r) => r.status !== 'finished').map(copy);
     },
     async delete(roomCode) {
-      return rows.delete(roomCode);
+      return s.snapshots.delete(roomCode);
     },
     async pruneFinished(before) {
       let n = 0;
-      for (const [k, r] of rows) if (r.status === 'finished' && r.updatedAt < before && rows.delete(k)) n++;
+      for (const [k, r] of [...s.snapshots]) if (r.status === 'finished' && r.updatedAt < before && s.snapshots.delete(k)) n++;
       return n;
     },
   };
 }
 
-function memoryMatchResults(): MatchResultsRepo {
-  const rows: MatchResultRecord[] = [];
-  let nextId = 0;
+function memoryMatchResults(s: MemoryState): MatchResultsRepo {
   return {
     async record(r) {
-      const row: MatchResultRecord = { ...copy(r), id: ++nextId };
-      rows.push(row);
+      const row: MatchResultRecord = { ...copy(r), id: ++s.matchSeq };
+      s.matches.push(row);
       return copy(row);
     },
     async listForClub(clubCode, limit = 50) {
-      return rows
+      return s.matches
         .filter((r) => r.clubCode === clubCode)
         .sort((a, b) => b.finishedAt - a.finishedAt || b.id - a.id)
         .slice(0, limit)
         .map(copy);
     },
     async listForRoom(roomCode) {
-      return rows.filter((r) => r.roomCode === roomCode).map(copy);
+      return s.matches.filter((r) => r.roomCode === roomCode).map(copy);
     },
   };
 }
 
-function memoryPuzzleResults(): PuzzleResultsRepo {
-  const rows: PuzzleResultRecord[] = [];
-  let nextId = 0;
+function memoryPuzzleResults(s: MemoryState): PuzzleResultsRepo {
   return {
     async record(r) {
-      const row: PuzzleResultRecord = { ...copy(r), id: ++nextId };
-      rows.push(row);
+      const row: PuzzleResultRecord = { ...copy(r), id: ++s.puzzleSeq };
+      s.puzzles.push(row);
       return copy(row);
     },
     async listForUser(userId, limit = 500) {
-      return rows
+      return s.puzzles
         .filter((r) => r.userId === userId)
         .sort((a, b) => a.createdAt - b.createdAt || a.id - b.id)
         .slice(0, limit)
@@ -459,7 +481,7 @@ function memoryPuzzleResults(): PuzzleResultsRepo {
     },
     async moveToUser(fromUserId, toUserId) {
       let n = 0;
-      for (const r of rows) {
+      for (const r of s.puzzles) {
         if (r.userId !== fromUserId) continue;
         r.userId = toUserId;
         n++;
@@ -469,21 +491,44 @@ function memoryPuzzleResults(): PuzzleResultsRepo {
   };
 }
 
-export function createMemoryRepos(): Repos {
-  const repos: Repos = {
+function build(s: MemoryState, transaction: Repos['transaction']): Repos {
+  return {
     kind: 'memory',
-    users: memoryUsers(),
-    identities: memoryIdentities(),
-    sessions: memorySessions(),
-    devices: memoryDevices(),
-    wallet: memoryWallet(),
-    storeEvents: memoryStoreEvents(),
-    reports: memoryReports(),
-    clubs: memoryClubs(),
-    tableSnapshots: memoryTableSnapshots(),
-    matchResults: memoryMatchResults(),
-    puzzleResults: memoryPuzzleResults(),
-    transaction: (fn) => fn(repos),
+    users: memoryUsers(s),
+    identities: memoryIdentities(s),
+    sessions: memorySessions(s),
+    devices: memoryDevices(s),
+    wallet: memoryWallet(s),
+    storeEvents: memoryStoreEvents(s),
+    reports: memoryReports(s),
+    clubs: memoryClubs(s),
+    tableSnapshots: memoryTableSnapshots(s),
+    matchResults: memoryMatchResults(s),
+    puzzleResults: memoryPuzzleResults(s),
+    transaction,
   };
+}
+
+export function createMemoryRepos(): Repos {
+  const state = emptyState();
+  // Transactions run one after another; a throw puts every map and counter back as it was.
+  let chain: Promise<unknown> = Promise.resolve();
+  const transaction: Repos['transaction'] = (fn) => {
+    const run = chain.then(async () => {
+      const before = structuredClone(state);
+      try {
+        return await fn(inner);
+      } catch (e) {
+        Object.assign(state, before);
+        throw e;
+      }
+    });
+    chain = run.catch(() => undefined);
+    return run;
+  };
+  const repos = build(state, transaction);
+  // Inside a transaction the same repositories are used (so a test that stubs one sees the stub
+  // there too); only a nested transaction() differs: it joins the outer one, as in Postgres.
+  const inner: Repos = { ...repos, transaction: (fn) => fn(inner) };
   return repos;
 }

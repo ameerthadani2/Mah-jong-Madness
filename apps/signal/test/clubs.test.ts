@@ -1,7 +1,9 @@
-import { describe, expect, it } from 'vitest';
+import { randomUUID } from 'node:crypto';
+import { describe, expect, it, vi } from 'vitest';
 import { DEFAULT_RULES, RULE_LIMITS } from '@mjm/engine';
+import { deleteAccount } from '../src/auth';
 import { CLUB_LIMITS, ClubError, ClubRegistry, sanitizeSettings, type Club, type ClubStore } from '../src/clubs';
-import { createMemoryRepos } from '../src/repos';
+import { createMemoryRepos, type Repos } from '../src/repos';
 import type { ApiOptions } from '../src/api';
 import { BucketTable } from '../src/limits';
 import { apiFixture, request } from './helpers';
@@ -55,6 +57,80 @@ describe('ClubRegistry', () => {
     await reg.flush();
     expect(saved).toEqual([`${a.code}:One 9`, `${a.code}:Two`]);
     expect(await inner.get(a.code)).toMatchObject({ name: 'Two', description: 'later' });
+  });
+
+  it('writes a club again after a failed write: at once on flush, and with backoff in between', async () => {
+    vi.useFakeTimers();
+    try {
+      const inner = createMemoryRepos().clubs;
+      let failures = 0;
+      const store: ClubStore = {
+        ...inner,
+        save: async (c) => {
+          if (failures > 0) {
+            failures--;
+            throw new Error('connection terminated unexpectedly');
+          }
+          return inner.save(c);
+        },
+      };
+      const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      const reg = new ClubRegistry({ store, retryDelayMs: 1000 });
+      const club = reg.createClub(alice, 'Night owls');
+      await reg.flush();
+      // One transient error at the last change before a restart: flush() still gets it written.
+      failures = 1;
+      reg.recordMatch(club.code, [{ userId: alice.userId, points: 120, handsWon: 3 }]);
+      await reg.flush();
+      expect(reg.unsaved).toEqual([]);
+      expect((await inner.get(club.code))!.members[0].points).toBe(120);
+      // Two errors in a row with no flush: the retry timer (1 s, then 2 s) brings the store up to date.
+      failures = 2;
+      reg.recordMatch(club.code, [{ userId: alice.userId, points: 30, handsWon: 1 }]);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(reg.unsaved).toEqual([club.code]);
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(reg.unsaved).toEqual([club.code]);
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(reg.unsaved).toEqual([]);
+      expect((await inner.get(club.code))!.members[0].points).toBe(150);
+      expect(errors).toHaveBeenCalledTimes(3);
+      // The next process reads the right standings.
+      const next = new ClubRegistry({ store: inner });
+      await next.load();
+      expect(next.club(club.code).members[0].points).toBe(150);
+    } finally {
+      vi.restoreAllMocks();
+      vi.useRealTimers();
+    }
+  });
+
+  it('an account deletion racing a club write keeps the anonymised name in the store and the points scored meanwhile', async () => {
+    const repos = createMemoryRepos();
+    const inner = repos.clubs;
+    const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+    // A slow store (each save takes 20 ms) and a slow deletion transaction (it runs after 5 ms).
+    const store: ClubStore = { ...inner, save: async (c) => (await sleep(20), inner.save(c)) };
+    const slowRepos: Repos = { ...repos, transaction: async (fn) => (await sleep(5), repos.transaction(fn)) };
+    const owner = await repos.users.create({ id: randomUUID(), kind: 'guest', displayName: 'Owner', createdAt: Date.now() });
+    const gina = await repos.users.create({ id: randomUUID(), kind: 'guest', displayName: 'Gina RealName', createdAt: Date.now() });
+    const reg = new ClubRegistry({ store });
+    const club = reg.createClub({ userId: owner.id, name: 'Owner' }, 'Race');
+    reg.joinClub(club.code, { userId: gina.id, name: gina.displayName });
+    await reg.flush();
+    // DELETE /api/me, as api.ts does it, with a hand finishing in the club while the transaction runs.
+    await reg.flush();
+    const deletion = deleteAccount(slowRepos, gina.id);
+    setTimeout(() => reg.recordMatch(club.code, [{ userId: owner.id, points: 10, handsWon: 1 }]), 1);
+    await deletion;
+    reg.anonymiseMember(gina.id);
+    await reg.flush();
+    const inMemory = reg.club(club.code);
+    expect(inMemory.members.find((m) => m.userId === gina.id)!.name).toBe('Deleted player');
+    expect(inMemory.members.find((m) => m.userId === owner.id)!.points).toBe(10);
+    const stored = (await inner.get(club.code))!;
+    expect(stored.members.find((m) => m.userId === gina.id)!.name).toBe('Deleted player');
+    expect(stored.members.find((m) => m.userId === owner.id)!.points).toBe(10);
   });
 });
 

@@ -261,6 +261,79 @@ function contract(name: string, setup: () => Promise<Repos>, teardown: () => Pro
       expect((await repos.clubs.get(zPending.code))!.pending).toEqual([]);
     });
 
+    it('clubs: a deleted owner passes the club to its senior admin, else its earliest member; an empty club is dissolved', async () => {
+      const gone = await user('account', 'Gone');
+      const early = await user('guest', 'Early');
+      const admin = await user('guest', 'Admin');
+      const withAdmin = clubFixture(gone, { members: [member(gone, 'owner', T0), member(early, 'member', T0 + 1), member(admin, 'admin', T0 + 2)] });
+      const noAdmin = clubFixture(gone, { members: [member(gone, 'owner', T0), member(admin, 'member', T0 + 5), member(early, 'member', T0 + 1)] });
+      const alone = clubFixture(gone, { pending: [{ userId: early.id, name: 'Early' }] });
+      for (const c of [withAdmin, noAdmin, alone]) await repos.clubs.save(c);
+      expect([...(await repos.clubs.anonymiseUser(gone.id))].sort()).toEqual([withAdmin.code, noAdmin.code, alone.code].sort());
+      const a = (await repos.clubs.get(withAdmin.code))!;
+      expect(a.ownerId).toBe(admin.id);
+      expect(a.members.find((mm) => mm.userId === admin.id)!.role).toBe('owner');
+      expect(a.members.find((mm) => mm.userId === gone.id)).toMatchObject({ name: DELETED_PLAYER_NAME, role: 'member' });
+      const b = (await repos.clubs.get(noAdmin.code))!;
+      expect(b.ownerId).toBe(early.id);
+      expect(b.members.find((mm) => mm.userId === early.id)!.role).toBe('owner');
+      expect(await repos.clubs.get(alone.code)).toBeNull();
+      expect(await repos.clubs.clubsForUser(early.id)).toEqual(expect.arrayContaining([expect.objectContaining({ clubCode: noAdmin.code, role: 'owner' })]));
+    });
+
+    it('reports: move to the account a guest merged into (a report between the two is dropped)', async () => {
+      const guest = await user();
+      const account = await user('account');
+      const other = await user();
+      await repos.reports.create({ reporterId: other.id, reportedUserId: guest.id, roomCode: null, reason: 'cheating', details: null, createdAt: T0 });
+      await repos.reports.create({ reporterId: guest.id, reportedUserId: other.id, roomCode: null, reason: 'other', details: null, createdAt: T0 + 1 });
+      await repos.reports.create({ reporterId: guest.id, reportedUserId: account.id, roomCode: null, reason: 'stalling', details: null, createdAt: T0 + 2 });
+      expect(await repos.reports.moveToUser(guest.id, account.id)).toBe(3);
+      expect((await repos.reports.listAbout(account.id)).map((r) => r.reporterId)).toEqual([other.id]);
+      expect(await repos.reports.listAbout(guest.id)).toEqual([]);
+      expect(await repos.reports.countByReporterSince(account.id, T0)).toBe(1);
+      expect(await repos.reports.countByReporterSince(guest.id, T0)).toBe(0);
+    });
+
+    it('users: purge removes accounts deleted long enough ago, with their rows, but keeps club owners and financial records; sessions: prune ended', async () => {
+      const old = await user('account', 'Old');
+      const recent = await user('guest', 'Recent');
+      const owner = await user('account', 'Owner');
+      const live = await user();
+      await repos.users.update(old.id, { deletedAt: T0 - 31 * 86_400_000 });
+      await repos.users.update(recent.id, { deletedAt: T0 - 86_400_000, mergedInto: live.id });
+      await repos.users.update(owner.id, { deletedAt: T0 - 40 * 86_400_000 });
+      await repos.clubs.save(clubFixture(owner));
+      await repos.identities.create({ provider: 'guest', subject: old.id, userId: old.id, secretHash: 'a'.repeat(64), email: null, createdAt: T0 });
+      await repos.devices.create({ id: randomUUID(), userId: old.id, platform: 'ios', appBuild: null, pushToken: null, locale: null, createdAt: T0, lastSeenAt: T0 });
+      await repos.wallet.apply({ userId: old.id, delta: 10, reason: 'purchase', ref: 'tx-old', createdAt: T0 });
+      await repos.wallet.recordPurchase({ userId: old.id, store: 'app_store', transactionId: 'tx-old-' + old.id, productId: 'diamonds.60', price: 1, currency: 'USD', eventId: null, raw: {}, createdAt: T0 });
+      await repos.puzzleResults.record({ userId: old.id, kind: 'discard', puzzleKey: 'p1', correct: true, seconds: 3, ratingAfter: null, createdAt: T0 });
+      await repos.reports.create({ reporterId: live.id, reportedUserId: old.id, roomCode: null, reason: 'other', details: null, createdAt: T0 });
+      const mk = (userId: string, expiresAt: number, revokedAt: number | null) => ({ id: randomUUID(), userId, deviceId: null, tokenHash: randomHex(32), createdAt: T0, expiresAt, rotatedFrom: null, revokedAt });
+      const [expired, revoked, graced, fine] = [mk(live.id, T0 - 1, null), mk(live.id, T0 + 9000, T0 - 5), mk(live.id, T0 + 9000, T0 + 60_000), mk(live.id, T0 + 9000, null)];
+      for (const s of [expired, revoked, graced, fine]) await repos.sessions.create(s);
+
+      expect(await repos.users.purgeDeleted(T0 - 30 * 86_400_000)).toBe(1);
+      expect(await repos.users.get(old.id)).toBeNull();
+      expect(await repos.identities.listForUser(old.id)).toEqual([]);
+      expect(await repos.devices.listForUser(old.id)).toEqual([]);
+      expect(await repos.puzzleResults.listForUser(old.id)).toEqual([]);
+      expect((await repos.wallet.listLedger(old.id)).length).toBe(1);
+      expect((await repos.wallet.listPurchases(old.id)).length).toBe(1);
+      expect((await repos.reports.listAbout(old.id)).length).toBe(1);
+      expect(await repos.users.get(recent.id)).not.toBeNull();
+      expect(await repos.users.get(owner.id)).not.toBeNull();
+      expect(await repos.users.purgeDeleted(T0)).toBe(1);
+      expect(await repos.users.get(recent.id)).toBeNull();
+
+      expect(await repos.sessions.pruneEnded(T0)).toBe(2);
+      expect(await repos.sessions.get(expired.id)).toBeNull();
+      expect(await repos.sessions.get(revoked.id)).toBeNull();
+      expect(await repos.sessions.get(graced.id)).not.toBeNull();
+      expect(await repos.sessions.get(fine.id)).not.toBeNull();
+    });
+
     it('devices: a push token lives on one device; push targets list the users\' tokens', async () => {
       const u = await user();
       const v = await user();
@@ -369,22 +442,42 @@ function contract(name: string, setup: () => Promise<Repos>, teardown: () => Pro
       expect((await repos.puzzleResults.listForUser(v.id, 1))[0]).toMatchObject({ kind: 'daily', correct: true, seconds: 41, ratingAfter: 1216 });
     });
 
-    it('transactions commit together and, in Postgres, roll back together', async () => {
+    it('transactions commit together and roll back together', async () => {
       const id = randomUUID();
       await repos.transaction(async (tx) => {
         await tx.users.create({ id, kind: 'guest', createdAt: T0 });
         await tx.transaction(async (inner) => inner.users.update(id, { displayName: 'Nested' }));
       });
       expect((await repos.users.get(id))?.displayName).toBe('Nested');
-      if (repos.kind !== 'pg') return;
       const lost = randomUUID();
+      const kept = await user();
       await expect(
         repos.transaction(async (tx) => {
           await tx.users.create({ id: lost, kind: 'guest', createdAt: T0 });
+          await tx.wallet.apply({ userId: kept.id, delta: 500, reason: 'purchase', ref: 'tx-lost', createdAt: T0 });
+          await tx.clubs.save(clubFixture(kept));
           throw new Error('boom');
         }),
       ).rejects.toThrow('boom');
       expect(await repos.users.get(lost)).toBeNull();
+      expect(await repos.wallet.get(kept.id)).toMatchObject({ diamonds: 0 });
+      expect(await repos.clubs.clubsForUser(kept.id)).toEqual([]);
+      // Two transactions started together do not see each other's half-done work.
+      const a = await user();
+      const b = await user();
+      const first = repos.transaction(async (tx) => {
+        await tx.wallet.apply({ userId: a.id, delta: 5, reason: 'test', createdAt: T0 });
+        await tx.wallet.apply({ userId: a.id, delta: 5, reason: 'test', createdAt: T0 });
+        return (await tx.wallet.get(b.id)).diamonds;
+      });
+      const second = repos.transaction(async (tx) => {
+        await tx.wallet.apply({ userId: b.id, delta: 7, reason: 'test', createdAt: T0 });
+        throw new Error('undo');
+      });
+      expect(await first).toBe(0);
+      await expect(second).rejects.toThrow('undo');
+      expect((await repos.wallet.get(a.id)).diamonds).toBe(10);
+      expect((await repos.wallet.get(b.id)).diamonds).toBe(0);
     });
   });
 }

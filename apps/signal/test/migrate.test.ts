@@ -82,7 +82,7 @@ describe.skipIf(!PG_URL)('migrate() against Postgres', () => {
     try {
       const lines: string[] = [];
       expect(await migrate(pool, { log: (l) => lines.push(l) })).toEqual(['0001_init', '0002_store_reports_seasons']);
-      expect(await appliedMigrations(pool)).toEqual(['0001_init']);
+      expect(await appliedMigrations(pool)).toEqual(['0001_init', '0002_store_reports_seasons']);
       const tables = await pool.query<{ table_name: string }>('SELECT table_name FROM information_schema.tables WHERE table_schema = current_schema()');
       expect(tables.rows.map((r) => r.table_name).sort()).toEqual([...PLANNED_TABLES].sort());
       expect(await migrate(pool)).toEqual([]);

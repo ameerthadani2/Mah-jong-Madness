@@ -16,6 +16,7 @@
 import { randomHex, sanitizeRules, type RuleSet } from '@mjm/engine';
 import type { HostEvent } from '@mjm/net';
 import { uniqueCode, type HexSource } from './codes';
+import { DELETED_PLAYER_NAME } from './repos/types';
 import type { ClubGate } from './rooms';
 
 export interface Identity {
@@ -119,6 +120,8 @@ export interface ClubPublicView {
 }
 
 const DAY_MS = 86_400_000;
+/** First retry after a failed club write; each further failure doubles it (up to a minute). */
+const RETRY_DELAY_MS = 1_000;
 
 export class ClubError extends Error {
   constructor(
@@ -180,6 +183,88 @@ function normalise(c: Club): Club {
 
 const newMember = (user: Identity, role: ClubRole, at: number): ClubMember => ({ ...user, role, joinedAt: at, points: 0, seasonPoints: 0, matchesPlayed: 0, matchesWon: 0, handsWon: 0 });
 
+/**
+ * Account merge, applied in place to clubs held in memory: `fromUserId`'s memberships and pending
+ * requests pass to `to` (where both have a row the stronger one stays: member beats pending; on a
+ * tie `to`'s row is kept), clubs `fromUserId` owns transfer, and its table listings are re-attributed.
+ * Returns the codes of the clubs changed. The memory repository and the registry both use this,
+ * so the rows in the store and the clubs in memory always agree (pg.ts does the same in SQL).
+ */
+export function moveMembershipsIn(clubs: Iterable<Club>, fromUserId: string, to: Identity): string[] {
+  const changed: string[] = [];
+  const rename = (x: Identity) => {
+    x.userId = to.userId;
+    x.name = to.name;
+    if (to.avatar === undefined) delete x.avatar;
+    else x.avatar = to.avatar;
+  };
+  for (const club of clubs) {
+    const fromMember = club.members.find((m) => m.userId === fromUserId);
+    const fromPending = club.pending.find((p) => p.userId === fromUserId);
+    const ownsIt = club.ownerId === fromUserId;
+    if (!fromMember && !fromPending && !ownsIt) continue;
+    changed.push(club.code);
+    const toMember = club.members.find((m) => m.userId === to.userId);
+    if (fromMember) {
+      if (toMember) club.members = club.members.filter((m) => m !== fromMember);
+      else {
+        rename(fromMember);
+        club.pending = club.pending.filter((p) => p.userId !== to.userId);
+      }
+    }
+    if (fromPending) {
+      const toHasRow = club.members.some((m) => m.userId === to.userId) || club.pending.some((p) => p !== fromPending && p.userId === to.userId);
+      if (toHasRow) club.pending = club.pending.filter((p) => p !== fromPending);
+      else rename(fromPending);
+    }
+    if (ownsIt) {
+      club.ownerId = to.userId;
+      const owner = club.members.find((m) => m.userId === to.userId);
+      if (owner) owner.role = 'owner';
+    }
+    for (const t of club.tables) if (t.createdBy === fromUserId) t.createdBy = to.userId;
+  }
+  return changed;
+}
+
+/**
+ * Account deletion, applied in place: the user's member rows become "Deleted player" with no
+ * avatar, pending requests are dropped, and a club they owned passes to its senior admin (the
+ * earliest-joined one), else its earliest member; a club with nobody else in it is removed from
+ * `clubs`. Returns the codes of the clubs changed, the removed ones included. Shared by the memory
+ * repository and the registry like `moveMembershipsIn` (pg.ts does the same in SQL).
+ */
+export function anonymiseUserIn(clubs: Map<string, Club>, userId: string): string[] {
+  const changed: string[] = [];
+  for (const club of [...clubs.values()]) {
+    let touched = false;
+    for (const m of club.members) {
+      if (m.userId !== userId) continue;
+      m.name = DELETED_PLAYER_NAME;
+      delete m.avatar;
+      touched = true;
+    }
+    const before = club.pending.length;
+    club.pending = club.pending.filter((p) => p.userId !== userId);
+    if (club.ownerId === userId) {
+      touched = true;
+      const successor = club.members
+        .filter((m) => m.userId !== userId)
+        .sort((a, b) => Number(b.role === 'admin') - Number(a.role === 'admin') || a.joinedAt - b.joinedAt || a.userId.localeCompare(b.userId))[0];
+      if (!successor) {
+        clubs.delete(club.code);
+        changed.push(club.code);
+        continue;
+      }
+      club.ownerId = successor.userId;
+      successor.role = 'owner';
+      for (const m of club.members) if (m.userId === userId) m.role = 'member';
+    }
+    if (touched || club.pending.length !== before) changed.push(club.code);
+  }
+  return changed;
+}
+
 export class ClubRegistry {
   private clubs = new Map<string, Club>();
   private readonly now: () => number;
@@ -189,14 +274,23 @@ export class ClubRegistry {
   private readonly writes = new Map<string, Promise<void>>();
   /** Clubs with a write queued that has not started yet (further changes ride along with it). */
   private readonly queued = new Set<string>();
+  /** Clubs whose last write failed: how many times in a row, and the retry timer. They are written again with backoff, and by `flush()`. */
+  private readonly dirty = new Map<string, { failures: number; timer: ReturnType<typeof setTimeout> | null }>();
   /** Number of writes requested (tests use it to check that no-op updates write nothing). */
   writeCount = 0;
   private readonly listeners = new Set<(ev: ClubEvent) => void>();
+  private readonly retryDelayMs: number;
 
-  constructor(opts: { store?: ClubStore; now?: () => number; randomHex?: HexSource } = {}) {
+  constructor(opts: { store?: ClubStore; now?: () => number; randomHex?: HexSource; retryDelayMs?: number } = {}) {
     this.now = opts.now ?? Date.now;
     this.hex = opts.randomHex ?? randomHex;
     this.store = opts.store ?? null;
+    this.retryDelayMs = opts.retryDelayMs ?? RETRY_DELAY_MS;
+  }
+
+  /** Clubs whose last write failed and have not been written since (tests and diagnostics). */
+  get unsaved(): string[] {
+    return [...this.dirty.keys()];
   }
 
   /** Subscribe to club events (a table opened, a join request approved). Listeners must not throw. */
@@ -250,10 +344,18 @@ export class ClubRegistry {
 
   /** Queue a write of this club. Writes for one club run in order; a burst of changes becomes one write. */
   private persist(club: Club): void {
+    this.persistCode(club.code);
+  }
+
+  /**
+   * Queue a write of the club with this code as it is when the write runs (a delete when it is no
+   * longer in the registry). A write that fails leaves the club dirty: it is tried again after a
+   * growing delay, and `flush()` tries once more before giving up.
+   */
+  private persistCode(code: string): void {
     this.writeCount++;
     const store = this.store;
     if (!store) return;
-    const code = club.code;
     if (this.queued.has(code)) return;
     this.queued.add(code);
     const prev = this.writes.get(code) ?? Promise.resolve();
@@ -263,17 +365,55 @@ export class ClubRegistry {
         const current = this.clubs.get(code);
         if (current) await store.save(structuredClone(current));
         else await store.delete(code);
+        this.clean(code);
       })
-      .catch((e: Error) => console.error(`[signal] club ${code} not saved:`, e.message));
+      .catch((e: Error) => {
+        console.error(`[signal] club ${code} not saved:`, e.message);
+        this.retryLater(code);
+      });
     this.writes.set(code, next);
     void next.then(() => {
       if (this.writes.get(code) === next) this.writes.delete(code);
     });
   }
 
-  /** Wait until every queued club write has reached the store. */
+  private clean(code: string): void {
+    const d = this.dirty.get(code);
+    if (!d) return;
+    if (d.timer) clearTimeout(d.timer);
+    this.dirty.delete(code);
+  }
+
+  /** A failed write: keep the club dirty and write it again after 1 s, 2 s, 4 s … up to a minute. */
+  private retryLater(code: string): void {
+    const d = this.dirty.get(code) ?? { failures: 0, timer: null };
+    d.failures++;
+    if (d.timer) clearTimeout(d.timer);
+    d.timer = setTimeout(() => {
+      d.timer = null;
+      this.persistCode(code);
+    }, Math.min(60_000, this.retryDelayMs * 2 ** (d.failures - 1)));
+    d.timer.unref?.();
+    this.dirty.set(code, d);
+  }
+
+  /**
+   * Wait until every queued club write has reached the store. A club whose write failed is tried
+   * again at once (a few times), so a shutdown does not leave a change behind; what still cannot be
+   * written is logged.
+   */
   async flush(): Promise<void> {
+    for (let attempt = 0; attempt < 4; attempt++) {
+      while (this.writes.size > 0) await Promise.all([...this.writes.values()]);
+      if (this.dirty.size === 0) return;
+      for (const [code, d] of this.dirty) {
+        if (d.timer) clearTimeout(d.timer);
+        d.timer = null;
+        this.persistCode(code);
+      }
+    }
     while (this.writes.size > 0) await Promise.all([...this.writes.values()]);
+    if (this.dirty.size) console.error(`[signal] clubs still not saved: ${[...this.dirty.keys()].join(' ')}`);
   }
 
   /**
@@ -288,6 +428,27 @@ export class ClubRegistry {
       if (club) this.clubs.set(code, normalise(club));
       else this.clubs.delete(code);
     }
+  }
+
+  /**
+   * Account merge: move `fromUserId`'s memberships, requests, ownerships and tables to `to` in the
+   * registry's own clubs (the same rules as the repositories' `moveMemberships`) and write them.
+   * The repositories rewrite their rows in the merge transaction too; applying the change here as
+   * well means a write queued by a table event while that transaction ran (which carries the
+   * registry's copy) can never put the old rows back, and nothing that happened in memory
+   * meanwhile is lost to a reload. Returns the clubs changed.
+   */
+  moveMemberships(fromUserId: string, to: Identity): string[] {
+    const changed = moveMembershipsIn(this.clubs.values(), fromUserId, to);
+    for (const code of changed) this.persistCode(code);
+    return changed;
+  }
+
+  /** Account deletion: the in-memory counterpart of the repositories' `anonymiseUser` (see `moveMemberships`). Returns the clubs changed. */
+  anonymiseMember(userId: string): string[] {
+    const changed = anonymiseUserIn(this.clubs, userId);
+    for (const code of changed) this.persistCode(code);
+    return changed;
   }
 
   /**

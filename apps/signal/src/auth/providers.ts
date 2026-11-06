@@ -27,7 +27,7 @@ export interface ProviderConfig {
   google?: { clientIds: string[]; jwks?: JwksSource };
   /** Facebook Limited Login (OIDC): enabled only when an app id is configured. */
   facebook?: { appId: string; jwks?: JwksSource };
-  /** The raw nonce the app generated for this sign-in. */
+  /** The raw nonce the app generated for this sign-in. Required: a token is accepted only when it carries this nonce. */
   nonce?: string;
   /** Clock for expiry checks (tests). */
   now?: () => number;
@@ -113,6 +113,8 @@ export async function verifyProviderToken(provider: unknown, token: unknown, cfg
   if (typeof token !== 'string' || token.length < 20 || token.length > 8192) throw new AuthError('invalid', 'Missing id token');
   const audience = audiences(provider, cfg);
   if (!audience.length) throw new AuthError('provider_disabled', provider + ' sign-in is not configured');
+  // Every sign-in is bound to a fresh nonce; without one a captured token could be replayed for its lifetime.
+  if (typeof cfg.nonce !== 'string' || !cfg.nonce) throw new AuthError('invalid', 'nonce is required');
   const source = provider === 'facebook' ? cfg.facebook?.jwks : cfg[provider]?.jwks;
 
   let payload: JWTPayload;
@@ -131,13 +133,8 @@ export async function verifyProviderToken(provider: unknown, token: unknown, cfg
 
   // Apple puts sha256(nonce) in the token (the app passes the hash to Apple); Google and Facebook echo the nonce itself.
   const claimed = payload.nonce;
-  if (cfg.nonce !== undefined) {
-    const expected = provider === 'apple' ? sha256Hex(cfg.nonce) : cfg.nonce;
-    if (typeof claimed !== 'string' || claimed !== expected) throw new AuthError('invalid_token', provider + ' token rejected: nonce mismatch');
-  } else if (claimed !== undefined) {
-    // The token was bound to a nonce we were not given, so its freshness cannot be checked.
-    throw new AuthError('invalid_token', provider + ' token rejected: nonce missing from request');
-  }
+  const expected = provider === 'apple' ? sha256Hex(cfg.nonce) : cfg.nonce;
+  if (typeof claimed !== 'string' || claimed !== expected) throw new AuthError('invalid_token', provider + ' token rejected: nonce mismatch');
 
   const subject = payload.sub;
   if (typeof subject !== 'string' || !subject || subject.length > 255) throw new AuthError('invalid_token', provider + ' token rejected: bad subject');

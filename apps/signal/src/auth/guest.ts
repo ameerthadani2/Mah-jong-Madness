@@ -80,9 +80,23 @@ export async function createGuest(repos: Repos, pepper: Peppers, device: GuestDe
   return { userId, deviceId, guestSecret, token, sessionId: session.id };
 }
 
+/**
+ * Replace a user's guest secret with a new one, so that only the caller (who receives it) can sign
+ * in with it from now on. Returns null when the user has no guest credential.
+ */
+export async function rotateGuestSecret(repos: Repos, pepper: Peppers, userId: string): Promise<string | null> {
+  const identity = await repos.identities.get('guest', userId);
+  if (!identity) return null;
+  const guestSecret = randomHex(32);
+  await repos.identities.updateSecretHash('guest', userId, hashToken(guestSecret, pepperSet(pepper).current));
+  return guestSecret;
+}
+
 export interface GuestLoginOptions extends GuestOptions {
   /** The device id the app was given at creation; attached to the session when it belongs to this user. */
   deviceId?: unknown;
+  /** Called once the secret has been proven, before a session is issued (the API spends the user's rate limit here; it may throw). */
+  verified?: (userId: string) => void;
 }
 
 /** A fixed digest compared against when the user is unknown, so a miss takes as long as a wrong secret. */
@@ -108,6 +122,7 @@ export async function loginGuest(
   if (!ok || !identity) throw fail();
   const user = await repos.users.get(identity.userId);
   if (!user || user.deletedAt !== null) throw fail();
+  opts.verified?.(user.id);
   let deviceId: string | null = null;
   if (typeof opts.deviceId === 'string' && opts.deviceId) {
     const device = await repos.devices.get(opts.deviceId);

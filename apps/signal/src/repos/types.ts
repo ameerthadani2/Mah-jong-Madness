@@ -46,6 +46,13 @@ export interface UsersRepo {
   get(id: string): Promise<UserRecord | null>;
   /** Applies the patch and returns the updated row, or null when there is no such user. */
   update(id: string, patch: UserPatch): Promise<UserRecord | null>;
+  /**
+   * Hard-deletes users soft-deleted (or merged away) before `before`, with everything that
+   * references them (identities, sessions, devices, wallet, entitlements, puzzle results, club
+   * rows). Ledger, purchases, store events and reports keep their user ids as records. A user who
+   * still owns a club is kept. Returns how many rows went.
+   */
+  purgeDeleted(before: number): Promise<number>;
 }
 
 export const IDENTITY_PROVIDERS = ['guest', 'apple', 'google', 'facebook'] as const;
@@ -95,6 +102,8 @@ export interface SessionsRepo {
   /** Ends every session of the user at `at` (including ones in a grace window), except `exceptId`. */
   revokeAllForUser(userId: string, at: number, exceptId?: string): Promise<number>;
   deleteForUser(userId: string): Promise<number>;
+  /** Removes sessions that have expired or whose revocation (grace window included) is past at `at`. */
+  pruneEnded(at: number): Promise<number>;
 }
 
 export interface DeviceRecord {
@@ -252,6 +261,8 @@ export interface ReportsRepo {
   countByReporterSince(reporterId: string, since: number): Promise<number>;
   /** Reports about this user, newest first (for moderation). */
   listAbout(reportedUserId: string, limit?: number): Promise<ReportRecord[]>;
+  /** Account merge: reports filed by or about `fromUserId` now name `toUserId` (a report between the two is dropped). */
+  moveToUser(fromUserId: string, toUserId: string): Promise<number>;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -280,7 +291,12 @@ export interface ClubsRepo {
    * cache such as ClubRegistry can reload them.
    */
   moveMemberships(fromUserId: string, to: Identity): Promise<string[]>;
-  /** Account deletion: renames the user's rows to "Deleted player", clears avatars, drops pending requests. Returns the clubs changed. */
+  /**
+   * Account deletion: renames the user's rows to "Deleted player", clears avatars, drops pending
+   * requests. A club the user owned passes to its senior admin, else its earliest member (the
+   * deleted row stays as a plain member); one with nobody else in it is deleted. Returns the
+   * clubs changed (the dissolved ones included).
+   */
   anonymiseUser(userId: string): Promise<string[]>;
 }
 
@@ -365,8 +381,8 @@ export interface Repos {
   puzzleResults: PuzzleResultsRepo;
   /**
    * Runs `fn` with repositories that share one transaction (pg: BEGIN/COMMIT, ROLLBACK on a
-   * throw; nested calls join the outer transaction). The memory implementation runs `fn`
-   * directly and cannot roll back.
+   * throw; nested calls join the outer transaction). The memory implementation runs one
+   * transaction at a time and restores its state when `fn` throws.
    */
   transaction<T>(fn: (tx: Repos) => Promise<T>): Promise<T>;
 }

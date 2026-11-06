@@ -2,25 +2,34 @@
  * Linking a verified provider identity (P) to the signed-in user (U), signing in with one, and
  * deleting an account. The rules:
  *
- * 1. P is linked to nobody: link it to U, and U becomes an account. U's other sessions end.
+ * 1. P is linked to nobody: link it to U, and U becomes an account. U's other sessions end, and
+ *    U's guest secret is replaced (the new one goes back to the linking device only), so a device
+ *    that held the old secret cannot sign back in.
  * 2. P is linked to V and U is a guest: merge U into V. U's wallet, purchases, entitlements,
- *    puzzle history, devices and club memberships move to V (where both are in a club, the
- *    stronger row stays; clubs U owns transfer); U's sessions end; U is soft-deleted with
- *    merged_into = V; the device gets a V session.
+ *    puzzle history, devices, reports and club memberships move to V (where both are in a club,
+ *    the stronger row stays; clubs U owns transfer); U's sessions end; U is soft-deleted with
+ *    merged_into = V and its profile scrubbed; the device gets a V session.
  * 3. P is linked to V and U already has a provider: 409 identity_in_use (two real accounts are
  *    never merged automatically).
  * 4. Unlinking needs another provider to remain; signing in with an unlinked P is 404 not_linked
  *    (the client then offers to attach P to the current guest, which is rule 1).
  *
  * Deletion is soft: profile fields are scrubbed, identities, sessions and devices (with their
- * push tokens) are deleted, club rows become "Deleted player", and purchases and the wallet
- * ledger stay as financial records. A daily job hard-deletes the row after 30 days.
+ * push tokens) are deleted, club rows become "Deleted player" (a club the user owned passes to
+ * its senior admin, else its earliest member, or is dissolved when nobody is left), and purchases
+ * and the wallet ledger stay as financial records. `purgeDeletedUsers` (run hourly by the server)
+ * hard-deletes the row after 30 days.
  */
 import type { Repos, UserRecord } from '../repos/types';
 import { DELETED_PLAYER_NAME } from '../repos/types';
 import { AuthError } from './errors';
+import { rotateGuestSecret } from './guest';
 import type { VerifiedIdentity } from './providers';
 import type { SessionService } from './tokens';
+
+const DAY_MS = 86_400_000;
+/** How long a soft-deleted account (or a merged-away guest) stays before its row is removed. */
+export const PURGE_AFTER_MS = 30 * DAY_MS;
 
 export interface MergeOptions {
   sessions: SessionService;
@@ -40,6 +49,8 @@ export interface LinkResult {
   /** A new session for `userId`, issued only after a merge (the old token belonged to the guest). */
   token?: string;
   sessionId?: string;
+  /** The account's new guest secret (rule 1 replaces it); the linking device must store it in place of the old one. */
+  guestSecret?: string;
   /** Clubs whose rows changed, so a club cache can reload them. */
   affectedClubs: string[];
 }
@@ -76,7 +87,9 @@ export async function link(repos: Repos, userId: string, identity: VerifiedIdent
       });
       if (!linked) continue;
       await opts.sessions.revokeAll(userId, opts.currentSessionId);
-      return { userId, merged: false, affectedClubs: [] };
+      // The old guest secret may be on other devices; from now on only the one that linked has a working copy.
+      const guestSecret = await rotateGuestSecret(repos, { current: opts.sessions.pepper, previous: opts.sessions.previousPepper }, userId);
+      return { userId, merged: false, affectedClubs: [], ...(guestSecret ? { guestSecret } : {}) };
     }
     if (existing.userId === userId) return { userId, merged: false, affectedClubs: [] };
 
@@ -91,9 +104,10 @@ export async function link(repos: Repos, userId: string, identity: VerifiedIdent
       const clubs = await tx.clubs.moveMemberships(user.id, target.avatar ? { userId: target.id, name: target.displayName, avatar: target.avatar } : { userId: target.id, name: target.displayName });
       await tx.puzzleResults.moveToUser(user.id, target.id);
       await tx.devices.moveToUser(user.id, target.id);
+      await tx.reports.moveToUser(user.id, target.id);
       await tx.sessions.revokeAllForUser(user.id, now);
       await tx.identities.deleteForUser(user.id);
-      await tx.users.update(user.id, { deletedAt: now, mergedInto: target.id });
+      await tx.users.update(user.id, { deletedAt: now, mergedInto: target.id, displayName: '', avatar: null, email: null, birthYear: null, locale: null });
       await tx.users.update(target.id, { lastSeenAt: now });
       return clubs;
     });
@@ -144,8 +158,22 @@ export async function deleteAccount(repos: Repos, userId: string, opts: { now?: 
       avatar: null,
       email: null,
       birthYear: null,
+      locale: null,
     });
     return clubs;
   });
   return { affectedClubs };
+}
+
+/**
+ * The hard delete promised at soft deletion: remove user rows deleted (or merged away) more than
+ * `PURGE_AFTER_MS` ago, and sessions that have expired or ended. Financial records (ledger,
+ * purchases, store events) and reports carry no reference to the user row and stay. Run
+ * periodically by the server; returns what was removed.
+ */
+export async function purgeDeletedUsers(repos: Repos, opts: { now?: () => number; after?: number } = {}): Promise<{ users: number; sessions: number }> {
+  const now = (opts.now ?? Date.now)();
+  const users = await repos.users.purgeDeleted(now - (opts.after ?? PURGE_AFTER_MS));
+  const sessions = await repos.sessions.pruneEnded(now);
+  return { users, sessions };
 }
