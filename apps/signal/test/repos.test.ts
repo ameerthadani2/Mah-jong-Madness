@@ -15,6 +15,7 @@ import type { Club, ClubMember } from '../src/clubs';
 import { createPool, ping, type Pool } from '../src/db';
 import { migrate } from '../src/migrate';
 import { createMemoryRepos, createPgRepos, createRepos, DELETED_PLAYER_NAME, type Repos, type UserKind, type UserRecord } from '../src/repos';
+import { WalletService, type StoreEvent } from '../src/wallet';
 
 const PG_URL = process.env.DATABASE_URL_TEST?.trim();
 const T0 = Date.UTC(2026, 0, 1, 8, 0, 0);
@@ -442,6 +443,52 @@ function contract(name: string, setup: () => Promise<Repos>, teardown: () => Pro
       expect((await repos.puzzleResults.listForUser(v.id, 1))[0]).toMatchObject({ kind: 'daily', correct: true, seconds: 41, ratingAfter: 1216 });
     });
 
+    it('store events: a refund delivered before the purchase, renewal or pack it undoes leaves nothing granted when that event comes', async () => {
+      let t = T0;
+      const wallet = new WalletService(repos, { now: () => t, log: () => {} });
+      const u = (await user()).id;
+      const DAY = 86_400_000;
+      const ev = (type: string, extra: Partial<StoreEvent>): StoreEvent => ({
+        vendor: 'revenuecat',
+        eventId: randomUUID(),
+        type,
+        userIds: [u],
+        storeProductId: null,
+        transactionId: randomUUID(),
+        expiresAt: null,
+        purchasedAt: T0,
+        price: 4.99,
+        currency: 'USD',
+        store: 'app_store',
+        environment: 'SANDBOX',
+        cancelReason: null,
+        transferredFrom: [],
+        transferredTo: [],
+        raw: { event: { type } },
+        ...extra,
+      });
+      const refund = (storeProductId: string, transactionId: string) => ev('CANCELLATION', { storeProductId, transactionId, cancelReason: 'CUSTOMER_SUPPORT', expiresAt: t });
+      // A diamond pack: the refund first, then the purchase (a retried delivery).
+      expect((await wallet.applyStoreEvent(refund('diamonds.7500', 'GPA.late'))).outcome).toBe('refunded');
+      expect((await wallet.applyStoreEvent(ev('NON_RENEWING_PURCHASE', { storeProductId: 'diamonds.7500', transactionId: 'GPA.late' }))).outcome).toBe('refunded');
+      expect(await repos.wallet.get(u)).toMatchObject({ diamonds: 0, bonusDiamonds: 0 });
+      // A subscription's first period, refunded before its INITIAL_PURCHASE arrived.
+      expect((await wallet.applyStoreEvent(refund('coach.platinum.year', 'tx-first'))).outcome).toBe('refunded');
+      expect((await wallet.applyStoreEvent(ev('INITIAL_PURCHASE', { storeProductId: 'coach.platinum.year', transactionId: 'tx-first', expiresAt: T0 + 365 * DAY }))).outcome).toBe('refunded');
+      expect((await wallet.summary(u)).coachTier).toBe('free');
+      // A renewal refunded while its RENEWAL event was still on its way: the first period stays, the second is never granted.
+      expect((await wallet.applyStoreEvent(ev('INITIAL_PURCHASE', { storeProductId: 'coach.gold.month', transactionId: 'tx-g1', expiresAt: T0 + 30 * DAY }))).outcome).toBe('entitled');
+      t += 31 * DAY;
+      expect((await wallet.applyStoreEvent(refund('coach.gold.month', 'tx-g2'))).outcome).toBe('refunded');
+      expect((await wallet.applyStoreEvent(ev('RENEWAL', { storeProductId: 'coach.gold.month', transactionId: 'tx-g2', purchasedAt: T0 + 30 * DAY, expiresAt: T0 + 60 * DAY }))).outcome).toBe('refunded');
+      const summary = await wallet.summary(u);
+      expect(summary.coachTier).toBe('free');
+      expect(summary.entitlements.map((e) => [e.entitlement, e.expiresAt])).toEqual([['coach.gold', T0 + 30 * DAY]]);
+      // The refund of each transaction is on the ledger once, and the purchases are on record.
+      expect((await repos.wallet.listLedger(u)).filter((l) => l.reason === 'refund').map((l) => l.ref).sort()).toEqual(['refund:GPA.late', 'refund:tx-first', 'refund:tx-g2']);
+      expect((await repos.wallet.listPurchases(u)).map((p) => p.transactionId).sort()).toEqual(['GPA.late', 'tx-first', 'tx-g1', 'tx-g2']);
+    });
+
     it('transactions commit together and roll back together', async () => {
       const id = randomUUID();
       await repos.transaction(async (tx) => {
@@ -474,6 +521,7 @@ function contract(name: string, setup: () => Promise<Repos>, teardown: () => Pro
         await tx.wallet.apply({ userId: b.id, delta: 7, reason: 'test', createdAt: T0 });
         throw new Error('undo');
       });
+      second.catch(() => undefined); // (it may settle before `first` does)
       expect(await first).toBe(0);
       await expect(second).rejects.toThrow('undo');
       expect((await repos.wallet.get(a.id)).diamonds).toBe(10);

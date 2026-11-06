@@ -260,4 +260,51 @@ describe('game server end to end', () => {
     const flood = Array.from({ length: 200 }, () => ({ t: 'to', to: 'nobody', data: 'x' }));
     expect(await closeCode([{ t: 'hello', auth: user.token }, ...flood])).toBe(1008);
   });
+
+  it('ends a verified socket with 4401 once its session ends: on logout, on account deletion, and at the next create or join after a quiet revocation', async () => {
+    const { base, wsUrl, server, sessions } = await start();
+    /** A raw socket that says hello with `token`, collecting frames and the close code. */
+    const open = async (token: string) => {
+      const ws = new WebSocket(wsUrl);
+      sockets.push(ws);
+      ws.on('error', () => undefined);
+      const frames: Array<Record<string, unknown>> = [];
+      ws.on('message', (raw) => frames.push(JSON.parse(String(raw)) as Record<string, unknown>));
+      const closed = new Promise<number>((resolve) => ws.on('close', (code) => resolve(code)));
+      await new Promise<void>((resolve) => ws.once('open', () => resolve()));
+      ws.send(JSON.stringify({ t: 'hello', auth: token }));
+      await until('the hello reply', () => frames.some((f) => f.t === 'hello'));
+      const send = (frame: unknown) => ws.send(JSON.stringify(frame));
+      const last = () => frames[frames.length - 1];
+      return { ws, frames, closed, send, last };
+    };
+
+    // Logout: the socket this session opened is closed at once, with the account's other socket untouched.
+    const alice = await guest(base, 'Alice');
+    const a = await open(alice.token);
+    a.send({ t: 'create', hosted: true });
+    await until('a room', () => a.last().t === 'room');
+    const room = a.last().room as string;
+    expect(server.rooms.peerUser(a.frames[0].id as string)).toBe(alice.userId);
+    expect((await api(base, 'POST', '/api/auth/logout', undefined, alice.token)).status).toBe(204);
+    expect(await a.closed).toBe(4401);
+    await until('the peer to be forgotten', () => server.rooms.peerUser(a.frames[0].id as string) === undefined);
+
+    // Account deletion: every socket of the account goes.
+    const carol = await guest(base, 'Carol');
+    const c1 = await open(carol.token);
+    const c2 = await open(carol.token);
+    expect((await api(base, 'DELETE', '/api/me', undefined, carol.token)).status).toBe(204);
+    expect(await Promise.all([c1.closed, c2.closed])).toEqual([4401, 4401]);
+
+    // A session that ended without the API knowing a socket was open (here: revoked straight in
+    // the store, as an expiry would): the next join is refused, nothing is joined, the socket closes.
+    const bob = await guest(base, 'Bob');
+    const b = await open(bob.token);
+    await sessions.revoke((await sessions.verify(bob.token)).sessionId);
+    b.send({ t: 'join', room });
+    expect(await b.closed).toBe(4401);
+    expect(b.frames.map((f) => f.t)).toEqual(['hello']);
+    await until('every peer to be gone', () => server.rooms.stats().peers === 0);
+  });
 });
