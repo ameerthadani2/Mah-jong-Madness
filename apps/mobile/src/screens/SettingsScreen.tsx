@@ -14,7 +14,7 @@ import { TABLE_THEMES } from '../themes';
 import { hasTier, ownsCosmetic } from '../monetisation/wallet';
 import { colors, fonts, space } from '../theme';
 import { Button, Card, Chip, fontFor, H2, P, Row, ScreenHeader, Stepper, Toggle } from '../components/Ui';
-import { AvatarPlate } from '../components/Avatars';
+import { AvatarPlate, avatarName } from '../components/Avatars';
 import { ThemeScene } from '../components/Scenes';
 import { Icon } from '../components/Icons';
 import { LegalLinks, NoValueNotice } from '../components/LegalLinks';
@@ -47,7 +47,15 @@ export function SettingsScreen() {
         </Row>
         <Row style={{ flexWrap: 'wrap', rowGap: 8 }} gap={8}>
           {AVATARS.map((a) => (
-            <Pressable key={a} onPress={() => setProfile({ ...profile, avatar: a })} hitSlop={2} style={[styles.pick, profile.avatar === a && styles.pickOn]}>
+            <Pressable
+              key={a}
+              onPress={() => setProfile({ ...profile, avatar: a })}
+              hitSlop={2}
+              style={[styles.pick, profile.avatar === a && styles.pickOn]}
+              accessibilityRole="button"
+              accessibilityLabel={avatarName(a)}
+              accessibilityState={{ selected: profile.avatar === a }}
+            >
               <AvatarPlate id={a} size={42} />
             </Pressable>
           ))}
@@ -73,7 +81,14 @@ export function SettingsScreen() {
             const on = settings.tableTheme === theme.id;
             const name = localized(locale, theme.name, theme.nameZh);
             return (
-              <Pressable key={theme.id} onPress={() => (locked ? app.go({ name: 'shop' }) : setSettings({ ...settings, tableTheme: theme.id }))} style={[styles.theme, on && styles.themeOn]}>
+              <Pressable
+                key={theme.id}
+                onPress={() => (locked ? app.go({ name: 'shop' }) : setSettings({ ...settings, tableTheme: theme.id }))}
+                style={[styles.theme, on && styles.themeOn]}
+                accessibilityRole="button"
+                accessibilityLabel={name}
+                accessibilityState={{ selected: on, disabled: locked }}
+              >
                 <ThemeScene theme={theme} width={96} height={80} />
                 <Row gap={4}>
                   {locked && <Icon name="lock" size={16} />}

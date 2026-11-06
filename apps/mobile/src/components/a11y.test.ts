@@ -9,7 +9,7 @@ import { describe, expect, it } from 'vitest';
 const SRC = join(__dirname, '..');
 // Components other tracks own are checked by their own tests.
 const NOT_OURS = new Set(['AgeGate.tsx', 'ReportPlayerSheet.tsx', 'LegalLinks.tsx', 'PrivacyToggles.tsx']);
-const SCREENS = ['TableScreen.tsx', 'LearnScreen.tsx', 'DrillScreen.tsx', 'PuzzleScreens.tsx', 'ReviewScreen.tsx', 'FairnessScreen.tsx'];
+const SCREENS = ['TableScreen.tsx', 'LearnScreen.tsx', 'DrillScreen.tsx', 'PuzzleScreens.tsx', 'ReviewScreen.tsx', 'FairnessScreen.tsx', 'SettingsScreen.tsx', 'HomeScreen.tsx', 'ShopScreen.tsx', 'ClubsScreen.tsx', 'OnlineScreen.tsx', 'AccountCard.tsx', 'LobbyScreen.tsx'];
 
 function tsx(dir: string): string[] {
   return readdirSync(dir).flatMap((f) => {
