@@ -101,6 +101,32 @@ describe('webhook events', () => {
     expect((await f.repos.storeEvents.get(body.event.id))?.raw).toEqual(body);
   });
 
+  it('a refund delivered before the purchase or renewal it undoes leaves nothing granted when that event arrives late', async () => {
+    const f = fixture();
+    const refund = (userId: string, product: string, transactionId: string) => rc('CANCELLATION', userId, { product_id: product, transaction_id: transactionId, cancel_reason: 'CUSTOMER_SUPPORT', expiration_at_ms: f.now() });
+    // INITIAL_PURCHASE of a subscription.
+    const a = await f.guest();
+    expect((await f.post(refund(a.userId, 'coach.platinum.year', 'tx-init'))).json.outcome).toBe('refunded');
+    expect((await f.post(rc('INITIAL_PURCHASE', a.userId, { product_id: 'coach.platinum.year', transaction_id: 'tx-init', expiration_at_ms: T0 + 365 * DAY }))).json.outcome).toBe('refunded');
+    expect((await f.me(a.auth)).coachTier).toBe('free');
+    // RENEWAL of a live subscription: the first period stays, the refunded second one is never granted.
+    const b = await f.guest();
+    expect((await f.post(rc('INITIAL_PURCHASE', b.userId, { transaction_id: 'tx-b1' }))).json.outcome).toBe('entitled');
+    f.advance(25 * DAY);
+    expect((await f.me(b.auth)).coachTier).toBe('gold'); // (and the session slides for another 30 days)
+    f.advance(6 * DAY);
+    expect((await f.post(refund(b.userId, 'coach.gold.month', 'tx-b2'))).json.outcome).toBe('refunded');
+    expect((await f.post(rc('RENEWAL', b.userId, { transaction_id: 'tx-b2', purchased_at_ms: T0 + 30 * DAY, expiration_at_ms: T0 + 60 * DAY }))).json.outcome).toBe('refunded');
+    const me = await f.me(b.auth);
+    expect(me.coachTier).toBe('free');
+    expect(me.entitlements).toEqual([{ entitlement: 'coach.gold', expiresAt: new Date(T0 + 30 * DAY).toISOString(), active: false }]);
+    // NON_RENEWING_PURCHASE of a diamond pack.
+    const c = await f.guest();
+    expect((await f.post(refund(c.userId, 'diamonds.7500', 'GPA.7500'))).json.outcome).toBe('refunded');
+    expect((await f.post(rc('NON_RENEWING_PURCHASE', c.userId, { product_id: 'diamonds.7500', transaction_id: 'GPA.7500' }))).json.outcome).toBe('refunded');
+    expect((await f.me(c.auth)).wallet).toEqual({ diamonds: 0, bonusDiamonds: 0 });
+  });
+
   it('RENEWAL extends; PRODUCT_CHANGE and BILLING_ISSUE record only; EXPIRATION ends it', async () => {
     const f = fixture();
     const g = await f.guest();

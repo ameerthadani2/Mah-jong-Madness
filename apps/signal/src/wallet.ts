@@ -135,6 +135,16 @@ export class WalletService {
     this.log = opts.log ?? ((line) => console.log(line));
   }
 
+  /**
+   * Run `fn` while nothing else in this process touches these users' wallets: store events and
+   * spends for them wait. The API runs an account merge under it, so a store event for the guest
+   * either lands before the merge (and moves with the wallet) or after it (and follows
+   * `mergedInto` to the account).
+   */
+  exclusive<T>(userIds: string[], fn: () => Promise<T>): Promise<T> {
+    return this.serialise(userIds, fn);
+  }
+
   private serialise<T>(keys: string[], fn: () => Promise<T>): Promise<T> {
     const unique = [...new Set(keys)].sort();
     const before = Promise.all(unique.map((k) => this.locks.get(k)?.catch(() => {}) ?? Promise.resolve()));
@@ -194,13 +204,34 @@ export class WalletService {
   }
 
   /** The live account a store user id refers to (following merges), or null. */
-  private async resolveUser(candidates: string[]): Promise<UserRecord | null> {
+  private async resolveUser(candidates: string[], repos: Repos = this.repos): Promise<UserRecord | null> {
     for (const id of candidates) {
-      let user = await this.repos.users.get(id);
-      for (let hops = 0; user && user.mergedInto && hops < 5; hops++) user = await this.repos.users.get(user.mergedInto);
+      let user = await repos.users.get(id);
+      for (let hops = 0; user && user.mergedInto && hops < 5; hops++) user = await repos.users.get(user.mergedInto);
       if (user && user.deletedAt === null) return user;
     }
     return null;
+  }
+
+  /** The ledger ref that records a refund of this store transaction, whether or not it was ever credited. */
+  private static refundRef(transactionId: string): string {
+    return `refund:${transactionId}`;
+  }
+
+  /** True when a refund for this transaction has been processed (so a late purchase or renewal event must not grant it). */
+  private async refunded(tx: Repos, userId: string, transactionId: string): Promise<boolean> {
+    const ref = WalletService.refundRef(transactionId);
+    return (await tx.wallet.listLedger(userId)).some((l) => l.ref === ref);
+  }
+
+  /**
+   * Record that a transaction was refunded: a zero ledger entry under `refund:<transaction>`.
+   * Written even when the refund arrives before the purchase it undoes (deliveries are retried
+   * out of order), so that purchase, when it comes, is not granted.
+   */
+  private async markRefunded(tx: Repos, userId: string, transactionId: string, at: number): Promise<void> {
+    if (await this.refunded(tx, userId, transactionId)) return;
+    await tx.wallet.apply({ userId, delta: 0, bonus: 0, reason: 'refund', ref: WalletService.refundRef(transactionId), createdAt: at });
   }
 
   /** Apply a store notification once. A redelivery answers `duplicate` and changes nothing. */
@@ -208,11 +239,13 @@ export class WalletService {
     const seen = await this.repos.storeEvents.get(e.eventId);
     if (seen) return { outcome: 'duplicate', userId: seen.userId, duplicate: true };
     const product = productForStoreId(e.storeProductId);
-    const user = e.type === 'TRANSFER' ? null : await this.resolveUser(e.userIds);
-    const keys = [user?.id ?? '', ...e.transferredFrom, ...e.transferredTo].filter(Boolean);
+    const resolved = e.type === 'TRANSFER' ? null : await this.resolveUser(e.userIds);
+    const keys = [resolved?.id ?? '', ...e.transferredFrom, ...e.transferredTo].filter(Boolean);
     try {
       return await this.serialise(keys, () =>
         this.repos.transaction(async (tx) => {
+          // Resolved again under the lock: the account may have been merged away (or deleted) while this event waited.
+          const user = resolved && (await this.resolveUser([resolved.id], tx));
           const fresh = await tx.storeEvents.record({
             eventId: e.eventId,
             vendor: e.vendor,
@@ -255,9 +288,14 @@ export class WalletService {
     const transactionId = e.transactionId ?? `${e.vendor}:${e.eventId}`;
 
     if (product.kind === 'diamonds') {
-      if (e.type === 'CANCELLATION') return { outcome: await this.refundDiamonds(tx, userId, product, transactionId, at), userId };
+      if (e.type === 'CANCELLATION') return { outcome: await this.refundDiamonds(tx, userId, product, transactionId, e.cancelReason, at), userId };
       if (e.type !== 'NON_RENEWING_PURCHASE' && e.type !== 'INITIAL_PURCHASE') return { outcome: 'recorded', userId };
       if ((await tx.wallet.listPurchases(userId)).some((p) => p.transactionId === transactionId)) return { outcome: 'duplicate', userId };
+      if (await this.refunded(tx, userId, transactionId)) {
+        // The refund got here first: keep the purchase on record, grant nothing.
+        await this.recordPurchase(tx, e, userId, product.id, transactionId, at);
+        return { outcome: 'refunded', userId };
+      }
       // Credit first, then record the purchase: if the credit fails nothing is written, even in memory.
       const res = await tx.wallet.apply({ userId, delta: product.diamonds, bonus: product.bonus, reason: 'purchase', ref: `${e.store}:${transactionId}`, createdAt: at });
       if (!res) throw new Error('Diamond credit refused');
@@ -283,7 +321,9 @@ export class WalletService {
       case 'SUBSCRIPTION_EXTENDED': {
         const until = e.expiresAt ?? (e.purchasedAt ?? at) + PERIOD_MS[product.period];
         if (e.type === 'INITIAL_PURCHASE' || e.type === 'RENEWAL') await this.recordPurchase(tx, e, userId, product.id, transactionId, at);
-        // Events can arrive out of order: never shorten a subscription that a later event extended.
+        // Events can arrive out of order: a period refunded before its purchase or renewal event
+        // got here is never granted, and a subscription a later event extended is never shortened.
+        if (await this.refunded(tx, userId, transactionId)) return { outcome: 'refunded', userId };
         if (current && current.expiresAt !== null && current.expiresAt >= until) return { outcome: 'ignored_stale', userId };
         await tx.wallet.setEntitlement({ userId, entitlement: product.entitlement, expiresAt: until, source: STORE_SOURCE, updatedAt: at });
         if (e.type === 'INITIAL_PURCHASE' || e.type === 'RENEWAL') {
@@ -292,10 +332,13 @@ export class WalletService {
         return { outcome: current && isLive(current, at) ? 'extended' : 'entitled', userId };
       }
       case 'CANCELLATION': {
-        // Auto-renew off: access continues to the end of the period. A refund ends it now.
-        if (e.cancelReason !== 'CUSTOMER_SUPPORT' || !current) return { outcome: 'recorded', userId };
+        // Auto-renew off: access continues to the end of the period. A refund ends it now, and is
+        // remembered so that the refunded period's own event cannot grant it later.
+        if (e.cancelReason !== 'CUSTOMER_SUPPORT') return { outcome: 'recorded', userId };
+        await this.markRefunded(tx, userId, transactionId, at);
+        if (!current) return { outcome: 'refunded', userId };
         const end = Math.min(e.expiresAt ?? at, at);
-        await tx.wallet.setEntitlement({ ...current, expiresAt: end, updatedAt: at });
+        if (current.expiresAt === null || current.expiresAt > end) await tx.wallet.setEntitlement({ ...current, expiresAt: end, updatedAt: at });
         return { outcome: 'refunded', userId };
       }
       case 'EXPIRATION': {
@@ -329,17 +372,22 @@ export class WalletService {
     });
   }
 
-  /** A refunded diamond pack: take back what is left of it (balances never go below zero). */
-  private async refundDiamonds(tx: Repos, userId: string, product: Extract<ServerProduct, { kind: 'diamonds' }>, transactionId: string, at: number): Promise<StoreOutcome> {
+  /**
+   * A refunded diamond pack: take back what is left of it (balances never go below zero). A refund
+   * that arrives before the purchase is remembered, so the purchase is not credited when it comes.
+   */
+  private async refundDiamonds(tx: Repos, userId: string, product: Extract<ServerProduct, { kind: 'diamonds' }>, transactionId: string, cancelReason: string | null, at: number): Promise<StoreOutcome> {
+    if (cancelReason !== 'CUSTOMER_SUPPORT') return 'recorded';
+    if (await this.refunded(tx, userId, transactionId)) return 'duplicate';
     const credited = (await tx.wallet.listPurchases(userId)).some((p) => p.transactionId === transactionId);
-    if (!credited) return 'recorded';
-    const ref = `refund:${transactionId}`;
-    if ((await tx.wallet.listLedger(userId)).some((l) => l.ref === ref)) return 'duplicate';
+    if (!credited) {
+      await this.markRefunded(tx, userId, transactionId, at);
+      return 'refunded';
+    }
     const w = await tx.wallet.get(userId);
     const delta = -Math.min(w.diamonds, product.diamonds);
     const bonus = -Math.min(w.bonusDiamonds, product.bonus);
-    if (delta === 0 && bonus === 0) return 'refunded';
-    await tx.wallet.apply({ userId, delta, bonus, reason: 'refund', ref, createdAt: at });
+    await tx.wallet.apply({ userId, delta, bonus, reason: 'refund', ref: WalletService.refundRef(transactionId), createdAt: at });
     return 'refunded';
   }
 

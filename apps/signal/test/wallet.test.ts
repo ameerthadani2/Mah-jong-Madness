@@ -151,6 +151,54 @@ describe('store events', () => {
     expect((await wallet.summary(u)).coachTier).toBe('free');
   });
 
+  it('a refund that arrives before the event it undoes is remembered, so the late purchase or renewal grants nothing', async () => {
+    const { repos, wallet, user, advance, now } = await setup();
+    const u = await user();
+    const month = T0 + 30 * DAY;
+    // A diamond pack: refund first, purchase later.
+    const pack = storeEvent(u, 'CANCELLATION', { storeProductId: 'diamonds.7500', transactionId: 'GPA.1', cancelReason: 'CUSTOMER_SUPPORT' });
+    expect((await wallet.applyStoreEvent(pack)).outcome).toBe('refunded');
+    expect((await wallet.applyStoreEvent(storeEvent(u, 'NON_RENEWING_PURCHASE', { storeProductId: 'diamonds.7500', transactionId: 'GPA.1' }))).outcome).toBe('refunded');
+    expect((await wallet.applyStoreEvent(storeEvent(u, 'INITIAL_PURCHASE', { storeProductId: 'diamonds.7500', transactionId: 'GPA.1' }))).outcome).toBe('duplicate');
+    expect(await balance(repos, u)).toEqual([0, 0]);
+    expect((await repos.wallet.listPurchases(u)).map((p) => p.transactionId)).toEqual(['GPA.1']);
+    // A subscription: the first period refunded before its INITIAL_PURCHASE was delivered.
+    expect((await wallet.applyStoreEvent(storeEvent(u, 'CANCELLATION', { storeProductId: 'coach.platinum.year', transactionId: 'tZ1', cancelReason: 'CUSTOMER_SUPPORT' }))).outcome).toBe('refunded');
+    expect((await wallet.applyStoreEvent(storeEvent(u, 'INITIAL_PURCHASE', { storeProductId: 'coach.platinum.year', transactionId: 'tZ1', expiresAt: T0 + 365 * DAY }))).outcome).toBe('refunded');
+    expect((await wallet.summary(u)).coachTier).toBe('free');
+    // A renewal refunded while the retry of its RENEWAL event was still on its way.
+    expect((await wallet.applyStoreEvent(storeEvent(u, 'INITIAL_PURCHASE', { storeProductId: 'coach.gold.month', transactionId: 'tA1', expiresAt: month }))).outcome).toBe('entitled');
+    advance(31 * DAY);
+    expect((await wallet.applyStoreEvent(storeEvent(u, 'CANCELLATION', { storeProductId: 'coach.gold.month', transactionId: 'tA2', cancelReason: 'CUSTOMER_SUPPORT', expiresAt: now() }))).outcome).toBe('refunded');
+    expect((await wallet.applyStoreEvent(storeEvent(u, 'RENEWAL', { storeProductId: 'coach.gold.month', transactionId: 'tA2', expiresAt: month + 30 * DAY }))).outcome).toBe('refunded');
+    expect((await wallet.summary(u)).coachTier).toBe('free');
+    // A refund of a period that was granted still ends it, and only once.
+    const r2 = storeEvent(u, 'CANCELLATION', { storeProductId: 'coach.gold.month', transactionId: 'tA1', cancelReason: 'CUSTOMER_SUPPORT', expiresAt: now() });
+    expect((await wallet.applyStoreEvent(r2)).outcome).toBe('refunded');
+    expect((await wallet.applyStoreEvent({ ...r2, eventId: randomUUID() })).outcome).toBe('refunded');
+  });
+
+  it('a purchase event that races the guest\'s merge credits the account the guest merged into', async () => {
+    const { repos, wallet, user } = await setup();
+    const { SessionService, link } = await import('../src/auth');
+    const sessions = new SessionService(repos, { pepper: 'merge-race-pepper-0123' });
+    const account = await user();
+    const guest = await user();
+    await link(repos, account, { provider: 'google', subject: 'g-race' }, { sessions });
+    for (let ticks = 0; ticks < 6; ticks++) {
+      const g = ticks === 0 ? guest : await user();
+      const credit = wallet.applyStoreEvent(storeEvent(g, 'NON_RENEWING_PURCHASE', { storeProductId: 'diamonds.600', transactionId: `race-${ticks}` }));
+      for (let i = 0; i < ticks; i++) await Promise.resolve();
+      // The API runs the merge under the wallet's lock, as api.ts does.
+      const merge = wallet.exclusive([g], () => link(repos, g, { provider: 'google', subject: 'g-race' }, { sessions }));
+      const [res, m] = await Promise.all([credit, merge]);
+      expect(m.merged).toBe(true);
+      expect(res.outcome).toBe('credited');
+      expect(await balance(repos, g)).toEqual([0, 0]);
+    }
+    expect(await balance(repos, account)).toEqual([6 * 600, 0]);
+  });
+
   it('records events for unknown users and products, and test events, with no effect', async () => {
     const { repos, wallet, user } = await setup();
     const u = await user();
