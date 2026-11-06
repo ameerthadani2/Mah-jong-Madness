@@ -284,6 +284,7 @@ export function TableScreen() {
           hint={hint}
           coachOpen={coachOpen}
           actions={L.actions === 'center' ? actionBar : null}
+          dock={actions.some((a) => a.type !== 'discard') || (actions.length > 0 && selected !== null) ? 'buttons' : actions.length > 0 ? 'hint' : 'none'}
           overlay={overlay}
         />
         {L.actions === 'strip' && (
