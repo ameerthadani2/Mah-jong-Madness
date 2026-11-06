@@ -5,9 +5,9 @@ Three routes, from quickest to most permanent. All of them start with:
 ```bash
 git clone https://github.com/ameerthadani2/Mah-jong-Madness.git
 cd Mah-jong-Madness
-git checkout claude/p2p-taiwanese-mahjong-app-9lzdls
+git checkout <branch>   # the branch you work on
 npm install          # Node 20 or newer
-npm test             # optional sanity check: 90 tests
+npm test             # optional sanity check
 ```
 
 ## 1. A development build on your iPhone — about 20 minutes the first time

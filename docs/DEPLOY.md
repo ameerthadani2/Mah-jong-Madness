@@ -17,7 +17,7 @@ warning). `apps/signal/README.md` lists every variable and route.
 | `apps/signal/.env.example` | Every environment variable the server reads, with notes. |
 | `apps/signal/migrations/*.sql` | Schema migrations, applied in filename order by `src/migrate.ts`. |
 | `fly.toml` | Fly app config: region `sin`, port 8787, HTTPS forced, one machine always running (`min_machines_running = 1`, `auto_stop_machines = false`), `/health` checks, and a release command that runs migrations. |
-| `.github/workflows/deploy-signal.yml` | Deploys on pushes to the development branches that touch the server, and on manual dispatch. |
+| `.github/workflows/deploy-signal.yml` | Deploys on pushes to `main` that touch the server, and on manual dispatch (which can be run on any branch). |
 
 ## One-time setup (owner)
 

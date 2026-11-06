@@ -5,7 +5,7 @@ Everything engineering needs from you, by phase. Nothing here blocks the code: e
 Where to put things:
 - **Repository variables and secrets**: GitHub → Settings → Secrets and variables → Actions. Variables are visible in build logs; secrets are not.
 - **Server environment**: set on the game server host (Fly.io `fly secrets set NAME=value`) once Phase 3 is deployed.
-- **Mobile build-time values**: repository variables prefixed `EXPO_PUBLIC_`, read by `apps/mobile/app.config.js` and the EAS workflows.
+- **Mobile build-time values**: repository variables (most prefixed `EXPO_PUBLIC_`). The TestFlight workflow copies them into the EAS build profile; a build started from a laptop with `eas build` sees only **EAS environment variables** (expo.dev → project → Environment variables), so set each one in both places ("repo variable + EAS variable" below).
 
 ## Phase 1 — honest build
 
@@ -30,9 +30,12 @@ Step-by-step setup (Fly app, Neon project, `fly secrets set`) is in [`DEPLOY.md`
 | `AUTH_PEPPER` | server secret | a random pepper per process: every player is signed out by each restart | 32+ random bytes (`openssl rand -hex 32`) mixed into every stored session and guest-secret hash. Keep a copy in your password manager. |
 | `APPLE_CLIENT_ID` | server secret | Sign in with Apple is hidden | The app's bundle id (plus the Services ID if web sign-in is added), after enabling the Sign in with Apple capability in App Store Connect. |
 | `GOOGLE_CLIENT_IDS` | server secret | Google sign-in is hidden | The iOS, Android and web OAuth client ids from Google Cloud Console, comma-separated. |
+| `FACEBOOK_APP_ID` | server secret | Facebook sign-in is hidden | Optional: the Facebook app id, for Facebook Limited Login. |
+| `AUTH_PEPPER_PREVIOUS` | server secret | no pepper rotation in progress | Only while rotating the pepper: the old `AUTH_PEPPER` value, so existing sessions keep working and are re-hashed on first use (`DEPLOY.md`). Remove it after 30 days. |
 | `CORS_ORIGINS` | server secret | browsers on other origins cannot call the API (native apps are unaffected) | The web preview's origin(s), comma-separated. |
+| `MAINTENANCE_MESSAGE` | server variable | none: online play is open | Optional: a short message the app shows instead of online play while you work on the server (`/api/config.maintenance`). Unset it to reopen. |
 | `TRUST_PROXY` | server variable | `1`, already set in `fly.toml` | The number of proxies in front of the server, so per-IP limits see the real client address. Change it only if you add or remove a proxy. |
-| `EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID`, `EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID`, `EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID` | repo variables | the Google button is hidden | The same OAuth client ids, for the app's sign-in flow; the iOS/Android ids also register `<bundle id>:/oauthredirect` as the redirect in `app.config.js`. |
+| `EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID`, `EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID`, `EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID` | repo variables + EAS variables | the Google button is hidden | The same OAuth client ids, for the app's sign-in flow; the iOS/Android ids also register `<bundle id>:/oauthredirect` as the redirect in `app.config.js`. |
 | `SIGNAL_URL` | repo variable | `ws://localhost:8787`; the deploy health check is skipped | The server address (`wss://<app>.fly.dev`); builds use it, and the deploy workflow checks `/health` there after each deploy. |
 
 ## Phase 4 — store and legal
@@ -45,17 +48,17 @@ The server decides every entitlement from RevenueCat's webhook (`docs/API.md` �
 | In-app products | App Store Connect / Play Console | nothing to buy | Create exactly these ids. App Store: consumables `diamonds.60`, `diamonds.300`, `diamonds.600`, `diamonds.1300`, `diamonds.3450`, `diamonds.7500`; auto-renewing subscriptions `coach.gold.month`, `coach.gold.year`, `coach.platinum.month`, `coach.platinum.year` (one subscription group, Platinum ranked above Gold). Play: the same consumables; subscriptions `coach.gold` and `coach.platinum`, each with base plans `month` and `year`. Price tiers are in the catalogue (USD 0.99 … 99.99; Gold 6.99/49.99, Platinum 10.99/79.99). Table looks are bought with diamonds and need no store product. |
 | RevenueCat project | account | store off | Add the App Store and Play apps, import the products above, and make one offering with them. RevenueCat's public SDK keys go to the app (mobile rows below). |
 | `REVENUECAT_WEBHOOK_SECRET` | server secret | `POST /api/webhooks/revenuecat` answers 503 and `/api/config.storeEnabled` is false, so the app shows "Store unavailable" | Generate one (`openssl rand -hex 32`), `fly secrets set REVENUECAT_WEBHOOK_SECRET=…`, then in RevenueCat → Integrations → Webhooks set the URL to `https://<app>.fly.dev/api/webhooks/revenuecat` and the Authorization header to `Bearer <the same value>`. Send RevenueCat's test event: the server answers `{"outcome":"test"}`. |
-| RevenueCat public SDK keys (iOS and Android) | repo variables (`EXPO_PUBLIC_…`; the names are listed in the mobile app's store module) | the app cannot start a purchase | RevenueCat → Project → API keys; the public keys are meant to ship in the app. |
+| RevenueCat public SDK keys (iOS and Android) | repo variables + EAS variables (`EXPO_PUBLIC_REVENUECAT_IOS_KEY`, `EXPO_PUBLIC_REVENUECAT_ANDROID_KEY`; the app table below) | the app cannot start a purchase | RevenueCat → Project → API keys; the public keys are meant to ship in the app. |
 | `EXPO_PUBLIC_STORE_MODE=mock` | repo variable (development builds only) | real store | Lets development builds use the mock store; release builds ignore it. |
-| `TERMS_URL`, `PRIVACY_URL` | repo variables | bundled screens marked DRAFT | Counsel-approved terms of service and privacy policy, hosted on your domain. |
+| `EXPO_PUBLIC_TERMS_URL`, `EXPO_PUBLIC_PRIVACY_URL` | repo variables + EAS variables | bundled screens marked DRAFT | Counsel-approved terms of service and privacy policy, hosted on your domain (https only; the app table below). |
 | Support email | decision | none shown | Shown in Settings and on the store listings. |
 | Moderation | process | reports pile up unread | Player reports land in the `reports` table (`status = 'open'`); decide who reads them and how often. |
 
 | Item (app) | Type | Default while absent | Why |
 | --- | --- | --- | --- |
-| `EXPO_PUBLIC_REVENUECAT_IOS_KEY`, `EXPO_PUBLIC_REVENUECAT_ANDROID_KEY` | repo variables | the Shop shows "Store unavailable on this build" and sells nothing | RevenueCat public SDK keys; products in App Store Connect / Play must use the ids in `apps/mobile/src/monetisation/catalog.ts`. |
+| `EXPO_PUBLIC_REVENUECAT_IOS_KEY`, `EXPO_PUBLIC_REVENUECAT_ANDROID_KEY` | repo variables + EAS variables | the Shop shows "Store unavailable on this build" and sells nothing | RevenueCat public SDK keys; products in App Store Connect / Play must use the ids in `apps/mobile/src/monetisation/catalog.ts`. |
 | `EXPO_PUBLIC_STORE_MODE` | repo variable (development builds only) | the real store | `mock` lets a development build grant purchases locally; release builds ignore it. |
-| `EXPO_PUBLIC_TERMS_URL`, `EXPO_PUBLIC_PRIVACY_URL` | repo variables | the bundled DRAFT texts open in-app | Hosted, counsel-approved documents. Also replace `[Company name]`, `[support email]` and `[jurisdiction]` in `apps/mobile/src/legal/documents.ts`. |
+| `EXPO_PUBLIC_TERMS_URL`, `EXPO_PUBLIC_PRIVACY_URL` | repo variables + EAS variables | the bundled DRAFT texts open in-app | Hosted, counsel-approved documents. Also replace `[Company name]`, `[support email]` and `[jurisdiction]` in `apps/mobile/src/legal/documents.ts`. |
 
 ## Phase 5 — audio
 
@@ -69,10 +72,10 @@ What each signal means and where to look is in [`OBSERVABILITY.md`](OBSERVABILIT
 | --- | --- | --- | --- |
 | `EXPO_ACCESS_TOKEN` | server secret | no push is sent; `/api/config.pushEnabled` is false | Expo → Account settings → Access tokens. The server sends "club table opened", "join request approved" and "your table is waiting" through Expo. |
 | APNs key and FCM credentials | EAS credentials | push cannot reach phones even with the token | Upload an APNs auth key (Apple Developer → Keys) and the FCM v1 service-account JSON (Firebase console) with `eas credentials`. |
-| `SENTRY_DSN` | server secret | server errors are only logged | Sentry project for the server (Node). Optional `SENTRY_ENVIRONMENT` (default `production`). |
+| `SENTRY_DSN` | server secret | server errors are only logged | Sentry project for the server (Node). Optional `SENTRY_ENVIRONMENT` (default `production`) and `SENTRY_RELEASE` (default: Fly's image reference, so each deploy is already a release). |
 | `EXPO_PUBLIC_SENTRY_DSN`, `SENTRY_AUTH_TOKEN`, `SENTRY_ORG`, `SENTRY_PROJECT` | repo variable / secrets | app crashes are not reported; no source maps | A second Sentry project for the app; the auth token uploads source maps from the EAS build. |
 | `POSTHOG_KEY` | server secret | no server events (`purchase_credited`, `report_filed`) | PostHog project key. Optional `POSTHOG_HOST` (`https://eu.i.posthog.com` for an EU project). |
-| `EXPO_PUBLIC_POSTHOG_KEY`, `EXPO_PUBLIC_POSTHOG_HOST` | repo variables | no app funnel events | The same PostHog project, so app and server events join on the user id. |
+| `EXPO_PUBLIC_POSTHOG_KEY`, `EXPO_PUBLIC_POSTHOG_HOST` | repo variables + EAS variables | no app funnel events | The same PostHog project. App events are anonymous (no person profiles, no identify call) and are not joined to the server's user id; the privacy manifest's "not linked" product-interaction entry relies on that. |
 | Uptime alert | Fly dashboard or an uptime monitor | you learn about outages from players | Alert on `https://<app>.fly.dev/health` failing, and in Sentry on new issues. |
 | `MIN_BUILD` | server variable | `0`: every build may play online | Raise it to turn away builds older than a given release (reported as `/api/config.minBuild`, which the app reads to ask for an update). |
 
@@ -94,7 +97,11 @@ The app reads these at build time. EAS cloud builds do not see your shell or Git
 
 ## Phase 7 — device QA and listings
 
-A native zh-TW reviewer for `apps/mobile/src/i18n/zh-TW.json`; store listing copy in both languages; a low-end Android phone; EAS credentials (`EXPO_TOKEN`, `ASC_KEY_ID`, `ASC_ISSUER_ID`, `ASC_KEY_P8`, `APPLE_TEAM_ID`).
+A native zh-TW reviewer for `apps/mobile/src/i18n/zh-TW.json`; store listing copy in both languages; a low-end Android phone; the TestFlight workflow's secrets (`EXPO_TOKEN`, `ASC_KEY_ID`, `ASC_ISSUER_ID`, `ASC_KEY_P8`, `APPLE_TEAM_ID`, and `EXPO_OWNER`, your Expo account name, which the run summary uses to link to the build list; `docs/RUN_FROM_PHONE.md` walks through them).
+
+## Developer-only
+
+Read by the code but never needed from you: `SENTRY_URL` (`app.config.js`, only for a self-hosted Sentry; defaults to sentry.io), `EXPO_BASE_URL` (set by the web-preview workflow to the GitHub Pages sub-path), `EXPO_PUBLIC_STORE_MODE` (development builds only, above), and the server's local-run switches in `apps/signal/README.md` (`PORT`, `HOST_TABLES`, `MAX_HOSTED_TABLES`, `P2P_ROOMS`, `MIGRATE_ON_BOOT`, `DATA_DIR`, `MIGRATIONS_DIR`, `DATABASE_URL_TEST`).
 
 ## Phase 8 — content and validation
 
