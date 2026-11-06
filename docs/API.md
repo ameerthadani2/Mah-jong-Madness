@@ -7,7 +7,7 @@ The contract between the app and `apps/signal`. The server side is implemented b
 - JSON bodies and responses; `Content-Type: application/json`.
 - Errors: `{ "error": "<code>", "message": "<English sentence>" }` with the HTTP status below. `message` is for logs; the app maps `error` codes to translated copy (`errors.*`).
 - Authentication: `Authorization: Bearer mjs_<64 hex>` on every `/api/*` route except `/health`, `/api/config` and the `/api/auth/guest*` bootstrap routes. A WebSocket connection authenticates with its first frame `{ "t": "hello", "auth": "<token>" }`.
-- Rate limits: per IP (HTTP 10/s burst 30; auth routes 5/min) and per user (auth routes 5/min). Exceeding one returns `429 { "error": "rate_limited" }`.
+- Rate limits: per IP (HTTP 10/s burst 30; auth routes 5/min) and per user (auth routes 5/min; a failed guest sign-in counts against the calling IP and the named user id together, never against the user's own bucket, so a stranger who knows a user id cannot lock that user out). Reports: 10 a day per user and 30 a day per IP. Exceeding one returns `429 { "error": "rate_limited" }` (auth routes add `retry-after: 12`).
 
 | `error` code | Status | Meaning |
 | --- | --- | --- |
@@ -15,14 +15,17 @@ The contract between the app and `apps/signal`. The server side is implemented b
 | `invalid_credentials` | 401 | Guest id or secret does not match |
 | `invalid_session` / `session_expired` / `session_revoked` / `session_rotated` | 401 | The bearer token is not usable; the app should refresh or bootstrap again |
 | `invalid_token` | 401 | The provider token failed verification |
+| `unauthorised` | 401 | The RevenueCat webhook secret is missing or wrong |
+| `forbidden` | 403 | The caller may not do this: not a member, not an owner or admin, not the user whose data is asked for |
 | `provider_disabled` | 404 | That sign-in method is not configured on this server (`GET /api/config.authProviders` lists the enabled ones) |
 | `not_linked` | 404 | `login` for a provider identity that has no account; offer "attach to this guest" |
-| `not_found` | 404 | No such user / identity |
+| `not_found` | 404 | No such user, identity, club or route |
 | `identity_in_use` | 409 | The identity already belongs to another account that also has a provider |
 | `last_identity` | 409 | Cannot unlink the only sign-in method |
 | `limit` | 409 | A club cap was hit |
 | `rate_limited` | 429 | Too many requests |
 | `unavailable` | 503 | The server is at capacity (tables) or a dependency is down |
+| `internal` | 500 | An unexpected error; nothing was applied, retry later |
 
 ## Configuration
 
@@ -34,16 +37,16 @@ The contract between the app and `apps/signal`. The server side is implemented b
 → `201 { "userId": "<uuid>", "guestSecret": "<64 hex>", "session": { "token": "mjs_…", "expiresAt": "<ISO>" }, "user": User }`.
 The app stores `userId` and `guestSecret` in secure storage; they are the only way back into a guest account on a new install.
 
-`POST /api/auth/guest/login` body `{ "userId", "guestSecret", "device" }` → `200 { "session", "user" }`.
+`POST /api/auth/guest/login` body `{ "userId", "guestSecret", "device" }` → `200 { "session", "user" }` or `401 invalid_credentials`. Five failed attempts a minute from one IP for one user id answer `429`; the user's own auth bucket is spent only once the secret has been proven. Linking a provider replaces the guest secret (see the `guestSecret` field of `POST /api/auth/link`); the old one then stops working.
 
 ## Sessions
 
 - Tokens are opaque; the server stores a peppered hash. Sliding expiry of 30 days.
 - `POST /api/auth/refresh` (bearer) → `200 { "session": { "token", "expiresAt" } }`. The old token stays valid for 5 minutes. The app refreshes once a day and on `session_expired`.
-- `POST /api/auth/logout` (bearer) → `204`. Revokes this session only.
+- `POST /api/auth/logout` (bearer) → `204`. Revokes this session only, removes the push token from this session's device (the phone is no longer this account's) and closes the table socket this session opened with `4401`.
 - `GET /api/me` (bearer) → `{ "user": User, "wallet": { "diamonds", "bonusDiamonds" }, "entitlements": [{ "entitlement", "expiresAt" }], "identities": [{ "provider", "email"? }], "serverNow" }`.
 - `PATCH /api/me` (bearer) body `{ "displayName"?, "avatar"?, "locale"?, "birthYear"? }` → `{ "user": User }`.
-- `DELETE /api/me` (bearer) → `204`. Soft-deletes the account (scrubbed after 30 days); every session is revoked; club rows are anonymised; purchase records are kept.
+- `DELETE /api/me` (bearer) → `204`. Soft-deletes the account: the profile is scrubbed at once, every session is revoked and every table socket of the account is closed with `4401`, identities and devices (with their push tokens) go, club rows become "Deleted player" (a club the user owned passes to its senior admin, else its earliest member, and is dissolved when nobody else is in it), and an hourly job hard-deletes the row 30 days later. Purchase records, the wallet ledger and reports are kept.
 
 `User` = `{ "id", "kind": "guest"|"account", "displayName", "avatar", "locale", "birthYear": number|null, "createdAt" }`.
 
@@ -51,22 +54,40 @@ The app stores `userId` and `guestSecret` in secure storage; they are the only w
 
 The app obtains an identity token from the provider SDK with a fresh `nonce` (the raw nonce is sent to the server; the SHA-256 of it was given to the provider), then:
 
-- `POST /api/auth/link` (bearer) body `{ "provider": "apple"|"google"|"facebook", "token": "<id token>", "nonce": "<raw nonce>", "email"?: string }` — attaches the identity to the current account (merge rules below) → `200 { "session", "user", "merged": boolean }`. When `merged` is true the device has been moved onto the existing account and must replace its stored session.
+- `POST /api/auth/link` (bearer) body `{ "provider": "apple"|"google"|"facebook", "token": "<id token>", "nonce": "<raw nonce>", "email"?: string }` — attaches the identity to the current account (merge rules below) → `200 { "session", "user", "merged": boolean, "guestSecret"?: "<64 hex>" }`. When `merged` is true the device has been moved onto the existing account and must replace its stored session. When `guestSecret` is present (rule 1, for a user who had one) the guest secret has been rotated: the device must store this one in place of the old, which no longer signs in; no other device receives it.
 - `POST /api/auth/login` body `{ "provider", "token", "nonce", "device" }` (no bearer, or a guest bearer) → `200 { "session", "user" }` or `404 not_linked`.
+- `nonce` is required on both: a request without one is `400 invalid`, and a token whose nonce claim is missing or differs is `401 invalid_token`.
 - `DELETE /api/auth/identities/:provider` (bearer) → `204` or `409 last_identity`.
 
-Merge rules: (1) identity unlinked → linked to the current user, who becomes `kind: "account"`; (2) identity belongs to V and the current user is a guest → the guest is merged into V (progress, wallet, purchases, club memberships, devices move; the guest's sessions are revoked) and the device receives a V session; (3) identity belongs to V and the current user already has a provider → `409 identity_in_use`; (4) unlink only while another provider remains.
+Merge rules: (1) identity unlinked → linked to the current user, who becomes `kind: "account"`; the user's other sessions (and their table sockets) end and the guest secret is rotated; (2) identity belongs to V and the current user is a guest → the guest is merged into V (progress, wallet, purchases, club memberships, devices and reports move; the guest's sessions are revoked and its sockets closed with `4401`) and the device receives a V session; (3) identity belongs to V and the current user already has a provider → `409 identity_in_use`; (4) unlink only while another provider remains.
 
 ## WebSocket (tables)
 
 1. First frame: `{ "t": "hello", "auth": "<token>" }`. The server verifies it before assigning a peer id and replies `{ "t": "hello", "id": "<peer id>", "userId": "<uuid>" }`. A missing or bad token closes the socket with `4401`.
-2. `{ "t": "create", "hosted": true, "rules"?, "botSkill"?, "club"?: "<club code>" }` → `{ "t": "room", "room", "host", "peers" }` or `{ "t": "error", "message" }`. Club tables require membership (`403`-style error frame `Join the club first`).
-3. `{ "t": "join", "room" }` → `room` or `error`. The table host binds the verified `userId` to the seat; the client's `join` frame to the table carries its name, avatar and rejoin token as before.
+2. `{ "t": "create", "hosted": true, "rules"?, "botSkill"?, "club"?: "<club code>" }` → `{ "t": "room", "room", "host", "peers" }` or `{ "t": "error", "code"?, "message" }`. Club tables require membership (`403`-style error frame `Join the club first`).
+3. `{ "t": "join", "room" }` → `room` or `error`. `{ "t": "error", "code": "room_unavailable", "message": "Room not found or full" }` is definitive (the table is over, was reaped, or is full): stop reconnecting to it. The table host binds the verified `userId` to the seat; the client's `join` frame to the table carries its name, avatar and rejoin token as before.
 4. Reconnect: on socket close the app retries with backoff 1, 2, 4, 8 … 60 s, re-sends `hello` + `join` with the same rejoin token, and shows "Reconnecting". The server keeps a seat for 15 minutes of inactivity.
+5. The session is checked again before every `create` and `join`, and a session that ends while the socket is open (logout, `DELETE /api/me`, a merge, a link ending the account's other sessions, a revocation or expiry) closes the socket with `4401`. The seat stays reclaimable: obtain the current session (refresh, or sign in again), then reconnect with `hello` + `join` and the rejoin token. A token that was refreshed more than 5 minutes ago is treated the same way at the next `create` or `join`.
 
-## Clubs (unchanged routes, now authenticated)
+## Clubs
 
-All `/api/clubs*` routes take the bearer session instead of the trust-on-first-use `user` field; member lists and standings are members-only; non-members get the public view `{ code, name, description, memberCount, joinRequiresApproval }`.
+All `/api/clubs*` routes take the bearer session (the caller's user id is the member id; name and avatar come from the user record); member lists and standings are members-only; non-members get the public view `{ code, name, description, memberCount, joinRequiresApproval }`. `Club` (members' view) is `{ code, name, description, ownerId, createdAt, rules, settings: { membersCanOpenTables, joinRequiresApproval }, members: [{ userId, name, avatar?, role: "owner"|"admin"|"member", joinedAt, points, seasonPoints, matchesPlayed, matchesWon, handsWon }], pending: [{ userId, name, avatar? }], tables: [{ code, label, rules, createdBy, createdAt, status: "open"|"playing"|"finished", players: [{ seat, name, userId?, isBot, connected }], handNumber, scores }], season, seasonStartedAt, seasons }`. `rules` is a rule set as in `@mjm/engine` (`sanitizeRules` applies); `settings` and `rules` are partial on input.
+
+| Route | Auth | Body | Answer |
+| --- | --- | --- | --- |
+| `POST /api/clubs` | bearer | `{ "name", "rules"?, "settings"? }` | `200 Club`; the caller is its owner. `400 invalid` (name), `409 limit` (clubs per user) |
+| `GET /api/clubs/:code` | bearer | | members: `Club`; anyone else: the public view. `404 not_found` |
+| `PATCH /api/clubs/:code` | bearer (owner or admin) | `{ "name"?, "description"?, "rules"?, "settings"? }` | `200 Club`; `403 forbidden` |
+| `POST /api/clubs/:code/join` | bearer | | `200 { "club", "status": "joined"\|"pending"\|"already" }` (`club` is the public view until membership); `409 limit` (members, or clubs per user) |
+| `POST /api/clubs/:code/members/:userId/approve` | bearer (owner or admin) | | `200 Club`; `403 forbidden`, `404 not_found` (no such request) |
+| `POST /api/clubs/:code/members/:userId/role` | bearer (owner) | `{ "role": "owner"\|"admin"\|"member" }` | `200 Club`; `owner` transfers ownership (the previous owner becomes an admin). `400 invalid` (role), `403 forbidden` (not the owner, or the owner's own role), `404 not_found` (not a member) |
+| `DELETE /api/clubs/:code/members/:userId` | bearer (the member, owner or admin) | | `200` the club (the public view once the caller has left); `403 forbidden` (the owner cannot leave; an admin cannot remove the owner) |
+| `GET /api/clubs/:code/standings` | bearer (member) | | rows by season points: `{ userId, name, avatar?, role, seasonPoints, lifetimePoints, points, season, … }`; `403 forbidden` |
+| `POST /api/clubs/:code/season` | bearer (owner) | | see Club seasons below; `403 forbidden` |
+| `POST /api/clubs/:code/tables` | bearer (member; owner and admins only when `settings.membersCanOpenTables` is false) | `{ "label"?, "rules"?, "botSkill"? }` | `200` the listed table `{ code, label, createdBy, createdAt, … }`; its room is a hosted club table and members with push tokens (not the opener) are notified. `403 forbidden`, `400 invalid`, `503 unavailable` (table capacity) |
+| `GET /api/users/:userId/clubs` | bearer (self; `me` works) | | `200 [Club, …]`: the caller's clubs (members' view) and pending requests (public view); `403 forbidden` for anyone else |
+
+Every club route answers `404 not_found` for an unknown code and `429 rate_limited` under the per-IP HTTP limit.
 
 ## Store, wallet, reports and seasons: what the app relies on
 
@@ -151,7 +172,7 @@ Header `Authorization: Bearer <REVENUECAT_WEBHOOK_SECRET>` (set exactly that as 
 | --- | --- |
 | `INITIAL_PURCHASE`, `RENEWAL` | Subscription: entitlement until `expiration_at_ms` (never shortened by a late, older event); purchase row recorded. A consumable sent as `INITIAL_PURCHASE` is credited like `NON_RENEWING_PURCHASE` |
 | `NON_RENEWING_PURCHASE` | Diamond pack credited (diamonds + bonus), once per `transaction_id` |
-| `CANCELLATION` | Auto-renew off: nothing changes until expiry. `cancel_reason: CUSTOMER_SUPPORT` (a refund): subscription ends now; for a diamond pack what is left of it is taken back (never below zero) |
+| `CANCELLATION` | Auto-renew off: nothing changes until expiry. `cancel_reason: CUSTOMER_SUPPORT` (a refund): subscription ends now; for a diamond pack what is left of it is taken back (never below zero). The refund is remembered by `transaction_id`, so a purchase or renewal event for that transaction delivered later (a retry) grants nothing and answers `refunded` |
 | `UNCANCELLATION`, `SUBSCRIPTION_EXTENDED` | Entitlement carried to `expiration_at_ms` if that is later |
 | `EXPIRATION` | Entitlement ends (ignored when a later renewal already extended it) |
 | `BILLING_ISSUE`, `PRODUCT_CHANGE`, `SUBSCRIPTION_PAUSED` | Recorded only (the store retries billing; the new product arrives with its `RENEWAL`; a pause ends with an `EXPIRATION`) |
@@ -164,7 +185,7 @@ Header `Authorization: Bearer <REVENUECAT_WEBHOOK_SECRET>` (set exactly that as 
 
 `POST /api/reports` (bearer) body `{ "reportedUserId": "<uuid>", "roomCode"?: "AB12CD", "reason": "cheating" | "collusion" | "abusive_chat" | "offensive_name" | "stalling" | "other", "details"?: "<up to 1,000 characters>" }` → `201 { "id", "status": "open", "createdAt" }`.
 
-`400 invalid` (missing or unknown field values, reporting yourself), `404 not_found` (no such player), `429 rate_limited` after 10 reports by the same user in 24 hours. Reports are kept when either account is deleted. There is no moderation UI yet: reports are read from the `reports` table (`status` open / actioned / dismissed).
+`400 invalid` (missing or unknown field values, reporting yourself), `404 not_found` (no such player), `429 rate_limited` after 10 reports by the same user in 24 hours, or after 30 reports from the same IP address in 24 hours whatever the accounts (guest accounts are free to make). Reports are kept when either account is deleted, and follow a guest into the account it merges into. There is no moderation UI yet: reports are read from the `reports` table (`status` open / actioned / dismissed).
 
 ## Club seasons (Phase 4)
 
@@ -175,7 +196,7 @@ Header `Authorization: Bearer <REVENUECAT_WEBHOOK_SECRET>` (set exactly that as 
 
 ## Push notifications (Phase 6)
 
-`POST /api/push/token` (bearer) body `{ "token": "ExponentPushToken[…]", "platform": "ios" | "android" }` → `204`. The token is stored on this session's device (a device row is created for sessions without one) and removed from every other device that had it, so an account switch on one phone moves it. `{ "token": null }` stops notifications for this device. `400 invalid` for anything that is not an Expo push token or a known platform.
+`POST /api/push/token` (bearer) body `{ "token": "ExponentPushToken[…]", "platform": "ios" | "android" }` → `204`. The token is stored on this session's device (a device row is created for sessions without one) and removed from every other device that had it, so an account switch on one phone moves it. `{ "token": null }` stops notifications for this device, and so does `POST /api/auth/logout` (the token is removed from the session's device; the next account to sign in on the phone registers it again). `400 invalid` for anything that is not an Expo push token or a known platform.
 
 `GET /api/config.pushEnabled` is `true` only when the server has `EXPO_ACCESS_TOKEN`; without it no push is sent. Notifications (each at most once a minute per user and kind; `data.kind` tells the app where to go):
 

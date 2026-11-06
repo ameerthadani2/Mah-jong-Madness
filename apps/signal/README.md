@@ -101,15 +101,15 @@ JSON in and out. Errors are `{ "error": "<code>", "message": "<English sentence>
 | `GET /health` | none | | `{ ok, peers, rooms, hostedTables, tables, actionLatency: { samples, p50Ms, p95Ms, maxMs, windowSeconds } \| null, pushEnabled, storeEnabled, storage: "memory"\|"pg", db?: "ok"\|"down" }` (see `docs/OBSERVABILITY.md`) |
 | `GET /api/config` | none | | `{ authProviders, storeEnabled, pushEnabled, minBuild, maintenance, serverNow }` |
 | `POST /api/auth/guest` | none | `{ device: { id, platform, appBuild, locale }, displayName?, avatar? }` | `201 { userId, guestSecret, session: { token, expiresAt }, user }` |
-| `POST /api/auth/guest/login` | none | `{ userId, guestSecret, device }` | `{ session, user }` or `401 invalid_credentials` |
+| `POST /api/auth/guest/login` | none | `{ userId, guestSecret, device }` | `{ session, user }` or `401 invalid_credentials`; five failures a minute per IP and user id → `429` (the user's own auth bucket is spent only by a correct secret) |
 | `POST /api/auth/refresh` | bearer | | `{ session }`; the old token works for 5 more minutes and cannot be refreshed again (`401 session_rotated`) |
-| `POST /api/auth/logout` | bearer | | `204`; this session only |
-| `POST /api/auth/link` | bearer | `{ provider, token, nonce, email? }` | `{ session, user, merged }`; `409 identity_in_use`, `401 invalid_token`, `404 provider_disabled` |
-| `POST /api/auth/login` | none (or a guest bearer) | `{ provider, token, nonce, device }` | `{ session, user }` or `404 not_linked` |
+| `POST /api/auth/logout` | bearer | | `204`; this session only. The device's push token is removed and the table socket this session opened is closed with 4401 |
+| `POST /api/auth/link` | bearer | `{ provider, token, nonce, email? }` | `{ session, user, merged, guestSecret? }`; `guestSecret` is the rotated guest secret the device must store (the old one stops working). `400 invalid` without a nonce, `409 identity_in_use`, `401 invalid_token`, `404 provider_disabled`. A merge closes the guest's sockets with 4401 |
+| `POST /api/auth/login` | none (or a guest bearer) | `{ provider, token, nonce, device }` | `{ session, user }` or `404 not_linked`; `400 invalid` without a nonce |
 | `DELETE /api/auth/identities/:provider` | bearer | | `204`, `409 last_identity` or `404 not_found` |
 | `GET /api/me` | bearer | | `{ user, wallet: { diamonds, bonusDiamonds }, entitlements: [{ entitlement, expiresAt, active }], cosmetics: ["theme.jade", …], coachTier: "free"\|"gold"\|"platinum", storeEnabled, identities: [{ provider, email? }], serverNow }` |
 | `PATCH /api/me` | bearer | `{ displayName?, avatar?, locale?, birthYear? }` | `{ user }`; the new name and avatar are written into every club the user is in |
-| `DELETE /api/me` | bearer | | `204`; soft delete, every session ends, club rows become "Deleted player" |
+| `DELETE /api/me` | bearer | | `204`; soft delete, every session ends (sockets closed with 4401), club rows become "Deleted player", a club the user owned passes to its senior admin or earliest member (or is dissolved), the row is purged after 30 days |
 | `POST /api/clubs` | bearer | `{ name, rules?, settings? }` | the club; the caller is its owner |
 | `GET /api/clubs/:code` | bearer | | members: the club; anyone else: `{ code, name, description, memberCount, joinRequiresApproval }` |
 | `PATCH /api/clubs/:code` | bearer (owner/admin) | `{ name?, description?, rules?, settings? }` | the club |
@@ -123,7 +123,7 @@ JSON in and out. Errors are `{ "error": "<code>", "message": "<English sentence>
 | `POST /api/clubs/:code/tables` | bearer (member; admins only if the club says so) | `{ label?, rules?, botSkill? }` | the listed table; its room is a hosted club table. Members with push tokens (not the opener) are notified |
 | `POST /api/wallet/spend` | bearer | `{ productId }` | `{ spent, entitlement, wallet, cosmetics }`; `409 insufficient`, `409 owned`, `404 not_for_sale` |
 | `POST /api/webhooks/revenuecat` | `Bearer <REVENUECAT_WEBHOOK_SECRET>` | RevenueCat v1 event | `{ ok, outcome, duplicate }`; `401` bad secret, `503` secret unset, `400` not an event |
-| `POST /api/reports` | bearer | `{ reportedUserId, roomCode?, reason, details? }` | `201 { id, status, createdAt }`; `404` unknown player; `429` after 10 a day |
+| `POST /api/reports` | bearer | `{ reportedUserId, roomCode?, reason, details? }` | `201 { id, status, createdAt }`; `404` unknown player; `429` after 10 a day per user or 30 a day per IP |
 | `POST /api/push/token` | bearer | `{ token: "ExponentPushToken[…]", platform: "ios"\|"android" }` or `{ token: null }` | `204`; stored on this session's device (and removed from any other device that had it) |
 
 Club members are identified by the session's user id; their name and avatar come from the user record (a guest without a name shows as `Player XXXX`).
@@ -134,14 +134,14 @@ Entitlements are decided here, never on the phone. The app buys through RevenueC
 
 ## Push
 
-`PushService` sends through Expo when `EXPO_ACCESS_TOKEN` is set: *club table opened* (to members with tokens, not the opener), *join request approved*, and *your table is waiting* (a seated human disconnected for 30 s while a hand is in play, noticed by `SeatWatcher` on the server tick). Each kind reaches a user at most once a minute. Copy is English, or Traditional Chinese for a device whose locale starts with `zh`. Tickets and, 15 minutes later, receipts reporting `DeviceNotRegistered` clear that token.
+`PushService` sends through Expo when `EXPO_ACCESS_TOKEN` is set: *club table opened* (to members with tokens, not the opener), *join request approved*, and *your table is waiting* (a seated human disconnected for 30 s of play while a hand is in progress, noticed by `SeatWatcher` on the server tick; a player who left the table on purpose is not chased). Each kind reaches a user at most once a minute. Signing out removes the device's token. Copy is English, or Traditional Chinese for a device whose locale starts with `zh`. Tickets and, 15 minutes later, receipts reporting `DeviceNotRegistered` clear that token.
 
 ## WebSocket protocol (JSON frames)
 
 Client → server
 | Message | Purpose |
 | --- | --- |
-| `{t:"hello", auth}` | Must be the first frame. `auth` is the session token. The server replies `{t:"hello", id, userId}` (`peerId`, the same as `id`, is kept for older clients); the id is assigned by the server and never changes. A missing or rejected token closes the socket with 4401 |
+| `{t:"hello", auth}` | Must be the first frame. `auth` is the session token. The server replies `{t:"hello", id, userId}` (`peerId`, the same as `id`, is kept for older clients); the id is assigned by the server and never changes. A missing or rejected token closes the socket with 4401, and so does a session that ends later (logout, deletion, merge, revocation): at once from the API, or at the next `create` or `join`, before which the token is checked again |
 | `{t:"create", hosted:true, rules?, botSkill?, club?}` | Create a room whose table the server hosts. `botSkill` is `beginner`, `club` or `pro`. With `club` it is a club table: only full members may open one (`Join the club first` otherwise) and it is listed in the club. Without `hosted:true` (and no `club`) the request is refused unless `P2P_ROOMS=1`; with `HOST_TABLES=0` it is refused with `Hosted tables are disabled` |
 | `{t:"join", room}` | Join by code (case-insensitive). A club table admits full members only |
 | `{t:"to", to, data}` | Relay `data` to a peer in the same room. A game `join` sent to the hosted table always carries the verified `userId`, whatever the client put there |
@@ -153,7 +153,7 @@ Server → client
 | `{t:"room", room, peers, host}` | Sent once in reply to each successful `create` or `join`. `host` is the peer to send game messages to |
 | `{t:"peer", peerId, event}` | A peer joined or left |
 | `{t:"from", from, data}` | Relayed data |
-| `{t:"error", message}` | Sent once in reply to a refused `create` or `join` |
+| `{t:"error", code?, message}` | Sent once in reply to a refused `create` or `join`. `code:"room_unavailable"` (`Room not found or full`) is definitive, so a client stops reconnecting to that room |
 | `{t:"error", code:"closed", message}` | The host of a relay-only room left, so the room has closed. Sent unprompted to every peer still in it; they are no longer in a room |
 
 The host role never moves: a relay-only room closes when its host leaves, because a guest promoted to host would hold none of the table's state.
