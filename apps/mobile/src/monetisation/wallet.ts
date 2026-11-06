@@ -121,6 +121,17 @@ export function mirrorMe(wallet: Wallet, me: MeWallet, deviceNow: number): Walle
 }
 
 /**
+ * The wallet for whoever is signed in now. A mirror that belongs to another account, or to an
+ * account this device no longer has (sign-out, deletion), must not lend its tier, themes or
+ * balance to the next player: everything the server decides is dropped and only today's meters
+ * stay. A mirror that was never synced (`userId` null) is kept for whoever syncs it first.
+ */
+export function walletForUser(wallet: Wallet, userId: string | null): Wallet {
+  if (wallet.userId === null || wallet.userId === userId) return wallet;
+  return { ...EMPTY_WALLET, meters: wallet.meters };
+}
+
+/**
  * Read a cached copy. Anything that is not a version-2 server mirror (the old device-only
  * mock wallet, a hand-edited value) keeps only today's meters: balances and entitlements
  * wait for the next sync.

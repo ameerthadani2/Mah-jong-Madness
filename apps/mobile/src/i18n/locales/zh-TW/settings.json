@@ -51,6 +51,15 @@
     "guest": "訪客帳號",
     "guestBody": "你的進度和俱樂部綁定在這台裝置上。登入後，就算裝置遺失或更換也能保留。",
     "signedIn": "已登入",
+    "signedOut": "已登出",
+    "signedOutBody": "遊戲伺服器不再接受這台裝置上 %{name} 的登入狀態。請重新登入以回到該帳號，或以新的訪客身分重新開始。",
+    "prompt": {
+      "title": "登入後才能線上對戰",
+      "body": "這台裝置記得 %{name}，但遊戲伺服器需要你重新登入，才能加入牌桌或俱樂部。",
+      "startFresh": "以新訪客繼續",
+      "startFreshWarning": "新的訪客帳號會從零開始：%{name} 的進度、購買項目和俱樂部會留在原帳號，直到你再次登入它。",
+      "startFreshConfirm": "仍要重新開始"
+    },
     "id": "玩家編號：%{id}",
     "apple": "使用 Apple 登入",
     "google": "使用 Google 登入",

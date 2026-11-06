@@ -4,7 +4,7 @@
  *
  *   connected ──closed──▶ reconnecting(1) ──failed──▶ reconnecting(2) … ──failed (10th)──▶ lost
  *        ▲                      │ succeeded                                   ▲
- *        └──────────────────────┘                         unauthorised (4401) ┘ (from any attempt)
+ *        └──────────────────────┘          unauthorised (4401), room gone ────┘ (from any attempt)
  */
 
 /** Waits before attempt 1, 2, 3 …: 1, 2, 4, 8, 16, 32, then 60 s each. */
@@ -24,15 +24,15 @@ export interface ReconnectState {
   status: ConnectionStatus;
   /** The attempt being waited for or made (1-based) while reconnecting; how many were made once lost. */
   attempt: number;
-  /** Why the table was lost. */
-  reason: 'exhausted' | 'unauthorised' | 'ended' | null;
+  /** Why the table was lost ('gone': the server says the room no longer exists or has no seat for us). */
+  reason: 'exhausted' | 'unauthorised' | 'ended' | 'gone' | null;
 }
 
 export type ReconnectEvent =
   /** The socket closed unexpectedly. */
   | { type: 'closed' }
-  /** The attempt in progress failed; `unauthorised` when the server refused the session (4401). */
-  | { type: 'failed'; unauthorised?: boolean }
+  /** The attempt in progress failed; `unauthorised` when the server refused the session (4401), `gone` when it answered the join with 'Room not found or full'. */
+  | { type: 'failed'; unauthorised?: boolean; gone?: boolean }
   | { type: 'succeeded' }
   /** The socket closed with 4401: no point retrying with the same session. */
   | { type: 'unauthorised' }
@@ -48,6 +48,8 @@ export function reconnectStep(s: ReconnectState, e: ReconnectEvent, maxAttempts 
     case 'failed':
       if (s.status !== 'reconnecting') return s;
       if (e.unauthorised) return { status: 'lost', attempt: s.attempt, reason: 'unauthorised' };
+      // The server's definitive answer: the table ended or was reaped while we were away. No backoff can bring it back.
+      if (e.gone) return { status: 'lost', attempt: s.attempt, reason: 'gone' };
       return s.attempt >= maxAttempts ? { status: 'lost', attempt: s.attempt, reason: 'exhausted' } : { status: 'reconnecting', attempt: s.attempt + 1, reason: null };
     case 'succeeded':
       return s.status === 'reconnecting' ? CONNECTED : s;

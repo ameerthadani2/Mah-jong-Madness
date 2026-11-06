@@ -99,18 +99,20 @@ export function LobbyScreen() {
       ) : conn.status === 'lost' || state.disconnected ? (
         // Leaving via the header would forget the table; this path keeps the saved record so Home can resume it.
         <Row style={{ flexWrap: 'wrap', rowGap: 6, alignItems: 'center' }} gap={8}>
-          <Pill tone="danger" icon="warning" text={t('lobby.connectionLost')} />
+          <Pill tone="danger" icon="warning" text={t(conn.reason === 'gone' ? 'lobby.tableGone' : 'lobby.connectionLost')} />
           <Button
             small
-            title={t('lobby.reconnect')}
+            title={t(conn.reason === 'gone' ? 'common.back' : 'lobby.reconnect')}
             onPress={() => {
+              // A table the server no longer has cannot be resumed: drop the saved record with the session.
+              if (conn.reason === 'gone') app.setActiveSession(null);
               app.setSession(null);
               app.reset({ name: 'home' });
             }}
           />
         </Row>
       ) : (
-        state.lastError && <Pill tone="danger" icon="warning" text={friendlyError(new Error(state.lastError), t)} />
+        state.lastError && <Pill tone="danger" icon="warning" wrap text={friendlyError(new Error(state.lastError), t)} />
       )}
     </ScrollView>
   );

@@ -8,30 +8,56 @@ import { CoachOwl } from '../Avatars';
 import { Icon } from '../Icons';
 import { Tile } from '../Tile';
 import { Row } from '../Ui';
+import type { CoachBudget } from './layout';
 
-export function CoachPanel({ hint, waitKinds, compact, lines = 3 }: { hint: Hint; waitKinds: Set<number>; compact?: boolean; /** Lines for the advice in the compact bubble. */ lines?: number }) {
+export function CoachPanel({
+  hint,
+  waitKinds,
+  compact,
+  lines = 3,
+  budget,
+}: {
+  hint: Hint;
+  waitKinds: Set<number>;
+  compact?: boolean;
+  /** Lines for the advice in the compact bubble. */
+  lines?: number;
+  /** Short landscape: how much of the centre column the bubble may take (see layout.ts coachBudget). */
+  budget?: CoachBudget;
+}) {
   const { t } = useT();
   // Coach sentences are engine reason keys rendered in the current locale (see src/i18n/index.ts).
   const engine = (key: string, params?: Record<string, string | number>) => t(`engine.${key}`, params);
   const preview = hint.winPreview ? t('table.coach.winPreview', { items: hint.winPreview.items.map((i) => t('table.coach.taiItem', { name: i.nameZh, tai: i.tai })).join(' · '), tai: hint.winPreview.tai }) : null;
   if (compact) {
-    // Status + the single most useful piece of advice; both wrap (two lines each) rather than truncate mid-word.
+    // Status + the single most useful piece of advice; both wrap rather than truncate mid-word. With a budget
+    // (claim buttons docked under the bubble) the status gives way to the advice, which is capped with an ellipsis.
     const rec = hint.claims.find((c) => c.recommended);
     const line = preview ?? (hint.discardReasonKey ? engine(hint.discardReasonKey, hint.discardReasonParams) : rec ? engine(rec.reasonKey, rec.reasonParams) : '');
+    const statusLines = budget ? (budget.statusLines === 0 && line ? 0 : Math.max(1, budget.statusLines)) : 2;
+    const adviceLines = budget ? budget.lines : lines;
+    const textOnly = !!budget?.textOnly;
+    if (budget && budget.lines === 0) return null;
     return (
-      <View style={[styles.coach, styles.coachCompact]} accessibilityRole="summary" testID="coach">
-        <CoachOwl size={30} />
+      <View
+        style={[styles.coach, styles.coachCompact, textOnly && styles.coachSlim, budget?.maxHeight !== null && budget?.maxHeight !== undefined && { maxHeight: budget.maxHeight }]}
+        accessibilityRole="summary"
+        testID="coach"
+      >
+        {!textOnly && <CoachOwl size={30} />}
         <View style={{ flex: 1, minWidth: 0, flexShrink: 1 }}>
-          <Text style={styles.coachStatus} numberOfLines={2}>
-            {engine(hint.statusKey, hint.statusParams)}
-          </Text>
+          {statusLines > 0 && (
+            <Text style={styles.coachStatus} numberOfLines={statusLines}>
+              {engine(hint.statusKey, hint.statusParams)}
+            </Text>
+          )}
           {!!line && (
-            <Text style={styles.coachLine} numberOfLines={lines}>
+            <Text style={styles.coachLine} numberOfLines={adviceLines}>
               {line}
             </Text>
           )}
         </View>
-        {hint.waits.length > 0 && (
+        {hint.waits.length > 0 && !textOnly && (
           <Row gap={2} style={{ flexShrink: 0 }}>
             {hint.waits.slice(0, 4).map((w) => (
               <Tile key={w.kind} kind={w.kind} size="xs" highlight={waitKinds.has(w.kind) ? 'wait' : undefined} />
@@ -76,6 +102,7 @@ export function CoachPanel({ hint, waitKinds, compact, lines = 3 }: { hint: Hint
 const styles = StyleSheet.create({
   coach: { backgroundColor: colors.cream, borderRadius: 16, padding: 8, gap: 4, borderWidth: 3, borderColor: colors.ink, flexShrink: 1, overflow: 'hidden' },
   coachCompact: { flexDirection: 'row', alignItems: 'center', gap: 8, minWidth: 0, maxWidth: 520, flexShrink: 1, paddingVertical: 5 },
+  coachSlim: { paddingVertical: 3 },
   coachTitle: { color: colors.ink, fontFamily: fonts.display, fontSize: 18 },
   coachStatus: { color: colors.ink, fontFamily: fonts.uiBold, fontSize: 13, lineHeight: 17 },
   coachLine: { color: colors.inkDim, fontSize: 12, lineHeight: 15, fontWeight: '700' },

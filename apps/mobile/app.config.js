@@ -52,6 +52,10 @@ const PRIVACY_MANIFEST = {
     collected('NSPrivacyCollectedDataTypePurchaseHistory', true, ['NSPrivacyCollectedDataTypePurposeAppFunctionality']),
     collected('NSPrivacyCollectedDataTypeProductInteraction', false, ['NSPrivacyCollectedDataTypePurposeAnalytics']),
     collected('NSPrivacyCollectedDataTypeCrashData', false, ['NSPrivacyCollectedDataTypePurposeAppFunctionality']),
+    // The display name players choose (users.display_name, and the names on match results) is stored with their account.
+    collected('NSPrivacyCollectedDataTypeName', true, ['NSPrivacyCollectedDataTypePurposeAppFunctionality']),
+    // Free text players type: the details of a player report (POST /api/reports), kept with the reporter's account.
+    collected('NSPrivacyCollectedDataTypeOtherUserContent', true, ['NSPrivacyCollectedDataTypePurposeAppFunctionality']),
   ],
 };
 

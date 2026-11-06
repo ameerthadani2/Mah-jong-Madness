@@ -103,6 +103,40 @@ describe('push registration', () => {
     expect(s.counts.requested).toBe(0);
   });
 
+  it('re-registers the token for the next account on the phone, and forgets it on sign-out', async () => {
+    const s = setup({ status: 'granted' });
+    let user: string | null = 'u-1';
+    const reg = () =>
+      new PushRegistrar({
+        platform: { getPermission: async () => ({ status: 'granted', canAskAgain: true }), requestPermission: async () => 'granted', getToken: async () => 'ExponentPushToken[abc]' },
+        kv: { getItem: async (k) => s.kvData[k] ?? null, setItem: async (k, v) => void (s.kvData[k] = v) },
+        base: 'https://game.example',
+        auth: { token: async () => `mjs_${user}`, onUnauthorised: () => undefined },
+        hasSession: () => user !== null,
+        userId: () => user,
+        pushEnabled: () => true,
+        devicePlatform: 'ios',
+        locale: () => 'en',
+        fetch: async (url, init) => {
+          s.sent.push({ url, method: init.method, headers: init.headers, body: undefined });
+          return { ok: true, status: 200, text: async () => '{}' };
+        },
+      });
+    expect(await reg().refreshOnStart()).toBe('registered');
+    // The same token, under the same account, is not re-sent (next launch = new registrar).
+    expect(await reg().refreshOnStart()).toBe('unchanged');
+    // Another account signs in on this phone: the token is theirs now, so it is sent again at once.
+    user = 'u-2';
+    expect(await reg().refreshOnStart()).toBe('registered');
+    expect(s.sent.map((x) => x.headers.authorization)).toEqual(['Bearer mjs_u-1', 'Bearer mjs_u-2']);
+    // Sign-out forgets the registration here (the permission answer stays), so a returning account re-sends too.
+    const r = reg();
+    await r.forget();
+    expect(JSON.parse(s.kvData[pushStorageKey('https://game.example')])).toMatchObject({ token: null, userId: null, registeredAt: 0 });
+    expect(await r.refreshOnStart()).toBe('registered');
+    expect(s.sent).toHaveLength(3);
+  });
+
   it('re-sends a rotated token', async () => {
     const s = setup({ status: 'granted' });
     const r = s.reg();

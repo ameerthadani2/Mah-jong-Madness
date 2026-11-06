@@ -137,7 +137,7 @@ export const storage = {
 };
 
 /** Avatar ids (≤ 8 chars, the host trims longer values); drawn by components/Avatars.tsx. */
-export const AVATARS = ['auntie', 'uncle', 'grandma', 'boss', 'lady', 'shades', 'hoops', 'cowboy', 'student', 'chef', 'sporty', 'gent'];
+export const AVATARS = ['auntie', 'uncle', 'grandma', 'boss', 'lady', 'shades', 'hoops', 'cowboy', 'student', 'chef', 'sporty', 'gent'] as const;
 
 /** Local calendar date key (`YYYY-MM-DD`): daily puzzles and streaks roll over at local midnight. */
 export function todayKey(d = new Date()): string {

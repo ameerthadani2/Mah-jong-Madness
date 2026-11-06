@@ -5,7 +5,7 @@ import { BOT_SKILLS, type BotSkill } from '@mjm/engine';
 import { allowedBotSkill, hasTier, totalDiamonds } from '../monetisation/wallet';
 import { useWallet } from '../monetisation/useWallet';
 import { gateFor } from '../legal/age';
-import { useAgeGate } from '../legal/useAgeGate';
+import { useOnlineGuard } from '../legal/useOnlineGuard';
 import { AgeBlocked, AgeGate } from '../components/AgeGate';
 import { useApp } from '../app-state';
 import { createLocalSession, createOnlineSession } from '../game/session';
@@ -16,7 +16,7 @@ import { botLabel, rulesSummary } from '../logic/rules-text';
 import { useT } from '../i18n';
 import { colors, fonts, nameFont, space } from '../theme';
 import { Button, Card, Chip, fontFor, GemCounter, IconButton, P, Pill, Row } from '../components/Ui';
-import { AvatarPlate } from '../components/Avatars';
+import { AvatarPlate, avatarName } from '../components/Avatars';
 import { ChestScene, ClubhouseScene, ScrollScene, TableScene } from '../components/Scenes';
 import { Icon } from '../components/Icons';
 import { Logo } from '../components/Logo';
@@ -43,8 +43,8 @@ export function HomeScreen() {
   const [resuming, setResuming] = useState(false);
   const [resumeError, setResumeError] = useState<string | null>(null);
 
-  // The age gate comes first on a fresh install (src/legal/age.ts, gateFor).
-  const gate = useAgeGate();
+  // The age gate comes first on a fresh install (src/legal/age.ts, gateFor); `entry` guards the online resume.
+  const { entry, gate } = useOnlineGuard();
   // Mirror the server wallet when this device already has a session (never bootstraps one).
   const { refresh: refreshWallet } = useWallet({ loadPrices: false });
   const accountId = auth.user?.id;
@@ -70,6 +70,9 @@ export function HomeScreen() {
         const session = createLocalSession(rec.name, rec.avatar, rec.host.rules, { restore: { host: rec.host, token: rec.token } });
         app.setSession(session);
         app.go({ name: 'table' });
+      } else if (entry !== 'ok') {
+        // An install with no age answer (or a signed-out account) is gated on the Online screen before anything reaches the server.
+        app.go({ name: 'online' });
       } else {
         // Back to the server the table lives on (the stored serverUrl), with this player's session.
         const session = await createOnlineSession({ signalUrl: rec.signalUrl, name: rec.name, avatar: rec.avatar, userId: app.profile.userId || undefined, rules: app.settings.rules, action: 'join', code: rec.roomCode, token: rec.token, clubCode: rec.clubCode, ...auth.tableAuth });
@@ -132,7 +135,7 @@ export function HomeScreen() {
       <View style={styles.cardFoot}>
         <Button testID="open-clubs" title={t('home.clubs.open')} kind="secondary" small={compact} large={tablet} onPress={goClubs} />
         {!compact && (
-          <Pressable onPress={goOnline} hitSlop={6} style={styles.link}>
+          <Pressable onPress={goOnline} hitSlop={6} style={styles.link} accessibilityRole="link" accessibilityLabel={t('home.clubs.quickTable')}>
             <Icon name="users" size={18} />
             <Text style={[styles.linkText, fontFor(t('home.clubs.quickTable'), fonts.uiBold)]}>{t('home.clubs.quickTable')}</Text>
           </Pressable>
@@ -161,7 +164,7 @@ export function HomeScreen() {
       <View style={styles.cardFoot}>
         <Button testID="open-learn" title={t('home.learn.open')} kind="premium" small={compact} large={tablet} onPress={() => app.go({ name: 'learn' })} />
         {!compact && (
-          <Pressable onPress={() => app.go({ name: 'daily' })} hitSlop={6} style={styles.link}>
+          <Pressable onPress={() => app.go({ name: 'daily' })} hitSlop={6} style={styles.link} accessibilityRole="link" accessibilityLabel={dailyDone ? t('home.learn.dailyDone') : t('home.learn.daily')}>
             <Icon name={dailyDone ? 'check' : 'scroll'} size={18} color={colors.cta} />
             <Text style={[styles.linkText, fontFor(t('home.learn.daily'), fonts.uiBold)]}>{dailyDone ? t('home.learn.dailyDone') : t('home.learn.daily')}</Text>
           </Pressable>
@@ -195,7 +198,7 @@ export function HomeScreen() {
         {needsName ? (
           <View style={{ flex: 1 }} />
         ) : (
-          <Pressable onPress={() => app.go({ name: 'settings' })} style={({ pressed }) => [styles.profile, pressed && { transform: [{ translateY: 2 }] }, { flex: wide ? undefined : 1 }]}>
+          <Pressable onPress={() => app.go({ name: 'settings' })} style={({ pressed }) => [styles.profile, pressed && { transform: [{ translateY: 2 }] }, { flex: wide ? undefined : 1 }]} accessibilityRole="button" accessibilityLabel={`${app.profile.name}. ${t('settings.title')}`}>
             <AvatarPlate id={app.profile.avatar} size={tablet ? 54 : 44} />
             <View style={{ flexShrink: 1 }}>
               <Text numberOfLines={1} style={[styles.profileName, nameFont(app.profile.name)]}>
@@ -252,7 +255,7 @@ export function HomeScreen() {
             </Row>
             <Row style={{ flexWrap: 'wrap', rowGap: 8 }} gap={wide ? 4 : 8}>
               {AVATARS.map((a) => (
-                <Pressable key={a} onPress={() => app.setProfile({ ...app.profile, avatar: a })} hitSlop={2} style={[styles.pick, app.profile.avatar === a && styles.pickOn]}>
+                <Pressable key={a} onPress={() => app.setProfile({ ...app.profile, avatar: a })} hitSlop={2} style={[styles.pick, app.profile.avatar === a && styles.pickOn]} accessibilityRole="button" accessibilityLabel={avatarName(a)} accessibilityState={{ selected: app.profile.avatar === a }}>
                   <AvatarPlate id={a} size={wide ? 36 : 40} />
                 </Pressable>
               ))}

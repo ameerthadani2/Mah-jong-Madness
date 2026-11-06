@@ -18,3 +18,8 @@ export function attachRegistrar(r: PushRegistrar): () => void {
 export function requestPushAfterClub(): Promise<PushResult> {
   return current ? current.requestAfterClub() : Promise.resolve('no-session');
 }
+
+/** After a sign-out or account deletion: the token registered for that account is forgotten here, so the next account re-sends it. */
+export function forgetPushRegistration(): Promise<void> {
+  return current ? current.forget() : Promise.resolve();
+}

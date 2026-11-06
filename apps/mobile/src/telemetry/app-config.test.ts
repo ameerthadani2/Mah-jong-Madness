@@ -5,7 +5,7 @@ const require = createRequire(import.meta.url);
 const appJson = require('../../app.json') as { expo: Record<string, unknown> };
 const build = require('../../app.config.js') as (a: { config: Record<string, unknown> }) => {
   plugins: Array<string | [string, Record<string, unknown>]>;
-  ios: { privacyManifests: { NSPrivacyTracking: boolean; NSPrivacyAccessedAPITypes: Array<{ NSPrivacyAccessedAPIType: string; NSPrivacyAccessedAPITypeReasons: string[] }>; NSPrivacyCollectedDataTypes: Array<{ NSPrivacyCollectedDataType: string; NSPrivacyCollectedDataTypeTracking: boolean }> } };
+  ios: { privacyManifests: { NSPrivacyTracking: boolean; NSPrivacyAccessedAPITypes: Array<{ NSPrivacyAccessedAPIType: string; NSPrivacyAccessedAPITypeReasons: string[] }>; NSPrivacyCollectedDataTypes: Array<{ NSPrivacyCollectedDataType: string; NSPrivacyCollectedDataTypeTracking: boolean; NSPrivacyCollectedDataTypeLinked: boolean; NSPrivacyCollectedDataTypePurposes: string[] }> } };
   android: { googleServicesFile?: string };
   extra: { storeUrls: { ios?: string; android: string } };
 };
@@ -28,6 +28,16 @@ describe('app.config.js (telemetry and push)', () => {
     expect(pm.NSPrivacyAccessedAPITypes.every((a) => a.NSPrivacyAccessedAPITypeReasons.length > 0)).toBe(true);
     expect(pm.NSPrivacyCollectedDataTypes.map((d) => d.NSPrivacyCollectedDataType)).toEqual(expect.arrayContaining(['NSPrivacyCollectedDataTypeProductInteraction', 'NSPrivacyCollectedDataTypeCrashData', 'NSPrivacyCollectedDataTypeUserID']));
     expect(pm.NSPrivacyCollectedDataTypes.every((d) => d.NSPrivacyCollectedDataTypeTracking === false)).toBe(true);
+  });
+
+  it('declares the stored user content: the display name and the free text of a player report, linked to the account', () => {
+    const types = config().ios.privacyManifests.NSPrivacyCollectedDataTypes;
+    const byType = Object.fromEntries(types.map((d) => [d.NSPrivacyCollectedDataType, d]));
+    for (const type of ['NSPrivacyCollectedDataTypeOtherUserContent', 'NSPrivacyCollectedDataTypeName']) {
+      expect(byType[type], type).toBeDefined();
+      expect(byType[type].NSPrivacyCollectedDataTypeLinked, type).toBe(true);
+      expect(byType[type].NSPrivacyCollectedDataTypePurposes, type).toEqual(['NSPrivacyCollectedDataTypePurposeAppFunctionality']);
+    }
   });
 
   it('adds the Sentry plugin only with a full upload configuration, and never writes the token', () => {

@@ -14,6 +14,30 @@ export const SIGNALING_TIMEOUT_MESSAGE = 'The game server did not answer in time
 export const UNAUTHORISED_CLOSE_CODE = 4401;
 /** `connect()` rejects with a message starting with this when the server closes with 4401. */
 export const UNAUTHORISED_MESSAGE = 'Unauthorised: the game server did not accept this session. Sign in again and retry.';
+/** The server's answer to a create or join for a room that has ended, been reaped or is full (apps/signal/src/rooms.ts). */
+export const ROOM_UNAVAILABLE_CODE = 'room_unavailable';
+export const ROOM_UNAVAILABLE_MESSAGE = 'Room not found or full';
+
+/**
+ * A refused create or join: the server's message, with its `code` when it sent one (newer servers
+ * send `room_unavailable` with ROOM_UNAVAILABLE_MESSAGE; older ones only the message).
+ */
+export class RoomRequestError extends Error {
+  constructor(
+    message: string,
+    readonly code?: string,
+  ) {
+    super(message);
+    this.name = 'RoomRequestError';
+  }
+}
+
+/** True when a create or join failed because the room is definitively gone or full: retrying the same room is pointless. */
+export function isRoomUnavailable(e: unknown): boolean {
+  if (!e || typeof e !== 'object') return false;
+  const { code, message } = e as { code?: unknown; message?: unknown };
+  return code === ROOM_UNAVAILABLE_CODE || (typeof message === 'string' && message.trim().toLowerCase() === ROOM_UNAVAILABLE_MESSAGE.toLowerCase());
+}
 
 export interface WebSocketLike {
   readyState: number;
@@ -167,7 +191,7 @@ export class SignalingClient {
           for (const h of this.closeHandlers) h();
         } else if (m.t === 'error') {
           const p = this.nextPending();
-          p?.reject(new Error(m.message));
+          p?.reject(new RoomRequestError(m.message, typeof m.code === 'string' ? m.code : undefined));
         } else if (m.t === 'peer' && this.room) {
           if (m.event === 'join' && !this.room.peers.includes(m.peerId)) this.room.peers.push(m.peerId);
           if (m.event === 'leave') this.room.peers = this.room.peers.filter((p) => p !== m.peerId);

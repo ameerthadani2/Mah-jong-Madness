@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { calloutMs, RESULT_HOLD_MS, rollUp, rollUpMs, slideFrom } from './feel';
-import { fitTile, handLayout, MIN_TOUCH, resultLayout, slopFor, tableLayout } from './layout';
+import { ACTION_DOCK_H, coachBubbleHeight, coachBudget, coachTextLines, COACH_MAX_ADVICE_LINES, fitTile, handLayout, MIN_TOUCH, resultLayout, slopFor, tableLayout } from './layout';
 
 describe('tableLayout', () => {
   it('docks the claim buttons over the centre column in landscape, never over a side pond', () => {
@@ -43,6 +43,51 @@ describe('tableLayout', () => {
     // Portrait wraps into rows of nine.
     const p = handLayout(360, tableLayout(360, 740), 17, 0, 0);
     expect(p.tile * 9 + 2 * 8).toBeLessThanOrEqual(360 - 24);
+  });
+});
+
+describe('coach bubble beside docked claim buttons (short landscape)', () => {
+  // The claim sentences the engine can show (packages/engine/src/hints.ts): the usual one, and the longest.
+  const USUAL = 'This claim brings you closer to ready. You would lose 門清 (1 台, or 門清自摸 3 台).';
+  const LONGEST = 'This claim would bring you closer to ready, but your concealed hand is worth more here. You would lose 門清 (1 台, or 門清自摸 3 台).';
+  // Text width of a text-only bubble across the centre column: the cross's padding, then the bubble's border and padding.
+  const textWidth = (w: number, h: number) => tableLayout(w, h).centerW - 12 - 22;
+
+  it('at 667×375 draws the advice text-only across the column, whole, ending above the buttons', () => {
+    const L = tableLayout(667, 375);
+    expect(L.coach).toBe('center');
+    expect(L.actions).toBe('center');
+    // Centre column heights measured in the web export at 667×375: 135 px with one row of across discards, 97 with two.
+    for (const [columnH, sentence] of [[135, LONGEST], [97, USUAL]] as const) {
+      const b = coachBudget(columnH, 'buttons');
+      expect(b).toMatchObject({ statusLines: 0, textOnly: true, overlay: true });
+      expect(coachTextLines(sentence, textWidth(667, 375)), `${columnH} px column`).toBeLessThanOrEqual(b.lines);
+      expect(coachBubbleHeight(b), `${columnH} px column`).toBeLessThanOrEqual(columnH - ACTION_DOCK_H);
+      expect(b.maxHeight).toBe(columnH - ACTION_DOCK_H);
+    }
+    // Beside the owl, in the narrower column, the same sentence would need an extra line or be cut short.
+    expect(coachTextLines(USUAL, textWidth(667, 375) - 100)).toBeGreaterThan(coachTextLines(USUAL, textWidth(667, 375)));
+  });
+
+  it('at 844×390 the longest sentence fits whole with two rows of across discards', () => {
+    expect(coachTextLines(LONGEST, textWidth(844, 390))).toBeLessThanOrEqual(coachBudget(112, 'buttons').lines);
+  });
+
+  it('hides the bubble rather than a clipped sliver when the column is too short for one line', () => {
+    expect(coachBudget(ACTION_DOCK_H + 20, 'buttons').lines).toBe(0);
+    expect(coachBudget(ACTION_DOCK_H + 27, 'buttons').lines).toBe(1);
+  });
+
+  it('keeps one status line under the tap hint, two with nothing docked, and never more than four advice lines', () => {
+    const hint = coachBudget(135, 'hint');
+    expect(hint).toMatchObject({ statusLines: 1, textOnly: false, overlay: false });
+    expect(hint.lines).toBeGreaterThanOrEqual(3);
+    const none = coachBudget(135, 'none');
+    expect(none).toMatchObject({ statusLines: 2, textOnly: false, overlay: false });
+    expect(none.lines).toBeGreaterThanOrEqual(3);
+    expect(coachBubbleHeight(none)).toBeLessThanOrEqual(none.maxHeight!);
+    expect(coachBudget(400, 'none').lines).toBe(COACH_MAX_ADVICE_LINES);
+    expect(coachBudget(0, 'buttons')).toMatchObject({ maxHeight: null, lines: COACH_MAX_ADVICE_LINES, overlay: false });
   });
 });
 

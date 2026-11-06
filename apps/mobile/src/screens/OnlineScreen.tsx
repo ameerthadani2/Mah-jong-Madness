@@ -6,8 +6,9 @@ import { useAuth } from '../auth/AuthProvider';
 import { friendlyError } from '../logic/errors';
 import { rulesSummary } from '../logic/rules-text';
 import { useT } from '../i18n';
-import { useAgeGate } from '../legal/useAgeGate';
+import { useOnlineGuard } from '../legal/useOnlineGuard';
 import { AgeBlocked, AgeGate } from '../components/AgeGate';
+import { SignInPrompt } from '../components/SignInPrompt';
 import { colors, fonts, space } from '../theme';
 import { Button, Card, H2, P, Row, ScreenHeader } from '../components/Ui';
 import { Icon } from '../components/Icons';
@@ -16,14 +17,16 @@ export function OnlineScreen() {
   const app = useApp();
   const auth = useAuth();
   const { t, locale } = useT();
-  const gate = useAgeGate();
+  // Nothing reaches the server until the age gate (and the account) let it: src/legal/online.ts.
+  const { entry } = useOnlineGuard();
   const [code, setCode] = useState('');
   // Opening Online is the first moment the app needs the server: bootstrap the guest now (quietly; failures show below).
   const { ensure } = auth;
   const [checking, setChecking] = useState(true);
   useEffect(() => {
+    if (entry !== 'ok') return;
     void ensure().finally(() => setChecking(false));
-  }, [ensure]);
+  }, [ensure, entry]);
   const [busy, setBusy] = useState<'create' | 'join' | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -52,7 +55,9 @@ export function OnlineScreen() {
   };
 
   // Installs that predate the age gate are asked before their first online table.
-  if (gate.loaded && gate.status !== 'allowed') return gate.status === 'blocked' ? <AgeBlocked onBack={app.back} /> : <AgeGate onBack={app.back} />;
+  if (entry === 'blocked') return <AgeBlocked onBack={app.back} />;
+  if (entry === 'ask') return <AgeGate onBack={app.back} />;
+  if (entry === 'sign_in') return <SignInPrompt onBack={app.back} />;
   return (
     <ScrollView contentContainerStyle={styles.wrap}>
       <ScreenHeader title={t('online.title')} onBack={app.back} right={<Button small kind="ghost" icon="users" title={t('online.clubs')} onPress={() => app.go({ name: 'clubs' })} />} />

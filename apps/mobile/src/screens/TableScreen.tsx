@@ -284,6 +284,7 @@ export function TableScreen() {
           hint={hint}
           coachOpen={coachOpen}
           actions={L.actions === 'center' ? actionBar : null}
+          dock={actions.some((a) => a.type !== 'discard') || (actions.length > 0 && selected !== null) ? 'buttons' : actions.length > 0 ? 'hint' : 'none'}
           overlay={overlay}
         />
         {L.actions === 'strip' && (
@@ -371,17 +372,19 @@ export function TableScreen() {
             <Button small title={t('table.connection.retryNow')} onPress={() => session.retryNow()} />
           </View>
         ) : !state.matchOver && (conn.status === 'lost' || state.disconnected) ? (
-          // Only after ten failed attempts, a refused session (4401) or the seat opening elsewhere.
+          // Only after ten failed attempts, a refused session (4401), the seat opening elsewhere, or the
+          // server saying the table is gone (then there is nothing to come back to: the saved record goes too).
           <View style={styles.banner} accessibilityLiveRegion="assertive">
             <Icon name="warning" size={28} />
             <View style={{ flex: 1 }}>
-              <Text style={styles.bannerTitle}>{t('table.connection.lostTitle')}</Text>
-              <Text style={styles.bannerText}>{t('table.connection.lostText')}</Text>
+              <Text style={styles.bannerTitle}>{t(conn.reason === 'gone' ? 'table.connection.goneTitle' : 'table.connection.lostTitle')}</Text>
+              <Text style={styles.bannerText}>{t(conn.reason === 'gone' ? 'table.connection.goneText' : 'table.connection.lostText')}</Text>
             </View>
             <Button
               small
-              title={t('table.connection.reconnect')}
+              title={t(conn.reason === 'gone' ? 'table.connection.goneLeave' : 'table.connection.reconnect')}
               onPress={() => {
+                if (conn.reason === 'gone') app.setActiveSession(null);
                 app.setSession(null);
                 app.reset({ name: 'home' });
               }}

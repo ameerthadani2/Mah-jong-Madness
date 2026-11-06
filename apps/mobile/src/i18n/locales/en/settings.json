@@ -51,6 +51,15 @@
     "guest": "Guest account",
     "guestBody": "Your progress and clubs are tied to this device. Sign in to keep them if you lose or replace it.",
     "signedIn": "Signed in",
+    "signedOut": "Signed out",
+    "signedOutBody": "The game server no longer accepts this device’s session for %{name}. Sign in again to get back to that account, or start fresh as a new guest.",
+    "prompt": {
+      "title": "Sign in to play online",
+      "body": "This device remembers %{name}, but the game server needs you to sign in again before you can join a table or a club.",
+      "startFresh": "Continue as a new guest",
+      "startFreshWarning": "A new guest account starts from nothing: the progress, purchases and clubs of %{name} stay with that account until you sign in to it again.",
+      "startFreshConfirm": "Start fresh anyway"
+    },
     "id": "Player id: %{id}",
     "apple": "Sign in with Apple",
     "google": "Sign in with Google",

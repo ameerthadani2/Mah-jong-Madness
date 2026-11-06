@@ -58,8 +58,8 @@ function DiscardPuzzleView({ puzzle, onResult, onNext, nextLabel, autoAdvance }:
       {answered !== null && pickedOpt && (
         <View style={{ gap: 6 }}>
           <Verdict good={good} goodKey="puzzles.view.good" badKey="puzzles.view.better" />
-          <P>{t('puzzles.view.picked', { tile: tileName(pickedOpt.kind, 'zh-TW'), shape: shape(pickedOpt.shanten), kinds: pickedOpt.accepts.length, tiles: pickedOpt.acceptance })}</P>
-          {!good && <P>{t('puzzles.view.best', { tile: tileName(bestOpt.kind, 'zh-TW'), shape: shape(bestOpt.shanten), kinds: bestOpt.accepts.length, tiles: bestOpt.acceptance, list: kindsToString(bestOpt.accepts) })}</P>}
+          <P>{t('puzzles.view.picked', { tile: tileName(pickedOpt.kind, locale), shape: shape(pickedOpt.shanten), kinds: pickedOpt.accepts.length, tiles: pickedOpt.acceptance })}</P>
+          {!good && <P>{t('puzzles.view.best', { tile: tileName(bestOpt.kind, locale), shape: shape(bestOpt.shanten), kinds: bestOpt.accepts.length, tiles: bestOpt.acceptance, list: kindsToString(bestOpt.accepts) })}</P>}
           <NextButton onNext={onNext} autoAdvance={autoAdvance} label={nextLabel} />
         </View>
       )}
@@ -68,7 +68,7 @@ function DiscardPuzzleView({ puzzle, onResult, onNext, nextLabel, autoAdvance }:
 }
 
 function WaitsPuzzleView({ puzzle, onResult, onNext, nextLabel, autoAdvance }: ThemeViewProps<WaitsPuzzle>) {
-  const { t } = useT();
+  const { t, locale } = useT();
   const [chosen, setChosen] = useState<Set<Kind>>(new Set());
   const { answered, report } = useAnswer('waits', undefined, onResult, onNext, autoAdvance);
   const checked = answered !== null;
@@ -101,7 +101,7 @@ function WaitsPuzzleView({ puzzle, onResult, onNext, nextLabel, autoAdvance }: T
           <Row style={{ flexWrap: 'wrap' }}>
             <Text style={{ color: colors.ink, fontFamily: fonts.uiBold }}>{t('puzzles.view.waits')}</Text>
             {puzzle.answers.map((k) => (
-              <Pill key={k} text={tileName(k, 'zh-TW')} tone="gold" />
+              <Pill key={k} text={tileName(k, locale)} tone="gold" />
             ))}
           </Row>
           <NextButton onNext={onNext} autoAdvance={autoAdvance} label={nextLabel} />

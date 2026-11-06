@@ -39,6 +39,9 @@
   "connection": {
     "lostTitle": "Connection lost",
     "lostText": "Your seat is saved. A bot plays for you until you are back.",
+    "goneTitle": "Table over",
+    "goneText": "The game server no longer has this table: it ended or was closed while you were away.",
+    "goneLeave": "Back to Home",
     "reconnect": "Reconnect",
     "reconnectingTitle": "Reconnecting…",
     "reconnectingText": "Attempt %{n}. Your seat is saved; a bot plays for you until you are back.",

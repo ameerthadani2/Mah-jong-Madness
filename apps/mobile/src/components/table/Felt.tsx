@@ -2,7 +2,7 @@
  * The felt: three opponents (left, across, right) with their hands, melds and ponds, the compass and wall in
  * the middle, my pond, the coach bubble and the claim buttons. Geometry comes from ./layout.ts.
  */
-import React from 'react';
+import React, { useState } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import type { Hint, PlayerView, TableView, TileId } from '@mjm/engine';
 import { DiscardPool, FeltFrame, MeldsAndFlowers, SeatBadge, WallRing } from '../TableParts';
@@ -12,7 +12,7 @@ import { fitPools } from '../../display/tableFit';
 import { Row } from '../Ui';
 import { CoachPanel } from './CoachPanel';
 import { slideFrom } from './feel';
-import type { TableLayout } from './layout';
+import { ACTION_DOCK_H, coachBudget, type ActionDock, type TableLayout } from './layout';
 
 export type PlateProps = Omit<React.ComponentProps<typeof SeatBadge>, 'size' | 'vertical' | 'maxNameWidth'>;
 
@@ -26,6 +26,7 @@ export function Felt({
   hint,
   coachOpen,
   actions,
+  dock = 'none',
   overlay,
 }: {
   view: TableView;
@@ -39,10 +40,16 @@ export function Felt({
   coachOpen: boolean;
   /** The claim / discard buttons, docked over my pond in landscape (portrait gives them a strip under the felt). */
   actions: React.ReactNode;
+  /** What `actions` currently shows (nothing, the tap hint, or buttons): on short landscape the coach makes room for it. */
+  dock?: ActionDock;
   /** Centre call-out and winner reveal, drawn over everything on the felt. */
   overlay?: React.ReactNode;
 }) {
   const { portrait, tablet, plate, sideWidth } = L;
+  // Short landscape: the coach bubble shares the centre column with the docked claim buttons, so it is
+  // budgeted from the column's measured height (layout.ts coachBudget) and never runs under them.
+  const [columnH, setColumnH] = useState(0);
+  const budget = coachBudget(columnH, L.actions === 'center' ? dock : 'none');
   // Settings → Display → Tiles grows the ponds and the opponents' melds (rows recomputed so they still fit).
   const { tileScale } = useDisplayScale();
   const { tile: pool, centerPerRow, sidePerRow, myPerRow, meldScale } = fitPools(L, tileScale);
@@ -112,15 +119,22 @@ export function Felt({
       ) : L.compact ? (
         // Short landscape: the compass sits beside the coach and my pond instead of above them, so my pond
         // clears the hand rail; the coach is top-aligned and ends above the claim buttons docked over my pond.
-        <View style={styles.compactMiddle}>
+        // While those buttons are up the bubble is drawn across the whole column instead (over the compass and
+        // my pond, which the decision does not need), so the claim advice fits in fewer lines above them.
+        <View style={styles.compactMiddle} testID="felt-centre" onLayout={(e) => setColumnH(Math.round(e.nativeEvent.layout.height))}>
           <View style={{ alignItems: 'center', justifyContent: 'center', gap: 6, paddingHorizontal: 4 }}>
             {compass}
             {statusPill}
           </View>
           <View style={{ flex: 1, minWidth: 0, justifyContent: 'space-between', gap: 4 }}>
-            {coach && L.coach === 'center' ? <CoachPanel hint={coach} waitKinds={waitKinds} compact lines={4} /> : <View />}
+            {coach && L.coach === 'center' && !budget.overlay ? <CoachPanel hint={coach} waitKinds={waitKinds} compact budget={budget} /> : <View />}
             {myPond(myPerRow)}
           </View>
+          {coach && L.coach === 'center' && budget.overlay && (
+            <View style={[styles.coachOverlay, { bottom: ACTION_DOCK_H }]} pointerEvents="none">
+              <CoachPanel hint={coach} waitKinds={waitKinds} compact budget={budget} />
+            </View>
+          )}
         </View>
       ) : (
         <>
@@ -191,5 +205,6 @@ const styles = StyleSheet.create({
   status: { backgroundColor: 'rgba(16,20,47,0.6)', borderRadius: 999, paddingHorizontal: 10, paddingVertical: 2, maxWidth: 220 },
   statusText: { color: '#FFFFFF', fontSize: 12, fontWeight: '900' },
   actionCenter: { position: 'absolute', left: 0, right: 0, bottom: 2, alignItems: 'center' },
+  coachOverlay: { position: 'absolute', left: 0, right: 0, alignItems: 'center', zIndex: 5 },
   overlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', gap: 10, zIndex: 25 },
 });

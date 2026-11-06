@@ -16,10 +16,10 @@ import { Icon } from '../components/Icons';
 import { AgeBlocked, AgeGate } from '../components/AgeGate';
 import { NoValueNotice } from '../components/LegalLinks';
 import { ReportPlayerSheet } from '../components/ReportPlayerSheet';
-import { gateFor } from '../legal/age';
+import { SignInPrompt } from '../components/SignInPrompt';
 import type { ReportTarget } from '../legal/reports';
 import { canStartSeason, sortStandings, standingPoints, type StandingsView } from '../legal/standings';
-import { useAgeGate } from '../legal/useAgeGate';
+import { useOnlineGuard } from '../legal/useOnlineGuard';
 
 const roleName = (role: ClubMember['role'] | 'guest', t: Translate) => t(`common.roles.${role}`);
 
@@ -44,9 +44,9 @@ export function ClubsScreen() {
     setConnection('checking');
     setConnection((await ensure()) ? 'ready' : 'offline');
   }, [ensure]);
-  // Nothing reaches the server (no guest account is made) until the age gate has been passed.
-  const gate = useAgeGate();
-  const ageOk = gate.status === 'allowed';
+  // Nothing reaches the server (no guest account is made) until the age gate has been passed (src/legal/online.ts).
+  const { entry } = useOnlineGuard();
+  const ageOk = entry === 'ok';
   useEffect(() => {
     if (ageOk) void connect();
   }, [connect, ageOk]);
@@ -96,9 +96,9 @@ export function ClubsScreen() {
     }
   };
 
-  const gateState = gateFor('clubs', gate.status, false);
-  if (gate.loaded && gateState === 'blocked') return <AgeBlocked onBack={app.back} />;
-  if (gate.loaded && gateState === 'ask') return <AgeGate onBack={app.back} />;
+  if (entry === 'blocked') return <AgeBlocked onBack={app.back} />;
+  if (entry === 'ask') return <AgeGate onBack={app.back} />;
+  if (entry === 'sign_in') return <SignInPrompt onBack={app.back} />;
 
   if (connection !== 'ready') {
     return (
@@ -112,7 +112,7 @@ export function ClubsScreen() {
           <P dim style={{ fontSize: 13 }}>
             {t('clubs.signIn.body')}
           </P>
-          {connection === 'offline' && auth.error ? <Pill tone="gold" icon="warning" text={friendlyError(auth.error, t)} /> : null}
+          {connection === 'offline' && auth.error ? <Pill tone="gold" icon="warning" wrap text={friendlyError(auth.error, t)} /> : null}
           <Button title={connection === 'checking' ? t('clubs.signIn.connecting') : t('clubs.signIn.retry')} onPress={() => void connect()} disabled={connection === 'checking'} />
         </Card>
       </ScrollView>
@@ -127,7 +127,7 @@ export function ClubsScreen() {
         <P style={{ flex: 1, fontSize: 13, lineHeight: 18 }}>{t('clubs.note')}</P>
       </View>
       <NoValueNotice />
-      {error && <Pill tone="gold" icon="warning" text={error} />}
+      {error && <Pill tone="gold" icon="warning" wrap text={error} />}
       <View style={styles.cols}>
         <Card style={styles.col}>
           <H2>{t('clubs.join.title')}</H2>
@@ -204,6 +204,8 @@ export function ClubScreen({ code }: { code: string }) {
   const [confirmSeason, setConfirmSeason] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [reporting, setReporting] = useState<ReportTarget | null>(null);
+  // A club reached from a notification or a link is gated like the Clubs list: no server call before 'ok'.
+  const { entry } = useOnlineGuard();
 
   const refresh = useCallback(async () => {
     try {
@@ -214,11 +216,15 @@ export function ClubScreen({ code }: { code: string }) {
     }
   }, [ctx, code, t]);
   useEffect(() => {
+    if (entry !== 'ok') return;
     void refresh();
     const id = setInterval(() => void refresh(), 5000);
     return () => clearInterval(id);
-  }, [refresh]);
+  }, [refresh, entry]);
 
+  if (entry === 'blocked') return <AgeBlocked onBack={app.back} />;
+  if (entry === 'ask') return <AgeGate onBack={app.back} />;
+  if (entry === 'sign_in') return <SignInPrompt onBack={app.back} />;
   if (!club) {
     return (
       <View style={styles.center}>

@@ -76,6 +76,77 @@ export function tableLayout(width: number, height: number): TableLayout {
 /** Height of the portrait action strip (claim buttons are 50 pt plus their shelf). */
 export const ACTION_STRIP_H = 60;
 
+/** Height the claim/discard buttons take when docked over the bottom of the centre column in landscape (50 pt buttons, 2 pt inset, 2 pt of air above). */
+export const ACTION_DOCK_H = 54;
+/** The 'tap a tile' pill the dock shows on my discard turn before a tile is selected. */
+export const TAP_HINT_DOCK_H = 34;
+
+/** What the action dock over the centre column shows: nothing, the tap hint pill, or claim/discard buttons. */
+export type ActionDock = 'none' | 'hint' | 'buttons';
+
+/** The compact coach bubble's type: the status line and the advice lines (see CoachPanel), plus its padding and border. */
+export const COACH_STATUS_LINE_H = 17;
+export const COACH_ADVICE_LINE_H = 15;
+export const COACH_BUBBLE_CHROME_H = 16;
+/** The text-only bubble's padding and border (it sits over the compass and my pond, so it is kept slim). */
+export const COACH_SLIM_CHROME_H = 12;
+/** Advice lines the compact bubble shows when nothing constrains it. */
+export const COACH_MAX_ADVICE_LINES = 4;
+
+export interface CoachBudget {
+  /** Lines for the status (0 hides it: a claim decision needs the reason more than the shanten count). */
+  statusLines: number;
+  /** Lines for the advice (capped with an ellipsis); 0 hides the bubble rather than showing a clipped sliver. */
+  lines: number;
+  /** Cap on the bubble's height, so it can never run under the docked buttons; null while the column is unmeasured. */
+  maxHeight: number | null;
+  /** Text only (no owl, no waits), with slim padding, so the words get the whole width when space is short. */
+  textOnly: boolean;
+  /**
+   * Draw the bubble over the whole centre column (compass and my pond included), ending just above the docked
+   * buttons: neither is needed for a claim decision, and the extra width keeps the advice to fewer lines.
+   */
+  overlay: boolean;
+}
+
+/**
+ * How much of the compact centre column (`columnH` px, measured, between the across seat's pond and the felt's
+ * bottom edge) the coach bubble may take. While claim or discard buttons are docked over my pond the bubble is
+ * drawn text-only across the whole column and must end above them, so the status line goes and the advice gets
+ * the lines that fit (none hides it); under the smaller tap-hint pill the status keeps one line; otherwise the
+ * bubble leaves one row of my pond visible. Before the column has been measured (0) the bubble is unconstrained.
+ */
+export function coachBudget(columnH: number, dock: ActionDock): CoachBudget {
+  if (columnH <= 0) return { statusLines: 2, lines: COACH_MAX_ADVICE_LINES, maxHeight: null, textOnly: false, overlay: false };
+  if (dock === 'buttons') {
+    const avail = Math.max(0, columnH - ACTION_DOCK_H);
+    const lines = Math.max(0, Math.min(COACH_MAX_ADVICE_LINES, Math.floor((avail - COACH_SLIM_CHROME_H) / COACH_ADVICE_LINE_H)));
+    return { statusLines: 0, lines, maxHeight: avail, textOnly: true, overlay: true };
+  }
+  const pondRow = tileDims('xs').h + 4;
+  const reserved = dock === 'hint' ? TAP_HINT_DOCK_H : pondRow;
+  const avail = Math.max(0, columnH - reserved - 4);
+  const statusLines = dock === 'hint' ? 1 : 2;
+  const forAdvice = avail - COACH_BUBBLE_CHROME_H - statusLines * COACH_STATUS_LINE_H;
+  const lines = Math.max(1, Math.min(COACH_MAX_ADVICE_LINES, Math.floor(forAdvice / COACH_ADVICE_LINE_H)));
+  return { statusLines, lines, maxHeight: avail, textOnly: false, overlay: false };
+}
+
+/**
+ * Lines a coach sentence needs at `textWidth` px: bold 12 pt Latin averages just over half an em, a CJK
+ * character a full em. An estimate for the layout tests, not a text measurer.
+ */
+export function coachTextLines(text: string, textWidth: number, fontSize = 12): number {
+  let w = 0;
+  for (const ch of text) w += /[\u3000-\u9fff\uff00-\uffef]/.test(ch) ? fontSize : fontSize * 0.56;
+  return Math.max(1, Math.ceil(w / Math.max(1, textWidth)));
+}
+
+/** Height of the compact bubble drawn to `budget`. */
+export function coachBubbleHeight(b: Pick<CoachBudget, 'statusLines' | 'lines' | 'textOnly'>): number {
+  return (b.textOnly ? COACH_SLIM_CHROME_H : COACH_BUBBLE_CHROME_H) + b.statusLines * COACH_STATUS_LINE_H + b.lines * COACH_ADVICE_LINE_H;
+}
+
 export interface HandLayout {
   /** Width of one hand tile. */
   tile: number;

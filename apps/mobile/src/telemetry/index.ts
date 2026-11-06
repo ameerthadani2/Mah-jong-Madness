@@ -1,7 +1,8 @@
 /**
  * The app's telemetry: `track(event, props)` for the funnel, `captureError` for failures, and the
- * player's privacy choices. Starts when first imported (from App.tsx), so crash reporting is on
- * before the first screen renders. With no keys in the build every call is a no-op.
+ * player's privacy choices. Starts when first imported (from App.tsx); crash reporting itself begins
+ * once the stored consent has loaded with it allowed (errors caught before that wait for the
+ * answer). With no keys in the build every call is a no-op.
  *
  *   track('purchase_start', { product: 'diamonds_120' })
  *   markConsentGiven({ minor: false })   // from the first-run age gate
@@ -23,7 +24,7 @@ export const consent = new ConsentStore({
 
 const crash = telemetryPlatform.createCrash(SENTRY_DSN, () => telemetry.crashAllowed());
 export const telemetry = new Telemetry({ consent, crash, analytics: telemetryPlatform.createAnalytics(POSTHOG_KEY, POSTHOG_HOST) });
-// Installed after Sentry's own handler, which it keeps: Sentry reports the crash, this counts it.
+// Sentry's handler (installed when crash reports start) keeps this one: Sentry reports the crash, this counts it.
 telemetryPlatform.installUnhandled((e, fatal) => telemetry.send(errorEvent(e, 'unhandled', fatal)));
 void consent.load();
 

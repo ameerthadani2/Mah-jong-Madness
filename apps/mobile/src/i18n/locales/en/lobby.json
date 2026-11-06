@@ -15,6 +15,7 @@
   "start": "Start match",
   "startWithBots": "Start (bots fill empty seats)",
   "connectionLost": "Connection lost.",
+  "tableGone": "This table is over or no longer exists.",
   "reconnect": "Reconnect",
   "reconnecting": "Reconnecting… (attempt %{n})",
   "retryNow": "Retry now"
