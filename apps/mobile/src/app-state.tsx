@@ -113,8 +113,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     });
   }, [session]);
 
-  // Android hardware back pops the screen stack instead of leaving the app.
+  // Android hardware back pops the screen stack instead of leaving the app (the web has no such key and logs an error for the listener).
   useEffect(() => {
+    if (Platform.OS !== 'android') return;
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
       let handled = false;
       setStack((st) => {
