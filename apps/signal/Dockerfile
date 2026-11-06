@@ -21,7 +21,12 @@ COPY packages/net/package.json packages/net/
 COPY apps/signal/package.json apps/signal/
 COPY apps/mobile/package.json apps/mobile/
 RUN npm ci --workspace @mjm/signal --workspace @mjm/engine --workspace @mjm/net
+# The tsconfig files too: esbuild reads the nearest tsconfig.json for each source file (strict
+# mode's "use strict" header, class-field semantics), so the bundle matches a local `npm run build`.
 COPY tsconfig.base.json ./
+COPY packages/engine/tsconfig.json packages/engine/
+COPY packages/net/tsconfig.json packages/net/
+COPY apps/signal/tsconfig.json apps/signal/
 COPY packages/engine/src packages/engine/src
 COPY packages/net/src packages/net/src
 COPY apps/signal/src apps/signal/src
