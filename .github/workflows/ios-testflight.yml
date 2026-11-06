@@ -9,8 +9,10 @@ name: iOS TestFlight build
 #   ASC_APP_ID            (optional) numeric App Store Connect app id, once the app record exists
 # Optional repository variables, copied into the build (all absent -> that feature is off; see docs/OWNER_TODO.md):
 #   SIGNAL_URL, APP_STORE_ID, EXPO_PUBLIC_SENTRY_DSN, EXPO_PUBLIC_POSTHOG_KEY, EXPO_PUBLIC_POSTHOG_HOST,
-#   SENTRY_ORG, SENTRY_PROJECT. SENTRY_AUTH_TOKEN and google-services.json belong in EAS environment
-#   variables (secret / file), never here.
+#   SENTRY_ORG, SENTRY_PROJECT, EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID, EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID,
+#   EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID, EXPO_PUBLIC_REVENUECAT_IOS_KEY, EXPO_PUBLIC_REVENUECAT_ANDROID_KEY,
+#   EXPO_PUBLIC_TERMS_URL, EXPO_PUBLIC_PRIVACY_URL. SENTRY_AUTH_TOKEN and google-services.json belong in
+#   EAS environment variables (secret / file), never here.
 # The app uses native modules (notifications, Sentry, purchases), so it runs only in builds like this one
 # or a development build; Expo Go cannot open it any more.
 on:
@@ -80,11 +82,18 @@ jobs:
           EXPO_PUBLIC_POSTHOG_HOST: ${{ vars.EXPO_PUBLIC_POSTHOG_HOST }}
           SENTRY_ORG: ${{ vars.SENTRY_ORG }}
           SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
+          EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID: ${{ vars.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID }}
+          EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID: ${{ vars.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID }}
+          EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID: ${{ vars.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID }}
+          EXPO_PUBLIC_REVENUECAT_IOS_KEY: ${{ vars.EXPO_PUBLIC_REVENUECAT_IOS_KEY }}
+          EXPO_PUBLIC_REVENUECAT_ANDROID_KEY: ${{ vars.EXPO_PUBLIC_REVENUECAT_ANDROID_KEY }}
+          EXPO_PUBLIC_TERMS_URL: ${{ vars.EXPO_PUBLIC_TERMS_URL }}
+          EXPO_PUBLIC_PRIVACY_URL: ${{ vars.EXPO_PUBLIC_PRIVACY_URL }}
         run: |
           node -e "
             const fs = require('fs');
             const eas = JSON.parse(fs.readFileSync('eas.json', 'utf8'));
-            const keys = ['SIGNAL_URL', 'APP_STORE_ID', 'EXPO_PUBLIC_SENTRY_DSN', 'EXPO_PUBLIC_POSTHOG_KEY', 'EXPO_PUBLIC_POSTHOG_HOST', 'SENTRY_ORG', 'SENTRY_PROJECT'];
+            const keys = ['SIGNAL_URL', 'APP_STORE_ID', 'EXPO_PUBLIC_SENTRY_DSN', 'EXPO_PUBLIC_POSTHOG_KEY', 'EXPO_PUBLIC_POSTHOG_HOST', 'SENTRY_ORG', 'SENTRY_PROJECT', 'EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID', 'EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID', 'EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID', 'EXPO_PUBLIC_REVENUECAT_IOS_KEY', 'EXPO_PUBLIC_REVENUECAT_ANDROID_KEY', 'EXPO_PUBLIC_TERMS_URL', 'EXPO_PUBLIC_PRIVACY_URL'];
             const profile = eas.build[process.env.PROFILE];
             profile.env = { ...(profile.env || {}) };
             for (const k of keys) if (process.env[k]) profile.env[k] = process.env[k];

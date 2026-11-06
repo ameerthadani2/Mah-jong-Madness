@@ -20,7 +20,7 @@ tests, sim   ──┘         │
 ### Engine (`packages/engine`)
 
 * `tiles.ts` — 144 physical tiles (`TileId` 0..143) over 42 kinds (34 playable + 8 bonus).
-* `hand.ts` — decomposition into 5 sets + pair, waits, shanten. Shanten splits the hand into the three suits plus the honor block, reduces each to a Pareto front of (melds, partials, pair) and combines them; fronts are memoised by count signature. Fast enough for bot search on mobile (~45 ms per full hand of 4 bots).
+* `hand.ts` — decomposition into 5 sets + pair, waits, shanten. Shanten is the distance to the nearest complete target (sets + pair) that holds at most four copies of any kind, so an un-konged quad is never read as a pong waiting on a fifth copy. It splits the hand into the three suits plus the honor block, computes each block's best overlap per (sets, pair) share with a small dynamic programme, and combines the four tables; tables are memoised by count signature. Fast enough for bot search on mobile (~40 ms per full hand of 4 bots).
 * `scoring.ts` — `scoreWin(WinContext)` tries every decomposition and returns the max-台 breakdown. `computePayments` applies dealer 台 per transaction.
 * `game.ts` — the JSON `GameState` and a pure `applyAction(state, seat, action)`. Phases: `discard` (player to act), `claim` (others respond to a discard or 加槓), `ended`. Drawing, flower replacement, kong replacement, dead-wall exhaustion and dealer rotation are internal transitions, so the only external inputs are player actions. `hashState`, `replayHand`, `matchSnapshot` support auditing.
 * `view.ts` — `viewFor(state, seat)` strips other hands and the wall; `viewToState(view)` rebuilds an engine-shaped object so clients can run hints and legality checks on visible information only.

@@ -83,9 +83,9 @@ Each prompt below is complete. Copy it as is.
 ## Putting them in the app (from a phone)
 
 1. Save each image with the file name shown above (`lady.png`, `auntie.png`, …). JPG or WebP is fine too.
-2. In Safari open github.com/ameerthadani2/Mah-jong-Madness, switch to branch `claude/p2p-taiwanese-mahjong-app-9lzdls`, and go to `apps/mobile/assets/avatars/`. If you don't see **Add file**, tap **aA → Request Desktop Website**.
+2. In Safari open github.com/ameerthadani2/Mah-jong-Madness, switch to the branch you work on, and go to `apps/mobile/assets/avatars/`. If you don't see **Add file**, tap **aA → Request Desktop Website**.
 3. **Add file → Upload files**, pick the images, **Commit changes**.
-4. The **Import avatar art** workflow crops each image to a square, shrinks it to 384×384, switches the app to use it, then rebuilds the web preview and the Expo Go update. Characters you haven't uploaded keep their drawn portrait, so you can upload one at a time.
+4. The **Import avatar art** workflow crops each image to a square, shrinks it to 384×384, switches the app to use it, then rebuilds the web preview. Characters you haven't uploaded keep their drawn portrait, so you can upload one at a time.
 
 Upload a better version any time by uploading a file with the same name.
 
