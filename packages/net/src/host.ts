@@ -28,6 +28,7 @@ import { commitFor, deriveSeed, isSecret, makeSecret, verifyReveals, type Commit
 import type { Audit, CeremonyRestart, ClientMessage, HostMessage, RestartCause, SeatInfo } from './messages';
 import type { Transport, Unsubscribe } from './transport';
 import { randomHex } from './sha256';
+import { cleanText } from './text';
 
 export type HostPhase = 'lobby' | 'commit' | 'reveal' | 'playing' | 'hand_over' | 'match_over';
 
@@ -478,7 +479,8 @@ export class TableHost {
     if (!msg || typeof msg !== 'object' || typeof (msg as { t?: unknown }).t !== 'string') return;
     switch (msg.t) {
       case 'join': {
-        const name = typeof msg.name === 'string' ? msg.name : '';
+        // Seat names reach every player at the table: cleaned like any other free text (see text.ts).
+        const name = cleanText(msg.name, 24);
         const avatar = typeof msg.avatar === 'string' ? msg.avatar.slice(0, 8) : undefined;
         const wantSeat = Number.isInteger(msg.wantSeat) && (msg.wantSeat as number) >= 0 && (msg.wantSeat as number) <= 3 ? (msg.wantSeat as number) : undefined;
         const token = typeof msg.token === 'string' && /^[0-9a-f]{32}$/.test(msg.token) ? msg.token : undefined;
@@ -540,14 +542,18 @@ export class TableHost {
         seat.ready = true;
         if (this.seats.every((s) => s.isBot || !s.connected || s.ready)) this.afterHand();
         return;
-      case 'chat':
-        if (typeof msg.text !== 'string' || !msg.text.trim()) return;
+      case 'chat': {
+        const text = cleanText(msg.text, 280);
+        if (!text) return;
         if (!this.takeToken(`chat:${seat.seat}`, CHAT_BUCKET)) return;
-        return this.broadcast(() => ({ t: 'chat', seat: seat.seat, name: seat.name, text: msg.text.slice(0, 280) }));
-      case 'emote':
-        if (typeof msg.emote !== 'string') return;
+        return this.broadcast(() => ({ t: 'chat', seat: seat.seat, name: seat.name, text }));
+      }
+      case 'emote': {
+        const emote = cleanText(msg.emote, 16);
+        if (!emote) return;
         if (!this.takeToken(`emote:${seat.seat}`, EMOTE_BUCKET)) return;
-        return this.broadcast(() => ({ t: 'emote', seat: seat.seat, emote: msg.emote.slice(0, 16) }));
+        return this.broadcast(() => ({ t: 'emote', seat: seat.seat, emote }));
+      }
       default:
         return;
     }
@@ -571,6 +577,7 @@ export class TableHost {
     if (!seat && token) {
       // Reconnect with the rejoin token — the only way to reclaim a seat. Names and user ids are public and never trusted.
       seat = this.seats.find((s) => s.token === token);
+      if (seat && this.seatedElsewhere(userId, seat)) return this.refuseSecondSeat(from);
       if (seat) {
         if (seat.connected && seat.peerId && seat.peerId !== from) {
           // The token is live on another connection: kick the old one (the newest device wins, like PokerBros).
@@ -582,6 +589,7 @@ export class TableHost {
     if (!seat) {
       // Mid-match (or a restored table waiting for its players) only token holders may sit.
       if (this.phase !== 'lobby' || this.pendingRestart) return this.sendTo(from, { t: 'error', code: 'full', message: 'Match already in progress.' });
+      if (this.seatedElsewhere(userId)) return this.refuseSecondSeat(from);
       seat = (wantSeat !== undefined && this.seats[wantSeat] && !this.seats[wantSeat].peerId && !this.seats[wantSeat].isBot ? this.seats[wantSeat] : undefined) ?? this.seats.find((s) => !s.peerId && !s.isBot);
       if (!seat) return this.sendTo(from, { t: 'error', code: 'full', message: 'Table is full.' });
       seat.peerId = from;
@@ -589,7 +597,7 @@ export class TableHost {
     }
     // Hosts serialised by older builds marked departed humans as bots named '… (away)'. A human binding to the seat takes it back.
     if (seat.isBot && seat.name.endsWith('(away)')) seat.isBot = false;
-    seat.name = name.slice(0, 24) || `Player ${seat.seat + 1}`;
+    seat.name = name || `Player ${seat.seat + 1}`;
     seat.avatar = avatar;
     seat.userId = userId ?? seat.userId;
     seat.connected = true;
@@ -621,6 +629,19 @@ export class TableHost {
       this.sendTo(from, { t: 'commits', handNumber: this.snapshot.handNumber, commits: this.commits() });
       this.sendTo(from, { t: 'reveal_request', handNumber: this.snapshot.handNumber });
     }
+  }
+
+  /**
+   * One seat per account: true when `userId` already holds a human seat other than `except`. Two
+   * seats would show one player two concealed hands. Tables without accounts (local play) send no id.
+   */
+  private seatedElsewhere(userId: string | undefined, except?: SeatState): boolean {
+    if (!userId) return false;
+    return this.seats.some((s) => s !== except && !s.isBot && s.userId === userId && (s.peerId !== null || this.phase !== 'lobby'));
+  }
+
+  private refuseSecondSeat(from: string): void {
+    this.sendTo(from, { t: 'error', code: 'already_seated', message: 'This account already has a seat at this table.' });
   }
 
   /**
