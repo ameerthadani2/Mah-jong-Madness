@@ -15,7 +15,10 @@
     "namePlaceholder": "俱樂部名稱",
     "preset": "預設規則",
     "approval": "成員加入前需要核准",
-    "button": "建立"
+    "button": "建立",
+    "fourWindsTitle": "經營俱樂部需要四風俱樂部會員",
+    "fourWindsBody": "訂閱四風俱樂部即可建立並經營最多 3 個俱樂部。加入俱樂部和在俱樂部打牌永遠免費。",
+    "fourWindsButton": "查看四風俱樂部"
   },
   "mine": "我的俱樂部",
   "none": "你還沒有加入任何俱樂部。",
@@ -25,11 +28,33 @@
   "loadingClub": "載入俱樂部中…",
   "tableLabel": "%{name} 的牌桌",
   "code": "代碼 %{code}",
-  "members": "%{n} 位成員",
+  "members": {
+    "makeAdmin": "設為管理員",
+    "makeMember": "改為一般會員",
+    "transfer": "轉讓負責人",
+    "transferConfirm": "要把俱樂部轉讓給 %{name} 嗎？你會改為管理員。",
+    "remove": "移除",
+    "removeConfirm": "要將 %{name} 移出俱樂部嗎？他也會離開正在進行的俱樂部牌桌。",
+    "ban": "封鎖",
+    "banConfirm": "要封鎖 %{name} 嗎？他會離開俱樂部和牌桌，解除封鎖前無法再加入。",
+    "bannedTitle": "已封鎖",
+    "unban": "解除封鎖",
+    "noBans": "目前沒有被封鎖的帳號。",
+    "confirm": "確認",
+    "danger": "退出或刪除",
+    "leave": "退出俱樂部",
+    "leaveConfirm": "要退出「%{name}」嗎？之後仍可再申請加入。",
+    "ownerLeave": "退出前請先把俱樂部轉讓給其他會員。",
+    "delete": "刪除俱樂部",
+    "deleteBody": "這會刪除俱樂部、排名和所有紀錄，並關閉所有牌桌。請輸入俱樂部名稱確認。",
+    "deletePlaceholder": "俱樂部名稱",
+    "deleteConfirm": "永久刪除"
+  },
   "tabs": {
     "tables": "牌桌（%{n}）",
     "standings": "排行榜",
-    "rules": "規則"
+    "rules": "規則",
+    "members": "會員（%{n}）"
   },
   "tables": {
     "opening": "開桌中…",
@@ -42,7 +67,19 @@
     "seats": "%{n} 個空位",
     "join": "加入牌桌",
     "pendingRequests": "待審申請",
-    "approve": "核准"
+    "approve": "核准",
+    "variant": "變化桌・不計排名",
+    "openVariant": "開變化桌",
+    "variantNote": "變化桌使用不同的規則，不計入排名。",
+    "openWithRules": "用這套規則開桌",
+    "close": "關桌",
+    "closeConfirm": "要關閉「%{label}」嗎？牌局會立即結束，不計入排名。",
+    "closed": "已關桌。",
+    "evict": "請 %{name} 離桌",
+    "evictConfirm": "要請 %{name} 離開這一桌嗎？他的位置會由電腦代打，而且不能再回到這一桌。",
+    "evicted": "已請 %{name} 離桌。",
+    "reject": "拒絕",
+    "ban": "封鎖"
   },
   "standing": "%{played} 場 · %{won} 勝",
   "rules": {
@@ -54,7 +91,10 @@
     "multipleWinners": "一炮多響",
     "passRule": "過水",
     "allowChi": "可以吃",
-    "adminOnly": "只有會長和管理員可以修改規則。"
+    "adminOnly": "只有會長和管理員可以修改規則。",
+    "botSkill": "俱樂部電腦等級",
+    "botSkillNote": "俱樂部的每一桌都使用這個等級的電腦。",
+    "houseNote": "會員開的桌一律使用這套房規。"
   },
   "signIn": {
     "title": "登入後才能使用俱樂部",
@@ -76,5 +116,66 @@
     "dealerStreakTai": "連莊每次加%{n}台",
     "deadWall": "留%{n}張",
     "startingPoints": "起始%{n}分"
+  },
+  "share": {
+    "button": "分享",
+    "message": "來 %{app} 加入我的俱樂部「%{name}」！俱樂部代碼 %{code}：%{link}"
+  },
+  "owner": {
+    "restricted": "俱樂部負責人的四風俱樂部會員已過期，續訂前只能同時開一桌。",
+    "renew": "續訂"
+  },
+  "ruleEditor": {
+    "presets": "從預設規則開始",
+    "presetConfirm": "要用「%{name}」取代你的修改嗎？",
+    "presetReplace": "取代",
+    "keep": "保留我的修改",
+    "save": "儲存房規",
+    "saved": "房規已儲存。",
+    "undo": "還原修改",
+    "unsaved": "尚未儲存的修改",
+    "noCap": "不封頂",
+    "groups": {
+      "stakes": "底台",
+      "length": "牌局長度",
+      "dealer": "莊家",
+      "wall": "留牌",
+      "claims": "吃碰與胡牌",
+      "flowers": "花牌",
+      "special": "天胡・地胡・人胡",
+      "speed": "速度"
+    },
+    "fields": {
+      "basePoints": "底",
+      "taiPoints": "每台分數",
+      "maxTai": "封頂台數",
+      "handsPerMatch": "輪莊次數",
+      "startingPoints": "起始分數",
+      "dealerTai": "莊家台數",
+      "dealerStreakTai": "連莊每次加台",
+      "drawKeepsDealer": "流局連莊",
+      "deadWallSize": "留牌張數",
+      "passRule": "過水",
+      "multipleWinners": "一炮多響",
+      "allowChi": "可以吃",
+      "noFlowerTai": "無花算一台",
+      "heavenlyTai": "天胡台數",
+      "earthlyTai": "地胡台數",
+      "humanlyTai": "人胡台數",
+      "speed": "速度",
+      "turnSeconds": "每手秒數",
+      "timeBankSeconds": "備用時間（秒）"
+    }
+  },
+  "errors": {
+    "cannotJoin": "你無法加入這個俱樂部。",
+    "ownLimit": "每個帳號最多只能經營 %{max} 個俱樂部。",
+    "lapsedCap": "負責人續訂四風俱樂部前，這個俱樂部只能同時開一桌。",
+    "confirmName": "請完整輸入俱樂部名稱才能刪除。",
+    "tableNotFound": "這一桌已經關閉了。",
+    "notBanned": "這個帳號沒有被封鎖。",
+    "adminOnAdmin": "只有負責人可以移除或封鎖管理員。",
+    "ownerProtected": "負責人不能被移除或封鎖。",
+    "notYourself": "你不能對自己這麼做。"
   }
 }

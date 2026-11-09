@@ -4,6 +4,7 @@
 import type { BotSkill, RuleSet } from '@mjm/engine';
 import { authorisedJson, globalFetch, type Authoriser, type FetchLike } from './http';
 import type { ReportPayload } from '../legal/reports';
+import type { Message } from '../logic/translate';
 
 export { ApiError as ClubApiError, httpBase } from './http';
 
@@ -34,6 +35,23 @@ export interface ClubTable {
   players: Array<{ seat: number; name: string; userId?: string; isBot: boolean; connected: boolean }>;
   handNumber: number;
   scores: number[];
+  /** Opened by an owner or admin with rules other than the house rules: it never counts toward the standings. */
+  variant?: boolean;
+}
+
+/** An account banned from the club (only the owner and admins see the list). */
+export interface ClubBan {
+  userId: string;
+  name: string;
+  bannedAt: number;
+  by: string;
+}
+
+export interface ClubSettings {
+  membersCanOpenTables: boolean;
+  joinRequiresApproval: boolean;
+  /** Strength of the bots at every club table (servers before it existed send none: Club). */
+  botSkill?: BotSkill;
 }
 
 /**
@@ -50,12 +68,54 @@ export interface Club {
   /** Current season number (1 until the owner starts a new one). */
   season?: number;
   rules: RuleSet;
-  settings: { membersCanOpenTables: boolean; joinRequiresApproval: boolean };
+  settings: ClubSettings;
   memberCount?: number;
   joinRequiresApproval?: boolean;
   members?: ClubMember[];
   pending?: Array<{ userId: string; name: string; avatar?: string }>;
   tables?: ClubTable[];
+  /** Banned accounts; present for the owner and admins only. */
+  bans?: ClubBan[];
+  /** When the server saw the owner's Four Winds Club plan lapse (null or absent while it is active). */
+  ownerLapsedAt?: number | null;
+}
+
+/**
+ * The club server's owner-tool and Four Winds refusals as translated copy (`clubs.errors.*` and
+ * `clubs.create.fourWindsTitle`); null for anything else, which the generic error mapping handles.
+ */
+export function clubErrorMessage(e: unknown): Message | null {
+  const code = e && typeof e === 'object' && typeof (e as { code?: unknown }).code === 'string' ? (e as { code: string }).code : '';
+  const message = e && typeof e === 'object' && typeof (e as { message?: unknown }).message === 'string' ? (e as { message: string }).message : '';
+  if (code === 'fourwinds_required') return { key: 'clubs.create.fourWindsTitle' };
+  const own = /^You can own at most (\d+) clubs/i.exec(message);
+  if (own) return { key: 'clubs.errors.ownLimit', params: { max: Number(own[1]) } };
+  const known: Array<[RegExp, string]> = [
+    [/^You cannot join this club/i, 'clubs.errors.cannotJoin'],
+    [/open table until its owner renews/i, 'clubs.errors.lapsedCap'],
+    [/^Type the club's name to confirm/i, 'clubs.errors.confirmName'],
+    [/^Table not found/i, 'clubs.errors.tableNotFound'],
+    [/^That account is not banned/i, 'clubs.errors.notBanned'],
+    [/^Only the owner can remove an admin/i, 'clubs.errors.adminOnAdmin'],
+    [/^The owner cannot be removed/i, 'clubs.errors.ownerProtected'],
+    [/^You cannot do that to yourself/i, 'clubs.errors.notYourself'],
+  ];
+  const hit = known.find(([re]) => re.test(message));
+  return hit ? { key: hit[1] } : null;
+}
+
+/** A link to share a club: `https://<domain>/c/<CODE>` with a link domain (the form `push/deeplink.ts` opens), else `<scheme>://club/<CODE>`. */
+export function clubLink(code: string, opts: { scheme: string; domain?: string }): string {
+  const c = encodeURIComponent(code.trim().toUpperCase());
+  return opts.domain ? `https://${opts.domain}/c/${c}` : `${opts.scheme}://club/${c}`;
+}
+
+/** Days a club keeps its full table cap after the owner's plan lapses (the server's `CLUB_LIMITS.ownerGraceMs`). */
+export const OWNER_GRACE_DAYS = 7;
+
+/** True when the club is down to one open table because its owner's plan lapsed past the grace. */
+export function ownerRestricted(club: Pick<Club, 'ownerLapsedAt'>, now = Date.now()): boolean {
+  return typeof club.ownerLapsedAt === 'number' && now - club.ownerLapsedAt >= OWNER_GRACE_DAYS * 86_400_000;
 }
 
 /**
@@ -81,14 +141,31 @@ function call<T>(ctx: ClubContext, method: string, path: string, body?: unknown)
 const enc = encodeURIComponent;
 
 export const clubsApi = {
-  create: (ctx: ClubContext, name: string, rules: Partial<RuleSet>, settings?: Partial<Club['settings']>) => call<Club>(ctx, 'POST', '/api/clubs', { name, rules, settings }),
+  /** Once the store is live the server answers 403 `fourwinds_required` unless the player holds The Four Winds Club. */
+  create: (ctx: ClubContext, name: string, rules: Partial<RuleSet>, settings?: Partial<ClubSettings>) => call<Club>(ctx, 'POST', '/api/clubs', { name, rules, settings }),
   join: (ctx: ClubContext, code: string) => call<{ club: Club; status: 'joined' | 'pending' | 'already' }>(ctx, 'POST', `/api/clubs/${enc(code)}/join`, {}),
   get: (ctx: ClubContext, code: string) => call<Club>(ctx, 'GET', `/api/clubs/${enc(code)}`),
   /** The signed-in player's clubs; `userId` is the server account id. */
   mine: (ctx: ClubContext, userId: string) => call<Club[]>(ctx, 'GET', `/api/users/${enc(userId)}/clubs`),
-  update: (ctx: ClubContext, code: string, patch: { name?: string; description?: string; rules?: Partial<RuleSet>; settings?: Partial<Club['settings']> }) => call<Club>(ctx, 'PATCH', `/api/clubs/${enc(code)}`, patch),
+  update: (ctx: ClubContext, code: string, patch: { name?: string; description?: string; rules?: Partial<RuleSet>; settings?: Partial<ClubSettings> }) => call<Club>(ctx, 'PATCH', `/api/clubs/${enc(code)}`, patch),
   approve: (ctx: ClubContext, code: string, userId: string) => call<Club>(ctx, 'POST', `/api/clubs/${enc(code)}/members/${enc(userId)}/approve`, {}),
+  /** Owner or admin: turn down a pending request. */
+  reject: (ctx: ClubContext, code: string, userId: string) => call<Club>(ctx, 'POST', `/api/clubs/${enc(code)}/members/${enc(userId)}/reject`, {}),
+  /** Owner or admin removing a member (they also leave the club's live tables), or a member leaving (their own id). */
   remove: (ctx: ClubContext, code: string, userId: string) => call<Club>(ctx, 'DELETE', `/api/clubs/${enc(code)}/members/${enc(userId)}`, {}),
+  /** Leave the club (the owner must pass it on first). */
+  leave: (ctx: ClubContext, code: string, myUserId: string) => call<Club>(ctx, 'DELETE', `/api/clubs/${enc(code)}/members/${enc(myUserId)}`, {}),
+  /** Owner only: make a member an admin or a plain member, or pass the club on (`owner`). */
+  setRole: (ctx: ClubContext, code: string, userId: string, role: ClubMember['role']) => call<Club>(ctx, 'POST', `/api/clubs/${enc(code)}/members/${enc(userId)}/role`, { role }),
+  /** Owner or admin: ban an account (it leaves the club and its tables and cannot come back). */
+  ban: (ctx: ClubContext, code: string, userId: string) => call<Club>(ctx, 'POST', `/api/clubs/${enc(code)}/bans`, { userId }),
+  unban: (ctx: ClubContext, code: string, userId: string) => call<Club>(ctx, 'DELETE', `/api/clubs/${enc(code)}/bans/${enc(userId)}`, {}),
+  /** Owner or admin: end a table at once (nothing counts toward the standings). */
+  closeTable: (ctx: ClubContext, code: string, table: string) => call<Club>(ctx, 'POST', `/api/clubs/${enc(code)}/tables/${enc(table)}/close`, {}),
+  /** Owner or admin: take a player off a table (a bot plays their seat; they cannot come back to it). */
+  evict: (ctx: ClubContext, code: string, table: string, userId: string) => call<{ seats: number }>(ctx, 'POST', `/api/clubs/${enc(code)}/tables/${enc(table)}/evict`, { userId }),
+  /** Owner only: delete the club; `confirm` repeats its name. Its tables close. */
+  deleteClub: (ctx: ClubContext, code: string, confirm: string) => call<unknown>(ctx, 'DELETE', `/api/clubs/${enc(code)}`, { confirm }),
   openTable: (ctx: ClubContext, code: string, opts: { label?: string; rules?: Partial<RuleSet>; botSkill?: BotSkill }) => call<ClubTable>(ctx, 'POST', `/api/clubs/${enc(code)}/tables`, opts),
   standings: (ctx: ClubContext, code: string) => call<ClubMember[]>(ctx, 'GET', `/api/clubs/${enc(code)}/standings`),
   /** Owner only: archive this season's points and start the next season from zero (re-read the club afterwards). */

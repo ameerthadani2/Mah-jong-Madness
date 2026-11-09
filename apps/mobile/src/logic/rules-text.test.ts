@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { BOT_SKILLS, DEFAULT_RULES, describeRules, RULE_PRESETS, rulesFromPreset, SPEED_PRESETS, type BotSkill, type GameSpeed } from '@mjm/engine';
-import { botDescription, botLabel, presetDescription, presetName, rulesStakes, rulesSummary, speedLabel } from './rules-text';
+import { BOT_SKILLS, DEFAULT_RULES, describeRules, RULE_LIMITS, RULE_PRESETS, rulesFromPreset, SPEED_PRESETS, type BotSkill, type GameSpeed } from '@mjm/engine';
+import { botDescription, botLabel, choosePreset, matchingPreset, presetDescription, presetName, RULE_GROUPS, rulesStakes, rulesSummary, sameRules, setRule, speedLabel } from './rules-text';
 import { translator } from './translator.fixture';
 
 const en = translator('en');
@@ -54,6 +54,47 @@ describe('rule and bot labels', () => {
   it('keeps the English preset copy in the locale file in step with the engine', () => {
     for (const p of RULE_PRESETS) expect(en(`settings.presets.${p.id}`)).toBe(p.description);
     for (const k of Object.keys(BOT_SKILLS) as BotSkill[]) expect(en(`common.bots.${k}`)).toBe(BOT_SKILLS[k].description);
+  });
+});
+
+describe('the rule editor model', () => {
+  it('covers every rule field exactly once, numbers within the engine limits, with labels in both languages', () => {
+    const keys = RULE_GROUPS.flatMap((g) => g.fields.map((f) => f.key));
+    expect([...keys].sort()).toEqual((Object.keys(DEFAULT_RULES) as string[]).sort());
+    expect(new Set(keys).size).toBe(keys.length);
+    expect(keys).toHaveLength(19);
+    for (const g of RULE_GROUPS) {
+      expect(en(`clubs.ruleEditor.groups.${g.id}`)).toBeTruthy();
+      expect(zh(`clubs.ruleEditor.groups.${g.id}`)).toBeTruthy();
+      for (const f of g.fields) {
+        expect(en(`clubs.ruleEditor.fields.${f.key}`)).toBeTruthy();
+        expect(zh(`clubs.ruleEditor.fields.${f.key}`)).toMatch(/[一-鿿]/);
+        if (f.kind === 'number') expect(RULE_LIMITS[f.key]).toBeDefined();
+      }
+    }
+  });
+
+  it('keeps each change within the limits and sets the clocks with the speed', () => {
+    expect(setRule(DEFAULT_RULES, 'basePoints', 99_999).basePoints).toBe(RULE_LIMITS.basePoints[1]);
+    expect(setRule(DEFAULT_RULES, 'deadWallSize', -4).deadWallSize).toBe(RULE_LIMITS.deadWallSize[0]);
+    expect(setRule(DEFAULT_RULES, 'drawKeepsDealer', false).drawKeepsDealer).toBe(false);
+    const turbo = setRule(DEFAULT_RULES, 'speed', 'turbo');
+    expect([turbo.speed, turbo.turnSeconds, turbo.timeBankSeconds]).toEqual(['turbo', SPEED_PRESETS.turbo.turnSeconds, SPEED_PRESETS.turbo.timeBankSeconds]);
+  });
+
+  it('applies a preset as the baseline, keeps edits made after it, and asks before a preset overwrites edits', () => {
+    const big = choosePreset(DEFAULT_RULES, DEFAULT_RULES, 'big');
+    expect(big.action).toBe('apply');
+    const baseline = (big as { rules: typeof DEFAULT_RULES }).rules;
+    expect(matchingPreset(baseline)).toBe('big');
+    // An edit after the preset stays; the rules no longer match the preset.
+    const edited = setRule(baseline, 'dealerTai', 3);
+    expect(edited.basePoints).toBe(baseline.basePoints);
+    expect(matchingPreset(edited)).toBeNull();
+    expect(sameRules(edited, baseline)).toBe(false);
+    // Another preset over those edits asks first; confirming applies it.
+    expect(choosePreset(edited, baseline, 'small')).toEqual({ action: 'confirm' });
+    expect(choosePreset(edited, baseline, 'small', true)).toEqual({ action: 'apply', rules: rulesFromPreset('small') });
   });
 });
 

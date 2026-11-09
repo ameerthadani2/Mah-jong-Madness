@@ -3,7 +3,22 @@
  * plus `nameZh` / `labelZh` fields; Chinese mahjong terms (底, 台, 一炮多響, 過水 …)
  * stay Chinese in every language. Pure: callers pass `t` and the current locale.
  */
-import { BOT_SKILLS, ruleExtras, ruleExtraText, SPEED_PRESETS, type BotSkill, type GameSpeed, type RuleExtra, type RulePreset, type RuleSet } from '@mjm/engine';
+import {
+  BOT_SKILLS,
+  RULE_LIMITS,
+  RULE_PRESETS,
+  ruleExtras,
+  ruleExtraText,
+  rulesFromPreset,
+  sanitizeRules,
+  SPEED_PRESETS,
+  withSpeed,
+  type BotSkill,
+  type GameSpeed,
+  type RuleExtra,
+  type RulePreset,
+  type RuleSet,
+} from '@mjm/engine';
 import type { Locale } from '../i18n/resolve';
 import { localized, type Translate } from './translate';
 
@@ -69,4 +84,63 @@ export function botLabel(skill: BotSkill, locale: Locale, short = false): string
 /** English comes from the engine; other languages from `common.bots.<skill>`. */
 export function botDescription(skill: BotSkill, t: Translate, locale: Locale): string {
   return locale === 'en' ? BOT_SKILLS[skill].description : t(`common.bots.${skill}`);
+}
+
+// ------------------------------------------------------------------ the rule editor's model
+
+export type NumericRule = keyof typeof RULE_LIMITS;
+export type BooleanRule = 'drawKeepsDealer' | 'allowChi' | 'multipleWinners' | 'passRule' | 'noFlowerTai';
+
+/** A rule the editor shows: a number within `RULE_LIMITS` (stepped by `step`), an on/off switch, or the speed chips. */
+export type RuleField = { key: NumericRule; kind: 'number'; step: number } | { key: BooleanRule; kind: 'toggle' } | { key: 'speed'; kind: 'speed' };
+
+export interface RuleGroup {
+  /** Its heading is `clubs.ruleEditor.groups.<id>`; each field's label `clubs.ruleEditor.fields.<key>`. */
+  id: 'stakes' | 'length' | 'dealer' | 'wall' | 'claims' | 'flowers' | 'special' | 'speed';
+  fields: RuleField[];
+}
+
+const num = (key: NumericRule, step = 1): RuleField => ({ key, kind: 'number', step });
+const toggle = (key: BooleanRule): RuleField => ({ key, kind: 'toggle' });
+
+/** Every field of a rule set, each exactly once, in the order the editor shows them. */
+export const RULE_GROUPS: readonly RuleGroup[] = [
+  { id: 'stakes', fields: [num('basePoints', 10), num('taiPoints', 10), num('maxTai')] },
+  { id: 'length', fields: [num('handsPerMatch'), num('startingPoints', 100)] },
+  { id: 'dealer', fields: [num('dealerTai'), num('dealerStreakTai'), toggle('drawKeepsDealer')] },
+  { id: 'wall', fields: [num('deadWallSize', 2)] },
+  { id: 'claims', fields: [toggle('passRule'), toggle('multipleWinners'), toggle('allowChi')] },
+  { id: 'flowers', fields: [toggle('noFlowerTai')] },
+  { id: 'special', fields: [num('heavenlyTai'), num('earthlyTai'), num('humanlyTai')] },
+  { id: 'speed', fields: [{ key: 'speed', kind: 'speed' }, num('turnSeconds'), num('timeBankSeconds', 5)] },
+];
+
+/** One rule changed, kept within its limits (a number past a limit stops at it). Choosing a speed sets its clocks. */
+export function setRule<K extends keyof RuleSet>(r: RuleSet, key: K, value: RuleSet[K]): RuleSet {
+  if (key === 'speed') return withSpeed(r, value as GameSpeed);
+  if (key in RULE_LIMITS && typeof value === 'number') {
+    const [lo, hi] = RULE_LIMITS[key as NumericRule];
+    return sanitizeRules({ ...r, [key]: Math.min(hi, Math.max(lo, Math.trunc(value))) }, r);
+  }
+  return sanitizeRules({ ...r, [key]: value }, r);
+}
+
+/** True when two rule sets agree in every field. */
+export function sameRules(a: RuleSet, b: RuleSet): boolean {
+  return (Object.keys(a) as Array<keyof RuleSet>).every((k) => a[k] === b[k]);
+}
+
+/** The preset these rules are exactly, if any. */
+export function matchingPreset(r: RuleSet): string | null {
+  return RULE_PRESETS.find((p) => sameRules(rulesFromPreset(p.id), r))?.id ?? null;
+}
+
+/**
+ * Pressing a preset chip. A preset sets a baseline; edits made after it stay until another preset
+ * is chosen. With edits on top of the baseline the chip asks first (`confirm`), so nothing is
+ * overwritten silently; `force` is the answer to that question.
+ */
+export function choosePreset(current: RuleSet, baseline: RuleSet, presetId: string, force = false): { action: 'apply'; rules: RuleSet } | { action: 'confirm' } {
+  if (!force && !sameRules(current, baseline)) return { action: 'confirm' };
+  return { action: 'apply', rules: rulesFromPreset(presetId) };
 }

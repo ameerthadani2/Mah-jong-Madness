@@ -15,7 +15,10 @@
     "namePlaceholder": "Club name",
     "preset": "House rules preset",
     "approval": "Approve members before they join",
-    "button": "Create"
+    "button": "Create",
+    "fourWindsTitle": "Running a club comes with The Four Winds Club",
+    "fourWindsBody": "Create and run up to 3 clubs with The Four Winds Club. Joining a club and playing in it is always free.",
+    "fourWindsButton": "See The Four Winds Club"
   },
   "mine": "My clubs",
   "none": "You are not in any club yet.",
@@ -25,11 +28,33 @@
   "loadingClub": "Loading club…",
   "tableLabel": "%{name}'s table",
   "code": "Code %{code}",
-  "members": "%{n} members",
+  "members": {
+    "makeAdmin": "Make admin",
+    "makeMember": "Make member",
+    "transfer": "Make owner",
+    "transferConfirm": "Make %{name} the owner? You become an admin.",
+    "remove": "Remove",
+    "removeConfirm": "Remove %{name} from the club? They also leave any club table they are at.",
+    "ban": "Ban",
+    "banConfirm": "Ban %{name}? They leave the club and its tables and cannot join again until unbanned.",
+    "bannedTitle": "Banned",
+    "unban": "Unban",
+    "noBans": "Nobody is banned.",
+    "confirm": "Confirm",
+    "danger": "Leave or delete",
+    "leave": "Leave club",
+    "leaveConfirm": "Leave %{name}? You can ask to join again later.",
+    "ownerLeave": "Pass the club to another member before you leave.",
+    "delete": "Delete club",
+    "deleteBody": "This deletes the club, its standings and its history, and closes its tables. Type the club's name to confirm.",
+    "deletePlaceholder": "Club name",
+    "deleteConfirm": "Delete for good"
+  },
   "tabs": {
     "tables": "Tables (%{n})",
     "standings": "Standings",
-    "rules": "Rules"
+    "rules": "Rules",
+    "members": "Members (%{n})"
   },
   "tables": {
     "opening": "Opening…",
@@ -42,7 +67,19 @@
     "seats": "%{n} seats",
     "join": "Join table",
     "pendingRequests": "Pending requests",
-    "approve": "Approve"
+    "approve": "Approve",
+    "variant": "Variant · not ranked",
+    "openVariant": "Open a variant table",
+    "variantNote": "A variant table plays other rules and never counts toward the standings.",
+    "openWithRules": "Open with these rules",
+    "close": "Close table",
+    "closeConfirm": "Close %{label}? The match ends now and counts for nothing.",
+    "closed": "Table closed.",
+    "evict": "Remove %{name}",
+    "evictConfirm": "Remove %{name} from this table? A bot plays their seat and they cannot come back to it.",
+    "evicted": "%{name} was removed from the table.",
+    "reject": "Reject",
+    "ban": "Ban"
   },
   "standing": "%{played} matches · %{won} wins",
   "rules": {
@@ -54,7 +91,10 @@
     "multipleWinners": "一炮多響 multiple winners",
     "passRule": "過水 pass rule",
     "allowChi": "Allow chi",
-    "adminOnly": "Only the owner and admins can change rules."
+    "adminOnly": "Only the owner and admins can change rules.",
+    "botSkill": "Club bots",
+    "botSkillNote": "Every table in this club plays with these bots.",
+    "houseNote": "Tables members open always use these house rules."
   },
   "signIn": {
     "title": "Sign in to use clubs",
@@ -76,5 +116,66 @@
     "dealerStreakTai": "連莊 +%{n}台 a hand",
     "deadWall": "dead wall %{n}",
     "startingPoints": "start %{n}"
+  },
+  "share": {
+    "button": "Share",
+    "message": "Join my club %{name} on %{app}. Club code %{code}: %{link}"
+  },
+  "owner": {
+    "restricted": "The owner's Four Winds Club plan has lapsed, so this club can have one open table until it is renewed.",
+    "renew": "Renew"
+  },
+  "ruleEditor": {
+    "presets": "Start from a preset",
+    "presetConfirm": "Replace your changes with %{name}?",
+    "presetReplace": "Replace",
+    "keep": "Keep my changes",
+    "save": "Save house rules",
+    "saved": "House rules saved.",
+    "undo": "Undo changes",
+    "unsaved": "Unsaved changes",
+    "noCap": "none",
+    "groups": {
+      "stakes": "Stakes",
+      "length": "Match length",
+      "dealer": "Dealer",
+      "wall": "Dead wall",
+      "claims": "Claims and wins",
+      "flowers": "Flowers",
+      "special": "天胡 · 地胡 · 人胡",
+      "speed": "Speed"
+    },
+    "fields": {
+      "basePoints": "底 base points",
+      "taiPoints": "Points per 台",
+      "maxTai": "封頂 cap on 台",
+      "handsPerMatch": "Dealer rotations",
+      "startingPoints": "Starting points",
+      "dealerTai": "Dealer 台",
+      "dealerStreakTai": "連莊 extra 台 per streak hand",
+      "drawKeepsDealer": "流局連莊 a drawn hand keeps the dealer",
+      "deadWallSize": "Tiles left undrawn",
+      "passRule": "過水 pass rule",
+      "multipleWinners": "一炮多響 multiple winners",
+      "allowChi": "Allow chi 吃",
+      "noFlowerTai": "無花 1台 with no flowers",
+      "heavenlyTai": "天胡 (dealer wins on the deal) 台",
+      "earthlyTai": "地胡 (first draw) 台",
+      "humanlyTai": "人胡 (dealer's first discard) 台",
+      "speed": "Speed",
+      "turnSeconds": "Seconds per turn",
+      "timeBankSeconds": "Time bank (seconds)"
+    }
+  },
+  "errors": {
+    "cannotJoin": "You cannot join this club.",
+    "ownLimit": "You can own at most %{max} clubs.",
+    "lapsedCap": "This club can have only one open table until its owner renews The Four Winds Club.",
+    "confirmName": "Type the club's name exactly to delete it.",
+    "tableNotFound": "That table has already closed.",
+    "notBanned": "That account is not banned.",
+    "adminOnAdmin": "Only the owner can remove or ban an admin.",
+    "ownerProtected": "The owner cannot be removed or banned.",
+    "notYourself": "You cannot do that to yourself."
   }
 }
