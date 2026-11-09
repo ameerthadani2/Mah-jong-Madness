@@ -25,7 +25,7 @@ PokerBros takes no rake; clubs set and keep it. Public estimates put it at a few
 
 Decided for launch (plan Phase 4): we ship the coaching subscriptions, diamonds and cosmetics only. The club economy stays free and points-only until it has been reviewed by counsel in each launch market.
 
-| PokerBros mechanic | Mahjong Madness at launch |
+| PokerBros mechanic | Mahjong Mania at launch |
 | --- | --- |
 | Premium currency ladder | **Yes.** Diamonds at 60 per dollar tier, with the bonus on bigger packs stated exactly. |
 | Club renewals by capacity | **No.** Clubs are free, with the server's fair-use caps. Revisit only once clubs show demand. |
@@ -36,7 +36,7 @@ Decided for launch (plan Phase 4): we ship the coaching subscriptions, diamonds 
 | VIP cards | **Not at launch.** Nothing a VIP card would bundle exists yet. |
 | Offline protection behind VIP | **No: free for everyone.** Crash and disconnect resume is a core promise. |
 
-| chess.com mechanic | Mahjong Madness at launch |
+| chess.com mechanic | Mahjong Mania at launch |
 | --- | --- |
 | Metered free taster | **Yes.** 1 full hand review a day, 1 Puzzle Rush a day; daily puzzle, drills, every lesson, Beginner and Club bots free. Meters reset at local midnight by the server's clock once the app has seen it. |
 | Coaching tiers | **Two** (below). A third tier waits until move-by-move explanations exist. |

@@ -8,6 +8,8 @@ import { colors, fonts, nameFont, space } from '../theme';
 import { Button, Card, H2, P, Pill, Row, ScreenHeader, StrokeText } from '../components/Ui';
 import { AvatarPlate, seatAvatarId } from '../components/Avatars';
 import { Icon } from '../components/Icons';
+import { APP_NAME, APP_SCHEMES, LINK_DOMAIN } from '../config';
+import { tableLink } from '../push/deeplink';
 
 export function LobbyScreen() {
   const app = useApp();
@@ -56,7 +58,17 @@ export function LobbyScreen() {
             </StrokeText>
           </View>
           <Row style={{ flexWrap: 'wrap', justifyContent: 'center', rowGap: 6 }}>
-            <Button small kind="secondary" icon="share" title={t('lobby.share')} onPress={() => void Share.share({ message: t('lobby.shareMessage', { code: session.roomCode }) })} />
+            <Button
+              small
+              kind="secondary"
+              icon="share"
+              title={t('lobby.share')}
+              onPress={() =>
+                void Share.share({
+                  message: t('lobby.shareMessage', { app: t('common.appName', { name: APP_NAME }), code: session.roomCode, link: tableLink(session.roomCode, { scheme: APP_SCHEMES[0] ?? 'mahjongmania', domain: LINK_DOMAIN }) }),
+                })
+              }
+            />
             <Pill text={session.mode === 'online' ? t('lobby.serverTable') : t('lobby.onDevice')} icon="shield" tone="gold" />
           </Row>
         </Card>

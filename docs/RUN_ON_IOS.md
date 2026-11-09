@@ -1,4 +1,4 @@
-# Running Mahjong Madness on iOS
+# Running Mahjong Mania on iOS
 
 Three routes, from quickest to most permanent. All of them start with:
 
@@ -62,14 +62,14 @@ First build and TestFlight upload (EAS does the Apple paperwork for you):
 ```bash
 eas build --platform ios --profile production
 ```
-* EAS asks for your Apple ID (the one on the Developer Program). It registers the bundle id `com.mahjongmadness.app`, creates the distribution certificate and provisioning profile, and stores them in your Expo account. Answer **yes** to letting EAS manage credentials.
+* EAS asks for your Apple ID (the one on the Developer Program). It registers the bundle id `com.mahjongmania.app`, creates the distribution certificate and provisioning profile, and stores them in your Expo account. Answer **yes** to letting EAS manage credentials.
 * The cloud build takes 10–20 minutes. You can close the terminal; `eas build:list` shows status.
 
 ```bash
 eas submit --platform ios --latest --profile manual
 ```
-* `--profile manual` makes EAS ask for what it needs. (The `production` submit profile reads App Store Connect API key secrets that only the GitHub TestFlight workflow has.) On first run EAS asks for an App Store Connect API key or your Apple ID, and creates the App Store Connect app record if it does not exist yet (it will ask for the app name "Mahjong Madness" and the SKU).
-* Processing in App Store Connect takes 5–30 minutes. Then open **App Store Connect → Apps → Mahjong Madness → TestFlight**, click the build, answer "No" to the encryption question if asked (the plist already declares non-exempt encryption = false), and add yourself under **Internal Testing**. Install TestFlight on the iPhone, accept the invite, tap Install.
+* `--profile manual` makes EAS ask for what it needs. (The `production` submit profile reads App Store Connect API key secrets that only the GitHub TestFlight workflow has.) On first run EAS asks for an App Store Connect API key or your Apple ID, and creates the App Store Connect app record if it does not exist yet (it will ask for the app name "Mahjong Mania" and the SKU).
+* Processing in App Store Connect takes 5–30 minutes. Then open **App Store Connect → Apps → Mahjong Mania → TestFlight**, click the build, answer "No" to the encryption question if asked (the plist already declares non-exempt encryption = false), and add yourself under **Internal Testing**. Install TestFlight on the iPhone, accept the invite, tap Install.
 * External testers (up to 10,000) need a short Beta App Review; internal testers (up to 100 people on your team) do not.
 
 Each later release:

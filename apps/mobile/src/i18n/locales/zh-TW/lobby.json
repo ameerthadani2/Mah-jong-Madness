@@ -4,7 +4,7 @@
   "title": "牌桌 %{code}",
   "shareCode": "分享這個代碼",
   "share": "分享",
-  "shareMessage": "來我的 Mahjong Madness 牌桌打牌：%{code}",
+  "shareMessage": "來我的%{app}牌桌打牌：%{code}\n%{link}",
   "serverTable": "伺服器牌桌",
   "onDevice": "在這台裝置上",
   "seats": "座位",

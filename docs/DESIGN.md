@@ -1,6 +1,6 @@
 # Visual design: Tycoon Parlour
 
-Mahjong Madness looks like a Codigames idle-tycoon game (Idle Supermarket Tycoon, Idle Theme Park Tycoon): bright, chunky, illustrated and friendly, and unmistakably a commercial game. Three complete directions were built and compared side by side. Tycoon Parlour won; Jade & Lacquer (deep jade felt, walnut rail, gold leaf) and Neo Arcade (navy glass cards, geometric tiles) were runners-up and are good sources for premium table themes.
+Mahjong Mania looks like a Codigames idle-tycoon game (Idle Supermarket Tycoon, Idle Theme Park Tycoon): bright, chunky, illustrated and friendly, and unmistakably a commercial game. Three complete directions were built and compared side by side. Tycoon Parlour won; Jade & Lacquer (deep jade felt, walnut rail, gold leaf) and Neo Arcade (navy glass cards, geometric tiles) were runners-up and are good sources for premium table themes.
 
 Player avatars are the exception to the cartoon style: shaded caricature portraits in the PokerBros vein (see `docs/screenshot-avatars.png`).
 

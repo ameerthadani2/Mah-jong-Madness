@@ -48,12 +48,18 @@ export const NATIVE_BUILD: number | null = parseBuildNumber(Application.nativeBu
 const storeUrls = (extra.storeUrls ?? {}) as { ios?: unknown; android?: unknown };
 export const STORE_URLS: { ios: string; android: string } = {
   ios: str(storeUrls.ios) ?? 'https://apps.apple.com/app/id0000000000',
-  android: str(storeUrls.android) ?? `https://play.google.com/store/apps/details?id=${APP_ID ?? 'com.mahjongmadness.app'}`,
+  android: str(storeUrls.android) ?? `https://play.google.com/store/apps/details?id=${APP_ID ?? 'com.mahjongmania.app'}`,
 };
 
 /** Deep-link schemes this build answers to (APP_SCHEME, plus the bundle id when Google sign-in registers it). */
 const scheme = Constants.expoConfig?.scheme as string | string[] | undefined;
-export const APP_SCHEMES: string[] = (Array.isArray(scheme) ? scheme : scheme ? [scheme] : ['mahjongmadness']).filter((s) => typeof s === 'string' && s);
+export const APP_SCHEMES: string[] = (Array.isArray(scheme) ? scheme : scheme ? [scheme] : ['mahjongmania']).filter((s) => typeof s === 'string' && s);
+
+/** The product name (APP_NAME at build time; Mahjong Mania by default). The Chinese name is the locale's `common.appName`. */
+export const APP_NAME: string = str(Constants.expoConfig?.name) ?? 'Mahjong Mania';
+
+/** The web domain for shared table links (EXPO_PUBLIC_LINK_DOMAIN, e.g. play.example.com); absent → links use the app scheme. */
+export const LINK_DOMAIN: string | undefined = str(process.env.EXPO_PUBLIC_LINK_DOMAIN)?.replace(/^https?:\/\//, '').replace(/\/.*$/, '') || undefined;
 
 /** The EAS project id; Expo push tokens need it, so without one push stays off. */
 export const EAS_PROJECT_ID: string | undefined = str(extra.eas?.projectId) ?? str(Constants.easConfig?.projectId);

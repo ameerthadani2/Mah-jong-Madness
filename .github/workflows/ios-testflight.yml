@@ -111,5 +111,5 @@ jobs:
       - name: Where to find it
         run: |
           echo "## Done" >> $GITHUB_STEP_SUMMARY
-          echo "Build list: https://expo.dev/accounts/${{ secrets.EXPO_OWNER || 'me' }}/projects/mahjong-madness/builds" >> $GITHUB_STEP_SUMMARY
-          echo "TestFlight: App Store Connect → Apps → Mahjong Madness → TestFlight → Internal Testing → add yourself." >> $GITHUB_STEP_SUMMARY
+          echo "Build list: https://expo.dev/accounts/${{ secrets.EXPO_OWNER || 'me' }}/projects/mahjongmania/builds" >> $GITHUB_STEP_SUMMARY
+          echo "TestFlight: App Store Connect → Apps → Mahjong Mania → TestFlight → Internal Testing → add yourself." >> $GITHUB_STEP_SUMMARY

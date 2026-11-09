@@ -11,10 +11,10 @@ Where to put things:
 
 | Item | Type | Default while absent | Why |
 | --- | --- | --- | --- |
-| `APP_NAME` | repo variable | `Mahjong Madness` | "Mahjong Madness" is already a live App Store title; choose a name that clears App Store and Play search and has a domain. |
-| `APP_SLUG` | repo variable | `mahjong-madness` | Expo project slug (lower-case, hyphens). |
-| `APP_SCHEME` | repo variable | `mahjongmadness` | Deep-link scheme (letters only). |
-| `APP_BUNDLE_ID` | repo variable | `com.mahjongmadness.app` | iOS bundle id and Android package; reserve it in App Store Connect early, it cannot change after release. |
+| `APP_NAME` | repo variable | `Mahjong Mania` | The new name (owner decision, 9 Nov). Store title "Mahjong Mania: Taiwan 16", Chinese name 麻將狂熱 (瘋麻將 is taken). Run the trademark search (US, UK, TW) before reserving the bundle id. |
+| `APP_SLUG` | repo variable | `mahjongmania` | Expo project slug (lower-case, hyphens). |
+| `APP_SCHEME` | repo variable | `mahjongmania` | Deep-link scheme (letters only). |
+| `APP_BUNDLE_ID` | repo variable | `com.mahjongmania.app` | iOS bundle id and Android package (a placeholder until the trademark check clears the name); reserve it in App Store Connect early, it cannot change after release. |
 | `SIGNAL_URL` | repo variable | `ws://localhost:8787` | The game server address (`wss://…`) once Phase 3 is deployed; baked into builds. |
 | Repository visibility / LICENSE | decision | public, no licence | A public repo without a licence is "all rights reserved" but anyone can read it. Make it private now, or add a licence. The plan publishes the engine under Apache-2.0 after the rebrand. |
 

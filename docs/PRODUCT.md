@@ -1,6 +1,6 @@
 # Product definition
 
-**Mahjong Madness is the Taiwanese 16-tile Mahjong app you would trust with your friends' money and your own improvement.** Three pillars: play with anyone anywhere (clubs), get better every day (chess.com-style learning), and never wonder whether the deal was rigged (verifiable luck).
+**Mahjong Mania is the Taiwanese 16-tile Mahjong app you would trust with your friends' money and your own improvement.** Three pillars: play with anyone anywhere (clubs), get better every day (chess.com-style learning), and never wonder whether the deal was rigged (verifiable luck).
 
 ## Who it is for
 1. **Club organisers** (the PokerBros persona): someone who runs a weekly game for a group across Taipei, Vancouver and Sydney and wants their rules, their standings, no cheating and no arguments.

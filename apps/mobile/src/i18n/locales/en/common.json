@@ -1,5 +1,6 @@
 {
   "_review": "n/a",
+  "appName": "%{name}",
   "ok": "OK",
   "cancel": "Cancel",
   "back": "Back",
@@ -25,7 +26,7 @@
   },
   "boot": {
     "title": "This device cannot run fair games",
-    "body": "Mahjong Madness needs the system's secure random number generator to shuffle fairly, and it is not available here. Please update the app or your device's system software."
+    "body": "Mahjong Mania needs the system's secure random number generator to shuffle fairly, and it is not available here. Please update the app or your device's system software."
   },
   "rules": {
     "summary": "底%{base} / 台%{tai} · %{hands} rotations · %{speed} (%{turn}s + %{bank}s bank)"

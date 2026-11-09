@@ -1,4 +1,4 @@
-# Mahjong Madness 🀄
+# Mahjong Mania 🀄
 
 **Taiwanese 16-tile Mahjong (台灣麻將) for iOS and Android: verifiable online tables, clubs with house rules, and a coach that teaches you while you play.**
 
