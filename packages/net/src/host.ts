@@ -67,6 +67,14 @@ export interface HostOptions {
   botSkill?: BotSkill;
   /** Restore a previously serialised host (crash recovery). */
   restore?: SerializedHost;
+  /**
+   * Who may add bots and start the match, by the account bound to their seat: at a club table its
+   * opener and the club's owner and admins, at a private table its creator. Asked at the moment of
+   * the request, so a change of club roles applies at once. While nobody it accepts holds a
+   * connected seat, any seated player may (a table is never stuck because its opener walked away).
+   * Absent: every seated player may (local play, and tables opened without an account).
+   */
+  isController?: (userId: string | undefined) => boolean;
 }
 
 export interface HostEvent {
@@ -183,6 +191,7 @@ export class TableHost {
   private wins: number[] = [0, 0, 0, 0];
   /** Per-seat chat and emote allowances. */
   private readonly buckets = new Map<string, { tokens: number; at: number }>();
+  private readonly isController?: (userId: string | undefined) => boolean;
 
   constructor(
     private readonly transport: Transport,
@@ -199,6 +208,7 @@ export class TableHost {
     this.intermissionMs = (opts.intermissionSeconds ?? 12) * 1000;
     this.botNames = opts.botNames ?? DEFAULT_BOT_NAMES;
     this.botSkill = opts.botSkill ?? opts.restore?.botSkill ?? 'club';
+    this.isController = opts.isController;
     if (opts.restore) this.restore(opts.restore);
     this.unsubs.push(transport.onMessage((from, msg) => this.handle(from, msg as ClientMessage)));
     this.unsubs.push(
@@ -351,6 +361,40 @@ export class TableHost {
     free.avatar = [...prefs, ...DEFAULT_BOT_AVATARS].find((a) => !taken.has(a)) ?? DEFAULT_BOT_AVATARS[free.seat];
     this.broadcastLobby();
     return free.seat;
+  }
+
+  /**
+   * Take a player off the table for good (a club owner's eviction): every seat bound to `userId`.
+   * Its connection is told (`{t:'error', code:'evicted'}`) and dropped from the seat, and the seat
+   * forgets the account and its rejoin token, so nobody can reclaim it. In the lobby the seat is
+   * simply freed. During a match the table's bot plays the seat to the end: the seat keeps its
+   * place in the deal and its human flag, because every client freezes the set of bot seats when
+   * the match starts and would rightly flag a host that changed it. Returns the seats affected.
+   */
+  evictUser(userId: string, message = 'You were removed from this table.'): number[] {
+    const seats = this.seats.filter((s) => !s.isBot && s.userId === userId);
+    for (const seat of seats) {
+      if (seat.peerId && seat.connected && !seat.peerId.startsWith('gone-')) this.sendTo(seat.peerId, { t: 'error', code: 'evicted', message });
+      if (this.phase === 'lobby' && !this.pendingRestart) {
+        Object.assign(seat, { peerId: null, name: '', connected: false, token: undefined, ready: false, userId: undefined, avatar: undefined, commit: undefined, secret: undefined, supplied: undefined, left: undefined });
+        continue;
+      }
+      const wasHere = seat.connected;
+      const gone = seat.peerId ?? 'evicted';
+      seat.token = undefined;
+      seat.userId = undefined;
+      seat.name = this.botNames[seat.seat % this.botNames.length];
+      seat.left = true;
+      if (wasHere) this.onDisconnect(gone);
+      else seat.peerId = seat.peerId ?? `gone-evicted-${seat.seat}`;
+    }
+    if (seats.length) this.broadcastLobby();
+    return seats.map((s) => s.seat);
+  }
+
+  /** Send one message to every connected human at the table (a notice from the server, such as the club closing it). */
+  notifySeated(msg: HostMessage): void {
+    this.broadcast(() => msg);
   }
 
   removeBot(seat: number): void {
@@ -519,6 +563,7 @@ export class TableHost {
           if (seat.connected && !seat.isBot) this.retryCeremony();
           return;
         }
+        if (!this.mayControl(seat)) return this.refuseControl(from);
         try {
           this.start();
         } catch (e) {
@@ -527,6 +572,7 @@ export class TableHost {
         return;
       case 'add_bot':
         if (this.phase !== 'lobby' || this.pendingRestart) return;
+        if (!this.mayControl(seat)) return this.refuseControl(from);
         this.addBot();
         return;
       case 'action': {
@@ -638,6 +684,21 @@ export class TableHost {
       this.sendTo(from, { t: 'commits', handNumber: this.snapshot.handNumber, commits: this.commits() });
       this.sendTo(from, { t: 'reveal_request', handNumber: this.snapshot.handNumber });
     }
+  }
+
+  /**
+   * Whether this seated player may add bots or start the match (see `HostOptions.isController`).
+   * A bot never asks; a human seat with no controller connected at the table may.
+   */
+  private mayControl(seat: SeatState): boolean {
+    const accepts = this.isController;
+    if (!accepts) return true;
+    if (accepts(seat.userId)) return true;
+    return !this.seats.some((s) => !s.isBot && s.connected && s.userId !== undefined && accepts(s.userId));
+  }
+
+  private refuseControl(from: string): void {
+    this.sendTo(from, { t: 'error', code: 'not_controller', message: "Only the table's host or a club admin can add bots or start the match." });
   }
 
   /**

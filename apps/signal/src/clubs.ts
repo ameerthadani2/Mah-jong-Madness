@@ -550,6 +550,14 @@ export class ClubRegistry {
     return !!club && club.members.some((m) => m.userId === userId);
   }
 
+  /** True when the user is the club's owner or one of its admins. */
+  isAdmin(code: string, userId: string | undefined): boolean {
+    if (!userId) return false;
+    const club = this.clubs.get(code.toUpperCase());
+    const m = club?.members.find((x) => x.userId === userId);
+    return !!m && (m.role === 'owner' || m.role === 'admin');
+  }
+
   private newCode(): string {
     return uniqueCode((c) => this.clubs.has(c), 6, this.hex);
   }
@@ -893,6 +901,7 @@ export function clubGate(clubs: ClubRegistry): ClubGate {
       clubs.addTable(clubCode, userId, { code: roomCode, rules });
     },
     mayJoin: (clubCode, userId) => clubs.isMember(clubCode, userId),
+    isAdmin: (clubCode, userId) => clubs.isAdmin(clubCode, userId),
   };
 }
 

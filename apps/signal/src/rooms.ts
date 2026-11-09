@@ -54,6 +54,8 @@ interface Room {
   clubCode?: string;
   /** The account that opened the table; counts towards that account's `maxTablesPerUser`. */
   createdBy?: string;
+  /** Accounts the club took off this table: they may not come back to it. */
+  evicted?: Set<string>;
 }
 
 /**
@@ -70,6 +72,8 @@ export interface ClubGate {
   tableOpened(clubCode: string, roomCode: string, userId: string, rules: RuleSet): void;
   /** True when the user is a full member of the club (pending requests do not count). */
   mayJoin(clubCode: string, userId: string | undefined): boolean;
+  /** True when the user is the club's owner or an admin: they may add bots and start any of its tables. */
+  isAdmin?(clubCode: string, userId: string | undefined): boolean;
 }
 
 export interface RoomEvent {
@@ -96,6 +100,10 @@ export const TABLE_CAP = 'You already have the most tables open; finish or leave
 export const TABLE_CAP_CODE = 'table_cap';
 /** Sent when a user who is not a full member of the club tries to open or join one of its tables. */
 export const CLUB_MEMBERS_ONLY = 'Join the club first';
+/** Sent to everyone at a club table its owner or an admin closed, as `{t:'error', code:'closed', message}`. */
+export const TABLE_CLOSED_BY_CLUB = 'The club closed this table.';
+/** Sent to a player the club took off a table, as `{t:'error', code:'closed', message}` (and `code:'evicted'` from the table). */
+export const EVICTED_BY_CLUB = 'The club removed you from this table.';
 
 /** How long a table with nobody connected is kept after its last activity while a human holds a seat. */
 export const KEEP_ALIVE_MS = 15 * 60_000;
@@ -232,6 +240,7 @@ export class RoomRegistry {
       botSkill: isBotSkill(botSkill) ? botSkill : undefined,
       now: this.opts.now,
       restore,
+      isController: this.controllersOf(room),
     });
     host.onEvent((event) => {
       // While a human holds a seat (connected or not) the table lives 15 minutes past its last activity.
@@ -245,6 +254,20 @@ export class RoomRegistry {
     });
     room.table = { host, transport };
     room.host = transport.id;
+  }
+
+  /**
+   * Who may add bots and start at this table (see `HostOptions.isController`): its opener, and at
+   * a club table the club's owner and admins as the club says now. A table opened without an
+   * account has no controllers (anyone seated may).
+   */
+  private controllersOf(room: Room): ((userId: string | undefined) => boolean) | undefined {
+    if (!room.createdBy) return undefined;
+    return (userId) => {
+      if (!userId) return false;
+      if (userId === room.createdBy) return true;
+      return room.clubCode !== undefined && (this.opts.clubs?.isAdmin?.(room.clubCode, userId) ?? false);
+    };
   }
 
   private now(): number {
@@ -449,6 +472,10 @@ export class RoomRegistry {
           this.error(peer, CLUB_MEMBERS_ONLY);
           return peer.id;
         }
+        if (peer.userId && room.evicted?.has(peer.userId)) {
+          this.error(peer, ROOM_UNAVAILABLE, ROOM_UNAVAILABLE_CODE);
+          return peer.id;
+        }
         this.leave(peer);
         room.peers.add(peer.id);
         peer.room = room.code;
@@ -587,6 +614,56 @@ export class RoomRegistry {
   closeRoomByCode(code: string): void {
     const room = this.rooms.get(code.toUpperCase());
     if (room) this.closeRoom(room);
+  }
+
+  /**
+   * A club owner or admin closed this table: everyone in the room is told (`{t:'error',
+   * code:'closed', message}` from the server, and `{t:'error', code:'table_closed'}` from the
+   * table to each seated player) and released, then the table ends at once. Nothing is added to
+   * the standings (the close reports the room as gone, not as a finished match). False when no
+   * such room is live.
+   */
+  closeTable(code: string, message = TABLE_CLOSED_BY_CLUB): boolean {
+    const room = this.rooms.get(code.toUpperCase());
+    if (!room) return false;
+    room.table?.host.notifySeated({ t: 'error', code: 'table_closed', message });
+    const closed = JSON.stringify({ t: 'error', code: 'closed', message });
+    for (const id of room.peers) {
+      const peer = this.peers.get(id);
+      if (!peer) continue;
+      peer.room = null;
+      peer.socket.send(closed);
+    }
+    room.peers.clear();
+    this.closeRoom(room);
+    return true;
+  }
+
+  /**
+   * Take an account off a table (a club owner's eviction, a removed or banned member): its seat is
+   * played by the table's bot to the end of the match (freed in the lobby), each of its sockets in
+   * the room is told (`{t:'error', code:'closed', message}`) and leaves, and it may not come back
+   * to this table. Returns how many seats it held.
+   */
+  evictFromTable(code: string, userId: string, message = EVICTED_BY_CLUB): number {
+    const room = this.rooms.get(code.toUpperCase());
+    if (!room) return 0;
+    (room.evicted ??= new Set()).add(userId);
+    const seats = room.table?.host.evictUser(userId, message) ?? [];
+    const closed = JSON.stringify({ t: 'error', code: 'closed', message });
+    for (const id of [...room.peers]) {
+      const peer = this.peers.get(id);
+      if (!peer || peer.userId !== userId) continue;
+      peer.socket.send(closed);
+      this.leave(peer);
+    }
+    return seats.length;
+  }
+
+  /** Every live table of this club (for owner actions on a member). */
+  clubRooms(clubCode: string): string[] {
+    const club = clubCode.toUpperCase();
+    return [...this.rooms.values()].filter((r) => r.clubCode === club).map((r) => r.code);
   }
 
   hostedTable(code: string): TableHost | undefined {
