@@ -13,7 +13,7 @@
  * Every value that arrives from the API is typed `unknown` here and checked
  * before it is stored, so a malformed request becomes a `ClubError` (HTTP 4xx), not a crash.
  */
-import { randomHex, sanitizeRules, type RuleSet } from '@mjm/engine';
+import { BOT_SKILLS, randomHex, sanitizeRules, type BotSkill, type RuleSet } from '@mjm/engine';
 import type { HostEvent } from '@mjm/net';
 import { uniqueCode, type HexSource } from './codes';
 import { cleanField } from './limits';
@@ -63,14 +63,31 @@ export interface ClubTable {
   players: ClubTablePlayer[];
   handNumber: number;
   scores: number[];
+  /**
+   * Opened by an owner or admin with rules other than the club's house rules. A variant table never
+   * counts toward the standings. Absent in listings written before variants existed (read as false).
+   */
+  variant?: boolean;
 }
 
 export interface ClubSettings {
   membersCanOpenTables: boolean;
   joinRequiresApproval: boolean;
+  /**
+   * Strength of the bots at every table of this club (the opener's choice is not used). Always set
+   * by `sanitizeSettings`; optional only so settings written before it existed still type-check.
+   */
+  botSkill?: BotSkill;
 }
 
-export const DEFAULT_CLUB_SETTINGS: ClubSettings = { membersCanOpenTables: true, joinRequiresApproval: false };
+export const DEFAULT_CLUB_SETTINGS: ClubSettings = { membersCanOpenTables: true, joinRequiresApproval: false, botSkill: 'club' };
+
+/** An account banned from a club: it cannot rejoin, ask to join, or join the club's tables. */
+export interface ClubBan extends Identity {
+  bannedAt: number;
+  /** The owner or admin who banned them. */
+  by: string;
+}
 
 export interface Club {
   code: string;
@@ -88,6 +105,14 @@ export interface Club {
   seasonStartedAt?: number;
   /** Finished seasons, oldest first (at most `CLUB_LIMITS.seasonsKept`). */
   seasons?: SeasonRecord[];
+  /** Banned accounts (absent in clubs stored before bans existed). Shown to the owner and admins only. */
+  bans?: ClubBan[];
+  /**
+   * When the server first saw that the owner no longer holds The Four Winds Club, while the store
+   * is live; null or absent while their plan is active. After `CLUB_LIMITS.ownerGraceMs` the club
+   * may have only `CLUB_LIMITS.lapsedOpenTables` open table until the owner renews or passes it on.
+   */
+  ownerLapsedAt?: number | null;
 }
 
 /** A finished season: its final standings by season points. Points only; they have no monetary value. */
@@ -142,6 +167,14 @@ export const CLUB_LIMITS = {
   membersPerClub: 200,
   /** Tables per club that have not finished. */
   openTablesPerClub: 5,
+  /** Clubs one account may own (decision 5: a Four Winds Club subscriber may run up to 3). */
+  ownedClubsPerUser: 3,
+  /** How long a club keeps its full table cap after the owner's plan lapses. */
+  ownerGraceMs: 7 * DAY_MS,
+  /** Open tables a club may have once the owner's plan has lapsed past the grace. */
+  lapsedOpenTables: 1,
+  /** Banned accounts kept per club. */
+  bansPerClub: 500,
   nameLength: 40,
   descriptionLength: 280,
   labelLength: 40,
@@ -153,12 +186,24 @@ export const CLUB_LIMITS = {
 
 /** Keep only the known settings, and only when they are real booleans; anything else keeps `base`'s value. */
 export function sanitizeSettings(input: unknown, base: ClubSettings = DEFAULT_CLUB_SETTINGS): ClubSettings {
-  const out: ClubSettings = { membersCanOpenTables: base.membersCanOpenTables, joinRequiresApproval: base.joinRequiresApproval };
+  const out: ClubSettings = {
+    membersCanOpenTables: base.membersCanOpenTables,
+    joinRequiresApproval: base.joinRequiresApproval,
+    botSkill: isSkill(base.botSkill) ? base.botSkill : 'club',
+  };
   if (!input || typeof input !== 'object' || Array.isArray(input)) return out;
   const src = input as Record<string, unknown>;
   if (typeof src.membersCanOpenTables === 'boolean') out.membersCanOpenTables = src.membersCanOpenTables;
   if (typeof src.joinRequiresApproval === 'boolean') out.joinRequiresApproval = src.joinRequiresApproval;
+  if (isSkill(src.botSkill)) out.botSkill = src.botSkill;
   return out;
+}
+
+const isSkill = (v: unknown): v is BotSkill => typeof v === 'string' && Object.prototype.hasOwnProperty.call(BOT_SKILLS, v);
+
+/** True when two rule sets are the same in every field. */
+function sameRules(a: RuleSet, b: RuleSet): boolean {
+  return (Object.keys(a) as Array<keyof RuleSet>).every((k) => a[k] === b[k]);
 }
 
 /**
@@ -182,6 +227,9 @@ function normalise(c: Club): Club {
   c.season = Number.isInteger(c.season) && (c.season as number) >= 1 ? c.season : 1;
   c.seasonStartedAt = typeof c.seasonStartedAt === 'number' ? c.seasonStartedAt : c.createdAt;
   c.seasons = Array.isArray(c.seasons) ? c.seasons : [];
+  c.bans = Array.isArray(c.bans) ? c.bans : [];
+  c.ownerLapsedAt = typeof c.ownerLapsedAt === 'number' ? c.ownerLapsedAt : null;
+  for (const t of c.tables) t.variant = t.variant === true;
   for (const m of c.members) if (typeof m.seasonPoints !== 'number') m.seasonPoints = m.points;
   return c;
 }
@@ -207,7 +255,9 @@ export function moveMembershipsIn(clubs: Iterable<Club>, fromUserId: string, to:
     const fromMember = club.members.find((m) => m.userId === fromUserId);
     const fromPending = club.pending.find((p) => p.userId === fromUserId);
     const ownsIt = club.ownerId === fromUserId;
-    if (!fromMember && !fromPending && !ownsIt) continue;
+    const bans = club.bans ?? [];
+    const fromBan = bans.find((b) => b.userId === fromUserId);
+    if (!fromMember && !fromPending && !ownsIt && !fromBan) continue;
     changed.push(club.code);
     const toMember = club.members.find((m) => m.userId === to.userId);
     if (fromMember) {
@@ -228,6 +278,18 @@ export function moveMembershipsIn(clubs: Iterable<Club>, fromUserId: string, to:
       if (owner) owner.role = 'owner';
     }
     for (const t of club.tables) if (t.createdBy === fromUserId) t.createdBy = to.userId;
+    // A ban follows the account it was moved into, and beats any membership there (the owner's excepted).
+    if (fromBan) {
+      if (bans.some((b) => b.userId === to.userId)) club.bans = bans.filter((b) => b !== fromBan);
+      else {
+        fromBan.userId = to.userId;
+        fromBan.name = to.name;
+      }
+    }
+    if ((club.bans ?? []).some((b) => b.userId === to.userId)) {
+      club.members = club.members.filter((m) => m.userId !== to.userId || m.role === 'owner');
+      club.pending = club.pending.filter((p) => p.userId !== to.userId);
+    }
   }
   return changed;
 }
@@ -251,6 +313,11 @@ export function anonymiseUserIn(clubs: Map<string, Club>, userId: string): strin
     }
     const before = club.pending.length;
     club.pending = club.pending.filter((p) => p.userId !== userId);
+    for (const b of club.bans ?? []) {
+      if (b.userId !== userId) continue;
+      b.name = DELETED_PLAYER_NAME;
+      touched = true;
+    }
     if (club.ownerId === userId) {
       touched = true;
       const successor = club.members
@@ -532,6 +599,8 @@ export class ClubRegistry {
       season: 1,
       seasonStartedAt: this.now(),
       seasons: [],
+      bans: [],
+      ownerLapsedAt: null,
     };
     this.clubs.set(club.code, club);
     this.persist(club);
@@ -642,15 +711,32 @@ export class ClubRegistry {
     return m;
   }
 
-  /** Register a table (room) opened for this club. The caller creates the room. */
+  /**
+   * The rules and bot strength a new table opened by `actorId` plays with (house rules, decision 1):
+   * a member's table always uses the club's rules, whatever they asked for. An owner or admin may
+   * ask for other rules; such a table is a variant and never counts toward the standings. The bots
+   * are always the club's.
+   */
+  tableSetup(code: string, actorId: string, requested: unknown): { rules: RuleSet; variant: boolean; botSkill: BotSkill } {
+    const club = this.get(code);
+    const m = this.member(club, actorId);
+    const botSkill = club.settings.botSkill ?? DEFAULT_CLUB_SETTINGS.botSkill!;
+    if (!m || m.role === 'member' || requested === undefined || requested === null) return { rules: { ...club.rules }, variant: false, botSkill };
+    const rules = sanitizeRules(requested, club.rules);
+    return { rules, variant: !sameRules(rules, club.rules), botSkill };
+  }
+
+  /** Register a table (room) opened for this club. The caller creates the room with `tableSetup`'s rules. */
   addTable(code: string, actorId: string, table: { code: string; label?: unknown; rules?: unknown }): ClubTable {
     const club = this.get(code);
     const m = this.assertCanOpenTable(code, actorId);
     const label = table.label === undefined ? '' : textField(table.label, 'Table label', CLUB_LIMITS.labelLength);
+    const { rules, variant } = this.tableSetup(code, actorId, table.rules);
     const t: ClubTable = {
       code: table.code,
       label: label || cleanField(`${m.name}'s table`, CLUB_LIMITS.labelLength),
-      rules: sanitizeRules(table.rules, club.rules),
+      rules,
+      variant,
       createdBy: actorId,
       createdAt: this.now(),
       status: 'open',
@@ -693,8 +779,8 @@ export class ClubRegistry {
     const players = event.seats.map((s) => ({ seat: s.seat, name: s.name, userId: s.userId, isBot: s.isBot, connected: s.connected }));
     if (event.type === 'match_over' && event.handNumber >= 0) {
       const table = club.tables.find((t) => t.code === roomCode);
-      // A match is counted once, however many times its end is reported.
-      if (table?.status !== 'finished') {
+      // A match is counted once, however many times its end is reported, and only when it is a real club game.
+      if (table && table.status !== 'finished' && countsForStandings(club, table, event.seats)) {
         this.recordMatch(club.code, event.seats.map((s) => ({ userId: s.userId, points: event.scores[s.seat] ?? 0, handsWon: event.handsWon[s.seat] ?? 0 })));
       }
       this.updateTable(club.code, roomCode, { status: 'finished', players, scores: event.scores });
@@ -774,6 +860,21 @@ export class ClubRegistry {
   }
 }
 
+/**
+ * Whether a finished match at a club table moves the standings: not at a variant table (other
+ * rules than the house's), only with at least two different human club members seated, and never
+ * when one account held two seats (the table host refuses that; this guard stays in case it ever
+ * slips). A member alone against bots, or a member with a second account outside the club, scores
+ * nothing, so standings cannot be farmed against bots.
+ */
+export function countsForStandings(club: Club, table: ClubTable, seats: ReadonlyArray<{ userId?: string; isBot: boolean }>): boolean {
+  if (table.variant) return false;
+  const ids = seats.filter((s) => !s.isBot && s.userId).map((s) => s.userId!);
+  if (new Set(ids).size !== ids.length) return false;
+  const members = ids.filter((id) => club.members.some((m) => m.userId === id));
+  return members.length >= 2;
+}
+
 /** The room registry's view of the clubs: who may open and join club tables over the socket. */
 export function clubGate(clubs: ClubRegistry): ClubGate {
   return {
@@ -781,7 +882,8 @@ export function clubGate(clubs: ClubRegistry): ClubGate {
       if (!userId) return { error: 'Join the club first' };
       try {
         clubs.assertCanOpenTable(clubCode, userId);
-        return { rules: sanitizeRules(rules, clubs.club(clubCode).rules) };
+        const setup = clubs.tableSetup(clubCode, userId, rules);
+        return { rules: setup.rules, botSkill: setup.botSkill };
       } catch (e) {
         if (e instanceof ClubError) return { error: e.message };
         throw e;

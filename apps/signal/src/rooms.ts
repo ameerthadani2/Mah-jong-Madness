@@ -61,8 +61,11 @@ interface Room {
  * Every method is synchronous because the club registry keeps its clubs in memory.
  */
 export interface ClubGate {
-  /** The rules a new table for this club should use, or the reason the user may not open one. */
-  openTable(clubCode: string, userId: string | undefined, rules: unknown): { rules: RuleSet } | { error: string };
+  /**
+   * The rules a new table for this club should use (the house rules for a member) and its bots'
+   * strength (the club's, replacing the opener's choice), or the reason the user may not open one.
+   */
+  openTable(clubCode: string, userId: string | undefined, rules: unknown): { rules: RuleSet; botSkill?: BotSkill } | { error: string };
   /** Called once the room exists, to list the table in the club. */
   tableOpened(clubCode: string, roomCode: string, userId: string, rules: RuleSet): void;
   /** True when the user is a full member of the club (pending requests do not count). */
@@ -393,6 +396,7 @@ export class RoomRegistry {
           return peer.id;
         }
         let rules: unknown = msg.rules;
+        let botSkill: unknown = msg.botSkill;
         if (club !== undefined) {
           // Checked before the cooldown, so a refusal does not cost the peer its next create.
           const gate = this.opts.clubs?.openTable(club, peer.userId, msg.rules) ?? { error: CLUB_MEMBERS_ONLY };
@@ -401,6 +405,7 @@ export class RoomRegistry {
             return peer.id;
           }
           rules = gate.rules;
+          if (gate.botSkill !== undefined) botSkill = gate.botSkill;
         }
         if (!this.allow(peer, this.createsByUser, this.createsByIp)) {
           this.error(peer, CREATE_COOLDOWN);
@@ -412,7 +417,7 @@ export class RoomRegistry {
         const room: Room = { code, host: peer.id, peers: new Set([peer.id]), createdAt: this.now() };
         if (club !== undefined) room.clubCode = club;
         if (hosted && peer.userId) room.createdBy = peer.userId;
-        if (hosted) this.attachTable(room, rules, msg.botSkill);
+        if (hosted) this.attachTable(room, rules, botSkill);
         this.rooms.set(code, room);
         peer.room = code;
         if (club !== undefined && peer.userId && room.table) {

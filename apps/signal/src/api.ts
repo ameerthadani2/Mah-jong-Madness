@@ -15,7 +15,6 @@
  */
 import { randomUUID } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { sanitizeRules } from '@mjm/engine';
 import {
   AuthError,
   createGuest,
@@ -522,10 +521,11 @@ export function buildRoutes(deps: ApiDeps, opts: Pick<ApiOptions, 'reportIpLimit
       // Check permission and the open-table cap before a room exists, so a refusal leaves nothing behind.
       clubs.assertCanOpenTable(code, me.userId);
       const club = clubs.club(code);
-      const rules = sanitizeRules(body.rules, club.rules);
+      // House rules: a member's table uses the club's rules and every table the club's bots (decision 1).
+      const { rules, botSkill } = clubs.tableSetup(code, me.userId, body.rules);
       let room: string;
       try {
-        room = rooms.createHostedRoom({ rules, botSkill: body.botSkill, clubCode: club.code, createdBy: me.userId });
+        room = rooms.createHostedRoom({ rules, botSkill, clubCode: club.code, createdBy: me.userId });
       } catch (e) {
         if (e instanceof RoomLimitError) throw new ClubError('unavailable', e.message);
         throw e;

@@ -22,6 +22,8 @@ const event = (type: HostEvent['type'], handNumber: number, connected = true): H
   handNumber,
   handsWon: [1, 0, 0, 0],
 });
+/** The same event with Bob (a second human member) in seat 1, so a finished match counts toward the standings. */
+const withBob = (ev: HostEvent): HostEvent => ({ ...ev, seats: ev.seats.map((s) => (s.seat === 1 ? { ...s, userId: bob.userId, isBot: false } : s)) });
 
 type Out = { t: string; host?: string; room?: string; message?: string };
 
@@ -73,12 +75,13 @@ describe('club table status from room events', () => {
   it('keeps a finished table finished when a player disconnects afterwards, and counts the match once', () => {
     const clubs = new ClubRegistry();
     const club = clubs.createClub(alice, 'C');
+    clubs.joinClub(club.code, bob);
     clubs.addTable(club.code, alice.userId, { code: 'ROOM01' });
-    clubs.applyRoomEvent('ROOM01', event('lobby', 0));
+    clubs.applyRoomEvent('ROOM01', withBob(event('lobby', 0)));
     expect(clubs.club(club.code).tables[0].status).toBe('open');
-    clubs.applyRoomEvent('ROOM01', event('state', 1));
+    clubs.applyRoomEvent('ROOM01', withBob(event('state', 1)));
     expect(clubs.club(club.code).tables[0].status).toBe('playing');
-    clubs.applyRoomEvent('ROOM01', event('match_over', 1));
+    clubs.applyRoomEvent('ROOM01', withBob(event('match_over', 1)));
     expect(clubs.club(club.code).tables[0].status).toBe('finished');
     // The player leaves after the match: the host reports a state with the seat disconnected.
     clubs.applyRoomEvent('ROOM01', event('state', 1, false));
@@ -87,7 +90,7 @@ describe('club table status from room events', () => {
     // So it no longer counts against the cap.
     for (let i = 1; i < CLUB_LIMITS.openTablesPerClub + 1; i++) clubs.addTable(club.code, alice.userId, { code: `T${i}` });
     // A repeated match_over neither reopens the table nor counts the match twice.
-    clubs.applyRoomEvent('ROOM01', event('match_over', 1));
+    clubs.applyRoomEvent('ROOM01', withBob(event('match_over', 1)));
     const me = clubs.standings(club.code).find((m) => m.userId === alice.userId)!;
     expect(me.matchesPlayed).toBe(1);
     expect(me.points).toBe(300);
