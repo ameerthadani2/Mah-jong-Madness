@@ -1,13 +1,16 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
-import { RULE_PRESETS, rulesFromPreset, SPEED_PRESETS, withSpeed, type GameSpeed, type RuleSet } from '@mjm/engine';
+import { ScrollView, Share, StyleSheet, Text, TextInput, View } from 'react-native';
+import { BOT_SKILLS, RULE_PRESETS, rulesFromPreset, type BotSkill, type RuleSet } from '@mjm/engine';
 import { useApp } from '../app-state';
-import { clubsApi, httpBase, type Club, type ClubContext, type ClubMember } from '../api/clubs';
+import { clubErrorMessage, clubLink, clubsApi, httpBase, ownerRestricted, type Club, type ClubContext, type ClubMember, type ClubTable } from '../api/clubs';
 import { useAuth } from '../auth/AuthProvider';
+import { APP_NAME, APP_SCHEMES, LINK_DOMAIN } from '../config';
 import { createOnlineSession } from '../game/session';
 import { friendlyError } from '../logic/errors';
-import { presetName, rulesStakes, rulesSummary, speedLabel } from '../logic/rules-text';
+import { botLabel, presetName, rulesStakes, rulesSummary, sameRules } from '../logic/rules-text';
 import type { Translate } from '../logic/translate';
+import { canCreateClubs } from '../monetisation/wallet';
+import { useRemoteConfig } from '../telemetry/RemoteConfig';
 import { useT } from '../i18n';
 import { colors, fonts, nameFont, space } from '../theme';
 import { Button, Card, Chip, H2, P, Pill, Row, ScreenHeader, SectionLabel, Toggle } from '../components/Ui';
@@ -16,12 +19,19 @@ import { Icon } from '../components/Icons';
 import { AgeBlocked, AgeGate } from '../components/AgeGate';
 import { NoValueNotice } from '../components/LegalLinks';
 import { ReportPlayerSheet } from '../components/ReportPlayerSheet';
+import { RuleEditor } from '../components/RuleEditor';
 import { SignInPrompt } from '../components/SignInPrompt';
 import type { ReportTarget } from '../legal/reports';
 import { canStartSeason, sortStandings, standingPoints, type StandingsView } from '../legal/standings';
 import { useOnlineGuard } from '../legal/useOnlineGuard';
 
 const roleName = (role: ClubMember['role'] | 'guest', t: Translate) => t(`common.roles.${role}`);
+
+/** A club call's failure as copy: the owner-tool and Four Winds refusals have their own lines, the rest the generic mapping. */
+function clubErrorText(e: unknown, t: Translate): string {
+  const m = clubErrorMessage(e);
+  return m ? t(m.key, m.params) : friendlyError(e, t);
+}
 
 /** Club calls authenticated with the signed-in session. */
 function useClubContext(): ClubContext {
@@ -50,6 +60,10 @@ export function ClubsScreen() {
   useEffect(() => {
     if (ageOk) void connect();
   }, [connect, ageOk]);
+  // Once the store is live, running a club comes with The Four Winds Club; joining is always free.
+  const { config } = useRemoteConfig();
+  const [planNeeded, setPlanNeeded] = useState(false);
+  const mayCreate = !planNeeded && (config?.storeEnabled !== true || canCreateClubs(app.wallet));
   const [clubs, setClubs] = useState<Club[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [joinCode, setJoinCode] = useState('');
@@ -80,7 +94,13 @@ export function ClubsScreen() {
       await refresh();
       app.go({ name: 'club', code: club.code });
     } catch (e) {
-      setError(friendlyError(e, t));
+      // The server knows the plan better than this device: show the offer instead of an error.
+      if ((e as { code?: unknown } | null)?.code === 'fourwinds_required') {
+        setPlanNeeded(true);
+        setCreating(false);
+        return;
+      }
+      setError(clubErrorText(e, t));
     }
   };
   const join = async () => {
@@ -92,7 +112,7 @@ export function ClubsScreen() {
       if (r.status === 'pending') setError(t('clubs.join.requestSent'));
       else app.go({ name: 'club', code: r.club.code });
     } catch (e) {
-      setError(friendlyError(e, t));
+      setError(clubErrorText(e, t));
     }
   };
 
@@ -136,7 +156,18 @@ export function ClubsScreen() {
         </Card>
         <Card style={styles.col}>
           <H2>{t('clubs.create.title')}</H2>
-          {!creating ? (
+          {!mayCreate ? (
+            <View testID="club-fourwinds-offer" style={{ gap: 8 }}>
+              <Row>
+                <Icon name="crown" size={24} />
+                <P style={{ flex: 1, fontSize: 14 }}>{t('clubs.create.fourWindsTitle')}</P>
+              </Row>
+              <P dim style={{ fontSize: 12, lineHeight: 17 }}>
+                {t('clubs.create.fourWindsBody')}
+              </P>
+              <Button kind="premium" icon="crown" title={t('clubs.create.fourWindsButton')} onPress={() => app.go({ name: 'shop' })} />
+            </View>
+          ) : !creating ? (
             <Button title={t('clubs.create.new')} onPress={() => setCreating(true)} />
           ) : (
             <>
@@ -190,6 +221,13 @@ export function ClubsScreen() {
   );
 }
 
+/** An owner action waiting for the "are you sure" answer. */
+type Pending =
+  | { kind: 'close'; table: ClubTable }
+  | { kind: 'evict'; table: ClubTable; userId: string; name: string }
+  | { kind: 'remove' | 'ban' | 'transfer'; userId: string; name: string }
+  | { kind: 'leave' };
+
 export function ClubScreen({ code }: { code: string }) {
   const app = useApp();
   const auth = useAuth();
@@ -199,11 +237,20 @@ export function ClubScreen({ code }: { code: string }) {
   const [club, setClub] = useState<Club | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [tab, setTab] = useState<'tables' | 'standings' | 'rules'>('tables');
+  const [tab, setTab] = useState<'tables' | 'standings' | 'members' | 'rules'>('tables');
   const [view, setView] = useState<StandingsView>('season');
   const [confirmSeason, setConfirmSeason] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [reporting, setReporting] = useState<ReportTarget | null>(null);
+  const [pending, setPending] = useState<Pending | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteName, setDeleteName] = useState('');
+  /** Rules for a variant table being set up (owners and admins), or null. */
+  const [variant, setVariant] = useState<RuleSet | null>(null);
+  /** House rules being edited in the rules tab, or null while nothing has changed. */
+  const [draft, setDraft] = useState<RuleSet | null>(null);
+  /** Bumped after a save so the editor takes the saved rules as its new baseline. */
+  const [saves, setSaves] = useState(0);
   // A club reached from a notification or a link is gated like the Clubs list: no server call before 'ok'.
   const { entry } = useOnlineGuard();
 
@@ -235,40 +282,73 @@ export function ClubScreen({ code }: { code: string }) {
   }
   const members = club.members ?? [];
   const pendingList = club.pending ?? [];
+  const bans = club.bans ?? [];
   const me = members.find((m) => m.userId === user.userId);
+  const isOwner = me?.role === 'owner';
   const isAdmin = me?.role === 'owner' || me?.role === 'admin';
   const canOpen = !!me && (isAdmin || club.settings.membersCanOpenTables);
+  const roleOf = (userId: string) => members.find((m) => m.userId === userId)?.role;
+  /** Whether I may remove, ban or take this account off a table (the server checks the same). */
+  const outranks = (userId: string) => {
+    if (!isAdmin || userId === user.userId || userId === club.ownerId) return false;
+    return isOwner || roleOf(userId) !== 'admin';
+  };
 
-  const openTable = async () => {
+  /** Run an owner action; a club in the reply replaces the one shown. */
+  const act = async (run: () => Promise<unknown>, done?: string) => {
     setBusy(true);
     try {
-      const table = await clubsApi.openTable(ctx, club.code, { label: t('clubs.tableLabel', { name: user.name }), botSkill: app.settings.botSkill });
-      await joinTable(table.code);
+      const next = await run();
+      if (next && typeof next === 'object' && 'code' in next && 'name' in next) setClub(next as Club);
+      else await refresh();
+      setError(null);
+      setNotice(done ?? null);
+      return true;
     } catch (e) {
-      setError(friendlyError(e, t));
+      setError(clubErrorText(e, t));
+      return false;
+    } finally {
+      setBusy(false);
+      setPending(null);
+    }
+  };
+
+  const openTable = async (rules?: RuleSet) => {
+    setBusy(true);
+    try {
+      // The server opens a member's table under the house rules and the club's bots; only owners and admins send rules.
+      const table = await clubsApi.openTable(ctx, club.code, { label: t('clubs.tableLabel', { name: user.name }), ...(rules ? { rules } : {}) });
+      setVariant(null);
+      await joinTable(table.code, table.rules);
+    } catch (e) {
+      setError(clubErrorText(e, t));
     } finally {
       setBusy(false);
     }
   };
-  const joinTable = async (tableCode: string) => {
+  const joinTable = async (tableCode: string, rules: RuleSet = club.rules) => {
     setBusy(true);
     try {
-      const session = await createOnlineSession({ signalUrl: app.signalUrl, name: user.name, avatar: user.avatar, userId: user.userId, rules: club.rules, action: 'join', code: tableCode, clubCode: club.code, ...auth.tableAuth });
+      const session = await createOnlineSession({ signalUrl: app.signalUrl, name: user.name, avatar: user.avatar, userId: user.userId, rules, action: 'join', code: tableCode, clubCode: club.code, ...auth.tableAuth });
       app.setSession(session);
       app.go({ name: 'lobby' });
     } catch (e) {
-      setError(friendlyError(e, t));
+      setError(clubErrorText(e, t));
     } finally {
       setBusy(false);
     }
   };
-  const setRules = async (rules: Partial<RuleSet>) => {
-    try {
-      setClub(await clubsApi.update(ctx, club.code, { rules }));
-    } catch (e) {
-      setError(friendlyError(e, t));
+  const saveRules = async () => {
+    if (!draft) return;
+    if (await act(() => clubsApi.update(ctx, club.code, { rules: draft }), t('clubs.ruleEditor.saved'))) {
+      setDraft(null);
+      setSaves((n) => n + 1);
     }
   };
+  const share = () =>
+    void Share.share({
+      message: t('clubs.share.message', { name: club.name, app: t('common.appName', { name: APP_NAME }), code: club.code, link: clubLink(club.code, { scheme: APP_SCHEMES[0] ?? 'mahjongmania', domain: LINK_DOMAIN }) }),
+    });
 
   const season = club.season ?? 1;
   const startSeason = async () => {
@@ -287,12 +367,64 @@ export function ClubScreen({ code }: { code: string }) {
     }
   };
 
+  const confirmText = (p: Pending): string => {
+    switch (p.kind) {
+      case 'close':
+        return t('clubs.tables.closeConfirm', { label: p.table.label });
+      case 'evict':
+        return t('clubs.tables.evictConfirm', { name: p.name });
+      case 'remove':
+        return t('clubs.members.removeConfirm', { name: p.name });
+      case 'ban':
+        return t('clubs.members.banConfirm', { name: p.name });
+      case 'transfer':
+        return t('clubs.members.transferConfirm', { name: p.name });
+      case 'leave':
+        return t('clubs.members.leaveConfirm', { name: club.name });
+    }
+  };
+  const runPending = async (p: Pending) => {
+    switch (p.kind) {
+      case 'close':
+        return void act(() => clubsApi.closeTable(ctx, club.code, p.table.code), t('clubs.tables.closed'));
+      case 'evict':
+        return void act(() => clubsApi.evict(ctx, club.code, p.table.code, p.userId), t('clubs.tables.evicted', { name: p.name }));
+      case 'remove':
+        return void act(() => clubsApi.remove(ctx, club.code, p.userId));
+      case 'ban':
+        return void act(() => clubsApi.ban(ctx, club.code, p.userId));
+      case 'transfer':
+        return void act(() => clubsApi.setRole(ctx, club.code, p.userId, 'owner'));
+      case 'leave':
+        if (await act(() => clubsApi.leave(ctx, club.code, user.userId))) app.back();
+        return;
+    }
+  };
+  const deleteClub = async () => {
+    if (await act(() => clubsApi.deleteClub(ctx, club.code, deleteName))) app.back();
+  };
+
+  /** The "are you sure" card, shown right where the action was asked for. */
+  const confirmHere = (match: (p: Pending) => boolean) =>
+    pending && match(pending) ? (
+      <Card tone="gold" style={{ gap: 8 }} testID="club-confirm">
+        <P style={{ fontSize: 13, lineHeight: 18 }}>{confirmText(pending)}</P>
+        <Row>
+          <Button small kind="danger" title={busy ? '…' : t('clubs.members.confirm')} onPress={() => void runPending(pending)} disabled={busy} />
+          <Button small kind="ghost" title={t('common.cancel')} onPress={() => setPending(null)} />
+        </Row>
+      </Card>
+    ) : null;
+  const aboutUser = (userId: string) => (p: Pending) => p.kind !== 'close' && p.kind !== 'evict' && p.kind !== 'leave' && p.userId === userId;
+
   const live = (club.tables ?? []).filter((t) => t.status !== 'finished');
+  const restricted = ownerRestricted(club);
   return (
     <ScrollView contentContainerStyle={styles.wrap}>
       <ScreenHeader
         title={club.name}
         onBack={app.back}
+        right={<Button small kind="secondary" icon="share" title={t('clubs.share.button')} onPress={share} testID="club-share" />}
         sub={
           <Row gap={6} style={{ marginTop: 2 }}>
             <Pill text={t('clubs.code', { code: club.code })} tone="gold" size="sm" />
@@ -301,46 +433,98 @@ export function ClubScreen({ code }: { code: string }) {
           </Row>
         }
       />
-      {error && <Pill tone="danger" icon="warning" text={error} />}
-      {notice && <Pill tone="ok" icon="check" text={notice} />}
-      <Row>
-        {(['tables', 'standings', 'rules'] as const).map((id) => (
-          <Chip key={id} label={id === 'tables' ? t('clubs.tabs.tables', { n: live.length }) : id === 'standings' ? t('clubs.tabs.standings') : t('clubs.tabs.rules')} selected={tab === id} onPress={() => setTab(id)} />
+      {error && <Pill tone="danger" icon="warning" wrap text={error} />}
+      {notice && <Pill tone="ok" icon="check" wrap text={notice} />}
+      {restricted && (
+        <Card tone="gold" style={{ gap: 6 }}>
+          <P style={{ fontSize: 13, lineHeight: 18 }}>{t('clubs.owner.restricted')}</P>
+          {isOwner && <Button small kind="premium" icon="crown" title={t('clubs.owner.renew')} onPress={() => app.go({ name: 'shop' })} style={{ alignSelf: 'flex-start' }} />}
+        </Card>
+      )}
+      <Row style={{ flexWrap: 'wrap', rowGap: 6 }}>
+        {(['tables', 'standings', 'members', 'rules'] as const).map((id) => (
+          <Chip
+            key={id}
+            label={id === 'tables' ? t('clubs.tabs.tables', { n: live.length }) : id === 'members' ? t('clubs.tabs.members', { n: members.length }) : id === 'standings' ? t('clubs.tabs.standings') : t('clubs.tabs.rules')}
+            selected={tab === id}
+            onPress={() => setTab(id)}
+          />
         ))}
       </Row>
 
       {tab === 'tables' && (
         <>
-          {canOpen && <Button title={busy ? t('clubs.tables.opening') : t('clubs.tables.open')} onPress={() => void openTable()} disabled={busy} />}
-          {live.length === 0 && <Pill text={canOpen ? t('clubs.tables.noneCanOpen') : t('clubs.tables.none')} icon="play" />}
-          {live.map((table) => (
-            <Card key={table.code} style={{ gap: 4 }}>
-              <Row style={{ justifyContent: 'space-between' }}>
-                <H2>{table.label}</H2>
-                <Pill text={table.status === 'open' ? t('clubs.tables.waiting') : t('clubs.tables.hand', { n: table.handNumber + 1 })} tone={table.status === 'open' ? 'ok' : 'gold'} />
-              </Row>
-              <P dim style={{ fontSize: 12 }}>
-                {rulesSummary(table.rules, t, locale)}
+          {canOpen && (
+            <Row style={{ flexWrap: 'wrap', rowGap: 6 }}>
+              <Button title={busy ? t('clubs.tables.opening') : t('clubs.tables.open')} onPress={() => void openTable()} disabled={busy} />
+              {isAdmin && !variant && <Button kind="secondary" title={t('clubs.tables.openVariant')} onPress={() => setVariant({ ...club.rules })} disabled={busy} />}
+            </Row>
+          )}
+          {isAdmin && variant && (
+            <Card style={{ gap: 8 }}>
+              <H2>{t('clubs.tables.openVariant')}</H2>
+              <P dim style={{ fontSize: 12, lineHeight: 17 }}>
+                {t('clubs.tables.variantNote')}
               </P>
-              <Row style={{ flexWrap: 'wrap' }}>
-                {table.players.map((p) => (
-                  <Pill key={p.seat} icon={p.isBot ? 'bot' : undefined} text={p.connected ? p.name : t('clubs.tables.away', { name: p.name })} />
-                ))}
-                {table.players.filter((p) => !p.isBot).length < 4 && <Pill text={t('clubs.tables.seats', { n: 4 - table.players.filter((p) => !p.isBot).length })} tone="ok" />}
+              <RuleEditor value={variant} onChange={setVariant} baseline={club.rules} />
+              <P dim style={{ fontSize: 12 }}>
+                {rulesSummary(variant, t, locale)}
+              </P>
+              <Row>
+                <Button title={t('clubs.tables.openWithRules')} onPress={() => void openTable(variant)} disabled={busy} />
+                <Button kind="ghost" title={t('common.cancel')} onPress={() => setVariant(null)} />
               </Row>
-              <Button small kind="secondary" title={busy ? '…' : t('clubs.tables.join')} onPress={() => void joinTable(table.code)} disabled={busy || !me} />
             </Card>
-          ))}
+          )}
+          {live.length === 0 && <Pill text={canOpen ? t('clubs.tables.noneCanOpen') : t('clubs.tables.none')} icon="play" />}
+          {live.map((table) => {
+            const humans = table.players.filter((p) => !p.isBot);
+            return (
+              <Card key={table.code} style={{ gap: 4 }}>
+                <Row style={{ justifyContent: 'space-between', flexWrap: 'wrap', rowGap: 4 }}>
+                  <H2>{table.label}</H2>
+                  <Row gap={6}>
+                    {table.variant && <Pill text={t('clubs.tables.variant')} tone="gold" size="sm" />}
+                    <Pill text={table.status === 'open' ? t('clubs.tables.waiting') : t('clubs.tables.hand', { n: table.handNumber + 1 })} tone={table.status === 'open' ? 'ok' : 'gold'} />
+                  </Row>
+                </Row>
+                <P dim style={{ fontSize: 12 }}>
+                  {rulesSummary(table.rules, t, locale)}
+                </P>
+                <Row style={{ flexWrap: 'wrap' }}>
+                  {table.players.map((p) => (
+                    <Pill key={p.seat} icon={p.isBot ? 'bot' : undefined} text={p.connected ? p.name : t('clubs.tables.away', { name: p.name })} />
+                  ))}
+                  {humans.length < 4 && <Pill text={t('clubs.tables.seats', { n: 4 - humans.length })} tone="ok" />}
+                </Row>
+                <Row style={{ flexWrap: 'wrap', rowGap: 6 }}>
+                  <Button small kind="secondary" title={busy ? '…' : t('clubs.tables.join')} onPress={() => void joinTable(table.code, table.rules)} disabled={busy || !me} />
+                  {isAdmin && <Button small kind="danger" title={t('clubs.tables.close')} onPress={() => setPending({ kind: 'close', table })} disabled={busy} />}
+                  {humans
+                    .filter((p): p is typeof p & { userId: string } => !!p.userId && outranks(p.userId))
+                    .map((p) => (
+                      <Button key={p.seat} small kind="ghost" title={t('clubs.tables.evict', { name: p.name })} onPress={() => setPending({ kind: 'evict', table, userId: p.userId, name: p.name })} disabled={busy} />
+                    ))}
+                </Row>
+                {confirmHere((p) => (p.kind === 'close' || p.kind === 'evict') && p.table.code === table.code)}
+              </Card>
+            );
+          })}
           {pendingList.length > 0 && isAdmin && (
             <Card>
               <H2>{t('clubs.tables.pendingRequests')}</H2>
               {pendingList.map((p) => (
-                <Row key={p.userId} style={{ justifyContent: 'space-between' }}>
+                <Row key={p.userId} style={{ justifyContent: 'space-between', flexWrap: 'wrap', rowGap: 6 }}>
                   <Row>
                     <AvatarPlate id={p.avatar} size={34} />
                     <P>{p.name}</P>
                   </Row>
-                  <Button small title={t('clubs.tables.approve')} onPress={() => void clubsApi.approve(ctx, club.code, p.userId).then(setClub).catch((e: unknown) => setError(friendlyError(e, t)))} />
+                  <Row gap={6}>
+                    <Button small title={t('clubs.tables.approve')} onPress={() => void act(() => clubsApi.approve(ctx, club.code, p.userId))} disabled={busy} />
+                    <Button small kind="ghost" title={t('clubs.tables.reject')} onPress={() => void act(() => clubsApi.reject(ctx, club.code, p.userId))} disabled={busy} />
+                    <Button small kind="ghost" title={t('clubs.tables.ban')} onPress={() => setPending({ kind: 'ban', userId: p.userId, name: p.name })} disabled={busy} />
+                  </Row>
+                  {confirmHere(aboutUser(p.userId))}
                 </Row>
               ))}
             </Card>
@@ -356,26 +540,26 @@ export function ClubScreen({ code }: { code: string }) {
           </Row>
           <NoValueNotice />
           {sortStandings(members, view).map((m, i) => (
-              <Row key={m.userId} style={styles.standing}>
-                <View style={[styles.rankBadge, i === 0 && { backgroundColor: colors.gold }]}>
-                  <Text style={styles.rank}>{i + 1}</Text>
-                </View>
-                <AvatarPlate id={m.avatar} size={36} />
-                <View style={{ flex: 1 }}>
-                  <Text style={[{ color: colors.ink }, nameFont(m.name)]}>
-                    {m.name} {m.role !== 'member' ? <Text style={{ color: colors.goldDim, fontSize: 11 }}>{roleName(m.role, t)}</Text> : null}
-                  </Text>
-                  <P dim style={{ fontSize: 12 }}>
-                    {t('clubs.standing', { played: m.matchesPlayed, won: m.matchesWon })}
-                  </P>
-                </View>
-                <Text style={{ color: standingPoints(m, view) >= 0 ? colors.okText : colors.dangerText, fontFamily: fonts.display, fontSize: 18 }}>
-                  {standingPoints(m, view) >= 0 ? '+' : ''}
-                  {standingPoints(m, view)}
+            <Row key={m.userId} style={styles.standing}>
+              <View style={[styles.rankBadge, i === 0 && { backgroundColor: colors.gold }]}>
+                <Text style={styles.rank}>{i + 1}</Text>
+              </View>
+              <AvatarPlate id={m.avatar} size={36} />
+              <View style={{ flex: 1 }}>
+                <Text style={[{ color: colors.ink }, nameFont(m.name)]}>
+                  {m.name} {m.role !== 'member' ? <Text style={{ color: colors.goldDim, fontSize: 11 }}>{roleName(m.role, t)}</Text> : null}
                 </Text>
-                {m.userId !== user.userId && <Button small kind="ghost" title={t('clubs.report')} onPress={() => setReporting({ userId: m.userId, name: m.name })} />}
-              </Row>
-            ))}
+                <P dim style={{ fontSize: 12 }}>
+                  {t('clubs.standing', { played: m.matchesPlayed, won: m.matchesWon })}
+                </P>
+              </View>
+              <Text style={{ color: standingPoints(m, view) >= 0 ? colors.okText : colors.dangerText, fontFamily: fonts.display, fontSize: 18 }}>
+                {standingPoints(m, view) >= 0 ? '+' : ''}
+                {standingPoints(m, view)}
+              </Text>
+              {m.userId !== user.userId && <Button small kind="ghost" title={t('clubs.report')} onPress={() => setReporting({ userId: m.userId, name: m.name })} />}
+            </Row>
+          ))}
           {canStartSeason(me?.role) &&
             (confirmSeason ? (
               <Card tone="gold" style={{ gap: 8 }}>
@@ -392,32 +576,97 @@ export function ClubScreen({ code }: { code: string }) {
       )}
       <ReportPlayerSheet visible={reporting !== null} target={reporting} onClose={() => setReporting(null)} />
 
+      {tab === 'members' && (
+        <>
+          <Card>
+            {members.map((m) => (
+              <View key={m.userId} style={styles.standing}>
+                <Row>
+                  <AvatarPlate id={m.avatar} size={34} />
+                  <Text style={[{ color: colors.ink, flex: 1 }, nameFont(m.name)]}>{m.name}</Text>
+                  <Pill text={roleName(m.role, t)} tone={m.role === 'owner' ? 'gold' : 'neutral'} size="sm" />
+                </Row>
+                {outranks(m.userId) && (
+                  <Row style={{ flexWrap: 'wrap', rowGap: 6, marginTop: 4 }}>
+                    {isOwner && m.role === 'member' && <Button small kind="secondary" title={t('clubs.members.makeAdmin')} onPress={() => void act(() => clubsApi.setRole(ctx, club.code, m.userId, 'admin'))} disabled={busy} />}
+                    {isOwner && m.role === 'admin' && <Button small kind="secondary" title={t('clubs.members.makeMember')} onPress={() => void act(() => clubsApi.setRole(ctx, club.code, m.userId, 'member'))} disabled={busy} />}
+                    {isOwner && <Button small kind="ghost" title={t('clubs.members.transfer')} onPress={() => setPending({ kind: 'transfer', userId: m.userId, name: m.name })} disabled={busy} />}
+                    <Button small kind="ghost" title={t('clubs.members.remove')} onPress={() => setPending({ kind: 'remove', userId: m.userId, name: m.name })} disabled={busy} />
+                    <Button small kind="danger" title={t('clubs.members.ban')} onPress={() => setPending({ kind: 'ban', userId: m.userId, name: m.name })} disabled={busy} />
+                  </Row>
+                )}
+                {confirmHere(aboutUser(m.userId))}
+              </View>
+            ))}
+          </Card>
+          {isAdmin && (
+            <Card>
+              <H2>{t('clubs.members.bannedTitle')}</H2>
+              {bans.length === 0 && <P dim style={{ fontSize: 12 }}>{t('clubs.members.noBans')}</P>}
+              {bans.map((b) => (
+                <Row key={b.userId} style={{ justifyContent: 'space-between' }}>
+                  <P>{b.name}</P>
+                  <Button small kind="ghost" title={t('clubs.members.unban')} onPress={() => void act(() => clubsApi.unban(ctx, club.code, b.userId))} disabled={busy} />
+                </Row>
+              ))}
+            </Card>
+          )}
+          {me && (
+            <Card style={{ gap: 8 }}>
+              <H2>{t('clubs.members.danger')}</H2>
+              {isOwner ? (
+                <P dim style={{ fontSize: 12 }}>
+                  {t('clubs.members.ownerLeave')}
+                </P>
+              ) : (
+                <Button small kind="secondary" title={t('clubs.members.leave')} onPress={() => setPending({ kind: 'leave' })} disabled={busy} style={{ alignSelf: 'flex-start' }} />
+              )}
+              {confirmHere((p) => p.kind === 'leave')}
+              {isOwner &&
+                (deleting ? (
+                  <Card tone="danger" style={{ gap: 8 }}>
+                    <P style={{ fontSize: 13, lineHeight: 18 }}>{t('clubs.members.deleteBody')}</P>
+                    <TextInput testID="club-delete-name" value={deleteName} onChangeText={setDeleteName} placeholder={t('clubs.members.deletePlaceholder')} placeholderTextColor="#9AA0BF" style={styles.input} maxLength={40} autoCorrect={false} />
+                    <Row>
+                      <Button small kind="danger" title={t('clubs.members.deleteConfirm')} onPress={() => void deleteClub()} disabled={busy || deleteName.trim().toLowerCase() !== club.name.trim().toLowerCase()} />
+                      <Button small kind="ghost" title={t('common.cancel')} onPress={() => setDeleting(false)} />
+                    </Row>
+                  </Card>
+                ) : (
+                  <Button small kind="danger" title={t('clubs.members.delete')} onPress={() => setDeleting(true)} style={{ alignSelf: 'flex-start' }} />
+                ))}
+            </Card>
+          )}
+        </>
+      )}
+
       {tab === 'rules' && (
-        <Card>
-          <P>{rulesSummary(club.rules, t, locale)}</P>
+        <Card style={{ gap: 8 }}>
+          <P>{rulesSummary(draft ?? club.rules, t, locale)}</P>
+          <P dim style={{ fontSize: 12 }}>
+            {t('clubs.rules.houseNote')}
+          </P>
           {isAdmin ? (
             <>
+              <Toggle label={t('clubs.rules.membersCanOpen')} value={club.settings.membersCanOpenTables} onChange={(v) => void act(() => clubsApi.update(ctx, club.code, { settings: { membersCanOpenTables: v } }))} />
+              <Toggle label={t('clubs.rules.approveNew')} value={club.settings.joinRequiresApproval} onChange={(v) => void act(() => clubsApi.update(ctx, club.code, { settings: { joinRequiresApproval: v } }))} />
+              <SectionLabel>{t('clubs.rules.botSkill')}</SectionLabel>
               <P dim style={{ fontSize: 12 }}>
-                {t('clubs.rules.presets')}
+                {t('clubs.rules.botSkillNote')}
               </P>
-              <Row style={{ flexWrap: 'wrap' }}>
-                {RULE_PRESETS.map((p) => (
-                  <Chip key={p.id} label={presetName(p, locale)} onPress={() => void setRules(rulesFromPreset(p.id))} />
+              <Row style={{ flexWrap: 'wrap', rowGap: 6 }}>
+                {(Object.keys(BOT_SKILLS) as BotSkill[]).map((k) => (
+                  <Chip key={k} label={botLabel(k, locale, true)} selected={(club.settings.botSkill ?? 'club') === k} onPress={() => void act(() => clubsApi.update(ctx, club.code, { settings: { botSkill: k } }))} />
                 ))}
               </Row>
-              <P dim style={{ fontSize: 12 }}>
-                {t('clubs.rules.speed')}
-              </P>
-              <Row style={{ flexWrap: 'wrap' }}>
-                {(Object.keys(SPEED_PRESETS) as GameSpeed[]).map((sp) => (
-                  <Chip key={sp} label={t('clubs.rules.speedChip', { label: speedLabel(sp, locale), turn: SPEED_PRESETS[sp].turnSeconds })} selected={club.rules.speed === sp} onPress={() => void setRules(withSpeed(club.rules, sp))} />
-                ))}
-              </Row>
-              <Toggle label={t('clubs.rules.membersCanOpen')} value={club.settings.membersCanOpenTables} onChange={(v) => void clubsApi.update(ctx, club.code, { settings: { membersCanOpenTables: v } }).then(setClub)} />
-              <Toggle label={t('clubs.rules.approveNew')} value={club.settings.joinRequiresApproval} onChange={(v) => void clubsApi.update(ctx, club.code, { settings: { joinRequiresApproval: v } }).then(setClub)} />
-              <Toggle label={t('clubs.rules.multipleWinners')} value={club.rules.multipleWinners} onChange={(v) => void setRules({ multipleWinners: v })} />
-              <Toggle label={t('clubs.rules.passRule')} value={club.rules.passRule} onChange={(v) => void setRules({ passRule: v })} />
-              <Toggle label={t('clubs.rules.allowChi')} value={club.rules.allowChi} onChange={(v) => void setRules({ allowChi: v })} />
+              <RuleEditor key={saves} value={draft ?? club.rules} baseline={club.rules} onChange={(r) => setDraft(sameRules(r, club.rules) ? null : r)} />
+              {draft && (
+                <Row style={{ flexWrap: 'wrap', rowGap: 6 }}>
+                  <Pill text={t('clubs.ruleEditor.unsaved')} tone="gold" size="sm" />
+                  <Button title={t('clubs.ruleEditor.save')} onPress={() => void saveRules()} disabled={busy} />
+                  <Button kind="ghost" title={t('clubs.ruleEditor.undo')} onPress={() => setDraft(null)} />
+                </Row>
+              )}
             </>
           ) : (
             <P dim style={{ fontSize: 12 }}>
