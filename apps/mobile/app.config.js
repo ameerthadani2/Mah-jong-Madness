@@ -18,6 +18,11 @@
 // - EXPO_PUBLIC_TERMS_URL, EXPO_PUBLIC_PRIVACY_URL: hosted legal texts (absent → the bundled DRAFT texts).
 // - APP_STORE_ID: the numeric App Store id, for the 'Update required' link (the Play link comes from the bundle id).
 // - GOOGLE_SERVICES_JSON: path to google-services.json (an EAS file variable), needed for Android push (FCM).
+// - APP_VERSION: the version players see (iOS short version, Android versionName), e.g. 1.0.0; default app.json's.
+//   The build numbers are not set here: eas.json keeps them on the EAS servers (appVersionSource remote) and the
+//   production profile raises the iOS build number and the Android version code by one on every build.
+// The Android package is APP_BUNDLE_ID too, so it must also be a valid Android package (dot-separated segments that
+// start with a letter; letters, digits and '_' only, no '-'): a build with any other id stops with a clear error.
 // Push notifications need the EAS project id (extra.eas.projectId, written by `eas init`); without it there is no token.
 const IDENTITY_DEFAULTS = {
   name: 'Mahjong Mania',
@@ -66,10 +71,21 @@ const PRIVACY_MANIFEST = {
   ],
 };
 
+/** A Play package name: two or more dot-separated segments, each a letter then letters, digits or '_'. */
+const ANDROID_PACKAGE = /^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+$/;
+/** What iOS accepts as CFBundleShortVersionString (and Play shows as versionName): up to three numbers. */
+const APP_VERSION = /^\d+(\.\d+){0,2}$/;
+
 module.exports = ({ config }) => {
   const bundleId = env('APP_BUNDLE_ID', IDENTITY_DEFAULTS.bundleId);
+  if (!ANDROID_PACKAGE.test(bundleId)) {
+    throw new Error(`APP_BUNDLE_ID '${bundleId}' cannot be the Android package: use dot-separated segments that start with a letter, with letters, digits and '_' only (e.g. com.mahjongmania.app)`);
+  }
+  const version = env('APP_VERSION', undefined);
+  if (version !== undefined && !APP_VERSION.test(version)) throw new Error(`APP_VERSION '${version}' must be one to three numbers separated by dots (e.g. 1.0.0)`);
   const out = {
     ...config,
+    ...(version !== undefined ? { version } : {}),
     name: env('APP_NAME', IDENTITY_DEFAULTS.name),
     slug: env('APP_SLUG', IDENTITY_DEFAULTS.slug),
     scheme: env('APP_SCHEME', IDENTITY_DEFAULTS.scheme),
