@@ -136,6 +136,11 @@ describe('portrait felt (360×740 late in a hand)', () => {
     expect(landscapeWallSize(400, 230, 150, 300, 112)).toBe(0);
   });
 
+  it('lets the portrait claim strip grow with its buttons, so a wrapped 胡 never sits under the hand rail', () => {
+    const screen = readFileSync(join(__dirname, '../../screens/TableScreen.tsx'), 'utf8');
+    expect(screen).toMatch(/actionStrip: \{ minHeight: ACTION_STRIP_H/);
+  });
+
   it('pins my pond under the scrolling part of the felt, so it never scrolls out of view (any tile size)', () => {
     const felt = readFileSync(join(__dirname, 'Felt.tsx'), 'utf8');
     expect(felt).toMatch(/<\/ScrollView>\s*<View style=\{styles\.pinnedPond\}>\{myPond\(pinnedPerRow\)\}<\/View>/);

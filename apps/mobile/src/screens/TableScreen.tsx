@@ -498,7 +498,8 @@ function safeHint(s: GameState, seat: number): Hint | null {
 
 const styles = StyleSheet.create({
   root: { flex: 1 },
-  actionStrip: { height: ACTION_STRIP_H, justifyContent: 'center', paddingHorizontal: 12 },
+  // Grows with its buttons (several 吃 options and 胡 wrap into more rows) so none runs under the hand rail.
+  actionStrip: { minHeight: ACTION_STRIP_H, justifyContent: 'center', paddingHorizontal: 12, paddingVertical: 4 },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12 },
   notice: { backgroundColor: colors.cream, borderWidth: 3, borderColor: colors.ink, borderRadius: 24, padding: 20, alignItems: 'center', gap: 10, borderBottomWidth: 8 },
   noticeTitle: { fontFamily: fonts.display, fontSize: 26, color: colors.ink },
