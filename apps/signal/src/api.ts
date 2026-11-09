@@ -596,7 +596,7 @@ export function createApiHandler(deps: ApiDeps, opts: ApiOptions = {}): (req: In
         route.keys.forEach((k, i) => (params[k] = decodeURIComponent(m[i + 1])));
         let body: Record<string, unknown> = {};
         if (req.method !== 'GET') {
-          const raw = await readBody(req, 64 * 1024);
+          const raw = await readBody(req, MAX_BODY_BYTES);
           if (raw) {
             const parsed: unknown = JSON.parse(raw);
             if (!isObject(parsed)) return send(res, 400, { error: 'invalid', message: 'Body must be a JSON object' });
@@ -632,7 +632,12 @@ export function createApiHandler(deps: ApiDeps, opts: ApiOptions = {}): (req: In
           if (e.status === 429) res.setHeader('retry-after', '12');
           return send(res, e.status, { error: e.code, message: e.message });
         }
-        if (e instanceof SyntaxError || e instanceof URIError || (e as Error).message === 'Body too large') {
+        if (e instanceof BodyTooLarge) {
+          // A body far over the limit is not read to the end: answer, then close the connection.
+          if (!e.drained) res.setHeader('connection', 'close');
+          return send(res, 413, { error: 'too_large', message: `The request body is larger than ${MAX_BODY_BYTES / 1024} KiB` });
+        }
+        if (e instanceof SyntaxError || e instanceof URIError) {
           return send(res, 400, { error: 'invalid', message: 'Malformed request' });
         }
         console.error('[signal] api error', (e as Error).message);
@@ -659,22 +664,47 @@ function send(res: ServerResponse, status: number, body: unknown): boolean {
   return true;
 }
 
-/** Read the request body, capped at `limit` bytes (not characters, so multi-byte text cannot get past the cap). */
+/** Largest request body accepted, in bytes. */
+export const MAX_BODY_BYTES = 64 * 1024;
+/** A body over the limit is still read (and dropped) up to this size, so the client gets its 413 instead of a reset. */
+const DRAIN_BYTES = 1024 * 1024;
+
+/** The request body was over `MAX_BODY_BYTES`: answered 413 `too_large`. */
+class BodyTooLarge extends Error {
+  constructor(readonly drained: boolean) {
+    super('Body too large');
+    this.name = 'BodyTooLarge';
+  }
+}
+
+/**
+ * Read the request body, capped at `limit` bytes (not characters, so multi-byte text cannot get
+ * past the cap). Past the cap the rest is read and dropped up to `DRAIN_BYTES`, then it rejects
+ * with BodyTooLarge, so the answer is a 413 the client can read rather than a dropped connection.
+ */
 function readBody(req: IncomingMessage, limit: number): Promise<string> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     let size = 0;
+    let done = false;
+    const finish = (err: Error | null, body?: string) => {
+      if (done) return;
+      done = true;
+      if (err) reject(err);
+      else resolve(body!);
+    };
     req.on('data', (chunk: Buffer | string) => {
       const buf = typeof chunk === 'string' ? Buffer.from(chunk) : chunk;
       size += buf.length;
-      if (size > limit) {
-        reject(new Error('Body too large'));
-        req.destroy();
-        return;
+      if (size > DRAIN_BYTES) {
+        // Not worth reading any further: answer now (the handler closes the connection).
+        req.pause();
+        return finish(new BodyTooLarge(false));
       }
-      chunks.push(buf);
+      if (size <= limit) chunks.push(buf);
+      else chunks.length = 0;
     });
-    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
-    req.on('error', reject);
+    req.on('end', () => (size > limit ? finish(new BodyTooLarge(true)) : finish(null, Buffer.concat(chunks).toString('utf8'))));
+    req.on('error', (e) => finish(e));
   });
 }

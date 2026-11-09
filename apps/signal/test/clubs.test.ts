@@ -406,7 +406,9 @@ describe('club HTTP API', () => {
     const a = (await guest('Alice')).auth;
     const big = JSON.stringify({ name: 'x', description: '麻'.repeat(23_000) }); // about 69 KB of UTF-8 but only about 23 K characters
     expect(big.length).toBeLessThan(64 * 1024);
-    expect((await http(handler, 'POST', '/api/clubs', big, a)).status).toBe(400);
+    const res = await http(handler, 'POST', '/api/clubs', big, a);
+    expect(res.status).toBe(413);
+    expect(res.json).toMatchObject({ error: 'too_large' });
   });
 
 });
