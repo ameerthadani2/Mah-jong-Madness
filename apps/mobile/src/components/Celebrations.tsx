@@ -43,8 +43,8 @@ function petal(x: number, y: number, rot: number, key: string) {
 
 function dragon(w: number, h: number) {
   const y = h * 0.42;
-  const seg = Math.max(14, w / 16);
-  const body = Array.from({ length: 9 }, (_, i) => ({ x: w * 0.12 + i * seg, y: y + Math.sin(i * 0.9) * seg * 0.6 }));
+  const seg = Math.max(8, Math.min(w / 14, h / 4));
+  const body = Array.from({ length: 9 }, (_, i) => ({ x: w * 0.06 + seg * 0.7 + i * seg, y: y + Math.sin(i * 0.9) * seg * 0.6 }));
   return (
     <G>
       {body
