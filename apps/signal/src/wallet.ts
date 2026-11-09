@@ -19,9 +19,21 @@ import { COSMETIC_ENTITLEMENTS, PERIOD_MS, productForStoreId, serverProduct, TIE
 import { NO_ANALYTICS, type Analytics } from './observability';
 import type { EntitlementRecord, Repos, UserRecord, WalletRecord } from './repos/types';
 
-export type WalletErrorCode = 'insufficient' | 'owned' | 'not_for_sale' | 'invalid';
+export type WalletErrorCode = 'insufficient' | 'owned' | 'not_for_sale' | 'invalid' | 'not_found' | 'unauthorised' | 'rate_limited' | 'unavailable' | 'store_unreachable';
 
-/** A refused wallet operation, with the HTTP status the API answers. */
+const WALLET_STATUS: Record<WalletErrorCode, number> = {
+  insufficient: 409,
+  owned: 409,
+  not_for_sale: 404,
+  not_found: 404,
+  invalid: 400,
+  unauthorised: 401,
+  rate_limited: 429,
+  unavailable: 503,
+  store_unreachable: 502,
+};
+
+/** A refused wallet, store or support operation, with the HTTP status the API answers. */
 export class WalletError extends Error {
   readonly status: number;
   constructor(
@@ -30,7 +42,7 @@ export class WalletError extends Error {
   ) {
     super(message);
     this.name = 'WalletError';
-    this.status = code === 'not_for_sale' ? 404 : code === 'invalid' ? 400 : 409;
+    this.status = WALLET_STATUS[code];
   }
 }
 
@@ -138,6 +150,8 @@ export const isSandbox = (e: Pick<StoreEvent, 'environment'>): boolean => (e.env
 /** Source written on entitlements granted by store events (TRANSFER moves only these). */
 export const STORE_SOURCE = 'store';
 const SPEND_SOURCE = 'diamonds';
+/** Source of entitlements granted by support (`POST /api/admin/grant`). */
+export const SUPPORT_SOURCE = 'support';
 
 const isLive = (e: Pick<EntitlementRecord, 'expiresAt'>, at: number) => e.expiresAt === null || e.expiresAt > at;
 
@@ -222,6 +236,22 @@ export class WalletService {
       if (!res) throw new WalletError('invalid', 'Credit refused');
       return res.wallet;
     });
+  }
+
+  /**
+   * A support grant of an entitlement (`POST /api/admin/grant`): written with source `support`,
+   * never shortening one the user already has, and noted on the ledger as a zero entry.
+   */
+  async grantSupport(userId: string, entitlement: string, expiresAt: number | null, note: string): Promise<void> {
+    await this.serialise([userId], () =>
+      this.repos.transaction(async (tx) => {
+        const at = this.now();
+        const current = (await tx.wallet.getEntitlements(userId)).find((e) => e.entitlement === entitlement);
+        const keeps = current && (current.expiresAt === null || (expiresAt !== null && current.expiresAt >= expiresAt));
+        if (!keeps) await tx.wallet.setEntitlement({ userId, entitlement, expiresAt, source: SUPPORT_SOURCE, updatedAt: at });
+        await tx.wallet.apply({ userId, delta: 0, bonus: 0, reason: 'support', ref: `support:${entitlement}:${note}`.slice(0, 255), createdAt: at });
+      }),
+    );
   }
 
   /** Buy a cosmetic with diamonds: debit and permanent entitlement together, or neither. */

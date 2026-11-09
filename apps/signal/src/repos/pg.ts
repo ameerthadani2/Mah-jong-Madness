@@ -432,6 +432,10 @@ function pgStoreEvents(q: Queryable): StoreEventsRepo {
       const res = await q.query('DELETE FROM store_events WHERE event_id = $1', [eventId]);
       return (res.rowCount ?? 0) > 0;
     },
+    async usersActiveSince(since) {
+      const res = await q.query<{ user_id: string }>('SELECT DISTINCT user_id FROM store_events WHERE user_id IS NOT NULL AND received_at >= $1 ORDER BY user_id', [toDate(since)]);
+      return res.rows.map((r) => r.user_id);
+    },
   };
 }
 

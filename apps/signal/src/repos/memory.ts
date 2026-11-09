@@ -291,6 +291,11 @@ function memoryStoreEvents(s: MemoryState): StoreEventsRepo {
     async delete(eventId) {
       return s.storeEvents.delete(eventId);
     },
+    async usersActiveSince(since) {
+      const ids = new Set<string>();
+      for (const e of s.storeEvents.values()) if (e.userId && e.receivedAt >= since) ids.add(e.userId);
+      return [...ids].sort();
+    },
   };
 }
 

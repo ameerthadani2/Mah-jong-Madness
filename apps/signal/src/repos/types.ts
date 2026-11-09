@@ -236,6 +236,8 @@ export interface StoreEventsRepo {
   setOutcome(eventId: string, outcome: string, userId: string | null): Promise<void>;
   /** Forgets an event whose processing failed, so a redelivery is processed (memory only needs it: Postgres rolls back). */
   delete(eventId: string): Promise<boolean>;
+  /** Users named by an event received at or after `since` (the nightly store reconciliation's list). */
+  usersActiveSince(since: number): Promise<string[]>;
 }
 
 // ---------------------------------------------------------------------------------------------
