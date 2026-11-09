@@ -4,6 +4,8 @@ import Svg, { Circle, Defs, Ellipse, G, LinearGradient, Line, Path, Polygon, Rec
 import { kindInfo, kindOf, type Kind, type TileId } from '@mjm/engine';
 import { colors } from '../theme';
 import { TableThemeContext, type TableTheme } from '../themes';
+import { tileBackById, type TileBackDesign } from '../monetisation/cosmetics';
+import { useEquipped } from '../monetisation/useEquipped';
 
 import { tileDims, type TileSize } from './tileDims';
 
@@ -343,7 +345,93 @@ function artFor(kind: Kind): React.ReactElement {
 /* Tile body                                                           */
 /* ------------------------------------------------------------------ */
 
-function TileSvg({ w, h, kind, faceDown, theme }: { w: number; h: number; kind?: Kind; faceDown?: boolean; theme: TableTheme }) {
+/** The motif of an equipped tile back, in the tile's 100×126 face units (centre 50, 63). */
+function backMotif(back: TileBackDesign): React.ReactNode {
+  const c = back.ink;
+  switch (back.motif) {
+    case 'jade':
+      return (
+        <G>
+          <Circle cx={50} cy={63} r={24} fill="none" stroke={c} strokeOpacity={0.75} strokeWidth={7} />
+          <Circle cx={50} cy={63} r={9} fill={c} fillOpacity={0.35} />
+          <Path d="M36 44 Q44 38 54 39" stroke="#FFFFFF" strokeOpacity={0.6} strokeWidth={4} fill="none" strokeLinecap="round" />
+        </G>
+      );
+    case 'knot':
+      return (
+        <G stroke={c} strokeWidth={5} fill="none" strokeLinejoin="round">
+          <Rect x={33} y={46} width={34} height={34} transform="rotate(45 50 63)" />
+          <Path d="M38 51 L62 75 M62 51 L38 75" strokeOpacity={0.8} />
+          {[
+            [50, 34],
+            [79, 63],
+            [50, 92],
+            [21, 63],
+          ].map(([x, y]) => (
+            <Circle key={`${x}-${y}`} cx={x} cy={y} r={6} />
+          ))}
+          <Path d="M50 98 V112 M44 112 H56" />
+        </G>
+      );
+    case 'star':
+      return <Path d="M50 36 L57.6 54 L77 55.4 L62.2 68 L66.8 87 L50 76.8 L33.2 87 L37.8 68 L23 55.4 L42.4 54 Z" fill={c} stroke="#FFFFFF" strokeOpacity={0.5} strokeWidth={3} strokeLinejoin="round" />;
+    case 'lotus':
+      return (
+        <G fill={c} stroke={back.base} strokeWidth={2.5}>
+          <Path d="M50 40 C62 52 62 70 50 82 C38 70 38 52 50 40 Z" />
+          <Path d="M50 82 C40 80 28 70 24 56 C36 56 46 66 50 82 Z" />
+          <Path d="M50 82 C60 80 72 70 76 56 C64 56 54 66 50 82 Z" />
+          <Path d="M28 88 Q50 98 72 88" fill="none" stroke={c} strokeWidth={4} strokeLinecap="round" />
+        </G>
+      );
+    case 'bamboo':
+      return (
+        <G stroke={c} strokeLinecap="round" fill="none">
+          <Path d="M40 30 V98 M60 38 V102" strokeWidth={8} />
+          <Path d="M35 52 H45 M35 76 H45 M55 60 H65 M55 84 H65" strokeWidth={3} stroke={back.base} />
+          <Path d="M60 50 Q74 40 82 44 Q72 52 60 52 Z" fill={c} strokeWidth={2} />
+        </G>
+      );
+    case 'wave':
+      return (
+        <G stroke={c} strokeWidth={5} fill="none" strokeLinecap="round">
+          <Path d="M22 58 C30 44 46 44 50 56 C52 64 44 68 40 62" />
+          <Path d="M50 80 C58 66 74 66 78 78 C80 86 72 90 68 84" />
+          <Path d="M22 96 Q36 88 50 96 T78 96" />
+        </G>
+      );
+    case 'cloud':
+      return <Path d="M26 74 a12 12 0 0 1 14 -14 a14 14 0 0 1 26 -2 a11 11 0 0 1 10 16 Z M48 58 a6 6 0 1 1 8 6" fill={c} fillOpacity={0.85} stroke="#FFFFFF" strokeOpacity={0.5} strokeWidth={3} strokeLinejoin="round" />;
+    case 'lattice':
+      return (
+        <G stroke={c} strokeWidth={4} fill="none">
+          <Rect x={24} y={36} width={52} height={54} rx={4} />
+          <Path d="M50 36 V90 M24 63 H76 M37 36 V90 M63 36 V90" strokeOpacity={0.7} />
+          <Rect x={41} y={54} width={18} height={18} transform="rotate(45 50 63)" fill={back.base} />
+        </G>
+      );
+    case 'sun':
+      return (
+        <G>
+          {Array.from({ length: 10 }, (_, i) => {
+            const a = (i * Math.PI) / 5;
+            return <Path key={i} d={`M${50 + Math.cos(a) * 20} ${63 + Math.sin(a) * 20} L${50 + Math.cos(a) * 32} ${63 + Math.sin(a) * 32}`} stroke={c} strokeWidth={4} strokeLinecap="round" />;
+          })}
+          <Circle cx={50} cy={63} r={14} fill={c} />
+        </G>
+      );
+    case 'scales':
+      return (
+        <G stroke={c} strokeWidth={4} fill="none">
+          {[44, 62, 80, 98].map((y, row) =>
+            (row % 2 ? [38, 62] : [26, 50, 74]).map((x) => <Path key={`${row}-${x}`} d={`M${x - 12} ${y} A12 12 0 0 0 ${x + 12} ${y}`} />),
+          )}
+        </G>
+      );
+  }
+}
+
+function TileSvg({ w, h, kind, faceDown, theme, back }: { w: number; h: number; kind?: Kind; faceDown?: boolean; theme: TableTheme; back?: TileBackDesign | null }) {
   const sw = w < 26 ? 1.3 : w < 36 ? 1.7 : 2.2;
   const depth = Math.max(2.5, Math.round(h * 0.085));
   const r = w * 0.17;
@@ -352,7 +440,7 @@ function TileSvg({ w, h, kind, faceDown, theme }: { w: number; h: number; kind?:
   const scale = fw / 100;
   const unitsH = (faceH - sw) / scale;
   const faceId = `tf-${theme.id}`;
-  const backId = `tb-${theme.id}`;
+  const backId = back ? `tb-${back.id.replace('.', '-')}` : `tb-${theme.id}`;
   return (
     <Svg width={w} height={h}>
       <Defs>
@@ -362,20 +450,26 @@ function TileSvg({ w, h, kind, faceDown, theme }: { w: number; h: number; kind?:
           <Stop offset="1" stopColor={theme.tileEdge} />
         </LinearGradient>
         <LinearGradient id={backId} x1="0" y1="0" x2="1" y2="1">
-          <Stop offset="0" stopColor={theme.feltLight} />
-          <Stop offset="1" stopColor={theme.tileBack} />
+          <Stop offset="0" stopColor={back?.light ?? theme.feltLight} />
+          <Stop offset="1" stopColor={back?.base ?? theme.tileBack} />
         </LinearGradient>
       </Defs>
       {/* Body: the coloured back layer (or ivory when face down) shows as the tile's thickness. */}
-      <Rect x={sw / 2} y={sw / 2} width={w - sw} height={h - sw} rx={r} fill={faceDown ? theme.tileEdge : theme.tileBack} stroke={INK} strokeWidth={sw} />
+      <Rect x={sw / 2} y={sw / 2} width={w - sw} height={h - sw} rx={r} fill={faceDown ? theme.tileEdge : (back?.base ?? theme.tileBack)} stroke={INK} strokeWidth={sw} />
       <Rect x={sw / 2} y={sw / 2} width={w - sw} height={faceH - sw / 2} rx={r} fill={faceDown ? `url(#${backId})` : `url(#${faceId})`} stroke={INK} strokeWidth={sw} />
       {/* Soft bevel: bright inner rim on the top-left. */}
       <Path d={`M${sw + 1.2} ${faceH * 0.6} V${sw + r} Q${sw + 1.2} ${sw + 1.2} ${sw + r} ${sw + 1.2} H${w * 0.72}`} stroke="#FFFFFF" strokeOpacity={faceDown ? 0.4 : 0.95} strokeWidth={Math.max(1, sw * 0.7)} fill="none" strokeLinecap="round" />
       {faceDown ? (
         <G transform={`translate(${sw / 2} ${sw / 2 + (unitsH - 126) * scale * 0.5}) scale(${scale})`}>
           <Rect x={14} y={14} width={72} height={98} rx={12} fill="none" stroke="#FFFFFF" strokeOpacity={0.35} strokeWidth={4} />
-          <Polygon points="50,34 72,63 50,92 28,63" fill="#FFFFFF" fillOpacity={0.2} stroke="#FFFFFF" strokeOpacity={0.45} strokeWidth={3.5} strokeLinejoin="round" />
-          <Circle cx={50} cy={63} r={8} fill="#FFFFFF" fillOpacity={0.45} />
+          {back ? (
+            backMotif(back)
+          ) : (
+            <G>
+              <Polygon points="50,34 72,63 50,92 28,63" fill="#FFFFFF" fillOpacity={0.2} stroke="#FFFFFF" strokeOpacity={0.45} strokeWidth={3.5} strokeLinejoin="round" />
+              <Circle cx={50} cy={63} r={8} fill="#FFFFFF" fillOpacity={0.45} />
+            </G>
+          )}
         </G>
       ) : (
         kind !== undefined && (
@@ -389,18 +483,25 @@ function TileSvg({ w, h, kind, faceDown, theme }: { w: number; h: number; kind?:
   );
 }
 
+/** A face-down tile in a given back design (or the table's own back), for the Shop and Settings previews. */
+export function TileBackPreview({ back, w = 40, theme }: { back: TileBackDesign | null; w?: number; theme?: TableTheme }) {
+  const fallback = useContext(TableThemeContext);
+  return <TileSvg w={w} h={Math.round(w * 1.36)} faceDown theme={theme ?? fallback} back={back} />;
+}
+
 const RING: Record<'good' | 'bad' | 'wait' | 'selected', string> = { good: '#35D04A', bad: colors.danger, wait: colors.gold, selected: colors.gold };
 
 export const Tile = React.memo(function Tile({ tile, kind, size = 'md', faceDown, selected, dimmed, highlight, onPress, onLongPress, style, rotated, accessibilityLabel, accessibilityHint }: TileProps) {
   const { w, h } = tileDims(size);
   const theme = useContext(TableThemeContext);
+  const back = tileBackById(useEquipped().tileBack);
   const k = kind ?? (tile !== undefined ? kindOf(tile) : undefined);
   const info = k !== undefined ? kindInfo(k) : undefined;
   const ring = selected ? RING.selected : highlight ? RING[highlight] : null;
   const r = w * 0.17;
   const face = (
     <View style={[styles.shadow, { width: w, height: h, borderRadius: r }]}>
-      <TileSvg w={w} h={h} kind={faceDown ? undefined : k} faceDown={faceDown} theme={theme} />
+      <TileSvg w={w} h={h} kind={faceDown ? undefined : k} faceDown={faceDown} theme={theme} back={back} />
       {ring && <View pointerEvents="none" style={[styles.ring, { borderColor: ring, borderRadius: r + 3, borderWidth: w < 26 ? 2 : 3 }]} />}
     </View>
   );
@@ -442,6 +543,7 @@ export const Tile = React.memo(function Tile({ tile, kind, size = 'md', faceDown
  */
 export function HiddenHand({ count, tileW = 12, tileH = 18, vertical }: { count: number; tileW?: number; tileH?: number; vertical?: boolean }) {
   const theme = useContext(TableThemeContext);
+  const backColor = tileBackById(useEquipped().tileBack)?.base ?? theme.tileBack;
   const n = Math.max(0, count);
   const step = tileW - 1;
   const len = n > 0 ? step * (n - 1) + tileW + 1 : 0;
@@ -458,7 +560,7 @@ export function HiddenHand({ count, tileW = 12, tileH = 18, vertical }: { count:
         return (
           <G key={i}>
             <Rect x={x} y={y} width={tw} height={th} rx={2.5} fill={theme.tileEdge} stroke={INK} strokeWidth={1.2} />
-            <Rect x={x} y={y} width={vertical ? tw - 3 : tw} height={vertical ? th : th - 3.5} rx={2.5} fill={theme.tileBack} stroke={INK} strokeWidth={1.2} />
+            <Rect x={x} y={y} width={vertical ? tw - 3 : tw} height={vertical ? th : th - 3.5} rx={2.5} fill={backColor} stroke={INK} strokeWidth={1.2} />
             <Rect x={x + 2} y={y + 2} width={vertical ? tw - 8 : tw - 5} height={vertical ? 2 : 2} rx={1} fill="#FFFFFF" opacity={0.35} />
           </G>
         );
