@@ -479,7 +479,7 @@ export function TableScreen() {
         ) : (
           state.lastError && (
             <View style={styles.toast} accessibilityLiveRegion="polite">
-              <Text style={[styles.toastText, nameFont(tableError(new Error(state.lastError), t), fonts.bodyBold)]}>{tableError(new Error(state.lastError), t)}</Text>
+              <Text style={[styles.toastText, nameFont(tableError({ code: state.lastErrorCode ?? undefined, message: state.lastError }, t), fonts.bodyBold)]}>{tableError({ code: state.lastErrorCode ?? undefined, message: state.lastError }, t)}</Text>
             </View>
           )
         )}

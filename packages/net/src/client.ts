@@ -109,6 +109,8 @@ export interface ClientState {
   chat: ChatLine[];
   emotes: Array<{ seat: number; emote: string; at: number }>;
   lastError: string | null;
+  /** The code of the table's last refusal (`already_seated`, `not_controller`, …), when it sent one. */
+  lastErrorCode: string | null;
   rttMs: number | null;
   /** The host used a stand-in random share for us this hand (we committed too late, or were away). */
   standIn: boolean;
@@ -316,6 +318,7 @@ export class TableClient {
     chat: [],
     emotes: [],
     lastError: null,
+    lastErrorCode: null,
     rttMs: null,
     standIn: false,
     disconnected: false,
@@ -412,6 +415,7 @@ export class TableClient {
       emotes: [],
       rttMs: null,
       lastError: null,
+      lastErrorCode: null,
     };
     this.secret = d.secret;
     this.commits = d.commits;
@@ -478,14 +482,14 @@ export class TableClient {
       try {
         this.onMessage(m);
       } catch (e) {
-        this.update({ lastError: `Ignored a malformed message from the table (${(e as Error).message}).` });
+        this.update({ lastError: `Ignored a malformed message from the table (${(e as Error).message}).`, lastErrorCode: null });
       }
     });
     this.unsubClose =
       link.onClose?.(() => {
         if (this.link !== link) return;
         this.noteLinkLost();
-        this.update({ connected: false, disconnected: true, lastError: 'Connection to the table was lost.' });
+        this.update({ connected: false, disconnected: true, lastError: 'Connection to the table was lost.', lastErrorCode: null });
       }) ?? (() => undefined);
   }
 
@@ -693,7 +697,7 @@ export class TableClient {
     switch (m.t) {
       case 'welcome': {
         if (!isInt(m.seat) || m.seat < 0 || m.seat > 3 || typeof m.matchId !== 'string') {
-          this.update({ lastError: 'The table sent a malformed welcome.' });
+          this.update({ lastError: 'The table sent a malformed welcome.', lastErrorCode: null });
           return;
         }
         const seats = Array.isArray(m.seats) ? m.seats : [];
@@ -918,7 +922,7 @@ export class TableClient {
         return;
       case 'error':
         this.noteRefusal(m);
-        this.update({ lastError: typeof m.message === 'string' ? m.message : 'The table reported an error.' });
+        this.update({ lastError: typeof m.message === 'string' ? m.message : 'The table reported an error.', lastErrorCode: typeof m.code === 'string' ? m.code : null });
         return;
       case 'pong':
         if (typeof m.at === 'number') this.update({ rttMs: this.now() - m.at });

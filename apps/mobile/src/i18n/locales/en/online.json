@@ -22,6 +22,9 @@
     "roomUnavailable": "No open table with that code. Check the code; the table may also be full or over.",
     "serverFull": "The game server is full right now. Please try again in a few minutes.",
     "tableCap": "You already have the most tables open. Finish or leave one of them first.",
-    "notController": "Only the player who opened the table, or a club admin, can add bots or start the match."
+    "notController": "Only the player who opened the table, or a club admin, can add bots or start the match.",
+    "tableClosedByClub": "The club closed this table.",
+    "evictedByClub": "The club removed you from this table.",
+    "clubDeleted": "The club was deleted, so this table has closed."
   }
 }

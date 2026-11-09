@@ -124,7 +124,7 @@ export function LobbyScreen() {
           />
         </Row>
       ) : (
-        state.lastError && <Pill tone="danger" icon="warning" wrap text={tableError(new Error(state.lastError), t)} />
+        state.lastError && <Pill tone="danger" icon="warning" wrap text={tableError({ code: state.lastErrorCode ?? undefined, message: state.lastError }, t)} />
       )}
     </ScrollView>
   );

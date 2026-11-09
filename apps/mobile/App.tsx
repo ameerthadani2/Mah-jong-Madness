@@ -60,7 +60,7 @@ function Router() {
     case 'rush':
       return <PuzzleRushScreen />;
     case 'shop':
-      return <ShopScreen />;
+      return <ShopScreen focus={screen.focus} />;
     case 'lobby':
       return <LobbyScreen />;
     case 'table':

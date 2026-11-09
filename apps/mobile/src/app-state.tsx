@@ -23,7 +23,7 @@ export type Screen =
   | { name: 'drill'; kind: 'discard' | 'waits' }
   | { name: 'daily' }
   | { name: 'rush' }
-  | { name: 'shop' }
+  | { name: 'shop'; focus?: 'fourwinds' }
   | { name: 'settings' };
 
 interface AppState {

@@ -15,6 +15,8 @@ const BY_CODE: Readonly<Record<string, string>> = {
   server_full: 'online.errors.serverFull',
   table_cap: 'online.errors.tableCap',
   not_controller: 'online.errors.notController',
+  table_closed: 'online.errors.tableClosedByClub',
+  evicted: 'online.errors.evictedByClub',
 };
 
 /** The servers' own sentences (apps/signal/src/rooms.ts, packages/net/src/host.ts), for errors that arrive without a code. */
@@ -23,7 +25,10 @@ const BY_MESSAGE: ReadonlyArray<readonly [RegExp, string]> = [
   [/^room not found or full/i, 'online.errors.roomUnavailable'],
   [/server is full right now/i, 'online.errors.serverFull'],
   [/already have the most tables open/i, 'online.errors.tableCap'],
-  [/only the table opener|table opener or a club admin/i, 'online.errors.notController'],
+  [/only the table opener|or a club admin can add bots/i, 'online.errors.notController'],
+  [/^the club closed this table/i, 'online.errors.tableClosedByClub'],
+  [/^the club removed you from this table/i, 'online.errors.evictedByClub'],
+  [/^the club was deleted, so this table has closed/i, 'online.errors.clubDeleted'],
 ];
 
 function str(e: unknown, key: 'code' | 'message'): string {

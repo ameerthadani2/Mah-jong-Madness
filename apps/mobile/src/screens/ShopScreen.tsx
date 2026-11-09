@@ -39,13 +39,14 @@ function shopError(e: unknown, t: Translate): string {
   return t('shop.purchaseFailed');
 }
 
-export function ShopScreen() {
+/** `focus: 'fourwinds'` opens on the plans, where The Four Winds Club is (club owners arrive here). */
+export function ShopScreen({ focus }: { focus?: 'fourwinds' } = {}) {
   const app = useApp();
   const gate = useAgeGate();
   const { t } = useT();
   const { width, height } = useWindowDimensions();
   const shop = useWallet();
-  const [tab, setTab] = useState<Tab>('diamonds');
+  const [tab, setTab] = useState<Tab>(focus === 'fourwinds' ? 'coach' : 'diamonds');
   const [shelf, setShelf] = useState<CosmeticCategory>('table');
   const equipped = useOwnedEquipped();
   const [busy, setBusy] = useState<string | null>(null);

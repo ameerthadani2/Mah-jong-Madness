@@ -22,6 +22,9 @@
     "roomUnavailable": "找不到這個代碼的牌桌。請確認代碼；牌桌也可能已滿或已結束。",
     "serverFull": "遊戲伺服器目前已滿，請過幾分鐘再試。",
     "tableCap": "你開的牌桌已達上限。請先打完或離開其中一桌。",
-    "notController": "只有開桌的玩家或俱樂部管理員可以加入電腦或開始比賽。"
+    "notController": "只有開桌的玩家或俱樂部管理員可以加入電腦或開始比賽。",
+    "tableClosedByClub": "俱樂部已關閉這一桌。",
+    "evictedByClub": "俱樂部已請你離開這一桌。",
+    "clubDeleted": "俱樂部已刪除，這一桌也已關閉。"
   }
 }

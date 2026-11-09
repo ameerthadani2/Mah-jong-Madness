@@ -165,7 +165,7 @@ export function ClubsScreen() {
               <P dim style={{ fontSize: 12, lineHeight: 17 }}>
                 {t('clubs.create.fourWindsBody')}
               </P>
-              <Button kind="premium" icon="crown" title={t('clubs.create.fourWindsButton')} onPress={() => app.go({ name: 'shop' })} />
+              <Button kind="premium" icon="crown" title={t('clubs.create.fourWindsButton')} onPress={() => app.go({ name: 'shop', focus: 'fourwinds' })} />
             </View>
           ) : !creating ? (
             <Button title={t('clubs.create.new')} onPress={() => setCreating(true)} />
@@ -438,7 +438,7 @@ export function ClubScreen({ code }: { code: string }) {
       {restricted && (
         <Card tone="gold" style={{ gap: 6 }}>
           <P style={{ fontSize: 13, lineHeight: 18 }}>{t('clubs.owner.restricted')}</P>
-          {isOwner && <Button small kind="premium" icon="crown" title={t('clubs.owner.renew')} onPress={() => app.go({ name: 'shop' })} style={{ alignSelf: 'flex-start' }} />}
+          {isOwner && <Button small kind="premium" icon="crown" title={t('clubs.owner.renew')} onPress={() => app.go({ name: 'shop', focus: 'fourwinds' })} style={{ alignSelf: 'flex-start' }} />}
         </Card>
       )}
       <Row style={{ flexWrap: 'wrap', rowGap: 6 }}>
