@@ -83,6 +83,7 @@ export async function createSignalServer(opts: SignalServerOptions): Promise<Sig
     allowHosted: config.hostTables,
     allowP2P: config.p2pRooms,
     maxHostedTables: config.maxHostedTables,
+    maxTablesPerUser: config.maxTablesPerUser,
     now,
     botDelayMs: opts.botDelayMs,
     clubs: clubGate(clubs),

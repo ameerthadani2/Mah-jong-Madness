@@ -10,6 +10,10 @@
  *
  * At boot `restore()` reopens every snapshot that has not finished; finished snapshots are pruned
  * once they are a day old.
+ *
+ * The account that opened a table travels inside the snapshot as `createdBy` (Postgres also
+ * exposes it as the generated column `table_snapshots.created_by`, migration 0003), so a restored
+ * table still counts towards its creator's open-table cap.
  */
 import type { SerializedHost, TableHost } from '@mjm/net';
 import type { TableSnapshotsRepo, TableStatus } from './repos/types';
@@ -34,6 +38,7 @@ export function tableStatus(host: TableHost): TableStatus {
 interface Tracked {
   host: TableHost;
   clubCode: string | null;
+  createdBy: string | null;
   timer: ReturnType<typeof setTimeout> | null;
   /** Write chain for this table. */
   chain: Promise<void>;
@@ -86,7 +91,7 @@ export class TablePersister {
     if (!t) {
       const host = this.rooms.hostedTable(code);
       if (!host) return undefined;
-      t = { host, clubCode: this.rooms.clubOf(code) ?? null, timer: null, chain: Promise.resolve(), queued: false, closed: false };
+      t = { host, clubCode: this.rooms.clubOf(code) ?? null, createdBy: this.rooms.createdByOf(code) ?? null, timer: null, chain: Promise.resolve(), queued: false, closed: false };
       this.tables.set(code, t);
     }
     return t;
@@ -133,7 +138,8 @@ export class TablePersister {
     t.chain = t.chain
       .then(async () => {
         t.queued = false;
-        const snapshot = t.host.serialize();
+        const snapshot: SerializedHost & { createdBy?: string } = t.host.serialize();
+        if (t.createdBy) snapshot.createdBy = t.createdBy;
         await this.repo.save({ roomCode: code, clubCode: t.clubCode, status: t.closed ? 'finished' : tableStatus(t.host), snapshot, updatedAt: this.now() });
         this.writes++;
         if (t.closed && this.tables.get(code) === t && !t.queued) this.tables.delete(code);
@@ -171,7 +177,9 @@ export class TablePersister {
     const restored: string[] = [];
     for (const s of await this.repo.listActive()) {
       try {
-        const code = this.rooms.createHostedRoom({ restore: s.snapshot as SerializedHost, clubCode: s.clubCode ?? undefined });
+        const snapshot = s.snapshot as SerializedHost & { createdBy?: unknown };
+        const createdBy = snapshot && typeof snapshot.createdBy === 'string' && snapshot.createdBy ? snapshot.createdBy : undefined;
+        const code = this.rooms.createHostedRoom({ restore: snapshot, clubCode: s.clubCode ?? undefined, createdBy });
         this.track(code);
         restored.push(code);
       } catch (e) {

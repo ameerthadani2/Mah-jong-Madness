@@ -92,7 +92,7 @@ export function attachSocketHandlers(
       return;
     }
 
-    let peerId = rooms.connect({ send: (json) => ws.readyState === ws.OPEN && ws.send(json), close: (code, reason) => ws.close(code, reason) });
+    let peerId = rooms.connect({ send: (json) => ws.readyState === ws.OPEN && ws.send(json), close: (code, reason) => ws.close(code, reason) }, ip);
     const bucket = new TokenBucket(limits.messageBurst, limits.messagesPerSec);
     let alive = true;
     let closed = false;

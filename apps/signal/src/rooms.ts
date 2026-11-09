@@ -7,7 +7,7 @@ import { TableHost, type HostEvent, type SerializedHost, type Transport, type Un
 import { BOT_SKILLS, randomHex, sanitizeRules, type BotSkill, type RuleSet } from '@mjm/engine';
 import { uniqueCode, type HexSource } from './codes';
 import { LIMITS } from './config';
-import { TokenBucket } from './limits';
+import { BucketTable } from './limits';
 import type { LatencyWindow } from './metrics';
 
 export interface Socket {
@@ -31,10 +31,8 @@ interface Peer {
   userId?: string;
   /** The session that proved `userId`; a logout or revocation of it closes the socket (see `endSessions`). */
   sessionId?: string;
-  /** Allows one room per `LIMITS.createCooldownMs`. */
-  creates: TokenBucket;
-  /** Allows `LIMITS.joinsPerWindow` join attempts per `LIMITS.joinWindowMs`, so codes cannot be guessed quickly. */
-  joins: TokenBucket;
+  /** The client address the socket came from, for the per-IP create and join buckets (absent in unit tests). */
+  ip?: string;
 }
 
 interface Room {
@@ -50,6 +48,8 @@ interface Room {
   pinned?: boolean;
   /** The club this table belongs to; only its members may join. */
   clubCode?: string;
+  /** The account that opened the table; counts towards that account's `maxTablesPerUser`. */
+  createdBy?: string;
 }
 
 /**
@@ -84,6 +84,9 @@ export const ROOM_CLOSED = 'The host left, so the room has closed';
 export const CREATE_COOLDOWN = 'Please wait a few seconds before creating another room';
 export const JOIN_THROTTLED = 'Too many join attempts; please wait a few seconds';
 export const SERVER_FULL = 'The server is full right now; please try again in a few minutes';
+/** Sent when an account already has `maxTablesPerUser` tables open, as `{t:'error', code:'table_cap', message}`. */
+export const TABLE_CAP = 'You already have the most tables open; finish or leave one first';
+export const TABLE_CAP_CODE = 'table_cap';
 /** Sent when a user who is not a full member of the club tries to open or join one of its tables. */
 export const CLUB_MEMBERS_ONLY = 'Join the club first';
 
@@ -112,6 +115,8 @@ export interface RoomRegistryOptions {
   allowP2P?: boolean;
   /** Maximum number of tables hosted at once (default 500). */
   maxHostedTables?: number;
+  /** Maximum number of unfinished tables one account may have opened (default `DEFAULT_MAX_TABLES_PER_USER`). */
+  maxTablesPerUser?: number;
   now?: () => number;
   /** Secure random source for room codes and peer ids. Injected in tests. */
   randomHex?: HexSource;
@@ -135,9 +140,17 @@ export interface HostedRoomOptions {
   keepAliveMs?: number;
   /** The club the table belongs to. */
   clubCode?: string;
+  /**
+   * The account opening the table. A new table is refused with `TABLE_CAP` once that account has
+   * `maxTablesPerUser` unfinished tables; a restored one keeps its creator without the check.
+   */
+  createdBy?: string;
   /** Resume a table from its snapshot (after a restart). The room keeps the snapshot's code. */
   restore?: SerializedHost;
 }
+
+/** Default for `RoomRegistryOptions.maxTablesPerUser` (`MAX_TABLES_PER_USER`). */
+export const DEFAULT_MAX_TABLES_PER_USER = 3;
 
 export class RoomRegistry {
   private readonly peers = new Map<string, Peer>();
@@ -146,8 +159,22 @@ export class RoomRegistry {
   private readonly changeHandlers = new Set<(room: string) => void>();
   private readonly hex: HexSource;
   private closed = false;
+  /**
+   * Create and join allowances, kept per account (or per socket for a peer with no account) and
+   * per client address, so reconnecting does not refill them and many guest accounts from one
+   * address share one allowance.
+   */
+  private readonly createsByUser: BucketTable<string>;
+  private readonly createsByIp: BucketTable<string>;
+  private readonly joinsByUser: BucketTable<string>;
+  private readonly joinsByIp: BucketTable<string>;
   constructor(private readonly opts: RoomRegistryOptions = {}) {
     this.hex = opts.randomHex ?? randomHex;
+    const now = () => this.now();
+    this.createsByUser = new BucketTable(1, 1000 / LIMITS.createCooldownMs, { now });
+    this.createsByIp = new BucketTable(LIMITS.createsPerIpPerMinute, LIMITS.createsPerIpPerMinute / 60, { now });
+    this.joinsByUser = new BucketTable(LIMITS.joinsPerWindow, (LIMITS.joinsPerWindow * 1000) / LIMITS.joinWindowMs, { now });
+    this.joinsByIp = new BucketTable(LIMITS.joinsPerIpPerWindow, (LIMITS.joinsPerIpPerWindow * 1000) / LIMITS.joinWindowMs, { now });
   }
 
   /** Subscribe to events from server-hosted tables (for club standings). */
@@ -170,12 +197,14 @@ export class RoomRegistry {
   createHostedRoom(opts: HostedRoomOptions = {}): string {
     if (!this.opts.allowHosted) throw new RoomLimitError(HOSTED_DISABLED);
     if (this.hostedCount() >= this.maxHostedTables()) throw new RoomLimitError(SERVER_FULL);
+    if (!opts.restore && opts.createdBy && this.openTablesOf(opts.createdBy) >= this.maxTablesPerUser()) throw new RoomLimitError(TABLE_CAP);
     const wanted = opts.restore ? opts.restore.roomCode : opts.code;
     const usable = typeof wanted === 'string' && /^[A-Z0-9]{4,8}$/.test(wanted) && !this.rooms.has(wanted);
     if (opts.restore && !usable) throw new Error(`Cannot restore table ${String(wanted)}: the code is malformed or in use`);
     const code = usable ? wanted : this.newCode();
     const room: Room = { code, host: '', peers: new Set(), createdAt: this.now(), keepAliveUntil: this.now() + (opts.keepAliveMs ?? KEEP_ALIVE_MS), pinned: true };
     if (opts.clubCode) room.clubCode = opts.clubCode.toUpperCase();
+    if (opts.createdBy) room.createdBy = opts.createdBy;
     this.attachTable(room, opts.rules, opts.botSkill, opts.restore);
     this.rooms.set(code, room);
     return code;
@@ -224,6 +253,23 @@ export class RoomRegistry {
     return n;
   }
 
+  private maxTablesPerUser(): number {
+    return this.opts.maxTablesPerUser ?? DEFAULT_MAX_TABLES_PER_USER;
+  }
+
+  /** Hosted tables this account opened that have not finished (a finished match no longer counts). */
+  openTablesOf(userId: string): number {
+    let n = 0;
+    for (const r of this.rooms.values()) if (r.table && r.createdBy === userId && r.table.host.phase !== 'match_over') n++;
+    return n;
+  }
+
+  /** Spend one token from the account's (or socket's) bucket and, when the address is known, the address's. */
+  private allow(peer: Peer, byUser: BucketTable<string>, byIp: BucketTable<string>): boolean {
+    if (!byUser.take(peer.userId ? `u:${peer.userId}` : `p:${peer.id}`)) return false;
+    return peer.ip === undefined || byIp.take(peer.ip);
+  }
+
   newCode(len = 6): string {
     return uniqueCode((c) => this.rooms.has(c), len, this.hex);
   }
@@ -234,16 +280,12 @@ export class RoomRegistry {
     return id;
   }
 
-  connect(socket: Socket): string {
+  /** Register a new socket; `ip` is the client address (see `clientIp`), used for the per-address limits. */
+  connect(socket: Socket, ip?: string): string {
     const id = this.newPeerId('tmp-');
-    const now = () => this.now();
-    this.peers.set(id, {
-      id,
-      socket,
-      room: null,
-      creates: new TokenBucket(1, 1000 / LIMITS.createCooldownMs, now),
-      joins: new TokenBucket(LIMITS.joinsPerWindow, (LIMITS.joinsPerWindow * 1000) / LIMITS.joinWindowMs, now),
-    });
+    const peer: Peer = { id, socket, room: null };
+    if (ip !== undefined) peer.ip = ip;
+    this.peers.set(id, peer);
     return id;
   }
 
@@ -323,6 +365,10 @@ export class RoomRegistry {
           this.error(peer, SERVER_FULL);
           return peer.id;
         }
+        if (hosted && peer.userId && this.openTablesOf(peer.userId) >= this.maxTablesPerUser()) {
+          this.error(peer, TABLE_CAP, TABLE_CAP_CODE);
+          return peer.id;
+        }
         let rules: unknown = msg.rules;
         if (club !== undefined) {
           // Checked before the cooldown, so a refusal does not cost the peer its next create.
@@ -333,7 +379,7 @@ export class RoomRegistry {
           }
           rules = gate.rules;
         }
-        if (!peer.creates.take()) {
+        if (!this.allow(peer, this.createsByUser, this.createsByIp)) {
           this.error(peer, CREATE_COOLDOWN);
           return peer.id;
         }
@@ -342,6 +388,7 @@ export class RoomRegistry {
         const code = wanted && /^[A-Z0-9]{4,8}$/.test(wanted) && !this.rooms.has(wanted) ? wanted : this.newCode();
         const room: Room = { code, host: peer.id, peers: new Set([peer.id]), createdAt: this.now() };
         if (club !== undefined) room.clubCode = club;
+        if (hosted && peer.userId) room.createdBy = peer.userId;
         if (hosted) this.attachTable(room, rules, msg.botSkill);
         this.rooms.set(code, room);
         peer.room = code;
@@ -361,7 +408,7 @@ export class RoomRegistry {
       }
       case 'join': {
         if (peer.id.startsWith('tmp-') || typeof msg.room !== 'string') return peer.id;
-        if (!peer.joins.take()) {
+        if (!this.allow(peer, this.joinsByUser, this.joinsByIp)) {
           this.error(peer, JOIN_THROTTLED);
           return peer.id;
         }
@@ -499,6 +546,11 @@ export class RoomRegistry {
   /** The club a room belongs to, if any. */
   clubOf(code: string): string | undefined {
     return this.rooms.get(code)?.clubCode;
+  }
+
+  /** The account that opened a room, if known. */
+  createdByOf(code: string): string | undefined {
+    return this.rooms.get(code)?.createdBy;
   }
 
   /** Codes of every table the server is hosting. */

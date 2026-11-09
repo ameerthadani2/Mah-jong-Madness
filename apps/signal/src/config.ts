@@ -25,6 +25,8 @@ export interface SignalConfig {
   corsOrigins: string[];
   /** Maximum number of tables the server hosts at once (`MAX_HOSTED_TABLES`, default 500). */
   maxHostedTables: number;
+  /** Maximum number of unfinished tables one account may have opened (`MAX_TABLES_PER_USER`, default 3). */
+  maxTablesPerUser: number;
   /** Allow rooms the server only relays (`P2P_ROOMS=1`). Off by default; intended for development only. */
   p2pRooms: boolean;
   /** Oldest app build allowed to play (`MIN_BUILD`, default 0); `GET /api/config` reports it so older apps can ask to update. */
@@ -48,10 +50,14 @@ export const LIMITS = {
   /** Per-IP HTTP bucket: sustained rate and burst size. Exceeding it returns 429. */
   httpPerSec: 10,
   httpBurst: 30,
-  /** Each peer may create one room per this many milliseconds. */
+  /** Each account (or socket without one) may create one room per this many milliseconds, however often it reconnects. */
   createCooldownMs: 10_000,
-  /** Join attempts allowed per peer within each `joinWindowMs`. */
+  /** Rooms one IP address may create per minute, whatever the accounts. */
+  createsPerIpPerMinute: 6,
+  /** Join attempts allowed per account (or socket without one) within each `joinWindowMs`. */
   joinsPerWindow: 5,
+  /** Join attempts allowed per IP address within each `joinWindowMs`, whatever the accounts. */
+  joinsPerIpPerWindow: 20,
   joinWindowMs: 10_000,
   /** `/api/auth/*` requests per minute, per IP and per user. Exceeding either returns 429. */
   authPerMinute: 5,
@@ -95,6 +101,7 @@ export function loadConfig(env: Env = process.env): SignalConfig {
       .map((s) => s.trim())
       .filter(Boolean),
     maxHostedTables: positiveInt(env.MAX_HOSTED_TABLES, 500),
+    maxTablesPerUser: positiveInt(env.MAX_TABLES_PER_USER, 3, 100),
     p2pRooms: flag(env.P2P_ROOMS, false),
     minBuild: env.MIN_BUILD && /^\d+$/.test(env.MIN_BUILD.trim()) ? Number(env.MIN_BUILD.trim()) : 0,
     maintenance: env.MAINTENANCE_MESSAGE && env.MAINTENANCE_MESSAGE.trim() ? env.MAINTENANCE_MESSAGE.trim().slice(0, 500) : null,
