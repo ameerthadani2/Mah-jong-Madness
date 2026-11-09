@@ -1,6 +1,6 @@
 /** The coach bubble: status, the most useful advice, waits and claim reasons (offline bot tables only). */
 import React from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import type { Hint } from '@mjm/engine';
 import { colors, fonts } from '../../theme';
 import { useT } from '../../i18n';
@@ -8,7 +8,7 @@ import { CoachOwl } from '../Avatars';
 import { Icon } from '../Icons';
 import { Tile } from '../Tile';
 import { Row } from '../Ui';
-import type { CoachBudget } from './layout';
+import { COACH_ADVICE_LINE_H, COACH_STATUS_LINE_H, type CoachBudget } from './layout';
 
 export function CoachPanel({
   hint,
@@ -31,7 +31,8 @@ export function CoachPanel({
   const preview = hint.winPreview ? t('table.coach.winPreview', { items: hint.winPreview.items.map((i) => t('table.coach.taiItem', { name: i.nameZh, tai: i.tai })).join(' · '), tai: hint.winPreview.tai }) : null;
   if (compact) {
     // Status + the single most useful piece of advice; both wrap rather than truncate mid-word. With a budget
-    // (claim buttons docked under the bubble) the status gives way to the advice, which is capped with an ellipsis.
+    // (claim buttons up) the status gives way to the advice. Advice longer than the lines that fit scrolls inside
+    // the bubble: it is never cut off with an ellipsis.
     const rec = hint.claims.find((c) => c.recommended);
     const line = preview ?? (hint.discardReasonKey ? engine(hint.discardReasonKey, hint.discardReasonParams) : rec ? engine(rec.reasonKey, rec.reasonParams) : '');
     const statusLines = budget ? (budget.statusLines === 0 && line ? 0 : Math.max(1, budget.statusLines)) : 2;
@@ -45,18 +46,10 @@ export function CoachPanel({
         testID="coach"
       >
         {!textOnly && <CoachOwl size={30} />}
-        <View style={{ flex: 1, minWidth: 0, flexShrink: 1 }}>
-          {statusLines > 0 && (
-            <Text style={styles.coachStatus} numberOfLines={statusLines}>
-              {engine(hint.statusKey, hint.statusParams)}
-            </Text>
-          )}
-          {!!line && (
-            <Text style={styles.coachLine} numberOfLines={adviceLines}>
-              {line}
-            </Text>
-          )}
-        </View>
+        <ScrollView style={{ flex: 1, minWidth: 0, flexShrink: 1, maxHeight: statusLines * COACH_STATUS_LINE_H + adviceLines * COACH_ADVICE_LINE_H }} nestedScrollEnabled showsVerticalScrollIndicator testID="coach-text">
+          {statusLines > 0 && <Text style={styles.coachStatus}>{engine(hint.statusKey, hint.statusParams)}</Text>}
+          {!!line && <Text style={styles.coachLine}>{line}</Text>}
+        </ScrollView>
         {hint.waits.length > 0 && !textOnly && (
           <Row gap={2} style={{ flexShrink: 0 }}>
             {hint.waits.slice(0, 4).map((w) => (
