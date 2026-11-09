@@ -3,7 +3,7 @@
  * plus `nameZh` / `labelZh` fields; Chinese mahjong terms (底, 台, 一炮多響, 過水 …)
  * stay Chinese in every language. Pure: callers pass `t` and the current locale.
  */
-import { BOT_SKILLS, SPEED_PRESETS, type BotSkill, type GameSpeed, type RulePreset, type RuleSet } from '@mjm/engine';
+import { BOT_SKILLS, ruleExtras, ruleExtraText, SPEED_PRESETS, type BotSkill, type GameSpeed, type RuleExtra, type RulePreset, type RuleSet } from '@mjm/engine';
 import type { Locale } from '../i18n/resolve';
 import { localized, type Translate } from './translate';
 
@@ -12,9 +12,35 @@ export function speedLabel(speed: GameSpeed, locale: Locale): string {
   return p ? localized(locale, p.label, p.labelZh) : speed;
 }
 
-/** Same text as the engine's `describeRules` in English, e.g. "底100 / 台20 · 16 rotations · Normal (15s + 30s bank)". */
+/**
+ * One rule that differs from the defaults, in the player's language. Chinese mahjong terms
+ * (一炮多響, 過水, 流局不連莊, 天胡 …) read the same in every language; the rest come from
+ * `clubs.rulesText`, whose English matches the engine's `describeRules`.
+ */
+export function ruleExtraLabel(e: RuleExtra, t: Translate): string {
+  switch (e.kind) {
+    case 'dealerTai':
+      return t('clubs.rulesText.dealerTai', { n: e.value });
+    case 'dealerStreakTai':
+      return t('clubs.rulesText.dealerStreakTai', { n: e.value });
+    case 'deadWall':
+      return t('clubs.rulesText.deadWall', { n: e.value });
+    case 'startingPoints':
+      return t('clubs.rulesText.startingPoints', { n: e.value });
+    default:
+      return ruleExtraText(e);
+  }
+}
+
+/**
+ * Same text as the engine's `describeRules` in English, e.g. "底100 / 台20 · 16 rotations · Normal
+ * (15s + 30s bank)", then every rule that differs from the defaults (dealer and streak 台, dead
+ * wall, 流局不連莊, 天/地/人胡 values …), so a joining player sees the whole house.
+ */
 export function rulesSummary(r: RuleSet, t: Translate, locale: Locale): string {
-  const extras = [r.multipleWinners && '一炮多響', r.passRule && '過水', r.noFlowerTai && '無花1台', !r.allowChi && '不可吃', r.maxTai > 0 && `封頂${r.maxTai}台`].filter(Boolean).join(' · ');
+  const extras = ruleExtras(r)
+    .map((e) => ruleExtraLabel(e, t))
+    .join(' · ');
   const main = t('common.rules.summary', { base: r.basePoints, tai: r.taiPoints, hands: r.handsPerMatch, speed: speedLabel(r.speed, locale), turn: r.turnSeconds, bank: r.timeBankSeconds });
   return extras ? `${main} · ${extras}` : main;
 }

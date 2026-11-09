@@ -159,9 +159,83 @@ export function rulesFromPreset(id: string, base: RuleSet = DEFAULT_RULES): Rule
   return preset ? sanitizeRules(preset.rules, sanitizeRules(base)) : sanitizeRules(base);
 }
 
-/** Human-readable one-liner, e.g. "底100 / 台20 · 16 rotations · Normal (15s + 30s bank)". */
+/**
+ * The rules that differ from `DEFAULT_RULES` beyond stakes, length and speed, in a fixed order, as
+ * data: callers word them (`describeRules` in English, the app in the player's language). Every
+ * such rule is listed, so a player joining a table sees exactly what is different about it.
+ */
+export type RuleExtra =
+  | { kind: 'multipleWinners' }
+  | { kind: 'passRule' }
+  | { kind: 'noFlowerTai' }
+  | { kind: 'noChi' }
+  | { kind: 'maxTai'; value: number }
+  | { kind: 'dealerTai'; value: number }
+  | { kind: 'dealerStreakTai'; value: number }
+  | { kind: 'drawPassesDeal' }
+  | { kind: 'deadWall'; value: number }
+  | { kind: 'heavenlyTai'; value: number }
+  | { kind: 'earthlyTai'; value: number }
+  | { kind: 'humanlyTai'; value: number }
+  | { kind: 'startingPoints'; value: number };
+
+export function ruleExtras(r: RuleSet): RuleExtra[] {
+  const d = DEFAULT_RULES;
+  const out: RuleExtra[] = [];
+  if (r.multipleWinners) out.push({ kind: 'multipleWinners' });
+  if (r.passRule) out.push({ kind: 'passRule' });
+  if (r.noFlowerTai) out.push({ kind: 'noFlowerTai' });
+  if (!r.allowChi) out.push({ kind: 'noChi' });
+  if (r.maxTai > 0) out.push({ kind: 'maxTai', value: r.maxTai });
+  if (r.dealerTai !== d.dealerTai) out.push({ kind: 'dealerTai', value: r.dealerTai });
+  if (r.dealerStreakTai !== d.dealerStreakTai) out.push({ kind: 'dealerStreakTai', value: r.dealerStreakTai });
+  if (!r.drawKeepsDealer) out.push({ kind: 'drawPassesDeal' });
+  if (r.deadWallSize !== d.deadWallSize) out.push({ kind: 'deadWall', value: r.deadWallSize });
+  if (r.heavenlyTai !== d.heavenlyTai) out.push({ kind: 'heavenlyTai', value: r.heavenlyTai });
+  if (r.earthlyTai !== d.earthlyTai) out.push({ kind: 'earthlyTai', value: r.earthlyTai });
+  if (r.humanlyTai !== d.humanlyTai) out.push({ kind: 'humanlyTai', value: r.humanlyTai });
+  if (r.startingPoints !== d.startingPoints) out.push({ kind: 'startingPoints', value: r.startingPoints });
+  return out;
+}
+
+/** One extra in English; Chinese mahjong terms stay Chinese. */
+export function ruleExtraText(e: RuleExtra): string {
+  switch (e.kind) {
+    case 'multipleWinners':
+      return '一炮多響';
+    case 'passRule':
+      return '過水';
+    case 'noFlowerTai':
+      return '無花1台';
+    case 'noChi':
+      return '不可吃';
+    case 'maxTai':
+      return `封頂${e.value}台`;
+    case 'dealerTai':
+      return `dealer ${e.value}台`;
+    case 'dealerStreakTai':
+      return `連莊 +${e.value}台 a hand`;
+    case 'drawPassesDeal':
+      return '流局不連莊';
+    case 'deadWall':
+      return `dead wall ${e.value}`;
+    case 'heavenlyTai':
+      return `天胡${e.value}台`;
+    case 'earthlyTai':
+      return `地胡${e.value}台`;
+    case 'humanlyTai':
+      return `人胡${e.value}台`;
+    case 'startingPoints':
+      return `start ${e.value}`;
+  }
+}
+
+/**
+ * Human-readable one-liner, e.g. "底100 / 台20 · 16 rotations · Normal (15s + 30s bank)", followed
+ * by every rule that differs from the defaults (see `ruleExtras`).
+ */
 export function describeRules(r: RuleSet): string {
   const speed = SPEED_PRESETS[r.speed]?.label ?? r.speed;
-  const extras = [r.multipleWinners && '一炮多響', r.passRule && '過水', r.noFlowerTai && '無花1台', !r.allowChi && '不可吃', r.maxTai > 0 && `封頂${r.maxTai}台`].filter(Boolean).join(' · ');
+  const extras = ruleExtras(r).map(ruleExtraText).join(' · ');
   return `底${r.basePoints} / 台${r.taiPoints} · ${r.handsPerMatch} rotations · ${speed} (${r.turnSeconds}s + ${r.timeBankSeconds}s bank)${extras ? ' · ' + extras : ''}`;
 }

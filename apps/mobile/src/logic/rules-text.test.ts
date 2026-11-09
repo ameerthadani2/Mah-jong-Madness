@@ -56,3 +56,19 @@ describe('rule and bot labels', () => {
     for (const k of Object.keys(BOT_SKILLS) as BotSkill[]) expect(en(`common.bots.${k}`)).toBe(BOT_SKILLS[k].description);
   });
 });
+
+describe('rulesSummary lists every non-default rule', () => {
+  const house = { ...DEFAULT_RULES, dealerTai: 2, dealerStreakTai: 3, drawKeepsDealer: false, deadWallSize: 8, heavenlyTai: 16, earthlyTai: 8, humanlyTai: 8, startingPoints: 1000 };
+
+  it('in English, exactly as the engine describes it', () => {
+    const s = rulesSummary(house, en, 'en');
+    expect(s).toBe(describeRules(house));
+    for (const part of ['dealer 2台', '連莊 +3台 a hand', '流局不連莊', 'dead wall 8', '天胡16台', '地胡8台', '人胡8台', 'start 1000']) expect(s).toContain(part);
+  });
+
+  it('in Traditional Chinese', () => {
+    const s = rulesSummary(house, zh, 'zh-TW');
+    for (const part of ['莊家2台', '連莊每次加3台', '流局不連莊', '留8張', '天胡16台', '地胡8台', '人胡8台', '起始1000分']) expect(s).toContain(part);
+    expect(s).not.toMatch(/dealer|dead wall|start/);
+  });
+});

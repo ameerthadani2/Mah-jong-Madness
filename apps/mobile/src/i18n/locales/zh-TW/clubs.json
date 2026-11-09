@@ -70,5 +70,11 @@
     "confirm": "開始第 %{n} 季",
     "started": "第 %{n} 季已開始。"
   },
-  "report": "檢舉"
+  "report": "檢舉",
+  "rulesText": {
+    "dealerTai": "莊家%{n}台",
+    "dealerStreakTai": "連莊每次加%{n}台",
+    "deadWall": "留%{n}張",
+    "startingPoints": "起始%{n}分"
+  }
 }
