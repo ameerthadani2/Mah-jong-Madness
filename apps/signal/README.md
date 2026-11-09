@@ -21,6 +21,8 @@ With no environment at all the server runs: accounts, clubs and tables are kept 
 | `src/rooms.ts` | Rooms, hosted tables, the club table gate, keep-alive |
 | `src/clubs.ts` | Clubs, members, standings and seasons, table listings; writes each changed club through `repos.clubs`; emits `table_opened` / `member_approved` for push |
 | `src/catalog.ts` | The server's product table (diamond packs, Coach Gold and The Four Winds Club, cosmetics and sets); ids match `apps/mobile/src/monetisation/catalog.ts` |
+| `src/matchmaking.ts` | The quick-match queue: arrival-order groups of four, Club bots after `QUICK_MATCH_FILL_MS`, blocked pairs apart, banned and under-17 accounts refused |
+| `src/moderation.ts` | The name blocklist, `/api/blocks`, and the moderators' routes behind `ADMIN_TOKEN` (report queue, ban, mute) with the in-memory mute list the tables ask |
 | `src/admin.ts` | `POST /api/wallet/sync` (store reconciliation after Restore) and `POST /api/admin/grant` (support grants behind `ADMIN_TOKEN`) |
 | `src/reconcile.ts` | RevenueCat REST client and the nightly reconciliation of missed store events |
 | `src/wallet.ts` | `WalletService`: credits, diamond spends, store events applied once (idempotent on the event id) |
@@ -58,7 +60,8 @@ With no environment at all the server runs: accounts, clubs and tables are kept 
 | `REVENUECAT_WEBHOOK_SECRET` | none | The value RevenueCat sends as `Authorization: Bearer <secret>` on its webhook (set the header to `Bearer <secret>` in the RevenueCat dashboard). Absent: `POST /api/webhooks/revenuecat` answers 503 and `/api/config.storeEnabled` is false |
 | `REVENUECAT_SECRET_KEY` | none | RevenueCat secret API key for reconciliation (`GET /v1/subscribers/{id}`). Absent: `POST /api/wallet/sync` answers `synced:false` and the nightly job does nothing |
 | `TESTER_USER_IDS` | none | Comma-separated account ids whose sandbox (TestFlight / Play test) purchases are granted. Everyone else's sandbox events are recorded as `ignored_sandbox` |
-| `ADMIN_TOKEN` | none | Bearer token for `/api/admin/*` (support grants). Absent: those routes answer 503 |
+| `ADMIN_TOKEN` | none | Bearer token for `/api/admin/*` (support grants, the report queue, bans and mutes). Absent: those routes answer 503 |
+| `QUICK_MATCH_FILL_MS` | `20000` | How long a quick-match group of one to three humans waits before Club bots fill its empty seats (1 to 600,000 ms) |
 | `EXPO_ACCESS_TOKEN` | none | Expo access token for push (`expo-server-sdk`). Absent: no push is sent and `/api/config.pushEnabled` is false |
 | `SENTRY_DSN` | none | Sentry project DSN for server errors. Absent: errors are only logged. `SENTRY_ENVIRONMENT` (default `production`) and `SENTRY_RELEASE` (default `FLY_IMAGE_REF`) are optional |
 | `POSTHOG_KEY` | none | PostHog project key for the server events `purchase_credited` and `report_filed`. Absent: none are sent. `POSTHOG_HOST` is optional (PostHog's US cloud by default; `https://eu.i.posthog.com` for the EU) |
@@ -128,7 +131,7 @@ JSON in and out. Errors are `{ "error": "<code>", "message": "<English sentence>
 | `POST /api/auth/login` | none (or a guest bearer) | `{ provider, token, nonce, device }` | `{ session, user }` or `404 not_linked`; `400 invalid` without a nonce |
 | `DELETE /api/auth/identities/:provider` | bearer | | `204`, `409 last_identity` or `404 not_found` |
 | `GET /api/me` | bearer | | `{ user, wallet: { diamonds, bonusDiamonds }, entitlements: [{ entitlement, expiresAt, active }], cosmetics: ["theme.jade", …], coachTier: "free"\|"gold"\|"fourwinds", storeEnabled, identities: [{ provider, email? }], serverNow }` |
-| `PATCH /api/me` | bearer | `{ displayName?, avatar?, locale?, birthYear? }` | `{ user }`; the new name and avatar are written into every club the user is in |
+| `PATCH /api/me` | bearer | `{ displayName?, avatar?, locale?, birthYear? }` | `{ user }`; the new name and avatar are written into every club the user is in. A name on the blocklist (slurs, profanity, staff titles; also club names and the guest bootstrap name) answers `400 name_not_allowed` |
 | `DELETE /api/me` | bearer | | `204`; soft delete, every session ends (sockets closed with 4401), club rows become "Deleted player", a club the user owned passes to its senior admin or earliest member (or is dissolved), the row is purged after 30 days |
 | `POST /api/clubs` | bearer | `{ name, rules?, settings? }` | the club; the caller is its owner. With the store live, `403 fourwinds_required` without The Four Winds Club; at most 3 owned |
 | `DELETE /api/clubs/:code` | bearer (owner) | `{ confirm }` (the club's name or code) | `204`; its live tables close |
@@ -149,6 +152,11 @@ JSON in and out. Errors are `{ "error": "<code>", "message": "<English sentence>
 | `POST /api/wallet/spend` | bearer | `{ productId }` | `{ spent, entitlement, wallet, cosmetics }`; `409 insufficient`, `409 owned`, `404 not_for_sale` |
 | `POST /api/webhooks/revenuecat` | `Bearer <REVENUECAT_WEBHOOK_SECRET>` | RevenueCat v1 event | `{ ok, outcome, duplicate }`; `401` bad secret, `503` secret unset, `400` not an event |
 | `POST /api/reports` | bearer | `{ reportedUserId, roomCode?, reason, details? }` | `201 { id, status, createdAt }`; `404` unknown player; `429` after 10 a day per user or 30 a day per IP |
+| `GET /api/blocks` / `POST /api/blocks` / `DELETE /api/blocks/:userId` | bearer | `{ userId }` (POST) | `{ blocks: [{ userId, displayName, avatar, createdAt }] }`, `201` the block, `204`; `400` yourself, `404` unknown player |
+| `GET /api/admin/reports?status=open` | `Bearer <ADMIN_TOKEN>` | | `{ reports: [{ id, status, reason, details, room, createdAt, reporter, reported }] }`, oldest first |
+| `POST /api/admin/reports/:id/resolve` | `Bearer <ADMIN_TOKEN>` | `{ action: "dismiss"\|"warn"\|"ban"\|"mute", days?, reason? }` | `{ ok, id, status, action }`; `ban` and `mute` act on the reported account; `409 resolved` |
+| `POST /api/admin/users/:id/ban` / `DELETE` | `Bearer <ADMIN_TOKEN>` | `{ reason? }` | `{ ok, account }`; sessions revoked, sockets closed with 4403, sign-in and refresh `403 banned` until lifted |
+| `POST /api/admin/users/:id/mute` | `Bearer <ADMIN_TOKEN>` | `{ days }` (0 lifts it) | `{ ok, account }`; chat and emotes dropped at every table until it ends |
 | `POST /api/push/token` | bearer | `{ token: "ExponentPushToken[…]", platform: "ios"\|"android" }` or `{ token: null }` | `204`; stored on this session's device (and removed from any other device that had it) |
 
 Club members are identified by the session's user id; their name and avatar come from the user record (a guest without a name shows as `Player XXXX`).
@@ -166,12 +174,14 @@ Entitlements are decided here, never on the phone. The app buys through RevenueC
 Client → server
 | Message | Purpose |
 | --- | --- |
-| `{t:"hello", auth}` | Must be the first frame. `auth` is the session token. The server replies `{t:"hello", id, userId}` (`peerId`, the same as `id`, is kept for older clients); the id is assigned by the server and never changes. A missing or rejected token closes the socket with 4401, and so does a session that ends later (logout, deletion, merge, revocation): at once from the API, or at the next `create` or `join`, before which the token is checked again |
+| `{t:"hello", auth}` | Must be the first frame. `auth` is the session token. The server replies `{t:"hello", id, userId}` (`peerId`, the same as `id`, is kept for older clients); the id is assigned by the server and never changes. A missing or rejected token closes the socket with 4401 (4403 for a banned account, also when a moderator bans it later), and so does a session that ends later (logout, deletion, merge, revocation): at once from the API, or at the next `create` or `join`, before which the token is checked again |
 | `{t:"create", hosted:true, rules?, botSkill?, club?}` | Create a room whose table the server hosts. `botSkill` is `beginner`, `club` or `pro`. With `club` it is a club table: only full members may open one (`Join the club first` otherwise) and it is listed in the club. Without `hosted:true` (and no `club`) the request is refused unless `P2P_ROOMS=1`; with `HOST_TABLES=0` it is refused with `Hosted tables are disabled` |
 | `{t:"join", room}` | Join by code (case-insensitive). A club table admits full members only |
 | `{t:"to", to, data}` | Relay `data` to a peer in the same room. A game `join` sent to the hosted table always carries the verified `userId`, whatever the client put there |
 | `{t:"leave"}` | Leave the room |
 | `{t:"ping"}` | Heartbeat; answered with `{t:"pong"}`. The app sends one every 15 s and reconnects after 10 s without an answer |
+| `{t:"queue", preset?:"normal"}` | Quick match: wait to be seated with strangers (see docs/API.md, "Quick match"). Needs an account that is not banned and a birth year making it 17 or older; spends the `join` allowance |
+| `{t:"leave_queue"}` | Leave the quick-match queue (answered `{t:"queue_left"}`) |
 
 Server → client
 | Message | Purpose |
@@ -180,6 +190,9 @@ Server → client
 | `{t:"peer", peerId, event}` | A peer joined or left |
 | `{t:"from", from, data}` | Relayed data |
 | `{t:"error", code?, message}` | Sent once in reply to a refused `create` or `join`. `code:"room_unavailable"` (`Room not found or full`) is definitive, so a client stops reconnecting to that room |
+| `{t:"queue_status", position, waitedMs, humans, fillMs}` | While queued: at once and every 2 s |
+| `{t:"matched", room, humans, bots}` | A quick-match table is ready: join it by code. Only the matched accounts may; it starts by itself once all of them sit, or after 15 s with bots in the empty seats |
+| `{t:"queue_error", code, message}` | Queue refusal: `banned`, `age_required`, `rate_limited`, `sign_in`, `unavailable`, or `replaced` (the account queued from another socket) |
 | `{t:"error", code:"closed", message}` | The host of a relay-only room left, so the room has closed. Sent unprompted to every peer still in it; they are no longer in a room |
 
 The host role never moves: a relay-only room closes when its host leaves, because a guest promoted to host would hold none of the table's state.
@@ -188,4 +201,4 @@ Game traffic is wrapped as `{ch:"game", msg}`, so other channels can share the s
 
 ## Tests
 
-`npm test -w @mjm/signal`. `catalog.test.ts` checks the product table against the app's catalogue; `wallet.test.ts`, `webhook.test.ts` (recorded-style RevenueCat payloads, replays, bad and unset secrets), `reports-seasons.test.ts`, `push.test.ts` (a fake Expo client) and `health.test.ts` cover Phases 4 and 6. `test/e2e.test.ts` runs the real server on port 0 with memory repositories and two `ws` clients through `SignalingClient`: full hands with verified audits, a dropped socket rejoining, the club gate, the flood limit, and a restart over the same repositories that restores a table mid-hand. The Postgres cases in `repos.test.ts` and `migrate.test.ts` run when `DATABASE_URL_TEST` is set (CI sets it).
+`npm test -w @mjm/signal`. `catalog.test.ts` checks the product table against the app's catalogue; `wallet.test.ts`, `webhook.test.ts` (recorded-style RevenueCat payloads, replays, bad and unset secrets), `reports-seasons.test.ts`, `push.test.ts` (a fake Expo client) and `health.test.ts` cover Phases 4 and 6. `matchmaking.test.ts` covers quick match (fill timing on a fake clock, blocked pairs, refusals, one entry per account, the restricted self-starting table, mutes, and a real-socket run with three clients) and `moderation.test.ts` the name check, blocks, bans and the moderators' routes. `test/e2e.test.ts` runs the real server on port 0 with memory repositories and two `ws` clients through `SignalingClient`: full hands with verified audits, a dropped socket rejoining, the club gate, the flood limit, and a restart over the same repositories that restores a table mid-hand. The Postgres cases in `repos.test.ts` and `migrate.test.ts` run when `DATABASE_URL_TEST` is set (CI sets it).

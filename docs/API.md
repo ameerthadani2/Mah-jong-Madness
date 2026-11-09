@@ -67,7 +67,40 @@ Merge rules: (1) identity unlinked → linked to the current user, who becomes `
 2. `{ "t": "create", "hosted": true, "rules"?, "botSkill"?, "club"?: "<club code>" }` → `{ "t": "room", "room", "host", "peers" }` or `{ "t": "error", "code"?, "message" }`. Club tables require membership (`403`-style error frame `Join the club first`).
 3. `{ "t": "join", "room" }` → `room` or `error`. `{ "t": "error", "code": "room_unavailable", "message": "Room not found or full" }` is definitive (the table is over, was reaped, or is full): stop reconnecting to it. The table host binds the verified `userId` to the seat; the client's `join` frame to the table carries its name, avatar and rejoin token as before.
 4. Reconnect: on socket close the app retries with backoff 1, 2, 4, 8 … 60 s, re-sends `hello` + `join` with the same rejoin token, and shows "Reconnecting". The server keeps a seat for 15 minutes of inactivity.
-5. The session is checked again before every `create` and `join`, and a session that ends while the socket is open (logout, `DELETE /api/me`, a merge, a link ending the account's other sessions, a revocation or expiry) closes the socket with `4401`. The seat stays reclaimable: obtain the current session (refresh, or sign in again), then reconnect with `hello` + `join` and the rejoin token. A token that was refreshed more than 5 minutes ago is treated the same way at the next `create` or `join`.
+5. The session is checked again before every `create`, `join` and `queue`, and a session that ends while the socket is open (logout, `DELETE /api/me`, a merge, a link ending the account's other sessions, a revocation or expiry) closes the socket with `4401`. The seat stays reclaimable: obtain the current session (refresh, or sign in again), then reconnect with `hello` + `join` and the rejoin token. A token that was refreshed more than 5 minutes ago is treated the same way at the next `create` or `join`.
+
+6. A banned account is refused at `hello` and at each recheck with close code `4403` (not `4401`: signing in again will not help), and a moderator's ban closes its open sockets with `4403` at once.
+
+### Quick match (WebSocket)
+
+Plan decision 3: instant seating with strangers. Any signed-in account may queue, guests included, provided it is not banned and the server holds a birth year that makes it 17 or older (the app sends it with `PATCH /api/me` after the age gate; the age counts as `currentYear - birthYear - 1`).
+
+- `{ "t": "queue", "preset"?: "normal" }` → at once and every 2 s while waiting: `{ "t": "queue_status", "position": 1, "waitedMs": 4000, "humans": 2, "fillMs": 20000 }` (`humans`: players in the group this one would be seated with now, itself included), then `{ "t": "matched", "room": "QM2345", "humans": 2, "bots": 2 }`. Join the room with `{t:"join", room}` and the table `join` as usual; reconnects use the rejoin token like any table.
+- `{ "t": "leave_queue" }` → `{ "t": "queue_left" }`. Closing the socket, or a `create`/`join`, also leaves.
+- Refusals: `{ "t": "queue_error", "code", "message" }` with `code` `banned`, `age_required` (no birth year on the server, or under 17), `rate_limited` (the same per-account and per-address allowance as `join`), `sign_in` (a socket without an account), `unavailable` (try again), or `replaced` (the same account queued from another socket, which keeps this one's place in line).
+
+Grouping: arrival order, four to a table; two accounts where either blocked the other are never in one group. A group of four is seated at once; a group of one to three is seated with Club bots in the empty seats once its first player has waited `QUICK_MATCH_FILL_MS` (default 20,000 ms). The table uses the default rules at Normal speed with Club bots, only the matched accounts may enter it (anyone else gets `room_unavailable`, onlookers included), no player may `start` it or `add_bot`, it counts against nobody's `MAX_TABLES_PER_USER`, it is never a club table and never counts toward club standings. It starts by itself once every matched player holds a seat, or 15 s after it opened with bots in the seats of anyone who did not come (with nobody there it closes).
+
+## Blocks
+
+Bearer. A blocked player's chat lines and emotes are hidden by the app at a table, and quick match never seats the two together (in either direction). Blocks move to the surviving account on a merge and go with an account deletion.
+
+- `GET /api/blocks` → `{ "blocks": [{ "userId", "displayName", "avatar", "createdAt" }] }`, newest first.
+- `POST /api/blocks { "userId" }` → `201` (or `200` when already blocked) with the same fields. `400 invalid` (missing, malformed, yourself), `404 not_found` (no such player), `409 limit` (500 blocks).
+- `DELETE /api/blocks/:userId` → `204`.
+
+## Moderation (`Authorization: Bearer <ADMIN_TOKEN>`)
+
+Compared in constant time. Without `ADMIN_TOKEN` every route here answers `503 unavailable`; a wrong token `401 unauthorised`.
+
+- `GET /api/admin/reports?status=open&limit=100` → `{ "reports": [{ "id", "status", "reason", "details", "room", "createdAt", "reporter": Account, "reported": Account }] }`, oldest first. `status` is `open` (default), `actioned` or `dismissed`. `Account` is `{ "id", "kind", "displayName", "deleted", "bannedAt", "banReason", "mutedUntil" }`.
+- `POST /api/admin/reports/:id/resolve { "action": "dismiss" | "warn" | "ban" | "mute", "days"?, "reason"? }` → `{ "ok": true, "id", "status", "action", "mutedUntil"? }`. `dismiss` leaves the report `dismissed`; the others `actioned`. `ban` bans the reported account (as below), `mute` mutes it for `days` (1 to 365, required), `warn` only records the decision. `409 resolved` for a report already closed, `404 not_found`.
+- `POST /api/admin/users/:id/ban { "reason"? }` → `{ "ok": true, "account": Account }`. Every session of the account is revoked, its sockets close with `4403`, it leaves the quick-match queue, and from then on sign-in (`/api/auth/guest/login`, `/api/auth/login`), `/api/auth/refresh` and every bearer route answer `403 banned`. `DELETE` on the same path lifts the ban (the old sessions stay ended; the player signs in again).
+- `POST /api/admin/users/:id/mute { "days" }` → `{ "ok": true, "account": Account }`. `days` 1 to 365; `0` lifts the mute. A muted account's chat lines and emotes are dropped at every table until it ends.
+
+## Names
+
+Display names (`POST /api/auth/guest`, `PATCH /api/me`) and club names (`POST /api/clubs`, `PATCH /api/clubs/:code`) are cleaned (`cleanText`) and then checked against a small English and Chinese blocklist: slurs and profanity, and names that pose as staff (admin, moderator, official, staff, support, GM, 官方, 管理員, 客服 and the like, also with digits or symbols for letters). A refused name answers `400 { "error": "name_not_allowed" }`. Words that only contain a blocked one (Badminton, Stafford, Scunthorpe) pass.
 
 ## Clubs
 
@@ -207,7 +240,7 @@ Header `Authorization: Bearer <REVENUECAT_WEBHOOK_SECRET>` (set exactly that as 
 
 `POST /api/reports` (bearer) body `{ "reportedUserId": "<uuid>", "roomCode"?: "AB12CD", "reason": "cheating" | "collusion" | "abusive_chat" | "offensive_name" | "stalling" | "other", "details"?: "<up to 1,000 characters>" }` → `201 { "id", "status": "open", "createdAt" }`.
 
-`400 invalid` (missing or unknown field values, reporting yourself), `404 not_found` (no such player), `429 rate_limited` after 10 reports by the same user in 24 hours, or after 30 reports from the same IP address in 24 hours whatever the accounts (guest accounts are free to make). Reports are kept when either account is deleted, and follow a guest into the account it merges into. There is no moderation UI yet: reports are read from the `reports` table (`status` open / actioned / dismissed).
+`400 invalid` (missing or unknown field values, reporting yourself), `404 not_found` (no such player), `429 rate_limited` after 10 reports by the same user in 24 hours, or after 30 reports from the same IP address in 24 hours whatever the accounts (guest accounts are free to make). Reports are kept when either account is deleted, and follow a guest into the account it merges into. Moderators read and resolve them with the routes under "Moderation" above.
 
 ## Club seasons (Phase 4)
 
