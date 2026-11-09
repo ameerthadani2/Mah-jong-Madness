@@ -36,7 +36,8 @@ import { DAY_MS } from './limits';
 import { LIMITS, type SignalConfig } from './config';
 import { BucketTable, cleanField, clientIp } from './limits';
 import type { LatencyWindow } from './metrics';
-import { NO_ANALYTICS, reportError, type Analytics } from './observability';
+import { NO_ANALYTICS, reportError, withConsent, type Analytics } from './observability';
+import { storeRoutes } from './admin';
 import { EXPO_PUSH_TOKEN, type PushService } from './push';
 import { REPORT_REASONS, type ReportReason, type Repos, type UserRecord } from './repos/types';
 import { parseRevenueCatWebhook, webhookAuthorised } from './revenuecat';
@@ -188,7 +189,8 @@ export function buildRoutes(deps: ApiDeps, opts: Pick<ApiOptions, 'reportIpLimit
   const { clubs, rooms, repos, sessions } = deps;
   const now = deps.now ?? Date.now;
   const reportsByIp = opts.reportIpLimiter ?? new BucketTable<string>(LIMITS.reportsPerDayPerIp, LIMITS.reportsPerDayPerIp / (DAY_MS / 1000), { now, idleMs: DAY_MS });
-  const analytics = deps.analytics ?? NO_ANALYTICS;
+  // Server-side events follow each player's analytics choice (sent on PATCH /api/me).
+  const analytics = withConsent(deps.analytics ?? NO_ANALYTICS, (id) => repos.users.getAnalyticsConsent(id));
   const wallet = deps.wallet ?? new WalletService(repos, { now, analytics });
   const webhookSecret = deps.config?.revenueCatWebhookSecret ?? null;
   const storeEnabled = webhookSecret !== null;
@@ -387,6 +389,10 @@ export function buildRoutes(deps: ApiDeps, opts: Pick<ApiOptions, 'reportIpLimit
         if (y !== null && !(Number.isInteger(y) && (y as number) >= 1900 && (y as number) <= new Date(now()).getUTCFullYear())) throw new AuthError('invalid', 'birthYear must be a year');
         patch.birthYear = y as number | null;
       }
+      if (body.analyticsConsent !== undefined) {
+        if (typeof body.analyticsConsent !== 'boolean' && body.analyticsConsent !== null) throw new AuthError('invalid', 'analyticsConsent must be true, false or null');
+        await repos.users.setAnalyticsConsent(me.userId, body.analyticsConsent as boolean | null);
+      }
       const user = (await repos.users.update(me.userId, patch)) ?? me.user;
       clubs.refreshMember(memberIdentity(user));
       return { user: userJson(user) };
@@ -417,6 +423,7 @@ export function buildRoutes(deps: ApiDeps, opts: Pick<ApiOptions, 'reportIpLimit
       const summary = await wallet.summary(me.userId);
       return { spent: res.spent, entitlement: res.entitlement, wallet: summary.wallet, cosmetics: summary.cosmetics };
     }),
+    ...storeRoutes(r, { repos, wallet, now }),
 
     // ------------------------------------------------------------------ reports and push
     r('POST', '/api/reports', async (ctx) => {
@@ -518,7 +525,7 @@ export function buildRoutes(deps: ApiDeps, opts: Pick<ApiOptions, 'reportIpLimit
       const rules = sanitizeRules(body.rules, club.rules);
       let room: string;
       try {
-        room = rooms.createHostedRoom({ rules, botSkill: body.botSkill, clubCode: club.code });
+        room = rooms.createHostedRoom({ rules, botSkill: body.botSkill, clubCode: club.code, createdBy: me.userId });
       } catch (e) {
         if (e instanceof RoomLimitError) throw new ClubError('unavailable', e.message);
         throw e;
@@ -640,6 +647,12 @@ export function createApiHandler(deps: ApiDeps, opts: ApiOptions = {}): (req: In
         if (e instanceof SyntaxError || e instanceof URIError) {
           return send(res, 400, { error: 'invalid', message: 'Malformed request' });
         }
+        if (isDatabaseUnavailable(e)) {
+          // A database that is down or too slow is an outage, not a bug: answer 503 and let the client retry.
+          console.error('[signal] database unavailable', (e as Error).message);
+          res.setHeader('retry-after', '5');
+          return send(res, 503, { error: 'unavailable', message: 'The server is busy; please try again in a moment' });
+        }
         console.error('[signal] api error', (e as Error).message);
         reportError(e, { route: `${route.method} ${route.pattern.source}` });
         return send(res, 500, { error: 'internal', message: 'Internal error' });
@@ -707,4 +720,12 @@ function readBody(req: IncomingMessage, limit: number): Promise<string> {
     req.on('end', () => (size > limit ? finish(new BodyTooLarge(true)) : finish(null, Buffer.concat(chunks).toString('utf8'))));
     req.on('error', (e) => finish(e));
   });
+}
+
+/** Errors from node-postgres that mean the database is unreachable or too slow, not that the request is wrong. */
+export function isDatabaseUnavailable(e: unknown): boolean {
+  if (!e || typeof e !== 'object') return false;
+  const { code, message } = e as { code?: unknown; message?: unknown };
+  if (typeof code === 'string' && (code === '57014' || code === '57P01' || code === '57P03' || code.startsWith('08') || code === 'ECONNREFUSED' || code === 'ECONNRESET' || code === 'ETIMEDOUT')) return true;
+  return typeof message === 'string' && /Query read timeout|timeout exceeded when trying to connect|Connection terminated|connect ECONNREFUSED/i.test(message);
 }

@@ -11,6 +11,7 @@ import { AvatarPlate, seatAvatarId, type AvatarMood } from './Avatars';
 import { Emote } from './Emotes';
 import { SeatMotion, type SeatReaction } from './SeatMotion';
 import { SlideIn } from './table/Motion';
+import { FeltPattern } from './FeltPattern';
 
 export function MeldView({ meld, size = 'sm' }: { meld: Meld; size?: TileSize | number }) {
   // Another seat's concealed kong arrives as placeholders until the hand ends: show all four face down.
@@ -196,6 +197,7 @@ export function FeltFrame({ children, rail = 11, style }: { children: React.Reac
           <Path d={`M${R} ${4.5} H${box.w - R}`} stroke="#F4C38A" strokeWidth={2.5} strokeLinecap="round" opacity={0.9} />
           {/* Felt */}
           <Rect x={rail} y={rail} width={box.w - rail * 2} height={box.h - rail * 2 - 4.5} rx={R - rail * 0.6} fill="url(#feltGlow)" stroke={colors.ink} strokeWidth={2.5} />
+          {theme.pattern && <FeltPattern pattern={theme.pattern} x={rail} y={rail} width={box.w - rail * 2} height={box.h - rail * 2 - 4.5} rx={R - rail * 0.6} color={theme.patternColor} />}
           <Rect x={rail + 3} y={rail + 3} width={box.w - rail * 2 - 6} height={box.h - rail * 2 - 10.5} rx={R - rail * 0.6 - 2} fill="none" stroke={theme.feltDark} strokeWidth={4} opacity={0.55} />
           {/* Felt emblem */}
           <G opacity={0.16}>

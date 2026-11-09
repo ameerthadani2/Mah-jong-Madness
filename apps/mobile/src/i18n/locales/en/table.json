@@ -83,8 +83,6 @@
   "audit": {
     "okShort": "Verified · details",
     "ok": "Shuffle & log verified · details",
-    "partialShort": "Verified (log only)",
-    "partial": "Verified (log only) · details",
     "failed": "Audit failed · details",
     "pending": "Audit pending"
   },

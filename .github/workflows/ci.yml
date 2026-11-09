@@ -34,6 +34,8 @@ jobs:
       - run: npm run i18n:check
       - run: npm test
       - run: npm run sim -- 40
+      # Bot strength gate: 2,000 paired Pro-vs-Club hands against a recorded reference; the old Pro regression fails it.
+      - run: npm run sim -- --gate
 
   docker:
     # The image fly.toml deploys: build it from the repository root and check that it boots and

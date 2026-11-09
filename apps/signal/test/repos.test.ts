@@ -460,7 +460,7 @@ function contract(name: string, setup: () => Promise<Repos>, teardown: () => Pro
         price: 4.99,
         currency: 'USD',
         store: 'app_store',
-        environment: 'SANDBOX',
+        environment: 'PRODUCTION',
         cancelReason: null,
         transferredFrom: [],
         transferredTo: [],
@@ -473,8 +473,8 @@ function contract(name: string, setup: () => Promise<Repos>, teardown: () => Pro
       expect((await wallet.applyStoreEvent(ev('NON_RENEWING_PURCHASE', { storeProductId: 'diamonds.7500', transactionId: 'GPA.late' }))).outcome).toBe('refunded');
       expect(await repos.wallet.get(u)).toMatchObject({ diamonds: 0, bonusDiamonds: 0 });
       // A subscription's first period, refunded before its INITIAL_PURCHASE arrived.
-      expect((await wallet.applyStoreEvent(refund('coach.platinum.year', 'tx-first'))).outcome).toBe('refunded');
-      expect((await wallet.applyStoreEvent(ev('INITIAL_PURCHASE', { storeProductId: 'coach.platinum.year', transactionId: 'tx-first', expiresAt: T0 + 365 * DAY }))).outcome).toBe('refunded');
+      expect((await wallet.applyStoreEvent(refund('fourwinds.year', 'tx-first'))).outcome).toBe('refunded');
+      expect((await wallet.applyStoreEvent(ev('INITIAL_PURCHASE', { storeProductId: 'fourwinds.year', transactionId: 'tx-first', expiresAt: T0 + 365 * DAY }))).outcome).toBe('refunded');
       expect((await wallet.summary(u)).coachTier).toBe('free');
       // A renewal refunded while its RENEWAL event was still on its way: the first period stays, the second is never granted.
       expect((await wallet.applyStoreEvent(ev('INITIAL_PURCHASE', { storeProductId: 'coach.gold.month', transactionId: 'tx-g1', expiresAt: T0 + 30 * DAY }))).outcome).toBe('entitled');
@@ -483,7 +483,7 @@ function contract(name: string, setup: () => Promise<Repos>, teardown: () => Pro
       expect((await wallet.applyStoreEvent(ev('RENEWAL', { storeProductId: 'coach.gold.month', transactionId: 'tx-g2', purchasedAt: T0 + 30 * DAY, expiresAt: T0 + 60 * DAY }))).outcome).toBe('refunded');
       const summary = await wallet.summary(u);
       expect(summary.coachTier).toBe('free');
-      expect(summary.entitlements.map((e) => [e.entitlement, e.expiresAt])).toEqual([['coach.gold', T0 + 30 * DAY]]);
+      expect(summary.entitlements.map((e) => [e.entitlement, e.expiresAt])).toEqual([['coach.gold.month', T0 + 30 * DAY]]);
       // The refund of each transaction is on the ledger once, and the purchases are on record.
       expect((await repos.wallet.listLedger(u)).filter((l) => l.reason === 'refund').map((l) => l.ref).sort()).toEqual(['refund:GPA.late', 'refund:tx-first', 'refund:tx-g2']);
       expect((await repos.wallet.listPurchases(u)).map((p) => p.transactionId).sort()).toEqual(['GPA.late', 'tx-first', 'tx-g1', 'tx-g2']);
@@ -544,7 +544,7 @@ describe.skipIf(!PG_URL)('postgres', () => {
       await admin.query('CREATE SCHEMA ' + schema);
       pool = createPool(PG_URL!, { options: '-c search_path=' + schema });
       expect(await ping(pool)).toBe(true);
-      expect(await migrate(pool)).toEqual(['0001_init', '0002_store_reports_seasons', '0003_server_hardening']);
+      expect(await migrate(pool)).toEqual(['0001_init', '0002_store_reports_seasons', '0003_server_hardening', '0004_store_plans_consent']);
       expect(await migrate(pool)).toEqual([]);
       return createPgRepos(pool);
     },

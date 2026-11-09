@@ -1112,16 +1112,19 @@ function bound(client: Queryable): Repos {
 
 async function inTransaction<T>(pool: Pool, fn: (client: Queryable) => Promise<T>): Promise<T> {
   const client = await pool.connect();
+  // A client whose ROLLBACK failed (for example after a query timeout left it busy) must not go
+  // back into the pool: release(err) destroys it.
+  let broken: Error | undefined;
   try {
     await client.query('BEGIN');
     const result = await fn(client as unknown as Queryable);
     await client.query('COMMIT');
     return result;
   } catch (e) {
-    await client.query('ROLLBACK').catch(() => {});
+    await client.query('ROLLBACK').catch((r: Error) => (broken = r));
     throw e;
   } finally {
-    client.release();
+    client.release(broken);
   }
 }
 

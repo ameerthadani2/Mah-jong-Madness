@@ -45,7 +45,7 @@ describe('migration files', () => {
 
   it('finds the shipped migrations by default, and together they create every planned table', () => {
     const files = listMigrations(defaultMigrationsDir());
-    expect(files.map((f) => f.version)).toEqual(['0001_init', '0002_store_reports_seasons', '0003_server_hardening']);
+    expect(files.map((f) => f.version)).toEqual(['0001_init', '0002_store_reports_seasons', '0003_server_hardening', '0004_store_plans_consent']);
     const sql = files.map((f) => readFileSync(f.path, 'utf8')).join('\n');
     for (const table of PLANNED_TABLES) expect(sql).toMatch(new RegExp('CREATE TABLE (IF NOT EXISTS )?' + table + ' \\('));
   });
@@ -86,8 +86,8 @@ describe.skipIf(!PG_URL)('migrate() against Postgres', () => {
     const pool = await freshPool();
     try {
       const lines: string[] = [];
-      expect(await migrate(pool, { log: (l) => lines.push(l) })).toEqual(['0001_init', '0002_store_reports_seasons', '0003_server_hardening']);
-      expect(await appliedMigrations(pool)).toEqual(['0001_init', '0002_store_reports_seasons', '0003_server_hardening']);
+      expect(await migrate(pool, { log: (l) => lines.push(l) })).toEqual(['0001_init', '0002_store_reports_seasons', '0003_server_hardening', '0004_store_plans_consent']);
+      expect(await appliedMigrations(pool)).toEqual(['0001_init', '0002_store_reports_seasons', '0003_server_hardening', '0004_store_plans_consent']);
       const tables = await pool.query<{ table_name: string }>('SELECT table_name FROM information_schema.tables WHERE table_schema = current_schema()');
       expect(tables.rows.map((r) => r.table_name).sort()).toEqual([...PLANNED_TABLES].sort());
       expect(await migrate(pool)).toEqual([]);
@@ -120,7 +120,7 @@ describe.skipIf(!PG_URL)('migrate() against Postgres', () => {
     const pool = await freshPool();
     try {
       const [a, b] = await Promise.all([migrate(pool), migrate(pool)]);
-      expect([...a, ...b].sort()).toEqual(['0001_init', '0002_store_reports_seasons', '0003_server_hardening']);
+      expect([...a, ...b].sort()).toEqual(['0001_init', '0002_store_reports_seasons', '0003_server_hardening', '0004_store_plans_consent']);
     } finally {
       await pool.end();
     }

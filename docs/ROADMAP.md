@@ -16,7 +16,7 @@ The programme that takes the app from the audited 3.7/10 (`docs/ASSESSMENT.md`) 
 - In-house guest accounts upgraded to Sign in with Apple / Google; opaque sessions; Postgres with plain SQL migrations; tables persisted across restarts; client auto-reconnect; club membership enforced on join; Fly.io deployment.
 
 ## Phase 4 — store and legal
-- Server-side wallet and entitlements fed by store webhooks; honest launch catalogue (Diamonds, table looks, Coach Gold / Platinum); terms, privacy, age gate, account deletion, seasonal standings, report flow.
+- Server-side wallet and entitlements fed by store webhooks; honest launch catalogue (Diamonds, table looks, Coach Gold / The Four Winds Club); terms, privacy, age gate, account deletion, seasonal standings, report flow.
 
 ## Phase 5 — audio and feel
 - Tile sounds and voiced calls, win celebration, tile motion, landscape and portrait layout fixes, accessibility labels and 44 pt targets, `TableScreen` split into parts.

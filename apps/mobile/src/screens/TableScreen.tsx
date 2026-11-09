@@ -31,6 +31,8 @@ import { useSfx, type TableEvent } from '../audio';
 
 import * as Haptics from 'expo-haptics';
 import { EMOTES, QUICK_CHATS, quickChatText, TableThemeContext, themeById } from '../themes';
+import { emoteChoices } from '../monetisation/equipped';
+import { useOwnedEquipped } from '../monetisation/useEquipped';
 import { useT } from '../i18n';
 import { ReportPlayerSheet } from '../components/ReportPlayerSheet';
 import type { ReportTarget } from '../legal/reports';
@@ -46,6 +48,7 @@ const REACTION: Record<'chi' | 'pong' | 'kong', SeatReactionKind> = { chi: 'chow
 
 export function TableScreen() {
   const app = useApp();
+  const equipped = useOwnedEquipped();
   const { t } = useT();
   const session = app.session;
   const state = useSession(session);
@@ -311,7 +314,7 @@ export function TableScreen() {
         {emotePicker && (
           <View style={styles.emotePanel}>
             <View style={styles.emoteGrid}>
-              {EMOTES.map((e) => (
+              {emoteChoices(EMOTES, equipped).map((e) => (
                 <Pressable
                   key={e}
                   accessibilityRole="button"

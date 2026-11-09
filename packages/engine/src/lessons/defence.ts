@@ -3,7 +3,7 @@
  *
  * Lessons in the 'defence' track, going deeper than the core 'defence' introduction: reading
  * exposed sets, reading the discard pool (Taiwanese rules have no furiten), honours and terminals,
- * when to fold or push with the coach's danger model (bot.ts threats / dealInDanger), and end-of-wall play.
+ * when to fold or push with the coach's danger model (bot.ts readOpponents / waitChance / dealInRisk), and end-of-wall play.
  * Every quiz answer is the engine's unique best discard or the only tile that completes the hand;
  * see lessons.test.ts.
  */
@@ -225,22 +225,22 @@ export const DEFENCE_LESSONS: Lesson[] = [
       {
         title: 'Who the coach counts as a threat',
         titleZh: '教練眼中的威脅',
-        body: 'The coach rates each opponent only from what the table shows. Four or more sets out (a concealed kong counts, since you can see it is a kong) is a full threat, 1.0. Three sets once they have made eight or more discards is 0.6. Anything else is 0. A concealed hand can be ready with nothing exposed, and the coach does not guess at it: if a quiet player stops throwing honours late and starts throwing middle tiles straight after drawing them, that reading is up to you.',
-        bodyZh: '教練只根據桌面上看得到的東西，替每一家對手打威脅分數。亮出四組以上（暗槓也算，因為看得出那是一組槓）是完全威脅，1.0。亮三組、而且已經打出八張以上，是 0.6。其他都是 0。門清的牌什麼都不亮也能聽牌，教練不會去猜：如果一個沒吃碰的玩家到了後段不再打字牌，改成摸到中張就直接打掉，要靠你自己看出來。',
+        body: 'The coach estimates, for each opponent, the chance they are ready, only from what the table shows: how many sets they have exposed (a concealed kong counts, since you can see it is a kong) and how long their discard row is. Four sets out is about 90%; three sets about 40% early and 80% late; a hand with nothing exposed starts near 0 and passes 50% after about twelve discards. The figures were measured on thousands of bot hands.',
+        bodyZh: '教練只根據桌面上看得到的東西，估計每一家已經聽牌的機率：亮了幾組（暗槓也算，因為看得出那是一組槓），以及打了幾張牌。亮四組大約九成；亮三組，前段大約四成、後段八成；什麼都沒亮的牌一開始接近零，打到十二張左右就超過一半。這些數字是從上千局電腦對局量出來的。',
         hand: 'CCC EEE 789s 456p',
       },
       {
         title: 'How dangerous each tile is',
         titleZh: '每張牌有多危險',
-        body: 'Against each threat, a kind that player has thrown themselves counts as safe, 0. Otherwise an honour with every copy visible is 0, an honour with one copy unseen 0.1 and any other honour 0.3; a 1 or 9 is 0.6, and 2 to 8 are 1.0. The coach multiplies by the threat level and adds up over all threats, so two players with four sets each make a middle tile twice as dangerous.',
-        bodyZh: '面對每一家威脅，那家自己打過的牌算安全，0。其他的：四張都看得到的字牌是 0，只剩一張看不到的字牌是 0.1，其他字牌 0.3；1 和 9 是 0.6，2 到 8 是 1.0。教練把這個數字乘上威脅分數，再把每一家加起來，所以兩家都亮四組時，中張的危險就變成兩倍。',
+        body: 'If an opponent is ready, how likely is each tile to be one of their winning tiles? A tile they threw themselves almost never is, and a tile someone threw after their last discard, which they did not win on, even less. An honour only finishes a pair or a pong, so it is safe once every other copy is visible and nearly safe with one left. Suited tiles are riskier towards the middle (3 to 7) and when more copies are unseen; a tile three away from one they threw (筋, a 1 behind their 4) is safer. If their exposed sets are all one suit and their discards avoid it, that suit is much more dangerous. The coach multiplies by the chance they are ready and adds up over the opponents.',
+        bodyZh: '如果對手已經聽牌，你手上每張牌有多大機會是他要的？他自己打過的牌幾乎不會是，他上一次打牌之後別人打過、他沒有胡的牌更不會是。字牌只能湊對或碰，其他幾張都看得到就安全，只剩一張也差不多安全。數字牌越靠中間（3到7）、看不到的張數越多就越危險；跟他打過的牌差三的筋牌（他打4，你的1）比較安全。如果他亮的面子都是同一門，打出來的牌又避開那一門，那一門就特別危險。教練把這個機率乘上他聽牌的機率，再把每一家加起來。',
         hand: 'C 1m 5p',
       },
       {
         title: 'When to fold, when to push',
         titleZh: '什麼時候棄胡，什麼時候衝',
-        body: 'Fold (棄胡) when you are two or more 向聽 from ready and someone looks ready: from that far back you will rarely finish first, and a 放槍 is expensive. The coach does exactly this: when its best discard still leaves it two or more from ready and a threat is at least 0.6, danger outweighs speed. Push when you are ready or one away, especially with a wide wait or a valuable hand: then danger only tips the choice between discards of similar value, and the coach very rarely gives up a ready hand. With no threat at all, play for speed.',
-        bodyZh: '你還差兩向聽以上，而有人看起來已經聽牌時，就該棄胡：差這麼多，你很少能搶先胡，放槍卻很貴。教練就是這樣做：打出最好的牌之後還差兩向聽以上，而威脅至少 0.6 時，危險比速度重要。你已經聽牌或只差一向聽，特別是聽得多或牌夠大時，就繼續衝：這時危險只在差不多好的牌之間幫忙選，教練幾乎不會拆掉已經聽的牌。完全沒有威脅時，專心求快。',
+        body: 'The coach leans towards the safer of two similar discards whenever someone may be ready. It folds (棄胡) outright when it is two or more 向聽 from ready and an opponent is probably ready: it weighs what the dangerous tile costs on average (the chance of dealing in times what their hand would cost you) against the chance of winning it would give up, which depends on how far it is from ready, how much of the wall is left, its own hand value and who is dealer. Ready or one away, it keeps pushing; with no threat at all it plays for speed.',
+        bodyZh: '只要有人可能聽牌，教練在差不多好的牌之間會選比較安全的。差兩向聽以上、而且有對手很可能已經聽牌時，教練就棄胡：它比較打危險牌平均要付出的代價（放槍的機率乘上對方那手牌的價值）和放棄的胡牌機會，後者要看自己差幾向聽、牌牆還剩多少、自己的牌值多少、誰是莊家。已經聽牌或只差一向聽就繼續衝；完全沒有威脅時專心求快。',
       },
       {
         title: 'Practice: ready against four sets',

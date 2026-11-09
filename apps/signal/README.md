@@ -1,6 +1,6 @@
 # @mjm/signal
 
-The game server for Mahjong Madness. Every online table runs on the server, which acts as a neutral host; players connect to it over one WebSocket each. The same process serves the accounts, sessions, configuration and clubs HTTP API. The contract with the app is [`docs/API.md`](../../docs/API.md); deployment is in [`docs/DEPLOY.md`](../../docs/DEPLOY.md).
+The game server for Mahjong Mania. Every online table runs on the server, which acts as a neutral host; players connect to it over one WebSocket each. The same process serves the accounts, sessions, configuration and clubs HTTP API. The contract with the app is [`docs/API.md`](../../docs/API.md); deployment is in [`docs/DEPLOY.md`](../../docs/DEPLOY.md).
 
 ```bash
 npm run signal                 # from the repository root (tsx src/main.ts), port 8787
@@ -20,7 +20,9 @@ With no environment at all the server runs: accounts, clubs and tables are kept 
 | `src/sockets.ts` | WebSocket limits, the `hello` session handshake, heartbeat, routing into the room registry |
 | `src/rooms.ts` | Rooms, hosted tables, the club table gate, keep-alive |
 | `src/clubs.ts` | Clubs, members, standings and seasons, table listings; writes each changed club through `repos.clubs`; emits `table_opened` / `member_approved` for push |
-| `src/catalog.ts` | The server's product table (diamond packs, Coach Gold/Platinum, table looks); ids match `apps/mobile/src/monetisation/catalog.ts` |
+| `src/catalog.ts` | The server's product table (diamond packs, Coach Gold and The Four Winds Club, cosmetics and sets); ids match `apps/mobile/src/monetisation/catalog.ts` |
+| `src/admin.ts` | `POST /api/wallet/sync` (store reconciliation after Restore) and `POST /api/admin/grant` (support grants behind `ADMIN_TOKEN`) |
+| `src/reconcile.ts` | RevenueCat REST client and the nightly reconciliation of missed store events |
 | `src/wallet.ts` | `WalletService`: credits, diamond spends, store events applied once (idempotent on the event id) |
 | `src/revenuecat.ts` | RevenueCat webhook authentication and payload mapping to a vendor-neutral `StoreEvent` |
 | `src/push.ts` | `PushService` over `expo-server-sdk` (rate limits, receipts) and `SeatWatcher` ("your table is waiting") |
@@ -37,7 +39,8 @@ With no environment at all the server runs: accounts, clubs and tables are kept 
 | --- | --- | --- |
 | `PORT` | `8787` | TCP port for both HTTP and WebSocket traffic |
 | `DATABASE_URL` | none | Pooled Postgres connection string (Neon: the `-pooler` host, `?sslmode=require`). Absent: in-memory storage, lost on restart |
-| `DATABASE_URL_DIRECT` | `DATABASE_URL` | Direct (unpooled) string, used by migrations only |
+| `DATABASE_URL_DIRECT` | `DATABASE_URL` | Direct (unpooled) string, used by migrations and by the single-host advisory lock |
+| `ALLOW_EPHEMERAL` | off | `1` lets `NODE_ENV=production` start without `DATABASE_URL`/`AUTH_PEPPER` (in-memory storage, random pepper). Without it a production boot missing either refuses to start |
 | `MIGRATE_ON_BOOT` | off | `1` applies pending migrations before the server starts (`fly.toml` also runs them as the release command) |
 | `AUTH_PEPPER` | random per process | Secret mixed into every stored session and guest-secret hash. Without it every session ends when the process stops. Keep a copy: losing it signs every player out |
 | `AUTH_PEPPER_PREVIOUS` | none | The old pepper during a rotation; tokens hashed with it keep working and are re-hashed on first use |
@@ -46,12 +49,16 @@ With no environment at all the server runs: accounts, clubs and tables are kept 
 | `FACEBOOK_APP_ID` | none | Facebook Limited Login. Absent: off |
 | `HOST_TABLES` | on | Set to `0` to stop the server hosting tables. A hosted `create` is then refused with `Hosted tables are disabled` (never turned into a relay-only room) |
 | `MAX_HOSTED_TABLES` | `500` | Maximum number of tables the server hosts at once |
+| `MAX_TABLES_PER_USER` | `3` | Unfinished tables one account may have opened (socket or API); restored tables count |
 | `TRUST_PROXY` | `0` (off) | The number of reverse proxies you run in front of the server. The client IP is then the `x-forwarded-for` entry that many places from the right: `1` takes the rightmost entry (the address your proxy appended), `2` the one before it, and so on. Entries further left are written by the client and are never used. Set it to exactly the number of proxies; with `0` the header is ignored and the TCP peer address is used. `true`/`on` still mean `1`. Fly: `1` |
 | `CORS_ORIGINS` | none | Comma-separated list of browser origins allowed to call the HTTP API. With no list, CORS headers are never sent, so only same-origin pages (and native apps, which are not subject to CORS) can call it. For the Expo web preview use `CORS_ORIGINS=http://localhost:8081`. `*` allows any origin |
 | `MIN_BUILD` | `0` | Oldest app build allowed online, reported as `GET /api/config.minBuild` |
 | `MAINTENANCE_MESSAGE` | none | Reported as `GET /api/config.maintenance`; the app shows it instead of online play |
 | `P2P_ROOMS` | off | Set to `1` to allow relay-only rooms in which a player's device is the host. For development only |
 | `REVENUECAT_WEBHOOK_SECRET` | none | The value RevenueCat sends as `Authorization: Bearer <secret>` on its webhook (set the header to `Bearer <secret>` in the RevenueCat dashboard). Absent: `POST /api/webhooks/revenuecat` answers 503 and `/api/config.storeEnabled` is false |
+| `REVENUECAT_SECRET_KEY` | none | RevenueCat secret API key for reconciliation (`GET /v1/subscribers/{id}`). Absent: `POST /api/wallet/sync` answers `synced:false` and the nightly job does nothing |
+| `TESTER_USER_IDS` | none | Comma-separated account ids whose sandbox (TestFlight / Play test) purchases are granted. Everyone else's sandbox events are recorded as `ignored_sandbox` |
+| `ADMIN_TOKEN` | none | Bearer token for `/api/admin/*` (support grants). Absent: those routes answer 503 |
 | `EXPO_ACCESS_TOKEN` | none | Expo access token for push (`expo-server-sdk`). Absent: no push is sent and `/api/config.pushEnabled` is false |
 | `SENTRY_DSN` | none | Sentry project DSN for server errors. Absent: errors are only logged. `SENTRY_ENVIRONMENT` (default `production`) and `SENTRY_RELEASE` (default `FLY_IMAGE_REF`) are optional |
 | `POSTHOG_KEY` | none | PostHog project key for the server events `purchase_credited` and `report_filed`. Absent: none are sent. `POSTHOG_HOST` is optional (PostHog's US cloud by default; `https://eu.i.posthog.com` for the EU) |
@@ -61,7 +68,7 @@ With no environment at all the server runs: accounts, clubs and tables are kept 
 ## Persistence
 
 - **Clubs** live in memory for fast reads and membership checks; each change writes that one club behind it through `repos.clubs` (writes for a club run in order, and a burst of changes becomes one write). Every club is loaded at boot.
-- **Tables**: every hosted table is written to `table_snapshots` (`host.serialize()`) 500 ms after it last changed, and at once at the end of each hand and of the match. At boot every snapshot that has not finished is restored under its own code; players reclaim their seats with their rejoin tokens (bots play for them meanwhile). SIGTERM and `close()` write every table one last time without finishing it. Finished snapshots are pruned after 24 hours.
+- **Tables**: every hosted table is written to `table_snapshots` (`host.serialize()`) 500 ms after it changes and at most every 2 s while a hand is played, and at once at the end of each hand and of the match. At boot every snapshot that has not finished is restored under its own code; players reclaim their seats with their rejoin tokens (bots play for them meanwhile). SIGTERM and `close()` write every table one last time without finishing it. Finished snapshots are pruned after 24 hours.
 - **Club listings** of restored tables stay open; listings whose table did not come back (ghosts) are removed at boot so they no longer count against the open-table cap; finished listings are dropped after 24 hours.
 - **Keep-alive**: a table with nobody connected is kept for 15 minutes after its last activity while a human holds a seat. A table opened over the socket closes as soon as its lobby empties; one opened through the API or restored waits 15 minutes for its first player.
 - **Results**: `match_results` gets a row at every `match_over`; club standings are updated from the same event.
@@ -118,7 +125,7 @@ JSON in and out. Errors are `{ "error": "<code>", "message": "<English sentence>
 | `POST /api/auth/link` | bearer | `{ provider, token, nonce, email? }` | `{ session, user, merged, guestSecret? }`; `guestSecret` is the rotated guest secret the device must store (the old one stops working). `400 invalid` without a nonce, `409 identity_in_use`, `401 invalid_token`, `404 provider_disabled`. A merge closes the guest's sockets with 4401 |
 | `POST /api/auth/login` | none (or a guest bearer) | `{ provider, token, nonce, device }` | `{ session, user }` or `404 not_linked`; `400 invalid` without a nonce |
 | `DELETE /api/auth/identities/:provider` | bearer | | `204`, `409 last_identity` or `404 not_found` |
-| `GET /api/me` | bearer | | `{ user, wallet: { diamonds, bonusDiamonds }, entitlements: [{ entitlement, expiresAt, active }], cosmetics: ["theme.jade", …], coachTier: "free"\|"gold"\|"platinum", storeEnabled, identities: [{ provider, email? }], serverNow }` |
+| `GET /api/me` | bearer | | `{ user, wallet: { diamonds, bonusDiamonds }, entitlements: [{ entitlement, expiresAt, active }], cosmetics: ["theme.jade", …], coachTier: "free"\|"gold"\|"fourwinds", storeEnabled, identities: [{ provider, email? }], serverNow }` |
 | `PATCH /api/me` | bearer | `{ displayName?, avatar?, locale?, birthYear? }` | `{ user }`; the new name and avatar are written into every club the user is in |
 | `DELETE /api/me` | bearer | | `204`; soft delete, every session ends (sockets closed with 4401), club rows become "Deleted player", a club the user owned passes to its senior admin or earliest member (or is dissolved), the row is purged after 30 days |
 | `POST /api/clubs` | bearer | `{ name, rules?, settings? }` | the club; the caller is its owner |
@@ -141,7 +148,7 @@ Club members are identified by the session's user id; their name and avatar come
 
 ## Store, wallet and entitlements
 
-Entitlements are decided here, never on the phone. The app buys through RevenueCat with our user id as the RevenueCat app user id; RevenueCat calls `POST /api/webhooks/revenuecat`; `WalletService` writes the event to `store_events` (raw, keyed by event id) in the same transaction as its effects, so a redelivered event changes nothing. Diamond packs credit purchased diamonds plus the pack's bonus once per store transaction; Coach Gold and Platinum set `coach.gold` / `coach.platinum` until the store's expiry (late or out-of-order events never shorten it); a refund (`CANCELLATION` with `cancel_reason: CUSTOMER_SUPPORT`) ends a subscription or takes back what is left of a pack; `EXPIRATION` ends it; `TRANSFER` moves store entitlements to the new account. `BILLING_ISSUE`, `PRODUCT_CHANGE`, `SUBSCRIPTION_PAUSED` and `TEST` are recorded only. Events for an unknown user or a product the catalogue does not sell are recorded and acknowledged (200) so RevenueCat stops retrying. Table looks are bought with diamonds through `POST /api/wallet/spend` (bonus diamonds are spent first) and never expire. Diamonds have no monetary value and cannot be redeemed or transferred.
+Entitlements are decided here, never on the phone. The app buys through RevenueCat with our user id as the RevenueCat app user id; RevenueCat calls `POST /api/webhooks/revenuecat`; `WalletService` writes the event to `store_events` (raw, keyed by event id) in the same transaction as its effects, so a redelivered event changes nothing. Diamond packs credit purchased diamonds plus the pack's bonus once per store transaction; each subscription plan sets its own entitlement (`coach.gold.month`, `coach.gold.year`, `fourwinds.month`, `fourwinds.year`) until the store's expiry, and the tier is the best active one, so refunding or ending one plan never cuts another (late or out-of-order events never shorten it); a refund remembered before its purchase arrives stays a refund; sandbox events grant only to `TESTER_USER_IDS`; a refunded pack can leave a negative balance, which blocks spending until it is paid back; a refund (`CANCELLATION` with `cancel_reason: CUSTOMER_SUPPORT`) ends a subscription or takes back what is left of a pack; `EXPIRATION` ends it; `TRANSFER` moves store entitlements to the new account. `BILLING_ISSUE`, `PRODUCT_CHANGE`, `SUBSCRIPTION_PAUSED` and `TEST` are recorded only. Events for an unknown user or a product the catalogue does not sell are recorded and acknowledged (200) so RevenueCat stops retrying. Table looks are bought with diamonds through `POST /api/wallet/spend` (bonus diamonds are spent first) and never expire. Diamonds have no monetary value and cannot be redeemed or transferred.
 
 ## Push
 
@@ -157,6 +164,7 @@ Client → server
 | `{t:"join", room}` | Join by code (case-insensitive). A club table admits full members only |
 | `{t:"to", to, data}` | Relay `data` to a peer in the same room. A game `join` sent to the hosted table always carries the verified `userId`, whatever the client put there |
 | `{t:"leave"}` | Leave the room |
+| `{t:"ping"}` | Heartbeat; answered with `{t:"pong"}`. The app sends one every 15 s and reconnects after 10 s without an answer |
 
 Server → client
 | Message | Purpose |

@@ -1,5 +1,5 @@
 {
-  "name": "mahjong-madness",
+  "name": "mahjongmania",
   "private": true,
   "version": "0.1.0",
   "description": "Taiwanese (16-tile) Mahjong for iOS and Android with verifiable server-hosted tables and a built-in coach.",

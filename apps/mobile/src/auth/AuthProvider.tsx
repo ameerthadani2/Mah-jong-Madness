@@ -6,6 +6,8 @@
  * the app carries on offline and the screen shows `friendlyError(auth.error, t)`.
  */
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { storeServer } from '../monetisation/server';
+import { consent } from '../telemetry';
 import { useApp } from '../app-state';
 import { httpBase } from '../api/http';
 import { GOOGLE_CLIENT_ID } from '../config';
@@ -90,6 +92,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const id = snap.userId ?? '';
     if (id !== profile.userId) setProfile({ ...profile, userId: id });
   }, [loaded, authLoaded, snap.userId, profile, setProfile]);
+
+  // Tell the server this account's analytics choice once per signed-in account, so server-side
+  // events follow it from the start (the Privacy toggle sends later changes).
+  const consentSentFor = useRef<string | null>(null);
+  useEffect(() => {
+    const id = me?.user.id ?? null;
+    if (!id || consentSentFor.current === id || !consent.loaded) return;
+    consentSentFor.current = id;
+    void storeServer.sendAnalyticsConsent({ base, auth: client }, consent.effective.analytics).catch(() => {
+      consentSentFor.current = null;
+    });
+  }, [me?.user.id, base, client]);
 
   // The cached wallet belongs to one account: another user on this device (or none, after a
   // sign-out or deletion) must not inherit its tier, themes or balance. Today's meters stay.

@@ -83,8 +83,6 @@
   "audit": {
     "okShort": "已驗證 · 詳情",
     "ok": "洗牌與紀錄已驗證 · 詳情",
-    "partialShort": "已驗證（僅紀錄）",
-    "partial": "已驗證（僅紀錄）· 詳情",
     "failed": "驗證失敗 · 詳情",
     "pending": "驗證中"
   },

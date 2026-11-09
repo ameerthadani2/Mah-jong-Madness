@@ -45,7 +45,7 @@ The app stores `userId` and `guestSecret` in secure storage; they are the only w
 - `POST /api/auth/refresh` (bearer) → `200 { "session": { "token", "expiresAt" } }`. The old token stays valid for 5 minutes. The app refreshes once a day and on `session_expired`.
 - `POST /api/auth/logout` (bearer) → `204`. Revokes this session only, removes the push token from this session's device (the phone is no longer this account's) and closes the table socket this session opened with `4401`.
 - `GET /api/me` (bearer) → `{ "user": User, "wallet": { "diamonds", "bonusDiamonds" }, "entitlements": [{ "entitlement", "expiresAt" }], "identities": [{ "provider", "email"? }], "serverNow" }`.
-- `PATCH /api/me` (bearer) body `{ "displayName"?, "avatar"?, "locale"?, "birthYear"? }` → `{ "user": User }`.
+- `PATCH /api/me` (bearer) body `{ "displayName"?, "avatar"?, "locale"?, "birthYear"?, "analyticsConsent"?: true|false|null }` → `{ "user": User }`. `analyticsConsent` is the player's product-analytics choice; server-side events (`purchase_credited`, `report_filed`) are sent only for players who chose `true`.
 - `DELETE /api/me` (bearer) → `204`. Soft-deletes the account: the profile is scrubbed at once, every session is revoked and every table socket of the account is closed with `4401`, identities and devices (with their push tokens) go, club rows become "Deleted player" (a club the user owned passes to its senior admin, else its earliest member, and is dissolved when nobody else is in it), and an hourly job hard-deletes the row 30 days later. Purchase records, the wallet ledger and reports are kept.
 
 `User` = `{ "id", "kind": "guest"|"account", "displayName", "avatar", "locale", "birthYear": number|null, "createdAt" }`.
@@ -93,9 +93,9 @@ Every club route answers `404 not_found` for an unknown code and `429 rate_limit
 
 The app side lives in `apps/mobile/src/monetisation/` (store and wallet), `apps/mobile/src/api/wallet.ts`, `apps/mobile/src/api/clubs.ts` and `apps/mobile/src/legal/`. The server's own section of this file is authoritative for status codes and limits; these are the parts the app depends on.
 
-- **The wallet is the server's.** The app's copy mirrors `GET /api/me` and is cached for offline display only. It reads `wallet.diamonds`, `wallet.bonusDiamonds`, `entitlements[]` (`coach.gold`, `coach.platinum`; a cosmetic entitlement is its product id, e.g. `theme.jade`) and the optional `cosmetics[]` (product ids). `serverNow` sets the clock that subscription expiry and the free-tier meters are judged by.
+- **The wallet is the server's.** The app's copy mirrors `GET /api/me` and is cached for offline display only. It reads `wallet.diamonds`, `wallet.bonusDiamonds`, `entitlements[]` (one per subscription plan: `coach.gold.month`, `coach.gold.year`, `fourwinds.month`, `fourwinds.year`; a cosmetic entitlement is its product id, e.g. `theme.jade`) and the optional `cosmetics[]` (product ids). `serverNow` sets the clock that subscription expiry and the free-tier meters are judged by.
 - **Purchases.** The app configures RevenueCat with the server user id as the app user id (`Purchases.logIn(userId)` after sign-in), buys with the store, then polls `GET /api/me` for about 8 seconds until the purchase shows; if it has not arrived yet the Shop says so and the next sync picks it up. Nothing is granted on the device. Store ids are the `catalog.ts` ids; a Google Play subscription arrives as `coach.gold:month`.
-- **`POST /api/wallet/spend`** body `{ "productId": "theme.jade" }` (bearer) → `{ spent, entitlement, wallet, cosmetics }`. The app maps `409 insufficient` to "you need N more diamonds" and `409 owned` to success, then re-reads `/api/me`.
+- **`POST /api/wallet/spend`** body `{ "productId": "theme.jade" }` (bearer) → `{ spent, entitlement, wallet, cosmetics }` (a `bundle.*` id also returns `granted: [...]`, the items the set unlocked). The app maps `409 insufficient` to "you need N more diamonds" and `409 owned` to success, then re-reads `/api/me`.
 - **`PATCH /api/me` `{ "birthYear" }`** is sent once the device has a session, after the age gate (the app keeps the answer on the device until then).
 - **`POST /api/reports`** body `{ "reportedUserId", "reason", "details"?, "roomCode"? }` with `reason` one of `cheating`, `collusion`, `abusive_chat`, `offensive_name`, `stalling`, `other`; the app trims `details` to 500 characters.
 - **`POST /api/clubs/:code/season`** (owner) starts the next season; the app then re-reads the club. Standings rows carry `points` (all time) and `seasonPoints`; the club carries `season`. An older server without seasons is shown with `points` in both views.
@@ -129,9 +129,9 @@ Entitlements are decided by the server from store notifications; the app never g
 
 ```json
 {
-  "entitlements": [{ "entitlement": "coach.gold", "expiresAt": "<ISO>" | null, "active": true }],
+  "entitlements": [{ "entitlement": "coach.gold.month", "expiresAt": "<ISO>" | null, "active": true }],
   "cosmetics": ["theme.jade"],
-  "coachTier": "free" | "gold" | "platinum",
+  "coachTier": "free" | "gold" | "fourwinds",
   "storeEnabled": true
 }
 ```
@@ -144,11 +144,19 @@ Entitlements are decided by the server from store notifications; the app never g
 | --- | --- | --- |
 | `diamonds.60`, `diamonds.300`, `diamonds.600` | consumable | 60 / 300 / 600 diamonds |
 | `diamonds.1300`, `diamonds.3450`, `diamonds.7500` | consumable | 1,200 + 100 bonus / 3,000 + 450 bonus (15 %) / 6,000 + 1,500 bonus (25 %) |
-| `coach.gold.month`, `coach.gold.year` | auto-renewing | entitlement `coach.gold` until the store's expiry |
-| `coach.platinum.month`, `coach.platinum.year` | auto-renewing | entitlement `coach.platinum` until the store's expiry |
+| `coach.gold.month`, `coach.gold.year` | auto-renewing | Coach Gold: an entitlement named after the plan until the store's expiry |
+| `fourwinds.month`, `fourwinds.year` | auto-renewing | The Four Winds Club (everything in Coach Gold, unlimited hand reviews, creating and running clubs): an entitlement named after the plan until the store's expiry |
 | `theme.nightmarket`, `theme.bamboo`, `theme.imperial` (300 💎), `theme.jade` (400 💎) | diamonds only | permanent entitlement with the product id |
 
-App Store product ids are these ids. A Google Play subscription arrives as `<subscription>:<base plan>`, so create the Play subscriptions `coach.gold` and `coach.platinum` with base plans `month` and `year`. Anything else (avatar and emote packs, VIP cards, club tiers, Coach Diamond, Table Pass) is not sold: events and spends for it grant nothing.
+App Store product ids are these ids. A Google Play subscription arrives as `<subscription>:<base plan>`, so create the Play subscriptions `coach.gold` and `fourwinds` with base plans `month` and `year`. The tier is the best active plan; refunding or ending one plan never cuts another. Sandbox events (TestFlight, Play testing) grant only to accounts in `TESTER_USER_IDS` and are otherwise recorded as `ignored_sandbox`. A refunded diamond pack takes back its diamonds even if that leaves a negative balance, which blocks spending until it is paid back. Anything else (avatar and emote packs, VIP cards, club tiers, Coach Diamond, Table Pass) is not sold: events and spends for it grant nothing.
+
+### `POST /api/wallet/sync` (bearer)
+
+Asks the server to fetch this account's purchases from RevenueCat and apply any the webhook missed (the app calls it after Restore). → `{ synced, applied, wallet, cosmetics, coachTier }`. `synced:false` when the server has no `REVENUECAT_SECRET_KEY`. Errors: `429 rate_limited` (4 a minute), `502 store_unreachable`. A nightly job does the same for accounts with store activity in the last 7 days.
+
+### `POST /api/admin/grant` (`Authorization: Bearer <ADMIN_TOKEN>`)
+
+Support grant. Body `{ userId, diamonds?, bonus?, entitlement?, days?, note }`; writes a `support` ledger entry or an entitlement. `401` wrong token, `404` unknown user, `503` when `ADMIN_TOKEN` is unset.
 
 ### `POST /api/wallet/spend` (bearer)
 

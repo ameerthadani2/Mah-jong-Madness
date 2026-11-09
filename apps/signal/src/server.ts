@@ -20,12 +20,14 @@ import { ClubRegistry, clubGate } from './clubs';
 import { LIMITS, type SignalConfig } from './config';
 import { BucketTable } from './limits';
 import { LatencyWindow } from './metrics';
-import { NO_ANALYTICS, reportError, type Analytics } from './observability';
+import { NO_ANALYTICS, reportError, withConsent, type Analytics } from './observability';
 import { TablePersister } from './persist';
 import { PushService, SeatWatcher } from './push';
 import type { RepoHandle } from './repos';
 import { RoomRegistry, type RoomEvent } from './rooms';
 import { createSocketServer, VerifyUnavailable, type SocketLimits } from './sockets';
+import { WalletService } from './wallet';
+import { Reconciler, revenueCatClientFromEnv, startReconcileJob } from './reconcile';
 
 export interface SignalServerOptions {
   /** TCP port for HTTP and WebSocket traffic; 0 picks a free port (see `address()`). */
@@ -155,6 +157,10 @@ export async function createSignalServer(opts: SignalServerOptions): Promise<Sig
   const offClubEvents = clubs.onEvent((ev) => void push.onClubEvent(ev));
   const seats = new SeatWatcher(rooms, (userId, room, club) => void push.tableWaiting(userId, room, club), { now, thresholdMs: opts.tableWaitingMs });
 
+  // One wallet for the API and the nightly store reconciliation, so both serialise on the same per-account lock.
+  const wallet = new WalletService(repos.repos, { now, analytics: withConsent(analytics, (id) => repos.repos.users.getAnalyticsConsent(id)) });
+  const stopReconcile = startReconcileJob(new Reconciler({ repos: repos.repos, wallet, client: revenueCatClientFromEnv(process.env), now, log }), { log });
+
   const api = createApiHandler(
     {
       clubs,
@@ -169,6 +175,7 @@ export async function createSignalServer(opts: SignalServerOptions): Promise<Sig
       now,
       push,
       analytics,
+      wallet,
       actionLatency,
     },
     { corsOrigins: config.corsOrigins, limiter: new BucketTable<string>(LIMITS.httpBurst, LIMITS.httpPerSec, { now }), trustProxy: config.trustProxy },
@@ -263,6 +270,7 @@ export async function createSignalServer(opts: SignalServerOptions): Promise<Sig
       clearInterval(ticker);
       clearInterval(pruner);
       clearInterval(receipts);
+      stopReconcile();
       offClubEvents();
       // Stop taking game input next: a move that arrived during the final write would be
       // acknowledged to its player but missing from the snapshot the next process restores.

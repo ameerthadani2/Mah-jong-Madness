@@ -3,7 +3,7 @@
 ## Goals
 
 1. **Play anywhere with friends** — private tables by code, like PokerBros, hosted by our game server and checked by every player.
-2. **Provably fair enough to bet a dinner on** — nobody can rig the shuffle; every hand is auditable by every player.
+2. **Checkable fairness** — every player's phone contributes to the shuffle and checks every hand it watched; the app says plainly what a phone could not check.
 3. **Teach while you play** — the same analysis that drives the bots drives the coach.
 4. **One rules engine everywhere** — the server's tables, offline bot tables on the phone, bots, drills and audits all run identical code.
 

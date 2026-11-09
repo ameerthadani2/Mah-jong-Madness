@@ -6,6 +6,8 @@ import React from 'react';
 import { Text } from 'react-native';
 import Svg, { Circle, Ellipse, G, Path, Rect, Text as SvgText } from 'react-native-svg';
 import { colors } from '../theme';
+import { isPackEmoteId } from '../monetisation/cosmetics';
+import { PackEmote } from './EmotePacks';
 
 const INK = colors.ink;
 
@@ -105,6 +107,7 @@ export function isEmoteId(s: string): s is EmoteId {
 }
 
 export function Emote({ id, size = 32 }: { id: string; size?: number }) {
+  if (isPackEmoteId(id)) return <PackEmote id={id} size={size} />;
   if (!isEmoteId(id)) return <Text style={{ fontSize: size * 0.6, fontWeight: '900', color: colors.ink }}>{id}</Text>;
   return (
     <Svg width={size} height={size} viewBox="0 0 48 48">

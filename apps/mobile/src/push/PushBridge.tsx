@@ -12,7 +12,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useApp } from '../app-state';
 import { useAuth } from '../auth/AuthProvider';
 import { httpBase } from '../api/http';
-import { APP_SCHEMES } from '../config';
+import { APP_SCHEMES, LINK_DOMAIN } from '../config';
 import { createOnlineSession } from '../game/session';
 import { currentLocale, t } from '../i18n';
 import { gatingScreen, onlineEntry } from '../legal/online';
@@ -22,6 +22,9 @@ import { linkFromNotificationData, parseDeepLink, planLink, presentInForeground,
 import { attachRegistrar } from './hub';
 import { pushDevice } from './platform';
 import { PushRegistrar } from './registration';
+
+/** Web domains whose https table links open in the app. */
+const LINK_DOMAINS: readonly string[] = LINK_DOMAIN ? [LINK_DOMAIN] : [];
 
 const devicePlatform = Platform.OS === 'ios' ? 'ios' : Platform.OS === 'android' ? 'android' : 'web';
 
@@ -120,9 +123,9 @@ export function PushBridge() {
   useEffect(() => {
     if (!pushDevice.supported) return;
     const detach = attachRegistrar(registrar);
-    pushDevice.configure((data) => presentInForeground(linkFromNotificationData(data, APP_SCHEMES), { roomCode: appRef.current.session?.roomCode ?? null }), t('privacy.push.channel'));
+    pushDevice.configure((data) => presentInForeground(linkFromNotificationData(data, APP_SCHEMES, LINK_DOMAINS), { roomCode: appRef.current.session?.roomCode ?? null }), t('privacy.push.channel'));
     const offOpen = pushDevice.onOpen((data) => {
-      const l = linkFromNotificationData(data, APP_SCHEMES);
+      const l = linkFromNotificationData(data, APP_SCHEMES, LINK_DOMAINS);
       if (l) void follow(l);
     });
     const offToken = pushDevice.onTokenRotated(() => void registrar.tokenChanged());
@@ -145,7 +148,7 @@ export function PushBridge() {
   useEffect(() => {
     if (Platform.OS === 'web') return;
     const open = (url: string | null | undefined) => {
-      const l = parseDeepLink(url, APP_SCHEMES);
+      const l = parseDeepLink(url, APP_SCHEMES, LINK_DOMAINS);
       if (l) void follow(l);
     };
     void Linking.getInitialURL().then(open, () => undefined);

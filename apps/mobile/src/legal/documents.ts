@@ -49,7 +49,7 @@ const TERMS_EN: LegalDocument = {
       paragraphs: [
         'Diamonds and points have no monetary value and cannot be redeemed or transferred. They cannot be exchanged for money, goods or anything of value, sold, or moved to another player, inside or outside the app.',
         'Diamonds and table looks are a limited, personal, revocable licence to use digital content in the app. Purchased diamonds do not expire. Diamonds are spent only on items listed in the Shop at the price shown there.',
-        'Coaching plans (Coach Gold, Coach Platinum) are subscriptions that renew automatically until you cancel them in your App Store or Google Play account settings. Payment, renewal and refunds are handled by the store you bought through, under its terms.',
+        'Subscriptions (Coach Gold, The Four Winds Club) are plans that renew automatically until you cancel them in your App Store or Google Play account settings. Payment, renewal and refunds are handled by the store you bought through, under its terms.',
         'Nothing you can buy changes the tiles you are dealt, what you can see at the table, or the clock.',
       ],
     },
@@ -105,7 +105,7 @@ const TERMS_ZH: LegalDocument = {
       paragraphs: [
         '鑽石與積分沒有金錢價值，不能兌換或轉讓。不論在 App 內外，都不能換成金錢、商品或任何有價物，不能出售，也不能轉給其他玩家。',
         '鑽石與桌布是在 App 內使用數位內容的有限、個人、可撤銷的授權。購買的鑽石不會過期。鑽石只能用來購買商店中列出的商品，價格以商店顯示為準。',
-        '教練方案（教練 金、教練 白金）是自動續訂的訂閱，直到你在 App Store 或 Google Play 帳號設定中取消為止。付款、續訂與退款由你購買時使用的商店依其條款處理。',
+        '訂閱方案（教練 金、四風俱樂部）是自動續訂的訂閱，直到你在 App Store 或 Google Play 帳號設定中取消為止。付款、續訂與退款由你購買時使用的商店依其條款處理。',
         '任何可購買的東西都不會改變你拿到的牌、你在牌桌上能看到的資訊或計時。',
       ],
     },

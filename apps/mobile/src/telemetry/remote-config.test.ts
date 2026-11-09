@@ -44,7 +44,7 @@ describe('update gate', () => {
       asked = `${init.method} ${url}`;
       return { ok: true, status: 200, text: async () => JSON.stringify({ authProviders: [], storeEnabled: false, pushEnabled: true, minBuild: 4, maintenance: null, serverNow: '' }) };
     };
-    expect(await fetchRemoteConfig(ok, 'https://game.example')).toEqual({ minBuild: 4, maintenance: null, pushEnabled: true });
+    expect(await fetchRemoteConfig(ok, 'https://game.example')).toEqual({ minBuild: 4, maintenance: null, pushEnabled: true, storeEnabled: false });
     expect(asked).toBe('GET https://game.example/api/config');
     expect(await fetchRemoteConfig(async () => Promise.reject(new TypeError('Failed to fetch')), 'http://localhost:8787')).toBeNull();
     expect(await fetchRemoteConfig(reply(500, '{"error":"unavailable"}'), 'x')).toBeNull();
