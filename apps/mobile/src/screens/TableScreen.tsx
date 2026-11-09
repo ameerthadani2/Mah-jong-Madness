@@ -21,7 +21,7 @@ import { ActionBar } from '../components/table/ActionBar';
 import { CallBanner, WinReveal, type Callout } from '../components/table/CallBanner';
 import { Felt, type PlateProps } from '../components/table/Felt';
 import { HandRail } from '../components/table/HandRail';
-import { ACTION_STRIP_H, tableLayout } from '../components/table/layout';
+import { ACTION_STRIP_H, slopFor, tableLayout } from '../components/table/layout';
 import { fitHand } from '../display/tableFit';
 import { useDisplayScale } from '../display/DisplayScale';
 import { RESULT_HOLD_MS } from '../components/table/feel';
@@ -392,6 +392,7 @@ export function TableScreen() {
               {emoteChoices(EMOTES, equipped).map((e) => (
                 <Pressable
                   key={e}
+                  hitSlop={slopFor(48)}
                   accessibilityRole="button"
                   accessibilityLabel={t('table.a11y.emote', { name: e })}
                   onPress={() => {

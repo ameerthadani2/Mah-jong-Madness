@@ -18,6 +18,7 @@ import { colors, fonts, nameFont, space } from '../theme';
 import { Button, Card, Chip, fontFor, GemCounter, IconButton, P, Pill, Row } from '../components/Ui';
 import { AvatarPlate, avatarName } from '../components/Avatars';
 import { useOwnedEquipped } from '../monetisation/useEquipped';
+import { slopFor } from '../components/table/layout';
 import { ChestScene, ClubhouseScene, ScrollScene, TableScene } from '../components/Scenes';
 import { Icon } from '../components/Icons';
 import { Logo } from '../components/Logo';
@@ -141,7 +142,7 @@ export function HomeScreen() {
       <View style={styles.cardFoot}>
         <Button testID="open-clubs" title={t('home.clubs.open')} kind="secondary" small={compact} large={tablet} onPress={goClubs} />
         {!compact && (
-          <Pressable onPress={goOnline} hitSlop={6} style={styles.link} accessibilityRole="link" accessibilityLabel={t('home.clubs.quickTable')}>
+          <Pressable onPress={goOnline} hitSlop={slopFor(20)} style={styles.link} accessibilityRole="link" accessibilityLabel={t('home.clubs.quickTable')}>
             <Icon name="users" size={18} />
             <Text style={[styles.linkText, fontFor(t('home.clubs.quickTable'), fonts.uiBold)]}>{t('home.clubs.quickTable')}</Text>
           </Pressable>
@@ -170,7 +171,7 @@ export function HomeScreen() {
       <View style={styles.cardFoot}>
         <Button testID="open-learn" title={t('home.learn.open')} kind="premium" small={compact} large={tablet} onPress={() => app.go({ name: 'learn' })} />
         {!compact && (
-          <Pressable onPress={() => app.go({ name: 'daily' })} hitSlop={6} style={styles.link} accessibilityRole="link" accessibilityLabel={dailyDone ? t('home.learn.dailyDone') : t('home.learn.daily')}>
+          <Pressable onPress={() => app.go({ name: 'daily' })} hitSlop={slopFor(20)} style={styles.link} accessibilityRole="link" accessibilityLabel={dailyDone ? t('home.learn.dailyDone') : t('home.learn.daily')}>
             <Icon name={dailyDone ? 'check' : 'scroll'} size={18} color={colors.cta} />
             <Text style={[styles.linkText, fontFor(t('home.learn.daily'), fonts.uiBold)]}>{dailyDone ? t('home.learn.dailyDone') : t('home.learn.daily')}</Text>
           </Pressable>
@@ -204,7 +205,7 @@ export function HomeScreen() {
         {needsName ? (
           <View style={{ flex: 1 }} />
         ) : (
-          <Pressable onPress={() => app.go({ name: 'settings' })} style={({ pressed }) => [styles.profile, pressed && { transform: [{ translateY: 2 }] }, { flex: wide ? undefined : 1 }]} accessibilityRole="button" accessibilityLabel={`${app.profile.name}. ${t('settings.title')}`}>
+          <Pressable onPress={() => app.go({ name: 'settings' })} hitSlop={slopFor(50)} style={({ pressed }) => [styles.profile, pressed && { transform: [{ translateY: 2 }] }, { flex: wide ? undefined : 1 }]} accessibilityRole="button" accessibilityLabel={`${app.profile.name}. ${t('settings.title')}`}>
             <AvatarPlate id={app.profile.avatar} size={tablet ? 54 : 44} frame={frame} />
             <View style={{ flexShrink: 1 }}>
               <Text numberOfLines={1} style={[styles.profileName, nameFont(app.profile.name)]}>

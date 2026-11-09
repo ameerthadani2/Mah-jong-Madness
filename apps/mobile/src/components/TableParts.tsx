@@ -15,6 +15,7 @@ import { FeltPattern } from './FeltPattern';
 import { useCountdown } from '../game/useTable';
 import { clockUrgent, timerFraction, type TurnClock } from './table/turnClock';
 import { reactionShouldPlay } from './table/feel';
+import { slopFor } from './table/layout';
 
 export function MeldView({ meld, size = 'sm' }: { meld: Meld; size?: TileSize | number }) {
   // Another seat's concealed kong arrives as placeholders until the hand ends: show all four face down.
@@ -155,7 +156,7 @@ export function SeatBadge({
   void compact;
   return (
     <View style={[styles.seat, vertical && styles.seatVertical]}>
-      <Pressable onLongPress={onLongPress} disabled={!onLongPress} accessibilityRole={onLongPress ? 'button' : undefined} accessibilityLabel={name} accessibilityHint={onLongPress ? onLongPressHint : undefined}>
+      <Pressable onLongPress={onLongPress} disabled={!onLongPress} hitSlop={slopFor(size)} accessibilityRole={onLongPress ? 'button' : undefined} accessibilityLabel={name} accessibilityHint={onLongPress ? onLongPressHint : undefined}>
         <SeatMotion size={size} seat={seat} active={isTurn && !offline} reaction={reaction}>
           <SeatPlate clock={isTurn ? (clock ?? null) : null} id={seatAvatarId(info, seat)} size={size} active={isTurn} dealer={seat === dealerSeat} wind={wind} offline={offline} mood={mood} frame={frame} />
         </SeatMotion>

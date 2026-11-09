@@ -49,6 +49,32 @@ describe('accessibility', () => {
     expect(missing).toEqual([]);
   });
 
+  // The table, Home, Online, Lobby and puzzle screens (and their table components): every control is named and
+  // reaches 44 pt on native, through hitSlop where it is drawn smaller (a full-screen scrim needs none).
+  const OWNED = [
+    ...tsx(join(SRC, 'components', 'table')),
+    ...['Tile.tsx', 'TableParts.tsx', 'SeatMotion.tsx', 'PuzzleView.tsx', 'Celebrations.tsx'].map((f) => join(SRC, 'components', f)),
+    ...['TableScreen.tsx', 'HomeScreen.tsx', 'OnlineScreen.tsx', 'LobbyScreen.tsx', 'PuzzleScreens.tsx', 'DrillScreen.tsx'].map((s) => join(SRC, 'screens', s)),
+  ];
+
+  it('names every Pressable on the table, Home, Online, Lobby and puzzle screens', () => {
+    const unnamed: string[] = [];
+    for (const f of OWNED) for (const tag of pressableTags(readFileSync(f, 'utf8'))) if (!/accessibilityLabel[=\s]/.test(tag)) unnamed.push(`${relative(SRC, f)}: ${tag.slice(0, 80)}`);
+    expect(unnamed).toEqual([]);
+  });
+
+  it('gives every small Pressable a 44 pt touch target with hitSlop on those screens', () => {
+    const small: string[] = [];
+    for (const f of OWNED) for (const tag of pressableTags(readFileSync(f, 'utf8'))) if (!/hitSlop=/.test(tag) && !/style=\{styles\.scrim\}/.test(tag)) small.push(`${relative(SRC, f)}: ${tag.slice(0, 80)}`);
+    expect(small).toEqual([]);
+  });
+
+  it('labels the shared buttons and icon buttons on those screens (Ui.tsx names them from the title, label or icon)', () => {
+    const ui = readFileSync(join(SRC, 'components', 'Ui.tsx'), 'utf8');
+    expect(ui).toMatch(/accessibilityLabel=\{accessibilityLabel \?\? title\}/);
+    expect(ui).toMatch(/accessibilityLabel=\{label \?\? iconLabel\(icon\)\}/);
+  });
+
   it('sets no text style below 11 px', () => {
     const small: string[] = [];
     for (const f of FILES) {
