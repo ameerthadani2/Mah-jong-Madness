@@ -11,6 +11,8 @@ import type { Club, ClubBan, ClubMember, ClubSettings, ClubTable, Identity, Seas
 import type { Pool, Queryable } from '../db';
 import {
   DELETED_PLAYER_NAME,
+  type BlockRecord,
+  type BlocksRepo,
   type ClubMembership,
   type ClubsRepo,
   type DeviceRecord,
@@ -23,6 +25,7 @@ import {
   type MatchPlayer,
   type MatchResultRecord,
   type MatchResultsRepo,
+  type ModerationRepo,
   type PurchaseRecord,
   type PushTarget,
   type PuzzleResultRecord,
@@ -503,6 +506,120 @@ function pgReports(q: Queryable, tx: Tx): ReportsRepo {
         const about = await c.query('UPDATE reports SET reported_user_id = $2 WHERE reported_user_id = $1', [fromUserId, toUserId]);
         return (dropped.rowCount ?? 0) + (filed.rowCount ?? 0) + (about.rowCount ?? 0);
       });
+    },
+    async get(id) {
+      if (!Number.isSafeInteger(id) || id < 1) return null;
+      const res = await q.query<ReportRow>('SELECT ' + COLS + ' FROM reports WHERE id = $1', [id]);
+      return res.rows[0] ? reportFromRow(res.rows[0]) : null;
+    },
+    async listByStatus(status, limit = 100) {
+      const res = await q.query<ReportRow>('SELECT ' + COLS + ' FROM reports WHERE status = $1 ORDER BY created_at, id LIMIT $2', [status, Math.max(1, Math.min(1000, Math.floor(limit)))]);
+      return res.rows.map(reportFromRow);
+    },
+    async resolve(id, resolution, at) {
+      if (!Number.isSafeInteger(id) || id < 1) return false;
+      const res = await q.query("UPDATE reports SET status = $2, resolution = $3, resolved_at = $4 WHERE id = $1 AND status = 'open'", [
+        id,
+        resolution === 'dismiss' ? 'dismissed' : 'actioned',
+        resolution,
+        toDate(at),
+      ]);
+      return (res.rowCount ?? 0) > 0;
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------------------------
+
+interface BlockRow {
+  blocker_id: string;
+  blocked_id: string;
+  created_at: Date;
+}
+
+const blockFromRow = (r: BlockRow): BlockRecord => ({ blockerId: r.blocker_id, blockedId: r.blocked_id, createdAt: r.created_at.getTime() });
+
+function pgBlocks(q: Queryable, tx: Tx): BlocksRepo {
+  return {
+    async add(blockerId, blockedId, at) {
+      if (!isUuid(blockerId) || !isUuid(blockedId) || blockerId === blockedId) return false;
+      // Both accounts must exist: the insert takes its rows from users, so a missing one inserts nothing.
+      const res = await q.query(
+        'INSERT INTO user_blocks (blocker_id, blocked_id, created_at) SELECT a.id, b.id, $3::timestamptz FROM users a, users b WHERE a.id = $1 AND b.id = $2 ON CONFLICT DO NOTHING',
+        [blockerId, blockedId, toDate(at)],
+      );
+      return (res.rowCount ?? 0) > 0;
+    },
+    async remove(blockerId, blockedId) {
+      if (!isUuid(blockerId) || !isUuid(blockedId)) return false;
+      const res = await q.query('DELETE FROM user_blocks WHERE blocker_id = $1 AND blocked_id = $2', [blockerId, blockedId]);
+      return (res.rowCount ?? 0) > 0;
+    },
+    async list(blockerId) {
+      if (!isUuid(blockerId)) return [];
+      const res = await q.query<BlockRow>('SELECT blocker_id, blocked_id, created_at FROM user_blocks WHERE blocker_id = $1 ORDER BY created_at DESC, blocked_id', [blockerId]);
+      return res.rows.map(blockFromRow);
+    },
+    async blockersOf(blockedId) {
+      if (!isUuid(blockedId)) return [];
+      const res = await q.query<{ blocker_id: string }>('SELECT blocker_id FROM user_blocks WHERE blocked_id = $1', [blockedId]);
+      return res.rows.map((r) => r.blocker_id);
+    },
+    async moveToUser(fromUserId, toUserId) {
+      if (!isUuid(fromUserId) || !isUuid(toUserId)) return 0;
+      return tx(async (c) => {
+        // A block between the two accounts would name one user twice: drop it.
+        await c.query('DELETE FROM user_blocks WHERE (blocker_id = $1 AND blocked_id = $2) OR (blocker_id = $2 AND blocked_id = $1)', [fromUserId, toUserId]);
+        const made = await c.query(
+          'INSERT INTO user_blocks (blocker_id, blocked_id, created_at) SELECT $2::uuid, blocked_id, created_at FROM user_blocks WHERE blocker_id = $1 ON CONFLICT DO NOTHING',
+          [fromUserId, toUserId],
+        );
+        const named = await c.query(
+          'INSERT INTO user_blocks (blocker_id, blocked_id, created_at) SELECT blocker_id, $2::uuid, created_at FROM user_blocks WHERE blocked_id = $1 ON CONFLICT DO NOTHING',
+          [fromUserId, toUserId],
+        );
+        const gone = await c.query('DELETE FROM user_blocks WHERE blocker_id = $1 OR blocked_id = $1', [fromUserId]);
+        return Math.max(gone.rowCount ?? 0, (made.rowCount ?? 0) + (named.rowCount ?? 0));
+      });
+    },
+    async deleteForUser(userId) {
+      if (!isUuid(userId)) return 0;
+      const res = await q.query('DELETE FROM user_blocks WHERE blocker_id = $1 OR blocked_id = $1', [userId]);
+      return res.rowCount ?? 0;
+    },
+  };
+}
+
+interface ModerationRow {
+  banned_at: Date | null;
+  ban_reason: string | null;
+  muted_until: Date | null;
+}
+
+function pgModeration(q: Queryable): ModerationRepo {
+  const changed = (res: { rowCount: number | null }) => (res.rowCount ?? 0) > 0;
+  return {
+    async status(userId) {
+      if (!isUuid(userId)) return null;
+      const res = await q.query<ModerationRow>('SELECT banned_at, ban_reason, muted_until FROM users WHERE id = $1', [userId]);
+      const r = res.rows[0];
+      return r ? { bannedAt: toMs(r.banned_at), banReason: r.ban_reason, mutedUntil: toMs(r.muted_until) } : null;
+    },
+    async ban(userId, at, reason) {
+      if (!isUuid(userId)) return false;
+      return changed(await q.query('UPDATE users SET banned_at = COALESCE(banned_at, $2), ban_reason = $3 WHERE id = $1', [userId, toDate(at), reason]));
+    },
+    async unban(userId) {
+      if (!isUuid(userId)) return false;
+      return changed(await q.query('UPDATE users SET banned_at = NULL, ban_reason = NULL WHERE id = $1', [userId]));
+    },
+    async mute(userId, until) {
+      if (!isUuid(userId)) return false;
+      return changed(await q.query('UPDATE users SET muted_until = $2 WHERE id = $1', [userId, toDate(until)]));
+    },
+    async mutedAfter(at) {
+      const res = await q.query<{ id: string; muted_until: Date }>('SELECT id, muted_until FROM users WHERE muted_until > $1', [toDate(at)]);
+      return res.rows.map((r) => ({ userId: r.id, mutedUntil: r.muted_until.getTime() }));
     },
   };
 }
@@ -1135,6 +1252,8 @@ function build(q: Queryable, tx: Tx, transaction: Repos['transaction']): Repos {
     tableSnapshots: pgTableSnapshots(q),
     matchResults: pgMatchResults(q),
     puzzleResults: pgPuzzleResults(q),
+    blocks: pgBlocks(q, tx),
+    moderation: pgModeration(q),
     transaction,
   };
 }

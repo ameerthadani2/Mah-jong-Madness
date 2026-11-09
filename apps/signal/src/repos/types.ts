@@ -272,6 +272,63 @@ export interface ReportsRepo {
   listAbout(reportedUserId: string, limit?: number): Promise<ReportRecord[]>;
   /** Account merge: reports filed by or about `fromUserId` now name `toUserId` (a report between the two is dropped). */
   moveToUser(fromUserId: string, toUserId: string): Promise<number>;
+  get(id: number): Promise<ReportRecord | null>;
+  /** Reports in this status, oldest first (the moderators' queue). */
+  listByStatus(status: ReportRecord['status'], limit?: number): Promise<ReportRecord[]>;
+  /**
+   * Closes an open report with a moderator's decision: `dismiss` leaves it `dismissed`, anything
+   * else `actioned`. False when there is no such report or it is no longer open.
+   */
+  resolve(id: number, resolution: ReportResolution, at: number): Promise<boolean>;
+}
+
+export const REPORT_RESOLUTIONS = ['dismiss', 'warn', 'ban', 'mute'] as const;
+export type ReportResolution = (typeof REPORT_RESOLUTIONS)[number];
+
+// ---------------------------------------------------------------------------------------------
+// Blocks, bans and mutes
+// ---------------------------------------------------------------------------------------------
+
+export interface BlockRecord {
+  blockerId: string;
+  blockedId: string;
+  createdAt: number;
+}
+
+export interface BlocksRepo {
+  /** Records that `blockerId` blocked `blockedId`; false (nothing written) when it already had. */
+  add(blockerId: string, blockedId: string, at: number): Promise<boolean>;
+  remove(blockerId: string, blockedId: string): Promise<boolean>;
+  /** Everyone this user blocked, newest first. */
+  list(blockerId: string): Promise<BlockRecord[]>;
+  /** The accounts that blocked this user. */
+  blockersOf(blockedId: string): Promise<string[]>;
+  /**
+   * Account merge: blocks made by or naming `fromUserId` now belong to `toUserId`. A block between
+   * the two is dropped, and a block both had collapses into one.
+   */
+  moveToUser(fromUserId: string, toUserId: string): Promise<number>;
+  /** Account deletion: every block made by or naming the user. */
+  deleteForUser(userId: string): Promise<number>;
+}
+
+export interface ModerationStatus {
+  bannedAt: number | null;
+  banReason: string | null;
+  /** The account's chat and emotes are dropped at every table until then. */
+  mutedUntil: number | null;
+}
+
+export interface ModerationRepo {
+  /** The account's ban and mute; null when there is no such user. */
+  status(userId: string): Promise<ModerationStatus | null>;
+  /** Bans the account (a second ban keeps the first time and takes the new reason); false when there is no such user. */
+  ban(userId: string, at: number, reason: string | null): Promise<boolean>;
+  unban(userId: string): Promise<boolean>;
+  /** Mutes the account until `until` (null lifts the mute); false when there is no such user. */
+  mute(userId: string, until: number | null): Promise<boolean>;
+  /** Accounts muted past `at`, for the tables to load at boot. */
+  mutedAfter(at: number): Promise<Array<{ userId: string; mutedUntil: number }>>;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -388,6 +445,8 @@ export interface Repos {
   tableSnapshots: TableSnapshotsRepo;
   matchResults: MatchResultsRepo;
   puzzleResults: PuzzleResultsRepo;
+  blocks: BlocksRepo;
+  moderation: ModerationRepo;
   /**
    * Runs `fn` with repositories that share one transaction (pg: BEGIN/COMMIT, ROLLBACK on a
    * throw; nested calls join the outer transaction). The memory implementation runs one

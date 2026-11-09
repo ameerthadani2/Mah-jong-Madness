@@ -10,6 +10,8 @@
  */
 import { anonymiseUserIn, moveMembershipsIn, type Club } from '../clubs';
 import {
+  type BlockRecord,
+  type BlocksRepo,
   type ClubMembership,
   type ClubsRepo,
   type DevicePatch,
@@ -22,6 +24,8 @@ import {
   type LedgerEntry,
   type MatchResultRecord,
   type MatchResultsRepo,
+  type ModerationRepo,
+  type ModerationStatus,
   type PurchaseRecord,
   type PushTarget,
   type PuzzleResultRecord,
@@ -68,6 +72,12 @@ interface MemoryState {
   puzzleSeq: number;
   /** Each user's analytics choice (users.analytics_consent in Postgres). */
   consent: Map<string, boolean>;
+  /** user_blocks, in insertion order. */
+  blocks: BlockRecord[];
+  /** users.banned_at, ban_reason and muted_until, for accounts that have any of them. */
+  moderation: Map<string, ModerationStatus>;
+  /** reports.resolution and resolved_at. */
+  resolutions: Map<number, { resolution: string; at: number }>;
 }
 
 const emptyState = (): MemoryState => ({
@@ -91,6 +101,9 @@ const emptyState = (): MemoryState => ({
   puzzles: [],
   puzzleSeq: 0,
   consent: new Map(),
+  blocks: [],
+  moderation: new Map(),
+  resolutions: new Map(),
 });
 
 function memoryUsers(s: MemoryState): UsersRepo {
@@ -145,6 +158,8 @@ function memoryUsers(s: MemoryState): UsersRepo {
         s.consent.delete(id);
         for (const [k, e] of [...s.entitlements]) if (e.userId === id) s.entitlements.delete(k);
         s.puzzles = s.puzzles.filter((p) => p.userId !== id);
+        s.blocks = s.blocks.filter((b) => b.blockerId !== id && b.blockedId !== id);
+        s.moderation.delete(id);
         for (const u2 of s.users.values()) if (u2.mergedInto === id) u2.mergedInto = null;
         for (const club of s.clubs.values()) {
           club.members = club.members.filter((m) => m.userId !== id);
@@ -341,6 +356,112 @@ function memoryReports(s: MemoryState): ReportsRepo {
       }
       return n;
     },
+    async get(id) {
+      const row = s.reports.find((r) => r.id === id);
+      return row ? copy(row) : null;
+    },
+    async listByStatus(status, limit = 100) {
+      return s.reports
+        .filter((r) => r.status === status)
+        .sort((a, b) => a.createdAt - b.createdAt || a.id - b.id)
+        .slice(0, limit)
+        .map(copy);
+    },
+    async resolve(id, resolution, at) {
+      const row = s.reports.find((r) => r.id === id);
+      if (!row || row.status !== 'open') return false;
+      row.status = resolution === 'dismiss' ? 'dismissed' : 'actioned';
+      s.resolutions.set(id, { resolution, at });
+      return true;
+    },
+  };
+}
+
+function memoryBlocks(s: MemoryState): BlocksRepo {
+  return {
+    async add(blockerId, blockedId, at) {
+      if (blockerId === blockedId || !s.users.has(blockerId) || !s.users.has(blockedId)) return false;
+      if (s.blocks.some((b) => b.blockerId === blockerId && b.blockedId === blockedId)) return false;
+      s.blocks.push({ blockerId, blockedId, createdAt: at });
+      return true;
+    },
+    async remove(blockerId, blockedId) {
+      const before = s.blocks.length;
+      s.blocks = s.blocks.filter((b) => !(b.blockerId === blockerId && b.blockedId === blockedId));
+      return s.blocks.length < before;
+    },
+    async list(blockerId) {
+      return s.blocks
+        .map((b, i) => ({ b, i }))
+        .filter(({ b }) => b.blockerId === blockerId)
+        .sort((x, y) => y.b.createdAt - x.b.createdAt || y.i - x.i)
+        .map(({ b }) => copy(b));
+    },
+    async blockersOf(blockedId) {
+      return s.blocks.filter((b) => b.blockedId === blockedId).map((b) => b.blockerId);
+    },
+    async moveToUser(fromUserId, toUserId) {
+      const involves = (b: BlockRecord) => b.blockerId === fromUserId || b.blockedId === fromUserId;
+      // Rows already on `toUserId` win over the ones moved onto it.
+      const ordered = [...s.blocks.filter((b) => !involves(b)), ...s.blocks.filter(involves)];
+      const kept: BlockRecord[] = [];
+      const seen = new Set<string>();
+      let n = 0;
+      for (const b of ordered) {
+        const moved = involves(b);
+        const row = moved ? { ...b, blockerId: b.blockerId === fromUserId ? toUserId : b.blockerId, blockedId: b.blockedId === fromUserId ? toUserId : b.blockedId } : b;
+        if (moved) n++;
+        const key = `${row.blockerId}>${row.blockedId}`;
+        if (row.blockerId === row.blockedId || seen.has(key)) continue;
+        seen.add(key);
+        kept.push(row);
+      }
+      s.blocks = kept;
+      return n;
+    },
+    async deleteForUser(userId) {
+      const before = s.blocks.length;
+      s.blocks = s.blocks.filter((b) => b.blockerId !== userId && b.blockedId !== userId);
+      return before - s.blocks.length;
+    },
+  };
+}
+
+function memoryModeration(s: MemoryState): ModerationRepo {
+  const row = (userId: string): ModerationStatus => {
+    let m = s.moderation.get(userId);
+    if (!m) s.moderation.set(userId, (m = { bannedAt: null, banReason: null, mutedUntil: null }));
+    return m;
+  };
+  return {
+    async status(userId) {
+      if (!s.users.has(userId)) return null;
+      return copy(s.moderation.get(userId) ?? { bannedAt: null, banReason: null, mutedUntil: null });
+    },
+    async ban(userId, at, reason) {
+      if (!s.users.has(userId)) return false;
+      const m = row(userId);
+      m.bannedAt ??= at;
+      m.banReason = reason;
+      return true;
+    },
+    async unban(userId) {
+      if (!s.users.has(userId)) return false;
+      const m = row(userId);
+      m.bannedAt = null;
+      m.banReason = null;
+      return true;
+    },
+    async mute(userId, until) {
+      if (!s.users.has(userId)) return false;
+      row(userId).mutedUntil = until;
+      return true;
+    },
+    async mutedAfter(at) {
+      const out: Array<{ userId: string; mutedUntil: number }> = [];
+      for (const [userId, m] of s.moderation) if (m.mutedUntil !== null && m.mutedUntil > at) out.push({ userId, mutedUntil: m.mutedUntil });
+      return out;
+    },
   };
 }
 
@@ -523,6 +644,8 @@ function build(s: MemoryState, transaction: Repos['transaction']): Repos {
     tableSnapshots: memoryTableSnapshots(s),
     matchResults: memoryMatchResults(s),
     puzzleResults: memoryPuzzleResults(s),
+    blocks: memoryBlocks(s),
+    moderation: memoryModeration(s),
     transaction,
   };
 }

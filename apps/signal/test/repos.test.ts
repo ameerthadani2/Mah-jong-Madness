@@ -492,6 +492,90 @@ function contract(name: string, setup: () => Promise<Repos>, teardown: () => Pro
       expect((await repos.wallet.listPurchases(u)).map((p) => p.transactionId).sort()).toEqual(['GPA.late', 'tx-first', 'tx-g1', 'tx-g2']);
     });
 
+    it('blocks: add once, list newest first, blockers, remove; both accounts must exist', async () => {
+      const [a, b, c] = [await user(), await user(), await user()];
+      expect(await repos.blocks.add(a.id, b.id, T0)).toBe(true);
+      expect(await repos.blocks.add(a.id, b.id, T0 + 5)).toBe(false);
+      expect(await repos.blocks.add(a.id, c.id, T0 + 1)).toBe(true);
+      expect(await repos.blocks.add(c.id, b.id, T0 + 2)).toBe(true);
+      expect(await repos.blocks.add(a.id, a.id, T0)).toBe(false);
+      expect(await repos.blocks.add(a.id, randomUUID(), T0)).toBe(false);
+      expect(await repos.blocks.add(a.id, 'not-a-uuid', T0)).toBe(false);
+      expect(await repos.blocks.list(a.id)).toEqual([
+        { blockerId: a.id, blockedId: c.id, createdAt: T0 + 1 },
+        { blockerId: a.id, blockedId: b.id, createdAt: T0 },
+      ]);
+      expect((await repos.blocks.blockersOf(b.id)).sort()).toEqual([a.id, c.id].sort());
+      expect(await repos.blocks.remove(a.id, c.id)).toBe(true);
+      expect(await repos.blocks.remove(a.id, c.id)).toBe(false);
+      expect((await repos.blocks.list(a.id)).map((r) => r.blockedId)).toEqual([b.id]);
+      expect(await repos.blocks.deleteForUser(b.id)).toBe(2);
+      expect(await repos.blocks.list(a.id)).toEqual([]);
+      expect(await repos.blocks.list(c.id)).toEqual([]);
+    });
+
+    it('blocks: move to the account a guest merged into (a block between the two goes, duplicates collapse)', async () => {
+      const [guest, account, x, y] = [await user(), await user('account'), await user(), await user()];
+      await repos.blocks.add(guest.id, x.id, T0);
+      await repos.blocks.add(account.id, x.id, T0 + 1);
+      await repos.blocks.add(guest.id, account.id, T0 + 2);
+      await repos.blocks.add(y.id, guest.id, T0 + 3);
+      await repos.blocks.moveToUser(guest.id, account.id);
+      expect((await repos.blocks.list(account.id)).map((r) => r.blockedId)).toEqual([x.id]);
+      expect(await repos.blocks.blockersOf(account.id)).toEqual([y.id]);
+      expect(await repos.blocks.list(guest.id)).toEqual([]);
+      expect(await repos.blocks.blockersOf(guest.id)).toEqual([]);
+    });
+
+    it('blocks and moderation: a purged account takes its blocks with it', async () => {
+      const [gone, other] = [await user(), await user()];
+      await repos.blocks.add(gone.id, other.id, T0);
+      await repos.blocks.add(other.id, gone.id, T0);
+      await repos.moderation.ban(gone.id, T0, 'spam');
+      await repos.users.update(gone.id, { deletedAt: T0 - 40 * 86_400_000 });
+      await repos.users.purgeDeleted(T0 - 30 * 86_400_000);
+      expect(await repos.blocks.list(other.id)).toEqual([]);
+      expect(await repos.blocks.blockersOf(other.id)).toEqual([]);
+      expect(await repos.moderation.status(gone.id)).toBeNull();
+    });
+
+    it('moderation: ban keeps the first time, unban clears it, mutes list while they run', async () => {
+      const u = await user();
+      expect(await repos.moderation.status(u.id)).toEqual({ bannedAt: null, banReason: null, mutedUntil: null });
+      expect(await repos.moderation.status(randomUUID())).toBeNull();
+      expect(await repos.moderation.status('not-a-uuid')).toBeNull();
+      expect(await repos.moderation.ban(u.id, T0, 'cheating')).toBe(true);
+      expect(await repos.moderation.ban(u.id, T0 + 10, 'cheating again')).toBe(true);
+      expect(await repos.moderation.status(u.id)).toEqual({ bannedAt: T0, banReason: 'cheating again', mutedUntil: null });
+      expect(await repos.moderation.ban(randomUUID(), T0, null)).toBe(false);
+      expect(await repos.moderation.unban(u.id)).toBe(true);
+      expect((await repos.moderation.status(u.id))?.bannedAt).toBeNull();
+      expect(await repos.moderation.mute(u.id, T0 + 1000)).toBe(true);
+      expect((await repos.moderation.mutedAfter(T0)).filter((m) => m.userId === u.id)).toEqual([{ userId: u.id, mutedUntil: T0 + 1000 }]);
+      expect((await repos.moderation.mutedAfter(T0 + 1000)).filter((m) => m.userId === u.id)).toEqual([]);
+      expect(await repos.moderation.mute(u.id, null)).toBe(true);
+      expect((await repos.moderation.status(u.id))?.mutedUntil).toBeNull();
+      // The ban and mute live on the user row: everything else about the account is untouched.
+      expect(await repos.users.get(u.id)).toMatchObject({ id: u.id, deletedAt: null });
+    });
+
+    it('reports: the open queue oldest first, get by id, resolve once', async () => {
+      const [a, b] = [await user(), await user()];
+      const r1 = await repos.reports.create({ reporterId: a.id, reportedUserId: b.id, roomCode: 'ABC123', reason: 'abusive_chat', details: 'rude', createdAt: T0 + 20 });
+      const r2 = await repos.reports.create({ reporterId: b.id, reportedUserId: a.id, roomCode: null, reason: 'stalling', details: null, createdAt: T0 + 10 });
+      const mine = (list: { id: number }[]) => list.map((r) => r.id).filter((id) => id === r1.id || id === r2.id);
+      expect(mine(await repos.reports.listByStatus('open', 1000))).toEqual([r2.id, r1.id]);
+      expect(await repos.reports.get(r1.id)).toEqual(r1);
+      expect(await repos.reports.get(9_999_999)).toBeNull();
+      expect(await repos.reports.resolve(r1.id, 'ban', T0 + 30)).toBe(true);
+      expect(await repos.reports.resolve(r1.id, 'dismiss', T0 + 31)).toBe(false);
+      expect(await repos.reports.resolve(r2.id, 'dismiss', T0 + 31)).toBe(true);
+      expect((await repos.reports.get(r1.id))?.status).toBe('actioned');
+      expect((await repos.reports.get(r2.id))?.status).toBe('dismissed');
+      expect(mine(await repos.reports.listByStatus('open', 1000))).toEqual([]);
+      expect(mine(await repos.reports.listByStatus('actioned', 1000))).toEqual([r1.id]);
+    });
+
     it('transactions commit together and roll back together', async () => {
       const id = randomUUID();
       await repos.transaction(async (tx) => {
@@ -547,7 +631,7 @@ describe.skipIf(!PG_URL)('postgres', () => {
       await admin.query('CREATE SCHEMA ' + schema);
       pool = createPool(PG_URL!, { options: '-c search_path=' + schema });
       expect(await ping(pool)).toBe(true);
-      expect(await migrate(pool)).toEqual(['0001_init', '0002_store_reports_seasons', '0003_server_hardening', '0004_store_plans_consent', '0005_club_owner_tools']);
+      expect(await migrate(pool)).toEqual(['0001_init', '0002_store_reports_seasons', '0003_server_hardening', '0004_store_plans_consent', '0005_club_owner_tools', '0006_quick_match_moderation']);
       expect(await migrate(pool)).toEqual([]);
       return createPgRepos(pool);
     },
