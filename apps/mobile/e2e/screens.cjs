@@ -89,7 +89,12 @@ async function run(browser, port, [w, h]) {
     let el;
     if ((el = await visible(page, 'text=/胡!/'))) { await tap(page, el); await page.waitForTimeout(400); continue; }
     if ((el = await visible(page, 'text="過"'))) {
-      if (!done.has('claim')) { done.add('claim'); await shot('table-claim'); }
+      if (!done.has('claim')) {
+        done.add('claim');
+        await shot('table-claim');
+        // English players see a gloss on the Chinese claim verbs ("Pass 過").
+        if (!(await visible(page, '[data-testid="claim-pass"] >> text=Pass'))) fails.push('claim buttons carry no English gloss');
+      }
       await tap(page, el);
       await page.waitForTimeout(300);
       continue;
@@ -111,7 +116,8 @@ async function run(browser, port, [w, h]) {
       await page.waitForTimeout(300);
       continue;
     }
-    if (await visible(page, 'text=Tap a tile, tap again to discard')) {
+    // My discard turn: the first-game tap hint, or (once it has retired) the hand marked for discarding.
+    if ((await visible(page, 'text=Tap a tile, tap again to discard')) || (await visible(page, '[data-testid="hand-discard"]'))) {
       const boxes = await page.$$eval('[data-testid^="tile-"]:not([data-testid="tile-back"])', (els) =>
         els.map((e) => { const r = e.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; }));
       const maxW = Math.max(...boxes.map((b) => b.w));

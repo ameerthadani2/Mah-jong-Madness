@@ -19,7 +19,7 @@ import { useRollUp } from './Motion';
 const signed = (n: number) => `${n >= 0 ? '+' : ''}${n}`;
 
 function WinCard({ w, state }: { w: WinRecord; state: ClientState }) {
-  const { t } = useT();
+  const { t, locale } = useT();
   const seatOf = (seat: number) => state.seats.find((s) => s.seat === seat);
   const name = (seat: number) => seatOf(seat)?.name ?? t('table.seat', { n: seat + 1 });
   const tai = useRollUp(w.score.tai);
@@ -63,7 +63,9 @@ function WinCard({ w, state }: { w: WinRecord; state: ClientState }) {
         {w.score.items.map((it) => (
           <Row key={it.key} style={styles.itemRow}>
             <Text style={[itemText, { flex: 1 }]}>
-              {it.nameZh} <Text style={itemEn}>{it.nameEn}</Text>
+              {/* zh-TW reads the 台 name alone; English adds its English name after the Chinese. */}
+              {it.nameZh}
+              {locale !== 'zh-TW' && <Text style={itemEn}> {it.nameEn}</Text>}
             </Text>
             <Text style={itemTai}>{t('table.win.tai', { tai: it.tai })}</Text>
           </Row>

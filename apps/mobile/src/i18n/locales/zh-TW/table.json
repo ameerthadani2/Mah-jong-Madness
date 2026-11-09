@@ -160,5 +160,15 @@
     "stay": "繼續打",
     "away": "回到首頁",
     "abandon": "放棄牌桌"
-  }
+  },
+  "claimGloss": {
+    "pass": "",
+    "chi": "",
+    "pong": "",
+    "kong": "",
+    "discard": "",
+    "win": "",
+    "selfDrawWin": ""
+  },
+  "autoDiscard": "時間到了：已替你打出%{tile}。"
 }

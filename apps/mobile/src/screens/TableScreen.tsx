@@ -3,10 +3,10 @@
  * composes the pieces in components/table: TableHud, Felt, HandRail, ActionBar, CoachPanel, CallBanner
  * and ResultSheet. Layout rules live in components/table/layout.ts; sounds in src/audio.
  */
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { hintFor, kindInfo, kindOf, legalActions, viewToState, WINDS, type Action, type GameState, type Hint, type TileId } from '@mjm/engine';
+import { hintFor, kindOf, legalActions, viewToState, WINDS, type Action, type GameState, type Hint, type TileId } from '@mjm/engine';
 import { useApp } from '../app-state';
 import { useConnection, useSession, useTableEvents } from '../game/useTable';
 import { nextFadeDelay } from '../logic/fade';
@@ -34,6 +34,9 @@ import type { TurnClock } from '../components/table/turnClock';
 import { exitPlan, type ExitChoice } from '../components/table/exit';
 import { celebrationFor } from '../components/table/celebrate';
 import { tableError } from '../components/table/tableErrors';
+import { autoDiscarded, callHaptic, plateScore, resultHaptic, type Haptic } from '../components/table/feedback';
+import { useTapHint } from '../components/table/useTapHint';
+import { tileLabel } from '../components/table/tileLabel';
 import { WinCelebration } from '../components/Celebrations';
 import { useSfx, type TableEvent } from '../audio';
 
@@ -52,6 +55,19 @@ const CHAT_MS = 6000;
 /** Hands whose result has already been celebrated (survives the table screen remounting). */
 const celebratedHands = new Set<string>();
 
+/** Claims, wins and a deal-in buzz (expo-haptics; a no-op where the device has none). */
+function buzz(h: Haptic | null): void {
+  if (!h) return;
+  const p =
+    h === 'claim' ? Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy)
+    : h === 'win' ? Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success)
+    : Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+  void p.catch(() => undefined);
+}
+
+/** How long the "discarded for you" notice stays up after a turn timeout. */
+const AUTO_DISCARD_NOTICE_MS = 3500;
+
 /** Keys for call-outs and seat reactions, unique across table screens so a remounted portrait never mistakes a new event for one it played. */
 let eventKey = 0;
 
@@ -60,7 +76,7 @@ const REACTION: Record<'chi' | 'pong' | 'kong', SeatReactionKind> = { chi: 'chow
 export function TableScreen() {
   const app = useApp();
   const equipped = useOwnedEquipped();
-  const { t } = useT();
+  const { t, locale } = useT();
   const session = app.session;
   const state = useSession(session);
   const conn = useConnection(session);
@@ -123,6 +139,7 @@ export function TableScreen() {
   const [callout, setCallout] = useState<Callout | null>(null);
   useTableEvents(state, (events: TableEvent[]) => {
     sfx.playEvents(events);
+    buzz(callHaptic(events, mySeat));
     for (const e of events) if (e.type === 'call' && e.call !== 'hu' && e.call !== 'selfdraw') fire(e.seat, REACTION[e.call]);
     const last = [...events].reverse().find((e) => e.type === 'call');
     if (last && last.type === 'call') setCallout({ call: last.call, seat: last.seat, key: ++eventKey });
@@ -143,6 +160,7 @@ export function TableScreen() {
       return;
     }
     if (resultKey) celebratedHands.add(resultKey);
+    buzz(resultHaptic(res, mySeat));
     if (res.type === 'win') {
       for (const w of res.wins) {
         fire(w.seat, w.selfDrawn ? 'selfdraw' : 'win');
@@ -153,6 +171,31 @@ export function TableScreen() {
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state?.lastResult]);
+
+  // A turn timeout that discarded for the player gets a short notice (and a buzz), never a silent tile leaving the hand.
+  const sentDiscard = useRef(false);
+  const pond = useRef<{ hand: number; count: number } | null>(null);
+  const [autoNotice, setAutoNotice] = useState<{ tile: number; key: number } | null>(null);
+  const myPond = view ? view.players[mySeat]?.discards : undefined;
+  useEffect(() => {
+    if (!view || !myPond) return;
+    const next = { hand: view.handNumber, count: myPond.length };
+    if (autoDiscarded(pond.current, next, sentDiscard.current)) {
+      setAutoNotice({ tile: myPond[myPond.length - 1], key: ++eventKey });
+      buzz('dealin');
+    }
+    if (!pond.current || next.count !== pond.current.count || next.hand !== pond.current.hand) sentDiscard.current = false;
+    pond.current = next;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [myPond?.length, view?.handNumber]);
+  useEffect(() => {
+    if (!autoNotice) return;
+    const id = setTimeout(() => setAutoNotice((n) => (n && n.key === autoNotice.key ? null : n)), AUTO_DISCARD_NOTICE_MS);
+    return () => clearTimeout(id);
+  }, [autoNotice]);
+  const autoNoticeText = autoNotice ? t('table.autoDiscard', { tile: tileLabel(kindOf(autoNotice.tile as TileId), locale) }) : null;
+  useAnnounce(autoNoticeText, autoNotice?.key);
+  const tapHint = useTapHint();
 
   // VoiceOver ignores the banners' live regions: announce them on iOS.
   const linkBanner =
@@ -193,6 +236,10 @@ export function TableScreen() {
 
   const act = (a: Action) => {
     if (a.type !== 'discard') sfx.sfx('tap');
+    else {
+      sentDiscard.current = true;
+      tapHint.discarded();
+    }
     session.client.act(a);
     setSelected(null);
   };
@@ -243,7 +290,8 @@ export function TableScreen() {
     player: view.players[seat],
     dealerSeat: view.dealerSeat,
     isTurn: timerSeat === seat || turnSeat === seat,
-    score: view.scores[seat],
+    // During the hold the plates keep the score from before the hand; the result sheet rolls the change up.
+    score: plateScore(view.scores[seat], state.lastResult?.scoreDelta[seat], !!state.lastResult && !showResult),
     viewerSeat: mySeat,
     clock: timerSeat === seat && rules ? clock : null,
     emote: latestEmote(seat),
@@ -262,7 +310,7 @@ export function TableScreen() {
   const activeRel = turnSeat === null ? null : (turnSeat - mySeat + 4) % 4;
   const compass = <Compass prevailing={WINDS[view.prevailingWind]} drawsLeft={view.drawsLeft} seatWinds={[relWind(0), relWind(1), relWind(2), relWind(3)]} active={activeRel} size={L.compassSize} />;
   const statusLine = view.pending
-    ? t('table.status.discarded', { name: seatInfo(view.pending.from)?.name ?? '', tile: kindInfo(kindOf(view.pending.tile)).nameZh }) + (view.pending.kind === 'addedKong' ? t('table.status.addedKong') : '')
+    ? t('table.status.discarded', { name: seatInfo(view.pending.from)?.name ?? '', tile: tileLabel(kindOf(view.pending.tile), locale) }) + (view.pending.kind === 'addedKong' ? t('table.status.addedKong') : '')
     : view.phase === 'discard' && view.turn !== mySeat
       ? t('table.status.turn', { name: seatInfo(view.turn)?.name ?? '' })
       : null;
@@ -280,7 +328,7 @@ export function TableScreen() {
       </>
     ) : null;
 
-  const actionBar = <ActionBar actions={actions} act={act} selected={selected} hint={hint} view={view} big={L.tablet} align={L.actions === 'center' ? 'center' : 'flex-end'} />;
+  const actionBar = <ActionBar actions={actions} act={act} selected={selected} hint={hint} view={view} big={L.tablet} align={L.actions === 'center' ? 'center' : 'flex-end'} tapHint={tapHint.show} />;
 
   return (
     <TableThemeContext.Provider value={theme}>
@@ -314,7 +362,7 @@ export function TableScreen() {
           hint={hint}
           coachOpen={coachOpen}
           actions={L.actions === 'center' ? actionBar : null}
-          dock={actions.some((a) => a.type !== 'discard') || (actions.length > 0 && selected !== null) ? 'buttons' : actions.length > 0 ? 'hint' : 'none'}
+          dock={actions.some((a) => a.type !== 'discard') || (actions.length > 0 && selected !== null) ? 'buttons' : actions.length > 0 && tapHint.show ? 'hint' : 'none'}
           overlay={overlay}
         />
         {L.actions === 'strip' && (
@@ -390,6 +438,12 @@ export function TableScreen() {
         )}
 
         {celebration && <WinCelebration id={celebration} width={winW} height={height} />}
+        {autoNoticeText && (
+          <View style={styles.autoNotice} accessibilityLiveRegion="polite" testID="auto-discard-notice" pointerEvents="none">
+            <Icon name="clock" size={22} />
+            <Text style={[styles.toastText, nameFont(autoNoticeText, fonts.bodyBold)]}>{autoNoticeText}</Text>
+          </View>
+        )}
         {state.lastResult && showResult && <ResultSheet result={state.lastResult} view={view} state={state} mySeat={mySeat} onNext={() => session.client.ready()} onLeave={leave} onReview={() => app.go({ name: 'review' })} onFairness={() => app.go({ name: 'fairness' })} />}
         {state.matchOver && <MatchOverSheet state={state} onLeave={leave} />}
         {conn.status === 'reconnecting' && !state.matchOver ? (
@@ -449,6 +503,7 @@ const styles = StyleSheet.create({
   noticeTitle: { fontFamily: fonts.display, fontSize: 26, color: colors.ink },
   toast: { position: 'absolute', bottom: 12, alignSelf: 'center', backgroundColor: colors.cream, borderWidth: 2.5, borderColor: colors.ink, paddingHorizontal: 14, paddingVertical: 7, borderRadius: 14, zIndex: 30 },
   toastText: { color: colors.ink, fontSize: 13 },
+  autoNotice: { position: 'absolute', top: 48, alignSelf: 'center', flexDirection: 'row', alignItems: 'center', gap: 8, maxWidth: '90%', backgroundColor: '#FFF1C4', borderWidth: 2.5, borderColor: colors.ink, paddingHorizontal: 14, paddingVertical: 7, borderRadius: 14, zIndex: 35 },
   banner: { position: 'absolute', top: 48, left: '15%', right: '15%', zIndex: 50, flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: '#FFE3E1', borderWidth: 3, borderColor: colors.ink, borderRadius: 18, padding: 10 },
   bannerTitle: { fontFamily: fonts.display, color: colors.ink, fontSize: 17 },
   bannerText: { fontFamily: fonts.body, color: colors.ink, fontSize: 12 },

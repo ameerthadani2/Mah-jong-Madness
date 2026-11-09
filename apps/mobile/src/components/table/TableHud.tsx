@@ -44,7 +44,7 @@ export function TableHud({
   return (
     <View style={styles.hud}>
       <Row gap={6} style={{ flexShrink: 1, flexWrap: 'wrap', rowGap: 4 }}>
-        <View style={styles.roundChip} accessible accessibilityLabel={`${WINDS[view.prevailingWind]}${t('table.roundChip', { hand: view.handNumber + 1 })}`}>
+        <View style={styles.roundChip} accessible accessibilityLabel={`${WINDS[view.prevailingWind]} ${t('table.roundChip', { hand: view.handNumber + 1 })}`}>
           <Text style={styles.roundWind}>{WINDS[view.prevailingWind]}</Text>
           <Text style={styles.roundText}>
             {t('table.roundChip', { hand: view.handNumber + 1 })}

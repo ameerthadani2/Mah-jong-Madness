@@ -48,7 +48,7 @@ export function HandRail({
   const hand = me.hand ?? [];
   const scroller = useRef<React.ComponentRef<typeof ScrollView>>(null);
   const tiles = (
-    <View style={[styles.handTiles, portrait && { flexWrap: 'wrap', rowGap: 6, justifyContent: 'center' }]} accessibilityRole="list" accessibilityLabel={t('table.a11y.hand', { n: hand.length })}>
+    <View style={[styles.handTiles, portrait && { flexWrap: 'wrap', rowGap: 6, justifyContent: 'center' }]} accessibilityRole="list" accessibilityLabel={t('table.a11y.hand', { n: hand.length })} testID={canDiscard ? 'hand-discard' : 'hand'}>
       {hand.map((tile, i) => (
         <Tile
           key={tile}

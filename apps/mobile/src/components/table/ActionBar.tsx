@@ -24,16 +24,20 @@ const PAL: Record<ButtonKind, [string, string, string]> = {
   ghost: [colors.creamDeep, colors.creamLight, colors.creamShelf],
 };
 
-/** Chunky claim button: a big CJK verb plus the tiles it would take. */
-function ClaimButton({ label, a11y, tiles, kind, onPress, big }: { label: string; a11y: string; tiles?: TileId[]; kind: ButtonKind; onPress: () => void; big?: boolean }) {
+/**
+ * Chunky claim button: a big CJK verb plus the tiles it would take. In English the verb carries a small gloss
+ * before it ("Pong 碰"); the zh-TW gloss is empty.
+ */
+function ClaimButton({ label, gloss, a11y, tiles, kind, onPress, big, testID }: { label: string; gloss?: string; a11y: string; tiles?: TileId[]; kind: ButtonKind; onPress: () => void; big?: boolean; testID?: string }) {
   const [fill, light, shelf] = PAL[kind];
   const h = big ? 60 : 50;
   return (
-    <Pressable onPress={onPress} hitSlop={slopFor(h, 4)} accessibilityRole="button" accessibilityLabel={a11y}>
+    <Pressable onPress={onPress} hitSlop={slopFor(h, 4)} accessibilityRole="button" accessibilityLabel={a11y} testID={testID}>
       {({ pressed }) => (
         <View style={[styles.claimShell, { backgroundColor: shelf, height: h, borderRadius: h / 2, paddingBottom: pressed ? 0 : 5, paddingTop: pressed ? 5 : 0 }]}>
           <View style={[styles.claimFace, { backgroundColor: fill, borderRadius: h / 2 }]}>
             <View style={[styles.claimTop, { backgroundColor: light }]} />
+            {!!gloss && <Text style={[styles.gloss, kind === 'ghost' ? { color: colors.ink } : null]}>{gloss}</Text>}
             {kind === 'ghost' ? (
               <Text style={[styles.claimGhost, { fontSize: big ? 24 : 21 }]}>{label}</Text>
             ) : (
@@ -55,7 +59,26 @@ function ClaimButton({ label, a11y, tiles, kind, onPress, big }: { label: string
   );
 }
 
-export function ActionBar({ actions, act, selected, hint, view, big, align = 'flex-end' }: { actions: Action[]; act: (a: Action) => void; selected: TileId | null; hint: Hint | null; view: TableView; big?: boolean; align?: 'center' | 'flex-end' }) {
+export function ActionBar({
+  actions,
+  act,
+  selected,
+  hint,
+  view,
+  big,
+  align = 'flex-end',
+  tapHint = true,
+}: {
+  actions: Action[];
+  act: (a: Action) => void;
+  selected: TileId | null;
+  hint: Hint | null;
+  view: TableView;
+  big?: boolean;
+  align?: 'center' | 'flex-end';
+  /** The first-game "tap a tile" pill (it retires after the player's first few discards: ./tapHint.ts). */
+  tapHint?: boolean;
+}) {
   const { t, locale } = useT();
   if (actions.length === 0) return null;
   const hu = actions.find((a) => a.type === 'hu');
@@ -70,24 +93,24 @@ export function ActionBar({ actions, act, selected, hint, view, big, align = 'fl
   const label = (verb: string, tiles?: TileId[]) => (tiles && tiles.length ? t('table.a11y.claimWith', { verb, tiles: names(tiles) }) : verb);
   return (
     <View style={[styles.actionBar, { justifyContent: align }]}>
-      {canDiscard && selected === null && !hu && kongs.length === 0 && (
+      {tapHint && canDiscard && selected === null && !hu && kongs.length === 0 && (
         <View style={styles.tapHint}>
           <Icon name="play" size={14} />
           <Text style={styles.tapHintText}>{t('table.tapHint')}</Text>
         </View>
       )}
-      {pass && <ClaimButton kind="ghost" label={t('table.claim.pass')} a11y={t('table.a11y.pass')} onPress={() => act(pass)} big={big} />}
+      {pass && <ClaimButton testID="claim-pass" kind="ghost" label={t('table.claim.pass')} gloss={t('table.claimGloss.pass')} a11y={t('table.a11y.pass')} onPress={() => act(pass)} big={big} />}
       {chis.map((c, i) => {
         const tiles = (c as { tiles: TileId[] }).tiles;
-        return <ClaimButton key={i} kind={recommended(c) ? 'primary' : 'secondary'} label={t('table.claim.chi')} a11y={label(t('table.a11y.chi'), tiles)} tiles={tiles} onPress={() => act(c)} big={big} />;
+        return <ClaimButton key={i} kind={recommended(c) ? 'primary' : 'secondary'} label={t('table.claim.chi')} gloss={t('table.claimGloss.chi')} a11y={label(t('table.a11y.chi'), tiles)} tiles={tiles} onPress={() => act(c)} big={big} />;
       })}
-      {pong && <ClaimButton kind={recommended(pong) ? 'primary' : 'secondary'} label={t('table.claim.pong')} a11y={label(t('table.a11y.pong'), pendingTile !== undefined ? [pendingTile] : undefined)} tiles={pendingTile !== undefined ? [pendingTile] : undefined} onPress={() => act(pong)} big={big} />}
+      {pong && <ClaimButton kind={recommended(pong) ? 'primary' : 'secondary'} label={t('table.claim.pong')} gloss={t('table.claimGloss.pong')} a11y={label(t('table.a11y.pong'), pendingTile !== undefined ? [pendingTile] : undefined)} tiles={pendingTile !== undefined ? [pendingTile] : undefined} onPress={() => act(pong)} big={big} />}
       {kongs.map((k, i) => {
         const tile = (k as { tile: TileId }).tile;
-        return <ClaimButton key={i} kind={recommended(k) ? 'primary' : 'premium'} label={t('table.claim.kong')} a11y={label(t('table.a11y.kong'), [tile])} tiles={[tile]} onPress={() => act(k)} big={big} />;
+        return <ClaimButton key={i} kind={recommended(k) ? 'primary' : 'premium'} label={t('table.claim.kong')} gloss={t('table.claimGloss.kong')} a11y={label(t('table.a11y.kong'), [tile])} tiles={[tile]} onPress={() => act(k)} big={big} />;
       })}
-      {canDiscard && selected !== null && <ClaimButton kind="danger" label={t('table.claim.discard')} a11y={label(t('table.a11y.discard'), [selected])} tiles={[selected]} onPress={() => act({ type: 'discard', tile: selected })} big={big} />}
-      {hu && <ClaimButton kind="gold" label={t(view.phase === 'discard' ? 'table.claim.selfDrawWin' : 'table.claim.win')} a11y={t(view.phase === 'discard' ? 'table.a11y.selfDrawWin' : 'table.a11y.win')} onPress={() => act(hu)} big />}
+      {canDiscard && selected !== null && <ClaimButton testID="claim-discard" kind="danger" label={t('table.claim.discard')} gloss={t('table.claimGloss.discard')} a11y={label(t('table.a11y.discard'), [selected])} tiles={[selected]} onPress={() => act({ type: 'discard', tile: selected })} big={big} />}
+      {hu && <ClaimButton testID="claim-win" kind="gold" label={t(view.phase === 'discard' ? 'table.claim.selfDrawWin' : 'table.claim.win')} gloss={t(view.phase === 'discard' ? 'table.claimGloss.selfDrawWin' : 'table.claimGloss.win')} a11y={t(view.phase === 'discard' ? 'table.a11y.selfDrawWin' : 'table.a11y.win')} onPress={() => act(hu)} big />}
     </View>
   );
 }
@@ -100,4 +123,5 @@ const styles = StyleSheet.create({
   claimFace: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingHorizontal: 16, overflow: 'hidden' },
   claimTop: { position: 'absolute', top: 0, left: 0, right: 0, height: '50%' },
   claimGhost: { color: colors.ink, fontWeight: '900' },
+  gloss: { color: '#FFFFFF', fontFamily: fonts.uiBold, fontSize: 13 },
 });
