@@ -60,6 +60,8 @@ const tapSel = async (page, sel, wait = 900) => {
 async function run(browser, port, [w, h]) {
   const tag = `${w}x${h}`;
   const notes = [];
+  // Hard checks: any entry fails the run.
+  const fails = [];
   const ctx = await browser.newContext({ viewport: { width: w, height: h } });
   await ctx.addInitScript(() => {
     localStorage.setItem('mjm.profile', JSON.stringify({ userId: 'user-e2e-1234567', userSecret: '0123456789abcdef0123456789abcdef', name: 'Tester', avatar: 'panda' }));
@@ -97,6 +99,15 @@ async function run(browser, port, [w, h]) {
       await tap(page, el);
       discards++;
       if (discards === 6) { await page.waitForTimeout(900); await shot('table-mid'); done.add('mid'); }
+      if (discards === 4 && !done.has('exit-sheet')) {
+        // The red exit icon asks first: one tap must not leave the table.
+        done.add('exit-sheet');
+        await tapSel(page, '[data-testid="leave-table"]', 700);
+        if (!(await visible(page, '[data-testid="leave-sheet"]'))) fails.push('exit icon left without asking');
+        await shot('exit-sheet');
+        await tapSel(page, '[data-testid="leave-stay"]', 500);
+        if (!(await visible(page, '[data-testid="leave-table"]'))) fails.push('keep playing did not return to the table');
+      }
       await page.waitForTimeout(300);
       continue;
     }
@@ -123,7 +134,10 @@ async function run(browser, port, [w, h]) {
       await shot('review');
       await tapSel(page, '[data-testid="back"]', 900);
     } else notes.push('no review button');
-    if (!(await tapSel(page, 'text=Leave table', 1200))) await tapSel(page, '[data-testid="leave-table"]', 1200);
+    if (!(await tapSel(page, 'text=Leave table', 1200))) {
+      await tapSel(page, '[data-testid="leave-table"]', 700);
+      await tapSel(page, '[data-testid="leave-confirm"]', 1200);
+    }
   }
   await page.waitForSelector('[data-testid="start-match"]', { timeout: 15000 }).catch(() => notes.push('did not return home'));
 
@@ -147,7 +161,7 @@ async function run(browser, port, [w, h]) {
   } else notes.push('no settings button');
 
   await ctx.close();
-  return { size: tag, finished, discards, shots: [...done], notes, errors };
+  return { size: tag, finished, discards, shots: [...done], notes, fails, errors };
 }
 
 (async () => {
@@ -158,7 +172,7 @@ async function run(browser, port, [w, h]) {
   for (const r of results) console.log(JSON.stringify(r));
   await browser.close();
   server.close();
-  process.exit(results.every((r) => r.finished && r.errors.length === 0) ? 0 : 1);
+  process.exit(results.every((r) => r.finished && r.errors.length === 0 && (r.fails || []).length === 0) ? 0 : 1);
 })().catch((e) => {
   console.error('SCREENS FAIL', e.message);
   process.exit(1);

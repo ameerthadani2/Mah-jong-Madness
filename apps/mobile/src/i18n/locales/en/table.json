@@ -151,5 +151,13 @@
     "tapToSelect": "Tap to select for discard",
     "emote": "Send emote %{name}",
     "reportHint": "Long press to report this player"
+  },
+  "leaveSheet": {
+    "title": "Leave the table?",
+    "bodyOnline": "A bot plays your seat while you are away. You can come back from Home with Resume. Abandoning gives up your seat for good.",
+    "bodyLocal": "The table waits for you. You can come back from Home with Resume. Abandoning ends this match.",
+    "stay": "Keep playing",
+    "away": "Back to Home",
+    "abandon": "Abandon table"
   }
 }

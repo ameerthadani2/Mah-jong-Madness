@@ -27,6 +27,8 @@ import { useDisplayScale } from '../display/DisplayScale';
 import { RESULT_HOLD_MS } from '../components/table/feel';
 import { MatchOverSheet, ResultSheet } from '../components/table/ResultSheet';
 import { TableHud } from '../components/table/TableHud';
+import { LeaveSheet } from '../components/table/LeaveSheet';
+import { exitPlan, type ExitChoice } from '../components/table/exit';
 import { useSfx, type TableEvent } from '../audio';
 
 import * as Haptics from 'expo-haptics';
@@ -66,6 +68,8 @@ export function TableScreen() {
   const [coachWanted, setCoachOpen] = useState(app.settings.coach);
   const coachOpen = coachAllowed && coachWanted;
   const [emotePicker, setEmotePicker] = useState(false);
+  // The red exit icon asks first (components/table/exit.ts): only "Abandon table" forgets the table.
+  const [leaveAsk, setLeaveAsk] = useState(false);
   const theme = themeById(app.settings.tableTheme);
   // Re-render once when the next emote bubble or chat line is due to fade, rather than on a fixed tick.
   const [fadeTick, forceTick] = useState(0);
@@ -176,11 +180,16 @@ export function TableScreen() {
     session.client.act(a);
     setSelected(null);
   };
+  function exit(choice: ExitChoice) {
+    setLeaveAsk(false);
+    const plan = exitPlan(choice);
+    if (plan.closeSession) app.setSession(null);
+    if (plan.forgetTable) app.setActiveSession(null);
+    if (plan.goHome) app.reset({ name: 'home' });
+  }
+  // The result and match-over sheets' explicit "Leave table" buttons and the ceremony's Leave: the table is done with.
   function leave() {
-    // Leaving on purpose abandons the table; Resume is for crashes and dropped connections.
-    app.setSession(null);
-    app.setActiveSession(null);
-    app.reset({ name: 'home' });
+    exit('abandon');
   }
 
   const me = view.players[mySeat];
@@ -273,8 +282,9 @@ export function TableScreen() {
           coachAllowed={coachAllowed}
           coachOpen={coachOpen}
           onCoach={() => setCoachOpen((v) => !v)}
-          onLeave={leave}
+          onLeave={() => setLeaveAsk(true)}
         />
+        <LeaveSheet visible={leaveAsk} online={session.mode === 'online'} onChoose={exit} />
 
         <ReportPlayerSheet visible={reporting !== null} target={reporting} onClose={() => setReporting(null)} />
         <Felt
