@@ -3,10 +3,11 @@
  * a restart or a deploy resumes it where it was and players reclaim their seats with their
  * rejoin tokens.
  *
- * Writes are debounced per table (500 ms by default) because a hand changes state on every move;
- * the end of a hand and the end of a match are written at once. Writes for one table run in
- * order, each taking the table as it is when the write runs, so a burst of changes is one write.
- * `flush()` writes everything pending (SIGTERM, `close()`).
+ * Writes are debounced per table (500 ms by default) and, while a hand is played, made at most
+ * once every 2 s per table (`minIntervalMs`), because a hand changes state on every move; the end
+ * of a hand and the end of a match are written at once. Writes for one table run in order, each
+ * taking the table as it is when the write runs, so a burst of changes is one write. `flush()`
+ * writes everything pending at once (SIGTERM, `close()`).
  *
  * At boot `restore()` reopens every snapshot that has not finished; finished snapshots are pruned
  * once they are a day old.
@@ -24,6 +25,8 @@ const DAY_MS = 86_400_000;
 export interface TablePersisterOptions {
   /** Quiet period before a changed table is written (default 500 ms). */
   debounceMs?: number;
+  /** Shortest time between two writes of one table for ordinary moves (default 2 s); hand and match ends and `flush()` do not wait. */
+  minIntervalMs?: number;
   now?: () => number;
   log?: (line: string) => void;
 }
@@ -46,12 +49,15 @@ interface Tracked {
   queued: boolean;
   /** The room has closed; the next write marks the snapshot finished and forgets the table. */
   closed: boolean;
+  /** When the last write of this table started (`now()`), for `minIntervalMs`. */
+  lastWriteAt: number | null;
 }
 
 export class TablePersister {
   private readonly tables = new Map<string, Tracked>();
   private readonly unsubs: Array<() => void> = [];
   private readonly debounceMs: number;
+  private readonly minIntervalMs: number;
   private readonly now: () => number;
   private readonly log: (line: string) => void;
   private stopped = false;
@@ -64,6 +70,7 @@ export class TablePersister {
     opts: TablePersisterOptions = {},
   ) {
     this.debounceMs = opts.debounceMs ?? 500;
+    this.minIntervalMs = opts.minIntervalMs ?? 2_000;
     this.now = opts.now ?? Date.now;
     this.log = opts.log ?? ((line) => console.log(line));
   }
@@ -91,7 +98,7 @@ export class TablePersister {
     if (!t) {
       const host = this.rooms.hostedTable(code);
       if (!host) return undefined;
-      t = { host, clubCode: this.rooms.clubOf(code) ?? null, createdBy: this.rooms.createdByOf(code) ?? null, timer: null, chain: Promise.resolve(), queued: false, closed: false };
+      t = { host, clubCode: this.rooms.clubOf(code) ?? null, createdBy: this.rooms.createdByOf(code) ?? null, timer: null, chain: Promise.resolve(), queued: false, closed: false, lastWriteAt: null };
       this.tables.set(code, t);
     }
     return t;
@@ -108,10 +115,12 @@ export class TablePersister {
       return;
     }
     if (t.timer) return;
+    const sinceLast = t.lastWriteAt === null ? Infinity : this.now() - t.lastWriteAt;
+    const delay = Math.max(this.debounceMs, this.minIntervalMs - sinceLast);
     t.timer = setTimeout(() => {
       t.timer = null;
       this.enqueue(code, t);
-    }, this.debounceMs);
+    }, delay);
   }
 
   /** The room closed (abandoned past its keep-alive, or every player left): write it as finished so it is never restored. */
@@ -138,6 +147,7 @@ export class TablePersister {
     t.chain = t.chain
       .then(async () => {
         t.queued = false;
+        t.lastWriteAt = this.now();
         const snapshot: SerializedHost & { createdBy?: string } = t.host.serialize();
         if (t.createdBy) snapshot.createdBy = t.createdBy;
         await this.repo.save({ roomCode: code, clubCode: t.clubCode, status: t.closed ? 'finished' : tableStatus(t.host), snapshot, updatedAt: this.now() });
