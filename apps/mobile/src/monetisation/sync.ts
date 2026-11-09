@@ -14,6 +14,8 @@ export interface WalletDeps {
   fetchMe(): Promise<MeWallet>;
   /** POST /api/wallet/spend. */
   spend(productId: string): Promise<unknown>;
+  /** POST /api/wallet/sync: the server reads this account's purchases from the store and applies any it missed. */
+  syncStore?(): Promise<unknown>;
   now(): number;
   sleep(ms: number): Promise<void>;
 }
@@ -91,7 +93,11 @@ export async function buyWithDiamonds(product: Product, wallet: Wallet, deps: Wa
   return { status: 'credited', wallet: await syncWallet(wallet, deps).catch(() => wallet) };
 }
 
-/** Restore Purchases: the store re-sends receipts, the server re-grants, the app re-reads `/api/me`. */
+/**
+ * Restore Purchases: the store re-sends receipts, the server re-grants (and, through
+ * `POST /api/wallet/sync`, reads the store itself for anything a webhook missed), and the app
+ * re-reads `/api/me`. A failed server sync is not a failed restore: the webhooks still arrive.
+ */
 export async function restorePurchases(wallet: Wallet, store: StoreProvider, deps: WalletDeps): Promise<{ ok: true; wallet: Wallet } | { ok: false; wallet: Wallet; error: unknown }> {
   try {
     const userId = await deps.ensureUser();
@@ -100,6 +106,7 @@ export async function restorePurchases(wallet: Wallet, store: StoreProvider, dep
   } catch (error) {
     return { ok: false, wallet, error };
   }
+  await deps.syncStore?.().catch(() => undefined);
   let latest = wallet;
   for (const ms of CREDIT_POLL_MS.slice(0, 3)) {
     await deps.sleep(ms);
