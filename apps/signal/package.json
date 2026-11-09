@@ -11,7 +11,8 @@
     "test": "vitest run",
     "migrate": "tsx src/main.ts migrate",
     "build": "esbuild src/main.ts --bundle --platform=node --target=node22 --format=cjs --outfile=dist/server.cjs --sourcemap --legal-comments=none --external:pg-native --external:bufferutil --external:utf-8-validate --define:import.meta.url=__mjm_import_meta_url \"--banner:js=const __mjm_import_meta_url = require('node:url').pathToFileURL(__filename).href;\"",
-    "start:prod": "node --enable-source-maps dist/server.cjs"
+    "start:prod": "node --enable-source-maps dist/server.cjs",
+    "smoke": "tsx scripts/smoke.ts"
   },
   "dependencies": {
     "@mjm/engine": "*",

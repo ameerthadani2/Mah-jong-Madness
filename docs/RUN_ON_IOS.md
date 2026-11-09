@@ -1,6 +1,6 @@
 # Running Mahjong Mania on iOS
 
-Three routes, from quickest to most permanent. All of them start with:
+Four routes. Route 2 (TestFlight from GitHub) is the one for testers and needs no computer set-up; the others start with:
 
 ```bash
 git clone https://github.com/ameerthadani2/Mah-jong-Madness.git
@@ -44,9 +44,26 @@ npm run signal            # on your laptop, port 8787
 ```
 Find the laptop's LAN address (macOS: System Settings → Wi-Fi → Details; or `ipconfig getifaddr en0`) and in the app go to **Settings → Network** and set the URL to `ws://<laptop-ip>:8787`. Create a table on one phone, join by code on another. For friends outside your Wi-Fi, deploy `apps/signal` as described in `docs/DEPLOY.md` (Fly.io + Neon) and use its `wss://…` address.
 
-(The Settings → Network card only exists in development builds; release builds read the server address from the `SIGNAL_URL` repository variable.) Push notifications need a physical device and the push credentials in `docs/OWNER_TODO.md` (Phase 6 — app); without them the app simply never asks.
+(The Settings → Network card only exists in development builds; release builds read the server address from the `SIGNAL_URL` repository variable.) Push notifications need a physical device and the push credentials in [`OWNER_TODO.md`](OWNER_TODO.md) (step 11); without them the app simply never asks.
 
-## 2. TestFlight with EAS — you have an Apple Developer membership, so this is the route
+## 2. TestFlight from GitHub — the normal route
+
+The **iOS TestFlight build** workflow (`.github/workflows/ios-testflight.yml`) builds on EAS and submits to TestFlight with no Mac and no terminal.
+
+One-time setup:
+
+1. **Server and `SIGNAL_URL`**: deploy the server ([`DEPLOY.md`](DEPLOY.md)) and set the repository variable `SIGNAL_URL` to its `wss://` address. The workflow refuses to build without it, or with anything that is not `wss://` on a public host: a release build must never point at localhost.
+2. **Repository secrets** (Settings → Secrets and variables → Actions): `EXPO_TOKEN` (expo.dev → Access tokens); from App Store Connect → Users and Access → Integrations → Team Keys, a key with the App Manager role: `ASC_KEY_ID`, `ASC_ISSUER_ID` and `ASC_KEY_P8` (the whole downloaded `.p8` file); and `APPLE_TEAM_ID` (developer.apple.com → Membership). Without any of them the run skips itself and its summary lists what to set up.
+3. **The App Store Connect app record**: App Store Connect → Apps → + → New App, with the bundle id `com.mahjongmania.app` (or your `APP_BUNDLE_ID`), name "Mahjong Mania: Taiwan 16" and any SKU. (An API key cannot create the record, so this is the one manual step; the bundle id appears in the list once EAS has registered it, which the first build does. If it is not listed yet, run the workflow once with *submit* unticked, then create the record.)
+4. Optional repository variables copied into the build: `APP_NAME`, `APP_SLUG`, `APP_SCHEME`, `APP_BUNDLE_ID`, `APP_VERSION`, `APP_STORE_ID`, `EXPO_PUBLIC_LINK_DOMAIN`, the `EXPO_PUBLIC_GOOGLE_*`, `EXPO_PUBLIC_REVENUECAT_*`, `EXPO_PUBLIC_TERMS_URL`, `EXPO_PUBLIC_PRIVACY_URL`, Sentry and PostHog values ([`OWNER_TODO.md`](OWNER_TODO.md)).
+
+Each build: GitHub → Actions → **iOS TestFlight build** → Run workflow → pick the branch, profile `production`, *submit* ticked → Run. It checks `SIGNAL_URL`, creates and links the EAS project on the first run (committing its id to `apps/mobile/app.json` on that branch), copies the variables into the EAS profile, builds, and submits the build to TestFlight (`--auto-submit`, with the API key written to the runner's temporary folder). The build number goes up by one on every production build (`autoIncrement`, kept on the EAS servers); the version string is `APP_VERSION`, or `app.json`'s `version`.
+
+If the first run stops on signing credentials (EAS cannot always create a distribution certificate without a person), run `eas build --platform ios --profile production` once from a laptop (below), answer **yes** to letting EAS manage credentials, and run the workflow again: it reuses them from then on.
+
+Then, once processing finishes (5–30 minutes): **App Store Connect → Apps → Mahjong Mania → TestFlight**, answer "No" to the encryption question if asked (the plist already declares non-exempt encryption = false), and under **Internal Testing** create a group and add yourself and your testers (up to 100 people with App Store Connect access; no review). Each tester installs **TestFlight** from the App Store, accepts the e-mail invitation and taps Install. External testers (up to 10,000, by e-mail or a public link) need a short Beta App Review first. For free test purchases, sign in to a **sandbox** account on the phone (Settings → App Store → Sandbox Account; created in App Store Connect → Users and Access → Sandbox) and put the tester's Player id in the server's `TESTER_USER_IDS`. Then work through [`QA.md`](QA.md).
+
+## 3. TestFlight from a laptop
 
 One-time setup (10 minutes):
 
@@ -56,6 +73,8 @@ cd apps/mobile
 eas login                 # free Expo account; create one at expo.dev if needed
 eas init                  # creates the EAS project and writes its id into app.json
 ```
+
+A laptop build does not see GitHub variables: set `SIGNAL_URL` (and any other value you use) as an EAS environment variable first (expo.dev → project → Environment variables, `preview` and `production`). The workflow's checks do not run here, so make sure it is the deployed `wss://` address.
 
 First build and TestFlight upload (EAS does the Apple paperwork for you):
 
@@ -68,28 +87,25 @@ eas build --platform ios --profile production
 ```bash
 eas submit --platform ios --latest --profile manual
 ```
-* `--profile manual` makes EAS ask for what it needs. (The `production` submit profile reads App Store Connect API key secrets that only the GitHub TestFlight workflow has.) On first run EAS asks for an App Store Connect API key or your Apple ID, and creates the App Store Connect app record if it does not exist yet (it will ask for the app name "Mahjong Mania" and the SKU).
-* Processing in App Store Connect takes 5–30 minutes. Then open **App Store Connect → Apps → Mahjong Mania → TestFlight**, click the build, answer "No" to the encryption question if asked (the plist already declares non-exempt encryption = false), and add yourself under **Internal Testing**. Install TestFlight on the iPhone, accept the invite, tap Install.
-* External testers (up to 10,000) need a short Beta App Review; internal testers (up to 100 people on your team) do not.
+* `--profile manual` makes EAS ask for what it needs. (The `production` submit profile reads the App Store Connect API key that the GitHub workflow writes.) On first run EAS asks for an App Store Connect API key or your Apple ID, and creates the App Store Connect app record if it does not exist yet (it will ask for the app name and the SKU).
+* Then TestFlight as in route 2.
 
 Each later release:
 ```bash
 eas build --platform ios --profile production && eas submit --platform ios --latest --profile manual
 ```
-The build number auto-increments (`autoIncrement` in `eas.json`); bump `version` in `app.json` when you want a new TestFlight version string.
+The build number auto-increments; set `APP_VERSION` (EAS environment variable or repository variable) or bump `version` in `app.json` for a new version string.
 
-Faster iteration without TestFlight review cycles — **internal distribution**:
+Faster iteration without TestFlight — **internal distribution**:
 ```bash
 eas device:create                                     # sends a link; open it on each iPhone once
 eas build --platform ios --profile preview
 ```
-EAS prints a QR code; scan it on a registered iPhone to install directly (ad-hoc provisioning, up to 100 devices).
-
-Before building for others, set `extra.signalUrl` in `app.json` to your deployed signaling server (`wss://…`) so Clubs work out of the box; `ws://localhost:8787` only works for a laptop on the same Wi-Fi with the address changed in Settings.
+EAS prints a QR code; scan it on a registered iPhone to install directly (ad-hoc provisioning, up to 100 devices). Store purchases do not work in these builds; use TestFlight for those.
 
 Artwork: `assets/icon.png` (1024×1024), `assets/splash.png` and `assets/adaptive-icon.png` are generated placeholders in the house style; replace them with final art any time.
 
-## 3. Local build with Xcode (Mac only)
+## 4. Local build with Xcode (Mac only)
 
 ```bash
 cd apps/mobile
@@ -103,4 +119,6 @@ This generates the `ios/` folder (git-ignored), installs CocoaPods and launches.
 * **Blank screen or stale code** — shake the phone → Reload, or restart Metro with `npx expo start --dev-client --clear` (from `apps/mobile`).
 * **QR code opens Camera but nothing happens** — the development build must be installed first (step 1); the QR encodes a link only it can open.
 * **"Cannot find native module" or a red screen naming RNSentry, ExpoNotifications or RNPurchases** — the app was opened in Expo Go or in a development build older than the native change; rebuild the development build.
-* **Table says "Could not connect"** — the phone cannot reach the signaling URL; check the laptop firewall allows port 8787 and that you used the LAN IP, not `localhost`.
+* **Table says "Could not connect"** — the phone cannot reach the server. In a development build, check the laptop firewall allows port 8787 and that you used the LAN IP, not `localhost`; in a TestFlight build, check `https://<app>.fly.dev/health` or run `npm run smoke -w @mjm/signal -- <server>`.
+* **The workflow fails at "Check SIGNAL_URL"** — set the repository variable `SIGNAL_URL` to the deployed server's `wss://` address.
+* **The workflow is skipped** — a secret is missing; the run summary names it.

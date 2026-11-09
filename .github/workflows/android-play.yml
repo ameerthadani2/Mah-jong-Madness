@@ -1,0 +1,224 @@
+name: Android Play build
+# Builds the Android app in the EAS cloud (production profile: a signed app bundle whose version
+# code EAS raises by one) and submits it to the Google Play internal testing track as a draft
+# release, entirely from GitHub. See docs/RUN_ON_ANDROID.md.
+# Secrets needed (Settings -> Secrets and variables -> Actions):
+#   EXPO_TOKEN                          expo.dev access token
+#   GOOGLE_PLAY_SERVICE_ACCOUNT_JSON    full contents of the Play service account key (JSON) with release
+#                                       rights on the app (only needed to submit)
+# Without EXPO_TOKEN, or without the service account when submitting, the run is skipped with a
+# summary of what to set up. Google refuses API uploads until one bundle has been uploaded by hand
+# in Play Console, so the very first build is downloaded from EAS and uploaded once (docs/RUN_ON_ANDROID.md).
+# Repository variables copied into the build (the same as ios-testflight.yml; see docs/OWNER_TODO.md):
+#   SIGNAL_URL (required, wss://), APP_NAME, APP_SLUG, APP_SCHEME, APP_BUNDLE_ID, APP_VERSION,
+#   APP_STORE_ID, EXPO_PUBLIC_LINK_DOMAIN, EXPO_PUBLIC_SENTRY_DSN, EXPO_PUBLIC_POSTHOG_KEY,
+#   EXPO_PUBLIC_POSTHOG_HOST, SENTRY_ORG, SENTRY_PROJECT, EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID,
+#   EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID, EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID, EXPO_PUBLIC_REVENUECAT_IOS_KEY,
+#   EXPO_PUBLIC_REVENUECAT_ANDROID_KEY, EXPO_PUBLIC_TERMS_URL, EXPO_PUBLIC_PRIVACY_URL.
+# SENTRY_AUTH_TOKEN and google-services.json (GOOGLE_SERVICES_JSON) belong in EAS environment
+# variables (secret / file), never here.
+on:
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: EAS build profile (production = Play app bundle; preview = installable APK, never submitted)
+        default: production
+        type: choice
+        options: [production, preview]
+      submit:
+        description: Submit a production build to the Play internal testing track
+        default: true
+        type: boolean
+
+concurrency:
+  group: mobile-build-android
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      ready: ${{ steps.gate.outputs.ready }}
+      submit: ${{ steps.gate.outputs.submit }}
+    steps:
+      - id: gate
+        env:
+          HAS_EXPO_TOKEN: ${{ secrets.EXPO_TOKEN != '' }}
+          HAS_PLAY_KEY: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON != '' }}
+          PROFILE: ${{ inputs.profile }}
+          WANT_SUBMIT: ${{ inputs.submit }}
+        run: |
+          SUBMIT=false
+          if [ "$PROFILE" = "production" ] && [ "$WANT_SUBMIT" = "true" ]; then SUBMIT=true; fi
+          MISSING=""
+          if [ "$HAS_EXPO_TOKEN" != "true" ]; then MISSING="EXPO_TOKEN"; fi
+          if [ "$SUBMIT" = "true" ] && [ "$HAS_PLAY_KEY" != "true" ]; then MISSING="${MISSING:+$MISSING and }GOOGLE_PLAY_SERVICE_ACCOUNT_JSON"; fi
+          echo "submit=$SUBMIT" >> "$GITHUB_OUTPUT"
+          if [ -z "$MISSING" ]; then echo "ready=true" >> "$GITHUB_OUTPUT"; exit 0; fi
+          echo "ready=false" >> "$GITHUB_OUTPUT"
+          {
+            echo "## Android build skipped: missing secret $MISSING"
+            echo ""
+            echo "1. expo.dev -> Account settings -> Access tokens -> create one; save it as the repository secret \`EXPO_TOKEN\`."
+            echo "2. Play Console -> create the app (package \`com.mahjongmania.app\`, or your \`APP_BUNDLE_ID\`)."
+            echo "3. Google Cloud -> a service account with a JSON key; Play Console -> Users and permissions -> invite it with release rights for the app. Save the whole JSON key as the repository secret \`GOOGLE_PLAY_SERVICE_ACCOUNT_JSON\`."
+            echo "4. Set the repository variable \`SIGNAL_URL\` to the deployed server (\`wss://...\`)."
+            echo "5. Re-run this workflow. Without the service account you can still build: untick 'submit' (docs/RUN_ON_ANDROID.md)."
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "::notice::$MISSING missing; skipping the Android build (the job summary lists the setup steps)"
+
+  build:
+    needs: check
+    if: needs.check.outputs.ready == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      PROFILE: ${{ inputs.profile }}
+      # Public build-time values: app.config.js reads them here (eas-cli resolves the config on this
+      # runner) and the copy step below hands them to the EAS cloud build.
+      SIGNAL_URL: ${{ vars.SIGNAL_URL }}
+      APP_NAME: ${{ vars.APP_NAME }}
+      APP_SLUG: ${{ vars.APP_SLUG }}
+      APP_SCHEME: ${{ vars.APP_SCHEME }}
+      APP_BUNDLE_ID: ${{ vars.APP_BUNDLE_ID }}
+      APP_VERSION: ${{ vars.APP_VERSION }}
+      APP_STORE_ID: ${{ vars.APP_STORE_ID }}
+      EXPO_PUBLIC_LINK_DOMAIN: ${{ vars.EXPO_PUBLIC_LINK_DOMAIN }}
+      EXPO_PUBLIC_SENTRY_DSN: ${{ vars.EXPO_PUBLIC_SENTRY_DSN }}
+      EXPO_PUBLIC_POSTHOG_KEY: ${{ vars.EXPO_PUBLIC_POSTHOG_KEY }}
+      EXPO_PUBLIC_POSTHOG_HOST: ${{ vars.EXPO_PUBLIC_POSTHOG_HOST }}
+      SENTRY_ORG: ${{ vars.SENTRY_ORG }}
+      SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
+      EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID: ${{ vars.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID }}
+      EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID: ${{ vars.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID }}
+      EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID: ${{ vars.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID }}
+      EXPO_PUBLIC_REVENUECAT_IOS_KEY: ${{ vars.EXPO_PUBLIC_REVENUECAT_IOS_KEY }}
+      EXPO_PUBLIC_REVENUECAT_ANDROID_KEY: ${{ vars.EXPO_PUBLIC_REVENUECAT_ANDROID_KEY }}
+      EXPO_PUBLIC_TERMS_URL: ${{ vars.EXPO_PUBLIC_TERMS_URL }}
+      EXPO_PUBLIC_PRIVACY_URL: ${{ vars.EXPO_PUBLIC_PRIVACY_URL }}
+    steps:
+      - name: Check SIGNAL_URL (a release build must reach the deployed server)
+        run: |
+          if [ -z "$SIGNAL_URL" ]; then
+            echo "::error title=SIGNAL_URL is not set::Set the repository variable SIGNAL_URL to the deployed game server, e.g. wss://mahjong-signal.fly.dev (Settings -> Secrets and variables -> Actions -> Variables). Without it the build would talk to a development address."
+            exit 1
+          fi
+          case "$SIGNAL_URL" in
+            wss://*) ;;
+            *) echo "::error title=SIGNAL_URL must start with wss://::SIGNAL_URL is '$SIGNAL_URL'. A release build talks to the deployed server over TLS: use wss://<your server> (docs/DEPLOY.md)."; exit 1 ;;
+          esac
+          HOST=$(printf '%s' "$SIGNAL_URL" | sed -E 's#^wss://([^/:?]+).*#\1#' | tr 'A-Z' 'a-z')
+          case "$HOST" in
+            ""|localhost|*.localhost|127.*|0.0.0.0|10.*|192.168.*|*.local|*.internal)
+              echo "::error title=SIGNAL_URL points at a local address::SIGNAL_URL is '$SIGNAL_URL'. A release build must never point at localhost or a private network: use the deployed server."
+              exit 1 ;;
+          esac
+          echo "Building against $SIGNAL_URL"
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
+      - run: npm ci
+      - name: Create or link the EAS project (first run only)
+        working-directory: apps/mobile
+        run: |
+          if node -e "const c=require('./app.json'); process.exit(c.expo.extra && c.expo.extra.eas && c.expo.extra.eas.projectId ? 0 : 1)"; then
+            echo "EAS project already linked"
+          else
+            eas init --force --non-interactive
+          fi
+      - name: Commit the EAS project id back to the branch (first run only)
+        run: |
+          if ! git diff --quiet -- apps/mobile/app.json; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add apps/mobile/app.json
+            git commit -m "Link EAS project (automated)"
+            git push
+          fi
+      - name: Pass build-time variables to the EAS build profile
+        # EAS cloud builds do not inherit this job's environment; the profile's env does reach them.
+        # Only public values go here (they end up in the app bundle anyway). The edit is not committed.
+        working-directory: apps/mobile
+        run: |
+          node -e "
+            const fs = require('fs');
+            const eas = JSON.parse(fs.readFileSync('eas.json', 'utf8'));
+            const keys = ['SIGNAL_URL', 'APP_NAME', 'APP_SLUG', 'APP_SCHEME', 'APP_BUNDLE_ID', 'APP_VERSION', 'APP_STORE_ID', 'EXPO_PUBLIC_LINK_DOMAIN', 'EXPO_PUBLIC_SENTRY_DSN', 'EXPO_PUBLIC_POSTHOG_KEY', 'EXPO_PUBLIC_POSTHOG_HOST', 'SENTRY_ORG', 'SENTRY_PROJECT', 'EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID', 'EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID', 'EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID', 'EXPO_PUBLIC_REVENUECAT_IOS_KEY', 'EXPO_PUBLIC_REVENUECAT_ANDROID_KEY', 'EXPO_PUBLIC_TERMS_URL', 'EXPO_PUBLIC_PRIVACY_URL'];
+            const profile = eas.build[process.env.PROFILE];
+            profile.env = { ...(profile.env || {}) };
+            for (const k of keys) if (process.env[k]) profile.env[k] = process.env[k];
+            fs.writeFileSync('eas.json', JSON.stringify(eas, null, 2));
+            console.log('Build variables set: ' + (Object.keys(profile.env).join(', ') || 'none'));
+          "
+      - name: Build on EAS
+        id: build
+        working-directory: apps/mobile
+        run: |
+          eas build --platform android --profile "$PROFILE" --non-interactive --wait --json > "$RUNNER_TEMP/build.json"
+          node -e "
+            const fs = require('fs');
+            const out = JSON.parse(fs.readFileSync(process.argv[1], 'utf8'));
+            const b = Array.isArray(out) ? out[0] : out;
+            if (!b || !b.id) { console.error('eas build printed no build id'); process.exit(1); }
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, 'id=' + b.id + '\n');
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, 'artifact=' + ((b.artifacts && (b.artifacts.applicationArchiveUrl || b.artifacts.buildUrl)) || '') + '\n');
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, 'versionCode=' + (b.appBuildVersion || '') + '\n');
+            console.log('Build ' + b.id + ' finished: version ' + (b.appVersion || '?') + ' (' + (b.appBuildVersion || '?') + ')');
+          " "$RUNNER_TEMP/build.json"
+      - name: Submit to the Play internal testing track (draft release)
+        id: submit
+        if: needs.check.outputs.submit == 'true'
+        working-directory: apps/mobile
+        env:
+          GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
+          BUILD_ID: ${{ steps.build.outputs.id }}
+        # The key is written only now, after the cloud build has taken its copy of the project, and
+        # removed again below: eas.json's submit profile reads it from this path.
+        run: |
+          printf '%s' "$GOOGLE_PLAY_SERVICE_ACCOUNT_JSON" > google-play-service-account.json
+          node -e "
+            let k;
+            try { k = JSON.parse(require('fs').readFileSync('google-play-service-account.json', 'utf8')); } catch { k = null; }
+            if (!k || k.type !== 'service_account' || !k.client_email || !k.private_key) {
+              console.error('::error title=GOOGLE_PLAY_SERVICE_ACCOUNT_JSON is not a service account key::Paste the whole JSON key file of the Play service account (it has type service_account, client_email and private_key).');
+              process.exit(1);
+            }
+            console.log('Submitting as ' + k.client_email);
+          "
+          eas submit --platform android --profile production --id "$BUILD_ID" --non-interactive
+      - name: Remove the service account key
+        if: always()
+        working-directory: apps/mobile
+        run: rm -f google-play-service-account.json
+      - name: Where to find it
+        if: always()
+        env:
+          BUILD_ID: ${{ steps.build.outputs.id }}
+          ARTIFACT: ${{ steps.build.outputs.artifact }}
+          VERSION_CODE: ${{ steps.build.outputs.versionCode }}
+          SUBMIT: ${{ steps.submit.outcome }}
+        run: |
+          {
+            echo "## Android build ($PROFILE)"
+            echo "- Server: $SIGNAL_URL"
+            if [ -n "$BUILD_ID" ]; then echo "- EAS build: \`$BUILD_ID\` (version code ${VERSION_CODE:-?}); expo.dev -> your project -> Builds"; fi
+            if [ -n "$ARTIFACT" ]; then echo "- Download: $ARTIFACT"; fi
+            echo "- Play submission: ${SUBMIT:-not requested}"
+            if [ "$SUBMIT" = "success" ]; then
+              echo ""
+              echo "Play Console -> Mahjong Mania -> Testing -> Internal testing: the release is a draft. Review it and roll it out to your testers (docs/RUN_ON_ANDROID.md)."
+            elif [ "$SUBMIT" = "failure" ]; then
+              echo ""
+              echo "If this is the app's first upload, Google refuses it over the API: download the bundle above and upload it once by hand in Play Console -> Testing -> Internal testing (docs/RUN_ON_ANDROID.md); later runs submit by themselves."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

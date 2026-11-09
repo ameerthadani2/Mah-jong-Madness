@@ -2,19 +2,29 @@ name: Deploy signal server
 # Builds apps/signal/Dockerfile on Fly's remote builder and rolls it out with fly.toml, as one
 # machine (--ha=false): the server keeps its tables in memory and holds a database lock, so a
 # second machine could never host tables anyway.
-# Runs only after CI has passed on main for the same commit (workflow_run), when that commit
-# touches the server, and on manual dispatch (any branch). Either way the deploy job runs the
-# server's typecheck and tests again, the Postgres cases included, on the exact commit it ships.
+# Runs after CI has passed on main for the same commit (workflow_run), when that commit touches
+# the server, and on manual dispatch from any branch (Actions -> Deploy signal server -> Run
+# workflow -> pick the branch; the first deploy is the working branch). Either way the deploy job
+# runs the server's typecheck and tests again, the Postgres cases included, on the exact commit
+# it ships.
+# After the deploy it waits for /health and runs the production smoke test (apps/signal/scripts/
+# smoke.ts: a guest marked as a smoke test plays one hand with bots, the hand's audit must verify,
+# and the account is deleted); a failed smoke test fails the job. The address is the repository
+# variable SIGNAL_URL (what the app connects to, e.g. wss://mahjong-signal.fly.dev; https:// works
+# too), turned into https:// for the checks; without it, https://<app in fly.toml>.fly.dev.
 # Needs one repository secret, FLY_API_TOKEN; without it the run is skipped with a summary of
-# what to set up (see docs/DEPLOY.md). Optional repository variable SIGNAL_URL (the address the
-# app connects to, e.g. wss://mahjong-signal.fly.dev; https:// works too) enables the post-deploy
-# health check.
+# what to set up (see docs/DEPLOY.md).
 on:
   workflow_run:
     workflows: [CI]
     types: [completed]
     branches: [main]
   workflow_dispatch:
+    inputs:
+      smoke:
+        description: Run the smoke test (one hand with bots) against the deployed server
+        default: true
+        type: boolean
 
 concurrency:
   group: deploy-signal
@@ -33,7 +43,7 @@ jobs:
       sha: ${{ steps.commit.outputs.sha }}
     steps:
       - id: commit
-        # The commit CI tested (workflow_run), or the dispatched one.
+        # The commit CI tested (workflow_run), or the head of the dispatched branch.
         run: echo "sha=${{ github.event.workflow_run.head_sha || github.sha }}" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@v4
         with:
@@ -64,8 +74,9 @@ jobs:
               echo "2. Create the app once: \`fly apps create <name>\` (and put that name in \`fly.toml\`)."
               echo "3. Create a deploy token: \`fly tokens create deploy -a <name>\`."
               echo "4. GitHub → Settings → Secrets and variables → Actions → New repository secret: \`FLY_API_TOKEN\`."
-              echo "5. Set the database and auth secrets with \`fly secrets set\` (see docs/DEPLOY.md); the server refuses to start in production without them unless \`ALLOW_EPHEMERAL=1\` is set. Optional: the repository variable \`SIGNAL_URL\`."
-              echo "6. Re-run this workflow."
+              echo "5. Set the database and auth secrets with \`fly secrets set\` (see docs/DEPLOY.md); the server refuses to start in production without them unless \`ALLOW_EPHEMERAL=1\` is set."
+              echo "6. Optional: the repository variable \`SIGNAL_URL\` (wss://...), which the smoke test and the app builds use."
+              echo "7. Re-run this workflow."
             } >> "$GITHUB_STEP_SUMMARY"
             echo "::notice::FLY_API_TOKEN secret missing; skipping the deploy (the job summary lists the setup steps)"
           fi
@@ -111,27 +122,68 @@ jobs:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         # One machine only: a second one would wait for the host lock and then fail to start.
         run: flyctl deploy --remote-only --config fly.toml --ha=false
-      - name: Health check
-        if: vars.SIGNAL_URL != ''
+      - name: Find the deployed address
+        id: url
         env:
           SIGNAL_URL: ${{ vars.SIGNAL_URL }}
         run: |
-          # wss://host/any/path -> https://host (the health route is on the same origin).
-          BASE=$(printf '%s' "$SIGNAL_URL" | sed -E 's#^ws(s?)://#http\1://#; s#^(https?://[^/]+).*#\1#')
-          for i in 1 2 3 4 5 6; do
-            if curl -fsS "$BASE/health"; then echo; exit 0; fi
+          # wss://host/any/path -> https://host (the health route and the socket share the origin).
+          if [ -n "$SIGNAL_URL" ]; then
+            BASE=$(printf '%s' "$SIGNAL_URL" | sed -E 's#^ws(s?)://#http\1://#; s#^(https?://[^/]+).*#\1#')
+            FROM="the SIGNAL_URL variable"
+          else
+            APP=$(sed -nE 's/^app *= *"([^"]+)".*/\1/p' fly.toml | head -n 1)
+            BASE="https://$APP.fly.dev"
+            FROM="the app name in fly.toml; set the SIGNAL_URL variable to check another address"
+          fi
+          case "$BASE" in
+            http://*|https://*) ;;
+            *) echo "::error::SIGNAL_URL must start with wss://, ws://, https:// or http:// (got '$SIGNAL_URL')"; exit 1 ;;
+          esac
+          echo "base=$BASE" >> "$GITHUB_OUTPUT"
+          echo "Checking $BASE (from $FROM)"
+      - name: Health check
+        env:
+          BASE: ${{ steps.url.outputs.base }}
+        run: |
+          for i in $(seq 1 12); do
+            if curl -fsS --max-time 10 "$BASE/health"; then echo; exit 0; fi
             sleep 10
           done
-          echo "::error::$BASE/health did not answer after the deploy"
+          echo "::error::$BASE/health did not answer 200 within two minutes of the deploy (fly logs -a <app> shows why)"
           exit 1
+      - name: Smoke test (one hand with bots, audit verified, account deleted)
+        id: smoke
+        # Always after CI; on a dispatch unless the smoke input was unticked.
+        if: github.event_name != 'workflow_dispatch' || inputs.smoke
+        timeout-minutes: 10
+        env:
+          BASE: ${{ steps.url.outputs.base }}
+        run: |
+          set -o pipefail
+          npm run smoke --workspace @mjm/signal -- "$BASE" 2>&1 | tee "$RUNNER_TEMP/smoke.txt"
       - name: Summary
         if: always()
         env:
           DEPLOYED_SHA: ${{ needs.check.outputs.sha }}
+          BRANCH: ${{ github.event.workflow_run.head_branch || github.ref_name }}
+          BASE: ${{ steps.url.outputs.base }}
+          SMOKE: ${{ steps.smoke.outcome }}
         run: |
           {
             echo "## Signal server deploy"
-            echo "- Commit: \`${DEPLOYED_SHA::7}\`"
-            echo "- Config: \`fly.toml\` (region sin, one machine always on)"
-            if [ -n "${{ vars.SIGNAL_URL }}" ]; then echo "- Server: ${{ vars.SIGNAL_URL }} (health checked at /health)"; fi
+            echo "- Commit: \`${DEPLOYED_SHA::7}\` on \`$BRANCH\`"
+            echo "- Config: \`fly.toml\` (one machine, always on)"
+            if [ -n "$BASE" ]; then echo "- Server: $BASE (health checked at /health)"; fi
+            echo "- Smoke test: ${SMOKE:-not run}"
+            if [ -f "$RUNNER_TEMP/smoke.txt" ]; then
+              echo ""
+              echo '```'
+              cat "$RUNNER_TEMP/smoke.txt"
+              echo '```'
+            fi
+            if [ "$SMOKE" = "failure" ]; then
+              echo ""
+              echo "The new version is live but failed the smoke test: roll back (docs/DEPLOY.md, Rollback) or fix forward."
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
