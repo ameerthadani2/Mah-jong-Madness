@@ -426,6 +426,41 @@ describe('the log is bound to the player’s own moves', () => {
     }
   });
 
+  it('a refused move comes back with its turn and code, and does not count against the log', () => {
+    const clock = { now: 1_000_000 };
+    const hub = new LoopbackHub();
+    const host = makeHost(hub, clock, 'RF');
+    const t = hub.create('p0');
+    const errors: Array<Extract<HostMessage, { t: 'error' }>> = [];
+    t.onMessage((_from, m) => {
+      if ((m as HostMessage).t === 'error') errors.push(m as Extract<HostMessage, { t: 'error' }>);
+    });
+    const c = new TableClient(transportLink(t, 'host'), 'Victim', undefined, {}, { now: () => clock.now });
+    c.join();
+    host.start();
+    let refused = false;
+    let guard = 0;
+    while (host.phase === 'playing' && guard++ < 4000) {
+      const s = c.localState()!;
+      if (legalActions(s, 0).length > 0) {
+        if (!refused && s.phase === 'discard') {
+          // A tile this seat does not hold: the host refuses it.
+          refused = true;
+          const notMine = [...Array(144).keys()].find((x) => !s.players[0].hand.includes(x))!;
+          c.act({ type: 'discard', tile: notMine });
+          continue;
+        }
+        c.act(chooseAction(s, 0)!);
+      } else {
+        clock.now += 60_000;
+        host.tick();
+      }
+    }
+    expect(refused).toBe(true);
+    expect(errors[0]).toMatchObject({ code: 'illegal', turnCounter: expect.any(Number) });
+    expect([c.state.auditStatus, c.state.auditFailures]).toEqual(['ok', []]);
+  });
+
   it('a state the player was shown that the replay never reaches fails the audit', () => {
     const clock = { now: 1_000_000 };
     const hub = new LoopbackHub();
