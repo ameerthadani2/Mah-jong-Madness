@@ -6,16 +6,16 @@ import { colors, fonts } from '../../theme';
 import { useT } from '../../i18n';
 import { Icon } from '../Icons';
 import { IconButton, Row } from '../Ui';
+import { HudClock } from './ClockParts';
+import type { TurnClock } from './turnClock';
 
 export function TableHud({
   view,
   roomCode,
   portrait,
-  countdown,
+  clock,
   myMove,
-  inTimeBank,
   timeBank,
-  timerUrgent,
   status,
   emotesOpen,
   onEmotes,
@@ -27,11 +27,10 @@ export function TableHud({
   view: TableView;
   roomCode: string;
   portrait: boolean;
-  countdown: number | null;
+  /** The turn clock (counted down by HudClock itself, so the table does not re-render every second). */
+  clock: TurnClock;
   myMove: boolean;
-  inTimeBank: boolean;
   timeBank: number;
-  timerUrgent: boolean;
   /** "X discarded Y", shown here on short screens to free the felt. */
   status: string | null;
   emotesOpen: boolean;
@@ -61,12 +60,7 @@ export function TableHud({
             <Text style={styles.hudChipText}>{roomCode}</Text>
           </View>
         )}
-        {countdown !== null && myMove && (
-          <View style={[styles.hudChip, timerUrgent && { backgroundColor: colors.danger }]} accessibilityLiveRegion={timerUrgent ? 'polite' : 'none'}>
-            <Icon name={inTimeBank ? 'hourglass' : 'clock'} size={18} />
-            <Text style={styles.hudChipText}>{inTimeBank ? t('table.timeBank', { s: countdown }) : t('table.seconds', { s: countdown })}</Text>
-          </View>
-        )}
+        {myMove && <HudClock clock={clock} />}
         {!myMove && timeBank > 0 && !portrait && (
           <View style={styles.hudChip}>
             <Icon name="hourglass" size={18} />

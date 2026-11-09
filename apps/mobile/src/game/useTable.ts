@@ -31,19 +31,31 @@ export function useConnection(session: Session | null): ReconnectState {
   return conn;
 }
 
-/** Seconds remaining until `deadline` (ms epoch), updated every 250ms. */
+/** Whole seconds left until `deadline` (ms epoch) at `now`, never negative; null without a deadline. */
+export function secondsLeft(deadline: number | null, now: number): number | null {
+  return deadline === null ? null : Math.max(0, Math.ceil((deadline - now) / 1000));
+}
+
+/**
+ * Seconds remaining until `deadline` (ms epoch), checked every 250 ms while there is a deadline and changing
+ * once a second. Only the component that calls it re-renders: the table keeps it in small leaf components
+ * (the HUD clock, the seat timer ring, the clock ticker; components/table/ClockParts.tsx) so the whole screen does not
+ * re-render every second.
+ */
 export function useCountdown(deadline: number | null): number | null {
-  const [left, setLeft] = useState<number | null>(null);
-  const ref = useRef(deadline);
-  ref.current = deadline;
+  const [s, setS] = useState(() => ({ deadline, left: secondsLeft(deadline, Date.now()) }));
   useEffect(() => {
-    const id = setInterval(() => {
-      const d = ref.current;
-      setLeft(d === null ? null : Math.max(0, Math.ceil((d - Date.now()) / 1000)));
-    }, 250);
+    const tick = () =>
+      setS((p) => {
+        const left = secondsLeft(deadline, Date.now());
+        return p.deadline === deadline && p.left === left ? p : { deadline, left };
+      });
+    tick();
+    if (deadline === null) return;
+    const id = setInterval(tick, 250);
     return () => clearInterval(id);
-  }, []);
-  return deadline === null ? null : left;
+  }, [deadline]);
+  return s.deadline === deadline ? s.left : secondsLeft(deadline, Date.now());
 }
 
 /**

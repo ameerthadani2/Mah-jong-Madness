@@ -8,7 +8,7 @@ import { Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-na
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { hintFor, kindInfo, kindOf, legalActions, viewToState, WINDS, type Action, type GameState, type Hint, type TileId } from '@mjm/engine';
 import { useApp } from '../app-state';
-import { useClockTick, useConnection, useCountdown, useSession, useTableEvents } from '../game/useTable';
+import { useConnection, useSession, useTableEvents } from '../game/useTable';
 import { nextFadeDelay } from '../logic/fade';
 import { colors, fonts, nameFont } from '../theme';
 import { Tile } from '../components/Tile';
@@ -28,6 +28,8 @@ import { RESULT_HOLD_MS } from '../components/table/feel';
 import { MatchOverSheet, ResultSheet } from '../components/table/ResultSheet';
 import { TableHud } from '../components/table/TableHud';
 import { LeaveSheet } from '../components/table/LeaveSheet';
+import { ClockTicker } from '../components/table/ClockParts';
+import type { TurnClock } from '../components/table/turnClock';
 import { exitPlan, type ExitChoice } from '../components/table/exit';
 import { useSfx, type TableEvent } from '../audio';
 
@@ -82,7 +84,8 @@ export function TableScreen() {
     const id = setTimeout(() => forceTick((n) => n + 1), delay + 20);
     return () => clearTimeout(id);
   }, [state?.emotes, state?.chat, fadeTick]);
-  const countdown = useCountdown(state?.deadline ?? null);
+  // The turn clock is handed down once per turn; only the leaf components that show it count it down.
+  const deadline = state?.deadline ?? null;
 
   const view = state?.view ?? null;
   const mySeat = state?.seat ?? 0;
@@ -118,7 +121,6 @@ export function TableScreen() {
     const last = [...events].reverse().find((e) => e.type === 'call');
     if (last && last.type === 'call') setCallout({ call: last.call, seat: last.seat, key: ++reactionKey.current });
   });
-  useClockTick(countdown, myMove, () => sfx.sfx('tick'));
 
   // Hold the result sheet back so the call-out and the winner's face-up hand are seen first — once per hand,
   // so coming back from the review or fair-play screen shows the results straight away.
@@ -220,8 +222,7 @@ export function TableScreen() {
   const rules = state.rules;
   const turnSeat = view.phase === 'discard' ? view.turn : null;
   const timerSeat = myMove ? mySeat : turnSeat;
-  const timerFrac = countdown !== null && rules ? countdown / Math.max(1, state.inTimeBank ? rules.timeBankSeconds || 1 : rules.turnSeconds || 1) : null;
-  const timerUrgent = state.inTimeBank || (countdown !== null && countdown <= 5);
+  const clock: TurnClock = { deadline, total: rules ? (state.inTimeBank ? rules.timeBankSeconds || 1 : rules.turnSeconds || 1) : 1, bank: state.inTimeBank };
   const plateProps = (seat: number): PlateProps => ({
     seat,
     info: seatInfo(seat),
@@ -230,8 +231,7 @@ export function TableScreen() {
     isTurn: timerSeat === seat || turnSeat === seat,
     score: view.scores[seat],
     viewerSeat: mySeat,
-    timer: timerSeat === seat ? timerFrac : null,
-    timerUrgent,
+    clock: timerSeat === seat && rules ? clock : null,
     emote: latestEmote(seat),
     onLongPress:
       session.mode === 'online' && seat !== mySeat && seatInfo(seat)?.userId && !seatInfo(seat)?.isBot
@@ -271,11 +271,9 @@ export function TableScreen() {
           view={view}
           roomCode={session.roomCode}
           portrait={L.portrait}
-          countdown={countdown}
+          clock={clock}
           myMove={myMove}
-          inTimeBank={state.inTimeBank}
           timeBank={state.timeBank}
-          timerUrgent={timerUrgent}
           status={L.statusInHud ? statusLine : null}
           emotesOpen={emotePicker}
           onEmotes={() => setEmotePicker((v) => !v)}
@@ -284,6 +282,7 @@ export function TableScreen() {
           onCoach={() => setCoachOpen((v) => !v)}
           onLeave={() => setLeaveAsk(true)}
         />
+        <ClockTicker clock={clock} myMove={myMove} onTick={() => sfx.sfx('tick')} />
         <LeaveSheet visible={leaveAsk} online={session.mode === 'online'} onChoose={exit} />
 
         <ReportPlayerSheet visible={reporting !== null} target={reporting} onClose={() => setReporting(null)} />
