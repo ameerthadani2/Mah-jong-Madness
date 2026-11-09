@@ -136,18 +136,18 @@ export function ResultSheet({ result, view, state, mySeat, onNext, onLeave, onRe
       })}
     </View>
   );
-  // 'partial': the shuffle log and result replayed correctly, but this seat's own share did not protect the seed
-  // (it was stood in, or it joined mid-hand). Amber, never green: a host can always claim a seat was late.
+  // 'partial': every check passed, but the server could have picked the deal (it made this seat's share, the seat
+  // joined mid-hand, the deal was restarted, or the link dropped during it). Amber with no shield, never green.
   const auditText = t(
     audit === 'ok' ? (twoCol ? 'table.audit.okShort' : 'table.audit.ok')
-    : audit === 'partial' ? (twoCol ? 'table.audit.partialShort' : 'table.audit.partial')
+    : audit === 'partial' ? (twoCol ? 'fairness.result.partialShort' : 'fairness.result.partial')
     : audit === 'failed' ? 'table.audit.failed'
     : 'table.audit.pending',
   );
   const auditRow = (
     <Row style={{ flexWrap: 'wrap', rowGap: 8 }}>
       <Pressable onPress={onFairness} testID="audit-status" accessibilityRole="button" accessibilityLabel={auditText} hitSlop={10}>
-        <Pill size={twoCol ? 'sm' : 'md'} text={auditText} icon={audit === 'ok' || audit === 'partial' ? 'shield' : audit === 'failed' ? 'warning' : 'hourglass'} tone={audit === 'ok' ? 'ok' : audit === 'partial' ? 'gold' : audit === 'failed' ? 'danger' : 'neutral'} />
+        <Pill size={twoCol ? 'sm' : 'md'} text={auditText} icon={audit === 'ok' ? 'shield' : audit === 'failed' ? 'warning' : audit === 'partial' ? undefined : 'hourglass'} wrap={audit === 'partial' && !twoCol} tone={audit === 'ok' ? 'ok' : audit === 'partial' ? 'gold' : audit === 'failed' ? 'danger' : 'neutral'} />
       </Pressable>
       {state.auditFailures.map((f, i) => (
         <Text key={`f${i}`} style={{ color: colors.dangerText, fontSize: 12 }}>

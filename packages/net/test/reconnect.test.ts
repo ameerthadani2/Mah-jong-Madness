@@ -6,7 +6,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { applyAction, chooseAction, hashState, kindOf, legalActions, newGame, replayHand, matchSnapshot, withRules, type Action, type GameState, type MatchSnapshot } from '@mjm/engine';
-import { AUDIT_CAVEATS, LoopbackHub, MAX_AUDITS, TableClient, TableHost, transportLink, type Audit, type HostMessage, type Link, type SerializedClient } from '../src/index';
+import { AUDIT_CAVEATS, caveatKey, LoopbackHub, MAX_AUDITS, TableClient, TableHost, transportLink, type Audit, type HostMessage, type Link, type SerializedClient } from '../src/index';
 
 const RULES = withRules({ handsPerMatch: 1 });
 
@@ -627,6 +627,13 @@ describe('the client’s record survives an app restart', () => {
     const junk = TableClient.restore({ version: 99 }, transportLink(hub.create('p1'), 'host'), 'A', undefined, { token: 'a'.repeat(32) });
     expect(junk.state.audits).toEqual([]);
     expect(junk.state.token).toBe('a'.repeat(32));
+  });
+});
+
+describe('caveats the app translates', () => {
+  it('every caveat text maps back to its key, and other text to none', () => {
+    for (const [key, text] of Object.entries(AUDIT_CAVEATS)) expect(caveatKey(text)).toBe(key);
+    expect(caveatKey('Something else')).toBeNull();
   });
 });
 
