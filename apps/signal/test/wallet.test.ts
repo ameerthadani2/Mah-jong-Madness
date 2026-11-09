@@ -36,7 +36,7 @@ function storeEvent(userId: string, type: string, extra: Partial<StoreEvent> = {
     price: 4.99,
     currency: 'USD',
     store: 'app_store',
-    environment: 'SANDBOX',
+    environment: 'PRODUCTION',
     cancelReason: null,
     transferredFrom: [],
     transferredTo: [],

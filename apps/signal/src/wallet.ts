@@ -89,6 +89,7 @@ export type StoreOutcome =
   | 'duplicate'
   | 'ignored_unknown_user'
   | 'ignored_unknown_product'
+  | 'ignored_sandbox'
   | 'ignored_stale'
   | 'ignored_type';
 
@@ -111,7 +112,28 @@ export interface WalletServiceOptions {
   now?: () => number;
   analytics?: Analytics;
   log?: (line: string) => void;
+  /**
+   * Accounts whose sandbox purchases (TestFlight, Play testing) are granted. Everyone else's
+   * sandbox events are recorded as `ignored_sandbox`. Default: `TESTER_USER_IDS` from the
+   * environment (comma-separated user ids). Ids are compared in lower case.
+   */
+  testerUserIds?: Iterable<string>;
 }
+
+type Env = Record<string, string | undefined>;
+
+/** The tester allowlist in `TESTER_USER_IDS` (comma-separated user ids). */
+export function testerIdsFromEnv(env: Env = process.env): Set<string> {
+  return new Set(
+    (env.TESTER_USER_IDS ?? '')
+      .split(',')
+      .map((s) => s.trim().toLowerCase())
+      .filter(Boolean),
+  );
+}
+
+/** True for an event from a store's test environment (App Store sandbox, Play test tracks). */
+export const isSandbox = (e: Pick<StoreEvent, 'environment'>): boolean => (e.environment ?? '').trim().toUpperCase() === 'SANDBOX';
 
 /** Source written on entitlements granted by store events (TRANSFER moves only these). */
 export const STORE_SOURCE = 'store';
@@ -123,6 +145,7 @@ export class WalletService {
   private readonly now: () => number;
   private readonly analytics: Analytics;
   private readonly log: (line: string) => void;
+  private readonly testers: ReadonlySet<string>;
   /** One chain per user, so two spends from one player cannot both pass the ownership check. */
   private readonly locks = new Map<string, Promise<unknown>>();
 
@@ -133,6 +156,15 @@ export class WalletService {
     this.now = opts.now ?? Date.now;
     this.analytics = opts.analytics ?? NO_ANALYTICS;
     this.log = opts.log ?? ((line) => console.log(line));
+    // A Set is kept as given (so a caller can add testers later); anything else is read once.
+    this.testers = opts.testerUserIds instanceof Set ? opts.testerUserIds : opts.testerUserIds ? new Set([...opts.testerUserIds].map((id) => id.trim().toLowerCase())) : testerIdsFromEnv();
+  }
+
+  /** True when this event may grant: a production event, or a sandbox event for an account on the tester list. */
+  private grantable(e: StoreEvent, user: UserRecord | null): boolean {
+    if (!isSandbox(e)) return true;
+    const ids = [user?.id, ...e.userIds, ...e.transferredTo].filter((x): x is string => !!x);
+    return ids.some((id) => this.testers.has(id.toLowerCase()));
   }
 
   /**
@@ -285,6 +317,11 @@ export class WalletService {
   private async applyEffects(tx: Repos, e: StoreEvent, product: ServerProduct | undefined, user: UserRecord | null): Promise<{ outcome: StoreOutcome; userId: string | null }> {
     const at = this.now();
     if (e.type === 'TEST') return { outcome: 'test', userId: user?.id ?? null };
+    // Sandbox purchases cost nothing: only accounts on the tester list get them.
+    if (!this.grantable(e, user)) {
+      this.log(`[signal] sandbox store event ${e.eventId} (${e.type}) for an account not on TESTER_USER_IDS; recorded only`);
+      return { outcome: 'ignored_sandbox', userId: user?.id ?? null };
+    }
     if (e.type === 'TRANSFER') return this.transfer(tx, e, at);
     if (!(STORE_EVENT_TYPES as readonly string[]).includes(e.type)) return { outcome: 'ignored_type', userId: user?.id ?? null };
     if (!user) {

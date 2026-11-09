@@ -5,7 +5,7 @@
  */
 import { randomUUID } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import { WalletService } from '../src/wallet';
+import { testerIdsFromEnv, WalletService } from '../src/wallet';
 import { apiFixture } from './helpers';
 
 const SECRET = 'rc_store_secret_0123456789abcdef';
@@ -39,10 +39,11 @@ function rc(type: string, appUserId: string, event: Record<string, unknown> = {}
 function fixture() {
   let t = T0;
   const now = () => t;
-  const f = apiFixture({ now, deps: (repos) => ({ config: { revenueCatWebhookSecret: SECRET }, wallet: new WalletService(repos, { now, log: () => {} }) }) });
+  const testers = new Set<string>();
+  const f = apiFixture({ now, deps: (repos) => ({ config: { revenueCatWebhookSecret: SECRET }, wallet: new WalletService(repos, { now, log: () => {}, testerUserIds: testers }) }) });
   const post = async (body: unknown) => (await f.call('POST', '/api/webhooks/revenuecat', body, hook)).json.outcome as string;
   const me = async (auth: Record<string, string>) => (await f.call('GET', '/api/me', undefined, auth)).json as { coachTier: string; wallet: { diamonds: number; bonusDiamonds: number }; cosmetics: string[]; entitlements: Array<{ entitlement: string; active: boolean }> };
-  return { ...f, post, me, now, advance: (ms: number) => (t += ms), wallet: f.deps.wallet as WalletService };
+  return { ...f, post, me, now, testers, advance: (ms: number) => (t += ms), wallet: f.deps.wallet as WalletService };
 }
 
 describe('subscription plans are separate entitlements', () => {
@@ -112,5 +113,30 @@ describe('refunded diamond packs', () => {
     expect(await f.post(rc('CANCELLATION', e.userId, { product_id: 'diamonds.7500', transaction_id: 'E-1', cancel_reason: 'CUSTOMER_SUPPORT' }))).toBe('refunded');
     expect((await f.me(e.auth)).wallet).toEqual({ diamonds: -1300, bonusDiamonds: 0 });
     expect((await f.call('POST', '/api/wallet/spend', { productId: 'theme.bamboo' }, e.auth)).json.error).toBe('owned');
+  });
+});
+
+describe('sandbox purchases', () => {
+  it('grant only to accounts on the tester list; everyone else is recorded as ignored_sandbox', async () => {
+    const f = fixture();
+    const tester = await f.guest('Tess');
+    const player = await f.guest('Pat');
+    f.testers.add(tester.userId);
+    const sandbox = { environment: 'SANDBOX' };
+    const sub = rc('INITIAL_PURCHASE', player.userId, { ...sandbox, product_id: 'fourwinds.year', expiration_at_ms: T0 + 365 * DAY });
+    expect(await f.post(sub)).toBe('ignored_sandbox');
+    expect(await f.repos.storeEvents.get(sub.event.id)).toMatchObject({ outcome: 'ignored_sandbox', userId: player.userId, environment: 'SANDBOX' });
+    expect(await f.post(rc('NON_RENEWING_PURCHASE', player.userId, { ...sandbox, product_id: 'diamonds.7500' }))).toBe('ignored_sandbox');
+    expect(await f.me(player.auth)).toMatchObject({ coachTier: 'free', wallet: { diamonds: 0, bonusDiamonds: 0 }, entitlements: [] });
+    expect(await f.post(rc('INITIAL_PURCHASE', tester.userId, { ...sandbox, product_id: 'fourwinds.year', expiration_at_ms: T0 + 365 * DAY }))).toBe('entitled');
+    expect(await f.post(rc('NON_RENEWING_PURCHASE', tester.userId, { ...sandbox, product_id: 'diamonds.60' }))).toBe('credited');
+    expect(await f.me(tester.auth)).toMatchObject({ coachTier: 'fourwinds', wallet: { diamonds: 60, bonusDiamonds: 0 } });
+    // Production purchases are granted to everyone, as before.
+    expect(await f.post(rc('NON_RENEWING_PURCHASE', player.userId, { product_id: 'diamonds.60' }))).toBe('credited');
+  });
+
+  it('reads the tester list from TESTER_USER_IDS', () => {
+    expect([...testerIdsFromEnv({ TESTER_USER_IDS: ' A1b2 , ,c3 ' })]).toEqual(['a1b2', 'c3']);
+    expect(testerIdsFromEnv({}).size).toBe(0);
   });
 });

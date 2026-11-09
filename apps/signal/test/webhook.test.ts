@@ -30,7 +30,7 @@ function rc(type: string, appUserId: string, event: Record<string, unknown> = {}
       period_type: 'NORMAL',
       purchased_at_ms: T0,
       expiration_at_ms: T0 + 30 * DAY,
-      environment: 'SANDBOX',
+      environment: 'PRODUCTION',
       store: 'APP_STORE',
       transaction_id: String(2_000_000_000_000_000 + Math.floor(Math.random() * 1e9)),
       original_transaction_id: '2000000000000001',
