@@ -34,7 +34,7 @@ import {
 import { ClubError, ClubRegistry, type Club, type Identity } from './clubs';
 import { DAY_MS } from './limits';
 import { LIMITS, type SignalConfig } from './config';
-import { BucketTable, clientIp } from './limits';
+import { BucketTable, cleanField, clientIp } from './limits';
 import type { LatencyWindow } from './metrics';
 import { NO_ANALYTICS, reportError, type Analytics } from './observability';
 import { EXPO_PUSH_TOKEN, type PushService } from './push';
@@ -142,9 +142,9 @@ export function userJson(u: UserRecord) {
   return { id: u.id, kind: u.kind, displayName: u.displayName, avatar: u.avatar, locale: u.locale, birthYear: u.birthYear, createdAt: iso(u.createdAt) };
 }
 
-/** A user as a club member: the user record's name (or a placeholder for a guest who has not picked one) and avatar. */
+/** A user as a club member: the user record's name, cleaned (or a placeholder for a guest who has not picked one, or whose name cleans to nothing), and avatar. */
 export function memberIdentity(u: UserRecord): Identity {
-  const name = u.displayName.trim().slice(0, 24) || `Player ${u.id.replace(/-/g, '').slice(0, 4).toUpperCase()}`;
+  const name = cleanField(u.displayName, 24) || `Player ${u.id.replace(/-/g, '').slice(0, 4).toUpperCase()}`;
   return u.avatar ? { userId: u.id, name, avatar: u.avatar } : { userId: u.id, name };
 }
 
@@ -158,11 +158,14 @@ function deviceOf(body: Record<string, unknown>): Record<string, unknown> {
   return isObject(body.device) ? body.device : {};
 }
 
-/** An optional text field: undefined when absent, trimmed and capped when text, otherwise 400. */
-function optionalText(v: unknown, field: string, max: number): string | undefined {
+/**
+ * An optional text field: undefined when absent, cleaned and capped when text (`cleanField`: a NUL
+ * or a bidi override never reaches the database), otherwise 400. The result may be empty.
+ */
+function optionalText(v: unknown, field: string, max: number, opts: { multiline?: boolean } = {}): string | undefined {
   if (v === undefined) return undefined;
   if (typeof v !== 'string') throw new AuthError('invalid', `${field} must be text`);
-  return v.trim().slice(0, max);
+  return cleanField(v, max, opts);
 }
 
 export function buildRoutes(deps: ApiDeps, opts: Pick<ApiOptions, 'reportIpLimiter'> = {}): Route[] {
@@ -408,7 +411,7 @@ export function buildRoutes(deps: ApiDeps, opts: Pick<ApiOptions, 'reportIpLimit
         if (typeof roomCode !== 'string' || !ROOM_CODE.test(roomCode.trim().toUpperCase())) throw new HttpError(400, 'invalid', 'roomCode must be a table code');
         room = roomCode.trim().toUpperCase();
       }
-      const text = details === undefined || details === null ? null : optionalText(details, 'details', 1000) || null;
+      const text = details === undefined || details === null ? null : optionalText(details, 'details', 1000, { multiline: true }) || null;
       const target = await repos.users.get(reportedUserId);
       if (!target) throw new HttpError(404, 'not_found', 'No such player');
       const at = now();

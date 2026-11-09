@@ -36,8 +36,8 @@ const MAX_QUEUED_FRAMES = 16;
 
 export type SocketLimits = Pick<typeof LIMITS, 'socketsPerIp' | 'messagesPerSec' | 'messageBurst'>;
 
-/** What a verifier says about a session token: the user, and the session itself when known. */
-export type VerifiedToken = string | { userId: string; sessionId?: string };
+/** What a verifier says about a session token: the user, the session itself when known, and the account's display name. */
+export type VerifiedToken = string | { userId: string; sessionId?: string; name?: string };
 
 export interface SocketAuthOptions {
   /**
@@ -126,8 +126,8 @@ export function attachSocketHandlers(
           stage = 'ready';
           sessionToken = token;
           if (helloTimer) clearTimeout(helloTimer);
-          const { userId, sessionId } = typeof verified === 'string' ? { userId: verified, sessionId: undefined } : verified;
-          peerId = rooms.hello(peerId, userId, sessionId);
+          const { userId, sessionId, name } = typeof verified === 'string' ? { userId: verified, sessionId: undefined, name: undefined } : verified;
+          peerId = rooms.hello(peerId, userId, sessionId, name);
           for (const m of queued.splice(0)) dispatch(m);
         },
         () => unauthorised(),
@@ -138,9 +138,11 @@ export function attachSocketHandlers(
       stage = 'verifying';
       queued.push(msg);
       auth.verify!(sessionToken).then(
-        () => {
+        (verified) => {
           if (closed) return;
           stage = 'ready';
+          // The player may have renamed themselves since `hello`: sit down under the current name.
+          if (typeof verified !== 'string') rooms.setPeerName(peerId, verified.name);
           for (const m of queued.splice(0)) dispatch(m);
         },
         () => unauthorised(),

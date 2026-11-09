@@ -544,7 +544,7 @@ describe.skipIf(!PG_URL)('postgres', () => {
       await admin.query('CREATE SCHEMA ' + schema);
       pool = createPool(PG_URL!, { options: '-c search_path=' + schema });
       expect(await ping(pool)).toBe(true);
-      expect(await migrate(pool)).toEqual(['0001_init', '0002_store_reports_seasons']);
+      expect(await migrate(pool)).toEqual(['0001_init', '0002_store_reports_seasons', '0003_server_hardening']);
       expect(await migrate(pool)).toEqual([]);
       return createPgRepos(pool);
     },

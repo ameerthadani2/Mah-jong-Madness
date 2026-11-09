@@ -1,8 +1,27 @@
 /**
  * Rate-limiting primitives: a token bucket, and a table of buckets keyed by
  * client that evicts idle entries. The clock is injected so tests can control time.
+ * Also `cleanField`, the size limit applied to every piece of free text a player sends.
  */
+import { cleanText, type CleanTextOptions } from '@mjm/net';
+
 export type Clock = () => number;
+
+/**
+ * Free text from a player, cleaned with `cleanText` (controls including NUL, bidi overrides and
+ * invisible characters removed, whitespace tidied) and cut to at most `max` characters that also
+ * fit in `max` UTF-16 code units, so neither a later `slice(0, max)` nor a database length check
+ * can split an emoji or turn the text away. The result may be empty; callers choose a fallback.
+ */
+export function cleanField(value: unknown, max: number, opts: CleanTextOptions = {}): string {
+  let s = cleanText(value, max, opts);
+  let n = max;
+  while (s.length > max && n > 1) {
+    n = Math.max(1, Math.min(n - 1, Math.floor((n * max) / s.length)));
+    s = cleanText(s, n, opts);
+  }
+  return s.length <= max ? s : '';
+}
 
 export const DAY_MS = 86_400_000;
 

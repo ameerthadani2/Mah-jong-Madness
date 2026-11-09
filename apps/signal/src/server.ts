@@ -158,7 +158,9 @@ export async function createSignalServer(opts: SignalServerOptions): Promise<Sig
   const wss = createSocketServer(http, rooms, config, opts.socketLimits ?? LIMITS, {
     verify: async (token) => {
       const s = await sessions.verify(token);
-      return { userId: s.userId, sessionId: s.sessionId };
+      // The seat name comes from the account, not from what the client writes in its table join.
+      const user = await repos.repos.users.get(s.userId);
+      return { userId: s.userId, sessionId: s.sessionId, name: user?.displayName };
     },
   });
 

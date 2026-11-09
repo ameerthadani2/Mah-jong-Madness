@@ -16,6 +16,7 @@
 import { randomHex, sanitizeRules, type RuleSet } from '@mjm/engine';
 import type { HostEvent } from '@mjm/net';
 import { uniqueCode, type HexSource } from './codes';
+import { cleanField } from './limits';
 import { DELETED_PLAYER_NAME } from './repos/types';
 import type { ClubGate } from './rooms';
 
@@ -160,10 +161,14 @@ export function sanitizeSettings(input: unknown, base: ClubSettings = DEFAULT_CL
   return out;
 }
 
-/** A string field from the API, trimmed and capped to `max` characters. A value that is not a string is a client error, not a crash. */
-function textField(v: unknown, field: string, max: number): string {
+/**
+ * A string field from the API, cleaned (`cleanField`: no control or invisible characters, so a NUL
+ * can never stop the club being saved) and capped to `max` characters. A value that is not a string
+ * is a client error, not a crash. The result may be empty; each caller decides what that means.
+ */
+function textField(v: unknown, field: string, max: number, multiline = false): string {
   if (typeof v !== 'string') throw new ClubError('invalid', `${field} must be text`);
-  return v.trim().slice(0, max);
+  return cleanField(v, max, { multiline });
 }
 
 /** Clean up a club read from storage: older rows may hold unchecked rules or the retired `neutralHost` setting. */
@@ -596,7 +601,7 @@ export class ClubRegistry {
     this.requireRole(club, actorId, ['owner', 'admin']);
     // Validate everything before changing anything, so a bad field leaves the club untouched.
     const name = patch.name === undefined ? undefined : textField(patch.name, 'Club name', CLUB_LIMITS.nameLength);
-    const description = patch.description === undefined ? undefined : textField(patch.description, 'Description', CLUB_LIMITS.descriptionLength);
+    const description = patch.description === undefined ? undefined : textField(patch.description, 'Description', CLUB_LIMITS.descriptionLength, true);
     if (name) club.name = name;
     if (description !== undefined) club.description = description;
     if (patch.rules !== undefined) club.rules = sanitizeRules(patch.rules, club.rules);
@@ -644,7 +649,7 @@ export class ClubRegistry {
     const label = table.label === undefined ? '' : textField(table.label, 'Table label', CLUB_LIMITS.labelLength);
     const t: ClubTable = {
       code: table.code,
-      label: label || `${m.name}'s table`.slice(0, CLUB_LIMITS.labelLength),
+      label: label || cleanField(`${m.name}'s table`, CLUB_LIMITS.labelLength),
       rules: sanitizeRules(table.rules, club.rules),
       createdBy: actorId,
       createdAt: this.now(),

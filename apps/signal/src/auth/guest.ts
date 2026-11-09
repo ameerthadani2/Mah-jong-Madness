@@ -6,6 +6,7 @@
  */
 import { randomUUID } from 'node:crypto';
 import { randomHex } from '@mjm/engine';
+import { cleanField } from '../limits';
 import type { Repos } from '../repos/types';
 import { AuthError } from './errors';
 import { digestsEqual, hashToken, SessionService } from './tokens';
@@ -42,11 +43,9 @@ export interface GuestCreated {
   sessionId: string;
 }
 
-/** Trimmed text capped to `max` characters, or null for anything that is not a non-empty string. */
+/** Cleaned text (`cleanField`) capped to `max` characters, or null for anything that is not a string or cleans to nothing. */
 function text(v: unknown, max: number): string | null {
-  if (typeof v !== 'string') return null;
-  const s = v.trim().slice(0, max);
-  return s ? s : null;
+  return cleanField(v, max) || null;
 }
 
 function sessionsFor(repos: Repos, peppers: Peppers, opts: GuestOptions): SessionService {
@@ -63,7 +62,7 @@ export async function createGuest(repos: Repos, pepper: Peppers, device: GuestDe
   const guestSecret = randomHex(32);
   const locale = text(device.locale, 16);
   await repos.transaction(async (tx) => {
-    await tx.users.create({ id: userId, kind: 'guest', displayName: opts.displayName?.trim().slice(0, 40) ?? '', avatar: text(opts.avatar, 16), locale, createdAt: now });
+    await tx.users.create({ id: userId, kind: 'guest', displayName: cleanField(opts.displayName ?? '', 24), avatar: text(opts.avatar, 16), locale, createdAt: now });
     await tx.devices.create({
       id: deviceId,
       userId,

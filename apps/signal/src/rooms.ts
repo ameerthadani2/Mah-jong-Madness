@@ -7,7 +7,7 @@ import { TableHost, type HostEvent, type SerializedHost, type Transport, type Un
 import { BOT_SKILLS, randomHex, sanitizeRules, type BotSkill, type RuleSet } from '@mjm/engine';
 import { uniqueCode, type HexSource } from './codes';
 import { LIMITS } from './config';
-import { BucketTable } from './limits';
+import { BucketTable, cleanField } from './limits';
 import type { LatencyWindow } from './metrics';
 
 export interface Socket {
@@ -33,6 +33,8 @@ interface Peer {
   sessionId?: string;
   /** The client address the socket came from, for the per-IP create and join buckets (absent in unit tests). */
   ip?: string;
+  /** The account's display name, cleaned; when set it is the name the peer sits down under. */
+  name?: string;
 }
 
 interface Room {
@@ -304,7 +306,7 @@ export class RoomRegistry {
    * with no user. Ids are always server-assigned and never change for the life of the socket, so
    * a peer cannot impersonate a departed player or the server-side host ('server-…').
    */
-  hello(peerId: string, userId?: string, sessionId?: string): string {
+  hello(peerId: string, userId?: string, sessionId?: string, name?: string): string {
     const peer = this.peers.get(peerId);
     if (!peer) return peerId;
     if (peerId.startsWith('tmp-')) {
@@ -314,6 +316,7 @@ export class RoomRegistry {
       this.peers.set(id, peer);
       if (userId) peer.userId = userId;
       if (sessionId) peer.sessionId = sessionId;
+      this.setPeerName(id, name);
     }
     // `peerId` is the older name of `id`, kept for clients built before accounts.
     peer.socket.send(JSON.stringify({ t: 'hello', id: peer.id, peerId: peer.id, userId: peer.userId }));
@@ -323,6 +326,19 @@ export class RoomRegistry {
   /** The verified account behind a peer, if any. */
   peerUser(peerId: string): string | undefined {
     return this.peers.get(peerId)?.userId;
+  }
+
+  /**
+   * The account's display name, as the socket layer last read it (at `hello` and before each
+   * create or join). It replaces whatever name the client puts in its table `join`; an account
+   * without a usable name keeps the client's, cleaned.
+   */
+  setPeerName(peerId: string, name: string | undefined): void {
+    const peer = this.peers.get(peerId);
+    if (!peer) return;
+    const clean = cleanField(name, SEAT_NAME_MAX);
+    if (clean) peer.name = clean;
+    else delete peer.name;
   }
 
   /**
@@ -440,7 +456,9 @@ export class RoomRegistry {
         if (room.table && to === room.table.transport.id) {
           const timed = this.opts.actionLatency && isAction(msg.data);
           const t0 = timed ? this.perfNow() : 0;
-          room.table.transport.receive(peer.id, bindUser(msg.data, peer.userId));
+          const data = bindUser(msg.data, peer.userId, peer.name);
+          if (data === null) return peer.id;
+          room.table.transport.receive(peer.id, data);
           if (timed) this.opts.actionLatency!.record(this.perfNow() - t0);
           return peer.id;
         }
@@ -613,18 +631,40 @@ function isAction(data: unknown): boolean {
   return !!env && typeof env === 'object' && env.ch === 'game' && !!env.msg && typeof env.msg === 'object' && env.msg.t === 'action';
 }
 
+/** Longest seat name and chat line the table keeps (it cuts longer ones by UTF-16 units). */
+const SEAT_NAME_MAX = 24;
+const CHAT_MAX = 280;
+const AVATAR_MAX = 8;
+
 /**
  * The table's `join` carries the verified account, never the one the client claims, so the host
  * (which reads `msg.userId`) binds the seat to the user the session proved. An unauthenticated
- * peer's claim is dropped.
+ * peer's claim is dropped. The seat name is the account's display name when it has one, and
+ * otherwise the client's, cleaned like every other piece of free text (a NUL in a seat name used
+ * to stop the table's snapshot being saved); chat lines and avatars are cleaned too. Returns null
+ * for a frame with nothing left to say (a chat line that cleans to nothing).
  */
-function bindUser(data: unknown, userId: string | undefined): unknown {
+function bindUser(data: unknown, userId: string | undefined, accountName?: string): unknown {
   const env = data as { ch?: unknown; msg?: unknown } | null;
   if (!env || typeof env !== 'object' || env.ch !== 'game' || !env.msg || typeof env.msg !== 'object') return data;
-  if ((env.msg as { t?: unknown }).t !== 'join') return data;
+  const t = (env.msg as { t?: unknown }).t;
+  if (t !== 'join' && t !== 'chat') return data;
   const msg: Record<string, unknown> = { ...(env.msg as Record<string, unknown>) };
+  if (t === 'chat') {
+    if (typeof msg.text !== 'string') return data;
+    msg.text = cleanField(msg.text, CHAT_MAX);
+    return msg.text ? { ...env, msg } : null;
+  }
   if (userId) msg.userId = userId;
   else delete msg.userId;
+  const name = accountName || (typeof msg.name === 'string' ? cleanField(msg.name, SEAT_NAME_MAX) : '');
+  if (name) msg.name = name;
+  else delete msg.name;
+  if (typeof msg.avatar === 'string') {
+    const avatar = cleanField(msg.avatar, AVATAR_MAX);
+    if (avatar) msg.avatar = avatar;
+    else delete msg.avatar;
+  }
   return { ...env, msg };
 }
 
