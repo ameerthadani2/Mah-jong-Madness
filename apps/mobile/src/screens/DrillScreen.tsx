@@ -5,17 +5,24 @@ import { useApp } from '../app-state';
 import { rateAnswer } from '../logic/rating';
 import { space } from '../theme';
 import { PuzzleView } from '../components/PuzzleView';
+import { PuzzleFoot } from './PuzzleScreens';
 import { Card, Chip, Pill, Row, ScreenHeader } from '../components/Ui';
 import { useT } from '../i18n';
+
+/** A drill puzzle's seed: one per run, difficulty and puzzle number. */
+export function drillSeed(kind: string, runId: string, difficulty: number, n: number): string {
+  return `${kind}-${runId}-d${difficulty}-${n}`;
+}
 
 export function DrillScreen({ kind }: { kind: 'discard' | 'waits' }) {
   const app = useApp();
   const { t } = useT();
   const [n, setN] = useState(0);
   const [difficulty, setDifficulty] = useState<1 | 2 | 3>(2);
-  // Seed is fixed for the life of this screen so answering never remounts the puzzle.
+  // Seed is fixed for the life of this screen so answering never remounts the puzzle; it names the difficulty,
+  // so switching difficulty mounts a fresh, unanswered puzzle (PuzzleView is keyed by the seed).
   const [runId] = useState(() => Math.random().toString(36).slice(2, 8));
-  const seed = `${kind}-${runId}-${n}`;
+  const seed = drillSeed(kind, runId, difficulty, n);
   const puzzle = useMemo(() => (kind === 'discard' ? discardPuzzle(seed, difficulty) : waitsPuzzle(seed, difficulty)), [kind, seed, difficulty]);
   const acc = app.progress.drillsPlayed ? Math.round((app.progress.drillsCorrect / app.progress.drillsPlayed) * 100) : null;
   return (
@@ -35,10 +42,11 @@ export function DrillScreen({ kind }: { kind: 'discard' | 'waits' }) {
           nextLabel={t('learn.nextHand')}
         />
       </Card>
+      <PuzzleFoot />
     </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  wrap: { padding: space.lg, gap: space.md },
+  wrap: { padding: space.lg, gap: space.md, flexGrow: 1 },
 });

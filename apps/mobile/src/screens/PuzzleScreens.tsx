@@ -15,6 +15,7 @@ import { PuzzleView } from '../components/PuzzleView';
 import { RatingPill } from '../components/puzzles/RatingPill';
 import { Button, Card, H2, P, Pill, Row, ScreenHeader, StrokeText } from '../components/Ui';
 import { Icon } from '../components/Icons';
+import { ConfirmSheet } from '../components/table/ConfirmSheet';
 import { useT } from '../i18n';
 
 export function DailyPuzzleScreen() {
@@ -63,7 +64,7 @@ export function DailyPuzzleScreen() {
           <PuzzleView puzzle={puzzle} onResult={onResult} onNext={app.back} nextLabel={t(done ? 'puzzles.daily.done' : 'puzzles.daily.next')} />
         )}
       </Card>
-      <P style={{ fontSize: 12 }}>{t('puzzles.daily.about')}</P>
+      <PuzzleFoot about={t('puzzles.daily.about')} />
     </ScrollView>
   );
 }
@@ -76,10 +77,14 @@ export function PuzzleRushScreen() {
   const { t } = useT();
   const [run, setRun] = useState(0);
   const [allowance, setAllowance] = useState(() => canUse(app.wallet, 'rush'));
-  useEffect(() => {
+  // A free run is spent when its first puzzle is answered, not when the screen opens: opening Rush and
+  // backing out at once costs nothing (and a run that was started is always recorded: see PuzzleRushRun).
+  const spent = useRef<number | null>(null);
+  const startRun = () => {
+    if (spent.current === run) return;
+    spent.current = run;
     if (allowance.ok && allowance.limit !== null) app.setWallet(consume(app.wallet, 'rush'));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [run]);
+  };
   if (!allowance.ok) {
     return (
       <ScrollView contentContainerStyle={styles.wrap}>
@@ -101,6 +106,7 @@ export function PuzzleRushScreen() {
   return (
     <PuzzleRushRun
       key={run}
+      onStart={startRun}
       onAgain={() => {
         const next = canUse(app.wallet, 'rush');
         setAllowance(next);
@@ -110,7 +116,7 @@ export function PuzzleRushScreen() {
   );
 }
 
-function PuzzleRushRun({ onAgain }: { onAgain: () => void }) {
+function PuzzleRushRun({ onAgain, onStart }: { onAgain: () => void; /** The first answer: the run counts from here (and spends a free run). */ onStart: () => void }) {
   const app = useApp();
   const { t } = useT();
   const [runSeed] = useState(() => `rush-${randomHex(4)}`);
@@ -136,14 +142,26 @@ function PuzzleRushRun({ onAgain }: { onAgain: () => void }) {
   useEffect(() => {
     if ((left === 0 || strikes >= RUSH_STRIKES) && !over) setOver(true);
   }, [left, strikes, over]);
-  useEffect(() => {
-    if (!over || recorded.current) return;
+  const record = () => {
+    if (recorded.current) return;
     recorded.current = true;
     app.setProgress((p) => recordRush(p, score, elapsed).progress);
+  };
+  useEffect(() => {
+    if (over) record();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [over]);
+  // Leaving mid-run asks first; leaving ends the run and records it (the free run it spent is not lost unrecorded).
+  const [askLeave, setAskLeave] = useState(false);
+  const back = () => (answeredOnce && !over ? setAskLeave(true) : app.back());
+  const leaveRun = () => {
+    setAskLeave(false);
+    record();
+    app.back();
+  };
 
   const onResult = (r: PuzzleResult) => {
+    if (!answeredOnce) onStart();
     if (r.correct) setScore((s) => s + 1);
     else setStrikes((s) => s + 1);
     setAnsweredOnce(true);
@@ -153,7 +171,17 @@ function PuzzleRushRun({ onAgain }: { onAgain: () => void }) {
 
   return (
     <ScrollView contentContainerStyle={styles.wrap}>
-      <ScreenHeader title={t('puzzles.rush.title')} onBack={app.back} />
+      <ScreenHeader title={t('puzzles.rush.title')} onBack={back} />
+      <ConfirmSheet
+        visible={askLeave}
+        testID="rush-leave-sheet"
+        title={t('puzzles.rush.leaveTitle')}
+        body={t('puzzles.rush.leaveBody', { n: score })}
+        yes={t('puzzles.rush.leaveYes')}
+        no={t('puzzles.rush.leaveNo')}
+        onYes={leaveRun}
+        onNo={() => setAskLeave(false)}
+      />
       <Row style={{ flexWrap: 'wrap', rowGap: 6 }}>
         <Pill icon="clock" text={`${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}`} tone={left <= 20 ? 'danger' : 'neutral'} />
         <Pill icon="check" text={`${score}`} tone="ok" />
@@ -190,12 +218,62 @@ function PuzzleRushRun({ onAgain }: { onAgain: () => void }) {
           </>
         )}
       </Card>
+      <PuzzleFoot />
     </ScrollView>
   );
 }
 
+/**
+ * The bottom of a puzzle screen: the player's puzzle record and a tip, so tall phones are not left with half a
+ * screen of empty sky under the puzzle (it sits at the bottom of the scroll content and wraps on narrow screens).
+ */
+export function PuzzleFoot({ about }: { /** A line about this screen, shown above the tip. */ about?: string }) {
+  const app = useApp();
+  const { t } = useT();
+  const p = app.progress;
+  const acc = p.drillsPlayed ? Math.round((p.drillsCorrect / p.drillsPlayed) * 100) : null;
+  const tips = ['puzzles.foot.tip1', 'puzzles.foot.tip2', 'puzzles.foot.tip3'];
+  // One tip per day, the same all day.
+  const tip = tips[new Date().getDate() % tips.length];
+  const stat = (icon: 'target' | 'flame' | 'trophy' | 'check', value: string, label: string) => (
+    <View style={styles.stat} accessible accessibilityLabel={`${label}: ${value}`}>
+      <Icon name={icon} size={22} />
+      <StrokeText style={styles.statValue} strokeWidth={2} drop={1.5}>
+        {value}
+      </StrokeText>
+      <P dim style={styles.statLabel}>
+        {label}
+      </P>
+    </View>
+  );
+  return (
+    <View style={styles.foot} testID="puzzle-foot">
+      <Card tone="sky" style={{ gap: space.sm }}>
+        <H2>{t('puzzles.foot.title')}</H2>
+        <View style={styles.stats}>
+          {stat('target', String(p.puzzleRating), t('puzzles.foot.rating'))}
+          {stat('flame', String(effectiveStreak(p)), t('puzzles.foot.streak'))}
+          {stat('trophy', String(p.rushBestScore), t('puzzles.foot.rushBest'))}
+          {stat('check', acc === null ? '–' : `${acc}%`, t('puzzles.foot.accuracy'))}
+        </View>
+      </Card>
+      {about ? <P style={{ fontSize: 12 }}>{about}</P> : null}
+      <Row style={styles.tip}>
+        <Icon name="book" size={22} />
+        <P style={{ flex: 1, fontSize: 13, lineHeight: 18 }}>{t(tip)}</P>
+      </Row>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
-  wrap: { padding: space.lg, gap: space.md },
+  wrap: { padding: space.lg, gap: space.md, flexGrow: 1 },
+  foot: { marginTop: 'auto', gap: space.sm, paddingTop: space.sm },
+  stats: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm, justifyContent: 'space-between' },
+  stat: { alignItems: 'center', minWidth: 64, flexGrow: 1, gap: 2 },
+  statValue: { fontSize: 22, fontFamily: fonts.display },
+  statLabel: { fontSize: 12, textAlign: 'center' },
+  tip: { backgroundColor: 'rgba(255,255,255,0.75)', borderWidth: 2, borderColor: colors.ink, borderRadius: 14, paddingHorizontal: 10, paddingVertical: 8, alignItems: 'center' },
   big: { fontSize: 64, fontFamily: fonts.display },
   strikes: { flexDirection: 'row', gap: 4, alignItems: 'center' },
   strike: { width: 24, height: 24, borderRadius: 12, borderWidth: 2.5, borderColor: colors.ink, backgroundColor: colors.creamLight, alignItems: 'center', justifyContent: 'center' },
