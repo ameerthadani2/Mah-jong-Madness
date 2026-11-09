@@ -16,19 +16,37 @@ function clock() {
 }
 
 describe('POST /api/reports', () => {
-  it('stores a report (201) and reports it to analytics without the free text', async () => {
+  it('stores a report (201) and, for a player who allowed analytics, reports it without the free text', async () => {
     const events: Array<{ event: string; props?: Record<string, unknown> }> = [];
     const c = clock();
     const f = apiFixture({ now: c.now, deps: { analytics: { enabled: true, capture: (_id, event, props) => events.push({ event, props }), shutdown: async () => {} } } });
     const a = await f.guest('Ah-Hua');
     const b = await f.guest('Bao');
+    expect((await f.call('PATCH', '/api/me', { analyticsConsent: true }, a.auth)).status).toBe(200);
     const res = await f.call('POST', '/api/reports', { reportedUserId: b.userId, roomCode: 'ab12cd', reason: 'abusive_chat', details: '  Swore at everyone  ' }, a.auth);
     expect(res.status).toBe(201);
     expect(res.json).toEqual({ id: 1, status: 'open', createdAt: new Date(T0).toISOString() });
     expect(await f.repos.reports.listAbout(b.userId)).toEqual([
       { id: 1, reporterId: a.userId, reportedUserId: b.userId, roomCode: 'AB12CD', reason: 'abusive_chat', details: 'Swore at everyone', status: 'open', createdAt: T0 },
     ]);
+    // The consent lookup is asynchronous: let it settle before reading the events.
+    await new Promise((r) => setTimeout(r, 0));
     expect(events).toEqual([{ event: 'report_filed', props: { reason: 'abusive_chat', hasRoom: true, hasDetails: true } }]);
+  });
+
+  it('sends no server-side analytics for a player who has not allowed them, or turned them off', async () => {
+    const events: string[] = [];
+    const f = apiFixture({ deps: { analytics: { enabled: true, capture: (_id, event) => events.push(event), shutdown: async () => {} } } });
+    const silent = await f.guest('Never asked');
+    const optedOut = await f.guest('Said no');
+    const target = await f.guest('Target');
+    expect((await f.call('PATCH', '/api/me', { analyticsConsent: false }, optedOut.auth)).status).toBe(200);
+    expect((await f.call('PATCH', '/api/me', { analyticsConsent: 'yes' }, optedOut.auth)).status).toBe(400);
+    for (const who of [silent, optedOut]) {
+      expect((await f.call('POST', '/api/reports', { reportedUserId: target.userId, reason: 'cheating' }, who.auth)).status).toBe(201);
+    }
+    await new Promise((r) => setTimeout(r, 0));
+    expect(events).toEqual([]);
   });
 
   it('rejects bad input: no target, self, unknown reason, bad room code, unknown player, no session', async () => {
