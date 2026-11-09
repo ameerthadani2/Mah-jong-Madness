@@ -35,7 +35,7 @@ describe('club house rules on the API path', () => {
   it('lets an owner or admin open a variant table, marked as such, and keeps an unchanged one a house table', async () => {
     const { call, guest, rooms } = apiFixture();
     const owner = await guest('Owner');
-    const admin = await guest('Admin');
+    const admin = await guest('Ada');
     const club = (await call('POST', '/api/clubs', { name: 'House', rules: HOUSE }, owner.auth)).json as unknown as Club;
     await call('POST', `/api/clubs/${club.code}/join`, {}, admin.auth);
     await call('POST', `/api/clubs/${club.code}/members/${admin.userId}/role`, { role: 'admin' }, owner.auth);

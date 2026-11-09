@@ -8,7 +8,7 @@ import { randomUUID } from 'node:crypto';
 import { randomHex } from '@mjm/engine';
 import { cleanField } from '../limits';
 import type { Repos } from '../repos/types';
-import { AuthError } from './errors';
+import { AuthError, assertNotBanned } from './errors';
 import { digestsEqual, hashToken, SessionService } from './tokens';
 
 /** The current pepper, or the current and previous ones during a rotation. */
@@ -122,6 +122,7 @@ export async function loginGuest(
   const user = await repos.users.get(identity.userId);
   if (!user || user.deletedAt !== null) throw fail();
   opts.verified?.(user.id);
+  await assertNotBanned(repos, user.id);
   let deviceId: string | null = null;
   if (typeof opts.deviceId === 'string' && opts.deviceId) {
     const device = await repos.devices.get(opts.deviceId);

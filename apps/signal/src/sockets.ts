@@ -20,7 +20,7 @@ import { WebSocketServer, type WebSocket } from 'ws';
 import { LIMITS, type SignalConfig } from './config';
 import { clientIp, TokenBucket } from './limits';
 import { reportError } from './observability';
-import { SESSION_ENDED, type Inbound, type RoomRegistry } from './rooms';
+import { BANNED_CLOSE_CODE, SESSION_ENDED, type Inbound, type RoomRegistry } from './rooms';
 
 /** Largest frame accepted, far above any legitimate game message. `ws` closes the socket with 1009 when a frame is bigger. */
 export const MAX_FRAME_BYTES = 64 * 1024;
@@ -117,6 +117,8 @@ export function attachSocketHandlers(
     const unauthorised = (e?: unknown) => {
       if (closed) return;
       if (e instanceof VerifyUnavailable) ws.close(TRY_AGAIN_LATER, 'Try again later');
+      // A banned account (the verifier's AuthError 'banned') is told so, so the app does not ask it to sign in again.
+      else if ((e as { code?: unknown } | null)?.code === 'banned') ws.close(BANNED_CLOSE_CODE, 'Banned');
       else ws.close(UNAUTHORISED, 'Unauthorised');
     };
     const helloTimer = auth.verify ? setTimeout(() => stage !== 'ready' && unauthorised(), auth.helloTimeoutMs ?? HELLO_TIMEOUT_MS) : null;

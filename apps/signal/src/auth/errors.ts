@@ -24,6 +24,8 @@ export const AUTH_ERRORS = {
   identity_in_use: 409,
   /** Removing this identity would leave the account with no provider to sign in with. */
   last_identity: 409,
+  /** A moderator banned the account: it cannot sign in, refresh or play. */
+  banned: 403,
 } as const;
 
 export type AuthErrorCode = keyof typeof AUTH_ERRORS;
@@ -42,3 +44,12 @@ export class AuthError extends Error {
 }
 
 export const isAuthError = (e: unknown): e is AuthError => e instanceof AuthError;
+
+/**
+ * Refuses a banned account (403 `banned`). Called before every session is issued and on every
+ * session check, so a ban takes effect on the next request whatever the client holds.
+ */
+export async function assertNotBanned(repos: { moderation: { status(userId: string): Promise<{ bannedAt: number | null } | null> } }, userId: string): Promise<void> {
+  const status = await repos.moderation.status(userId);
+  if (status && status.bannedAt !== null) throw new AuthError('banned', 'This account has been banned');
+}

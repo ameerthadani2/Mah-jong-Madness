@@ -6,7 +6,7 @@
  *    U's guest secret is replaced (the new one goes back to the linking device only), so a device
  *    that held the old secret cannot sign back in.
  * 2. P is linked to V and U is a guest: merge U into V. U's wallet, purchases, entitlements,
- *    puzzle history, devices, reports and club memberships move to V (where both are in a club,
+ *    puzzle history, devices, reports, blocks and club memberships move to V (where both are in a club,
  *    the stronger row stays; clubs U owns transfer); U's sessions end; U is soft-deleted with
  *    merged_into = V and its profile scrubbed; the device gets a V session.
  * 3. P is linked to V and U already has a provider: 409 identity_in_use (two real accounts are
@@ -22,7 +22,7 @@
  */
 import type { Repos, UserRecord } from '../repos/types';
 import { DELETED_PLAYER_NAME } from '../repos/types';
-import { AuthError } from './errors';
+import { AuthError, assertNotBanned } from './errors';
 import { rotateGuestSecret } from './guest';
 import type { VerifiedIdentity } from './providers';
 import type { SessionService } from './tokens';
@@ -105,6 +105,7 @@ export async function link(repos: Repos, userId: string, identity: VerifiedIdent
       await tx.puzzleResults.moveToUser(user.id, target.id);
       await tx.devices.moveToUser(user.id, target.id);
       await tx.reports.moveToUser(user.id, target.id);
+      await tx.blocks.moveToUser(user.id, target.id);
       await tx.sessions.revokeAllForUser(user.id, now);
       await tx.identities.deleteForUser(user.id);
       await tx.users.update(user.id, { deletedAt: now, mergedInto: target.id, displayName: '', avatar: null, email: null, birthYear: null, locale: null });
@@ -123,6 +124,7 @@ export async function login(repos: Repos, identity: VerifiedIdentity, opts: Merg
   if (!existing) throw new AuthError('not_linked', 'This sign-in is not linked to an account');
   const user = await repos.users.get(existing.userId);
   if (!user || user.deletedAt !== null) throw new AuthError('not_linked', 'This sign-in is not linked to an account');
+  await assertNotBanned(repos, user.id);
   let deviceId: string | null = null;
   if (opts.deviceId) {
     const device = await repos.devices.get(opts.deviceId);
@@ -151,6 +153,7 @@ export async function deleteAccount(repos: Repos, userId: string, opts: { now?: 
     await tx.sessions.deleteForUser(userId);
     await tx.devices.deleteForUser(userId);
     await tx.identities.deleteForUser(userId);
+    await tx.blocks.deleteForUser(userId);
     const clubs = await tx.clubs.anonymiseUser(userId);
     await tx.users.update(userId, {
       deletedAt: user.deletedAt ?? now,

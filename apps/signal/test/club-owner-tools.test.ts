@@ -120,7 +120,7 @@ describe('taking a player off a club table', () => {
 
   it('refuses an admin acting on the owner or another admin, and a member acting at all', async () => {
     const f = fixture();
-    const { owner, club, others } = await clubWith(f, ['Admin1', 'Admin2', 'Member']);
+    const { owner, club, others } = await clubWith(f, ['Ada', 'Abe', 'Member']);
     const [ad1, ad2, m] = others;
     await f.call('POST', `/api/clubs/${club.code}/members/${ad1.userId}/role`, { role: 'admin' }, owner.auth);
     await f.call('POST', `/api/clubs/${club.code}/members/${ad2.userId}/role`, { role: 'admin' }, owner.auth);
@@ -241,7 +241,7 @@ describe('requests, ownership, leaving and deleting', () => {
 
   it('deletes a club only for its owner with the name typed, and closes its tables', async () => {
     const f = fixture();
-    const { owner, club, others } = await clubWith(f, ['Admin']);
+    const { owner, club, others } = await clubWith(f, ['Ada']);
     const [admin] = others;
     await f.call('POST', `/api/clubs/${club.code}/members/${admin.userId}/role`, { role: 'admin' }, owner.auth);
     const table = ((await f.call('POST', `/api/clubs/${club.code}/tables`, {}, admin.auth)).json as { code: string }).code;

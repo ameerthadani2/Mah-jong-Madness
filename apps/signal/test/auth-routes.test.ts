@@ -177,7 +177,7 @@ describe('the profile', () => {
   it("deleting a club owner's account hands the club to its senior admin, and dissolves a club nobody else is in", async () => {
     const { call, guest, clubs, repos } = apiFixture();
     const owner = await guest('Owner');
-    const admin = await guest('Admin');
+    const admin = await guest('Ada');
     const member = await guest('Mem');
     const club = (await call('POST', '/api/clubs', { name: 'Handover', settings: { joinRequiresApproval: true } }, owner.auth)).json as unknown as Club;
     for (const who of [member, admin]) {

@@ -87,6 +87,8 @@ export const ROOM_UNAVAILABLE = 'Room not found or full';
 export const ROOM_UNAVAILABLE_CODE = 'room_unavailable';
 /** WebSocket close code for a socket whose session has ended (logout, revocation, deletion, expiry); the same code a bad `hello` gets. */
 export const SESSION_ENDED = 4401;
+/** WebSocket close code for a socket whose account a moderator banned (and for a banned account's `hello`). */
+export const BANNED_CLOSE_CODE = 4403;
 export const HOSTED_ONLY = 'Only server-hosted tables can be created';
 /** Sent for a hosted create while `HOST_TABLES=0`, instead of quietly opening a relay-only room. */
 export const HOSTED_DISABLED = 'Hosted tables are disabled';
@@ -376,14 +378,14 @@ export class RoomRegistry {
    * sockets were closed. The seats stay as they are: a player who signs in again reclaims one
    * with the rejoin token like any other reconnect.
    */
-  endSessions(which: { sessionId?: string; userId?: string; exceptSessionId?: string }): number {
+  endSessions(which: { sessionId?: string; userId?: string; exceptSessionId?: string }, close: { code: number; reason: string } = { code: SESSION_ENDED, reason: 'Session ended' }): number {
     let n = 0;
     for (const peer of [...this.peers.values()]) {
       if (!peer.sessionId && !peer.userId) continue;
       const bySession = which.sessionId !== undefined && peer.sessionId === which.sessionId;
       const byUser = which.userId !== undefined && peer.userId === which.userId && peer.sessionId !== which.exceptSessionId;
       if (!bySession && !byUser) continue;
-      peer.socket.close(SESSION_ENDED, 'Session ended');
+      peer.socket.close(close.code, close.reason);
       n++;
     }
     return n;

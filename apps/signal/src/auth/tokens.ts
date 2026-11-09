@@ -9,7 +9,7 @@
 import { randomUUID, timingSafeEqual } from 'node:crypto';
 import { randomHex, sha256Hex } from '@mjm/engine';
 import type { Repos, SessionRecord } from '../repos/types';
-import { AuthError } from './errors';
+import { AuthError, assertNotBanned } from './errors';
 
 export const SESSION_TOKEN_PREFIX = 'mjs_';
 const TOKEN_SHAPE = /^mjs_[0-9a-f]{64}$/;
@@ -105,6 +105,8 @@ export class SessionService {
       }
     }
     if (!session) throw new AuthError('invalid_session', 'Unknown session token');
+    // Before expiry and revocation: a ban revokes every session, and the client should hear why.
+    await assertNotBanned(this.repos, session.userId);
     const now = this.now();
     if (now >= session.expiresAt) throw new AuthError('session_expired', 'Session expired');
     if (session.revokedAt !== null && session.revokedAt <= now) throw new AuthError('session_revoked', 'Session revoked');

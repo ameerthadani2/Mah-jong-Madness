@@ -37,10 +37,11 @@ import { BucketTable, cleanField, clientIp } from './limits';
 import type { LatencyWindow } from './metrics';
 import { NO_ANALYTICS, reportError, withConsent, type Analytics } from './observability';
 import { storeRoutes } from './admin';
+import { adminModerationRoutes, blockRoutes, ModerationError, MuteList, NAME_NOT_ALLOWED, nameAllowed } from './moderation';
 import { EXPO_PUSH_TOKEN, type PushService } from './push';
 import { REPORT_REASONS, type ReportReason, type Repos, type UserRecord } from './repos/types';
 import { parseRevenueCatWebhook, webhookAuthorised } from './revenuecat';
-import { isBotSkill, RoomLimitError, type RoomRegistry } from './rooms';
+import { BANNED_CLOSE_CODE, isBotSkill, RoomLimitError, type RoomRegistry } from './rooms';
 import { WalletError, WalletService } from './wallet';
 
 export interface ApiDeps {
@@ -69,6 +70,12 @@ export interface ApiDeps {
   /** True once the server has begun shutting down: `/health` answers 503 `draining`. */
   draining?: () => boolean;
   now?: () => number;
+  /** The tables' mute list (default: a new one, which only the admin routes then update). */
+  mutes?: MuteList;
+  /** Quick match, told when a player's blocks change and when an account is banned. */
+  matchmaker?: { blocksChanged(userId: string): void; removeUser(userId: string): void };
+  /** The moderators' token (default: ADMIN_TOKEN from the environment; blank turns the moderation routes off). */
+  adminToken?: string | null;
 }
 
 export interface ApiOptions {
@@ -184,6 +191,16 @@ function optionalText(v: unknown, field: string, max: number, opts: { multiline?
   return cleanField(v, max, opts);
 }
 
+/** A display name or club name, cleaned, that the name blocklist refuses: 400 `name_not_allowed`. */
+function assertNameAllowed(name: string | undefined): void {
+  if (name && !nameAllowed(name)) throw new HttpError(400, NAME_NOT_ALLOWED, 'That name is not allowed; please choose another');
+}
+
+/** Club names are checked here before the club registry cleans and stores them. */
+function assertClubNameAllowed(v: unknown): void {
+  if (typeof v === 'string') assertNameAllowed(cleanField(v, 64));
+}
+
 export function buildRoutes(deps: ApiDeps, opts: Pick<ApiOptions, 'reportIpLimiter'> = {}): Route[] {
   const { clubs, rooms, repos, sessions } = deps;
   const now = deps.now ?? Date.now;
@@ -196,6 +213,17 @@ export function buildRoutes(deps: ApiDeps, opts: Pick<ApiOptions, 'reportIpLimit
   // Decision 5: with the store live, owning a club needs The Four Winds Club.
   clubs.useOwnerPlan(storeEnabled ? (userId) => wallet.hasFourWinds(userId) : null);
   const providers = deps.providers ?? {};
+  const moderation = {
+    repos,
+    now,
+    reply: (status: number, body?: unknown) => new Reply(status, body),
+    mutes: deps.mutes ?? new MuteList(now),
+    // A banned account's table sockets close with 4403, and it leaves the quick-match queue.
+    closeSockets: (userId: string) => void rooms.endSessions({ userId }, { code: BANNED_CLOSE_CODE, reason: 'Banned' }),
+    onBlocksChanged: (userId: string) => deps.matchmaker?.blocksChanged(userId),
+    onBanned: (userId: string) => deps.matchmaker?.removeUser(userId),
+    ...(deps.adminToken !== undefined ? { adminToken: deps.adminToken } : {}),
+  };
   const peppers: Peppers = { current: sessions.pepper, previous: sessions.previousPepper };
 
   const r = (method: string, path: string, handler: Handler, auth = false): Route => {
@@ -260,6 +288,7 @@ export function buildRoutes(deps: ApiDeps, opts: Pick<ApiOptions, 'reportIpLimit
       async ({ body }) => {
         const device = deviceOf(body);
         const displayName = optionalText(body.displayName, 'displayName', 24);
+        assertNameAllowed(displayName);
         const avatar = optionalText(body.avatar, 'avatar', 16);
         const g = await createGuest(repos, peppers, device, { sessions, now, displayName, avatar, deviceId: device.id });
         const user = await liveUser(g.userId);
@@ -382,6 +411,7 @@ export function buildRoutes(deps: ApiDeps, opts: Pick<ApiOptions, 'reportIpLimit
       const { body } = ctx;
       const patch: Partial<Pick<UserRecord, 'displayName' | 'avatar' | 'locale' | 'birthYear'>> = {};
       const displayName = optionalText(body.displayName, 'displayName', 24);
+      assertNameAllowed(displayName);
       if (displayName !== undefined) patch.displayName = displayName;
       if (body.avatar !== undefined) patch.avatar = body.avatar === null ? null : (optionalText(body.avatar, 'avatar', 16) ?? null) || null;
       if (body.locale !== undefined) {
@@ -429,6 +459,10 @@ export function buildRoutes(deps: ApiDeps, opts: Pick<ApiOptions, 'reportIpLimit
       return { spent: res.spent, entitlement: res.entitlement, wallet: summary.wallet, cosmetics: summary.cosmetics };
     }),
     ...storeRoutes(r, { repos, wallet, now }),
+
+    // ------------------------------------------------------------------ blocks and moderation
+    ...blockRoutes(r, moderation),
+    ...adminModerationRoutes(r, moderation),
 
     // ------------------------------------------------------------------ reports and push
     r('POST', '/api/reports', async (ctx) => {
@@ -483,6 +517,7 @@ export function buildRoutes(deps: ApiDeps, opts: Pick<ApiOptions, 'reportIpLimit
       const me = await member(ctx);
       // With the store live a club needs an owner with The Four Winds Club; before that anyone may create one.
       if (storeEnabled && !(await wallet.hasFourWinds(me.userId))) throw new HttpError(403, 'fourwinds_required', 'Creating a club needs The Four Winds Club');
+      assertClubNameAllowed(ctx.body.name);
       return clubs.createClub(me, ctx.body.name ?? '', ctx.body.rules ?? {}, ctx.body.settings ?? {});
     }),
     r('GET', '/api/clubs/:code', async (ctx) => view(clubs.club(ctx.params.code), (await ctx.caller()).userId)),
@@ -494,6 +529,7 @@ export function buildRoutes(deps: ApiDeps, opts: Pick<ApiOptions, 'reportIpLimit
     r('PATCH', '/api/clubs/:code', async (ctx) => {
       const me = await member(ctx);
       const { body } = ctx;
+      assertClubNameAllowed(body.name);
       return view(clubs.update(ctx.params.code, me.userId, { name: body.name, description: body.description, rules: body.rules, settings: body.settings }), me.userId);
     }),
     // Owner only, with the club's name typed again; its live tables close first.
@@ -693,6 +729,7 @@ export function createApiHandler(deps: ApiDeps, opts: ApiOptions = {}): (req: In
         if (e instanceof AuthError) return send(res, e.status, { error: e.code, message: e.message });
         if (e instanceof ClubError) return send(res, STATUS[e.code] ?? 400, { error: e.code, message: e.message });
         if (e instanceof WalletError) return send(res, e.status, { error: e.code, message: e.message });
+        if (e instanceof ModerationError) return send(res, e.status, { error: e.code, message: e.message });
         if (e instanceof HttpError) {
           if (e.status === 429) res.setHeader('retry-after', '12');
           return send(res, e.status, { error: e.code, message: e.message });
