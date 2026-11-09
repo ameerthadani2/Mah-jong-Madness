@@ -22,8 +22,9 @@ empty seats so a table always runs; offline you play the same engine against bot
 ## Try it from a phone
 
 * **Play in Safari:** enable GitHub Pages (Settings → Pages → Source: GitHub Actions), then open https://ameerthadani2.github.io/Mah-jong-Madness/
-* **Host clubs for friends:** deploy the game server to Fly.io with Neon Postgres (`docs/DEPLOY.md`) and set the `SIGNAL_URL` repo variable to its `wss://` address.
-* Step-by-step: `docs/RUN_FROM_PHONE.md`. Native builds: `docs/RUN_ON_IOS.md`.
+* **Deploy the game server:** Fly.io with Neon Postgres, by dispatching the **Deploy signal server** workflow; it runs the tests, deploys, and plays one hand against the live server with the smoke test (`docs/DEPLOY.md`). Then set the `SIGNAL_URL` repository variable to its `wss://` address.
+* **Native builds from GitHub:** the **iOS TestFlight build** and **Android Play build** workflows build on EAS and submit to TestFlight and the Play internal testing track (`docs/RUN_ON_IOS.md`, `docs/RUN_ON_ANDROID.md`). They skip themselves until their secrets exist and refuse to build without a `wss://` `SIGNAL_URL`.
+* What to set up, in order: `docs/OWNER_TODO.md`. What to test on the phones: `docs/QA.md`. Step-by-step for the web build: `docs/RUN_FROM_PHONE.md`.
 
 ## Quick start
 
@@ -32,8 +33,9 @@ npm install            # Node ≥ 20
 npm test               # every workspace
 npm run typecheck      # every workspace
 npm run sim -- 50      # 50 bot-vs-bot matches, prints win/draw stats
-npm run signal         # signaling server on :8787
+npm run signal         # game server on :8787 (in memory, guest sign-in)
 npm run mobile         # Expo dev server; press i / a / w
+npm run smoke -w @mjm/signal -- http://127.0.0.1:8787   # play one hand against a running server
 ```
 
 Playing against bots needs nothing else. Online tables always run on the game server: builds read its
