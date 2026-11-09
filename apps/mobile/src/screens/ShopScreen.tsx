@@ -4,8 +4,11 @@ import { Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } fr
 import { LinearGradient } from 'expo-linear-gradient';
 import { useApp } from '../app-state';
 import { useAuth } from '../auth/AuthProvider';
-import { COSMETICS, DIAMOND_PACKS, productText, SUBSCRIPTIONS, type Product } from '../monetisation/catalog';
-import { coachRenewal, coachTier, ownsCosmetic, totalDiamonds } from '../monetisation/wallet';
+import { BUNDLES, bundlePrice, COSMETIC_CATEGORIES, COSMETICS, DIAMOND_PACKS, productById, productText, SUBSCRIPTIONS, type CosmeticCategory, type Product } from '../monetisation/catalog';
+import { EMOTE_PACKS, tileBackById, type CelebrationId } from '../monetisation/cosmetics';
+import { slotOf } from '../monetisation/equipped';
+import { setEquipped, useOwnedEquipped } from '../monetisation/useEquipped';
+import { coachRenewal, coachTier, ownsProduct, totalDiamonds, type Wallet } from '../monetisation/wallet';
 import { StoreError } from '../monetisation/providers';
 import { shopStoreState } from '../monetisation/store-mode';
 import { useRemoteConfig } from '../telemetry/RemoteConfig';
@@ -18,9 +21,13 @@ import { gateFor } from '../legal/age';
 import { useAgeGate } from '../legal/useAgeGate';
 import { colors, fonts, space } from '../theme';
 import { themeById } from '../themes';
-import { Button, Card, fontFor, GemCounter, H2, P, Pill, Row, ScreenHeader, StrokeText } from '../components/Ui';
+import { Button, Card, Chip, fontFor, GemCounter, H2, P, Pill, Row, ScreenHeader, StrokeText } from '../components/Ui';
 import { Icon, type IconName } from '../components/Icons';
 import { GemPile, MedalScene, ThemeScene } from '../components/Scenes';
+import { AvatarPlate } from '../components/Avatars';
+import { PackEmote } from '../components/EmotePacks';
+import { WinCelebration } from '../components/Celebrations';
+import { TileBackPreview } from '../components/Tile';
 import { AgeBlocked, AgeGate } from '../components/AgeGate';
 import { LegalLinks, NoValueNotice } from '../components/LegalLinks';
 
@@ -39,6 +46,8 @@ export function ShopScreen() {
   const { width, height } = useWindowDimensions();
   const shop = useWallet();
   const [tab, setTab] = useState<Tab>('diamonds');
+  const [shelf, setShelf] = useState<CosmeticCategory>('table');
+  const equipped = useOwnedEquipped();
   const [busy, setBusy] = useState<string | null>(null);
   const [msg, setMsg] = useState<{ text: string; tone: 'gold' | 'ok' | 'danger' } | null>(null);
   const [offline, setOffline] = useState(false);
@@ -55,9 +64,21 @@ export function ShopScreen() {
   if (gate.loaded && gateState === 'blocked') return <AgeBlocked onBack={app.back} />;
   if (gate.loaded && gateState === 'ask') return <AgeGate onBack={app.back} />;
 
-  const unlocked = (p: Product) => {
+  /** Put a cosmetic on: a table look becomes the table theme; anything else goes in its slot. */
+  const wear = (p: Product, w: Wallet) => {
+    if (p.category === 'table' && p.unlocks) app.setSettings({ ...app.settings, tableTheme: p.unlocks });
+    const slot = slotOf(p.id);
+    if (slot) setEquipped(slot, p.id, w);
+  };
+
+  const unlocked = (p: Product, w: Wallet = wallet) => {
     setMsg({ text: t('shop.unlocked', { title: productText(p, t).title }), tone: 'ok' });
-    if (p.kind === 'cosmetic' && p.unlocks) app.setSettings({ ...app.settings, tableTheme: p.unlocks });
+    if (p.kind !== 'cosmetic') return;
+    // A set puts on each of its items; a single item goes straight on.
+    for (const id of p.contains ?? [p.id]) {
+      const item = productById(id);
+      if (item) wear(item, w);
+    }
   };
 
   const buy = async (p: Product) => {
@@ -87,7 +108,7 @@ export function ShopScreen() {
     setMsg(null);
     try {
       const r = await shop.spend(p);
-      if (r.status === 'credited') unlocked(p);
+      if (r.status === 'credited') unlocked(p, r.wallet);
       else if (r.status === 'need_diamonds') {
         setMsg({ text: t('shop.needDiamonds', { n: r.short }), tone: 'gold' });
       } else setMsg({ text: shopError(r.error, t), tone: 'danger' });
@@ -175,21 +196,39 @@ export function ShopScreen() {
         </>
       )}
 
-      {tab === 'looks' &&
-        grid(
-          COSMETICS.map((p) => (
-            <ProductCard
-              key={p.id}
-              w={cardW}
-              p={p}
-              owned={p.unlocks ? ownsCosmetic(wallet, p.unlocks) : false}
-              busy={busy === p.id}
-              onBuyDiamonds={p.diamondPrice ? () => void spend(p) : undefined}
-              art={<ThemeScene theme={themeById(p.unlocks)} width="100%" height="100%" />}
-              bg={['#D5F7E3', '#8FE0B0']}
-            />
-          )),
-        )}
+      {tab === 'looks' && (
+        <>
+          <Row style={{ flexWrap: 'wrap', rowGap: 6 }} gap={6}>
+            {COSMETIC_CATEGORIES.map((c) => (
+              <Chip key={c} label={t(`shop.shelves.${c}`)} selected={shelf === c} onPress={() => setShelf(c)} />
+            ))}
+          </Row>
+          {grid(
+            (shelf === 'bundle' ? BUNDLES : COSMETICS.filter((p) => p.category === shelf)).map((p) => {
+              const owned = ownsProduct(wallet, p.id);
+              const inUse = p.category === 'table' ? app.settings.tableTheme === p.unlocks : !!slotOf(p.id) && Object.values(equipped).includes(p.id);
+              const price = p.contains ? bundlePrice(p, (id) => ownsProduct(wallet, id)) : (p.diamondPrice ?? 0);
+              const have = p.contains ? p.contains.filter((id) => ownsProduct(wallet, id)).length : 0;
+              return (
+                <ProductCard
+                  key={p.id}
+                  w={cardW}
+                  p={p}
+                  owned={owned}
+                  busy={busy === p.id}
+                  onBuyDiamonds={p.diamondPrice ? () => void spend(p) : undefined}
+                  diamondLabel={price}
+                  note={have > 0 && !owned ? t('shop.bundleSaves', { owned: have, total: p.contains!.length }) : undefined}
+                  onEquip={owned && !p.contains ? () => wear(p, wallet) : undefined}
+                  inUse={inUse}
+                  art={<CosmeticPreview p={p} avatar={app.profile.avatar} w={cardW - 16} />}
+                  bg={['#D5F7E3', '#8FE0B0']}
+                />
+              );
+            }),
+          )}
+        </>
+      )}
 
       {tab === 'coach' && (
         <>
@@ -217,6 +256,52 @@ export function ShopScreen() {
   );
 }
 
+/** The Shop picture of a cosmetic: the look itself, drawn the way the table will show it. */
+function CosmeticPreview({ p, avatar, w }: { p: Product; avatar: string; w: number }) {
+  const first = p.contains ? productById(p.contains[0]) : p;
+  if (!first) return null;
+  if (p.contains) {
+    const back = p.contains.map((id) => tileBackById(id)).find(Boolean) ?? null;
+    return (
+      <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
+        <View style={{ width: '62%', height: '100%' }}>
+          <ThemeScene theme={themeById(first.unlocks)} width="100%" height="100%" />
+        </View>
+        {back && <TileBackPreview back={back} w={26} />}
+      </View>
+    );
+  }
+  switch (p.category) {
+    case 'table':
+      return <ThemeScene theme={themeById(p.unlocks)} width="100%" height="100%" />;
+    case 'tileback':
+      return (
+        <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+          <TileBackPreview back={tileBackById(p.id)} w={34} />
+          <TileBackPreview back={tileBackById(p.id)} w={34} />
+        </View>
+      );
+    case 'frame':
+      return (
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+          <AvatarPlate id={avatar} frame={p.id} size={64} />
+        </View>
+      );
+    case 'emotes':
+      return (
+        <View style={{ flex: 1, flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'center', alignContent: 'center' }}>
+          {(EMOTE_PACKS[p.id as keyof typeof EMOTE_PACKS] ?? []).map((id) => (
+            <PackEmote key={id} id={id} size={28} />
+          ))}
+        </View>
+      );
+    case 'celebration':
+      return <WinCelebration id={p.id as CelebrationId} width={Math.max(40, w - 8)} height={84} still />;
+    default:
+      return null;
+  }
+}
+
 function ProductCard({
   p,
   price,
@@ -224,6 +309,10 @@ function ProductCard({
   busy,
   onBuy,
   onBuyDiamonds,
+  diamondLabel,
+  note,
+  onEquip,
+  inUse,
   art,
   bg,
   w,
@@ -237,6 +326,13 @@ function ProductCard({
   busy: boolean;
   onBuy?: () => void;
   onBuyDiamonds?: () => void;
+  /** The diamond price shown on the buy button (a set's price drops with what is owned). */
+  diamondLabel?: number;
+  /** A line under the description (what a set already holds). */
+  note?: string;
+  /** For an owned cosmetic: put it on. */
+  onEquip?: () => void;
+  inUse?: boolean;
   art: React.ReactNode;
   bg: readonly [string, string];
   w: number;
@@ -274,16 +370,20 @@ function ProductCard({
         <Text style={[styles.sub, fontFor(sub, fonts.body, '700'), amount !== undefined && { textAlign: 'center' }]} numberOfLines={2}>
           {sub}
         </Text>
+        {note && <Text style={[styles.sub, { color: colors.okText }]}>{note}</Text>}
       </View>
       {owned ? (
-        <View style={styles.owned}>
-          <Icon name="check" size={20} color={colors.cta} />
-          <Text style={[styles.ownedText, fontFor(t('shop.owned'), fonts.display)]}>{t('shop.owned')}</Text>
+        <View style={{ gap: 4 }}>
+          <View style={styles.owned}>
+            <Icon name="check" size={20} color={colors.cta} />
+            <Text style={[styles.ownedText, fontFor(t('shop.owned'), fonts.display)]}>{t('shop.owned')}</Text>
+          </View>
+          {onEquip && <Button small kind={inUse ? 'ghost' : 'secondary'} testID={`equip-${p.id}`} title={inUse ? t('shop.equipped') : t('shop.equip')} onPress={onEquip} disabled={inUse} />}
         </View>
       ) : (
         <View style={{ gap: 6 }}>
           {price && onBuy && <Button small testID={`buy-${p.id}`} title={busy ? '…' : price.label} onPress={onBuy} disabled={busy || !price.sellable} />}
-          {onBuyDiamonds && <Button small testID={`spend-${p.id}`} icon="gem" title={busy ? '…' : (p.diamondPrice ?? 0).toLocaleString()} onPress={onBuyDiamonds} disabled={busy} />}
+          {onBuyDiamonds && <Button small testID={`spend-${p.id}`} icon="gem" title={busy ? '…' : (diamondLabel ?? p.diamondPrice ?? 0).toLocaleString()} onPress={onBuyDiamonds} disabled={busy} />}
         </View>
       )}
     </Card>

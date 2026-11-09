@@ -7,6 +7,14 @@
   "profile": "個人檔案",
   "namePlaceholder": "名字",
   "tableLook": "牌桌外觀",
+  "looks": {
+    "tileBack": "牌背",
+    "frame": "頭像框",
+    "emotes": "表情包",
+    "celebration": "胡牌慶祝",
+    "default": "預設",
+    "none": "還沒有，可以到商店看看。"
+  },
   "lockedLooks": "上鎖的外觀可在商店解鎖。",
   "openShop": "前往商店",
   "coachBots": "教練與電腦",
