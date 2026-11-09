@@ -615,9 +615,16 @@ export class ClubRegistry {
     return club;
   }
 
+  /** True when the account is on this club's ban list. */
+  isBanned(code: string, userId: string | undefined): boolean {
+    if (!userId) return false;
+    return (this.clubs.get(code.toUpperCase())?.bans ?? []).some((b) => b.userId === userId);
+  }
+
   joinClub(code: string, user: Identity): { club: Club; status: 'joined' | 'pending' | 'already' } {
     const club = this.get(code);
     if (this.member(club, user.userId)) return { club, status: 'already' };
+    if (this.isBanned(club.code, user.userId)) throw new ClubError('forbidden', 'You cannot join this club');
     if (club.pending.some((p) => p.userId === user.userId)) return { club, status: 'pending' };
     this.requireClubRoom(user.userId);
     if (club.settings.joinRequiresApproval) {
@@ -647,12 +654,112 @@ export class ClubRegistry {
 
   removeMember(code: string, actorId: string, userId: string): Club {
     const club = this.get(code);
-    if (actorId !== userId) this.requireRole(club, actorId, ['owner', 'admin']);
     if (userId === club.ownerId) throw new ClubError('forbidden', 'The owner cannot leave; transfer ownership first');
+    if (actorId !== userId) this.assertOutranks(club, actorId, userId);
     club.members = club.members.filter((m) => m.userId !== userId);
     club.pending = club.pending.filter((p) => p.userId !== userId);
     this.persist(club);
     return club;
+  }
+
+  /** Owner or admin: turn down a pending join request. */
+  reject(code: string, actorId: string, userId: string): Club {
+    const club = this.get(code);
+    this.requireRole(club, actorId, ['owner', 'admin']);
+    const before = club.pending.length;
+    club.pending = club.pending.filter((p) => p.userId !== userId);
+    if (club.pending.length === before) throw new ClubError('not_found', 'No pending request for that user');
+    this.persist(club);
+    return club;
+  }
+
+  /**
+   * Check that `actorId` may act against `userId` in this club (remove, ban, take off a table):
+   * the owner may act against anyone but themselves; an admin only against plain members and
+   * accounts outside the club. Returns the club.
+   */
+  private assertOutranks(club: Club, actorId: string, userId: string): ClubMember {
+    const actor = this.requireRole(club, actorId, ['owner', 'admin']);
+    if (userId === actorId) throw new ClubError('forbidden', 'You cannot do that to yourself');
+    if (userId === club.ownerId) throw new ClubError('forbidden', 'The owner cannot be removed; transfer ownership first');
+    const target = this.member(club, userId);
+    if (actor.role === 'admin' && target?.role === 'admin') throw new ClubError('forbidden', 'Only the owner can remove an admin');
+    return actor;
+  }
+
+  /**
+   * Owner or admin: ban an account. Its membership or pending request goes, and it can no longer
+   * join, ask to join, or join the club's tables until it is unbanned. The caller takes it off the
+   * club's live tables. `who` names an account that is not in the club (from its user record).
+   */
+  ban(code: string, actorId: string, userId: unknown, who?: Identity): Club {
+    const club = this.get(code);
+    if (typeof userId !== 'string' || !/^[\w-]{6,64}$/.test(userId)) throw new ClubError('invalid', 'userId must be an account id');
+    const actor = this.assertOutranks(club, actorId, userId);
+    const bans = (club.bans ??= []);
+    if (!bans.some((b) => b.userId === userId)) {
+      if (bans.length >= CLUB_LIMITS.bansPerClub) throw new ClubError('limit', `This club already has ${CLUB_LIMITS.bansPerClub} banned accounts; unban one first`);
+      const row = this.member(club, userId) ?? club.pending.find((p) => p.userId === userId) ?? who;
+      if (!row) throw new ClubError('not_found', 'Member not found');
+      bans.push({ userId, name: row.name, bannedAt: this.now(), by: actor.userId });
+    }
+    club.members = club.members.filter((m) => m.userId !== userId);
+    club.pending = club.pending.filter((p) => p.userId !== userId);
+    this.persist(club);
+    return club;
+  }
+
+  /** Owner or admin: lift a ban. The account may then ask to join again like anyone else. */
+  unban(code: string, actorId: string, userId: string): Club {
+    const club = this.get(code);
+    this.requireRole(club, actorId, ['owner', 'admin']);
+    const bans = club.bans ?? [];
+    if (!bans.some((b) => b.userId === userId)) throw new ClubError('not_found', 'That account is not banned');
+    club.bans = bans.filter((b) => b.userId !== userId);
+    this.persist(club);
+    return club;
+  }
+
+  /**
+   * Owner or admin: check that `actorId` may take `userId` off one of this club's tables, and that
+   * the table is the club's. The room registry does the rest.
+   */
+  assertCanEvict(code: string, actorId: string, tableCode: string, userId: unknown): string {
+    const club = this.get(code);
+    if (typeof userId !== 'string' || !userId) throw new ClubError('invalid', 'userId must be an account id');
+    if (!club.tables.some((t) => t.code === tableCode.toUpperCase() && t.status !== 'finished')) throw new ClubError('not_found', 'Table not found');
+    this.assertOutranks(club, actorId, userId);
+    return userId;
+  }
+
+  /**
+   * Owner or admin: close one of the club's tables. The listing goes at once and the match counts
+   * for nothing; the caller ends the room (`RoomRegistry.closeTable`).
+   */
+  closeTable(code: string, actorId: string, tableCode: string): Club {
+    const club = this.get(code);
+    this.requireRole(club, actorId, ['owner', 'admin']);
+    const wanted = tableCode.toUpperCase();
+    if (!club.tables.some((t) => t.code === wanted)) throw new ClubError('not_found', 'Table not found');
+    this.removeTable(club.code, wanted);
+    return club;
+  }
+
+  /**
+   * Owner only: delete the club. `confirm` must repeat the club's name or code (the app asks the
+   * owner to type it). Returns the codes of its tables that are still live, for the caller to close.
+   */
+  deleteClub(code: string, actorId: string, confirm: unknown): string[] {
+    const club = this.get(code);
+    this.requireRole(club, actorId, ['owner']);
+    const typed = typeof confirm === 'string' ? confirm.trim().toLowerCase() : '';
+    if (!typed || (typed !== club.name.trim().toLowerCase() && typed !== club.code.toLowerCase())) {
+      throw new ClubError('invalid', "Type the club's name to confirm");
+    }
+    const live = club.tables.filter((t) => t.status !== 'finished').map((t) => t.code);
+    this.clubs.delete(club.code);
+    this.persistCode(club.code);
+    return live;
   }
 
   setRole(code: string, actorId: string, userId: string, role: unknown): Club {
@@ -860,6 +967,14 @@ export class ClubRegistry {
     club.seasonStartedAt = archived.endedAt;
     this.persist(club);
     return { club, archived };
+  }
+
+  /** What a member sees: the whole club, except that only the owner and admins see the ban list. */
+  static memberView(club: Club, userId: string): Club {
+    const m = club.members.find((x) => x.userId === userId);
+    if (m && (m.role === 'owner' || m.role === 'admin')) return club;
+    const { bans: _bans, ...rest } = club;
+    return rest;
   }
 
   /** What anyone may see of a club: no member list, standings or tables. */

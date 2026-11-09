@@ -218,7 +218,11 @@ export function buildRoutes(deps: ApiDeps, opts: Pick<ApiOptions, 'reportIpLimit
     return identity;
   };
   /** Members see the whole club; everyone else sees the public view. */
-  const view = (club: Club, userId: string) => (clubs.isMember(club.code, userId) ? club : ClubRegistry.publicView(club));
+  const view = (club: Club, userId: string) => (clubs.isMember(club.code, userId) ? ClubRegistry.memberView(club, userId) : ClubRegistry.publicView(club));
+  /** Take an account off every live table of a club (a removed or banned member). */
+  const evictEverywhere = (clubCode: string, userId: string) => {
+    for (const room of rooms.clubRooms(clubCode)) rooms.evictFromTable(room, userId);
+  };
 
   return [
     // 503 while shutting down or while the database is down or slower than `healthTimeoutMs`, so
@@ -483,7 +487,13 @@ export function buildRoutes(deps: ApiDeps, opts: Pick<ApiOptions, 'reportIpLimit
     r('PATCH', '/api/clubs/:code', async (ctx) => {
       const me = await member(ctx);
       const { body } = ctx;
-      return clubs.update(ctx.params.code, me.userId, { name: body.name, description: body.description, rules: body.rules, settings: body.settings });
+      return view(clubs.update(ctx.params.code, me.userId, { name: body.name, description: body.description, rules: body.rules, settings: body.settings }), me.userId);
+    }),
+    // Owner only, with the club's name typed again; its live tables close first.
+    r('DELETE', '/api/clubs/:code', async (ctx) => {
+      const me = await member(ctx);
+      for (const room of clubs.deleteClub(ctx.params.code, me.userId, ctx.body.confirm)) rooms.closeTable(room, CLUB_DELETED);
+      return new Reply(204);
     }),
     r('POST', '/api/clubs/:code/members/:userId/approve', async (ctx) => {
       const me = await member(ctx);
@@ -492,10 +502,44 @@ export function buildRoutes(deps: ApiDeps, opts: Pick<ApiOptions, 'reportIpLimit
       if (target && target.deletedAt === null) clubs.refreshMember(memberIdentity(target));
       return clubs.approve(ctx.params.code, me.userId, ctx.params.userId);
     }),
-    r('POST', '/api/clubs/:code/members/:userId/role', async (ctx) => clubs.setRole(ctx.params.code, (await member(ctx)).userId, ctx.params.userId, ctx.body.role)),
+    r('POST', '/api/clubs/:code/members/:userId/reject', async (ctx) => {
+      const me = await member(ctx);
+      return view(clubs.reject(ctx.params.code, me.userId, ctx.params.userId), me.userId);
+    }),
+    r('POST', '/api/clubs/:code/members/:userId/role', async (ctx) => {
+      const me = await member(ctx);
+      return view(clubs.setRole(ctx.params.code, me.userId, ctx.params.userId, ctx.body.role), me.userId);
+    }),
     r('DELETE', '/api/clubs/:code/members/:userId', async (ctx) => {
       const me = await member(ctx);
-      return view(clubs.removeMember(ctx.params.code, me.userId, ctx.params.userId), me.userId);
+      const club = clubs.removeMember(ctx.params.code, me.userId, ctx.params.userId);
+      // Removed by the owner or an admin (not leaving): off the club's live tables too, the seat to a bot.
+      if (ctx.params.userId !== me.userId) evictEverywhere(club.code, ctx.params.userId);
+      return view(club, me.userId);
+    }),
+    r('POST', '/api/clubs/:code/bans', async (ctx) => {
+      const me = await member(ctx);
+      const userId = ctx.body.userId;
+      const target = typeof userId === 'string' && /^[0-9a-f-]{36}$/i.test(userId) ? await repos.users.get(userId) : null;
+      const club = clubs.ban(ctx.params.code, me.userId, userId, target && target.deletedAt === null ? memberIdentity(target) : undefined);
+      evictEverywhere(club.code, userId as string);
+      return view(club, me.userId);
+    }),
+    r('DELETE', '/api/clubs/:code/bans/:userId', async (ctx) => {
+      const me = await member(ctx);
+      return view(clubs.unban(ctx.params.code, me.userId, ctx.params.userId), me.userId);
+    }),
+    r('POST', '/api/clubs/:code/tables/:table/close', async (ctx) => {
+      const me = await member(ctx);
+      const club = clubs.closeTable(ctx.params.code, me.userId, ctx.params.table);
+      rooms.closeTable(ctx.params.table);
+      return view(club, me.userId);
+    }),
+    r('POST', '/api/clubs/:code/tables/:table/evict', async (ctx) => {
+      const me = await member(ctx);
+      const userId = clubs.assertCanEvict(ctx.params.code, me.userId, ctx.params.table, ctx.body.userId);
+      const seats = rooms.clubOf(ctx.params.table.toUpperCase()) === clubs.club(ctx.params.code).code ? rooms.evictFromTable(ctx.params.table, userId) : 0;
+      return { seats };
     }),
     r('GET', '/api/clubs/:code/standings', async (ctx) => {
       const me = await ctx.caller();
@@ -539,6 +583,9 @@ export function buildRoutes(deps: ApiDeps, opts: Pick<ApiOptions, 'reportIpLimit
     }),
   ];
 }
+
+/** Sent to the players at each table of a club its owner deleted. */
+const CLUB_DELETED = 'The club was deleted, so this table has closed.';
 
 const STATUS: Record<ClubError['code'], number> = {
   not_found: 404,
