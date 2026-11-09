@@ -42,7 +42,7 @@
     "store_not_signed_in": "Connect to the game server first, so the purchase reaches your account.",
     "store_unavailable": "The store is not available on this build."
   },
-  "foot": "Prices come from your App Store or Google Play region. Subscriptions renew automatically unless you cancel them in your store account settings at least 24 hours before the renewal date. Restore purchases brings back plans and looks bought with the same store account.",
+  "foot": "Prices come from your App Store or Google Play region. Subscriptions renew automatically unless you cancel them in your store account settings at least 24 hours before the renewal date. Restore purchases brings back subscriptions bought with the same store account; diamonds and looks belong to the game account they were bought on, so sign in with Apple or Google to keep them on a new phone.",
   "products": {
     "diamonds_60": {
       "title": "60 Diamonds",
