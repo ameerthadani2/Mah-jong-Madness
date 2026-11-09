@@ -782,7 +782,12 @@ export class TableClient {
           }
           const at = r.attempts.find((a) => a.n === n);
           if (at) at.stoodIn = true;
-          else r.attempts.push({ n, committed: false, revealed: false, stoodIn: true });
+          else {
+            r.attempts.push({ n, committed: false, revealed: false, stoodIn: true });
+            // Commitments we hold belong to an earlier attempt, not to the one this stand-in is for.
+            this.commits = null;
+            this.commitsHand = null;
+          }
           r.attempts.sort((a, b) => a.n - b.n);
         } else return;
         this.standInHand = h;
