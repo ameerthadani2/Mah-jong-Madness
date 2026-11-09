@@ -6,6 +6,8 @@ import { colors } from '../theme';
 import { TableThemeContext, type TableTheme } from '../themes';
 import { tileBackById, type TileBackDesign } from '../monetisation/cosmetics';
 import { useEquipped } from '../monetisation/useEquipped';
+import { useT } from '../i18n';
+import { tileLabel } from './table/tileLabel';
 
 import { tileDims, type TileSize } from './tileDims';
 
@@ -27,7 +29,7 @@ export interface TileProps {
   style?: ViewStyle;
   /** Rotate 90° to show a claimed tile in a meld. */
   rotated?: boolean;
-  /** Screen-reader name for a pressable tile (defaults to the tile's English name). */
+  /** Screen-reader name (defaults to the tile's name in the UI language; face-down tiles read as a tile back). */
   accessibilityLabel?: string;
   accessibilityHint?: string;
 }
@@ -499,6 +501,9 @@ export const Tile = React.memo(function Tile({ tile, kind, size = 'md', faceDown
   const info = k !== undefined ? kindInfo(k) : undefined;
   const ring = selected ? RING.selected : highlight ? RING[highlight] : null;
   const r = w * 0.17;
+  // Every tile drawn has a name in the UI language: ponds, melds and the win reveal are read out, not only the hand.
+  const { t, locale } = useT();
+  const spoken = accessibilityLabel ?? (faceDown ? t('table.a11y.tileBack') : k !== undefined ? tileLabel(k, locale) : undefined);
   const face = (
     <View style={[styles.shadow, { width: w, height: h, borderRadius: r }]}>
       <TileSvg w={w} h={h} kind={faceDown ? undefined : k} faceDown={faceDown} theme={theme} back={back} />
@@ -508,6 +513,7 @@ export const Tile = React.memo(function Tile({ tile, kind, size = 'md', faceDown
   const body = (
     <View
       testID={faceDown ? 'tile-back' : `tile-${info?.code ?? 'x'}`}
+      {...(!onPress && !onLongPress && spoken ? { accessible: true, accessibilityRole: 'image' as const, accessibilityLabel: spoken } : null)}
       style={[
         { width: rotated ? h : w, height: rotated ? w : h },
         rotated && styles.rotatedBox,
@@ -527,7 +533,7 @@ export const Tile = React.memo(function Tile({ tile, kind, size = 'md', faceDown
       onLongPress={onLongPress}
       hitSlop={{ top: Math.max(4, Math.ceil((44 - h) / 2)), bottom: Math.max(4, Math.ceil((44 - h) / 2)), left: 1, right: 1 }}
       accessibilityRole="button"
-      accessibilityLabel={accessibilityLabel ?? (faceDown ? undefined : info?.nameEn)}
+      accessibilityLabel={spoken}
       accessibilityHint={accessibilityHint}
       accessibilityState={{ selected: !!selected }}
       style={({ pressed }) => pressed && { opacity: 0.85 }}

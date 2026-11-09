@@ -150,7 +150,8 @@
     "tapToDiscard": "Tap again to discard",
     "tapToSelect": "Tap to select for discard",
     "emote": "Send emote %{name}",
-    "reportHint": "Long press to report this player"
+    "reportHint": "Long press to report this player",
+    "tileBack": "Face-down tile"
   },
   "leaveSheet": {
     "title": "Leave the table?",

@@ -10,14 +10,21 @@ import React, { useEffect, useMemo, useRef } from 'react';
 import { Animated, Easing, Platform, StyleSheet, Text, View } from 'react-native';
 import Svg, { Path } from 'react-native-svg';
 import { colors } from '../theme';
+import { useReducedMotion } from '../display/reducedMotion';
+import { reactionShouldPlay, reactionHoldMs } from './table/feel';
 
 export type SeatReactionKind = 'pong' | 'chow' | 'kong' | 'win' | 'selfdraw' | 'dealin';
 
 export interface SeatReaction {
   kind: SeatReactionKind;
-  /** Changes on every new event so the same kind can fire twice in a row. */
+  /** Unique per event (across table screens), so the same kind can fire twice in a row. */
   key: number;
+  /** When the event happened (ms epoch): a portrait mounted later (rotation, resize) never replays it. */
+  at?: number;
 }
+
+/** Reactions already played: a seat portrait remounted by a rotation or a resize does not play them again. */
+const played = new Set<number>();
 
 const NATIVE = Platform.OS !== 'web';
 
@@ -40,9 +47,14 @@ export function SeatMotion({ children, size, seat, active, reaction }: { childre
   const shake = useRef(new Animated.Value(0)).current;
   const pop = useRef(new Animated.Value(0)).current;
   const burst = useRef(new Animated.Value(0)).current;
+  const reduced = useReducedMotion();
 
-  // Idle breathing, offset per seat so the table never pulses in sync.
+  // Idle breathing, offset per seat so the table never pulses in sync (none under reduce motion).
   useEffect(() => {
+    if (reduced) {
+      breathe.setValue(0);
+      return;
+    }
     const loop = Animated.loop(
       Animated.sequence([
         Animated.delay(seat * 350),
@@ -52,12 +64,12 @@ export function SeatMotion({ children, size, seat, active, reaction }: { childre
     );
     loop.start();
     return () => loop.stop();
-  }, [breathe, seat]);
+  }, [breathe, seat, reduced]);
 
-  // Halo pulse while it is this seat's move.
+  // Halo pulse while it is this seat's move (a steady halo under reduce motion).
   useEffect(() => {
-    if (!active) {
-      halo.setValue(0);
+    if (!active || reduced) {
+      halo.setValue(reduced && active ? 0.6 : 0);
       return;
     }
     const loop = Animated.loop(
@@ -68,16 +80,27 @@ export function SeatMotion({ children, size, seat, active, reaction }: { childre
     );
     loop.start();
     return () => loop.stop();
-  }, [active, halo]);
+  }, [active, halo, reduced]);
 
-  // One-shot reactions.
+  // One-shot reactions, each played once: a portrait remounted later (rotation, resize) does not replay it.
   useEffect(() => {
     if (!reaction) return;
+    if (!reactionShouldPlay(reaction, played.has(reaction.key), Date.now())) {
+      pop.setValue(2);
+      return;
+    }
+    played.add(reaction.key);
+    if (reduced) {
+      // Reduce motion: the bubble just shows for its time, with no bounce, shake or sparks.
+      pop.setValue(1);
+      const id = setTimeout(() => pop.setValue(2), reactionHoldMs(reaction.kind) + 280);
+      return () => clearTimeout(id);
+    }
     pop.setValue(0);
     const anims: Animated.CompositeAnimation[] = [
       Animated.sequence([
         Animated.spring(pop, { toValue: 1, friction: 5, tension: 140, useNativeDriver: NATIVE }),
-        Animated.delay(reaction.kind === 'win' || reaction.kind === 'selfdraw' ? 1500 : 1000),
+        Animated.delay(reactionHoldMs(reaction.kind)),
         Animated.timing(pop, { toValue: 2, duration: 280, easing: Easing.in(Easing.quad), useNativeDriver: NATIVE }),
       ]),
     ];

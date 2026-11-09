@@ -14,6 +14,7 @@ import { SlideIn } from './table/Motion';
 import { FeltPattern } from './FeltPattern';
 import { useCountdown } from '../game/useTable';
 import { clockUrgent, timerFraction, type TurnClock } from './table/turnClock';
+import { reactionShouldPlay } from './table/feel';
 
 export function MeldView({ meld, size = 'sm' }: { meld: Meld; size?: TileSize | number }) {
   // Another seat's concealed kong arrives as placeholders until the hand ends: show all four face down.
@@ -142,7 +143,8 @@ export function SeatBadge({
   // Win and deal-in reactions switch the portrait to its win/lose clip for a few seconds (if it has clips).
   const [mood, setMood] = useState<AvatarMood | null>(null);
   useEffect(() => {
-    if (!reaction) return;
+    // Only a fresh reaction: a plate remounted by a rotation or resize keeps its usual face.
+    if (!reaction || !reactionShouldPlay(reaction, false, Date.now())) return;
     const m: AvatarMood | null = reaction.kind === 'win' || reaction.kind === 'selfdraw' ? 'win' : reaction.kind === 'dealin' ? 'lose' : null;
     if (!m) return;
     setMood(m);

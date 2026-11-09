@@ -1,18 +1,18 @@
 /** The claim and discard buttons: big CJK verbs (過 吃 碰 槓 打 胡) with the tiles each would take. */
 import React from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { kindInfo, kindOf, type Action, type Hint, type TableView, type TileId } from '@mjm/engine';
+import { kindOf, type Action, type Hint, type TableView, type TileId } from '@mjm/engine';
 import { colors, fonts } from '../../theme';
 import { useT, type Locale } from '../../i18n';
 import { Tile } from '../Tile';
 import { StrokeText, type ButtonKind } from '../Ui';
 import { Icon } from '../Icons';
 import { slopFor } from './layout';
+import { tileLabel } from './tileLabel';
 
 /** Spoken name of a tile for screen readers, in the UI language. */
 export function tileName(tile: TileId, locale: Locale): string {
-  const info = kindInfo(kindOf(tile));
-  return locale === 'zh-TW' ? info.nameZh : info.nameEn;
+  return tileLabel(kindOf(tile), locale);
 }
 
 const PAL: Record<ButtonKind, [string, string, string]> = {

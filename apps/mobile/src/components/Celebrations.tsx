@@ -10,6 +10,7 @@ import { Animated, Easing, StyleSheet, View } from 'react-native';
 import Svg, { Circle, Ellipse, G, Path, Rect } from 'react-native-svg';
 import type { CelebrationId } from '../monetisation/cosmetics';
 import { colors } from '../theme';
+import { useReducedMotion } from '../display/reducedMotion';
 
 const INK = colors.ink;
 export const CELEBRATION_MS = 2600;
@@ -96,10 +97,16 @@ function scene(id: CelebrationId, w: number, h: number): React.ReactNode {
  * The celebration overlay. Mount it over the table when the player wins, with `onDone` to unmount
  * it; it ignores touches.
  */
-export function WinCelebration({ id, width, height, still, onDone }: { id: CelebrationId; width: number; height: number; still?: boolean; onDone?: () => void }) {
+export function WinCelebration({ id, width, height, still: stillProp, onDone }: { id: CelebrationId; width: number; height: number; still?: boolean; onDone?: () => void }) {
+  // Reduce motion: the single still frame, whatever the caller asked for.
+  const reduced = useReducedMotion();
+  const still = stillProp || reduced;
   const t = useRef(new Animated.Value(still ? 0.5 : 0)).current;
   useEffect(() => {
-    if (still) return;
+    if (still) {
+      t.setValue(0.5);
+      return;
+    }
     const run = Animated.timing(t, { toValue: 1, duration: CELEBRATION_MS, easing: Easing.out(Easing.quad), useNativeDriver: true });
     run.start(({ finished }) => finished && onDone?.());
     return () => run.stop();
@@ -115,7 +122,7 @@ export function WinCelebration({ id, width, height, still, onDone }: { id: Celeb
           : { transform: [{ scale: t.interpolate({ inputRange: [0, 0.3, 1], outputRange: [0.3, 1, 1.15] }) }], opacity: t.interpolate({ inputRange: [0, 0.2, 0.75, 1], outputRange: [0, 1, 1, 0] }) };
 
   return (
-    <View pointerEvents="none" style={[StyleSheet.absoluteFill, { overflow: 'hidden' }]} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
+    <View pointerEvents="none" testID="win-celebration" style={[StyleSheet.absoluteFill, { overflow: 'hidden' }]} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
       <Animated.View style={[StyleSheet.absoluteFill, still ? null : motion]}>
         <Svg width={width} height={height}>
           {scene(id, width, height)}

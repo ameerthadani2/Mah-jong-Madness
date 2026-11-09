@@ -3,7 +3,7 @@
  * composes the pieces in components/table: TableHud, Felt, HandRail, ActionBar, CoachPanel, CallBanner
  * and ResultSheet. Layout rules live in components/table/layout.ts; sounds in src/audio.
  */
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { hintFor, kindInfo, kindOf, legalActions, viewToState, WINDS, type Action, type GameState, type Hint, type TileId } from '@mjm/engine';
@@ -29,6 +29,7 @@ import { MatchOverSheet, ResultSheet } from '../components/table/ResultSheet';
 import { TableHud } from '../components/table/TableHud';
 import { LeaveSheet } from '../components/table/LeaveSheet';
 import { ClockTicker } from '../components/table/ClockParts';
+import { useAnnounce } from '../components/table/announce';
 import type { TurnClock } from '../components/table/turnClock';
 import { exitPlan, type ExitChoice } from '../components/table/exit';
 import { useSfx, type TableEvent } from '../audio';
@@ -47,6 +48,9 @@ const CHAT_MS = 6000;
 
 /** Hands whose result has already been celebrated (survives the table screen remounting). */
 const celebratedHands = new Set<string>();
+
+/** Keys for call-outs and seat reactions, unique across table screens so a remounted portrait never mistakes a new event for one it played. */
+let eventKey = 0;
 
 const REACTION: Record<'chi' | 'pong' | 'kong', SeatReactionKind> = { chi: 'chow', pong: 'pong', kong: 'kong' };
 
@@ -112,14 +116,13 @@ export function TableScreen() {
   // Table events: sounds, the centre call-out and the seat reactions (call-outs for claims, a celebration
   // for winners, a shake for the discarder).
   const [reactions, setReactions] = useState<Record<number, SeatReaction>>({});
-  const reactionKey = useRef(0);
-  const fire = (seat: number, kind: SeatReactionKind) => setReactions((r) => ({ ...r, [seat]: { kind, key: ++reactionKey.current } }));
+  const fire = (seat: number, kind: SeatReactionKind) => setReactions((r) => ({ ...r, [seat]: { kind, key: ++eventKey, at: Date.now() } }));
   const [callout, setCallout] = useState<Callout | null>(null);
   useTableEvents(state, (events: TableEvent[]) => {
     sfx.playEvents(events);
     for (const e of events) if (e.type === 'call' && e.call !== 'hu' && e.call !== 'selfdraw') fire(e.seat, REACTION[e.call]);
     const last = [...events].reverse().find((e) => e.type === 'call');
-    if (last && last.type === 'call') setCallout({ call: last.call, seat: last.seat, key: ++reactionKey.current });
+    if (last && last.type === 'call') setCallout({ call: last.call, seat: last.seat, key: ++eventKey });
   });
 
   // Hold the result sheet back so the call-out and the winner's face-up hand are seen first — once per hand,
@@ -147,6 +150,14 @@ export function TableScreen() {
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state?.lastResult]);
+
+  // VoiceOver ignores the banners' live regions: announce them on iOS.
+  const linkBanner =
+    !state || state.matchOver ? null
+    : conn.status === 'reconnecting' ? t('table.connection.reconnectingTitle')
+    : conn.status === 'lost' || state.disconnected ? `${t(conn.reason === 'gone' ? 'table.connection.goneTitle' : 'table.connection.lostTitle')}. ${t(conn.reason === 'gone' ? 'table.connection.goneText' : 'table.connection.lostText')}`
+    : null;
+  useAnnounce(linkBanner);
 
   if (!session || !state) {
     return (
