@@ -4,9 +4,9 @@
  * purchase is credited by the server (store webhook) and only shows once `GET /api/me`
  * says so; a diamond spend is debited and granted by the server.
  */
-import type { Product } from './catalog';
+import { bundlePrice, type Product } from './catalog';
 import type { StoreProvider } from './providers';
-import { mirrorMe, showsPurchase, type MeWallet, type Wallet } from './wallet';
+import { mirrorMe, ownsProduct, showsPurchase, type MeWallet, type Wallet } from './wallet';
 
 export interface WalletDeps {
   /** A usable session; resolves to the server user id (bootstraps a guest the first time). */
@@ -85,7 +85,8 @@ export async function buyWithDiamonds(product: Product, wallet: Wallet, deps: Wa
     const code = errorCode(error);
     if (code === 'insufficient') {
       const fresh = await syncWallet(wallet, deps).catch(() => wallet);
-      return { status: 'need_diamonds', wallet: fresh, short: Math.max(1, product.diamondPrice - fresh.diamonds - fresh.bonusDiamonds) };
+      const price = product.contains ? bundlePrice(product, (id) => ownsProduct(fresh, id)) : product.diamondPrice;
+      return { status: 'need_diamonds', wallet: fresh, short: Math.max(1, price - Math.max(0, fresh.diamonds) - fresh.bonusDiamonds) };
     }
     if (code === 'owned') return { status: 'credited', wallet: await syncWallet(wallet, deps).catch(() => wallet) };
     return { status: 'failed', wallet, error };

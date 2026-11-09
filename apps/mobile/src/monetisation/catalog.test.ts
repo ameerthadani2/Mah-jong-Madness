@@ -2,20 +2,63 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 import { describe, expect, it } from 'vitest';
 import { translator } from '../logic/translator.fixture';
-import { ALL_PRODUCTS, COSMETICS, DIAMOND_PACKS, DIAMONDS_PER_DOLLAR, productByStoreId, productText, SELLABLE_PRODUCTS, STORE_PRODUCTS, SUBSCRIPTIONS } from './catalog';
+import { ALL_PRODUCTS, BUNDLES, bundlePrice, COSMETICS, DIAMOND_PACKS, DIAMONDS_PER_DOLLAR, productByStoreId, productText, SELLABLE_PRODUCTS, STORE_PRODUCTS, SUBSCRIPTIONS } from './catalog';
+import { CELEBRATIONS, EMOTE_PACKS, FELT_PATTERNS, FRAMES, PACK_EMOTE_IDS, TILE_BACKS } from './cosmetics';
 import { storeQueryIds } from './providers';
 
 const en = translator('en');
 const zh = translator('zh-TW');
 
 describe('launch catalogue', () => {
-  it('sells only what ships: diamond packs, the four table looks, Coach Gold and The Four Winds Club', () => {
-    expect(ALL_PRODUCTS.map((p) => p.kind).sort()).toEqual([...Array(6).fill('diamonds'), ...Array(4).fill('cosmetic'), ...Array(4).fill('subscription')].sort());
-    expect(COSMETICS.map((p) => p.unlocks).sort()).toEqual(['bamboo', 'imperial', 'jade', 'nightmarket']);
+  it('sells only what ships: diamond packs, cosmetics and sets, Coach Gold and The Four Winds Club', () => {
+    expect(ALL_PRODUCTS.map((p) => p.kind).sort()).toEqual([...Array(6).fill('diamonds'), ...Array(COSMETICS.length + BUNDLES.length).fill('cosmetic'), ...Array(4).fill('subscription')].sort());
+    const shelf = (c: string) => COSMETICS.filter((p) => p.category === c).length;
+    expect([shelf('table'), shelf('tileback'), shelf('frame'), shelf('emotes'), shelf('celebration')]).toEqual([12, 10, 12, 4, 4]);
+    expect(BUNDLES.length).toBeGreaterThanOrEqual(3);
     expect(SUBSCRIPTIONS.map((p) => `${p.tier}/${p.period}`)).toEqual(['gold/month', 'gold/year', 'fourwinds/month', 'fourwinds/year']);
-    // Removed until built: Diamond tier, Table Pass, zodiac avatars, Taiwan emotes, VIP cards, club tiers.
-    for (const gone of [/coach\.diamond/, /tablepass/, /avatars\./, /emotes\./, /^vip\./, /^club\./]) {
+    // Removed until built: Diamond tier, Table Pass, zodiac avatars, the Taiwan emote set, VIP cards, club tiers.
+    for (const gone of [/coach\.diamond/, /tablepass/, /avatars\./, /^emotes\.taiwan$/, /^vip\./, /^club\./]) {
       expect(ALL_PRODUCTS.filter((p) => gone.test(p.id)), String(gone)).toEqual([]);
+    }
+  });
+
+  it('every diamond pack can be spent in full: the cosmetics add up to at least 10,000 diamonds', () => {
+    const total = COSMETICS.reduce((n, p) => n + (p.diamondPrice ?? 0), 0);
+    expect(total).toBeGreaterThanOrEqual(10_000);
+    for (const pack of DIAMOND_PACKS) expect(pack.diamonds!, pack.id).toBeLessThanOrEqual(total);
+  });
+
+  it('bundles hold cosmetics sold alone, cost less than their parts, and charge only for what is missing', () => {
+    for (const b of BUNDLES) {
+      const parts = b.contains!.map((id) => COSMETICS.find((c) => c.id === id));
+      expect(parts.every(Boolean), b.id).toBe(true);
+      const sum = parts.reduce((n, c) => n + (c?.diamondPrice ?? 0), 0);
+      expect(b.diamondPrice!, b.id).toBeLessThan(sum);
+      expect(bundlePrice(b, () => false), b.id).toBe(b.diamondPrice);
+      expect(bundlePrice(b, () => true), b.id).toBe(0);
+      expect(bundlePrice(b, (id) => id !== b.contains![0]), b.id).toBeLessThanOrEqual(parts[0]!.diamondPrice!);
+    }
+    expect(bundlePrice(BUNDLES.find((b) => b.id === 'bundle.nightmarket')!, (id) => id === 'theme.nightmarket')).toBe(610);
+  });
+
+  it('every cosmetic on sale has a code-drawn design, and every design is on sale', () => {
+    const ids = (c: string) => COSMETICS.filter((p) => p.category === c).map((p) => p.id).sort();
+    expect(ids('tileback')).toEqual(TILE_BACKS.map((b) => b.id).sort());
+    expect(ids('frame')).toEqual(FRAMES.map((f) => f.id).sort());
+    expect(ids('emotes')).toEqual(Object.keys(EMOTE_PACKS).sort());
+    expect(ids('celebration')).toEqual([...CELEBRATIONS].sort());
+    for (const pack of Object.values(EMOTE_PACKS)) {
+      expect(pack.length).toBe(6);
+      for (const id of pack) expect(id.length, id).toBeLessThanOrEqual(16);
+    }
+    expect(new Set(PACK_EMOTE_IDS).size).toBe(24);
+    for (const p of COSMETICS.filter((c) => c.category !== 'table')) expect(p.unlocks, p.id).toBe(p.id);
+  });
+
+  it('no product shows or names coins, chips or money', () => {
+    for (const p of ALL_PRODUCTS) {
+      for (const text of [p.title, p.description, productText(p, en).title, productText(p, en).description]) expect(text, p.id).not.toMatch(/\bcoins?\b|\bchips?\b|\bcash\b|\bmoney\b|\bjackpot\b/i);
+      for (const text of [productText(p, zh).title, productText(p, zh).description]) expect(text, p.id).not.toMatch(/金幣|籌碼|現金|錢/);
     }
   });
 
@@ -90,15 +133,20 @@ describe('launch catalogue', () => {
       expect(cells.slice(2, 5), p.id).toEqual([`$${p.priceUsd}`, p.diamonds!.toLocaleString('en'), p.bonusDiamonds!.toLocaleString('en')]);
       expect(cells[5], p.id).toBe(p.badge ?? '');
     }
-    for (const p of COSMETICS) expect(section, p.id).toContain(`${p.title.replace(/ table$/, '')} ${p.diamondPrice}`);
+    for (const p of [...COSMETICS, ...BUNDLES]) {
+      const row = section.split('\n').find((l) => l.startsWith(`| \`${p.id}\``));
+      expect(row, p.id).toBeDefined();
+      expect(row!.split('|').map((c) => c.trim()).slice(2, 4), p.id).toEqual([p.title, p.diamondPrice!.toLocaleString('en')]);
+    }
     for (const p of SUBSCRIPTIONS) {
       expect(section, p.id).toContain(`\`${p.storeId}\``);
       expect(section, p.id).toContain(`$${p.priceUsd}`);
     }
   });
 
-  it('every look unlocks a premium table theme that exists', () => {
+  it('every table look unlocks a premium table theme that exists, with a felt pattern for the new ones', () => {
     const themes = readFileSync(join(__dirname, '..', 'themes.ts'), 'utf8');
-    for (const p of COSMETICS) expect(themes, p.id).toMatch(new RegExp(`id: '${p.unlocks}'[\\s\\S]*?premium: true`));
+    for (const p of COSMETICS.filter((c) => c.category === 'table')) expect(themes, p.id).toMatch(new RegExp(`id: '${p.unlocks}'[\\s\\S]*?premium: true`));
+    for (const pattern of FELT_PATTERNS) expect(themes, pattern).toContain(`pattern: '${pattern}'`);
   });
 });

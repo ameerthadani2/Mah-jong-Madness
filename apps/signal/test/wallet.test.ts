@@ -92,6 +92,20 @@ describe('spend', () => {
     expect(await balance(repos, u)).toEqual([700, 0]);
   });
 
+  it('a bundle grants its missing items for the share of the price still missing, and is owned once complete', async () => {
+    const { repos, wallet, user } = await setup();
+    const u = await user();
+    await wallet.credit(u, 3000, 'grant');
+    await wallet.spend(u, 'theme.nightmarket');
+    // 850 for all four (1,050 alone); the 300 table is owned, so 750 of 1,050 is missing: 850 × 750 / 1050 = 607.1 → 610.
+    const res = await wallet.spend(u, 'bundle.nightmarket');
+    expect(res).toMatchObject({ spent: 610, granted: ['back.midnight', 'frame.lantern', 'emotes.nightmarket'] });
+    expect((await wallet.summary(u)).cosmetics).toEqual(['back.midnight', 'emotes.nightmarket', 'frame.lantern', 'theme.nightmarket']);
+    await expect(wallet.spend(u, 'bundle.nightmarket')).rejects.toMatchObject({ code: 'owned' });
+    expect(await balance(repos, u)).toEqual([3000 - 300 - 610, 0]);
+    expect((await repos.wallet.listLedger(u)).at(-1)).toMatchObject({ reason: 'spend', ref: 'bundle.nightmarket', delta: -610 });
+  });
+
   it('refuses products that are not sold for diamonds (404)', async () => {
     const { wallet, user } = await setup();
     const u = await user();

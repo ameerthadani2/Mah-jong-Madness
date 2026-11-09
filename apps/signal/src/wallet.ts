@@ -15,7 +15,7 @@
  * players. Work for one user is serialised in this process (one game server machine), and on
  * Postgres every operation is one transaction.
  */
-import { COSMETIC_ENTITLEMENTS, PERIOD_MS, productForStoreId, serverProduct, TIER_RANK, tierOfEntitlements, type CoachTier, type ServerProduct } from './catalog';
+import { bundlePrice, COSMETIC_ENTITLEMENTS, PERIOD_MS, productForStoreId, serverProduct, TIER_RANK, tierOfEntitlements, type CoachTier, type ServerProduct } from './catalog';
 import { NO_ANALYTICS, withConsent, type Analytics } from './observability';
 import type { EntitlementRecord, Repos, UserRecord, WalletRecord } from './repos/types';
 
@@ -255,24 +255,30 @@ export class WalletService {
     );
   }
 
-  /** Buy a cosmetic with diamonds: debit and permanent entitlement together, or neither. */
-  async spend(userId: string, productId: unknown): Promise<{ wallet: WalletRecord; entitlement: string; spent: number }> {
+  /**
+   * Buy a cosmetic with diamonds: debit and permanent entitlement together, or neither. A bundle
+   * grants each of its items the player does not own yet, at `bundlePrice` (the share still
+   * missing), and is refused as owned when nothing is missing.
+   */
+  async spend(userId: string, productId: unknown): Promise<{ wallet: WalletRecord; entitlement: string; spent: number; granted: string[] }> {
     const product = serverProduct(productId);
     if (!product || product.kind !== 'cosmetic') throw new WalletError('not_for_sale', 'That item is not sold for diamonds');
     return this.serialise([userId], () =>
       this.repos.transaction(async (tx) => {
-        const owned = (await tx.wallet.getEntitlements(userId)).some((e) => e.entitlement === product.entitlement && isLive(e, this.now()));
-        if (owned) throw new WalletError('owned', 'You already own that item');
+        const at0 = this.now();
+        const ownedNow = new Set((await tx.wallet.getEntitlements(userId)).filter((e) => isLive(e, at0)).map((e) => e.entitlement));
+        const grants = product.contains ? product.contains.filter((id) => !ownedNow.has(id)) : ownedNow.has(product.entitlement) ? [] : [product.entitlement];
+        if (grants.length === 0) throw new WalletError('owned', 'You already own that item');
         const w = await tx.wallet.get(userId);
-        const price = product.diamondPrice;
+        const price = product.contains ? bundlePrice(product, (e) => ownedNow.has(e)) : product.diamondPrice;
         // A refund can leave purchased diamonds below zero: nothing is spent until they are back above.
         if (w.diamonds < 0 || w.diamonds + w.bonusDiamonds < price) throw new WalletError('insufficient', 'Not enough diamonds');
         const fromBonus = Math.min(w.bonusDiamonds, price);
         const at = this.now();
         const res = await tx.wallet.apply({ userId, delta: -(price - fromBonus), bonus: -fromBonus, reason: 'spend', ref: product.id, createdAt: at });
         if (!res) throw new WalletError('insufficient', 'Not enough diamonds');
-        await tx.wallet.setEntitlement({ userId, entitlement: product.entitlement, expiresAt: null, source: SPEND_SOURCE, updatedAt: at });
-        return { wallet: res.wallet, entitlement: product.entitlement, spent: price };
+        for (const entitlement of grants) await tx.wallet.setEntitlement({ userId, entitlement, expiresAt: null, source: SPEND_SOURCE, updatedAt: at });
+        return { wallet: res.wallet, entitlement: product.entitlement, spent: price, granted: grants };
       }),
     );
   }

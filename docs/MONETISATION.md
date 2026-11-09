@@ -59,7 +59,58 @@ The two files list the same products (the server's `test/catalog.test.ts` reads 
 | `diamonds.3450` | $49.99 | 3,450 | 450 | +15% |
 | `diamonds.7500` | $99.99 | 7,500 | 1,500 | +25% |
 
-**Table looks** (cosmetic, owned for good; bought with diamonds only through `POST /api/wallet/spend`, so there is no cash price to undercut): Night Market 300, Bamboo Garden 300, Jade Parlour 400, Imperial Red 300. The three free felts (Classic, Deep Green, Midnight Blue) stay free.
+**Cosmetics** (owned for good; bought with diamonds only through `POST /api/wallet/spend`, so there is no cash price to undercut). Everything is drawn in code (`apps/mobile/src/monetisation/cosmetics.ts` and the components that draw it), with no coins, chips or money imagery anywhere. Players equip what they own in Settings → Looks. The three free felts (Classic, Deep Green, Midnight Blue) and the eight free emotes stay free.
+
+The items add up to 13,900 diamonds, so even the 7,500 pack can be spent in full. A set costs about a fifth less than its items; a player who already owns some of a set pays only for the share still missing (`bundlePrice`, the same on the app and the server), and a complete set cannot be bought again.
+
+| Product id | Title | Diamonds | Shelf | Contains |
+| --- | --- | --- | --- | --- |
+| `theme.nightmarket` | Night Market table | 300 | Table look |  |
+| `theme.bamboo` | Bamboo Garden table | 300 | Table look |  |
+| `theme.jade` | Jade Parlour table | 400 | Table look |  |
+| `theme.imperial` | Imperial Red table | 300 | Table look |  |
+| `theme.lantern` | Lantern Festival table | 450 | Table look |  |
+| `theme.teahouse` | Teahouse table | 400 | Table look |  |
+| `theme.oceanwave` | Ocean Wave table | 450 | Table look |  |
+| `theme.plumblossom` | Plum Blossom table | 500 | Table look |  |
+| `theme.cloud` | Lucky Clouds table | 450 | Table look |  |
+| `theme.starlight` | Starlit Night table | 500 | Table look |  |
+| `theme.porcelain` | Blue Porcelain table | 550 | Table look |  |
+| `theme.dragonscale` | Dragon Scale table | 600 | Table look |  |
+| `back.jade` | Polished Jade tile back | 250 | Tile back |  |
+| `back.crimson` | Crimson Knot tile back | 250 | Tile back |  |
+| `back.midnight` | Midnight Star tile back | 250 | Tile back |  |
+| `back.lotus` | Lotus Pond tile back | 300 | Tile back |  |
+| `back.bamboo` | Bamboo Grove tile back | 250 | Tile back |  |
+| `back.wave` | Ocean Wave tile back | 300 | Tile back |  |
+| `back.cloud` | Lucky Cloud tile back | 300 | Tile back |  |
+| `back.lattice` | Teahouse Lattice tile back | 300 | Tile back |  |
+| `back.sunset` | Sunset Rays tile back | 250 | Tile back |  |
+| `back.dragon` | Dragon Scale tile back | 400 | Tile back |  |
+| `frame.bamboo` | Bamboo Ring frame | 150 | Avatar frame |  |
+| `frame.jade` | Jade Bangle frame | 200 | Avatar frame |  |
+| `frame.gilded` | Gilded Ring frame | 250 | Avatar frame |  |
+| `frame.blossom` | Plum Blossom frame | 200 | Avatar frame |  |
+| `frame.wave` | Rolling Waves frame | 200 | Avatar frame |  |
+| `frame.cloud` | Lucky Clouds frame | 200 | Avatar frame |  |
+| `frame.flame` | Hot Streak frame | 250 | Avatar frame |  |
+| `frame.star` | Starlight frame | 250 | Avatar frame |  |
+| `frame.lantern` | Lantern Glow frame | 250 | Avatar frame |  |
+| `frame.dragon` | Jade Dragon frame | 350 | Avatar frame |  |
+| `frame.phoenix` | Phoenix Feather frame | 350 | Avatar frame |  |
+| `frame.rainbow` | Rainbow Ribbon frame | 300 | Avatar frame |  |
+| `emotes.teahouse` | Tea House emotes | 250 | Emote pack (6) |  |
+| `emotes.nightmarket` | Night Market emotes | 250 | Emote pack (6) |  |
+| `emotes.festival` | Festival emotes | 250 | Emote pack (6) |  |
+| `emotes.zodiac` | Zodiac emotes | 300 | Emote pack (6) |  |
+| `win.fireworks` | Fireworks win | 400 | Win celebration |  |
+| `win.lanterns` | Sky Lanterns win | 450 | Win celebration |  |
+| `win.dragon` | Dragon Dance win | 600 | Win celebration |  |
+| `win.petals` | Blossom Shower win | 400 | Win celebration |  |
+| `bundle.nightmarket` | Night Market set | 850 | Set | `theme.nightmarket`, `back.midnight`, `frame.lantern`, `emotes.nightmarket` |
+| `bundle.festival` | Lantern Festival set | 1,300 | Set | `theme.lantern`, `back.crimson`, `frame.flame`, `emotes.festival`, `win.lanterns` |
+| `bundle.dragon` | Dragon set | 1,750 | Set | `theme.dragonscale`, `back.dragon`, `frame.dragon`, `emotes.zodiac`, `win.dragon` |
+| `bundle.garden` | Blossom Garden set | 1,100 | Set | `theme.plumblossom`, `back.lotus`, `frame.blossom`, `win.petals` |
 
 **Subscriptions** (auto-renewing, cross-device through the account; Google Play: subscriptions `coach.gold` and `fourwinds`, each with base plans `month` and `year`; RevenueCat entitlements `gold` and `fourwinds`):
 
@@ -71,7 +122,7 @@ The two files list the same products (the server's `test/catalog.test.ts` reads 
 
 Each plan is its own entitlement on the server (`coach.gold.month`, `fourwinds.year`, …): refunding or expiring one plan never ends another, and the player's tier is the best plan still live. Joining and playing in clubs stays free; only creating and running a club needs The Four Winds Club (the server checks it through `WalletService.hasFourWinds`). If it lapses, after a 7-day grace the clubs keep working for their members and the owner keeps the admin tools, but no new club can be created and each club's open-table cap drops to 1 until the owner renews or hands the club over.
 
-The Shop copy lists only these unlocks. Removed until built: Coach Diamond, Table Pass, zodiac avatars, Taiwan emotes, VIP cards and club capacity tiers. Trials and introductory offers are set in the stores, not in the app.
+The Shop copy lists only these unlocks. Removed until built: Coach Diamond, Table Pass, zodiac avatars, VIP cards and club capacity tiers. Trials and introductory offers are set in the stores, not in the app.
 
 **Builds without keys.** With no `EXPO_PUBLIC_REVENUECAT_IOS_KEY` / `_ANDROID_KEY` the Shop says "Store unavailable on this build", shows no prices and grants nothing; table looks can still be bought with diamonds the server already holds. `EXPO_PUBLIC_STORE_MODE=mock` gives a development build an instant, free test store whose grants live only on the device until the next sync; a release build cannot select it.
 

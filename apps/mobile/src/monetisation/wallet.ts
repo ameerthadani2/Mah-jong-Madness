@@ -212,6 +212,14 @@ export function ownsCosmetic(wallet: Wallet, unlockId: string): boolean {
   return wallet.cosmetics.includes(unlockId);
 }
 
+/** True when the player owns this cosmetic product; for a bundle, every item in it. */
+export function ownsProduct(wallet: Wallet, productId: string): boolean {
+  const p = productById(productId);
+  if (!p || p.kind !== 'cosmetic') return false;
+  if (p.contains) return p.contains.every((id) => ownsProduct(wallet, id));
+  return !!p.unlocks && ownsCosmetic(wallet, p.unlocks);
+}
+
 export function totalDiamonds(wallet: Wallet): number {
   return wallet.diamonds + wallet.bonusDiamonds;
 }
@@ -250,7 +258,7 @@ export function showsPurchase(before: Wallet, after: Wallet, productId: string):
   const p = productById(productId);
   if (!p) return false;
   if (p.kind === 'diamonds') return totalDiamonds(after) > totalDiamonds(before);
-  if (p.kind === 'cosmetic') return !!p.unlocks && ownsCosmetic(after, p.unlocks);
+  if (p.kind === 'cosmetic') return ownsProduct(after, p.id);
   if (!p.tier || !hasTier(after, p.tier)) return false;
   // A renewal or an upgrade also counts: the tier is new, or its expiry moved.
   return !hasTier(before, p.tier) || coachRenewal(after) !== coachRenewal(before);
