@@ -1,22 +1,66 @@
 /**
  * Headless simulation.
  *
- *   tsx scripts/simulate.ts [matches]                 four Club bots play N matches; prints win rates,
- *                                                     average 台 and draw frequency, and asserts tile
- *                                                     conservation every step.
- *   tsx scripts/simulate.ts --ladder <skill> <hands>  one bot of <skill> (rotating seats) against three
- *                                                     Club bots; prints win %, points per hand and
- *                                                     deal-in % for the test skill and for Club.
- *                                                     Each seed is also played with Club in the test
- *                                                     seat (common random numbers), and the paired
- *                                                     per-hand difference is printed with its
- *                                                     standard error and a 95% interval.
+ *   tsx scripts/simulate.ts [matches]
+ *       Four Club bots play N full matches; prints win rates, average 台 and draw frequency, and
+ *       asserts tile conservation every step.
+ *
+ *   tsx scripts/simulate.ts --ladder <skill> <n> [--seed <prefix>] [--matches] [--vs <skill>]
+ *       One bot of <skill> (rotating seats) against three <vs> bots (Club by default). Prints, for
+ *       the test seat and for the others: win %, points per hand, deal-in %, average 台 per win and
+ *       how many wins were flushes (混一色 / 清一色), plus illegal moves and the average decision
+ *       time of the test skill.
+ *       Each seed is also played with <vs> in the test seat (common random numbers), and the paired
+ *       difference is printed with its standard error and a 95% interval.
+ *       --seed     seed prefix (default `ladder`). Tune on one prefix and report on another, so the
+ *                  reported numbers are out of sample.
+ *       --matches  <n> counts full matches (16 dealer rotations, streaks and prevailing winds included)
+ *                  instead of first hands of fresh matches; the paired difference is per match, also
+ *                  shown per hand.
+ *
+ *   tsx scripts/simulate.ts --gate
+ *       The CI strength gate: Pro against three Club bots on GATE_HANDS paired hands (seed prefix
+ *       `gate`), compared with the reference stored in test/fixtures/bot-gate.json. Fails (exit 1)
+ *       when the paired mean falls more than two reference standard errors below the reference.
+ *       `--record` stores the current result as the new reference.
+ *
+ *   tsx scripts/simulate.ts --record-reference
+ *       Records the Pro decision reference that test/bots.test.ts replays (test/fixtures/pro-reference.json).
+ *
+ *   --weights '<json>' (any mode) overrides BOT_WEIGHTS first, e.g. '{"proConcealedShanten":2}' to
+ *   check that the gate catches the old Pro regression.
+ *
+ * From the repository root: `npm run sim -- --ladder pro 600 --seed report`.
  */
-import { applyAction, chooseAction, hashState, newGame, nextHand, tilesRemaining, type BotSkill, type GameState } from '../src/index';
+import { readFileSync, writeFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { applyAction, BOT_WEIGHTS, chooseAction, hashState, isLegal, newGame, nextHand, tilesRemaining, type Action, type BotSkill, type GameState } from '../src/index';
+import { recordHand, type ReferenceFile } from '../test/helpers/reference';
 
 function checkInvariants(s: GameState): void {
   const total = s.players.reduce((n, p) => n + p.hand.length + p.melds.reduce((m, x) => m + x.tiles.length, 0) + p.flowers.length + p.discards.length, 0) + tilesRemaining(s);
   if (total !== 144) throw new Error(`Tile conservation broken: ${total}`);
+}
+
+/** Decision-time and legality counters, per skill. */
+interface Timing {
+  decisions: number;
+  ns: bigint;
+  illegal: number;
+}
+const timing = new Map<BotSkill, Timing>();
+function timed(s: GameState, seat: number, skill: BotSkill): Action | null {
+  const t0 = process.hrtime.bigint();
+  const a = chooseAction(s, seat, { seed: `bot${seat}`, skill });
+  const dt = process.hrtime.bigint() - t0;
+  const t = timing.get(skill) ?? { decisions: 0, ns: 0n, illegal: 0 };
+  if (a) {
+    t.decisions++;
+    t.ns += dt;
+    if (!isLegal(s, seat, a)) t.illegal++;
+  }
+  timing.set(skill, t);
+  return a;
 }
 
 /** Play one hand to the end with the given skill per seat, checking invariants every step. */
@@ -26,7 +70,7 @@ function playHand(s: GameState, skills: readonly BotSkill[]): GameState {
     checkInvariants(s);
     let acted = false;
     for (let seat = 0; seat < 4; seat++) {
-      const a = chooseAction(s, seat, { seed: `bot${seat}`, skill: skills[seat] });
+      const a = timed(s, seat, skills[seat]);
       if (a) {
         s = applyAction(s, seat, a);
         acted = true;
@@ -44,7 +88,10 @@ interface Tally {
   wins: number;
   dealIns: number;
   points: number;
+  tai: number;
+  flushes: number;
 }
+const tally = (): Tally => ({ seatHands: 0, wins: 0, dealIns: 0, points: 0, tai: 0, flushes: 0 });
 
 const pct = (n: number, d: number): string => `${((n / Math.max(1, d)) * 100).toFixed(1)}%`;
 const perHand = (t: Tally): number => t.points / Math.max(1, t.seatHands);
@@ -58,37 +105,87 @@ function meanInterval(xs: readonly number[]): { mean: number; se: number; low: n
   return { mean, se, low: mean - 1.96 * se, high: mean + 1.96 * se };
 }
 
-function runLadder(skill: BotSkill, hands: number): void {
-  const test: Tally = { seatHands: 0, wins: 0, dealIns: 0, points: 0 };
-  const club: Tally = { seatHands: 0, wins: 0, dealIns: 0, points: 0 };
-  // Paired: the test seat's score with `skill` there minus its score on the same seed with Club there.
+/** Add one finished hand to the per-seat tallies (`pick(seat)` says which tally a seat feeds). */
+function record(s: GameState, pick: (seat: number) => Tally): void {
+  const r = s.result!;
+  for (let seat = 0; seat < 4; seat++) {
+    const t = pick(seat);
+    t.seatHands++;
+    t.points += r.scoreDelta[seat];
+    for (const w of r.wins) {
+      if (w.seat === seat) {
+        t.wins++;
+        t.tai += w.score.tai;
+        if (w.score.items.some((i) => i.key === 'half_flush' || i.key === 'full_flush')) t.flushes++;
+      }
+      if (!w.selfDrawn && w.fromSeat === seat) t.dealIns++;
+    }
+  }
+}
+
+/** Play a full match, feeding every hand into the tallies; returns the final state and the hand count. */
+function playMatch(seed: string, skills: readonly BotSkill[], pick: ((seat: number) => Tally) | null): { s: GameState; hands: number } {
+  let s = newGame(seed);
+  let hands = 0;
+  // `nextHand` returns a state with `matchOver` set (and no deal) once the last rotation is done.
+  while (!s.matchOver) {
+    s = playHand(s, skills);
+    hands++;
+    if (pick) record(s, pick);
+    s = nextHand(s);
+  }
+  return { s, hands };
+}
+
+interface LadderOptions {
+  skill: BotSkill;
+  vs: BotSkill;
+  n: number;
+  prefix: string;
+  matches: boolean;
+}
+
+function runLadder(o: LadderOptions): void {
+  const test = tally();
+  const others = tally();
+  // Paired: the test seat's score with `skill` there minus its score on the same seed with `vs` there.
   const paired: number[] = [];
+  let hands = 0;
   let draws = 0;
   const started = Date.now();
-  for (let h = 0; h < hands; h++) {
-    const testSeat = h % 4;
-    const skills = [0, 1, 2, 3].map((seat): BotSkill => (seat === testSeat ? skill : 'club'));
-    const r = playHand(newGame(`ladder-${h}`), skills).result!;
-    const baseline = skill === 'club' ? r : playHand(newGame(`ladder-${h}`), ['club', 'club', 'club', 'club']).result!;
-    paired.push(r.scoreDelta[testSeat] - baseline.scoreDelta[testSeat]);
-    if (r.type !== 'win') draws++;
-    for (let seat = 0; seat < 4; seat++) {
-      const t = seat === testSeat ? test : club;
-      t.seatHands++;
-      t.points += r.scoreDelta[seat];
-      if (r.wins.some((w) => w.seat === seat)) t.wins++;
-      if (r.wins.some((w) => !w.selfDrawn && w.fromSeat === seat)) t.dealIns++;
+  for (let i = 0; i < o.n; i++) {
+    const testSeat = i % 4;
+    const skills = [0, 1, 2, 3].map((seat): BotSkill => (seat === testSeat ? o.skill : o.vs));
+    const pick = (seat: number) => (seat === testSeat ? test : others);
+    const seed = `${o.prefix}-${i}`;
+    if (o.matches) {
+      const a = playMatch(seed, skills, pick);
+      hands += a.hands;
+      const b = o.skill === o.vs ? a : playMatch(seed, [o.vs, o.vs, o.vs, o.vs], null);
+      paired.push(a.s.scores[testSeat] - b.s.scores[testSeat]);
+    } else {
+      const a = playHand(newGame(seed), skills);
+      hands++;
+      if (a.result!.type !== 'win') draws++;
+      record(a, pick);
+      const b = o.skill === o.vs ? a : playHand(newGame(seed), [o.vs, o.vs, o.vs, o.vs]);
+      paired.push(a.result!.scoreDelta[testSeat] - b.result!.scoreDelta[testSeat]);
     }
   }
   const ms = Date.now() - started;
-  const line = (label: string, t: Tally) => `${label.padEnd(9)} win ${pct(t.wins, t.seatHands).padStart(6)}  pts/hand ${perHand(t).toFixed(2).padStart(8)}  deal-in ${pct(t.dealIns, t.seatHands).padStart(6)}`;
-  console.log(`ladder ${skill} vs 3 club: hands=${hands} draws=${draws} (${pct(draws, hands)})`);
-  console.log(line(skill, test));
-  console.log(line('club', club));
-  console.log(`${skill} minus club (unpaired): ${(perHand(test) - perHand(club)).toFixed(2)} pts/hand; ${(ms / hands).toFixed(1)} ms per hand`);
+  const line = (label: string, t: Tally) =>
+    `${label.padEnd(9)} win ${pct(t.wins, t.seatHands).padStart(6)}  pts/hand ${perHand(t).toFixed(2).padStart(8)}  deal-in ${pct(t.dealIns, t.seatHands).padStart(6)}  台/win ${(t.tai / Math.max(1, t.wins)).toFixed(2)}  flushes ${t.flushes}`;
+  const unit = o.matches ? 'matches' : 'hands';
+  console.log(`ladder ${o.skill} vs 3 ${o.vs}: ${unit}=${o.n} seed=${o.prefix}${o.matches ? ` hands=${hands}` : ` draws=${draws} (${pct(draws, hands)})`}`);
+  console.log(line(o.skill, test));
+  console.log(line(o.vs, others));
+  console.log(`${o.skill} minus ${o.vs} (unpaired): ${(perHand(test) - perHand(others)).toFixed(2)} pts/hand; ${(ms / hands).toFixed(1)} ms per hand played`);
+  for (const [skill, t] of timing) console.log(`${skill.padEnd(9)} decisions ${t.decisions}  avg ${(Number(t.ns) / Math.max(1, t.decisions) / 1e6).toFixed(3)} ms  illegal ${t.illegal}`);
   const p = meanInterval(paired);
-  console.log(`${skill} minus club (paired, same seeds and seat): ${p.mean.toFixed(2)} pts/hand, se ${p.se.toFixed(2)}, 95% interval [${p.low.toFixed(2)}, ${p.high.toFixed(2)}]`);
-  if (skill !== 'club') console.log(p.low > 0 ? `${skill} is ahead of club at 95%` : p.high < 0 ? `${skill} is behind club at 95%` : `no clear difference from club at 95%`);
+  const scale = o.matches ? hands / o.n : 1;
+  const per = (x: number) => (o.matches ? `${x.toFixed(1)} pts/match (${(x / scale).toFixed(2)} pts/hand)` : `${x.toFixed(2)} pts/hand`);
+  console.log(`${o.skill} minus ${o.vs} (paired, same seeds and seat): ${per(p.mean)}, se ${p.se.toFixed(2)}, 95% interval [${p.low.toFixed(2)}, ${p.high.toFixed(2)}]`);
+  if (o.skill !== o.vs) console.log(p.low > 0 ? `${o.skill} is ahead of ${o.vs} at 95%` : p.high < 0 ? `${o.skill} is behind ${o.vs} at 95%` : `no clear difference from ${o.vs} at 95%`);
 }
 
 function runMatches(matches: number): void {
@@ -116,18 +213,95 @@ function runMatches(matches: number): void {
     }
   }
   const ms = Date.now() - started;
+  const club = timing.get('club');
   console.log(`matches=${matches} hands=${hands} wins=${wins} draws=${draws} (${pct(draws, hands)})`);
   console.log(`avg tai=${(taiSum / Math.max(1, wins)).toFixed(2)} self-draw=${pct(selfDraws, wins)} seatWins=${seatWins.join('/')}`);
-  console.log(`${(ms / hands).toFixed(1)} ms per hand`);
+  console.log(`${(ms / hands).toFixed(1)} ms per hand; illegal moves ${club?.illegal ?? 0}`);
+}
+
+const SKILLS: readonly BotSkill[] = ['beginner', 'club', 'pro'];
+function skillArg(v: string | undefined): BotSkill {
+  if (!SKILLS.includes(v as BotSkill)) throw new Error(`Unknown skill "${String(v)}" (beginner | club | pro)`);
+  return v as BotSkill;
+}
+function countArg(v: string | undefined, fallback: number): number {
+  const n = Number(v ?? fallback);
+  if (!Number.isInteger(n) || n <= 0) throw new Error(`Invalid count "${String(v)}"`);
+  return n;
+}
+
+const GATE_HANDS = 2000;
+const fixture = (name: string): string => fileURLToPath(new URL(`../test/fixtures/${name}`, import.meta.url));
+
+interface GateReference {
+  note: string;
+  prefix: string;
+  hands: number;
+  mean: number;
+  se: number;
+}
+
+function runGate(record: boolean): void {
+  const started = Date.now();
+  const diffs: number[] = [];
+  for (let h = 0; h < GATE_HANDS; h++) {
+    const testSeat = h % 4;
+    const a = playHand(newGame(`gate-${h}`), [0, 1, 2, 3].map((seat): BotSkill => (seat === testSeat ? 'pro' : 'club')));
+    const b = playHand(newGame(`gate-${h}`), ['club', 'club', 'club', 'club']);
+    diffs.push(a.result!.scoreDelta[testSeat] - b.result!.scoreDelta[testSeat]);
+  }
+  const p = meanInterval(diffs);
+  const secs = (Date.now() - started) / 1000;
+  console.log(`gate: pro minus club over ${GATE_HANDS} paired hands: ${p.mean.toFixed(2)} pts/hand, se ${p.se.toFixed(2)} (${secs.toFixed(0)} s)`);
+  if (record) {
+    const ref: GateReference = { note: 'Pro minus Club, paired, seed prefix gate. Regenerate: npm run sim -- --gate --record', prefix: 'gate', hands: GATE_HANDS, mean: Number(p.mean.toFixed(3)), se: Number(p.se.toFixed(3)) };
+    writeFileSync(fixture('bot-gate.json'), `${JSON.stringify(ref, null, 2)}\n`);
+    console.log('reference recorded');
+    return;
+  }
+  const ref = JSON.parse(readFileSync(fixture('bot-gate.json'), 'utf8')) as GateReference;
+  const floor = ref.mean - 2 * ref.se;
+  console.log(`reference ${ref.mean.toFixed(2)} (se ${ref.se.toFixed(2)}): pass at ${floor.toFixed(2)} or more`);
+  if (p.mean < floor) {
+    console.log('GATE FAILED: Pro is weaker than the stored reference');
+    process.exitCode = 1;
+  } else console.log('gate passed');
+}
+
+function recordReference(): void {
+  const hands = Array.from({ length: 120 }, (_, i) => recordHand(`ref-${i}`, i % 4));
+  const file: ReferenceFile = {
+    note: 'Pro decisions replayed by test/bots.test.ts. Regenerate after an intentional change to Pro: npm run sim -- --record-reference',
+    hands,
+  };
+  writeFileSync(fixture('pro-reference.json'), `${JSON.stringify(file)}\n`);
+  console.log(`recorded ${hands.length} hands, ${hands.reduce((n, h) => n + h.points.length, 0)} decisions`);
 }
 
 const args = process.argv.slice(2);
-if (args[0] === '--ladder') {
-  const skill = args[1];
-  if (skill !== 'beginner' && skill !== 'club' && skill !== 'pro') throw new Error(`Unknown skill "${String(skill)}" (beginner | club | pro)`);
-  const hands = Number(args[2] ?? 500);
-  if (!Number.isInteger(hands) || hands <= 0) throw new Error(`Invalid hand count "${String(args[2])}"`);
-  runLadder(skill, hands);
+const flag = (name: string): boolean => {
+  const i = args.indexOf(name);
+  if (i < 0) return false;
+  args.splice(i, 1);
+  return true;
+};
+const option = (name: string): string | undefined => {
+  const i = args.indexOf(name);
+  if (i < 0) return undefined;
+  const [, v] = args.splice(i, 2);
+  if (v === undefined) throw new Error(`${name} needs a value`);
+  return v;
+};
+const weights = option('--weights');
+if (weights) Object.assign(BOT_WEIGHTS, JSON.parse(weights) as Partial<typeof BOT_WEIGHTS>);
+if (flag('--gate')) runGate(flag('--record'));
+else if (flag('--record-reference')) recordReference();
+else if (flag('--ladder')) {
+  const matches = flag('--matches');
+  const prefix = option('--seed') ?? 'ladder';
+  const vs = skillArg(option('--vs') ?? 'club');
+  const skill = skillArg(args[0]);
+  runLadder({ skill, vs, n: countArg(args[1], 500), prefix, matches });
 } else {
-  runMatches(Number(args[0] ?? 20));
+  runMatches(countArg(args[0], 20));
 }

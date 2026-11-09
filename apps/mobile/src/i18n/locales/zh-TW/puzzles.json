@@ -15,7 +15,7 @@
   "rush": {
     "title": "謎題衝刺",
     "usedTitle": "今日次數已用完",
-    "usedText": "免費帳號每天可以玩一次謎題衝刺。黃金教練方案不限次數，還有歷史紀錄和排行榜。",
+    "usedText": "免費帳號每天可以玩一次謎題衝刺。黃金教練方案不限次數。",
     "seePlans": "查看教練方案",
     "dailyInstead": "改玩每日謎題",
     "best": "最佳 %{n}",
@@ -78,7 +78,11 @@
     "claimReady": "吃碰後聽牌",
     "claimCloser": "吃碰後更接近聽牌",
     "valueKeepPattern": "保住牌型",
-    "valueTradeSpeed": "慢一點也值得"
+    "valueTradeSpeed": "慢一點也值得",
+    "defencePassed": "他上一次打牌後別人打過",
+    "defenceFewCopies": "能聽這張的牌型很少",
+    "defenceMiddle": "能聽這張的牌型最少",
+    "valueSpeed": "這手牌速度比台數重要"
   },
   "defence": {
     "intro": "有人看起來快胡了。在保持牌型的前提下，打哪一張最安全？",
@@ -88,9 +92,13 @@
     "discards": "打過的牌",
     "yourDiscards": "你打過的牌",
     "noMelds": "沒有亮牌",
-    "safe": "最安全的牌！",
+    "safe": "安全的選擇！",
     "unsafe": "還有更安全的牌。",
-    "answer": "最安全：%{tile}"
+    "answer": "最安全：%{tile}",
+    "verdicts": "如果他已經聽牌，你能打的每張牌放槍的機率",
+    "fine": "可以",
+    "riskier": "比較危險",
+    "chance": "他可能的牌型中有 %{pct}"
   },
   "claim": {
     "intro": "%{seat}打出%{tile}，你要怎麼做？",
@@ -103,20 +111,31 @@
     "hu": "胡%{tile}",
     "right": "判斷正確！",
     "wrong": "教練會有不同的選擇。",
-    "answer": "最佳：%{label}"
+    "answer": "最佳：%{label}",
+    "fine": "可以",
+    "worse": "比較差",
+    "ready": "聽牌，%{tiles} 張可以胡",
+    "away": "離聽牌 %{n} 步",
+    "win": "直接胡牌"
   },
   "value": {
-    "intro": "兩種打法都能聽牌，哪一張能保住大牌？",
+    "intro": "好幾種打法都能聽牌，打哪一張最有價值？",
     "yourMelds": "你的面子",
     "seatWind": "門風 %{wind}",
     "roundWind": "圈風 %{wind}",
-    "good": "保住大牌了！",
-    "bad": "這張會丟掉台數。",
-    "projections": "胡牌時的台數",
+    "good": "最有價值！",
+    "bad": "有別的打法更有價值。",
+    "projections": "每種打法的價值",
     "discard": "打%{tile}",
     "tai": "%{n} 台",
     "noLive": "沒有活的聽牌",
-    "waits": "%{kinds} 種 / %{tiles} 張"
+    "waits": "%{kinds} 種 / %{tiles} 張",
+    "avgTai": "平均每次胡 %{n} 台",
+    "bestTai": "最多 %{n} 台",
+    "share": "是最佳打法的 %{n}%",
+    "best": "最佳",
+    "fine": "也可以",
+    "worse": "比較差"
   },
   "rating": {
     "pill": "積分 %{n}",

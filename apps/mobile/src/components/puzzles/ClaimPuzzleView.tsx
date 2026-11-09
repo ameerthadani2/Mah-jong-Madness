@@ -3,7 +3,7 @@ import { StyleSheet, View } from 'react-native';
 import type { ClaimPuzzle } from '@mjm/engine';
 import { colors } from '../../theme';
 import { useT } from '../../i18n';
-import { checkPuzzleAnswer, claimButtons, SEAT_KEYS, seatRelation, tileName, type ClaimButton } from '../../logic/puzzle';
+import { checkPuzzleAnswer, claimButtons, claimOutcomeKey, SEAT_KEYS, seatRelation, tileName, type ClaimButton } from '../../logic/puzzle';
 import { Tile } from '../Tile';
 import { Button, P, Pill, Row } from '../Ui';
 import { Icon } from '../Icons';
@@ -11,7 +11,8 @@ import { Explanation, KindMeld, KindRow, Label, NextButton, partStyles, useAnswe
 
 /**
  * Claim window: your hand and sets, the tile just thrown and who threw it (上家 / 對家 /
- * 下家), and one button per legal response: pass, each 吃 shape, 碰, 槓, 胡.
+ * 下家), and one button per legal response: pass, each 吃 shape, 碰, 槓, 胡. Every accepted
+ * response counts; once answered, each button says where it leaves the hand and whether it is fine.
  */
 export function ClaimPuzzleView({ puzzle, onResult, onNext, nextLabel, autoAdvance }: ThemeViewProps<ClaimPuzzle>) {
   const { t, locale } = useT();
@@ -44,6 +45,21 @@ export function ClaimPuzzleView({ puzzle, onResult, onNext, nextLabel, autoAdvan
           </View>
         </>
       )}
+      {puzzle.opponents.map((o) => (
+        <Row key={o.seat} gap={6} style={{ flexWrap: 'wrap', rowGap: 4 }}>
+          <Pill size="sm" text={t(SEAT_KEYS[seatRelation(o.seat)])} />
+          {o.melds.map((m, i) => (
+            <KindMeld key={i} meld={m} size="xs" />
+          ))}
+          <KindRow kinds={o.discards} size="xs" />
+        </Row>
+      ))}
+      {puzzle.ownDiscards.length > 0 && (
+        <>
+          <Label>{t('puzzles.defence.yourDiscards')}</Label>
+          <KindRow kinds={puzzle.ownDiscards} />
+        </>
+      )}
       <Label>{t('puzzles.claim.yourHand')}</Label>
       <View style={partStyles.hand}>
         {puzzle.hand.map((k, i) => (
@@ -52,12 +68,16 @@ export function ClaimPuzzleView({ puzzle, onResult, onNext, nextLabel, autoAdvan
       </View>
       <View style={{ gap: 6 }}>
         {buttons.map((b) => {
-          const mark = answered !== null ? (b.id === puzzle.answer.id ? 'good' : picked === b.id ? 'bad' : null) : null;
+          const fine = puzzle.answers.includes(b.id);
+          const mark = answered !== null ? (fine ? 'good' : picked === b.id ? 'bad' : null) : null;
+          const outcome = claimOutcomeKey(b.option);
           return (
             <Row key={b.id} gap={8} style={[styles.option, mark === 'good' && styles.good, mark === 'bad' && styles.bad]}>
               <Button testID={`claim-${b.id}`} title={t(b.label.key, b.label.params)} kind={b.type === 'pass' ? 'ghost' : b.type === 'hu' ? 'gold' : 'secondary'} small onPress={() => choose(b)} disabled={answered !== null && mark === null} />
               {b.kinds.length > 0 && <KindRow kinds={b.kinds} size="xs" />}
               {mark && <Icon name={mark === 'good' ? 'check' : 'cross'} size={20} color={mark === 'good' ? colors.cta : colors.danger} />}
+              {answered !== null && <Pill size="sm" text={t(fine ? 'puzzles.claim.fine' : 'puzzles.claim.worse')} tone={fine ? 'gold' : 'neutral'} />}
+              {answered !== null && <P style={{ fontSize: 13 }}>{t(outcome.key, outcome.params)}</P>}
             </Row>
           );
         })}

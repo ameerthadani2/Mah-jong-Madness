@@ -124,6 +124,9 @@ const REASON_KEYS: Record<string, string> = {
   'puzzle.defence.lastHonour': 'puzzles.reason.defenceLastHonour',
   'puzzle.defence.honour': 'puzzles.reason.defenceHonour',
   'puzzle.defence.terminal': 'puzzles.reason.defenceTerminal',
+  'puzzle.defence.passed': 'puzzles.reason.defencePassed',
+  'puzzle.defence.fewCopies': 'puzzles.reason.defenceFewCopies',
+  'puzzle.defence.middle': 'puzzles.reason.defenceMiddle',
   'puzzle.claim.hu': 'puzzles.reason.claimHu',
   'puzzle.claim.passReady': 'puzzles.reason.claimPassReady',
   'puzzle.claim.passNoGain': 'puzzles.reason.claimPassNoGain',
@@ -132,6 +135,7 @@ const REASON_KEYS: Record<string, string> = {
   'puzzle.claim.closer': 'puzzles.reason.claimCloser',
   'puzzle.value.keepPattern': 'puzzles.reason.valueKeepPattern',
   'puzzle.value.tradeSpeed': 'puzzles.reason.valueTradeSpeed',
+  'puzzle.value.speed': 'puzzles.reason.valueSpeed',
 };
 
 /** The headline key for an engine reason key, or null for one the app does not know yet (then only the explanation shows). */
@@ -188,6 +192,13 @@ export function claimButtons(p: ClaimPuzzle, locale: string): ClaimButton[] {
     .sort((x, y) => CLAIM_ORDER[x.type] - CLAIM_ORDER[y.type] || (x.kinds[0] ?? 0) - (y.kinds[0] ?? 0));
 }
 
+/** Where a claim option leaves the hand, shown on each button once the puzzle is answered. */
+export function claimOutcomeKey(o: ClaimOption): TextKey {
+  if (o.type === 'hu') return { key: 'puzzles.claim.win' };
+  if (o.shantenAfter <= 0) return { key: 'puzzles.claim.ready', params: { tiles: o.acceptance } };
+  return { key: 'puzzles.claim.away', params: { n: o.shantenAfter } };
+}
+
 // ---------------------------------------------------------------------------
 // Defence puzzles
 // ---------------------------------------------------------------------------
@@ -210,7 +221,29 @@ export function defenceSeats(p: DefencePuzzle): DefenceSeat[] {
 
 /** The heading for the threatening seat: four exposed sets, or three and a long discard row. */
 export function threatKey(p: DefencePuzzle): TextKey {
-  return { key: p.threatLevel >= 1 ? 'puzzles.defence.threatFour' : 'puzzles.defence.threatThree', params: { n: p.opponents.find((o) => o.seat === p.threatSeat)?.melds.length ?? 0 } };
+  const n = p.opponents.find((o) => o.seat === p.threatSeat)?.melds.length ?? 0;
+  return { key: n >= 4 ? 'puzzles.defence.threatFour' : 'puzzles.defence.threatThree', params: { n } };
+}
+
+/** One shape-keeping discard after a defence puzzle is answered: how often it would deal in, and whether it counts. */
+export interface DefenceVerdict {
+  kind: Kind;
+  /** Exact chance (0–1) that the threat, if ready, wins on this tile (the engine's enumeration). */
+  chance: number;
+  accepted: boolean;
+}
+
+/** Every discard that keeps the hand's shape, safest first, so the player sees why others are also fine or worse. */
+export function defenceVerdicts(p: DefencePuzzle): DefenceVerdict[] {
+  return p.options
+    .filter((o) => o.shanten === p.bestShanten)
+    .map((o) => ({ kind: o.kind, chance: o.exact, accepted: p.answers.includes(o.kind) }))
+    .sort((a, b) => Number(b.accepted) - Number(a.accepted) || a.chance - b.chance || a.kind - b.kind);
+}
+
+/** A percentage for the verdict lines, one decimal. */
+export function percent(x: number): string {
+  return `${(Math.round(x * 1000) / 10).toFixed(1)}%`;
 }
 
 // ---------------------------------------------------------------------------
@@ -219,19 +252,39 @@ export function threatKey(p: DefencePuzzle): TextKey {
 
 export interface ValueProjection {
   kind: Kind;
-  role: 'answer' | 'rival';
-  /** Projected pattern 台 of the best completion (−1 when no winning tile is live). */
-  tai: number;
+  /** 'best' is the highest expected score, 'accepted' within the tolerance of it, 'worse' the rest. */
+  role: 'best' | 'accepted' | 'worse';
+  /** Average 台 of a win over the live winning tiles (a quarter of wins self-drawn). */
+  expectedTai: number;
+  /** The biggest single win, in 台 (−1 when no winning tile is live). */
+  bestTai: number;
+  /** Expected score as a share of the best discard's (0–100). */
+  share: number;
+  /** The headline pattern items of the biggest win. */
   items: TaiItem[];
   waits: Kind[];
   acceptance: number;
 }
 
-/** The two 台 projections shown after answering: the answer's, then the tempting alternative's. */
-export function valueProjections(p: ValuePuzzle): [ValueProjection, ValueProjection] {
-  const of = (kind: Kind, role: ValueProjection['role']): ValueProjection => {
-    const o = p.options.find((x) => x.kind === kind);
-    return { kind, role, tai: o?.projectedTai ?? -1, items: o?.items ?? [], waits: o?.waits ?? [], acceptance: o?.acceptance ?? 0 };
-  };
-  return [of(p.answer, 'answer'), of(p.rival, 'rival')];
+/** Every discard that keeps the hand ready, best expected score first: the cards shown after answering. */
+export function valueProjections(p: ValuePuzzle): ValueProjection[] {
+  const ready = p.options.filter((o) => o.ready && (o.acceptance ?? 0) > 0);
+  const top = Math.max(...ready.map((o) => o.expectedScore ?? 0));
+  return ready
+    .map((o): ValueProjection => ({
+      kind: o.kind,
+      role: o.kind === p.answer ? 'best' : p.answers.includes(o.kind) ? 'accepted' : 'worse',
+      expectedTai: o.expectedTai ?? 0,
+      bestTai: o.bestTai ?? -1,
+      share: top > 0 ? Math.round((100 * (o.expectedScore ?? 0)) / top) : 0,
+      items: o.items ?? [],
+      waits: o.waits ?? [],
+      acceptance: o.acceptance ?? 0,
+    }))
+    .sort((a, b) => b.share - a.share || a.kind - b.kind);
+}
+
+/** One decimal for the average 台 on a card (whole numbers stay whole). */
+export function taiFigure(x: number): string {
+  return (Math.round(x * 10) / 10).toString();
 }

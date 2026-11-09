@@ -15,7 +15,7 @@
   "rush": {
     "title": "Puzzle Rush",
     "usedTitle": "Daily run used",
-    "usedText": "Free accounts get one Puzzle Rush a day. Coach Gold makes it unlimited, with history and leaderboards.",
+    "usedText": "Free accounts get one Puzzle Rush a day. Coach Gold makes it unlimited.",
     "seePlans": "See Coach plans",
     "dailyInstead": "Daily puzzle instead",
     "best": "Best %{n}",
@@ -78,7 +78,11 @@
     "claimReady": "The claim makes you ready",
     "claimCloser": "The claim gets you closer",
     "valueKeepPattern": "Keep the pattern",
-    "valueTradeSpeed": "Worth a slower wait"
+    "valueTradeSpeed": "Worth a slower wait",
+    "defencePassed": "Let pass since their last discard",
+    "defenceFewCopies": "Few hands wait on it",
+    "defenceMiddle": "The fewest hands wait on it",
+    "valueSpeed": "Speed beats size here"
   },
   "defence": {
     "intro": "Someone looks close to winning. Keep your shape, but which discard is safest?",
@@ -88,9 +92,13 @@
     "discards": "Discards",
     "yourDiscards": "Your discards",
     "noMelds": "No exposed sets",
-    "safe": "Safest tile!",
+    "safe": "Safe choice!",
     "unsafe": "There is a safer tile.",
-    "answer": "Safest: %{tile}"
+    "answer": "Safest: %{tile}",
+    "verdicts": "If they are ready, how often each tile you can throw wins for them",
+    "fine": "Fine",
+    "riskier": "Riskier",
+    "chance": "%{pct} of their possible hands"
   },
   "claim": {
     "intro": "%{seat} discards %{tile}. What do you do?",
@@ -101,22 +109,33 @@
     "pong": "碰 %{tile}",
     "kong": "槓 %{tile}",
     "hu": "胡 on %{tile}",
-    "right": "Right call!",
+    "right": "Good call!",
     "wrong": "The coach would do something else.",
-    "answer": "Best: %{label}"
+    "answer": "Best: %{label}",
+    "fine": "Fine",
+    "worse": "Worse",
+    "ready": "Ready, %{tiles} winning tiles",
+    "away": "%{n} from ready",
+    "win": "Wins the hand"
   },
   "value": {
-    "intro": "Either of two discards leaves you ready. Which one keeps the bigger hand?",
+    "intro": "Several discards leave you ready. Which one is worth the most?",
     "yourMelds": "Your sets",
     "seatWind": "Seat: %{wind}",
     "roundWind": "Round: %{wind}",
-    "good": "Big hand kept!",
-    "bad": "That one gives up 台.",
-    "projections": "台 if you win",
+    "good": "Worth the most!",
+    "bad": "Another discard is worth more.",
+    "projections": "What each discard is worth",
     "discard": "Discard %{tile}",
     "tai": "%{n} 台",
     "noLive": "No live winning tile",
-    "waits": "%{kinds} kinds / %{tiles} tiles"
+    "waits": "%{kinds} kinds / %{tiles} tiles",
+    "avgTai": "%{n} 台 a win on average",
+    "bestTai": "Up to %{n} 台",
+    "share": "%{n}% of the best",
+    "best": "Best",
+    "fine": "Also fine",
+    "worse": "Worse"
   },
   "rating": {
     "pill": "Rating %{n}",
