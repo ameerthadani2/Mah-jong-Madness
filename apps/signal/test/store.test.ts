@@ -140,3 +140,22 @@ describe('sandbox purchases', () => {
     expect(testerIdsFromEnv({}).size).toBe(0);
   });
 });
+
+describe('deleting an account with a live subscription', () => {
+  it('Restore on a new account moves the subscription from the deleted one (TRANSFER)', async () => {
+    const f = fixture();
+    const c = await f.guest('C');
+    await f.post(rc('INITIAL_PURCHASE', c.userId, { product_id: 'fourwinds.month', transaction_id: 'C-1', price: 10.99 }));
+    await f.post(rc('NON_RENEWING_PURCHASE', c.userId, { product_id: 'diamonds.300', transaction_id: 'C-2' }));
+    expect((await f.me(c.auth)).coachTier).toBe('fourwinds');
+    expect((await f.call('DELETE', '/api/me', undefined, c.auth)).status).toBe(204);
+    const c2 = await f.guest('C2');
+    const transfer = { api_version: '1.0', event: { id: randomUUID(), type: 'TRANSFER', transferred_from: [c.userId], transferred_to: [c2.userId], store: 'APP_STORE', environment: 'PRODUCTION' } };
+    expect(await f.post(transfer)).toBe('transferred');
+    const me = await f.me(c2.auth);
+    expect(me.coachTier).toBe('fourwinds');
+    // Diamonds are not store purchases that can be restored: they went with the deleted account.
+    expect(me.wallet).toEqual({ diamonds: 0, bonusDiamonds: 0 });
+    expect((await f.repos.wallet.getEntitlements(c.userId)).length).toBe(0);
+  });
+});

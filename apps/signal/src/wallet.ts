@@ -247,11 +247,11 @@ export class WalletService {
   }
 
   /** The live account a store user id refers to (following merges), or null. */
-  private async resolveUser(candidates: string[], repos: Repos = this.repos): Promise<UserRecord | null> {
+  private async resolveUser(candidates: string[], repos: Repos = this.repos, includeDeleted = false): Promise<UserRecord | null> {
     for (const id of candidates) {
       let user = await repos.users.get(id);
       for (let hops = 0; user && user.mergedInto && hops < 5; hops++) user = await repos.users.get(user.mergedInto);
-      if (user && user.deletedAt === null) return user;
+      if (user && (user.deletedAt === null || (includeDeleted && user.mergedInto === null))) return user;
     }
     return null;
   }
@@ -447,15 +447,18 @@ export class WalletService {
   /**
    * The store moved purchases between app user ids (a Restore signed into another account).
    * Store-granted entitlements move to the first known recipient, the later expiry winning;
-   * diamonds already credited stay where they were spent or credited.
+   * diamonds already credited stay where they were spent or credited. A deleted account's
+   * subscriptions move too (until its rows are purged), so a player who deleted an account with
+   * a live subscription gets it back with Restore on a new one; after the purge, reconciliation
+   * (reconcile.ts) reads the subscription from the store instead.
    */
   private async transfer(tx: Repos, e: StoreEvent, at: number): Promise<{ outcome: StoreOutcome; userId: string | null }> {
-    const to = await this.resolveUser(e.transferredTo);
+    const to = await this.resolveUser(e.transferredTo, tx);
     if (!to) return { outcome: 'ignored_unknown_user', userId: null };
     const theirs = new Map((await tx.wallet.getEntitlements(to.id)).map((x) => [x.entitlement, x]));
     let moved = 0;
     for (const fromId of e.transferredFrom) {
-      const from = await this.resolveUser([fromId]);
+      const from = await this.resolveUser([fromId], tx, true);
       if (!from || from.id === to.id) continue;
       for (const ent of await tx.wallet.getEntitlements(from.id)) {
         if (ent.source !== STORE_SOURCE) continue;
