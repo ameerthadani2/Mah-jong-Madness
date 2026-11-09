@@ -43,3 +43,19 @@ export function selectStoreMode(env: StoreEnv, platform: string, isDev: boolean)
   if (!key) return { kind: 'unavailable', reason: 'no_key' };
   return { kind: 'revenuecat', apiKey: key };
 }
+
+/**
+ * Whether the Shop sells for money right now. The build decides first (no key, the web, a mock in
+ * a release build); then the server: `storeEnabled: false` in `GET /api/config` means it cannot
+ * take the store's notifications, so a purchase would be charged and never granted. An unknown
+ * server answer (offline, an older server) leaves the build's choice standing, and the mock store
+ * of a development build grants on the device, so it never needs the server.
+ */
+export type ShopStoreState = 'open' | 'build_off' | 'server_off';
+
+export function shopStoreState(buildKind: StoreMode['kind'], serverStoreEnabled: boolean | undefined): ShopStoreState {
+  if (buildKind === 'unavailable') return 'build_off';
+  if (buildKind === 'mock') return 'open';
+  if (serverStoreEnabled === false) return 'server_off';
+  return 'open';
+}

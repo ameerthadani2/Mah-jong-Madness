@@ -46,6 +46,10 @@ export interface UsersRepo {
   get(id: string): Promise<UserRecord | null>;
   /** Applies the patch and returns the updated row, or null when there is no such user. */
   update(id: string, patch: UserPatch): Promise<UserRecord | null>;
+  /** The player's analytics choice (`PATCH /api/me` analyticsConsent); null when the app has not said, which counts as no. */
+  getAnalyticsConsent(id: string): Promise<boolean | null>;
+  /** Stores the choice; false when there is no such user. */
+  setAnalyticsConsent(id: string, consent: boolean | null): Promise<boolean>;
   /**
    * Hard-deletes users soft-deleted (or merged away) before `before`, with everything that
    * references them (identities, sessions, devices, wallet, entitlements, puzzle results, club

@@ -1,6 +1,7 @@
 /**
  * Remote configuration and the update gate. `GET /api/config` (docs/API.md) tells the app the
- * oldest build the server still serves (`minBuild`) and an optional maintenance message.
+ * oldest build the server still serves (`minBuild`), an optional maintenance message, whether
+ * push is on and whether the server takes store purchases (`storeEnabled`).
  *
  * Pure TypeScript with `fetch` injected. Every failure (no server, a timeout, an odd reply) gives
  * `null`, and `null` shows nothing: an unreachable server never blocks the app.
@@ -11,6 +12,12 @@ export interface RemoteConfig {
   minBuild: number;
   maintenance: string | null;
   pushEnabled: boolean;
+  /**
+   * False when the server cannot take store purchases (no webhook secret): the Shop then says
+   * "Store unavailable" and sells nothing for money, whatever this build's store keys. Present
+   * only when the server says; absent means the build's own store setting decides.
+   */
+  storeEnabled?: boolean;
 }
 
 export const CONFIG_TIMEOUT_MS = 8_000;
@@ -21,7 +28,9 @@ export function readRemoteConfig(raw: unknown): RemoteConfig | null {
   const o = raw as Record<string, unknown>;
   const minBuild = typeof o.minBuild === 'number' && Number.isFinite(o.minBuild) && o.minBuild > 0 ? Math.floor(o.minBuild) : 0;
   const maintenance = typeof o.maintenance === 'string' && o.maintenance.trim() ? o.maintenance.trim().slice(0, 500) : null;
-  return { minBuild, maintenance, pushEnabled: o.pushEnabled === true };
+  const config: RemoteConfig = { minBuild, maintenance, pushEnabled: o.pushEnabled === true };
+  if (typeof o.storeEnabled === 'boolean') config.storeEnabled = o.storeEnabled;
+  return config;
 }
 
 export async function fetchRemoteConfig(fetch: FetchLike, base: string, timeoutMs = CONFIG_TIMEOUT_MS): Promise<RemoteConfig | null> {

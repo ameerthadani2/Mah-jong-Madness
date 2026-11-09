@@ -30,7 +30,9 @@
   },
   "unavailable": {
     "title": "Store unavailable on this build",
-    "body": "Purchases are switched off here, so nothing can be bought or granted. Looks and plans you already own still work."
+    "body": "Purchases are switched off here, so nothing can be bought or granted. Looks and plans you already own still work.",
+    "serverTitle": "Store unavailable",
+    "serverBody": "The game server is not taking purchases right now, so nothing can be bought for money. Diamonds you already have still buy looks, and plans you own still work."
   },
   "mock": "Development build: a test store. Purchases are instant, free and stay on this device until the next sync with the server.",
   "offline": "Offline: showing your balance from the last time the app reached the server.",

@@ -106,6 +106,7 @@ describe('store events', () => {
   it('credits a diamond pack (base plus bonus) once per event id and once per transaction', async () => {
     const { repos, wallet, user, events } = await setup();
     const u = await user();
+    await repos.users.setAnalyticsConsent(u, true);
     const e = storeEvent(u, 'NON_RENEWING_PURCHASE', { storeProductId: 'diamonds.3450', price: 49.99 });
     expect(await wallet.applyStoreEvent(e)).toEqual({ outcome: 'credited', userId: u, duplicate: false });
     expect(await balance(repos, u)).toEqual([3000, 450]);
@@ -115,6 +116,18 @@ describe('store events', () => {
     expect(await balance(repos, u)).toEqual([3000, 450]);
     expect((await repos.wallet.listPurchases(u)).map((p) => [p.productId, p.price, p.currency])).toEqual([['diamonds.3450', 49.99, 'USD']]);
     expect(events).toEqual([{ id: u, event: 'purchase_credited', props: expect.objectContaining({ productId: 'diamonds.3450', diamonds: 3450 }) }]);
+  });
+
+  it('sends purchase analytics only for players who allowed analytics in the app', async () => {
+    const { repos, wallet, user, events } = await setup();
+    const [unknown, no, yes] = [await user(), await user(), await user()];
+    await repos.users.setAnalyticsConsent(no, false);
+    await repos.users.setAnalyticsConsent(yes, true);
+    for (const u of [unknown, no, yes]) await wallet.applyStoreEvent(storeEvent(u, 'NON_RENEWING_PURCHASE', { storeProductId: 'diamonds.60' }));
+    await wallet.applyStoreEvent(storeEvent(no, 'INITIAL_PURCHASE', { storeProductId: 'coach.gold.month', expiresAt: T0 + 30 * DAY }));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(events.map((e) => e.id)).toEqual([yes]);
+    expect(await balance(repos, unknown)).toEqual([60, 0]);
   });
 
   it('a refunded pack takes back everything it credited: spent diamonds leave a negative balance that blocks spends', async () => {

@@ -7,6 +7,8 @@ import { useAuth } from '../auth/AuthProvider';
 import { COSMETICS, DIAMOND_PACKS, productText, SUBSCRIPTIONS, type Product } from '../monetisation/catalog';
 import { coachRenewal, coachTier, ownsCosmetic, totalDiamonds } from '../monetisation/wallet';
 import { StoreError } from '../monetisation/providers';
+import { shopStoreState } from '../monetisation/store-mode';
+import { useRemoteConfig } from '../telemetry/RemoteConfig';
 import { useWallet } from '../monetisation/useWallet';
 import { ApiError } from '../api/http';
 import { friendlyError } from '../logic/errors';
@@ -43,6 +45,7 @@ export function ShopScreen() {
   const wallet = shop.wallet;
   const { refresh } = shop;
   const accountId = useAuth().user?.id;
+  const storeState = shopStoreState(shop.storeKind, useRemoteConfig().config?.storeEnabled);
 
   useEffect(() => {
     void refresh().then((r) => setOffline(r === 'offline'));
@@ -58,6 +61,10 @@ export function ShopScreen() {
   };
 
   const buy = async (p: Product) => {
+    if (storeState !== 'open') {
+      setMsg({ text: t('shop.errors.store_unavailable'), tone: 'danger' });
+      return;
+    }
     setBusy(p.id);
     setMsg(null);
     try {
@@ -102,7 +109,7 @@ export function ShopScreen() {
 
   /** The store's own price string, or why there is none. */
   const priceLabel = (p: Product): { label: string; sellable: boolean } => {
-    if (shop.storeKind === 'unavailable') return { label: t('shop.notOnSale'), sellable: false };
+    if (storeState !== 'open') return { label: t('shop.notOnSale'), sellable: false };
     if (!shop.pricesLoaded) return { label: t('shop.priceLoading'), sellable: false };
     const price = shop.prices[p.id];
     if (!price) return { label: t('shop.notOnSale'), sellable: false };
@@ -135,13 +142,13 @@ export function ShopScreen() {
           {t('shop.trust')}
         </Text>
       </View>
-      {shop.storeKind === 'unavailable' && (
+      {storeState !== 'open' && (
         <Card tone="gold" testID="store-unavailable" style={{ flexDirection: 'row', gap: space.md, alignItems: 'center' }}>
           <Icon name="lock" size={30} />
           <View style={{ flex: 1, gap: 2 }}>
-            <H2>{t('shop.unavailable.title')}</H2>
+            <H2>{t(storeState === 'server_off' ? 'shop.unavailable.serverTitle' : 'shop.unavailable.title')}</H2>
             <P dim style={{ fontSize: 13, lineHeight: 18 }}>
-              {t('shop.unavailable.body')}
+              {t(storeState === 'server_off' ? 'shop.unavailable.serverBody' : 'shop.unavailable.body')}
             </P>
           </View>
         </Card>
@@ -201,7 +208,7 @@ export function ShopScreen() {
       )}
 
       <NoValueNotice />
-      {shop.storeKind !== 'unavailable' && (
+      {storeState === 'open' && (
         <Button testID="restore-purchases" small kind="ghost" icon="check" title={busy === 'restore' ? t('shop.restoring') : t('shop.restore')} onPress={() => void restore()} disabled={busy !== null} style={{ alignSelf: 'flex-start' }} />
       )}
       <Text style={styles.foot}>{t('shop.foot')}</Text>

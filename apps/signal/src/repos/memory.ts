@@ -66,6 +66,8 @@ interface MemoryState {
   matchSeq: number;
   puzzles: PuzzleResultRecord[];
   puzzleSeq: number;
+  /** Each user's analytics choice (users.analytics_consent in Postgres). */
+  consent: Map<string, boolean>;
 }
 
 const emptyState = (): MemoryState => ({
@@ -88,6 +90,7 @@ const emptyState = (): MemoryState => ({
   matchSeq: 0,
   puzzles: [],
   puzzleSeq: 0,
+  consent: new Map(),
 });
 
 function memoryUsers(s: MemoryState): UsersRepo {
@@ -120,6 +123,15 @@ function memoryUsers(s: MemoryState): UsersRepo {
       Object.assign(row, copy(patch));
       return copy(row);
     },
+    async getAnalyticsConsent(id) {
+      return s.users.has(id) ? (s.consent.get(id) ?? null) : null;
+    },
+    async setAnalyticsConsent(id, consent) {
+      if (!s.users.has(id)) return false;
+      if (consent === null) s.consent.delete(id);
+      else s.consent.set(id, consent);
+      return true;
+    },
     async purgeDeleted(before) {
       let n = 0;
       for (const [id, u] of [...s.users]) {
@@ -130,6 +142,7 @@ function memoryUsers(s: MemoryState): UsersRepo {
         for (const [k, r] of [...s.sessions]) if (r.userId === id) s.sessions.delete(k);
         for (const [k, r] of [...s.devices]) if (r.userId === id) s.devices.delete(k);
         s.wallets.delete(id);
+        s.consent.delete(id);
         for (const [k, e] of [...s.entitlements]) if (e.userId === id) s.entitlements.delete(k);
         s.puzzles = s.puzzles.filter((p) => p.userId !== id);
         for (const u2 of s.users.values()) if (u2.mergedInto === id) u2.mergedInto = null;

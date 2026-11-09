@@ -144,6 +144,16 @@ function pgUsers(q: Queryable): UsersRepo {
       );
       return res.rows[0] ? userFromRow(res.rows[0]) : null;
     },
+    async getAnalyticsConsent(id) {
+      if (!isUuid(id)) return null;
+      const res = await q.query<{ analytics_consent: boolean | null }>('SELECT analytics_consent FROM users WHERE id = $1', [id]);
+      return res.rows[0]?.analytics_consent ?? null;
+    },
+    async setAnalyticsConsent(id, consent) {
+      if (!isUuid(id)) return false;
+      const res = await q.query('UPDATE users SET analytics_consent = $2 WHERE id = $1', [id, consent]);
+      return (res.rowCount ?? 0) > 0;
+    },
     async purgeDeleted(before) {
       // Everything that references the row cascades (0001_init); a club owner is never deleted (clubs.owner_id has no cascade).
       const res = await q.query('DELETE FROM users u WHERE u.deleted_at IS NOT NULL AND u.deleted_at < $1 AND NOT EXISTS (SELECT 1 FROM clubs c WHERE c.owner_id = u.id)', [toDate(before)]);

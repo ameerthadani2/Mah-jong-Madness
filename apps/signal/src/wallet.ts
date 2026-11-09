@@ -16,7 +16,7 @@
  * Postgres every operation is one transaction.
  */
 import { COSMETIC_ENTITLEMENTS, PERIOD_MS, productForStoreId, serverProduct, TIER_RANK, tierOfEntitlements, type CoachTier, type ServerProduct } from './catalog';
-import { NO_ANALYTICS, type Analytics } from './observability';
+import { NO_ANALYTICS, withConsent, type Analytics } from './observability';
 import type { EntitlementRecord, Repos, UserRecord, WalletRecord } from './repos/types';
 
 export type WalletErrorCode = 'insufficient' | 'owned' | 'not_for_sale' | 'invalid' | 'not_found' | 'unauthorised' | 'rate_limited' | 'unavailable' | 'store_unreachable';
@@ -168,7 +168,8 @@ export class WalletService {
     opts: WalletServiceOptions = {},
   ) {
     this.now = opts.now ?? Date.now;
-    this.analytics = opts.analytics ?? NO_ANALYTICS;
+    // Purchase events reach analytics only for players who allowed analytics in the app.
+    this.analytics = withConsent(opts.analytics ?? NO_ANALYTICS, (id) => repos.users.getAnalyticsConsent(id));
     this.log = opts.log ?? ((line) => console.log(line));
     // A Set is kept as given (so a caller can add testers later); anything else is read once.
     this.testers = opts.testerUserIds instanceof Set ? opts.testerUserIds : opts.testerUserIds ? new Set([...opts.testerUserIds].map((id) => id.trim().toLowerCase())) : testerIdsFromEnv();

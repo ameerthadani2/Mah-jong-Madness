@@ -1,6 +1,6 @@
 /**
  * Reads `GET /api/config` at launch and whenever the app returns to the foreground, and exposes
- * the update gate (`minBuild`), the maintenance message and `pushEnabled`. With no server
+ * the update gate (`minBuild`), the maintenance message, `pushEnabled` and `storeEnabled`. With no server
  * reachable the config stays null and nothing is shown.
  */
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
