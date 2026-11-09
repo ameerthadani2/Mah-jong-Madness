@@ -1,18 +1,22 @@
 name: iOS TestFlight build
-# Builds the iOS app in the EAS cloud and submits it to TestFlight, entirely from GitHub.
+# Builds the iOS app in the EAS cloud and submits it to TestFlight, entirely from GitHub. See docs/RUN_ON_IOS.md.
 # Secrets needed (Settings → Secrets and variables → Actions):
 #   EXPO_TOKEN            expo.dev access token
 #   ASC_KEY_ID            App Store Connect API key id        (App Store Connect → Users and Access → Integrations → Team Keys)
 #   ASC_ISSUER_ID         App Store Connect API issuer id
 #   ASC_KEY_P8            full contents of the downloaded AuthKey_XXXX.p8 file
 #   APPLE_TEAM_ID         10-character team id (developer.apple.com → Membership)
-#   ASC_APP_ID            (optional) numeric App Store Connect app id, once the app record exists
-# Optional repository variables, copied into the build (all absent -> that feature is off; see docs/OWNER_TODO.md):
-#   SIGNAL_URL, APP_STORE_ID, EXPO_PUBLIC_SENTRY_DSN, EXPO_PUBLIC_POSTHOG_KEY, EXPO_PUBLIC_POSTHOG_HOST,
-#   SENTRY_ORG, SENTRY_PROJECT, EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID, EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID,
-#   EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID, EXPO_PUBLIC_REVENUECAT_IOS_KEY, EXPO_PUBLIC_REVENUECAT_ANDROID_KEY,
-#   EXPO_PUBLIC_TERMS_URL, EXPO_PUBLIC_PRIVACY_URL. SENTRY_AUTH_TOKEN and google-services.json belong in
-#   EAS environment variables (secret / file), never here.
+# Without any of them the run is skipped with a summary of what to set up.
+# Repository variables copied into the build (the same as android-play.yml; see docs/OWNER_TODO.md):
+#   SIGNAL_URL (required, wss://), APP_NAME, APP_SLUG, APP_SCHEME, APP_BUNDLE_ID, APP_VERSION,
+#   APP_STORE_ID, EXPO_PUBLIC_LINK_DOMAIN, EXPO_PUBLIC_SENTRY_DSN, EXPO_PUBLIC_POSTHOG_KEY,
+#   EXPO_PUBLIC_POSTHOG_HOST, SENTRY_ORG, SENTRY_PROJECT, EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID,
+#   EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID, EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID, EXPO_PUBLIC_REVENUECAT_IOS_KEY,
+#   EXPO_PUBLIC_REVENUECAT_ANDROID_KEY, EXPO_PUBLIC_TERMS_URL, EXPO_PUBLIC_PRIVACY_URL.
+# A missing SIGNAL_URL, or one that is not wss:// or points at a local address, fails the run
+# before anything is built: a release build must reach the deployed server.
+# SENTRY_AUTH_TOKEN and google-services.json belong in EAS environment variables (secret / file),
+# never here.
 # The app uses native modules (notifications, Sentry, purchases), so it runs only in builds like this one
 # or a development build; Expo Go cannot open it any more.
 on:
@@ -28,12 +32,93 @@ on:
         default: true
         type: boolean
 
+concurrency:
+  group: mobile-build-ios
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
 jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      ready: ${{ steps.gate.outputs.ready }}
+    steps:
+      - id: gate
+        env:
+          HAS_EXPO_TOKEN: ${{ secrets.EXPO_TOKEN != '' }}
+          HAS_ASC_KEY_ID: ${{ secrets.ASC_KEY_ID != '' }}
+          HAS_ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID != '' }}
+          HAS_ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 != '' }}
+          HAS_APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID != '' }}
+        run: |
+          MISSING=""
+          for name in EXPO_TOKEN ASC_KEY_ID ASC_ISSUER_ID ASC_KEY_P8 APPLE_TEAM_ID; do
+            var="HAS_$name"
+            if [ "${!var}" != "true" ]; then MISSING="${MISSING:+$MISSING, }$name"; fi
+          done
+          if [ -z "$MISSING" ]; then echo "ready=true" >> "$GITHUB_OUTPUT"; exit 0; fi
+          echo "ready=false" >> "$GITHUB_OUTPUT"
+          {
+            echo "## iOS build skipped: missing secret $MISSING"
+            echo ""
+            echo "1. expo.dev -> Account settings -> Access tokens -> create one; save it as the repository secret \`EXPO_TOKEN\`."
+            echo "2. App Store Connect -> Users and Access -> Integrations -> Team Keys -> a key with the App Manager role: save its id as \`ASC_KEY_ID\`, the issuer id as \`ASC_ISSUER_ID\` and the whole .p8 file as \`ASC_KEY_P8\`."
+            echo "3. developer.apple.com -> Membership: save the team id as \`APPLE_TEAM_ID\`."
+            echo "4. Set the repository variable \`SIGNAL_URL\` to the deployed server (\`wss://...\`)."
+            echo "5. Re-run this workflow (docs/RUN_ON_IOS.md)."
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "::notice::$MISSING missing; skipping the iOS build (the job summary lists the setup steps)"
+
   build:
+    needs: check
+    if: needs.check.outputs.ready == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    env:
+      PROFILE: ${{ inputs.profile }}
+      # Public build-time values: app.config.js reads them here (eas-cli resolves the config on this
+      # runner) and the copy step below hands them to the EAS cloud build.
+      SIGNAL_URL: ${{ vars.SIGNAL_URL }}
+      APP_NAME: ${{ vars.APP_NAME }}
+      APP_SLUG: ${{ vars.APP_SLUG }}
+      APP_SCHEME: ${{ vars.APP_SCHEME }}
+      APP_BUNDLE_ID: ${{ vars.APP_BUNDLE_ID }}
+      APP_VERSION: ${{ vars.APP_VERSION }}
+      APP_STORE_ID: ${{ vars.APP_STORE_ID }}
+      EXPO_PUBLIC_LINK_DOMAIN: ${{ vars.EXPO_PUBLIC_LINK_DOMAIN }}
+      EXPO_PUBLIC_SENTRY_DSN: ${{ vars.EXPO_PUBLIC_SENTRY_DSN }}
+      EXPO_PUBLIC_POSTHOG_KEY: ${{ vars.EXPO_PUBLIC_POSTHOG_KEY }}
+      EXPO_PUBLIC_POSTHOG_HOST: ${{ vars.EXPO_PUBLIC_POSTHOG_HOST }}
+      SENTRY_ORG: ${{ vars.SENTRY_ORG }}
+      SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
+      EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID: ${{ vars.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID }}
+      EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID: ${{ vars.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID }}
+      EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID: ${{ vars.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID }}
+      EXPO_PUBLIC_REVENUECAT_IOS_KEY: ${{ vars.EXPO_PUBLIC_REVENUECAT_IOS_KEY }}
+      EXPO_PUBLIC_REVENUECAT_ANDROID_KEY: ${{ vars.EXPO_PUBLIC_REVENUECAT_ANDROID_KEY }}
+      EXPO_PUBLIC_TERMS_URL: ${{ vars.EXPO_PUBLIC_TERMS_URL }}
+      EXPO_PUBLIC_PRIVACY_URL: ${{ vars.EXPO_PUBLIC_PRIVACY_URL }}
     steps:
+      - name: Check SIGNAL_URL (a release build must reach the deployed server)
+        run: |
+          if [ -z "$SIGNAL_URL" ]; then
+            echo "::error title=SIGNAL_URL is not set::Set the repository variable SIGNAL_URL to the deployed game server, e.g. wss://mahjong-signal.fly.dev (Settings -> Secrets and variables -> Actions -> Variables). Without it the build would talk to a development address."
+            exit 1
+          fi
+          case "$SIGNAL_URL" in
+            wss://*) ;;
+            *) echo "::error title=SIGNAL_URL must start with wss://::SIGNAL_URL is '$SIGNAL_URL'. A release build talks to the deployed server over TLS: use wss://<your server> (docs/DEPLOY.md)."; exit 1 ;;
+          esac
+          HOST=$(printf '%s' "$SIGNAL_URL" | sed -E 's#^wss://([^/:?]+).*#\1#' | tr 'A-Z' 'a-z')
+          case "$HOST" in
+            ""|localhost|*.localhost|127.*|0.0.0.0|10.*|192.168.*|*.local|*.internal)
+              echo "::error title=SIGNAL_URL points at a local address::SIGNAL_URL is '$SIGNAL_URL'. A release build must never point at localhost or a private network: use the deployed server."
+              exit 1 ;;
+          esac
+          echo "Building against $SIGNAL_URL"
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
@@ -45,13 +130,18 @@ jobs:
           token: ${{ secrets.EXPO_TOKEN }}
       - run: npm ci
       - name: Write App Store Connect API key
+        env:
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
-          echo "${{ secrets.ASC_KEY_P8 }}" > $RUNNER_TEMP/AuthKey.p8
-          echo "EXPO_ASC_API_KEY_PATH=$RUNNER_TEMP/AuthKey.p8" >> $GITHUB_ENV
-          echo "EXPO_ASC_KEY_ID=${{ secrets.ASC_KEY_ID }}" >> $GITHUB_ENV
-          echo "EXPO_ASC_ISSUER_ID=${{ secrets.ASC_ISSUER_ID }}" >> $GITHUB_ENV
-          echo "EXPO_APPLE_TEAM_ID=${{ secrets.APPLE_TEAM_ID }}" >> $GITHUB_ENV
-          echo "EXPO_APPLE_TEAM_TYPE=COMPANY_OR_ORGANIZATION" >> $GITHUB_ENV
+          printf '%s\n' "$ASC_KEY_P8" > "$RUNNER_TEMP/AuthKey.p8"
+          echo "EXPO_ASC_API_KEY_PATH=$RUNNER_TEMP/AuthKey.p8" >> "$GITHUB_ENV"
+          echo "EXPO_ASC_KEY_ID=$ASC_KEY_ID" >> "$GITHUB_ENV"
+          echo "EXPO_ASC_ISSUER_ID=$ASC_ISSUER_ID" >> "$GITHUB_ENV"
+          echo "EXPO_APPLE_TEAM_ID=$APPLE_TEAM_ID" >> "$GITHUB_ENV"
+          echo "EXPO_APPLE_TEAM_TYPE=COMPANY_OR_ORGANIZATION" >> "$GITHUB_ENV"
       - name: Create or link the EAS project (first run only)
         working-directory: apps/mobile
         run: |
@@ -73,27 +163,11 @@ jobs:
         # EAS cloud builds do not inherit this job's environment; the profile's env does reach them.
         # Only public values go here (they end up in the app bundle anyway). The edit is not committed.
         working-directory: apps/mobile
-        env:
-          PROFILE: ${{ github.event.inputs.profile }}
-          SIGNAL_URL: ${{ vars.SIGNAL_URL }}
-          APP_STORE_ID: ${{ vars.APP_STORE_ID }}
-          EXPO_PUBLIC_SENTRY_DSN: ${{ vars.EXPO_PUBLIC_SENTRY_DSN }}
-          EXPO_PUBLIC_POSTHOG_KEY: ${{ vars.EXPO_PUBLIC_POSTHOG_KEY }}
-          EXPO_PUBLIC_POSTHOG_HOST: ${{ vars.EXPO_PUBLIC_POSTHOG_HOST }}
-          SENTRY_ORG: ${{ vars.SENTRY_ORG }}
-          SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
-          EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID: ${{ vars.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID }}
-          EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID: ${{ vars.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID }}
-          EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID: ${{ vars.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID }}
-          EXPO_PUBLIC_REVENUECAT_IOS_KEY: ${{ vars.EXPO_PUBLIC_REVENUECAT_IOS_KEY }}
-          EXPO_PUBLIC_REVENUECAT_ANDROID_KEY: ${{ vars.EXPO_PUBLIC_REVENUECAT_ANDROID_KEY }}
-          EXPO_PUBLIC_TERMS_URL: ${{ vars.EXPO_PUBLIC_TERMS_URL }}
-          EXPO_PUBLIC_PRIVACY_URL: ${{ vars.EXPO_PUBLIC_PRIVACY_URL }}
         run: |
           node -e "
             const fs = require('fs');
             const eas = JSON.parse(fs.readFileSync('eas.json', 'utf8'));
-            const keys = ['SIGNAL_URL', 'APP_STORE_ID', 'EXPO_PUBLIC_SENTRY_DSN', 'EXPO_PUBLIC_POSTHOG_KEY', 'EXPO_PUBLIC_POSTHOG_HOST', 'SENTRY_ORG', 'SENTRY_PROJECT', 'EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID', 'EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID', 'EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID', 'EXPO_PUBLIC_REVENUECAT_IOS_KEY', 'EXPO_PUBLIC_REVENUECAT_ANDROID_KEY', 'EXPO_PUBLIC_TERMS_URL', 'EXPO_PUBLIC_PRIVACY_URL'];
+            const keys = ['SIGNAL_URL', 'APP_NAME', 'APP_SLUG', 'APP_SCHEME', 'APP_BUNDLE_ID', 'APP_VERSION', 'APP_STORE_ID', 'EXPO_PUBLIC_LINK_DOMAIN', 'EXPO_PUBLIC_SENTRY_DSN', 'EXPO_PUBLIC_POSTHOG_KEY', 'EXPO_PUBLIC_POSTHOG_HOST', 'SENTRY_ORG', 'SENTRY_PROJECT', 'EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID', 'EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID', 'EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID', 'EXPO_PUBLIC_REVENUECAT_IOS_KEY', 'EXPO_PUBLIC_REVENUECAT_ANDROID_KEY', 'EXPO_PUBLIC_TERMS_URL', 'EXPO_PUBLIC_PRIVACY_URL'];
             const profile = eas.build[process.env.PROFILE];
             profile.env = { ...(profile.env || {}) };
             for (const k of keys) if (process.env[k]) profile.env[k] = process.env[k];
@@ -102,14 +176,20 @@ jobs:
           "
       - name: Build (and submit) on EAS
         working-directory: apps/mobile
+        env:
+          SUBMIT: ${{ inputs.submit }}
         run: |
-          if [ "${{ github.event.inputs.submit }}" = "true" ]; then
-            eas build --platform ios --profile ${{ github.event.inputs.profile }} --non-interactive --auto-submit --wait
+          if [ "$SUBMIT" = "true" ]; then
+            eas build --platform ios --profile "$PROFILE" --non-interactive --auto-submit --wait
           else
-            eas build --platform ios --profile ${{ github.event.inputs.profile }} --non-interactive --wait
+            eas build --platform ios --profile "$PROFILE" --non-interactive --wait
           fi
       - name: Where to find it
+        if: always()
         run: |
-          echo "## Done" >> $GITHUB_STEP_SUMMARY
-          echo "Build list: https://expo.dev/accounts/${{ secrets.EXPO_OWNER || 'me' }}/projects/mahjongmania/builds" >> $GITHUB_STEP_SUMMARY
-          echo "TestFlight: App Store Connect → Apps → Mahjong Mania → TestFlight → Internal Testing → add yourself." >> $GITHUB_STEP_SUMMARY
+          {
+            echo "## iOS build ($PROFILE)"
+            echo "- Server: $SIGNAL_URL"
+            echo "- Builds: expo.dev -> your project -> Builds (submissions under Submissions)"
+            echo "- TestFlight: App Store Connect -> Apps -> Mahjong Mania -> TestFlight -> Internal Testing -> add yourself (docs/RUN_ON_IOS.md)."
+          } >> "$GITHUB_STEP_SUMMARY"
