@@ -6,7 +6,7 @@
  * Pure TypeScript: the RevenueCat SDK is injected as `PurchasesLike`, so the provider is
  * tested with a fake (./revenuecat-native.ts adapts the real `react-native-purchases`).
  */
-import { productByStoreId, STORE_PRODUCTS, type Product } from './catalog';
+import { productById, productByStoreId, STORE_PRODUCTS, type Product } from './catalog';
 import type { DevBuildProof, UnavailableReason } from './store-mode';
 import type { Wallet } from './wallet';
 
@@ -60,10 +60,13 @@ export class UnavailableStoreProvider implements StoreProvider {
 export function mockGrant(wallet: Wallet, product: Product): Wallet {
   const next: Wallet = { ...wallet, mock: true, cosmetics: [...wallet.cosmetics], entitlements: [...wallet.entitlements] };
   if (product.kind === 'diamonds') next.diamonds += product.diamonds ?? 0;
-  else if (product.kind === 'cosmetic' && product.unlocks && !next.cosmetics.includes(product.unlocks)) next.cosmetics.push(product.unlocks);
+  else if (product.kind === 'cosmetic') {
+    const unlocks = product.contains ? product.contains.map((id) => productById(id)?.unlocks) : [product.unlocks];
+    for (const u of unlocks) if (u && !next.cosmetics.includes(u)) next.cosmetics.push(u);
+  }
   else if (product.kind === 'subscription' && product.tier) {
     const days = product.period === 'year' ? 365 : 30;
-    next.entitlements.push({ entitlement: `coach.${product.tier}`, expiresAt: Date.now() + days * 86400_000 });
+    next.entitlements.push({ entitlement: product.id, expiresAt: Date.now() + days * 86400_000 });
   }
   return next;
 }

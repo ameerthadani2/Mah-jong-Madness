@@ -144,6 +144,16 @@ function pgUsers(q: Queryable): UsersRepo {
       );
       return res.rows[0] ? userFromRow(res.rows[0]) : null;
     },
+    async getAnalyticsConsent(id) {
+      if (!isUuid(id)) return null;
+      const res = await q.query<{ analytics_consent: boolean | null }>('SELECT analytics_consent FROM users WHERE id = $1', [id]);
+      return res.rows[0]?.analytics_consent ?? null;
+    },
+    async setAnalyticsConsent(id, consent) {
+      if (!isUuid(id)) return false;
+      const res = await q.query('UPDATE users SET analytics_consent = $2 WHERE id = $1', [id, consent]);
+      return (res.rowCount ?? 0) > 0;
+    },
     async purgeDeleted(before) {
       // Everything that references the row cascades (0001_init); a club owner is never deleted (clubs.owner_id has no cascade).
       const res = await q.query('DELETE FROM users u WHERE u.deleted_at IS NOT NULL AND u.deleted_at < $1 AND NOT EXISTS (SELECT 1 FROM clubs c WHERE c.owner_id = u.id)', [toDate(before)]);
@@ -432,6 +442,10 @@ function pgStoreEvents(q: Queryable): StoreEventsRepo {
       const res = await q.query('DELETE FROM store_events WHERE event_id = $1', [eventId]);
       return (res.rowCount ?? 0) > 0;
     },
+    async usersActiveSince(since) {
+      const res = await q.query<{ user_id: string }>('SELECT DISTINCT user_id FROM store_events WHERE user_id IS NOT NULL AND received_at >= $1 ORDER BY user_id', [toDate(since)]);
+      return res.rows.map((r) => r.user_id);
+    },
   };
 }
 
@@ -569,16 +583,16 @@ function pgWallet(q: Queryable, tx: Tx): WalletRepo {
       const res = await q.query<WalletRow>('SELECT user_id, diamonds, bonus_diamonds, updated_at FROM wallets WHERE user_id = $1', [userId]);
       return res.rows[0] ? walletFromRow(res.rows[0]) : { userId, diamonds: 0, bonusDiamonds: 0, updatedAt: 0 };
     },
-    async apply(e) {
+    async apply(e, opts) {
       return tx(async (c) => {
         const at = toDate(e.createdAt);
         const bonus = e.bonus ?? 0;
         await c.query('INSERT INTO wallets (user_id, diamonds, bonus_diamonds, updated_at) VALUES ($1, 0, 0, $2) ON CONFLICT (user_id) DO NOTHING', [e.userId, at]);
         const w = await c.query<WalletRow>(
           `UPDATE wallets SET diamonds = diamonds + $2, bonus_diamonds = bonus_diamonds + $3, updated_at = $4
-           WHERE user_id = $1 AND diamonds + $2 >= 0 AND bonus_diamonds + $3 >= 0
+           WHERE user_id = $1 AND ($2 >= 0 OR diamonds + $2 >= 0 OR $5::boolean) AND bonus_diamonds + $3 >= 0
            RETURNING user_id, diamonds, bonus_diamonds, updated_at`,
-          [e.userId, e.delta, bonus, at],
+          [e.userId, e.delta, bonus, at, opts?.allowNegative === true],
         );
         if (!w.rows[0]) return null;
         const l = await c.query<LedgerRow>('INSERT INTO wallet_ledger (user_id, delta, bonus, reason, ref, created_at) VALUES ($1, $2, $3, $4, $5, $6) RETURNING ' + LEDGER_COLS, [

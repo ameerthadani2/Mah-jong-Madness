@@ -6,6 +6,7 @@
  *   tests and servers without a DSN never load the SDK.
  * - PostHog (`posthog-node`) captures a few server-side events (`purchase_credited`,
  *   `report_filed`) only when POSTHOG_KEY is set (`createAnalytics`); otherwise `NO_ANALYTICS`.
+ *   Wrapped in `withConsent`, an event is sent only for a player who allowed analytics in the app.
  *
  * Neither ever receives names, emails, chat or tokens: events carry the user id (an opaque uuid)
  * and the few properties listed in docs/OBSERVABILITY.md.
@@ -68,6 +69,27 @@ export interface Analytics {
 }
 
 export const NO_ANALYTICS: Analytics = { enabled: false, capture: () => {}, shutdown: async () => {} };
+
+/**
+ * Analytics that only reach `inner` for players who allowed them: `consented(userId)` is asked
+ * for every event (the app sends the choice with `PATCH /api/me`; no answer counts as no). A
+ * failed lookup drops the event.
+ */
+export function withConsent(inner: Analytics, consented: (distinctId: string) => Promise<boolean | null>): Analytics {
+  if (!inner.enabled) return inner;
+  return {
+    enabled: true,
+    capture(distinctId, event, properties) {
+      void consented(distinctId).then(
+        (ok) => {
+          if (ok === true) inner.capture(distinctId, event, properties);
+        },
+        () => {},
+      );
+    },
+    shutdown: () => inner.shutdown(),
+  };
+}
 
 /** The part of `posthog-node`'s client the server uses. */
 export interface PostHogLike {

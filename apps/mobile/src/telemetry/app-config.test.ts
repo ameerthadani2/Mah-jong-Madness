@@ -10,7 +10,7 @@ const build = require('../../app.config.js') as (a: { config: Record<string, unk
   extra: { storeUrls: { ios?: string; android: string } };
 };
 
-const KEYS = ['SENTRY_AUTH_TOKEN', 'SENTRY_ORG', 'SENTRY_PROJECT', 'APP_STORE_ID', 'GOOGLE_SERVICES_JSON', 'APP_BUNDLE_ID'];
+const KEYS = ['SENTRY_AUTH_TOKEN', 'SENTRY_ORG', 'SENTRY_PROJECT', 'APP_STORE_ID', 'GOOGLE_SERVICES_JSON', 'APP_BUNDLE_ID', 'EXPO_PUBLIC_LINK_DOMAIN'];
 const config = () => build({ config: structuredClone(appJson.expo) });
 const pluginNames = (c: ReturnType<typeof build>) => c.plugins.map((p) => (Array.isArray(p) ? p[0] : p));
 
@@ -52,11 +52,36 @@ describe('app.config.js (telemetry and push)', () => {
   });
 
   it('builds the store links and the FCM file from env', () => {
-    expect(config().extra.storeUrls).toEqual({ android: 'https://play.google.com/store/apps/details?id=com.mahjongmadness.app' });
+    expect(config().extra.storeUrls).toEqual({ android: 'https://play.google.com/store/apps/details?id=com.mahjongmania.app' });
     process.env.APP_STORE_ID = '6400000000';
     process.env.GOOGLE_SERVICES_JSON = '/tmp/google-services.json';
     const c = config();
     expect(c.extra.storeUrls.ios).toBe('https://apps.apple.com/app/id6400000000');
     expect(c.android.googleServicesFile).toBe('/tmp/google-services.json');
+  });
+
+  it('names the app Mahjong Mania with the mahjongmania scheme and slug by default', () => {
+    const c = build({ config: structuredClone(appJson.expo) }) as unknown as { name: string; slug: string; scheme: string; ios: { bundleIdentifier: string } };
+    expect([c.name, c.slug, c.scheme, c.ios.bundleIdentifier]).toEqual(['Mahjong Mania', 'mahjongmania', 'mahjongmania', 'com.mahjongmania.app']);
+    expect(appJson.expo).toMatchObject({ name: 'Mahjong Mania', slug: 'mahjongmania', scheme: 'mahjongmania' });
+  });
+
+  it('declares the birth year and the gameplay content the account keeps', () => {
+    const byType = Object.fromEntries(config().ios.privacyManifests.NSPrivacyCollectedDataTypes.map((d) => [d.NSPrivacyCollectedDataType, d]));
+    for (const type of ['NSPrivacyCollectedDataTypeOtherDataTypes', 'NSPrivacyCollectedDataTypeGameplayContent']) {
+      expect(byType[type], type).toMatchObject({ NSPrivacyCollectedDataTypeLinked: true, NSPrivacyCollectedDataTypeTracking: false, NSPrivacyCollectedDataTypePurposes: ['NSPrivacyCollectedDataTypePurposeAppFunctionality'] });
+    }
+  });
+
+  it('opens shared table links on the link domain as universal links and app links', () => {
+    const plain = build({ config: structuredClone(appJson.expo) }) as unknown as { ios: Record<string, unknown>; android: Record<string, unknown> };
+    expect(plain.ios.associatedDomains).toBeUndefined();
+    process.env.EXPO_PUBLIC_LINK_DOMAIN = 'https://play.example.com/';
+    const c = build({ config: structuredClone(appJson.expo) }) as unknown as { ios: { associatedDomains: string[] }; android: { intentFilters: Array<{ data: Array<{ host: string; pathPrefix: string }> }> } };
+    expect(c.ios.associatedDomains).toEqual(['applinks:play.example.com']);
+    expect(c.android.intentFilters[0].data).toEqual([
+      { scheme: 'https', host: 'play.example.com', pathPrefix: '/t/' },
+      { scheme: 'https', host: 'play.example.com', pathPrefix: '/c/' },
+    ]);
   });
 });

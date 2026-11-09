@@ -1,10 +1,14 @@
 /**
- * Table cosmetics: felt + tile skins. Purely visual, never affects play.
- * These are the first monetisable surface (see docs/MONETISATION.md): the
- * first two are free, the rest are marked premium for the shop to gate later.
+ * Table cosmetics: felt + tile skins, and the emotes. Purely visual, never affects play.
+ * The first three felts are free; the premium ones are bought with diamonds in the Shop
+ * (docs/MONETISATION.md). A premium felt may carry a code-drawn pattern
+ * (components/FeltPattern.tsx), drawn wherever the felt is.
  */
 import React from 'react';
 import { t } from './i18n';
+import type { FeltPatternId } from './monetisation/cosmetics';
+
+export { EMOTE_PACKS, PACK_EMOTE_IDS, packOfEmote, type EmotePackId, type PackEmoteId } from './monetisation/cosmetics';
 
 export interface TableTheme {
   id: string;
@@ -20,6 +24,9 @@ export interface TableTheme {
   premium: boolean;
   /** Optional wood-rail override (defaults to the house oak). */
   rail?: { light: string; mid: string; edge: string; deep: string; stud: string };
+  /** Optional pattern printed on the felt, in `patternColor` (default: white) at low opacity. */
+  pattern?: FeltPatternId;
+  patternColor?: string;
 }
 
 export const TABLE_THEMES: TableTheme[] = [
@@ -43,6 +50,29 @@ export const TABLE_THEMES: TableTheme[] = [
     rail: { light: '#7B4A2B', mid: '#4A2716', edge: '#26120A', deep: '#1A0C06', stud: '#F4C04E' },
   },
   { id: 'imperial', name: 'Imperial Red', nameZh: '宮廷紅', felt: '#6b1414', feltDark: '#4a0d0d', feltLight: '#8f2020', tileFace: '#fff9ee', tileEdge: '#e3d6bd', tileBack: '#a63a3a', accent: '#ffd26a', premium: true },
+  { id: 'lantern', name: 'Lantern Festival', nameZh: '元宵燈會', felt: '#7a1f12', feltDark: '#4f120a', feltLight: '#a8321e', tileFace: '#fff8ec', tileEdge: '#e6d2b0', tileBack: '#c4452c', accent: '#ffcf4a', premium: true, pattern: 'lanterns', patternColor: '#ffcf4a' },
+  { id: 'teahouse', name: 'Teahouse', nameZh: '老茶館', felt: '#5b3a24', feltDark: '#3b2416', feltLight: '#7a5236', tileFace: '#fffaf0', tileEdge: '#e2cfae', tileBack: '#8b5a36', accent: '#e9c27a', premium: true, pattern: 'lattice', patternColor: '#f3d9a6' },
+  { id: 'oceanwave', name: 'Ocean Wave', nameZh: '海浪', felt: '#124a6b', feltDark: '#0a2f46', feltLight: '#1d6a94', tileFace: '#f7fbff', tileEdge: '#cfdbe6', tileBack: '#2c7fb0', accent: '#7fe3ff', premium: true, pattern: 'waves' },
+  { id: 'plumblossom', name: 'Plum Blossom', nameZh: '梅花', felt: '#6b2a4a', feltDark: '#461a30', feltLight: '#8f3d64', tileFace: '#fff8fb', tileEdge: '#ead3df', tileBack: '#b0507e', accent: '#ffd1e6', premium: true, pattern: 'blossoms', patternColor: '#ffd1e6' },
+  { id: 'cloud', name: 'Lucky Clouds', nameZh: '祥雲', felt: '#17635f', feltDark: '#0d403d', feltLight: '#23827d', tileFace: '#fffbee', tileEdge: '#dfd6bb', tileBack: '#2a9a93', accent: '#ffe08a', premium: true, pattern: 'clouds', patternColor: '#ffe08a' },
+  { id: 'starlight', name: 'Starlit Night', nameZh: '星夜', felt: '#1a1f4a', feltDark: '#0f1230', feltLight: '#2b3270', tileFace: '#f8f7ff', tileEdge: '#d4d2e6', tileBack: '#3d4796', accent: '#ffe46b', premium: true, pattern: 'stars', patternColor: '#ffe46b' },
+  { id: 'porcelain', name: 'Blue Porcelain', nameZh: '青花瓷', felt: '#1f3f7a', feltDark: '#132852', feltLight: '#2f5aa6', tileFace: '#ffffff', tileEdge: '#d5deee', tileBack: '#3b6cc4', accent: '#e8f0ff', premium: true, pattern: 'fretwork', patternColor: '#e8f0ff' },
+  {
+    id: 'dragonscale',
+    name: 'Dragon Scale',
+    nameZh: '龍鱗',
+    felt: '#0f5a3a',
+    feltDark: '#083822',
+    feltLight: '#1a7d52',
+    tileFace: '#fffaea',
+    tileEdge: '#e0d3ad',
+    tileBack: '#1f8a5a',
+    accent: '#f4c04e',
+    premium: true,
+    pattern: 'scales',
+    patternColor: '#f4c04e',
+    rail: { light: '#7B4A2B', mid: '#4A2716', edge: '#26120A', deep: '#1A0C06', stud: '#F4C04E' },
+  },
 ];
 
 export const DEFAULT_TABLE_THEME = TABLE_THEMES[0];
@@ -58,7 +88,7 @@ export function themeName(theme: TableTheme): string {
 
 export const TableThemeContext = React.createContext<TableTheme>(DEFAULT_TABLE_THEME);
 
-/** Emote ids, drawn by components/Emotes.tsx. */
+/** The free emote ids, drawn by components/Emotes.tsx; the paid packs are `EMOTE_PACKS` (components/EmotePacks.tsx). */
 export const EMOTES = ['thumbs', 'lol', 'wow', 'cry', 'fire', 'love', 'zzz', 'hu'];
 /** Quick-chat ids; the text (`table.quickChat.<id>`) is sent in the sender's language. */
 export const QUICK_CHATS = ['nice', 'sorry', 'gg', 'hurry', 'goodHand', 'dealtIn', 'oneMore', 'faster'] as const;

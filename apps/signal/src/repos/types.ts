@@ -46,6 +46,10 @@ export interface UsersRepo {
   get(id: string): Promise<UserRecord | null>;
   /** Applies the patch and returns the updated row, or null when there is no such user. */
   update(id: string, patch: UserPatch): Promise<UserRecord | null>;
+  /** The player's analytics choice (`PATCH /api/me` analyticsConsent); null when the app has not said, which counts as no. */
+  getAnalyticsConsent(id: string): Promise<boolean | null>;
+  /** Stores the choice; false when there is no such user. */
+  setAnalyticsConsent(id: string, consent: boolean | null): Promise<boolean>;
   /**
    * Hard-deletes users soft-deleted (or merged away) before `before`, with everything that
    * references them (identities, sessions, devices, wallet, entitlements, puzzle results, club
@@ -146,6 +150,7 @@ export interface PushTarget {
 
 export interface WalletRecord {
   userId: string;
+  /** Purchased diamonds; below zero only after a refund of diamonds already spent (no spend goes through until it is back above). */
   diamonds: number;
   bonusDiamonds: number;
   updatedAt: number;
@@ -194,9 +199,11 @@ export interface WalletRepo {
   get(userId: string): Promise<WalletRecord>;
   /**
    * Appends a ledger entry and moves the balances by it, atomically. Returns null (and writes
-   * nothing) when either balance would go below zero.
+   * nothing) when a debit would take purchased diamonds below zero, or bonus diamonds would go
+   * below zero. A credit is always applied, even to a negative balance. `allowNegative` lets a
+   * debit take purchased diamonds below zero (a refunded pack whose diamonds were already spent).
    */
-  apply(entry: NewLedgerEntry): Promise<{ wallet: WalletRecord; entry: LedgerEntry } | null>;
+  apply(entry: NewLedgerEntry, opts?: { allowNegative?: boolean }): Promise<{ wallet: WalletRecord; entry: LedgerEntry } | null>;
   listLedger(userId: string): Promise<LedgerEntry[]>;
   /** Idempotent on transaction id and event id: a repeat returns the stored row with inserted false. */
   recordPurchase(purchase: NewPurchase): Promise<{ purchase: PurchaseRecord; inserted: boolean }>;
@@ -233,6 +240,8 @@ export interface StoreEventsRepo {
   setOutcome(eventId: string, outcome: string, userId: string | null): Promise<void>;
   /** Forgets an event whose processing failed, so a redelivery is processed (memory only needs it: Postgres rolls back). */
   delete(eventId: string): Promise<boolean>;
+  /** Users named by an event received at or after `since` (the nightly store reconciliation's list). */
+  usersActiveSince(since: number): Promise<string[]>;
 }
 
 // ---------------------------------------------------------------------------------------------

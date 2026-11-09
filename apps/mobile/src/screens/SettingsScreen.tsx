@@ -1,5 +1,5 @@
 import React from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, TextInput } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { BOT_SKILLS, DEFAULT_RULES, RULE_PRESETS, rulesFromPreset, SPEED_PRESETS, withSpeed, type BotSkill, type GameSpeed } from '@mjm/engine';
 import { useApp } from '../app-state';
 import { useAuth } from '../auth/AuthProvider';
@@ -12,6 +12,13 @@ import { BUILD_SIGNAL_URL } from '../config';
 import { AVATARS } from '../storage';
 import { TABLE_THEMES } from '../themes';
 import { hasTier, ownsCosmetic } from '../monetisation/wallet';
+import { COSMETICS, productText } from '../monetisation/catalog';
+import { EMOTE_PACKS, frameById, tileBackById, type CelebrationId } from '../monetisation/cosmetics';
+import { SLOT_ITEMS, type EquipSlot } from '../monetisation/equipped';
+import { setEquipped, useOwnedEquipped } from '../monetisation/useEquipped';
+import { TileBackPreview } from '../components/Tile';
+import { PackEmote } from '../components/EmotePacks';
+import { WinCelebration } from '../components/Celebrations';
 import { colors, fonts, space } from '../theme';
 import { Button, Card, Chip, fontFor, H2, P, Row, ScreenHeader, Stepper, Toggle } from '../components/Ui';
 import { AvatarPlate, avatarName } from '../components/Avatars';
@@ -22,8 +29,31 @@ import { SoundSettings } from '../components/SoundSettings';
 import { PrivacyToggles } from '../components/PrivacyToggles';
 import { DisplaySettings } from '../components/DisplaySettings';
 
+const SLOT_KEYS: Record<EquipSlot, string> = { tileBack: 'settings.looks.tileBack', frame: 'settings.looks.frame', emotes: 'settings.looks.emotes', celebration: 'settings.looks.celebration' };
+
+/** A small picture of an equippable item (or of the default look when `id` is null). */
+function SlotPreview({ slot, id, avatar }: { slot: EquipSlot; id: string | null; avatar: string }) {
+  switch (slot) {
+    case 'tileBack':
+      return <TileBackPreview back={tileBackById(id)} w={30} />;
+    case 'frame':
+      return <AvatarPlate id={avatar} frame={frameById(id)?.id ?? null} size={40} />;
+    case 'emotes':
+      return id ? <PackEmote id={EMOTE_PACKS[id as keyof typeof EMOTE_PACKS][0]} size={36} /> : <Icon name="star" size={30} />;
+    case 'celebration':
+      return id ? (
+        <View style={{ width: 72, height: 44 }}>
+          <WinCelebration id={id as CelebrationId} width={72} height={44} still />
+        </View>
+      ) : (
+        <Icon name="star" size={30} />
+      );
+  }
+}
+
 export function SettingsScreen() {
   const app = useApp();
+  const equipped = useOwnedEquipped();
   const { settings, setSettings, profile } = app;
   const auth = useAuth();
   // Name and avatar stay local; when the device has a server session they are also sent with PATCH /api/me.
@@ -42,7 +72,7 @@ export function SettingsScreen() {
       <Card>
         <H2>{t('settings.profile')}</H2>
         <Row gap={12}>
-          <AvatarPlate id={profile.avatar} size={56} />
+          <AvatarPlate id={profile.avatar} size={56} frame={equipped.frame} />
           <TextInput value={profile.name} onChangeText={(name) => setProfile({ ...profile, name })} placeholder={t('settings.namePlaceholder')} placeholderTextColor="#9AA0BF" style={[styles.input, { flex: 1 }]} maxLength={24} />
         </Row>
         <Row style={{ flexWrap: 'wrap', rowGap: 8 }} gap={8}>
@@ -100,6 +130,37 @@ export function SettingsScreen() {
             );
           })}
         </Row>
+        {(Object.keys(SLOT_ITEMS) as EquipSlot[]).map((slot) => {
+          const owned = SLOT_ITEMS[slot].filter((id) => ownsCosmetic(app.wallet, id));
+          return (
+            <View key={slot} style={{ gap: 6 }} testID={`equip-${slot}`}>
+              <P dim style={{ fontSize: 12 }}>{t(SLOT_KEYS[slot])}</P>
+              <Row style={{ flexWrap: 'wrap', rowGap: 8 }} gap={8}>
+                {[null, ...owned].map((id) => {
+                  const on = equipped[slot] === id;
+                  const product = id ? COSMETICS.find((c) => c.id === id) : undefined;
+                  const name = product ? productText(product, t).title : t('settings.looks.default');
+                  return (
+                    <Pressable
+                      key={id ?? 'default'}
+                      onPress={() => setEquipped(slot, id, app.wallet)}
+                      style={[styles.slot, on && styles.themeOn]}
+                      accessibilityRole="button"
+                      accessibilityLabel={name}
+                      accessibilityState={{ selected: on }}
+                    >
+                      <SlotPreview slot={slot} id={id} avatar={profile.avatar} />
+                      <Text style={[styles.themeName, fontFor(name, fonts.uiBold)]} numberOfLines={1}>
+                        {name}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </Row>
+              {owned.length === 0 && <P dim style={{ fontSize: 12 }}>{t('settings.looks.none')}</P>}
+            </View>
+          );
+        })}
         <Row style={{ justifyContent: 'space-between' }}>
           <P dim style={{ fontSize: 12 }}>{t('settings.lockedLooks')}</P>
           <Button small kind="gold" title={t('settings.openShop')} onPress={() => app.go({ name: 'shop' })} />
@@ -178,4 +239,5 @@ const styles = StyleSheet.create({
   theme: { alignItems: 'center', gap: 2, padding: 4, borderRadius: 16, borderWidth: 3, borderColor: 'transparent', width: 112 },
   themeOn: { borderColor: colors.ink, backgroundColor: colors.gold },
   themeName: { fontFamily: fonts.uiBold, color: colors.ink, fontSize: 12, maxWidth: 90 },
+  slot: { alignItems: 'center', justifyContent: 'flex-end', gap: 4, padding: 4, borderRadius: 16, borderWidth: 3, borderColor: 'transparent', width: 96, minHeight: 84 },
 });

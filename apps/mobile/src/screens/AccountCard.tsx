@@ -1,23 +1,30 @@
 /**
  * Settings → Account: who this device is on the game server, sign-in with Apple or Google,
- * signing out (guests are warned first) and account deletion behind a typed confirmation.
+ * signing out (guests are warned first) and account deletion behind a typed confirmation. A live
+ * subscription is shown before deletion with a link to the store's subscription page, because
+ * deleting the account does not stop the store billing it; the player must acknowledge that too.
  * Everything here works offline: with no server answer there are simply no provider buttons.
  */
 import React, { useEffect, useState } from 'react';
-import { StyleSheet, TextInput } from 'react-native';
+import { Linking, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { useApp } from '../app-state';
 import { useAuth } from '../auth/AuthProvider';
+import { canConfirmDeletion, deletionLosses, manageSubscriptionUrl } from '../monetisation/deletion';
 import { useT } from '../i18n';
 import { friendlyError } from '../logic/errors';
 import type { SignInProvider } from '../logic/auth-config';
 import { colors, fonts } from '../theme';
 import { Button, Card, H2, P, Pill, Row } from '../components/Ui';
+import { Icon } from '../components/Icons';
 
 const LINKED_KEY: Record<SignInProvider, string> = { apple: 'settings.account.linkedApple', google: 'settings.account.linkedGoogle' };
 const SIGN_IN_KEY: Record<SignInProvider, string> = { apple: 'settings.account.apple', google: 'settings.account.google' };
 
 export function AccountCard() {
   const auth = useAuth();
+  const app = useApp();
   const { t } = useT();
+  const [billingAck, setBillingAck] = useState(false);
   const [confirmSignOut, setConfirmSignOut] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [word, setWord] = useState('');
@@ -29,6 +36,7 @@ export function AccountCard() {
 
   const online = auth.status !== 'offline';
   const deleteWord = t('settings.account.deleteWord');
+  const losses = deletionLosses(app.wallet);
   const signIn = (p: SignInProvider) => void (p === 'apple' ? auth.signInApple() : auth.signInGoogle());
 
   return (
@@ -89,6 +97,7 @@ export function AccountCard() {
             onPress={() => {
               setNotice(null);
               setWord('');
+              setBillingAck(false);
               setDeleting(true);
             }}
           />
@@ -117,13 +126,28 @@ export function AccountCard() {
       {deleting && (
         <Card tone="danger">
           <P style={styles.small}>{t('settings.account.deleteBody', { word: deleteWord })}</P>
+          {losses.subscription && (
+            <Card tone="gold" testID="delete-subscription">
+              <P style={styles.small}>
+                {t('settings.account.deleteSubscription', {
+                  plan: t(`shop.tiers.${losses.subscription.tier}`),
+                  date: losses.subscription.renewsAt === null ? '—' : new Date(losses.subscription.renewsAt).toLocaleDateString(),
+                })}
+              </P>
+              <Button small kind="secondary" icon="exit" testID="manage-subscription" title={t('settings.account.manageSubscription')} onPress={() => void Linking.openURL(manageSubscriptionUrl(Platform.OS)).catch(() => undefined)} />
+              <Pressable testID="delete-billing-ack" accessibilityRole="checkbox" accessibilityState={{ checked: billingAck }} onPress={() => setBillingAck((v) => !v)} style={styles.ack}>
+                <View style={[styles.box, billingAck && styles.boxOn]}>{billingAck && <Icon name="check" size={16} color={colors.ink} />}</View>
+                <Text style={styles.ackText}>{t('settings.account.deleteSubscriptionAck')}</Text>
+              </Pressable>
+            </Card>
+          )}
           <TextInput value={word} onChangeText={setWord} placeholder={deleteWord} placeholderTextColor="#9AA0BF" autoCapitalize="characters" autoCorrect={false} style={styles.input} />
           <Row gap={8}>
             <Button
               small
               kind="danger"
               title={t('settings.account.deleteConfirm')}
-              disabled={auth.busy || word.trim() !== deleteWord}
+              disabled={auth.busy || !canConfirmDeletion(word, deleteWord, losses, billingAck)}
               onPress={() => {
                 void (async () => {
                   if (!(await auth.deleteAccount())) return;
@@ -144,5 +168,9 @@ export function AccountCard() {
 const styles = StyleSheet.create({
   small: { fontSize: 13 },
   tiny: { fontSize: 12 },
+  ack: { flexDirection: 'row', alignItems: 'center', gap: 10, minHeight: 44 },
+  box: { width: 26, height: 26, borderRadius: 7, borderWidth: 3, borderColor: colors.ink, backgroundColor: '#FFFFFF', alignItems: 'center', justifyContent: 'center' },
+  boxOn: { backgroundColor: colors.gold },
+  ackText: { flex: 1, fontFamily: fonts.bodyBold, color: colors.ink, fontSize: 13, lineHeight: 18 },
   input: { backgroundColor: '#FFFFFF', color: colors.ink, borderWidth: 3, borderColor: colors.ink, borderRadius: 14, paddingHorizontal: 12, paddingVertical: 10, fontSize: 16, fontFamily: fonts.uiBold },
 });

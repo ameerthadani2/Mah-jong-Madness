@@ -1,8 +1,8 @@
 {
   "expo": {
-    "name": "Mahjong Madness",
-    "slug": "mahjong-madness",
-    "scheme": "mahjongmadness",
+    "name": "Mahjong Mania",
+    "slug": "mahjongmania",
+    "scheme": "mahjongmania",
     "version": "0.1.0",
     "orientation": "default",
     "userInterfaceStyle": "dark",
@@ -13,7 +13,7 @@
       "backgroundColor": "#5BC8F5"
     },
     "ios": {
-      "bundleIdentifier": "com.mahjongmadness.app",
+      "bundleIdentifier": "com.mahjongmania.app",
       "supportsTablet": true,
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
@@ -33,7 +33,7 @@
       "icon": "./assets/icon.png"
     },
     "android": {
-      "package": "com.mahjongmadness.app",
+      "package": "com.mahjongmania.app",
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#5BC8F5"

@@ -1,11 +1,11 @@
 {
   "_review": "first pass, needs native review",
   "title": "商店",
-  "trust": "只賣桌布外觀和教練方案。這裡的東西都不會改變你摸到的牌，俱樂部也完全免費。",
+  "trust": "只賣外觀、教練方案和開設俱樂部的權利。這裡的東西都不會改變你摸到的牌，加入俱樂部也完全免費。",
   "tabs": {
     "diamonds": "鑽石",
     "looks": "外觀",
-    "coach": "教練"
+    "coach": "方案"
   },
   "purchaseFailed": "購買沒有完成，App 沒有向你收費，請再試一次。",
   "needDiamonds": "還差 %{n} 顆鑽石",
@@ -17,20 +17,22 @@
   "productSub": "%{description}",
   "notOnSale": "尚未販售",
   "priceLoading": "…",
-  "diamondsUse": "鑽石可以購買桌布（每款 300 或 400）。會優先使用贈送的鑽石。",
+  "diamondsUse": "鑽石可以購買桌布、牌背、頭像框、表情包和胡牌慶祝（每款 150 到 600，套組更划算）。會優先使用贈送的鑽石。",
   "tiers": {
-    "gold": "金",
-    "platinum": "白金"
+    "gold": "教練 金",
+    "fourwinds": "四風俱樂部"
   },
   "coach": {
-    "tiers": "教練方案",
-    "active": "教練 %{tier} 使用中",
-    "body": "免費：電腦牌桌的教練、每日謎題、練習、全部課程，每天 1 次複盤和 1 次謎題衝刺，新手與牌友電腦。\n金：高手電腦、無限謎題衝刺。\n白金：金的全部內容，加上無限複盤。",
+    "tiers": "教練與俱樂部方案",
+    "active": "%{tier} 使用中",
+    "body": "免費：電腦牌桌的教練、每日謎題、練習、全部課程，每天 1 次複盤和 1 次謎題衝刺，新手與牌友電腦，以及加入任何俱樂部。\n教練 金：高手電腦、無限謎題衝刺。\n四風俱樂部：教練 金的全部內容、無限複盤，以及開設並經營自己的俱樂部。",
     "renews": "%{date} 續訂或到期"
   },
   "unavailable": {
     "title": "此版本無法使用商店",
-    "body": "這個版本關閉了購買功能，無法購買也不會發放任何商品。你已擁有的外觀和方案仍可使用。"
+    "body": "這個版本關閉了購買功能，無法購買也不會發放任何商品。你已擁有的外觀和方案仍可使用。",
+    "serverTitle": "商店暫停服務",
+    "serverBody": "遊戲伺服器目前不接受購買，所以暫時無法用錢購買任何商品。你已有的鑽石仍可購買外觀，已擁有的方案也照常使用。"
   },
   "mock": "開發版本：測試商店。購買立即生效且免費，只存在這台裝置上，下次與伺服器同步時會被取代。",
   "offline": "離線中：顯示上次連上伺服器時的餘額。",
@@ -42,7 +44,7 @@
     "store_not_signed_in": "請先連上遊戲伺服器，購買才會記到你的帳號。",
     "store_unavailable": "此版本無法使用商店。"
   },
-  "foot": "價格依你的 App Store 或 Google Play 地區而定。訂閱會自動續訂，除非你在續訂日至少 24 小時前於商店帳號設定中取消。「恢復購買」可以找回用同一個商店帳號購買的方案與外觀。",
+  "foot": "價格依你的 App Store 或 Google Play 地區而定。訂閱會自動續訂，除非你在續訂日至少 24 小時前於商店帳號設定中取消。「恢復購買」可以找回用同一個商店帳號購買的訂閱；鑽石和外觀屬於購買時的遊戲帳號，換手機時請用 Apple 或 Google 登入保留。",
   "products": {
     "diamonds_60": {
       "title": "60 鑽石",
@@ -81,12 +83,184 @@
     },
     "theme_jade": {
       "title": "翡翠廳桌布",
-      "description": "深翡翠綠桌面，胡桃木邊框鑲金釘，象牙色牌。",
-      "badge": "新品"
+      "description": "深翡翠綠桌面，胡桃木邊框鑲金釘，象牙色牌。"
     },
     "theme_imperial": {
       "title": "宮廷紅桌布",
       "description": "朱漆紅搭配金邊。"
+    },
+    "theme_lantern": {
+      "title": "元宵燈會桌布",
+      "description": "朱紅桌面印滿元宵花燈。",
+      "badge": "新品"
+    },
+    "theme_teahouse": {
+      "title": "老茶館桌布",
+      "description": "胡桃色桌面配上窗花格紋。"
+    },
+    "theme_oceanwave": {
+      "title": "海浪桌布",
+      "description": "深藍桌面上一圈圈浪花。"
+    },
+    "theme_plumblossom": {
+      "title": "梅花桌布",
+      "description": "玫瑰色桌面點綴朵朵梅花。"
+    },
+    "theme_cloud": {
+      "title": "祥雲桌布",
+      "description": "青綠桌面配金色祥雲。"
+    },
+    "theme_starlight": {
+      "title": "星夜桌布",
+      "description": "深藍桌面灑滿金色星星。"
+    },
+    "theme_porcelain": {
+      "title": "青花瓷桌布",
+      "description": "鈷藍桌面印上白色回紋。"
+    },
+    "theme_dragonscale": {
+      "title": "龍鱗桌布",
+      "description": "翠綠桌面配金色龍鱗與胡桃木邊框。"
+    },
+    "back_jade": {
+      "title": "溫潤玉石牌背",
+      "description": "光亮玉綠色，中央一圈淡色玉環。"
+    },
+    "back_crimson": {
+      "title": "朱紅中國結牌背",
+      "description": "深紅底色配金色中國結。"
+    },
+    "back_midnight": {
+      "title": "午夜星辰牌背",
+      "description": "夜藍底色配一顆金星。"
+    },
+    "back_lotus": {
+      "title": "荷花池牌背",
+      "description": "玫瑰粉底色配白色荷花。"
+    },
+    "back_bamboo": {
+      "title": "竹影牌背",
+      "description": "嫩綠底色配竹枝。"
+    },
+    "back_wave": {
+      "title": "浪花牌背",
+      "description": "海藍底色配捲起的浪花。"
+    },
+    "back_cloud": {
+      "title": "祥雲牌背",
+      "description": "青綠底色配米色祥雲。"
+    },
+    "back_lattice": {
+      "title": "茶館窗花牌背",
+      "description": "胡桃棕底色配窗花格。"
+    },
+    "back_sunset": {
+      "title": "夕照牌背",
+      "description": "暖橘底色配初升的太陽。"
+    },
+    "back_dragon": {
+      "title": "龍鱗牌背",
+      "description": "翠綠底色配金色龍鱗。"
+    },
+    "frame_bamboo": {
+      "title": "竹節框",
+      "description": "頭像外圍一圈青竹。"
+    },
+    "frame_jade": {
+      "title": "玉鐲框",
+      "description": "溫潤玉鐲配淡色珠子。"
+    },
+    "frame_gilded": {
+      "title": "鎏金框",
+      "description": "亮金色圓框配四顆金釘。"
+    },
+    "frame_blossom": {
+      "title": "梅花框",
+      "description": "粉色圓框綴滿梅花。"
+    },
+    "frame_wave": {
+      "title": "浪花框",
+      "description": "藍色圓框配白色浪頭。"
+    },
+    "frame_cloud": {
+      "title": "祥雲框",
+      "description": "青綠圓框配米色雲朵。"
+    },
+    "frame_flame": {
+      "title": "火焰框",
+      "description": "橘色圓框燃起火焰。"
+    },
+    "frame_star": {
+      "title": "星光框",
+      "description": "夜藍圓框配金色星星。"
+    },
+    "frame_lantern": {
+      "title": "燈籠框",
+      "description": "紅色圓框掛著小燈籠。"
+    },
+    "frame_dragon": {
+      "title": "玉龍框",
+      "description": "綠色圓框配金色龍鱗。"
+    },
+    "frame_phoenix": {
+      "title": "鳳羽框",
+      "description": "緋紅圓框配金色羽毛。"
+    },
+    "frame_rainbow": {
+      "title": "彩虹框",
+      "description": "一條七彩緞帶。"
+    },
+    "emotes_teahouse": {
+      "title": "茶館表情",
+      "description": "六個表情：茶、包子、餃子、麵、月餅、橘子。"
+    },
+    "emotes_nightmarket": {
+      "title": "夜市表情",
+      "description": "六個表情：珍奶、烤串、剉冰、烤玉米、燈籠、鞭炮。"
+    },
+    "emotes_festival": {
+      "title": "節慶表情",
+      "description": "六個表情：煙火、中國結、鼓、風箏、月亮、龍舟。"
+    },
+    "emotes_zodiac": {
+      "title": "生肖表情",
+      "description": "六個表情：鼠、牛、虎、兔、龍、雞。"
+    },
+    "win_fireworks": {
+      "title": "煙火慶祝",
+      "description": "胡牌時牌桌上空煙火綻放。"
+    },
+    "win_lanterns": {
+      "title": "天燈慶祝",
+      "description": "胡牌時天燈冉冉升起。"
+    },
+    "win_dragon": {
+      "title": "舞龍慶祝",
+      "description": "胡牌時一條龍舞過牌桌。"
+    },
+    "win_petals": {
+      "title": "花瓣雨慶祝",
+      "description": "胡牌時梅花瓣紛紛飄落。"
+    },
+    "bundle_nightmarket": {
+      "title": "夜市套組",
+      "description": "夜市霓虹桌布、午夜星辰牌背、燈籠框和夜市表情。",
+      "badge": "套組"
+    },
+    "bundle_festival": {
+      "title": "元宵套組",
+      "description": "元宵燈會桌布、朱紅中國結牌背、火焰框、節慶表情和天燈慶祝。",
+      "badge": "套組"
+    },
+    "bundle_dragon": {
+      "title": "龍騰套組",
+      "description": "龍鱗桌布與牌背、玉龍框、生肖表情和舞龍慶祝。",
+      "badge": "套組"
+    },
+    "bundle_garden": {
+      "title": "花園套組",
+      "description": "梅花桌布、荷花池牌背、梅花框和花瓣雨慶祝。",
+      "badge": "套組"
     },
     "coach_gold_month": {
       "title": "教練 金",
@@ -97,15 +271,26 @@
       "description": "一次付清，使用一年教練 金。",
       "badge": "年繳"
     },
-    "coach_platinum_month": {
-      "title": "教練 白金",
-      "description": "金的全部內容，加上無限複盤。",
-      "badge": "進步首選"
+    "fourwinds_month": {
+      "title": "四風俱樂部",
+      "description": "教練 金的全部內容、無限複盤，還能開設並經營自己的俱樂部。",
+      "badge": "開自己的俱樂部"
     },
-    "coach_platinum_year": {
-      "title": "教練 白金 年繳",
-      "description": "一次付清，使用一年教練 白金。",
+    "fourwinds_year": {
+      "title": "四風俱樂部 年繳",
+      "description": "一次付清，使用一年四風俱樂部。",
       "badge": "年繳"
     }
-  }
+  },
+  "shelves": {
+    "table": "桌布",
+    "tileback": "牌背",
+    "frame": "頭像框",
+    "emotes": "表情",
+    "celebration": "胡牌慶祝",
+    "bundle": "套組"
+  },
+  "bundleSaves": "你已擁有 %{total} 件中的 %{owned} 件，只需付其餘的",
+  "equip": "使用",
+  "equipped": "使用中"
 }

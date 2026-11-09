@@ -1,11 +1,11 @@
 {
   "_review": "n/a",
   "title": "Shop",
-  "trust": "Table looks and coaching only. Nothing here changes the tiles you draw, and clubs are free.",
+  "trust": "Looks, coaching and club ownership only. Nothing here changes the tiles you draw, and joining clubs is free.",
   "tabs": {
     "diamonds": "Diamonds",
     "looks": "Looks",
-    "coach": "Coach"
+    "coach": "Plans"
   },
   "purchaseFailed": "The purchase did not go through. Nothing was charged by the app; try again.",
   "needDiamonds": "You need %{n} more diamonds",
@@ -17,20 +17,22 @@
   "productSub": "%{zh} · %{description}",
   "notOnSale": "Not on sale",
   "priceLoading": "…",
-  "diamondsUse": "Diamonds buy table looks (300 or 400 each). Bonus diamonds are spent first.",
+  "diamondsUse": "Diamonds buy table looks, tile backs, avatar frames, emote packs and win celebrations (150 to 600 each, sets for less). Bonus diamonds are spent first.",
   "tiers": {
-    "gold": "Gold",
-    "platinum": "Platinum"
+    "gold": "Coach Gold",
+    "fourwinds": "The Four Winds Club"
   },
   "coach": {
-    "tiers": "Coaching plans",
-    "active": "Coach %{tier} is active",
-    "body": "Free: the coach at bot tables, the daily puzzle, drills, every lesson, 1 hand review and 1 Puzzle Rush a day, Beginner and Club bots.\nGold: Pro bots and unlimited Puzzle Rush.\nPlatinum: everything in Gold plus unlimited hand reviews.",
+    "tiers": "Coaching and club plans",
+    "active": "%{tier} is active",
+    "body": "Free: the coach at bot tables, the daily puzzle, drills, every lesson, 1 hand review and 1 Puzzle Rush a day, Beginner and Club bots, and joining any club.\nCoach Gold: Pro bots and unlimited Puzzle Rush.\nThe Four Winds Club: everything in Coach Gold, unlimited hand reviews, and creating and running your own clubs.",
     "renews": "Renews or ends %{date}"
   },
   "unavailable": {
     "title": "Store unavailable on this build",
-    "body": "Purchases are switched off here, so nothing can be bought or granted. Looks and plans you already own still work."
+    "body": "Purchases are switched off here, so nothing can be bought or granted. Looks and plans you already own still work.",
+    "serverTitle": "Store unavailable",
+    "serverBody": "The game server is not taking purchases right now, so nothing can be bought for money. Diamonds you already have still buy looks, and plans you own still work."
   },
   "mock": "Development build: a test store. Purchases are instant, free and stay on this device until the next sync with the server.",
   "offline": "Offline: showing your balance from the last time the app reached the server.",
@@ -42,7 +44,7 @@
     "store_not_signed_in": "Connect to the game server first, so the purchase reaches your account.",
     "store_unavailable": "The store is not available on this build."
   },
-  "foot": "Prices come from your App Store or Google Play region. Subscriptions renew automatically unless you cancel them in your store account settings at least 24 hours before the renewal date. Restore purchases brings back plans and looks bought with the same store account.",
+  "foot": "Prices come from your App Store or Google Play region. Subscriptions renew automatically unless you cancel them in your store account settings at least 24 hours before the renewal date. Restore purchases brings back subscriptions bought with the same store account; diamonds and looks belong to the game account they were bought on, so sign in with Apple or Google to keep them on a new phone.",
   "products": {
     "diamonds_60": {
       "title": "60 Diamonds",
@@ -81,12 +83,184 @@
     },
     "theme_jade": {
       "title": "Jade Parlour table",
-      "description": "Deep jade felt, walnut rail with gold studs, ivory tiles.",
-      "badge": "New"
+      "description": "Deep jade felt, walnut rail with gold studs, ivory tiles."
     },
     "theme_imperial": {
       "title": "Imperial Red table",
       "description": "Lacquer red with gold trim."
+    },
+    "theme_lantern": {
+      "title": "Lantern Festival table",
+      "description": "Crimson felt printed with festival lanterns.",
+      "badge": "New"
+    },
+    "theme_teahouse": {
+      "title": "Teahouse table",
+      "description": "Walnut felt with a window-lattice print."
+    },
+    "theme_oceanwave": {
+      "title": "Ocean Wave table",
+      "description": "Deep blue felt with rolling wave rings."
+    },
+    "theme_plumblossom": {
+      "title": "Plum Blossom table",
+      "description": "Dusky rose felt scattered with plum blossoms."
+    },
+    "theme_cloud": {
+      "title": "Lucky Clouds table",
+      "description": "Teal felt with golden cloud swirls."
+    },
+    "theme_starlight": {
+      "title": "Starlit Night table",
+      "description": "Navy felt sprinkled with gold stars."
+    },
+    "theme_porcelain": {
+      "title": "Blue Porcelain table",
+      "description": "Cobalt felt with a white key-fret print."
+    },
+    "theme_dragonscale": {
+      "title": "Dragon Scale table",
+      "description": "Emerald felt with gold dragon scales and a walnut rail."
+    },
+    "back_jade": {
+      "title": "Polished Jade tile back",
+      "description": "Glossy jade green with a pale ring."
+    },
+    "back_crimson": {
+      "title": "Crimson Knot tile back",
+      "description": "Deep red with a golden lucky knot."
+    },
+    "back_midnight": {
+      "title": "Midnight Star tile back",
+      "description": "Night blue with a bright gold star."
+    },
+    "back_lotus": {
+      "title": "Lotus Pond tile back",
+      "description": "Rose pink with a white lotus."
+    },
+    "back_bamboo": {
+      "title": "Bamboo Grove tile back",
+      "description": "Fresh green with bamboo stems."
+    },
+    "back_wave": {
+      "title": "Ocean Wave tile back",
+      "description": "Sea blue with curling waves."
+    },
+    "back_cloud": {
+      "title": "Lucky Cloud tile back",
+      "description": "Teal with a cream cloud swirl."
+    },
+    "back_lattice": {
+      "title": "Teahouse Lattice tile back",
+      "description": "Walnut brown with a window lattice."
+    },
+    "back_sunset": {
+      "title": "Sunset Rays tile back",
+      "description": "Warm orange with a rising sun."
+    },
+    "back_dragon": {
+      "title": "Dragon Scale tile back",
+      "description": "Emerald with gold dragon scales."
+    },
+    "frame_bamboo": {
+      "title": "Bamboo Ring frame",
+      "description": "A green bamboo ring around your avatar."
+    },
+    "frame_jade": {
+      "title": "Jade Bangle frame",
+      "description": "A smooth jade bangle with pale beads."
+    },
+    "frame_gilded": {
+      "title": "Gilded Ring frame",
+      "description": "A bright gilded ring with four studs."
+    },
+    "frame_blossom": {
+      "title": "Plum Blossom frame",
+      "description": "Pink ring dotted with plum blossoms."
+    },
+    "frame_wave": {
+      "title": "Rolling Waves frame",
+      "description": "Blue ring with white wave crests."
+    },
+    "frame_cloud": {
+      "title": "Lucky Clouds frame",
+      "description": "Teal ring with cream cloud puffs."
+    },
+    "frame_flame": {
+      "title": "Hot Streak frame",
+      "description": "Orange ring licked by flames."
+    },
+    "frame_star": {
+      "title": "Starlight frame",
+      "description": "Night-blue ring with gold stars."
+    },
+    "frame_lantern": {
+      "title": "Lantern Glow frame",
+      "description": "Red ring hung with little lanterns."
+    },
+    "frame_dragon": {
+      "title": "Jade Dragon frame",
+      "description": "Green ring with gold dragon scales."
+    },
+    "frame_phoenix": {
+      "title": "Phoenix Feather frame",
+      "description": "Crimson ring with golden feathers."
+    },
+    "frame_rainbow": {
+      "title": "Rainbow Ribbon frame",
+      "description": "A ribbon in every colour."
+    },
+    "emotes_teahouse": {
+      "title": "Tea House emotes",
+      "description": "Six emotes: tea, bun, dumpling, noodles, mooncake, tangerine."
+    },
+    "emotes_nightmarket": {
+      "title": "Night Market emotes",
+      "description": "Six emotes: bubble tea, skewer, shaved ice, corn, lantern, firecracker."
+    },
+    "emotes_festival": {
+      "title": "Festival emotes",
+      "description": "Six emotes: fireworks, lucky knot, drum, kite, moon, dragon boat."
+    },
+    "emotes_zodiac": {
+      "title": "Zodiac emotes",
+      "description": "Six emotes: rat, ox, tiger, rabbit, dragon, rooster."
+    },
+    "win_fireworks": {
+      "title": "Fireworks win",
+      "description": "Fireworks burst over the table when you win."
+    },
+    "win_lanterns": {
+      "title": "Sky Lanterns win",
+      "description": "Sky lanterns rise when you win."
+    },
+    "win_dragon": {
+      "title": "Dragon Dance win",
+      "description": "A dragon dances across the table when you win."
+    },
+    "win_petals": {
+      "title": "Blossom Shower win",
+      "description": "Plum petals drift down when you win."
+    },
+    "bundle_nightmarket": {
+      "title": "Night Market set",
+      "description": "Night Market table, Midnight Star back, Lantern Glow frame and the Night Market emotes.",
+      "badge": "Set"
+    },
+    "bundle_festival": {
+      "title": "Lantern Festival set",
+      "description": "Lantern Festival table, Crimson Knot back, Hot Streak frame, Festival emotes and Sky Lanterns win.",
+      "badge": "Set"
+    },
+    "bundle_dragon": {
+      "title": "Dragon set",
+      "description": "Dragon Scale table and back, Jade Dragon frame, Zodiac emotes and Dragon Dance win.",
+      "badge": "Set"
+    },
+    "bundle_garden": {
+      "title": "Blossom Garden set",
+      "description": "Plum Blossom table, Lotus Pond back, Plum Blossom frame and Blossom Shower win.",
+      "badge": "Set"
     },
     "coach_gold_month": {
       "title": "Coach Gold",
@@ -97,15 +271,26 @@
       "description": "Coach Gold for a year, billed once.",
       "badge": "Yearly"
     },
-    "coach_platinum_month": {
-      "title": "Coach Platinum",
-      "description": "Everything in Gold plus unlimited hand reviews.",
-      "badge": "Best for improvers"
+    "fourwinds_month": {
+      "title": "The Four Winds Club",
+      "description": "Everything in Coach Gold, unlimited hand reviews, and clubs of your own to create and run.",
+      "badge": "Run your own club"
     },
-    "coach_platinum_year": {
-      "title": "Coach Platinum (yearly)",
-      "description": "Coach Platinum for a year, billed once.",
+    "fourwinds_year": {
+      "title": "The Four Winds Club (yearly)",
+      "description": "The Four Winds Club for a year, billed once.",
       "badge": "Yearly"
     }
-  }
+  },
+  "shelves": {
+    "table": "Tables",
+    "tileback": "Tile backs",
+    "frame": "Frames",
+    "emotes": "Emotes",
+    "celebration": "Wins",
+    "bundle": "Sets"
+  },
+  "bundleSaves": "You own %{owned} of %{total}: pay only for the rest",
+  "equip": "Equip",
+  "equipped": "In use"
 }

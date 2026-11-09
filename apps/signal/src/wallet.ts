@@ -15,13 +15,25 @@
  * players. Work for one user is serialised in this process (one game server machine), and on
  * Postgres every operation is one transaction.
  */
-import { COACH_ENTITLEMENTS, COSMETIC_ENTITLEMENTS, PERIOD_MS, productForStoreId, serverProduct, type ServerProduct } from './catalog';
-import { NO_ANALYTICS, type Analytics } from './observability';
+import { bundlePrice, COSMETIC_ENTITLEMENTS, PERIOD_MS, productForStoreId, serverProduct, TIER_RANK, tierOfEntitlements, type CoachTier, type ServerProduct } from './catalog';
+import { NO_ANALYTICS, withConsent, type Analytics } from './observability';
 import type { EntitlementRecord, Repos, UserRecord, WalletRecord } from './repos/types';
 
-export type WalletErrorCode = 'insufficient' | 'owned' | 'not_for_sale' | 'invalid';
+export type WalletErrorCode = 'insufficient' | 'owned' | 'not_for_sale' | 'invalid' | 'not_found' | 'unauthorised' | 'rate_limited' | 'unavailable' | 'store_unreachable';
 
-/** A refused wallet operation, with the HTTP status the API answers. */
+const WALLET_STATUS: Record<WalletErrorCode, number> = {
+  insufficient: 409,
+  owned: 409,
+  not_for_sale: 404,
+  not_found: 404,
+  invalid: 400,
+  unauthorised: 401,
+  rate_limited: 429,
+  unavailable: 503,
+  store_unreachable: 502,
+};
+
+/** A refused wallet, store or support operation, with the HTTP status the API answers. */
 export class WalletError extends Error {
   readonly status: number;
   constructor(
@@ -30,7 +42,7 @@ export class WalletError extends Error {
   ) {
     super(message);
     this.name = 'WalletError';
-    this.status = code === 'not_for_sale' ? 404 : code === 'invalid' ? 400 : 409;
+    this.status = WALLET_STATUS[code];
   }
 }
 
@@ -89,6 +101,7 @@ export type StoreOutcome =
   | 'duplicate'
   | 'ignored_unknown_user'
   | 'ignored_unknown_product'
+  | 'ignored_sandbox'
   | 'ignored_stale'
   | 'ignored_type';
 
@@ -103,19 +116,42 @@ export interface WalletSummary {
   entitlements: Array<{ entitlement: string; expiresAt: number | null; active: boolean }>;
   /** Product ids of the cosmetics the user owns (`theme.jade`). */
   cosmetics: string[];
-  /** The highest coaching tier currently live. */
-  coachTier: 'free' | 'gold' | 'platinum';
+  /** The best tier among the plans currently live (`fourwinds` is The Four Winds Club). */
+  coachTier: CoachTier;
 }
 
 export interface WalletServiceOptions {
   now?: () => number;
   analytics?: Analytics;
   log?: (line: string) => void;
+  /**
+   * Accounts whose sandbox purchases (TestFlight, Play testing) are granted. Everyone else's
+   * sandbox events are recorded as `ignored_sandbox`. Default: `TESTER_USER_IDS` from the
+   * environment (comma-separated user ids). Ids are compared in lower case.
+   */
+  testerUserIds?: Iterable<string>;
 }
+
+type Env = Record<string, string | undefined>;
+
+/** The tester allowlist in `TESTER_USER_IDS` (comma-separated user ids). */
+export function testerIdsFromEnv(env: Env = process.env): Set<string> {
+  return new Set(
+    (env.TESTER_USER_IDS ?? '')
+      .split(',')
+      .map((s) => s.trim().toLowerCase())
+      .filter(Boolean),
+  );
+}
+
+/** True for an event from a store's test environment (App Store sandbox, Play test tracks). */
+export const isSandbox = (e: Pick<StoreEvent, 'environment'>): boolean => (e.environment ?? '').trim().toUpperCase() === 'SANDBOX';
 
 /** Source written on entitlements granted by store events (TRANSFER moves only these). */
 export const STORE_SOURCE = 'store';
 const SPEND_SOURCE = 'diamonds';
+/** Source of entitlements granted by support (`POST /api/admin/grant`). */
+export const SUPPORT_SOURCE = 'support';
 
 const isLive = (e: Pick<EntitlementRecord, 'expiresAt'>, at: number) => e.expiresAt === null || e.expiresAt > at;
 
@@ -123,6 +159,7 @@ export class WalletService {
   private readonly now: () => number;
   private readonly analytics: Analytics;
   private readonly log: (line: string) => void;
+  private readonly testers: ReadonlySet<string>;
   /** One chain per user, so two spends from one player cannot both pass the ownership check. */
   private readonly locks = new Map<string, Promise<unknown>>();
 
@@ -131,8 +168,18 @@ export class WalletService {
     opts: WalletServiceOptions = {},
   ) {
     this.now = opts.now ?? Date.now;
-    this.analytics = opts.analytics ?? NO_ANALYTICS;
+    // Purchase events reach analytics only for players who allowed analytics in the app.
+    this.analytics = withConsent(opts.analytics ?? NO_ANALYTICS, (id) => repos.users.getAnalyticsConsent(id));
     this.log = opts.log ?? ((line) => console.log(line));
+    // A Set is kept as given (so a caller can add testers later); anything else is read once.
+    this.testers = opts.testerUserIds instanceof Set ? opts.testerUserIds : opts.testerUserIds ? new Set([...opts.testerUserIds].map((id) => id.trim().toLowerCase())) : testerIdsFromEnv();
+  }
+
+  /** True when this event may grant: a production event, or a sandbox event for an account on the tester list. */
+  private grantable(e: StoreEvent, user: UserRecord | null): boolean {
+    if (!isSandbox(e)) return true;
+    const ids = [user?.id, ...e.userIds, ...e.transferredTo].filter((x): x is string => !!x);
+    return ids.some((id) => this.testers.has(id.toLowerCase()));
   }
 
   /**
@@ -161,13 +208,23 @@ export class WalletService {
     const [w, ents] = await Promise.all([this.repos.wallet.get(userId), this.repos.wallet.getEntitlements(userId)]);
     const at = this.now();
     const live = ents.filter((e) => isLive(e, at));
-    const coach = COACH_ENTITLEMENTS.find((c) => live.some((e) => e.entitlement === c));
     return {
       wallet: { diamonds: w.diamonds, bonusDiamonds: w.bonusDiamonds },
       entitlements: ents.map((e) => ({ entitlement: e.entitlement, expiresAt: e.expiresAt, active: isLive(e, at) })),
       cosmetics: live.filter((e) => COSMETIC_ENTITLEMENTS.has(e.entitlement)).map((e) => e.entitlement).sort(),
-      coachTier: coach === 'coach.platinum' ? 'platinum' : coach === 'coach.gold' ? 'gold' : 'free',
+      coachTier: tierOfEntitlements(live.map((e) => e.entitlement)),
     };
+  }
+
+  /** The user's tier now: the best subscription plan still live. */
+  async tierOf(userId: string): Promise<CoachTier> {
+    const at = this.now();
+    return tierOfEntitlements((await this.repos.wallet.getEntitlements(userId)).filter((e) => isLive(e, at)).map((e) => e.entitlement));
+  }
+
+  /** True while the user has The Four Winds Club (the club-ownership gate calls this). */
+  async hasFourWinds(userId: string): Promise<boolean> {
+    return TIER_RANK[await this.tierOf(userId)] >= TIER_RANK.fourwinds;
   }
 
   /** Add diamonds (and optionally bonus diamonds) with a ledger entry. */
@@ -182,33 +239,56 @@ export class WalletService {
     });
   }
 
-  /** Buy a cosmetic with diamonds: debit and permanent entitlement together, or neither. */
-  async spend(userId: string, productId: unknown): Promise<{ wallet: WalletRecord; entitlement: string; spent: number }> {
+  /**
+   * A support grant of an entitlement (`POST /api/admin/grant`): written with source `support`,
+   * never shortening one the user already has, and noted on the ledger as a zero entry.
+   */
+  async grantSupport(userId: string, entitlement: string, expiresAt: number | null, note: string): Promise<void> {
+    await this.serialise([userId], () =>
+      this.repos.transaction(async (tx) => {
+        const at = this.now();
+        const current = (await tx.wallet.getEntitlements(userId)).find((e) => e.entitlement === entitlement);
+        const keeps = current && (current.expiresAt === null || (expiresAt !== null && current.expiresAt >= expiresAt));
+        if (!keeps) await tx.wallet.setEntitlement({ userId, entitlement, expiresAt, source: SUPPORT_SOURCE, updatedAt: at });
+        await tx.wallet.apply({ userId, delta: 0, bonus: 0, reason: 'support', ref: `support:${entitlement}:${note}`.slice(0, 255), createdAt: at });
+      }),
+    );
+  }
+
+  /**
+   * Buy a cosmetic with diamonds: debit and permanent entitlement together, or neither. A bundle
+   * grants each of its items the player does not own yet, at `bundlePrice` (the share still
+   * missing), and is refused as owned when nothing is missing.
+   */
+  async spend(userId: string, productId: unknown): Promise<{ wallet: WalletRecord; entitlement: string; spent: number; granted: string[] }> {
     const product = serverProduct(productId);
     if (!product || product.kind !== 'cosmetic') throw new WalletError('not_for_sale', 'That item is not sold for diamonds');
     return this.serialise([userId], () =>
       this.repos.transaction(async (tx) => {
-        const owned = (await tx.wallet.getEntitlements(userId)).some((e) => e.entitlement === product.entitlement && isLive(e, this.now()));
-        if (owned) throw new WalletError('owned', 'You already own that item');
+        const at0 = this.now();
+        const ownedNow = new Set((await tx.wallet.getEntitlements(userId)).filter((e) => isLive(e, at0)).map((e) => e.entitlement));
+        const grants = product.contains ? product.contains.filter((id) => !ownedNow.has(id)) : ownedNow.has(product.entitlement) ? [] : [product.entitlement];
+        if (grants.length === 0) throw new WalletError('owned', 'You already own that item');
         const w = await tx.wallet.get(userId);
-        const price = product.diamondPrice;
-        if (w.diamonds + w.bonusDiamonds < price) throw new WalletError('insufficient', 'Not enough diamonds');
+        const price = product.contains ? bundlePrice(product, (e) => ownedNow.has(e)) : product.diamondPrice;
+        // A refund can leave purchased diamonds below zero: nothing is spent until they are back above.
+        if (w.diamonds < 0 || w.diamonds + w.bonusDiamonds < price) throw new WalletError('insufficient', 'Not enough diamonds');
         const fromBonus = Math.min(w.bonusDiamonds, price);
         const at = this.now();
         const res = await tx.wallet.apply({ userId, delta: -(price - fromBonus), bonus: -fromBonus, reason: 'spend', ref: product.id, createdAt: at });
         if (!res) throw new WalletError('insufficient', 'Not enough diamonds');
-        await tx.wallet.setEntitlement({ userId, entitlement: product.entitlement, expiresAt: null, source: SPEND_SOURCE, updatedAt: at });
-        return { wallet: res.wallet, entitlement: product.entitlement, spent: price };
+        for (const entitlement of grants) await tx.wallet.setEntitlement({ userId, entitlement, expiresAt: null, source: SPEND_SOURCE, updatedAt: at });
+        return { wallet: res.wallet, entitlement: product.entitlement, spent: price, granted: grants };
       }),
     );
   }
 
   /** The live account a store user id refers to (following merges), or null. */
-  private async resolveUser(candidates: string[], repos: Repos = this.repos): Promise<UserRecord | null> {
+  private async resolveUser(candidates: string[], repos: Repos = this.repos, includeDeleted = false): Promise<UserRecord | null> {
     for (const id of candidates) {
       let user = await repos.users.get(id);
       for (let hops = 0; user && user.mergedInto && hops < 5; hops++) user = await repos.users.get(user.mergedInto);
-      if (user && user.deletedAt === null) return user;
+      if (user && (user.deletedAt === null || (includeDeleted && user.mergedInto === null))) return user;
     }
     return null;
   }
@@ -274,6 +354,11 @@ export class WalletService {
   private async applyEffects(tx: Repos, e: StoreEvent, product: ServerProduct | undefined, user: UserRecord | null): Promise<{ outcome: StoreOutcome; userId: string | null }> {
     const at = this.now();
     if (e.type === 'TEST') return { outcome: 'test', userId: user?.id ?? null };
+    // Sandbox purchases cost nothing: only accounts on the tester list get them.
+    if (!this.grantable(e, user)) {
+      this.log(`[signal] sandbox store event ${e.eventId} (${e.type}) for an account not on TESTER_USER_IDS; recorded only`);
+      return { outcome: 'ignored_sandbox', userId: user?.id ?? null };
+    }
     if (e.type === 'TRANSFER') return this.transfer(tx, e, at);
     if (!(STORE_EVENT_TYPES as readonly string[]).includes(e.type)) return { outcome: 'ignored_type', userId: user?.id ?? null };
     if (!user) {
@@ -373,8 +458,11 @@ export class WalletService {
   }
 
   /**
-   * A refunded diamond pack: take back what is left of it (balances never go below zero). A refund
-   * that arrives before the purchase is remembered, so the purchase is not credited when it comes.
+   * A refunded diamond pack: take back everything it credited. Bonus diamonds come back first as
+   * far as they go; the rest comes off purchased diamonds, which may go below zero when the pack
+   * was already spent. A negative balance blocks every spend until a purchase covers it, so a
+   * buy, spend, refund cycle never ends with free looks. A refund that arrives before the purchase
+   * is remembered, so the purchase is not credited when it comes.
    */
   private async refundDiamonds(tx: Repos, userId: string, product: Extract<ServerProduct, { kind: 'diamonds' }>, transactionId: string, cancelReason: string | null, at: number): Promise<StoreOutcome> {
     if (cancelReason !== 'CUSTOMER_SUPPORT') return 'recorded';
@@ -385,24 +473,29 @@ export class WalletService {
       return 'refunded';
     }
     const w = await tx.wallet.get(userId);
-    const delta = -Math.min(w.diamonds, product.diamonds);
-    const bonus = -Math.min(w.bonusDiamonds, product.bonus);
-    await tx.wallet.apply({ userId, delta, bonus, reason: 'refund', ref: WalletService.refundRef(transactionId), createdAt: at });
+    const bonus = Math.min(Math.max(0, w.bonusDiamonds), product.bonus);
+    const delta = -(product.diamonds + product.bonus - bonus);
+    const res = await tx.wallet.apply({ userId, delta, bonus: -bonus, reason: 'refund', ref: WalletService.refundRef(transactionId), createdAt: at }, { allowNegative: true });
+    if (!res) throw new Error('Diamond refund refused');
+    if (res.wallet.diamonds < 0) this.log(`[signal] refund ${transactionId} left ${userId} at ${res.wallet.diamonds} diamonds; spends are blocked until it is covered`);
     return 'refunded';
   }
 
   /**
    * The store moved purchases between app user ids (a Restore signed into another account).
    * Store-granted entitlements move to the first known recipient, the later expiry winning;
-   * diamonds already credited stay where they were spent or credited.
+   * diamonds already credited stay where they were spent or credited. A deleted account's
+   * subscriptions move too (until its rows are purged), so a player who deleted an account with
+   * a live subscription gets it back with Restore on a new one; after the purge, reconciliation
+   * (reconcile.ts) reads the subscription from the store instead.
    */
   private async transfer(tx: Repos, e: StoreEvent, at: number): Promise<{ outcome: StoreOutcome; userId: string | null }> {
-    const to = await this.resolveUser(e.transferredTo);
+    const to = await this.resolveUser(e.transferredTo, tx);
     if (!to) return { outcome: 'ignored_unknown_user', userId: null };
     const theirs = new Map((await tx.wallet.getEntitlements(to.id)).map((x) => [x.entitlement, x]));
     let moved = 0;
     for (const fromId of e.transferredFrom) {
-      const from = await this.resolveUser([fromId]);
+      const from = await this.resolveUser([fromId], tx, true);
       if (!from || from.id === to.id) continue;
       for (const ent of await tx.wallet.getEntitlements(from.id)) {
         if (ent.source !== STORE_SOURCE) continue;

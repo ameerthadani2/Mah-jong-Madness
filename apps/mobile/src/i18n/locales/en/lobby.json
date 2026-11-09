@@ -4,7 +4,7 @@
   "title": "Table %{code}",
   "shareCode": "Share this code",
   "share": "Share",
-  "shareMessage": "Join my Mahjong Madness table: %{code}",
+  "shareMessage": "Join my %{app} table: %{code}\n%{link}",
   "serverTable": "Server table",
   "onDevice": "On this device",
   "seats": "Seats",

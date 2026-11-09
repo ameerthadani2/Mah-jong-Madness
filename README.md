@@ -1,10 +1,10 @@
-# Mahjong Madness 🀄
+# Mahjong Mania 🀄
 
 **Taiwanese 16-tile Mahjong (台灣麻將) for iOS and Android: verifiable online tables, clubs with house rules, and a coach that teaches you while you play.**
 
 Think PokerBros for Mahjong: create a private table, share a six-letter code, and play with friends anywhere.
-Online tables run on the game server, but the server cannot choose the deal: every seat and the server commit
-to a secret before any tile is dealt, and every phone re-derives the seed and replays the hand afterwards. Bots fill
+Online tables run on the game server. Every seat and the server commit to a secret before any tile is dealt,
+and every phone re-derives the seed and replays the hand afterwards: every hand is logged and checked on your phone. Bots fill
 empty seats so a table always runs; offline you play the same engine against bots on your own phone.
 
 ![Table screen with coach panel](docs/screenshot-table.png)
@@ -45,9 +45,9 @@ Settings → Network — on a laptop on the same Wi-Fi, `ws://<laptop-ip>:8787`.
 * **Play anywhere**: offline vs bots (3 skill levels), quick tables by code, or clubs with your own house rules, standings and server-hosted tables.
 * **Poker-style clocks**: Relaxed / Normal / Fast / Turbo / Hyper speeds with a per-hand time bank; the bot steps in when you run out.
 * **Never lose a game**: crash, reload or switch networks and resume the same hand with a rejoin token (guests) or a saved host snapshot (offline).
-* **Learn like chess.com**: coach panel at the table, daily puzzle with streaks, Puzzle Rush, drills, 6 lessons, and a hand review that grades every decision.
-* **Provably not rigged**: commit-reveal shuffles audited by every phone, with a Fair-play screen showing the seeds and hashes.
-* **Make it yours**: avatars, table looks, emotes and quick chat; a shop that sells only cosmetics, coaching and club capacity.
+* **Learn and improve**: coach panel at the table, daily puzzle with streaks, Puzzle Rush, drills, 6 lessons, and a hand review that grades every decision.
+* **Every hand checked**: commit-reveal shuffles audited by every phone, with a Fair-play screen showing the seeds and hashes and saying plainly what this device could not check.
+* **Make it yours**: avatars, table looks, tile backs, avatar frames, emotes and win celebrations; a shop that sells only cosmetics, coaching (Coach Gold) and club ownership (The Four Winds Club).
 * **Looks like a game, not a spreadsheet**: bright sky lobby, chunky cream panels and shelf buttons in the spirit of Codigames' idle games (see `docs/DESIGN.md`).
 
 ## How a hand is kept honest

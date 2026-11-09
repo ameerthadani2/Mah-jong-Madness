@@ -10,6 +10,7 @@ import { httpBase } from '../api/http';
 import { walletApi } from '../api/wallet';
 import type { Product } from './catalog';
 import { buyWithDiamonds, buyWithMoney, restorePurchases, syncWallet, type BuyResult, type SpendResult, type WalletDeps } from './sync';
+import { storeServer } from './server';
 import { store } from './store';
 import type { Wallet } from './wallet';
 
@@ -47,6 +48,7 @@ export function useWallet(options: { loadPrices?: boolean } = {}): {
       },
       fetchMe: () => client.getMe(),
       spend: (productId) => walletApi.spend({ base, auth: client }, productId),
+      syncStore: () => storeServer.sync({ base, auth: client }),
       now: () => Date.now(),
       sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
     }),

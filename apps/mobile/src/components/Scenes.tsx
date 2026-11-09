@@ -8,6 +8,7 @@ import Svg, { Circle, Ellipse, G, Line, Path, Polygon, Rect, Text as SvgText } f
 import { colors, fonts } from '../theme';
 import type { TableTheme } from '../themes';
 import { Gem } from './Icons';
+import { FeltPattern } from './FeltPattern';
 
 const INK = colors.ink;
 const IVORY = '#FFF9EE';
@@ -180,17 +181,12 @@ export function ScrollScene({ width, height }: { width: number | string; height:
   );
 }
 
+/** A small gold gem where older art had a coin: the Shop shows no coins, chips or money. */
 function coin(cx: number, cy: number, r = 7, key?: string | number) {
-  return (
-    <G key={key}>
-      <Ellipse cx={cx} cy={cy + 1.5} rx={r} ry={r * 0.9} fill={colors.goldShelf} stroke={INK} strokeWidth={2.4} />
-      <Ellipse cx={cx} cy={cy} rx={r} ry={r * 0.9} fill={colors.gold} stroke={INK} strokeWidth={2.4} />
-      <Ellipse cx={cx} cy={cy} rx={r * 0.5} ry={r * 0.42} fill="none" stroke={colors.goldShelf} strokeWidth={1.8} />
-    </G>
-  );
+  return <Gem key={key} x={cx - r} y={cy - r} s={(r * 2) / 48} hue="gold" />;
 }
 
-/** Treasure chest overflowing with gems and coins. */
+/** Treasure chest overflowing with gems. */
 export function ChestScene({ width, height }: { width: number | string; height: number | string }) {
   return (
     <Svg width={width} height={height} viewBox="0 0 200 140">
@@ -276,12 +272,12 @@ export function GemPile({ tier, width, height }: { tier: number; width: number |
 
 const MEDAL = {
   gold: { fill: colors.gold, shade: colors.goldShelf },
-  platinum: { fill: '#E3EAF5', shade: '#A9B6CC' },
+  fourwinds: { fill: '#7DDBB4', shade: '#2E9A72' },
   diamond: { fill: '#7FE3FF', shade: '#2FA8E0' },
 } as const;
 
-/** Ribbon medal for coaching tiers. */
-export function MedalScene({ tier, width, height }: { tier: 'gold' | 'platinum' | 'diamond'; width: number | string; height: number | string }) {
+/** Ribbon medal for coaching tiers; The Four Winds Club carries a four-point compass for the four winds. */
+export function MedalScene({ tier, width, height }: { tier: 'gold' | 'fourwinds' | 'diamond'; width: number | string; height: number | string }) {
   const m = MEDAL[tier];
   return (
     <Svg width={width} height={height} viewBox="0 0 120 100">
@@ -293,6 +289,11 @@ export function MedalScene({ tier, width, height }: { tier: 'gold' | 'platinum' 
       <Circle cx={60} cy={57} r={18} fill="none" stroke={m.shade} strokeWidth={3} />
       {tier === 'diamond' ? (
         <Gem x={45} y={42} s={0.62} hue="blue" />
+      ) : tier === 'fourwinds' ? (
+        <G>
+          <Path d="M60 38 L65 52 L79 57 L65 62 L60 76 L55 62 L41 57 L55 52 Z" fill="#FFFFFF" stroke={INK} strokeWidth={2.6} strokeLinejoin="round" />
+          <Circle cx={60} cy={57} r={4} fill={m.shade} stroke={INK} strokeWidth={2} />
+        </G>
       ) : (
         <Path d="M60 42 L64.5 52 L75 53 L67 60 L69.5 71 L60 65.5 L50.5 71 L53 60 L45 53 L55.5 52 Z" fill="#FFFFFF" stroke={INK} strokeWidth={2.6} strokeLinejoin="round" />
       )}
@@ -330,13 +331,14 @@ export function VipCardScene({ tier, width, height }: { tier: 'bronze' | 'silver
 }
 
 /** Mini table in a theme's colours, for table-look cosmetics. */
-export function ThemeScene({ theme, width, height }: { theme: Pick<TableTheme, 'felt' | 'feltDark' | 'feltLight' | 'tileFace' | 'tileBack' | 'accent'>; width: number | string; height: number | string }) {
+export function ThemeScene({ theme, width, height }: { theme: Pick<TableTheme, 'felt' | 'feltDark' | 'feltLight' | 'tileFace' | 'tileBack' | 'accent' | 'pattern' | 'patternColor'>; width: number | string; height: number | string }) {
   return (
     <Svg width={width} height={height} viewBox="0 0 120 100">
       <Rect x={8} y={12} width={104} height={80} rx={14} fill={colors.railEdge} stroke={INK} strokeWidth={4} />
       <Rect x={8} y={10} width={104} height={76} rx={14} fill={colors.rail} stroke={INK} strokeWidth={4} />
       <Rect x={17} y={18} width={86} height={60} rx={8} fill={theme.felt} stroke={INK} strokeWidth={3} />
       <Ellipse cx={60} cy={44} rx={34} ry={22} fill={theme.feltLight} opacity={0.6} />
+      {theme.pattern && <FeltPattern pattern={theme.pattern} x={17} y={18} width={86} height={60} rx={8} color={theme.patternColor} opacity={0.3} cell={16} />}
       {[0, 1, 2].map((i) => (
         <G key={i}>
           <Rect x={33 + i * 19} y={33} width={16} height={23} rx={3} fill={theme.tileBack} stroke={INK} strokeWidth={2.4} />

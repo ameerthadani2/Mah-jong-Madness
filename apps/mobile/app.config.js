@@ -1,6 +1,9 @@
 // Extends app.json at build time. Every value has a default, so a build with no env set still works.
 // - APP_NAME, APP_SLUG, APP_SCHEME, APP_BUNDLE_ID: product identity (store name, Expo slug, deep-link
-//   scheme, iOS bundle id and Android package). Today's values are placeholders until the name is cleared.
+//   scheme, iOS bundle id and Android package). The name is Mahjong Mania (麻將狂熱 in Chinese); the bundle id
+//   is a placeholder until the owner's trademark check clears it and reserves it in the stores.
+// - EXPO_PUBLIC_LINK_DOMAIN: the web domain for shared table links (https://<domain>/t/<code>); absent → the
+//   app scheme (<scheme>://table/<code>). Read by src/config.ts at bundle time.
 // - SIGNAL_URL: the deployed game server (wss://…) baked into the build; the app reads it on every launch.
 // - EXPO_BASE_URL: serve the web export under a sub-path (GitHub Pages uses /<repo-name>/).
 // - EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID, EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID, EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID:
@@ -17,10 +20,10 @@
 // - GOOGLE_SERVICES_JSON: path to google-services.json (an EAS file variable), needed for Android push (FCM).
 // Push notifications need the EAS project id (extra.eas.projectId, written by `eas init`); without it there is no token.
 const IDENTITY_DEFAULTS = {
-  name: 'Mahjong Madness',
-  slug: 'mahjong-madness',
-  scheme: 'mahjongmadness',
-  bundleId: 'com.mahjongmadness.app',
+  name: 'Mahjong Mania',
+  slug: 'mahjongmania',
+  scheme: 'mahjongmania',
+  bundleId: 'com.mahjongmania.app',
 };
 
 const env = (key, fallback) => {
@@ -56,6 +59,10 @@ const PRIVACY_MANIFEST = {
     collected('NSPrivacyCollectedDataTypeName', true, ['NSPrivacyCollectedDataTypePurposeAppFunctionality']),
     // Free text players type: the details of a player report (POST /api/reports), kept with the reporter's account.
     collected('NSPrivacyCollectedDataTypeOtherUserContent', true, ['NSPrivacyCollectedDataTypePurposeAppFunctionality']),
+    // The birth year from the age gate (sent with PATCH /api/me), kept with the account.
+    collected('NSPrivacyCollectedDataTypeOtherDataTypes', true, ['NSPrivacyCollectedDataTypePurposeAppFunctionality']),
+    // Hands, results and puzzle answers (match results, club standings, puzzle ratings), kept with the account.
+    collected('NSPrivacyCollectedDataTypeGameplayContent', true, ['NSPrivacyCollectedDataTypePurposeAppFunctionality']),
   ],
 };
 
@@ -95,6 +102,16 @@ module.exports = ({ config }) => {
     out.extra.googleClientIds = googleIds;
     // The native Google redirect is <bundle id>:/oauthredirect, so the bundle id must also be a URL scheme.
     if (googleIds.ios || googleIds.android) out.scheme = [out.scheme, bundleId];
+  }
+  // Shared table links (https://<domain>/t/<code>) open the app: iOS universal links and Android app links. The
+  // domain must serve apple-app-site-association and assetlinks.json (docs/OWNER_TODO.md).
+  const linkDomain = env('EXPO_PUBLIC_LINK_DOMAIN', undefined);
+  if (linkDomain) {
+    const host = linkDomain.replace(/^https?:\/\//, '').replace(/\/.*$/, '');
+    out.ios.associatedDomains = [`applinks:${host}`];
+    out.android.intentFilters = [
+      { action: 'VIEW', autoVerify: true, data: ['/t/', '/c/'].map((pathPrefix) => ({ scheme: 'https', host, pathPrefix })), category: ['BROWSABLE', 'DEFAULT'] },
+    ];
   }
   const baseUrl = env('EXPO_BASE_URL', undefined);
   if (baseUrl) out.experiments = { ...(config.experiments || {}), baseUrl };

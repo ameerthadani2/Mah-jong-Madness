@@ -25,7 +25,7 @@ const STORE: StoreProductLike[] = [
   { identifier: 'diamonds.600', priceString: 'NT$330' },
   // Google Play reports a subscription with its base plan.
   { identifier: 'coach.gold:month', priceString: 'NT$230' },
-  { identifier: 'coach.platinum.year', priceString: 'NT$2,690' },
+  { identifier: 'fourwinds.year', priceString: 'NT$2,690' },
   { identifier: 'someone.elses.product', priceString: '$1' },
 ];
 
@@ -42,7 +42,7 @@ describe('RevenueCat store provider', () => {
   it('prices come only from the store, keyed by catalogue id, for subscriptions and one-off products', async () => {
     const { sdk, calls } = fakeSdk(STORE);
     const store = new RevenueCatStoreProvider(sdk, 'k');
-    expect(await store.prices()).toEqual({ 'diamonds.600': 'NT$330', 'coach.gold.month': 'NT$230', 'coach.platinum.year': 'NT$2,690' });
+    expect(await store.prices()).toEqual({ 'diamonds.600': 'NT$330', 'coach.gold.month': 'NT$230', 'fourwinds.year': 'NT$2,690' });
     expect(calls).toEqual(['configure k anon', 'getProducts SUBSCRIPTION 6', 'getProducts NON_SUBSCRIPTION 6']);
     // Logged in afterwards: the anonymous configure is followed by logIn, so purchases reach the account.
     await store.identify('u-1');
@@ -111,6 +111,6 @@ describe('mock grant (development builds)', () => {
     expect(totalDiamonds(w1)).toBe(300);
     expect(w1.mock).toBe(true);
     expect(ownsCosmetic(mockGrant(w1, productById('theme.bamboo')!), 'bamboo')).toBe(true);
-    expect(hasTier(mockGrant(w1, productById('coach.platinum.month')!), 'platinum', Date.now())).toBe(true);
+    expect(hasTier(mockGrant(w1, productById('fourwinds.month')!), 'fourwinds', Date.now())).toBe(true);
   });
 });

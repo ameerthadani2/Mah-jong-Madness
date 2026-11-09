@@ -58,7 +58,7 @@ describe('buying with money', () => {
 
   it('a purchase the server has not seen yet stays pending and grants nothing on the device', async () => {
     const { d } = deps([{}]);
-    const r = await buyWithMoney(productById('coach.platinum.month')!, EMPTY_WALLET, storeThat({ status: 'purchased' }), d);
+    const r = await buyWithMoney(productById('fourwinds.month')!, EMPTY_WALLET, storeThat({ status: 'purchased' }), d);
     expect(r.status).toBe('pending');
     expect(r.wallet.entitlements).toEqual([]);
   });
@@ -130,6 +130,17 @@ describe('restore purchases', () => {
     const r = await restorePurchases(EMPTY_WALLET, store, d);
     expect(store.log).toEqual(['identify u-1', 'restore']);
     expect(r.ok && r.wallet.entitlements.map((e) => e.entitlement)).toEqual(['coach.gold']);
+  });
+
+  it('asks the server to read the store for anything a webhook missed, and still restores if that fails', async () => {
+    const store = storeThat({ status: 'purchased' });
+    const synced: string[] = [];
+    const { d } = deps([{ wallet: { diamonds: 300, bonusDiamonds: 0 } }], { syncStore: async () => void synced.push('sync') });
+    const r = await restorePurchases(EMPTY_WALLET, store, d);
+    expect(synced).toEqual(['sync']);
+    expect(r.ok && totalDiamonds(r.wallet)).toBe(300);
+    const failing = deps([{}], { syncStore: async () => Promise.reject(new Error('502')) });
+    expect((await restorePurchases(EMPTY_WALLET, store, failing.d)).ok).toBe(true);
   });
 
   it('reports a store that cannot restore', async () => {

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { Authoriser, FetchLike } from '../api/http';
 import { clubsApi } from '../api/clubs';
 import { walletApi } from '../api/wallet';
+import { storeServer } from './server';
 
 /** Records each request and answers 200 with `body`. */
 function recorder(body: unknown = {}) {
@@ -32,5 +33,17 @@ describe('wallet and club routes the store and legal surface call', () => {
     const { calls, ctx } = recorder({ id: 'r-1' });
     await clubsApi.report(ctx, { reportedUserId: 'u-2', reason: 'abusive_chat', roomCode: 'ROOM1' });
     expect(calls[0]).toEqual({ method: 'POST', url: 'https://game.example/api/reports', auth: 'Bearer mjs_tok', body: { reportedUserId: 'u-2', reason: 'abusive_chat', roomCode: 'ROOM1' } });
+  });
+
+  it('POST /api/wallet/sync asks the server to read the store after Restore', async () => {
+    const { calls, ctx } = recorder({ synced: true, applied: 1, wallet: { diamonds: 300, bonusDiamonds: 0 } });
+    expect((await storeServer.sync(ctx)).applied).toBe(1);
+    expect(calls).toEqual([{ method: 'POST', url: 'https://game.example/api/wallet/sync', auth: 'Bearer mjs_tok', body: {} }]);
+  });
+
+  it('PATCH /api/me carries the analytics choice', async () => {
+    const { calls, ctx } = recorder({ user: { id: 'u-1' } });
+    await storeServer.sendAnalyticsConsent(ctx, false);
+    expect(calls).toEqual([{ method: 'PATCH', url: 'https://game.example/api/me', auth: 'Bearer mjs_tok', body: { analyticsConsent: false } }]);
   });
 });

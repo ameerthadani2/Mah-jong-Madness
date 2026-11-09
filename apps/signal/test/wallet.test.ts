@@ -36,7 +36,7 @@ function storeEvent(userId: string, type: string, extra: Partial<StoreEvent> = {
     price: 4.99,
     currency: 'USD',
     store: 'app_store',
-    environment: 'SANDBOX',
+    environment: 'PRODUCTION',
     cancelReason: null,
     transferredFrom: [],
     transferredTo: [],
@@ -92,6 +92,20 @@ describe('spend', () => {
     expect(await balance(repos, u)).toEqual([700, 0]);
   });
 
+  it('a bundle grants its missing items for the share of the price still missing, and is owned once complete', async () => {
+    const { repos, wallet, user } = await setup();
+    const u = await user();
+    await wallet.credit(u, 3000, 'grant');
+    await wallet.spend(u, 'theme.nightmarket');
+    // 850 for all four (1,050 alone); the 300 table is owned, so 750 of 1,050 is missing: 850 × 750 / 1050 = 607.1 → 610.
+    const res = await wallet.spend(u, 'bundle.nightmarket');
+    expect(res).toMatchObject({ spent: 610, granted: ['back.midnight', 'frame.lantern', 'emotes.nightmarket'] });
+    expect((await wallet.summary(u)).cosmetics).toEqual(['back.midnight', 'emotes.nightmarket', 'frame.lantern', 'theme.nightmarket']);
+    await expect(wallet.spend(u, 'bundle.nightmarket')).rejects.toMatchObject({ code: 'owned' });
+    expect(await balance(repos, u)).toEqual([3000 - 300 - 610, 0]);
+    expect((await repos.wallet.listLedger(u)).at(-1)).toMatchObject({ reason: 'spend', ref: 'bundle.nightmarket', delta: -610 });
+  });
+
   it('refuses products that are not sold for diamonds (404)', async () => {
     const { wallet, user } = await setup();
     const u = await user();
@@ -106,6 +120,7 @@ describe('store events', () => {
   it('credits a diamond pack (base plus bonus) once per event id and once per transaction', async () => {
     const { repos, wallet, user, events } = await setup();
     const u = await user();
+    await repos.users.setAnalyticsConsent(u, true);
     const e = storeEvent(u, 'NON_RENEWING_PURCHASE', { storeProductId: 'diamonds.3450', price: 49.99 });
     expect(await wallet.applyStoreEvent(e)).toEqual({ outcome: 'credited', userId: u, duplicate: false });
     expect(await balance(repos, u)).toEqual([3000, 450]);
@@ -117,7 +132,19 @@ describe('store events', () => {
     expect(events).toEqual([{ id: u, event: 'purchase_credited', props: expect.objectContaining({ productId: 'diamonds.3450', diamonds: 3450 }) }]);
   });
 
-  it('a refunded pack takes back what is left of it, never below zero', async () => {
+  it('sends purchase analytics only for players who allowed analytics in the app', async () => {
+    const { repos, wallet, user, events } = await setup();
+    const [unknown, no, yes] = [await user(), await user(), await user()];
+    await repos.users.setAnalyticsConsent(no, false);
+    await repos.users.setAnalyticsConsent(yes, true);
+    for (const u of [unknown, no, yes]) await wallet.applyStoreEvent(storeEvent(u, 'NON_RENEWING_PURCHASE', { storeProductId: 'diamonds.60' }));
+    await wallet.applyStoreEvent(storeEvent(no, 'INITIAL_PURCHASE', { storeProductId: 'coach.gold.month', expiresAt: T0 + 30 * DAY }));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(events.map((e) => e.id)).toEqual([yes]);
+    expect(await balance(repos, unknown)).toEqual([60, 0]);
+  });
+
+  it('a refunded pack takes back everything it credited: spent diamonds leave a negative balance that blocks spends', async () => {
     const { repos, wallet, user } = await setup();
     const u = await user();
     const buy = storeEvent(u, 'NON_RENEWING_PURCHASE', { storeProductId: 'diamonds.1300' });
@@ -125,14 +152,21 @@ describe('store events', () => {
     await wallet.spend(u, 'theme.jade'); // 100 bonus + 300 purchased
     const refund = storeEvent(u, 'CANCELLATION', { storeProductId: 'diamonds.1300', transactionId: buy.transactionId, cancelReason: 'CUSTOMER_SUPPORT' });
     expect((await wallet.applyStoreEvent(refund)).outcome).toBe('refunded');
-    expect(await balance(repos, u)).toEqual([0, 0]);
+    expect(await balance(repos, u)).toEqual([-400, 0]);
     expect((await wallet.applyStoreEvent({ ...refund, eventId: randomUUID() })).outcome).toBe('duplicate');
+    expect(await balance(repos, u)).toEqual([-400, 0]);
+    // A later purchase is credited on top of the debt; spends wait until the balance is above zero.
+    await wallet.credit(u, 0, 'grant', null, 500);
+    await expect(wallet.spend(u, 'theme.bamboo')).rejects.toMatchObject({ code: 'insufficient' });
+    await wallet.applyStoreEvent(storeEvent(u, 'NON_RENEWING_PURCHASE', { storeProductId: 'diamonds.600' }));
+    expect(await balance(repos, u)).toEqual([200, 500]);
+    expect((await wallet.spend(u, 'theme.bamboo')).wallet).toMatchObject({ diamonds: 200, bonusDiamonds: 200 });
   });
 
   it('grants, extends, refunds and expires a subscription, ignoring stale events', async () => {
     const { repos, wallet, user, advance, now } = await setup();
     const u = await user();
-    const ent = async () => (await repos.wallet.getEntitlements(u)).find((e) => e.entitlement === 'coach.gold');
+    const ent = async () => (await repos.wallet.getEntitlements(u)).find((e) => e.entitlement === 'coach.gold.month');
     const month = T0 + 30 * DAY;
     expect((await wallet.applyStoreEvent(storeEvent(u, 'INITIAL_PURCHASE', { storeProductId: 'coach.gold.month', expiresAt: month }))).outcome).toBe('entitled');
     expect(await ent()).toMatchObject({ expiresAt: month, source: 'store' });
@@ -163,8 +197,8 @@ describe('store events', () => {
     expect(await balance(repos, u)).toEqual([0, 0]);
     expect((await repos.wallet.listPurchases(u)).map((p) => p.transactionId)).toEqual(['GPA.1']);
     // A subscription: the first period refunded before its INITIAL_PURCHASE was delivered.
-    expect((await wallet.applyStoreEvent(storeEvent(u, 'CANCELLATION', { storeProductId: 'coach.platinum.year', transactionId: 'tZ1', cancelReason: 'CUSTOMER_SUPPORT' }))).outcome).toBe('refunded');
-    expect((await wallet.applyStoreEvent(storeEvent(u, 'INITIAL_PURCHASE', { storeProductId: 'coach.platinum.year', transactionId: 'tZ1', expiresAt: T0 + 365 * DAY }))).outcome).toBe('refunded');
+    expect((await wallet.applyStoreEvent(storeEvent(u, 'CANCELLATION', { storeProductId: 'fourwinds.year', transactionId: 'tZ1', cancelReason: 'CUSTOMER_SUPPORT' }))).outcome).toBe('refunded');
+    expect((await wallet.applyStoreEvent(storeEvent(u, 'INITIAL_PURCHASE', { storeProductId: 'fourwinds.year', transactionId: 'tZ1', expiresAt: T0 + 365 * DAY }))).outcome).toBe('refunded');
     expect((await wallet.summary(u)).coachTier).toBe('free');
     // A renewal refunded while the retry of its RENEWAL event was still on its way.
     expect((await wallet.applyStoreEvent(storeEvent(u, 'INITIAL_PURCHASE', { storeProductId: 'coach.gold.month', transactionId: 'tA1', expiresAt: month }))).outcome).toBe('entitled');

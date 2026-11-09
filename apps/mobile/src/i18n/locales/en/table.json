@@ -107,7 +107,15 @@
     "nightmarket": "Night Market",
     "bamboo": "Bamboo Garden",
     "jade": "Jade Parlour",
-    "imperial": "Imperial Red"
+    "imperial": "Imperial Red",
+    "lantern": "Lantern Festival",
+    "teahouse": "Teahouse",
+    "oceanwave": "Ocean Wave",
+    "plumblossom": "Plum Blossom",
+    "cloud": "Lucky Clouds",
+    "starlight": "Starlit Night",
+    "porcelain": "Blue Porcelain",
+    "dragonscale": "Dragon Scale"
   },
   "callout": {
     "chi": "吃",

@@ -8,13 +8,14 @@
  */
 import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
-import Svg, { Circle, ClipPath, Defs, G, Image as SvgImage, Path, Polygon } from 'react-native-svg';
+import Svg, { Circle, ClipPath, Defs, Ellipse, G, Image as SvgImage, Path, Polygon } from 'react-native-svg';
 import { colors } from '../theme';
 import { t } from '../i18n';
 import { linear, radial } from './portraits/kit';
 import { portraitArt } from './portraits';
 import { Image as ClipImage } from 'expo-image';
 import { PORTRAIT_CLIPS, PORTRAIT_IMAGES } from './portraits/images';
+import { frameById, type FrameDesign } from '../monetisation/cosmetics';
 
 export type AvatarMood = 'idle' | 'win' | 'lose';
 
@@ -161,16 +162,93 @@ const PLATE_GOLD = linear(
   90,
   100,
 );
+/** The ring gradient of an avatar frame. */
+const frameGradient = (id: string, f: FrameDesign) =>
+  linear(
+    id,
+    [
+      [0, f.ring[0]],
+      [0.5, f.ring[1]],
+      [1, f.ring[2]],
+    ],
+    10,
+    0,
+    90,
+    100,
+  );
 const PLATE_GLOW = radial('pt-plate-glow', [
   [0.6, '#FFD34D', 0.95],
   [0.76, '#FFC53D', 0.45],
   [1, '#FFC53D', 0],
 ]);
 
+/** Points spaced evenly round a circle, starting at the top. */
+const around = (n: number, r: number, offset = 0) =>
+  Array.from({ length: n }, (_, i) => {
+    const a = ((i + offset) / n) * Math.PI * 2 - Math.PI / 2;
+    return { x: 50 + Math.cos(a) * r, y: 50 + Math.sin(a) * r, deg: (a * 180) / Math.PI + 90 };
+  });
+
+/** The decorations of an avatar frame, on a ring of radius `r` and width `w` (100-unit plate). */
+function frameDecor(f: FrameDesign, r: number, w: number): React.ReactNode {
+  const c = f.accent;
+  const k = w / 2;
+  switch (f.style) {
+    case 'bamboo':
+      return around(8, r).map((p, i) => <Path key={i} d={`M0 ${-k} V${k}`} stroke={c} strokeWidth={k * 0.6} strokeLinecap="round" transform={`translate(${p.x} ${p.y}) rotate(${p.deg + 90})`} />);
+    case 'jade':
+      return around(12, r).map((p, i) => <Circle key={i} cx={p.x} cy={p.y} r={k * 0.45} fill={c} fillOpacity={0.85} />);
+    case 'gilded':
+      return around(4, r).map((p, i) => (
+        <G key={i}>
+          <Circle cx={p.x} cy={p.y} r={k * 0.9} fill={f.ring[1]} stroke={colors.ink} strokeWidth={k * 0.25} />
+          <Circle cx={p.x - k * 0.25} cy={p.y - k * 0.25} r={k * 0.3} fill={c} />
+        </G>
+      ));
+    case 'blossom':
+      return around(6, r).map((p, i) => (
+        <G key={i} transform={`translate(${p.x} ${p.y})`}>
+          {[0, 72, 144, 216, 288].map((a) => (
+            <Circle key={a} cx={Math.sin((a * Math.PI) / 180) * k * 0.55} cy={-Math.cos((a * Math.PI) / 180) * k * 0.55} r={k * 0.42} fill={c} />
+          ))}
+          <Circle cx={0} cy={0} r={k * 0.3} fill={f.ring[2]} />
+        </G>
+      ));
+    case 'wave':
+      return around(8, r).map((p, i) => <Path key={i} d={`M${-k} ${k * 0.3} Q0 ${-k} ${k} ${k * 0.3}`} stroke={c} strokeWidth={k * 0.45} fill="none" strokeLinecap="round" transform={`translate(${p.x} ${p.y}) rotate(${p.deg})`} />);
+    case 'cloud':
+      return around(6, r).map((p, i) => (
+        <G key={i} transform={`translate(${p.x} ${p.y}) rotate(${p.deg})`}>
+          <Circle cx={-k * 0.5} cy={0} r={k * 0.45} fill={c} />
+          <Circle cx={k * 0.45} cy={0} r={k * 0.55} fill={c} />
+        </G>
+      ));
+    case 'flame':
+      return around(10, r + k * 0.5).map((p, i) => <Path key={i} d={`M${-k * 0.6} ${k * 0.4} Q0 ${-k * 1.8} ${k * 0.6} ${k * 0.4} Z`} fill={c} transform={`translate(${p.x} ${p.y}) rotate(${p.deg})`} />);
+    case 'star':
+      return around(6, r).map((p, i) => <Path key={i} d={`M0 ${-k} Q${k * 0.2} ${-k * 0.2} ${k} 0 Q${k * 0.2} ${k * 0.2} 0 ${k} Q${-k * 0.2} ${k * 0.2} ${-k} 0 Q${-k * 0.2} ${-k * 0.2} 0 ${-k} Z`} fill={c} transform={`translate(${p.x} ${p.y})`} />);
+    case 'lantern':
+      return around(4, r, 0.5).map((p, i) => (
+        <G key={i} transform={`translate(${p.x} ${p.y})`}>
+          <Ellipse cx={0} cy={0} rx={k * 0.75} ry={k * 0.95} fill={c} stroke={colors.ink} strokeWidth={k * 0.2} />
+          <Path d={`M${-k * 0.4} ${-k * 0.95} H${k * 0.4} M${-k * 0.4} ${k * 0.95} H${k * 0.4}`} stroke={colors.ink} strokeWidth={k * 0.25} />
+        </G>
+      ));
+    case 'dragon':
+      return around(12, r).map((p, i) => <Path key={i} d={`M${-k * 0.6} 0 A${k * 0.6} ${k * 0.6} 0 0 0 ${k * 0.6} 0`} stroke={c} strokeWidth={k * 0.3} fill="none" transform={`translate(${p.x} ${p.y}) rotate(${p.deg})`} />);
+    case 'phoenix':
+      return around(8, r).map((p, i) => <Ellipse key={i} cx={0} cy={0} rx={k * 0.35} ry={k * 0.95} fill={c} transform={`translate(${p.x} ${p.y}) rotate(${p.deg + 35})`} />);
+    case 'rainbow':
+      return null;
+  }
+}
+
 /**
  * Round avatar plate for the table and lobby: the portrait inside a thin
  * metallic gold ring with an ink edge, a soft gold glow when active, an
  * optional turn-timer ring (fraction 0..1), dealer badge and seat-wind badge.
+ * An avatar frame bought in the Shop (`frame`, monetisation/cosmetics.ts)
+ * replaces the gold ring with a wider decorated one.
  */
 export const AvatarPlate = React.memo(function AvatarPlate({
   id,
@@ -182,8 +260,11 @@ export const AvatarPlate = React.memo(function AvatarPlate({
   wind,
   offline,
   mood,
+  frame,
 }: {
   id: string | undefined | null;
+  /** An owned avatar frame (`frame.jade`); null or unknown draws the plain gold ring. */
+  frame?: string | null;
   /** Which animated clip to play, if this portrait has clips (falls back to idle, then the still). */
   mood?: AvatarMood | null;
   size?: number;
@@ -205,8 +286,10 @@ export const AvatarPlate = React.memo(function AvatarPlate({
   // Ring widths are set in pixels and converted to the 100-unit viewBox.
   const u = 100 / size;
   const ink = (size >= 44 ? 2 : 1.5) * u;
-  const gold = Math.max(2, size * 0.055) * u;
+  const design = frameById(frame);
+  const gold = Math.max(2, size * 0.055) * u * (design ? 1.9 : 1);
   const R = 50 - ink - gold * 0.6;
+  const ringId = design ? `pt-frame-${design.style}` : 'pt-plate-gold';
   const glow = Math.round(size * 1.5);
   return (
     <View style={{ width: size, height: size }}>
@@ -242,10 +325,15 @@ export const AvatarPlate = React.memo(function AvatarPlate({
       )}
       <View style={[{ width: size, height: size, borderRadius: size / 2 }, offline && { opacity: 0.55 }]}>
         <Svg width={size} height={size} viewBox="0 0 100 100">
-          <Defs>{PLATE_GOLD}</Defs>
+          <Defs>{design ? frameGradient(ringId, design) : PLATE_GOLD}</Defs>
           <Circle cx={50} cy={50} r={50} fill={colors.ink} />
           <G transform={`translate(${50 - R} ${50 - R}) scale(${R / 50})`}>{portraitLayer(aid)}</G>
-          <Circle cx={50} cy={50} r={50 - ink - gold / 2} stroke="url(#pt-plate-gold)" strokeWidth={gold} fill="none" />
+          {design?.style === 'rainbow' ? (
+            design.ring.map((c, i) => <Circle key={c} cx={50} cy={50} r={50 - ink - (gold / 3) * (i + 0.5)} stroke={c} strokeWidth={gold / 3 + 0.3} fill="none" />)
+          ) : (
+            <Circle cx={50} cy={50} r={50 - ink - gold / 2} stroke={`url(#${ringId})`} strokeWidth={gold} fill="none" />
+          )}
+          {design && frameDecor(design, 50 - ink - gold / 2, gold)}
           <Circle cx={50} cy={50} r={50 - ink / 2} stroke={colors.ink} strokeWidth={ink} fill="none" />
         </Svg>
         {clip && (

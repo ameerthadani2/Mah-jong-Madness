@@ -4,9 +4,9 @@
  * purchase is credited by the server (store webhook) and only shows once `GET /api/me`
  * says so; a diamond spend is debited and granted by the server.
  */
-import type { Product } from './catalog';
+import { bundlePrice, type Product } from './catalog';
 import type { StoreProvider } from './providers';
-import { mirrorMe, showsPurchase, type MeWallet, type Wallet } from './wallet';
+import { mirrorMe, ownsProduct, showsPurchase, type MeWallet, type Wallet } from './wallet';
 
 export interface WalletDeps {
   /** A usable session; resolves to the server user id (bootstraps a guest the first time). */
@@ -14,6 +14,8 @@ export interface WalletDeps {
   fetchMe(): Promise<MeWallet>;
   /** POST /api/wallet/spend. */
   spend(productId: string): Promise<unknown>;
+  /** POST /api/wallet/sync: the server reads this account's purchases from the store and applies any it missed. */
+  syncStore?(): Promise<unknown>;
   now(): number;
   sleep(ms: number): Promise<void>;
 }
@@ -83,7 +85,8 @@ export async function buyWithDiamonds(product: Product, wallet: Wallet, deps: Wa
     const code = errorCode(error);
     if (code === 'insufficient') {
       const fresh = await syncWallet(wallet, deps).catch(() => wallet);
-      return { status: 'need_diamonds', wallet: fresh, short: Math.max(1, product.diamondPrice - fresh.diamonds - fresh.bonusDiamonds) };
+      const price = product.contains ? bundlePrice(product, (id) => ownsProduct(fresh, id)) : product.diamondPrice;
+      return { status: 'need_diamonds', wallet: fresh, short: Math.max(1, price - Math.max(0, fresh.diamonds) - fresh.bonusDiamonds) };
     }
     if (code === 'owned') return { status: 'credited', wallet: await syncWallet(wallet, deps).catch(() => wallet) };
     return { status: 'failed', wallet, error };
@@ -91,7 +94,11 @@ export async function buyWithDiamonds(product: Product, wallet: Wallet, deps: Wa
   return { status: 'credited', wallet: await syncWallet(wallet, deps).catch(() => wallet) };
 }
 
-/** Restore Purchases: the store re-sends receipts, the server re-grants, the app re-reads `/api/me`. */
+/**
+ * Restore Purchases: the store re-sends receipts, the server re-grants (and, through
+ * `POST /api/wallet/sync`, reads the store itself for anything a webhook missed), and the app
+ * re-reads `/api/me`. A failed server sync is not a failed restore: the webhooks still arrive.
+ */
 export async function restorePurchases(wallet: Wallet, store: StoreProvider, deps: WalletDeps): Promise<{ ok: true; wallet: Wallet } | { ok: false; wallet: Wallet; error: unknown }> {
   try {
     const userId = await deps.ensureUser();
@@ -100,6 +107,7 @@ export async function restorePurchases(wallet: Wallet, store: StoreProvider, dep
   } catch (error) {
     return { ok: false, wallet, error };
   }
+  await deps.syncStore?.().catch(() => undefined);
   let latest = wallet;
   for (const ms of CREDIT_POLL_MS.slice(0, 3)) {
     await deps.sleep(ms);
