@@ -25,6 +25,8 @@ export interface SignalConfig {
   corsOrigins: string[];
   /** Maximum number of tables the server hosts at once (`MAX_HOSTED_TABLES`, default 500). */
   maxHostedTables: number;
+  /** How long a quick-match group of one to three players waits before bots fill the empty seats (`QUICK_MATCH_FILL_MS`, default 20 s). */
+  quickMatchFillMs: number;
   /** Maximum number of unfinished tables one account may have opened (`MAX_TABLES_PER_USER`, default 3). */
   maxTablesPerUser: number;
   /** Allow rooms the server only relays (`P2P_ROOMS=1`). Off by default; intended for development only. */
@@ -101,6 +103,7 @@ export function loadConfig(env: Env = process.env): SignalConfig {
       .map((s) => s.trim())
       .filter(Boolean),
     maxHostedTables: positiveInt(env.MAX_HOSTED_TABLES, 500),
+    quickMatchFillMs: positiveInt(env.QUICK_MATCH_FILL_MS, 20_000, 600_000),
     maxTablesPerUser: positiveInt(env.MAX_TABLES_PER_USER, 3, 100),
     p2pRooms: flag(env.P2P_ROOMS, false),
     minBuild: env.MIN_BUILD && /^\d+$/.test(env.MIN_BUILD.trim()) ? Number(env.MIN_BUILD.trim()) : 0,

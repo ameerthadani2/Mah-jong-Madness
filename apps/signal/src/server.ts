@@ -125,7 +125,7 @@ export async function createSignalServer(opts: SignalServerOptions): Promise<Sig
   await mutes.load(repos.repos).catch((e: Error) => console.error('[signal] mutes not loaded', e.message));
   const matchmaker: Matchmaker = new Matchmaker({
     now,
-    fillMs: opts.quickMatchFillMs ?? fillMsFromEnv(process.env),
+    fillMs: opts.quickMatchFillMs ?? config.quickMatchFillMs ?? fillMsFromEnv(process.env),
     check: (userId) => quickMatchCheck(repos.repos, userId, now()),
     avoid: (userId) => blockedEitherWay(repos.repos, userId),
     // Declared below; the queue only opens tables once the server is up.

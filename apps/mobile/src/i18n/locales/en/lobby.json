@@ -18,5 +18,6 @@
   "tableGone": "This table is over or no longer exists.",
   "reconnect": "Reconnect",
   "reconnecting": "Reconnecting… (attempt %{n})",
-  "retryNow": "Retry now"
+  "retryNow": "Retry now",
+  "quickStarts": "Quick match: the table starts by itself once everyone is seated, or within 15 seconds with bots in any empty seat."
 }

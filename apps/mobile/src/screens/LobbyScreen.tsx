@@ -94,15 +94,19 @@ export function LobbyScreen() {
               </Row>
             );
           })}
-          <Row style={{ flexWrap: 'wrap', rowGap: 6 }}>
-            <Button small kind="secondary" icon="bot" title={t('lobby.addBot')} onPress={addBot} />
-            <P dim style={{ fontSize: 12, flexShrink: 1 }}>
-              {t('lobby.fillHint')}
-            </P>
-          </Row>
+          {session.quickMatch ? (
+            <P dim style={{ fontSize: 12 }}>{t('lobby.quickStarts')}</P>
+          ) : (
+            <Row style={{ flexWrap: 'wrap', rowGap: 6 }}>
+              <Button small kind="secondary" icon="bot" title={t('lobby.addBot')} onPress={addBot} />
+              <P dim style={{ fontSize: 12, flexShrink: 1 }}>
+                {t('lobby.fillHint')}
+              </P>
+            </Row>
+          )}
         </Card>
       </View>
-      <Button large title={humans > 1 ? t('lobby.start') : t('lobby.startWithBots')} icon="play" onPress={start} style={{ alignSelf: 'center' }} />
+      {!session.quickMatch && <Button large title={humans > 1 ? t('lobby.start') : t('lobby.startWithBots')} icon="play" onPress={start} style={{ alignSelf: 'center' }} />}
       {conn.status === 'reconnecting' ? (
         <Row style={{ flexWrap: 'wrap', rowGap: 6, alignItems: 'center' }} gap={8}>
           <Pill tone="gold" icon="hourglass" text={t('lobby.reconnecting', { n: conn.attempt })} />

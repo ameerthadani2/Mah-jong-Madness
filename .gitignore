@@ -11,3 +11,5 @@ android/
 *.tgz
 .env
 .claude/
+# Written by the android-play workflow for the submit step only.
+apps/mobile/google-play-service-account.json

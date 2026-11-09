@@ -110,6 +110,8 @@ function fromCode(e: unknown): Message | null {
       return { key: 'errors.sessionExpired' };
     case 'signed_out':
       return { key: 'errors.signedOut' };
+    case 'banned':
+      return { key: 'errors.banned' };
     case 'room_unavailable':
       return { key: 'errors.roomUnavailable' };
     case 'invalid_token':

@@ -18,5 +18,6 @@
   "tableGone": "這張牌桌已經結束或不存在了。",
   "reconnect": "重新連線",
   "reconnecting": "重新連線中…（第 %{n} 次）",
-  "retryNow": "立即重試"
+  "retryNow": "立即重試",
+  "quickStarts": "快速配桌：大家坐定後會自動開局；若有空位，最多 15 秒後由電腦補位開局。"
 }

@@ -51,11 +51,23 @@ jobs:
         run: |
           docker run -d --name signal -p 8787:8787 -e ALLOW_EPHEMERAL=1 mahjong-signal:ci
           for i in $(seq 1 30); do
-            if curl -fsS http://127.0.0.1:8787/health; then echo; docker rm -f signal > /dev/null; exit 0; fi
+            if curl -fsS http://127.0.0.1:8787/health; then echo; exit 0; fi
             sleep 1
           done
           docker logs signal
           exit 1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --workspace @mjm/signal --workspace @mjm/engine --workspace @mjm/net
+      - name: Play a hand against the image (the same smoke test that runs after a deploy)
+        run: npm run smoke -w @mjm/signal -- http://127.0.0.1:8787
+      - name: Stop the container
+        if: always()
+        run: |
+          docker logs signal > signal.log 2>&1 || true
+          docker rm -f signal > /dev/null 2>&1 || true
 
   e2e:
     runs-on: ubuntu-latest

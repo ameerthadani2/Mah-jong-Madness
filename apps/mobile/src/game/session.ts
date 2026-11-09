@@ -49,6 +49,8 @@ export interface Session {
   /** Online only: the game server this table lives on (a resume must go back to it). */
   serverUrl?: string;
   clubCode?: string;
+  /** A quick-match table: the server seats the matched players and starts it by itself. */
+  readonly quickMatch?: boolean;
   /** Link to the table: always 'connected' locally. */
   readonly status: ConnectionStatus;
   /** While reconnecting, the attempt being waited for or made (1-based). */
@@ -245,6 +247,7 @@ async function openConnection(opts: OnlineOptions, action: 'create' | 'join', co
 }
 
 class OnlineSession implements Session {
+  quickMatch = false;
   readonly host = null;
   readonly mode = 'online' as const;
   readonly transportKind = 'relay' as const;
@@ -309,6 +312,7 @@ class OnlineSession implements Session {
     // The seat was opened on another device: reconnecting would take it back and start a tug of war.
     // A dropped link alone (`disconnected`) is what reconnecting is for.
     if (st.kicked || st.matchOver) return this.step({ type: 'ended' });
+    if (code === BANNED_CLOSE_CODE) return this.step({ type: 'ended' });
     if (code === UNAUTHORISED_CLOSE) {
       void this.opts.onUnauthorised?.();
       return this.step({ type: 'unauthorised' });
@@ -459,6 +463,7 @@ export function startQuickMatch(opts: QuickMatchOptions): { session: Promise<Ses
       const online: OnlineOptions = { ...opts, rules: DEFAULT_RULES, action: 'join', code: info.room };
       const client = new TableClient(connection.link, opts.name, opts.avatar, { userId: opts.userId });
       const session = new OnlineSession(online, connection, client);
+      session.quickMatch = true;
       client.join();
       return session;
     } catch (e) {

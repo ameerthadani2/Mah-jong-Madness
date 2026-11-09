@@ -51,5 +51,6 @@
   "tableGone": "This table is over or no longer exists on the game server.",
   "limit": "A limit was reached. Leave or finish something first.",
   "notFound": "That could not be found.",
-  "invalidRequest": "The game server could not use that request."
+  "invalidRequest": "The game server could not use that request.",
+  "banned": "This account has been banned from online play."
 }
