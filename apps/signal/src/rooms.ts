@@ -265,6 +265,12 @@ export class RoomRegistry {
     return this.createHostedRoom({ botSkill: 'club', quickMatch: { players, startAfterMs: opts.startAfterMs } });
   }
 
+  /** The accounts a quick-match table was opened for (undefined for any other room); for its snapshot. */
+  quickPlayersOf(code: string): string[] | undefined {
+    const quick = this.rooms.get(code.toUpperCase())?.quick;
+    return quick ? [...quick.players] : undefined;
+  }
+
   /** Whether a room is a quick-match table. */
   isQuickMatch(code: string): boolean {
     return this.rooms.get(code.toUpperCase())?.quick !== undefined;

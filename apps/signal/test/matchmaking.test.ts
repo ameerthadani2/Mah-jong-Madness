@@ -232,6 +232,7 @@ describe('quick-match tables', () => {
     expect(rooms.clubOf(room)).toBeUndefined();
     expect(rooms.createdByOf(room)).toBeUndefined();
     expect(rooms.isQuickMatch(room)).toBe(true);
+    expect(rooms.quickPlayersOf(room)).toEqual([a.userId, b.userId]);
   });
 
   it('starts by itself once every matched player has sat down; players cannot start it or add bots', async () => {
