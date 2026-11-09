@@ -28,6 +28,20 @@ export const MAX_FRAME_BYTES = 64 * 1024;
 export const POLICY_VIOLATION = 1008;
 /** Application close code for a missing, malformed or rejected session token in the first frame (and for a session that ends later). */
 export const UNAUTHORISED = SESSION_ENDED;
+/** WebSocket close code 1013 means "try again later": the session could not be checked (the database is down), not that it is bad. */
+export const TRY_AGAIN_LATER = 1013;
+
+/**
+ * Thrown by a verifier that could not check the token at all (the database did not answer). The
+ * socket is closed with 1013 instead of 4401, so the app retries instead of asking the player to
+ * sign in again.
+ */
+export class VerifyUnavailable extends Error {
+  constructor(message = 'The session could not be checked') {
+    super(message);
+    this.name = 'VerifyUnavailable';
+  }
+}
 const HEARTBEAT_MS = 30_000;
 /** How long a new socket has to send a verified `hello` before it is closed with 4401. */
 const HELLO_TIMEOUT_MS = 10_000;
@@ -100,8 +114,10 @@ export function attachSocketHandlers(
     // Without a verifier the socket starts out ready; with one it must first prove a session.
     let stage: 'hello' | 'verifying' | 'ready' = auth.verify ? 'hello' : 'ready';
     const queued: Inbound[] = [];
-    const unauthorised = () => {
-      if (!closed) ws.close(UNAUTHORISED, 'Unauthorised');
+    const unauthorised = (e?: unknown) => {
+      if (closed) return;
+      if (e instanceof VerifyUnavailable) ws.close(TRY_AGAIN_LATER, 'Try again later');
+      else ws.close(UNAUTHORISED, 'Unauthorised');
     };
     const helloTimer = auth.verify ? setTimeout(() => stage !== 'ready' && unauthorised(), auth.helloTimeoutMs ?? HELLO_TIMEOUT_MS) : null;
     ws.on('close', () => helloTimer && clearTimeout(helloTimer));
@@ -130,7 +146,7 @@ export function attachSocketHandlers(
           peerId = rooms.hello(peerId, userId, sessionId, name);
           for (const m of queued.splice(0)) dispatch(m);
         },
-        () => unauthorised(),
+        (e: unknown) => unauthorised(e),
       );
     };
     /** Check the session still stands before a create or join; the frame (and any that follow) waits for the answer. */
@@ -145,7 +161,7 @@ export function attachSocketHandlers(
           if (typeof verified !== 'string') rooms.setPeerName(peerId, verified.name);
           for (const m of queued.splice(0)) dispatch(m);
         },
-        () => unauthorised(),
+        (e: unknown) => unauthorised(e),
       );
     };
     ws.on('pong', () => (alive = true));
@@ -198,16 +214,24 @@ export function guardHttpServer(http: Server): void {
   });
 }
 
-/** Create the WebSocket server on `http` with the frame cap, and wire every handler. */
+/**
+ * Create the WebSocket server on `http` with the frame cap, and wire every handler. While
+ * `accepting()` is false (the server is shutting down) an upgrade is answered 503 and no socket opens.
+ */
 export function createSocketServer(
   http: Server,
   rooms: RoomRegistry,
   config: Pick<SignalConfig, 'trustProxy'>,
   limits: SocketLimits = LIMITS,
   auth: SocketAuthOptions = {},
+  accepting: () => boolean = () => true,
 ): WebSocketServer {
   guardHttpServer(http);
-  const wss = new WebSocketServer({ server: http, maxPayload: MAX_FRAME_BYTES });
+  const wss = new WebSocketServer({
+    server: http,
+    maxPayload: MAX_FRAME_BYTES,
+    verifyClient: (_info, done) => (accepting() ? done(true) : done(false, 503, 'Server is restarting')),
+  });
   attachSocketHandlers(wss, rooms, config, limits, auth);
   return wss;
 }

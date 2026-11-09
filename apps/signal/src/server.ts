@@ -13,7 +13,7 @@ import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import type { WebSocketServer } from 'ws';
 import { createApiHandler } from './api';
-import { purgeDeletedUsers, type ProviderConfig, type SessionService } from './auth';
+import { AuthError, purgeDeletedUsers, type ProviderConfig, type SessionService } from './auth';
 import { ClubRegistry, clubGate } from './clubs';
 import { LIMITS, type SignalConfig } from './config';
 import { BucketTable } from './limits';
@@ -23,7 +23,7 @@ import { TablePersister } from './persist';
 import { PushService, SeatWatcher } from './push';
 import type { RepoHandle } from './repos';
 import { RoomRegistry, type RoomEvent } from './rooms';
-import { createSocketServer, type SocketLimits } from './sockets';
+import { createSocketServer, VerifyUnavailable, type SocketLimits } from './sockets';
 
 export interface SignalServerOptions {
   /** TCP port for HTTP and WebSocket traffic; 0 picks a free port (see `address()`). */
@@ -48,6 +48,8 @@ export interface SignalServerOptions {
   analytics?: Analytics;
   /** How long a seated human may be disconnected mid-hand before "your table is waiting" (default 30 s). */
   tableWaitingMs?: number;
+  /** Longest `close()` may take before it stops waiting for writes and drops every connection (default 20 s). */
+  closeDeadlineMs?: number;
 }
 
 export interface SignalServer {
@@ -61,17 +63,24 @@ export interface SignalServer {
   actionLatency: LatencyWindow;
   api: ReturnType<typeof createApiHandler>;
   address(): { port: number };
-  /** Write every table, stop accepting traffic and close every socket. Tables stay restorable. */
+  /**
+   * Stop accepting HTTP requests and socket upgrades, write every table, close every socket.
+   * Tables stay restorable. Never takes longer than `closeDeadlineMs`, even with a hung database.
+   */
   close(): Promise<void>;
 }
 
 const HOUR_MS = 3_600_000;
 const DAY_MS = 24 * HOUR_MS;
+/** Default `closeDeadlineMs`: inside Fly's 30 s kill_timeout, with room for the process to exit. */
+const CLOSE_DEADLINE_MS = 20_000;
 
 export async function createSignalServer(opts: SignalServerOptions): Promise<SignalServer> {
   const { config, repos, sessions } = opts;
   const now = opts.now ?? Date.now;
   const log = opts.log ?? ((line: string) => console.log(line));
+  /** Set when `close()` begins: new requests and upgrades are refused, `/health` answers 503. */
+  let draining = false;
 
   const clubs = new ClubRegistry({ store: repos.repos.clubs, now });
   await clubs.load();
@@ -131,6 +140,7 @@ export async function createSignalServer(opts: SignalServerOptions): Promise<Sig
       config,
       storage: repos.kind,
       healthy: repos.kind === 'pg' ? () => repos.healthy() : undefined,
+      draining: () => draining,
       now,
       push,
       analytics,
@@ -140,6 +150,11 @@ export async function createSignalServer(opts: SignalServerOptions): Promise<Sig
   );
 
   const http = createServer((req, res) => {
+    if (draining && !(req.url ?? '').startsWith('/health')) {
+      res.writeHead(503, { 'content-type': 'application/json', connection: 'close', 'retry-after': '5' });
+      res.end(JSON.stringify({ error: 'unavailable', message: 'The server is restarting; please try again in a moment' }));
+      return;
+    }
     api(req, res)
       .then((handled) => {
         if (!handled) {
@@ -155,14 +170,27 @@ export async function createSignalServer(opts: SignalServerOptions): Promise<Sig
       });
   });
   // Frames over 64 KiB close the socket with 1009; a malformed frame closes it with 1002; a bad session 4401.
-  const wss = createSocketServer(http, rooms, config, opts.socketLimits ?? LIMITS, {
-    verify: async (token) => {
-      const s = await sessions.verify(token);
-      // The seat name comes from the account, not from what the client writes in its table join.
-      const user = await repos.repos.users.get(s.userId);
-      return { userId: s.userId, sessionId: s.sessionId, name: user?.displayName };
+  const wss = createSocketServer(
+    http,
+    rooms,
+    config,
+    opts.socketLimits ?? LIMITS,
+    {
+      verify: async (token) => {
+        try {
+          const s = await sessions.verify(token);
+          // The seat name comes from the account, not from what the client writes in its table join.
+          const user = await repos.repos.users.get(s.userId);
+          return { userId: s.userId, sessionId: s.sessionId, name: user?.displayName };
+        } catch (e) {
+          // A bad token is the player's to fix; a database that did not answer is not.
+          if (e instanceof AuthError) throw e;
+          throw new VerifyUnavailable((e as Error).message);
+        }
+      },
     },
-  });
+    () => !draining,
+  );
 
   const ticker = setInterval(() => {
     try {
@@ -201,26 +229,40 @@ export async function createSignalServer(opts: SignalServerOptions): Promise<Sig
   http.on('error', (e: Error) => console.error('[signal] http server error', e.message));
 
   let closing: Promise<void> | null = null;
+  const deadlineMs = opts.closeDeadlineMs ?? CLOSE_DEADLINE_MS;
   const close = () =>
     (closing ??= (async () => {
+      // First stop taking new work: no new connections, upgrades or requests (they get 503).
+      draining = true;
+      const httpClosed = new Promise<void>((resolve) => http.close(() => resolve()));
       clearInterval(ticker);
       clearInterval(pruner);
       clearInterval(receipts);
       offClubEvents();
-      // Stop taking game input first: a move that arrived during the final write would be
+      // Stop taking game input next: a move that arrived during the final write would be
       // acknowledged to its player but missing from the snapshot the next process restores.
       // Then write the tables as they are and stop every table without reporting it finished,
       // so club listings stay open and the next process restores them.
       rooms.freeze();
-      await persister.flush();
+      const writes = (async () => {
+        await persister.flush();
+        await clubs.flush();
+      })().catch((e: Error) => console.error('[signal] final write failed', e.message));
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const deadline = new Promise<'late'>((resolve) => {
+        timer = setTimeout(() => resolve('late'), deadlineMs);
+      });
+      if ((await Promise.race([writes.then(() => 'done' as const), deadline])) === 'late') {
+        console.error(`[signal] shutdown deadline (${deadlineMs} ms) reached before every table was written; closing anyway`);
+      }
+      clearTimeout(timer);
       persister.stop();
       offRoomEvents();
       rooms.shutdown();
       for (const ws of wss.clients) ws.terminate();
       await new Promise<void>((resolve) => wss.close(() => resolve()));
       http.closeAllConnections();
-      await new Promise<void>((resolve) => http.close(() => resolve()));
-      await clubs.flush();
+      await httpClosed;
     })());
 
   return {

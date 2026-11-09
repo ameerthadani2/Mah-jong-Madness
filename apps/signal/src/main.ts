@@ -31,7 +31,8 @@ async function runMigrations(): Promise<boolean> {
     console.log('[migrate] DATABASE_URL is not set; nothing to migrate (the server uses in-memory storage)');
     return false;
   }
-  const pool = createPool(url, { max: 1 });
+  // A migration may run long statements and waits on the migration lock: no query timeouts here.
+  const pool = createPool(url, { max: 1, queryTimeoutMs: 0, statementTimeoutMs: 0 });
   try {
     await migrate(pool, { log: (line) => console.log(line) });
     return true;

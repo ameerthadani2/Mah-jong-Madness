@@ -62,8 +62,12 @@ export interface ApiDeps {
   actionLatency?: LatencyWindow;
   /** `memory` or `pg`, shown on `/health`. */
   storage?: Repos['kind'];
-  /** Database check for `/health` (absent: not reported). */
+  /** Database check for `/health` (absent: not reported). A check slower than `healthTimeoutMs` counts as down. */
   healthy?: () => Promise<boolean>;
+  /** How long `/health` waits for `healthy` (default 2 s). */
+  healthTimeoutMs?: number;
+  /** True once the server has begun shutting down: `/health` answers 503 `draining`. */
+  draining?: () => boolean;
   now?: () => number;
 }
 
@@ -148,6 +152,18 @@ export function memberIdentity(u: UserRecord): Identity {
   return u.avatar ? { userId: u.id, name, avatar: u.avatar } : { userId: u.id, name };
 }
 
+/** How long `/health` waits for the database check. */
+const HEALTH_TIMEOUT_MS = 2_000;
+
+/** `check`'s answer, or false when it fails or takes longer than `ms`. */
+function withTimeout(check: Promise<boolean>, ms: number): Promise<boolean> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<boolean>((resolve) => {
+    timer = setTimeout(() => resolve(false), ms);
+  });
+  return Promise.race([check.then((ok) => ok === true, () => false), late]).finally(() => clearTimeout(timer));
+}
+
 const isObject = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
 
 const ROOM_CODE = /^[A-Z0-9]{4,8}$/;
@@ -204,19 +220,22 @@ export function buildRoutes(deps: ApiDeps, opts: Pick<ApiOptions, 'reportIpLimit
   const view = (club: Club, userId: string) => (clubs.isMember(club.code, userId) ? club : ClubRegistry.publicView(club));
 
   return [
+    // 503 while shutting down or while the database is down or slower than `healthTimeoutMs`, so
+    // the platform's checks and proxy stop sending players to a machine that cannot serve them.
     r('GET', '/health', async () => {
-      const db = deps.healthy ? await deps.healthy().then((ok) => (ok ? 'ok' : 'down'), () => 'down') : undefined;
       const stats = rooms.stats();
-      return {
-        ok: true,
+      const body = {
         ...stats,
         tables: stats.hostedTables,
         actionLatency: deps.actionLatency?.summary() ?? null,
         pushEnabled: deps.push?.enabled ?? false,
         storeEnabled,
         storage: deps.storage ?? repos.kind,
-        ...(db ? { db } : {}),
       };
+      if (deps.draining?.()) return new Reply(503, { ok: false, draining: true, ...body });
+      const db = deps.healthy ? ((await withTimeout(deps.healthy(), deps.healthTimeoutMs ?? HEALTH_TIMEOUT_MS)) ? 'ok' : 'down') : undefined;
+      if (db === 'down') return new Reply(503, { ok: false, ...body, db });
+      return { ok: true, ...body, ...(db ? { db } : {}) };
     }),
     r('GET', '/api/config', () => ({
       authProviders: enabledProviders(providers),
