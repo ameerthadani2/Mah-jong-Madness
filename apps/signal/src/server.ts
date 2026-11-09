@@ -4,15 +4,17 @@
  * listens on `port` (0 picks a free one). Nothing happens at import time; `main.ts` reads the
  * environment and calls it, and the tests call it directly.
  *
- * Boot order: load every club, restore every table that had not finished (players reclaim their
- * seats with their rejoin tokens), clear club listings whose table is gone, prune what is more
- * than a day old, then listen. `close()` writes every table one last time and stops without
- * finishing any of them, so the next process can restore them.
+ * Boot order: take the host lock (with Postgres: only one process may host a database's tables),
+ * load every club, restore every table that had not finished (players reclaim their seats with
+ * their rejoin tokens), clear club listings whose table is gone, prune what is more than a day
+ * old, then listen. `close()` writes every table one last time and stops without finishing any of
+ * them, so the next process can restore them, then gives the host lock up.
  */
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import type { WebSocketServer } from 'ws';
 import { createApiHandler } from './api';
+import type { HostLock } from './db';
 import { AuthError, purgeDeletedUsers, type ProviderConfig, type SessionService } from './auth';
 import { ClubRegistry, clubGate } from './clubs';
 import { LIMITS, type SignalConfig } from './config';
@@ -50,6 +52,17 @@ export interface SignalServerOptions {
   tableWaitingMs?: number;
   /** Longest `close()` may take before it stops waiting for writes and drops every connection (default 20 s). */
   closeDeadlineMs?: number;
+  /**
+   * The single-host lease (main.ts passes one for Postgres; memory repositories need none). It is
+   * taken before anything is loaded, so a second process waits (and then fails to start) instead
+   * of restoring a second copy of every table.
+   */
+  hostLock?: HostLock;
+  /**
+   * Called after the host lock was lost and the server has closed (rooms frozen, tables written
+   * as far as possible). main.ts exits 1 so the platform restarts the machine.
+   */
+  onHostLockLost?: (e: Error) => void;
 }
 
 export interface SignalServer {
@@ -79,11 +92,18 @@ export async function createSignalServer(opts: SignalServerOptions): Promise<Sig
   const { config, repos, sessions } = opts;
   const now = opts.now ?? Date.now;
   const log = opts.log ?? ((line: string) => console.log(line));
+  // Before anything is read: another process that still hosts these tables must stop first.
+  if (opts.hostLock) await opts.hostLock.acquire();
   /** Set when `close()` begins: new requests and upgrades are refused, `/health` answers 503. */
   let draining = false;
 
   const clubs = new ClubRegistry({ store: repos.repos.clubs, now });
-  await clubs.load();
+  try {
+    await clubs.load();
+  } catch (e) {
+    await opts.hostLock?.release();
+    throw e;
+  }
   const actionLatency = new LatencyWindow({ now });
   const push = opts.push ?? new PushService({ devices: repos.repos.devices, client: null, now, log });
   const analytics = opts.analytics ?? NO_ANALYTICS;
@@ -99,7 +119,12 @@ export async function createSignalServer(opts: SignalServerOptions): Promise<Sig
   });
 
   const persister = new TablePersister(rooms, repos.repos.tableSnapshots, { now, debounceMs: opts.persistDebounceMs, log });
-  await persister.restore();
+  try {
+    await persister.restore();
+  } catch (e) {
+    await opts.hostLock?.release();
+    throw e;
+  }
   persister.start();
   clubs.reconcileTables((code) => rooms.hasRoom(code));
   await persister.prune().catch((e: Error) => console.error('[signal] snapshot prune failed', e.message));
@@ -263,7 +288,16 @@ export async function createSignalServer(opts: SignalServerOptions): Promise<Sig
       await new Promise<void>((resolve) => wss.close(() => resolve()));
       http.closeAllConnections();
       await httpClosed;
+      // Last: the next process may restore the tables only once they are written.
+      await opts.hostLock?.release();
     })());
+  // Losing the lease means another process may already be hosting these tables: stop taking
+  // input, write what can be written, and stop so the platform restarts this machine.
+  opts.hostLock?.onLost((e) => {
+    console.error(`[signal] lost the host lock (${e.message}); freezing the tables and shutting down`);
+    reportError(e, { where: 'host-lock' });
+    void close().finally(() => opts.onHostLockLost?.(e));
+  });
 
   return {
     http,

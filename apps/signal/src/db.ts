@@ -106,3 +106,120 @@ export async function ping(pool: Queryable, timeoutMs = DB_PING_TIMEOUT_MS): Pro
     clearTimeout(timer);
   }
 }
+
+/** Advisory lock key held by the one process allowed to host tables on a database ("MJM" then 1). */
+export const HOST_LOCK_KEY = 0x4d4a4d01;
+
+/**
+ * The single-host lease: only one server process at a time may restore and host the tables of a
+ * database, because each process keeps its tables in memory and two copies of a table would deal
+ * two different games under one code and overwrite each other's snapshots.
+ */
+export interface HostLock {
+  /** Take the lock, retrying until it is free or the wait runs out (then it rejects). */
+  acquire(): Promise<void>;
+  /** Called once if the lock is lost after it was taken (its connection failed or stopped answering). */
+  onLost(cb: (e: Error) => void): void;
+  /** Give the lock up (ends its connection). */
+  release(): Promise<void>;
+}
+
+export interface HostLockOptions {
+  /** Advisory lock key (default `HOST_LOCK_KEY`; tests use their own). */
+  key?: number;
+  /** Pause between attempts while another process holds the lock (default 1 s). */
+  retryMs?: number;
+  /** Give up after this long (default 30 s). */
+  waitMs?: number;
+  /** How often the held lock's connection is checked (default 15 s); a check that fails or takes over 10 s loses the lock. */
+  checkEveryMs?: number;
+  log?: (line: string) => void;
+}
+
+/**
+ * A session-level `pg_try_advisory_lock` on a dedicated connection. The URL must be a direct
+ * connection: a transaction pooler hands each statement to any server connection, so a session
+ * lock taken through it is neither kept nor released reliably (`main.ts` prefers
+ * `DATABASE_URL_DIRECT` for this reason).
+ */
+export function createHostLock(databaseUrl: string, opts: HostLockOptions = {}): HostLock {
+  const key = opts.key ?? HOST_LOCK_KEY;
+  const retryMs = opts.retryMs ?? 1_000;
+  const waitMs = opts.waitMs ?? 30_000;
+  const checkEveryMs = opts.checkEveryMs ?? 15_000;
+  const log = opts.log ?? ((line: string) => console.log(line));
+  const base = poolConfig(databaseUrl, { queryTimeoutMs: 10_000, statementTimeoutMs: 0 });
+  const lostHandlers: Array<(e: Error) => void> = [];
+  let client: pg.Client | null = null;
+  let check: ReturnType<typeof setInterval> | null = null;
+  let held = false;
+  let released = false;
+  let lostOnce = false;
+
+  const lose = (e: Error) => {
+    if (!held || released || lostOnce) return;
+    lostOnce = true;
+    held = false;
+    if (check) clearInterval(check);
+    for (const h of lostHandlers) h(e);
+  };
+  const drop = async (c: pg.Client | null) => {
+    if (!c) return;
+    c.removeAllListeners('error');
+    c.removeAllListeners('end');
+    c.on('error', () => undefined);
+    await c.end().catch(() => undefined);
+  };
+
+  return {
+    async acquire() {
+      const until = Date.now() + waitMs;
+      let said = false;
+      for (;;) {
+        try {
+          if (!client) {
+            const c = new pg.Client({ connectionString: base.connectionString, ssl: base.ssl, query_timeout: base.query_timeout, connectionTimeoutMillis: 5_000, keepAlive: true });
+            c.on('error', (e: Error) => lose(e));
+            await c.connect();
+            client = c;
+            c.on('end', () => lose(new Error('The host lock connection ended')));
+          }
+          const res = await client.query<{ ok: boolean }>('SELECT pg_try_advisory_lock($1) AS ok', [key]);
+          if (res.rows[0]?.ok === true) {
+            held = true;
+            check = setInterval(() => {
+              client?.query('SELECT 1').catch((e: Error) => lose(e));
+            }, checkEveryMs);
+            check.unref?.();
+            return;
+          }
+          if (!said) log('[signal] another server holds the host lock on this database; waiting for it to stop');
+          said = true;
+        } catch (e) {
+          const c = client;
+          client = null;
+          await drop(c);
+          if (Date.now() >= until) throw new Error(`Could not reach the database for the host lock: ${(e as Error).message}`);
+        }
+        if (Date.now() >= until) {
+          const c = client;
+          client = null;
+          await drop(c);
+          throw new Error(`Another server still holds the host lock after ${Math.round(waitMs / 1000)} s: only one server may host tables on a database`);
+        }
+        await new Promise((r) => setTimeout(r, retryMs));
+      }
+    },
+    onLost(cb) {
+      lostHandlers.push(cb);
+    },
+    async release() {
+      released = true;
+      held = false;
+      if (check) clearInterval(check);
+      const c = client;
+      client = null;
+      await drop(c);
+    },
+  };
+}

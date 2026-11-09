@@ -12,11 +12,14 @@
  * ALLOW_EPHEMERAL=1 says the in-memory server is wanted.
  * Without REVENUECAT_WEBHOOK_SECRET the store webhook answers 503; without EXPO_ACCESS_TOKEN no
  * push is sent; without SENTRY_DSN errors are only logged; without POSTHOG_KEY no server events.
- * Migrations prefer DATABASE_URL_DIRECT (Neon's direct, unpooled string) over DATABASE_URL.
+ * Migrations prefer DATABASE_URL_DIRECT (Neon's direct, unpooled string) over DATABASE_URL, and
+ * so does the single-host lock: with Postgres the server first takes a session advisory lock
+ * (retried for 30 s, then exit 1), so two machines never host the same tables; losing it later
+ * freezes the tables, writes them and exits 1 so Fly restarts the machine.
  */
 import { SessionService } from './auth';
 import { loadConfig, missingProductionEnv, missingProductionEnvMessage, pepperFromEnv, providersFromEnv } from './config';
-import { createPool } from './db';
+import { createHostLock, createPool, isPooledDatabase } from './db';
 import { migrate } from './migrate';
 import { createAnalytics, initSentry, reportError } from './observability';
 import { pushClientFromEnv, PushService } from './push';
@@ -62,10 +65,33 @@ async function main(): Promise<void> {
   const repos = createRepos({ databaseUrl: env.DATABASE_URL });
   if (repos.kind === 'memory') warn('[signal] DATABASE_URL is not set: accounts, clubs and tables are kept in memory and lost on restart');
   const sessions = new SessionService(repos.repos, pepperFromEnv(env, warn));
+  let hostLock;
+  if (repos.kind === 'pg') {
+    const direct = (env.DATABASE_URL_DIRECT ?? '').trim();
+    const lockUrl = direct || (env.DATABASE_URL ?? '').trim();
+    if (!direct) warn('[signal] DATABASE_URL_DIRECT is not set: taking the host lock over DATABASE_URL, which only works on a direct (unpooled) connection');
+    else if (isPooledDatabase(direct)) warn('[signal] DATABASE_URL_DIRECT looks like a pooled connection string: the host lock needs a direct one');
+    hostLock = createHostLock(lockUrl);
+  }
   const providers = providersFromEnv(env);
   const push = new PushService({ devices: repos.repos.devices, client: await pushClientFromEnv(env) });
   const analytics = await createAnalytics(env);
-  const server = await createSignalServer({ port: config.port, repos, sessions, providers, config, push, analytics });
+  const server = await createSignalServer({
+    port: config.port,
+    repos,
+    sessions,
+    providers,
+    config,
+    push,
+    analytics,
+    hostLock,
+    onHostLockLost: () => {
+      void repos
+        .close()
+        .catch(() => undefined)
+        .finally(() => process.exit(1));
+    },
+  });
 
   const enabled = Object.keys(providers);
   console.log(
