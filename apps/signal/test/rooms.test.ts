@@ -228,9 +228,10 @@ describe('RoomRegistry', () => {
   });
 
   it('answers the same way for a missing room and a full one', () => {
-    const { reg, peer } = setup({ allowHosted: true });
+    // A relay-only room fills at twelve peers (a hosted table's onlooker places are in room-places.test.ts).
+    const { reg, peer } = setup({ allowP2P: true });
     const owner = peer();
-    reg.handle(owner.id, { t: 'create', hosted: true });
+    reg.handle(owner.id, { t: 'create' });
     const code = owner.socket.out.find((m) => m.t === 'room')!.room!;
     for (let i = 0; i < 11; i++) reg.handle(peer().id, { t: 'join', room: code });
     expect(reg.roomPeers(code)).toHaveLength(12);

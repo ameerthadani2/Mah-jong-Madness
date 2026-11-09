@@ -93,8 +93,13 @@ export const CLUB_MEMBERS_ONLY = 'Join the club first';
 /** How long a table with nobody connected is kept after its last activity while a human holds a seat. */
 export const KEEP_ALIVE_MS = 15 * 60_000;
 
-/** Most peers one room can hold: the four seats plus spare places for players who drop out and rejoin. */
+/**
+ * Most peers one room can hold: the four seats plus spare places for players who drop out and
+ * rejoin. A player who holds a human seat is always let back in, past this limit.
+ */
 const MAX_ROOM_PEERS = 12;
+/** Places at a hosted table for peers who hold no seat (onlookers, and players about to sit down). */
+const MAX_ROOM_WATCHERS = 4;
 
 /** Thrown by `createHostedRoom` when the server cannot open another table. */
 export class RoomLimitError extends Error {
@@ -413,7 +418,7 @@ export class RoomRegistry {
           return peer.id;
         }
         const room = msg.room.length <= 8 ? this.rooms.get(msg.room.toUpperCase()) : undefined;
-        if (!room || (room.peers.size >= MAX_ROOM_PEERS && !room.peers.has(peer.id))) {
+        if (!room || !this.hasPlaceFor(room, peer)) {
           this.error(peer, ROOM_UNAVAILABLE, ROOM_UNAVAILABLE_CODE);
           return peer.id;
         }
@@ -487,6 +492,23 @@ export class RoomRegistry {
         room.keepAliveUntil = this.now() + KEEP_ALIVE_MS;
       } else this.closeRoom(room);
     }
+  }
+
+  /**
+   * Whether `peer` may enter `room`: always when its account holds a human seat there (a player
+   * coming back after a drop), otherwise while the room is under `MAX_ROOM_PEERS` and, at a hosted
+   * table, while fewer than `MAX_ROOM_WATCHERS` peers without a seat are in it.
+   */
+  private hasPlaceFor(room: Room, peer: Peer): boolean {
+    if (room.peers.has(peer.id)) return true;
+    const seats = room.table?.host.seatInfo() ?? [];
+    if (peer.userId && seats.some((s) => !s.isBot && s.userId === peer.userId)) return true;
+    if (room.peers.size >= MAX_ROOM_PEERS) return false;
+    if (!room.table) return true;
+    const seated = new Set(seats.filter((s) => !s.isBot && s.peerId).map((s) => s.peerId));
+    let watchers = 0;
+    for (const id of room.peers) if (!seated.has(id)) watchers++;
+    return watchers < MAX_ROOM_WATCHERS;
   }
 
   private sendRoom(peer: Peer, room: Room): void {
