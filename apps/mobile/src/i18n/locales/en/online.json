@@ -16,5 +16,12 @@
   },
   "devServer": "Game server: %{url}. Development builds can change it in Settings.",
   "connecting": "Connecting to the game server…",
-  "retry": "Try again"
+  "retry": "Try again",
+  "errors": {
+    "alreadySeated": "Your account already has a seat at this table. One seat per account: carry on from that seat, or leave it first.",
+    "roomUnavailable": "No open table with that code. Check the code; the table may also be full or over.",
+    "serverFull": "The game server is full right now. Please try again in a few minutes.",
+    "tableCap": "You already have the most tables open. Finish or leave one of them first.",
+    "notController": "Only the player who opened the table, or a club admin, can add bots or start the match."
+  }
 }

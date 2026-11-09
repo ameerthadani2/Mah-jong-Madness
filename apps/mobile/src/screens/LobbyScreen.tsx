@@ -3,7 +3,7 @@ import { ScrollView, Share, StyleSheet, Text, View } from 'react-native';
 import { useApp } from '../app-state';
 import { useConnection, useSession } from '../game/useTable';
 import { useT } from '../i18n';
-import { friendlyError } from '../logic/errors';
+import { tableError } from '../components/table/tableErrors';
 import { colors, fonts, nameFont, space } from '../theme';
 import { Button, Card, H2, P, Pill, Row, ScreenHeader, StrokeText } from '../components/Ui';
 import { AvatarPlate, seatAvatarId } from '../components/Avatars';
@@ -124,7 +124,7 @@ export function LobbyScreen() {
           />
         </Row>
       ) : (
-        state.lastError && <Pill tone="danger" icon="warning" wrap text={friendlyError(new Error(state.lastError), t)} />
+        state.lastError && <Pill tone="danger" icon="warning" wrap text={tableError(new Error(state.lastError), t)} />
       )}
     </ScrollView>
   );

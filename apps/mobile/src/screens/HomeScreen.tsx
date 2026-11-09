@@ -11,12 +11,13 @@ import { useApp } from '../app-state';
 import { createLocalSession, createOnlineSession } from '../game/session';
 import { useAuth } from '../auth/AuthProvider';
 import { AVATARS, effectiveStreak, todayKey } from '../storage';
-import { friendlyError } from '../logic/errors';
+import { tableError } from '../components/table/tableErrors';
 import { botLabel, rulesSummary } from '../logic/rules-text';
 import { useT } from '../i18n';
 import { colors, fonts, nameFont, space } from '../theme';
 import { Button, Card, Chip, fontFor, GemCounter, IconButton, P, Pill, Row } from '../components/Ui';
 import { AvatarPlate, avatarName } from '../components/Avatars';
+import { useOwnedEquipped } from '../monetisation/useEquipped';
 import { ChestScene, ClubhouseScene, ScrollScene, TableScene } from '../components/Scenes';
 import { Icon } from '../components/Icons';
 import { Logo } from '../components/Logo';
@@ -30,6 +31,8 @@ const WINDOWS = {
 
 export function HomeScreen() {
   const app = useApp();
+  // The avatar frame the player equipped (only one their wallet owns).
+  const { frame } = useOwnedEquipped();
   const auth = useAuth();
   const { t, locale } = useT();
   const { width, height } = useWindowDimensions();
@@ -80,7 +83,7 @@ export function HomeScreen() {
         app.go({ name: 'lobby' });
       }
     } catch (e) {
-      setResumeError(friendlyError(e, t));
+      setResumeError(tableError(e, t));
     } finally {
       setResuming(false);
     }
@@ -199,7 +202,7 @@ export function HomeScreen() {
           <View style={{ flex: 1 }} />
         ) : (
           <Pressable onPress={() => app.go({ name: 'settings' })} style={({ pressed }) => [styles.profile, pressed && { transform: [{ translateY: 2 }] }, { flex: wide ? undefined : 1 }]} accessibilityRole="button" accessibilityLabel={`${app.profile.name}. ${t('settings.title')}`}>
-            <AvatarPlate id={app.profile.avatar} size={tablet ? 54 : 44} />
+            <AvatarPlate id={app.profile.avatar} size={tablet ? 54 : 44} frame={frame} />
             <View style={{ flexShrink: 1 }}>
               <Text numberOfLines={1} style={[styles.profileName, nameFont(app.profile.name)]}>
                 {app.profile.name}
@@ -230,7 +233,7 @@ export function HomeScreen() {
       {needsName && (
         <Card style={wide ? { flexDirection: 'row', alignItems: 'center', gap: space.lg } : undefined}>
           <Row gap={14} style={{ flexShrink: 0 }}>
-            <AvatarPlate id={app.profile.avatar} size={wide ? 80 : 60} />
+            <AvatarPlate id={app.profile.avatar} size={wide ? 80 : 60} frame={frame} />
             {!wide && (
               <View>
                 <Text style={[styles.welcomeTitle, fontFor(t('home.welcome.title'), fonts.display)]}>{t('home.welcome.title')}</Text>

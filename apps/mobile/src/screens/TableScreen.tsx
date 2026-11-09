@@ -32,6 +32,9 @@ import { ClockTicker } from '../components/table/ClockParts';
 import { useAnnounce } from '../components/table/announce';
 import type { TurnClock } from '../components/table/turnClock';
 import { exitPlan, type ExitChoice } from '../components/table/exit';
+import { celebrationFor } from '../components/table/celebrate';
+import { tableError } from '../components/table/tableErrors';
+import { WinCelebration } from '../components/Celebrations';
 import { useSfx, type TableEvent } from '../audio';
 
 import * as Haptics from 'expo-haptics';
@@ -250,6 +253,8 @@ export function TableScreen() {
         : undefined,
     onLongPressHint: t('table.a11y.reportHint'),
     reaction: reactions[seat],
+    // The player's own seat wears the avatar frame they equipped.
+    frame: seat === mySeat ? equipped.frame : null,
   });
 
   const recentChat = state.chat.filter((c) => now - c.at < CHAT_MS).slice(-3);
@@ -265,6 +270,8 @@ export function TableScreen() {
   // During the hold after a win: the call-out and the winner's hand face up in the middle of the felt.
   const holding = !!state.lastResult && !showResult;
   const revealWin = holding && state.lastResult?.type === 'win' ? state.lastResult.wins[0] : null;
+  // The player's own win: the celebration they equipped plays over the table during the hold (a still frame under reduce motion).
+  const celebration = celebrationFor(state.lastResult, mySeat, equipped.celebration, holding);
   const overlay =
     callout || revealWin ? (
       <>
@@ -382,6 +389,7 @@ export function TableScreen() {
           </View>
         )}
 
+        {celebration && <WinCelebration id={celebration} width={winW} height={height} />}
         {state.lastResult && showResult && <ResultSheet result={state.lastResult} view={view} state={state} mySeat={mySeat} onNext={() => session.client.ready()} onLeave={leave} onReview={() => app.go({ name: 'review' })} onFairness={() => app.go({ name: 'fairness' })} />}
         {state.matchOver && <MatchOverSheet state={state} onLeave={leave} />}
         {conn.status === 'reconnecting' && !state.matchOver ? (
@@ -416,7 +424,7 @@ export function TableScreen() {
         ) : (
           state.lastError && (
             <View style={styles.toast} accessibilityLiveRegion="polite">
-              <Text style={[styles.toastText, nameFont(state.lastError, fonts.bodyBold)]}>{state.lastError}</Text>
+              <Text style={[styles.toastText, nameFont(tableError(new Error(state.lastError), t), fonts.bodyBold)]}>{tableError(new Error(state.lastError), t)}</Text>
             </View>
           )
         )}
