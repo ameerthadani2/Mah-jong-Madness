@@ -24,6 +24,7 @@ const PLANNED_TABLES = [
   'clubs',
   'club_members',
   'club_tables',
+  'club_bans',
   'match_results',
   'table_snapshots',
   'puzzle_results',

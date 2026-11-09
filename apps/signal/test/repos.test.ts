@@ -41,6 +41,8 @@ function clubFixture(owner: UserRecord, extra: Partial<Club> = {}): Club {
     season: 1,
     seasonStartedAt: T0,
     seasons: [],
+    bans: [],
+    ownerLapsedAt: null,
     ...extra,
   };
 }
@@ -187,6 +189,7 @@ function contract(name: string, setup: () => Promise<Repos>, teardown: () => Pro
             players: [{ seat: 0, name: 'Ah-Hua', userId: owner.id, isBot: false, connected: true }, { seat: 1, name: 'Bot', isBot: true, connected: true }],
             handNumber: 3,
             scores: [100, -100, 0, 0],
+            variant: false,
           },
         ],
       });
