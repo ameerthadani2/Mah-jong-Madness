@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { DEFAULT_RULES } from '@mjm/engine';
-import type { ClientState } from '@mjm/net';
-import { connectSignaling, createLocalSession, createOnlineSession, isUnauthorised, UNAUTHORISED_CLOSE, type Session } from './session';
+import { chooseAction, DEFAULT_RULES, legalActions, withRules } from '@mjm/engine';
+import { LoopbackHub, TableClient, TableHost, transportLink, type ClientState, type SerializedClient } from '@mjm/net';
+import { connectSignaling, createLocalSession, createOnlineSession, isUnauthorised, setSavedClientSource, UNAUTHORISED_CLOSE, type Session } from './session';
 
 type Frame = Record<string, unknown>;
 
@@ -160,7 +160,7 @@ describe('online reconnect', () => {
     return { s, statuses, first: FakeSocket.last! };
   };
 
-  it('rejoins the same room with the saved token after the socket drops, and swaps the new client in', async () => {
+  it('rejoins the same room with the saved token after the socket drops, and rebinds the same client', async () => {
     const { s, statuses, first } = await open({ auth: async () => 'mjs_tok' });
     const oldClient = s.client;
     const seen: ClientState[] = [];
@@ -181,14 +181,34 @@ describe('online reconnect', () => {
     expect(second.sent.find((f) => f.t === 'join')).toEqual({ t: 'join', room: 'ABC123' });
     expect(tableJoins(second)).toEqual([expect.objectContaining({ t: 'join', name: 'Tester', token: 'f'.repeat(32) })]);
     expect(s.status).toBe('connected');
-    expect(s.client).not.toBe(oldClient);
+    // One client per table: it keeps what it recorded about the deal across the reconnect.
+    expect(s.client).toBe(oldClient);
     expect(statuses).toEqual(['reconnecting:1', 'connected:0']);
-    // Listeners follow the new client.
     second.push({ t: 'from', from: 'server-1', data: { ch: 'game', msg: { t: 'welcome', seat: 2, roomCode: 'ABC123', rules: DEFAULT_RULES, seats: [], matchId: 'm1', token: 'e'.repeat(32) } } });
     expect(seen.at(-1)?.token).toBe('e'.repeat(32));
     expect(seen.at(-1)?.disconnected).toBe(false);
+    // Frames still arriving on the old socket are no longer heard.
+    first.onmessage?.({ data: JSON.stringify({ t: 'from', from: 'server-1', data: { ch: 'game', msg: { t: 'chat', seat: 1, name: 'Old', text: 'stale' } } }) });
+    expect(s.client.state.chat).toEqual([]);
     s.close();
     expect(second.closed).toBe(true);
+  });
+
+  it('a link that drops is reconnected; only a seat opened on another device ends the session', async () => {
+    const { s, first } = await open();
+    first.push({ t: 'from', from: 'server-1', data: { ch: 'game', msg: { t: 'welcome', seat: 0, roomCode: 'ABC123', rules: DEFAULT_RULES, seats: [], matchId: 'm1', token: TOKEN } } });
+    first.serverClose(1006);
+    expect(s.client.state.disconnected).toBe(true);
+    expect(s.client.state.kicked).toBe(false);
+    expect(s.status).toBe('reconnecting');
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(s.status).toBe('connected');
+    // The seat is opened elsewhere while this socket stays up: stop, without waiting for a close.
+    FakeSocket.last!.push({ t: 'from', from: 'server-1', data: { ch: 'game', msg: { t: 'disconnected' } } });
+    expect(s.client.state.kicked).toBe(true);
+    expect(s.status).toBe('lost');
+    expect(s.lostReason).toBe('ended');
+    s.close();
   });
 
   it('backs off 1, 2, 4, 8 … seconds and is lost after ten failed attempts', async () => {
@@ -291,6 +311,48 @@ describe('online reconnect', () => {
     await vi.advanceTimersByTimeAsync(60_000);
     expect(statuses).toEqual([]);
     expect(FakeSocket.all).toHaveLength(1);
+  });
+});
+
+describe('cold resume after an app restart', () => {
+  /** A client record as the app saves it in ActiveSession after one verified hand at table ABC123. */
+  function savedRecord(): SerializedClient {
+    const hub = new LoopbackHub();
+    const host = new TableHost(hub.create('host'), { roomCode: 'ABC123', rules: withRules({ handsPerMatch: 4 }), matchId: 'm-saved' });
+    const c = new TableClient(transportLink(hub.create('p0'), 'host'), 'Tester', 'lady', { userId: 'user-123456' });
+    c.join();
+    host.start();
+    let guard = 0;
+    while (host.phase === 'playing' && guard++ < 4000) {
+      const st = c.localState();
+      if (st && legalActions(st, 0).length > 0) c.act(chooseAction(st, 0)!);
+      else host.tick();
+    }
+    expect(c.state.audits).toHaveLength(1);
+    return JSON.parse(JSON.stringify(c.serialize())) as SerializedClient;
+  }
+
+  afterEach(() => setSavedClientSource(null));
+
+  it('restores the saved client record passed in the options', async () => {
+    const saved = savedRecord();
+    const s = await createOnlineSession({ ...base, action: 'join', code: 'ABC123', token: saved.state.token!, restoreClient: saved });
+    expect(s.client.state.audits.map((a) => a.audit.matchId)).toEqual(['m-saved']);
+    expect(s.client.serialize().handsEnded).toEqual([0]);
+    expect(tableJoins(FakeSocket.last!)).toEqual([expect.objectContaining({ t: 'join', token: saved.state.token })]);
+    s.close();
+  });
+
+  it('finds the saved record through the registered source, and ignores one for another seat', async () => {
+    const saved = savedRecord();
+    setSavedClientSource((url, room, token) => (url === base.signalUrl && room === 'ABC123' && token === saved.state.token ? saved : undefined));
+    const s = await createOnlineSession({ ...base, action: 'join', code: 'ABC123', token: saved.state.token! });
+    expect(s.client.state.audits).toHaveLength(1);
+    s.close();
+    // A record for another token is never restored onto this seat.
+    const other = await createOnlineSession({ ...base, action: 'join', code: 'ABC123', token: TOKEN, restoreClient: saved });
+    expect(other.client.state.audits).toEqual([]);
+    other.close();
   });
 });
 

@@ -1,6 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { DEFAULT_RULES, type BotSkill, type RuleSet } from '@mjm/engine';
-import type { SerializedHost } from '@mjm/net';
+import type { SerializedClient, SerializedHost } from '@mjm/net';
 import { clampDailyToToday, effectiveStreak as streakOn } from './logic/daily';
 import { localDateKey, previousDateKey } from './logic/dates';
 import { migrateSettings } from './logic/settings';
@@ -50,9 +50,13 @@ export interface Progress {
   reviewedHands: string[];
 }
 
-/** The table the player was last seated at, so a crash or relaunch can resume it. */
+/**
+ * The table the player was last seated at, so a crash or relaunch can resume it. Online, `client`
+ * is the table client's verification record (its ceremony record, chain and audits), so a resumed
+ * client goes on checking the deal where it left off instead of starting with no history.
+ */
 export type ActiveSession =
-  | { kind: 'online'; signalUrl: string; roomCode: string; token: string; name: string; avatar: string; clubCode?: string; savedAt: number }
+  | { kind: 'online'; signalUrl: string; roomCode: string; token: string; name: string; avatar: string; clubCode?: string; client?: SerializedClient; savedAt: number }
   | { kind: 'local'; host: SerializedHost; token: string; name: string; avatar: string; savedAt: number };
 
 const KEYS = { profile: 'mjm.profile', settings: 'mjm.settings', progress: 'mjm.progress', session: 'mjm.activeSession', age: 'mjm.age' } as const;
