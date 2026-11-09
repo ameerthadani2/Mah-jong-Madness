@@ -202,7 +202,8 @@ export class WalletService {
         if (owned) throw new WalletError('owned', 'You already own that item');
         const w = await tx.wallet.get(userId);
         const price = product.diamondPrice;
-        if (w.diamonds + w.bonusDiamonds < price) throw new WalletError('insufficient', 'Not enough diamonds');
+        // A refund can leave purchased diamonds below zero: nothing is spent until they are back above.
+        if (w.diamonds < 0 || w.diamonds + w.bonusDiamonds < price) throw new WalletError('insufficient', 'Not enough diamonds');
         const fromBonus = Math.min(w.bonusDiamonds, price);
         const at = this.now();
         const res = await tx.wallet.apply({ userId, delta: -(price - fromBonus), bonus: -fromBonus, reason: 'spend', ref: product.id, createdAt: at });
@@ -383,8 +384,11 @@ export class WalletService {
   }
 
   /**
-   * A refunded diamond pack: take back what is left of it (balances never go below zero). A refund
-   * that arrives before the purchase is remembered, so the purchase is not credited when it comes.
+   * A refunded diamond pack: take back everything it credited. Bonus diamonds come back first as
+   * far as they go; the rest comes off purchased diamonds, which may go below zero when the pack
+   * was already spent. A negative balance blocks every spend until a purchase covers it, so a
+   * buy, spend, refund cycle never ends with free looks. A refund that arrives before the purchase
+   * is remembered, so the purchase is not credited when it comes.
    */
   private async refundDiamonds(tx: Repos, userId: string, product: Extract<ServerProduct, { kind: 'diamonds' }>, transactionId: string, cancelReason: string | null, at: number): Promise<StoreOutcome> {
     if (cancelReason !== 'CUSTOMER_SUPPORT') return 'recorded';
@@ -395,9 +399,11 @@ export class WalletService {
       return 'refunded';
     }
     const w = await tx.wallet.get(userId);
-    const delta = -Math.min(w.diamonds, product.diamonds);
-    const bonus = -Math.min(w.bonusDiamonds, product.bonus);
-    await tx.wallet.apply({ userId, delta, bonus, reason: 'refund', ref: WalletService.refundRef(transactionId), createdAt: at });
+    const bonus = Math.min(Math.max(0, w.bonusDiamonds), product.bonus);
+    const delta = -(product.diamonds + product.bonus - bonus);
+    const res = await tx.wallet.apply({ userId, delta, bonus: -bonus, reason: 'refund', ref: WalletService.refundRef(transactionId), createdAt: at }, { allowNegative: true });
+    if (!res) throw new Error('Diamond refund refused');
+    if (res.wallet.diamonds < 0) this.log(`[signal] refund ${transactionId} left ${userId} at ${res.wallet.diamonds} diamonds; spends are blocked until it is covered`);
     return 'refunded';
   }
 

@@ -333,10 +333,10 @@ function memoryWallet(s: MemoryState): WalletRepo {
     async get(userId) {
       return copy(wallet(userId));
     },
-    async apply(e) {
+    async apply(e, opts) {
       const w = wallet(e.userId);
       const bonus = e.bonus ?? 0;
-      if (w.diamonds + e.delta < 0 || w.bonusDiamonds + bonus < 0) return null;
+      if ((e.delta < 0 && w.diamonds + e.delta < 0 && !opts?.allowNegative) || w.bonusDiamonds + bonus < 0) return null;
       const next: WalletRecord = { userId: e.userId, diamonds: w.diamonds + e.delta, bonusDiamonds: w.bonusDiamonds + bonus, updatedAt: e.createdAt };
       const entry: LedgerEntry = { id: ++s.ledgerSeq, userId: e.userId, delta: e.delta, bonus, reason: e.reason, ref: e.ref ?? null, createdAt: e.createdAt };
       s.wallets.set(e.userId, next);

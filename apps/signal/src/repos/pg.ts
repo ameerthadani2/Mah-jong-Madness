@@ -569,16 +569,16 @@ function pgWallet(q: Queryable, tx: Tx): WalletRepo {
       const res = await q.query<WalletRow>('SELECT user_id, diamonds, bonus_diamonds, updated_at FROM wallets WHERE user_id = $1', [userId]);
       return res.rows[0] ? walletFromRow(res.rows[0]) : { userId, diamonds: 0, bonusDiamonds: 0, updatedAt: 0 };
     },
-    async apply(e) {
+    async apply(e, opts) {
       return tx(async (c) => {
         const at = toDate(e.createdAt);
         const bonus = e.bonus ?? 0;
         await c.query('INSERT INTO wallets (user_id, diamonds, bonus_diamonds, updated_at) VALUES ($1, 0, 0, $2) ON CONFLICT (user_id) DO NOTHING', [e.userId, at]);
         const w = await c.query<WalletRow>(
           `UPDATE wallets SET diamonds = diamonds + $2, bonus_diamonds = bonus_diamonds + $3, updated_at = $4
-           WHERE user_id = $1 AND diamonds + $2 >= 0 AND bonus_diamonds + $3 >= 0
+           WHERE user_id = $1 AND ($2 >= 0 OR diamonds + $2 >= 0 OR $5::boolean) AND bonus_diamonds + $3 >= 0
            RETURNING user_id, diamonds, bonus_diamonds, updated_at`,
-          [e.userId, e.delta, bonus, at],
+          [e.userId, e.delta, bonus, at, opts?.allowNegative === true],
         );
         if (!w.rows[0]) return null;
         const l = await c.query<LedgerRow>('INSERT INTO wallet_ledger (user_id, delta, bonus, reason, ref, created_at) VALUES ($1, $2, $3, $4, $5, $6) RETURNING ' + LEDGER_COLS, [

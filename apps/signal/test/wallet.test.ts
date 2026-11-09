@@ -117,7 +117,7 @@ describe('store events', () => {
     expect(events).toEqual([{ id: u, event: 'purchase_credited', props: expect.objectContaining({ productId: 'diamonds.3450', diamonds: 3450 }) }]);
   });
 
-  it('a refunded pack takes back what is left of it, never below zero', async () => {
+  it('a refunded pack takes back everything it credited: spent diamonds leave a negative balance that blocks spends', async () => {
     const { repos, wallet, user } = await setup();
     const u = await user();
     const buy = storeEvent(u, 'NON_RENEWING_PURCHASE', { storeProductId: 'diamonds.1300' });
@@ -125,8 +125,15 @@ describe('store events', () => {
     await wallet.spend(u, 'theme.jade'); // 100 bonus + 300 purchased
     const refund = storeEvent(u, 'CANCELLATION', { storeProductId: 'diamonds.1300', transactionId: buy.transactionId, cancelReason: 'CUSTOMER_SUPPORT' });
     expect((await wallet.applyStoreEvent(refund)).outcome).toBe('refunded');
-    expect(await balance(repos, u)).toEqual([0, 0]);
+    expect(await balance(repos, u)).toEqual([-400, 0]);
     expect((await wallet.applyStoreEvent({ ...refund, eventId: randomUUID() })).outcome).toBe('duplicate');
+    expect(await balance(repos, u)).toEqual([-400, 0]);
+    // A later purchase is credited on top of the debt; spends wait until the balance is above zero.
+    await wallet.credit(u, 0, 'grant', null, 500);
+    await expect(wallet.spend(u, 'theme.bamboo')).rejects.toMatchObject({ code: 'insufficient' });
+    await wallet.applyStoreEvent(storeEvent(u, 'NON_RENEWING_PURCHASE', { storeProductId: 'diamonds.600' }));
+    expect(await balance(repos, u)).toEqual([200, 500]);
+    expect((await wallet.spend(u, 'theme.bamboo')).wallet).toMatchObject({ diamonds: 200, bonusDiamonds: 200 });
   });
 
   it('grants, extends, refunds and expires a subscription, ignoring stale events', async () => {

@@ -146,6 +146,7 @@ export interface PushTarget {
 
 export interface WalletRecord {
   userId: string;
+  /** Purchased diamonds; below zero only after a refund of diamonds already spent (no spend goes through until it is back above). */
   diamonds: number;
   bonusDiamonds: number;
   updatedAt: number;
@@ -194,9 +195,11 @@ export interface WalletRepo {
   get(userId: string): Promise<WalletRecord>;
   /**
    * Appends a ledger entry and moves the balances by it, atomically. Returns null (and writes
-   * nothing) when either balance would go below zero.
+   * nothing) when a debit would take purchased diamonds below zero, or bonus diamonds would go
+   * below zero. A credit is always applied, even to a negative balance. `allowNegative` lets a
+   * debit take purchased diamonds below zero (a refunded pack whose diamonds were already spent).
    */
-  apply(entry: NewLedgerEntry): Promise<{ wallet: WalletRecord; entry: LedgerEntry } | null>;
+  apply(entry: NewLedgerEntry, opts?: { allowNegative?: boolean }): Promise<{ wallet: WalletRecord; entry: LedgerEntry } | null>;
   listLedger(userId: string): Promise<LedgerEntry[]>;
   /** Idempotent on transaction id and event id: a repeat returns the stored row with inserted false. */
   recordPurchase(purchase: NewPurchase): Promise<{ purchase: PurchaseRecord; inserted: boolean }>;
