@@ -33,7 +33,8 @@
   "welcome": {
     "title": "Welcome!",
     "sub": "Pick a name and a buddy.",
-    "namePlaceholder": "Your name"
+    "namePlaceholder": "Your name",
+    "play": "Play now"
   },
   "resume": {
     "title": "Table in progress",

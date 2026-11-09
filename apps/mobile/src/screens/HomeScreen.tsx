@@ -11,12 +11,14 @@ import { useApp } from '../app-state';
 import { createLocalSession, createOnlineSession } from '../game/session';
 import { useAuth } from '../auth/AuthProvider';
 import { AVATARS, effectiveStreak, todayKey } from '../storage';
-import { friendlyError } from '../logic/errors';
+import { tableError } from '../components/table/tableErrors';
 import { botLabel, rulesSummary } from '../logic/rules-text';
 import { useT } from '../i18n';
 import { colors, fonts, nameFont, space } from '../theme';
 import { Button, Card, Chip, fontFor, GemCounter, IconButton, P, Pill, Row } from '../components/Ui';
 import { AvatarPlate, avatarName } from '../components/Avatars';
+import { useOwnedEquipped } from '../monetisation/useEquipped';
+import { slopFor } from '../components/table/layout';
 import { ChestScene, ClubhouseScene, ScrollScene, TableScene } from '../components/Scenes';
 import { Icon } from '../components/Icons';
 import { Logo } from '../components/Logo';
@@ -30,12 +32,16 @@ const WINDOWS = {
 
 export function HomeScreen() {
   const app = useApp();
+  // The avatar frame the player equipped (only one their wallet owns).
+  const { frame } = useOwnedEquipped();
   const auth = useAuth();
   const { t, locale } = useT();
   const { width, height } = useWindowDimensions();
   const [name, setName] = useState(app.profile.name);
   const needsName = !app.profile.name;
   const wide = width >= 700;
+  // Any landscape phone (667×375 is not "wide"): the first-run Play button goes beside the name field.
+  const landscape = width > height;
   const tablet = width >= 1000 && height >= 700;
 
   const saveName = () => app.setProfile({ ...app.profile, name: name.trim() || t('common.player') });
@@ -80,7 +86,7 @@ export function HomeScreen() {
         app.go({ name: 'lobby' });
       }
     } catch (e) {
-      setResumeError(friendlyError(e, t));
+      setResumeError(tableError(e, t));
     } finally {
       setResuming(false);
     }
@@ -120,7 +126,8 @@ export function HomeScreen() {
       </P>
       {skillChips}
       <View style={styles.cardFoot}>
-        <Button testID="start-match" title={t('home.play.start')} icon="play" large={tablet} onPress={playBots} />
+        {/* On a first run the welcome card carries the Play button (above the fold everywhere); this one is the card's own. */}
+        <Button testID={needsName ? 'start-match-card' : 'start-match'} title={t('home.play.start')} icon="play" large={tablet} onPress={playBots} />
       </View>
     </ModeCard>
   );
@@ -135,7 +142,7 @@ export function HomeScreen() {
       <View style={styles.cardFoot}>
         <Button testID="open-clubs" title={t('home.clubs.open')} kind="secondary" small={compact} large={tablet} onPress={goClubs} />
         {!compact && (
-          <Pressable onPress={goOnline} hitSlop={6} style={styles.link} accessibilityRole="link" accessibilityLabel={t('home.clubs.quickTable')}>
+          <Pressable onPress={goOnline} hitSlop={slopFor(20)} style={styles.link} accessibilityRole="link" accessibilityLabel={t('home.clubs.quickTable')}>
             <Icon name="users" size={18} />
             <Text style={[styles.linkText, fontFor(t('home.clubs.quickTable'), fonts.uiBold)]}>{t('home.clubs.quickTable')}</Text>
           </Pressable>
@@ -164,7 +171,7 @@ export function HomeScreen() {
       <View style={styles.cardFoot}>
         <Button testID="open-learn" title={t('home.learn.open')} kind="premium" small={compact} large={tablet} onPress={() => app.go({ name: 'learn' })} />
         {!compact && (
-          <Pressable onPress={() => app.go({ name: 'daily' })} hitSlop={6} style={styles.link} accessibilityRole="link" accessibilityLabel={dailyDone ? t('home.learn.dailyDone') : t('home.learn.daily')}>
+          <Pressable onPress={() => app.go({ name: 'daily' })} hitSlop={slopFor(20)} style={styles.link} accessibilityRole="link" accessibilityLabel={dailyDone ? t('home.learn.dailyDone') : t('home.learn.daily')}>
             <Icon name={dailyDone ? 'check' : 'scroll'} size={18} color={colors.cta} />
             <Text style={[styles.linkText, fontFor(t('home.learn.daily'), fonts.uiBold)]}>{dailyDone ? t('home.learn.dailyDone') : t('home.learn.daily')}</Text>
           </Pressable>
@@ -198,8 +205,8 @@ export function HomeScreen() {
         {needsName ? (
           <View style={{ flex: 1 }} />
         ) : (
-          <Pressable onPress={() => app.go({ name: 'settings' })} style={({ pressed }) => [styles.profile, pressed && { transform: [{ translateY: 2 }] }, { flex: wide ? undefined : 1 }]} accessibilityRole="button" accessibilityLabel={`${app.profile.name}. ${t('settings.title')}`}>
-            <AvatarPlate id={app.profile.avatar} size={tablet ? 54 : 44} />
+          <Pressable onPress={() => app.go({ name: 'settings' })} hitSlop={slopFor(50)} style={({ pressed }) => [styles.profile, pressed && { transform: [{ translateY: 2 }] }, { flex: wide ? undefined : 1 }]} accessibilityRole="button" accessibilityLabel={`${app.profile.name}. ${t('settings.title')}`}>
+            <AvatarPlate id={app.profile.avatar} size={tablet ? 54 : 44} frame={frame} />
             <View style={{ flexShrink: 1 }}>
               <Text numberOfLines={1} style={[styles.profileName, nameFont(app.profile.name)]}>
                 {app.profile.name}
@@ -230,7 +237,7 @@ export function HomeScreen() {
       {needsName && (
         <Card style={wide ? { flexDirection: 'row', alignItems: 'center', gap: space.lg } : undefined}>
           <Row gap={14} style={{ flexShrink: 0 }}>
-            <AvatarPlate id={app.profile.avatar} size={wide ? 80 : 60} />
+            <AvatarPlate id={app.profile.avatar} size={wide ? 80 : 60} frame={frame} />
             {!wide && (
               <View>
                 <Text style={[styles.welcomeTitle, fontFor(t('home.welcome.title'), fonts.display)]}>{t('home.welcome.title')}</Text>
@@ -250,16 +257,20 @@ export function HomeScreen() {
               </Row>
             )}
             <Row gap={10}>
-              <TextInput testID="name-input" value={name} onChangeText={setName} placeholder={t('home.welcome.namePlaceholder')} placeholderTextColor="#9AA0BF" style={[styles.input, { flex: 1 }, wide && { paddingVertical: 7 }]} maxLength={24} />
-              <Button testID="save-name" title={t('common.save')} onPress={saveName} disabled={!name.trim()} />
+              <TextInput testID="name-input" value={name} onChangeText={setName} placeholder={t('home.welcome.namePlaceholder')} placeholderTextColor="#9AA0BF" style={[styles.input, { flex: 1, minWidth: 0 }, wide && { paddingVertical: 7 }]} maxLength={24} />
+              <Button testID="save-name" small={!wide} title={t('common.save')} onPress={saveName} disabled={!name.trim()} />
+              {/* First run: Play sits right here in landscape, where the mode cards are below the fold. */}
+              {(wide || landscape) && <Button testID="start-match" title={t('home.welcome.play')} icon="play" onPress={playBots} />}
             </Row>
             <Row style={{ flexWrap: 'wrap', rowGap: 8 }} gap={wide ? 4 : 8}>
               {AVATARS.map((a) => (
                 <Pressable key={a} onPress={() => app.setProfile({ ...app.profile, avatar: a })} hitSlop={2} style={[styles.pick, app.profile.avatar === a && styles.pickOn]} accessibilityRole="button" accessibilityLabel={avatarName(a)} accessibilityState={{ selected: app.profile.avatar === a }}>
-                  <AvatarPlate id={a} size={wide ? 36 : 40} />
+                  <AvatarPlate id={a} size={wide ? 36 : 34} />
                 </Pressable>
               ))}
             </Row>
+            {/* Narrow phones (the iPhone SE size included): a full-width Play under the buddies, still above the fold. */}
+            {!wide && !landscape && <Button testID="start-match" title={t('home.welcome.play')} icon="play" onPress={playBots} />}
           </View>
         </Card>
       )}

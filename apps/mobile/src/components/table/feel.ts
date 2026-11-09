@@ -31,6 +31,23 @@ export function rollUpMs(target: number): number {
   return Math.min(900, 250 + Math.abs(target) * 40);
 }
 
+/** How long a seat's reaction bubble (碰! 胡牌! 放槍…) holds before it fades. */
+export function reactionHoldMs(kind: string): number {
+  return kind === 'win' || kind === 'selfdraw' ? 1500 : 1000;
+}
+
+/** A reaction older than this is history: a portrait that mounts after it (rotation, resize) shows nothing. */
+export const REACTION_FRESH_MS = 600;
+
+/**
+ * Whether a seat portrait should play `reaction` now: only once (`alreadyPlayed` is false), and only while it is
+ * fresh, so rotating the device or resizing a window never replays the last 碰!/吃!/槓! of every seat.
+ */
+export function reactionShouldPlay(reaction: { key: number; at?: number }, alreadyPlayed: boolean, now: number): boolean {
+  if (alreadyPlayed) return false;
+  return reaction.at === undefined || now - reaction.at <= REACTION_FRESH_MS;
+}
+
 /** Where a new discard slides in from, for the seat `rel` places clockwise from me (0 = me). */
 export function slideFrom(rel: number, distance = 26): { x: number; y: number } {
   switch (((rel % 4) + 4) % 4) {

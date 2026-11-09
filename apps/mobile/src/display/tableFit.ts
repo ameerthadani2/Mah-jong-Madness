@@ -5,8 +5,8 @@
  *
  * - Portrait: the hand already wraps into two rows of nine; larger tiles wrap into a third row (never more:
  *   past three rows the tiles shrink instead).
- * - Landscape: the hand stays one row. When the scaled row is wider than the rail, the rail scrolls sideways
- *   (`scroll`), and the drawn tile is scrolled into view by the rail.
+ * - Landscape: the hand stays one row and grows only as far as the rail's width allows, so it never scrolls
+ *   sideways (`scroll` stays false at every scale; the rail keeps its scroll fallback should a row ever overflow).
  * - Ponds grow too, but a side seat always keeps three tiles per row, and short landscape phones (under 420 px
  *   tall) stop at Large so the side ponds never run off the felt.
  *
@@ -79,14 +79,25 @@ export function fitHand(width: number, height: number, L: Pick<TableLayout, 'por
 
   if (scale === 1) return { ...base, meldTile: smW, scroll: false, perRow: slots, rows: 1 };
   // Landscape: my melds share the rail with the hand, so they grow only while they take under 40 % of the width.
-  const meldCap = meldTiles > 0 ? Math.floor((width * 0.4 - meldCount * 8) / meldTiles) - 1 : smW;
+  // …and only while the hand still fits beside them at its Normal size.
+  const meldRoom = Math.min(width * 0.4, width - 24 - base.plateW - 10 - rowWidth(slots, base.tile));
+  const meldCap = meldTiles > 0 ? Math.floor((meldRoom - meldCount * 8) / meldTiles) - 1 : smW;
   const meldTile = Math.max(smW, Math.min(Math.round(smW * scale), meldCap));
   const meldW = meldTiles * (meldTile + 1) + meldCount * 8;
   const avail = width - 24 - base.plateW - (meldW ? meldW + 10 : 0);
   // A tile is 1.4× as tall as it is wide; the rail may take a fifth of the screen height.
   const heightCap = Math.floor((height * 0.2) / 1.4);
-  const tile = Math.max(base.tile, Math.min(90, heightCap, Math.round(base.tile * scale)));
+  // The scaled row shrinks to the rail's width rather than scrolling sideways (a hidden tile is a tile the
+  // player cannot see); it never goes below the Normal size, which always fits.
+  const widthCap = fitRowTile(slots, avail);
+  const tile = Math.max(base.tile, Math.min(90, heightCap, widthCap, Math.round(base.tile * scale)));
   return { ...base, tile, meldTile, scroll: rowWidth(slots, tile) > avail, perRow: slots, rows: 1 };
+}
+
+/** The widest tile that puts a row of `count` hand tiles (with the drawn tile's gap and the padding) inside `room` px. */
+export function fitRowTile(count: number, room: number): number {
+  if (count <= 0) return 0;
+  return Math.floor((room - HAND_PAD - (count > 1 ? DRAWN_GAP : 0) + HAND_GAP) / count) - HAND_GAP;
 }
 
 export interface PoolFit {

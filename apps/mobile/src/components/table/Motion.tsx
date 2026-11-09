@@ -4,17 +4,23 @@
  */
 import React, { useEffect, useRef, useState } from 'react';
 import { Animated, Easing, Platform, Text, type StyleProp, type TextStyle } from 'react-native';
+import { useReducedMotion } from '../../display/reducedMotion';
 import { DISCARD_SLIDE_MS, FLIP_HALF_MS, rollUp, rollUpMs } from './feel';
 
 /** The native driver is not available on web; there Animated runs on the JS thread. */
 export const NATIVE = Platform.OS !== 'web';
 
-/** Slides its child in from (x, y) and fades it up, once, when it mounts. */
+/** Slides its child in from (x, y) and fades it up, once, when it mounts (in place at once under reduce motion). */
 export function SlideIn({ from, children }: { from: { x: number; y: number }; children: React.ReactNode }) {
-  const p = useRef(new Animated.Value(0)).current;
+  const reduced = useReducedMotion();
+  const p = useRef(new Animated.Value(reduced ? 1 : 0)).current;
   useEffect(() => {
+    if (reduced) {
+      p.setValue(1);
+      return;
+    }
     Animated.timing(p, { toValue: 1, duration: DISCARD_SLIDE_MS, easing: Easing.out(Easing.cubic), useNativeDriver: NATIVE }).start();
-  }, [p]);
+  }, [p, reduced]);
   const tx = p.interpolate({ inputRange: [0, 1], outputRange: [from.x, 0] });
   const ty = p.interpolate({ inputRange: [0, 1], outputRange: [from.y, 0] });
   const opacity = p.interpolate({ inputRange: [0, 0.4, 1], outputRange: [0, 1, 1] });
@@ -26,9 +32,15 @@ export function SlideIn({ from, children }: { from: { x: number; y: number }; ch
  * Used for the winner's hand during the result hold.
  */
 export function Flip({ delay, back, face }: { delay: number; back: React.ReactNode; face: React.ReactNode }) {
+  const reduced = useReducedMotion();
   const s = useRef(new Animated.Value(1)).current;
-  const [shown, setShown] = useState(false);
+  const [shown, setShown] = useState(reduced);
   useEffect(() => {
+    if (reduced) {
+      s.setValue(1);
+      setShown(true);
+      return;
+    }
     const half = (to: number) => Animated.timing(s, { toValue: to, duration: FLIP_HALF_MS, easing: Easing.inOut(Easing.quad), useNativeDriver: NATIVE });
     const anim = Animated.sequence([Animated.delay(delay), half(0)]);
     anim.start(({ finished }) => {
@@ -37,14 +49,19 @@ export function Flip({ delay, back, face }: { delay: number; back: React.ReactNo
       half(1).start();
     });
     return () => anim.stop();
-  }, [delay, s]);
+  }, [delay, s, reduced]);
   return <Animated.View style={{ transform: [{ scaleX: s }] }}>{shown ? face : back}</Animated.View>;
 }
 
 /** Counts from 0 up to `value` when it first appears (台 and score changes on the result sheet). */
 export function useRollUp(value: number): number {
-  const [shown, setShown] = useState(0);
+  const reduced = useReducedMotion();
+  const [shown, setShown] = useState(reduced ? value : 0);
   useEffect(() => {
+    if (reduced) {
+      setShown(value);
+      return;
+    }
     const start = Date.now();
     const duration = rollUpMs(value);
     let id: ReturnType<typeof setTimeout> | null = null;
@@ -57,7 +74,7 @@ export function useRollUp(value: number): number {
     return () => {
       if (id) clearTimeout(id);
     };
-  }, [value]);
+  }, [value, reduced]);
   return shown;
 }
 

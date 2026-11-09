@@ -33,7 +33,8 @@
   "welcome": {
     "title": "歡迎！",
     "sub": "取個名字，挑個夥伴。",
-    "namePlaceholder": "你的名字"
+    "namePlaceholder": "你的名字",
+    "play": "開始打牌"
   },
   "resume": {
     "title": "牌局進行中",

@@ -4,6 +4,7 @@ import { useApp } from '../app-state';
 import { createOnlineSession } from '../game/session';
 import { useAuth } from '../auth/AuthProvider';
 import { friendlyError } from '../logic/errors';
+import { tableError } from '../components/table/tableErrors';
 import { rulesSummary } from '../logic/rules-text';
 import { useT } from '../i18n';
 import { useOnlineGuard } from '../legal/useOnlineGuard';
@@ -48,7 +49,8 @@ export function OnlineScreen() {
       app.setSession(session);
       app.go({ name: 'lobby' });
     } catch (e) {
-      setError(friendlyError(e, t));
+      // Join and create refusals (one seat per account, table gone or full, server or account at its limit) by code.
+      setError(tableError(e, t));
     } finally {
       setBusy(null);
     }

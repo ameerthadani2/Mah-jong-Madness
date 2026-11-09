@@ -9,14 +9,14 @@
     "revealed": "Revealed"
   },
   "leave": "Leave",
-  "roundChip": "風 · 第%{hand}局",
-  "dealerStreak": " · 連%{n}",
+  "roundChip": "wind · hand %{hand}",
+  "dealerStreak": " · dealer ×%{n}",
   "timeBank": "bank %{s}s",
   "seconds": "%{s}s",
   "status": {
-    "discarded": "%{name} 打出 %{tile}",
-    "addedKong": "（加槓）",
-    "turn": "輪到 %{name}"
+    "discarded": "%{name} discarded %{tile}",
+    "addedKong": " (added kong 加槓)",
+    "turn": "%{name}'s turn"
   },
   "tapHint": "Tap a tile, tap again to discard",
   "claim": {
@@ -30,7 +30,7 @@
   },
   "coach": {
     "title": "Coach",
-    "waits": "聽",
+    "waits": "Waits 聽",
     "taiItem": "%{name} %{tai}",
     "winPreview": "%{items} = %{tai} 台",
     "claimLine": "%{label}: %{reason}",
@@ -49,20 +49,20 @@
   },
   "seat": "Seat %{n}",
   "relSeat": {
-    "me": "你",
-    "right": "下家",
-    "across": "對家",
-    "left": "上家"
+    "me": "You",
+    "right": "Right 下家",
+    "across": "Across 對家",
+    "left": "Left 上家"
   },
-  "offline": "離線",
+  "offline": "Offline",
   "win": {
-    "title": "%{name} 胡牌",
-    "selfDrawn": "自摸",
-    "dealtIn": "%{name} 放槍",
+    "title": "%{name} wins (胡牌)",
+    "selfDrawn": "Self-drawn (自摸)",
+    "dealtIn": "%{name} dealt in (放槍)",
     "eightFlowers": "八仙過海",
     "sevenRob": "七搶一 · %{name}",
     "taiLabel": "台",
-    "tai": "%{tai} 台",
+    "tai": "%{tai} tai",
     "payment": "%{from} → %{to}: %{points} (%{tai} 台 incl. dealer)"
   },
   "result": {
@@ -150,6 +150,25 @@
     "tapToDiscard": "Tap again to discard",
     "tapToSelect": "Tap to select for discard",
     "emote": "Send emote %{name}",
-    "reportHint": "Long press to report this player"
-  }
+    "reportHint": "Long press to report this player",
+    "tileBack": "Face-down tile"
+  },
+  "leaveSheet": {
+    "title": "Leave the table?",
+    "bodyOnline": "A bot plays your seat while you are away. You can come back from Home with Resume. Abandoning gives up your seat for good.",
+    "bodyLocal": "The table waits for you. You can come back from Home with Resume. Abandoning ends this match.",
+    "stay": "Keep playing",
+    "away": "Back to Home",
+    "abandon": "Abandon table"
+  },
+  "claimGloss": {
+    "pass": "Pass",
+    "chi": "Chow",
+    "pong": "Pong",
+    "kong": "Kong",
+    "discard": "Discard",
+    "win": "Win",
+    "selfDrawWin": "Self-draw"
+  },
+  "autoDiscard": "Time ran out: %{tile} was discarded for you."
 }

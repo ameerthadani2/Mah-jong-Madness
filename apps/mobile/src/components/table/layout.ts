@@ -15,9 +15,10 @@ export interface TableLayout {
   /** The "X discarded Y" pill sits in the HUD on short screens instead of under the compass. */
   statusInHud: boolean;
   /**
-   * Claim and discard buttons: docked over the bottom of the centre column (my own pond, which no claim
-   * decision needs) in landscape, so they never cover a side opponent's pond; in portrait, a strip of their
-   * own between the felt and my hand, so they never cover the coach or a pond.
+   * Claim and discard buttons: in landscape, in the centre column just above my pond (tablets and tall
+   * landscape: floating over the empty felt above it; short landscape: a row of their own under the compass
+   * and my pond), so they never cover my pond or a side opponent's; in portrait, a strip of their own between
+   * the felt and my hand, so they never cover the coach or a pond.
    */
   actions: 'center' | 'strip';
   sideWidth: number;
@@ -96,40 +97,65 @@ export const COACH_MAX_ADVICE_LINES = 4;
 export interface CoachBudget {
   /** Lines for the status (0 hides it: a claim decision needs the reason more than the shanten count). */
   statusLines: number;
-  /** Lines for the advice (capped with an ellipsis); 0 hides the bubble rather than showing a clipped sliver. */
+  /** Advice lines on screen at once (more scroll inside the bubble, never cut); 0 hides the bubble rather than a sliver. */
   lines: number;
-  /** Cap on the bubble's height, so it can never run under the docked buttons; null while the column is unmeasured. */
+  /** Cap on the bubble's height, so it ends above my pond; null while the column is unmeasured. */
   maxHeight: number | null;
   /** Text only (no owl, no waits), with slim padding, so the words get the whole width when space is short. */
   textOnly: boolean;
-  /**
-   * Draw the bubble over the whole centre column (compass and my pond included), ending just above the docked
-   * buttons: neither is needed for a claim decision, and the extra width keeps the advice to fewer lines.
-   */
-  overlay: boolean;
 }
 
 /**
- * How much of the compact centre column (`columnH` px, measured, between the across seat's pond and the felt's
- * bottom edge) the coach bubble may take. While claim or discard buttons are docked over my pond the bubble is
- * drawn text-only across the whole column and must end above them, so the status line goes and the advice gets
- * the lines that fit (none hides it); under the smaller tap-hint pill the status keeps one line; otherwise the
- * bubble leaves one row of my pond visible. Before the column has been measured (0) the bubble is unconstrained.
+ * How much of the compact middle row's right-hand column (`columnH` px, measured: between the across seat's
+ * pond and the action dock, which now has a row of its own) the coach bubble may take above my pond (`pondH`,
+ * measured; one row before it is). It never covers my pond or the compass beside it. While claim or discard
+ * buttons are up the status gives way to the advice and the bubble goes text-only; under the tap-hint pill the
+ * status keeps one line. Advice longer than the lines that fit scrolls inside the bubble instead of being cut.
+ * Before the column has been measured (0) the bubble is unconstrained.
  */
-export function coachBudget(columnH: number, dock: ActionDock): CoachBudget {
-  if (columnH <= 0) return { statusLines: 2, lines: COACH_MAX_ADVICE_LINES, maxHeight: null, textOnly: false, overlay: false };
+export function coachBudget(columnH: number, dock: ActionDock, pondH = 0): CoachBudget {
+  if (columnH <= 0) return { statusLines: 2, lines: COACH_MAX_ADVICE_LINES, maxHeight: null, textOnly: false };
+  const pond = Math.max(pondH, tileDims('xs').h + 2) + 4;
+  const avail = Math.max(0, columnH - pond);
   if (dock === 'buttons') {
-    const avail = Math.max(0, columnH - ACTION_DOCK_H);
     const lines = Math.max(0, Math.min(COACH_MAX_ADVICE_LINES, Math.floor((avail - COACH_SLIM_CHROME_H) / COACH_ADVICE_LINE_H)));
-    return { statusLines: 0, lines, maxHeight: avail, textOnly: true, overlay: true };
+    return { statusLines: 0, lines, maxHeight: avail, textOnly: true };
   }
-  const pondRow = tileDims('xs').h + 4;
-  const reserved = dock === 'hint' ? TAP_HINT_DOCK_H : pondRow;
-  const avail = Math.max(0, columnH - reserved - 4);
   const statusLines = dock === 'hint' ? 1 : 2;
   const forAdvice = avail - COACH_BUBBLE_CHROME_H - statusLines * COACH_STATUS_LINE_H;
-  const lines = Math.max(1, Math.min(COACH_MAX_ADVICE_LINES, Math.floor(forAdvice / COACH_ADVICE_LINE_H)));
-  return { statusLines, lines, maxHeight: avail, textOnly: false, overlay: false };
+  const lines = Math.max(0, Math.min(COACH_MAX_ADVICE_LINES, Math.floor(forAdvice / COACH_ADVICE_LINE_H)));
+  if (lines === 0) {
+    // No room beside the owl: fall back to the slim text-only bubble before hiding it.
+    const slim = Math.max(0, Math.min(COACH_MAX_ADVICE_LINES, Math.floor((avail - COACH_SLIM_CHROME_H) / COACH_ADVICE_LINE_H)));
+    return { statusLines: 0, lines: slim, maxHeight: avail, textOnly: true };
+  }
+  return { statusLines, lines, maxHeight: avail, textOnly: false };
+}
+
+/** Height the landscape action dock takes: claim/discard buttons (larger on tablets), the tap-hint pill, or nothing. */
+export function dockHeight(dock: ActionDock, big: boolean): number {
+  return dock === 'buttons' ? (big ? ACTION_DOCK_H + 10 : ACTION_DOCK_H) : dock === 'hint' ? TAP_HINT_DOCK_H : 0;
+}
+
+/** Short landscape: the compass shrinks to the middle row's height (`rowH`, measured) and goes when under 40 px. */
+export function compactCompassSize(rowH: number, max: number): number {
+  if (rowH <= 0) return max;
+  const s = Math.min(max, rowH - 6);
+  return s >= 40 ? s : 0;
+}
+
+/**
+ * Portrait: the wall ring around the compass is the felt's one stretchable piece. Given the ring's current size
+ * and the felt's measured content and viewport heights, the size that makes the content fit (it grows back
+ * when there is room again, never past `max`); below `min` the ring is dropped and the compass stands alone
+ * (returns 0), so my pond is never scrolled out of the felt late in a hand.
+ */
+export function fitWallSize(current: number, contentH: number, viewH: number, max: number, min: number): number {
+  if (contentH <= 0 || viewH <= 0) return current;
+  // Without the ring, bring it back only when there is room for the whole of it (no flicker at the edge).
+  if (current <= 0) return viewH - contentH >= min ? min : 0;
+  const next = Math.min(max, current - (contentH - viewH));
+  return next >= min ? Math.round(next) : 0;
 }
 
 /**
@@ -192,4 +218,14 @@ export const MIN_TOUCH = 44;
 /** hitSlop that grows a `size`-point control to at least MIN_TOUCH. */
 export function slopFor(size: number, atLeast = 0): number {
   return Math.max(atLeast, Math.ceil((MIN_TOUCH - size) / 2));
+}
+
+/**
+ * Tablets in landscape: the wall ring's size from the centre column's measured height, less the across seat
+ * and my pond (and the column's gaps); 0 (the compass alone) when not even `min` fits. Unmeasured: `max`.
+ */
+export function landscapeWallSize(columnH: number, topH: number, pondH: number, max: number, min: number): number {
+  if (columnH <= 0 || topH <= 0) return max;
+  const room = Math.min(max, columnH - topH - pondH - 24);
+  return room >= min ? Math.round(room) : 0;
 }

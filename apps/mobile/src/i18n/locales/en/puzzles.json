@@ -30,7 +30,11 @@
     "backToLearn": "Back to Learn",
     "progress": "Puzzle %{n} · %{type}",
     "solved": "%{n} solved",
-    "bestScore": "Best %{n} points"
+    "bestScore": "Best %{n} points",
+    "leaveTitle": "End this run?",
+    "leaveBody": "Leaving ends the run now with %{n} solved. It is recorded, and it counts as today's run.",
+    "leaveYes": "End run",
+    "leaveNo": "Keep going"
   },
   "view": {
     "next": "Next",
@@ -140,5 +144,15 @@
   "rating": {
     "pill": "Rating %{n}",
     "after": "Rating %{n} (%{delta})"
+  },
+  "foot": {
+    "title": "Your puzzle record",
+    "rating": "Rating",
+    "streak": "Day streak",
+    "rushBest": "Rush best",
+    "accuracy": "Drill accuracy",
+    "tip1": "Tip: count the tiles you can still draw. A wait on four live tiles beats a prettier wait on one.",
+    "tip2": "Tip: break up isolated honours early; keep tiles that connect to pairs and runs.",
+    "tip3": "Tip: when an opponent has three melds out, the tiles they already discarded are your safest."
   }
 }

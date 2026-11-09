@@ -58,7 +58,8 @@ const visible = async (page, sel) => {
     if ((el = await visible(page, 'text=/胡!/'))) { await tap(page, el); stats.wins++; await page.waitForTimeout(400); continue; }
     if ((el = await visible(page, 'text="過"'))) { await tap(page, el); stats.passes++; await page.waitForTimeout(300); continue; }
     if ((el = await visible(page, 'text="打"'))) { await tap(page, el); stats.discards++; await page.waitForTimeout(300); continue; }
-    if (await visible(page, 'text=Tap a tile, tap again to discard')) {
+    // My discard turn: the first-game tap hint, or (once it has retired) the hand marked for discarding.
+    if ((await visible(page, 'text=Tap a tile, tap again to discard')) || (await visible(page, '[data-testid="hand-discard"]'))) {
       const boxes = await page.$$eval('[data-testid^="tile-"]:not([data-testid="tile-back"])', (els) =>
         els.map((e) => { const r = e.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; }));
       const maxW = Math.max(...boxes.map((b) => b.w));

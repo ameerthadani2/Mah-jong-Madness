@@ -7,9 +7,13 @@
  *   npm run e2e:screens                                           (both steps)
  *
  * Writes <dir>/<width>x<height>-<screen>.png for home, table-mid, table-selected, table-claim (when a claim
- * came up), callout and win-hold (when they came up), result, review, learn, lesson, shop and settings. Each viewport plays one hand against bots in
- * its own browser context, all in parallel. Set SCREENS_SIZES=390x844,667x375 to capture a subset.
- * Exits non-zero if a viewport cannot reach the result sheet or the page throws.
+ * came up), callout and win-hold (when they came up), result, review, learn, lesson, shop and settings, plus
+ * exit-sheet (the red exit icon's confirmation) and, for each landscape viewport, table-xl (Extra-large tiles).
+ * Each viewport plays one hand against bots in its own browser context, all in parallel. Set
+ * SCREENS_SIZES=390x844,667x375 to capture a subset.
+ * Exits non-zero if a viewport cannot reach the result sheet, the page throws, or a hard check fails (one tap on
+ * the exit icon leaves the table, the English claim buttons carry no gloss, an Extra-large hand scrolls or runs
+ * off screen).
  */
 const http = require('http');
 const fs = require('fs');
@@ -60,6 +64,8 @@ const tapSel = async (page, sel, wait = 900) => {
 async function run(browser, port, [w, h]) {
   const tag = `${w}x${h}`;
   const notes = [];
+  // Hard checks: any entry fails the run.
+  const fails = [];
   const ctx = await browser.newContext({ viewport: { width: w, height: h } });
   await ctx.addInitScript(() => {
     localStorage.setItem('mjm.profile', JSON.stringify({ userId: 'user-e2e-1234567', userSecret: '0123456789abcdef0123456789abcdef', name: 'Tester', avatar: 'panda' }));
@@ -87,7 +93,12 @@ async function run(browser, port, [w, h]) {
     let el;
     if ((el = await visible(page, 'text=/胡!/'))) { await tap(page, el); await page.waitForTimeout(400); continue; }
     if ((el = await visible(page, 'text="過"'))) {
-      if (!done.has('claim')) { done.add('claim'); await shot('table-claim'); }
+      if (!done.has('claim')) {
+        done.add('claim');
+        await shot('table-claim');
+        // English players see a gloss on the Chinese claim verbs ("Pass 過").
+        if (!(await visible(page, '[data-testid="claim-pass"] >> text=Pass'))) fails.push('claim buttons carry no English gloss');
+      }
       await tap(page, el);
       await page.waitForTimeout(300);
       continue;
@@ -97,10 +108,20 @@ async function run(browser, port, [w, h]) {
       await tap(page, el);
       discards++;
       if (discards === 6) { await page.waitForTimeout(900); await shot('table-mid'); done.add('mid'); }
+      if (discards === 4 && !done.has('exit-sheet')) {
+        // The red exit icon asks first: one tap must not leave the table.
+        done.add('exit-sheet');
+        await tapSel(page, '[data-testid="leave-table"]', 700);
+        if (!(await visible(page, '[data-testid="leave-sheet"]'))) fails.push('exit icon left without asking');
+        await shot('exit-sheet');
+        await tapSel(page, '[data-testid="leave-stay"]', 500);
+        if (!(await visible(page, '[data-testid="leave-table"]'))) fails.push('keep playing did not return to the table');
+      }
       await page.waitForTimeout(300);
       continue;
     }
-    if (await visible(page, 'text=Tap a tile, tap again to discard')) {
+    // My discard turn: the first-game tap hint, or (once it has retired) the hand marked for discarding.
+    if ((await visible(page, 'text=Tap a tile, tap again to discard')) || (await visible(page, '[data-testid="hand-discard"]'))) {
       const boxes = await page.$$eval('[data-testid^="tile-"]:not([data-testid="tile-back"])', (els) =>
         els.map((e) => { const r = e.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; }));
       const maxW = Math.max(...boxes.map((b) => b.w));
@@ -123,7 +144,10 @@ async function run(browser, port, [w, h]) {
       await shot('review');
       await tapSel(page, '[data-testid="back"]', 900);
     } else notes.push('no review button');
-    if (!(await tapSel(page, 'text=Leave table', 1200))) await tapSel(page, '[data-testid="leave-table"]', 1200);
+    if (!(await tapSel(page, 'text=Leave table', 1200))) {
+      await tapSel(page, '[data-testid="leave-table"]', 700);
+      await tapSel(page, '[data-testid="leave-confirm"]', 1200);
+    }
   }
   await page.waitForSelector('[data-testid="start-match"]', { timeout: 15000 }).catch(() => notes.push('did not return home'));
 
@@ -147,18 +171,70 @@ async function run(browser, port, [w, h]) {
   } else notes.push('no settings button');
 
   await ctx.close();
-  return { size: tag, finished, discards, shots: [...done], notes, errors };
+  return { size: tag, finished, discards, shots: [...done], notes, fails, errors };
+}
+
+/**
+ * Extra-large tiles in landscape: a table at Settings → Display → Tiles: Extra large, a few turns in, captured as
+ * <size>-table-xl.png. Fails if the hand rail scrolls sideways (a hand tile off the rail) or a hand tile is off screen.
+ */
+async function runXL(browser, port, [w, h]) {
+  const tag = `${w}x${h}`;
+  const fails = [];
+  const ctx = await browser.newContext({ viewport: { width: w, height: h } });
+  await ctx.addInitScript(() => {
+    localStorage.setItem('mjm.profile', JSON.stringify({ userId: 'user-e2e-1234567', userSecret: '0123456789abcdef0123456789abcdef', name: 'Tester', avatar: 'panda' }));
+    localStorage.setItem('mjm.display', JSON.stringify({ tileScale: 1.5, textScale: 1.3 }));
+  });
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await page.goto(`http://localhost:${port}/`);
+  await page.waitForSelector('[data-testid="start-match"]', { timeout: 30000 });
+  await tapSel(page, '[data-testid="start-match"]', 300);
+  await page.waitForSelector('[data-testid^="tile-"]', { timeout: 15000 });
+  let discards = 0;
+  const started = Date.now();
+  while (discards < 5 && Date.now() - started < 90000) {
+    if (await visible(page, 'text=Next hand')) break;
+    let el;
+    if ((el = await visible(page, 'text="過"'))) { await tap(page, el); await page.waitForTimeout(300); continue; }
+    if ((el = await visible(page, 'text="打"'))) { await tap(page, el); discards++; await page.waitForTimeout(300); continue; }
+    if ((await visible(page, 'text=Tap a tile, tap again to discard')) || (await visible(page, '[data-testid="hand-discard"]'))) {
+      const boxes = await page.$$eval('[data-testid^="tile-"]:not([data-testid="tile-back"])', (els) => els.map((e) => { const r = e.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; }));
+      const maxW = Math.max(...boxes.map((b) => b.w));
+      const hand = boxes.filter((b) => b.w >= maxW * 0.9).sort((a, b) => b.y - a.y || b.x - a.x);
+      if (hand[0]) await page.mouse.click(hand[0].x + hand[0].w / 2, hand[0].y + hand[0].h / 2);
+      await page.waitForTimeout(250);
+      continue;
+    }
+    await page.waitForTimeout(300);
+  }
+  await page.waitForTimeout(500);
+  await page.screenshot({ path: path.join(out, `${tag}-table-xl.png`) });
+  if (await page.$('[data-testid="hand-scroll"]')) fails.push('extra-large hand scrolls sideways');
+  const off = await page.$$eval('[data-testid="hand"] [data-testid^="tile-"], [data-testid="hand-discard"] [data-testid^="tile-"]', (els) =>
+    els.filter((e) => { const r = e.getBoundingClientRect(); return r.right > innerWidth + 1 || r.left < -1 || r.bottom > innerHeight + 1; }).length,
+  );
+  if (off) fails.push(`${off} extra-large hand tiles off screen`);
+  await ctx.close();
+  return { size: `${tag} xl`, finished: true, discards, shots: ['table-xl'], notes: [], fails, errors };
 }
 
 (async () => {
   await new Promise((r) => server.listen(0, r));
   const port = server.address().port;
   const browser = await chromium.launch(process.env.PW_CHROMIUM ? { executablePath: process.env.PW_CHROMIUM } : {});
-  const results = await Promise.all(SIZES.map((s) => run(browser, port, s).catch((e) => ({ size: `${s[0]}x${s[1]}`, finished: false, notes: [e.message], errors: [] }))));
+  // Large tiles in landscape: the landscape viewports again at Extra-large.
+  const XL = SIZES.filter(([w, h]) => w > h);
+  const results = await Promise.all([
+    ...SIZES.map((s) => run(browser, port, s).catch((e) => ({ size: `${s[0]}x${s[1]}`, finished: false, notes: [e.message], errors: [] }))),
+    ...XL.map((s) => runXL(browser, port, s).catch((e) => ({ size: `${s[0]}x${s[1]} xl`, finished: false, notes: [e.message], errors: [] }))),
+  ]);
   for (const r of results) console.log(JSON.stringify(r));
   await browser.close();
   server.close();
-  process.exit(results.every((r) => r.finished && r.errors.length === 0) ? 0 : 1);
+  process.exit(results.every((r) => r.finished && r.errors.length === 0 && (r.fails || []).length === 0) ? 0 : 1);
 })().catch((e) => {
   console.error('SCREENS FAIL', e.message);
   process.exit(1);

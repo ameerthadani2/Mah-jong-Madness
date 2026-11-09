@@ -14,6 +14,8 @@ import { Tile } from '../Tile';
 import { StrokeText } from '../Ui';
 import { calloutMs, FLIP_STAGGER_MS } from './feel';
 import { Flip, NATIVE } from './Motion';
+import { useReducedMotion } from '../../display/reducedMotion';
+import { announce } from './announce';
 
 export interface Callout {
   call: CallKind;
@@ -25,12 +27,25 @@ const TONE: Record<CallKind, string> = { chi: colors.info, pong: colors.cta, kon
 
 export function CallBanner({ callout, name, onDone, small }: { callout: Callout; name: string; onDone: () => void; /** Short screens: a smaller banner that covers less of the felt. */ small?: boolean }) {
   const { t } = useT();
-  const p = useRef(new Animated.Value(0)).current;
+  const reduced = useReducedMotion();
+  const p = useRef(new Animated.Value(reduced ? 1 : 0)).current;
   const done = useRef(onDone);
   done.current = onDone;
+  const word = t(`table.callout.${callout.call}`);
+  const label = t('table.a11y.callout', { name, call: word });
+  const spoken = useRef(label);
+  spoken.current = label;
   useEffect(() => {
-    p.setValue(0);
+    // VoiceOver ignores the live region below: say it on iOS.
+    announce(spoken.current);
     const total = calloutMs(callout.call);
+    if (reduced) {
+      // Reduce motion: the banner simply shows for its time, then goes.
+      p.setValue(1);
+      const id = setTimeout(() => done.current(), total);
+      return () => clearTimeout(id);
+    }
+    p.setValue(0);
     const anim = Animated.sequence([
       Animated.spring(p, { toValue: 1, friction: 5, tension: 140, useNativeDriver: NATIVE }),
       Animated.delay(Math.max(0, total - 520)),
@@ -38,16 +53,15 @@ export function CallBanner({ callout, name, onDone, small }: { callout: Callout;
     ]);
     anim.start(({ finished }) => finished && done.current());
     return () => anim.stop();
-  }, [callout.key, callout.call, p]);
+  }, [callout.key, callout.call, p, reduced]);
   const scale = p.interpolate({ inputRange: [0, 1, 2], outputRange: [0.4, 1, 1.15] });
   const opacity = p.interpolate({ inputRange: [0, 0.3, 1, 2], outputRange: [0, 1, 1, 0] });
-  const word = t(`table.callout.${callout.call}`);
   return (
     <Animated.View
       pointerEvents="none"
       testID="call-banner"
       accessibilityLiveRegion="assertive"
-      accessibilityLabel={t('table.a11y.callout', { name, call: word })}
+      accessibilityLabel={label}
       style={[styles.banner, small && styles.bannerSmall, { backgroundColor: TONE[callout.call], opacity, transform: [{ scale }] }]}
     >
       <StrokeText style={small ? styles.wordSmall : styles.word} strokeWidth={small ? 2.5 : 3} drop={small ? 2 : 2.5}>

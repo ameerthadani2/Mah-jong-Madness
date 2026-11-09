@@ -12,6 +12,10 @@ import { Emote } from './Emotes';
 import { SeatMotion, type SeatReaction } from './SeatMotion';
 import { SlideIn } from './table/Motion';
 import { FeltPattern } from './FeltPattern';
+import { useCountdown } from '../game/useTable';
+import { clockUrgent, timerFraction, type TurnClock } from './table/turnClock';
+import { reactionShouldPlay } from './table/feel';
+import { slopFor } from './table/layout';
 
 export function MeldView({ meld, size = 'sm' }: { meld: Meld; size?: TileSize | number }) {
   // Another seat's concealed kong arrives as placeholders until the hand ends: show all four face down.
@@ -80,6 +84,15 @@ export function DiscardPool({ tiles, size = 'xs', perRow = 8, latest, align = 'f
   );
 }
 
+/**
+ * The seat's portrait with its timer ring. The ring counts the turn clock down here, so only this plate
+ * re-renders every second, never the table around it.
+ */
+function SeatPlate({ clock, ...plate }: Omit<React.ComponentProps<typeof AvatarPlate>, 'timer' | 'timerUrgent'> & { clock: TurnClock | null }) {
+  const left = useCountdown(clock?.deadline ?? null);
+  return <AvatarPlate {...plate} timer={clock ? timerFraction(left, clock) : null} timerUrgent={clock ? clockUrgent(left, clock) : false} />;
+}
+
 /** Avatar plate with name tag, score, dealer and wind badges, turn ring and emote bubble. */
 export function SeatBadge({
   seat,
@@ -91,14 +104,14 @@ export function SeatBadge({
   compact,
   viewerSeat,
   size = 40,
-  timer,
-  timerUrgent,
+  clock,
   emote,
   vertical,
   maxNameWidth = 110,
   reaction,
   onLongPress,
   onLongPressHint,
+  frame,
 }: {
   seat: number;
   info?: SeatInfo;
@@ -109,8 +122,8 @@ export function SeatBadge({
   compact?: boolean;
   viewerSeat: number;
   size?: number;
-  timer?: number | null;
-  timerUrgent?: boolean;
+  /** This seat's turn clock while it is on the clock (the plate's ring counts it down on its own). */
+  clock?: TurnClock | null;
   emote?: string;
   vertical?: boolean;
   maxNameWidth?: number;
@@ -119,6 +132,8 @@ export function SeatBadge({
   /** Long-press action on the portrait (online tables: report this player). */
   onLongPress?: () => void;
   onLongPressHint?: string;
+  /** An owned avatar frame to draw round the portrait (the player's own seat). */
+  frame?: string | null;
 }) {
   const wind = WINDS[(seat - dealerSeat + 4) % 4];
   const rel = (seat - viewerSeat + 4) % 4;
@@ -129,7 +144,8 @@ export function SeatBadge({
   // Win and deal-in reactions switch the portrait to its win/lose clip for a few seconds (if it has clips).
   const [mood, setMood] = useState<AvatarMood | null>(null);
   useEffect(() => {
-    if (!reaction) return;
+    // Only a fresh reaction: a plate remounted by a rotation or resize keeps its usual face.
+    if (!reaction || !reactionShouldPlay(reaction, false, Date.now())) return;
     const m: AvatarMood | null = reaction.kind === 'win' || reaction.kind === 'selfdraw' ? 'win' : reaction.kind === 'dealin' ? 'lose' : null;
     if (!m) return;
     setMood(m);
@@ -140,9 +156,9 @@ export function SeatBadge({
   void compact;
   return (
     <View style={[styles.seat, vertical && styles.seatVertical]}>
-      <Pressable onLongPress={onLongPress} disabled={!onLongPress} accessibilityRole={onLongPress ? 'button' : undefined} accessibilityLabel={name} accessibilityHint={onLongPress ? onLongPressHint : undefined}>
+      <Pressable onLongPress={onLongPress} disabled={!onLongPress} hitSlop={slopFor(size)} accessibilityRole={onLongPress ? 'button' : undefined} accessibilityLabel={name} accessibilityHint={onLongPress ? onLongPressHint : undefined}>
         <SeatMotion size={size} seat={seat} active={isTurn && !offline} reaction={reaction}>
-          <AvatarPlate id={seatAvatarId(info, seat)} size={size} active={isTurn} timer={isTurn ? timer : null} timerUrgent={timerUrgent} dealer={seat === dealerSeat} wind={wind} offline={offline} mood={mood} />
+          <SeatPlate clock={isTurn ? (clock ?? null) : null} id={seatAvatarId(info, seat)} size={size} active={isTurn} dealer={seat === dealerSeat} wind={wind} offline={offline} mood={mood} frame={frame} />
         </SeatMotion>
         {emote && (
           <View style={[styles.bubble, { left: size * 0.6, top: -size * 0.55 }]}>
