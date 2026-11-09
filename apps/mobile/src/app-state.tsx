@@ -12,6 +12,7 @@ import { requestPushAfterClub } from './push/hub';
 export type Screen =
   | { name: 'home' }
   | { name: 'online' }
+  | { name: 'quickmatch' }
   | { name: 'clubs' }
   | { name: 'club'; code: string }
   | { name: 'lobby' }

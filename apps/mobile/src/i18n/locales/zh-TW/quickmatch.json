@@ -1,0 +1,30 @@
+{
+  "_review": "first pass, needs native review",
+  "button": "快速配對",
+  "buttonHint": "馬上和其他玩家對戰，空位由電腦補上。",
+  "title": "快速配對",
+  "rules": "台灣十六張標準規則，一般速度。電腦玩家都有清楚標示。",
+  "connecting": "正在連線遊戲伺服器…",
+  "searching": "正在尋找玩家…",
+  "humans": {
+    "one": "已找到 1 位玩家（你）",
+    "other": "已找到 %{count} 位玩家"
+  },
+  "waited": "已等待 %{seconds} 秒",
+  "botsNote": "%{seconds} 秒後由電腦補滿空位",
+  "botsSoon": "電腦將在 %{seconds} 秒後加入",
+  "matched": "找到牌桌了！正在入座…",
+  "cancel": "取消",
+  "retry": "再試一次",
+  "a11y": {
+    "status": "%{found}。%{waited}。"
+  },
+  "errors": {
+    "banned": "這個帳號已被禁止線上遊戲。如果你認為有誤，請聯絡客服。",
+    "rateLimited": "嘗試次數太多了，請稍等幾秒再試。",
+    "unavailable": "目前無法快速配對，請稍後再試。",
+    "replaced": "你在另一台裝置開始了快速配對，所以這裡的配對已停止。",
+    "signIn": "請先登入再使用快速配對。",
+    "ageSync": "無法向伺服器確認你的年齡，請再試一次。"
+  }
+}

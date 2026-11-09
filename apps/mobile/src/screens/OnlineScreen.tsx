@@ -69,6 +69,16 @@ export function OnlineScreen() {
           {t('online.note')}
         </P>
       </View>
+      <Card tone="gold" testID="online-quickmatch">
+        <Row style={{ flexWrap: 'wrap', rowGap: 8 }}>
+          <Icon name="users" size={26} color={colors.cta} />
+          <View style={{ flex: 1, minWidth: 180 }}>
+            <H2>{t('online.quick.title')}</H2>
+            <P dim style={{ fontSize: 13 }}>{t('online.quick.body')}</P>
+          </View>
+          <Button testID="online-quickmatch-button" title={t('online.quick.button')} onPress={() => app.go({ name: 'quickmatch' })} disabled={busy !== null} />
+        </Row>
+      </Card>
       <View style={styles.cols}>
         <Card style={styles.col}>
           <Row>

@@ -26,5 +26,16 @@
     "tableClosedByClub": "The club closed this table.",
     "evictedByClub": "The club removed you from this table.",
     "clubDeleted": "The club was deleted, so this table has closed."
+  },
+  "quick": {
+    "title": "Quick match",
+    "body": "Seated with other players in seconds; bots fill empty seats after 20 seconds.",
+    "button": "Quick match"
+  },
+  "block": {
+    "button": "Block %{name}",
+    "busy": "Blocking…",
+    "done": "Blocked. You won't see their chat or emotes, and quick match won't seat you together.",
+    "undo": "Unblock"
   }
 }

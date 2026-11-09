@@ -105,6 +105,11 @@ export function HomeScreen() {
     if (needsName) saveName();
     app.go({ name: 'online' });
   };
+  // Quick match: the screen itself runs the online guard (age gate, update block, sign-in) before it queues.
+  const goQuickMatch = () => {
+    if (needsName) saveName();
+    app.go({ name: 'quickmatch' });
+  };
 
   const phoneLand = wide && !tablet;
   const windowH = tablet ? Math.min(250, Math.round(height * 0.28)) : wide ? Math.max(70, Math.min(150, Math.round(height * 0.22))) : 104;
@@ -141,6 +146,7 @@ export function HomeScreen() {
       )}
       <View style={styles.cardFoot}>
         <Button testID="open-clubs" title={t('home.clubs.open')} kind="secondary" small={compact} large={tablet} onPress={goClubs} />
+        <Button testID="open-quickmatch" title={t('quickmatch.button')} icon="users" accessibilityLabel={`${t('quickmatch.button')}. ${t('quickmatch.buttonHint')}`} small={compact} large={tablet} onPress={goQuickMatch} />
         {!compact && (
           <Pressable onPress={goOnline} hitSlop={slopFor(20)} style={styles.link} accessibilityRole="link" accessibilityLabel={t('home.clubs.quickTable')}>
             <Icon name="users" size={18} />

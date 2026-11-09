@@ -46,6 +46,9 @@ import { emoteChoices } from '../monetisation/equipped';
 import { useOwnedEquipped } from '../monetisation/useEquipped';
 import { useT } from '../i18n';
 import { ReportPlayerSheet } from '../components/ReportPlayerSheet';
+import { hideBlocked, useBlockedIds } from '../api/blocks';
+import { httpBase } from '../api/http';
+import { useAuth } from '../auth/AuthProvider';
 import type { ReportTarget } from '../legal/reports';
 
 /** How long an emote bubble and a chat line stay on screen. */
@@ -90,6 +93,9 @@ export function TableScreen() {
   const coachAllowed = session?.mode === 'local';
   // Online only: a long press on an opponent's portrait opens the report sheet (bots and the local table have no one to report).
   const [reporting, setReporting] = useState<ReportTarget | null>(null);
+  // Players this account blocked: their chat lines and emotes are not shown (src/api/blocks.ts).
+  const auth = useAuth();
+  const blocked = useBlockedIds(session?.mode === 'online' && auth.user ? { base: httpBase(app.signalUrl), auth: auth.client } : null, session?.mode === 'online' ? (auth.user?.id ?? null) : null);
   const [coachWanted, setCoachOpen] = useState(app.settings.coach);
   const coachOpen = coachAllowed && coachWanted;
   const [emotePicker, setEmotePicker] = useState(false);
@@ -277,7 +283,7 @@ export function TableScreen() {
   const seatName = (seat: number) => seatInfo(seat)?.name ?? t('table.seat', { n: seat + 1 });
   const now = Date.now();
   const latestEmote = (seat: number) => {
-    const e = [...state.emotes].reverse().find((x) => x.seat === seat && now - x.at < EMOTE_MS);
+    const e = hideBlocked(state.emotes, state.seats, blocked).reverse().find((x) => x.seat === seat && now - x.at < EMOTE_MS);
     return e?.emote;
   };
   const rules = state.rules;
@@ -305,7 +311,7 @@ export function TableScreen() {
     frame: seat === mySeat ? equipped.frame : null,
   });
 
-  const recentChat = state.chat.filter((c) => now - c.at < CHAT_MS).slice(-3);
+  const recentChat = hideBlocked(state.chat, state.seats, blocked).filter((c) => now - c.at < CHAT_MS).slice(-3);
   const relWind = (r: number) => WINDS[(seatAt(r) - view.dealerSeat + 4) % 4];
   const activeRel = turnSeat === null ? null : (turnSeat - mySeat + 4) % 4;
   const compass = <Compass prevailing={WINDS[view.prevailingWind]} drawsLeft={view.drawsLeft} seatWinds={[relWind(0), relWind(1), relWind(2), relWind(3)]} active={activeRel} size={L.compassSize} />;

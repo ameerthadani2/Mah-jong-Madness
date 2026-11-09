@@ -1,0 +1,30 @@
+{
+  "_review": "n/a",
+  "button": "Quick match",
+  "buttonHint": "Play with people now. Bots fill empty seats.",
+  "title": "Quick match",
+  "rules": "Standard Taiwanese rules at Normal speed. Bots are clearly labelled.",
+  "connecting": "Connecting to the game server…",
+  "searching": "Finding players…",
+  "humans": {
+    "one": "1 player found (you)",
+    "other": "%{count} players found"
+  },
+  "waited": "Waiting %{seconds} s",
+  "botsNote": "Bots fill empty seats after %{seconds} seconds",
+  "botsSoon": "Bots join in %{seconds} s",
+  "matched": "Table found! Taking your seat…",
+  "cancel": "Cancel",
+  "retry": "Try again",
+  "a11y": {
+    "status": "%{found}. %{waited}."
+  },
+  "errors": {
+    "banned": "This account has been banned from online play. If you think this is a mistake, contact support.",
+    "rateLimited": "Too many tries in a row. Please wait a few seconds and try again.",
+    "unavailable": "Quick match is not available right now. Please try again in a moment.",
+    "replaced": "You started quick match on another device, so this search stopped.",
+    "signIn": "Sign in to play quick match.",
+    "ageSync": "We could not confirm your age with the server. Please try again."
+  }
+}

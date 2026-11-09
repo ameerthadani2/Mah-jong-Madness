@@ -20,6 +20,7 @@ import { SkyBackdrop, TableBackdrop } from './src/components/Backdrop';
 import { Logo } from './src/components/Logo';
 import { HomeScreen } from './src/screens/HomeScreen';
 import { OnlineScreen } from './src/screens/OnlineScreen';
+import { QuickMatchScreen } from './src/screens/QuickMatchScreen';
 import { LobbyScreen } from './src/screens/LobbyScreen';
 import { TableScreen } from './src/screens/TableScreen';
 import { LearnScreen, LessonScreen } from './src/screens/LearnScreen';
@@ -47,6 +48,8 @@ function Router() {
       return <HomeScreen />;
     case 'online':
       return <OnlineScreen />;
+    case 'quickmatch':
+      return <QuickMatchScreen />;
     case 'clubs':
       return <ClubsScreen />;
     case 'club':

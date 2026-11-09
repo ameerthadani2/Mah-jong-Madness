@@ -6,12 +6,15 @@
  *   <ReportPlayerSheet visible={!!target} target={target} onClose={() => setTarget(null)} />
  *
  * with `target = { userId, name, roomCode?, clubCode? }` for a seated human (never a bot).
+ * It also offers to block the player (src/api/blocks.ts): their chat and emotes disappear from
+ * the table at once, and quick match never seats the two together.
  */
 import React, { useEffect, useState } from 'react';
 import { Modal, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { useApp } from '../app-state';
 import { useAuth } from '../auth/AuthProvider';
 import { clubsApi, httpBase } from '../api/clubs';
+import { blockedStore, useBlockedIds } from '../api/blocks';
 import { friendlyError } from '../logic/errors';
 import { useT } from '../i18n';
 import { buildReport, REPORT_NOTE_MAX, REPORT_REASONS, type ReportReason, type ReportTarget } from '../legal/reports';
@@ -26,6 +29,24 @@ export function ReportPlayerSheet({ visible, target, onClose }: { visible: boole
   const [note, setNote] = useState('');
   const [state, setState] = useState<'idle' | 'sending' | 'sent'>('idle');
   const [error, setError] = useState<string | null>(null);
+  const [blocking, setBlocking] = useState(false);
+  const blocksCtx = { base: httpBase(app.signalUrl), auth: auth.client };
+  const blocked = useBlockedIds(auth.user ? blocksCtx : null, auth.user?.id ?? null);
+  const isBlocked = !!target && blocked.has(target.userId);
+  const toggleBlock = async () => {
+    if (!target) return;
+    setBlocking(true);
+    setError(null);
+    try {
+      await auth.client.ensureSession();
+      if (isBlocked) await blockedStore.unblock(blocksCtx, target.userId);
+      else await blockedStore.block(blocksCtx, target.userId);
+    } catch (e) {
+      setError(friendlyError(e, t));
+    } finally {
+      setBlocking(false);
+    }
+  };
 
   // A fresh form for every player reported.
   useEffect(() => {
@@ -83,9 +104,19 @@ export function ReportPlayerSheet({ visible, target, onClose }: { visible: boole
                   style={styles.input}
                 />
                 {error && <Pill tone="danger" icon="warning" text={error} />}
-                <Row>
+                {isBlocked ? <Pill tone="ok" icon="check" wrap text={t('online.block.done')} /> : null}
+                <Row style={{ flexWrap: 'wrap', rowGap: 8 }}>
                   <Button testID="report-send" title={state === 'sending' ? t('legal.report.sending') : t('legal.report.send')} onPress={() => void send()} disabled={!payload || state === 'sending'} />
                   <Button kind="ghost" title={t('legal.report.cancel')} onPress={onClose} />
+                  <Button
+                    testID="report-block"
+                    kind="secondary"
+                    small
+                    icon={isBlocked ? undefined : 'cross'}
+                    title={blocking ? t('online.block.busy') : isBlocked ? t('online.block.undo') : t('online.block.button', { name: target?.name ?? '' })}
+                    onPress={() => void toggleBlock()}
+                    disabled={!target || blocking || target.userId === auth.user?.id}
+                  />
                 </Row>
               </>
             )}
