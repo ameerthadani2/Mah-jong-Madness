@@ -352,6 +352,9 @@ export class ClubRegistry {
   writeCount = 0;
   private readonly listeners = new Set<(ev: ClubEvent) => void>();
   private readonly retryDelayMs: number;
+  /** Whether a club owner holds The Four Winds Club; null while the store is not live (no check). */
+  private ownerPlan: ((userId: string) => Promise<boolean>) | null = null;
+  private planCheck: Promise<void> | null = null;
 
   constructor(opts: { store?: ClubStore; now?: () => number; randomHex?: HexSource; retryDelayMs?: number } = {}) {
     this.now = opts.now ?? Date.now;
@@ -363,6 +366,73 @@ export class ClubRegistry {
   /** Clubs whose last write failed and have not been written since (tests and diagnostics). */
   get unsaved(): string[] {
     return [...this.dirty.keys()];
+  }
+
+  /**
+   * Decision 5: once the store is live, owning a club needs The Four Winds Club. `hasPlan` says
+   * whether an account holds it (the wallet); null turns the check off (development, pre-store
+   * builds), and every club keeps its full table cap.
+   */
+  useOwnerPlan(hasPlan: ((userId: string) => Promise<boolean>) | null): void {
+    this.ownerPlan = hasPlan;
+  }
+
+  /** True while the owner-plan check is on (the store is live). */
+  get ownerPlanRequired(): boolean {
+    return this.ownerPlan !== null;
+  }
+
+  /**
+   * Bring one club's record of its owner's plan up to date: cleared while the plan is active, set
+   * to now the first time it is seen missing (the 7-day grace starts then). A lapse already on
+   * record is kept while the plan stays missing, so passing the club back and forth between two
+   * accounts without a plan never starts a new grace. A wallet that cannot answer changes nothing.
+   */
+  async refreshOwnerPlan(code: string): Promise<void> {
+    const check = this.ownerPlan;
+    const club = this.clubs.get(code.toUpperCase());
+    if (!check || !club) return;
+    let active: boolean;
+    try {
+      active = await check(club.ownerId);
+    } catch (e) {
+      console.error(`[signal] owner plan check for club ${club.code} failed:`, (e as Error).message);
+      return;
+    }
+    // The club may have been deleted or passed on while the wallet answered.
+    const current = this.clubs.get(club.code);
+    if (current !== club) return;
+    const next = active ? null : (club.ownerLapsedAt ?? this.now());
+    if (next === (club.ownerLapsedAt ?? null)) return;
+    club.ownerLapsedAt = next;
+    this.persist(club);
+  }
+
+  /** Check every club's owner (the hourly pruner runs this). One run at a time. */
+  checkOwnerPlans(): Promise<void> {
+    if (!this.ownerPlan) return Promise.resolve();
+    this.planCheck ??= (async () => {
+      try {
+        for (const code of [...this.clubs.keys()]) await this.refreshOwnerPlan(code);
+      } finally {
+        this.planCheck = null;
+      }
+    })();
+    return this.planCheck;
+  }
+
+  /**
+   * True when the club runs on one open table because its owner's plan lapsed more than
+   * `CLUB_LIMITS.ownerGraceMs` ago (only while the store is live).
+   */
+  ownerRestricted(club: Club): boolean {
+    if (!this.ownerPlan || typeof club.ownerLapsedAt !== 'number') return false;
+    return this.now() - club.ownerLapsedAt >= CLUB_LIMITS.ownerGraceMs;
+  }
+
+  /** Clubs this account owns. */
+  ownedBy(userId: string): Club[] {
+    return [...this.clubs.values()].filter((c) => c.ownerId === userId);
   }
 
   /** Subscribe to club events (a table opened, a join request approved). Listeners must not throw. */
@@ -404,8 +474,12 @@ export class ClubRegistry {
     }
   }
 
-  /** Drop finished table listings created before `before` (run daily). */
+  /**
+   * Drop finished table listings created before `before` (the server runs this every hour). It
+   * also starts a check of every owner's plan while the store is live (see `checkOwnerPlans`).
+   */
   pruneFinishedTables(before: number): void {
+    void this.checkOwnerPlans();
     for (const club of this.clubs.values()) {
       const kept = club.tables.filter((t) => t.status !== 'finished' || t.createdAt >= before);
       if (kept.length === club.tables.length) continue;
@@ -592,6 +666,9 @@ export class ClubRegistry {
     const trimmed = textField(name, 'Club name', CLUB_LIMITS.nameLength);
     if (!trimmed) throw new ClubError('invalid', 'Club name is required');
     if (!owner.userId || !owner.name) throw new ClubError('invalid', 'Owner identity is required');
+    if (this.ownedBy(owner.userId).length >= CLUB_LIMITS.ownedClubsPerUser) {
+      throw new ClubError('limit', `You can own at most ${CLUB_LIMITS.ownedClubsPerUser} clubs`);
+    }
     this.requireClubRoom(owner.userId);
     const club: Club = {
       code: this.newCode(),
@@ -820,7 +897,11 @@ export class ClubRegistry {
     const m = this.member(club, actorId);
     if (!m) throw new ClubError('forbidden', 'Join the club first');
     if (!club.settings.membersCanOpenTables && m.role === 'member') throw new ClubError('forbidden', 'Only admins can open tables in this club');
-    if (club.tables.filter((t) => t.status !== 'finished').length >= CLUB_LIMITS.openTablesPerClub) {
+    const open = club.tables.filter((t) => t.status !== 'finished').length;
+    if (this.ownerRestricted(club) && open >= CLUB_LIMITS.lapsedOpenTables) {
+      throw new ClubError('limit', `This club can have only ${CLUB_LIMITS.lapsedOpenTables} open table until its owner renews The Four Winds Club`);
+    }
+    if (open >= CLUB_LIMITS.openTablesPerClub) {
       throw new ClubError('limit', `This club already has ${CLUB_LIMITS.openTablesPerClub} open tables; finish one first`);
     }
     return m;

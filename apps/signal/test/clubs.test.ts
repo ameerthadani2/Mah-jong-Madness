@@ -270,10 +270,13 @@ describe('ClubRegistry validation and limits', () => {
     expect(reg.club(club.code).description).toHaveLength(CLUB_LIMITS.descriptionLength);
   });
 
-  it('caps clubs per user at 10', () => {
+  it('caps clubs per user at 10, and clubs owned at 3', () => {
     const reg = new ClubRegistry();
-    for (let i = 0; i < CLUB_LIMITS.clubsPerUser; i++) reg.createClub(alice, `Club ${i}`);
-    expectClubError(() => reg.createClub(alice, 'One too many'), 'limit', /at most 10/);
+    for (let i = 0; i < CLUB_LIMITS.ownedClubsPerUser; i++) reg.createClub(alice, `Club ${i}`);
+    expectClubError(() => reg.createClub(alice, 'One too many'), 'limit', /own at most 3/);
+    // Memberships of clubs others own count toward the 10.
+    for (let i = CLUB_LIMITS.ownedClubsPerUser; i < CLUB_LIMITS.clubsPerUser; i++) reg.joinClub(reg.createClub(user(100 + i), `Club ${i}`).code, alice);
+    expectClubError(() => reg.createClub({ ...alice }, 'Again'), 'limit', /own at most 3/);
     const other = reg.createClub(bob, 'Elsewhere');
     expectClubError(() => reg.joinClub(other.code, alice), 'limit');
     expect(reg.clubsForUser(alice.userId)).toHaveLength(10);

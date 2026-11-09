@@ -193,6 +193,8 @@ export function buildRoutes(deps: ApiDeps, opts: Pick<ApiOptions, 'reportIpLimit
   const wallet = deps.wallet ?? new WalletService(repos, { now, analytics });
   const webhookSecret = deps.config?.revenueCatWebhookSecret ?? null;
   const storeEnabled = webhookSecret !== null;
+  // Decision 5: with the store live, owning a club needs The Four Winds Club.
+  clubs.useOwnerPlan(storeEnabled ? (userId) => wallet.hasFourWinds(userId) : null);
   const providers = deps.providers ?? {};
   const peppers: Peppers = { current: sessions.pepper, previous: sessions.previousPepper };
 
@@ -477,7 +479,12 @@ export function buildRoutes(deps: ApiDeps, opts: Pick<ApiOptions, 'reportIpLimit
     }),
 
     // ------------------------------------------------------------------ clubs
-    r('POST', '/api/clubs', async (ctx) => clubs.createClub(await member(ctx), ctx.body.name ?? '', ctx.body.rules ?? {}, ctx.body.settings ?? {})),
+    r('POST', '/api/clubs', async (ctx) => {
+      const me = await member(ctx);
+      // With the store live a club needs an owner with The Four Winds Club; before that anyone may create one.
+      if (storeEnabled && !(await wallet.hasFourWinds(me.userId))) throw new HttpError(403, 'fourwinds_required', 'Creating a club needs The Four Winds Club');
+      return clubs.createClub(me, ctx.body.name ?? '', ctx.body.rules ?? {}, ctx.body.settings ?? {});
+    }),
     r('GET', '/api/clubs/:code', async (ctx) => view(clubs.club(ctx.params.code), (await ctx.caller()).userId)),
     r('POST', '/api/clubs/:code/join', async (ctx) => {
       const me = await member(ctx);
@@ -508,7 +515,10 @@ export function buildRoutes(deps: ApiDeps, opts: Pick<ApiOptions, 'reportIpLimit
     }),
     r('POST', '/api/clubs/:code/members/:userId/role', async (ctx) => {
       const me = await member(ctx);
-      return view(clubs.setRole(ctx.params.code, me.userId, ctx.params.userId, ctx.body.role), me.userId);
+      const club = clubs.setRole(ctx.params.code, me.userId, ctx.params.userId, ctx.body.role);
+      // A new owner: their plan decides the club's table cap from now on.
+      if (ctx.body.role === 'owner') await clubs.refreshOwnerPlan(club.code);
+      return view(club, me.userId);
     }),
     r('DELETE', '/api/clubs/:code/members/:userId', async (ctx) => {
       const me = await member(ctx);
@@ -563,6 +573,7 @@ export function buildRoutes(deps: ApiDeps, opts: Pick<ApiOptions, 'reportIpLimit
       if (body.botSkill !== undefined && !isBotSkill(body.botSkill)) throw new ClubError('invalid', 'Unknown bot skill');
       if (body.label !== undefined && typeof body.label !== 'string') throw new ClubError('invalid', 'Table label must be text');
       // Check permission and the open-table cap before a room exists, so a refusal leaves nothing behind.
+      await clubs.refreshOwnerPlan(code);
       clubs.assertCanOpenTable(code, me.userId);
       const club = clubs.club(code);
       // House rules: a member's table uses the club's rules and every table the club's bots (decision 1).
