@@ -39,6 +39,8 @@ export function HomeScreen() {
   const [name, setName] = useState(app.profile.name);
   const needsName = !app.profile.name;
   const wide = width >= 700;
+  // Any landscape phone (667×375 is not "wide"): the first-run Play button goes beside the name field.
+  const landscape = width > height;
   const tablet = width >= 1000 && height >= 700;
 
   const saveName = () => app.setProfile({ ...app.profile, name: name.trim() || t('common.player') });
@@ -123,7 +125,8 @@ export function HomeScreen() {
       </P>
       {skillChips}
       <View style={styles.cardFoot}>
-        <Button testID="start-match" title={t('home.play.start')} icon="play" large={tablet} onPress={playBots} />
+        {/* On a first run the welcome card carries the Play button (above the fold everywhere); this one is the card's own. */}
+        <Button testID={needsName ? 'start-match-card' : 'start-match'} title={t('home.play.start')} icon="play" large={tablet} onPress={playBots} />
       </View>
     </ModeCard>
   );
@@ -253,16 +256,20 @@ export function HomeScreen() {
               </Row>
             )}
             <Row gap={10}>
-              <TextInput testID="name-input" value={name} onChangeText={setName} placeholder={t('home.welcome.namePlaceholder')} placeholderTextColor="#9AA0BF" style={[styles.input, { flex: 1 }, wide && { paddingVertical: 7 }]} maxLength={24} />
-              <Button testID="save-name" title={t('common.save')} onPress={saveName} disabled={!name.trim()} />
+              <TextInput testID="name-input" value={name} onChangeText={setName} placeholder={t('home.welcome.namePlaceholder')} placeholderTextColor="#9AA0BF" style={[styles.input, { flex: 1, minWidth: 0 }, wide && { paddingVertical: 7 }]} maxLength={24} />
+              <Button testID="save-name" small={!wide} title={t('common.save')} onPress={saveName} disabled={!name.trim()} />
+              {/* First run: Play sits right here in landscape, where the mode cards are below the fold. */}
+              {(wide || landscape) && <Button testID="start-match" title={t('home.welcome.play')} icon="play" onPress={playBots} />}
             </Row>
             <Row style={{ flexWrap: 'wrap', rowGap: 8 }} gap={wide ? 4 : 8}>
               {AVATARS.map((a) => (
                 <Pressable key={a} onPress={() => app.setProfile({ ...app.profile, avatar: a })} hitSlop={2} style={[styles.pick, app.profile.avatar === a && styles.pickOn]} accessibilityRole="button" accessibilityLabel={avatarName(a)} accessibilityState={{ selected: app.profile.avatar === a }}>
-                  <AvatarPlate id={a} size={wide ? 36 : 40} />
+                  <AvatarPlate id={a} size={wide ? 36 : 34} />
                 </Pressable>
               ))}
             </Row>
+            {/* Narrow phones (the iPhone SE size included): a full-width Play under the buddies, still above the fold. */}
+            {!wide && !landscape && <Button testID="start-match" title={t('home.welcome.play')} icon="play" onPress={playBots} />}
           </View>
         </Card>
       )}
