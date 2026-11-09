@@ -68,6 +68,7 @@ export function ActionBar({
   big,
   align = 'flex-end',
   tapHint = true,
+  wrap = true,
 }: {
   actions: Action[];
   act: (a: Action) => void;
@@ -78,6 +79,8 @@ export function ActionBar({
   align?: 'center' | 'flex-end';
   /** The first-game "tap a tile" pill (it retires after the player's first few discards: ./tapHint.ts). */
   tapHint?: boolean;
+  /** Short landscape: one row only (the dock scrolls sideways when several 吃 options are up), so it never grows over my pond. */
+  wrap?: boolean;
 }) {
   const { t, locale } = useT();
   if (actions.length === 0) return null;
@@ -92,7 +95,7 @@ export function ActionBar({
   const names = (tiles: TileId[]) => tiles.map((x) => tileName(x, locale)).join(', ');
   const label = (verb: string, tiles?: TileId[]) => (tiles && tiles.length ? t('table.a11y.claimWith', { verb, tiles: names(tiles) }) : verb);
   return (
-    <View style={[styles.actionBar, { justifyContent: align }]}>
+    <View style={[styles.actionBar, { justifyContent: align }, !wrap && { flexWrap: 'nowrap' }]}>
       {tapHint && canDiscard && selected === null && !hu && kongs.length === 0 && (
         <View style={styles.tapHint}>
           <Icon name="play" size={14} />

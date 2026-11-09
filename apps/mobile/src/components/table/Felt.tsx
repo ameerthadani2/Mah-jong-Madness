@@ -180,7 +180,9 @@ export function Felt({
           // Short landscape: a row of its own under the compass and my pond (which moves up rather than being covered).
           dockH > 0 && (
             <View style={[styles.actionRow, { minHeight: dockH }]} pointerEvents="box-none" testID="action-dock">
-              {actions}
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ alignSelf: 'stretch', flexGrow: 0 }} contentContainerStyle={styles.actionScroll}>
+                {actions}
+              </ScrollView>
             </View>
           )
         ) : (
@@ -256,6 +258,7 @@ const styles = StyleSheet.create({
   statusText: { color: '#FFFFFF', fontSize: 12, fontWeight: '900' },
   actionCenter: { position: 'absolute', left: 0, right: 0, alignItems: 'center' },
   pinnedPond: { alignItems: 'center', paddingTop: 4, paddingBottom: 2 },
+  actionScroll: { flexGrow: 1, justifyContent: 'center', alignItems: 'flex-end' },
   actionRow: { alignSelf: 'stretch', alignItems: 'center', justifyContent: 'flex-end' },
   overlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', gap: 10, zIndex: 25 },
 });
