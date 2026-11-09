@@ -21,7 +21,9 @@ export type Inbound =
   | { t: 'create'; room?: string; hosted?: boolean; rules?: Partial<RuleSet>; botSkill?: BotSkill | string; club?: string }
   | { t: 'join'; room: string }
   | { t: 'to'; to: string; data: unknown }
-  | { t: 'leave' };
+  | { t: 'leave' }
+  /** The client's heartbeat; answered with `{t:'pong'}`. */
+  | { t: 'ping' };
 
 interface Peer {
   id: string;
@@ -469,6 +471,9 @@ export class RoomRegistry {
       case 'leave':
         this.leave(peer);
         return peer.id;
+      case 'ping':
+        peer.socket.send(PONG);
+        return peer.id;
       default:
         return peer.id;
     }
@@ -630,6 +635,8 @@ function isAction(data: unknown): boolean {
   const env = data as { ch?: unknown; msg?: { t?: unknown } } | null;
   return !!env && typeof env === 'object' && env.ch === 'game' && !!env.msg && typeof env.msg === 'object' && env.msg.t === 'action';
 }
+
+const PONG = JSON.stringify({ t: 'pong' });
 
 /** Longest seat name and chat line the table keeps (it cuts longer ones by UTF-16 units). */
 const SEAT_NAME_MAX = 24;

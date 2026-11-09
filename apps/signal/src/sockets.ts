@@ -179,6 +179,8 @@ export function attachSocketHandlers(
       }
       if (!msg || typeof msg !== 'object' || typeof (msg as { t?: unknown }).t !== 'string') return;
       if (stage === 'hello') return authenticate(msg);
+      // The client's heartbeat is answered at once, even while a session check is in flight.
+      if (msg.t === 'ping') return dispatch(msg);
       if (stage === 'verifying') {
         if (queued.length >= MAX_QUEUED_FRAMES) ws.close(POLICY_VIOLATION, 'Rate limit exceeded');
         else queued.push(msg);

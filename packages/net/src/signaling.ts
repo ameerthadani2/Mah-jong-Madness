@@ -10,6 +10,12 @@ import type { Transport, Unsubscribe } from './transport';
 /** How long `connect()` and each room request wait for the server before giving up. */
 export const SIGNALING_TIMEOUT_MS = 10_000;
 export const SIGNALING_TIMEOUT_MESSAGE = 'The game server did not answer in time. Check your connection and try again.';
+/** How often a connected client asks the server for a `pong`. */
+export const HEARTBEAT_MS = 15_000;
+/** How long a client waits for that `pong` before it treats the link as dead and closes it. */
+export const PONG_TIMEOUT_MS = 10_000;
+/** `lastCloseCode` after the client closed a link that stopped answering its pings. */
+export const HEARTBEAT_CLOSE_CODE = 4408;
 /** Close code the server uses when the session token in `hello` is missing or not accepted. */
 export const UNAUTHORISED_CLOSE_CODE = 4401;
 /** `connect()` rejects with a message starting with this when the server closes with 4401. */
@@ -59,7 +65,9 @@ export type ServerMessage =
   | { t: 'peer'; peerId: string; event: 'join' | 'leave' }
   | { t: 'from'; from: string; data: unknown }
   /** In reply to a refused create or join; with `code: 'closed'`, sent unprompted when the room has closed. */
-  | { t: 'error'; message: string; code?: string };
+  | { t: 'error'; message: string; code?: string }
+  /** The answer to a client `ping`. */
+  | { t: 'pong' };
 
 export type ClientToServer =
   /** `auth` is the session token; the server closes the socket with 4401 without a valid one. */
@@ -68,7 +76,27 @@ export type ClientToServer =
   | { t: 'create'; room?: string; hosted?: boolean; rules?: Partial<RuleSet>; botSkill?: BotSkill; club?: string }
   | { t: 'join'; room: string }
   | { t: 'to'; to: string; data: unknown }
-  | { t: 'leave' };
+  | { t: 'leave' }
+  /**
+   * Heartbeat: the server answers `{t:'pong'}`. A half-open link (a network handover, a NAT that
+   * forgot the connection) delivers nothing and reports nothing; only a missing answer shows it.
+   */
+  | { t: 'ping' };
+
+/** Timer functions, injectable so tests can drive the heartbeat. */
+export interface SignalingTimers {
+  setInterval(cb: () => void, ms: number): unknown;
+  clearInterval(handle: unknown): void;
+  setTimeout(cb: () => void, ms: number): unknown;
+  clearTimeout(handle: unknown): void;
+}
+
+const realTimers: SignalingTimers = {
+  setInterval: (cb, ms) => setInterval(cb, ms),
+  clearInterval: (h) => clearInterval(h as ReturnType<typeof setInterval>),
+  setTimeout: (cb, ms) => setTimeout(cb, ms),
+  clearTimeout: (h) => clearTimeout(h as ReturnType<typeof setTimeout>),
+};
 
 export interface RoomInfo {
   room: string;
@@ -82,6 +110,12 @@ export interface SignalingOptions {
   /** Builds the socket (default: the platform's global WebSocket). Tests and Node pass `ws`. */
   webSocket?: WebSocketFactory;
   timeoutMs?: number;
+  /** Ping interval once connected (default `HEARTBEAT_MS`; 0 turns the heartbeat off). */
+  heartbeatMs?: number;
+  /** How long to wait for each `pong` (default `PONG_TIMEOUT_MS`). */
+  pongTimeoutMs?: number;
+  /** Timers for the heartbeat (default the global ones). */
+  timers?: SignalingTimers;
 }
 
 const defaultSocket: WebSocketFactory = (u) => new (globalThis as unknown as { WebSocket: new (u: string) => WebSocketLike }).WebSocket(u);
@@ -91,7 +125,7 @@ export class SignalingClient {
   /** The account the server verified from the session token (absent on servers without accounts). */
   userId: string | null = null;
   room: RoomInfo | null = null;
-  /** Close code of the last connection that ended (4401: the session was not accepted). */
+  /** Close code of the last connection that ended (4401: the session was not accepted; 4408: it stopped answering pings). */
   lastCloseCode: number | null = null;
   private ws: WebSocketLike | null = null;
   private readonly msgHandlers = new Set<(m: ServerMessage) => void>();
@@ -108,6 +142,11 @@ export class SignalingClient {
   private readonly timeoutMs: number;
   private readonly makeSocket: WebSocketFactory;
   private auth: string | undefined;
+  private readonly heartbeatMs: number;
+  private readonly pongTimeoutMs: number;
+  private readonly timers: SignalingTimers;
+  private heartbeat: unknown = null;
+  private pongDue: unknown = null;
 
   /**
    * `options` may also be a bare WebSocketFactory (the older form), with the timeout in `legacy`.
@@ -121,6 +160,56 @@ export class SignalingClient {
     this.makeSocket = opts.webSocket ?? defaultSocket;
     this.timeoutMs = opts.timeoutMs ?? legacy.timeoutMs ?? SIGNALING_TIMEOUT_MS;
     this.auth = opts.auth;
+    this.heartbeatMs = opts.heartbeatMs ?? HEARTBEAT_MS;
+    this.pongTimeoutMs = opts.pongTimeoutMs ?? PONG_TIMEOUT_MS;
+    this.timers = opts.timers ?? realTimers;
+  }
+
+  /**
+   * Every `heartbeatMs` once connected, send `{t:'ping'}`; if no `pong` (or any other frame) has
+   * arrived `pongTimeoutMs` later, the link is dead even though no close was reported: close it
+   * and fire the close handlers, which drives the app's usual reconnect.
+   */
+  private startHeartbeat(ws: WebSocketLike): void {
+    this.stopHeartbeat();
+    if (!(this.heartbeatMs > 0)) return;
+    this.heartbeat = this.timers.setInterval(() => {
+      if (this.ws !== ws || this.pongDue !== null) return;
+      try {
+        ws.send(JSON.stringify({ t: 'ping' } satisfies ClientToServer));
+      } catch {
+        /* a failing send shows up as a missing pong */
+      }
+      this.pongDue = this.timers.setTimeout(() => {
+        this.pongDue = null;
+        if (this.ws === ws) this.linkDead(ws);
+      }, this.pongTimeoutMs);
+    }, this.heartbeatMs);
+  }
+
+  private stopHeartbeat(): void {
+    if (this.heartbeat !== null) this.timers.clearInterval(this.heartbeat);
+    if (this.pongDue !== null) this.timers.clearTimeout(this.pongDue);
+    this.heartbeat = null;
+    this.pongDue = null;
+  }
+
+  /** The link answered: whatever is in flight proves it is alive. */
+  private heardFrom(): void {
+    if (this.pongDue !== null) this.timers.clearTimeout(this.pongDue);
+    this.pongDue = null;
+  }
+
+  /** Give up on a link that stopped answering: detach it, close it, and report it closed now (its own close event may never come). */
+  private linkDead(ws: WebSocketLike): void {
+    const onclose = ws.onclose;
+    ws.onopen = ws.onclose = ws.onerror = ws.onmessage = null;
+    try {
+      ws.close();
+    } catch {
+      /* already closed */
+    }
+    onclose?.({ code: HEARTBEAT_CLOSE_CODE });
   }
 
   /** Use a new session token from the next `connect()` (after a refresh or a sign-in). */
@@ -156,7 +245,10 @@ export class SignalingClient {
       ws.onopen = () => ws.send(JSON.stringify((this.auth ? { t: 'hello', auth: this.auth } : { t: 'hello' }) satisfies ClientToServer));
       ws.onerror = () => settle(new Error('Signaling connection failed'));
       ws.onclose = (ev) => {
-        if (this.ws === ws) this.ws = null;
+        if (this.ws === ws) {
+          this.ws = null;
+          this.stopHeartbeat();
+        }
         const code = typeof (ev as { code?: unknown } | null)?.code === 'number' ? (ev as { code: number }).code : null;
         this.lastCloseCode = code;
         settle(new Error(code === UNAUTHORISED_CLOSE_CODE ? UNAUTHORISED_MESSAGE : 'Connection closed'));
@@ -173,6 +265,8 @@ export class SignalingClient {
         } catch {
           return;
         }
+        if (this.ws === ws) this.heardFrom();
+        if (m.t === 'pong') return;
         if (m.t === 'hello') {
           const id = m.id ?? m.peerId;
           if (typeof id !== 'string') return;
@@ -180,6 +274,7 @@ export class SignalingClient {
           this.userId = typeof m.userId === 'string' ? m.userId : null;
           for (const p of this.pendingHello) p(id);
           this.pendingHello = [];
+          if (!settled && this.ws === ws) this.startHeartbeat(ws);
           settle(null, id);
         } else if (m.t === 'room') {
           this.room = { room: m.room, peers: m.peers, host: m.host };
@@ -265,6 +360,7 @@ export class SignalingClient {
 
   close(): void {
     this.closedLocally = true;
+    this.stopHeartbeat();
     try {
       this.ws?.send(JSON.stringify({ t: 'leave' } satisfies ClientToServer));
     } catch {

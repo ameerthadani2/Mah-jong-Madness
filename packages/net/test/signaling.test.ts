@@ -1,5 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { SIGNALING_TIMEOUT_MESSAGE, SIGNALING_TIMEOUT_MS, SignalingClient, UNAUTHORISED_CLOSE_CODE, type WebSocketLike } from '../src/signaling';
+import {
+  HEARTBEAT_CLOSE_CODE,
+  HEARTBEAT_MS,
+  PONG_TIMEOUT_MS,
+  SIGNALING_TIMEOUT_MESSAGE,
+  SIGNALING_TIMEOUT_MS,
+  SignalingClient,
+  UNAUTHORISED_CLOSE_CODE,
+  type SignalingTimers,
+  type WebSocketLike,
+} from '../src/signaling';
 
 /** A scriptable stand-in for the browser WebSocket, handed to SignalingClient through its factory. */
 class FakeSocket implements WebSocketLike {
@@ -96,7 +106,8 @@ describe('SignalingClient', () => {
     ws.serverSays({ t: 'room', room: 'ABC234', peers: ['p-1', 'server-ABC234'], host: 'server-ABC234' });
     await expect(p).resolves.toEqual({ room: 'ABC234', peers: ['p-1', 'server-ABC234'], host: 'server-ABC234' });
     expect(c.room?.host).toBe('server-ABC234');
-    expect(vi.getTimerCount()).toBe(0);
+    // The request's timer is gone; only the heartbeat's interval remains.
+    expect(vi.getTimerCount()).toBe(1);
   });
 
   it('rejects a room request with the server error message', async () => {
@@ -204,5 +215,109 @@ describe('SignalingClient', () => {
     const { c, ws } = await connected();
     void c.createHostedRoom({ handsPerMatch: 4 }, 'pro', { club: 'CLUB22' });
     expect(ws.sent[1]).toEqual({ t: 'create', hosted: true, rules: { handsPerMatch: 4 }, botSkill: 'pro', club: 'CLUB22' });
+  });
+});
+
+describe('SignalingClient heartbeat', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const pings = (ws: FakeSocket) => ws.sent.filter((m) => m.t === 'ping').length;
+
+  it('pings every 15 s once connected and keeps a link that answers', async () => {
+    expect(HEARTBEAT_MS).toBe(15_000);
+    expect(PONG_TIMEOUT_MS).toBe(10_000);
+    const { c, socket } = client();
+    const p = c.connect();
+    socket().open();
+    // Nothing before the hello: the first frame must be the session.
+    await vi.advanceTimersByTimeAsync(5_000);
+    socket().serverSays({ t: 'hello', peerId: 'p-1' });
+    await p;
+    const ws = socket();
+    const closes = vi.fn();
+    c.onClose(closes);
+    for (let i = 1; i <= 4; i++) {
+      await vi.advanceTimersByTimeAsync(HEARTBEAT_MS);
+      expect(pings(ws)).toBe(i);
+      await vi.advanceTimersByTimeAsync(1_000);
+      ws.serverSays({ t: 'pong' });
+    }
+    await vi.advanceTimersByTimeAsync(PONG_TIMEOUT_MS);
+    expect(ws.closed).toBe(false);
+    expect(closes).not.toHaveBeenCalled();
+  });
+
+  it('closes a half-open link 10 s after an unanswered ping and fires the close handlers at once', async () => {
+    const { c, ws } = await connected();
+    const closes = vi.fn();
+    c.onClose(closes);
+    await vi.advanceTimersByTimeAsync(HEARTBEAT_MS);
+    expect(pings(ws)).toBe(1);
+    // A request made while the link is already dead fails with the link, not after its own timeout.
+    const pending = c.joinRoom('ABC234');
+    pending.catch(() => undefined);
+    await vi.advanceTimersByTimeAsync(PONG_TIMEOUT_MS - 1);
+    expect(closes).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    // Detected within 25 s of the link going quiet.
+    expect(ws.closed).toBe(true);
+    expect(closes).toHaveBeenCalledTimes(1);
+    expect(c.lastCloseCode).toBe(HEARTBEAT_CLOSE_CODE);
+    await expect(pending).rejects.toThrow('Connection closed');
+    // The socket's own close event, if it ever comes, changes nothing.
+    ws.drop(1006);
+    expect(closes).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('counts any frame from the server as an answer, and stops after close()', async () => {
+    const { c, ws } = await connected();
+    await vi.advanceTimersByTimeAsync(HEARTBEAT_MS);
+    ws.serverSays({ t: 'peer', peerId: 'p-2', event: 'join' });
+    await vi.advanceTimersByTimeAsync(PONG_TIMEOUT_MS);
+    expect(ws.closed).toBe(false);
+    c.close();
+    const before = pings(ws);
+    await vi.advanceTimersByTimeAsync(HEARTBEAT_MS * 3);
+    expect(pings(ws)).toBe(before);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('uses injected timers, and none when the heartbeat is off', async () => {
+    const intervals: Array<{ cb: () => void; ms: number }> = [];
+    const timeouts: Array<{ cb: () => void; ms: number }> = [];
+    const timers: SignalingTimers = {
+      setInterval: (cb, ms) => (intervals.push({ cb, ms }), intervals.length),
+      clearInterval: () => undefined,
+      setTimeout: (cb, ms) => (timeouts.push({ cb, ms }), timeouts.length),
+      clearTimeout: () => undefined,
+    };
+    const sockets: FakeSocket[] = [];
+    const c = new SignalingClient('ws://test', { webSocket: () => (sockets.push(new FakeSocket()), sockets[sockets.length - 1]), heartbeatMs: 1_000, pongTimeoutMs: 500, timers });
+    const closes = vi.fn();
+    c.onClose(closes);
+    const p = c.connect();
+    sockets[0].open();
+    sockets[0].serverSays({ t: 'hello', peerId: 'p-1' });
+    await p;
+    expect(intervals.map((i) => i.ms)).toEqual([1_000]);
+    intervals[0].cb();
+    expect(sockets[0].sent.at(-1)).toEqual({ t: 'ping' });
+    expect(timeouts.map((t) => t.ms)).toEqual([500]);
+    timeouts[0].cb();
+    expect(closes).toHaveBeenCalledTimes(1);
+    expect(sockets[0].closed).toBe(true);
+
+    const off = new SignalingClient('ws://test', { webSocket: () => (sockets.push(new FakeSocket()), sockets[sockets.length - 1]), heartbeatMs: 0 });
+    const q = off.connect();
+    sockets[1].open();
+    sockets[1].serverSays({ t: 'hello', peerId: 'p-2' });
+    await q;
+    expect(vi.getTimerCount()).toBe(0);
   });
 });
