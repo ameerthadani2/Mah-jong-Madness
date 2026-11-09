@@ -3,7 +3,7 @@ import { StyleSheet, View } from 'react-native';
 import type { DefencePuzzle } from '@mjm/engine';
 import { colors } from '../../theme';
 import { useT } from '../../i18n';
-import { checkPuzzleAnswer, defenceSeats, SEAT_KEYS, threatKey, tileName } from '../../logic/puzzle';
+import { checkPuzzleAnswer, defenceSeats, defenceVerdicts, percent, SEAT_KEYS, threatKey, tileName } from '../../logic/puzzle';
 import { Tile } from '../Tile';
 import { P, Pill, Row } from '../Ui';
 import { Explanation, KindMeld, KindRow, Label, NextButton, partStyles, useAnswer, Verdict, type ThemeViewProps } from './PuzzleParts';
@@ -18,6 +18,7 @@ export function DefencePuzzleView({ puzzle, onResult, onNext, nextLabel, autoAdv
   const [picked, setPicked] = useState<number | null>(null);
   const { answered, report } = useAnswer('defence', puzzle.difficulty, onResult, onNext, autoAdvance);
   const seats = useMemo(() => defenceSeats(puzzle), [puzzle]);
+  const verdicts = useMemo(() => defenceVerdicts(puzzle), [puzzle]);
   const keeps = useMemo(() => new Set(puzzle.options.filter((o) => o.shanten === puzzle.bestShanten).map((o) => o.kind)), [puzzle]);
   const pick = (i: number) => {
     if (answered !== null) return;
@@ -42,7 +43,7 @@ export function DefencePuzzleView({ puzzle, onResult, onNext, nextLabel, autoAdv
             </View>
           ) : null}
           <Label>{t('puzzles.defence.discards')}</Label>
-          <KindRow kinds={s.discards} size={s.threat ? 'sm' : 'xs'} highlight={answered !== null ? (k) => (k === puzzle.answer ? 'good' : undefined) : undefined} />
+          <KindRow kinds={s.discards} size={s.threat ? 'sm' : 'xs'} highlight={answered !== null ? (k) => (puzzle.answers.includes(k) ? 'good' : undefined) : undefined} />
         </View>
       ))}
       <Label>{t('puzzles.defence.yourDiscards')}</Label>
@@ -56,7 +57,7 @@ export function DefencePuzzleView({ puzzle, onResult, onNext, nextLabel, autoAdv
             onPress={() => pick(i)}
             selected={picked === i}
             dimmed={answered !== null && !keeps.has(k)}
-            highlight={answered !== null ? (k === puzzle.answer ? 'good' : picked === i ? 'bad' : undefined) : undefined}
+            highlight={answered !== null ? (puzzle.answers.includes(k) ? 'good' : picked === i ? 'bad' : undefined) : undefined}
             accessibilityLabel={tileName(k, locale)}
           />
         ))}
@@ -66,6 +67,16 @@ export function DefencePuzzleView({ puzzle, onResult, onNext, nextLabel, autoAdv
           <Verdict good={answered} goodKey="puzzles.defence.safe" badKey="puzzles.defence.unsafe" />
           {!answered && <P>{t('puzzles.defence.answer', { tile: tileName(puzzle.answer, locale) })}</P>}
           <Explanation puzzle={puzzle} />
+          <Label>{t('puzzles.defence.verdicts')}</Label>
+          <View style={{ gap: 4 }} testID="defence-verdicts">
+            {verdicts.map((v) => (
+              <Row key={v.kind} gap={8}>
+                <Tile kind={v.kind} size="xs" highlight={v.accepted ? 'good' : undefined} accessibilityLabel={tileName(v.kind, locale)} />
+                <Pill size="sm" text={t(v.accepted ? 'puzzles.defence.fine' : 'puzzles.defence.riskier')} tone={v.accepted ? 'gold' : 'neutral'} />
+                <P style={{ fontSize: 13, flexShrink: 1 }}>{t('puzzles.defence.chance', { pct: percent(v.chance) })}</P>
+              </Row>
+            ))}
+          </View>
           <NextButton onNext={onNext} autoAdvance={autoAdvance} label={nextLabel} />
         </View>
       )}

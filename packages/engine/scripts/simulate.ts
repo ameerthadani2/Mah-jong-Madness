@@ -18,9 +18,24 @@
  *                  instead of first hands of fresh matches; the paired difference is per match, also
  *                  shown per hand.
  *
+ *   tsx scripts/simulate.ts --gate
+ *       The CI strength gate: Pro against three Club bots on GATE_HANDS paired hands (seed prefix
+ *       `gate`), compared with the reference stored in test/fixtures/bot-gate.json. Fails (exit 1)
+ *       when the paired mean falls more than two reference standard errors below the reference.
+ *       `--record` stores the current result as the new reference.
+ *
+ *   tsx scripts/simulate.ts --record-reference
+ *       Records the Pro decision reference that test/bots.test.ts replays (test/fixtures/pro-reference.json).
+ *
+ *   --weights '<json>' (any mode) overrides BOT_WEIGHTS first, e.g. '{"proConcealedShanten":2}' to
+ *   check that the gate catches the old Pro regression.
+ *
  * From the repository root: `npm run sim -- --ladder pro 600 --seed report`.
  */
-import { applyAction, chooseAction, hashState, isLegal, newGame, nextHand, tilesRemaining, type Action, type BotSkill, type GameState } from '../src/index';
+import { readFileSync, writeFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { applyAction, BOT_WEIGHTS, chooseAction, hashState, isLegal, newGame, nextHand, tilesRemaining, type Action, type BotSkill, type GameState } from '../src/index';
+import { recordHand, type ReferenceFile } from '../test/helpers/reference';
 
 function checkInvariants(s: GameState): void {
   const total = s.players.reduce((n, p) => n + p.hand.length + p.melds.reduce((m, x) => m + x.tiles.length, 0) + p.flowers.length + p.discards.length, 0) + tilesRemaining(s);
@@ -215,6 +230,54 @@ function countArg(v: string | undefined, fallback: number): number {
   return n;
 }
 
+const GATE_HANDS = 2000;
+const fixture = (name: string): string => fileURLToPath(new URL(`../test/fixtures/${name}`, import.meta.url));
+
+interface GateReference {
+  note: string;
+  prefix: string;
+  hands: number;
+  mean: number;
+  se: number;
+}
+
+function runGate(record: boolean): void {
+  const started = Date.now();
+  const diffs: number[] = [];
+  for (let h = 0; h < GATE_HANDS; h++) {
+    const testSeat = h % 4;
+    const a = playHand(newGame(`gate-${h}`), [0, 1, 2, 3].map((seat): BotSkill => (seat === testSeat ? 'pro' : 'club')));
+    const b = playHand(newGame(`gate-${h}`), ['club', 'club', 'club', 'club']);
+    diffs.push(a.result!.scoreDelta[testSeat] - b.result!.scoreDelta[testSeat]);
+  }
+  const p = meanInterval(diffs);
+  const secs = (Date.now() - started) / 1000;
+  console.log(`gate: pro minus club over ${GATE_HANDS} paired hands: ${p.mean.toFixed(2)} pts/hand, se ${p.se.toFixed(2)} (${secs.toFixed(0)} s)`);
+  if (record) {
+    const ref: GateReference = { note: 'Pro minus Club, paired, seed prefix gate. Regenerate: npm run sim -- --gate --record', prefix: 'gate', hands: GATE_HANDS, mean: Number(p.mean.toFixed(3)), se: Number(p.se.toFixed(3)) };
+    writeFileSync(fixture('bot-gate.json'), `${JSON.stringify(ref, null, 2)}\n`);
+    console.log('reference recorded');
+    return;
+  }
+  const ref = JSON.parse(readFileSync(fixture('bot-gate.json'), 'utf8')) as GateReference;
+  const floor = ref.mean - 2 * ref.se;
+  console.log(`reference ${ref.mean.toFixed(2)} (se ${ref.se.toFixed(2)}): pass at ${floor.toFixed(2)} or more`);
+  if (p.mean < floor) {
+    console.log('GATE FAILED: Pro is weaker than the stored reference');
+    process.exitCode = 1;
+  } else console.log('gate passed');
+}
+
+function recordReference(): void {
+  const hands = Array.from({ length: 120 }, (_, i) => recordHand(`ref-${i}`, i % 4));
+  const file: ReferenceFile = {
+    note: 'Pro decisions replayed by test/bots.test.ts. Regenerate after an intentional change to Pro: npm run sim -- --record-reference',
+    hands,
+  };
+  writeFileSync(fixture('pro-reference.json'), `${JSON.stringify(file)}\n`);
+  console.log(`recorded ${hands.length} hands, ${hands.reduce((n, h) => n + h.points.length, 0)} decisions`);
+}
+
 const args = process.argv.slice(2);
 const flag = (name: string): boolean => {
   const i = args.indexOf(name);
@@ -229,7 +292,11 @@ const option = (name: string): string | undefined => {
   if (v === undefined) throw new Error(`${name} needs a value`);
   return v;
 };
-if (flag('--ladder')) {
+const weights = option('--weights');
+if (weights) Object.assign(BOT_WEIGHTS, JSON.parse(weights) as Partial<typeof BOT_WEIGHTS>);
+if (flag('--gate')) runGate(flag('--record'));
+else if (flag('--record-reference')) recordReference();
+else if (flag('--ladder')) {
   const matches = flag('--matches');
   const prefix = option('--seed') ?? 'ladder';
   const vs = skillArg(option('--vs') ?? 'club');

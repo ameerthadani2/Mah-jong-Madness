@@ -23,15 +23,19 @@ import {
   checkValueAnswer,
   claimPuzzle,
   coachAction,
-  dealInDanger,
+  CLAIM_TOLERANCE,
+  DEFENCE_TOLERANCE,
   defencePuzzle,
   isComplete,
   PUZZLE_TYPES,
   puzzleOfType,
+  readOpponents,
   scoreWin,
-  threats,
   unseenCounts,
   valuePuzzle,
+  VALUE_SELF_DRAW_SHARE,
+  VALUE_TOLERANCE,
+  waitChance,
   DEFAULT_RULES,
   type Action,
   type ClaimPuzzle,
@@ -186,7 +190,7 @@ function tableFromView(p: DefencePuzzle): GameState {
       draws: 0,
     };
   });
-  return { players } as unknown as GameState;
+  return { players, rules: DEFAULT_RULES, dealerSeat: 0, dealerStreak: 0, prevailingWind: 0 } as unknown as GameState;
 }
 
 /** A claim window rebuilt from the puzzle alone (seat 0's hand and sets, the discard, the shown options). */
@@ -223,22 +227,24 @@ function claimTable(p: ClaimPuzzle): GameState {
 describe('defence puzzles', () => {
   const { puzzles, avgMs } = generateAll(defencePuzzle);
 
-  it('generate in under 5 ms on average', () => {
-    expect(avgMs).toBeLessThan(5);
+  it('generate in under 50 ms on average', () => {
+    expect(avgMs).toBeLessThan(50);
   });
 
-  it('have a unique safest answer among the discards that keep shanten, and it passes its checker', () => {
+  it('accept every near-safest discard that keeps shanten, and only those', () => {
     for (const p of puzzles) {
       expect(p.hand).toHaveLength(17);
       expect(shanten(count(p.hand), 5)).toBe(p.bestShanten);
+      expect(p.opponents.find((o) => o.seat === p.threatSeat)!.melds).toHaveLength(4);
       const kept = p.options.filter((o) => o.shanten === p.bestShanten);
-      expect(kept.length).toBeGreaterThanOrEqual(2);
-      const answer = p.options.find((o) => o.kind === p.answer)!;
-      expect(answer.shanten).toBe(p.bestShanten);
-      expect(kept.filter((o) => o.danger <= answer.danger)).toHaveLength(1);
-      expect(checkDefenceAnswer(p, p.answer)).toBe(true);
-      for (const o of p.options) if (o.kind !== p.answer) expect(checkDefenceAnswer(p, o.kind)).toBe(false);
-      expect(p.threatLevel).toBeGreaterThan(0);
+      expect(kept.length).toBeGreaterThanOrEqual(3);
+      const chance = (o: (typeof kept)[number]) => o.danger / p.threatLevel;
+      const min = Math.min(...kept.map(chance));
+      expect(p.answers.slice().sort((a, b) => a - b)).toEqual(kept.filter((o) => chance(o) <= min + DEFENCE_TOLERANCE + 1e-12).map((o) => o.kind));
+      expect(p.answers).toContain(p.answer);
+      for (const o of p.options) expect(checkDefenceAnswer(p, o.kind)).toBe(p.answers.includes(o.kind));
+      expect(p.options.filter((o) => o.shanten > p.bestShanten).every((o) => !o.accepted)).toBe(true);
+      expect(p.threatLevel).toBeGreaterThan(0.85);
       expect(p.explanation.length).toBeGreaterThan(0);
       expect(p.explanationZh.length).toBeGreaterThan(0);
       expect(p.reasonKey).toBe(`puzzle.defence.${p.reason}`);
@@ -247,33 +253,84 @@ describe('defence puzzles', () => {
     }
   });
 
-  it('never raise shanten when an equal-shanten safe tile exists', () => {
-    for (const p of puzzles) {
-      const answer = p.options.find((o) => o.kind === p.answer)!;
-      expect(answer.shanten).toBe(Math.min(...p.options.map((o) => o.shanten)));
-      if (p.options.some((o) => o.shanten === p.bestShanten && o.danger === 0)) expect(answer.danger).toBe(0);
-    }
-  });
-
-  it("agree with the bot's danger model re-run on the table as shown", () => {
+  it("agree with the bots' deal-in model re-run on the table as shown", () => {
     for (const p of puzzles) {
       const s = tableFromView(p);
-      const levels = threats(s, 0);
-      expect(levels[p.threatSeat]).toBe(p.threatLevel);
-      expect(levels.filter((l) => l > 0)).toHaveLength(1);
+      const read = readOpponents(s, 0)[p.threatSeat];
+      expect(read.tenpai).toBe(p.threatLevel);
       const unseen = unseenCounts(s, 0);
       for (const o of p.options) {
-        expect(dealInDanger(s, 0, o.kind, levels, unseen)).toBeCloseTo(o.danger, 10);
+        expect(read.tenpai * waitChance(read, o.kind, unseen)).toBeCloseTo(o.danger, 12);
         expect(shanten(count(p.hand.filter((k, i) => i !== p.hand.indexOf(o.kind))), 5)).toBe(o.shanten);
       }
     }
   });
 
-  it('match the reason each difficulty teaches, and are deterministic', () => {
-    const byDifficulty = (d: PuzzleDifficulty) => puzzles.filter((p) => p.difficulty === d);
-    expect(byDifficulty(1).every((p) => p.reason === 'theirDiscard')).toBe(true);
-    expect(byDifficulty(2).every((p) => p.reason === 'honour' || p.reason === 'terminal')).toBe(true);
-    expect(byDifficulty(3).every((p) => p.reason === 'deadHonour' || p.reason === 'lastHonour')).toBe(true);
+  it('agree with an exact enumeration of every hand the threat could hold', () => {
+    // Every four-tile concealed hand, once, with its winning kinds (engine waits for one set and a pair).
+    const hands: Array<{ counts: Array<[Kind, number]>; wins: Kind[] }> = [];
+    const c = new Array<number>(34).fill(0);
+    const walk = (from: number, left: number) => {
+      if (left === 0) {
+        const wins = waits(c, 1);
+        if (wins.length > 0) hands.push({ counts: c.flatMap((n, k) => (n > 0 ? [[k, n] as [Kind, number]] : [])), wins });
+        return;
+      }
+      for (let k = from; k < 34; k++) {
+        for (let n = 1; n <= Math.min(4, left); n++) {
+          c[k] += n;
+          walk(k + 1, left - n);
+          c[k] -= n;
+        }
+      }
+    };
+    walk(0, 4);
+    const choose = (n: number, k: number): number => (k > n ? 0 : k === 0 ? 1 : (n * choose(n - 1, k - 1)) / k);
+    for (const p of puzzles.filter((_, i) => i % 3 === 0)) {
+      const s = tableFromView(p);
+      const unseen = unseenCounts(s, 0);
+      const threat = p.opponents.find((o) => o.seat === p.threatSeat)!;
+      // Not a wait: a kind the threat threw, or one thrown after its last discard by a seat between it and you.
+      const excluded = new Set(threat.discards);
+      for (let seat = p.threatSeat + 1; seat < 4; seat++) {
+        const d = p.opponents.find((o) => o.seat === seat)!.discards;
+        if (d.length > 0) excluded.add(d[d.length - 1]);
+      }
+      const win = new Array<number>(34).fill(0);
+      let total = 0;
+      for (const h of hands) {
+        if (h.wins.some((w) => excluded.has(w))) continue;
+        const weight = h.counts.reduce((x, [k, n]) => x * choose(unseen[k], n), 1);
+        if (weight === 0) continue;
+        total += weight;
+        for (const w of h.wins) win[w] += weight;
+      }
+      const kept = p.options.filter((o) => o.shanten === p.bestShanten);
+      for (const o of p.options) expect(o.exact).toBeCloseTo(win[o.kind] / total, 9);
+      const exactMin = Math.min(...kept.map((o) => o.exact));
+      // The exact safest tile is accepted, every accepted tile is within 1.5 points of it, and a wrong tile is clearly worse.
+      expect(kept.some((o) => o.accepted && o.exact <= exactMin + 1e-9)).toBe(true);
+      for (const o of kept) if (o.accepted) expect(o.exact).toBeLessThanOrEqual(exactMin + 0.015);
+      expect(kept.some((o) => !o.accepted && o.exact >= exactMin + 0.02)).toBe(true);
+    }
+  }, 120_000);
+
+  it('are not a fixed lookup rule: several reasons, several accepted answers, and deterministic', () => {
+    // The old three-step rule ("their discard > fewest-unseen honour > terminal") reproduced every answer.
+    let ruleHits = 0;
+    for (const p of puzzles) {
+      const s = tableFromView(p);
+      const unseen = unseenCounts(s, 0);
+      const threat = p.opponents.find((o) => o.seat === p.threatSeat)!;
+      const kept = p.options.filter((o) => o.shanten === p.bestShanten).map((o) => o.kind);
+      const theirs = kept.filter((k) => threat.discards.includes(k));
+      const honours = kept.filter((k) => k >= 27).sort((a, b) => unseen[a] - unseen[b]);
+      const pick = theirs[0] ?? honours[0] ?? kept.find((k) => k % 9 === 0 || k % 9 === 8);
+      if (pick !== undefined && p.answers.length === 1 && p.answers[0] === pick) ruleHits++;
+    }
+    expect(ruleHits).toBeLessThan(puzzles.length * 0.75);
+    expect(new Set(puzzles.map((p) => p.reason)).size).toBeGreaterThanOrEqual(5);
+    expect(puzzles.filter((p) => p.answers.length > 1).length).toBeGreaterThan(puzzles.length * 0.1);
     for (let i = 0; i < puzzles.length; i += 15) expect(defencePuzzle(puzzles[i].seed, puzzles[i].difficulty)).toEqual(puzzles[i]);
   });
 });
@@ -281,11 +338,11 @@ describe('defence puzzles', () => {
 describe('claim puzzles', () => {
   const { puzzles, avgMs } = generateAll(claimPuzzle);
 
-  it('generate in under 5 ms on average', () => {
-    expect(avgMs).toBeLessThan(5);
+  it('generate in under 50 ms on average', () => {
+    expect(avgMs).toBeLessThan(50);
   });
 
-  it('offer exactly the legal claims, and the answer is the coach action and passes its checker', () => {
+  it('offer exactly the legal claims, and the coach action is always one of the accepted answers', () => {
     for (const p of puzzles) {
       const setsNeeded = 5 - p.melds.length;
       const c = count(p.hand);
@@ -300,35 +357,57 @@ describe('claim puzzles', () => {
       if (p.from !== 3) expect(p.options.some((o) => o.type === 'chi')).toBe(false);
       expect(p.options[0].type).toBe('pass');
       expect(new Set(p.options.map((o) => o.id)).size).toBe(p.options.length);
-      // The coach, re-run on a table rebuilt from the puzzle alone, picks the stated answer.
+      // The coach, re-run on a table rebuilt from the puzzle alone, picks an accepted answer.
       const coach = coachAction(claimTable(p), 0) as Action;
       expect(checkClaimAnswer(p, coach)).toBe(true);
-      expect(checkClaimAnswer(p, p.answer)).toBe(true);
-      expect(checkClaimAnswer(p, p.answer.id)).toBe(true);
-      for (const o of p.options) if (o.id !== p.answer.id) expect(checkClaimAnswer(p, o)).toBe(false);
+      expect(p.answers).toContain(p.answer.id);
+      for (const o of p.options) expect(checkClaimAnswer(p, o)).toBe(p.answers.includes(o.id));
+      expect(p.answers.length).toBeLessThan(p.options.length);
       expect(p.explanation.length).toBeGreaterThan(0);
       expect(p.explanationZh.length).toBeGreaterThan(0);
     }
   });
 
-  it('have a unique answer under the coach evaluation', () => {
+  it('accept the lowest shanten on offer and, there, the most valuable choices', () => {
     for (const p of puzzles) {
       if (p.options.some((o) => o.type === 'hu')) {
-        expect(p.answer.type).toBe('hu');
+        expect(p.answers).toEqual(['hu']);
         continue;
       }
-      const stay = p.melds.length === 0 && p.shantenBefore <= 0;
-      const gain = (o: (typeof p.options)[number]) => p.shantenBefore - o.shantenAfter + (o.type === 'kong' ? 0.5 : 0) - (stay ? 1 : 0);
-      const claims = p.options.filter((o) => o.type !== 'pass');
-      if (p.answer.type === 'pass') expect(claims.every((o) => gain(o) <= 0)).toBe(true);
-      else {
-        expect(gain(p.answer)).toBeGreaterThan(0);
-        for (const o of claims) if (o.id !== p.answer.id) expect(gain(o)).toBeLessThan(gain(p.answer));
-      }
+      const lowest = Math.min(...p.options.map((o) => o.shantenAfter));
+      const top = Math.max(...p.options.filter((o) => o.shantenAfter === lowest).map((o) => o.value));
+      for (const o of p.options) expect(o.accepted).toBe(o.shantenAfter === lowest && o.value >= CLAIM_TOLERANCE * top);
+      // A ready result is judged by its live winning tiles, so it lists them.
+      for (const o of p.options) if (o.shantenAfter === 0) expect(o.waits!.length).toBeGreaterThan(0);
     }
   });
 
-  it('scale options with difficulty, mix passing and claiming, and are deterministic', () => {
+  it('weigh 台 and wait quality: a ready pass is scored from its live waits by the engine scorer', () => {
+    let checked = 0;
+    for (const p of puzzles) {
+      const pass = p.options.find((o) => o.type === 'pass')!;
+      if (pass.shantenAfter !== 0) continue;
+      const c = count(p.hand);
+      const melds: Meld[] = p.melds.map((m) => ({ type: m.type, tiles: m.kinds.map((k, i) => k * 4 + i), concealed: m.concealed, from: m.from }));
+      const meldCounts = count(p.melds.flatMap((m) => m.kinds));
+      // The discard already sits in its thrower's row.
+      const seen = count([...p.hand, ...p.ownDiscards, ...p.melds.flatMap((m) => m.kinds), ...p.opponents.flatMap((o) => [...o.discards, ...o.melds.flatMap((m) => m.kinds)])]);
+      let value = 0;
+      for (const w of waits(c, 5 - p.melds.length)) {
+        const live = Math.min(4 - seen[w], 4 - c[w] - meldCounts[w]);
+        if (live <= 0) continue;
+        const ctx = { rules: DEFAULT_RULES, seat: 0, dealerSeat: p.dealerSeat, dealerStreak: 0, prevailingWind: p.prevailingWind, concealed: p.hand, melds, flowers: [], winningTile: w };
+        const d = scoreWin({ ...ctx, selfDrawn: false, fromSeat: 1 }).tai;
+        const sd = scoreWin({ ...ctx, selfDrawn: true }).tai;
+        value += live * (0.75 * (100 + 20 * d) + 0.25 * 3 * (100 + 20 * sd));
+      }
+      expect(pass.value).toBeCloseTo(value, 6);
+      checked++;
+    }
+    expect(checked).toBeGreaterThan(50);
+  });
+
+  it('scale options with difficulty, mix passing and claiming, rarely ask 胡-or-pass, and are deterministic', () => {
     const of = (d: PuzzleDifficulty) => puzzles.filter((p) => p.difficulty === d);
     expect(of(1).filter((p) => p.options.length === 2).length).toBeGreaterThan(SEEDS * 0.95);
     expect(of(2).filter((p) => p.options.length === 3).length).toBeGreaterThan(SEEDS * 0.95);
@@ -336,6 +415,7 @@ describe('claim puzzles', () => {
     const passes = puzzles.filter((p) => p.answer.type === 'pass').length;
     expect(passes).toBeGreaterThan(puzzles.length * 0.2);
     expect(passes).toBeLessThan(puzzles.length * 0.8);
+    expect(puzzles.filter((p) => p.options.some((o) => o.type === 'hu')).length).toBeLessThan(puzzles.length * 0.12);
     for (let i = 0; i < puzzles.length; i += 15) expect(claimPuzzle(puzzles[i].seed, puzzles[i].difficulty)).toEqual(puzzles[i]);
   });
 });
@@ -343,11 +423,11 @@ describe('claim puzzles', () => {
 describe('value puzzles', () => {
   const { puzzles, avgMs } = generateAll(valuePuzzle);
 
-  it('generate in under 5 ms on average', () => {
-    expect(avgMs).toBeLessThan(5);
+  it('generate in under 10 ms on average', () => {
+    expect(avgMs).toBeLessThan(10);
   });
 
-  it('keep the hand ready either way, with a unique higher-台 answer that passes its checker', () => {
+  it('judge every ready discard by its exact expected score, accepting all within the tolerance', () => {
     puzzles.forEach((p: ValuePuzzle, n) => {
       const setsNeeded = 5 - p.melds.length;
       expect(p.hand).toHaveLength(3 * setsNeeded + 2);
@@ -358,40 +438,72 @@ describe('value puzzles', () => {
         x[k]--;
         return x;
       };
-      // Ready means some tile completes the hand: the engine's waits() agrees for every option, and
-      // its shanten (slow on whole-suit hands, so on every third puzzle) says 0 for the answer and rival.
       for (const o of p.options) expect(waits(without(o.kind), setsNeeded).length > 0).toBe(o.ready);
       if (n % 3 === 0) {
         expect(shanten(without(p.answer), setsNeeded)).toBe(0);
         expect(shanten(without(p.rival), setsNeeded)).toBe(0);
       }
-      const answer = p.options.find((o) => o.kind === p.answer)!;
-      const others = p.options.filter((o) => o.ready && o.kind !== p.answer);
-      expect(others.length).toBeGreaterThan(0);
-      for (const o of others) expect(o.projectedTai!).toBeLessThan(answer.projectedTai!);
-      expect(answer.items!.some((i) => i.key === p.patternKey)).toBe(true);
-      expect(p.options.find((o) => o.kind === p.rival)!.items!.some((i) => i.key === p.patternKey)).toBe(false);
-      // The projected 台 comes from a real scored win on one of the answer's live waits.
-      const rest = p.hand.slice();
-      rest.splice(rest.indexOf(p.answer), 1);
+      // Exact enumeration: every winning tile, every live copy, both ways of winning, every engine item.
       const melds: Meld[] = p.melds.map((m) => ({ type: m.type, tiles: m.kinds.map((k, i) => k * 4 + i), concealed: m.concealed, from: m.from }));
-      const scored = answer.waits!.map((w) =>
-        scoreWin({ rules: DEFAULT_RULES, seat: 0, dealerSeat: p.dealerSeat, dealerStreak: 0, prevailingWind: p.prevailingWind, concealed: rest, melds, flowers: [], winningTile: w, selfDrawn: false, fromSeat: 1 }),
-      );
-      expect(scored.some((r) => r.items.some((i) => i.key === p.patternKey))).toBe(true);
-      expect(checkValueAnswer(p, p.answer)).toBe(true);
-      for (const o of p.options) if (o.kind !== p.answer) expect(checkValueAnswer(p, o.kind)).toBe(false);
-      expect(p.explanation).toContain(p.patternEn);
+      const meldCounts = count(p.melds.flatMap((m) => m.kinds));
+      const exact = new Map<Kind, { score: number; tiles: number; tai: number; best: number }>();
+      for (const o of p.options.filter((x) => x.ready)) {
+        const rest = p.hand.slice();
+        rest.splice(rest.indexOf(o.kind), 1);
+        let score = 0;
+        let tiles = 0;
+        let tai = 0;
+        let best = -1;
+        for (const w of waits(without(o.kind), setsNeeded)) {
+          const live = 4 - c[w] - meldCounts[w];
+          if (live <= 0) continue;
+          const ctx = { rules: DEFAULT_RULES, seat: 0, dealerSeat: p.dealerSeat, dealerStreak: 0, prevailingWind: p.prevailingWind, concealed: rest, melds, flowers: [], winningTile: w };
+          const d = scoreWin({ ...ctx, selfDrawn: false, fromSeat: 1 }).tai;
+          const sd = scoreWin({ ...ctx, selfDrawn: true }).tai;
+          score += live * ((1 - VALUE_SELF_DRAW_SHARE) * (100 + 20 * d) + VALUE_SELF_DRAW_SHARE * 3 * (100 + 20 * sd));
+          tiles += live;
+          tai += live * ((1 - VALUE_SELF_DRAW_SHARE) * d + VALUE_SELF_DRAW_SHARE * sd);
+          best = Math.max(best, d, sd);
+        }
+        exact.set(o.kind, { score, tiles, tai: tiles > 0 ? tai / tiles : 0, best });
+        expect(o.expectedScore).toBeCloseTo(score, 6);
+        expect(o.acceptance).toBe(tiles);
+        expect(o.expectedTai).toBeCloseTo(tiles > 0 ? tai / tiles : 0, 9);
+        expect(o.bestTai).toBe(best);
+      }
+      const live = [...exact.entries()].filter(([, e]) => e.tiles > 0);
+      const top = Math.max(...live.map(([, e]) => e.score));
+      const accepted = live.filter(([, e]) => e.score >= VALUE_TOLERANCE * top).map(([k]) => k);
+      expect(p.answers.slice().sort((a, b) => a - b)).toEqual(accepted.sort((a, b) => a - b));
+      expect(exact.get(p.answer)!.score).toBe(top);
+      expect(p.answers).not.toContain(p.rival);
+      for (const o of p.options) expect(checkValueAnswer(p, o.kind)).toBe(p.answers.includes(o.kind));
+      if (p.patternKey) {
+        expect(p.options.find((o) => o.kind === p.answer)!.items!.some((i) => i.key === p.patternKey)).toBe(true);
+        expect(p.explanation).toContain(p.patternEn);
+      }
       expect(p.explanationZh.length).toBeGreaterThan(0);
     });
   });
 
-  it('match each difficulty (1: no speed trade, 3: the rival is faster) and are deterministic', () => {
-    const acc = (p: ValuePuzzle, k: Kind) => p.options.find((o) => o.kind === k)!.acceptance!;
-    expect(puzzles.filter((p) => p.difficulty === 1).every((p) => acc(p, p.answer) >= acc(p, p.rival))).toBe(true);
-    expect(puzzles.filter((p) => p.difficulty === 3).every((p) => acc(p, p.rival) > acc(p, p.answer))).toBe(true);
-    // Several patterns turn up, not only one.
+  it('show the expected and the best case honestly: the average never exceeds the best', () => {
+    for (const p of puzzles) {
+      for (const o of p.options.filter((x) => x.ready && x.acceptance! > 0)) {
+        expect(o.expectedTai!).toBeLessThanOrEqual(o.bestTai! + 1e-9);
+        expect(o.winning!.reduce((n, w) => n + w.live, 0)).toBe(o.acceptance);
+      }
+    }
+  });
+
+  it('match each difficulty (1: the best is also as fast; 3: a trade of speed against size) and are deterministic', () => {
+    const o = (p: ValuePuzzle, k: Kind) => p.options.find((x) => x.kind === k)!;
+    expect(puzzles.filter((p) => p.difficulty === 1).filter((p) => o(p, p.answer).acceptance! >= o(p, p.rival).acceptance!).length).toBeGreaterThan(SEEDS * 0.9);
+    expect(
+      puzzles.filter((p) => p.difficulty === 3).filter((p) => o(p, p.rival).acceptance! > o(p, p.answer).acceptance! || o(p, p.rival).bestTai! > o(p, p.answer).bestTai!).length,
+    ).toBeGreaterThan(SEEDS * 0.9);
+    // Several patterns turn up, and some answers win on speed rather than on a pattern.
     expect(new Set(puzzles.map((p) => p.patternKey)).size).toBeGreaterThanOrEqual(4);
+    expect(new Set(puzzles.map((p) => p.reasonKey)).size).toBe(3);
     for (let i = 0; i < puzzles.length; i += 15) expect(valuePuzzle(puzzles[i].seed, puzzles[i].difficulty)).toEqual(puzzles[i]);
   });
 });

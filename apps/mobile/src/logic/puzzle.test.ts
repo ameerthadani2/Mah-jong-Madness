@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { claimPuzzle, dailyPuzzle, dailySeed, defencePuzzle, discardPuzzle, kindInfo, PUZZLE_TYPES, puzzleOfType, valuePuzzle, waitsPuzzle, type AnyPuzzle, type ClaimPuzzle, type PuzzleType } from '@mjm/engine';
 import { en, zhTW } from '../i18n/locales';
-import { checkPuzzleAnswer, claimButtons, dailyDifficulty, defenceSeats, explanationFor, PUZZLE_TYPE_KEYS, puzzleDifficultyOf, puzzleStatus, reasonTitleKey, seatRelation, SEAT_KEYS, threatKey, tileName, valueProjections } from './puzzle';
+import { checkPuzzleAnswer, claimButtons, claimOutcomeKey, dailyDifficulty, defenceSeats, defenceVerdicts, explanationFor, percent, PUZZLE_TYPE_KEYS, puzzleDifficultyOf, puzzleStatus, reasonTitleKey, seatRelation, SEAT_KEYS, taiFigure, threatKey, tileName, valueProjections } from './puzzle';
 
 const lookup = (tree: unknown, key: string): unknown => key.split('.').reduce<unknown>((n, part) => (n && typeof n === 'object' ? (n as Record<string, unknown>)[part] : undefined), tree);
 const inBothLocales = (key: string) => typeof lookup(en, key) === 'string' && typeof lookup(zhTW, key) === 'string';
@@ -71,11 +71,11 @@ function wrongAnswer(p: AnyPuzzle) {
     case 'waits':
       return p.answers.slice(1);
     case 'defence':
-      return p.options.find((o) => o.kind !== p.answer)!.kind;
+      return p.options.find((o) => !p.answers.includes(o.kind))!.kind;
     case 'value':
       return p.rival;
     case 'claim':
-      return p.options.find((o) => o.id !== p.answer.id)!.id;
+      return p.options.find((o) => !p.answers.includes(o.id))!.id;
   }
 }
 
@@ -90,6 +90,18 @@ describe('checkPuzzleAnswer', () => {
       }
     });
   }
+
+  it('accepts every accepted answer of the table themes, not only the best one', () => {
+    let several = 0;
+    for (let i = 0; i < 60; i++) {
+      for (const p of [defencePuzzle(`many-${i}`, 3), valuePuzzle(`many-${i}`, 2), claimPuzzle(`many-${i}`, 2)]) {
+        const ids: Array<number | string> = p.answers;
+        if (ids.length > 1) several++;
+        for (const a of ids) expect(checkPuzzleAnswer(p, a)).toBe(true);
+      }
+    }
+    expect(several).toBeGreaterThan(0);
+  });
 
   it('accepts a claim option object as well as its id', () => {
     const p = claimPuzzle('claim-object', 2);
@@ -176,8 +188,10 @@ describe('claimButtons', () => {
       expect(b[0].type).toBe('pass');
       const rank = { pass: 0, chi: 1, pong: 2, kong: 3, hu: 4 };
       for (let i = 1; i < b.length; i++) expect(rank[b[i].type]).toBeGreaterThanOrEqual(rank[b[i - 1].type]);
-      expect(b.filter((x) => checkPuzzleAnswer(p, x.option))).toHaveLength(1);
-      expect(b.filter((x) => checkPuzzleAnswer(p, x.id))).toHaveLength(1);
+      expect(b.filter((x) => checkPuzzleAnswer(p, x.option))).toHaveLength(p.answers.length);
+      expect(b.filter((x) => checkPuzzleAnswer(p, x.id)).map((x) => x.id).sort()).toEqual(p.answers.slice().sort());
+      // Once answered, each button says where it leaves the hand.
+      for (const x of b) expect(inBothLocales(claimOutcomeKey(x.option).key)).toBe(true);
     }
   });
 
@@ -223,18 +237,42 @@ describe('defenceSeats', () => {
   });
 });
 
-describe('valueProjections', () => {
-  it('gives the answer and the rival, the answer worth more 台', () => {
-    for (let i = 0; i < 6; i++) {
-      const p = valuePuzzle(`proj-${i}`, (1 + (i % 3)) as 1 | 2 | 3);
-      const [a, r] = valueProjections(p);
-      expect(a.role).toBe('answer');
-      expect(a.kind).toBe(p.answer);
-      expect(r.role).toBe('rival');
-      expect(r.kind).toBe(p.rival);
-      expect(a.tai).toBeGreaterThan(r.tai);
-      expect(a.items.some((it) => it.key === p.patternKey)).toBe(true);
-      expect(r.items.some((it) => it.key === p.patternKey)).toBe(false);
+describe('defenceVerdicts', () => {
+  it('lists every shape-keeping discard, accepted ones first, with its exact deal-in chance', () => {
+    for (let i = 0; i < 9; i++) {
+      const p = defencePuzzle(`verdicts-${i}`, (1 + (i % 3)) as 1 | 2 | 3);
+      const v = defenceVerdicts(p);
+      expect(v.map((x) => x.kind).sort((a, b) => a - b)).toEqual(p.options.filter((o) => o.shanten === p.bestShanten).map((o) => o.kind));
+      expect(v.filter((x) => x.accepted).map((x) => x.kind).sort((a, b) => a - b)).toEqual(p.answers.slice().sort((a, b) => a - b));
+      const firstWorse = v.findIndex((x) => !x.accepted);
+      expect(v.slice(0, firstWorse).every((x) => x.accepted)).toBe(true);
+      expect(v.every((x) => x.chance >= 0 && x.chance <= 1)).toBe(true);
     }
+    expect(percent(0.0234)).toBe('2.3%');
+    expect(percent(0)).toBe('0.0%');
   });
 });
+
+describe('valueProjections', () => {
+  it('shows every ready discard, the best first, with the expected and the best case', () => {
+    for (let i = 0; i < 9; i++) {
+      const p = valuePuzzle(`proj-${i}`, (1 + (i % 3)) as 1 | 2 | 3);
+      const cards = valueProjections(p);
+      expect(cards[0].role).toBe('best');
+      expect(cards[0].kind).toBe(p.answer);
+      expect(cards[0].share).toBe(100);
+      const rival = cards.find((c) => c.kind === p.rival)!;
+      expect(rival.role).toBe('worse');
+      expect(rival.share).toBeLessThan(90);
+      for (const c of cards) {
+        expect(c.role === 'worse').toBe(!p.answers.includes(c.kind));
+        expect(c.expectedTai).toBeLessThanOrEqual(c.bestTai + 1e-9);
+        expect(c.acceptance).toBeGreaterThan(0);
+      }
+      if (p.patternKey) expect(cards[0].items.some((it) => it.key === p.patternKey)).toBe(true);
+    }
+    expect(taiFigure(2)).toBe('2');
+    expect(taiFigure(2.25)).toBe('2.3');
+  });
+});
+

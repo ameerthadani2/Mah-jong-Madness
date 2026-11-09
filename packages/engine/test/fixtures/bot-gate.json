@@ -1,0 +1,7 @@
+{
+  "note": "Pro minus Club, paired, seed prefix gate. Regenerate: npm run sim -- --gate --record",
+  "prefix": "gate",
+  "hands": 2000,
+  "mean": 1.76,
+  "se": 4.145
+}

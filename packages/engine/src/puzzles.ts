@@ -4,13 +4,15 @@
  * player and a rush run can be replayed.
  *
  * Five themes: discard (tile efficiency), waits (name every winning tile),
- * defence (the safest tile against a visibly close opponent), claim (what the
- * coach does in a claim window) and value (keep the 台 pattern). Each has a
- * seeded generator, a solver-checked answer and a checker.
+ * defence (the safest tiles against an opponent with four exposed sets, by the
+ * bots' deal-in model and checked by exact enumeration), claim (the response
+ * that leaves the hand closest to ready and worth most) and value (the ready
+ * discard with the highest expected score). Each has a seeded generator, every
+ * accepted answer (several when they are about equal) and a checker.
  *
  * Chinese: first pass, needs native review.
  */
-import { coachAction, dealInDanger, shantenAfterClaim, threats, unseenCounts } from './bot';
+import { coachAction, honourTai, readOpponents, unseenCounts, waitChance, type OpponentRead } from './bot';
 import { applyAction, legalActions, type Action, type GameState, type PlayerState } from './game';
 import { countsFromKinds, discardOptions, isComplete, relevantKinds, shanten, TOTAL_SETS, waits, type Counts } from './hand';
 import { type Meld, type MeldType } from './meld';
@@ -170,8 +172,8 @@ export function puzzleOfType(type: PuzzleType, seed: string, difficulty: PuzzleD
 
 /**
  * Puzzle Rush: an endless, seeded sequence that gets harder as you go. With two
- * arguments it keeps the classic discard/waits rotation (what the app renders
- * today); pass `PUZZLE_TYPES` to rotate all five themes.
+ * arguments it keeps the classic discard/waits rotation; pass `PUZZLE_TYPES` to
+ * rotate all five themes (as the app's Rush does).
  */
 export function rushPuzzle(runSeed: string, index: number): Puzzle;
 export function rushPuzzle(runSeed: string, index: number, types: readonly PuzzleType[]): AnyPuzzle;
@@ -393,17 +395,25 @@ function seatViews(s: GameState): PuzzleSeatView[] {
 }
 
 // ===========================================================================
-// Defence: the safest tile against one visibly close opponent
+// Defence: the safest tiles against one opponent with four exposed sets
 // ===========================================================================
 
-/** Why the answer is the safest tile, from strongest to weakest kind of safety. */
-export type DefenceReason = 'theirDiscard' | 'deadHonour' | 'lastHonour' | 'honour' | 'terminal';
+/** Why a tile is safe, from strongest to weakest kind of safety. */
+export type DefenceReason = 'theirDiscard' | 'passed' | 'deadHonour' | 'lastHonour' | 'honour' | 'fewCopies' | 'terminal' | 'middle';
 
 export interface DefenceOption {
   kind: Kind;
   shanten: number;
-  /** The engine's deal-in estimate (`dealInDanger`) against the table as shown. */
+  /** The engine's deal-in estimate (`dealInRisk`, the bots' model) against the table as shown. */
   danger: number;
+  /**
+   * Exact chance that this kind wins for the threat if it is ready, by enumerating every hand its
+   * four concealed tiles could be (`exactWaitChances`). Kinds it threw or let pass are not waits.
+   */
+  exact: number;
+  /** Accepted: keeps the hand's shanten and is within `DEFENCE_TOLERANCE` of the safest such discard. */
+  accepted: boolean;
+  reason: DefenceReason;
 }
 
 export interface DefencePuzzle extends PuzzleExplanation {
@@ -414,51 +424,106 @@ export interface DefencePuzzle extends PuzzleExplanation {
   hand: Kind[];
   /** Your own discards, oldest first. */
   ownDiscards: Kind[];
-  /** Seats 1–3 as the table shows them. */
+  /** Seats 1–3 as the table shows them (discards oldest first: the last tile is the latest). */
   opponents: PuzzleSeatView[];
-  /** The opponent who looks close to winning (four exposed sets, or three and a long discard row). */
+  /** The opponent who looks close to winning: four exposed sets. */
   threatSeat: number;
-  /** `threats()` level of the threatening seat: 1 for four exposed sets, 0.6 for three. */
+  /** The bots' estimate that the threat is ready (`readOpponents`). */
   threatLevel: number;
   /** Shanten of the hand: the discards that keep it are the candidates. */
   bestShanten: number;
   /** Every discard with its shanten and danger. */
   options: DefenceOption[];
-  /** The one safest discard among those that keep `bestShanten`. */
+  /** Every accepted discard: the safest ones that keep `bestShanten` (within the tolerance). */
+  answers: Kind[];
+  /** The safest of them, which the explanation is about. */
   answer: Kind;
-  /** The most efficient of those discards (highest acceptance), for the explanation. */
+  /** The most efficient of the shape-keeping discards (highest acceptance), for the explanation. */
   efficient: Kind;
   reason: DefenceReason;
 }
 
-const DEFENCE_TARGET: Record<PuzzleDifficulty, readonly DefenceReason[]> = {
-  1: ['theirDiscard'],
-  2: ['honour', 'terminal'],
-  3: ['deadHonour', 'lastHonour'],
+/** Discards whose estimated deal-in chance (if the threat is ready) is within this of the safest all count as right. */
+export const DEFENCE_TOLERANCE = 0.01;
+
+const binomial = (n: number, k: number): number => {
+  let r = 1;
+  for (let i = 0; i < k; i++) r = (r * (n - i)) / (i + 1);
+  return r;
 };
 
-function defenceReason(s: GameState, threatSeat: number, kind: Kind, unseen: Counts): DefenceReason {
-  if (s.players[threatSeat].discards.some((t) => kindOf(t) === kind)) return 'theirDiscard';
-  if (isHonorKind(kind)) return unseen[kind] === 0 ? 'deadHonour' : unseen[kind] === 1 ? 'lastHonour' : 'honour';
-  return 'terminal';
+/**
+ * For a seat with four exposed sets (four concealed tiles: one set and a pair to make), the exact
+ * chance that each kind is one of its winning tiles, given it is ready: every four-tile hand the
+ * `unseen` pool allows, weighted by the number of ways the pool deals it (each copy equally
+ * likely), keeping the ready hands none of whose winning tiles is `excluded`. Every ready hand
+ * plus a winning tile is a pair and a set, so the hands are found from those five-tile shapes.
+ */
+export function exactWaitChances(unseen: Counts, excluded: readonly boolean[]): number[] {
+  const sets: Kind[][] = [];
+  for (let k = 0; k < NUM_PLAY_KINDS; k++) {
+    sets.push([k, k, k]);
+    if (k < KIND_WIND && rankOfKind(k) <= 7) sets.push([k, k + 1, k + 2]);
+  }
+  const waitsOf = new Map<string, { counts: number[]; waits: Set<Kind> }>();
+  for (let pair = 0; pair < NUM_PLAY_KINDS; pair++) {
+    for (const set of sets) {
+      const five = new Array<number>(NUM_PLAY_KINDS).fill(0);
+      five[pair] += 2;
+      for (const k of set) five[k]++;
+      if (five.some((c) => c > 4)) continue;
+      for (let w = 0; w < NUM_PLAY_KINDS; w++) {
+        if (five[w] === 0) continue;
+        five[w]--;
+        if (five.every((c, k) => c <= unseen[k])) {
+          const key = five.join(',');
+          const e = waitsOf.get(key) ?? { counts: five.slice(), waits: new Set<Kind>() };
+          e.waits.add(w);
+          waitsOf.set(key, e);
+        }
+        five[w]++;
+      }
+    }
+  }
+  const win = new Array<number>(NUM_PLAY_KINDS).fill(0);
+  let total = 0;
+  for (const { counts, waits } of waitsOf.values()) {
+    if ([...waits].some((w) => excluded[w])) continue;
+    let weight = 1;
+    for (let k = 0; k < NUM_PLAY_KINDS; k++) if (counts[k] > 0) weight *= binomial(unseen[k], counts[k]);
+    total += weight;
+    for (const w of waits) win[w] += weight;
+  }
+  return win.map((x) => (total > 0 ? x / total : 0));
 }
 
-function defenceText(p: Pick<DefencePuzzle, 'answer' | 'threatSeat' | 'threatLevel' | 'reason' | 'efficient'>): PuzzleExplanation {
+function defenceReason(read: OpponentRead, kind: Kind, unseen: Counts): DefenceReason {
+  if (read.ownDiscards[kind]) return 'theirDiscard';
+  if (read.passed[kind]) return 'passed';
+  if (isHonorKind(kind)) return unseen[kind] === 0 ? 'deadHonour' : unseen[kind] === 1 ? 'lastHonour' : 'honour';
+  if (unseen[kind] <= 1) return 'fewCopies';
+  return rankOfKind(kind) === 1 || rankOfKind(kind) === 9 ? 'terminal' : 'middle';
+}
+
+const pct = (x: number): string => `${(x * 100).toFixed(1)}%`;
+
+function defenceText(p: Pick<DefencePuzzle, 'answer' | 'answers' | 'threatSeat' | 'reason' | 'efficient' | 'opponents' | 'options'>): PuzzleExplanation {
   const t = tileEn(p.answer);
   const tz = tileZh(p.answer);
   const who = SEAT_EN[p.threatSeat];
   const whoZh = SEAT_ZH[p.threatSeat];
-  const threatEn =
-    p.threatLevel >= 1
-      ? `${capitalise(who)} has four exposed sets and needs only one more set or the pair.`
-      : `${capitalise(who)} has three exposed sets and a long row of discards: that hand is well on its way.`;
-  const threatZh = p.threatLevel >= 1 ? `${whoZh}已經亮了四組面子，只差一組面子或一對眼。` : `${whoZh}亮了三組面子，又打了很多張，牌已經做得差不多了。`;
+  const threatEn = `${capitalise(who)} has four exposed sets and needs only one more set or the pair.`;
+  const threatZh = `${whoZh}已經亮了四組面子，只差一組面子或一對眼。`;
   let en: string;
   let zh: string;
   switch (p.reason) {
     case 'theirDiscard':
       en = `${t} is a tile ${who} has thrown. Taiwanese rules have no furiten, so it is not a guarantee, but players rarely wait on a tile they have discarded.`;
       zh = `${tz}是${whoZh}自己打過的熟張。台灣麻將沒有振聽，不是百分之百安全，但很少有人聽自己打掉的牌。`;
+      break;
+    case 'passed':
+      en = `${t} was thrown after ${who}'s last discard and ${who} did not win on it, so it is not one of their winning tiles unless they changed their wait since.`;
+      zh = `${tz}在${whoZh}上一次打牌之後有人打過，${whoZh}沒有胡，所以除非後來換了聽牌，這張不是他要的牌。`;
       break;
     case 'deadHonour':
       en = `Every other copy of ${t} is already visible, so nobody can win on it: an honour only completes a pair or a pong.`;
@@ -469,58 +534,75 @@ function defenceText(p: Pick<DefencePuzzle, 'answer' | 'threatSeat' | 'threatLev
       zh = `${tz}只剩一張沒出現。字牌不能吃，只有對方單吊最後那張才會放槍。`;
       break;
     case 'honour':
-      en = `${t} is an honour: it can complete a pair or a pong but never a chow, so it is safer than any suited tile you could throw here.`;
-      zh = `${tz}是字牌，只能湊對或碰，不能吃，比你手上可以打的數字牌安全。`;
+      en = `${t} is an honour: it can complete a pair or a pong but never a chow.`;
+      zh = `${tz}是字牌，只能湊對或碰，不能吃。`;
+      break;
+    case 'fewCopies':
+      en = `Most copies of ${t} and its neighbours are visible, so few hands ${who} could hold are waiting on it.`;
+      zh = `${tz}和旁邊的牌大多已經看得到了，${whoZh}能聽這張的牌型很少。`;
       break;
     case 'terminal':
-      en = `${t} is a terminal: it fits fewer chows than a middle tile, and none of the discards that keep your shape is an honour or a tile ${who} has thrown.`;
-      zh = `${tz}是么九牌，能組成的順子比中張少，比較安全；能保持牌型的牌裡也沒有對方打過的熟張或字牌。`;
+      en = `${t} is a terminal: it fits fewer chows than a middle tile.`;
+      zh = `${tz}是么九牌，能組成的順子比中張少。`;
+      break;
+    case 'middle':
+      en = `Counting the tiles you can see, ${t} completes the fewest of the hands ${who} could hold.`;
+      zh = `算一算看得到的牌，${tz}能讓${whoZh}胡的牌型最少。`;
       break;
   }
+  const a = p.options.find((o) => o.kind === p.answer)!;
+  const others = p.answers.filter((k) => k !== p.answer);
+  const numbersEn = ` If ${who} is ready, ${t} wins for them in about ${pct(a.exact)} of the hands they could hold.`;
+  const numbersZh = `如果${whoZh}已經聽牌，${tz}大約只在${pct(a.exact)}的牌型裡會放槍。`;
+  const alsoEn = others.length > 0 ? ` ${others.map(tileEn).join(' and ')} ${others.length > 1 ? 'are' : 'is'} about as safe, so ${others.length > 1 ? 'they count' : 'it counts'} too.` : '';
+  const alsoZh = others.length > 0 ? `${others.map(tileZh).join('、')}差不多一樣安全，也算對。` : '';
   const keepEn = ' Throwing it also keeps your hand as close to ready as any other discard.';
   const keepZh = '打這張也不會讓你的向聽數退步。';
-  const tradeEn = p.efficient !== p.answer ? ` ${tileEn(p.efficient)} would leave more useful tiles, but not while someone looks ready.` : '';
-  const tradeZh = p.efficient !== p.answer ? `打${tileZh(p.efficient)}進張比較多，但對方看起來快聽牌了，先求安全。` : '';
-  return { reasonKey: `puzzle.defence.${p.reason}`, explanation: `${threatEn} ${en}${keepEn}${tradeEn}`, explanationZh: `${threatZh}${zh}${keepZh}${tradeZh}` };
+  const tradeEn = !p.answers.includes(p.efficient) ? ` ${tileEn(p.efficient)} would leave more useful tiles, but not while someone looks ready.` : '';
+  const tradeZh = !p.answers.includes(p.efficient) ? `打${tileZh(p.efficient)}進張比較多，但對方看起來快聽牌了，先求安全。` : '';
+  return {
+    reasonKey: `puzzle.defence.${p.reason}`,
+    explanation: `${threatEn} ${en}${numbersEn}${alsoEn}${keepEn}${tradeEn}`,
+    explanationZh: `${threatZh}${zh}${numbersZh}${alsoZh}${keepZh}${tradeZh}`,
+  };
 }
 
+/** What each difficulty plants: 1 tiles the threat threw, 2 a tile let pass or none, 3 visible copies of a held kind. */
+const DEFENCE_PLANT: Record<PuzzleDifficulty, 'theirDiscard' | 'passed' | 'copies'> = { 1: 'theirDiscard', 2: 'passed', 3: 'copies' };
+
 /**
- * A 17-tile hand (seat 0) facing one opponent whose exposed sets and discards are shown.
- * The answer is the safest discard by the engine's danger model (`threats` / `dealInDanger`)
- * among the discards that keep the hand's shanten, and it is the unique minimum. Difficulty
- * picks the reason: 1 a tile the opponent threw (熟張), 2 an honour or terminal when none of
- * the candidates is one they threw, 3 an honour made safe by counting visible copies.
+ * A 17-tile hand (seat 0) facing one opponent with four exposed sets. Every discard that keeps
+ * the hand's shanten is rated by the bots' deal-in model (`readOpponents` / `waitChance`), and
+ * every one within `DEFENCE_TOLERANCE` of the safest is accepted. A puzzle is kept only when the
+ * exact enumeration (`exactWaitChances`) agrees: its safest kind is accepted, every accepted kind
+ * is within 1.5 points of it, and at least one shape-keeping discard is clearly worse (2 points).
+ * Difficulty decides what the table plants (tiles the threat threw, a tile let pass, visible
+ * copies), not which rule the answer follows.
  */
 export function defencePuzzle(seed: string, difficulty: PuzzleDifficulty = 2): DefencePuzzle {
   const rng = createRng(`defence:${seed}:${difficulty}`);
-  let fallback: DefencePuzzle | null = null;
-  for (let attempt = 0; attempt < 400; attempt++) {
+  for (let attempt = 0; attempt < 600; attempt++) {
     const p = defenceAttempt(seed, difficulty, rng);
-    if (!p) continue;
-    if (DEFENCE_TARGET[difficulty].includes(p.reason)) return p;
-    fallback = fallback ?? p;
-    if (attempt >= 200) return fallback;
+    if (p) return p;
   }
-  if (fallback) return fallback;
   throw new Error(`defencePuzzle: no puzzle for seed ${seed}`);
 }
 
 function defenceAttempt(seed: string, difficulty: PuzzleDifficulty, rng: Rng): DefencePuzzle | null {
   const pool = new TilePool();
   const threatSeat = 1 + rng.int(3);
-  const nMelds = difficulty === 1 || rng.next() < 0.5 ? 4 : 3;
   const melds: PuzzleMeld[] = [];
-  for (let i = 0; i < nMelds; i++) {
+  for (let i = 0; i < 4; i++) {
     const set = randomSet(rng, pool, 0.45);
     if (!set) return null;
     const pong = set[0] === set[1];
     const from = pong ? (threatSeat + 1 + rng.int(3)) % 4 : (threatSeat + 3) % 4;
     melds.push({ type: pong ? 'pong' : 'chow', kinds: set, concealed: false, from });
   }
-  const threatHand = pool.draw(rng, 16 - 3 * nMelds);
+  // The threat's four concealed tiles are a ready shape: a set and a single, or a pair and two.
+  const threatHand = readyHand(rng, pool, 1);
   if (!threatHand) return null;
 
-  // Your hand: a few draws until one is in the shanten band.
   const [minS, maxS] = difficulty === 1 ? [2, 4] : [1, 3];
   let hand: Kind[] | null = null;
   let counts: Counts = [];
@@ -538,41 +620,49 @@ function defenceAttempt(seed: string, difficulty: PuzzleDifficulty, rng: Rng): D
   pool.takeAll(hand);
   const byDiscard = shantenByDiscard(counts, TOTAL_SETS);
   const bestShanten = Math.min(...byDiscard);
-  const keep = new Set<Kind>();
-  for (let k = 0; k < NUM_PLAY_KINDS; k++) if (byDiscard[k] === bestShanten) keep.add(k);
+  const keepList: Kind[] = [];
+  for (let k = 0; k < NUM_PLAY_KINDS; k++) if (byDiscard[k] === bestShanten) keepList.push(k);
+  if (keepList.length < 3) return null;
+  const plant = DEFENCE_PLANT[difficulty];
 
-  // Discards. The threat never throws a kind you could keep-discard, except the one planted at difficulty 1.
   const threatDiscards: Kind[] = [];
-  if (difficulty === 1) {
-    const keepList = [...keep];
-    const g = keepList[rng.int(keepList.length)];
-    if (!pool.take(g)) return null;
-    threatDiscards.push(g);
+  if (plant === 'theirDiscard') {
+    for (let i = 0, n = 1 + rng.int(2); i < n; i++) {
+      const g = keepList[rng.int(keepList.length)];
+      if (pool.take(g)) threatDiscards.push(g);
+    }
   }
-  const nThreat = nMelds === 3 ? 8 + rng.int(5) : 5 + rng.int(6);
-  const rest = pool.draw(rng, nThreat - threatDiscards.length, (k) => !keep.has(k));
+  const rest = pool.draw(rng, 5 + rng.int(6) - threatDiscards.length, (k) => plant === 'theirDiscard' || !keepList.includes(k));
   if (!rest) return null;
   threatDiscards.push(...rest);
   shuffle(threatDiscards, rng);
 
+  // Turn order is threat, then the seats after it, then you: those seats threw after the threat.
   const otherSeats = [1, 2, 3].filter((x) => x !== threatSeat);
   const otherDiscards: Kind[][] = [[], []];
-  if (difficulty === 3) {
-    // Plant visible copies of one kept honour in the other seats' discards.
-    const honours = [...keep].filter(isHonorKind);
-    if (honours.length < 2) return null;
-    const h = honours[rng.int(honours.length)];
-    const want = Math.max(0, 4 - counts[h] - (rng.next() < 0.5 ? 0 : 1));
+  if (plant === 'copies') {
+    const k = keepList[rng.int(keepList.length)];
+    const want = Math.max(0, 4 - counts[k] - rng.int(2));
     for (let i = 0; i < want; i++) {
-      if (!pool.take(h)) return null;
-      otherDiscards[rng.int(2)].push(h);
+      if (!pool.take(k)) return null;
+      otherDiscards[rng.int(2)].splice(0, 0, k);
     }
   }
   for (let i = 0; i < 2; i++) {
-    const d = pool.draw(rng, Math.max(1, 5 + rng.int(6) - otherDiscards[i].length));
+    const d = pool.draw(rng, Math.max(1, 5 + rng.int(6) - otherDiscards[i].length), (k) => plant === 'passed' || !keepList.includes(k) || rng.next() < 0.3);
     if (!d) return null;
-    otherDiscards[i].push(...d);
+    otherDiscards[i].splice(0, 0, ...d);
     shuffle(otherDiscards[i], rng);
+  }
+  if (plant === 'passed') {
+    // The latest discard of a seat that plays after the threat: a kind you could throw.
+    const after = otherSeats.filter((x) => x > threatSeat).map((x) => otherSeats.indexOf(x));
+    if (after.length > 0) {
+      const i = after[rng.int(after.length)];
+      const k = keepList[rng.int(keepList.length)];
+      if (!pool.take(k)) return null;
+      otherDiscards[i].push(k);
+    }
   }
   const ownDiscards = pool.draw(rng, 5 + rng.int(6));
   if (!ownDiscards) return null;
@@ -592,22 +682,27 @@ function defenceAttempt(seed: string, difficulty: PuzzleDifficulty, rng: Rng): D
     }
   }
   const s = buildTable(seats, 0, rng.int(4), rng.int(2), rng);
-  const levels = threats(s, 0);
-  if (levels[threatSeat] === 0 || levels.some((l, i) => i !== threatSeat && l > 0)) return null;
+  const read = readOpponents(s, 0)[threatSeat];
   const unseen = unseenCounts(s, 0);
+  const excluded = read.ownDiscards.map((x, k) => x || read.passed[k]);
+  const exact = exactWaitChances(unseen, excluded);
   const options: DefenceOption[] = [];
   for (let k = 0; k < NUM_PLAY_KINDS; k++) {
     if (counts[k] === 0) continue;
-    options.push({ kind: k, shanten: byDiscard[k], danger: dealInDanger(s, 0, k, levels, unseen) });
+    options.push({ kind: k, shanten: byDiscard[k], danger: read.tenpai * waitChance(read, k, unseen), exact: exact[k], accepted: false, reason: defenceReason(read, k, unseen) });
   }
   const kept = options.filter((o) => o.shanten === bestShanten);
-  // A real choice: at least two discards keep the shape.
-  if (kept.length < 2) return null;
-  const minDanger = Math.min(...kept.map((o) => o.danger));
-  const safest = kept.filter((o) => o.danger === minDanger);
-  if (safest.length !== 1) return null;
-  const answer = safest[0].kind;
-  let efficient = answer;
+  const minChance = Math.min(...kept.map((o) => o.danger / read.tenpai));
+  for (const o of kept) o.accepted = o.danger / read.tenpai <= minChance + DEFENCE_TOLERANCE;
+  const accepted = kept.filter((o) => o.accepted);
+  // The exact enumeration must agree with the model, and there must be a real choice to make.
+  const exactMin = Math.min(...kept.map((o) => o.exact));
+  if (!kept.some((o) => o.accepted && o.exact <= exactMin + 1e-9)) return null;
+  if (accepted.some((o) => o.exact > exactMin + 0.015)) return null;
+  if (!kept.some((o) => !o.accepted && o.exact >= exactMin + 0.02)) return null;
+  if (accepted.length > Math.max(2, Math.floor(kept.length / 2))) return null;
+  const best = accepted.slice().sort((x, y) => x.danger - y.danger || x.exact - y.exact || x.kind - y.kind)[0];
+  let efficient = best.kind;
   let bestAcc = -1;
   for (const o of kept) {
     const acc = acceptanceAfter(counts, TOTAL_SETS, o.kind, unseen);
@@ -616,25 +711,23 @@ function defenceAttempt(seed: string, difficulty: PuzzleDifficulty, rng: Rng): D
       efficient = o.kind;
     }
   }
-  const reason = defenceReason(s, threatSeat, answer, unseen);
-  if (reason === 'terminal' && rankOfKind(answer) !== 1 && rankOfKind(answer) !== 9) return null;
-  const base = { answer, threatSeat, threatLevel: levels[threatSeat], reason, efficient };
+  const opponents = seatViews(s);
+  const base = { answer: best.kind, answers: accepted.map((o) => o.kind), threatSeat, reason: best.reason, efficient, opponents, options };
   return {
     type: 'defence',
     seed,
     difficulty,
     hand: hand.slice().sort((a, b) => a - b),
     ownDiscards,
-    opponents: seatViews(s),
+    threatLevel: read.tenpai,
     bestShanten,
-    options,
     ...base,
     ...defenceText(base),
   };
 }
 
 export function checkDefenceAnswer(p: DefencePuzzle, kind: Kind): boolean {
-  return kind === p.answer;
+  return p.answers.includes(kind);
 }
 
 // ===========================================================================
@@ -651,7 +744,23 @@ export interface ClaimOption {
   kinds?: [Kind, Kind];
   /** Shanten after taking this claim and making the best discard (pass: unchanged; hu: -1). */
   shantenAfter: number;
+  /**
+   * What the hand is worth afterwards, comparable between options that reach the same shanten: when
+   * ready, the expected score of its winning tiles (`scoreWaits`: live copies, 台 by discard and by
+   * self-draw, so 門清 and value pongs count); otherwise the useful tiles left times a win at the 台
+   * the hand can already count on (value pongs, 門清). 胡 is not scored.
+   */
+  value: number;
+  /** Live winning tiles after the claim and the best discard, when it leaves the hand ready. */
+  waits?: Kind[];
+  /** Live copies of `waits` (ready), or of the tiles that would improve the hand (not ready). */
+  acceptance: number;
+  /** Accepted: reaches the lowest shanten on offer and is within `CLAIM_TOLERANCE` of the best value there. */
+  accepted: boolean;
 }
+
+/** Claims whose value is at least this share of the best (at the same shanten) all count as right. */
+export const CLAIM_TOLERANCE = 0.9;
 
 export interface ClaimPuzzle extends PuzzleExplanation {
   type: 'claim';
@@ -667,14 +776,18 @@ export interface ClaimPuzzle extends PuzzleExplanation {
   dealerSeat: number;
   prevailingWind: number;
   opponents: PuzzleSeatView[];
+  /** Your own discards, oldest first (they count when judging how many winning tiles are live). */
+  ownDiscards: Kind[];
   shantenBefore: number;
   /** Legal responses: pass, 胡, 碰, 槓 and each 吃 shape. */
   options: ClaimOption[];
-  /** The coach's action (`coachAction`), unique under its own evaluation. */
+  /** The coach's action (`coachAction`); always one of the accepted options. */
   answer: ClaimOption;
+  /** Ids of every accepted option. */
+  answers: string[];
 }
 
-function claimOptionOf(a: Action): Omit<ClaimOption, 'shantenAfter'> {
+function claimOptionOf(a: Action): Pick<ClaimOption, 'id' | 'type' | 'kinds'> {
   if (a.type === 'chi') {
     const ks = a.tiles.map(kindOf).sort((x, y) => x - y) as [Kind, Kind];
     return { id: `chi:${ks[0]}-${ks[1]}`, type: 'chi', kinds: ks };
@@ -700,13 +813,7 @@ function claimLabel(o: ClaimOption, discard: Kind): { en: string; zh: string } {
   }
 }
 
-/** The coach's claim evaluation (mirrors `chooseAction` for the coach): shanten gained, plus half a step for a kong. */
-function claimGain(o: ClaimOption, before: number, stayConcealed: boolean): number {
-  if (o.type === 'pass' || o.type === 'hu') return 0;
-  return before - o.shantenAfter + (o.type === 'kong' ? 0.5 : 0) - (stayConcealed ? 1 : 0);
-}
-
-function claimText(p: Pick<ClaimPuzzle, 'answer' | 'discard' | 'shantenBefore' | 'options' | 'melds'>): PuzzleExplanation {
+function claimText(p: Pick<ClaimPuzzle, 'answer' | 'discard' | 'shantenBefore' | 'options' | 'melds'>, valuePong: number): PuzzleExplanation {
   const a = p.answer;
   const label = claimLabel(a, p.discard);
   const concealed = p.melds.every((m) => m.concealed);
@@ -718,32 +825,54 @@ function claimText(p: Pick<ClaimPuzzle, 'answer' | 'discard' | 'shantenBefore' |
     };
   }
   if (a.type === 'pass') {
+    const o = othersText(p);
     if (p.shantenBefore === 0 && concealed) {
       return {
         reasonKey: 'puzzle.claim.passReady',
-        explanation: 'You are already ready (聽牌) with a concealed hand. No claim gets you closer, and calling would cost you 門清, so pass.',
-        explanationZh: '你已經聽牌，而且是門清。吃碰不會讓你更接近胡牌，還會失去門清，所以不要。',
+        explanation: `You are already ready (聽牌) with a concealed hand and ${a.acceptance} live winning tiles. No claim gets you closer, and calling would cost you 門清 (and 門清自摸 on a self-draw), so pass.${o.en}`,
+        explanationZh: `你已經聽牌，而且是門清，還有${a.acceptance}張可以胡。吃碰不會讓你更接近胡牌，還會失去門清（自摸時的門清自摸），所以不要。${o.zh}`,
       };
     }
     return {
       reasonKey: 'puzzle.claim.passNoGain',
-      explanation: 'None of these claims brings your hand closer to ready: the shanten (向聽) stays the same or gets worse. Exposing a set for nothing gives away information and flexibility, so pass.',
-      explanationZh: '這些吃碰都不能降低向聽數。白白亮出一組面子只會洩露牌型、少了變化，所以不要。',
+      explanation: `No claim here leaves the hand better off: none of them gets you closer to ready (向聽) with as much to win. Exposing a set for nothing gives away information and flexibility, so pass.${o.en}`,
+      explanationZh: `這些吃碰都不能讓牌變得更好：向聽數沒有降低，能胡的牌和台數也沒有增加。白白亮出一組面子只會洩露牌型、少了變化，所以不要。${o.zh}`,
     };
   }
   const after = a.shantenAfter;
   const stepsEn = after === 0 ? 'makes you ready (聽牌)' : `takes you from ${p.shantenBefore} to ${after} away from ready (向聽)`;
   const stepsZh = after === 0 ? '吃碰後就聽牌' : `向聽數從${p.shantenBefore}降到${after}`;
-  const others = p.options.filter((o) => o.id !== a.id && o.type !== 'pass' && o.type !== 'hu');
-  const otherEn = others.length > 0 ? ' The other claims do less for the hand.' : '';
-  const otherZh = others.length > 0 ? '其他吃碰的效果都比較差。' : '';
+  const waitEn = after === 0 && a.waits ? ` It leaves ${a.acceptance} live winning tiles.` : '';
+  const waitZh = after === 0 && a.waits ? `聽${a.acceptance}張。` : '';
+  const valueEn = valuePong ? ` The pong of ${tileEn(p.discard)} is also worth ${valuePong} 台.` : '';
+  const valueZh = valuePong ? `${tileZh(p.discard)}的刻子還有${valuePong}台。` : '';
   const kongEn = a.type === 'kong' ? ' A kong also brings a replacement tile from the back of the wall.' : '';
   const kongZh = a.type === 'kong' ? '槓還可以從牌尾補一張。' : '';
   return {
     reasonKey: a.type === 'kong' ? 'puzzle.claim.kong' : after === 0 ? 'puzzle.claim.ready' : 'puzzle.claim.closer',
-    explanation: `${label.en} ${stepsEn}.${kongEn}${otherEn}`,
-    explanationZh: `${label.zh}，${stepsZh}。${kongZh}${otherZh}`,
+    explanation: `${label.en} ${stepsEn}.${waitEn}${valueEn}${kongEn}${othersText(p).en}`,
+    explanationZh: `${label.zh}，${stepsZh}。${waitZh}${valueZh}${kongZh}${othersText(p).zh}`,
   };
+}
+
+/** How the other options compare: equally good ones named, worse ones summed up. */
+function othersText(p: Pick<ClaimPuzzle, 'answer' | 'discard' | 'options'>): { en: string; zh: string } {
+  const also = p.options.filter((o) => o.accepted && o.id !== p.answer.id);
+  const worse = p.options.filter((o) => !o.accepted && o.type !== 'hu');
+  let en = '';
+  let zh = '';
+  if (also.length > 0) {
+    en += ` ${also.map((o) => claimLabel(o, p.discard).en).join(' and ')} ${also.length > 1 ? 'are' : 'is'} about as good.`;
+    zh += `${also.map((o) => claimLabel(o, p.discard).zh).join('、')}差不多一樣好。`;
+  }
+  if (worse.some((o) => o.shantenAfter > p.answer.shantenAfter)) {
+    en += ' The other choices leave you further from ready.';
+    zh += '其他選擇離聽牌比較遠。';
+  } else if (worse.length > 0) {
+    en += ' The other choices are as close to ready but leave fewer or cheaper winning tiles.';
+    zh += '其他選擇向聽數一樣，但能胡的牌比較少或台數比較低。';
+  }
+  return { en, zh };
 }
 
 /** A ready 3n+1 hand: n sets and a pair, minus one tile; null when the pool runs short. */
@@ -857,26 +986,25 @@ function claimAttempt(seed: string, difficulty: PuzzleDifficulty, rng: Rng): Cla
   if (s.phase !== 'claim') return null;
   const actions = legalActions(s, 0);
   if (actions.length < 2) return null;
+  // About a fifth of windows used to be a bare 胡-or-pass choice: keep only some of them.
+  if (actions.some((a) => a.type === 'hu') && rng.next() < 0.65) return null;
   const coach = coachAction(s, 0);
   if (!coach) return null;
   const before = shanten(counts, setsNeeded);
-  const options: ClaimOption[] = actions.map((a) => ({
-    ...claimOptionOf(a),
-    shantenAfter: a.type === 'hu' ? -1 : a.type === 'pass' ? before : shantenAfterClaim(s, 0, a),
-  }));
-  const answer = options.find((o) => o.id === claimOptionOf(coach).id);
-  if (!answer) return null;
-  // Uniqueness under the coach's evaluation: a claim answer must beat every other claim outright.
-  if (answer.type !== 'hu') {
-    const stay = melds.length === 0 && before <= 0;
-    const gains = options.filter((o) => o.type !== 'pass' && o.type !== 'hu').map((o) => ({ id: o.id, g: claimGain(o, before, stay) }));
-    if (answer.type === 'pass') {
-      if (gains.some((x) => x.g > 0)) return null;
-    } else {
-      const mine = gains.find((x) => x.id === answer.id)!.g;
-      if (mine <= 0 || gains.some((x) => x.id !== answer.id && x.g >= mine)) return null;
-    }
+  const unseen = unseenCounts(s, 0);
+  const options: ClaimOption[] = actions.map((a) => ({ ...claimOptionOf(a), ...claimOutcome(s, a, before, unseen) }));
+  // Accepted: 胡 when offered; otherwise the lowest shanten on offer, and the best value there (within the tolerance).
+  const hu = options.find((o) => o.type === 'hu');
+  if (hu) hu.accepted = true;
+  else {
+    const lowest = Math.min(...options.map((o) => o.shantenAfter));
+    const top = Math.max(...options.filter((o) => o.shantenAfter === lowest).map((o) => o.value));
+    for (const o of options) o.accepted = o.shantenAfter === lowest && o.value >= CLAIM_TOLERANCE * top;
   }
+  const answer = options.find((o) => o.id === claimOptionOf(coach).id);
+  // The coach and the puzzle's judgement must agree, and there must be a wrong choice to make.
+  if (!answer || !answer.accepted || options.every((o) => o.accepted)) return null;
+  const valuePong = answer.type === 'pong' || answer.type === 'kong' ? honourTai(s, 0, discard) : 0;
   const base = { answer, discard, shantenBefore: before, options, melds };
   return {
     type: 'claim',
@@ -887,46 +1015,94 @@ function claimAttempt(seed: string, difficulty: PuzzleDifficulty, rng: Rng): Cla
     dealerSeat,
     prevailingWind,
     opponents: seatViews(s),
+    ownDiscards: s.players[0].discards.map(kindOf),
+    answers: options.filter((o) => o.accepted).map((o) => o.id),
     ...base,
-    ...claimText(base),
+    ...claimText(base, valuePong),
   };
+}
+
+/** Points of a win at `tai` with the default rules, a quarter self-drawn (paid by all three). */
+function winWorth(tai: number): number {
+  const r = DEFAULT_RULES;
+  return (1 - VALUE_SELF_DRAW_SHARE) * (r.basePoints + r.taiPoints * tai) + VALUE_SELF_DRAW_SHARE * 3 * (r.basePoints + r.taiPoints * tai);
+}
+
+/** Shanten, value and waits of seat 0's hand after answering a claim window with `a` (see `ClaimOption`). */
+function claimOutcome(s: GameState, a: Action, before: number, unseen: Counts): Pick<ClaimOption, 'shantenAfter' | 'value' | 'waits' | 'acceptance' | 'accepted'> {
+  if (a.type === 'hu') return { shantenAfter: -1, value: 0, acceptance: 0, accepted: false };
+  const p = s.players[0];
+  const k = kindOf(s.pending!.tile);
+  const hand = p.hand.map(kindOf);
+  const melds: Meld[] = p.melds.map((m) => ({ ...m }));
+  const take = (kinds: Kind[]) => {
+    for (const x of kinds) hand.splice(hand.indexOf(x), 1);
+  };
+  if (a.type === 'pong' || a.type === 'kong') {
+    const n = a.type === 'pong' ? 2 : 3;
+    take(new Array<Kind>(n).fill(k));
+    melds.push({ type: a.type, tiles: new Array<number>(n + 1).fill(0).map((_, i) => k * 4 + i), concealed: false, from: s.pending!.from });
+  } else if (a.type === 'chi') {
+    const [x, y] = a.tiles.map(kindOf);
+    take([x, y]);
+    melds.push({ type: 'chow', tiles: [x, y, k].sort((m, n) => m - n).map((q, i) => q * 4 + i), concealed: false, from: s.pending!.from });
+  }
+  const setsNeeded = TOTAL_SETS - melds.length;
+  const concealedHand = melds.every((m) => m.concealed);
+  const meldTai = melds.reduce((n, m) => n + (m.type === 'chow' ? 0 : honourTai(s, 0, kindOf(m.tiles[0]))), 0);
+  const handTai = 1.5 + meldTai + (concealedHand ? 1 : 0);
+  // The 3n+1 hands to judge: the hand itself after a pass (or a kong, which draws a replacement),
+  // or each discard that keeps the best shanten after a pong or chow.
+  const candidates: Kind[][] = [];
+  let after: number;
+  if (a.type === 'pass' || a.type === 'kong') {
+    after = a.type === 'pass' ? before : shanten(countsFromKinds(hand), setsNeeded);
+    candidates.push(hand);
+  } else {
+    const byDiscard = shantenByDiscard(countsFromKinds(hand), setsNeeded);
+    after = Math.min(...byDiscard);
+    for (let d = 0; d < NUM_PLAY_KINDS; d++) {
+      if (byDiscard[d] !== after) continue;
+      const rest = hand.slice();
+      rest.splice(rest.indexOf(d), 1);
+      candidates.push(rest);
+    }
+  }
+  const ownMelds = countsFromKinds(melds.flatMap((m) => m.tiles.map(kindOf)));
+  let best: Pick<ClaimOption, 'value' | 'waits' | 'acceptance'> = { value: -1, acceptance: 0 };
+  for (const h of candidates) {
+    const c = countsFromKinds(h);
+    if (after === 0) {
+      const live = shapeWaits(c.slice(), setsNeeded)
+        .map((w) => ({ kind: w, live: Math.max(0, Math.min(unseen[w], 4 - c[w] - ownMelds[w])) }))
+        .filter((w) => w.live > 0);
+      const v = scoreWaits(h, live, melds, s.dealerSeat, s.prevailingWind);
+      const acceptance = live.reduce((n, w) => n + w.live, 0);
+      if (v.expectedScore! > best.value) best = { value: v.expectedScore!, waits: live.map((w) => w.kind), acceptance };
+    } else {
+      let acceptance = 0;
+      for (const x of relevantKinds(c)) {
+        if (c[x] >= 4 || unseen[x] <= 0) continue;
+        c[x]++;
+        if (shanten(c, setsNeeded) < after) acceptance += unseen[x];
+        c[x]--;
+      }
+      const value = acceptance * winWorth(handTai);
+      if (value > best.value) best = { value, acceptance };
+    }
+  }
+  return { shantenAfter: after, ...best, accepted: false };
 }
 
 /** Accepts an option, its id, or the engine action the player chose. */
 export function checkClaimAnswer(p: ClaimPuzzle, choice: ClaimOption | string | Action): boolean {
   const id = typeof choice === 'string' ? choice : 'id' in choice ? choice.id : claimOptionOf(choice).id;
-  return id === p.answer.id;
+  return p.answers.includes(id);
 }
 
 // ===========================================================================
-// Value: two discards keep the same shanten; one keeps a 台 pattern
+// Value: several discards keep the hand ready; which one is worth the most?
 // ===========================================================================
-
-/**
- * Items that describe how or when a hand is won rather than what it is made of. The
- * projected 台 leaves them out, so the comparison is about the pattern each discard keeps.
- */
-const NON_PATTERN_KEYS: ReadonlySet<string> = new Set([
-  'single_wait',
-  'all_chows',
-  'concealed',
-  'concealed_self_draw',
-  'self_draw',
-  'full_begging',
-  'half_begging',
-  'dealer',
-  'dealer_streak',
-  'last_tile_draw',
-  'last_tile_discard',
-  'rob_kong',
-  'after_kong',
-  'after_flower',
-  'no_flowers',
-  'four_flowers',
-  'four_seasons',
-  'seat_flower',
-  'seat_season',
-]);
 
 /** The patterns a value puzzle is about: flushes, all pongs and value-honour pongs (and their bigger cousins). */
 const HEADLINE_KEYS: ReadonlySet<string> = new Set([
@@ -945,6 +1121,24 @@ const HEADLINE_KEYS: ReadonlySet<string> = new Set([
   'big_four_winds',
 ]);
 
+/**
+ * Share of wins that are self-drawn when judging a wait: measured at 24% on Club-bot tables
+ * (`npm run sim`), rounded to a quarter. A self-drawn win is paid by all three other seats.
+ */
+export const VALUE_SELF_DRAW_SHARE = 0.25;
+/** Discards whose expected score is at least this share of the best one's all count as right. */
+export const VALUE_TOLERANCE = 0.9;
+
+/** One winning tile of a ready discard, with what a win on it scores. */
+export interface ValueWait {
+  kind: Kind;
+  /** Copies still unseen from your own view. */
+  live: number;
+  /** 台 of a win on a discard and of a self-drawn win (every engine item, dealer items included). */
+  taiDiscard: number;
+  taiSelfDraw: number;
+}
+
 export interface ValueOption {
   kind: Kind;
   /** The discard leaves the hand ready (shanten 0), which is the best this hand can do. */
@@ -953,10 +1147,22 @@ export interface ValueOption {
   waits?: Kind[];
   /** Unseen copies of those winning tiles, from your own view (ready discards only). */
   acceptance?: number;
-  /** Projected pattern 台 of the best completion; -1 when no winning tile is live (ready discards only). */
-  projectedTai?: number;
-  /** The pattern items of that best completion. */
+  /** Every winning tile with its 台 (ready discards only). */
+  winning?: ValueWait[];
+  /** Average 台 of a win, over the live copies and the self-draw share (ready discards only). */
+  expectedTai?: number;
+  /** The biggest single win this discard allows, in 台 (ready discards only; -1 when no winning tile is live). */
+  bestTai?: number;
+  /**
+   * Expected score per draw (ready discards only): the sum over live copies of what a win on that
+   * copy is worth, `VALUE_SELF_DRAW_SHARE` of them self-drawn (all three pay) and the rest by
+   * discard, at 底 + 台 × 台值 of the default rules. Proportional to the hand's expected winnings.
+   */
+  expectedScore?: number;
+  /** The headline pattern items (flushes, all pongs, value pongs) its best win includes. */
   items?: TaiItem[];
+  /** Within `VALUE_TOLERANCE` of the best expected score. */
+  accepted?: boolean;
 }
 
 export interface ValuePuzzle extends PuzzleExplanation {
@@ -973,11 +1179,13 @@ export interface ValuePuzzle extends PuzzleExplanation {
   /** 0: every discard counted here leaves the hand ready (聽牌). */
   bestShanten: number;
   options: ValueOption[];
-  /** The discard that keeps the higher projected 台 (unique). */
+  /** Every accepted discard (within `VALUE_TOLERANCE` of the best expected score). */
+  answers: Kind[];
+  /** The discard with the highest expected score. */
   answer: Kind;
-  /** The tempting alternative: the other ready-keeping discard with the most acceptance. */
+  /** The tempting alternative: the ready discard outside the accepted set with the most winning tiles. */
   rival: Kind;
-  /** The headline 台 item the answer keeps and the rival loses. */
+  /** The headline 台 item the answer keeps and the rival loses ('' when the answer wins on speed alone). */
   patternKey: string;
   patternEn: string;
   patternZh: string;
@@ -1027,39 +1235,88 @@ function themedHand(rng: Rng, pool: TilePool, theme: ValueTheme, valueHonours: r
   return { sets, pair, suit };
 }
 
-/** Pattern 台 of the best discard win for a ready hand: the highest over its live waits (-1 when none is live). */
-function projectValue(concealed: Kind[], liveWaits: readonly Kind[], melds: Meld[], dealerSeat: number, prevailingWind: number): { tai: number; items: TaiItem[] } {
-  let best: { tai: number; items: TaiItem[] } = { tai: -1, items: [] };
-  for (const w of liveWaits) {
-    const r = scoreWin({ rules: DEFAULT_RULES, seat: 0, dealerSeat, dealerStreak: 0, prevailingWind, concealed, melds, flowers: [], winningTile: w, selfDrawn: false, fromSeat: 1 });
-    const items = r.items.filter((i) => !NON_PATTERN_KEYS.has(i.key));
-    const tai = items.reduce((n, i) => n + i.tai, 0);
-    if (tai > best.tai) best = { tai, items };
+/**
+ * Score every live winning tile of a ready hand (`concealed` is the 3n+1 hand after the discard)
+ * both ways, with every engine item. Returns the waits and the summary numbers of a value option.
+ */
+export function scoreWaits(
+  concealed: Kind[],
+  live: readonly { kind: Kind; live: number }[],
+  melds: Meld[],
+  dealerSeat: number,
+  prevailingWind: number,
+): Pick<ValueOption, 'winning' | 'expectedTai' | 'bestTai' | 'expectedScore' | 'items'> {
+  const rules = DEFAULT_RULES;
+  const winning: ValueWait[] = [];
+  let tiles = 0;
+  let taiSum = 0;
+  let score = 0;
+  let bestTai = -1;
+  let items: TaiItem[] = [];
+  for (const w of live) {
+    if (w.live <= 0) continue;
+    const ctx = { rules, seat: 0, dealerSeat, dealerStreak: 0, prevailingWind, concealed, melds, flowers: [], winningTile: w.kind };
+    const byDiscard = scoreWin({ ...ctx, selfDrawn: false, fromSeat: 1 });
+    const bySelf = scoreWin({ ...ctx, selfDrawn: true });
+    winning.push({ kind: w.kind, live: w.live, taiDiscard: byDiscard.tai, taiSelfDraw: bySelf.tai });
+    const mix = (1 - VALUE_SELF_DRAW_SHARE) * byDiscard.tai + VALUE_SELF_DRAW_SHARE * bySelf.tai;
+    tiles += w.live;
+    taiSum += w.live * mix;
+    score +=
+      w.live *
+      ((1 - VALUE_SELF_DRAW_SHARE) * (rules.basePoints + rules.taiPoints * byDiscard.tai) + VALUE_SELF_DRAW_SHARE * 3 * (rules.basePoints + rules.taiPoints * bySelf.tai));
+    const top = Math.max(byDiscard.tai, bySelf.tai);
+    if (top > bestTai) {
+      bestTai = top;
+      items = (bySelf.tai >= byDiscard.tai ? bySelf : byDiscard).items.filter((i) => HEADLINE_KEYS.has(i.key));
+    }
   }
-  return best;
+  return { winning, expectedTai: tiles > 0 ? taiSum / tiles : 0, bestTai, expectedScore: score, items };
 }
 
-function valueText(p: Pick<ValuePuzzle, 'answer' | 'rival' | 'options' | 'patternEn' | 'patternZh' | 'patternTai'>, itemZh: string): PuzzleExplanation {
+const fmt1 = (x: number): string => (Math.round(x * 10) / 10).toString();
+
+function valueText(p: Pick<ValuePuzzle, 'answer' | 'answers' | 'rival' | 'options' | 'patternEn' | 'patternZh' | 'patternTai'>, reasonKey: string): PuzzleExplanation {
   const a = p.options.find((o) => o.kind === p.answer)!;
   const r = p.options.find((o) => o.kind === p.rival)!;
-  let en = `Throwing ${tileEn(p.answer)} or ${tileEn(p.rival)} leaves you ready (聽牌) either way, but only throwing ${tileEn(p.answer)} keeps ${p.patternEn} (${itemZh}, ${p.patternTai} 台). Your best win would be worth ${a.projectedTai} 台 from the hand's patterns, against ${r.projectedTai} 台 after throwing ${tileEn(p.rival)}.`;
-  let zh = `打${tileZh(p.answer)}或${tileZh(p.rival)}都能聽牌，但只有打${tileZh(p.answer)}才能保住${p.patternZh}（${p.patternTai}台）。牌型台數最多可以胡到${a.projectedTai}台，打${tileZh(p.rival)}只有${r.projectedTai}台。`;
-  const trade = r.acceptance! > a.acceptance!;
-  if (trade) {
-    en += ` ${tileEn(p.rival)} would leave more winning tiles (${r.acceptance} against ${a.acceptance}): this is a trade of speed for value.`;
-    zh += `打${tileZh(p.rival)}能胡的牌比較多（${r.acceptance}張對${a.acceptance}張），這是用速度換台數。`;
+  const A = tileEn(p.answer);
+  const Az = tileZh(p.answer);
+  const R = tileEn(p.rival);
+  const Rz = tileZh(p.rival);
+  const ratio = Math.round((100 * r.expectedScore!) / a.expectedScore!);
+  let en = `Throwing ${A} leaves ${a.acceptance} winning tiles worth ${fmt1(a.expectedTai!)} 台 a win on average (up to ${a.bestTai} 台). Throwing ${R} leaves ${r.acceptance}, worth ${fmt1(r.expectedTai!)} 台 on average (up to ${r.bestTai} 台).`;
+  let zh = `打${Az}聽${a.acceptance}張，平均每次胡${fmt1(a.expectedTai!)}台（最多${a.bestTai}台）；打${Rz}聽${r.acceptance}張，平均${fmt1(r.expectedTai!)}台（最多${r.bestTai}台）。`;
+  if (reasonKey === 'puzzle.value.speed') {
+    en += ` More winning tiles beat the bigger hand here: counting 100 points a win plus 20 a 台, ${R} is worth only ${ratio}% of ${A}.`;
+    zh += `這手牌速度比台數重要：以底100、每台20計算，打${Rz}的期望值只有打${Az}的${ratio}%。`;
+  } else {
+    const keep = p.patternEn ? ` keeps ${p.patternEn} (${p.patternZh}, ${p.patternTai} 台), and` : '';
+    const keepZh = p.patternZh ? `保住${p.patternZh}（${p.patternTai}台），` : '';
+    en += ` ${A}${keep} counting 100 points a win plus 20 a 台, ${R} is worth only ${ratio}% of it.`;
+    zh += `打${Az}${keepZh}以底100、每台20計算，打${Rz}的期望值只有它的${ratio}%。`;
+    if (reasonKey === 'puzzle.value.tradeSpeed') {
+      en += ` That is a trade of speed for value worth making.`;
+      zh += `這是值得的以速度換台數。`;
+    }
   }
-  return { reasonKey: trade ? 'puzzle.value.tradeSpeed' : 'puzzle.value.keepPattern', explanation: en, explanationZh: zh };
+  const others = p.answers.filter((k) => k !== p.answer);
+  if (others.length > 0) {
+    en += ` ${others.map(tileEn).join(' and ')} ${others.length > 1 ? 'are' : 'is'} within 10% of the best, so ${others.length > 1 ? 'they count' : 'it counts'} too.`;
+    zh += `${others.map(tileZh).join('、')}和最好的差不到一成，也算對。`;
+  }
+  en += ' A quarter of wins are counted as self-drawn, which all three players pay.';
+  zh += '計算時假設四分之一是自摸（三家都要付）。';
+  return { reasonKey, explanation: en, explanationZh: zh };
 }
 
 /**
  * A 17-tile hand (with up to two exposed sets above difficulty 1) where at least two discards
- * keep it ready but differ in 台. Projected 台 (a documented heuristic): for each discard that
- * keeps the best shanten, score every live winning tile with `scoreWin` as a win by discard and
- * take the best, counting only pattern items (flushes, all pongs, value-honour pongs, concealed
- * pongs) and leaving out wait and win-method items (獨聽, 平胡, 門清, 自摸), dealer items and
- * flowers. The answer is the unique highest, and the rival loses a headline pattern. Difficulty 1:
- * the answer is also at least as fast; 3: the rival leaves strictly more winning tiles.
+ * keep it ready but differ in value. Each ready discard is judged by its expected score: for every
+ * live winning tile (unseen copies from your view), the engine's 台 for a win on a discard and a
+ * self-drawn win, mixed `VALUE_SELF_DRAW_SHARE`, at 底 + 台 × 台值. Every discard within
+ * `VALUE_TOLERANCE` of the best is accepted, and at least one ready discard is clearly worse.
+ * Difficulty 1: the best discard is also at least as fast as the rival; 3: the rival leaves
+ * strictly more winning tiles, or the best discard wins on speed against a bigger hand.
  */
 export function valuePuzzle(seed: string, difficulty: PuzzleDifficulty = 2): ValuePuzzle {
   const rng = createRng(`value:${seed}:${difficulty}`);
@@ -1067,9 +1324,10 @@ export function valuePuzzle(seed: string, difficulty: PuzzleDifficulty = 2): Val
   for (let attempt = 0; attempt < 600; attempt++) {
     const p = valueAttempt(seed, difficulty, rng);
     if (!p) continue;
-    const a = p.options.find((o) => o.kind === p.answer)!.acceptance!;
-    const r = p.options.find((o) => o.kind === p.rival)!.acceptance!;
-    if (difficulty === 1 ? a >= r : difficulty === 3 ? r > a : true) return p;
+    const a = p.options.find((o) => o.kind === p.answer)!;
+    const r = p.options.find((o) => o.kind === p.rival)!;
+    const trade = r.acceptance! > a.acceptance! || r.bestTai! > a.bestTai!;
+    if (difficulty === 1 ? a.acceptance! >= r.acceptance! && p.patternKey !== '' : difficulty === 3 ? trade : true) return p;
     fallback = fallback ?? p;
     if (attempt >= 300) return fallback;
   }
@@ -1137,28 +1395,39 @@ function valueAttempt(seed: string, difficulty: PuzzleDifficulty, rng: Rng): Val
       continue;
     }
     // Live from your own view: the discarded copy is gone too, so count the hand before the discard.
-    const live = shape.filter((w) => counts[w] + ownMeldCounts[w] < 4);
+    const live = shape.map((w) => ({ kind: w, live: 4 - counts[w] - ownMeldCounts[w] })).filter((w) => w.live > 0);
     const rest = concealed.slice();
     rest.splice(rest.indexOf(k), 1);
-    const v = projectValue(rest, live, meldObjs, dealerSeat, prevailingWind);
-    const acceptance = live.reduce((n, w) => n + 4 - counts[w] - ownMeldCounts[w], 0);
-    options.push({ kind: k, ready: true, waits: live, acceptance, projectedTai: v.tai, items: v.items });
+    const v = scoreWaits(rest, live, meldObjs, dealerSeat, prevailingWind);
+    const acceptance = live.reduce((n, w) => n + w.live, 0);
+    options.push({ kind: k, ready: true, waits: live.map((w) => w.kind), acceptance, ...v });
   }
-  // A ready shape whose every winning tile is in your own hand or sets cannot win: it scores -1.
-  const live = options.filter((o) => o.ready && o.projectedTai! >= 0);
+  // A ready shape whose every winning tile is in your own hand or sets cannot win.
+  const live = options.filter((o) => o.ready && o.acceptance! > 0);
   if (live.length < 2) return null;
-  const top = Math.max(...live.map((o) => o.projectedTai!));
-  const winners = live.filter((o) => o.projectedTai === top);
-  if (winners.length !== 1) return null;
-  const answer = winners[0];
-  const rival = live.filter((o) => o !== answer).sort((x, y) => y.acceptance! - x.acceptance! || y.projectedTai! - x.projectedTai! || x.kind - y.kind)[0];
+  const top = Math.max(...live.map((o) => o.expectedScore!));
+  for (const o of live) o.accepted = o.expectedScore! >= VALUE_TOLERANCE * top;
+  const accepted = live.filter((o) => o.accepted);
+  const rejected = live.filter((o) => !o.accepted);
+  // A real decision: some ready discard is clearly worse, and not everything else is right.
+  if (rejected.length === 0 || accepted.length > 2) return null;
+  const answer = accepted.slice().sort((x, y) => y.expectedScore! - x.expectedScore! || x.kind - y.kind)[0];
+  const rival = rejected.slice().sort((x, y) => y.acceptance! - x.acceptance! || y.expectedScore! - x.expectedScore! || x.kind - y.kind)[0];
   const rivalKeys = new Set(rival.items!.map((i) => i.key));
-  const lost = answer.items!.filter((i) => HEADLINE_KEYS.has(i.key) && !rivalKeys.has(i.key)).sort((x, y) => y.tai - x.tai);
-  if (lost.length === 0) return null;
+  const lost = answer.items!.filter((i) => !rivalKeys.has(i.key)).sort((x, y) => y.tai - x.tai);
   const pattern = lost[0];
   // A value-honour item is a pong (中 → 中的刻子); flushes and 碰碰胡 read as they are.
-  const patternZh = pattern.key.startsWith('dragon_') || pattern.key === 'seat_wind' || pattern.key === 'round_wind' ? `${pattern.nameZh}的刻子` : pattern.nameZh;
-  const base = { answer: answer.kind, rival: rival.kind, options, patternEn: pattern.nameEn, patternZh, patternTai: pattern.tai };
+  const patternZh = !pattern ? '' : pattern.key.startsWith('dragon_') || pattern.key === 'seat_wind' || pattern.key === 'round_wind' ? `${pattern.nameZh}的刻子` : pattern.nameZh;
+  const reasonKey = !pattern ? 'puzzle.value.speed' : rival.acceptance! > answer.acceptance! ? 'puzzle.value.tradeSpeed' : 'puzzle.value.keepPattern';
+  const base = {
+    answer: answer.kind,
+    answers: accepted.map((o) => o.kind),
+    rival: rival.kind,
+    options,
+    patternEn: pattern?.nameEn ?? '',
+    patternZh,
+    patternTai: pattern?.tai ?? 0,
+  };
   return {
     type: 'value',
     seed,
@@ -1169,16 +1438,16 @@ function valueAttempt(seed: string, difficulty: PuzzleDifficulty, rng: Rng): Val
     prevailingWind,
     seatWind,
     bestShanten: 0,
-    patternKey: pattern.key,
+    patternKey: pattern?.key ?? '',
     ...base,
-    ...valueText(base, pattern.nameZh),
+    ...valueText(base, reasonKey),
   };
 }
 
 export function checkValueAnswer(p: ValuePuzzle, kind: Kind): boolean {
-  return kind === p.answer;
+  return p.answers.includes(kind);
 }
 
-/** Every puzzle theme. `Puzzle` stays the two classic themes the app renders today. */
+/** Every puzzle theme. `Puzzle` is the two classic themes (discard and waits), the two-argument `rushPuzzle` rotation. */
 export type AnyPuzzle = Puzzle | DefencePuzzle | ClaimPuzzle | ValuePuzzle;
 export type PuzzleType = AnyPuzzle['type'];
