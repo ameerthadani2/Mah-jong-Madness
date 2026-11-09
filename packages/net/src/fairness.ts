@@ -13,12 +13,14 @@
  * each client checks the commitments, re-derives the seed, replays the log and
  * compares hashes (see TableClient.verifyAudit).
  *
- * What this gives a player whose own share was used: nobody, the host included,
- * could choose the seed after seeing that share. What it does not give: the
- * host may restart a ceremony (every restart is published and bounded by the
- * number of human seats), may stand in for a seat (that seat's audit is then
- * only 'partial'), and learns the seed at deal time, so it is trusted not to
- * look at the wall during the hand. Online tables run on the game server.
+ * What this gives a player whose own share was used in a deal its client
+ * watched whole, in one attempt: nobody, the host included, could choose the
+ * seed after seeing that share. What it does not give: the host may restart a
+ * ceremony (every restart is published, bounded by the number of human seats,
+ * and keeps the hand 'partial'), may stand in for a seat (that seat's audit is
+ * then only 'partial'), and learns the seed at deal time, so it is trusted not
+ * to look at the wall during the hand or leak it. Online tables run on the
+ * game server.
  */
 import { sha256Hex, randomHex } from './sha256';
 

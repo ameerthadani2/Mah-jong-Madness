@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { chooseAction, legalActions, withRules } from '@mjm/engine';
-import { commitFor, LoopbackHub, makeSecret, MAX_CEREMONY_ATTEMPTS, TableClient, TableHost, transportLink, type HostEvent, type HostMessage, type SerializedHost } from '../src/index';
+import { AUDIT_CAVEATS, commitFor, LoopbackHub, makeSecret, MAX_CEREMONY_ATTEMPTS, TableClient, TableHost, transportLink, type HostEvent, type HostMessage, type SerializedHost } from '../src/index';
 
 /** A raw peer that commits but never reveals (a phone that backgrounds mid-ceremony). */
 function silentRevealer(hub: LoopbackHub, id: string, name: string) {
@@ -55,7 +55,7 @@ describe('ceremony robustness', () => {
     expect(host.nextDeadline()).not.toBeNull();
   });
 
-  it('a late revealer does not cause an honest second player to be stood in, and the honest player audits OK', () => {
+  it('a late revealer does not cause an honest second player to be stood in; the restart keeps the honest player at partial', () => {
     const clock = { now: 1_000_000 };
     const hub = new LoopbackHub();
     const host = makeHost(hub, clock);
@@ -78,8 +78,10 @@ describe('ceremony robustness', () => {
       }
     }
     expect(host.phase).toBe('hand_over');
-    expect(honest.state.auditStatus).toBe('ok');
+    // Every check passes, but a restarted deal is one the server could have picked (decision 2): amber, not green.
+    expect(honest.state.auditStatus).toBe('partial');
     expect(honest.state.auditFailures).toEqual([]);
+    expect(honest.state.auditCaveats).toEqual([AUDIT_CAVEATS.restarted]);
   });
 
   it('a stood-in player audits as partial: every check passes but its own share did not protect the seed', () => {
@@ -111,7 +113,7 @@ describe('ceremony robustness', () => {
     }
     expect(c.state.auditStatus).toBe('partial');
     expect(c.state.auditFailures).toEqual([]);
-    expect(c.state.auditCaveats).toEqual(["The host supplied this seat's share"]);
+    expect(c.state.auditCaveats).toEqual(["The host supplied this seat's share", AUDIT_CAVEATS.restarted]);
     expect(c.state.audits[0].caveats).toEqual(c.state.auditCaveats);
   });
 });

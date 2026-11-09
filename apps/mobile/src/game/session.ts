@@ -4,9 +4,13 @@
  * every player, this device included, verifies each hand).
  *
  * An online session survives a dropped socket: it rejoins the same room with the
- * saved rejoin token on a backoff of 1, 2, 4 … 60 s (src/logic/reconnect.ts), builds
- * a fresh TableClient over a new relay and swaps it in, so screens that follow
- * `session.onChange` never notice beyond the "Reconnecting" banner.
+ * saved rejoin token on a backoff of 1, 2, 4 … 60 s (src/logic/reconnect.ts) and
+ * rebinds its one TableClient to the new relay, so screens that follow
+ * `session.onChange` never notice beyond the "Reconnecting" banner, and the client
+ * keeps everything it needs to verify the deal (a fresh client would forget the
+ * ceremony it watched, which is what a server dropping the link would count on).
+ * A cold resume after an app restart passes the client's saved record back in
+ * (`OnlineOptions.restoreClient`, or the source registered with `setSavedClientSource`).
  */
 import { type BotSkill, type RuleSet } from '@mjm/engine';
 import {
@@ -18,7 +22,9 @@ import {
   TableHost,
   transportLink,
   type ClientState,
+  type Link as TableLink,
   type RoomInfo,
+  type SerializedClient,
   type SerializedHost,
   type WebSocketFactory,
   type WebSocketLike,
@@ -30,7 +36,7 @@ export type { ConnectionStatus } from '../logic/reconnect';
 type Unsubscribe = () => void;
 
 export interface Session {
-  /** The live table client. Online, it is replaced after a reconnect: follow `onChange`, not `client.onChange`. */
+  /** The table client: one per table, kept across reconnects (it is rebound to each new link). */
   readonly client: TableClient;
   /** Present only for local play, where this device runs the table. */
   host: TableHost | null;
@@ -46,7 +52,7 @@ export interface Session {
   readonly attempt: number;
   /** Why a lost table was lost. */
   readonly lostReason: ReconnectState['reason'];
-  /** Client state, from whichever client is current; fires on every swap. */
+  /** Client state; also fires once after each reconnect. */
   onChange(cb: (s: ClientState) => void): Unsubscribe;
   /** Connection status and attempt changes. */
   onStatus(cb: (s: ReconnectState) => void): Unsubscribe;
@@ -111,6 +117,28 @@ export interface OnlineOptions {
   onUnauthorised?: () => Promise<void> | void;
   /** Tests inject a fake socket; defaults to the global WebSocket. */
   webSocket?: WebSocketFactory;
+  /**
+   * The table client's saved record (`TableClient.serialize()`) from before an app restart, so the
+   * resumed client keeps verifying where it left off. Ignored unless it is for this room and token.
+   */
+  restoreClient?: SerializedClient;
+}
+
+/** Where a cold resume finds a saved client record when the caller passes none (app-state registers it). */
+type SavedClientSource = (signalUrl: string, roomCode: string, token: string) => SerializedClient | undefined;
+let savedClientSource: SavedClientSource | null = null;
+
+/** Register where saved client records live (the app's ActiveSession); null unregisters. */
+export function setSavedClientSource(source: SavedClientSource | null): void {
+  savedClientSource = source;
+}
+
+/** The saved record to restore for this table, if it matches the room and the seat's token. */
+function savedClientFor(opts: OnlineOptions, code: string): SerializedClient | undefined {
+  if (!opts.token) return undefined;
+  const saved = opts.restoreClient ?? savedClientSource?.(opts.signalUrl, code, opts.token);
+  if (!saved || saved.state?.roomCode !== code || saved.state?.token !== opts.token) return undefined;
+  return saved;
 }
 
 /** WebSocket close code the game server uses for a missing or bad session token. */
@@ -181,19 +209,20 @@ export function requestHostedRoom(signaling: SignalingClient, rules: RuleSet, bo
   return signaling.createHostedRoom(rules, botSkill);
 }
 
-interface Link {
+/** One connection to the table: a signalling socket, the room it joined and the link to its host. */
+interface Connection {
   signaling: SignalingClient;
-  client: TableClient;
+  link: TableLink;
   room: RoomInfo;
   /** Set by the session: runs before the client's own close handler. */
   dropped: { handler: ((code: number | undefined) => void) | null };
 }
 
-/** Connects, authenticates, creates or joins the room and seats a new client (not yet joined). */
-async function openLink(opts: OnlineOptions, action: 'create' | 'join', code: string, token: string | undefined): Promise<Link> {
+/** Connects, authenticates, and creates or joins the room. The caller binds a client to `link`. */
+async function openConnection(opts: OnlineOptions, action: 'create' | 'join', code: string): Promise<Connection> {
   const auth = opts.auth ? await opts.auth() : undefined;
   const { signaling, closeCode } = connectSignaling(opts.signalUrl, auth, opts.webSocket);
-  const dropped: Link['dropped'] = { handler: null };
+  const dropped: Connection['dropped'] = { handler: null };
   // Registered first so the session sees the drop before the client marks itself disconnected.
   signaling.onClose(() => dropped.handler?.(closeCode()));
   try {
@@ -205,8 +234,7 @@ async function openLink(opts: OnlineOptions, action: 'create' | 'join', code: st
   try {
     const transport = new RelayTransport(signaling, 'game');
     const room = action === 'create' ? await requestHostedRoom(signaling, opts.rules, opts.botSkill) : await signaling.joinRoom(code);
-    const client = new TableClient(transportLink(transport, room.host), opts.name, opts.avatar, { token, userId: opts.userId });
-    return { signaling, client, room, dropped };
+    return { signaling, link: transportLink(transport, room.host), room, dropped };
   } catch (e) {
     signaling.close();
     throw e;
@@ -220,28 +248,32 @@ class OnlineSession implements Session {
   readonly roomCode: string;
   readonly serverUrl: string;
   readonly clubCode?: string;
-  private link: Link;
+  readonly client: TableClient;
+  private connection: Connection;
   private conn: ReconnectState = CONNECTED;
   private closed = false;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private inFlight = false;
-  private unsubClient: Unsubscribe = () => undefined;
+  private readonly unsubClient: Unsubscribe;
   private readonly stateListeners = new Set<(s: ClientState) => void>();
   private readonly statusListeners = new Set<(s: ReconnectState) => void>();
 
   constructor(
     private readonly opts: OnlineOptions,
-    link: Link,
+    connection: Connection,
+    client: TableClient,
   ) {
-    this.link = link;
-    this.roomCode = link.room.room;
+    this.connection = connection;
+    this.client = client;
+    this.roomCode = connection.room.room;
     this.serverUrl = opts.signalUrl;
     this.clubCode = opts.clubCode;
-    this.attach(link);
-  }
-
-  get client(): TableClient {
-    return this.link.client;
+    this.unsubClient = client.onChange((s) => {
+      // The seat was opened on another device: stop here, a reconnect would take it back.
+      if (s.kicked && this.conn.status !== 'lost') this.step({ type: 'ended' });
+      for (const l of this.stateListeners) l(s);
+    });
+    this.attach(connection);
   }
   get status(): ConnectionStatus {
     return this.conn.status;
@@ -263,20 +295,17 @@ class OnlineSession implements Session {
     return () => this.statusListeners.delete(cb);
   }
 
-  private attach(link: Link): void {
-    this.unsubClient();
-    this.link = link;
-    this.unsubClient = link.client.onChange((s) => {
-      for (const l of this.stateListeners) l(s);
-    });
-    link.dropped.handler = (code) => this.onDrop(link, code);
+  private attach(connection: Connection): void {
+    this.connection = connection;
+    connection.dropped.handler = (code) => this.onDrop(connection, code);
   }
 
-  private onDrop(link: Link, code: number | undefined): void {
-    if (this.closed || link !== this.link) return;
-    const st = link.client.state;
+  private onDrop(connection: Connection, code: number | undefined): void {
+    if (this.closed || connection !== this.connection) return;
+    const st = this.client.state;
     // The seat was opened on another device: reconnecting would take it back and start a tug of war.
-    if (st.disconnected || st.matchOver) return this.step({ type: 'ended' });
+    // A dropped link alone (`disconnected`) is what reconnecting is for.
+    if (st.kicked || st.matchOver) return this.step({ type: 'ended' });
     if (code === UNAUTHORISED_CLOSE) {
       void this.opts.onUnauthorised?.();
       return this.step({ type: 'unauthorised' });
@@ -310,24 +339,26 @@ class OnlineSession implements Session {
     if (this.closed || this.conn.status !== 'reconnecting' || this.inFlight) return;
     this.timer = null;
     this.inFlight = true;
-    const token = this.link.client.state.token ?? this.opts.token;
-    let link: Link | null = null;
+    let connection: Connection | null = null;
     let failure: unknown = null;
     try {
-      link = await openLink(this.opts, 'join', this.roomCode, token);
+      connection = await openConnection(this.opts, 'join', this.roomCode);
     } catch (e) {
       failure = e;
     }
     this.inFlight = false;
     if (this.closed) {
-      link?.signaling.close();
+      connection?.signaling.close();
       return;
     }
-    if (link) {
-      this.attach(link);
-      link.client.join();
+    if (connection) {
+      // The same client on the new link: its ceremony record and evidence carry on. It rejoins with
+      // the token it holds (the host's latest), so the seat it gets back is its own.
+      this.attach(connection);
+      this.client.rebind(connection.link);
+      this.client.join();
       this.step({ type: 'succeeded' });
-      for (const l of this.stateListeners) l(link.client.state);
+      for (const l of this.stateListeners) l(this.client.state);
       return;
     }
     const unauthorised = isUnauthorised(failure);
@@ -343,22 +374,25 @@ class OnlineSession implements Session {
     this.timer = null;
     this.unsubClient();
     // Leaving closes the relay transport, which closes the signalling socket.
-    this.link.client.leave();
+    this.client.leave();
   }
 }
 
 export async function createOnlineSession(opts: OnlineOptions): Promise<Session> {
   const code = (opts.code ?? '').toUpperCase();
-  let link: Link;
+  let connection: Connection;
   try {
-    link = await openLink(opts, opts.action, code, opts.token);
+    connection = await openConnection(opts, opts.action, code);
   } catch (e) {
     // A stale session token: replace it once and try again.
     if (!isUnauthorised(e) || !opts.onUnauthorised) throw e;
     await opts.onUnauthorised();
-    link = await openLink(opts, opts.action, code, opts.token);
+    connection = await openConnection(opts, opts.action, code);
   }
-  const session = new OnlineSession(opts, link);
-  link.client.join();
+  const identity = { token: opts.token, userId: opts.userId };
+  const saved = opts.action === 'join' ? savedClientFor(opts, connection.room.room) : undefined;
+  const client = saved ? TableClient.restore(saved, connection.link, opts.name, opts.avatar, identity) : new TableClient(connection.link, opts.name, opts.avatar, identity);
+  const session = new OnlineSession(opts, connection, client);
+  client.join();
   return session;
 }

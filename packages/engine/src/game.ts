@@ -87,6 +87,12 @@ export interface LoggedAction {
   n: number;
   seat: number;
   action: Action;
+  /**
+   * Who chose the action: the seat's own player, or the table on its behalf (a bot seat, a seat
+   * whose player is away, or a clock that ran out). Absent in logs written before it existed.
+   * Replays and state hashes ignore it.
+   */
+  source?: 'player' | 'auto';
 }
 
 export interface GameState {
@@ -528,7 +534,7 @@ export function canonicalAction(input: unknown): Action | null {
   }
 }
 
-export function applyAction(prev: GameState, seat: number, rawAction: Action): GameState {
+export function applyAction(prev: GameState, seat: number, rawAction: Action, source?: LoggedAction['source']): GameState {
   const action = canonicalAction(rawAction);
   if (!action) throw new IllegalAction('Malformed action');
   if (!Number.isInteger(seat) || seat < 0 || seat > 3) throw new IllegalAction('Bad seat');
@@ -536,7 +542,7 @@ export function applyAction(prev: GameState, seat: number, rawAction: Action): G
     throw new IllegalAction(`Seat ${seat} cannot ${action.type} in phase ${prev.phase}`);
   }
   const s = clone(prev);
-  s.actionLog.push({ n: s.turnCounter++, seat, action });
+  s.actionLog.push(source ? { n: s.turnCounter++, seat, action, source } : { n: s.turnCounter++, seat, action });
   if (s.phase === 'discard') applyTurnAction(s, seat, action);
   else applyClaimAction(s, seat, action as ClaimResponse);
   return s;

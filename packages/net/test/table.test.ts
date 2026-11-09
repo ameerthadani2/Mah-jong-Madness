@@ -101,7 +101,8 @@ describe('P2P table over loopback', () => {
     let now = 1_000_000;
     const hub = new LoopbackHub();
     const host = new TableHost(hub.create('host'), { roomCode: 'T', rules: withRules({ handsPerMatch: 1, turnSeconds: 5 }), now: () => now });
-    const c = new TableClient(transportLink(hub.create('p0'), 'host'), 'Slow');
+    // The client's clock runs with the host's: it only accepts a timeout once its time is really up.
+    const c = new TableClient(transportLink(hub.create('p0'), 'host'), 'Slow', undefined, {}, { now: () => now });
     c.join();
     host.start();
     expect(host.phase).toBe('playing');

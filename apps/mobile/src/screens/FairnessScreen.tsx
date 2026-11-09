@@ -1,11 +1,18 @@
 import React from 'react';
 import { ScrollView, StyleSheet, Text } from 'react-native';
+import { caveatKey } from '@mjm/net';
 import { useApp } from '../app-state';
 import { useSession } from '../game/useTable';
 import { colors, fonts, space } from '../theme';
 import { Card, H2, P, Pill, Row, ScreenHeader, SectionLabel } from '../components/Ui';
 import { Icon } from '../components/Icons';
 import { useT } from '../i18n';
+
+/** A caveat from the table client in the player's language (unknown texts are shown as they are). */
+export function caveatText(t: (key: string) => string, text: string): string {
+  const key = caveatKey(text);
+  return key ? t(`fairness.caveat.${key}`) : text;
+}
 
 export function FairnessScreen() {
   const app = useApp();
@@ -41,8 +48,10 @@ export function FairnessScreen() {
           <Card key={`${audit.matchId}-${audit.handNumber}`} style={{ gap: 4 }}>
             <Row style={{ justifyContent: 'space-between' }}>
               <H2>{t('fairness.hand', { n: audit.handNumber + 1 })}</H2>
+              {/* Amber 'Logged' carries no shield: only a deal this phone watched whole earns one. */}
               <Pill
-                icon={status === 'ok' || status === 'partial' ? 'shield' : status === 'failed' ? 'warning' : 'hourglass'}
+                icon={status === 'ok' ? 'shield' : status === 'failed' ? 'warning' : status === 'partial' ? undefined : 'hourglass'}
+                wrap={status === 'partial'}
                 text={t(status === 'ok' ? 'fairness.status.ok' : status === 'partial' ? 'fairness.status.partial' : status === 'failed' ? 'fairness.status.failed' : 'fairness.status.unverified')}
                 tone={status === 'ok' ? 'ok' : status === 'partial' ? 'gold' : status === 'failed' ? 'danger' : 'neutral'}
               />
@@ -58,7 +67,7 @@ export function FairnessScreen() {
             </Text>
             {(caveats ?? []).map((c, i) => (
               <Text key={`c${i}`} style={{ color: colors.goldDim, fontSize: 12, fontFamily: fonts.bodyBold }}>
-                {t('fairness.note', { text: c })}
+                {t('fairness.note', { text: caveatText(t, c) })}
               </Text>
             ))}
             {failures.map((f, i) => (

@@ -28,6 +28,7 @@ import { commitFor, deriveSeed, isSecret, makeSecret, verifyReveals, type Commit
 import type { Audit, CeremonyRestart, ClientMessage, HostMessage, RestartCause, SeatInfo } from './messages';
 import type { Transport, Unsubscribe } from './transport';
 import { randomHex } from './sha256';
+import { cleanText } from './text';
 
 export type HostPhase = 'lobby' | 'commit' | 'reveal' | 'playing' | 'hand_over' | 'match_over';
 
@@ -110,6 +111,8 @@ export interface SerializedHost {
 interface SeatState extends SeatInfo {
   secret?: string;
   commit?: string;
+  /** The host made this human seat's share for the current attempt (it was away or late); told again on a rejoin. */
+  supplied?: boolean;
   ready: boolean;
   /** Rejoin token issued in `welcome`; lets a crashed client reclaim its seat. */
   token?: string;
@@ -299,6 +302,7 @@ export class TableHost {
       for (const s of this.seats) {
         s.commit = undefined;
         s.secret = undefined;
+        s.supplied = undefined;
       }
       this.phase = 'lobby';
       this.pendingRestart = true;
@@ -478,7 +482,8 @@ export class TableHost {
     if (!msg || typeof msg !== 'object' || typeof (msg as { t?: unknown }).t !== 'string') return;
     switch (msg.t) {
       case 'join': {
-        const name = typeof msg.name === 'string' ? msg.name : '';
+        // Seat names reach every player at the table: cleaned like any other free text (see text.ts).
+        const name = cleanText(msg.name, 24);
         const avatar = typeof msg.avatar === 'string' ? msg.avatar.slice(0, 8) : undefined;
         const wantSeat = Number.isInteger(msg.wantSeat) && (msg.wantSeat as number) >= 0 && (msg.wantSeat as number) <= 3 ? (msg.wantSeat as number) : undefined;
         const token = typeof msg.token === 'string' && /^[0-9a-f]{32}$/.test(msg.token) ? msg.token : undefined;
@@ -524,30 +529,37 @@ export class TableHost {
         if (this.phase !== 'lobby' || this.pendingRestart) return;
         this.addBot();
         return;
-      case 'action':
+      case 'action': {
         if (seat.isBot) return;
-        if (this.phase !== 'playing' || !this.game) return this.sendTo(from, { t: 'error', code: 'not_playing', message: 'No hand in progress.' });
-        if (msg.seat !== seat.seat) return this.sendTo(from, { t: 'error', code: 'wrong_seat', message: 'You can only act for your own seat.' });
+        // Every refusal echoes the turn the player acted on, so its client can tell which of its moves was refused.
+        const turnCounter = Number.isInteger(msg.turnCounter) ? msg.turnCounter : undefined;
+        if (this.phase !== 'playing' || !this.game) return this.sendTo(from, { t: 'error', code: 'not_playing', message: 'No hand in progress.', turnCounter });
+        if (msg.seat !== seat.seat) return this.sendTo(from, { t: 'error', code: 'wrong_seat', message: 'You can only act for your own seat.', turnCounter });
         try {
           this.apply(seat.seat, msg.action, 'player');
         } catch (e) {
-          this.sendTo(from, { t: 'error', code: 'illegal', message: (e as Error).message });
+          this.sendTo(from, { t: 'error', code: 'illegal', message: (e as Error).message, turnCounter });
           this.sendTo(from, this.stateMsg(seat.seat));
         }
         return;
+      }
       case 'ready':
         if (seat.isBot || this.phase !== 'hand_over') return;
         seat.ready = true;
         if (this.seats.every((s) => s.isBot || !s.connected || s.ready)) this.afterHand();
         return;
-      case 'chat':
-        if (typeof msg.text !== 'string' || !msg.text.trim()) return;
+      case 'chat': {
+        const text = cleanText(msg.text, 280);
+        if (!text) return;
         if (!this.takeToken(`chat:${seat.seat}`, CHAT_BUCKET)) return;
-        return this.broadcast(() => ({ t: 'chat', seat: seat.seat, name: seat.name, text: msg.text.slice(0, 280) }));
-      case 'emote':
-        if (typeof msg.emote !== 'string') return;
+        return this.broadcast(() => ({ t: 'chat', seat: seat.seat, name: seat.name, text }));
+      }
+      case 'emote': {
+        const emote = cleanText(msg.emote, 16);
+        if (!emote) return;
         if (!this.takeToken(`emote:${seat.seat}`, EMOTE_BUCKET)) return;
-        return this.broadcast(() => ({ t: 'emote', seat: seat.seat, emote: msg.emote.slice(0, 16) }));
+        return this.broadcast(() => ({ t: 'emote', seat: seat.seat, emote }));
+      }
       default:
         return;
     }
@@ -571,6 +583,7 @@ export class TableHost {
     if (!seat && token) {
       // Reconnect with the rejoin token — the only way to reclaim a seat. Names and user ids are public and never trusted.
       seat = this.seats.find((s) => s.token === token);
+      if (seat && this.seatedElsewhere(userId, seat)) return this.refuseSecondSeat(from);
       if (seat) {
         if (seat.connected && seat.peerId && seat.peerId !== from) {
           // The token is live on another connection: kick the old one (the newest device wins, like PokerBros).
@@ -582,6 +595,7 @@ export class TableHost {
     if (!seat) {
       // Mid-match (or a restored table waiting for its players) only token holders may sit.
       if (this.phase !== 'lobby' || this.pendingRestart) return this.sendTo(from, { t: 'error', code: 'full', message: 'Match already in progress.' });
+      if (this.seatedElsewhere(userId)) return this.refuseSecondSeat(from);
       seat = (wantSeat !== undefined && this.seats[wantSeat] && !this.seats[wantSeat].peerId && !this.seats[wantSeat].isBot ? this.seats[wantSeat] : undefined) ?? this.seats.find((s) => !s.peerId && !s.isBot);
       if (!seat) return this.sendTo(from, { t: 'error', code: 'full', message: 'Table is full.' });
       seat.peerId = from;
@@ -589,7 +603,7 @@ export class TableHost {
     }
     // Hosts serialised by older builds marked departed humans as bots named '… (away)'. A human binding to the seat takes it back.
     if (seat.isBot && seat.name.endsWith('(away)')) seat.isBot = false;
-    seat.name = name.slice(0, 24) || `Player ${seat.seat + 1}`;
+    seat.name = name || `Player ${seat.seat + 1}`;
     seat.avatar = avatar;
     seat.userId = userId ?? seat.userId;
     seat.connected = true;
@@ -602,25 +616,41 @@ export class TableHost {
       this.retryCeremony();
       return;
     }
+    // The host made this seat's share while it was away: say so before anything else about the hand,
+    // or the returning client would expect its own share in the audit.
+    if (seat.supplied && this.phase !== 'lobby' && this.phase !== 'match_over') this.sendTo(from, { t: 'stand_in', handNumber: this.snapshot.handNumber, attempt: this.ceremonyAttempts });
     if (this.phase === 'playing' && this.game) {
       this.armClocks();
       this.sendTo(from, this.stateMsg(seat.seat));
       this.runBots();
     } else if (this.phase === 'hand_over' && this.game) {
       const last = this.audits[this.audits.length - 1];
-      if (last) this.sendTo(from, { t: 'hand_over', result: this.game.result!, audit: last, view: viewFor(this.game, seat.seat) });
+      if (last) this.sendTo(from, { t: 'hand_over', result: this.game.result!, audit: last, view: viewFor(this.game, seat.seat), now: this.now() });
       if (this.deadline === null) this.deadline = this.now() + this.intermissionMs;
     }
     else if (this.phase === 'match_over' && this.game) {
       const finalView = { ...this.game, scores: this.snapshot.scores };
       this.sendTo(from, { t: 'match_over', scores: this.snapshot.scores, view: viewFor(finalView, seat.seat) });
     }
-    else if (this.phase === 'commit' && !seat.commit) this.sendTo(from, { t: 'commit_request', handNumber: this.snapshot.handNumber });
+    else if (this.phase === 'commit' && !seat.commit) this.sendTo(from, { t: 'commit_request', handNumber: this.snapshot.handNumber, attempt: this.ceremonyAttempts });
     else if (this.phase === 'reveal' && !seat.secret) {
       // Clients refuse to reveal before they hold every commitment, so a returning seat gets them first.
       this.sendTo(from, { t: 'commits', handNumber: this.snapshot.handNumber, commits: this.commits() });
       this.sendTo(from, { t: 'reveal_request', handNumber: this.snapshot.handNumber });
     }
+  }
+
+  /**
+   * One seat per account: true when `userId` already holds a human seat other than `except`. Two
+   * seats would show one player two concealed hands. Tables without accounts (local play) send no id.
+   */
+  private seatedElsewhere(userId: string | undefined, except?: SeatState): boolean {
+    if (!userId) return false;
+    return this.seats.some((s) => s !== except && !s.isBot && s.userId === userId && (s.peerId !== null || this.phase !== 'lobby'));
+  }
+
+  private refuseSecondSeat(from: string): void {
+    this.sendTo(from, { t: 'error', code: 'already_seated', message: 'This account already has a seat at this table.' });
   }
 
   /**
@@ -669,12 +699,13 @@ export class TableHost {
   private supplyShare(seat: SeatState, notify = true): void {
     seat.secret = makeSecret();
     seat.commit = commitFor(seat.secret);
+    seat.supplied = true;
     if (notify) this.notifyStandIn(seat);
   }
 
   /** Tell a connected player their share was supplied. Must follow any commit_request so the client drops its own secret. */
   private notifyStandIn(seat: SeatState): void {
-    if (seat.connected && seat.peerId && !seat.isBot && !seat.peerId.startsWith('gone-')) this.sendTo(seat.peerId, { t: 'stand_in', handNumber: this.snapshot.handNumber });
+    if (seat.connected && seat.peerId && !seat.isBot && !seat.peerId.startsWith('gone-')) this.sendTo(seat.peerId, { t: 'stand_in', handNumber: this.snapshot.handNumber, attempt: this.ceremonyAttempts });
   }
 
   /**
@@ -710,6 +741,7 @@ export class TableHost {
     for (const s of this.seats) {
       s.commit = undefined;
       s.secret = undefined;
+      s.supplied = undefined;
     }
     this.phase = 'lobby';
     this.pendingRestart = true;
@@ -752,17 +784,21 @@ export class TableHost {
     for (const s of this.seats) {
       s.commit = undefined;
       s.secret = undefined;
+      s.supplied = undefined;
       s.ready = false;
       if (s.isBot || !s.connected) {
         s.secret = makeSecret();
         s.commit = commitFor(s.secret);
+        // A human who is away now gets the same notice on return as one stood in on purpose.
+        if (!s.isBot) s.supplied = true;
       } else if (supplied.has(s.seat)) {
         this.supplyShare(s, false);
       }
     }
     this.deadline = this.now() + 10_000;
+    const attempt = this.ceremonyAttempts;
     this.announcing(() => {
-      this.broadcast(() => ({ t: 'commit_request', handNumber: this.snapshot.handNumber }));
+      this.broadcast(() => ({ t: 'commit_request', handNumber: this.snapshot.handNumber, attempt }));
       for (const n of supplied) this.notifyStandIn(this.seats[n]);
     });
     this.notify();
@@ -841,6 +877,7 @@ export class TableHost {
       deadline: this.deadlineFor(seat),
       timeBank: Math.round(this.banks[seat] / 1000),
       inTimeBank: clock?.inBank ?? false,
+      now: this.now(),
     };
   }
 
@@ -865,7 +902,8 @@ export class TableHost {
 
   private apply(seat: number, action: Action, source: 'player' | 'bot' | 'timeout'): void {
     if (!this.game) return;
-    this.game = applyAction(this.game, seat, action);
+    // The log says whether the seat's own player chose the move; its client checks that against what it sent.
+    this.game = applyAction(this.game, seat, action, source === 'player' ? 'player' : 'auto');
     if (source === 'player') this.settleClock(seat);
     if (this.game.phase === 'ended') {
       this.clocks.clear();
@@ -920,7 +958,8 @@ export class TableHost {
     this.phase = 'hand_over';
     for (const s of this.seats) s.ready = false;
     this.deadline = this.now() + this.intermissionMs;
-    this.broadcast((s) => ({ t: 'hand_over', result: game.result!, audit, view: viewFor(game, s.seat) }));
+    const now = this.now();
+    this.broadcast((s) => ({ t: 'hand_over', result: game.result!, audit, view: viewFor(game, s.seat), now }));
     this.notify();
     this.emit('hand_over');
     // Nobody human is here to press "next": pause so a returning player finds the table where they left it.

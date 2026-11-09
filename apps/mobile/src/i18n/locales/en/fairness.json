@@ -4,19 +4,30 @@
   "howTitle": "How the deal works",
   "step1": "1. Before each hand your phone picks a secret, and so does every other player. The table server adds a fifth secret of its own and picks the bots' secrets.",
   "step2": "2. All five SHA-256 fingerprints are published before anyone reveals. Your phone only reveals its secret once it holds all five, so no one can pick a secret after seeing yours. The shuffle seed is the hash of all five secrets together.",
-  "step3": "3. When the hand ends, the secrets, any restarts of the deal and the full action log are published. Your phone checks the fingerprints, re-derives the seed, replays the hand and compares the result.",
+  "step3": "3. When the hand ends, the secrets, any restarts of the deal and the full action log are published. Your phone checks the fingerprints, re-derives the seed, replays the hand, and checks the log against every move it sent, every table state it was shown and every move the table made for you.",
   "partialBefore": "A hand marked ",
-  "partialLabel": "Verified (log only)",
-  "partialAfter": " checked out in every way, but your own secret was not part of its deal (the server stood in for you, or you joined mid-hand), so that shuffle rests on the server alone.",
-  "trust": "The server learns the seed when it deals, so it is trusted not to look at the wall during the hand. There is no \"luck balancing\", no streak engine, no hidden weights. The engine is deterministic and open; the only randomness is the seed above.",
-  "sessionHands": "This session's hands",
+  "partialLabel": "Logged — the server could have picked this deal",
+  "partialAfter": " passed every check, but your phone cannot rule out that the server chose its deal: the server made your secret for you (you were late or away), you joined mid-hand, the deal was restarted, or your connection dropped while the deal was being agreed. Only a hand marked Verified had a deal your phone watched from start to finish in one attempt.",
+  "trust": "What no phone can check: the server knows the seed when it deals, so it sees every wall and could look at it during the hand or leak it to a player. It is trusted not to. To limit the damage a leak could do, each account gets only one seat per table, and quick match never seats players who have blocked each other. There is no \"luck balancing\", no streak engine, no hidden weights. The engine is deterministic and open; the only randomness is the seed above.",
+  "sessionHands": "This table's hands",
   "none": "No hands finished yet.",
   "hand": "Hand %{n}",
   "status": {
     "ok": "Verified",
-    "partial": "Verified (log only)",
+    "partial": "Logged — the server could have picked this deal",
     "failed": "Failed",
     "unverified": "Unverified"
+  },
+  "result": {
+    "partial": "Logged — the server could have picked this deal · details",
+    "partialShort": "Logged · details"
+  },
+  "caveat": {
+    "standIn": "The server made this seat's secret (it was late or away), so it could have picked this deal.",
+    "joined": "You joined during this hand: its log checked out, but your secret was not part of the deal.",
+    "restarted": "The deal was restarted, so the server could have picked which attempt to keep.",
+    "linkLost": "Your connection dropped while the deal was being agreed, so your phone did not watch all of it.",
+    "missedAttempts": "Your phone did not see every attempt at this deal."
   },
   "seed": "seed %{seed}",
   "server": "server",

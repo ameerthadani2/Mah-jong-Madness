@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { BackHandler, Platform } from 'react-native';
 import { DEFAULT_PROFILE, DEFAULT_PROGRESS, DEFAULT_SETTINGS, storage, type ActiveSession, type Profile, type Progress, type Settings } from './storage';
-import type { Session } from './game/session';
+import { setSavedClientSource, type Session } from './game/session';
 import { APP_BUILD, resolveSignalUrl } from './config';
 import { EMPTY_WALLET, loadWallet, saveWallet, type Wallet } from './monetisation/store';
 import { currentLocale, setLocalePreference } from './i18n';
@@ -127,6 +127,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     return () => sub.remove();
   }, []);
 
+  // A cold resume (Home's Resume card) restores the saved table client's record when it is for the same table and seat.
+  const activeRef = useRef<ActiveSession | null>(null);
+  activeRef.current = activeSession;
+  useEffect(() => {
+    setSavedClientSource((url, room, token) => {
+      const rec = activeRef.current;
+      return rec?.kind === 'online' && rec.signalUrl === url && rec.roomCode === room && rec.token === token ? rec.client : undefined;
+    });
+    return () => setSavedClientSource(null);
+  }, []);
+
   // Keep the resumable-session record in sync with whatever table we are at.
   useEffect(() => {
     if (!session) return;
@@ -141,7 +152,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const record: ActiveSession =
         session.mode === 'local'
           ? { kind: 'local', host: session.host!.serialize(), token: st.token, name: profile.name, avatar: profile.avatar, savedAt: Date.now() }
-          : { kind: 'online', signalUrl: session.serverUrl ?? signalUrl, roomCode: session.roomCode, token: st.token, name: profile.name, avatar: profile.avatar, clubCode: session.clubCode, savedAt: Date.now() };
+          : { kind: 'online', signalUrl: session.serverUrl ?? signalUrl, roomCode: session.roomCode, token: st.token, name: profile.name, avatar: profile.avatar, clubCode: session.clubCode, client: session.client.serialize(), savedAt: Date.now() };
       setActiveSessionState(record);
       void storage.saveActiveSession(record);
     };
@@ -149,7 +160,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       if (persistTimer.current) clearTimeout(persistTimer.current);
       persistTimer.current = setTimeout(save, 400);
     };
-    // The session forwards state from whichever client is current (a reconnect swaps it).
+    // The session forwards its client's state (one client per table, kept across reconnects).
     const unsubClient = session.onChange(schedule);
     const unsubHost = session.host?.onChange(schedule);
     schedule();
