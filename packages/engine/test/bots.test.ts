@@ -300,12 +300,12 @@ describe('bot strength ladder (fixed seeds)', () => {
     expect(draws / hands).toBeLessThan(0.5);
   }, 120_000);
 
-  it('Pro is ahead of Club in a paired comparison on the same seeds (a coarse check; the CI gate is below)', () => {
-    // 200 paired hands cannot pin the edge down (a hand swings by about 180 points), but a Pro that
-    // has fallen well behind Club fails this.
-    const { mean, se } = pairedLadder('pro', 200, 'paired');
+  it('Beginner is clearly behind Club in a paired comparison on the same seeds', () => {
+    // Pro against Club is gated by the recorded-decision replay above and by `npm run sim -- --gate`
+    // (2,000 paired hands): a few hundred hands swing by tens of points a hand and cannot rank them.
+    const { mean, se } = pairedLadder('beginner', 120, 'paired');
     expect(se).toBeGreaterThan(0);
-    expect(mean + 1.96 * se).toBeGreaterThan(0);
+    expect(mean + 1.96 * se).toBeLessThan(0);
   }, 120_000);
 
   it('no skill ever makes an illegal move or loses a tile', () => {

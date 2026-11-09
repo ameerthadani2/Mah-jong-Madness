@@ -255,22 +255,28 @@ function flushShape(p: PlayerState): { suit: number; inSuit: number; honours: nu
  * prefixes (see `scripts/simulate.ts`); exported so the tuning runs can vary them.
  */
 export const BOT_WEIGHTS = {
-  /** Pro: score points per point of expected deal-in cost against every seat (a light lean, as Club). */
+  /** Pro: score points per point of expected deal-in cost (a light lean, as Club)... */
   proLean: 3,
+  /** ...against seats estimated at least this likely to be ready (0: every seat). */
+  proLeanTenpai: 0,
   /** Pro: how strongly the deal-in cost against a likely-ready seat outweighs the speed it would give up (1 = break even). */
   proFold: 1,
   /** Pro: a seat counts as likely ready from this estimate. */
   proFoldTenpai: 0.5,
   /** Pro: folds only from this shanten (and further). */
   proFoldShanten: 2,
-  /** Club: score points per point of expected deal-in cost (a light lean only). */
+  /** Club: score points per point of expected deal-in cost (a light lean only)... */
   clubDefence: 3,
+  /** ...against seats it reads as likely ready (as the old Club defence: exposed sets and a long row). */
+  clubDefenceTenpai: 0.5,
   /** Pro: score per 台 for keeping a value-honour pair or pong. */
   proValuePair: 25,
   /** Pro: score for throwing an off-suit tile once a flush is in reach (scaled by how close). */
   proFlush: 400,
   /** Pro: off-suit tiles (hand and sets) at most this many to chase a flush. */
   proFlushReach: 5,
+  /** Pro: shanten-steps of credit for a value-honour pong or kong (taken even when it only keeps the shape). */
+  proValuePong: 0.5,
   /**
    * Pro stays concealed (門清) rather than claim from this shanten or closer (Club: 1). At 0 Pro
    * only refuses claims once ready; the old value 2 made the paid Pro lose to the free Club.
@@ -293,6 +299,8 @@ export function rankDiscards(s: GameState, seat: number, skill: BotSkill = 'club
   // Everyone but a Beginner leans away from danger a little; a Pro also folds against a seat that is
   // probably ready, at the exchange rate of the win chance one step of shanten gives up.
   const lean = !threatened ? 0 : skill === 'pro' ? BOT_WEIGHTS.proLean : skill === 'club' ? BOT_WEIGHTS.clubDefence : 0;
+  const leanFrom = skill === 'club' ? BOT_WEIGHTS.clubDefenceTenpai : BOT_WEIGHTS.proLeanTenpai;
+  const leanOn = reads.filter((r) => r.tenpai > 0 && r.tenpai >= leanFrom);
   const strong = skill === 'pro' && bestShanten >= BOT_WEIGHTS.proFoldShanten ? reads.filter((r) => r.tenpai >= BOT_WEIGHTS.proFoldTenpai) : [];
   let perPoint = 0;
   if (strong.length > 0) {
@@ -313,7 +321,7 @@ export function rankDiscards(s: GameState, seat: number, skill: BotSkill = 'club
     // Fewer unseen copies → tile is less useful to keep.
     score += (4 - unseen[o.kind]) * 1;
     const risk = defend ? dealInRisk(o.kind, reads, unseen) : 0;
-    if (lean > 0) score -= lean * dealInCost(s, o.kind, reads, unseen);
+    if (lean > 0) score -= lean * dealInCost(s, o.kind, leanOn, unseen);
     if (perPoint > 0) score -= perPoint * dealInCost(s, o.kind, strong, unseen);
     if (skill === 'pro') {
       // 台 value: keep value-honour pairs and pongs, and chase a flush once it is in reach.
@@ -468,7 +476,7 @@ export function chooseAction(s: GameState, seat: number, opts: BotOptions = {}):
     let gain = before - after;
     if (a.type === 'kong') gain += 0.5; // extra tai and a replacement draw
     // Pro: a value-honour pong (or kong) is 台 in hand, worth taking even when it only keeps the shape.
-    if (skill === 'pro' && (a.type === 'pong' || a.type === 'kong') && honourTai(s, seat, kindOf(s.pending!.tile)) > 0) gain += 0.5;
+    if (skill === 'pro' && (a.type === 'pong' || a.type === 'kong') && honourTai(s, seat, kindOf(s.pending!.tile)) > 0) gain += BOT_WEIGHTS.proValuePong;
     // Kongs included: a claimed kong (明槓) exposes the hand just as a pong does and loses 門清.
     if (valueConcealed) gain -= 1;
     if (!greedy || gain > 0) {
