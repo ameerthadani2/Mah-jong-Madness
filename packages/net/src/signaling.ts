@@ -20,6 +20,10 @@ export const HEARTBEAT_CLOSE_CODE = 4408;
 export const UNAUTHORISED_CLOSE_CODE = 4401;
 /** `connect()` rejects with a message starting with this when the server closes with 4401. */
 export const UNAUTHORISED_MESSAGE = 'Unauthorised: the game server did not accept this session. Sign in again and retry.';
+/** Close code the server uses for a banned account (at `hello`, or when a moderator bans it). */
+export const BANNED_CLOSE_CODE = 4403;
+/** `connect()` rejects with this message when the server closes with 4403. */
+export const BANNED_MESSAGE = 'Banned: this account has been banned from online play.';
 /** The server's answer to a create or join for a room that has ended, been reaped or is full (apps/signal/src/rooms.ts). */
 export const ROOM_UNAVAILABLE_CODE = 'room_unavailable';
 export const ROOM_UNAVAILABLE_MESSAGE = 'Room not found or full';
@@ -67,7 +71,45 @@ export type ServerMessage =
   /** In reply to a refused create or join; with `code: 'closed'`, sent unprompted when the room has closed. */
   | { t: 'error'; message: string; code?: string }
   /** The answer to a client `ping`. */
-  | { t: 'pong' };
+  | { t: 'pong' }
+  /** While a quick match is being found: sent at once and every 2 s (see `SignalingClient.joinQueue`). */
+  | QueueStatus
+  /** A quick match was found: join `room` by its code as usual (only the matched players may). */
+  | { t: 'matched'; room: string; humans?: number; bots?: number }
+  /** The queue refused or dropped this socket; `code` is one of `QueueErrorCode`. */
+  | { t: 'queue_error'; code: string; message: string }
+  /** The answer to `leave_queue`. */
+  | { t: 'queue_left' };
+
+/** Where a quick-match search stands. */
+export interface QueueStatus {
+  t: 'queue_status';
+  /** 1 for the player who has waited longest. */
+  position: number;
+  waitedMs: number;
+  /** Humans in the group this player would be seated with now (itself included). */
+  humans: number;
+  /** How long a group short of four waits before bots fill its empty seats (absent on older servers). */
+  fillMs?: number;
+}
+
+/**
+ * Why the queue refused or dropped a socket: `banned` (the account is banned), `age_required` (no
+ * birth year on the server, or under 17), `rate_limited`, `sign_in` (no account), `unavailable`
+ * (try again), `replaced` (the same account queued from another socket).
+ */
+export type QueueErrorCode = 'banned' | 'age_required' | 'rate_limited' | 'sign_in' | 'unavailable' | 'replaced';
+
+/** A quick match the server refused or ended, with its `code`. */
+export class QueueError extends Error {
+  constructor(
+    message: string,
+    readonly code: string,
+  ) {
+    super(message);
+    this.name = 'QueueError';
+  }
+}
 
 export type ClientToServer =
   /** `auth` is the session token; the server closes the socket with 4401 without a valid one. */
@@ -81,7 +123,10 @@ export type ClientToServer =
    * Heartbeat: the server answers `{t:'pong'}`. A half-open link (a network handover, a NAT that
    * forgot the connection) delivers nothing and reports nothing; only a missing answer shows it.
    */
-  | { t: 'ping' };
+  | { t: 'ping' }
+  /** Quick match: seat me with strangers (default rules at Normal speed; bots fill empty seats after 20 s). */
+  | { t: 'queue'; preset?: 'normal' }
+  | { t: 'leave_queue' };
 
 /** Timer functions, injectable so tests can drive the heartbeat. */
 export interface SignalingTimers {
@@ -251,7 +296,7 @@ export class SignalingClient {
         }
         const code = typeof (ev as { code?: unknown } | null)?.code === 'number' ? (ev as { code: number }).code : null;
         this.lastCloseCode = code;
-        settle(new Error(code === UNAUTHORISED_CLOSE_CODE ? UNAUTHORISED_MESSAGE : 'Connection closed'));
+        settle(new Error(code === UNAUTHORISED_CLOSE_CODE ? UNAUTHORISED_MESSAGE : code === BANNED_CLOSE_CODE ? BANNED_MESSAGE : 'Connection closed'));
         if (!this.closedLocally) for (const h of this.closeHandlers) h();
         const pending = this.pendingRoom;
         this.pendingRoom = [];
@@ -309,6 +354,46 @@ export class SignalingClient {
     return this.roomRequest(opts.club ? { t: 'create', hosted: true, rules, botSkill, club: opts.club } : { t: 'create', hosted: true, rules, botSkill });
   }
 
+
+  /**
+   * Ask for a quick match. The answers arrive as messages: `queue_status` while waiting, then
+   * `matched` (join that room with `joinRoom`) or `queue_error`. `onStatus` gets each status;
+   * the promise resolves with the room code, or rejects with a QueueError, or with an Error when
+   * the connection closes first. `cancel()` leaves the queue (and rejects with code 'cancelled').
+   */
+  findMatch(onStatus: (s: QueueStatus) => void = () => undefined): { match: Promise<string>; cancel: () => void } {
+    let cancel: () => void = () => undefined;
+    const match = new Promise<string>((resolve, reject) => {
+      const ws = this.ws;
+      if (!ws) return reject(new Error('Not connected'));
+      let done = false;
+      const finish = (err: Error | null, room?: string) => {
+        if (done) return;
+        done = true;
+        offMsg();
+        offClose();
+        if (err) reject(err);
+        else resolve(room!);
+      };
+      const offMsg = this.onMessage((m) => {
+        if (m.t === 'queue_status') onStatus(m);
+        else if (m.t === 'matched') finish(null, m.room);
+        else if (m.t === 'queue_error') finish(new QueueError(m.message, m.code));
+      });
+      const offClose = this.onClose(() => finish(new Error('Connection closed')));
+      cancel = () => {
+        if (done) return;
+        try {
+          this.ws?.send(JSON.stringify({ t: 'leave_queue' } satisfies ClientToServer));
+        } catch {
+          /* closed already */
+        }
+        finish(new QueueError('Cancelled', 'cancelled'));
+      };
+      ws.send(JSON.stringify({ t: 'queue', preset: 'normal' } satisfies ClientToServer));
+    });
+    return { match, cancel: () => cancel() };
+  }
 
   private nextPending(): { resolve: (r: RoomInfo) => void; reject: (e: Error) => void } | undefined {
     if (this.staleReplies > 0) {

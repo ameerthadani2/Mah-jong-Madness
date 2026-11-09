@@ -19,7 +19,9 @@ import { AuthError, purgeDeletedUsers, type ProviderConfig, type SessionService 
 import { ClubRegistry, clubGate } from './clubs';
 import { LIMITS, type SignalConfig } from './config';
 import { BucketTable } from './limits';
+import { blockedEitherWay, fillMsFromEnv, Matchmaker, quickMatchCheck } from './matchmaking';
 import { LatencyWindow } from './metrics';
+import { MuteList } from './moderation';
 import { NO_ANALYTICS, reportError, withConsent, type Analytics } from './observability';
 import { TablePersister } from './persist';
 import { PushService, SeatWatcher } from './push';
@@ -45,6 +47,12 @@ export interface SignalServerOptions {
   persistDebounceMs?: number;
   /** Socket limits (default `LIMITS`). */
   socketLimits?: SocketLimits;
+  /** How long a quick-match group short of four waits for bots (default QUICK_MATCH_FILL_MS, else 20 s). */
+  quickMatchFillMs?: number;
+  /** How long a quick-match table waits for its players before starting with bots (default 15 s). */
+  quickStartMs?: number;
+  /** The moderators' token (default ADMIN_TOKEN from the environment). */
+  adminToken?: string | null;
   log?: (line: string) => void;
   /** Push notifications (default: off). */
   push?: PushService;
@@ -72,6 +80,10 @@ export interface SignalServer {
   wss: WebSocketServer;
   rooms: RoomRegistry;
   clubs: ClubRegistry;
+  /** The quick-match queue. */
+  matchmaker: Matchmaker;
+  /** Accounts muted by a moderator (their chat and emotes are dropped at every table). */
+  mutes: MuteList;
   persister: TablePersister;
   push: PushService;
   /** Action-to-state latency of hosted tables (on `/health`). */
@@ -109,7 +121,20 @@ export async function createSignalServer(opts: SignalServerOptions): Promise<Sig
   const actionLatency = new LatencyWindow({ now });
   const push = opts.push ?? new PushService({ devices: repos.repos.devices, client: null, now, log });
   const analytics = opts.analytics ?? NO_ANALYTICS;
-  const rooms = new RoomRegistry({
+  const mutes = new MuteList(now);
+  await mutes.load(repos.repos).catch((e: Error) => console.error('[signal] mutes not loaded', e.message));
+  const matchmaker: Matchmaker = new Matchmaker({
+    now,
+    fillMs: opts.quickMatchFillMs ?? fillMsFromEnv(process.env),
+    check: (userId) => quickMatchCheck(repos.repos, userId, now()),
+    avoid: (userId) => blockedEitherWay(repos.repos, userId),
+    // Declared below; the queue only opens tables once the server is up.
+    openTable: (userIds): string => rooms.createQuickMatchRoom(userIds, { startAfterMs: opts.quickStartMs }),
+    log,
+  });
+  const rooms: RoomRegistry = new RoomRegistry({
+    queue: matchmaker,
+    isMuted: (userId) => mutes.isMuted(userId),
     actionLatency,
     allowHosted: config.hostTables,
     allowP2P: config.p2pRooms,
@@ -177,6 +202,9 @@ export async function createSignalServer(opts: SignalServerOptions): Promise<Sig
       analytics,
       wallet,
       actionLatency,
+      mutes,
+      matchmaker,
+      ...(opts.adminToken !== undefined ? { adminToken: opts.adminToken } : {}),
     },
     { corsOrigins: config.corsOrigins, limiter: new BucketTable<string>(LIMITS.httpBurst, LIMITS.httpPerSec, { now }), trustProxy: config.trustProxy },
   );
@@ -227,6 +255,7 @@ export async function createSignalServer(opts: SignalServerOptions): Promise<Sig
   const ticker = setInterval(() => {
     try {
       rooms.tick();
+      matchmaker.tick();
       seats.tick();
     } catch (e) {
       console.error('[signal] tick error', (e as Error).message);
@@ -312,6 +341,8 @@ export async function createSignalServer(opts: SignalServerOptions): Promise<Sig
     wss,
     rooms,
     clubs,
+    matchmaker,
+    mutes,
     persister,
     push,
     actionLatency,

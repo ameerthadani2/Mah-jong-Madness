@@ -10,8 +10,8 @@
  *
  * With a session verifier (the real server), the first frame must be `{t:'hello', auth}`; until
  * the token is verified nothing else is routed (frames sent meanwhile wait, in order), and a
- * missing or rejected token closes the socket with 4401. The token is checked again before every
- * `create` and `join`, so a session that has since expired or been revoked cannot open or enter a
+ * missing or rejected token closes the socket with 4401 (4403 for a banned account). The token is
+ * checked again before every `create`, `join` and `queue`, so a session that has since expired or been revoked cannot open or enter a
  * table; a revocation also closes the socket at once through `RoomRegistry.endSessions`.
  */
 import type { IncomingMessage, Server } from 'node:http';
@@ -64,8 +64,8 @@ export interface SocketAuthOptions {
   helloTimeoutMs?: number;
 }
 
-/** Frames that open or enter a table: the session is verified again before each one. */
-const RECHECKED = new Set<string>(['create', 'join']);
+/** Frames that open or enter a table, or ask for one: the session is verified again before each one (a ban since `hello` closes the socket with 4403). */
+const RECHECKED = new Set<string>(['create', 'join', 'queue']);
 
 /** Attach the connection handler to `wss`. Returns a function that reports open sockets per IP (for tests and health checks). */
 export function attachSocketHandlers(

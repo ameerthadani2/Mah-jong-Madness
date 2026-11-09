@@ -1,12 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  BANNED_CLOSE_CODE,
+  BANNED_MESSAGE,
   HEARTBEAT_CLOSE_CODE,
   HEARTBEAT_MS,
   PONG_TIMEOUT_MS,
+  QueueError,
   SIGNALING_TIMEOUT_MESSAGE,
   SIGNALING_TIMEOUT_MS,
   SignalingClient,
   UNAUTHORISED_CLOSE_CODE,
+  type QueueStatus,
   type SignalingTimers,
   type WebSocketLike,
 } from '../src/signaling';
@@ -319,5 +323,47 @@ describe('SignalingClient heartbeat', () => {
     sockets[1].serverSays({ t: 'hello', peerId: 'p-2' });
     await q;
     expect(vi.getTimerCount()).toBe(0);
+  });
+});
+
+describe('SignalingClient quick match', () => {
+  it('sends queue, reports each status and resolves with the matched room; room requests are unaffected', async () => {
+    const { c, ws } = await connected();
+    const statuses: QueueStatus[] = [];
+    const { match } = c.findMatch((st) => statuses.push(st));
+    expect(ws.sent.at(-1)).toEqual({ t: 'queue', preset: 'normal' });
+    ws.serverSays({ t: 'queue_status', position: 1, waitedMs: 0, humans: 1, fillMs: 20_000 });
+    ws.serverSays({ t: 'queue_status', position: 1, waitedMs: 2000, humans: 2, fillMs: 20_000 });
+    ws.serverSays({ t: 'matched', room: 'QM1234', humans: 2, bots: 2 });
+    await expect(match).resolves.toBe('QM1234');
+    expect(statuses.map((st) => st.humans)).toEqual([1, 2]);
+    const join = c.joinRoom('QM1234');
+    ws.serverSays({ t: 'room', room: 'QM1234', peers: ['p-1', 'server-QM1234'], host: 'server-QM1234' });
+    await expect(join).resolves.toMatchObject({ room: 'QM1234' });
+  });
+
+  it('rejects with the refusal code, and cancel leaves the queue', async () => {
+    const { c, ws } = await connected();
+    const refused = c.findMatch();
+    ws.serverSays({ t: 'queue_error', code: 'age_required', message: 'Quick match needs your birth year' });
+    await expect(refused.match).rejects.toBeInstanceOf(QueueError);
+    await expect(refused.match).rejects.toMatchObject({ code: 'age_required' });
+    const waiting = c.findMatch();
+    waiting.cancel();
+    expect(ws.sent.at(-1)).toEqual({ t: 'leave_queue' });
+    await expect(waiting.match).rejects.toMatchObject({ code: 'cancelled' });
+  });
+
+  it('a dropped connection rejects the search; a ban closes with 4403 and connect says so', async () => {
+    const { c, ws } = await connected();
+    const search = c.findMatch();
+    ws.drop(BANNED_CLOSE_CODE);
+    await expect(search.match).rejects.toThrow('Connection closed');
+    expect(c.lastCloseCode).toBe(BANNED_CLOSE_CODE);
+    const { c: c2, socket } = client();
+    const p = c2.connect();
+    socket().open();
+    socket().drop(BANNED_CLOSE_CODE);
+    await expect(p).rejects.toThrow(BANNED_MESSAGE);
   });
 });

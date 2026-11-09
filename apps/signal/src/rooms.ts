@@ -8,6 +8,7 @@ import { BOT_SKILLS, randomHex, sanitizeRules, type BotSkill, type RuleSet } fro
 import { uniqueCode, type HexSource } from './codes';
 import { LIMITS } from './config';
 import { BucketTable, cleanField } from './limits';
+import { QUEUE_MESSAGES, type QueueGate } from './matchmaking';
 import type { LatencyWindow } from './metrics';
 
 export interface Socket {
@@ -23,7 +24,10 @@ export type Inbound =
   | { t: 'to'; to: string; data: unknown }
   | { t: 'leave' }
   /** The client's heartbeat; answered with `{t:'pong'}`. */
-  | { t: 'ping' };
+  | { t: 'ping' }
+  /** Ask for a quick match (matchmaking.ts); `preset` is reserved, only 'normal' exists. */
+  | { t: 'queue'; preset?: string }
+  | { t: 'leave_queue' };
 
 interface Peer {
   id: string;
@@ -56,6 +60,8 @@ interface Room {
   createdBy?: string;
   /** Accounts the club took off this table: they may not come back to it. */
   evicted?: Set<string>;
+  /** A quick-match table: only these accounts may enter, and it starts by itself (see `autoStart`). */
+  quick?: { players: Set<string>; startBy: number; started: boolean };
 }
 
 /**
@@ -153,6 +159,10 @@ export interface RoomRegistryOptions {
   actionLatency?: LatencyWindow;
   /** High-resolution clock in milliseconds for `actionLatency` (default `performance.now`). */
   perfNow?: () => number;
+  /** The quick-match queue (matchmaking.ts). Without it, `{t:'queue'}` is refused as unavailable. */
+  queue?: QueueGate;
+  /** Accounts whose chat lines and emotes are dropped at every table (a moderator's mute). */
+  isMuted?: (userId: string | undefined) => boolean;
 }
 
 export interface HostedRoomOptions {
@@ -169,7 +179,20 @@ export interface HostedRoomOptions {
   createdBy?: string;
   /** Resume a table from its snapshot (after a restart). The room keeps the snapshot's code. */
   restore?: SerializedHost;
+  /**
+   * A quick-match table for these accounts: nobody else may enter it, no player may start it or
+   * add bots, and it starts by itself once every one of them has sat down, or `startAfterMs`
+   * after it opened with bots in the seats still empty (closed instead if nobody came).
+   */
+  quickMatch?: { players: string[]; startAfterMs?: number };
 }
+
+/** How long a quick-match table waits for its players before it starts with bots in the empty seats. */
+export const QUICK_START_MS = 15_000;
+/** Table frames a quick-match player may not send: the table starts itself and its bots are the server's. */
+const QUICK_BLOCKED = new Set(['start', 'add_bot']);
+/** Table frames a muted account's are dropped. */
+const MUTED_BLOCKED = new Set(['chat', 'emote']);
 
 /** Default for `RoomRegistryOptions.maxTablesPerUser` (`MAX_TABLES_PER_USER`). */
 export const DEFAULT_MAX_TABLES_PER_USER = 3;
@@ -227,9 +250,51 @@ export class RoomRegistry {
     const room: Room = { code, host: '', peers: new Set(), createdAt: this.now(), keepAliveUntil: this.now() + (opts.keepAliveMs ?? KEEP_ALIVE_MS), pinned: true };
     if (opts.clubCode) room.clubCode = opts.clubCode.toUpperCase();
     if (opts.createdBy) room.createdBy = opts.createdBy;
+    if (opts.quickMatch) room.quick = { players: new Set(opts.quickMatch.players), startBy: this.now() + (opts.quickMatch.startAfterMs ?? QUICK_START_MS), started: false };
     this.attachTable(room, opts.rules, opts.botSkill, opts.restore);
     this.rooms.set(code, room);
     return code;
+  }
+
+  /**
+   * Open a quick-match table for a matched group (decision 3): the default rules at Normal speed,
+   * Club bots, restricted to these accounts, never a club table and not counted against anyone's
+   * own table cap.
+   */
+  createQuickMatchRoom(players: string[], opts: { startAfterMs?: number } = {}): string {
+    return this.createHostedRoom({ botSkill: 'club', quickMatch: { players, startAfterMs: opts.startAfterMs } });
+  }
+
+  /** Whether a room is a quick-match table. */
+  isQuickMatch(code: string): boolean {
+    return this.rooms.get(code.toUpperCase())?.quick !== undefined;
+  }
+
+  /**
+   * Start a quick-match table once every matched player holds a connected seat, or at its
+   * deadline with whoever came (bots take the other seats); with nobody there by then it closes.
+   */
+  private autoStart(room: Room): void {
+    const quick = room.quick;
+    const host = room.table?.host;
+    if (!quick || quick.started || !host || !this.rooms.has(room.code)) return;
+    if (host.phase !== 'lobby') {
+      quick.started = true;
+      return;
+    }
+    const seated = new Set(host.seatInfo().filter((s) => !s.isBot && s.connected && s.userId).map((s) => s.userId!));
+    const everyone = [...quick.players].every((id) => seated.has(id));
+    if (!everyone && this.now() < quick.startBy) return;
+    quick.started = true;
+    if (seated.size === 0) {
+      this.closeRoom(room);
+      return;
+    }
+    try {
+      host.start();
+    } catch {
+      /* the table refused to start (it never should with bots to fill it) */
+    }
   }
 
   /** Rules and bot skill come in from the network, so both are sanitised before the table sees them. */
@@ -250,6 +315,8 @@ export class RoomRegistry {
       if (event.seats.some((s) => !s.isBot && s.name !== '')) room.keepAliveUntil = this.now() + KEEP_ALIVE_MS;
       else if (!room.pinned) room.keepAliveUntil = undefined;
       for (const h of this.eventHandlers) h({ room: room.code, event });
+      // A player sat down at a quick-match table: start it once this frame has been handled.
+      if (room.quick && !room.quick.started && event.type === 'lobby') queueMicrotask(() => this.autoStart(room));
     });
     host.onChange(() => {
       for (const h of this.changeHandlers) h(room.code);
@@ -436,6 +503,7 @@ export class RoomRegistry {
           this.error(peer, CREATE_COOLDOWN);
           return peer.id;
         }
+        this.opts.queue?.leave(peer.id);
         this.leave(peer);
         const wanted = typeof msg.room === 'string' ? msg.room : undefined;
         const code = wanted && /^[A-Z0-9]{4,8}$/.test(wanted) && !this.rooms.has(wanted) ? wanted : this.newCode();
@@ -478,6 +546,12 @@ export class RoomRegistry {
           this.error(peer, ROOM_UNAVAILABLE, ROOM_UNAVAILABLE_CODE);
           return peer.id;
         }
+        // A quick-match table is only for the players it was opened for (no onlookers either).
+        if (room.quick && !(peer.userId && room.quick.players.has(peer.userId))) {
+          this.error(peer, ROOM_UNAVAILABLE, ROOM_UNAVAILABLE_CODE);
+          return peer.id;
+        }
+        this.opts.queue?.leave(peer.id);
         this.leave(peer);
         room.peers.add(peer.id);
         peer.room = room.code;
@@ -492,6 +566,9 @@ export class RoomRegistry {
         if (room.table && to === room.table.transport.id) {
           const timed = this.opts.actionLatency && isAction(msg.data);
           const t0 = timed ? this.perfNow() : 0;
+          const t = tableFrameType(msg.data);
+          if (room.quick && t !== undefined && QUICK_BLOCKED.has(t)) return peer.id;
+          if (t !== undefined && MUTED_BLOCKED.has(t) && this.opts.isMuted?.(peer.userId)) return peer.id;
           const data = bindUser(msg.data, peer.userId, peer.name);
           if (data === null) return peer.id;
           room.table.transport.receive(peer.id, data);
@@ -508,6 +585,20 @@ export class RoomRegistry {
       case 'ping':
         peer.socket.send(PONG);
         return peer.id;
+      case 'queue': {
+        if (peer.id.startsWith('tmp-')) return peer.id;
+        const refuse = (code: keyof typeof QUEUE_MESSAGES) => peer.socket.send(JSON.stringify({ t: 'queue_error', code, message: QUEUE_MESSAGES[code] }));
+        if (!this.opts.queue || !this.opts.allowHosted) return (refuse('unavailable'), peer.id);
+        if (!peer.userId) return (refuse('sign_in'), peer.id);
+        // The same per-account and per-address allowance as joining a table.
+        if (!this.allow(peer, this.joinsByUser, this.joinsByIp)) return (refuse('rate_limited'), peer.id);
+        const socket = peer.socket;
+        void this.opts.queue.enqueue({ peerId: peer.id, userId: peer.userId, send: (m) => socket.send(JSON.stringify(m)) });
+        return peer.id;
+      }
+      case 'leave_queue':
+        this.opts.queue?.leave(peer.id);
+        return peer.id;
       default:
         return peer.id;
     }
@@ -516,6 +607,7 @@ export class RoomRegistry {
   disconnect(peerId: string): void {
     const peer = this.peers.get(peerId);
     if (!peer) return;
+    this.opts.queue?.leave(peerId);
     this.leave(peer);
     this.peers.delete(peerId);
   }
@@ -604,6 +696,8 @@ export class RoomRegistry {
   /** Drive hosted tables' timers and expire abandoned API-created rooms. */
   tick(): void {
     for (const r of [...this.rooms.values()]) {
+      if (r.quick && !r.quick.started) this.autoStart(r);
+      if (!this.rooms.has(r.code)) continue;
       r.table?.host.tick();
       if (r.peers.size === 0 && r.keepAliveUntil !== undefined && r.keepAliveUntil <= this.now()) this.closeRoom(r);
     }
@@ -712,6 +806,13 @@ export class RoomRegistry {
     for (const peer of this.peers.values()) peer.room = null;
     for (const r of rooms) r.table?.host.close();
   }
+}
+
+/** The `t` of a table frame (`{ch:'game', msg:{t}}`), if it is one. */
+function tableFrameType(data: unknown): string | undefined {
+  const env = data as { ch?: unknown; msg?: { t?: unknown } } | null;
+  if (!env || typeof env !== 'object' || env.ch !== 'game' || !env.msg || typeof env.msg !== 'object') return undefined;
+  return typeof env.msg.t === 'string' ? env.msg.t : undefined;
 }
 
 /** A game action for the table (`{ch:'game', msg:{t:'action'}}`). */
