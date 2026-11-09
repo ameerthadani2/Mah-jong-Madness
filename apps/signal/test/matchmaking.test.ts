@@ -421,3 +421,34 @@ describe('quick match over real sockets', () => {
     expect(server.rooms.clubOf(room)).toBeUndefined();
   });
 });
+
+describe('a ban over real sockets', () => {
+  it("closes the banned account's socket with 4403 and refuses its next hello with 4403", async () => {
+    const repos = createRepos();
+    const sessions = new SessionService(repos.repos, { pepper: 'ban-pepper-0123456789abcdef' });
+    const token = 'moderator-token-0123456789';
+    const server = await createSignalServer({ port: 0, host: '127.0.0.1', repos, sessions, providers: {}, config: loadConfig({}), botDelayMs: 0, log: () => undefined, adminToken: token });
+    servers.push(server);
+    const port = server.address().port;
+    const base = `http://127.0.0.1:${port}`;
+    const res = await fetch(`${base}/api/auth/guest`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ device: { id: randomUUID(), platform: 'ios' }, displayName: 'Cheat' }) });
+    const g = (await res.json()) as { userId: string; session: { token: string } };
+    const open = (): Promise<{ ws: WebSocket; closed: Promise<number> }> =>
+      new Promise((resolve) => {
+        const ws = new WebSocket(`ws://127.0.0.1:${port}`);
+        sockets.push(ws);
+        const closed = new Promise<number>((r) => ws.on('close', (code) => r(code)));
+        ws.on('open', () => {
+          ws.send(JSON.stringify({ t: 'hello', auth: g.session.token }));
+          resolve({ ws, closed });
+        });
+      });
+    const first = await open();
+    await new Promise<void>((r) => first.ws.once('message', () => r()));
+    const ban = await fetch(`${base}/api/admin/users/${g.userId}/ban`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` }, body: '{}' });
+    expect(ban.status).toBe(200);
+    expect(await first.closed).toBe(4403);
+    const second = await open();
+    expect(await second.closed).toBe(4403);
+  });
+});
