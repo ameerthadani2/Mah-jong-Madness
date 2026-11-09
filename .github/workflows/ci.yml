@@ -37,7 +37,9 @@ jobs:
 
   docker:
     # The image fly.toml deploys: build it from the repository root and check that it boots and
-    # answers /health with no environment at all (in-memory storage, guest-only sign-in).
+    # answers /health with no secrets (in-memory storage, guest-only sign-in). The image sets
+    # NODE_ENV=production, which refuses to start without DATABASE_URL and AUTH_PEPPER unless
+    # ALLOW_EPHEMERAL=1 says the in-memory server is wanted.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -45,7 +47,7 @@ jobs:
         run: docker build -f apps/signal/Dockerfile -t mahjong-signal:ci .
       - name: Boot it and check /health
         run: |
-          docker run -d --name signal -p 8787:8787 mahjong-signal:ci
+          docker run -d --name signal -p 8787:8787 -e ALLOW_EPHEMERAL=1 mahjong-signal:ci
           for i in $(seq 1 30); do
             if curl -fsS http://127.0.0.1:8787/health; then echo; docker rm -f signal > /dev/null; exit 0; fi
             sleep 1

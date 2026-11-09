@@ -5,15 +5,17 @@
  *   node dist/server.cjs            start the server (MIGRATE_ON_BOOT=1 migrates first)
  *   node dist/server.cjs migrate    apply pending migrations and exit
  *
- * Everything is optional. Without DATABASE_URL the server keeps its state in memory (lost on
- * restart); without AUTH_PEPPER it uses a random pepper for this process (sessions end on
- * restart); without provider ids only guest accounts exist. Each case logs a warning.
+ * Everything is optional outside production. Without DATABASE_URL the server keeps its state in
+ * memory (lost on restart); without AUTH_PEPPER it uses a random pepper for this process (sessions
+ * end on restart); without provider ids only guest accounts exist. Each case logs a warning. With
+ * NODE_ENV=production a missing DATABASE_URL or AUTH_PEPPER stops the boot (exit 1) unless
+ * ALLOW_EPHEMERAL=1 says the in-memory server is wanted.
  * Without REVENUECAT_WEBHOOK_SECRET the store webhook answers 503; without EXPO_ACCESS_TOKEN no
  * push is sent; without SENTRY_DSN errors are only logged; without POSTHOG_KEY no server events.
  * Migrations prefer DATABASE_URL_DIRECT (Neon's direct, unpooled string) over DATABASE_URL.
  */
 import { SessionService } from './auth';
-import { loadConfig, pepperFromEnv, providersFromEnv } from './config';
+import { loadConfig, missingProductionEnv, missingProductionEnvMessage, pepperFromEnv, providersFromEnv } from './config';
 import { createPool } from './db';
 import { migrate } from './migrate';
 import { createAnalytics, initSentry, reportError } from './observability';
@@ -44,6 +46,12 @@ async function main(): Promise<void> {
     return;
   }
   const env = process.env;
+  // Fail closed: a production machine without its database or pepper would lose everything at the next deploy.
+  const missing = missingProductionEnv(env);
+  if (missing.length) {
+    console.error(missingProductionEnvMessage(missing));
+    process.exit(1);
+  }
   // First, so that a failure from here on is reported.
   const sentry = await initSentry(env);
   if (flag(env.MIGRATE_ON_BOOT)) await runMigrations();

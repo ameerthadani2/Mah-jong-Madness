@@ -127,6 +127,27 @@ export function providersFromEnv(env: Env): ProviderConfig {
   return cfg;
 }
 
+/**
+ * What a production server would be missing: with `NODE_ENV=production`, `DATABASE_URL` and
+ * `AUTH_PEPPER` must be set, because without them every account, club and table lives in memory
+ * and every session ends at the next deploy. `ALLOW_EPHEMERAL=1` accepts that on purpose (the CI
+ * image check, a throwaway staging machine). Returns the missing variable names; empty means boot.
+ */
+export function missingProductionEnv(env: Env): string[] {
+  if ((env.NODE_ENV ?? '').trim().toLowerCase() !== 'production' || flag(env.ALLOW_EPHEMERAL, false)) return [];
+  return ['DATABASE_URL', 'AUTH_PEPPER'].filter((name) => !(env[name] ?? '').trim());
+}
+
+/** The message `main.ts` prints before refusing to start (see `missingProductionEnv`). */
+export function missingProductionEnvMessage(missing: string[]): string {
+  return (
+    `[signal] refusing to start: NODE_ENV=production but ${missing.join(' and ')} ${missing.length === 1 ? 'is' : 'are'} not set, ` +
+    'so accounts, clubs and tables would be lost at the next restart. Set ' +
+    (missing.length === 1 ? 'it' : 'them') +
+    ' (fly secrets set ...), or set ALLOW_EPHEMERAL=1 to run with in-memory storage on purpose.'
+  );
+}
+
 /** The session pepper: AUTH_PEPPER, or a random one for this process only (with a warning). */
 export function pepperFromEnv(env: Env, warn: (line: string) => void): { pepper: string; previousPepper?: string } {
   const pepper = (env.AUTH_PEPPER ?? '').trim();
