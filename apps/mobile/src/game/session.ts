@@ -12,9 +12,11 @@
  * A cold resume after an app restart passes the client's saved record back in
  * (`OnlineOptions.restoreClient`, or the source registered with `setSavedClientSource`).
  */
-import { type BotSkill, type RuleSet } from '@mjm/engine';
+import { DEFAULT_RULES, type BotSkill, type RuleSet } from '@mjm/engine';
 import {
+  BANNED_CLOSE_CODE,
   isRoomUnavailable,
+  QueueError,
   LoopbackHub,
   RelayTransport,
   SignalingClient,
@@ -23,6 +25,7 @@ import {
   transportLink,
   type ClientState,
   type Link as TableLink,
+  type QueueStatus,
   type RoomInfo,
   type SerializedClient,
   type SerializedHost,
@@ -395,4 +398,89 @@ export async function createOnlineSession(opts: OnlineOptions): Promise<Session>
   const session = new OnlineSession(opts, connection, client);
   client.join();
   return session;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Quick match
+// ---------------------------------------------------------------------------------------------
+
+export interface QuickMatchOptions {
+  signalUrl: string;
+  name: string;
+  avatar: string;
+  userId?: string;
+  auth?: () => Promise<string | undefined>;
+  onUnauthorised?: () => Promise<void> | void;
+  webSocket?: WebSocketFactory;
+  /** Each `queue_status` while the server looks for players. */
+  onStatus?: (s: QueueStatus) => void;
+  /** The server found a table and the session is joining it. */
+  onMatched?: (room: string) => void;
+}
+
+/**
+ * Quick match: queue on the game server, and once it has matched a table, join that table on
+ * the same socket and return an ordinary online session (it reconnects and rejoins like any
+ * other table; only the matched accounts may enter it, and it starts by itself). The session
+ * promise rejects with a QueueError (`code` banned, age_required, rate_limited, unavailable,
+ * replaced, cancelled) or the usual join errors. `cancel()` leaves the queue.
+ */
+export function startQuickMatch(opts: QuickMatchOptions): { session: Promise<Session>; cancel: () => void } {
+  let cancelled = false;
+  let leave: () => void = () => undefined;
+  const attempt = async (): Promise<Session> => {
+    const auth = opts.auth ? await opts.auth() : undefined;
+    const { signaling, closeCode } = connectSignaling(opts.signalUrl, auth, opts.webSocket);
+    const dropped: Connection['dropped'] = { handler: null };
+    signaling.onClose(() => dropped.handler?.(closeCode()));
+    const banned = () => new QueueError('This account has been banned', 'banned');
+    try {
+      await signaling.connect();
+    } catch (e) {
+      if (closeCode() === UNAUTHORISED_CLOSE || isUnauthorised(e)) throw Object.assign(new Error(UNAUTHORISED_MESSAGE), { code: UNAUTHORISED_CLOSE });
+      if (closeCode() === BANNED_CLOSE_CODE) throw banned();
+      throw e;
+    }
+    try {
+      if (cancelled) throw new QueueError('Cancelled', 'cancelled');
+      const search = signaling.findMatch(opts.onStatus);
+      leave = search.cancel;
+      let room: string;
+      try {
+        room = await search.match;
+      } catch (e) {
+        if (closeCode() === BANNED_CLOSE_CODE) throw banned();
+        throw e;
+      }
+      opts.onMatched?.(room);
+      const transport = new RelayTransport(signaling, 'game');
+      const info = await signaling.joinRoom(room);
+      const connection: Connection = { signaling, link: transportLink(transport, info.host), room: info, dropped };
+      const online: OnlineOptions = { ...opts, rules: DEFAULT_RULES, action: 'join', code: info.room };
+      const client = new TableClient(connection.link, opts.name, opts.avatar, { userId: opts.userId });
+      const session = new OnlineSession(online, connection, client);
+      client.join();
+      return session;
+    } catch (e) {
+      signaling.close();
+      throw e;
+    }
+  };
+  const session = (async () => {
+    try {
+      return await attempt();
+    } catch (e) {
+      // A stale session token: replace it once and queue again.
+      if (cancelled || !isUnauthorised(e) || !opts.onUnauthorised) throw e;
+      await opts.onUnauthorised();
+      return attempt();
+    }
+  })();
+  return {
+    session,
+    cancel: () => {
+      cancelled = true;
+      leave();
+    },
+  };
 }
