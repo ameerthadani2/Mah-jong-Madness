@@ -21,6 +21,7 @@ function fakeRegistry() {
     hostedRooms: () => ['TABLE1'],
     clubOf: () => undefined,
     createdByOf: () => undefined,
+    quickPlayersOf: () => undefined,
   } as unknown as RoomRegistry;
   return {
     rooms,
