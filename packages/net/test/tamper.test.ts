@@ -6,7 +6,7 @@
  */
 import { describe, expect, it, vi } from 'vitest';
 import { chooseAction, countsFromKinds, dealFromSnapshot, kindOf, legalActions, NUM_PLAY_KINDS, shanten, withRules, type GameState, type MatchSnapshot } from '@mjm/engine';
-import { commitFor, deriveSeed, LoopbackHub, makeSecret, sha256Hex, TableClient, TableHost, transportLink, type Audit, type HostMessage, type Reveal } from '../src/index';
+import { AUDIT_CAVEATS, commitFor, deriveSeed, LoopbackHub, makeSecret, sha256Hex, TableClient, TableHost, transportLink, type Audit, type HostMessage, type Reveal } from '../src/index';
 
 const RULES = withRules({ handsPerMatch: 1 });
 
@@ -285,7 +285,7 @@ describe('tampering hosts (audit probes)', () => {
 });
 
 describe('honest tables stay verified', () => {
-  it('four humans with one late revealer: three verify ok and the late one partial', () => {
+  it('four humans with one late revealer: nobody fails, and the restart keeps every hand at partial', () => {
     const clock = { now: 1_000_000 };
     const hub = new LoopbackHub();
     const host = makeHost(hub, clock, 'H4');
@@ -317,9 +317,10 @@ describe('honest tables stay verified', () => {
     const audit = internals(host).audits[0];
     expect(audit.ceremonyAttempts).toBe(2);
     expect(audit.restarts).toEqual([{ attempt: 1, seats: [2], cause: 'no_reveal' }]);
-    expect(clients.map((c) => c.state.auditStatus)).toEqual(['ok', 'ok', 'partial', 'ok']);
+    expect(clients.map((c) => c.state.auditStatus)).toEqual(['partial', 'partial', 'partial', 'partial']);
     for (const c of clients) expect(c.state.auditFailures).toEqual([]);
-    expect(clients[2].state.auditCaveats).toEqual(["The host supplied this seat's share"]);
+    for (const i of [0, 1, 3]) expect(clients[i].state.auditCaveats).toEqual([AUDIT_CAVEATS.restarted]);
+    expect(clients[2].state.auditCaveats).toEqual(["The host supplied this seat's share", AUDIT_CAVEATS.restarted]);
   });
 
   it('two humans verify every hand of a match as ok', () => {

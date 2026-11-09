@@ -53,7 +53,8 @@ export type ClientMessage =
   | { t: 'leave' }
   | { t: 'commit'; hash: string }
   | { t: 'reveal'; secret: string }
-  | { t: 'action'; seat: number; action: Action; expectHash?: string }
+  /** `turnCounter`: the turn of the view the player acted on (the host echoes it if it refuses the move). */
+  | { t: 'action'; seat: number; action: Action; expectHash?: string; turnCounter?: number }
   | { t: 'ready' }
   /** Ask the host to start the match / add a bot (used when the host is a neutral server). */
   | { t: 'start' }
@@ -66,16 +67,19 @@ export type ClientMessage =
 export type HostMessage =
   | { t: 'welcome'; seat: number; roomCode: string; rules: RuleSet; seats: SeatInfo[]; matchId: string; token: string }
   | { t: 'lobby'; seats: SeatInfo[] }
-  | { t: 'commit_request'; handNumber: number }
+  /** `attempt`: which ceremony attempt at this hand (1 for the first). */
+  | { t: 'commit_request'; handNumber: number; attempt?: number }
   | { t: 'commits'; handNumber: number; commits: Commitment[] }
   | { t: 'reveal_request'; handNumber: number }
   /** The host used a stand-in secret for this seat (it did not commit in time). */
-  | { t: 'stand_in'; handNumber: number }
+  | { t: 'stand_in'; handNumber: number; attempt?: number }
   | { t: 'disconnected' }
-  | { t: 'state'; view: TableView; hash: string; deadline: number | null; timeBank: number; inTimeBank: boolean }
-  | { t: 'hand_over'; result: HandResult; audit: Audit; view: TableView }
+  /** `now`: the host's clock when it sent the frame (the same clock as `deadline`). */
+  | { t: 'state'; view: TableView; hash: string; deadline: number | null; timeBank: number; inTimeBank: boolean; now?: number }
+  | { t: 'hand_over'; result: HandResult; audit: Audit; view: TableView; now?: number }
   | { t: 'match_over'; scores: number[]; view: TableView }
-  | { t: 'error'; code: string; message: string }
+  /** `turnCounter`: on a refused action, the turn the player acted on (as it sent it). */
+  | { t: 'error'; code: string; message: string; turnCounter?: number }
   | { t: 'chat'; seat: number; name: string; text: string }
   | { t: 'emote'; seat: number; emote: string }
   | { t: 'pong'; at: number; now: number };
