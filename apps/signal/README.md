@@ -73,20 +73,31 @@ With no environment at all the server runs: accounts, clubs and tables are kept 
 | WebSockets per IP | 20 at once | The extra socket is closed with 1008 `Too many connections` |
 | Messages per socket | 30/s, burst 60 | The socket is closed with 1008 `Rate limit exceeded` |
 | Message size | 64 KiB | The socket is closed with 1009 (message too big). A malformed frame closes it with 1002 (or 1007 for text that is not UTF-8). Other sockets are unaffected |
-| Session handshake | first frame, within 10 s | Closed with 4401 `Unauthorised` |
+| Session handshake | first frame, within 10 s | Closed with 4401 `Unauthorised`; with 1013 (try again later) when the database could not check the token |
+| Client heartbeat | the app sends `{t:"ping"}` every 15 s | The server answers `{t:"pong"}`; an app with no answer for 10 s closes the link and reconnects |
 | HTTP requests per IP | 10/s, burst 30 | `429 {error:"rate_limited"}` with `retry-after: 1` |
 | `/api/auth/*` requests | 5 a minute per IP and 5 a minute per user | `429 {error:"rate_limited"}` with `retry-after: 12` |
-| HTTP body | 64 KiB (bytes) | `400 {error:"invalid"}` |
-| Room creation | 1 per 10 s per connection | `{t:"error", message:"Please wait a few seconds before creating another room"}` |
-| Join attempts | 5 per 10 s per connection (refills at one every 2 s) | `{t:"error", message:"Too many join attempts; please wait a few seconds"}` |
+| HTTP body | 64 KiB (bytes) | `413 {error:"too_large"}` (a body over 1 MiB is not read to the end: the connection closes after the answer) |
+| Room creation | 1 per 10 s per account (per socket without one), and 6 a minute per IP, however often the client reconnects | `{t:"error", message:"Please wait a few seconds before creating another room"}` |
+| Join attempts | 5 per 10 s per account (refills at one every 2 s), and 20 per 10 s per IP | `{t:"error", message:"Too many join attempts; please wait a few seconds"}` |
+| Open tables per account | `MAX_TABLES_PER_USER` (default 3) unfinished tables the account opened, over the socket or the API; restored tables count, finished ones do not | Socket: `{t:"error", code:"table_cap", message:"You already have the most tables open; …"}`. API: `503 {error:"unavailable"}` |
 | Hosted tables | `MAX_HOSTED_TABLES` | Socket: `The server is full right now; …`. API: `503 {error:"unavailable"}` |
-| Peers per room | 12 | `Room not found or full` (the same reply as for an unknown code, so codes cannot be probed) |
+| Peers per room | 12; at a hosted table, 4 of them for peers without a seat. A player whose account holds a seat always gets back in | `Room not found or full` (the same reply as for an unknown code, so codes cannot be probed) |
+| Free text | display and seat names 24, club and table names 40, club descriptions 280, chat 280, report details 1,000 characters | Cleaned (`cleanField`: controls including NUL, bidi overrides and invisible characters removed) and cut, never split inside an emoji; a club name that cleans to nothing is `400` |
+| Database queries | 5 s each (and `statement_timeout` on a direct connection) | The request fails; `/health` answers 503 `db:"down"` after 2 s without an answer |
 | Clubs per user | 10 (owned, joined or pending) | `409 {error:"limit"}` |
 | Members per club | 200 (pending requests have the same cap) | `409 {error:"limit"}` |
 | Open tables per club | 5 (finished tables do not count) | `409 {error:"limit"}` |
 | Player reports | 10 per reporter in any 24 hours | `429 {error:"rate_limited"}` |
 | Push notifications | 1 a minute per user for each kind | Skipped (not queued) |
 | Archived club seasons | the latest 24 | The oldest is dropped |
+
+## Boot and shutdown
+
+- **Fail closed.** With `NODE_ENV=production`, a missing `DATABASE_URL` or `AUTH_PEPPER` stops the boot (exit 1, with the reason) unless `ALLOW_EPHEMERAL=1` is set, which keeps the in-memory server on purpose (the CI image check sets it).
+- **One host per database.** With Postgres, `main.ts` first takes a session advisory lock (`pg_try_advisory_lock`) on its own connection from `DATABASE_URL_DIRECT` (falling back to `DATABASE_URL` with a warning; a transaction pooler cannot hold it), retrying every second for 30 s, then exiting 1. Nothing is loaded or restored before the lock is held. If the lock's connection fails or stops answering later, the server freezes its tables, writes them and exits 1 so the platform restarts it. Memory storage needs no lock.
+- **Shutdown** (SIGTERM, `close()`): new HTTP requests get 503 and socket upgrades are refused, `/health` answers 503 `{ok:false, draining:true}`, game input stops, every table is written, every socket closed, and only then is the host lock released. A 20 s deadline bounds it, even with a hung database.
+- **Health.** `/health` is 503 `{ok:false, db:"down"}` when the database does not answer within 2 s.
 
 Room codes, club codes and peer ids come from the platform's secure random source. Each random byte is masked with `& 31` to index a 32-character alphabet, which avoids modulo bias.
 

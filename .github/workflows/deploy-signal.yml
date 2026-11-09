@@ -1,19 +1,19 @@
 name: Deploy signal server
-# Builds apps/signal/Dockerfile on Fly's remote builder and rolls it out with fly.toml.
+# Builds apps/signal/Dockerfile on Fly's remote builder and rolls it out with fly.toml, as one
+# machine (--ha=false): the server keeps its tables in memory and holds a database lock, so a
+# second machine could never host tables anyway.
+# Runs only after CI has passed on main for the same commit (workflow_run), when that commit
+# touches the server, and on manual dispatch (any branch). Either way the deploy job runs the
+# server's typecheck and tests again, the Postgres cases included, on the exact commit it ships.
 # Needs one repository secret, FLY_API_TOKEN; without it the run is skipped with a summary of
 # what to set up (see docs/DEPLOY.md). Optional repository variable SIGNAL_URL (the address the
 # app connects to, e.g. wss://mahjong-signal.fly.dev; https:// works too) enables the post-deploy
 # health check.
 on:
-  push:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
     branches: [main]
-    paths:
-      - apps/signal/**
-      - packages/engine/**
-      - packages/net/**
-      - package-lock.json
-      - fly.toml
-      - .github/workflows/deploy-signal.yml
   workflow_dispatch:
 
 concurrency:
@@ -25,15 +25,37 @@ permissions:
 
 jobs:
   check:
+    # A CI run only counts when it passed, for a push (not a pull request from a fork).
+    if: github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
     runs-on: ubuntu-latest
     outputs:
       ready: ${{ steps.gate.outputs.ready }}
+      sha: ${{ steps.commit.outputs.sha }}
     steps:
+      - id: commit
+        # The commit CI tested (workflow_run), or the dispatched one.
+        run: echo "sha=${{ github.event.workflow_run.head_sha || github.sha }}" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.commit.outputs.sha }}
+          fetch-depth: 2
+      - id: changed
+        # After CI, deploy only when the commit touches what the server is built from; a dispatch always deploys.
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] || ! git rev-parse -q --verify HEAD~1 > /dev/null; then
+            echo "server=true" >> "$GITHUB_OUTPUT"
+          elif git diff --quiet HEAD~1 HEAD -- apps/signal packages/engine packages/net package-lock.json fly.toml .github/workflows/deploy-signal.yml; then
+            echo "server=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::This commit does not change the server; nothing to deploy"
+          else
+            echo "server=true" >> "$GITHUB_OUTPUT"
+          fi
       - id: gate
         env:
           HAS_TOKEN: ${{ secrets.FLY_API_TOKEN != '' }}
+          CHANGED: ${{ steps.changed.outputs.server }}
         run: |
-          echo "ready=$HAS_TOKEN" >> "$GITHUB_OUTPUT"
+          if [ "$HAS_TOKEN" = "true" ] && [ "$CHANGED" = "true" ]; then echo "ready=true" >> "$GITHUB_OUTPUT"; else echo "ready=false" >> "$GITHUB_OUTPUT"; fi
           if [ "$HAS_TOKEN" != "true" ]; then
             {
               echo "## Signal server not deployed: the FLY_API_TOKEN secret is missing"
@@ -42,7 +64,7 @@ jobs:
               echo "2. Create the app once: \`fly apps create <name>\` (and put that name in \`fly.toml\`)."
               echo "3. Create a deploy token: \`fly tokens create deploy -a <name>\`."
               echo "4. GitHub → Settings → Secrets and variables → Actions → New repository secret: \`FLY_API_TOKEN\`."
-              echo "5. Optional: set the database and auth secrets with \`fly secrets set\` (see docs/DEPLOY.md), and the repository variable \`SIGNAL_URL\`."
+              echo "5. Set the database and auth secrets with \`fly secrets set\` (see docs/DEPLOY.md); the server refuses to start in production without them unless \`ALLOW_EPHEMERAL=1\` is set. Optional: the repository variable \`SIGNAL_URL\`."
               echo "6. Re-run this workflow."
             } >> "$GITHUB_STEP_SUMMARY"
             echo "::notice::FLY_API_TOKEN secret missing; skipping the deploy (the job summary lists the setup steps)"
@@ -52,8 +74,25 @@ jobs:
     needs: check
     if: needs.check.outputs.ready == 'true'
     runs-on: ubuntu-latest
+    # The server's Postgres tests (repositories, migrations, timeouts, the host lock) run here too.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      DATABASE_URL_TEST: postgres://postgres:postgres@localhost:5432/postgres
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.check.outputs.sha }}
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -63,12 +102,15 @@ jobs:
       - name: Typecheck and test before shipping
         run: |
           npm run typecheck --workspace @mjm/signal
+          npm test --workspace @mjm/net
           npm test --workspace @mjm/signal
-      - uses: superfly/flyctl-actions/setup-flyctl@master
+      # Pinned to the commit of release 1.6 (a moving ref such as @master could change under us).
+      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1 # 1.6
       - name: Deploy
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
-        run: flyctl deploy --remote-only --config fly.toml
+        # One machine only: a second one would wait for the host lock and then fail to start.
+        run: flyctl deploy --remote-only --config fly.toml --ha=false
       - name: Health check
         if: vars.SIGNAL_URL != ''
         env:
@@ -84,10 +126,12 @@ jobs:
           exit 1
       - name: Summary
         if: always()
+        env:
+          DEPLOYED_SHA: ${{ needs.check.outputs.sha }}
         run: |
           {
             echo "## Signal server deploy"
-            echo "- Commit: \`${GITHUB_SHA::7}\`"
+            echo "- Commit: \`${DEPLOYED_SHA::7}\`"
             echo "- Config: \`fly.toml\` (region sin, one machine always on)"
             if [ -n "${{ vars.SIGNAL_URL }}" ]; then echo "- Server: ${{ vars.SIGNAL_URL }} (health checked at /health)"; fi
           } >> "$GITHUB_STEP_SUMMARY"

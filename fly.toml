@@ -11,8 +11,12 @@ kill_timeout = "30s"
 
 [deploy]
   # Applies pending migrations in a temporary machine before the new version starts.
-  # Without DATABASE_URL it prints a note and succeeds, so the first deploys work before Neon exists.
+  # Without DATABASE_URL it prints a note and succeeds (the server itself then needs
+  # ALLOW_EPHEMERAL=1 to start, see docs/DEPLOY.md).
   release_command = "node dist/server.cjs migrate"
+  # One machine (deploy with --ha=false, `fly scale count 1`): the server holds a Postgres advisory
+  # lock while it hosts tables, so a second machine would only wait for it and then exit. Rolling
+  # replaces the one machine; the new process waits up to 30 s for the old one to release the lock.
   strategy = "rolling"
 
 [env]
@@ -20,6 +24,10 @@ kill_timeout = "30s"
   HOST_TABLES = "1"
   TRUST_PROXY = "1"
   NODE_ENV = "production"
+  # Sized for one shared-cpu-1x machine with 512 MB: 200 tables x 4 players = 800 sockets, within
+  # the connection hard_limit below with room for onlookers and reconnects (the code default is 500).
+  MAX_HOSTED_TABLES = "200"
+  MAX_TABLES_PER_USER = "3"
 
 [http_service]
   internal_port = 8787
@@ -29,9 +37,11 @@ kill_timeout = "30s"
   auto_start_machines = true
   min_machines_running = 1
 
+  # Stays above 4 x MAX_HOSTED_TABLES (800 seated players) plus onlookers and reconnects; raise
+  # both together with a larger machine.
   [http_service.concurrency]
     type = "connections"
-    soft_limit = 800
+    soft_limit = 900
     hard_limit = 1000
 
   [[http_service.checks]]
