@@ -1,6 +1,6 @@
 # Monetisation
 
-**Principle:** we sell cosmetics and coaching (clubs are free at launch). We never sell luck, information or time that other players at the table do not have. Everything below was designed against two reference businesses: PokerBros (club economy) and chess.com (learning subscriptions). Figures for those companies come from a research sweep that could only read search-engine extracts of the primary pages (the session's network policy blocked direct reads), so they are marked *reported* and must be re-verified from the live pricing pages before launch. Store-policy constraints come from Apple's own guidelines and are verified.
+**Principle:** we sell cosmetics, coaching and club ownership (joining and playing in clubs is free; creating and running one comes with The Four Winds Club). We never sell luck, information or time that other players at the table do not have. Everything below was designed against two reference businesses: PokerBros (club economy) and chess.com (learning subscriptions). Figures for those companies come from a research sweep that could only read search-engine extracts of the primary pages (the session's network policy blocked direct reads), so they are marked *reported* and must be re-verified from the live pricing pages before launch. Store-policy constraints come from Apple's own guidelines and are verified.
 
 ## How the references make money
 
@@ -23,12 +23,12 @@ PokerBros takes no rake; clubs set and keep it. Public estimates put it at a few
 
 ## What we will and will not copy
 
-Decided for launch (plan Phase 4): we ship the coaching subscriptions, diamonds and cosmetics only. The club economy stays free and points-only until it has been reviewed by counsel in each launch market.
+Decided for launch (plan Phase 4, updated by the owner on 9 Nov): we ship the subscriptions (Coach Gold and The Four Winds Club), diamonds and cosmetics. Joining and playing in clubs stays free and points-only; running a club is part of The Four Winds Club. No club chips or club economy until counsel has reviewed it in each launch market.
 
 | PokerBros mechanic | Mahjong Mania at launch |
 | --- | --- |
 | Premium currency ladder | **Yes.** Diamonds at 60 per dollar tier, with the bonus on bigger packs stated exactly. |
-| Club renewals by capacity | **No.** Clubs are free, with the server's fair-use caps. Revisit only once clubs show demand. |
+| Club renewals by capacity | **No renewals by capacity.** Creating and running clubs (up to 3 owned clubs, 200 members each) comes with The Four Winds Club; members join and play free. If the plan lapses, after a 7-day grace the clubs keep working for members, the owner keeps the admin tools, no new club can be created and each club's open-table cap drops to 1 until the owner renews or hands the club over. |
 | Owner-minted club chips | **No.** Standings are points only (open decision 1 settled: points-only). Points have no monetary value and cannot be redeemed or transferred. |
 | Time banks for sale | **No.** The time bank is a table rule, identical for all seats. Selling time changes outcomes. |
 | Insurance / run-it-twice analogues | **No.** Nothing that alters payouts. |
@@ -39,9 +39,9 @@ Decided for launch (plan Phase 4): we ship the coaching subscriptions, diamonds 
 | chess.com mechanic | Mahjong Mania at launch |
 | --- | --- |
 | Metered free taster | **Yes.** 1 full hand review a day, 1 Puzzle Rush a day; daily puzzle, drills, every lesson, Beginner and Club bots free. Meters reset at local midnight by the server's clock once the app has seen it. |
-| Coaching tiers | **Two** (below). A third tier waits until move-by-move explanations exist. |
+| Coaching tiers | **Two** (below): Coach Gold, and The Four Winds Club on top of it. A further tier waits until move-by-move explanations exist. |
 | Family / club bundle | **Not at launch** (the old "Table Pass" granted one seat, not six). |
-| Free clubs and club matches | **Yes.** |
+| Free clubs and club matches | **Yes, to join and play.** Running a club is The Four Winds Club. |
 | Celebrity coach personas | Later: coach voice or persona packs as cosmetics. |
 
 ## Catalogue (implemented in `apps/mobile/src/monetisation/catalog.ts` and `apps/signal/src/catalog.ts`)
@@ -124,7 +124,9 @@ Each plan is its own entitlement on the server (`coach.gold.month`, `fourwinds.y
 
 The Shop copy lists only these unlocks. Removed until built: Coach Diamond, Table Pass, zodiac avatars, VIP cards and club capacity tiers. Trials and introductory offers are set in the stores, not in the app.
 
-**Builds without keys.** With no `EXPO_PUBLIC_REVENUECAT_IOS_KEY` / `_ANDROID_KEY` the Shop says "Store unavailable on this build", shows no prices and grants nothing; table looks can still be bought with diamonds the server already holds. `EXPO_PUBLIC_STORE_MODE=mock` gives a development build an instant, free test store whose grants live only on the device until the next sync; a release build cannot select it.
+**Builds without keys.** With no `EXPO_PUBLIC_REVENUECAT_IOS_KEY` / `_ANDROID_KEY` the Shop says "Store unavailable on this build", shows no prices and grants nothing; looks can still be bought with diamonds the server already holds. A build with keys does the same ("Store unavailable") when the server reports `storeEnabled: false`.
+
+**Server rules.** Sandbox purchases grant only to accounts in `TESTER_USER_IDS`. A refunded diamond pack takes back everything it credited, even when that leaves purchased diamonds below zero; no spend goes through until a purchase covers it. Restore asks the server to reconcile with RevenueCat (`REVENUECAT_SECRET_KEY`), which also runs nightly for accounts with recent store activity; support can grant diamonds or a plan with `POST /api/admin/grant` (`ADMIN_TOKEN`). Server analytics only for players whose analytics choice is yes. `EXPO_PUBLIC_STORE_MODE=mock` gives a development build an instant, free test store whose grants live only on the device until the next sync; a release build cannot select it.
 
 ## Compliance guardrails (see `docs/STORE_COMPLIANCE.md`)
 * "Diamonds and points have no monetary value and cannot be redeemed or transferred": shown on the Shop, Clubs, standings and Settings, and in the Terms.

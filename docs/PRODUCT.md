@@ -1,6 +1,6 @@
 # Product definition
 
-**Mahjong Mania is the Taiwanese 16-tile Mahjong app you would trust with your friends' money and your own improvement.** Three pillars: play with anyone anywhere (clubs), get better every day (chess.com-style learning), and never wonder whether the deal was rigged (verifiable luck).
+**Mahjong Mania (麻將狂熱; store title "Mahjong Mania: Taiwan 16") is the Taiwanese 16-tile Mahjong app you would trust with your friends' game night and your own improvement.** Three pillars: play with anyone anywhere (clubs), get better every day (structured learning), and see for yourself how each deal was made (every hand logged and checked on your phone).
 
 ## Who it is for
 1. **Club organisers** (the PokerBros persona): someone who runs a weekly game for a group across Taipei, Vancouver and Sydney and wants their rules, their standings, no cheating and no arguments.
@@ -33,7 +33,7 @@
 Expo / React Native: iOS (iPhone, iPad), Android (phones, tablets), web. Landscape table that fits 17 tiles on an iPhone SE; lobby screens responsive. Online play goes through the game server over WebSocket.
 
 ## Free vs paid (summary — details in `docs/MONETISATION.md`)
-Everything needed to play with friends is free: clubs, tables, all speeds, resume, coach at the table, daily puzzle, drills, lessons 1–3, two bot levels, one review and one Puzzle Rush per day. Paid: coaching tiers, club capacity, cosmetics, VIP cards.
+Everything needed to play with friends is free: joining and playing in clubs, tables, all speeds, resume, coach at the table, daily puzzle, drills, every lesson, two bot levels, one review and one Puzzle Rush per day. Paid: Coach Gold (Pro bots, unlimited Puzzle Rush), The Four Winds Club (everything in Gold, unlimited reviews, creating and running clubs) and cosmetics bought with diamonds (`docs/MONETISATION.md`).
 
 ## Metrics that matter
 D1/D7 retention of players who finished a hand; % of tables that are club tables; hands per club per week; review open rate; daily-puzzle streak length; audit-verified rate (should be 100%); crash-resume success rate; time-to-first-table for a new user.
