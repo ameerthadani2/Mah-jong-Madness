@@ -4,7 +4,6 @@
  * exit 52); the old unit test's fake response object could not show that.
  */
 import { request as httpRequest, type IncomingHttpHeaders } from 'node:http';
-import type { AddressInfo } from 'node:net';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { SessionService } from '../src/auth';
 import { loadConfig } from '../src/config';
