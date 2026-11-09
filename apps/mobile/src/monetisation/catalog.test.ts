@@ -9,10 +9,10 @@ const en = translator('en');
 const zh = translator('zh-TW');
 
 describe('launch catalogue', () => {
-  it('sells only what ships: diamond packs, the four table looks, Coach Gold and Coach Platinum', () => {
+  it('sells only what ships: diamond packs, the four table looks, Coach Gold and The Four Winds Club', () => {
     expect(ALL_PRODUCTS.map((p) => p.kind).sort()).toEqual([...Array(6).fill('diamonds'), ...Array(4).fill('cosmetic'), ...Array(4).fill('subscription')].sort());
     expect(COSMETICS.map((p) => p.unlocks).sort()).toEqual(['bamboo', 'imperial', 'jade', 'nightmarket']);
-    expect(SUBSCRIPTIONS.map((p) => `${p.tier}/${p.period}`)).toEqual(['gold/month', 'gold/year', 'platinum/month', 'platinum/year']);
+    expect(SUBSCRIPTIONS.map((p) => `${p.tier}/${p.period}`)).toEqual(['gold/month', 'gold/year', 'fourwinds/month', 'fourwinds/year']);
     // Removed until built: Diamond tier, Table Pass, zodiac avatars, Taiwan emotes, VIP cards, club tiers.
     for (const gone of [/coach\.diamond/, /tablepass/, /avatars\./, /emotes\./, /^vip\./, /^club\./]) {
       expect(ALL_PRODUCTS.filter((p) => gone.test(p.id)), String(gone)).toEqual([]);
@@ -49,11 +49,11 @@ describe('launch catalogue', () => {
 
   it('maps a Google Play `subscription:basePlan` identifier back to the product, and asks the store for both forms', () => {
     expect(productByStoreId('coach.gold:month')?.id).toBe('coach.gold.month');
-    expect(productByStoreId('coach.platinum:year')?.id).toBe('coach.platinum.year');
+    expect(productByStoreId('fourwinds:year')?.id).toBe('fourwinds.year');
     expect(productByStoreId('coach.gold:weekly')).toBeUndefined();
     expect(productByStoreId('theme.jade')).toBeUndefined();
     const q = storeQueryIds();
-    expect(q.subscriptions).toEqual(expect.arrayContaining(['coach.gold.month', 'coach.gold', 'coach.platinum']));
+    expect(q.subscriptions).toEqual(expect.arrayContaining(['coach.gold.month', 'coach.gold', 'fourwinds']));
     expect(q.other).toEqual(DIAMOND_PACKS.map((p) => p.storeId));
   });
 

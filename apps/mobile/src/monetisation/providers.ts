@@ -63,7 +63,7 @@ export function mockGrant(wallet: Wallet, product: Product): Wallet {
   else if (product.kind === 'cosmetic' && product.unlocks && !next.cosmetics.includes(product.unlocks)) next.cosmetics.push(product.unlocks);
   else if (product.kind === 'subscription' && product.tier) {
     const days = product.period === 'year' ? 365 : 30;
-    next.entitlements.push({ entitlement: `coach.${product.tier}`, expiresAt: Date.now() + days * 86400_000 });
+    next.entitlements.push({ entitlement: product.id, expiresAt: Date.now() + days * 86400_000 });
   }
   return next;
 }

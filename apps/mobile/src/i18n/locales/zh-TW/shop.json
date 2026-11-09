@@ -1,7 +1,7 @@
 {
   "_review": "first pass, needs native review",
   "title": "商店",
-  "trust": "只賣桌布外觀和教練方案。這裡的東西都不會改變你摸到的牌，俱樂部也完全免費。",
+  "trust": "只賣外觀、教練方案和開設俱樂部的權利。這裡的東西都不會改變你摸到的牌，加入俱樂部也完全免費。",
   "tabs": {
     "diamonds": "鑽石",
     "looks": "外觀",
@@ -19,13 +19,13 @@
   "priceLoading": "…",
   "diamondsUse": "鑽石可以購買桌布（每款 300 或 400）。會優先使用贈送的鑽石。",
   "tiers": {
-    "gold": "金",
-    "platinum": "白金"
+    "gold": "教練 金",
+    "fourwinds": "四風俱樂部"
   },
   "coach": {
-    "tiers": "教練方案",
-    "active": "教練 %{tier} 使用中",
-    "body": "免費：電腦牌桌的教練、每日謎題、練習、全部課程，每天 1 次複盤和 1 次謎題衝刺，新手與牌友電腦。\n金：高手電腦、無限謎題衝刺。\n白金：金的全部內容，加上無限複盤。",
+    "tiers": "教練與俱樂部方案",
+    "active": "%{tier} 使用中",
+    "body": "免費：電腦牌桌的教練、每日謎題、練習、全部課程，每天 1 次複盤和 1 次謎題衝刺，新手與牌友電腦，以及加入任何俱樂部。\n教練 金：高手電腦、無限謎題衝刺。\n四風俱樂部：教練 金的全部內容、無限複盤，以及開設並經營自己的俱樂部。",
     "renews": "%{date} 續訂或到期"
   },
   "unavailable": {
@@ -97,14 +97,14 @@
       "description": "一次付清，使用一年教練 金。",
       "badge": "年繳"
     },
-    "coach_platinum_month": {
-      "title": "教練 白金",
-      "description": "金的全部內容，加上無限複盤。",
-      "badge": "進步首選"
+    "fourwinds_month": {
+      "title": "四風俱樂部",
+      "description": "教練 金的全部內容、無限複盤，還能開設並經營自己的俱樂部。",
+      "badge": "開自己的俱樂部"
     },
-    "coach_platinum_year": {
-      "title": "教練 白金 年繳",
-      "description": "一次付清，使用一年教練 白金。",
+    "fourwinds_year": {
+      "title": "四風俱樂部 年繳",
+      "description": "一次付清，使用一年四風俱樂部。",
       "badge": "年繳"
     }
   }

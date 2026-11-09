@@ -276,12 +276,12 @@ export function GemPile({ tier, width, height }: { tier: number; width: number |
 
 const MEDAL = {
   gold: { fill: colors.gold, shade: colors.goldShelf },
-  platinum: { fill: '#E3EAF5', shade: '#A9B6CC' },
+  fourwinds: { fill: '#7DDBB4', shade: '#2E9A72' },
   diamond: { fill: '#7FE3FF', shade: '#2FA8E0' },
 } as const;
 
-/** Ribbon medal for coaching tiers. */
-export function MedalScene({ tier, width, height }: { tier: 'gold' | 'platinum' | 'diamond'; width: number | string; height: number | string }) {
+/** Ribbon medal for coaching tiers; The Four Winds Club carries a four-point compass for the four winds. */
+export function MedalScene({ tier, width, height }: { tier: 'gold' | 'fourwinds' | 'diamond'; width: number | string; height: number | string }) {
   const m = MEDAL[tier];
   return (
     <Svg width={width} height={height} viewBox="0 0 120 100">
@@ -293,6 +293,11 @@ export function MedalScene({ tier, width, height }: { tier: 'gold' | 'platinum' 
       <Circle cx={60} cy={57} r={18} fill="none" stroke={m.shade} strokeWidth={3} />
       {tier === 'diamond' ? (
         <Gem x={45} y={42} s={0.62} hue="blue" />
+      ) : tier === 'fourwinds' ? (
+        <G>
+          <Path d="M60 38 L65 52 L79 57 L65 62 L60 76 L55 62 L41 57 L55 52 Z" fill="#FFFFFF" stroke={INK} strokeWidth={2.6} strokeLinejoin="round" />
+          <Circle cx={60} cy={57} r={4} fill={m.shade} stroke={INK} strokeWidth={2} />
+        </G>
       ) : (
         <Path d="M60 42 L64.5 52 L75 53 L67 60 L69.5 71 L60 65.5 L50.5 71 L53 60 L45 53 L55.5 52 Z" fill="#FFFFFF" stroke={INK} strokeWidth={2.6} strokeLinejoin="round" />
       )}

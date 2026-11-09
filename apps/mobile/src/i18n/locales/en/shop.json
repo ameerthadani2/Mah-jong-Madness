@@ -1,7 +1,7 @@
 {
   "_review": "n/a",
   "title": "Shop",
-  "trust": "Table looks and coaching only. Nothing here changes the tiles you draw, and clubs are free.",
+  "trust": "Looks, coaching and club ownership only. Nothing here changes the tiles you draw, and joining clubs is free.",
   "tabs": {
     "diamonds": "Diamonds",
     "looks": "Looks",
@@ -19,13 +19,13 @@
   "priceLoading": "…",
   "diamondsUse": "Diamonds buy table looks (300 or 400 each). Bonus diamonds are spent first.",
   "tiers": {
-    "gold": "Gold",
-    "platinum": "Platinum"
+    "gold": "Coach Gold",
+    "fourwinds": "The Four Winds Club"
   },
   "coach": {
-    "tiers": "Coaching plans",
-    "active": "Coach %{tier} is active",
-    "body": "Free: the coach at bot tables, the daily puzzle, drills, every lesson, 1 hand review and 1 Puzzle Rush a day, Beginner and Club bots.\nGold: Pro bots and unlimited Puzzle Rush.\nPlatinum: everything in Gold plus unlimited hand reviews.",
+    "tiers": "Coaching and club plans",
+    "active": "%{tier} is active",
+    "body": "Free: the coach at bot tables, the daily puzzle, drills, every lesson, 1 hand review and 1 Puzzle Rush a day, Beginner and Club bots, and joining any club.\nCoach Gold: Pro bots and unlimited Puzzle Rush.\nThe Four Winds Club: everything in Coach Gold, unlimited hand reviews, and creating and running your own clubs.",
     "renews": "Renews or ends %{date}"
   },
   "unavailable": {
@@ -97,14 +97,14 @@
       "description": "Coach Gold for a year, billed once.",
       "badge": "Yearly"
     },
-    "coach_platinum_month": {
-      "title": "Coach Platinum",
-      "description": "Everything in Gold plus unlimited hand reviews.",
-      "badge": "Best for improvers"
+    "fourwinds_month": {
+      "title": "The Four Winds Club",
+      "description": "Everything in Coach Gold, unlimited hand reviews, and clubs of your own to create and run.",
+      "badge": "Run your own club"
     },
-    "coach_platinum_year": {
-      "title": "Coach Platinum (yearly)",
-      "description": "Coach Platinum for a year, billed once.",
+    "fourwinds_year": {
+      "title": "The Four Winds Club (yearly)",
+      "description": "The Four Winds Club for a year, billed once.",
       "badge": "Yearly"
     }
   }

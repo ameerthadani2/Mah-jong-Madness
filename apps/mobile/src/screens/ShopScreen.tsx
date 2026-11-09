@@ -196,7 +196,7 @@ export function ShopScreen() {
               {tier !== 'free' && renewal !== null && <Pill text={t('shop.coach.renews', { date: new Date(renewal).toLocaleDateString() })} tone="ok" />}
             </View>
           </Card>
-          {grid(SUBSCRIPTIONS.map((p) => <ProductCard key={p.id} w={cardW} p={p} price={priceLabel(p)} busy={busy === p.id} onBuy={() => void buy(p)} art={<MedalScene tier={p.tier === 'platinum' ? 'platinum' : 'gold'} width="100%" height="100%" />} bg={['#FFF3C4', '#FFD36B']} />))}
+          {grid(SUBSCRIPTIONS.map((p) => <ProductCard key={p.id} w={cardW} p={p} price={priceLabel(p)} busy={busy === p.id} onBuy={() => void buy(p)} art={<MedalScene tier={p.tier === 'fourwinds' ? 'fourwinds' : 'gold'} width="100%" height="100%" />} bg={['#FFF3C4', '#FFD36B']} />))}
         </>
       )}
 

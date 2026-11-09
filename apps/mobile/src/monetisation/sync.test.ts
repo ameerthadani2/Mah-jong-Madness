@@ -58,7 +58,7 @@ describe('buying with money', () => {
 
   it('a purchase the server has not seen yet stays pending and grants nothing on the device', async () => {
     const { d } = deps([{}]);
-    const r = await buyWithMoney(productById('coach.platinum.month')!, EMPTY_WALLET, storeThat({ status: 'purchased' }), d);
+    const r = await buyWithMoney(productById('fourwinds.month')!, EMPTY_WALLET, storeThat({ status: 'purchased' }), d);
     expect(r.status).toBe('pending');
     expect(r.wallet.entitlements).toEqual([]);
   });

@@ -1,15 +1,19 @@
 /**
  * The launch catalogue: only what ships (docs/MONETISATION.md, "Catalogue").
  *
- * Everything sold here is cosmetic or coaching: nothing changes tile odds, information or
- * clocks at the table, and clubs are free. Diamond packs carry honest bonuses (the badge is
+ * Everything sold here is cosmetic, coaching or club ownership: nothing changes tile odds,
+ * information or clocks at the table, and joining and playing in clubs is free. The Four Winds
+ * Club (四風俱樂部) adds the right to create and run clubs on top of Coach Gold and unlimited
+ * hand reviews. Diamond packs carry honest bonuses (the badge is
  * the bonus as a share of the 60-per-dollar base, rounded), and table looks are bought with
  * diamonds only (POST /api/wallet/spend).
  *
  * The server keeps the same table (apps/signal/src/catalog.ts; its test reads this file):
  * same ids, kinds, price tiers, diamonds and diamond prices. `storeId` is the identifier in
  * App Store Connect and RevenueCat for products sold for money; a Google Play subscription is
- * `coach.<tier>` with base plans `month` / `year`, reported as `coach.gold:month`.
+ * `coach.gold` or `fourwinds` with base plans `month` / `year`, reported as `coach.gold:month`.
+ * Each plan is its own entitlement on the server (`fourwinds.month`), so refunding one plan
+ * never ends another; the tier is the best plan still live.
  * `priceUsd` is the planning tier only: the Shop shows the price string the store SDK returns.
  *
  * `title` / `description` / `badge` are the English source copy; screens show
@@ -19,7 +23,8 @@
 import type { Translate } from '../logic/translate';
 
 export type ProductKind = 'diamonds' | 'cosmetic' | 'subscription';
-export type CoachTier = 'free' | 'gold' | 'platinum';
+/** Coaching tiers, lowest first; `fourwinds` is The Four Winds Club. */
+export type CoachTier = 'free' | 'gold' | 'fourwinds';
 
 export interface Product {
   id: string;
@@ -71,8 +76,19 @@ export const COSMETICS: Product[] = [
 export const SUBSCRIPTIONS: Product[] = [
   { id: 'coach.gold.month', storeId: 'coach.gold.month', kind: 'subscription', tier: 'gold', title: 'Coach Gold', titleZh: '教練 金', description: 'Pro bots and unlimited Puzzle Rush.', priceUsd: 6.99, period: 'month' },
   { id: 'coach.gold.year', storeId: 'coach.gold.year', kind: 'subscription', tier: 'gold', title: 'Coach Gold (yearly)', titleZh: '教練 金 年繳', description: 'Coach Gold for a year, billed once.', priceUsd: 49.99, period: 'year', badge: 'Yearly' },
-  { id: 'coach.platinum.month', storeId: 'coach.platinum.month', kind: 'subscription', tier: 'platinum', title: 'Coach Platinum', titleZh: '教練 白金', description: 'Everything in Gold plus unlimited hand reviews.', priceUsd: 10.99, period: 'month', badge: 'Best for improvers' },
-  { id: 'coach.platinum.year', storeId: 'coach.platinum.year', kind: 'subscription', tier: 'platinum', title: 'Coach Platinum (yearly)', titleZh: '教練 白金 年繳', description: 'Coach Platinum for a year, billed once.', priceUsd: 79.99, period: 'year', badge: 'Yearly' },
+  {
+    id: 'fourwinds.month',
+    storeId: 'fourwinds.month',
+    kind: 'subscription',
+    tier: 'fourwinds',
+    title: 'The Four Winds Club',
+    titleZh: '四風俱樂部',
+    description: 'Everything in Coach Gold, unlimited hand reviews, and clubs of your own to create and run.',
+    priceUsd: 10.99,
+    period: 'month',
+    badge: 'Run your own club',
+  },
+  { id: 'fourwinds.year', storeId: 'fourwinds.year', kind: 'subscription', tier: 'fourwinds', title: 'The Four Winds Club (yearly)', titleZh: '四風俱樂部 年繳', description: 'The Four Winds Club for a year, billed once.', priceUsd: 79.99, period: 'year', badge: 'Yearly' },
 ];
 
 export const ALL_PRODUCTS: Product[] = [...DIAMOND_PACKS, ...COSMETICS, ...SUBSCRIPTIONS];
@@ -98,9 +114,16 @@ export function productByStoreId(storeId: string): Product | undefined {
   return basePlan ? STORE_PRODUCTS.find((p) => p.storeId === `${sub}.${basePlan}`) : undefined;
 }
 
-/** Server entitlement name for a coaching tier (docs/API.md, "Wallet"). */
-export function tierEntitlement(tier: Exclude<CoachTier, 'free'>): string {
-  return `coach.${tier}`;
+/** The plan id prefix of each paid tier: every entitlement named `<prefix>` or `<prefix>.<plan>` grants it. */
+const TIER_PREFIX: Record<Exclude<CoachTier, 'free'>, string> = { gold: 'coach.gold', fourwinds: 'fourwinds' };
+
+/** The paid tier an entitlement name grants (`coach.gold.year` → gold, `fourwinds.month` → fourwinds), or null. */
+export function tierOfEntitlement(name: string): Exclude<CoachTier, 'free'> | null {
+  for (const tier of ['fourwinds', 'gold'] as const) {
+    const prefix = TIER_PREFIX[tier];
+    if (name === prefix || name.startsWith(`${prefix}.`)) return tier;
+  }
+  return null;
 }
 
 /** Daily meters for the free tier (reset at local midnight, by the server's clock when known). */

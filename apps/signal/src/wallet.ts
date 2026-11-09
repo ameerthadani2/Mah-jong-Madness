@@ -15,7 +15,7 @@
  * players. Work for one user is serialised in this process (one game server machine), and on
  * Postgres every operation is one transaction.
  */
-import { COACH_ENTITLEMENTS, COSMETIC_ENTITLEMENTS, PERIOD_MS, productForStoreId, serverProduct, type ServerProduct } from './catalog';
+import { COSMETIC_ENTITLEMENTS, PERIOD_MS, productForStoreId, serverProduct, TIER_RANK, tierOfEntitlements, type CoachTier, type ServerProduct } from './catalog';
 import { NO_ANALYTICS, type Analytics } from './observability';
 import type { EntitlementRecord, Repos, UserRecord, WalletRecord } from './repos/types';
 
@@ -103,8 +103,8 @@ export interface WalletSummary {
   entitlements: Array<{ entitlement: string; expiresAt: number | null; active: boolean }>;
   /** Product ids of the cosmetics the user owns (`theme.jade`). */
   cosmetics: string[];
-  /** The highest coaching tier currently live. */
-  coachTier: 'free' | 'gold' | 'platinum';
+  /** The best tier among the plans currently live (`fourwinds` is The Four Winds Club). */
+  coachTier: CoachTier;
 }
 
 export interface WalletServiceOptions {
@@ -161,13 +161,23 @@ export class WalletService {
     const [w, ents] = await Promise.all([this.repos.wallet.get(userId), this.repos.wallet.getEntitlements(userId)]);
     const at = this.now();
     const live = ents.filter((e) => isLive(e, at));
-    const coach = COACH_ENTITLEMENTS.find((c) => live.some((e) => e.entitlement === c));
     return {
       wallet: { diamonds: w.diamonds, bonusDiamonds: w.bonusDiamonds },
       entitlements: ents.map((e) => ({ entitlement: e.entitlement, expiresAt: e.expiresAt, active: isLive(e, at) })),
       cosmetics: live.filter((e) => COSMETIC_ENTITLEMENTS.has(e.entitlement)).map((e) => e.entitlement).sort(),
-      coachTier: coach === 'coach.platinum' ? 'platinum' : coach === 'coach.gold' ? 'gold' : 'free',
+      coachTier: tierOfEntitlements(live.map((e) => e.entitlement)),
     };
+  }
+
+  /** The user's tier now: the best subscription plan still live. */
+  async tierOf(userId: string): Promise<CoachTier> {
+    const at = this.now();
+    return tierOfEntitlements((await this.repos.wallet.getEntitlements(userId)).filter((e) => isLive(e, at)).map((e) => e.entitlement));
+  }
+
+  /** True while the user has The Four Winds Club (the club-ownership gate calls this). */
+  async hasFourWinds(userId: string): Promise<boolean> {
+    return TIER_RANK[await this.tierOf(userId)] >= TIER_RANK.fourwinds;
   }
 
   /** Add diamonds (and optionally bonus diamonds) with a ledger entry. */

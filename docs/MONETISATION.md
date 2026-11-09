@@ -61,13 +61,15 @@ The two files list the same products (the server's `test/catalog.test.ts` reads 
 
 **Table looks** (cosmetic, owned for good; bought with diamonds only through `POST /api/wallet/spend`, so there is no cash price to undercut): Night Market 300, Bamboo Garden 300, Jade Parlour 400, Imperial Red 300. The three free felts (Classic, Deep Green, Midnight Blue) stay free.
 
-**Coaching** (auto-renewing subscriptions, cross-device through the account; Google Play: subscription `coach.gold` / `coach.platinum` with base plans `month` and `year`):
+**Subscriptions** (auto-renewing, cross-device through the account; Google Play: subscriptions `coach.gold` and `fourwinds`, each with base plans `month` and `year`; RevenueCat entitlements `gold` and `fourwinds`):
 
 | Plan | Store ids | Monthly | Yearly | What it unlocks today |
 | --- | --- | --- | --- | --- |
-| Free | | | | Coach at bot tables, daily puzzle, drills, every lesson, 1 hand review and 1 Puzzle Rush a day, Beginner and Club bots |
+| Free | | | | Coach at bot tables, daily puzzle, drills, every lesson, 1 hand review and 1 Puzzle Rush a day, Beginner and Club bots, joining and playing in any club |
 | Coach Gold | `coach.gold.month`, `coach.gold.year` | $6.99 | $49.99 | Pro bots, unlimited Puzzle Rush |
-| Coach Platinum | `coach.platinum.month`, `coach.platinum.year` | $10.99 | $79.99 | Everything in Gold plus unlimited hand reviews |
+| The Four Winds Club (四風俱樂部) | `fourwinds.month`, `fourwinds.year` | $10.99 | $79.99 | Everything in Coach Gold, unlimited hand reviews, and creating and running clubs (up to 3 owned clubs) |
+
+Each plan is its own entitlement on the server (`coach.gold.month`, `fourwinds.year`, …): refunding or expiring one plan never ends another, and the player's tier is the best plan still live. Joining and playing in clubs stays free; only creating and running a club needs The Four Winds Club (the server checks it through `WalletService.hasFourWinds`). If it lapses, after a 7-day grace the clubs keep working for their members and the owner keeps the admin tools, but no new club can be created and each club's open-table cap drops to 1 until the owner renews or hands the club over.
 
 The Shop copy lists only these unlocks. Removed until built: Coach Diamond, Table Pass, zodiac avatars, Taiwan emotes, VIP cards and club capacity tiers. Trials and introductory offers are set in the stores, not in the app.
 

@@ -26,9 +26,9 @@ beforeAll(async () => {
   const path = fileURLToPath(new URL('../../mobile/src/monetisation/catalog.ts', import.meta.url));
   const mod = (await import(/* @vite-ignore */ path)) as Record<string, unknown>;
   app = mod.ALL_PRODUCTS as AppProduct[];
-  // The app may name its launch list; otherwise the launch catalogue is diamond packs, table looks, Gold and Platinum.
+  // The app may name its launch list; otherwise the launch catalogue is diamond packs, cosmetics, Coach Gold and The Four Winds Club.
   const named = (mod.SELLABLE_PRODUCTS ?? mod.LAUNCH_PRODUCTS) as AppProduct[] | undefined;
-  sellable = named ?? app.filter((p) => p.kind === 'diamonds' || (p.kind === 'cosmetic' && p.id.startsWith('theme.')) || (p.kind === 'subscription' && (p.tier === 'gold' || p.tier === 'platinum')));
+  sellable = named ?? app.filter((p) => p.kind === 'diamonds' || (p.kind === 'cosmetic' && p.id.startsWith('theme.')) || (p.kind === 'subscription' && (p.tier === 'gold' || p.tier === 'fourwinds')));
 });
 
 describe('server catalogue', () => {
@@ -65,7 +65,7 @@ describe('server catalogue', () => {
 
   it('maps store product ids, including Play subscription base plans', () => {
     expect(productForStoreId('coach.gold.month')?.id).toBe('coach.gold.month');
-    expect(productForStoreId('coach.platinum:year')?.id).toBe('coach.platinum.year');
+    expect(productForStoreId('fourwinds:year')?.id).toBe('fourwinds.year');
     expect(productForStoreId('diamonds.600')?.id).toBe('diamonds.600');
     expect(productForStoreId('coach.gold:weekly')).toBeUndefined();
     expect(productForStoreId('')).toBeUndefined();

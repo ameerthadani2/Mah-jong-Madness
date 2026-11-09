@@ -92,7 +92,7 @@ describe('webhook events', () => {
     const replay = await f.post(body);
     expect(replay.json).toEqual({ ok: true, outcome: 'duplicate', duplicate: true });
     const me = await f.me(g.auth);
-    expect(me.entitlements).toEqual([{ entitlement: 'coach.gold', expiresAt: new Date(T0 + 30 * DAY).toISOString(), active: true }]);
+    expect(me.entitlements).toEqual([{ entitlement: 'coach.gold.month', expiresAt: new Date(T0 + 30 * DAY).toISOString(), active: true }]);
     expect(me.coachTier).toBe('gold');
     expect(me.storeEnabled).toBe(true);
     const purchases = await f.repos.wallet.listPurchases(g.userId);
@@ -106,8 +106,8 @@ describe('webhook events', () => {
     const refund = (userId: string, product: string, transactionId: string) => rc('CANCELLATION', userId, { product_id: product, transaction_id: transactionId, cancel_reason: 'CUSTOMER_SUPPORT', expiration_at_ms: f.now() });
     // INITIAL_PURCHASE of a subscription.
     const a = await f.guest();
-    expect((await f.post(refund(a.userId, 'coach.platinum.year', 'tx-init'))).json.outcome).toBe('refunded');
-    expect((await f.post(rc('INITIAL_PURCHASE', a.userId, { product_id: 'coach.platinum.year', transaction_id: 'tx-init', expiration_at_ms: T0 + 365 * DAY }))).json.outcome).toBe('refunded');
+    expect((await f.post(refund(a.userId, 'fourwinds.year', 'tx-init'))).json.outcome).toBe('refunded');
+    expect((await f.post(rc('INITIAL_PURCHASE', a.userId, { product_id: 'fourwinds.year', transaction_id: 'tx-init', expiration_at_ms: T0 + 365 * DAY }))).json.outcome).toBe('refunded');
     expect((await f.me(a.auth)).coachTier).toBe('free');
     // RENEWAL of a live subscription: the first period stays, the refunded second one is never granted.
     const b = await f.guest();
@@ -119,7 +119,7 @@ describe('webhook events', () => {
     expect((await f.post(rc('RENEWAL', b.userId, { transaction_id: 'tx-b2', purchased_at_ms: T0 + 30 * DAY, expiration_at_ms: T0 + 60 * DAY }))).json.outcome).toBe('refunded');
     const me = await f.me(b.auth);
     expect(me.coachTier).toBe('free');
-    expect(me.entitlements).toEqual([{ entitlement: 'coach.gold', expiresAt: new Date(T0 + 30 * DAY).toISOString(), active: false }]);
+    expect(me.entitlements).toEqual([{ entitlement: 'coach.gold.month', expiresAt: new Date(T0 + 30 * DAY).toISOString(), active: false }]);
     // NON_RENEWING_PURCHASE of a diamond pack.
     const c = await f.guest();
     expect((await f.post(refund(c.userId, 'diamonds.7500', 'GPA.7500'))).json.outcome).toBe('refunded');
@@ -132,7 +132,7 @@ describe('webhook events', () => {
     const g = await f.guest();
     await f.post(rc('INITIAL_PURCHASE', g.userId));
     expect((await f.post(rc('RENEWAL', g.userId, { expiration_at_ms: T0 + 60 * DAY, purchased_at_ms: T0 + 30 * DAY }))).json.outcome).toBe('extended');
-    expect((await f.post(rc('PRODUCT_CHANGE', g.userId, { new_product_id: 'coach.platinum.month' }))).json.outcome).toBe('recorded');
+    expect((await f.post(rc('PRODUCT_CHANGE', g.userId, { new_product_id: 'fourwinds.month' }))).json.outcome).toBe('recorded');
     expect((await f.post(rc('BILLING_ISSUE', g.userId, { grace_period_expiration_at_ms: T0 + 63 * DAY }))).json.outcome).toBe('recorded');
     expect(((await f.me(g.auth)).entitlements as Array<{ expiresAt: string }>)[0].expiresAt).toBe(new Date(T0 + 60 * DAY).toISOString());
     f.advance(25 * DAY); // (sessions slide for 30 days)
@@ -145,14 +145,14 @@ describe('webhook events', () => {
   it('CANCELLATION keeps access to the period end; UNCANCELLATION and SUBSCRIPTION_EXTENDED carry on; a refund ends it', async () => {
     const f = fixture();
     const g = await f.guest();
-    await f.post(rc('INITIAL_PURCHASE', g.userId, { product_id: 'coach.platinum:month' }));
-    expect((await f.post(rc('CANCELLATION', g.userId, { product_id: 'coach.platinum:month', cancel_reason: 'UNSUBSCRIBE' }))).json.outcome).toBe('recorded');
-    expect((await f.me(g.auth)).coachTier).toBe('platinum');
-    expect((await f.post(rc('UNCANCELLATION', g.userId, { product_id: 'coach.platinum:month' }))).json.outcome).toBe('ignored_stale');
-    expect((await f.post(rc('SUBSCRIPTION_EXTENDED', g.userId, { product_id: 'coach.platinum:month', expiration_at_ms: T0 + 37 * DAY }))).json.outcome).toBe('extended');
-    expect((await f.post(rc('SUBSCRIPTION_PAUSED', g.userId, { product_id: 'coach.platinum:month', auto_resume_at_ms: T0 + 60 * DAY }))).json.outcome).toBe('recorded');
+    await f.post(rc('INITIAL_PURCHASE', g.userId, { product_id: 'fourwinds:month' }));
+    expect((await f.post(rc('CANCELLATION', g.userId, { product_id: 'fourwinds:month', cancel_reason: 'UNSUBSCRIBE' }))).json.outcome).toBe('recorded');
+    expect((await f.me(g.auth)).coachTier).toBe('fourwinds');
+    expect((await f.post(rc('UNCANCELLATION', g.userId, { product_id: 'fourwinds:month' }))).json.outcome).toBe('ignored_stale');
+    expect((await f.post(rc('SUBSCRIPTION_EXTENDED', g.userId, { product_id: 'fourwinds:month', expiration_at_ms: T0 + 37 * DAY }))).json.outcome).toBe('extended');
+    expect((await f.post(rc('SUBSCRIPTION_PAUSED', g.userId, { product_id: 'fourwinds:month', auto_resume_at_ms: T0 + 60 * DAY }))).json.outcome).toBe('recorded');
     f.advance(DAY);
-    expect((await f.post(rc('CANCELLATION', g.userId, { product_id: 'coach.platinum:month', cancel_reason: 'CUSTOMER_SUPPORT', expiration_at_ms: f.now() }))).json.outcome).toBe('refunded');
+    expect((await f.post(rc('CANCELLATION', g.userId, { product_id: 'fourwinds:month', cancel_reason: 'CUSTOMER_SUPPORT', expiration_at_ms: f.now() }))).json.outcome).toBe('refunded');
     expect((await f.me(g.auth)).coachTier).toBe('free');
   });
 

@@ -132,7 +132,7 @@ describe('store events', () => {
   it('grants, extends, refunds and expires a subscription, ignoring stale events', async () => {
     const { repos, wallet, user, advance, now } = await setup();
     const u = await user();
-    const ent = async () => (await repos.wallet.getEntitlements(u)).find((e) => e.entitlement === 'coach.gold');
+    const ent = async () => (await repos.wallet.getEntitlements(u)).find((e) => e.entitlement === 'coach.gold.month');
     const month = T0 + 30 * DAY;
     expect((await wallet.applyStoreEvent(storeEvent(u, 'INITIAL_PURCHASE', { storeProductId: 'coach.gold.month', expiresAt: month }))).outcome).toBe('entitled');
     expect(await ent()).toMatchObject({ expiresAt: month, source: 'store' });
@@ -163,8 +163,8 @@ describe('store events', () => {
     expect(await balance(repos, u)).toEqual([0, 0]);
     expect((await repos.wallet.listPurchases(u)).map((p) => p.transactionId)).toEqual(['GPA.1']);
     // A subscription: the first period refunded before its INITIAL_PURCHASE was delivered.
-    expect((await wallet.applyStoreEvent(storeEvent(u, 'CANCELLATION', { storeProductId: 'coach.platinum.year', transactionId: 'tZ1', cancelReason: 'CUSTOMER_SUPPORT' }))).outcome).toBe('refunded');
-    expect((await wallet.applyStoreEvent(storeEvent(u, 'INITIAL_PURCHASE', { storeProductId: 'coach.platinum.year', transactionId: 'tZ1', expiresAt: T0 + 365 * DAY }))).outcome).toBe('refunded');
+    expect((await wallet.applyStoreEvent(storeEvent(u, 'CANCELLATION', { storeProductId: 'fourwinds.year', transactionId: 'tZ1', cancelReason: 'CUSTOMER_SUPPORT' }))).outcome).toBe('refunded');
+    expect((await wallet.applyStoreEvent(storeEvent(u, 'INITIAL_PURCHASE', { storeProductId: 'fourwinds.year', transactionId: 'tZ1', expiresAt: T0 + 365 * DAY }))).outcome).toBe('refunded');
     expect((await wallet.summary(u)).coachTier).toBe('free');
     // A renewal refunded while the retry of its RENEWAL event was still on its way.
     expect((await wallet.applyStoreEvent(storeEvent(u, 'INITIAL_PURCHASE', { storeProductId: 'coach.gold.month', transactionId: 'tA1', expiresAt: month }))).outcome).toBe('entitled');

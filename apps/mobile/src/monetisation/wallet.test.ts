@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { allowedBotSkill, canAfford, canUse, coachRenewal, coachTier, consume, EMPTY_WALLET, hasTier, migrateWallet, mirrorMe, ownsCosmetic, showsPurchase, totalDiamonds, trustedNow, walletForUser, type MeWallet } from './wallet';
+import { allowedBotSkill, canAfford, canCreateClubs, canUse, coachRenewal, coachTier, consume, EMPTY_WALLET, hasTier, migrateWallet, mirrorMe, ownsCosmetic, showsPurchase, totalDiamonds, trustedNow, walletForUser, type MeWallet } from './wallet';
 
 const DAY = 86400_000;
 const SERVER_NOW = '2026-11-05T12:00:00.000Z';
@@ -16,7 +16,7 @@ const me = (over: Partial<MeWallet> = {}): MeWallet => ({
 describe('wallet mirror', () => {
   it('drops another account’s mirror (tier, themes, balance) after a sign-out, a deletion or an account switch, keeping the meters', () => {
     const meters = { day: '2026-11-5', reviews: 2, rush: 1 };
-    const w = mirrorMe({ ...EMPTY_WALLET, meters }, me({ entitlements: [{ entitlement: 'coach.platinum', expiresAt: '2026-12-05T12:00:00.000Z' }, { entitlement: 'theme.jade', expiresAt: null }] }), S);
+    const w = mirrorMe({ ...EMPTY_WALLET, meters }, me({ entitlements: [{ entitlement: 'fourwinds', expiresAt: '2026-12-05T12:00:00.000Z' }, { entitlement: 'theme.jade', expiresAt: null }] }), S);
     expect(hasTier(w, 'gold', S)).toBe(true);
     // Signed out (no account) or deleted: nothing of u-1 stays on the device but today's meters.
     const out = walletForUser(w, null);
@@ -47,7 +47,7 @@ describe('wallet mirror', () => {
   });
 
   it('the server replaces whatever the cached copy claimed', () => {
-    const tampered = { ...EMPTY_WALLET, diamonds: 999_999, cosmetics: ['jade'], entitlements: [{ entitlement: 'coach.platinum', expiresAt: null }] };
+    const tampered = { ...EMPTY_WALLET, diamonds: 999_999, cosmetics: ['jade'], entitlements: [{ entitlement: 'fourwinds', expiresAt: null }] };
     const w = mirrorMe(tampered, me({ wallet: { diamonds: 0, bonusDiamonds: 0 } }), S);
     expect(totalDiamonds(w)).toBe(0);
     expect(ownsCosmetic(w, 'jade')).toBe(false);
@@ -55,7 +55,7 @@ describe('wallet mirror', () => {
   });
 
   it('ignores junk balances and treats an unreadable expiry as expired', () => {
-    const w = mirrorMe(EMPTY_WALLET, me({ wallet: { diamonds: -5, bonusDiamonds: Number.NaN }, entitlements: [{ entitlement: 'coach.platinum', expiresAt: 'soon' }] }), S);
+    const w = mirrorMe(EMPTY_WALLET, me({ wallet: { diamonds: -5, bonusDiamonds: Number.NaN }, entitlements: [{ entitlement: 'fourwinds', expiresAt: 'soon' }] }), S);
     expect(totalDiamonds(w)).toBe(0);
     expect(coachTier(w, S)).toBe('free');
   });
@@ -77,7 +77,7 @@ describe('wallet mirror', () => {
 
 describe('server clock', () => {
   it('judges expiry by the server time, not a wound-back device clock', () => {
-    const w = mirrorMe(EMPTY_WALLET, me({ entitlements: [{ entitlement: 'coach.platinum', expiresAt: '2026-11-04T00:00:00.000Z' }] }), S);
+    const w = mirrorMe(EMPTY_WALLET, me({ entitlements: [{ entitlement: 'fourwinds', expiresAt: '2026-11-04T00:00:00.000Z' }] }), S);
     const deviceAYearAgo = S - 365 * DAY;
     // Device time a year behind: the latest server time seen still wins.
     expect(trustedNow(w, deviceAYearAgo)).toBe(S);
@@ -106,11 +106,11 @@ describe('server clock', () => {
     expect(canUse(used, 'rush', new Date(trustedNow(used, S - DAY))).ok).toBe(false);
   });
 
-  it('subscriptions lift the meters: Gold for Puzzle Rush, Platinum for reviews', () => {
+  it('subscriptions lift the meters: Gold for Puzzle Rush, The Four Winds Club for reviews', () => {
     const gold = mirrorMe(EMPTY_WALLET, me({ entitlements: [{ entitlement: 'coach.gold', expiresAt: null }] }), S);
     expect(canUse(gold, 'rush', new Date(S))).toEqual({ ok: true, left: Infinity, limit: null });
     expect(canUse(gold, 'reviews', new Date(S)).limit).toBe(1);
-    const plat = mirrorMe(EMPTY_WALLET, me({ entitlements: [{ entitlement: 'coach.platinum.month', expiresAt: '2026-12-01T00:00:00.000Z' }] }), S);
+    const plat = mirrorMe(EMPTY_WALLET, me({ entitlements: [{ entitlement: 'fourwinds.month', expiresAt: '2026-12-01T00:00:00.000Z' }] }), S);
     expect(canUse(plat, 'reviews', new Date(S)).ok).toBe(true);
     expect(hasTier(plat, 'gold', S)).toBe(true);
     expect(coachRenewal(plat, S)).toBe(Date.parse('2026-12-01T00:00:00.000Z'));
@@ -146,5 +146,22 @@ describe('Pro bots', () => {
     const gold = mirrorMe(EMPTY_WALLET, me({ entitlements: [{ entitlement: 'coach.gold', expiresAt: '2026-12-01T00:00:00.000Z' }] }), S);
     expect(allowedBotSkill('pro', gold, S)).toBe('pro');
     expect(allowedBotSkill('pro', gold, Date.parse('2027-01-01T00:00:00.000Z'))).toBe('club');
+  });
+});
+
+describe('The Four Winds Club', () => {
+  it('each plan is its own entitlement and the tier is the best live one: a refunded monthly Gold leaves the yearly in force', () => {
+    const w = mirrorMe(EMPTY_WALLET, me({ entitlements: [{ entitlement: 'coach.gold.month', expiresAt: '2026-11-01T00:00:00.000Z' }, { entitlement: 'coach.gold.year', expiresAt: '2027-11-01T00:00:00.000Z' }] }), S);
+    expect(coachTier(w, S)).toBe('gold');
+    expect(canCreateClubs(w, S)).toBe(false);
+  });
+
+  it('includes everything in Coach Gold, unlimited reviews and creating clubs', () => {
+    const w = mirrorMe(EMPTY_WALLET, me({ entitlements: [{ entitlement: 'fourwinds.year', expiresAt: '2027-11-01T00:00:00.000Z' }] }), S);
+    expect(coachTier(w, S)).toBe('fourwinds');
+    expect(hasTier(w, 'gold', S)).toBe(true);
+    expect(canUse(w, 'reviews', new Date(S)).limit).toBeNull();
+    expect(allowedBotSkill('pro', w, S)).toBe('pro');
+    expect(canCreateClubs(w, S)).toBe(true);
   });
 });

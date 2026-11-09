@@ -12,7 +12,7 @@
  * Pure TypeScript (no React Native), so it is unit-tested directly.
  */
 import type { BotSkill } from '@mjm/engine';
-import { COSMETICS, FREE_METERS, productById, type CoachTier } from './catalog';
+import { COSMETICS, FREE_METERS, productById, tierOfEntitlement, type CoachTier } from './catalog';
 
 export interface WalletEntitlement {
   entitlement: string;
@@ -173,12 +173,13 @@ function active(wallet: Wallet, now: number): string[] {
 }
 
 function grants(name: string, tier: Exclude<CoachTier, 'free'>): boolean {
-  return name === `coach.${tier}` || name.startsWith(`coach.${tier}.`);
+  return tierOfEntitlement(name) === tier;
 }
 
+/** The best tier among the live plans (each plan is its own entitlement). */
 export function coachTier(wallet: Wallet, now: number = trustedNow(wallet)): CoachTier {
   const names = active(wallet, now);
-  if (names.some((n) => grants(n, 'platinum'))) return 'platinum';
+  if (names.some((n) => grants(n, 'fourwinds'))) return 'fourwinds';
   if (names.some((n) => grants(n, 'gold'))) return 'gold';
   return 'free';
 }
@@ -191,10 +192,15 @@ export function coachRenewal(wallet: Wallet, now: number = trustedNow(wallet)): 
   return ends.includes(null) ? null : Math.max(...(ends as number[]));
 }
 
-const TIER_RANK: Record<CoachTier, number> = { free: 0, gold: 1, platinum: 2 };
+const TIER_RANK: Record<CoachTier, number> = { free: 0, gold: 1, fourwinds: 2 };
 
 export function hasTier(wallet: Wallet, tier: CoachTier, now: number = trustedNow(wallet)): boolean {
   return TIER_RANK[coachTier(wallet, now)] >= TIER_RANK[tier];
+}
+
+/** Creating and running clubs comes with The Four Winds Club (joining clubs is free); the server checks it again. */
+export function canCreateClubs(wallet: Wallet, now: number = trustedNow(wallet)): boolean {
+  return hasTier(wallet, 'fourwinds', now);
 }
 
 /** Pro bots come with Coach Gold: a saved 'pro' choice without it (lapsed, or from an old mock grant) plays as 'club'. */
@@ -227,7 +233,7 @@ function metersFor(wallet: Wallet, now: Date): Wallet['meters'] {
 
 /** Free-tier meters (full product, limited count, reset at local midnight by the trusted clock). */
 export function canUse(wallet: Wallet, meter: 'reviews' | 'rush', now: Date = new Date(trustedNow(wallet))): { ok: boolean; left: number; limit: number | null } {
-  if (meter === 'reviews' && hasTier(wallet, 'platinum', now.getTime())) return { ok: true, left: Infinity, limit: null };
+  if (meter === 'reviews' && hasTier(wallet, 'fourwinds', now.getTime())) return { ok: true, left: Infinity, limit: null };
   if (meter === 'rush' && hasTier(wallet, 'gold', now.getTime())) return { ok: true, left: Infinity, limit: null };
   const limit = meter === 'reviews' ? FREE_METERS.reviewsPerDay : FREE_METERS.rushPerDay;
   const used = metersFor(wallet, now)[meter];
