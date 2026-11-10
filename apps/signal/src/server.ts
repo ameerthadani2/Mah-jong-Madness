@@ -269,8 +269,10 @@ export async function createSignalServer(opts: SignalServerOptions): Promise<Sig
     clubs.pruneFinishedTables(now() - DAY_MS);
     persister.prune().catch((e: Error) => console.error('[signal] snapshot prune failed', e.message));
     // The hard delete promised at soft deletion (30 days), and sessions that have ended.
+    // The clubs in memory still hold the purged accounts' rows: drop them before the next club write.
     purgeDeletedUsers(repos.repos, { now })
-      .then(({ users, sessions: ended }) => {
+      .then(({ users, sessions: ended, userIds }) => {
+        clubs.dropPurged(userIds);
         if (users || ended) log(`[signal] purged ${users} deleted account(s) and ${ended} ended session(s)`);
       })
       .catch((e: Error) => console.error('[signal] account purge failed', e.message));

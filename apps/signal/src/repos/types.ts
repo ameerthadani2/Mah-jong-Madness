@@ -57,6 +57,11 @@ export interface UsersRepo {
    * still owns a club is kept. Returns how many rows went.
    */
   purgeDeleted(before: number): Promise<number>;
+  /**
+   * `purgeDeleted`, returning the ids of the users removed, so a cache that still holds their rows
+   * (the club registry) can drop them.
+   */
+  purgeDeletedIds(before: number): Promise<string[]>;
 }
 
 export const IDENTITY_PROVIDERS = ['guest', 'apple', 'google', 'facebook'] as const;

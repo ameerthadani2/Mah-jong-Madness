@@ -158,9 +158,15 @@ function pgUsers(q: Queryable): UsersRepo {
       return (res.rowCount ?? 0) > 0;
     },
     async purgeDeleted(before) {
+      return (await this.purgeDeletedIds(before)).length;
+    },
+    async purgeDeletedIds(before) {
       // Everything that references the row cascades (0001_init); a club owner is never deleted (clubs.owner_id has no cascade).
-      const res = await q.query('DELETE FROM users u WHERE u.deleted_at IS NOT NULL AND u.deleted_at < $1 AND NOT EXISTS (SELECT 1 FROM clubs c WHERE c.owner_id = u.id)', [toDate(before)]);
-      return res.rowCount ?? 0;
+      const res = await q.query<{ id: string }>(
+        'DELETE FROM users u WHERE u.deleted_at IS NOT NULL AND u.deleted_at < $1 AND NOT EXISTS (SELECT 1 FROM clubs c WHERE c.owner_id = u.id) RETURNING u.id',
+        [toDate(before)],
+      );
+      return res.rows.map((r) => r.id);
     },
   };
 }
@@ -922,6 +928,12 @@ function pgClubs(q: Queryable, tx: Tx): ClubsRepo {
     return assembleClubs(clubs.rows, members.rows, tables.rows, bans.rows);
   };
   return {
+    /**
+     * The club in memory may name accounts that have since been purged (their member rows went
+     * with them, see 0001_init): only rows whose user still exists are written, and an owner that
+     * no longer exists leaves the stored owner as it is, so a save never fails on a missing user.
+     * `club_tables.created_by`, `club_bans.user_id` and `club_bans.banned_by` carry no foreign key.
+     */
     async save(club) {
       const rows = [
         ...club.members.map((m) => ({
@@ -967,7 +979,9 @@ function pgClubs(q: Queryable, tx: Tx): ClubsRepo {
         await c.query(
           `INSERT INTO clubs (code, owner_id, name, description, rules, settings, created_at, updated_at, season, season_started_at, season_history, owner_lapsed_at)
            VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7, now(), $8, $9, $10::jsonb, $11)
-           ON CONFLICT (code) DO UPDATE SET owner_id = excluded.owner_id, name = excluded.name, description = excluded.description,
+           ON CONFLICT (code) DO UPDATE SET
+             owner_id = CASE WHEN EXISTS (SELECT 1 FROM users u WHERE u.id = excluded.owner_id) THEN excluded.owner_id ELSE clubs.owner_id END,
+             name = excluded.name, description = excluded.description,
              rules = excluded.rules, settings = excluded.settings, updated_at = now(), season = excluded.season,
              season_started_at = excluded.season_started_at, season_history = excluded.season_history, owner_lapsed_at = excluded.owner_lapsed_at`,
           [
@@ -991,6 +1005,7 @@ function pgClubs(q: Queryable, tx: Tx): ClubsRepo {
                   r.season_points, r.points, r.matches_played, r.matches_won, r.hands_won
            FROM jsonb_to_recordset($2::jsonb) AS r(user_id uuid, role text, status text, display_name text, avatar text,
                 joined_at double precision, season_points integer, points integer, matches_played integer, matches_won integer, hands_won integer)
+           WHERE EXISTS (SELECT 1 FROM users u WHERE u.id = r.user_id)
            ON CONFLICT (club_code, user_id) DO UPDATE SET role = excluded.role, status = excluded.status,
              display_name = excluded.display_name, avatar = excluded.avatar,
              joined_at = CASE WHEN excluded.status = 'member' THEN excluded.joined_at ELSE club_members.joined_at END,

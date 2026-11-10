@@ -598,6 +598,33 @@ export class ClubRegistry {
   }
 
   /**
+   * The hard delete of accounts (30 days after they were deleted) has removed these users, and in
+   * Postgres their club rows with them. Drop their member rows and join requests from the clubs in
+   * memory too, so the next write of a club matches the store. Bans they made, and bans of them,
+   * stay (a ban row names an account, it does not need one). A club one of them still owned (the
+   * store refuses to purge an owner, so this is a registry that had fallen behind) passes on as at
+   * deletion, or is removed when nobody else is in it. Returns the clubs changed.
+   */
+  dropPurged(userIds: Iterable<string>): string[] {
+    const gone = new Set(userIds);
+    if (gone.size === 0) return [];
+    const changed = new Set<string>();
+    for (const id of gone) {
+      if (this.ownedBy(id).length) for (const code of anonymiseUserIn(this.clubs, id)) changed.add(code);
+    }
+    for (const club of this.clubs.values()) {
+      const members = club.members.filter((m) => !gone.has(m.userId));
+      const pending = club.pending.filter((p) => !gone.has(p.userId));
+      if (members.length === club.members.length && pending.length === club.pending.length) continue;
+      club.members = members;
+      club.pending = pending;
+      changed.add(club.code);
+    }
+    for (const code of changed) this.persistCode(code);
+    return [...changed];
+  }
+
+  /**
    * Write a user's current name and avatar over their rows in every club (members and pending
    * requests), so standings show what the user record says. Only clubs that change are written.
    */
