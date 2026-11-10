@@ -9,6 +9,7 @@ import { uniqueCode, type HexSource } from './codes';
 import { LIMITS } from './config';
 import { BucketTable, cleanField } from './limits';
 import { QUEUE_MESSAGES, type QueueGate } from './matchmaking';
+import { nameAllowed } from './moderation';
 import type { LatencyWindow } from './metrics';
 
 export interface Socket {
@@ -39,7 +40,7 @@ interface Peer {
   sessionId?: string;
   /** The client address the socket came from, for the per-IP create and join buckets (absent in unit tests). */
   ip?: string;
-  /** The account's display name, cleaned; when set it is the name the peer sits down under. */
+  /** The account's display name, cleaned and passed by the name check; when set it is the name the peer sits down under. */
   name?: string;
 }
 
@@ -433,14 +434,16 @@ export class RoomRegistry {
 
   /**
    * The account's display name, as the socket layer last read it (at `hello` and before each
-   * create or join). It replaces whatever name the client puts in its table `join`; an account
-   * without a usable name keeps the client's, cleaned.
+   * create or join). A peer with an account always sits down under it, or under the generated
+   * default (`Player XXXX`) when the account has no name or the name check refuses it: whatever
+   * name the client puts in its table `join` is ignored. Only a peer without an account (relay
+   * tests and development) keeps the client's name, cleaned and checked the same way.
    */
   setPeerName(peerId: string, name: string | undefined): void {
     const peer = this.peers.get(peerId);
     if (!peer) return;
     const clean = cleanField(name, SEAT_NAME_MAX);
-    if (clean) peer.name = clean;
+    if (clean && nameAllowed(clean)) peer.name = clean;
     else delete peer.name;
   }
 
@@ -834,13 +837,20 @@ const SEAT_NAME_MAX = 24;
 const CHAT_MAX = 280;
 const AVATAR_MAX = 8;
 
+/** The seat name of an account that has no usable display name: `Player` and the first four hex digits of its id. */
+export function defaultSeatName(userId: string): string {
+  return `Player ${userId.replace(/-/g, '').slice(0, 4).toUpperCase()}`;
+}
+
 /**
  * The table's `join` carries the verified account, never the one the client claims, so the host
  * (which reads `msg.userId`) binds the seat to the user the session proved. An unauthenticated
- * peer's claim is dropped. The seat name is the account's display name when it has one, and
- * otherwise the client's, cleaned like every other piece of free text (a NUL in a seat name used
- * to stop the table's snapshot being saved); chat lines and avatars are cleaned too. Returns null
- * for a frame with nothing left to say (a chat line that cleans to nothing).
+ * peer's claim is dropped. An account's seat name is its display name (`accountName`, already
+ * cleaned and checked by `setPeerName`) or the generated default, never the name in the frame;
+ * a peer without an account keeps the frame's name, cleaned like every other piece of free text
+ * (a NUL in a seat name used to stop the table's snapshot being saved) and dropped when the name
+ * check refuses it. Avatars and chat lines are cleaned too. Returns null for a frame with nothing
+ * left to say (a chat line that cleans to nothing).
  */
 function bindUser(data: unknown, userId: string | undefined, accountName?: string): unknown {
   const env = data as { ch?: unknown; msg?: unknown } | null;
@@ -855,7 +865,11 @@ function bindUser(data: unknown, userId: string | undefined, accountName?: strin
   }
   if (userId) msg.userId = userId;
   else delete msg.userId;
-  const name = accountName || (typeof msg.name === 'string' ? cleanField(msg.name, SEAT_NAME_MAX) : '');
+  let name = accountName || (userId ? defaultSeatName(userId) : '');
+  if (!name && typeof msg.name === 'string') {
+    const claimed = cleanField(msg.name, SEAT_NAME_MAX);
+    if (claimed && nameAllowed(claimed)) name = claimed;
+  }
   if (name) msg.name = name;
   else delete msg.name;
   if (typeof msg.avatar === 'string') {
@@ -865,7 +879,6 @@ function bindUser(data: unknown, userId: string | undefined, accountName?: strin
   }
   return { ...env, msg };
 }
-
 
 /** Transport for a table hosted by the server itself: a virtual peer inside the room. */
 export class ServerTransport implements Transport {
