@@ -84,6 +84,12 @@ export type HostMessage =
   | { t: 'match_over'; scores: number[]; view: TableView }
   /** To a returning seat: the audit of a hand that ended while it was away (one frame per hand, in order). */
   | { t: 'hand_missed'; audit: Audit }
+  /**
+   * To a returning seat, while the hand lasts: this table was restored from a saved snapshot (the
+   * server restarted). `handNumber` is the hand it resumed and `turnCounter` the turn it resumed
+   * at; -1 means before that hand was dealt. Anything the seat was shown beyond that point is void.
+   */
+  | { t: 'restored'; handNumber: number; turnCounter: number }
   /** `turnCounter`: on a refused action, the turn the player acted on (as it sent it). */
   | { t: 'error'; code: string; message: string; turnCounter?: number }
   | { t: 'chat'; seat: number; name: string; text: string }

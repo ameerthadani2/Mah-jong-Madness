@@ -321,6 +321,7 @@ export interface SerializedClient {
   matchEnded: boolean;
   atStart: boolean;
   gapHand: number | null;
+  rewinds: Array<{ hand: number; tc: number; undone: boolean }>;
 }
 
 export interface TableClientOptions {
@@ -416,6 +417,11 @@ export class TableClient {
   private gapHand: number | null = null;
   /** The entry `failNow` last put on the list of audits (so the next failure about the same hand adds to it). */
   private liveFailure: ClientState['audits'][number] | null = null;
+  /**
+   * Hands the host said it resumed from a snapshot after a restart, and the turn it resumed at
+   * (-1: before the deal). `undone`: this client had been shown more than that, and dropped it.
+   */
+  private rewinds: Array<{ hand: number; tc: number; undone: boolean }> = [];
   private readonly listeners = new Set<(s: ClientState) => void>();
   private unsubMessage: Unsubscribe = () => undefined;
   private unsubClose: Unsubscribe = () => undefined;
@@ -496,6 +502,7 @@ export class TableClient {
     this.matchEnded = d.matchEnded === true;
     this.atStart = d.atStart === true;
     this.gapHand = isInt(d.gapHand) ? d.gapHand : null;
+    this.rewinds = Array.isArray(d.rewinds) ? d.rewinds.filter((x) => isObject(x) && isInt(x.hand) && isInt(x.tc)) : [];
     // The app stopped: the link it had is gone. Moves sent just before the last save may be missing
     // from the ledger, so it vouches for the current hand's log only from the next state it sees.
     this.noteLinkLost();
@@ -537,6 +544,7 @@ export class TableClient {
       matchEnded: this.matchEnded,
       atStart: this.atStart,
       gapHand: this.gapHand,
+      rewinds: this.rewinds,
     };
   }
 
@@ -810,6 +818,7 @@ export class TableClient {
     this.matchEnded = false;
     this.atStart = false;
     this.gapHand = null;
+    this.rewinds = [];
     this.state = { ...this.state, matchOver: false, finalScores: null, view: null, lastResult: null };
   }
 
@@ -1115,6 +1124,9 @@ export class TableClient {
       case 'hand_missed':
         if (isAudit(m.audit)) this.auditMissed(m.audit);
         return;
+      case 'restored':
+        if (isInt(m.handNumber) && isInt(m.turnCounter) && m.turnCounter >= -1) this.noteRestore(m.handNumber, m.turnCounter);
+        return;
       case 'match_over':
         if (!isView(m.view) || !Array.isArray(m.scores)) {
           this.update({ lastError: 'The table sent a malformed match result.' });
@@ -1188,6 +1200,64 @@ export class TableClient {
       hash: m.hash,
     });
     if (play.seen.length > MAX_SEEN) play.seen.splice(0, play.seen.length - MAX_SEEN);
+  }
+
+  /**
+   * The host says it was restored from a snapshot (the server restarted) and resumed hand `h` at
+   * turn `r`, or before its deal (-1). A snapshot is written a moment after the fact, so the
+   * players may have been shown turns it does not hold; those are played again. This client drops
+   * what it was shown beyond `r`, but only what reached it over an earlier link (a restart drops
+   * every link) and only once per hand: anything else is a rewind and fails as before. A hand
+   * with turns undone this way can only be `partial`. A hand whose result this client holds stays
+   * ended whatever the notice says.
+   */
+  private noteRestore(h: number, r: number): void {
+    if (this.handsEnded.has(h)) return;
+    const known = this.rewinds.find((x) => x.hand === h);
+    if (known) {
+      // Every rejoin during the hand brings the same notice again; a different one is a second restart.
+      if (known.tc !== r) this.flag(h, 'Host said it restarted this hand more than once');
+      return;
+    }
+    const play = this.plays.find((p) => p.hand === h);
+    const rec = this.recordFor(h);
+    const fresh = (epoch: number) => epoch >= this.epoch;
+    let undone = false;
+    if (r >= 0) {
+      if (play) {
+        if (play.seen.some((f) => f.tc > r && fresh(f.epoch))) return;
+        const kept = play.seen.filter((f) => f.tc <= r);
+        undone = kept.length !== play.seen.length;
+        play.seen = kept;
+        // Moves made on the turns undone are gone with them.
+        play.sent = play.sent.filter((x) => x.tc < r || fresh(x.epoch));
+        if (play.refusals) play.refusals = play.refusals.filter((x) => x.at <= r);
+      }
+    } else {
+      // Back to before the deal: the attempts this client saw, and any play, are void.
+      if ((play && play.seen.some((f) => fresh(f.epoch))) || (this.commitHand === h && this.ceremonyEpoch === this.epoch)) return;
+      undone = (rec !== null && rec.attempts.length > 0) || (play !== undefined && play.seen.length > 0);
+      if (rec) {
+        rec.attempts = [];
+        rec.linkLost = true;
+        rec.dealt = false;
+      }
+      this.plays = this.plays.filter((p) => p.hand !== h);
+      if (this.commitHand === h) {
+        this.commitHand = null;
+        this.secret = null;
+      }
+      if (this.commitsHand === h) {
+        this.commits = null;
+        this.commitsHand = null;
+      }
+      if (this.standInHand === h) this.standInHand = null;
+      if (this.handStart?.handNumber === h) this.handStart = null;
+      if (this.chainChecked === h) this.chainChecked = null;
+      if (this.state.view?.handNumber === h && this.state.lastResult === null) this.update({ view: null, stateHash: null, deadline: null, ceremony: 'idle', standIn: false });
+    }
+    this.rewinds.push({ hand: h, tc: r, undone });
+    if (this.rewinds.length > 4) this.rewinds.shift();
   }
 
   /** The host refused a move: mark it in the ledger so the audit does not expect it in the log. */
@@ -1408,6 +1478,7 @@ export class TableClient {
     if (rec?.linkLost) caveats.push(AUDIT_CAVEATS.linkLost);
     else if (tookPart && !stoodIn && rec && !rec.fromStart) caveats.push(AUDIT_CAVEATS.missedAttempts);
     if (this.gapHand === h) caveats.push(AUDIT_CAVEATS.gap);
+    if (this.rewinds.some((x) => x.hand === h && x.undone)) caveats.push(AUDIT_CAVEATS.serverRestart);
 
     const status: AuditStatus = failures.length > 0 ? 'failed' : caveats.length > 0 ? 'partial' : 'ok';
     return { check: { status, failures, caveats }, replayed };

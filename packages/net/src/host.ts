@@ -318,8 +318,21 @@ export class TableHost {
       this.pendingRestart = true;
     }
     if (this.phase === 'playing') this.clocks.clear();
+    // Players may have been shown more than the snapshot holds (it is written a moment after the
+    // fact): say where this table resumed, so their clients can tell a restart from a rewind.
+    if (this.phase === 'playing' && this.game) this.restoredAt = { handNumber: this.game.handNumber, turnCounter: this.game.turnCounter };
+    else if (this.pendingRestart) this.restoredAt = { handNumber: this.snapshot.handNumber, turnCounter: -1 };
+    else if (this.phase === 'hand_over' && this.game) {
+      const next = advanceMatch(this.game);
+      if (!next.matchOver) this.restoredAt = { handNumber: next.handNumber, turnCounter: -1 };
+    }
   }
 
+  /**
+   * Set when this table was restored from a snapshot: the hand it resumed and the turn it resumed
+   * at (-1: before that hand was dealt). Every returning seat is told until that hand ends.
+   */
+  private restoredAt: { handNumber: number; turnCounter: number } | null = null;
   private pendingRestart = false;
   /** True while a round of ceremony messages is going out (see `announcing`). */
   private ceremonyBusy = false;
@@ -661,6 +674,7 @@ export class TableHost {
     // A returning seat first gets the audits of the hands that ended without it, so its client can
     // check them and carry its record of the match forward to the hand now on the table.
     if (!newOccupant && have !== undefined) this.sendMissed(from, have);
+    if (!newOccupant && this.restoredAt && this.phase !== 'match_over') this.sendTo(from, { t: 'restored', ...this.restoredAt });
     this.broadcastLobby();
     if (this.pendingRestart && this.anyHumanConnected()) {
       this.retryCeremony();
@@ -1025,6 +1039,7 @@ export class TableHost {
       restartReasons: this.restarts.map(describeRestart),
     };
     this.audits.push(audit);
+    if (this.restoredAt?.handNumber === audit.handNumber) this.restoredAt = null;
     for (const w of game.result?.wins ?? []) this.wins[w.seat]++;
     this.phase = 'hand_over';
     for (const s of this.seats) s.ready = false;
