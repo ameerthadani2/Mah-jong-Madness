@@ -61,8 +61,12 @@ interface Room {
   createdBy?: string;
   /** Accounts the club took off this table: they may not come back to it. */
   evicted?: Set<string>;
-  /** A quick-match table: only these accounts may enter, and it starts by itself (see `autoStart`). */
-  quick?: { players: Set<string>; startBy: number; started: boolean };
+  /**
+   * A quick-match table: only these accounts may enter, and it starts by itself (see `autoStart`).
+   * `emptySince` is when its last peer left (or when it was opened or restored), null while anyone
+   * is connected: once started it closes `QUICK_ABANDONED_MS` after that.
+   */
+  quick?: { players: Set<string>; startBy: number; started: boolean; emptySince: number | null };
 }
 
 /**
@@ -271,6 +275,12 @@ export interface HostedRoomOptions {
 
 /** How long a quick-match table waits for its players before it starts with bots in the empty seats. */
 export const QUICK_START_MS = 15_000;
+/**
+ * How long a started quick-match table lives with none of its players connected. Much shorter
+ * than `KEEP_ALIVE_MS`: nobody else can enter it, so once its humans are gone it is only bots
+ * playing each other and a place taken from the server's table cap.
+ */
+export const QUICK_ABANDONED_MS = 2 * 60_000;
 /** Table frames a quick-match player may not send: the table starts itself and its bots are the server's. */
 const QUICK_BLOCKED = new Set(['start', 'add_bot']);
 /** Table frames a muted account's are dropped. */
@@ -333,7 +343,7 @@ export class RoomRegistry {
     if (opts.clubCode) room.clubCode = opts.clubCode.toUpperCase();
     if (opts.createdBy) room.createdBy = opts.createdBy;
     if (opts.evicted?.length) room.evicted = new Set(opts.evicted);
-    if (opts.quickMatch) room.quick = { players: new Set(opts.quickMatch.players), startBy: this.now() + (opts.quickMatch.startAfterMs ?? QUICK_START_MS), started: false };
+    if (opts.quickMatch) room.quick = { players: new Set(opts.quickMatch.players), startBy: this.now() + (opts.quickMatch.startAfterMs ?? QUICK_START_MS), started: false, emptySince: this.now() };
     this.attachTable(room, opts.rules, opts.botSkill, opts.restore);
     this.rooms.set(code, room);
     return code;
@@ -341,11 +351,43 @@ export class RoomRegistry {
 
   /**
    * Open a quick-match table for a matched group (decision 3): the default rules at Normal speed,
-   * Club bots, restricted to these accounts, never a club table and not counted against anyone's
-   * own table cap.
+   * Club bots, restricted to these accounts, never a club table. It is not counted against
+   * anyone's `maxTablesPerUser`; the queue keeps quick-match tables in bounds instead (one per
+   * account at a time, `quickTableOf`, and each one charged like a create, `chargeQuickMatch`),
+   * and a started one closes `QUICK_ABANDONED_MS` after its last player disconnected.
    */
   createQuickMatchRoom(players: string[], opts: { startAfterMs?: number } = {}): string {
     return this.createHostedRoom({ botSkill: 'club', quickMatch: { players, startAfterMs: opts.startAfterMs } });
+  }
+
+  /**
+   * The unfinished quick-match table this account is still at, if any: one it holds a seat at
+   * (connected or not), or one that has not started and is waiting for it to sit down.
+   */
+  quickTableOf(userId: string): string | undefined {
+    for (const r of this.rooms.values()) {
+      if (!r.quick || !r.table || !r.quick.players.has(userId) || r.table.host.phase === 'match_over') continue;
+      if (!r.quick.started || r.table.host.seatInfo().some((s) => !s.isBot && s.userId === userId)) return r.code;
+    }
+    return undefined;
+  }
+
+  /**
+   * Charge a quick-match table to the sockets it is opened for: one create from each account's
+   * allowance and one from each distinct address (the same buckets a `create` spends). Returns
+   * the peer ids that had none left; the queue keeps those waiting and seats the others.
+   */
+  chargeQuickMatch(peerIds: string[]): string[] {
+    const refused: string[] = [];
+    const byIp = new Map<string, string[]>();
+    for (const id of peerIds) {
+      const peer = this.peers.get(id);
+      if (!peer) continue;
+      if (!this.createsByUser.take(peer.userId ? `u:${peer.userId}` : `p:${peer.id}`)) refused.push(id);
+      else if (peer.ip !== undefined) byIp.set(peer.ip, [...(byIp.get(peer.ip) ?? []), id]);
+    }
+    for (const [ip, ids] of byIp) if (!this.createsByIp.take(ip)) refused.push(...ids);
+    return refused;
   }
 
   /** The accounts a quick-match table was opened for (undefined for any other room); for its snapshot. */
@@ -651,6 +693,7 @@ export class RoomRegistry {
         this.opts.queue?.leave(peer.id);
         this.leave(peer);
         room.peers.add(peer.id);
+        if (room.quick) room.quick.emptySince = null;
         peer.room = room.code;
         this.sendRoom(peer, room);
         this.broadcast(room, { t: 'peer', peerId: peer.id, event: 'join' }, peer.id);
@@ -759,6 +802,7 @@ export class RoomRegistry {
       return;
     }
     if (room.peers.size === 0) {
+      if (room.quick) room.quick.emptySince = this.now();
       if (room.keepAliveUntil !== undefined && room.keepAliveUntil > this.now()) {
         // Give players time to come back (bots play for them, or the table pauses between hands).
         room.keepAliveUntil = this.now() + KEEP_ALIVE_MS;
@@ -822,7 +866,9 @@ export class RoomRegistry {
       if (r.quick && !r.quick.started) this.autoStart(r);
       if (!this.rooms.has(r.code)) continue;
       r.table?.host.tick();
-      if (r.peers.size === 0 && r.keepAliveUntil !== undefined && r.keepAliveUntil <= this.now()) this.closeRoom(r);
+      if (r.peers.size !== 0) continue;
+      const abandoned = r.quick?.started && r.quick.emptySince !== null && this.now() - r.quick.emptySince >= QUICK_ABANDONED_MS;
+      if (abandoned || (r.keepAliveUntil !== undefined && r.keepAliveUntil <= this.now())) this.closeRoom(r);
     }
   }
 

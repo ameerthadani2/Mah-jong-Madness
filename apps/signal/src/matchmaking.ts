@@ -13,8 +13,16 @@
  * `{t:'leave_queue'}` or closing the socket leaves; a second socket of the same account replaces
  * the first (`{t:'queue_error', code:'replaced'}` to the old one) and keeps its place.
  *
+ * Quick-match tables stay inside the server's limits: an account that is still at an unfinished
+ * quick-match table (it holds a seat there, or the table is waiting for it to sit down) cannot
+ * queue again and is told which table (`{t:'queue_error', code:'seated', room}`), so the app can
+ * go back to it; and opening a table is charged to each matched player's create allowance and
+ * once to each address they came from, exactly as creating a table is. A player with no
+ * allowance left keeps its place in the queue until it has some, and the rest of the group is
+ * seated without it.
+ *
  * Refusals are `{t:'queue_error', code, message}` with code `banned`, `age_required`,
- * `rate_limited`, `sign_in`, `unavailable` or `replaced`.
+ * `rate_limited`, `sign_in`, `unavailable`, `replaced` or `seated` (which also carries `room`).
  */
 
 /** Default for `MatchmakerOptions.fillMs` (QUICK_MATCH_FILL_MS). */
@@ -35,7 +43,7 @@ export const QUEUE_STATUS_MS = 2_000;
 export const QUICK_MATCH_MIN_AGE = 17;
 export const TABLE_SIZE = 4;
 
-export type QueueRefusal = 'banned' | 'age_required' | 'rate_limited' | 'sign_in' | 'unavailable' | 'replaced';
+export type QueueRefusal = 'banned' | 'age_required' | 'rate_limited' | 'sign_in' | 'unavailable' | 'replaced' | 'seated';
 
 export const QUEUE_MESSAGES: Record<QueueRefusal, string> = {
   banned: 'This account has been banned',
@@ -44,6 +52,7 @@ export const QUEUE_MESSAGES: Record<QueueRefusal, string> = {
   sign_in: 'Sign in to use quick match',
   unavailable: 'Quick match is not available right now; please try again',
   replaced: 'You joined quick match from another device',
+  seated: 'You are still at a quick-match table; go back to it, or wait for it to finish',
 };
 
 /** A socket asking to be matched (the room registry passes these in). */
@@ -71,6 +80,17 @@ export interface MatchmakerOptions {
   avoid(userId: string): Promise<Iterable<string>>;
   /** Open the table for a group, in seat order; returns its room code. A throw answers `unavailable`. */
   openTable(userIds: string[]): string;
+  /**
+   * The unfinished quick-match table this account is still at (it holds a seat there, or the
+   * table is waiting for it to sit down), if any: such an account is not queued again.
+   */
+  seatedAt?(userId: string): string | undefined;
+  /**
+   * Charge opening a table to these sockets (the create allowance of each account, and of each
+   * address once). Returns the peer ids with no allowance left: they stay in the queue, keeping
+   * their place, and the others are seated without them.
+   */
+  charge?(peerIds: string[]): string[];
   log?: (line: string) => void;
 }
 
@@ -155,6 +175,12 @@ export class Matchmaker implements QueueGate {
       if (refusal) {
         this.pending.delete(peer.peerId);
         return refuse(peer, refusal);
+      }
+      // One quick-match table per account: back to the one it is at, never a second.
+      const room = this.opts.seatedAt?.(peer.userId);
+      if (room !== undefined) {
+        this.pending.delete(peer.peerId);
+        return refuse(peer, 'seated', { room });
       }
       avoid = new Set(await this.opts.avoid(peer.userId));
     } catch (e) {
@@ -241,16 +267,21 @@ export class Matchmaker implements QueueGate {
     for (const g of this.groups()) {
       const full = g.length === TABLE_SIZE;
       if (!full && now - Math.min(...g.map((e) => e.joinedAt)) < this.fillMs) continue;
-      for (const e of g) this.entries.delete(e.peer.peerId);
+      // The table counts against its players' create allowance, like any table they open. A player
+      // with none left waits on (it is asked again at the next pass); the others are not held up.
+      const broke = new Set(this.opts.charge?.(g.map((e) => e.peer.peerId)) ?? []);
+      const seated = g.filter((e) => !broke.has(e.peer.peerId));
+      for (const e of seated) this.entries.delete(e.peer.peerId);
+      if (seated.length === 0) continue;
       let room: string;
       try {
-        room = this.opts.openTable(g.map((e) => e.peer.userId));
+        room = this.opts.openTable(seated.map((e) => e.peer.userId));
       } catch (e) {
         this.opts.log?.(`[signal] quick match table not opened: ${(e as Error).message}`);
-        for (const x of g) refuse(x.peer, 'unavailable');
+        for (const x of seated) refuse(x.peer, 'unavailable');
         continue;
       }
-      for (const e of g) e.peer.send({ t: 'matched', room, humans: g.length, bots: TABLE_SIZE - g.length });
+      for (const e of seated) e.peer.send({ t: 'matched', room, humans: seated.length, bots: TABLE_SIZE - seated.length });
     }
   }
 
@@ -267,6 +298,6 @@ function clash(a: Entry, b: Entry): boolean {
   return a.avoid.has(b.peer.userId) || b.avoid.has(a.peer.userId);
 }
 
-function refuse(peer: QueuePeer, code: QueueRefusal): void {
-  peer.send({ t: 'queue_error', code, message: QUEUE_MESSAGES[code] });
+function refuse(peer: QueuePeer, code: QueueRefusal, extra: { room?: string } = {}): void {
+  peer.send({ t: 'queue_error', code, message: QUEUE_MESSAGES[code], ...extra });
 }

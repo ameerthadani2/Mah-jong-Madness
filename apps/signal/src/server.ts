@@ -130,6 +130,9 @@ export async function createSignalServer(opts: SignalServerOptions): Promise<Sig
     avoid: (userId) => blockedEitherWay(repos.repos, userId),
     // Declared below; the queue only opens tables once the server is up.
     openTable: (userIds): string => rooms.createQuickMatchRoom(userIds, { startAfterMs: opts.quickStartMs }),
+    // One quick-match table per account at a time, each charged to its players like a table they created.
+    seatedAt: (userId): string | undefined => rooms.quickTableOf(userId),
+    charge: (peerIds): string[] => rooms.chargeQuickMatch(peerIds),
     log,
   });
   const rooms: RoomRegistry = new RoomRegistry({
