@@ -556,7 +556,14 @@ export class TableClient {
 
   join(wantSeat?: number): void {
     const token = this.state.token ?? this.identity.token;
-    this.send({ t: 'join', name: this.name, avatar: this.avatar, wantSeat, token, userId: this.identity.userId });
+    this.send({ t: 'join', name: this.name, avatar: this.avatar, wantSeat, token, userId: this.identity.userId, have: this.have() });
+  }
+
+  /** The last hand of this match whose end this client holds (-1: none yet, but it watched from the lobby). */
+  private have(): number | undefined {
+    if (this.state.matchId === null) return undefined;
+    if (this.handsEnded.size > 0) return Math.max(...this.handsEnded);
+    return this.atStart ? -1 : undefined;
   }
 
   act(action: Action): void {
@@ -705,10 +712,15 @@ export class TableClient {
       if (this.expected && this.expected.handNumber !== h) this.flag(this.expected.handNumber, 'Host asked to deal a hand that was already played');
     } else if (this.openHand !== null) {
       // The hand this client is on never ended, as far as it has seen.
-      if (this.handEpoch === this.epoch) this.flag(h, 'Host started another hand before the one in progress had ended');
-      else this.noteGap(h);
+      this.carryFlags(this.openHand, h);
+      if (this.handEpoch === this.epoch) {
+        const problem = 'Host started another hand before the one in progress had ended';
+        this.flag(h, problem);
+        this.failNow(problem);
+      } else this.noteGap(h);
     } else if (base?.matchOver) this.flag(h, 'Host dealt another hand after the match was over');
     else if (base ? h !== base.handNumber : this.handsEnded.size > 0 && this.gapHand === null && h !== Math.max(...this.handsEnded) + 1) {
+      this.carryFlags(base ? base.handNumber : Math.max(...this.handsEnded) + 1, h);
       if (this.quietSince === this.epoch) this.flag(h, 'Host dealt a hand out of turn');
       else this.noteGap(h);
     }
@@ -721,6 +733,13 @@ export class TableClient {
     this.expected = null;
     this.chainChecked = null;
     this.atStart = false;
+  }
+
+  /** What the host did wrong about a hand that will never be audited counts against the hand it moved on to. */
+  private carryFlags(from: number, to: number): void {
+    if (from === to) return;
+    for (const p of this.tamper.get(from) ?? []) this.flag(to, p);
+    this.tamper.delete(from);
   }
 
   /**
@@ -1061,6 +1080,9 @@ export class TableClient {
         this.update({ view: m.view, lastResult: m.result, lastAudit: m.audit, auditStatus: status, auditFailures: failures, auditCaveats: caveats, deadline: null, audits });
         return;
       }
+      case 'hand_missed':
+        if (isAudit(m.audit)) this.auditMissed(m.audit);
+        return;
       case 'match_over':
         if (!isView(m.view) || !Array.isArray(m.scores)) {
           this.update({ lastError: 'The table sent a malformed match result.' });
@@ -1077,6 +1099,8 @@ export class TableClient {
             return;
           }
           if (verdict === 'verified') this.matchEnded = true;
+          // No hand is left to carry what was flagged since the last audit: put it on show now.
+          for (const p of this.tamper.get(this.activeHand()) ?? []) this.failNow(p);
           // The last hand's verified view stays on show; the host's is used only when this device holds none.
           const own = this.state.view;
           const view = own && this.state.lastResult !== null && own.handNumber === m.view.handNumber ? own : m.view;
@@ -1146,6 +1170,116 @@ export class TableClient {
   }
 
   /**
+   * The audit of a hand that ended while this client's link was down. It is checked as far as a
+   * device that was not there can check it: the shares and the seed, a replay from where the last
+   * verified hand left the match, the ceremony accounting, and whatever this client did see of the
+   * hand before it left (its own reveal, the states it was shown, the moves it sent). A hand that
+   * passes is `partial` (this device did not watch it) and the next hand chains onto it; one that
+   * fails also fails the hand now on the table. The host cannot use this path for a hand this
+   * client watched over an unbroken link.
+   */
+  private auditMissed(audit: Audit): void {
+    const h = audit.handNumber;
+    const rules = this.pinnedRules ?? this.state.rules;
+    if (!rules || !this.state.matchId) return;
+    if (audit.matchId !== this.state.matchId) {
+      this.flag(this.activeHand(), 'Host sent the record of a hand from a different match');
+      return;
+    }
+    if (this.handsEnded.has(h)) {
+      const prior = this.state.audits.find((a) => a.audit.handNumber === h && a.audit.matchId === this.state.matchId);
+      if (prior && stableStringify(prior.audit) !== stableStringify(audit)) {
+        const problem = 'Host sent a different audit for a hand it had already ended';
+        this.flag(this.activeHand(), problem);
+        this.update({ audits: [...this.state.audits, { audit, status: 'failed' as const, failures: [problem], caveats: [] }].slice(-MAX_AUDITS) });
+      }
+      return;
+    }
+    const base = this.chainBase(h);
+    // Nothing to chain from: the hands in between stay a gap, noted on the next hand this client sees.
+    if (!base) return;
+    if (base.matchOver || base.handNumber !== h) {
+      this.flag(this.activeHand(), 'The record of the hands this device missed does not follow from the last hand it verified');
+      return;
+    }
+    const away = this.openHand === null ? this.quietSince !== this.epoch : this.handEpoch !== this.epoch;
+    if (!away) {
+      const problem = 'Host reported a hand as missed although this device was connected throughout';
+      this.flag(h, problem);
+      this.failNow(problem);
+      return;
+    }
+    const failures: string[] = [...(this.tamper.get(h) ?? [])];
+    const caveats: string[] = [AUDIT_CAVEATS.away];
+    const me = this.state.seat;
+    const { commitsOk, revealsOk } = this.checkShareSets(audit, failures);
+    this.checkSeed(audit, commitsOk && revealsOk, failures);
+    // This client's own share counts only when it revealed in the attempt that was dealt: after
+    // any other attempt an honest host stands the absent seat in.
+    const rec = this.recordFor(h);
+    const last = rec?.attempts[rec.attempts.length - 1];
+    if (last && last.n === audit.ceremonyAttempts && this.commitHand === h) {
+      if (last.committed && last.revealed && !last.stoodIn && this.secret) {
+        const mine = commitsOk ? audit.commits.find((c) => c.seat === me) : undefined;
+        if (!mine || mine.hash !== commitFor(this.secret)) failures.push('Host altered my commitment');
+        const myReveal = revealsOk ? audit.reveals.find((r) => r.seat === me) : undefined;
+        if (!myReveal || myReveal.secret !== this.secret) failures.push('Host altered my secret');
+      }
+      if (this.commits && this.commitsHand === h) {
+        for (const c of this.commits) {
+          const a = commitsOk ? audit.commits.find((x) => x.seat === c.seat) : undefined;
+          if (!a || a.hash !== c.hash) failures.push(`Commitment for seat ${c.seat} changed after the fact`);
+        }
+      }
+    }
+    let replayed: GameState | null = null;
+    const end: SeenState = { tc: Number.POSITIVE_INFINITY, epoch: this.epoch, at: this.now(), owes: false, deadline: null, timeBank: 0, inBank: false, hash: '' };
+    try {
+      replayed = this.replayChecked(base, audit.seed, rules, audit.log, h, end, failures);
+      if (hashState(replayed) !== audit.finalHash) failures.push('Replaying the action log does not reproduce the final state');
+    } catch (e) {
+      failures.push(`Replay failed: ${(e as Error).message}`);
+    }
+    failures.push(...this.checkAccounting(audit));
+    if (isInt(audit.ceremonyAttempts) && audit.ceremonyAttempts > 1) caveats.push(AUDIT_CAVEATS.restarted);
+    const status: AuditStatus = failures.length > 0 ? 'failed' : 'partial';
+    this.handsEnded.add(h);
+    if (this.openHand === h) this.openHand = null;
+    this.atStart = false;
+    this.expected = replayed && hashState(replayed) === audit.finalHash ? nextHand(replayed) : null;
+    this.chainChecked = null;
+    this.tamper.delete(h);
+    // A record that fails is the host's doing now, not then: the hand on the table carries it too.
+    if (status === 'failed') this.flag(this.activeHand(), `The record of hand ${h + 1}, played while this device was away, failed its checks`);
+    this.update({ audits: [...this.state.audits, { audit, status, failures, caveats }].slice(-MAX_AUDITS) });
+  }
+
+  /** Exactly one commitment and one secret per seat 0–4: an extra share would let the host move the seed. */
+  private checkShareSets(audit: Audit, failures: string[]): { commitsOk: boolean; revealsOk: boolean } {
+    const commitsOk = isCommitSet(audit.commits);
+    const revealsOk = isRevealSet(audit.reveals);
+    if (!commitsOk) failures.push('Audit must list exactly one commitment for each of seats 0–4');
+    if (!revealsOk) failures.push('Audit must list exactly one secret for each of seats 0–4');
+    return { commitsOk, revealsOk };
+  }
+
+  /** Every secret matches its commitment, and the seed is derived from them under this match's id. */
+  private checkSeed(audit: Audit, setsOk: boolean, failures: string[]): void {
+    if (setsOk) {
+      const rv = verifyReveals(audit.commits, audit.reveals);
+      if (!rv.ok) failures.push(`Reveals do not match commitments for seats ${rv.badSeats.join(', ')}`);
+      let seed: string | null = null;
+      try {
+        seed = deriveSeed(`${this.state.matchId}:${audit.handNumber}`, audit.reveals);
+      } catch {
+        seed = null;
+      }
+      if (seed !== audit.seed) failures.push('Seed was not derived from the revealed secrets');
+    }
+    if (audit.rngVersion !== WALL_RNG_VERSION) failures.push(`Unknown shuffle construction ${audit.rngVersion}`);
+  }
+
+  /**
    * Verify a hand audit against what this client saw: misbehaviour recorded during the hand, whether
    * we took part in the deal, our own share, the commitments we were shown, the reveals, the seed,
    * a replay of the log against our own moves and the states we were shown, and the ceremony
@@ -1170,11 +1304,8 @@ export class TableClient {
     failures.push(...(this.tamper.get(h) ?? []));
     if (audit.matchId !== this.state.matchId) failures.push('The audit is for a different match than the one this seat is in');
 
-    // 2. Exactly one commitment and one secret per seat 0–4: an extra share would let the host move the seed.
-    const commitsOk = isCommitSet(audit.commits);
-    const revealsOk = isRevealSet(audit.reveals);
-    if (!commitsOk) failures.push('Audit must list exactly one commitment for each of seats 0–4');
-    if (!revealsOk) failures.push('Audit must list exactly one secret for each of seats 0–4');
+    // 2. Exactly one commitment and one secret per seat 0–4.
+    const { commitsOk, revealsOk } = this.checkShareSets(audit, failures);
 
     // 3. Participation: we committed, or the host told us it made our share.
     const stoodIn = this.standInHand === h;
@@ -1201,18 +1332,7 @@ export class TableClient {
     } else if (tookPart && !stoodIn) failures.push('The commitments for this hand never arrived');
 
     // 6. Reveals, seed and replay.
-    if (commitsOk && revealsOk) {
-      const rv = verifyReveals(audit.commits, audit.reveals);
-      if (!rv.ok) failures.push(`Reveals do not match commitments for seats ${rv.badSeats.join(', ')}`);
-      let seed: string | null = null;
-      try {
-        seed = deriveSeed(`${this.state.matchId}:${h}`, audit.reveals);
-      } catch {
-        seed = null;
-      }
-      if (seed !== audit.seed) failures.push('Seed was not derived from the revealed secrets');
-    }
-    if (audit.rngVersion !== WALL_RNG_VERSION) failures.push(`Unknown shuffle construction ${audit.rngVersion}`);
+    this.checkSeed(audit, commitsOk && revealsOk, failures);
     const start = this.handStart && this.handStart.handNumber === h ? this.handStart : snapshotFromView(finalView, true);
     try {
       replayed = this.replayChecked(start, audit.seed, rules, audit.log, h, end, failures);

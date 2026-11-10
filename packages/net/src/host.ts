@@ -532,7 +532,8 @@ export class TableHost {
         const wantSeat = Number.isInteger(msg.wantSeat) && (msg.wantSeat as number) >= 0 && (msg.wantSeat as number) <= 3 ? (msg.wantSeat as number) : undefined;
         const token = typeof msg.token === 'string' && /^[0-9a-f]{32}$/.test(msg.token) ? msg.token : undefined;
         const userId = typeof msg.userId === 'string' && /^[\w-]{6,64}$/.test(msg.userId) ? msg.userId : undefined;
-        return this.onJoin(from, name, avatar, wantSeat, token, userId);
+        const have = Number.isInteger(msg.have) && (msg.have as number) >= -1 ? (msg.have as number) : undefined;
+        return this.onJoin(from, name, avatar, wantSeat, token, userId, have);
       }
       case 'leave':
         return this.onLeave(from);
@@ -623,7 +624,7 @@ export class TableHost {
     return true;
   }
 
-  private onJoin(from: string, name: string, avatar: string | undefined, wantSeat?: number, token?: string, userId?: string): void {
+  private onJoin(from: string, name: string, avatar: string | undefined, wantSeat?: number, token?: string, userId?: string, have?: number): void {
     let seat = this.seats.find((s) => s.peerId === from && s.connected);
     let newOccupant = false;
     if (!seat && token) {
@@ -657,6 +658,9 @@ export class TableHost {
     // A new occupant never inherits a previous player's token (that would let the old player kick them).
     if (newOccupant || !seat.token) seat.token = randomHex(16);
     this.sendTo(from, { t: 'welcome', seat: seat.seat, roomCode: this.roomCode, rules: this.rules, seats: this.seatInfo(), matchId: this.matchId, token: seat.token });
+    // A returning seat first gets the audits of the hands that ended without it, so its client can
+    // check them and carry its record of the match forward to the hand now on the table.
+    if (!newOccupant && have !== undefined) this.sendMissed(from, have);
     this.broadcastLobby();
     if (this.pendingRestart && this.anyHumanConnected()) {
       this.retryCeremony();
@@ -684,6 +688,12 @@ export class TableHost {
       this.sendTo(from, { t: 'commits', handNumber: this.snapshot.handNumber, commits: this.commits() });
       this.sendTo(from, { t: 'reveal_request', handNumber: this.snapshot.handNumber });
     }
+  }
+
+  /** The audits of the hands after `have`, oldest first. The hand whose result is on show goes out as `hand_over` itself. */
+  private sendMissed(peerId: string, have: number): void {
+    const ended = this.phase === 'hand_over' ? this.audits.slice(0, -1) : this.audits;
+    for (const audit of ended) if (audit.handNumber > have) this.sendTo(peerId, { t: 'hand_missed', audit });
   }
 
   /**

@@ -49,7 +49,11 @@ export interface Audit {
 
 /** Client → host */
 export type ClientMessage =
-  | { t: 'join'; name: string; avatar?: string; wantSeat?: number; token?: string; userId?: string }
+  /**
+   * `have`: on a rejoin, the last hand of this match whose end the client holds (-1: none, but it
+   * sat at the table from the lobby). The host answers with the audits of the hands after it.
+   */
+  | { t: 'join'; name: string; avatar?: string; wantSeat?: number; token?: string; userId?: string; have?: number }
   | { t: 'leave' }
   | { t: 'commit'; hash: string }
   | { t: 'reveal'; secret: string }
@@ -78,6 +82,8 @@ export type HostMessage =
   | { t: 'state'; view: TableView; hash: string; deadline: number | null; timeBank: number; inTimeBank: boolean; now?: number }
   | { t: 'hand_over'; result: HandResult; audit: Audit; view: TableView; now?: number }
   | { t: 'match_over'; scores: number[]; view: TableView }
+  /** To a returning seat: the audit of a hand that ended while it was away (one frame per hand, in order). */
+  | { t: 'hand_missed'; audit: Audit }
   /** `turnCounter`: on a refused action, the turn the player acted on (as it sent it). */
   | { t: 'error'; code: string; message: string; turnCounter?: number }
   | { t: 'chat'; seat: number; name: string; text: string }
