@@ -2,9 +2,12 @@
  * Moderation: the name check, player blocks, and the moderators' tools.
  *
  * - `nameAllowed(name)`: a small English and Chinese blocklist (slurs, profanity, and names that
- *   pose as the game's staff such as "Admin" or 官方), applied after `cleanText` to display names
- *   and club names. The API answers 400 `name_not_allowed`. Short or common words only match as a
- *   whole word, so names such as "Badminton Bob" or "Stafford" pass.
+ *   pose as the game's staff such as "Admin" or 官方), applied after `cleanText` to display names,
+ *   club names and seat names. Accents, look-alike letters of other scripts ("Аdmin" with a
+ *   Cyrillic А), digits and symbols written for letters and a blanked-out letter ("f*ck") are read
+ *   as the letters they stand for. Short or common words only match as a whole word and staff
+ *   words only within one word, so "Badminton Bob", "Stafford", "Brad Min" and "G. M. Lee" pass.
+ *   `PATCH /api/me` answers 400 `name_not_allowed`; a new guest is created without the name.
  * - `blockRoutes`: `GET /api/blocks`, `POST /api/blocks {userId}`, `DELETE /api/blocks/:userId`
  *   (bearer). The app hides a blocked player's chat and emotes; quick match never seats the two
  *   together (either direction).
@@ -33,7 +36,9 @@ const STAFF_WORDS = [
   'admin',
   'admins',
   'administrator',
+  'administrators',
   'sysadmin',
+  'sysop',
   'mod',
   'mods',
   'moderator',
@@ -48,7 +53,7 @@ const STAFF_WORDS = [
   'customerservice',
   'system',
 ];
-/** Staff words also refused at the start or end of a name written as one word ("AdminMei", "mahjongofficial"). */
+/** Staff words also refused at the start or end of any one word of a name ("AdminMei", "mahjongofficial"). */
 const STAFF_AFFIXES = ['admin', 'administrator', 'moderator', 'official'];
 
 /** Refused as a whole word: common enough inside innocent words that a substring match would misfire. */
@@ -82,31 +87,72 @@ const RUDE_WORDS = [
   'wanker',
   'whore',
 ];
+/**
+ * Listed words that are also a first name. One is allowed as the first word of a longer name
+ * ("Dick Wong", "Dick Van Dyke") unless a word after it gives the joke away.
+ */
+const GIVEN_NAMES = new Set(['dick']);
+const NOT_A_SURNAME = new Set(['head', 'heads', 'face', 'sucker', 'suck', 'sucks', 'licker', 'pic', 'pics', 'pix', 'big', 'long', 'hard', 'tiny', 'small', 'my', 'your', 'ur', 'his', 'her', 'me']);
+/**
+ * The listed words whose stretched spellings are refused too ("shiiit", "biitch", "addmin"). Only
+ * these: squeezing every doubled letter turned the surnames Rappe and Nazzi into listed words.
+ */
+const STRETCHED_WORDS = ['shit', 'bitch', 'cunt', 'slut', 'whore', 'pussy', 'dick', 'cock', 'dildo', 'wank', 'wanker', 'retard', 'bastard', 'asshole', 'penis', 'vagina', 'chink', 'admin', 'moderator', 'official', 'staff', 'support'];
 /** Refused anywhere in a name: these do not occur inside innocent words. */
-const RUDE_FRAGMENTS = ['fuck', 'nigger', 'nigga', 'faggot', 'motherf', 'shithead', 'bullshit', 'asshole', 'bitchass', 'cocksuck', 'jerkoff'];
-/** Chinese (Traditional and Simplified) refused anywhere in a name: profanity, slurs, and staff titles. */
+const RUDE_FRAGMENTS = ['fuck', 'fvck', 'phuck', 'nigger', 'nigga', 'faggot', 'motherf', 'shithead', 'dickhead', 'bullshit', 'asshole', 'bitchass', 'cocksuck', 'jerkoff'];
+/**
+ * Chinese refused anywhere in a name: profanity, slurs, and staff titles. Every entry is listed
+ * in its Traditional and its Simplified form (and with the look-alike characters people swap
+ * in), because a name is matched as written.
+ */
 const CHINESE_FRAGMENTS = [
+  // Staff titles.
   '官方',
   '管理員',
   '管理员',
+  '管理者',
+  '管理人員',
+  '管理人员',
+  '工作人員',
+  '工作人员',
   '客服',
   '版主',
+  '板主',
+  '站長',
+  '站长',
   '系統管理',
   '系统管理',
+  '系統公告',
+  '系统公告',
+  '系統訊息',
+  '系统消息',
+  // Profanity and slurs.
   '幹你',
+  '干你',
   '幹恁',
+  '干恁',
   '幹林娘',
+  '干林娘',
   '操你',
   '肏',
   '他媽的',
   '他妈的',
+  '他馬的',
+  '他马的',
   '你媽的',
   '你妈的',
+  '你馬的',
+  '你马的',
   '靠北',
+  '靠杯',
   '雞掰',
+  '鸡掰',
   '機掰',
+  '机掰',
   '雞巴',
   '鸡巴',
+  '機巴',
+  '机巴',
   '屌',
   '婊子',
   '賤人',
@@ -121,66 +167,239 @@ const CHINESE_FRAGMENTS = [
   '白癡',
 ];
 
-/** Digits and symbols written for letters ("4dm1n", "f@ck"). */
-const LEET: Record<string, string> = { '0': 'o', '1': 'i', '3': 'e', '4': 'a', '5': 's', '7': 't', '8': 'b', '@': 'a', $: 's', '!': 'i' };
+/**
+ * Letters of other scripts and letter-like symbols that read as a Latin letter ("Аdmin" with a
+ * Cyrillic А, "Mοderator" with a Greek omicron, "ᴀᴅᴍɪɴ" in small capitals), folded to that
+ * letter before matching. Looked up by the character as typed and then by its lowercase, so an
+ * entry for a capital is only needed where the capital reads differently (Greek Η is an H, η an n).
+ * Accents never reach this table: they are stripped first.
+ */
+const LOOKALIKES: Readonly<Record<string, string>> = {
+  // Cyrillic
+  а: 'a',
+  б: 'b',
+  в: 'b',
+  г: 'r',
+  д: 'd',
+  е: 'e',
+  з: 'e',
+  и: 'u',
+  И: 'n',
+  к: 'k',
+  л: 'n',
+  м: 'm',
+  н: 'h',
+  о: 'o',
+  п: 'n',
+  р: 'p',
+  с: 'c',
+  т: 't',
+  у: 'y',
+  х: 'x',
+  ц: 'u',
+  ш: 'w',
+  щ: 'w',
+  ь: 'b',
+  э: 'e',
+  я: 'r',
+  і: 'i',
+  ј: 'j',
+  ѕ: 's',
+  һ: 'h',
+  ԁ: 'd',
+  ԛ: 'q',
+  ԝ: 'w',
+  ҝ: 'k',
+  ү: 'y',
+  // Greek
+  α: 'a',
+  β: 'b',
+  γ: 'y',
+  δ: 'd',
+  ε: 'e',
+  ζ: 'z',
+  η: 'n',
+  Η: 'h',
+  θ: 'o',
+  ι: 'i',
+  κ: 'k',
+  μ: 'u',
+  Μ: 'm',
+  ν: 'v',
+  Ν: 'n',
+  ο: 'o',
+  π: 'n',
+  ρ: 'p',
+  σ: 'o',
+  ς: 's',
+  Σ: 'e',
+  τ: 't',
+  υ: 'u',
+  Υ: 'y',
+  χ: 'x',
+  ω: 'w',
+  // Small capitals and other Latin letter forms
+  ᴀ: 'a',
+  ʙ: 'b',
+  ᴄ: 'c',
+  ᴅ: 'd',
+  ᴇ: 'e',
+  ꜰ: 'f',
+  ɢ: 'g',
+  ʜ: 'h',
+  ɪ: 'i',
+  ᴊ: 'j',
+  ᴋ: 'k',
+  ʟ: 'l',
+  ᴍ: 'm',
+  ɴ: 'n',
+  ᴏ: 'o',
+  ᴘ: 'p',
+  ǫ: 'q',
+  ʀ: 'r',
+  ꜱ: 's',
+  ᴛ: 't',
+  ᴜ: 'u',
+  ᴠ: 'v',
+  ᴡ: 'w',
+  ʏ: 'y',
+  ᴢ: 'z',
+  ı: 'i',
+  ȷ: 'j',
+  ł: 'l',
+  ø: 'o',
+  đ: 'd',
+  ð: 'd',
+  þ: 'p',
+  ß: 'ss',
+  æ: 'ae',
+  œ: 'oe',
+  ƒ: 'f',
+  ɑ: 'a',
+  ɡ: 'g',
+  ɛ: 'e',
+  ɔ: 'o',
+  ǝ: 'e',
+};
 
-/** "fuuuck" and "fuck" alike: runs of one letter collapse to a single letter. */
-const squeeze = (s: string) => s.replace(/(.)\1+/gu, '$1');
+/** Digits and symbols written for letters ("4dm1n", "f@ck", "$hit"). */
+const LEET: Readonly<Record<string, string>> = { '0': 'o', '1': 'i', '3': 'e', '4': 'a', '5': 's', '6': 'g', '7': 't', '8': 'b', '9': 'g', '@': 'a', $: 's', '!': 'i', '¡': 'i', '|': 'i', '+': 't', '€': 'e', '£': 'l', '¢': 'c' };
+/** The same with 1 and | read as an L ("officia1"). */
+const LEET_L: Readonly<Record<string, string>> = { ...LEET, '1': 'l', '|': 'l' };
 
-const LONG_FRAGMENTS = RUDE_FRAGMENTS.map(squeeze);
+/**
+ * A letter blanked out with an asterisk ("f*ck", "sh*t") stands for any one letter. Inside the
+ * check it is written as this character, which counts as a letter when a name is split in words.
+ */
+const ANY = 'ǂ';
+
+/** Collapses every run of one letter to a single letter ("fuuuck" to "fuck"); blanked-out letters are left alone. */
+const squeeze = (s: string) => s.replace(/([^ǂ])\1+/gu, '$1');
+/** Collapses a run of three or more of one letter to two ("niggger" to "nigger"). */
+const soften = (s: string) => s.replace(/([^ǂ])\1{2,}/gu, '$1$1');
+
+const STRETCHED = STRETCHED_WORDS.map(squeeze);
+/** Fragments with a doubled letter are matched as written ("Niger" is a country); the others also in their squeezed spelling. */
+const SQUEEZABLE_FRAGMENTS = RUDE_FRAGMENTS.filter((f) => squeeze(f) === f);
+/** Words long enough to be refused when a name spells them across its spaces ("Ad Min", "of fi cial"). */
+const SPELLED_OUT = [...STAFF_WORDS, ...RUDE_WORDS].filter((w) => w.length >= 5);
+
+/** Whether `text` reads `word` from `at` on, a blanked-out letter matching any letter (at least two real letters must match). */
+function readsAt(text: string, at: number, word: string): boolean {
+  if (at < 0 || at + word.length > text.length) return false;
+  let real = 0;
+  for (let i = 0; i < word.length; i++) {
+    const c = text[at + i];
+    if (c === word[i]) real++;
+    else if (c !== ANY) return false;
+  }
+  return real >= Math.min(2, word.length);
+}
+const reads = (text: string, word: string) => text.length === word.length && readsAt(text, 0, word);
+const readsAny = (text: string, list: readonly string[]) => list.some((w) => reads(text, w));
+function contains(text: string, fragment: string): boolean {
+  for (let at = 0; at + fragment.length <= text.length; at++) if (readsAt(text, at, fragment)) return true;
+  return false;
+}
 
 function words(text: string): string[] {
   return text.split(/[^\p{L}\p{N}]+/u).filter(Boolean);
 }
 
 /**
- * The spellings of a name the lists are matched against: its words as typed (camelCase split),
- * with digits stripped from their ends, with digits and symbols read as letters, and runs of
- * single characters joined ("a d m i n").
+ * A name as the lists read it: camelCase split into words, accents and combining marks removed,
+ * look-alike letters of other scripts folded to Latin, lowercase, an asterisk kept as "any letter".
  */
-function spellings(name: string): { words: Set<string>; joined: string[] } {
-  const base = name.normalize('NFKC').replace(/(\p{Ll})(\p{Lu})/gu, '$1 $2').toLowerCase();
-  const leet = [...base].map((c) => LEET[c] ?? c).join('');
-  const out = new Set<string>();
-  const joined: string[] = [];
-  for (const text of [base, leet]) {
-    const ws = words(text);
-    for (const w of ws) {
-      out.add(w);
-      const stripped = w.replace(/^\p{N}+|\p{N}+$/gu, '');
-      if (stripped) out.add(stripped);
-    }
-    // Single characters spaced out spell a word too.
-    let run = '';
-    for (const w of [...ws, '']) {
-      if (w.length === 1) run += w;
-      else {
-        if (run.length > 1) out.add(run);
-        run = '';
-      }
-    }
-    joined.push(ws.join(''));
+function skeleton(name: string): string {
+  const split = name.normalize('NFKC').replace(/(\p{Ll})(\p{Lu})/gu, '$1 $2');
+  let out = '';
+  for (const ch of split.normalize('NFKD')) {
+    if (/\p{M}/u.test(ch)) continue;
+    if (ch === '*') out += ANY;
+    else out += LOOKALIKES[ch] ?? LOOKALIKES[ch.toLowerCase()] ?? ch.toLowerCase();
   }
-  return { words: out, joined };
+  return out;
+}
+
+/** `text` with digits and symbols read as letters; a number standing on its own ("Bob 455") stays a number. */
+function leet(text: string, table: Readonly<Record<string, string>>): string {
+  return text
+    .split(/(\s+)/u)
+    .map((chunk) => (/^\p{N}+$/u.test(chunk) ? chunk : [...chunk].map((c) => table[c] ?? c).join('')))
+    .join('');
+}
+
+/** Whether one spelling of a name (its words in order) hits a list. */
+function refused(ws: string[], asTyped: boolean): boolean {
+  const bare = ws.map((w) => w.replace(/^\p{N}+|\p{N}+$/gu, '')).filter(Boolean);
+  // "Dick Wong": a listed word that is also a first name, followed by what reads as the rest of a name.
+  const givenName = asTyped && ws.length >= 2 && GIVEN_NAMES.has(ws[0]) && ws.slice(1).every((w) => /^\p{L}{2,}$/u.test(w) && !NOT_A_SURNAME.has(w) && !RUDE_WORDS.includes(w)) ? ws[0] : null;
+  const candidates = new Set([...ws, ...bare]);
+  // Single letters spaced out spell a word too, once there are three or more ("a d m i n"; "G. M." is initials).
+  let run = '';
+  for (const w of [...ws, '']) {
+    if ([...w].length === 1) run += w;
+    else {
+      if ([...run].length >= 3) candidates.add(run);
+      run = '';
+    }
+  }
+  for (const w of candidates) {
+    if (w === givenName) continue;
+    if (readsAny(w, STAFF_WORDS) || readsAny(w, RUDE_WORDS)) return true;
+    if (w.length >= 4 && readsAny(squeeze(w), STRETCHED)) return true;
+    // Staff words at either end of one word. Per word, never across words: "Brad Min" is a name.
+    const letters = w.replace(/\p{N}+/gu, '');
+    if (STAFF_AFFIXES.some((a) => readsAt(letters, 0, a) || readsAt(letters, letters.length - a.length, a))) return true;
+  }
+  // A longer listed word spelled across neighbouring words ("Ad Min", "mo der ator").
+  for (let from = 0; from < bare.length; from++) {
+    let joined = bare[from];
+    for (let to = from + 1; to < bare.length && joined.length < 16; to++) {
+      joined += bare[to];
+      if (readsAny(joined, SPELLED_OUT)) return true;
+    }
+  }
+  const whole = ws.join('');
+  if (RUDE_FRAGMENTS.some((f) => contains(whole, f) || contains(soften(whole), f))) return true;
+  const squeezed = squeeze(whole);
+  return SQUEEZABLE_FRAGMENTS.some((f) => contains(squeezed, f));
 }
 
 /**
  * Whether a display name or club name may be used. Call it on the cleaned name (`cleanText`);
  * an empty name is the caller's business and passes here.
+ *
+ * The name is read three ways (as typed, and with digits and symbols read as letters, the 1 as an
+ * I and as an L), each after accents are removed and look-alike letters are folded to Latin.
+ * Staff words and the shorter rude words only match a whole word; staff words also match at
+ * either end of a word; the unmistakable ones match anywhere. Chinese is matched as written,
+ * ignoring spaces and punctuation.
  */
 export function nameAllowed(name: string): boolean {
-  const { words: ws, joined } = spellings(name);
-  for (const w of ws) {
-    if (STAFF_WORDS.includes(w) || RUDE_WORDS.includes(w)) return false;
-    const sq = squeeze(w);
-    if (sq.length >= 4 && RUDE_WORDS.some((r) => r.length >= 4 && squeeze(r) === sq)) return false;
-  }
-  for (const j of joined) {
-    const letters = j.replace(/\p{N}+/gu, '');
-    if (STAFF_AFFIXES.some((a) => letters.startsWith(a) || letters.endsWith(a))) return false;
-    const sq = squeeze(j);
-    if (LONG_FRAGMENTS.some((f) => sq.includes(f))) return false;
-  }
+  const base = skeleton(name);
+  const spellings = [...new Set([base, leet(base, LEET), leet(base, LEET_L)])];
+  if (spellings.some((s, i) => refused(words(s), i === 0))) return false;
   const compact = name.normalize('NFKC').replace(/[\s\p{P}\p{S}]+/gu, '');
   return !CHINESE_FRAGMENTS.some((f) => compact.includes(f));
 }
