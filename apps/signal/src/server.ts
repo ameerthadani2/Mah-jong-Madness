@@ -26,7 +26,7 @@ import { NO_ANALYTICS, reportError, withConsent, type Analytics } from './observ
 import { TablePersister } from './persist';
 import { PushService, SeatWatcher } from './push';
 import type { RepoHandle } from './repos';
-import { RoomRegistry, type RoomEvent } from './rooms';
+import { EmotePackOwners, RoomRegistry, type RoomEvent } from './rooms';
 import { createSocketServer, VerifyUnavailable, type SocketLimits } from './sockets';
 import { WalletService } from './wallet';
 import { Reconciler, revenueCatClientFromEnv, startReconcileJob } from './reconcile';
@@ -135,6 +135,8 @@ export async function createSignalServer(opts: SignalServerOptions): Promise<Sig
   const rooms: RoomRegistry = new RoomRegistry({
     queue: matchmaker,
     isMuted: (userId) => mutes.isMuted(userId),
+    // A paid emote is relayed only for an account that owns its pack (the wallet is declared below; nothing asks before the server is up).
+    emotePacks: new EmotePackOwners((userId) => wallet.summary(userId).then((w) => w.cosmetics), { now }),
     actionLatency,
     allowHosted: config.hostTables,
     allowP2P: config.p2pRooms,

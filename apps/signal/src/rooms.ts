@@ -3,7 +3,7 @@
  * can be unit-tested. Rooms are identified by short codes players can read out
  * loud (PokerBros-style club/table codes).
  */
-import { TableHost, type HostEvent, type SerializedHost, type Transport, type Unsubscribe } from '@mjm/net';
+import { emotePackOf, isQuickChatId, isTableEmoteId, TableHost, type HostEvent, type SerializedHost, type Transport, type Unsubscribe } from '@mjm/net';
 import { BOT_SKILLS, randomHex, sanitizeRules, type BotSkill, type RuleSet } from '@mjm/engine';
 import { uniqueCode, type HexSource } from './codes';
 import { LIMITS } from './config';
@@ -164,6 +164,85 @@ export interface RoomRegistryOptions {
   queue?: QueueGate;
   /** Accounts whose chat lines and emotes are dropped at every table (a moderator's mute). */
   isMuted?: (userId: string | undefined) => boolean;
+  /**
+   * Who owns which paid emote pack. With it, an emote from a pack is relayed only when the
+   * sender's account owns that pack; without it (tests of the relay alone) every known emote is.
+   */
+  emotePacks?: EmotePackGate;
+}
+
+/** Ownership of the paid emote packs, as the tables ask it (see `EmotePackOwners`). */
+export interface EmotePackGate {
+  /** Whether the account owns the pack (a product id such as `emotes.zodiac`); a promise while the answer is being read. */
+  owns(userId: string, pack: string): boolean | Promise<boolean>;
+  /** The account sat down at a table: have the answer ready before its first emote. */
+  warm?(userId: string): void;
+}
+
+/** How long an account's emote packs are remembered. */
+export const EMOTE_PACKS_TTL_MS = 60_000;
+/** How soon a pack the account did not own is looked up again (so a pack bought mid-match works within seconds). */
+export const EMOTE_PACKS_RECHECK_MS = 10_000;
+/** Accounts remembered at most; the oldest answers go first. */
+const EMOTE_PACKS_MAX = 20_000;
+
+/**
+ * Each account's emote packs, read once (from the wallet's cosmetics) and remembered for about a
+ * minute, so an emote at the table does not cost a database round trip. A pack the account did
+ * not own when last read is looked up again after `recheckMs`. When the read fails the last known
+ * answer stands, and with none the emote is dropped.
+ */
+export class EmotePackOwners implements EmotePackGate {
+  private readonly known = new Map<string, { packs: ReadonlySet<string>; at: number }>();
+  private readonly reading = new Map<string, Promise<ReadonlySet<string>>>();
+  private readonly now: () => number;
+  private readonly ttlMs: number;
+  private readonly recheckMs: number;
+
+  constructor(
+    private readonly load: (userId: string) => Promise<Iterable<string>>,
+    opts: { now?: () => number; ttlMs?: number; recheckMs?: number } = {},
+  ) {
+    this.now = opts.now ?? Date.now;
+    this.ttlMs = opts.ttlMs ?? EMOTE_PACKS_TTL_MS;
+    this.recheckMs = opts.recheckMs ?? EMOTE_PACKS_RECHECK_MS;
+  }
+
+  owns(userId: string, pack: string): boolean | Promise<boolean> {
+    const hit = this.known.get(userId);
+    if (hit) {
+      const age = this.now() - hit.at;
+      if (age < (hit.packs.has(pack) ? this.ttlMs : this.recheckMs)) return hit.packs.has(pack);
+    }
+    return this.read(userId).then((packs) => packs.has(pack));
+  }
+
+  warm(userId: string): void {
+    const hit = this.known.get(userId);
+    if (!hit || this.now() - hit.at >= this.ttlMs) void this.read(userId);
+  }
+
+  /** Forget an account's answer (after a purchase, say). */
+  forget(userId: string): void {
+    this.known.delete(userId);
+  }
+
+  private read(userId: string): Promise<ReadonlySet<string>> {
+    let reading = this.reading.get(userId);
+    if (reading) return reading;
+    reading = this.load(userId)
+      .then((ids): ReadonlySet<string> => {
+        const packs = new Set(ids);
+        this.known.delete(userId);
+        this.known.set(userId, { packs, at: this.now() });
+        if (this.known.size > EMOTE_PACKS_MAX) this.known.delete(this.known.keys().next().value as string);
+        return packs;
+      })
+      .catch((): ReadonlySet<string> => this.known.get(userId)?.packs ?? new Set<string>())
+      .finally(() => this.reading.delete(userId));
+    this.reading.set(userId, reading);
+    return reading;
+  }
 }
 
 export interface HostedRoomOptions {
@@ -587,8 +666,11 @@ export class RoomRegistry {
           const t = tableFrameType(msg.data);
           if (room.quick && t !== undefined && QUICK_BLOCKED.has(t)) return peer.id;
           if (t !== undefined && MUTED_BLOCKED.has(t) && this.opts.isMuted?.(peer.userId)) return peer.id;
+          // No free text: only a quick-phrase id or a known emote id goes on to the table.
+          if (t === 'chat' && !isQuickChatId(tableFrameField(msg.data, 'text'))) return peer.id;
+          if (t === 'emote' && !this.mayEmote(peer, room, msg.data)) return peer.id;
           const data = bindUser(msg.data, peer.userId, peer.name);
-          if (data === null) return peer.id;
+          if (t === 'join' && peer.userId) this.opts.emotePacks?.warm?.(peer.userId);
           room.table.transport.receive(peer.id, data);
           if (timed) this.opts.actionLatency!.record(this.perfNow() - t0);
           return peer.id;
@@ -620,6 +702,29 @@ export class RoomRegistry {
       default:
         return peer.id;
     }
+  }
+
+  /**
+   * Whether an `emote` frame goes on to the table now: a free emote always, an emote from a paid
+   * pack only when the sender's account owns the pack. While ownership is still being read the
+   * frame waits for the answer and is delivered then (if the peer is still at the table).
+   */
+  private mayEmote(peer: Peer, room: Room, data: unknown): boolean {
+    const emote = tableFrameField(data, 'emote');
+    if (!isTableEmoteId(emote)) return false;
+    const pack = emotePackOf(emote);
+    const gate = this.opts.emotePacks;
+    if (!pack || !gate) return true;
+    if (!peer.userId) return false;
+    const owns = gate.owns(peer.userId, pack);
+    if (typeof owns === 'boolean') return owns;
+    owns.then(
+      (ok) => {
+        if (ok && !this.closed && peer.room === room.code && this.rooms.get(room.code) === room) room.table?.transport.receive(peer.id, data);
+      },
+      () => undefined,
+    );
+    return false;
   }
 
   disconnect(peerId: string): void {
@@ -836,6 +941,11 @@ function tableFrameType(data: unknown): string | undefined {
   return typeof env.msg.t === 'string' ? env.msg.t : undefined;
 }
 
+/** One field of a table frame's message (`{ch:'game', msg:{[field]}}`). */
+function tableFrameField(data: unknown, field: string): unknown {
+  return (data as { msg?: Record<string, unknown> } | null)?.msg?.[field];
+}
+
 /** A game action for the table (`{ch:'game', msg:{t:'action'}}`). */
 function isAction(data: unknown): boolean {
   const env = data as { ch?: unknown; msg?: { t?: unknown } } | null;
@@ -844,9 +954,8 @@ function isAction(data: unknown): boolean {
 
 const PONG = JSON.stringify({ t: 'pong' });
 
-/** Longest seat name and chat line the table keeps (it cuts longer ones by UTF-16 units). */
+/** Longest seat name and avatar id the table keeps. */
 const SEAT_NAME_MAX = 24;
-const CHAT_MAX = 280;
 const AVATAR_MAX = 8;
 
 /** The seat name of an account that has no usable display name: `Player` and the first four hex digits of its id. */
@@ -861,20 +970,14 @@ export function defaultSeatName(userId: string): string {
  * cleaned and checked by `setPeerName`) or the generated default, never the name in the frame;
  * a peer without an account keeps the frame's name, cleaned like every other piece of free text
  * (a NUL in a seat name used to stop the table's snapshot being saved) and dropped when the name
- * check refuses it. Avatars and chat lines are cleaned too. Returns null for a frame with nothing
- * left to say (a chat line that cleans to nothing).
+ * check refuses it. Avatars are cleaned too.
  */
 function bindUser(data: unknown, userId: string | undefined, accountName?: string): unknown {
   const env = data as { ch?: unknown; msg?: unknown } | null;
   if (!env || typeof env !== 'object' || env.ch !== 'game' || !env.msg || typeof env.msg !== 'object') return data;
   const t = (env.msg as { t?: unknown }).t;
-  if (t !== 'join' && t !== 'chat') return data;
+  if (t !== 'join') return data;
   const msg: Record<string, unknown> = { ...(env.msg as Record<string, unknown>) };
-  if (t === 'chat') {
-    if (typeof msg.text !== 'string') return data;
-    msg.text = cleanField(msg.text, CHAT_MAX);
-    return msg.text ? { ...env, msg } : null;
-  }
   if (userId) msg.userId = userId;
   else delete msg.userId;
   let name = accountName || (userId ? defaultSeatName(userId) : '');

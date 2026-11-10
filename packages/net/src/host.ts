@@ -29,6 +29,7 @@ import type { Audit, CeremonyRestart, ClientMessage, HostMessage, RestartCause, 
 import type { Transport, Unsubscribe } from './transport';
 import { randomHex } from './sha256';
 import { cleanText } from './text';
+import { isQuickChatId, isTableEmoteId } from './tabletext';
 
 export type HostPhase = 'lobby' | 'commit' | 'reveal' | 'playing' | 'hand_over' | 'match_over';
 
@@ -595,14 +596,16 @@ export class TableHost {
         if (this.seats.every((s) => s.isBot || !s.connected || s.ready)) this.afterHand();
         return;
       case 'chat': {
-        const text = cleanText(msg.text, 280);
-        if (!text) return;
+        // No free text at the table: a chat frame carries a quick-phrase id and anything else is dropped.
+        const text = msg.text;
+        if (!isQuickChatId(text)) return;
         if (!this.takeToken(`chat:${seat.seat}`, CHAT_BUCKET)) return;
         return this.broadcast(() => ({ t: 'chat', seat: seat.seat, name: seat.name, text }));
       }
       case 'emote': {
-        const emote = cleanText(msg.emote, 16);
-        if (!emote) return;
+        // Only a known emote id is relayed (whether the sender owns a paid pack is the server's check: apps/signal rooms.ts).
+        const emote = msg.emote;
+        if (!isTableEmoteId(emote)) return;
         if (!this.takeToken(`emote:${seat.seat}`, EMOTE_BUCKET)) return;
         return this.broadcast(() => ({ t: 'emote', seat: seat.seat, emote }));
       }

@@ -327,11 +327,11 @@ describe('quick-match tables', () => {
     b.enter(room);
     b.sit();
     const heard = () => b.socket.out.filter((m) => m.t === 'from' && ['chat', 'emote'].includes(((m.data as { msg: { t: string } }).msg ?? {}).t)).length;
-    a.table({ t: 'chat', text: 'hello' });
+    a.table({ t: 'chat', text: 'gg' });
     expect(heard()).toBe(1);
     mutes.set(a.userId, Date.now() + 60_000);
-    a.table({ t: 'chat', text: 'rude words' });
-    a.table({ t: 'emote', emote: 'laugh' });
+    a.table({ t: 'chat', text: 'nice' });
+    a.table({ t: 'emote', emote: 'lol' });
     expect(heard()).toBe(1);
   });
 

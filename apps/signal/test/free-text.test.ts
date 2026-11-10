@@ -156,7 +156,7 @@ describe('seat names and chat at a hosted table', () => {
     expect(reg.hostedTable(code)!.seatInfo().map((s) => s.name)).toEqual(['Seat', 'b'.repeat(23), 'Player 3', '']);
   });
 
-  it('cleans chat lines and drops one that cleans to nothing', () => {
+  it('relays a quick-phrase id and drops every other chat line before it reaches the table', () => {
     const reg = new RoomRegistry({ allowHosted: true, botDelayMs: 0 });
     const code = reg.createHostedRoom();
     const p = seatAt(reg, 'user-chatty-1', 'Chatty', {});
@@ -165,8 +165,12 @@ describe('seat names and chat at a hosted table', () => {
     to({ t: 'join', name: 'Chatty' });
     const chats = () => p.out.filter((m) => m.data?.msg?.t === 'chat').map((m) => m.data!.msg!.text);
     to({ t: 'chat', text: `hi${NUL}${RLO} there` });
+    to({ t: 'chat', text: 'Official support: verify your account at http://evil.example/login' });
     to({ t: 'chat', text: `${NUL}${ZWSP}` });
-    expect(chats()).toEqual(['hi there']);
+    to({ t: 'chat', text: 7 });
+    to({ t: 'chat' });
+    to({ t: 'chat', text: 'goodHand' });
+    expect(chats()).toEqual(['goodHand']);
   });
 });
 
