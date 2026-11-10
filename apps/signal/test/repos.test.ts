@@ -13,7 +13,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { DEFAULT_RULES, randomHex } from '@mjm/engine';
 import type { Club, ClubMember } from '../src/clubs';
 import { createPool, ping, type Pool } from '../src/db';
-import { migrate } from '../src/migrate';
+import { defaultMigrationsDir, listMigrations, migrate } from '../src/migrate';
 import { createMemoryRepos, createPgRepos, createRepos, DELETED_PLAYER_NAME, type Repos, type UserKind, type UserRecord } from '../src/repos';
 import { WalletService, type StoreEvent } from '../src/wallet';
 
@@ -631,7 +631,8 @@ describe.skipIf(!PG_URL)('postgres', () => {
       await admin.query('CREATE SCHEMA ' + schema);
       pool = createPool(PG_URL!, { options: '-c search_path=' + schema });
       expect(await ping(pool)).toBe(true);
-      expect(await migrate(pool)).toEqual(['0001_init', '0002_store_reports_seasons', '0003_server_hardening', '0004_store_plans_consent', '0005_club_owner_tools', '0006_quick_match_moderation']);
+      // Every shipped migration, in order (the list is read from the folder: see migrate.test.ts).
+      expect(await migrate(pool)).toEqual(listMigrations(defaultMigrationsDir()).map((m) => m.version));
       expect(await migrate(pool)).toEqual([]);
       return createPgRepos(pool);
     },

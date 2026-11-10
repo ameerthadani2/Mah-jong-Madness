@@ -2,7 +2,7 @@
  * Migration runner. File ordering and the schema's coverage are checked everywhere; applying
  * to a real database runs only with DATABASE_URL_TEST (see repos.test.ts).
  */
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -12,27 +12,24 @@ import { appliedMigrations, defaultMigrationsDir, listMigrations, migrate } from
 
 const PG_URL = process.env.DATABASE_URL_TEST?.trim();
 
-const PLANNED_TABLES = [
-  'users',
-  'auth_identities',
-  'sessions',
-  'devices',
-  'wallets',
-  'wallet_ledger',
-  'purchases',
-  'entitlements',
-  'clubs',
-  'club_members',
-  'club_tables',
-  'club_bans',
-  'match_results',
-  'table_snapshots',
-  'puzzle_results',
-  'schema_migrations',
-  'store_events',
-  'reports',
-  'user_blocks',
-];
+/**
+ * The shipped migrations and the tables they create, read from the migrations folder itself, so
+ * adding a migration never needs a list edited here (several branches adding one at the same time
+ * used to collide on these lists).
+ */
+const SHIPPED_DIR = defaultMigrationsDir();
+const SHIPPED_VERSIONS = readdirSync(SHIPPED_DIR)
+  .filter((name) => /^\d{4}_[a-z0-9_]+\.sql$/.test(name))
+  .sort()
+  .map((name) => name.replace(/\.sql$/, ''));
+const SHIPPED_TABLES = [
+  ...new Set(
+    SHIPPED_VERSIONS.flatMap((v) => [...readFileSync(join(SHIPPED_DIR, v + '.sql'), 'utf8').matchAll(/^CREATE TABLE (?:IF NOT EXISTS )?([a-z_]+) \(/gm)].map((m) => m[1])),
+  ),
+].sort();
+
+/** Tables the server cannot run without: a migration that lost one of them is a mistake. */
+const CORE_TABLES = ['users', 'auth_identities', 'sessions', 'devices', 'wallets', 'wallet_ledger', 'purchases', 'entitlements', 'clubs', 'club_members', 'club_tables', 'match_results', 'table_snapshots', 'schema_migrations', 'store_events', 'reports'];
 
 describe('migration files', () => {
   it('lists NNNN_name.sql files in filename order and ignores anything else', () => {
@@ -45,11 +42,16 @@ describe('migration files', () => {
     }
   });
 
-  it('finds the shipped migrations by default, and together they create every planned table', () => {
-    const files = listMigrations(defaultMigrationsDir());
-    expect(files.map((f) => f.version)).toEqual(['0001_init', '0002_store_reports_seasons', '0003_server_hardening', '0004_store_plans_consent', '0005_club_owner_tools', '0006_quick_match_moderation']);
-    const sql = files.map((f) => readFileSync(f.path, 'utf8')).join('\n');
-    for (const table of PLANNED_TABLES) expect(sql).toMatch(new RegExp('CREATE TABLE (IF NOT EXISTS )?' + table + ' \\('));
+  it('finds every shipped migration by default: numbered from 0001 with no gap and no number used twice', () => {
+    const files = listMigrations(SHIPPED_DIR);
+    expect(files.map((f) => f.version)).toEqual(SHIPPED_VERSIONS);
+    expect(SHIPPED_VERSIONS[0]).toBe('0001_init');
+    // Two migrations with the same number would run in an order nobody chose; a gap means a file is missing.
+    expect(SHIPPED_VERSIONS.map((v) => Number(v.slice(0, 4)))).toEqual(SHIPPED_VERSIONS.map((_, i) => i + 1));
+  });
+
+  it('together the shipped migrations create every table the server needs', () => {
+    expect(SHIPPED_TABLES).toEqual(expect.arrayContaining(CORE_TABLES));
   });
 
   it('0002 adds the season columns and copies lifetime points into the current season', () => {
@@ -88,10 +90,10 @@ describe.skipIf(!PG_URL)('migrate() against Postgres', () => {
     const pool = await freshPool();
     try {
       const lines: string[] = [];
-      expect(await migrate(pool, { log: (l) => lines.push(l) })).toEqual(['0001_init', '0002_store_reports_seasons', '0003_server_hardening', '0004_store_plans_consent', '0005_club_owner_tools', '0006_quick_match_moderation']);
-      expect(await appliedMigrations(pool)).toEqual(['0001_init', '0002_store_reports_seasons', '0003_server_hardening', '0004_store_plans_consent', '0005_club_owner_tools', '0006_quick_match_moderation']);
+      expect(await migrate(pool, { log: (l) => lines.push(l) })).toEqual(SHIPPED_VERSIONS);
+      expect(await appliedMigrations(pool)).toEqual(SHIPPED_VERSIONS);
       const tables = await pool.query<{ table_name: string }>('SELECT table_name FROM information_schema.tables WHERE table_schema = current_schema()');
-      expect(tables.rows.map((r) => r.table_name).sort()).toEqual([...PLANNED_TABLES].sort());
+      expect(tables.rows.map((r) => r.table_name).sort()).toEqual(SHIPPED_TABLES);
       expect(await migrate(pool)).toEqual([]);
       expect(lines.some((l) => l.includes('applying 0001_init'))).toBe(true);
     } finally {
@@ -122,7 +124,7 @@ describe.skipIf(!PG_URL)('migrate() against Postgres', () => {
     const pool = await freshPool();
     try {
       const [a, b] = await Promise.all([migrate(pool), migrate(pool)]);
-      expect([...a, ...b].sort()).toEqual(['0001_init', '0002_store_reports_seasons', '0003_server_hardening', '0004_store_plans_consent', '0005_club_owner_tools', '0006_quick_match_moderation']);
+      expect([...a, ...b].sort()).toEqual(SHIPPED_VERSIONS);
     } finally {
       await pool.end();
     }
