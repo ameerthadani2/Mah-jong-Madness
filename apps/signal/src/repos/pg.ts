@@ -7,7 +7,7 @@
  * Ids that are uuid columns are checked before they reach SQL, so a malformed id from a client
  * reads as "not found" rather than a database error.
  */
-import { anonymiseUserIn, moveMembershipsIn, type Club, type ClubBan, type ClubMember, type ClubSettings, type ClubTable, type Identity, type OwnerLapse, type SeasonRecord } from '../clubs';
+import { anonymiseUserIn, moveMembershipsIn, type Club, type ClubBan, type ClubMember, type ClubSettings, type ClubTable, type FormerMember, type Identity, type OwnerLapse, type SeasonRecord } from '../clubs';
 import type { Pool, Queryable } from '../db';
 import {
   DELETED_PLAYER_NAME,
@@ -845,16 +845,27 @@ interface TableRow {
   rules: ClubTable['rules'];
   created_by: string;
   status: ClubTable['status'];
-  state: { players?: ClubTable['players']; handNumber?: number; scores?: number[] };
+  state: { players?: ClubTable['players']; handNumber?: number; scores?: number[]; startedWith?: ClubTable['startedWith'] };
   created_at: Date;
   variant: boolean;
+}
+interface FormerRow {
+  club_code: string;
+  user_id: string;
+  left_at: Date;
+  season: number;
+  season_points: number;
+  lifetime_points: number;
+  matches_played: number;
+  matches_won: number;
+  hands_won: number;
 }
 
 function identityOf(r: MemberRow): Identity {
   return r.avatar === null ? { userId: r.user_id, name: r.display_name } : { userId: r.user_id, name: r.display_name, avatar: r.avatar };
 }
 
-function assembleClubs(clubs: ClubRow[], members: MemberRow[], tables: TableRow[], bans: BanRow[]): Club[] {
+function assembleClubs(clubs: ClubRow[], members: MemberRow[], tables: TableRow[], bans: BanRow[], former: FormerRow[]): Club[] {
   const byCode = new Map<string, Club>();
   for (const c of clubs) {
     // Newer fields are set only when there is something in them, so a club reads back as it was written.
@@ -912,7 +923,23 @@ function assembleClubs(clubs: ClubRow[], members: MemberRow[], tables: TableRow[
       handNumber: t.state.handNumber ?? 0,
       scores: t.state.scores ?? [],
       variant: t.variant === true,
+      ...(Array.isArray(t.state.startedWith) ? { startedWith: t.state.startedWith } : {}),
     });
+  }
+  for (const f of former) {
+    const club = byCode.get(f.club_code);
+    if (!club) continue;
+    const row: FormerMember = {
+      userId: f.user_id,
+      leftAt: f.left_at.getTime(),
+      season: f.season,
+      points: f.lifetime_points,
+      seasonPoints: f.season_points,
+      matchesPlayed: f.matches_played,
+      matchesWon: f.matches_won,
+      handsWon: f.hands_won,
+    };
+    (club.former ??= []).push(row);
   }
   return [...byCode.values()];
 }
@@ -922,6 +949,7 @@ function pgClubs(q: Queryable, tx: Tx): ClubsRepo {
   const MEMBER_COLS = 'club_code, user_id, role, status, display_name, avatar, joined_at, season_points, lifetime_points, matches_played, matches_won, hands_won';
   const TABLE_COLS = 'code, club_code, label, rules, created_by, status, state, created_at, variant';
   const BAN_COLS = 'club_code, user_id, display_name, banned_by, banned_at';
+  const FORMER_COLS = 'club_code, user_id, left_at, season, season_points, lifetime_points, matches_played, matches_won, hands_won';
   const load = async (c: Queryable, codes: string[] | null): Promise<Club[]> => {
     const clubs = await c.query<ClubRow>('SELECT ' + CLUB_COLS + ' FROM clubs WHERE ($1::text[] IS NULL OR code = ANY($1::text[])) ORDER BY created_at, code', [codes]);
     if (!clubs.rows.length) return [];
@@ -929,7 +957,8 @@ function pgClubs(q: Queryable, tx: Tx): ClubsRepo {
     const members = await c.query<MemberRow>('SELECT ' + MEMBER_COLS + ' FROM club_members WHERE club_code = ANY($1::text[]) ORDER BY joined_at, user_id', [found]);
     const tables = await c.query<TableRow>('SELECT ' + TABLE_COLS + ' FROM club_tables WHERE club_code = ANY($1::text[]) ORDER BY created_at, code', [found]);
     const bans = await c.query<BanRow>('SELECT ' + BAN_COLS + ' FROM club_bans WHERE club_code = ANY($1::text[]) ORDER BY banned_at, user_id', [found]);
-    return assembleClubs(clubs.rows, members.rows, tables.rows, bans.rows);
+    const former = await c.query<FormerRow>('SELECT ' + FORMER_COLS + ' FROM club_former_members WHERE club_code = ANY($1::text[]) ORDER BY left_at, user_id', [found]);
+    return assembleClubs(clubs.rows, members.rows, tables.rows, bans.rows, former.rows);
   };
   /**
    * Write one club in full on the given connection. The club in memory may name accounts that have
@@ -973,12 +1002,15 @@ function pgClubs(q: Queryable, tx: Tx): ClubsRepo {
       rules: t.rules,
       created_by: t.createdBy,
       status: t.status,
-      state: { players: t.players, handNumber: t.handNumber, scores: t.scores },
+      state: { players: t.players, handNumber: t.handNumber, scores: t.scores, ...(t.startedWith ? { startedWith: t.startedWith } : {}) },
       created_at: t.createdAt,
       variant: t.variant === true,
     }));
     // Only ids that can be stored: a ban row's user_id is a uuid (accounts always are).
     const bans = (club.bans ?? []).filter((b) => isUuid(b.userId)).map((b) => ({ user_id: b.userId, display_name: b.name, banned_by: b.by, banned_at: b.bannedAt }));
+    const former = (club.former ?? [])
+      .filter((f) => isUuid(f.userId))
+      .map((f) => ({ user_id: f.userId, left_at: f.leftAt, season: f.season, season_points: f.seasonPoints, points: f.points, matches_played: f.matchesPlayed, matches_won: f.matchesWon, hands_won: f.handsWon }));
     await c.query(
       `INSERT INTO clubs (code, owner_id, name, description, rules, settings, created_at, updated_at, season, season_started_at, season_history, owner_lapsed_at, owner_lapses)
        VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7, now(), $8, $9, $10::jsonb, $11, $12::jsonb)
@@ -1037,13 +1069,26 @@ function pgClubs(q: Queryable, tx: Tx): ClubsRepo {
        ON CONFLICT (club_code, user_id) DO UPDATE SET display_name = excluded.display_name, banned_by = excluded.banned_by, banned_at = excluded.banned_at`,
       [club.code, json(bans)],
     );
+    // Standings on file reference the account like a member row: only for users that still exist.
+    await c.query('DELETE FROM club_former_members WHERE club_code = $1 AND NOT (user_id = ANY($2::uuid[]))', [club.code, former.map((f) => f.user_id)]);
+    await c.query(
+      `INSERT INTO club_former_members (club_code, user_id, left_at, season, season_points, lifetime_points, matches_played, matches_won, hands_won)
+       SELECT $1, r.user_id, to_timestamp(r.left_at / 1000.0), r.season, r.season_points, r.points, r.matches_played, r.matches_won, r.hands_won
+       FROM jsonb_to_recordset($2::jsonb) AS r(user_id uuid, left_at double precision, season integer, season_points integer, points integer,
+            matches_played integer, matches_won integer, hands_won integer)
+       WHERE EXISTS (SELECT 1 FROM users u WHERE u.id = r.user_id)
+       ON CONFLICT (club_code, user_id) DO UPDATE SET left_at = excluded.left_at, season = excluded.season, season_points = excluded.season_points,
+         lifetime_points = excluded.lifetime_points, matches_played = excluded.matches_played, matches_won = excluded.matches_won, hands_won = excluded.hands_won`,
+      [club.code, json(former)],
+    );
   };
-  /** Clubs with a row for this account (member, request, owner, ban, or a lapse on file as an owner). */
+  /** Clubs with a row for this account (member, request, owner, ban, standings on file, or a lapse on file as an owner). */
   const clubsNaming = async (c: Queryable, userId: string): Promise<string[]> => {
     const res = await c.query<{ code: string }>(
       `SELECT club_code AS code FROM club_members WHERE user_id = $1
        UNION SELECT code FROM clubs WHERE owner_id = $1
        UNION SELECT club_code FROM club_bans WHERE user_id = $1
+       UNION SELECT club_code FROM club_former_members WHERE user_id = $1
        UNION SELECT code FROM clubs WHERE owner_lapses @> jsonb_build_array(jsonb_build_object('userId', $1::text))
        ORDER BY code`,
       [userId],

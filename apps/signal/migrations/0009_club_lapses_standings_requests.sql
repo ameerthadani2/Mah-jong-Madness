@@ -6,3 +6,21 @@
 -- [{ "userId": uuid, "lapsedAt": ms, "until": ms | null }]. A lapse belongs to the account, so
 -- handing the club to a subscriber and taking it back does not start a new 7-day grace.
 ALTER TABLE clubs ADD COLUMN owner_lapses jsonb NOT NULL DEFAULT '[]'::jsonb;
+
+-- Standings kept on file for an account that is no longer a member (it left, or was removed or
+-- banned): hidden from the standings, and added back if the account rejoins, so leaving and
+-- rejoining never wipes a score. season is the season season_points were scored in. The rows go
+-- with the account when it is purged, like club_members.
+CREATE TABLE club_former_members (
+  club_code       text NOT NULL REFERENCES clubs (code) ON DELETE CASCADE,
+  user_id         uuid NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+  left_at         timestamptz NOT NULL DEFAULT now(),
+  season          integer NOT NULL DEFAULT 1 CHECK (season >= 1),
+  season_points   integer NOT NULL DEFAULT 0,
+  lifetime_points integer NOT NULL DEFAULT 0,
+  matches_played  integer NOT NULL DEFAULT 0 CHECK (matches_played >= 0),
+  matches_won     integer NOT NULL DEFAULT 0 CHECK (matches_won >= 0),
+  hands_won       integer NOT NULL DEFAULT 0 CHECK (hands_won >= 0),
+  PRIMARY KEY (club_code, user_id)
+);
+CREATE INDEX club_former_members_user_idx ON club_former_members (user_id);

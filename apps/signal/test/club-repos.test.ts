@@ -102,6 +102,46 @@ function contract(name: string, repos: () => Repos) {
       expect((await r.clubs.get(c.code))!.ownerLapses ?? []).toEqual([]);
     });
 
+    it('keeps standings on file and the list of who started a match through a save and a load; a merge and a purge follow the account', async () => {
+      const r = repos();
+      const [owner, member, gone, target] = [await user(), await user(), await user(), await user()];
+      const c: Club = { ...clubOf(code(), owner, member, gone), bans: [] };
+      c.former = [{ userId: gone, leftAt: T0 + 9_000, season: 1, points: -320, seasonPoints: -120, matchesPlayed: 2, matchesWon: 0, handsWon: 1 }];
+      c.tables[0].startedWith = [
+        { seat: 0, userId: owner },
+        { seat: 2, userId: gone },
+      ];
+      await r.clubs.save(c);
+      const back = (await r.clubs.get(c.code))!;
+      expect(back.former).toEqual(c.former);
+      expect(back.tables.map((t) => t.startedWith)).toEqual([c.tables[0].startedWith, undefined]);
+      expect(await r.clubs.clubsForUser(gone)).toEqual([]);
+      expect(await r.clubs.isMember(c.code, gone)).toBe(false);
+
+      // The departed account is merged into another that is not in the club: the file follows it.
+      expect(await r.clubs.moveMemberships(gone, { userId: target, name: 'Target' })).toEqual([c.code]);
+      const merged = (await r.clubs.get(c.code))!;
+      expect(merged.former).toEqual([{ ...c.former[0], userId: target }]);
+      expect(merged.tables[0].startedWith).toEqual([
+        { seat: 0, userId: owner },
+        { seat: 2, userId: target },
+      ]);
+      // Merged into a member instead, the results are added to the member's row.
+      expect(await r.clubs.moveMemberships(target, { userId: member, name: 'Member' })).toEqual([c.code]);
+      const folded = (await r.clubs.get(c.code))!;
+      expect(folded.former ?? []).toEqual([]);
+      expect(folded.members.find((m) => m.userId === member)).toMatchObject({ points: -320, seasonPoints: -120, matchesPlayed: 2, handsWon: 1 });
+
+      // A file for an account that is deleted and purged goes with it, and a stale copy still saves.
+      const stale: Club = { ...folded, former: [{ ...c.former[0], userId: gone }] };
+      await r.clubs.save(stale);
+      await r.users.update(gone, { deletedAt: T0 });
+      expect(await r.users.purgeDeletedIds(T0 + 1)).toContain(gone);
+      expect((await r.clubs.get(c.code))!.former ?? []).toEqual([]);
+      await r.clubs.save(stale);
+      if (r.kind === 'pg') expect((await r.clubs.get(c.code))!.former ?? []).toEqual([]);
+    });
+
     it("passes a deleted owner's club to the first admin or member who owns fewer than 3 clubs and has not deleted their account", async () => {
       const r = repos();
       const [gone, busyAdmin, deleted, heir, late] = [await user(), await user(), await user(), await user(), await user()];

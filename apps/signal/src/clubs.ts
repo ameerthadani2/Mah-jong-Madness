@@ -68,6 +68,30 @@ export interface ClubTable {
    * counts toward the standings. Absent in listings written before variants existed (read as false).
    */
   variant?: boolean;
+  /**
+   * The club members seated when the match started (written once, when play begins). The match
+   * counts toward the standings by these, and each is charged their seat's result, whatever
+   * happens to their membership or their seat before the end. Absent while the table is open, and
+   * in listings written before it existed.
+   */
+  startedWith?: Array<{ seat: number; userId: string }>;
+}
+
+/**
+ * Standings kept on file for an account that is no longer a member (it left, or was removed or
+ * banned). Hidden from the standings and from every view; added back if the account rejoins, so
+ * leaving and rejoining never wipes a score.
+ */
+export interface FormerMember {
+  userId: string;
+  leftAt: number;
+  /** The season `seasonPoints` were scored in; they return only while that season is still running. */
+  season: number;
+  points: number;
+  seasonPoints: number;
+  matchesPlayed: number;
+  matchesWon: number;
+  handsWon: number;
 }
 
 export interface ClubSettings {
@@ -119,6 +143,8 @@ export interface Club {
    * a new grace. Never sent to clients.
    */
   ownerLapses?: OwnerLapse[];
+  /** Standings on file for accounts that left the club (decision 5). Never sent to clients. */
+  former?: FormerMember[];
 }
 
 /** One account's lapse as an owner of a club. */
@@ -198,6 +224,8 @@ export const CLUB_LIMITS = {
   ownerLapsesPerClub: 20,
   /** Banned accounts kept per club. */
   bansPerClub: 500,
+  /** Departed members whose standings are kept on file per club (the longest gone are dropped first). */
+  formerMembersPerClub: 1000,
   nameLength: 40,
   descriptionLength: 280,
   labelLength: 40,
@@ -253,12 +281,56 @@ function normalise(c: Club): Club {
   c.bans = Array.isArray(c.bans) ? c.bans : [];
   c.ownerLapsedAt = typeof c.ownerLapsedAt === 'number' ? c.ownerLapsedAt : null;
   c.ownerLapses = Array.isArray(c.ownerLapses) ? c.ownerLapses.filter((l) => l && typeof l.userId === 'string' && typeof l.lapsedAt === 'number') : [];
+  c.former = Array.isArray(c.former) ? c.former.filter((f) => f && typeof f.userId === 'string') : [];
   for (const t of c.tables) t.variant = t.variant === true;
   for (const m of c.members) if (typeof m.seasonPoints !== 'number') m.seasonPoints = m.points;
   return c;
 }
 
 const newMember = (user: Identity, role: ClubRole, at: number): ClubMember => ({ ...user, role, joinedAt: at, points: 0, seasonPoints: 0, matchesPlayed: 0, matchesWon: 0, handsWon: 0 });
+
+type Standing = Pick<ClubMember, 'points' | 'matchesPlayed' | 'matchesWon' | 'handsWon'> & { seasonPoints?: number };
+
+/** Add a row of standings on file to another row (a member's, or another one on file). Season points count only for the season `into` is in. */
+function addStandings(into: Standing, from: FormerMember, season: number): void {
+  into.points += from.points;
+  into.seasonPoints = (into.seasonPoints ?? 0) + (from.season === season ? from.seasonPoints : 0);
+  into.matchesPlayed += from.matchesPlayed;
+  into.matchesWon += from.matchesWon;
+  into.handsWon += from.handsWon;
+}
+
+/**
+ * A member is going (leaving, removed, banned): put their standings on file. Nothing is filed for
+ * a member with no results who is not at one of the club's tables either, so accounts that only
+ * join and leave cost nothing.
+ */
+function fileStandings(club: Club, m: ClubMember, at: number): void {
+  const seated = club.tables.some((t) => t.status !== 'finished' && ((t.startedWith ?? []).some((s) => s.userId === m.userId) || (t.players ?? []).some((p) => !p.isBot && p.userId === m.userId)));
+  if (!seated && m.points === 0 && (m.seasonPoints ?? 0) === 0 && m.matchesPlayed === 0 && m.matchesWon === 0 && m.handsWon === 0) return;
+  const season = club.season ?? 1;
+  const row: FormerMember = { userId: m.userId, leftAt: at, season, points: m.points, seasonPoints: m.seasonPoints ?? m.points, matchesPlayed: m.matchesPlayed, matchesWon: m.matchesWon, handsWon: m.handsWon };
+  const former = (club.former ??= []);
+  const old = former.find((f) => f.userId === m.userId);
+  if (old) {
+    addStandings(row, old, season);
+    former.splice(former.indexOf(old), 1);
+  }
+  former.push(row);
+  if (former.length > CLUB_LIMITS.formerMembersPerClub) {
+    former.sort((a, b) => a.leftAt - b.leftAt);
+    former.splice(0, former.length - CLUB_LIMITS.formerMembersPerClub);
+  }
+}
+
+/** An account is (back) in the club: whatever standings it has on file return to its member row. */
+function restoreStandings(club: Club, m: ClubMember): void {
+  const former = club.former ?? [];
+  const row = former.find((f) => f.userId === m.userId);
+  if (!row) return;
+  addStandings(m, row, club.season ?? 1);
+  club.former = former.filter((f) => f !== row);
+}
 
 /**
  * Account merge, applied in place to clubs held in memory: `fromUserId`'s memberships and pending
@@ -267,10 +339,12 @@ const newMember = (user: Identity, role: ClubRole, at: number): ClubMember => ({
  * The two accounts are one person, so every club passes to `to` even when that takes it past
  * `CLUB_LIMITS.ownedClubsPerUser`: the plan covers only the first three (see `ClubRegistry.covered`),
  * and the rest run as lapsed clubs until they are passed on. A lapse on file for `fromUserId` as an
- * owner follows it too. Returns the codes of the clubs changed. The memory repository and the registry both use this,
- * so the rows in the store and the clubs in memory always agree (pg.ts does the same in SQL).
+ * owner follows it too. Standings on file for either account in a club (it had left) are added to
+ * the member row `to` ends up with, or stay on file under `to`. Returns the codes of the clubs
+ * changed. The memory repository, the Postgres one and the registry all use this, so the rows in
+ * the store and the clubs in memory always agree. `at` is the time of the merge.
  */
-export function moveMembershipsIn(clubs: Iterable<Club>, fromUserId: string, to: Identity): string[] {
+export function moveMembershipsIn(clubs: Iterable<Club>, fromUserId: string, to: Identity, at: number = Date.now()): string[] {
   const changed: string[] = [];
   const rename = (x: Identity) => {
     x.userId = to.userId;
@@ -285,7 +359,8 @@ export function moveMembershipsIn(clubs: Iterable<Club>, fromUserId: string, to:
     const bans = club.bans ?? [];
     const fromBan = bans.find((b) => b.userId === fromUserId);
     const fromLapse = (club.ownerLapses ?? []).find((l) => l.userId === fromUserId);
-    if (!fromMember && !fromPending && !ownsIt && !fromBan && !fromLapse) continue;
+    const fromFormer = (club.former ?? []).find((f) => f.userId === fromUserId);
+    if (!fromMember && !fromPending && !ownsIt && !fromBan && !fromLapse && !fromFormer) continue;
     changed.push(club.code);
     if (fromLapse) {
       const toLapse = club.ownerLapses!.find((l) => l.userId === to.userId);
@@ -313,7 +388,29 @@ export function moveMembershipsIn(clubs: Iterable<Club>, fromUserId: string, to:
       const owner = club.members.find((m) => m.userId === to.userId);
       if (owner) owner.role = 'owner';
     }
-    for (const t of club.tables) if (t.createdBy === fromUserId) t.createdBy = to.userId;
+    for (const t of club.tables) {
+      if (t.createdBy === fromUserId) t.createdBy = to.userId;
+      for (const s of t.startedWith ?? []) if (s.userId === fromUserId) s.userId = to.userId;
+    }
+    // Standings on file: one person, one row. They join the member row, or stay on file under `to`.
+    const nowMember = club.members.find((m) => m.userId === to.userId);
+    const toFormer = (club.former ?? []).find((f) => f.userId === to.userId);
+    if (nowMember) {
+      restoreStandings(club, nowMember);
+      if (fromFormer) {
+        addStandings(nowMember, fromFormer, club.season ?? 1);
+        club.former = (club.former ?? []).filter((f) => f !== fromFormer);
+      }
+    } else if (fromFormer) {
+      if (toFormer) {
+        const season = Math.max(toFormer.season, fromFormer.season);
+        if (toFormer.season !== season) toFormer.seasonPoints = 0;
+        toFormer.season = season;
+        addStandings(toFormer, fromFormer, season);
+        toFormer.leftAt = Math.max(toFormer.leftAt, fromFormer.leftAt);
+        club.former = (club.former ?? []).filter((f) => f !== fromFormer);
+      } else fromFormer.userId = to.userId;
+    }
     // A ban follows the account it was moved into, and beats any membership there (the owner's excepted).
     if (fromBan) {
       if (bans.some((b) => b.userId === to.userId)) club.bans = bans.filter((b) => b !== fromBan);
@@ -323,6 +420,7 @@ export function moveMembershipsIn(clubs: Iterable<Club>, fromUserId: string, to:
       }
     }
     if ((club.bans ?? []).some((b) => b.userId === to.userId)) {
+      for (const m of club.members) if (m.userId === to.userId && m.role !== 'owner') fileStandings(club, m, at);
       club.members = club.members.filter((m) => m.userId !== to.userId || m.role === 'owner');
       club.pending = club.pending.filter((p) => p.userId !== to.userId);
     }
@@ -710,7 +808,7 @@ export class ClubRegistry {
    * meanwhile is lost to a reload. Returns the clubs changed.
    */
   moveMemberships(fromUserId: string, to: Identity): string[] {
-    const changed = moveMembershipsIn(this.clubs.values(), fromUserId, to);
+    const changed = moveMembershipsIn(this.clubs.values(), fromUserId, to, this.now());
     for (const code of changed) {
       this.persistCode(code);
       // Clubs the merged account now owns: its plan decides their table cap (and covers only three).
@@ -737,7 +835,7 @@ export class ClubRegistry {
   /**
    * The hard delete of accounts (30 days after they were deleted) has removed these users, and in
    * Postgres their club rows with them. Drop their member rows and join requests from the clubs in
-   * memory too, so the next write of a club matches the store. Bans they made, and bans of them,
+   * memory too, with any standings on file for them, so the next write of a club matches the store. Bans they made, and bans of them,
    * stay (a ban row names an account, it does not need one). A club one of them still owned (the
    * store refuses to purge an owner, so this is a registry that had fallen behind) passes on as at
    * deletion, or is removed when nobody else is in it. Returns the clubs changed.
@@ -753,10 +851,12 @@ export class ClubRegistry {
       const members = club.members.filter((m) => !gone.has(m.userId));
       const pending = club.pending.filter((p) => !gone.has(p.userId));
       const lapses = (club.ownerLapses ?? []).filter((l) => !gone.has(l.userId));
-      if (members.length === club.members.length && pending.length === club.pending.length && lapses.length === (club.ownerLapses ?? []).length) continue;
+      const former = (club.former ?? []).filter((f) => !gone.has(f.userId));
+      if (members.length === club.members.length && pending.length === club.pending.length && lapses.length === (club.ownerLapses ?? []).length && former.length === (club.former ?? []).length) continue;
       club.members = members;
       club.pending = pending;
       club.ownerLapses = lapses;
+      club.former = former;
       changed.add(club.code);
     }
     for (const code of changed) this.persistCode(code);
@@ -852,6 +952,8 @@ export class ClubRegistry {
       seasons: [],
       bans: [],
       ownerLapsedAt: null,
+      ownerLapses: [],
+      former: [],
     };
     this.clubs.set(club.code, club);
     this.persist(club);
@@ -877,9 +979,17 @@ export class ClubRegistry {
       return { club, status: 'pending' };
     }
     this.requireMemberRoom(club);
-    club.members.push(newMember(user, 'member', this.now()));
+    this.admit(club, user);
     this.persist(club);
     return { club, status: 'joined' };
+  }
+
+  /** Make an account a member. Standings it left on file here come back with it (decision 5). */
+  private admit(club: Club, user: Identity): ClubMember {
+    const m = newMember({ userId: user.userId, name: user.name, ...(user.avatar === undefined ? {} : { avatar: user.avatar }) }, 'member', this.now());
+    restoreStandings(club, m);
+    club.members.push(m);
+    return m;
   }
 
   approve(code: string, actorId: string, userId: string): Club {
@@ -889,16 +999,23 @@ export class ClubRegistry {
     if (idx < 0) throw new ClubError('not_found', 'No pending request for that user');
     this.requireMemberRoom(club);
     const [user] = club.pending.splice(idx, 1);
-    club.members.push(newMember(user, 'member', this.now()));
+    this.admit(club, user);
     this.persist(club);
     this.emit({ type: 'member_approved', club, userId, by: actorId });
     return club;
   }
 
+  /**
+   * A member leaves, or the owner or an admin removes one. Their standings go on file (hidden) and
+   * come back if they rejoin, so leaving never wipes a score; a match they are seated in still
+   * counts, and they are still charged their result (decision 5).
+   */
   removeMember(code: string, actorId: string, userId: string): Club {
     const club = this.get(code);
     if (userId === club.ownerId) throw new ClubError('forbidden', 'The owner cannot leave; transfer ownership first');
     if (actorId !== userId) this.assertOutranks(club, actorId, userId);
+    const leaving = this.member(club, userId);
+    if (leaving) fileStandings(club, leaving, this.now());
     club.members = club.members.filter((m) => m.userId !== userId);
     club.pending = club.pending.filter((p) => p.userId !== userId);
     this.persist(club);
@@ -946,6 +1063,8 @@ export class ClubRegistry {
       if (!row) throw new ClubError('not_found', 'Member not found');
       bans.push({ userId, name: row.name, bannedAt: this.now(), by: actor.userId });
     }
+    const banned = this.member(club, userId);
+    if (banned) fileStandings(club, banned, this.now());
     club.members = club.members.filter((m) => m.userId !== userId);
     club.pending = club.pending.filter((p) => p.userId !== userId);
     this.persist(club);
@@ -1144,11 +1263,18 @@ export class ClubRegistry {
     const club = this.clubForTable(roomCode);
     if (!club) return;
     const players = event.seats.map((s) => ({ seat: s.seat, name: s.name, userId: s.userId, isBot: s.isBot, connected: s.connected }));
+    const table = club.tables.find((t) => t.code === roomCode);
     if (event.type === 'match_over' && event.handNumber >= 0) {
-      const table = club.tables.find((t) => t.code === roomCode);
       // A match is counted once, however many times its end is reported, and only when it is a real club game.
       if (table && table.status !== 'finished' && countsForStandings(club, table, event.seats)) {
-        this.recordMatch(club.code, event.seats.map((s) => ({ userId: s.userId, points: event.scores[s.seat] ?? 0, handsWon: event.handsWon[s.seat] ?? 0 })));
+        // Each seat's result goes to the member who held it when the match started, even if they
+        // have left the club or the table since (a bot finished for them).
+        const roster = startingMembers(club, table, event.seats);
+        this.recordMatch(
+          club.code,
+          event.seats.map((s) => ({ userId: roster.find((r) => r.seat === s.seat)?.userId, points: event.scores[s.seat] ?? 0, handsWon: event.handsWon[s.seat] ?? 0 })),
+          { departed: true },
+        );
       }
       this.updateTable(club.code, roomCode, { status: 'finished', players, scores: event.scores });
     } else if (event.type === 'match_over') {
@@ -1157,6 +1283,10 @@ export class ClubRegistry {
     } else {
       // updateTable ignores these once the table has finished.
       const playing = event.type === 'state' || event.type === 'hand_over' || event.handNumber > 0;
+      // Play begins: note which club members are seated. The match counts, and is charged, by them.
+      if (playing && table && table.status === 'open' && !table.startedWith) {
+        table.startedWith = event.seats.filter((s) => !s.isBot && s.userId && this.member(club, s.userId)).map((s) => ({ seat: s.seat, userId: s.userId! }));
+      }
       this.updateTable(club.code, roomCode, { status: playing ? 'playing' : 'open', players, handNumber: event.handNumber, scores: event.scores });
     }
   }
@@ -1170,15 +1300,21 @@ export class ClubRegistry {
     this.persist(club);
   }
 
-  /** Add a finished match to member standings. `results` carry each seat's final points. */
-  recordMatch(code: string, results: Array<{ userId?: string; points: number; handsWon: number }>): void {
+  /**
+   * Add a finished match to member standings. `results` carry each seat's final points. With
+   * `departed`, a result for an account that is no longer a member is added to its standings on
+   * file (it was a member when the match started); without it such a result is ignored.
+   */
+  recordMatch(code: string, results: Array<{ userId?: string; points: number; handsWon: number }>, opts: { departed?: boolean } = {}): void {
     const club = this.clubs.get(code.toUpperCase());
     if (!club) return;
     const best = Math.max(...results.map((r) => r.points));
+    const season = club.season ?? 1;
     for (const r of results) {
       if (!r.userId) continue;
-      const m = this.member(club, r.userId);
+      const m: Standing | undefined = this.member(club, r.userId) ?? (opts.departed ? onFile(club, r.userId, this.now()) : undefined);
       if (!m) continue;
+      if ('season' in m && m.season !== season) Object.assign(m, { season, seasonPoints: 0 });
       m.points += r.points;
       m.seasonPoints = (m.seasonPoints ?? 0) + r.points;
       m.matchesPlayed++;
@@ -1223,10 +1359,10 @@ export class ClubRegistry {
 
   /**
    * What a member sees: the whole club, except that only the owner and admins see the ban list,
-   * and nobody is sent the server's own records (the owner-lapse file).
+   * and nobody is sent the server's own records (the owner-lapse file, standings kept for members who left).
    */
   static memberView(club: Club, userId: string): Club {
-    const { ownerLapses: _lapses, ...shown } = club;
+    const { ownerLapses: _lapses, former: _former, ...shown } = club;
     const m = club.members.find((x) => x.userId === userId);
     if (m && (m.role === 'owner' || m.role === 'admin')) return shown;
     const { bans: _bans, ...rest } = shown;
@@ -1239,19 +1375,44 @@ export class ClubRegistry {
   }
 }
 
+/** The row of standings on file for an account that has left, made if there is none yet. */
+function onFile(club: Club, userId: string, at: number): FormerMember {
+  const former = (club.former ??= []);
+  let row = former.find((f) => f.userId === userId);
+  if (!row) {
+    row = { userId, leftAt: at, season: club.season ?? 1, points: 0, seasonPoints: 0, matchesPlayed: 0, matchesWon: 0, handsWon: 0 };
+    former.push(row);
+  }
+  return row;
+}
+
+/**
+ * The club members a match at this table started with, by seat (decision 5): the list written
+ * when play began. A table with no such list (its match began before the list existed, or no
+ * start was ever reported) falls back to the humans seated now who are members, or who left the
+ * club after the table was opened.
+ */
+export function startingMembers(club: Club, table: ClubTable, seats: ReadonlyArray<{ seat?: number; userId?: string; isBot: boolean }>): Array<{ seat: number; userId: string }> {
+  if (table.startedWith) return table.startedWith;
+  const wasMember = (id: string) => club.members.some((m) => m.userId === id) || (club.former ?? []).some((f) => f.userId === id && f.leftAt >= table.createdAt);
+  return seats.flatMap((s, i) => (!s.isBot && s.userId && wasMember(s.userId) ? [{ seat: s.seat ?? i, userId: s.userId }] : []));
+}
+
 /**
  * Whether a finished match at a club table moves the standings: not at a variant table (other
- * rules than the house's), only with at least two different human club members seated, and never
- * when one account held two seats (the table host refuses that; this guard stays in case it ever
- * slips). A member alone against bots, or a member with a second account outside the club, scores
- * nothing, so standings cannot be farmed against bots.
+ * rules than the house's), only when at least two different club members were seated when it
+ * started (`startingMembers`), and never when one account held two seats (the table host refuses
+ * that; this guard stays in case it ever slips). A member alone against bots, or a member with a
+ * second account outside the club, scores nothing, so standings cannot be farmed against bots.
+ * What happens after the start does not change the answer: a member who leaves the club, or is
+ * taken off the table, before the end cannot void the others' result.
  */
-export function countsForStandings(club: Club, table: ClubTable, seats: ReadonlyArray<{ userId?: string; isBot: boolean }>): boolean {
+export function countsForStandings(club: Club, table: ClubTable, seats: ReadonlyArray<{ seat?: number; userId?: string; isBot: boolean }>): boolean {
   if (table.variant) return false;
-  const ids = seats.filter((s) => !s.isBot && s.userId).map((s) => s.userId!);
-  if (new Set(ids).size !== ids.length) return false;
-  const members = ids.filter((id) => club.members.some((m) => m.userId === id));
-  return members.length >= 2;
+  const humans = seats.filter((s) => !s.isBot && s.userId).map((s) => s.userId!);
+  if (new Set(humans).size !== humans.length) return false;
+  const members = startingMembers(club, table, seats).map((s) => s.userId);
+  return members.length >= 2 && new Set(members).size === members.length;
 }
 
 /** The room registry's view of the clubs: who may open and join club tables over the socket. */

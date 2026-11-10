@@ -167,6 +167,7 @@ function memoryUsers(s: MemoryState): UsersRepo {
         for (const club of s.clubs.values()) {
           club.members = club.members.filter((m) => m.userId !== id);
           club.pending = club.pending.filter((p) => p.userId !== id);
+          if (club.former) club.former = club.former.filter((f) => f.userId !== id);
         }
         purged.push(id);
       }
