@@ -14,7 +14,9 @@
  *
  * The account that opened a table travels inside the snapshot as `createdBy` (Postgres also
  * exposes it as the generated column `table_snapshots.created_by`, migration 0003), so a restored
- * table still counts towards its creator's open-table cap.
+ * table still counts towards its creator's open-table cap. A quick-match table's accounts
+ * (`quickPlayers`) and the accounts taken off a table (`evicted`) travel the same way, so a
+ * restart neither opens a quick-match table to strangers nor lets an evicted player back in.
  */
 import type { SerializedHost, TableHost } from '@mjm/net';
 import type { TableSnapshotsRepo, TableStatus } from './repos/types';
@@ -148,11 +150,14 @@ export class TablePersister {
       .then(async () => {
         t.queued = false;
         t.lastWriteAt = this.now();
-        const snapshot: SerializedHost & { createdBy?: string; quickPlayers?: string[] } = t.host.serialize();
+        const snapshot: SerializedHost & { createdBy?: string; quickPlayers?: string[]; evicted?: string[] } = t.host.serialize();
         if (t.createdBy) snapshot.createdBy = t.createdBy;
         // A quick-match table admits only its matched accounts, after a restart too.
         const quick = this.rooms.quickPlayersOf(code);
         if (quick) snapshot.quickPlayers = quick;
+        // An account the club took off this table stays out of it after a restart.
+        const evicted = this.rooms.evictedOf(code);
+        if (evicted) snapshot.evicted = evicted;
         await this.repo.save({ roomCode: code, clubCode: t.clubCode, status: t.closed ? 'finished' : tableStatus(t.host), snapshot, updatedAt: this.now() });
         this.writes++;
         if (t.closed && this.tables.get(code) === t && !t.queued) this.tables.delete(code);
@@ -190,10 +195,17 @@ export class TablePersister {
     const restored: string[] = [];
     for (const s of await this.repo.listActive()) {
       try {
-        const snapshot = s.snapshot as SerializedHost & { createdBy?: unknown; quickPlayers?: unknown };
+        const snapshot = s.snapshot as SerializedHost & { createdBy?: unknown; quickPlayers?: unknown; evicted?: unknown };
         const createdBy = snapshot && typeof snapshot.createdBy === 'string' && snapshot.createdBy ? snapshot.createdBy : undefined;
         const quickPlayers = snapshot && Array.isArray(snapshot.quickPlayers) ? snapshot.quickPlayers.filter((x): x is string => typeof x === 'string') : undefined;
-        const code = this.rooms.createHostedRoom({ restore: snapshot, clubCode: s.clubCode ?? undefined, createdBy, ...(quickPlayers ? { quickMatch: { players: quickPlayers } } : {}) });
+        const evicted = snapshot && Array.isArray(snapshot.evicted) ? snapshot.evicted.filter((x): x is string => typeof x === 'string') : undefined;
+        const code = this.rooms.createHostedRoom({
+          restore: snapshot,
+          clubCode: s.clubCode ?? undefined,
+          createdBy,
+          ...(quickPlayers ? { quickMatch: { players: quickPlayers } } : {}),
+          ...(evicted?.length ? { evicted } : {}),
+        });
         this.track(code);
         restored.push(code);
       } catch (e) {

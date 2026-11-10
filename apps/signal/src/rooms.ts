@@ -186,6 +186,8 @@ export interface HostedRoomOptions {
    * after it opened with bots in the seats still empty (closed instead if nobody came).
    */
   quickMatch?: { players: string[]; startAfterMs?: number };
+  /** Accounts taken off this table before a restart (from its snapshot): they still may not come back. */
+  evicted?: string[];
 }
 
 /** How long a quick-match table waits for its players before it starts with bots in the empty seats. */
@@ -251,6 +253,7 @@ export class RoomRegistry {
     const room: Room = { code, host: '', peers: new Set(), createdAt: this.now(), keepAliveUntil: this.now() + (opts.keepAliveMs ?? KEEP_ALIVE_MS), pinned: true };
     if (opts.clubCode) room.clubCode = opts.clubCode.toUpperCase();
     if (opts.createdBy) room.createdBy = opts.createdBy;
+    if (opts.evicted?.length) room.evicted = new Set(opts.evicted);
     if (opts.quickMatch) room.quick = { players: new Set(opts.quickMatch.players), startBy: this.now() + (opts.quickMatch.startAfterMs ?? QUICK_START_MS), started: false };
     this.attachTable(room, opts.rules, opts.botSkill, opts.restore);
     this.rooms.set(code, room);
@@ -270,6 +273,12 @@ export class RoomRegistry {
   quickPlayersOf(code: string): string[] | undefined {
     const quick = this.rooms.get(code.toUpperCase())?.quick;
     return quick ? [...quick.players] : undefined;
+  }
+
+  /** The accounts taken off a table, which may not come back to it (undefined when there are none); for its snapshot. */
+  evictedOf(code: string): string[] | undefined {
+    const evicted = this.rooms.get(code.toUpperCase())?.evicted;
+    return evicted?.size ? [...evicted] : undefined;
   }
 
   /** Whether a room is a quick-match table. */
@@ -748,7 +757,8 @@ export class RoomRegistry {
    * Take an account off a table (a club owner's eviction, a removed or banned member): its seat is
    * played by the table's bot to the end of the match (freed in the lobby), each of its sockets in
    * the room is told (`{t:'error', code:'closed', message}`) and leaves, and it may not come back
-   * to this table. Returns how many seats it held.
+   * to this table, after a restart either (the evicted accounts are written with the table's
+   * snapshot). Returns how many seats it held.
    */
   evictFromTable(code: string, userId: string, message = EVICTED_BY_CLUB): number {
     const room = this.rooms.get(code.toUpperCase());
@@ -762,6 +772,8 @@ export class RoomRegistry {
       peer.socket.send(closed);
       this.leave(peer);
     }
+    // The eviction is part of the table's snapshot, also when the account held no seat.
+    if (room.table && this.rooms.has(room.code)) for (const h of this.changeHandlers) h(room.code);
     return seats.length;
   }
 
