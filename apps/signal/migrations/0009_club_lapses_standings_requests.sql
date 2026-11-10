@@ -24,3 +24,8 @@ CREATE TABLE club_former_members (
   PRIMARY KEY (club_code, user_id)
 );
 CREATE INDEX club_former_members_user_idx ON club_former_members (user_id);
+
+-- When a pending join request was made (status = 'pending' rows only). A request nobody answered
+-- is dropped 30 days later. Null in rows written before requests expired: their 30 days start
+-- when the server next loads the club.
+ALTER TABLE club_members ADD COLUMN requested_at timestamptz;

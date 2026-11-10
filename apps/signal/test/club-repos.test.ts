@@ -142,6 +142,23 @@ function contract(name: string, repos: () => Repos) {
       if (r.kind === 'pg') expect((await r.clubs.get(c.code))!.former ?? []).toEqual([]);
     });
 
+    it('keeps the date of a join request through saves, and gives a request stored without one no date', async () => {
+      const r = repos();
+      const [owner, member, banned, asker, old] = [await user(), await user(), await user(), await user(), await user()];
+      const c: Club = { ...clubOf(code(), owner, member, banned), pending: [{ userId: asker, name: 'Asker', requestedAt: T0 + 7_000 }, { userId: old, name: 'Old request' }] };
+      await r.clubs.save(c);
+      const read = async () => Object.fromEntries((await r.clubs.get(c.code))!.pending.map((p) => [p.name, p.requestedAt]));
+      expect(await read()).toEqual({ Asker: T0 + 7_000, 'Old request': undefined });
+      // A later save (the club changed for another reason) keeps it; approving clears it.
+      await r.clubs.save({ ...c, description: 'Changed' });
+      expect(await read()).toEqual({ Asker: T0 + 7_000, 'Old request': undefined });
+      const row = c.members[1];
+      await r.clubs.save({ ...c, pending: [], members: [...c.members, { ...row, userId: asker, name: 'Asker', joinedAt: T0 + 8_000 }] });
+      const after = (await r.clubs.get(c.code))!;
+      expect(after.pending).toEqual([]);
+      expect(after.members.find((m) => m.userId === asker)).toMatchObject({ name: 'Asker', joinedAt: T0 + 8_000 });
+    });
+
     it("passes a deleted owner's club to the first admin or member who owns fewer than 3 clubs and has not deleted their account", async () => {
       const r = repos();
       const [gone, busyAdmin, deleted, heir, late] = [await user(), await user(), await user(), await user(), await user()];

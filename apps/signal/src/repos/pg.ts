@@ -837,6 +837,7 @@ interface MemberRow {
   matches_played: number;
   matches_won: number;
   hands_won: number;
+  requested_at: Date | null;
 }
 interface TableRow {
   code: string;
@@ -896,7 +897,7 @@ function assembleClubs(clubs: ClubRow[], members: MemberRow[], tables: TableRow[
   for (const m of members) {
     const club = byCode.get(m.club_code);
     if (!club) continue;
-    if (m.status === 'pending') club.pending.push(identityOf(m));
+    if (m.status === 'pending') club.pending.push({ ...identityOf(m), ...(m.requested_at ? { requestedAt: m.requested_at.getTime() } : {}) });
     else
       club.members.push({
         ...identityOf(m),
@@ -946,7 +947,7 @@ function assembleClubs(clubs: ClubRow[], members: MemberRow[], tables: TableRow[
 
 function pgClubs(q: Queryable, tx: Tx): ClubsRepo {
   const CLUB_COLS = 'code, owner_id, name, description, rules, settings, created_at, season, season_started_at, season_history, owner_lapsed_at, owner_lapses';
-  const MEMBER_COLS = 'club_code, user_id, role, status, display_name, avatar, joined_at, season_points, lifetime_points, matches_played, matches_won, hands_won';
+  const MEMBER_COLS = 'club_code, user_id, role, status, display_name, avatar, joined_at, season_points, lifetime_points, matches_played, matches_won, hands_won, requested_at';
   const TABLE_COLS = 'code, club_code, label, rules, created_by, status, state, created_at, variant';
   const BAN_COLS = 'club_code, user_id, display_name, banned_by, banned_at';
   const FORMER_COLS = 'club_code, user_id, left_at, season, season_points, lifetime_points, matches_played, matches_won, hands_won';
@@ -981,6 +982,7 @@ function pgClubs(q: Queryable, tx: Tx): ClubsRepo {
         matches_played: m.matchesPlayed,
         matches_won: m.matchesWon,
         hands_won: m.handsWon,
+        requested_at: null as number | null,
       })),
       ...club.pending.map((p) => ({
         user_id: p.userId,
@@ -994,6 +996,7 @@ function pgClubs(q: Queryable, tx: Tx): ClubsRepo {
         matches_played: 0,
         matches_won: 0,
         hands_won: 0,
+        requested_at: p.requestedAt ?? null,
       })),
     ];
     const tables = club.tables.map((t) => ({
@@ -1037,17 +1040,18 @@ function pgClubs(q: Queryable, tx: Tx): ClubsRepo {
     );
     await c.query('DELETE FROM club_members WHERE club_code = $1 AND NOT (user_id = ANY($2::uuid[]))', [club.code, rows.map((r) => r.user_id)]);
     await c.query(
-      `INSERT INTO club_members (club_code, user_id, role, status, display_name, avatar, joined_at, season_points, lifetime_points, matches_played, matches_won, hands_won)
+      `INSERT INTO club_members (club_code, user_id, role, status, display_name, avatar, joined_at, season_points, lifetime_points, matches_played, matches_won, hands_won, requested_at)
        SELECT $1, r.user_id, r.role, r.status, r.display_name, r.avatar, COALESCE(to_timestamp(r.joined_at / 1000.0), now()),
-              r.season_points, r.points, r.matches_played, r.matches_won, r.hands_won
+              r.season_points, r.points, r.matches_played, r.matches_won, r.hands_won, to_timestamp(r.requested_at / 1000.0)
        FROM jsonb_to_recordset($2::jsonb) AS r(user_id uuid, role text, status text, display_name text, avatar text,
-            joined_at double precision, season_points integer, points integer, matches_played integer, matches_won integer, hands_won integer)
+            joined_at double precision, season_points integer, points integer, matches_played integer, matches_won integer, hands_won integer,
+            requested_at double precision)
        WHERE EXISTS (SELECT 1 FROM users u WHERE u.id = r.user_id)
        ON CONFLICT (club_code, user_id) DO UPDATE SET role = excluded.role, status = excluded.status,
          display_name = excluded.display_name, avatar = excluded.avatar,
          joined_at = CASE WHEN excluded.status = 'member' THEN excluded.joined_at ELSE club_members.joined_at END,
          season_points = excluded.season_points, lifetime_points = excluded.lifetime_points, matches_played = excluded.matches_played,
-         matches_won = excluded.matches_won, hands_won = excluded.hands_won`,
+         matches_won = excluded.matches_won, hands_won = excluded.hands_won, requested_at = excluded.requested_at`,
       [club.code, json(rows)],
     );
     await c.query('DELETE FROM club_tables WHERE club_code = $1 AND NOT (code = ANY($2::text[]))', [club.code, tables.map((t) => t.code)]);

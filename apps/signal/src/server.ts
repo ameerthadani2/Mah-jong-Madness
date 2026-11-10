@@ -267,6 +267,8 @@ export async function createSignalServer(opts: SignalServerOptions): Promise<Sig
   receipts.unref();
   const pruner = setInterval(() => {
     clubs.pruneFinishedTables(now() - DAY_MS);
+    // Join requests nobody answered in 30 days.
+    clubs.expirePending();
     persister.prune().catch((e: Error) => console.error('[signal] snapshot prune failed', e.message));
     // The hard delete promised at soft deletion (30 days), and sessions that have ended.
     // The clubs in memory still hold the purged accounts' rows: drop them before the next club write.

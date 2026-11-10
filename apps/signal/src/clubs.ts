@@ -16,7 +16,7 @@
 import { BOT_SKILLS, randomHex, sanitizeRules, type BotSkill, type RuleSet } from '@mjm/engine';
 import type { HostEvent } from '@mjm/net';
 import { uniqueCode, type HexSource } from './codes';
-import { cleanField } from './limits';
+import { BucketTable, cleanField } from './limits';
 import { DELETED_PLAYER_NAME } from './repos/types';
 import type { ClubGate } from './rooms';
 
@@ -113,6 +113,12 @@ export interface ClubBan extends Identity {
   by: string;
 }
 
+/** A request to join a club that waits for the owner or an admin. */
+export interface PendingRequest extends Identity {
+  /** When it was made; it expires `CLUB_LIMITS.pendingRequestMs` later. Absent in rows written before requests expired (read as the time they were loaded). */
+  requestedAt?: number;
+}
+
 export interface Club {
   code: string;
   name: string;
@@ -122,7 +128,7 @@ export interface Club {
   rules: RuleSet;
   settings: ClubSettings;
   members: ClubMember[];
-  pending: Identity[];
+  pending: PendingRequest[];
   tables: ClubTable[];
   /** The current season number (from 1). Absent in clubs stored before seasons existed (read as 1). */
   season?: number;
@@ -192,7 +198,7 @@ const RETRY_DELAY_MS = 1_000;
 
 export class ClubError extends Error {
   constructor(
-    public readonly code: 'not_found' | 'forbidden' | 'exists' | 'invalid' | 'pending' | 'limit' | 'unavailable',
+    public readonly code: 'not_found' | 'forbidden' | 'exists' | 'invalid' | 'pending' | 'limit' | 'unavailable' | 'rate_limited',
     message: string,
   ) {
     super(message);
@@ -206,6 +212,15 @@ export const CLUB_LIMITS = {
   clubsPerUser: 10,
   /** Members per club. Pending requests have the same cap. */
   membersPerClub: 200,
+  /** A join request nobody answered is dropped after this long, so old ones cannot fill the queue for good. */
+  pendingRequestMs: 30 * DAY_MS,
+  /**
+   * New members and join requests one address may add per hour over the API, across all clubs
+   * (accounts are free to make, addresses less so).
+   */
+  joinsPerHourPerIp: 10,
+  /** New members and join requests one club takes per hour over the API, whoever sends them. */
+  joinsPerHourPerClub: 60,
   /** Tables per club that have not finished. */
   openTablesPerClub: 5,
   /** Clubs one account may own (decision 5: a Four Winds Club subscriber may run up to 3). */
@@ -498,12 +513,18 @@ export class ClubRegistry {
   /** Whether a club owner holds The Four Winds Club; null while the store is not live (no check). */
   private ownerPlan: ((userId: string) => Promise<boolean>) | null = null;
   private planCheck: Promise<void> | null = null;
+  /** Joins and join requests over the API, per client address and per club (see `joinClub`). */
+  private readonly joinsByIp: BucketTable<string>;
+  private readonly joinsByClub: BucketTable<string>;
 
   constructor(opts: { store?: ClubStore; now?: () => number; randomHex?: HexSource; retryDelayMs?: number } = {}) {
     this.now = opts.now ?? Date.now;
     this.hex = opts.randomHex ?? randomHex;
     this.store = opts.store ?? null;
     this.retryDelayMs = opts.retryDelayMs ?? RETRY_DELAY_MS;
+    const hourly = (n: number) => new BucketTable<string>(n, n / 3600, { now: this.now, idleMs: 3_600_000 });
+    this.joinsByIp = hourly(CLUB_LIMITS.joinsPerHourPerIp);
+    this.joinsByClub = hourly(CLUB_LIMITS.joinsPerHourPerClub);
   }
 
   /** Clubs whose last write failed and have not been written since (tests and diagnostics). */
@@ -677,7 +698,34 @@ export class ClubRegistry {
   /** Read every club from the store (once, at boot, before the registry is used). */
   async load(): Promise<void> {
     if (!this.store) return;
-    for (const c of await this.store.loadAll()) this.clubs.set(c.code, normalise(c));
+    for (const c of await this.store.loadAll()) this.clubs.set(c.code, this.read(c));
+  }
+
+  /** A club as read from the store, cleaned up; a join request with no date starts its 30 days now. */
+  private read(c: Club): Club {
+    const club = normalise(c);
+    for (const p of club.pending) if (typeof p.requestedAt !== 'number') p.requestedAt = this.now();
+    return club;
+  }
+
+  /**
+   * Drop join requests made before `before` (default: older than `CLUB_LIMITS.pendingRequestMs`).
+   * The server runs this every hour; a club also does it for itself whenever someone asks to join.
+   * Returns how many went.
+   */
+  expirePending(before: number = this.now() - CLUB_LIMITS.pendingRequestMs): number {
+    let dropped = 0;
+    for (const club of this.clubs.values()) dropped += this.expirePendingIn(club, before);
+    return dropped;
+  }
+
+  private expirePendingIn(club: Club, before: number): number {
+    const kept = club.pending.filter((p) => (p.requestedAt ?? before) >= before);
+    const dropped = club.pending.length - kept.length;
+    if (dropped === 0) return 0;
+    club.pending = kept;
+    this.persist(club);
+    return dropped;
   }
 
   /**
@@ -794,7 +842,7 @@ export class ClubRegistry {
     await this.flush();
     for (const code of new Set(codes)) {
       const club = await this.store.get(code);
-      if (club) this.clubs.set(code, normalise(club));
+      if (club) this.clubs.set(code, this.read(club));
       else this.clubs.delete(code);
     }
   }
@@ -966,22 +1014,38 @@ export class ClubRegistry {
     return (this.clubs.get(code.toUpperCase())?.bans ?? []).some((b) => b.userId === userId);
   }
 
-  joinClub(code: string, user: Identity): { club: Club; status: 'joined' | 'pending' | 'already' } {
+  /**
+   * Join a club, or ask to (a club that approves its members). `from` is the client address of a
+   * request over the API: a new member or request is then charged to that address and to the
+   * club (`joinsPerHourPerIp`, `joinsPerHourPerClub`), so throwaway accounts cannot fill a club or
+   * its request queue in one go. Asking again while already in, or already waiting, costs nothing.
+   */
+  joinClub(code: string, user: Identity, from?: { ip: string }): { club: Club; status: 'joined' | 'pending' | 'already' } {
     const club = this.get(code);
     if (this.member(club, user.userId)) return { club, status: 'already' };
     if (this.isBanned(club.code, user.userId)) throw new ClubError('forbidden', 'You cannot join this club');
+    this.expirePendingIn(club, this.now() - CLUB_LIMITS.pendingRequestMs);
     if (club.pending.some((p) => p.userId === user.userId)) return { club, status: 'pending' };
     this.requireClubRoom(user.userId);
     if (club.settings.joinRequiresApproval) {
       if (club.pending.length >= CLUB_LIMITS.membersPerClub) throw new ClubError('limit', 'This club has too many pending requests; try again later');
-      club.pending.push(user);
+      this.chargeJoin(club, from);
+      club.pending.push({ userId: user.userId, name: user.name, ...(user.avatar === undefined ? {} : { avatar: user.avatar }), requestedAt: this.now() });
       this.persist(club);
       return { club, status: 'pending' };
     }
     this.requireMemberRoom(club);
+    this.chargeJoin(club, from);
     this.admit(club, user);
     this.persist(club);
     return { club, status: 'joined' };
+  }
+
+  /** Spend one join from the address and from the club; 429 `rate_limited` when either has run out. */
+  private chargeJoin(club: Club, from?: { ip: string }): void {
+    if (!from) return;
+    if (!this.joinsByIp.take(from.ip)) throw new ClubError('rate_limited', 'Too many clubs joined from this connection; try again in an hour');
+    if (!this.joinsByClub.take(club.code)) throw new ClubError('rate_limited', 'This club is getting a lot of join requests; try again later');
   }
 
   /** Make an account a member. Standings it left on file here come back with it (decision 5). */
@@ -1031,6 +1095,30 @@ export class ClubRegistry {
     if (club.pending.length === before) throw new ClubError('not_found', 'No pending request for that user');
     this.persist(club);
     return club;
+  }
+
+  /**
+   * Owner or admin: turn down every pending join request at once, or only the ones named in
+   * `userIds` (the app sends the requests it was showing, so one that arrives while the owner is
+   * deciding is not swept away unseen). Clearing a queue also gives the club its hourly join
+   * allowance back, so the people the owner does want can ask at once after a flood. Returns the
+   * club and how many requests went.
+   */
+  rejectAll(code: string, actorId: string, userIds?: unknown): { club: Club; rejected: number } {
+    const club = this.get(code);
+    this.requireRole(club, actorId, ['owner', 'admin']);
+    if (userIds !== undefined && userIds !== null && (!Array.isArray(userIds) || userIds.length > CLUB_LIMITS.membersPerClub || userIds.some((id) => typeof id !== 'string'))) {
+      throw new ClubError('invalid', 'userIds must be a list of account ids');
+    }
+    const only = Array.isArray(userIds) ? new Set(userIds as string[]) : null;
+    const kept = only ? club.pending.filter((p) => !only.has(p.userId)) : [];
+    const rejected = club.pending.length - kept.length;
+    if (rejected > 0) {
+      club.pending = kept;
+      this.joinsByClub.forget(club.code);
+      this.persist(club);
+    }
+    return { club, rejected };
   }
 
   /**
