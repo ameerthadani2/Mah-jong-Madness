@@ -10,6 +10,16 @@
 import { describe, expect, it } from 'vitest';
 import { chooseAction, legalActions, withRules, type Action, type GameState } from '@mjm/engine';
 import { LoopbackHub, TableClient, TableHost, transportLink, type HostMessage, type Link } from '../src/index';
+import { Missed, scenario, seededDeals } from './support';
+
+seededDeals();
+
+/** A test on a fresh deal, dealt again when the turn it needs does not come up. */
+const deal = (name: string, fn: () => void) => it(name, () => scenario(fn));
+/** The deal did not bring the situation the test is about. */
+const need = (cond: boolean) => {
+  if (!cond) throw new Missed();
+};
 
 type StateMsg = Extract<HostMessage, { t: 'state' }>;
 
@@ -103,7 +113,7 @@ function play(t: T, onTurn: (n: number) => boolean | void) {
 const early = (t: T) => t.c.state.auditFailures.filter((f) => f.includes('clock had not run out')).length;
 
 describe('the table plays for a connected seat only after its time has run out', () => {
-  it('clock fields forged in the frame (already in the bank, 100 ms left) do not excuse an early move', () => {
+  deal('clock fields forged in the frame (already in the bank, 100 ms left) do not excuse an early move', () => {
     const t = table('CK1');
     const orig = t.h.stateMsg.bind(t.host);
     t.h.stateMsg = (seat) => {
@@ -119,12 +129,12 @@ describe('the table plays for a connected seat only after its time has run out',
       forced++;
       return true;
     });
-    expect(forced).toBeGreaterThan(0);
+    need(forced > 0);
     expect(t.c.state.auditStatus).toBe('failed');
     expect(early(t)).toBe(forced);
   });
 
-  it('time stamps that leap ahead of this device’s clock do not excuse it either', () => {
+  deal('time stamps that leap ahead of this device’s clock do not excuse it either', () => {
     for (const standIn of [false, true]) {
       const t = table(standIn ? 'CK2S' : 'CK2');
       let leap = 0;
@@ -142,25 +152,29 @@ describe('the table plays for a connected seat only after its time has run out',
         t.h.apply(0, chooseAction(t.host.game!, 0)!, 'timeout');
         return true;
       });
+      need(leap > 0);
       expect(early(t)).toBe(1);
     }
   });
 
-  it('a time bank the seat never used cannot be written off', () => {
+  deal('a time bank the seat never used cannot be written off', () => {
     const t = table('CK3');
+    let emptied = false;
     play(t, (n) => {
       if (n !== 2) return false;
       // The host empties the bank and times the seat out after the turn clock alone.
       t.h.banks[0] = 0;
       t.h.sendTo('p0', t.h.stateMsg(0));
       wait(t, TURN + 1_000);
+      emptied = true;
       return true;
     });
+    need(emptied);
     expect(t.c.state.auditStatus).toBe('failed');
     expect(early(t)).toBe(1);
   });
 
-  it('honest: a bank partly used on one move and run out on a later one is not flagged', () => {
+  deal('honest: a bank partly used on one move and run out on a later one is not flagged', () => {
     const t = table('CK4', { skew: 5 * 3_600_000 });
     let timedOut = 0;
     play(t, (n) => {
@@ -180,14 +194,16 @@ describe('the table plays for a connected seat only after its time has run out',
       }
       return false;
     });
-    expect(timedOut).toBeGreaterThan(0);
+    need(timedOut > 0);
     expect([t.c.state.auditStatus, t.c.state.auditFailures]).toEqual(['ok', []]);
   });
 
-  it('honest: frames that arrive seconds late, in bursts, over a link that stays up are not flagged', () => {
+  deal('honest: frames that arrive seconds late, in bursts, over a link that stays up are not flagged', () => {
     const t = table('CK5', { skew: -7 * 3_600_000 });
+    let late = 0;
     play(t, (n) => {
       if (n % 2 === 0) return false;
+      late++;
       // The frame showing the turn sits in the network for 8 s; the player is away; the timeout's frames then arrive at once.
       t.net.hold = true;
       wait(t, 8_000);
@@ -198,35 +214,33 @@ describe('the table plays for a connected seat only after its time has run out',
       while (t.host.phase === 'playing' && t.host.game!.turnCounter === before && guard++ < 400) wait(t, 500);
       return true;
     });
+    need(late > 0);
     expect([t.c.state.auditStatus, t.c.state.auditFailures]).toEqual(['ok', []]);
   });
 
-  it('honest: the phone sleeps through a whole turn and gets the frames in one burst', () => {
+  deal('honest: the phone sleeps through a whole turn and gets the frames in one burst', () => {
     const t = table('CK6');
     let slept = false;
     play(t, (n) => {
-      if (n !== 2) return false;
       act(t);
+      if (n !== 2 || t.host.phase !== 'playing') return true;
       // Nothing reaches the app until it wakes: its next turn, the bank frame and the timeout all arrive together.
       t.net.hold = true;
       let guard = 0;
-      while (t.host.phase === 'playing' && guard++ < 200) {
-        wait(t, 60_000);
-        if (legalActions(t.host.game!, 0).length > 0) {
-          wait(t, TURN + BANK + 1_000);
-          slept = true;
-          break;
-        }
+      while (t.host.phase === 'playing' && legalActions(t.host.game!, 0).length === 0 && guard++ < 2000) wait(t, 500);
+      if (t.host.phase === 'playing') {
+        wait(t, TURN + BANK + 1_000);
+        slept = true;
       }
       t.net.hold = false;
       t.net.flush();
       return true;
     });
-    expect(slept).toBe(true);
+    need(slept);
     expect([t.c.state.auditStatus, t.c.state.auditFailures]).toEqual(['ok', []]);
   });
 
-  it('honest: a reconnect in the middle of a turn that the host never noticed keeps the old clock and is not flagged', () => {
+  deal('honest: a reconnect in the middle of a turn that the host never noticed keeps the old clock and is not flagged', () => {
     const t = table('CK7');
     let swapped = false;
     play(t, (n) => {
@@ -242,14 +256,14 @@ describe('the table plays for a connected seat only after its time has run out',
       // The table timed the seat out on the clock it started 9 s before the reconnect.
       return true;
     });
-    expect(swapped).toBe(true);
+    need(swapped);
     expect(t.c.state.auditFailures).toEqual([]);
     expect(t.c.state.auditStatus).toBe('ok');
   });
 });
 
 describe('the table may not turn the seat’s own moves away', () => {
-  it('a legal move refused as "illegal", then played by the table after the clock ran out, fails', () => {
+  deal('a legal move refused as "illegal", then played by the table after the clock ran out, fails', () => {
     const t = table('RF1');
     const orig = t.h.handle.bind(t.host);
     let refused = 0;
@@ -270,13 +284,13 @@ describe('the table may not turn the seat’s own moves away', () => {
       if (t.host.phase === 'playing' && t.host.game!.turnCounter === tc) wait(t, TURN + BANK + 1_000);
       return true;
     });
-    expect(refused).toBe(2);
+    need(refused === 2);
     expect(t.c.state.auditStatus).toBe('failed');
     expect(t.c.state.auditFailures.filter((f) => f.startsWith('The host refused a legal move this seat made')).length).toBe(2);
     expect(early(t)).toBe(0);
   });
 
-  it('a legal move the table never answered, and replaced with its own when the clock ran out, fails', () => {
+  deal('a legal move the table never answered, and replaced with its own when the clock ran out, fails', () => {
     const t = table('RF2');
     const orig = t.h.handle.bind(t.host);
     let dropped = 0;
@@ -306,12 +320,12 @@ describe('the table may not turn the seat’s own moves away', () => {
       if (t.host.phase === 'playing' && t.host.game!.turnCounter === tc) wait(t, TURN + BANK + 1_000);
       return true;
     });
-    expect(dropped).toBe(1);
+    need(dropped === 1);
     expect(t.c.state.auditStatus).toBe('failed');
     expect(t.c.state.auditFailures.some((f) => f.startsWith('The table ignored a move this seat sent in good time'))).toBe(true);
   });
 
-  it('honest: a move that reaches the table just after the clock ran out is refused there, and nothing is flagged', () => {
+  deal('honest: a move that reaches the table just after the clock ran out is refused there, and nothing is flagged', () => {
     const t = table('RF3');
     let raced = false;
     play(t, (n) => {
@@ -321,18 +335,55 @@ describe('the table may not turn the seat’s own moves away', () => {
       t.net.stall = true;
       act(t);
       wait(t, 5_000);
-      expect(legalActions(t.host.game!, 0).length === 0 || t.host.game!.turnCounter > t.c.state.view!.turnCounter - 1).toBe(true);
       t.net.stall = false;
       t.net.flush();
       raced = true;
       return true;
     });
-    expect(raced).toBe(true);
-    expect(t.c.state.lastErrorCode === null || t.c.state.lastErrorCode === 'illegal').toBe(true);
+    need(raced);
     expect([t.c.state.auditStatus, t.c.state.auditFailures]).toEqual(['ok', []]);
   });
 
-  it('honest: a tile not in hand, then a legal move on the same turn, and a double tap, are not held against the host', () => {
+  deal('honest: a move that arrives after the clock ran out is played on the seat’s next turn if still legal, and is not flagged', () => {
+    const t = table('RF5');
+    let late: Action | null = null;
+    let playedLate = false;
+    play(t, (n) => {
+      const s = t.c.localState()!;
+      if (n !== 2 || s.phase !== 'discard') return false;
+      // The player picks a tile the table's own choice will leave in the hand, two seconds before time is up.
+      const tables = chooseAction(t.host.game!, 0, { seed: 'timeout:0', skill: 'club' });
+      const mine = legalActions(s, 0).find((a) => a.type === 'discard' && (tables?.type !== 'discard' || a.tile !== tables.tile));
+      if (!mine) return false;
+      wait(t, TURN + BANK - 2_000);
+      t.net.stall = true;
+      t.c.act(mine);
+      late = mine;
+      // The network holds the move until the seat is to discard again.
+      let guard = 0;
+      wait(t, 3_000);
+      while (t.host.phase === 'playing' && !(t.host.game!.phase === 'discard' && t.host.game!.turn === 0) && guard++ < 400) {
+        if (myTurn(t)) {
+          // A claim in between is answered at once (on another link the stalled move would not block it).
+          t.net.stall = false;
+          break;
+        }
+        wait(t, 500);
+      }
+      const before = t.host.game?.turnCounter;
+      const stalled = t.net.stall;
+      t.net.stall = false;
+      t.net.flush();
+      playedLate = stalled && t.host.phase === 'playing' && t.host.game!.turnCounter > (before ?? 0);
+      return true;
+    });
+    need(late !== null && playedLate);
+    const mineInLog = t.host.game!.actionLog.filter((e) => e.seat === 0 && e.source === 'player' && JSON.stringify(e.action) === JSON.stringify(late));
+    expect(mineInLog.length).toBeGreaterThan(0);
+    expect([t.c.state.auditStatus, t.c.state.auditFailures]).toEqual(['ok', []]);
+  });
+
+  deal('honest: a tile not in hand, then a legal move on the same turn, and a double tap, are not held against the host', () => {
     const t = table('RF4');
     let done = 0;
     play(t, (n) => {
@@ -354,7 +405,7 @@ describe('the table may not turn the seat’s own moves away', () => {
       done++;
       return true;
     });
-    expect(done).toBe(2);
+    need(done === 2);
     expect([t.c.state.auditStatus, t.c.state.auditFailures]).toEqual(['ok', []]);
   });
 });

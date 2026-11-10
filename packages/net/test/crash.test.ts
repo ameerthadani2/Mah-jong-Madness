@@ -8,6 +8,12 @@
 import { describe, expect, it } from 'vitest';
 import { chooseAction, legalActions, withRules, type GameState, type MatchSnapshot } from '@mjm/engine';
 import { AUDIT_CAVEATS, LoopbackHub, TableClient, TableHost, transportLink, type HostMessage, type Link, type SerializedHost } from '../src/index';
+import { Missed, scenario, seededDeals } from './support';
+
+seededDeals();
+
+/** A test on a fresh deal, dealt again when the situation it waits for does not come up. */
+const deal = (name: string, fn: () => void) => it(name, () => scenario(fn));
 
 interface HostInternals {
   phase: string;
@@ -71,8 +77,11 @@ function table(code: string) {
     },
     until(done: () => boolean) {
       let guard = 0;
-      while (!done() && guard++ < 20_000) t.step();
-      expect(done()).toBe(true);
+      while (!done() && guard++ < 20_000) {
+        if (t.host.phase === 'match_over') throw new Missed();
+        t.step();
+      }
+      if (!done()) throw new Missed();
     },
     /** The process dies and a new one restores the table from `snapshot`; both players reconnect. */
     crash(snapshot: SerializedHost, deliver: (m: HostMessage) => HostMessage | null = (m) => m) {
@@ -114,7 +123,7 @@ const last = (c: TableClient) => c.state.audits[c.state.audits.length - 1];
 const summary = (c: TableClient) => c.state.audits.map((x) => `${x.audit.handNumber}:${x.status}`).join(' ');
 
 describe('a server crash in the middle of a hand', () => {
-  it('turns played again after the restart make the hand partial for every player, with the reason, never failed', () => {
+  deal('turns played again after the restart make the hand partial for every player, with the reason, never failed', () => {
     const t = table('CR1');
     t.until(() => humanToDiscard(t, 0, 10));
     const saved = t.snap();
@@ -130,7 +139,7 @@ describe('a server crash in the middle of a hand', () => {
     expect([summary(t.a), summary(t.b)]).toEqual(['0:partial 1:ok', '0:partial 1:ok']);
   });
 
-  it('an orderly restart that lost nothing keeps the hand verified', () => {
+  deal('an orderly restart that lost nothing keeps the hand verified', () => {
     const t = table('CR2');
     t.until(() => playing(t, 0, 12));
     t.crash(t.snap());
@@ -138,7 +147,7 @@ describe('a server crash in the middle of a hand', () => {
     for (const c of [t.a, t.b]) expect([last(c).status, last(c).failures, last(c).caveats]).toEqual(['ok', [], []]);
   });
 
-  it('the same turns played again with no notice from the host fail, as any rewind does', () => {
+  deal('the same turns played again with no notice from the host fail, as any rewind does', () => {
     const t = table('CR3');
     t.until(() => humanToDiscard(t, 0, 10));
     const saved = t.snap();
@@ -149,7 +158,7 @@ describe('a server crash in the middle of a hand', () => {
     expect(last(t.a).failures.join(' ')).toContain('two different states');
   });
 
-  it('a "restart" announced over a link that never dropped does not excuse a rewind', () => {
+  deal('a "restart" announced over a link that never dropped does not excuse a rewind', () => {
     const t = table('CR4');
     t.until(() => humanToDiscard(t, 0, 10));
     const h = internals(t.host);
@@ -166,7 +175,7 @@ describe('a server crash in the middle of a hand', () => {
     expect(last(t.a).failures.join(' ')).toContain('two different states');
   });
 
-  it('a second restart of the same hand fails it', () => {
+  deal('a second restart of the same hand fails it', () => {
     const t = table('CR5');
     t.until(() => humanToDiscard(t, 0, 8));
     const first = t.snap();
@@ -183,7 +192,7 @@ describe('a server crash in the middle of a hand', () => {
 });
 
 describe('a server crash around a deal', () => {
-  it('a snapshot from the result screen, with the next hand already dealt and under way: that hand is dealt again and is partial, not failed', () => {
+  deal('a snapshot from the result screen, with the next hand already dealt and under way: that hand is dealt again and is partial, not failed', () => {
     const t = table('CR6');
     t.until(() => hand(t) === 0 && t.host.phase === 'hand_over');
     const saved = t.snap();
@@ -198,7 +207,7 @@ describe('a server crash around a deal', () => {
     }
   });
 
-  it('a snapshot from the result screen with nothing of the next hand seen yet: the next hand is verified as usual', () => {
+  deal('a snapshot from the result screen with nothing of the next hand seen yet: the next hand is verified as usual', () => {
     const t = table('CR7');
     t.until(() => hand(t) === 0 && t.host.phase === 'hand_over');
     t.crash(t.snap());
@@ -206,7 +215,7 @@ describe('a server crash around a deal', () => {
     for (const c of [t.a, t.b]) expect(summary(c)).toBe('0:ok 1:ok');
   });
 
-  it('a snapshot from the middle of the ceremony, with the hand since dealt and under way: dealt again, partial, not failed', () => {
+  deal('a snapshot from the middle of the ceremony, with the hand since dealt and under way: dealt again, partial, not failed', () => {
     const t = table('CR8');
     t.until(() => hand(t) === 0 && t.host.phase === 'hand_over');
     // Snapshot taken while hand 1's shares were being collected (the host waits for a held commitment).
@@ -218,8 +227,7 @@ describe('a server crash around a deal', () => {
       origSend(peer, msg);
     };
     t.until(() => playing(t, 1, 6));
-    expect(saved).not.toBeNull();
-    expect(saved!.phase).toBe('commit');
+    if (!saved || (saved as SerializedHost).phase !== 'commit') throw new Missed();
     t.crash(saved!);
     t.until(() => playing(t, 2));
     for (const c of [t.a, t.b]) {

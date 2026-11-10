@@ -1526,6 +1526,8 @@ export class TableClient {
         const source = entry.source === 'auto' ? 'auto' : 'player';
         if (source === 'player') {
           if (play.ledgerFrom !== null && isInt(n) && n >= play.ledgerFrom) {
+            // Any move this client sent and the log has not used yet may be the one: a move that reaches
+            // the table late (after its clock ran out, say) is played on the seat's next turn if still legal.
             const match = sent.find((x) => !x.used && x.tc <= n && sameActionSafe(x.action, entry.action, s, me));
             if (match) {
               match.used = true;
@@ -1535,8 +1537,6 @@ export class TableClient {
             } else if (sent.some((x) => !x.used && !x.rejected && x.tc <= n)) problems.add(`The log changed a move this seat made (turn ${n})`);
             else problems.add(`The log shows a move this seat never made (turn ${n})`);
           }
-          // Any move we sent for this turn and lost to this one is accounted for.
-          for (const x of sent) if (!x.used && isInt(n) && x.tc <= n) x.used = true;
         } else {
           let couldWin = false;
           try {
@@ -1551,7 +1551,6 @@ export class TableClient {
           if (after && sent.some((x) => !x.used && x.tc <= n && x.epoch === after.epoch && typeof x.at === 'number' && after.at - x.at > MOVE_SLACK_MS && !(x.refusedAt !== undefined && x.refusedAt <= n) && legalFor(s, me, x.action) && !sameActionSafe(x.action, entry.action, s, me))) {
             problems.add(`The table ignored a move this seat sent in good time and played its own instead (turn ${n})`);
           }
-          for (const x of sent) if (!x.used && isInt(n) && x.tc <= n) x.used = true;
         }
       }
       s = applyAction(s, entry.seat, entry.action);

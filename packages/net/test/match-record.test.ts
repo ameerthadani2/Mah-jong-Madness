@@ -7,6 +7,9 @@
 import { describe, expect, it } from 'vitest';
 import { chooseAction, countsFromKinds, dealFromSnapshot, kindOf, legalActions, NUM_PLAY_KINDS, shanten, viewFor, withRules, type GameState, type MatchSnapshot } from '@mjm/engine';
 import { deriveSeed, LoopbackHub, TableClient, TableHost, transportLink, type Audit, type HostMessage, type Reveal, type SeatInfo } from '../src/index';
+import { seededDeals } from './support';
+
+seededDeals();
 
 interface HostInternals {
   phase: string;
