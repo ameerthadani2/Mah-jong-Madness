@@ -156,7 +156,8 @@ describe('the profile', () => {
       expect(res.status).toBe(400);
       expect(res.json.error).toBe('invalid');
     }
-    expect(((await call('PATCH', '/api/me', { birthYear: null, avatar: null }, g.auth)).json.user as { birthYear: unknown; avatar: unknown })).toMatchObject({ birthYear: null, avatar: null });
+    // The avatar can be cleared; the birth year, once given, stays (see birth-year.test.ts).
+    expect(((await call('PATCH', '/api/me', { avatar: null }, g.auth)).json.user as { birthYear: unknown; avatar: unknown })).toMatchObject({ birthYear: 1990, avatar: null });
 
     // Deleting anonymises club rows, ends every session and the guest secret stops working.
     const club = clubs.createClub({ userId: 'owner-user-1', name: 'Owner' }, 'Club');

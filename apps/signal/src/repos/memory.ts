@@ -76,8 +76,8 @@ interface MemoryState {
   blocks: BlockRecord[];
   /** users.banned_at, ban_reason and muted_until, for accounts that have any of them. */
   moderation: Map<string, ModerationStatus>;
-  /** reports.resolution and resolved_at. */
-  resolutions: Map<number, { resolution: string; at: number }>;
+  /** banned_devices: the device ids each banned account covers. */
+  bannedDevices: Array<{ deviceId: string; userId: string }>;
 }
 
 const emptyState = (): MemoryState => ({
@@ -103,7 +103,7 @@ const emptyState = (): MemoryState => ({
   consent: new Map(),
   blocks: [],
   moderation: new Map(),
-  resolutions: new Map(),
+  bannedDevices: [],
 });
 
 function memoryUsers(s: MemoryState): UsersRepo {
@@ -160,6 +160,7 @@ function memoryUsers(s: MemoryState): UsersRepo {
         s.puzzles = s.puzzles.filter((p) => p.userId !== id);
         s.blocks = s.blocks.filter((b) => b.blockerId !== id && b.blockedId !== id);
         s.moderation.delete(id);
+        s.bannedDevices = s.bannedDevices.filter((b) => b.userId !== id);
         for (const u2 of s.users.values()) if (u2.mergedInto === id) u2.mergedInto = null;
         for (const club of s.clubs.values()) {
           club.members = club.members.filter((m) => m.userId !== id);
@@ -254,8 +255,12 @@ function memorySessions(s: MemoryState): SessionsRepo {
 function memoryDevices(s: MemoryState): DevicesRepo {
   return {
     async create(device) {
-      if (s.devices.has(device.id)) throw new Error(`Device ${device.id} already exists`);
-      s.devices.set(device.id, copy(device));
+      // As in Postgres (INSERT ... ON CONFLICT DO NOTHING): a taken id writes nothing and says so.
+      if (s.devices.has(device.id)) return false;
+      const row = copy(device);
+      if (!row.installId) delete row.installId;
+      s.devices.set(device.id, row);
+      return true;
     },
     async get(id) {
       const row = s.devices.get(id);
@@ -367,12 +372,16 @@ function memoryReports(s: MemoryState): ReportsRepo {
         .slice(0, limit)
         .map(copy);
     },
-    async resolve(id, resolution, at) {
+    async claim(id, resolution, at) {
       const row = s.reports.find((r) => r.id === id);
-      if (!row || row.status !== 'open') return false;
+      if (!row || row.status !== 'open') return null;
       row.status = resolution === 'dismiss' ? 'dismissed' : 'actioned';
-      s.resolutions.set(id, { resolution, at });
-      return true;
+      row.resolution = resolution;
+      row.resolvedAt = at;
+      return copy(row);
+    },
+    async resolve(id, resolution, at) {
+      return (await this.claim(id, resolution, at)) !== null;
     },
   };
 }
@@ -443,6 +452,12 @@ function memoryModeration(s: MemoryState): ModerationRepo {
       const m = row(userId);
       m.bannedAt ??= at;
       m.banReason = reason;
+      for (const d of s.devices.values()) {
+        if (d.userId !== userId) continue;
+        for (const deviceId of new Set([d.id, d.installId ?? d.id])) {
+          if (!s.bannedDevices.some((b) => b.deviceId === deviceId && b.userId === userId)) s.bannedDevices.push({ deviceId, userId });
+        }
+      }
       return true;
     },
     async unban(userId) {
@@ -450,7 +465,12 @@ function memoryModeration(s: MemoryState): ModerationRepo {
       const m = row(userId);
       m.bannedAt = null;
       m.banReason = null;
+      s.bannedDevices = s.bannedDevices.filter((b) => b.userId !== userId);
       return true;
+    },
+    async deviceBanned(deviceId) {
+      const id = deviceId.toLowerCase();
+      return s.bannedDevices.some((b) => b.deviceId === id);
     },
     async mute(userId, until) {
       if (!s.users.has(userId)) return false;

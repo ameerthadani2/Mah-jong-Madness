@@ -13,10 +13,14 @@
  *   together (either direction).
  * - `adminModerationRoutes` (`Authorization: Bearer <ADMIN_TOKEN>`, compared in constant time;
  *   503 without ADMIN_TOKEN): the open report queue, resolving a report (dismiss, warn, ban,
- *   mute), banning and unbanning an account, muting one.
+ *   mute), banning and unbanning an account, muting one, and correcting an account's birth year
+ *   (which the account itself can set only once).
  *
  * A ban revokes every session of the account, closes its sockets with 4403 and keeps it out of
- * sign-in, refresh and the queue (auth answers 403 `banned`). A mute drops the account's chat
+ * sign-in, refresh and the queue (auth answers 403 `banned`). It also covers the account's
+ * devices: no new guest account can be created from one of them until the ban is lifted. A report
+ * is claimed before its action is applied, in one transaction, so two moderators deciding the
+ * same report at once apply one action and the other is told the report is closed. A mute drops the account's chat
  * lines and emotes at every table until it ends (`MuteList`, which the room registry asks).
  */
 import type { IncomingMessage } from 'node:http';
@@ -547,22 +551,31 @@ export function adminModerationRoutes<R>(r: ModerationRouteFactory<R>, deps: Mod
     return v;
   };
 
-  const ban = async (user: UserRecord, reason: string | null) => {
+  /** The ban as the database sees it (also the account's devices), in whatever transaction `r` is. */
+  const writeBan = async (r: Repos, user: UserRecord, reason: string | null) => {
     const at = now();
-    await repos.moderation.ban(user.id, at, reason);
-    await repos.sessions.revokeAllForUser(user.id, at);
+    await r.moderation.ban(user.id, at, reason);
+    await r.sessions.revokeAllForUser(user.id, at);
+  };
+  /** What a ban does outside the database, once it is written: the sockets close and the queue lets go. */
+  const afterBan = (user: UserRecord) => {
     deps.closeSockets?.(user.id);
     deps.onBanned?.(user.id);
   };
+  const ban = async (user: UserRecord, reason: string | null) => {
+    await writeBan(repos, user, reason);
+    afterBan(user);
+  };
+  const muteUntil = (d: number) => (d === 0 ? null : now() + d * DAY_MS);
   const mute = async (user: UserRecord, d: number) => {
-    const until = d === 0 ? null : now() + d * DAY_MS;
+    const until = muteUntil(d);
     await repos.moderation.mute(user.id, until);
     deps.mutes?.set(user.id, until);
     return until;
   };
   const accountJson = async (u: UserRecord) => {
     const status = await repos.moderation.status(u.id);
-    return { id: u.id, kind: u.kind, displayName: publicName(u), deleted: u.deletedAt !== null, bannedAt: iso(status?.bannedAt ?? null), banReason: status?.banReason ?? null, mutedUntil: iso(status?.mutedUntil ?? null) };
+    return { id: u.id, kind: u.kind, displayName: publicName(u), deleted: u.deletedAt !== null, birthYear: u.birthYear, bannedAt: iso(status?.bannedAt ?? null), banReason: status?.banReason ?? null, mutedUntil: iso(status?.mutedUntil ?? null) };
   };
 
   return [
@@ -599,15 +612,26 @@ export function adminModerationRoutes<R>(r: ModerationRouteFactory<R>, deps: Mod
       if (!report) throw new ModerationError(404, 'not_found', 'No such report');
       const action = ctx.body.action;
       if (typeof action !== 'string' || !(REPORT_RESOLUTIONS as readonly string[]).includes(action)) throw new ModerationError(400, 'invalid', `action must be one of ${REPORT_RESOLUTIONS.join(', ')}`);
-      if (report.status !== 'open') throw new ModerationError(409, 'resolved', 'This report has already been resolved');
+      const resolved = () => new ModerationError(409, 'resolved', 'This report has already been resolved');
+      if (report.status !== 'open') throw resolved();
       const resolution = action as ReportResolution;
       const muteDays = resolution === 'mute' ? days(ctx.body.days, 1) : 0;
       const reported = await repos.users.get(report.reportedUserId);
-      let mutedUntil: number | null = null;
-      if (reported && resolution === 'ban') await ban(reported, cleanText(ctx.body.reason, 500) || `report ${report.id}: ${report.reason}`);
-      if (reported && resolution === 'mute') mutedUntil = await mute(reported, muteDays);
-      if (!(await repos.reports.resolve(report.id, resolution, now()))) throw new ModerationError(409, 'resolved', 'This report has already been resolved');
-      return { ok: true, id: report.id, status: resolution === 'dismiss' ? 'dismissed' : 'actioned', action: resolution, ...(mutedUntil !== null ? { mutedUntil: iso(mutedUntil) } : {}) };
+      const mutedUntil = reported && resolution === 'mute' ? muteUntil(muteDays) : null;
+      // Claim first, then act, in one transaction: when two moderators decide the same report at
+      // once, one claim wins and only its action is applied; the other is told so and nothing of
+      // its decision is written. The report records the action that was applied.
+      const claimed = await repos.transaction(async (tx) => {
+        const row = await tx.reports.claim(report.id, resolution, now());
+        if (!row) return null;
+        if (reported && resolution === 'ban') await writeBan(tx, reported, cleanText(ctx.body.reason, 500) || `report ${report.id}: ${report.reason}`);
+        if (reported && resolution === 'mute') await tx.moderation.mute(reported.id, mutedUntil);
+        return row;
+      });
+      if (!claimed) throw resolved();
+      if (reported && resolution === 'ban') afterBan(reported);
+      if (reported && resolution === 'mute') deps.mutes?.set(reported.id, mutedUntil);
+      return { ok: true, id: claimed.id, status: claimed.status, action: claimed.resolution, ...(mutedUntil !== null ? { mutedUntil: iso(mutedUntil) } : {}) };
     }),
     r('POST', '/api/admin/users/:id/ban', async (ctx) => {
       admin(ctx);
@@ -626,6 +650,16 @@ export function adminModerationRoutes<R>(r: ModerationRouteFactory<R>, deps: Mod
       const user = await target(ctx.params.id);
       await mute(user, days(ctx.body.days, 0));
       return { ok: true, account: await accountJson(user) };
+    }),
+    // The account itself can set its birth year only once (PATCH /api/me): a correction comes through support.
+    r('POST', '/api/admin/users/:id/birth-year', async (ctx) => {
+      admin(ctx);
+      const user = await target(ctx.params.id);
+      if (user.deletedAt !== null) throw new ModerationError(404, 'not_found', 'No such account');
+      const y = ctx.body.birthYear;
+      if (y !== null && !(typeof y === 'number' && Number.isInteger(y) && y >= 1900 && y <= new Date(now()).getUTCFullYear())) throw new ModerationError(400, 'invalid', 'birthYear must be a year, or null to clear it');
+      const updated = (await repos.users.update(user.id, { birthYear: y })) ?? user;
+      return { ok: true, account: await accountJson(updated) };
     }),
   ];
 }

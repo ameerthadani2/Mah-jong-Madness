@@ -222,9 +222,10 @@ describe.skipIf(!PG_URL)('free text against Postgres', () => {
     const reg = new RoomRegistry({ allowHosted: true, botDelayMs: 0 });
     const code = reg.createHostedRoom();
     const s: Socket = { send: () => undefined, close: () => undefined };
-    const peer = reg.hello(reg.connect(s), id, undefined, undefined);
+    // The seat takes the account's name (cleaned), not the one in the table join.
+    const peer = reg.hello(reg.connect(s), id, undefined, `Seat${NUL}`);
     reg.handle(peer, { t: 'join', room: code });
-    reg.handle(peer, { t: 'to', to: `server-${code}`, data: { ch: 'game', msg: { t: 'join', name: `Seat${NUL}` } } });
+    reg.handle(peer, { t: 'to', to: `server-${code}`, data: { ch: 'game', msg: { t: 'join', name: `Other${NUL}` } } });
     await repos.tableSnapshots.save({ roomCode: code, clubCode: null, status: 'open', snapshot: reg.hostedTable(code)!.serialize(), updatedAt: Date.now() });
     expect(((await repos.tableSnapshots.get(code))!.snapshot as { seats: Array<{ name: string }> }).seats[0].name).toBe('Seat');
   });
