@@ -63,6 +63,9 @@ export const AUDIT_CAVEATS = {
   restarted: 'The deal was restarted, so the server could have picked it',
   linkLost: 'This seat lost its connection while the deal was being agreed',
   missedAttempts: 'This seat did not see every attempt at the deal',
+  away: 'This device was away when the hand ended; its record was checked afterwards, the play was not watched',
+  gap: 'This device missed the hands before this one and was not shown their records, so the scores it started from could not be checked',
+  serverRestart: 'The server restarted during this hand and some turns were played again',
 } as const;
 
 export type AuditCaveat = keyof typeof AUDIT_CAVEATS;
@@ -259,7 +262,7 @@ const CLOCK_SLACK_MS = 1_000;
 const CLOCK_SKEW_MS = 2_000;
 
 /** Version of `SerializedClient`; bump on any incompatible change. */
-export const CLIENT_SNAPSHOT_VERSION = 1;
+export const CLIENT_SNAPSHOT_VERSION = 2;
 
 /** Everything a client needs to keep verifying a table after the app restarts. JSON-safe. */
 export interface SerializedClient {
@@ -285,6 +288,11 @@ export interface SerializedClient {
   epoch: number;
   ceremonyEpoch: number;
   quietSince: number;
+  openHand: number | null;
+  handEpoch: number;
+  matchEnded: boolean;
+  atStart: boolean;
+  gapHand: number | null;
 }
 
 export interface TableClientOptions {
@@ -362,6 +370,24 @@ export class TableClient {
   private ceremonyEpoch = -1;
   /** Epoch in which this client last watched a hand end (or first sat down): no link loss since means it saw everything after. */
   private quietSince = -1;
+  /**
+   * The hand this client is on: the one it was last asked to commit to or shown, until that hand's
+   * result arrives. While it is set, the table has no business with any other hand.
+   */
+  private openHand: number | null = null;
+  /** Epoch of the last message about `openHand`: no link loss since means the hand cannot have ended unseen. */
+  private handEpoch = -1;
+  /** The match ended, and the hands this client verified say so (see `matchEndVerdict`). */
+  private matchEnded = false;
+  /**
+   * This client sat down in the lobby and has not yet seen a hand end: the first hand it is dealt
+   * must be the match's first, from the rules' starting position, whatever number the host gives it.
+   */
+  private atStart = false;
+  /** A hand reached after hands this client missed with no record of them: its starting scores cannot be checked. */
+  private gapHand: number | null = null;
+  /** The entry `failNow` last put on the list of audits (so the next failure about the same hand adds to it). */
+  private liveFailure: ClientState['audits'][number] | null = null;
   private readonly listeners = new Set<(s: ClientState) => void>();
   private unsubMessage: Unsubscribe = () => undefined;
   private unsubClose: Unsubscribe = () => undefined;
@@ -437,6 +463,11 @@ export class TableClient {
     this.epoch = isInt(d.epoch) ? d.epoch : 0;
     this.ceremonyEpoch = isInt(d.ceremonyEpoch) ? d.ceremonyEpoch : -1;
     this.quietSince = isInt(d.quietSince) ? d.quietSince : -1;
+    this.openHand = isInt(d.openHand) ? d.openHand : null;
+    this.handEpoch = isInt(d.handEpoch) ? d.handEpoch : -1;
+    this.matchEnded = d.matchEnded === true;
+    this.atStart = d.atStart === true;
+    this.gapHand = isInt(d.gapHand) ? d.gapHand : null;
     // The app stopped: the link it had is gone. Moves sent just before the last save may be missing
     // from the ledger, so it vouches for the current hand's log only from the next state it sees.
     this.noteLinkLost();
@@ -473,6 +504,11 @@ export class TableClient {
       epoch: this.epoch,
       ceremonyEpoch: this.ceremonyEpoch,
       quietSince: this.quietSince,
+      openHand: this.openHand,
+      handEpoch: this.handEpoch,
+      matchEnded: this.matchEnded,
+      atStart: this.atStart,
+      gapHand: this.gapHand,
     };
   }
 
@@ -640,27 +676,67 @@ export class TableClient {
   }
 
   /**
-   * A hand must start where the previous verified hand left the match (advanceMatch of its replay):
-   * same scores, dealer, streak, rotations and wind, and the next hand number. Hand 0 must start
-   * where a new match starts. Other hands are skipped when this client holds no previous hand (it
-   * sat down mid-match from a token alone).
+   * Where hand `h` must start: where the previous verified hand left the match (advanceMatch of its
+   * replay), or, for hand 0 and for the first hand of a match this client watched from the lobby,
+   * where a new match starts. Null when this client holds nothing to chain from (it sat down
+   * mid-match from a token alone, the previous hand failed its replay, or it missed hands).
+   */
+  private chainBase(h: number): MatchSnapshot | null {
+    if (this.expected) return this.expected;
+    if (this.gapHand !== null) return null;
+    return this.atStart || h === 0 ? this.anchor() : null;
+  }
+
+  /**
+   * The table has turned to hand `h` (a commit request, a state or a result for it). Hands follow
+   * one another: never one already played, never a new one while the hand this client is on has not
+   * ended, and only the hand the last verified one leads to. A jump is honest only when this
+   * client's link was down in between (the table plays on without it); then the hands it missed
+   * are a gap, noted on this hand's audit, unless the host has shown their records (see `missed`).
+   */
+  private enterHand(h: number): void {
+    if (this.openHand === h) {
+      this.handEpoch = this.epoch;
+      return;
+    }
+    const base = this.chainBase(h);
+    if ([...this.handsEnded].some((e) => e >= h)) {
+      this.flag(h, 'Host asked to deal a hand that was already played');
+      if (this.expected && this.expected.handNumber !== h) this.flag(this.expected.handNumber, 'Host asked to deal a hand that was already played');
+    } else if (this.openHand !== null) {
+      // The hand this client is on never ended, as far as it has seen.
+      if (this.handEpoch === this.epoch) this.flag(h, 'Host started another hand before the one in progress had ended');
+      else this.noteGap(h);
+    } else if (base?.matchOver) this.flag(h, 'Host dealt another hand after the match was over');
+    else if (base ? h !== base.handNumber : this.handsEnded.size > 0 && this.gapHand === null && h !== Math.max(...this.handsEnded) + 1) {
+      if (this.quietSince === this.epoch) this.flag(h, 'Host dealt a hand out of turn');
+      else this.noteGap(h);
+    }
+    this.noteOpenHand(h);
+  }
+
+  /** Hands were played while this client's link was down and it holds no record of them: nothing chains into `h`. */
+  private noteGap(h: number): void {
+    this.gapHand = h;
+    this.expected = null;
+    this.chainChecked = null;
+    this.atStart = false;
+  }
+
+  /**
+   * A hand must start with the scores, dealer, streak, rotations and wind its chain base gives
+   * (see `chainBase`); the hand number itself is checked when the table turns to the hand.
    */
   private checkChain(start: MatchSnapshot): void {
     const h = start.handNumber;
     if (this.chainChecked === h) return;
-    const e = h === 0 ? this.anchor() : this.expected;
+    const e = this.chainBase(h);
     if (!e) return;
     this.chainChecked = h;
-    if (h !== 0 && e.matchOver) {
-      this.flag(h, 'Host dealt another hand after the match was over');
-      return;
-    }
-    if (h !== e.handNumber) {
-      this.flag(h, 'Host dealt a hand out of turn');
-      return;
-    }
+    if (e.matchOver || e.handNumber !== h) return;
+    const first = this.expected === null;
     const changed = CHAINED_FIELDS.filter((k) => stableStringify(start[k]) !== stableStringify(e[k]));
-    if (changed.length > 0) this.flag(h, h === 0 ? `The match started with ${changed.join(', ')} different from a new match` : `Hand started with ${changed.join(', ')} different from where the previous hand left them`);
+    if (changed.length > 0) this.flag(h, first ? `The match started with ${changed.join(', ')} different from a new match` : `Hand started with ${changed.join(', ')} different from where the previous hand left them`);
   }
 
   /** Forget the previous match's verification record (its audits stay on the list). */
@@ -682,7 +758,63 @@ export class TableClient {
     this.frozenBots = null;
     this.pinnedRules = null;
     this.quietSince = this.epoch;
+    this.openHand = null;
+    this.handEpoch = -1;
+    this.matchEnded = false;
+    this.atStart = false;
+    this.gapHand = null;
     this.state = { ...this.state, matchOver: false, finalScores: null, view: null, lastResult: null };
+  }
+
+  /** This client holds a record of the match being played: there is something a reset would wipe. */
+  private hasEvidence(): boolean {
+    return this.firstHand !== null || this.handsEnded.size > 0 || this.records.length > 0;
+  }
+
+  /** This client is on `hand` now (asked to commit to it, or shown it). */
+  private noteOpenHand(hand: number): void {
+    this.openHand = hand;
+    this.handEpoch = this.epoch;
+  }
+
+  /**
+   * Whether a `match_over` can be believed. `verified`: the last hand this client verified ends the
+   * match with exactly these scores. `unverified`: this client cannot know (it holds no record of
+   * the match, the last hand already failed its audit, or its link was down and the table may have
+   * played on without it); the end is shown, but the match stays pinned. `refuse`: this client
+   * watched the table without a break and the match is not over, or not with these scores.
+   */
+  private matchEndVerdict(scores: unknown[], view: TableView): 'verified' | 'unverified' | 'refuse' {
+    const same = (a: unknown[], b: number[]) => a.length === b.length && b.every((x, i) => a[i] === x);
+    const e = this.expected;
+    const between = this.openHand === null;
+    if (e?.matchOver && between) return same(scores, e.scores) && same(view.scores, e.scores) ? 'verified' : 'refuse';
+    if (!this.hasEvidence()) return 'unverified';
+    if (between ? this.quietSince !== this.epoch : this.handEpoch !== this.epoch) return 'unverified';
+    if (!e && between && this.handsEnded.size > 0) {
+      // The last hand failed its replay, so nothing chains from it: go by the rules' hand count and the result it showed.
+      const v = this.state.view;
+      const r = this.state.lastResult;
+      const rules = this.pinnedRules ?? this.state.rules;
+      const last = Math.max(...this.handsEnded);
+      if (v && r && rules && v.handNumber === last && !r.dealerContinues && v.dealerRotations + 1 >= rules.handsPerMatch && same(scores, v.scores)) return 'unverified';
+    }
+    return 'refuse';
+  }
+
+  /** Put a failure on show at once (not waiting for a hand to end), and keep it on the list of audits. */
+  private failNow(problem: string): void {
+    const last = this.state.lastAudit;
+    const failures = this.state.auditStatus === 'failed' ? [...this.state.auditFailures.filter((f) => f !== problem), problem] : [problem];
+    let audits = this.state.audits;
+    const tail = audits[audits.length - 1];
+    if (last && tail && tail === this.liveFailure && tail.audit === last) {
+      if (!tail.failures.includes(problem)) tail.failures.push(problem);
+    } else if (last) {
+      this.liveFailure = { audit: last, status: 'failed', failures: [problem], caveats: [] };
+      audits = [...audits, this.liveFailure].slice(-MAX_AUDITS);
+    }
+    this.update({ auditStatus: 'failed', auditFailures: failures, auditCaveats: [], audits });
   }
 
   /** The bot seats as listed now; once frozen, any change is the host's doing. */
@@ -701,18 +833,27 @@ export class TableClient {
           return;
         }
         const seats = Array.isArray(m.seats) ? m.seats : [];
-        const pinned = this.state.matchId !== null && this.state.seat !== null && !this.state.matchOver;
+        // The seat and the match are pinned from the first deal this client hears of until the hands
+        // it verified say the match is over. Before that there is nothing a new seat could undo.
+        const pinned = this.state.matchId !== null && this.state.seat !== null && this.hasEvidence() && !this.matchEnded;
         if (pinned && (m.matchId !== this.state.matchId || m.seat !== this.state.seat)) {
           // Same table, same match, same token: an honest host returns the same seat in the same match.
-          this.flag(this.activeHand(), m.matchId !== this.state.matchId ? 'Host moved this seat into a different match mid-match' : 'Host moved this seat to another seat mid-match');
+          const problem = m.matchId !== this.state.matchId ? 'Host moved this seat into a different match mid-match' : 'Host moved this seat to another seat mid-match';
+          this.flag(this.activeHand(), problem);
           this.update({ connected: true, disconnected: false, kicked: false, seats, token: typeof m.token === 'string' ? m.token : this.state.token, lastError: null });
+          // With no hand left to audit, the flag would never be seen.
+          if (this.state.matchOver) this.failNow(problem);
           return;
         }
-        // A new match at this table (after the last one ended) starts a fresh record.
+        // A new match at this table (after the last one verifiably ended) starts a fresh record.
         if (this.state.matchId !== null && m.matchId !== this.state.matchId) this.resetMatch();
         const rules = sanitizeRules(m.rules);
         if (this.pinnedRules && stableStringify(rules) !== stableStringify(this.pinnedRules)) this.flag(this.activeHand(), 'Host changed the rules mid-match');
-        if (this.state.matchId === null) this.quietSince = this.epoch;
+        if (this.state.matchId === null) {
+          this.quietSince = this.epoch;
+          // Without a token the host seats nobody after the first deal, so this client is in the lobby.
+          this.atStart = !this.noHistory;
+        }
         this.checkBots(seats);
         this.update({ connected: true, disconnected: false, kicked: false, seat: m.seat, roomCode: m.roomCode, rules: this.pinnedRules ?? rules, seats, matchId: m.matchId, token: m.token, lastError: null });
         return;
@@ -732,12 +873,7 @@ export class TableClient {
           this.flag(h, 'Host re-dealt a hand in progress');
           return;
         }
-        // Hands follow one another: never one already played, and only the one the last hand leads to.
-        if ([...this.handsEnded].some((e) => e >= h)) {
-          this.flag(h, 'Host asked to deal a hand that was already played');
-          if (this.expected && this.expected.handNumber !== h) this.flag(this.expected.handNumber, 'Host asked to deal a hand that was already played');
-        } else if (this.expected?.matchOver) this.flag(h, 'Host dealt another hand after the match was over');
-        else if (this.expected && h !== this.expected.handNumber) this.flag(h, 'Host dealt a hand out of turn');
+        this.enterHand(h);
         if (this.firstHand === null) this.firstHand = h;
         // The bot seats and the rules are fixed from the match's first deal on.
         if (this.frozenBots === null) this.frozenBots = this.state.seats.filter((s) => s.isBot).map((s) => s.seat).sort((a, b) => a - b);
@@ -856,6 +992,14 @@ export class TableClient {
         }
         const v = m.view;
         const h = v.handNumber;
+        if (this.handsEnded.has(h)) {
+          // A hand whose result this client holds is over: nothing more is played in it.
+          const problem = 'Host went back to a hand that had already ended';
+          this.flag(this.activeHand(), problem);
+          this.failNow(problem);
+          return;
+        }
+        this.enterHand(h);
         this.noteHand(h);
         const first = !this.state.view || this.state.view.handNumber !== h || this.state.lastResult !== null;
         if (first || !this.handStart || this.handStart.handNumber !== h) {
@@ -875,24 +1019,35 @@ export class TableClient {
         }
         const h = m.audit.handNumber;
         if (this.handsEnded.has(h)) {
-          // A returning seat is sent the result again. An honest host sends the same audit; a
-          // different one for the same hand stays on the record as a failure.
-          const prior = this.state.audits.find((a) => a.audit.handNumber === h && a.audit.matchId === m.audit.matchId);
-          if (!prior || stableStringify(prior.audit) === stableStringify(m.audit)) {
-            this.update({ view: m.view, lastResult: m.result, lastAudit: m.audit, deadline: null, ...(prior ? { auditStatus: prior.status, auditFailures: prior.failures, auditCaveats: prior.caveats } : {}) });
+          // A returning seat is sent the result again. Whatever this frame carries, the result, view
+          // and audit this client verified stay; a frame that differs from them is kept as a failure.
+          const prior = this.state.audits.find((a) => a.audit.handNumber === h && a.audit.matchId === this.state.matchId);
+          const held = this.state.lastAudit?.handNumber === h && this.state.lastResult !== null && this.state.view !== null;
+          let problem: string | null = null;
+          if (m.audit.matchId !== this.state.matchId) problem = 'Host re-sent a hand under a different match id';
+          else if (prior && stableStringify(prior.audit) !== stableStringify(m.audit)) problem = 'Host sent a different audit for a hand it had already ended';
+          else if (held && (stableStringify(m.result) !== stableStringify(this.state.lastResult) || stableStringify(m.view.scores) !== stableStringify(this.state.view!.scores))) problem = 'Host re-sent a different result for a hand it had already ended';
+          if (problem === null) {
+            if (held) this.update({ deadline: null });
             return;
           }
-          const failures = [...(this.tamper.get(h) ?? []), 'Host sent a different audit for a hand it had already ended'];
-          const audits = [...this.state.audits, { audit: m.audit, status: 'failed' as const, failures, caveats: [] }].slice(-MAX_AUDITS);
-          this.update({ view: m.view, lastResult: m.result, lastAudit: m.audit, auditStatus: 'failed', auditFailures: failures, auditCaveats: [], deadline: null, audits });
+          // One failed entry per offending hand: a failure already on show for it is folded into this one.
+          const live = this.liveFailure && this.liveFailure.audit.handNumber === h ? this.liveFailure : null;
+          const failures = [...new Set([...(this.tamper.get(h) ?? []), ...(live?.failures ?? []), problem])];
+          const audits = [...this.state.audits.filter((a) => a !== live), { audit: m.audit, status: 'failed' as const, failures, caveats: [] }].slice(-MAX_AUDITS);
+          this.liveFailure = null;
+          this.update({ auditStatus: 'failed', auditFailures: failures, auditCaveats: [], deadline: null, audits });
           return;
         }
+        this.enterHand(h);
         this.noteHand(h);
         const rec = this.recordFor(h);
         if (rec) rec.dealt = true;
         // A hand that ended at the deal sends no state first: check where it started from its end.
         if (!this.handStart || this.handStart.handNumber !== h) this.checkChain(snapshotFromView(m.view, true));
         this.handsEnded.add(h);
+        if (this.openHand === h) this.openHand = null;
+        this.atStart = false;
         const end: SeenState = { tc: Number.POSITIVE_INFINITY, epoch: this.epoch, at: this.now(), now: typeof m.now === 'number' ? m.now : undefined, owes: false, deadline: null, timeBank: 0, inBank: false, hash: '' };
         const { check, replayed } = this.runAudit(m.audit, m.view, m.result, end);
         const { status, failures, caveats } = check;
@@ -901,6 +1056,7 @@ export class TableClient {
         this.chainChecked = null;
         this.quietSince = this.epoch;
         this.tamper.delete(h);
+        if (this.gapHand === h) this.gapHand = null;
         const audits = [...this.state.audits, { audit: m.audit, status, failures, caveats }].slice(-MAX_AUDITS);
         this.update({ view: m.view, lastResult: m.result, lastAudit: m.audit, auditStatus: status, auditFailures: failures, auditCaveats: caveats, deadline: null, audits });
         return;
@@ -910,7 +1066,22 @@ export class TableClient {
           this.update({ lastError: 'The table sent a malformed match result.' });
           return;
         }
-        this.update({ view: m.view, matchOver: true, finalScores: m.scores, deadline: null });
+        {
+          const verdict = this.matchEndVerdict(m.scores, m.view);
+          if (verdict === 'refuse') {
+            // Never taken on trust: a false end would unpin the match and let the next welcome wipe the record.
+            const problem = 'Host announced the end of the match, which the hands this device verified do not support';
+            this.flag(this.activeHand(), problem);
+            this.failNow(problem);
+            this.update({ lastError: 'The table announced the end of the match, but the hands this device checked do not support it.', lastErrorCode: null });
+            return;
+          }
+          if (verdict === 'verified') this.matchEnded = true;
+          // The last hand's verified view stays on show; the host's is used only when this device holds none.
+          const own = this.state.view;
+          const view = own && this.state.lastResult !== null && own.handNumber === m.view.handNumber ? own : m.view;
+          this.update({ view, matchOver: true, finalScores: m.scores.slice(), deadline: null });
+        }
         return;
       case 'chat':
         if (typeof m.text !== 'string') return;
@@ -995,8 +1166,9 @@ export class TableClient {
     const h = audit.handNumber;
     const me = this.state.seat;
 
-    // 1. Anything the host did wrong while the hand was under way.
+    // 1. Anything the host did wrong while the hand was under way, and an audit for some other match.
     failures.push(...(this.tamper.get(h) ?? []));
+    if (audit.matchId !== this.state.matchId) failures.push('The audit is for a different match than the one this seat is in');
 
     // 2. Exactly one commitment and one secret per seat 0–4: an extra share would let the host move the seed.
     const commitsOk = isCommitSet(audit.commits);
@@ -1066,6 +1238,7 @@ export class TableClient {
     if (isInt(audit.ceremonyAttempts) && audit.ceremonyAttempts > 1) caveats.push(AUDIT_CAVEATS.restarted);
     if (rec?.linkLost) caveats.push(AUDIT_CAVEATS.linkLost);
     else if (tookPart && !stoodIn && rec && !rec.fromStart) caveats.push(AUDIT_CAVEATS.missedAttempts);
+    if (this.gapHand === h) caveats.push(AUDIT_CAVEATS.gap);
 
     const status: AuditStatus = failures.length > 0 ? 'failed' : caveats.length > 0 ? 'partial' : 'ok';
     return { check: { status, failures, caveats }, replayed };

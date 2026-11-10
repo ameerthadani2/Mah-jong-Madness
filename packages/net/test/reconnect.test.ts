@@ -6,7 +6,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { applyAction, chooseAction, hashState, kindOf, legalActions, newGame, replayHand, matchSnapshot, withRules, type Action, type GameState, type MatchSnapshot } from '@mjm/engine';
-import { AUDIT_CAVEATS, caveatKey, LoopbackHub, MAX_AUDITS, TableClient, TableHost, transportLink, type Audit, type HostMessage, type Link, type SerializedClient } from '../src/index';
+import { AUDIT_CAVEATS, caveatKey, CLIENT_SNAPSHOT_VERSION, LoopbackHub, MAX_AUDITS, TableClient, TableHost, transportLink, type Audit, type HostMessage, type Link, type SerializedClient } from '../src/index';
 
 const RULES = withRules({ handsPerMatch: 1 });
 
@@ -636,7 +636,7 @@ describe('the client’s record survives an app restart', () => {
     host.start();
     playOut(host, c, clock);
     const saved = JSON.parse(JSON.stringify(c.serialize())) as SerializedClient;
-    expect(saved.version).toBe(1);
+    expect(saved.version).toBe(CLIENT_SNAPSHOT_VERSION);
     first.drop();
     const back = TableClient.restore(saved, droppable(hub, 'p0r').link, 'Victim', undefined, { token: saved.state.token! }, { now: () => clock.now });
     expect(back.state.audits).toHaveLength(1);
