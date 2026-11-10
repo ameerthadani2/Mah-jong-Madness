@@ -79,6 +79,61 @@ function contract(name: string, repos: () => Repos) {
       expect(await r.clubs.delete(c.code)).toBe(true);
       expect(await r.clubs.get(c.code)).toBeNull();
     });
+
+    it("keeps the owner-lapse file through a save and a load, and moves an account's lapse with a merge", async () => {
+      const r = repos();
+      const [owner, member, other, target] = [await user(), await user(), await user(), await user()];
+      const c = clubOf(code(), owner, member, other);
+      c.ownerLapses = [
+        { userId: owner, lapsedAt: T0 + 60_000, until: null },
+        { userId: member, lapsedAt: T0 - 5_000, until: T0 + 1_000 },
+      ];
+      await r.clubs.save(c);
+      expect((await r.clubs.get(c.code))!.ownerLapses).toEqual(c.ownerLapses);
+      // The former owner's account is merged into another: only its lapse names it in this club.
+      await r.clubs.save({ ...c, members: c.members.filter((m) => m.userId !== member) });
+      expect(await r.clubs.moveMemberships(member, { userId: target, name: 'Target' })).toEqual([c.code]);
+      expect((await r.clubs.get(c.code))!.ownerLapses).toEqual([
+        { userId: owner, lapsedAt: T0 + 60_000, until: null },
+        { userId: target, lapsedAt: T0 - 5_000, until: T0 + 1_000 },
+      ]);
+      // A club with nothing on file reads back without the field.
+      await r.clubs.save({ ...c, ownerLapses: [] });
+      expect((await r.clubs.get(c.code))!.ownerLapses ?? []).toEqual([]);
+    });
+
+    it("passes a deleted owner's club to the first admin or member who owns fewer than 3 clubs and has not deleted their account", async () => {
+      const r = repos();
+      const [gone, busyAdmin, deleted, heir, late] = [await user(), await user(), await user(), await user(), await user()];
+      // The senior admin already owns three clubs.
+      for (let i = 0; i < 3; i++) await r.clubs.save({ ...clubOf(code(), busyAdmin, late, gone), bans: [] });
+      const row = (userId: string, role: 'owner' | 'admin' | 'member', joinedAt: number, name = userId.slice(0, 4)) => ({ userId, name, role, joinedAt, points: 0, seasonPoints: 0, matchesPlayed: 0, matchesWon: 0, handsWon: 0 });
+      const c: Club = {
+        ...clubOf(code(), gone, heir, late),
+        bans: [],
+        members: [row(gone, 'owner', T0), row(busyAdmin, 'admin', T0 + 1), row(deleted, 'member', T0 + 2, DELETED_PLAYER_NAME), row(heir, 'member', T0 + 3), row(late, 'member', T0 + 4)],
+      };
+      // A second club where the only other member is at the cap: they take it all the same.
+      const onlyBusy: Club = { ...clubOf(code(), gone, busyAdmin, late), bans: [] };
+      // And one where only a deleted player is left: nobody can run it, so it is dissolved.
+      const onlyDeleted: Club = { ...clubOf(code(), gone, deleted, late), bans: [], members: [row(gone, 'owner', T0), row(deleted, 'member', T0 + 1, DELETED_PLAYER_NAME)] };
+      for (const club of [c, onlyBusy, onlyDeleted]) await r.clubs.save(club);
+
+      expect([...(await r.clubs.anonymiseUser(gone))].sort()).toEqual([c.code, onlyBusy.code, onlyDeleted.code].sort());
+      const after = (await r.clubs.get(c.code))!;
+      expect(after.ownerId).toBe(heir);
+      expect(after.members.map((m) => [m.userId, m.role]).sort()).toEqual(
+        [
+          [gone, 'member'],
+          [busyAdmin, 'admin'],
+          [deleted, 'member'],
+          [heir, 'owner'],
+          [late, 'member'],
+        ].sort(),
+      );
+      expect((await r.clubs.get(onlyBusy.code))!.ownerId).toBe(busyAdmin);
+      expect(await r.clubs.get(onlyDeleted.code)).toBeNull();
+    });
   });
 }
 

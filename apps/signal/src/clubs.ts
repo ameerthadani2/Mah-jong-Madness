@@ -113,6 +113,21 @@ export interface Club {
    * may have only `CLUB_LIMITS.lapsedOpenTables` open table until the owner renews or passes it on.
    */
   ownerLapsedAt?: number | null;
+  /**
+   * Accounts that owned this club while without the plan, and when each one's lapse began. A lapse
+   * belongs to the account, so handing the club to a subscriber and taking it back does not start
+   * a new grace. Never sent to clients.
+   */
+  ownerLapses?: OwnerLapse[];
+}
+
+/** One account's lapse as an owner of a club. */
+export interface OwnerLapse {
+  userId: string;
+  /** When the server first saw this account own a club without the plan. */
+  lapsedAt: number;
+  /** When the club passed on from this account; null while it is still the owner. */
+  until: number | null;
 }
 
 /** A finished season: its final standings by season points. Points only; they have no monetary value. */
@@ -173,6 +188,14 @@ export const CLUB_LIMITS = {
   ownerGraceMs: 7 * DAY_MS,
   /** Open tables a club may have once the owner's plan has lapsed past the grace. */
   lapsedOpenTables: 1,
+  /**
+   * How long a lapse stays attached to the club after it passed on from the lapsed owner: an
+   * account that takes the club over without a plan within this time continues that lapse (no new
+   * grace). The lapsed account's own record does not expire.
+   */
+  lapseMemoryMs: 30 * DAY_MS,
+  /** Owner lapses kept on file per club. */
+  ownerLapsesPerClub: 20,
   /** Banned accounts kept per club. */
   bansPerClub: 500,
   nameLength: 40,
@@ -229,6 +252,7 @@ function normalise(c: Club): Club {
   c.seasons = Array.isArray(c.seasons) ? c.seasons : [];
   c.bans = Array.isArray(c.bans) ? c.bans : [];
   c.ownerLapsedAt = typeof c.ownerLapsedAt === 'number' ? c.ownerLapsedAt : null;
+  c.ownerLapses = Array.isArray(c.ownerLapses) ? c.ownerLapses.filter((l) => l && typeof l.userId === 'string' && typeof l.lapsedAt === 'number') : [];
   for (const t of c.tables) t.variant = t.variant === true;
   for (const m of c.members) if (typeof m.seasonPoints !== 'number') m.seasonPoints = m.points;
   return c;
@@ -240,7 +264,10 @@ const newMember = (user: Identity, role: ClubRole, at: number): ClubMember => ({
  * Account merge, applied in place to clubs held in memory: `fromUserId`'s memberships and pending
  * requests pass to `to` (where both have a row the stronger one stays: member beats pending; on a
  * tie `to`'s row is kept), clubs `fromUserId` owns transfer, and its table listings are re-attributed.
- * Returns the codes of the clubs changed. The memory repository and the registry both use this,
+ * The two accounts are one person, so every club passes to `to` even when that takes it past
+ * `CLUB_LIMITS.ownedClubsPerUser`: the plan covers only the first three (see `ClubRegistry.covered`),
+ * and the rest run as lapsed clubs until they are passed on. A lapse on file for `fromUserId` as an
+ * owner follows it too. Returns the codes of the clubs changed. The memory repository and the registry both use this,
  * so the rows in the store and the clubs in memory always agree (pg.ts does the same in SQL).
  */
 export function moveMembershipsIn(clubs: Iterable<Club>, fromUserId: string, to: Identity): string[] {
@@ -257,8 +284,17 @@ export function moveMembershipsIn(clubs: Iterable<Club>, fromUserId: string, to:
     const ownsIt = club.ownerId === fromUserId;
     const bans = club.bans ?? [];
     const fromBan = bans.find((b) => b.userId === fromUserId);
-    if (!fromMember && !fromPending && !ownsIt && !fromBan) continue;
+    const fromLapse = (club.ownerLapses ?? []).find((l) => l.userId === fromUserId);
+    if (!fromMember && !fromPending && !ownsIt && !fromBan && !fromLapse) continue;
     changed.push(club.code);
+    if (fromLapse) {
+      const toLapse = club.ownerLapses!.find((l) => l.userId === to.userId);
+      if (toLapse) {
+        toLapse.lapsedAt = Math.min(toLapse.lapsedAt, fromLapse.lapsedAt);
+        if (fromLapse.until === null) toLapse.until = null;
+        club.ownerLapses = club.ownerLapses!.filter((l) => l !== fromLapse);
+      } else fromLapse.userId = to.userId;
+    }
     const toMember = club.members.find((m) => m.userId === to.userId);
     if (fromMember) {
       if (toMember) club.members = club.members.filter((m) => m !== fromMember);
@@ -297,12 +333,19 @@ export function moveMembershipsIn(clubs: Iterable<Club>, fromUserId: string, to:
 /**
  * Account deletion, applied in place: the user's member rows become "Deleted player" with no
  * avatar, pending requests are dropped, and a club they owned passes to its senior admin (the
- * earliest-joined one), else its earliest member; a club with nobody else in it is removed from
- * `clubs`. Returns the codes of the clubs changed, the removed ones included. Shared by the memory
- * repository and the registry like `moveMembershipsIn` (pg.ts does the same in SQL).
+ * earliest-joined one), else its earliest member, skipping accounts that already own
+ * `CLUB_LIMITS.ownedClubsPerUser` clubs and members who have deleted their own account. When
+ * everyone left is at the cap the senior one takes it all the same (a club needs an owner), and it
+ * runs as a lapsed club until they pass it on (`ClubRegistry.covered`). A club with nobody else
+ * left in it is removed from `clubs`. Returns the codes of the clubs changed, the removed ones
+ * included. Shared by the memory repository, the Postgres one and the registry, like
+ * `moveMembershipsIn`. `ownedCount` says how many clubs an account owns when `clubs` is not every
+ * club there is (Postgres loads only the ones this user is in).
  */
-export function anonymiseUserIn(clubs: Map<string, Club>, userId: string): string[] {
+export function anonymiseUserIn(clubs: Map<string, Club>, userId: string, ownedCount?: (userId: string) => number): string[] {
   const changed: string[] = [];
+  const handedOver = new Map<string, number>();
+  const owned = (id: string) => (ownedCount ? ownedCount(id) + (handedOver.get(id) ?? 0) : [...clubs.values()].filter((c) => c.ownerId === id).length);
   for (const club of [...clubs.values()]) {
     let touched = false;
     for (const m of club.members) {
@@ -320,9 +363,10 @@ export function anonymiseUserIn(clubs: Map<string, Club>, userId: string): strin
     }
     if (club.ownerId === userId) {
       touched = true;
-      const successor = club.members
-        .filter((m) => m.userId !== userId)
-        .sort((a, b) => Number(b.role === 'admin') - Number(a.role === 'admin') || a.joinedAt - b.joinedAt || a.userId.localeCompare(b.userId))[0];
+      const candidates = club.members
+        .filter((m) => m.userId !== userId && m.name !== DELETED_PLAYER_NAME)
+        .sort((a, b) => Number(b.role === 'admin') - Number(a.role === 'admin') || a.joinedAt - b.joinedAt || a.userId.localeCompare(b.userId));
+      const successor = candidates.find((m) => owned(m.userId) < CLUB_LIMITS.ownedClubsPerUser) ?? candidates[0];
       if (!successor) {
         clubs.delete(club.code);
         changed.push(club.code);
@@ -330,6 +374,7 @@ export function anonymiseUserIn(clubs: Map<string, Club>, userId: string): strin
       }
       club.ownerId = successor.userId;
       successor.role = 'owner';
+      handedOver.set(successor.userId, (handedOver.get(successor.userId) ?? 0) + 1);
       for (const m of club.members) if (m.userId === userId) m.role = 'member';
     }
     if (touched || club.pending.length !== before) changed.push(club.code);
@@ -383,29 +428,109 @@ export class ClubRegistry {
   }
 
   /**
-   * Bring one club's record of its owner's plan up to date: cleared while the plan is active, set
-   * to now the first time it is seen missing (the 7-day grace starts then). A lapse already on
-   * record is kept while the plan stays missing, so passing the club back and forth between two
-   * accounts without a plan never starts a new grace. A wallet that cannot answer changes nothing.
+   * Bring one club's record of its owner's plan up to date: cleared while the plan is active and
+   * covers this club, set to now the first time it is seen missing (the 7-day grace starts then).
+   * A lapse already on record is kept while the plan stays missing, so passing the club back and
+   * forth between two accounts without a plan never starts a new grace; and a lapse is filed under
+   * the account that had it (`ownerLapses`), so it is still there when the club comes back to that
+   * account from a subscriber. A wallet that cannot answer changes nothing.
    */
   async refreshOwnerPlan(code: string): Promise<void> {
     const check = this.ownerPlan;
     const club = this.clubs.get(code.toUpperCase());
     if (!check || !club) return;
+    const ownerId = club.ownerId;
     let active: boolean;
     try {
-      active = await check(club.ownerId);
+      active = await check(ownerId);
     } catch (e) {
       console.error(`[signal] owner plan check for club ${club.code} failed:`, (e as Error).message);
       return;
     }
     // The club may have been deleted or passed on while the wallet answered.
-    const current = this.clubs.get(club.code);
-    if (current !== club) return;
-    const next = active ? null : (club.ownerLapsedAt ?? this.now());
-    if (next === (club.ownerLapsedAt ?? null)) return;
-    club.ownerLapsedAt = next;
-    this.persist(club);
+    if (this.clubs.get(club.code) !== club || club.ownerId !== ownerId) return;
+    const now = this.now();
+    let next: number | null;
+    let changed = false;
+    if (active) {
+      // The account holds the plan: whatever lapse it had on file anywhere is over.
+      this.forgetLapses(ownerId);
+      // A plan covers three clubs; one beyond them runs as a lapsed club until it is passed on.
+      next = this.covered(club) ? null : (club.ownerLapsedAt ?? now);
+    } else {
+      const own = this.accountLapse(ownerId);
+      next = Math.min(club.ownerLapsedAt ?? now, own ?? now);
+      changed = this.fileLapse(club, ownerId, own ?? now, null);
+    }
+    if (next !== (club.ownerLapsedAt ?? null)) {
+      club.ownerLapsedAt = next;
+      changed = true;
+    }
+    if (changed) this.persist(club);
+  }
+
+  /**
+   * True when this club is one of the `CLUB_LIMITS.ownedClubsPerUser` its owner's plan covers: the
+   * first three they own, oldest first. Nobody can create or be handed a fourth, but an account
+   * merge, or a deleted owner's club with nobody else to take it, can leave an account with more.
+   */
+  covered(club: Club): boolean {
+    const owned = this.ownedBy(club.ownerId).sort((a, b) => a.createdAt - b.createdAt || a.code.localeCompare(b.code));
+    return owned.indexOf(club) < CLUB_LIMITS.ownedClubsPerUser;
+  }
+
+  /** When this account's lapse as a club owner began, from every club's file; undefined when it has none. */
+  private accountLapse(userId: string): number | undefined {
+    let at: number | undefined;
+    for (const c of this.clubs.values()) for (const l of c.ownerLapses ?? []) if (l.userId === userId && (at === undefined || l.lapsedAt < at)) at = l.lapsedAt;
+    return at;
+  }
+
+  /** Record (or bring up to date) an account's lapse in a club's file. Returns whether the file changed. */
+  private fileLapse(club: Club, userId: string, lapsedAt: number, until: number | null): boolean {
+    const file = (club.ownerLapses ??= []);
+    const row = file.find((l) => l.userId === userId);
+    if (row) {
+      if (row.lapsedAt <= lapsedAt && row.until === until) return false;
+      row.lapsedAt = Math.min(row.lapsedAt, lapsedAt);
+      row.until = until;
+      return true;
+    }
+    file.push({ userId, lapsedAt, until });
+    // Keep the file small: the owner's own row and the most recent departures.
+    if (file.length > CLUB_LIMITS.ownerLapsesPerClub) {
+      file.sort((a, b) => (a.until ?? Infinity) - (b.until ?? Infinity));
+      file.splice(0, file.length - CLUB_LIMITS.ownerLapsesPerClub);
+    }
+    return true;
+  }
+
+  /** The account holds the plan again: drop its lapse from every club's file. */
+  private forgetLapses(userId: string): void {
+    for (const c of this.clubs.values()) {
+      const kept = (c.ownerLapses ?? []).filter((l) => l.userId !== userId);
+      if (kept.length === (c.ownerLapses ?? []).length) continue;
+      c.ownerLapses = kept;
+      this.persist(c);
+    }
+  }
+
+  /**
+   * The club has just passed from `prevOwnerId` to `club.ownerId`. A lapse it was running under
+   * is filed under the account that had it, and the new owner starts with the earliest lapse on
+   * file: their own from any club, or one this club passed on from within `lapseMemoryMs` (so a
+   * chain of accounts without a plan cannot restart the grace through a subscriber). The caller
+   * then asks the wallet (`refreshOwnerPlan`), which clears it for an owner whose plan covers it.
+   */
+  private ownerPassed(club: Club, prevOwnerId: string): void {
+    const now = this.now();
+    if (typeof club.ownerLapsedAt === 'number') this.fileLapse(club, prevOwnerId, club.ownerLapsedAt, now);
+    let onFile = this.accountLapse(club.ownerId);
+    for (const l of club.ownerLapses ?? []) {
+      if (l.userId === club.ownerId || l.until === null || now - l.until > CLUB_LIMITS.lapseMemoryMs) continue;
+      if (onFile === undefined || l.lapsedAt < onFile) onFile = l.lapsedAt;
+    }
+    if (onFile !== undefined) club.ownerLapsedAt = Math.min(club.ownerLapsedAt ?? onFile, onFile);
   }
 
   /** Check every club's owner (the hourly pruner runs this). One run at a time. */
@@ -586,14 +711,26 @@ export class ClubRegistry {
    */
   moveMemberships(fromUserId: string, to: Identity): string[] {
     const changed = moveMembershipsIn(this.clubs.values(), fromUserId, to);
-    for (const code of changed) this.persistCode(code);
+    for (const code of changed) {
+      this.persistCode(code);
+      // Clubs the merged account now owns: its plan decides their table cap (and covers only three).
+      if (this.clubs.get(code)?.ownerId === to.userId) void this.refreshOwnerPlan(code);
+    }
     return changed;
   }
 
   /** Account deletion: the in-memory counterpart of the repositories' `anonymiseUser` (see `moveMemberships`). Returns the clubs changed. */
   anonymiseMember(userId: string): string[] {
+    const owned = this.ownedBy(userId).map((c) => c.code);
     const changed = anonymiseUserIn(this.clubs, userId);
     for (const code of changed) this.persistCode(code);
+    // A club that passed to a successor: the lapse on record follows the rules of a transfer.
+    for (const code of owned) {
+      const club = this.clubs.get(code);
+      if (!club || club.ownerId === userId) continue;
+      this.ownerPassed(club, userId);
+      void this.refreshOwnerPlan(code);
+    }
     return changed;
   }
 
@@ -610,14 +747,16 @@ export class ClubRegistry {
     if (gone.size === 0) return [];
     const changed = new Set<string>();
     for (const id of gone) {
-      if (this.ownedBy(id).length) for (const code of anonymiseUserIn(this.clubs, id)) changed.add(code);
+      if (this.ownedBy(id).length) for (const code of this.anonymiseMember(id)) changed.add(code);
     }
     for (const club of this.clubs.values()) {
       const members = club.members.filter((m) => !gone.has(m.userId));
       const pending = club.pending.filter((p) => !gone.has(p.userId));
-      if (members.length === club.members.length && pending.length === club.pending.length) continue;
+      const lapses = (club.ownerLapses ?? []).filter((l) => !gone.has(l.userId));
+      if (members.length === club.members.length && pending.length === club.pending.length && lapses.length === (club.ownerLapses ?? []).length) continue;
       club.members = members;
       club.pending = pending;
+      club.ownerLapses = lapses;
       changed.add(club.code);
     }
     for (const code of changed) this.persistCode(code);
@@ -875,9 +1014,14 @@ export class ClubRegistry {
     const m = this.member(club, userId);
     if (!m) throw new ClubError('not_found', 'Member not found');
     if (role === 'owner') {
+      // Decision 5: one account runs at most three clubs, however it comes by them.
+      if (this.ownedBy(userId).length >= CLUB_LIMITS.ownedClubsPerUser) {
+        throw new ClubError('limit', `That member already owns ${CLUB_LIMITS.ownedClubsPerUser} clubs, the most one account may own`);
+      }
       const prev = this.member(club, club.ownerId);
       if (prev) prev.role = 'admin';
       club.ownerId = userId;
+      this.ownerPassed(club, actorId);
     }
     m.role = role;
     this.persist(club);
@@ -1077,11 +1221,15 @@ export class ClubRegistry {
     return { club, archived };
   }
 
-  /** What a member sees: the whole club, except that only the owner and admins see the ban list. */
+  /**
+   * What a member sees: the whole club, except that only the owner and admins see the ban list,
+   * and nobody is sent the server's own records (the owner-lapse file).
+   */
   static memberView(club: Club, userId: string): Club {
+    const { ownerLapses: _lapses, ...shown } = club;
     const m = club.members.find((x) => x.userId === userId);
-    if (m && (m.role === 'owner' || m.role === 'admin')) return club;
-    const { bans: _bans, ...rest } = club;
+    if (m && (m.role === 'owner' || m.role === 'admin')) return shown;
+    const { bans: _bans, ...rest } = shown;
     return rest;
   }
 
