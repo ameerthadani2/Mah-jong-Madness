@@ -34,7 +34,7 @@
     "transfer": "Make owner",
     "transferConfirm": "Make %{name} the owner? You become an admin.",
     "remove": "Remove",
-    "removeConfirm": "Remove %{name} from the club? They also leave any club table they are at.",
+    "removeConfirm": "Remove %{name} from the club? They also leave any club table they are at. Their standings are kept on file and come back if they rejoin.",
     "ban": "Ban",
     "banConfirm": "Ban %{name}? They leave the club and its tables and cannot join again until unbanned.",
     "bannedTitle": "Banned",
@@ -43,7 +43,7 @@
     "confirm": "Confirm",
     "danger": "Leave or delete",
     "leave": "Leave club",
-    "leaveConfirm": "Leave %{name}? You can ask to join again later.",
+    "leaveConfirm": "Leave %{name}? Your standings are kept on file and come back if you rejoin. A match you are playing still counts, win or lose.",
     "ownerLeave": "Pass the club to another member before you leave.",
     "delete": "Delete club",
     "deleteBody": "This deletes the club, its standings and its history, and closes its tables. Type the club's name to confirm.",
@@ -79,7 +79,10 @@
     "evictConfirm": "Remove %{name} from this table? A bot plays their seat and they cannot come back to it.",
     "evicted": "%{name} was removed from the table.",
     "reject": "Reject",
-    "ban": "Ban"
+    "ban": "Ban",
+    "rejectAll": "Reject all",
+    "rejectAllConfirm": "Reject all %{n} requests? They can ask to join again later.",
+    "rejectedAll": "Requests rejected."
   },
   "standing": "%{played} matches · %{won} wins",
   "rules": {
@@ -122,7 +125,7 @@
     "message": "Join my club %{name} on %{app}. Club code %{code}: %{link}"
   },
   "owner": {
-    "restricted": "The owner's Four Winds Club plan has lapsed, so this club can have one open table until it is renewed.",
+    "restricted": "This club is not covered by an active Four Winds Club plan (the owner's plan has lapsed, or already covers 3 other clubs), so it can have one open table until the owner renews or passes the club on.",
     "renew": "Renew"
   },
   "ruleEditor": {
@@ -176,6 +179,10 @@
     "notBanned": "That account is not banned.",
     "adminOnAdmin": "Only the owner can remove or ban an admin.",
     "ownerProtected": "The owner cannot be removed or banned.",
-    "notYourself": "You cannot do that to yourself."
+    "notYourself": "You cannot do that to yourself.",
+    "transferLimit": "That member already owns %{max} clubs, the most one account can own.",
+    "joinRateIp": "Too many clubs joined from this connection. Try again in an hour.",
+    "joinRateClub": "This club is getting a lot of join requests. Try again later.",
+    "queueFull": "This club has too many requests waiting. Try again later."
   }
 }

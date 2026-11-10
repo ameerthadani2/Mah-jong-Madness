@@ -10,7 +10,6 @@
 import { anonymiseUserIn, moveMembershipsIn, type Club, type ClubBan, type ClubMember, type ClubSettings, type ClubTable, type FormerMember, type Identity, type OwnerLapse, type SeasonRecord } from '../clubs';
 import type { Pool, Queryable } from '../db';
 import {
-  DELETED_PLAYER_NAME,
   type BlockRecord,
   type BlocksRepo,
   type ClubMembership,

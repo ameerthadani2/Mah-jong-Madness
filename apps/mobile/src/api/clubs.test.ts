@@ -26,6 +26,7 @@ describe('club owner tool routes', () => {
     await clubsApi.ban(ctx, 'AB12', 'u-9');
     await clubsApi.unban(ctx, 'AB12', 'u-9');
     await clubsApi.reject(ctx, 'AB12', 'u-8');
+    await clubsApi.rejectAll(ctx, 'AB12', ['u-5', 'u-6']);
     await clubsApi.setRole(ctx, 'AB12', 'u-7', 'owner');
     await clubsApi.leave(ctx, 'AB12', 'me-1');
     expect(calls.map((c) => [c.method, c.url.replace('https://game.example', ''), c.body])).toEqual([
@@ -34,6 +35,7 @@ describe('club owner tool routes', () => {
       ['POST', '/api/clubs/AB12/bans', { userId: 'u-9' }],
       ['DELETE', '/api/clubs/AB12/bans/u-9', {}],
       ['POST', '/api/clubs/AB12/members/u-8/reject', {}],
+      ['POST', '/api/clubs/AB12/pending/reject-all', { userIds: ['u-5', 'u-6'] }],
       ['POST', '/api/clubs/AB12/members/u-7/role', { role: 'owner' }],
       ['DELETE', '/api/clubs/AB12/members/me-1', {}],
     ]);
@@ -76,6 +78,10 @@ describe('clubErrorMessage', () => {
       [{ code: 'forbidden', message: 'Only the owner can remove an admin' }, 'clubs.errors.adminOnAdmin'],
       [{ code: 'forbidden', message: 'The owner cannot be removed; transfer ownership first' }, 'clubs.errors.ownerProtected'],
       [{ code: 'forbidden', message: 'You cannot do that to yourself' }, 'clubs.errors.notYourself'],
+      [{ code: 'limit', message: 'That member already owns 3 clubs, the most one account may own' }, 'clubs.errors.transferLimit'],
+      [{ code: 'rate_limited', message: 'Too many clubs joined from this connection; try again in an hour' }, 'clubs.errors.joinRateIp'],
+      [{ code: 'rate_limited', message: 'This club is getting a lot of join requests; try again later' }, 'clubs.errors.joinRateClub'],
+      [{ code: 'limit', message: 'This club has too many pending requests; try again later' }, 'clubs.errors.queueFull'],
     ];
     for (const [e, key] of cases) {
       const m = clubErrorMessage(e);
@@ -84,6 +90,7 @@ describe('clubErrorMessage', () => {
       expect(zh(key, m?.params)).toMatch(/[一-鿿]/);
     }
     expect(clubErrorMessage({ code: 'limit', message: 'You can own at most 3 clubs' })?.params).toEqual({ max: 3 });
+    expect(clubErrorMessage({ code: 'limit', message: 'That member already owns 3 clubs, the most one account may own' })?.params).toEqual({ max: 3 });
     expect(clubErrorMessage(new Error('Network request failed'))).toBeNull();
   });
 });
