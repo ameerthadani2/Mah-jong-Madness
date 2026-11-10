@@ -18,6 +18,7 @@ import {
   advanceMatch,
   dealFromSnapshot,
   hashState,
+  isLegal,
   legalActions,
   matchSnapshot,
   newGame,
@@ -191,6 +192,19 @@ interface AttemptRecord {
   revealed: boolean;
   /** The host told us it supplied our share in this attempt. */
   stoodIn: boolean;
+  /** This device's clock, and its link epoch, when it sent its secret. */
+  revealedAt?: number;
+  revealedEpoch?: number;
+}
+
+/**
+ * A fixed point between this device's clock and the host's: something the host did (`now`, on its
+ * clock) that it cannot have done before this device sent what it answers (`at`, on this clock).
+ */
+interface ClockAnchor {
+  at: number;
+  now: number;
+  epoch: number;
 }
 
 /** What this client saw of one hand's ceremony. */
@@ -230,8 +244,12 @@ interface SentAction {
   tc: number;
   action: Action;
   epoch: number;
+  /** This device's clock when it sent the move. */
+  at?: number;
   /** The host refused it (error code). */
   rejected?: string;
+  /** The turn the host's own frames had reached when its refusal arrived. */
+  refusedAt?: number;
   /** Matched to an entry of the hand's log during the audit. */
   used?: boolean;
 }
@@ -241,6 +259,8 @@ interface PlayRecord {
   hand: number;
   seen: SeenState[];
   sent: SentAction[];
+  /** Refusals of this seat's moves: the turn the move was made on (as the host echoed it) and the turn the host's frames had reached. */
+  refusals?: Array<{ tc: number; at: number }>;
   /**
    * Turn counter from which every move the log credits to this seat's player must be one this client
    * sent (it watched the hand from there with its ledger intact). Null when it cannot vouch at all.
@@ -258,8 +278,16 @@ const MAX_SEEN = 600;
 const MAX_SENT = 300;
 /** Slack for the host's rounding of time banks to whole seconds. */
 const CLOCK_SLACK_MS = 1_000;
-/** How far the host's clock may seem to gain on this device's within one unbroken link. */
-const CLOCK_SKEW_MS = 2_000;
+/** How far the host's clock may seem to gain on this device's after a fixed point between them (clock steps and drift). */
+const CLOCK_SKEW_MS = 5_000;
+/**
+ * How much later than the frames before it a frame may have been stamped, relative to when each
+ * arrived: the swing in network delay an unbroken link can show (a longer stall trips the
+ * heartbeat and the link is replaced).
+ */
+const LATENCY_SLACK_MS = 30_000;
+/** A move sent this long before the table's own move for the same turn arrived was not lost to a slow network. */
+const MOVE_SLACK_MS = 30_000;
 
 /** Version of `SerializedClient`; bump on any incompatible change. */
 export const CLIENT_SNAPSHOT_VERSION = 2;
@@ -572,7 +600,7 @@ export class TableClient {
     const tc = v && isInt(v.turnCounter) ? v.turnCounter : undefined;
     if (v && tc !== undefined) {
       const play = this.playFor(v.handNumber);
-      play.sent.push({ tc, action, epoch: this.epoch });
+      play.sent.push({ tc, action, epoch: this.epoch, at: this.now() });
       if (play.sent.length > MAX_SENT) play.sent.splice(0, play.sent.length - MAX_SENT);
     }
     this.send({ t: 'action', seat: this.state.seat, action, expectHash: this.state.stateHash ?? undefined, turnCounter: tc });
@@ -998,7 +1026,11 @@ export class TableClient {
         }
         {
           const attempt = this.currentAttempt(h);
-          if (attempt) attempt.revealed = true;
+          if (attempt) {
+            attempt.revealed = true;
+            attempt.revealedAt = this.now();
+            attempt.revealedEpoch = this.epoch;
+          }
         }
         this.send({ t: 'reveal', secret: this.secret });
         this.update({ ceremony: 'revealed' });
@@ -1166,7 +1198,16 @@ export class TableClient {
     if (!play) return;
     const open = play.sent.filter((s) => !s.rejected && (!isInt(m.turnCounter) || s.tc === m.turnCounter));
     const target = open[open.length - 1];
-    if (target) target.rejected = code;
+    // Every state the host reached before it refused has arrived before the refusal (frames come in order).
+    const v = this.state.view;
+    const at = v && v.handNumber === play.hand && isInt(v.turnCounter) ? v.turnCounter : undefined;
+    if (target) {
+      target.rejected = code;
+      target.refusedAt = at;
+    }
+    if (isInt(m.turnCounter) && at !== undefined) {
+      play.refusals = [...(play.refusals ?? []), { tc: m.turnCounter, at }].slice(-MAX_SENT);
+    }
   }
 
   /**
@@ -1334,8 +1375,16 @@ export class TableClient {
     // 6. Reveals, seed and replay.
     this.checkSeed(audit, commitsOk && revealsOk, failures);
     const start = this.handStart && this.handStart.handNumber === h ? this.handStart : snapshotFromView(finalView, true);
+    // The deal used this device's secret, so the hand's first frame was made after the secret was sent.
+    const anchors: ClockAnchor[] = [];
+    const lastAttempt = this.recordFor(h)?.attempts.slice(-1)[0];
+    const firstFrame = this.plays.find((p) => p.hand === h)?.seen[0];
+    const mySecret = revealsOk ? audit.reveals.find((r) => r.seat === me)?.secret : undefined;
+    if (tookPart && !stoodIn && this.secret && mySecret === this.secret && lastAttempt?.revealed && typeof lastAttempt.revealedAt === 'number' && firstFrame && typeof firstFrame.now === 'number' && firstFrame.epoch === lastAttempt.revealedEpoch && firstFrame.at >= lastAttempt.revealedAt) {
+      anchors.push({ at: lastAttempt.revealedAt, now: firstFrame.now, epoch: firstFrame.epoch });
+    }
     try {
-      replayed = this.replayChecked(start, audit.seed, rules, audit.log, h, end, failures);
+      replayed = this.replayChecked(start, audit.seed, rules, audit.log, h, end, failures, anchors);
       if (hashState(replayed) !== audit.finalHash) failures.push('Replaying the action log does not reproduce the final state');
       // The result and scores the host announced must be the ones the replay produces.
       if (announced && stableStringify(replayed.result) !== stableStringify(announced)) failures.push('Announced result differs from the replayed hand');
@@ -1368,9 +1417,11 @@ export class TableClient {
    * Replay the hand, checking along the way every state hash this client was shown and every entry
    * the log puts on this seat: a move credited to the player must be one this client sent (and
    * not refused), a move the table made for the seat must come after its clock ran out or while
-   * its link was down, and never pass up a win (the table's own play always takes one).
+   * its link was down, and never pass up a win (the table's own play always takes one). A move
+   * this client sent must not have been refused while it was legal, nor left lying until the
+   * clock ran out.
    */
-  private replayChecked(start: MatchSnapshot, seed: string, rules: RuleSet, log: LoggedAction[], h: number, end: SeenState | null, failures: string[]): GameState {
+  private replayChecked(start: MatchSnapshot, seed: string, rules: RuleSet, log: LoggedAction[], h: number, end: SeenState | null, failures: string[], anchors: ClockAnchor[] = []): GameState {
     const me = this.state.seat;
     const play = end ? (this.plays.find((p) => p.hand === h) ?? null) : null;
     const shown = new Map<number, string>();
@@ -1382,8 +1433,22 @@ export class TableClient {
     };
     const sent = (play?.sent ?? []).map((x) => ({ ...x, used: false }));
     const problems = new Set<string>();
+    // The host refuses only what is not legal in the state it is in. Each refusal names the turn
+    // the move was made on; it is excused by one move this client sent on that turn that was not
+    // legal in the state the host's own frames showed when the refusal arrived.
+    const checkRefusals = (s: GameState) => {
+      if (!play || me === null) return;
+      const here = (play.refusals ?? []).filter((r) => r.at === s.turnCounter);
+      for (const tc of new Set(here.map((r) => r.tc))) {
+        const excused = sent.filter((x) => x.tc === tc && !legalFor(s, me, x.action)).length;
+        if (here.filter((r) => r.tc === tc).length > excused) problems.add(`The host refused a legal move this seat made (turn ${s.turnCounter})`);
+      }
+    };
+    /** The first frame this client got after turn `n` was played (the hand's result if none). */
+    const frameAfter = (n: number): SeenState | null => play?.seen.find((f) => f.tc > n) ?? end;
     let s = dealFromSnapshot(start, seed, rules);
     checkHash(s);
+    checkRefusals(s);
     for (const entry of log) {
       if (play && me !== null && isObject(entry) && entry.seat === me) {
         const n = entry.n;
@@ -1391,8 +1456,12 @@ export class TableClient {
         if (source === 'player') {
           if (play.ledgerFrom !== null && isInt(n) && n >= play.ledgerFrom) {
             const match = sent.find((x) => !x.used && x.tc <= n && sameActionSafe(x.action, entry.action, s, me));
-            if (match) match.used = true;
-            else if (sent.some((x) => !x.used && !x.rejected && x.tc <= n)) problems.add(`The log changed a move this seat made (turn ${n})`);
+            if (match) {
+              match.used = true;
+              // The host cannot have played this move before this device sent it: a fixed point between the two clocks.
+              const f = frameAfter(n);
+              if (f && typeof match.at === 'number' && typeof f.now === 'number' && f.epoch === match.epoch && f.at >= match.at) anchors.push({ at: match.at, now: f.now, epoch: f.epoch });
+            } else if (sent.some((x) => !x.used && !x.rejected && x.tc <= n)) problems.add(`The log changed a move this seat made (turn ${n})`);
             else problems.add(`The log shows a move this seat never made (turn ${n})`);
           }
           // Any move we sent for this turn and lost to this one is accounted for.
@@ -1405,12 +1474,18 @@ export class TableClient {
             couldWin = false;
           }
           if (couldWin && entry.action?.type !== 'hu') problems.add(`The table played for this seat and passed up its win (turn ${String(n)})`);
-          if (isInt(n) && this.autoWasEarly(play, n, end)) problems.add(`The table played for this seat while it was connected and its clock had not run out (turn ${n})`);
+          if (isInt(n) && this.autoWasEarly(play, n, end, rules, anchors)) problems.add(`The table played for this seat while it was connected and its clock had not run out (turn ${n})`);
+          // A legal move this device sent for this turn long before, over a link that never dropped, was left lying.
+          const after = isInt(n) ? frameAfter(n) : null;
+          if (after && sent.some((x) => !x.used && x.tc <= n && x.epoch === after.epoch && typeof x.at === 'number' && after.at - x.at > MOVE_SLACK_MS && !(x.refusedAt !== undefined && x.refusedAt <= n) && legalFor(s, me, x.action) && !sameActionSafe(x.action, entry.action, s, me))) {
+            problems.add(`The table ignored a move this seat sent in good time and played its own instead (turn ${n})`);
+          }
           for (const x of sent) if (!x.used && isInt(n) && x.tc <= n) x.used = true;
         }
       }
       s = applyAction(s, entry.seat, entry.action);
       checkHash(s);
+      checkRefusals(s);
     }
     // States shown for turns the log never reached: the log was cut short or rewritten.
     for (const tc of shown.keys()) if (tc > s.turnCounter) problems.add(`The state this seat was shown at turn ${tc} is not in the replay`);
@@ -1420,10 +1495,14 @@ export class TableClient {
 
   /**
    * True when the log has the table moving for this seat at turn `n` although this client's link
-   * was up throughout and, by the host's own clock, the seat's time had not run out. The host's
-   * clock is only believed as far as it cannot run ahead of this device's within one link.
+   * was up throughout and the seat's time had not run out. How long the seat had is worked out
+   * from the rules and from what this client saw earlier in the hand (`expiryBound`), never from
+   * the clock fields of the frame alone; how long it was given is read from the host's time
+   * stamps, which are believed only as far as this device's own clock allows: the host cannot
+   * have played a move before this device sent it, so from any such move on, no more time can
+   * pass on the host's clock than passes here.
    */
-  private autoWasEarly(play: PlayRecord, n: number, end: SeenState | null): boolean {
+  private autoWasEarly(play: PlayRecord, n: number, end: SeenState | null, rules: RuleSet, anchors: ClockAnchor[]): boolean {
     let a: SeenState | null = null;
     let b: SeenState | null = null;
     for (const s of play.seen) {
@@ -1433,11 +1512,59 @@ export class TableClient {
     if (!b) b = end;
     if (!a || !b || a.epoch !== b.epoch || !a.owes) return false;
     if (a.deadline === null || typeof b.now !== 'number') return true;
+    // What the frame itself says can only add time: a host that re-armed the clock (a rejoin) knows more than this client.
+    const claimed = a.inBank ? a.deadline : a.deadline + a.timeBank * 1000;
+    const expiry = Math.max(this.expiryBound(play, a, rules), claimed);
+    if (b.now < expiry - CLOCK_SLACK_MS) return true;
+    for (const k of anchors) if (k.epoch === b.epoch && b.now - k.now > b.at - k.at + CLOCK_SKEW_MS) return true;
+    // With no such fixed point yet, the host's clock may still not leap ahead of every frame before it.
     let minOffset = Number.POSITIVE_INFINITY;
     for (const s of play.seen) if (s.epoch === a.epoch && s.tc <= n && typeof s.now === 'number') minOffset = Math.min(minOffset, s.at - s.now);
-    if (b.at - b.now < minOffset - CLOCK_SKEW_MS) return true;
-    const expiry = a.inBank ? a.deadline : a.deadline + a.timeBank * 1000;
-    return b.now < expiry - CLOCK_SLACK_MS;
+    return b.at - b.now < minOffset - LATENCY_SLACK_MS;
+  }
+
+  /**
+   * The earliest moment, on the host's clock, at which an honest table could time this seat out of
+   * the move it owes in frame `a`: the rules' turn clock from the frame in which the seat came to
+   * owe the move, plus the time bank it had then. The bank starts each hand at the rules' value
+   * and shrinks only by the time the seat's earlier moves took past the turn clock. Across a lost
+   * link this client cannot know what the seat spent, so there it takes the bank the next frame
+   * states; the bound itself never moves back within a hand (an honest table's never does).
+   */
+  private expiryBound(play: PlayRecord, a: SeenState, rules: RuleSet): number {
+    const turn = rules.turnSeconds * 1000;
+    const fullBank = rules.timeBankSeconds * 1000;
+    // The host rounds the bank to whole seconds.
+    const stated = (f: SeenState) => Math.min(fullBank, Math.max(0, f.timeBank * 1000 - 500));
+    // The first frame is the deal itself only if this client watched the deal over the same unbroken link.
+    const rec = this.recordFor(play.hand);
+    const fromDeal = rec !== null && rec.attempts.length > 0 && !rec.linkLost;
+    let bound = Number.NEGATIVE_INFINITY;
+    let bank: number | null = null;
+    /** The frame in which the seat came to owe its current move; `known` when its clock started with that frame. */
+    let run: { start: SeenState; known: boolean } | null = null;
+    let prev: SeenState | null = null;
+    for (const f of play.seen) {
+      const fresh = prev === null || prev.epoch !== f.epoch;
+      if (fresh) {
+        // A new link: a move owed in its first frame may have been on the clock for a while already.
+        const deal = prev === null && fromDeal && f.tc === 0;
+        run = f.owes ? { start: f, known: deal && typeof f.now === 'number' } : null;
+        bank = deal ? fullBank : f.owes ? null : stated(f);
+        if (run?.known) bound = Math.max(bound, (f.now as number) + turn + fullBank);
+      } else if (f.owes && !run) {
+        run = { start: f, known: typeof f.now === 'number' };
+        if (run.known) bound = Math.max(bound, (f.now as number) + turn + (bank ?? 0));
+      } else if (!f.owes && run) {
+        const began = run.start.now;
+        if (run.known && bank !== null && typeof f.now === 'number' && typeof began === 'number') bank = Math.max(0, bank - Math.max(0, f.now - began - turn));
+        else bank = stated(f);
+        run = null;
+      } else if (!f.owes && bank === null) bank = stated(f);
+      if (f === a) break;
+      prev = f;
+    }
+    return bound;
   }
 
   private checkAccounting(audit: Audit): string[] {
@@ -1514,6 +1641,15 @@ export class TableClient {
     const dealt = byN.get(attempts);
     if (blamedMe && !flaggedBlame && dealt && dealt.committed && !dealt.stoodIn) failures.push('The audit blames this seat for a restart, yet the deal used a new share from it instead of standing it in');
     return failures;
+  }
+}
+
+/** Whether `action` is a legal move for `seat` in `s`; false for anything malformed. */
+function legalFor(s: GameState, seat: number, action: Action): boolean {
+  try {
+    return isLegal(s, seat, action);
+  } catch {
+    return false;
   }
 }
 
