@@ -7,7 +7,8 @@ import { createServer, type Server } from 'node:http';
 import { connect as netConnect, type AddressInfo, type Socket as NetSocket } from 'node:net';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { WebSocket, type WebSocketServer } from 'ws';
-import { RoomRegistry } from '../src/rooms';
+import { LIMITS } from '../src/config';
+import { CREATE_COOLDOWN, JOIN_THROTTLED, RoomRegistry } from '../src/rooms';
 import { createSocketServer, MAX_FRAME_BYTES } from '../src/sockets';
 
 type Frame = { t: string; peerId?: string; room?: string; host?: string; data?: { msg?: { t?: string } } };
@@ -188,7 +189,7 @@ describe('session handshake', () => {
     }
   });
 
-  it('checks the session again before a create or join, and ends a verified socket with 4401 once its session is revoked', async () => {
+  it('checks the session again before a create or join once the last check is a few seconds old, and ends a verified socket with 4401 once its session is revoked', async () => {
     const http2 = createServer();
     // 'good' verifies while `valid` holds; the verifier also names the session so the registry can end it.
     let valid = true;
@@ -197,7 +198,9 @@ describe('session handshake', () => {
       if (token !== 'good' || !valid) throw new Error('bad token');
       return { userId: 'user-verified-2', sessionId: 'session-2' };
     });
-    const wss2 = createSocketServer(http2, rooms, { trustProxy: 0 }, undefined, { verify });
+    // The socket layer's clock, so the test decides when a check has gone stale.
+    let clock = 1_000_000;
+    const wss2 = createSocketServer(http2, rooms, { trustProxy: 0 }, undefined, { verify, now: () => clock });
     await new Promise<void>((resolve) => http2.listen(0, '127.0.0.1', resolve));
     const url2 = `ws://127.0.0.1:${(http2.address() as AddressInfo).port}`;
     try {
@@ -213,22 +216,107 @@ describe('session handshake', () => {
         await vi.waitFor(() => expect(frames.some((f) => f.t === 'hello')).toBe(true));
         return { ws, frames, done };
       };
-      // A live session creates a table (the token is checked again for it).
+      // A live session creates a table: the check made for its hello a moment ago still stands.
       const a = await connect();
       a.ws.send(JSON.stringify({ t: 'create', hosted: true }));
       await vi.waitFor(() => expect(a.frames.some((f) => f.t === 'room')).toBe(true));
+      expect(verify).toHaveBeenCalledTimes(1);
+      // One tick short of the window it still stands; at the window the token is checked again.
+      clock += LIMITS.sessionRecheckMs - 1;
+      a.ws.send(JSON.stringify({ t: 'join', room: 'NOSUCH' }));
+      await vi.waitFor(() => expect(a.frames.filter((f) => f.t === 'error').length).toBe(1));
+      expect(verify).toHaveBeenCalledTimes(1);
+      clock += 1;
+      a.ws.send(JSON.stringify({ t: 'join', room: 'NOSUCH' }));
+      await vi.waitFor(() => expect(a.frames.filter((f) => f.t === 'error').length).toBe(2));
       expect(verify).toHaveBeenCalledTimes(2);
       // The session ends on the API side: the registry closes its socket at once.
       expect(rooms.endSessions({ sessionId: 'session-2' })).toBe(1);
       expect(await a.done).toBe(4401);
-      // A session that expired quietly: the next create is refused and the socket closed, nothing is opened.
+      // A session that expired quietly: once the last check is stale, the next join is refused and the socket closed, nothing is entered.
       const b = await connect();
       valid = false;
-      const before = rooms.stats().rooms;
-      b.ws.send(JSON.stringify({ t: 'create', hosted: true }));
+      clock += LIMITS.sessionRecheckMs;
+      const room = rooms.createHostedRoom();
+      b.ws.send(JSON.stringify({ t: 'join', room }));
       expect(await b.done).toBe(4401);
       expect(b.frames.map((f) => f.t)).toEqual(['hello']);
-      expect(rooms.stats().rooms).toBe(before);
+      expect(rooms.roomPeers(room)).toEqual([]);
+    } finally {
+      for (const c of wss2.clients) c.terminate();
+      await new Promise<void>((resolve) => wss2.close(() => resolve()));
+      await new Promise<void>((resolve) => http2.close(() => resolve()));
+    }
+  });
+
+  it('refuses a create or join whose allowance is spent without checking the session again', async () => {
+    const http2 = createServer();
+    const verify = vi.fn(async () => ({ userId: 'user-verified-3', sessionId: 'session-3' }));
+    // Every create, join and queue would be checked against the database (no reuse of the last check).
+    const wss2 = createSocketServer(http2, rooms, { trustProxy: 0 }, { ...LIMITS, sessionRecheckMs: 0 }, { verify });
+    await new Promise<void>((resolve) => http2.listen(0, '127.0.0.1', resolve));
+    try {
+      const ws = new WebSocket(`ws://127.0.0.1:${(http2.address() as AddressInfo).port}`);
+      clients.push(ws);
+      ws.on('error', () => undefined);
+      const frames: Array<Frame & { message?: string; code?: string }> = [];
+      ws.on('message', (raw) => frames.push(JSON.parse(String(raw)) as Frame));
+      await new Promise<void>((resolve) => ws.once('open', () => resolve()));
+      /** Send one frame and wait for its one reply. */
+      const ask = async (frame: unknown) => {
+        const n = frames.length;
+        ws.send(JSON.stringify(frame));
+        await vi.waitFor(() => expect(frames.length).toBe(n + 1));
+        return frames[n];
+      };
+      await ask({ t: 'hello', auth: 'good' });
+      expect(verify).toHaveBeenCalledTimes(1);
+      // Joins: the allowance is five in ten seconds. The five are checked, and answered by the table lookup.
+      for (let i = 0; i < LIMITS.joinsPerWindow; i++) expect((await ask({ t: 'join', room: 'NOSUCH' })).code).toBe('room_unavailable');
+      expect(verify).toHaveBeenCalledTimes(1 + LIMITS.joinsPerWindow);
+      // The rest are refused by the bucket, and the database is left alone.
+      for (let i = 0; i < 20; i++) expect((await ask({ t: 'join', room: 'NOSUCH' })).message).toBe(JOIN_THROTTLED);
+      expect(verify).toHaveBeenCalledTimes(1 + LIMITS.joinsPerWindow);
+      // Creates: one every ten seconds. The first is checked; the ones after it are not.
+      expect((await ask({ t: 'create', hosted: true })).t).toBe('room');
+      expect(verify).toHaveBeenCalledTimes(2 + LIMITS.joinsPerWindow);
+      for (let i = 0; i < 20; i++) expect((await ask({ t: 'create', hosted: true })).message).toBe(CREATE_COOLDOWN);
+      expect(verify).toHaveBeenCalledTimes(2 + LIMITS.joinsPerWindow);
+      expect(rooms.stats().rooms).toBe(1);
+    } finally {
+      for (const c of wss2.clients) c.terminate();
+      await new Promise<void>((resolve) => wss2.close(() => resolve()));
+      await new Promise<void>((resolve) => http2.close(() => resolve()));
+    }
+  });
+
+  it('closes with 1013 (try again later), never 4401, when the hello timer fires while the token is still being checked', async () => {
+    const http2 = createServer();
+    // A database that answers, slowly: the check outlasts the hello timer.
+    const verify = vi.fn(async () => {
+      await new Promise((r) => setTimeout(r, 400));
+      return 'user-verified-4';
+    });
+    const wss2 = createSocketServer(http2, rooms, { trustProxy: 0 }, undefined, { verify, helloTimeoutMs: 60 });
+    await new Promise<void>((resolve) => http2.listen(0, '127.0.0.1', resolve));
+    try {
+      const ws = new WebSocket(`ws://127.0.0.1:${(http2.address() as AddressInfo).port}`);
+      clients.push(ws);
+      ws.on('error', () => undefined);
+      const frames: Frame[] = [];
+      ws.on('message', (raw) => frames.push(JSON.parse(String(raw)) as Frame));
+      const done = closed(ws);
+      ws.on('open', () => ws.send(JSON.stringify({ t: 'hello', auth: 'good' })));
+      expect(await done).toBe(1013);
+      expect(frames).toEqual([]);
+      // The late answer changes nothing: no peer was bound to the user.
+      await new Promise((r) => setTimeout(r, 450));
+      expect(rooms.stats().peers).toBe(0);
+      // A missing token is still 4401 at once, and a socket that says nothing still gets 4401 from the timer.
+      const silent = new WebSocket(`ws://127.0.0.1:${(http2.address() as AddressInfo).port}`);
+      clients.push(silent);
+      silent.on('error', () => undefined);
+      expect(await closed(silent)).toBe(4401);
     } finally {
       for (const c of wss2.clients) c.terminate();
       await new Promise<void>((resolve) => wss2.close(() => resolve()));

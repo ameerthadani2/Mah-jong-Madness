@@ -9,9 +9,9 @@ import { WebSocket } from 'ws';
 import { chooseAction, legalActions } from '@mjm/engine';
 import { RelayTransport, SignalingClient, TableClient, transportLink, type AuditStatus, type WebSocketLike } from '@mjm/net';
 import { SessionService } from '../src/auth';
-import { loadConfig } from '../src/config';
+import { LIMITS, loadConfig } from '../src/config';
 import { createRepos, type RepoHandle } from '../src/repos';
-import { createSignalServer, type SignalServer } from '../src/server';
+import { createSignalServer, type SignalServer, type SignalServerOptions } from '../src/server';
 
 const PEPPER = 'e2e-pepper-0123456789abcdef';
 /** A provider configured with no keys: it shows up in /api/config, and every token for it fails. */
@@ -26,7 +26,7 @@ afterEach(async () => {
   vi.restoreAllMocks();
 });
 
-async function start(repos: RepoHandle = createRepos(), sessions = new SessionService(repos.repos, { pepper: PEPPER })) {
+async function start(repos: RepoHandle = createRepos(), sessions = new SessionService(repos.repos, { pepper: PEPPER }), extra: Partial<SignalServerOptions> = {}) {
   const server = await createSignalServer({
     port: 0,
     host: '127.0.0.1',
@@ -37,6 +37,7 @@ async function start(repos: RepoHandle = createRepos(), sessions = new SessionSe
     botDelayMs: 0,
     persistDebounceMs: 20,
     log: () => undefined,
+    ...extra,
   });
   servers.push(server);
   const port = server.address().port;
@@ -261,8 +262,9 @@ describe('game server end to end', () => {
     expect(await closeCode([{ t: 'hello', auth: user.token }, ...flood])).toBe(1008);
   });
 
-  it('ends a verified socket with 4401 once its session ends: on logout, on account deletion, and at the next create or join after a quiet revocation', async () => {
-    const { base, wsUrl, server, sessions } = await start();
+  it('ends a verified socket with 4401 once its session ends: on logout, on account deletion, and at a create or join once a quiet revocation is noticed', async () => {
+    // A socket's session check stands for a short while (5 s in production; 150 ms here).
+    const { base, wsUrl, server, sessions } = await start(undefined, undefined, { socketLimits: { ...LIMITS, sessionRecheckMs: 150 } });
     /** A raw socket that says hello with `token`, collecting frames and the close code. */
     const open = async (token: string) => {
       const ws = new WebSocket(wsUrl);
@@ -298,10 +300,12 @@ describe('game server end to end', () => {
     expect(await Promise.all([c1.closed, c2.closed])).toEqual([4401, 4401]);
 
     // A session that ended without the API knowing a socket was open (here: revoked straight in
-    // the store, as an expiry would): the next join is refused, nothing is joined, the socket closes.
+    // the store, as an expiry would): once the last check is too old to stand, the next join is
+    // refused, nothing is joined, the socket closes.
     const bob = await guest(base, 'Bob');
     const b = await open(bob.token);
     await sessions.revoke((await sessions.verify(bob.token)).sessionId);
+    await new Promise((r) => setTimeout(r, 200));
     b.send({ t: 'join', room });
     expect(await b.closed).toBe(4401);
     expect(b.frames.map((f) => f.t)).toEqual(['hello']);

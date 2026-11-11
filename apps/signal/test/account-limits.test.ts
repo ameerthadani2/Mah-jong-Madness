@@ -95,6 +95,74 @@ describe('per-account and per-address create and join allowances', () => {
   });
 });
 
+describe('a spent allowance, asked before the session is checked again', () => {
+  it('refuses a join or create whose allowance is spent with the usual message, and takes nothing itself', () => {
+    const { reg, clock, socket } = setup();
+    const s = socket('user-a');
+    // Asking takes nothing: after any number of questions the whole allowance is still there.
+    for (let i = 0; i < 50; i++) expect(reg.throttled(s.id, { t: 'join', room: 'NOPE00' })).toBe(false);
+    expect(s.out.filter((m) => m.t === 'error')).toEqual([]);
+    for (let i = 0; i < 5; i++) {
+      reg.handle(s.id, { t: 'join', room: `NOPE0${i}` });
+      expect(s.last()!.code).toBe('room_unavailable');
+    }
+    const before = s.out.length;
+    expect(reg.throttled(s.id, { t: 'join', room: 'NOPE99' })).toBe(true);
+    expect(s.out.slice(before)).toEqual([{ t: 'error', message: JOIN_THROTTLED }]);
+    // The same account on a new socket shares the allowance; another account at another address does not.
+    expect(reg.throttled(socket('user-a').id, { t: 'join', room: 'NOPE99' })).toBe(true);
+    expect(reg.throttled(socket('user-b', '198.51.100.9').id, { t: 'join', room: 'NOPE99' })).toBe(false);
+    clock.now += 2_000;
+    expect(reg.throttled(s.id, { t: 'join', room: 'NOPE99' })).toBe(false);
+
+    expect(reg.throttled(s.id, { t: 'create', hosted: true })).toBe(false);
+    reg.handle(s.id, { t: 'create', hosted: true });
+    expect(s.last()!.t).toBe('room');
+    expect(reg.throttled(s.id, { t: 'create', hosted: true })).toBe(true);
+    expect(s.last()).toEqual({ t: 'error', message: CREATE_COOLDOWN });
+    clock.now += 10_000;
+    expect(reg.throttled(s.id, { t: 'create', hosted: true })).toBe(false);
+  });
+
+  it('refuses when the address has no allowance left, whatever the account', () => {
+    const { reg, socket } = setup();
+    for (let i = 0; i < 20; i++) reg.handle(socket(`guest-${i}`).id, { t: 'join', room: `NOPE${i}` });
+    const fresh = socket('guest-fresh');
+    expect(reg.throttled(fresh.id, { t: 'join', room: 'NOPE99' })).toBe(true);
+    expect(fresh.last()).toEqual({ t: 'error', message: JOIN_THROTTLED });
+    expect(reg.throttled(socket('guest-elsewhere', '198.51.100.9').id, { t: 'join', room: 'NOPE99' })).toBe(false);
+  });
+
+  it('leaves a create that would be refused for another reason to the usual path, so its reply stays the same', () => {
+    const { reg, clock, socket } = setup({ maxTablesPerUser: 1 });
+    const s = socket('user-a');
+    reg.handle(s.id, { t: 'create', hosted: true });
+    expect(s.last()!.t).toBe('room');
+    // Inside the cooldown and at the table cap: the cap is the answer, as before.
+    clock.now += 1_000;
+    const before = s.out.length;
+    expect(reg.throttled(s.id, { t: 'create', hosted: true })).toBe(false);
+    expect(s.out.length).toBe(before);
+    reg.handle(s.id, { t: 'create', hosted: true });
+    expect(s.last()).toEqual({ t: 'error', code: TABLE_CAP_CODE, message: TABLE_CAP });
+    // A club's answer comes first too, and a relay-only room where none are allowed.
+    expect(reg.throttled(s.id, { t: 'create', club: 'CLUB01' })).toBe(false);
+    expect(reg.throttled(s.id, { t: 'create' })).toBe(false);
+    // Frames that need no allowance are never throttled.
+    expect(reg.throttled(s.id, { t: 'leave' })).toBe(false);
+    expect(reg.throttled('nobody', { t: 'join', room: 'NOPE00' })).toBe(false);
+  });
+
+  it('refuses a queue request whose join allowance is spent with the queue code', () => {
+    const { reg, socket } = setup({ queue: { enqueue: () => undefined, leave: () => undefined } });
+    const s = socket('user-a');
+    expect(reg.throttled(s.id, { t: 'queue' })).toBe(false);
+    for (let i = 0; i < 5; i++) reg.handle(s.id, { t: 'join', room: `NOPE0${i}` });
+    expect(reg.throttled(s.id, { t: 'queue' })).toBe(true);
+    expect(s.last()).toMatchObject({ t: 'queue_error', code: 'rate_limited' });
+  });
+});
+
 describe('open tables per account', () => {
   it('refuses a fourth unfinished table to one account over the socket, and frees a place when one closes', () => {
     const { reg, clock, socket } = setup();

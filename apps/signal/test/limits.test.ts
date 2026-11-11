@@ -59,6 +59,23 @@ describe('BucketTable', () => {
     expect(t.size).toBe(2);
   });
 
+  it('says whether a key has a token left without taking one or creating a bucket', () => {
+    let now = 0;
+    const t = new BucketTable<string>(1, 1, { now: () => now });
+    expect(t.has('a')).toBe(true);
+    expect(t.has('a')).toBe(true);
+    expect(t.size).toBe(0);
+    expect(t.take('a')).toBe(true);
+    expect(t.has('a')).toBe(false);
+    expect(t.has('b')).toBe(true);
+    now = 999;
+    expect(t.has('a')).toBe(false);
+    now = 1_000;
+    expect(t.has('a')).toBe(true);
+    expect(t.take('a')).toBe(true);
+    expect(t.size).toBe(1);
+  });
+
   it('evicts buckets that are idle and full, but keeps ones still draining', () => {
     let now = 0;
     const t = new BucketTable<string>(10, 1, { now: () => now, idleMs: 60_000 });

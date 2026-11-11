@@ -102,6 +102,12 @@ export class BucketTable<K> {
     return entry.bucket.take(n);
   }
 
+  /** Whether `key`'s bucket holds `n` tokens right now. Nothing is taken and no bucket is created. */
+  has(key: K, n = 1): boolean {
+    const entry = this.buckets.get(key);
+    return entry ? entry.bucket.available() >= n : this.capacity >= n;
+  }
+
   /** Evict buckets that have been idle for at least `idleMs` and have refilled. Returns how many were removed. */
   sweep(): number {
     const t = this.now();

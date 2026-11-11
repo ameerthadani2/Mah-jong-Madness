@@ -49,6 +49,12 @@ export const LIMITS = {
   /** Per-socket message bucket: sustained rate and burst size. Exceeding it closes the socket. */
   messagesPerSec: 30,
   messageBurst: 60,
+  /**
+   * How long a socket's successful session check stands before a `create`, `join` or `queue` has it
+   * checked against the database again. A logout, ban or deletion closes the socket at once whatever
+   * this is; a session that ended any other way (it expired) is noticed within this time.
+   */
+  sessionRecheckMs: 5_000,
   /** Per-IP HTTP bucket: sustained rate and burst size. Exceeding it returns 429. */
   httpPerSec: 10,
   httpBurst: 30,

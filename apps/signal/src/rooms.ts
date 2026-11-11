@@ -516,6 +516,42 @@ export class RoomRegistry {
     return peer.ip === undefined || byIp.take(peer.ip);
   }
 
+  /**
+   * For the socket layer, before it spends a database round trip on checking the session again:
+   * when the allowance this `create`, `join` or `queue` needs is already spent, the peer is told
+   * what `handle` would tell it and this returns true (the frame is done with). Nothing is taken.
+   * A frame `handle` would refuse for another reason first (a full server, the table cap, a club's
+   * answer) returns false and takes the usual path, so every reply stays what it was.
+   */
+  throttled(peerId: string, msg: Inbound): boolean {
+    const peer = this.peers.get(peerId);
+    if (!peer || this.closed || peer.id.startsWith('tmp-')) return false;
+    const spent = (byUser: BucketTable<string>, byIp: BucketTable<string>): boolean =>
+      !byUser.has(peer.userId ? `u:${peer.userId}` : `p:${peer.id}`) || (peer.ip !== undefined && !byIp.has(peer.ip));
+    switch (msg.t) {
+      case 'create': {
+        if (typeof msg.club === 'string' && msg.club) return false;
+        const hosted = msg.hosted === true;
+        if (hosted ? !this.opts.allowHosted : !this.opts.allowP2P) return false;
+        if (hosted && this.hostedCount() >= this.maxHostedTables()) return false;
+        if (hosted && peer.userId && this.openTablesOf(peer.userId) >= this.maxTablesPerUser()) return false;
+        if (!spent(this.createsByUser, this.createsByIp)) return false;
+        this.error(peer, CREATE_COOLDOWN);
+        return true;
+      }
+      case 'join':
+        if (typeof msg.room !== 'string' || !spent(this.joinsByUser, this.joinsByIp)) return false;
+        this.error(peer, JOIN_THROTTLED);
+        return true;
+      case 'queue':
+        if (!this.opts.queue || !this.opts.allowHosted || !peer.userId || !spent(this.joinsByUser, this.joinsByIp)) return false;
+        peer.socket.send(JSON.stringify({ t: 'queue_error', code: 'rate_limited', message: QUEUE_MESSAGES.rate_limited }));
+        return true;
+      default:
+        return false;
+    }
+  }
+
   newCode(len = 6): string {
     return uniqueCode((c) => this.rooms.has(c), len, this.hex);
   }
