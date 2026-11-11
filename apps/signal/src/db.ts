@@ -118,7 +118,11 @@ export const HOST_LOCK_KEY = 0x4d4a4d01;
 export interface HostLock {
   /** Take the lock, retrying until it is free or the wait runs out (then it rejects). */
   acquire(): Promise<void>;
-  /** Called once if the lock is lost after it was taken (its connection failed or stopped answering). */
+  /**
+   * Called once if the lock is lost after it was taken (its connection failed or stopped
+   * answering). The loss is remembered: a handler registered after it happened is called too
+   * (on the next microtask), so a loss during boot is never missed.
+   */
   onLost(cb: (e: Error) => void): void;
   /** Give the lock up (ends its connection). */
   release(): Promise<void>;
@@ -154,11 +158,12 @@ export function createHostLock(databaseUrl: string, opts: HostLockOptions = {}):
   let check: ReturnType<typeof setInterval> | null = null;
   let held = false;
   let released = false;
-  let lostOnce = false;
+  /** Why the lock was lost, from the moment it happens: handlers registered later are told as well. */
+  let lostWith: Error | null = null;
 
   const lose = (e: Error) => {
-    if (!held || released || lostOnce) return;
-    lostOnce = true;
+    if (!held || released || lostWith) return;
+    lostWith = e;
     held = false;
     if (check) clearInterval(check);
     for (const h of lostHandlers) h(e);
@@ -212,6 +217,8 @@ export function createHostLock(databaseUrl: string, opts: HostLockOptions = {}):
     },
     onLost(cb) {
       lostHandlers.push(cb);
+      const e = lostWith;
+      if (e) queueMicrotask(() => cb(e));
     },
     async release() {
       released = true;

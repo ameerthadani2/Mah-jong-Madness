@@ -9,6 +9,10 @@
  * their rejoin tokens), clear club listings whose table is gone, prune what is more than a day
  * old, then listen. `close()` writes every table one last time and stops without finishing any of
  * them, so the next process can restore them, then gives the host lock up.
+ *
+ * The host lock is watched from the moment it is taken. Lost while the server is still coming up,
+ * the boot fails with `HostLockLostError`: nothing listens and no table is written, because another
+ * process may already own them. Lost later, the server freezes its tables, closes and reports it.
  */
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -70,9 +74,22 @@ export interface SignalServerOptions {
   hostLock?: HostLock;
   /**
    * Called after the host lock was lost and the server has closed (rooms frozen, tables written
-   * as far as possible). main.ts exits 1 so the platform restarts the machine.
+   * as far as possible). main.ts exits 1 so the platform restarts the machine. A lock lost before
+   * the server was listening is not reported here: `createSignalServer` rejects with
+   * `HostLockLostError` instead.
    */
   onHostLockLost?: (e: Error) => void;
+}
+
+/**
+ * Thrown by `createSignalServer` when the host lock was lost while the server was coming up: it
+ * never listened, wrote no table and has stopped. main.ts treats it like any failed boot (exit 1).
+ */
+export class HostLockLostError extends Error {
+  constructor(readonly lostWith: Error) {
+    super(`The host lock was lost while the server was starting (${lostWith.message}): another server may host these tables now`);
+    this.name = 'HostLockLostError';
+  }
 }
 
 export interface SignalServer {
@@ -108,6 +125,31 @@ export async function createSignalServer(opts: SignalServerOptions): Promise<Sig
   const log = opts.log ?? ((line: string) => console.log(line));
   // Before anything is read: another process that still hosts these tables must stop first.
   if (opts.hostLock) await opts.hostLock.acquire();
+  // Watched from this moment on, not from the end of the boot: a lock lost while the clubs load or
+  // the tables are restored must stop the boot, or this process would host tables without it.
+  const hostLock: { lost: Error | null; whenLost: (e: Error) => void } = { lost: null, whenLost: () => undefined };
+  opts.hostLock?.onLost((e) => {
+    if (hostLock.lost) return;
+    hostLock.lost = e;
+    console.error(`[signal] lost the host lock (${e.message}); freezing the tables and shutting down`);
+    reportError(e, { where: 'host-lock' });
+    hostLock.whenLost(e);
+  });
+  let lockReleased = false;
+  /** Give the lock up (once): its connection ends, held or lost. */
+  const releaseLock = async (): Promise<void> => {
+    if (lockReleased) return;
+    lockReleased = true;
+    await opts.hostLock?.release();
+  };
+  /** During boot: stop here if the lock is gone (after `stop`, which undoes what the boot has set up so far). */
+  const failIfLockLost = async (stop?: () => void | Promise<void>): Promise<void> => {
+    const lost = hostLock.lost;
+    if (!lost) return;
+    await stop?.();
+    await releaseLock();
+    throw new HostLockLostError(lost);
+  };
   /** Set when `close()` begins: new requests and upgrades are refused, `/health` answers 503. */
   let draining = false;
 
@@ -118,6 +160,7 @@ export async function createSignalServer(opts: SignalServerOptions): Promise<Sig
     await opts.hostLock?.release();
     throw e;
   }
+  await failIfLockLost();
   const actionLatency = new LatencyWindow({ now });
   const push = opts.push ?? new PushService({ devices: repos.repos.devices, client: null, now, log });
   const analytics = opts.analytics ?? NO_ANALYTICS;
@@ -151,12 +194,19 @@ export async function createSignalServer(opts: SignalServerOptions): Promise<Sig
   });
 
   const persister = new TablePersister(rooms, repos.repos.tableSnapshots, { now, debounceMs: opts.persistDebounceMs, log });
+  // From here on a lost lock stops the tables and their snapshots at once, before the boot notices.
+  hostLock.whenLost = () => {
+    rooms.freeze();
+    persister.stop();
+  };
+  await failIfLockLost();
   try {
     await persister.restore();
   } catch (e) {
     await opts.hostLock?.release();
     throw e;
   }
+  await failIfLockLost(() => rooms.shutdown());
   persister.start();
   clubs.reconcileTables((code) => rooms.hasRoom(code));
   await persister.prune().catch((e: Error) => console.error('[signal] snapshot prune failed', e.message));
@@ -287,18 +337,9 @@ export async function createSignalServer(opts: SignalServerOptions): Promise<Sig
   ticker.unref();
   pruner.unref();
 
-  await new Promise<void>((resolve, reject) => {
-    const onError = (e: Error) => reject(e);
-    http.once('error', onError);
-    http.listen(opts.port, opts.host, () => {
-      http.off('error', onError);
-      resolve();
-    });
-  });
-  // After listening, an HTTP server error is logged; a client can never bring the process down.
-  http.on('error', (e: Error) => console.error('[signal] http server error', e.message));
-
   let closing: Promise<void> | null = null;
+  /** False once the host lock was lost during boot: the tables are no longer this process's to write. */
+  let writeOnClose = true;
   const deadlineMs = opts.closeDeadlineMs ?? CLOSE_DEADLINE_MS;
   const close = () =>
     (closing ??= (async () => {
@@ -316,6 +357,7 @@ export async function createSignalServer(opts: SignalServerOptions): Promise<Sig
       // so club listings stay open and the next process restores them.
       rooms.freeze();
       const writes = (async () => {
+        if (!writeOnClose) return;
         await persister.flush();
         await clubs.flush();
       })().catch((e: Error) => console.error('[signal] final write failed', e.message));
@@ -335,15 +377,37 @@ export async function createSignalServer(opts: SignalServerOptions): Promise<Sig
       http.closeAllConnections();
       await httpClosed;
       // Last: the next process may restore the tables only once they are written.
-      await opts.hostLock?.release();
+      await releaseLock();
     })());
-  // Losing the lease means another process may already be hosting these tables: stop taking
-  // input, write what can be written, and stop so the platform restarts this machine.
-  opts.hostLock?.onLost((e) => {
-    console.error(`[signal] lost the host lock (${e.message}); freezing the tables and shutting down`);
-    reportError(e, { where: 'host-lock' });
-    void close().finally(() => opts.onHostLockLost?.(e));
-  });
+  // A server that lost the lock while it was coming up never listens: it stops everything it
+  // started, writes nothing and fails the boot.
+  const stopUnwritten = (): Promise<void> => {
+    writeOnClose = false;
+    return close();
+  };
+  await failIfLockLost(stopUnwritten);
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const onError = (e: Error) => reject(e);
+      http.once('error', onError);
+      http.listen(opts.port, opts.host, () => {
+        http.off('error', onError);
+        resolve();
+      });
+    });
+  } catch (e) {
+    // The port could not be bound: stop what was started and give the lock up, so the next process need not wait for it.
+    await stopUnwritten();
+    throw e;
+  }
+  // After listening, an HTTP server error is logged; a client can never bring the process down.
+  http.on('error', (e: Error) => console.error('[signal] http server error', e.message));
+  // Lost in the instant the port was being bound: the same, and the port is closed again.
+  await failIfLockLost(stopUnwritten);
+
+  // Losing the lease once the server is up means another process may already be hosting these
+  // tables: stop taking input, write what can be written, and stop so the platform restarts this machine.
+  hostLock.whenLost = (e) => void close().finally(() => opts.onHostLockLost?.(e));
 
   return {
     http,

@@ -5,6 +5,7 @@
  * waits for it, fails to start without it, and shuts down if it loses it.
  */
 import { randomInt } from 'node:crypto';
+import { connect, createServer as createTcpServer } from 'node:net';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { randomHex } from '@mjm/engine';
 import { SessionService } from '../src/auth';
@@ -12,7 +13,7 @@ import { loadConfig } from '../src/config';
 import { createHostLock, createPool, type HostLock, type Pool } from '../src/db';
 import { migrate } from '../src/migrate';
 import { createRepos, type RepoHandle } from '../src/repos';
-import { createSignalServer, type SignalServerOptions } from '../src/server';
+import { createSignalServer, HostLockLostError, type SignalServerOptions } from '../src/server';
 
 const PG_URL = process.env.DATABASE_URL_TEST?.trim();
 
@@ -35,6 +36,46 @@ function fakeLock(acquire: () => Promise<void> = async () => undefined) {
     },
   };
   return { lock, events, lose: (e: Error) => lost?.(e) };
+}
+
+/** A port nothing listens on (taken and given back). */
+async function freePort(): Promise<number> {
+  const probe = createTcpServer();
+  await new Promise<void>((resolve) => probe.listen(0, '127.0.0.1', () => resolve()));
+  const port = (probe.address() as { port: number }).port;
+  await new Promise<void>((resolve) => probe.close(() => resolve()));
+  return port;
+}
+
+/** Whether anything accepts connections on the port. */
+function listening(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = connect(port, '127.0.0.1');
+    socket.once('connect', () => (socket.destroy(), resolve(true)));
+    socket.once('error', () => resolve(false));
+  });
+}
+
+/** Run `fn` with console.error collected instead of printed. */
+async function quietly<T>(fn: () => Promise<T>): Promise<{ result: T; errors: string[] }> {
+  const errors: string[] = [];
+  const original = console.error;
+  console.error = (...a: unknown[]) => errors.push(a.map(String).join(' '));
+  try {
+    return { result: await fn(), errors };
+  } finally {
+    console.error = original;
+  }
+}
+
+/** Memory repositories holding one unfinished table, as a server that stopped left them. */
+async function reposWithOneTable(): Promise<{ repos: RepoHandle; code: string }> {
+  const repos = createRepos();
+  const server = await createSignalServer(serverOptions(repos));
+  const code = server.rooms.createHostedRoom();
+  await server.close();
+  expect((await repos.repos.tableSnapshots.listActive()).map((s) => s.roomCode)).toEqual([code]);
+  return { repos, code };
 }
 
 describe('the server and its host lock', () => {
@@ -95,6 +136,84 @@ describe('the server and its host lock', () => {
   });
 });
 
+describe('a host lock lost while the server is starting', () => {
+  it('stops the boot when the lock goes while the clubs are loading: no table is restored and nothing listens', async () => {
+    const { repos } = await reposWithOneTable();
+    const { lock, events, lose } = fakeLock();
+    const loadAll = repos.repos.clubs.loadAll.bind(repos.repos.clubs);
+    repos.repos.clubs.loadAll = async () => {
+      lose(new Error('Connection terminated'));
+      return loadAll();
+    };
+    repos.repos.tableSnapshots.listActive = async () => (events.push('restore'), []);
+    let reported = false;
+    const port = await freePort();
+    const { result, errors } = await quietly(() => createSignalServer(serverOptions(repos, { port, hostLock: lock, onHostLockLost: () => (reported = true) })).catch((e: Error) => e));
+    expect(result).toBeInstanceOf(HostLockLostError);
+    expect((result as HostLockLostError).lostWith.message).toBe('Connection terminated');
+    expect(errors.join('\n')).toContain('lost the host lock');
+    expect(events).toEqual(['acquire', 'release']);
+    expect(await listening(port)).toBe(false);
+    // The boot failed; there is no server to report a later loss for.
+    expect(reported).toBe(false);
+  });
+
+  it('stops the boot when the lock goes while the tables are being restored: they are closed again and never written', async () => {
+    const { repos, code } = await reposWithOneTable();
+    const before = await repos.repos.tableSnapshots.get(code);
+    const { lock, events, lose } = fakeLock();
+    const listActive = repos.repos.tableSnapshots.listActive.bind(repos.repos.tableSnapshots);
+    repos.repos.tableSnapshots.listActive = async () => {
+      events.push('restore');
+      const rows = await listActive();
+      lose(new Error('Connection terminated'));
+      return rows;
+    };
+    const save = repos.repos.tableSnapshots.save.bind(repos.repos.tableSnapshots);
+    repos.repos.tableSnapshots.save = async (s) => (events.push('write'), save(s));
+    repos.repos.tableSnapshots.pruneFinished = async () => (events.push('prune'), 0);
+    const port = await freePort();
+    const { result } = await quietly(() => createSignalServer(serverOptions(repos, { port, hostLock: lock, persistDebounceMs: 5 })).catch((e: Error) => e));
+    expect(result).toBeInstanceOf(HostLockLostError);
+    await new Promise((r) => setTimeout(r, 60));
+    expect(events).toEqual(['acquire', 'restore', 'release']);
+    expect(await listening(port)).toBe(false);
+    expect(await repos.repos.tableSnapshots.get(code)).toEqual(before);
+  });
+
+  it('stops the boot when the lock goes after the tables were restored: nothing listens and no table is written', async () => {
+    const { repos, code } = await reposWithOneTable();
+    const before = await repos.repos.tableSnapshots.get(code);
+    const { lock, events, lose } = fakeLock();
+    const save = repos.repos.tableSnapshots.save.bind(repos.repos.tableSnapshots);
+    repos.repos.tableSnapshots.save = async (s) => (events.push('write'), save(s));
+    repos.repos.tableSnapshots.pruneFinished = async () => {
+      events.push('prune');
+      lose(new Error('The host lock connection ended'));
+      return 0;
+    };
+    const port = await freePort();
+    const { result } = await quietly(() => createSignalServer(serverOptions(repos, { port, hostLock: lock, persistDebounceMs: 5 })).catch((e: Error) => e));
+    expect(result).toBeInstanceOf(HostLockLostError);
+    await new Promise((r) => setTimeout(r, 60));
+    expect(events).toEqual(['acquire', 'prune', 'release']);
+    expect(await listening(port)).toBe(false);
+    expect(await repos.repos.tableSnapshots.get(code)).toEqual(before);
+  });
+
+  it('gives the lock up when the port cannot be bound', async () => {
+    const taken = createTcpServer();
+    await new Promise<void>((resolve) => taken.listen(0, '127.0.0.1', () => resolve()));
+    const { lock, events } = fakeLock();
+    try {
+      await expect(createSignalServer(serverOptions(createRepos(), { port: (taken.address() as { port: number }).port, hostLock: lock }))).rejects.toThrow(/EADDRINUSE/);
+      expect(events).toEqual(['acquire', 'release']);
+    } finally {
+      await new Promise<void>((resolve) => taken.close(() => resolve()));
+    }
+  });
+});
+
 describe.skipIf(!PG_URL)('the host lock on Postgres', () => {
   const schema = 'mjm_lock_' + randomHex(6);
   let admin: Pool;
@@ -112,6 +231,13 @@ describe.skipIf(!PG_URL)('the host lock on Postgres', () => {
     await admin.query('DROP SCHEMA IF EXISTS ' + schema + ' CASCADE');
     await admin.end();
   });
+
+  /** Cut the database connection that holds the lock, as a database restart or a network fault would. */
+  const killLockHolder = async (k: number): Promise<void> => {
+    const holder = await admin.query<{ pid: number }>("SELECT pid FROM pg_locks WHERE locktype = 'advisory' AND objid = $1 AND objsubid = 1 AND granted", [k]);
+    expect(holder.rows.length).toBe(1);
+    await admin.query('SELECT pg_terminate_backend($1)', [holder.rows[0].pid]);
+  };
 
   it('lets one holder at a time take it, and the next one in once it is released', async () => {
     const k = key();
@@ -142,6 +268,75 @@ describe.skipIf(!PG_URL)('the host lock on Postgres', () => {
     expect((await lost).message).toBeTruthy();
     await lock.release();
   });
+
+  it('tells a handler registered after the loss, so a loss during boot is never missed', async () => {
+    const k = key();
+    const lock = createHostLock(PG_URL!, { key: k });
+    await lock.acquire();
+    const first = new Promise<Error>((resolve) => lock.onLost(resolve));
+    await killLockHolder(k);
+    const e = await first;
+    // Registered only now, after the lock has gone.
+    const late = await new Promise<Error>((resolve) => lock.onLost(resolve));
+    expect(late).toBe(e);
+    await lock.release();
+  });
+
+  for (const stage of ['the clubs load', 'the tables are restored'] as const) {
+    it(`fails the boot when the lock connection is killed while ${stage}, and the next server takes the tables over untouched`, async () => {
+      const k = key();
+      const poolA = createPool(PG_URL!, { options: '-c search_path=' + schema });
+      const poolB = createPool(PG_URL!, { options: '-c search_path=' + schema });
+      const reposA = createRepos({ pool: poolA });
+      const reposB = createRepos({ pool: poolB });
+      try {
+        // A table left unfinished by an earlier process.
+        const earlier = await createSignalServer(serverOptions(reposA, { hostLock: createHostLock(PG_URL!, { key: k }) }));
+        const code = earlier.rooms.createHostedRoom();
+        await earlier.close();
+        const before = await reposA.repos.tableSnapshots.get(code);
+        expect(before).not.toBeNull();
+
+        const lock = createHostLock(PG_URL!, { key: k, checkEveryMs: 200 });
+        const gone = new Promise<void>((resolve) => lock.onLost(() => resolve()));
+        // The database connection of the lock dies in the middle of the boot.
+        const cut = async () => {
+          await killLockHolder(k);
+          await gone;
+        };
+        if (stage === 'the clubs load') {
+          const loadAll = reposA.repos.clubs.loadAll.bind(reposA.repos.clubs);
+          reposA.repos.clubs.loadAll = async () => (await cut(), loadAll());
+        } else {
+          const listActive = reposA.repos.tableSnapshots.listActive.bind(reposA.repos.tableSnapshots);
+          reposA.repos.tableSnapshots.listActive = async () => {
+            const rows = await listActive();
+            await cut();
+            return rows;
+          };
+        }
+        let writes = 0;
+        const save = reposA.repos.tableSnapshots.save.bind(reposA.repos.tableSnapshots);
+        reposA.repos.tableSnapshots.save = async (s) => (writes++, save(s));
+        const port = await freePort();
+        const { result } = await quietly(() => createSignalServer(serverOptions(reposA, { port, hostLock: lock, persistDebounceMs: 5 })).catch((e: Error) => e));
+        expect(result).toBeInstanceOf(HostLockLostError);
+        await new Promise((r) => setTimeout(r, 60));
+        expect(await listening(port)).toBe(false);
+        expect(writes).toBe(0);
+        expect(await reposB.repos.tableSnapshots.get(code)).toEqual(before);
+
+        // The next process gets the lock at once and restores the table.
+        const next = await createSignalServer(serverOptions(reposB, { hostLock: createHostLock(PG_URL!, { key: k, retryMs: 100, waitMs: 5_000 }) }));
+        expect(next.rooms.hasRoom(code)).toBe(true);
+        next.rooms.closeRoomByCode(code);
+        await next.close();
+      } finally {
+        await poolA.end();
+        await poolB.end();
+      }
+    });
+  }
 
   it('keeps a second server on the same database from hosting the tables', async () => {
     const k = key();
