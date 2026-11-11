@@ -78,8 +78,10 @@ const visible = async (page, sel) => {
   let auditOk = false;
   let auditText = '';
   if (finished) {
-    // The result sheet's audit pill must report the hand as verified (it reads
-    // "Shuffle & log verified · details", or "Verified (log only)" for a partial audit).
+    // The result sheet's audit pill must report the hand as verified: it reads "Shuffle & log verified · details"
+    // (green). An amber hand reads "Logged — the server could have picked this deal · details" and does not pass.
+    // This run deals its hand in a table opened in this page load. The first hand after an app restart (a resumed
+    // table) is amber by design, so a run that resumes a table must not expect green for that hand.
     const auditStarted = Date.now();
     while (Date.now() - auditStarted < 15000) {
       const pill = await page.$('[data-testid="audit-status"]');

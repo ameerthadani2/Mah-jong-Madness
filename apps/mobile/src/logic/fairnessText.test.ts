@@ -97,6 +97,16 @@ describe('audit failure texts in the app', () => {
     }
   });
 
+  it('tells a player whose app restarted that the amber hand is expected, in the words of the green label', () => {
+    // The first hand after a restart is amber by design: the sentence must not read like an accusation,
+    // and it names the green status exactly as the pill shows it.
+    for (const [locale, tree] of [['en', en], ['zh-TW', zhTW]] as const) {
+      const text = caveatText(translator(locale), AUDIT_CAVEATS.appRestart);
+      expect(text, locale).toContain(tree.fairness.status.ok);
+      expect(text, locale).toBe(tree.fairness.caveat.appRestart);
+    }
+  });
+
   it('shows a caveat by its key', () => {
     expect(caveatText(translator('zh-TW'), AUDIT_CAVEATS.appRestart)).toBe(zhTW.fairness.caveat.appRestart);
     expect(caveatText(translator('en'), AUDIT_CAVEATS.standIn)).toBe(en.fairness.caveat.standIn);

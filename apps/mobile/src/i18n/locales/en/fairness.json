@@ -33,7 +33,7 @@
     "away": "Your phone was away when this hand ended. It checked the hand's record afterwards, but did not watch the play.",
     "gap": "Your phone missed the hands before this one and was not shown their records, so it could not check the scores this hand started from.",
     "serverRestart": "The server restarted during this hand, and some turns were played again.",
-    "appRestart": "The app was restarted around this deal, so your phone cannot vouch for all of it."
+    "appRestart": "The app was restarted around this deal, so your phone cannot be sure it watched all of it. This is expected for the first hand after a restart; later hands can be Verified again."
   },
   "failure": {
     "dealtPlayedHand": "The table tried to deal a hand that had already been played.",
