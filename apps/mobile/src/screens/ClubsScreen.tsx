@@ -21,6 +21,7 @@ import { NoValueNotice } from '../components/LegalLinks';
 import { ReportPlayerSheet } from '../components/ReportPlayerSheet';
 import { RuleEditor } from '../components/RuleEditor';
 import { SignInPrompt } from '../components/SignInPrompt';
+import { acceptedName } from '../logic/profile';
 import type { ReportTarget } from '../legal/reports';
 import { canStartSeason, sortStandings, standingPoints, type StandingsView } from '../legal/standings';
 import { useOnlineGuard } from '../legal/useOnlineGuard';
@@ -46,7 +47,7 @@ export function ClubsScreen() {
   const auth = useAuth();
   const { t, locale } = useT();
   const ctx = useClubContext();
-  const user = { userId: auth.user?.id ?? '', name: app.profile.name || t('common.player'), avatar: app.profile.avatar };
+  const user = { userId: auth.user?.id ?? '', name: acceptedName(app.profile) || t('common.player'), avatar: app.profile.avatar };
   // Clubs need the server: the guest account is made here the first time, never at launch.
   const [connection, setConnection] = useState<'checking' | 'ready' | 'offline'>('checking');
   const { ensure } = auth;
@@ -235,7 +236,7 @@ export function ClubScreen({ code }: { code: string }) {
   const auth = useAuth();
   const { t, locale } = useT();
   const ctx = useClubContext();
-  const user = { userId: auth.user?.id ?? '', name: app.profile.name || t('common.player'), avatar: app.profile.avatar };
+  const user = { userId: auth.user?.id ?? '', name: acceptedName(app.profile) || t('common.player'), avatar: app.profile.avatar };
   const [club, setClub] = useState<Club | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);

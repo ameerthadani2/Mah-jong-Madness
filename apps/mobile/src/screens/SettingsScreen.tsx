@@ -10,6 +10,7 @@ import { botDescription, botLabel, presetName, rulesSummary, speedLabel } from '
 import { localized } from '../logic/translate';
 import { BUILD_SIGNAL_URL } from '../config';
 import { AVATARS } from '../storage';
+import { isNameRefused } from '../logic/profile';
 import { TABLE_THEMES } from '../themes';
 import { hasTier, ownsCosmetic } from '../monetisation/wallet';
 import { COSMETICS, productText } from '../monetisation/catalog';
@@ -62,6 +63,7 @@ export function SettingsScreen() {
     if (p.name !== profile.name || p.avatar !== profile.avatar) auth.syncProfile(p.name, p.avatar);
   };
   const { t, locale } = useT();
+  const nameRefused = isNameRefused(profile);
   const rules = settings.rules;
   const languages: Array<[LocalePreference, string]> = [['auto', t('settings.languageAuto')], ...SUPPORTED_LOCALES.map((l): [LocalePreference, string] => [l, LOCALE_NAMES[l]])];
   const setRule = <K extends keyof typeof rules>(k: K, v: (typeof rules)[K]) => setSettings({ ...settings, rules: { ...rules, [k]: v } });
@@ -73,8 +75,23 @@ export function SettingsScreen() {
         <H2>{t('settings.profile')}</H2>
         <Row gap={12}>
           <AvatarPlate id={profile.avatar} size={56} frame={equipped.frame} />
-          <TextInput value={profile.name} onChangeText={(name) => setProfile({ ...profile, name })} placeholder={t('settings.namePlaceholder')} placeholderTextColor="#9AA0BF" style={[styles.input, { flex: 1 }]} maxLength={24} />
+          <TextInput
+            testID="profile-name"
+            value={profile.name}
+            onChangeText={(name) => setProfile({ ...profile, name })}
+            placeholder={t('settings.namePlaceholder')}
+            placeholderTextColor="#9AA0BF"
+            accessibilityLabel={nameRefused ? `${t('settings.namePlaceholder')}. ${t('settings.nameRefused.field')}` : t('settings.namePlaceholder')}
+            style={[styles.input, { flex: 1 }, nameRefused && { borderColor: colors.dangerText }]}
+            maxLength={24}
+          />
         </Row>
+        {nameRefused && (
+          // The server refused this name (a guest sign-up's nameRefused, or PATCH /api/me 400 name_not_allowed).
+          <View testID="profile-name-refused" accessibilityLiveRegion="polite">
+            <P style={{ color: colors.dangerText, fontSize: 13 }}>{t('settings.nameRefused.field')}</P>
+          </View>
+        )}
         <Row style={{ flexWrap: 'wrap', rowGap: 8 }} gap={8}>
           {AVATARS.map((a) => (
             <Pressable

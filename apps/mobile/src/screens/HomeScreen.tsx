@@ -11,6 +11,8 @@ import { useApp } from '../app-state';
 import { createLocalSession, createOnlineSession } from '../game/session';
 import { useAuth } from '../auth/AuthProvider';
 import { AVATARS, effectiveStreak, todayKey } from '../storage';
+import { acceptedName } from '../logic/profile';
+import { NameRefusedNotice } from '../components/NameRefusedNotice';
 import { tableError } from '../components/table/tableErrors';
 import { botLabel, rulesSummary } from '../logic/rules-text';
 import { useT } from '../i18n';
@@ -39,6 +41,8 @@ export function HomeScreen() {
   const { width, height } = useWindowDimensions();
   const [name, setName] = useState(app.profile.name);
   const needsName = !app.profile.name;
+  // A name the server refused is not shown as the player's (src/logic/profile.ts); the notice below says why.
+  const shownName = acceptedName(app.profile) || t('common.player');
   const wide = width >= 700;
   // Any landscape phone (667×375 is not "wide"): the first-run Play button goes beside the name field.
   const landscape = width > height;
@@ -60,7 +64,7 @@ export function HomeScreen() {
 
   const playBots = () => {
     if (needsName) saveName();
-    const session = createLocalSession(app.profile.name || name.trim() || t('common.player'), app.profile.avatar, app.settings.rules, { botSkill: allowedBotSkill(app.settings.botSkill, app.wallet) });
+    const session = createLocalSession(acceptedName(app.profile) || (needsName ? name.trim() : '') || t('common.player'), app.profile.avatar, app.settings.rules, { botSkill: allowedBotSkill(app.settings.botSkill, app.wallet) });
     app.setSession(session);
     session.host!.start();
     app.go({ name: 'table' });
@@ -73,7 +77,7 @@ export function HomeScreen() {
     setResumeError(null);
     try {
       if (rec.kind === 'local') {
-        const session = createLocalSession(rec.name, rec.avatar, rec.host.rules, { restore: { host: rec.host, token: rec.token } });
+        const session = createLocalSession(rec.name || t('common.player'), rec.avatar, rec.host.rules, { restore: { host: rec.host, token: rec.token } });
         app.setSession(session);
         app.go({ name: 'table' });
       } else if (entry !== 'ok') {
@@ -83,7 +87,7 @@ export function HomeScreen() {
         // Back to the server the table lives on (the stored serverUrl), with this player's session.
         const session = await createOnlineSession({
           signalUrl: rec.signalUrl,
-          name: rec.name,
+          name: rec.name || t('common.player'),
           avatar: rec.avatar,
           userId: app.profile.userId || undefined,
           rules: app.settings.rules,
@@ -226,8 +230,8 @@ export function HomeScreen() {
           <Pressable onPress={() => app.go({ name: 'settings' })} hitSlop={slopFor(50)} style={({ pressed }) => [styles.profile, pressed && { transform: [{ translateY: 2 }] }, { flex: wide ? undefined : 1 }]} accessibilityRole="button" accessibilityLabel={`${app.profile.name}. ${t('settings.title')}`}>
             <AvatarPlate id={app.profile.avatar} size={tablet ? 54 : 44} frame={frame} />
             <View style={{ flexShrink: 1 }}>
-              <Text numberOfLines={1} style={[styles.profileName, nameFont(app.profile.name)]}>
-                {app.profile.name}
+              <Text numberOfLines={1} style={[styles.profileName, nameFont(shownName)]}>
+                {shownName}
               </Text>
               <Text numberOfLines={1} style={styles.profileMeta}>
                 {t('home.profile.meta', { hands: app.progress.handsPlayed, wins: winRate === null ? t('home.profile.noWins') : t('home.profile.winRate', { rate: winRate }) })}
@@ -251,6 +255,8 @@ export function HomeScreen() {
           <Logo size={1.25} />
         </View>
       )}
+
+      <NameRefusedNotice />
 
       {needsName && (
         <Card style={wide ? { flexDirection: 'row', alignItems: 'center', gap: space.lg } : undefined}>

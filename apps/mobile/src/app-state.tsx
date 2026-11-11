@@ -2,6 +2,7 @@ import React, { createContext, useContext, useEffect, useMemo, useRef, useState 
 import { BackHandler, Platform } from 'react-native';
 import { DEFAULT_PROFILE, DEFAULT_PROGRESS, DEFAULT_SETTINGS, storage, type ActiveSession, type Profile, type Progress, type Settings } from './storage';
 import { setSavedClientSource, type Session } from './game/session';
+import { acceptedName } from './logic/profile';
 import { APP_BUILD, resolveSignalUrl } from './config';
 import { EMPTY_WALLET, loadWallet, saveWallet, type Wallet } from './monetisation/store';
 import { currentLocale, setLocalePreference } from './i18n';
@@ -139,7 +140,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     return () => setSavedClientSource(null);
   }, []);
 
-  // Keep the resumable-session record in sync with whatever table we are at.
+  // Keep the resumable-session record in sync with whatever table we are at. A name the server refused
+  // is not carried into it (the resume falls back to "Player").
+  const shown = acceptedName(profile);
   useEffect(() => {
     if (!session) return;
     const save = () => {
@@ -152,13 +155,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       if (!st.token) return;
       const record: ActiveSession =
         session.mode === 'local'
-          ? { kind: 'local', host: session.host!.serialize(), token: st.token, name: profile.name, avatar: profile.avatar, savedAt: Date.now() }
+          ? { kind: 'local', host: session.host!.serialize(), token: st.token, name: shown, avatar: profile.avatar, savedAt: Date.now() }
           : {
               kind: 'online',
               signalUrl: session.serverUrl ?? signalUrl,
               roomCode: session.roomCode,
               token: st.token,
-              name: profile.name,
+              name: shown,
               avatar: profile.avatar,
               clubCode: session.clubCode,
               quickMatch: session.quickMatch || undefined,
@@ -181,7 +184,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       unsubHost?.();
       if (persistTimer.current) clearTimeout(persistTimer.current);
     };
-  }, [session, profile.name, profile.avatar, signalUrl]);
+  }, [session, shown, profile.avatar, signalUrl]);
 
   const value = useMemo<AppState>(
     () => ({

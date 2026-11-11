@@ -67,6 +67,12 @@ export interface StoredAuth {
    * the player's name, until they sign in again or choose to start fresh. Never replaced on its own.
    */
   signedOut?: boolean;
+  /**
+   * When the server last said this account is banned (403 `banned`, or a socket closed with 4403), epoch ms.
+   * A ban covers the account's devices, so a new guest from this one is refused too: while this is recent
+   * the app does not offer one. Cleared by the next session the server grants.
+   */
+  bannedAt?: number;
 }
 
 /** Key-value secure storage (expo-secure-store on native, AsyncStorage on web; an in-memory map in tests). */

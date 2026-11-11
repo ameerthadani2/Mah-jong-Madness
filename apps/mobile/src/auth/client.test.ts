@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { FetchLike } from '../api/http';
 import { clubsApi } from '../api/clubs';
-import { ApiError, AuthClient, authStorageKey, REFRESH_AFTER_MS, SignedOutError } from './client';
+import { ApiError, AuthClient, authStorageKey, BAN_MEMORY_MS, offersStartFresh, REFRESH_AFTER_MS, SignedOutError } from './client';
 import { EMPTY_WALLET, walletForUser } from '../monetisation/wallet';
 import { memoryStore } from './store';
 import type { DeviceInfo, StoredAuth } from './types';
@@ -41,13 +41,17 @@ const T0 = Date.parse('2026-06-01T00:00:00Z');
 function setup(routes: Record<string, Reply[]>, stored?: StoredAuth, now = { t: T0 }) {
   const server = fakeServer(routes);
   const store = memoryStore(stored ? { [KEY]: JSON.stringify(stored) } : {});
-  const client = new AuthClient({ base: BASE, store, fetch: server.fetch, device: () => DEVICE, now: () => now.t, profile: () => ({ displayName: 'Tester', avatar: 'lady' }) });
+  const refusedNames: string[] = [];
+  const client = new AuthClient({ base: BASE, store, fetch: server.fetch, device: () => DEVICE, now: () => now.t, profile: () => ({ displayName: 'Tester', avatar: 'lady' }), onNameRefused: (name) => refusedNames.push(name) });
   const saved = async () => {
     const raw = await store.getItem(KEY);
     return raw ? (JSON.parse(raw) as StoredAuth) : null;
   };
-  return { ...server, store, client, saved, now };
+  return { ...server, store, client, saved, now, refusedNames };
 }
+
+const BANNED: Reply = { status: 403, body: { error: 'banned', message: 'This account has been banned' } };
+const DEVICE_BANNED: Reply = { status: 403, body: { error: 'banned', message: 'This device belongs to a banned account' } };
 
 const guestReply: Reply = { status: 201, body: { userId: 'u-guest', guestSecret: 'a'.repeat(64), session: session('mjs_guest1'), user: user('u-guest') } };
 const storedGuest = (over: Partial<StoredAuth> = {}): StoredAuth => ({ v: 1, userId: 'u-guest', guestSecret: 'a'.repeat(64), kind: 'guest', session: { token: 'mjs_old', expiresAt: '2026-12-31T00:00:00Z', refreshedAt: T0 }, ...over });
@@ -270,7 +274,7 @@ describe('AuthClient: providers, sign-out and deletion', () => {
     s.routes['DELETE /api/me'] = [{ status: 204 }];
     await s.client.deleteAccount();
     expect(await s.saved()).toBeNull();
-    expect(s.client.snapshot()).toEqual({ status: 'offline', userId: null, displayName: null, kind: null, hasSession: false });
+    expect(s.client.snapshot()).toEqual({ status: 'offline', userId: null, displayName: null, kind: null, hasSession: false, banned: false });
   });
 
   it('after a sign-out or a deletion the cached wallet belongs to nobody on the device, so its tier, themes and balance go', async () => {
@@ -293,6 +297,122 @@ describe('AuthClient: providers, sign-out and deletion', () => {
     await s.client.updateMe({ displayName: 'Mei' });
     expect(s.calls[0]).toMatchObject({ method: 'PATCH', body: { displayName: 'Mei' } });
     expect(s.client.snapshot().displayName).toBe('Mei');
+  });
+});
+
+describe('AuthClient: a name the server refuses', () => {
+  it('a guest whose name was refused is still signed up, with no name, and the app is told which name it was', async () => {
+    const s = setup({ 'POST /api/auth/guest': [{ status: 201, body: { userId: 'u-guest', guestSecret: 'a'.repeat(64), session: session('mjs_guest1'), user: { ...user('u-guest'), displayName: '' }, nameRefused: true } }] });
+    expect(await s.client.ensureSession()).toBe('mjs_guest1');
+    expect(s.calls[0].body).toMatchObject({ displayName: 'Tester' });
+    expect(s.refusedNames).toEqual(['Tester']);
+    // The refused name is not kept as the account's.
+    expect(s.client.snapshot()).toMatchObject({ status: 'guest', userId: 'u-guest', displayName: '', hasSession: true });
+    expect((await s.saved())!.displayName).toBe('');
+  });
+
+  it('an accepted name is not reported', async () => {
+    const s = setup({ 'POST /api/auth/guest': [guestReply] });
+    await s.client.ensureSession();
+    expect(s.refusedNames).toEqual([]);
+    expect(s.client.snapshot().displayName).toBe('Tester');
+  });
+
+  it('the profile sync reports name_not_allowed instead of swallowing it, and still sends the avatar', async () => {
+    const s = setup({ 'PATCH /api/me': [{ status: 400, body: { error: 'name_not_allowed', message: 'That name is not allowed' } }, { status: 200, body: { user: user('u-guest') } }] }, storedGuest());
+    expect(await s.client.syncProfile('  Admin  ', 'boss')).toEqual({ nameRefused: true });
+    expect(s.calls.map((c) => c.body)).toEqual([{ displayName: 'Admin', avatar: 'boss' }, { avatar: 'boss' }]);
+  });
+
+  it('the profile sync says so when the name went through, and throws when the server cannot be reached', async () => {
+    const ok = setup({ 'PATCH /api/me': [{ status: 200, body: { user: { ...user('u-guest'), displayName: 'Mei' } } }] }, storedGuest());
+    expect(await ok.client.syncProfile('Mei', 'lady')).toEqual({ nameRefused: false });
+    expect(ok.calls).toHaveLength(1);
+    const down = setup({ 'PATCH /api/me': ['network'] }, storedGuest());
+    await expect(down.client.syncProfile('Mei', 'lady')).rejects.toMatchObject({ code: 'auth_unreachable' });
+  });
+});
+
+describe('AuthClient: a banned account or device', () => {
+  it('a new guest refused on a banned device is final for the run: nothing is stored and the ban is remembered', async () => {
+    const s = setup({ 'POST /api/auth/guest': [DEVICE_BANNED] });
+    await expect(s.client.ensureSession()).rejects.toMatchObject({ code: 'banned', status: 403 });
+    expect(await s.saved()).toBeNull();
+    expect(s.client.snapshot()).toMatchObject({ status: 'offline', banned: true });
+  });
+
+  it('starting fresh on a banned device keeps the remembered identity and stops offering a new guest', async () => {
+    const stored = storedGuest({ userId: 'u-gone', session: null, signedOut: true });
+    const s = setup({ 'POST /api/auth/guest': [DEVICE_BANNED] }, stored);
+    await s.client.load();
+    expect(s.client.snapshot()).toMatchObject({ status: 'signed_out', banned: false });
+    await expect(s.client.startFresh()).rejects.toMatchObject({ code: 'banned' });
+    // Nothing was thrown away for a guest the server would never have made.
+    expect(await s.saved()).toMatchObject({ userId: 'u-gone', guestSecret: 'a'.repeat(64), signedOut: true, bannedAt: T0 });
+    expect(await s.store.getItem(`${KEY}.previous`)).toBeNull();
+    expect(s.client.snapshot()).toMatchObject({ status: 'signed_out', userId: 'u-gone', banned: true });
+    expect(offersStartFresh(s.client.snapshot())).toBe(false);
+  });
+
+  it('the sign-in prompt offers a new guest to a signed-out device, but never after a ban', () => {
+    expect(offersStartFresh({ status: 'signed_out', banned: false })).toBe(true);
+    expect(offersStartFresh({ status: 'signed_out', banned: true })).toBe(false);
+    expect(offersStartFresh({ status: 'guest', banned: false })).toBe(false);
+  });
+
+  it('starting fresh while the server is out of reach keeps the remembered identity too', async () => {
+    const s = setup({ 'POST /api/auth/guest': ['network'] }, storedGuest({ userId: 'u-gone', session: null, signedOut: true }));
+    await expect(s.client.startFresh()).rejects.toMatchObject({ code: 'auth_unreachable' });
+    expect(await s.saved()).toMatchObject({ userId: 'u-gone', signedOut: true });
+    expect(s.client.snapshot()).toMatchObject({ status: 'signed_out', banned: false });
+  });
+
+  it('a banned account is not handed its old token: the refresh refusal is the answer', async () => {
+    const now = { t: T0 + REFRESH_AFTER_MS + 1 };
+    const s = setup({ 'POST /api/auth/refresh': [BANNED] }, storedGuest(), now);
+    await expect(s.client.ensureSession()).rejects.toMatchObject({ code: 'banned' });
+    expect(s.calls.map((c) => c.path)).toEqual(['/api/auth/refresh']);
+    expect(s.client.snapshot()).toMatchObject({ status: 'guest', userId: 'u-guest', banned: true });
+  });
+
+  it('a guest login or a bearer request refused as banned is remembered', async () => {
+    const login = setup({ 'POST /api/auth/guest/login': [BANNED] }, storedGuest({ session: null }));
+    await expect(login.client.ensureSession()).rejects.toMatchObject({ code: 'banned' });
+    expect(login.client.snapshot()).toMatchObject({ status: 'guest', banned: true });
+    // Never a new guest in its place.
+    expect(login.calls.map((c) => c.path)).toEqual(['/api/auth/guest/login']);
+    const bearer = setup({ 'GET /api/me': [BANNED] }, storedGuest());
+    await expect(bearer.client.getMe()).rejects.toMatchObject({ code: 'banned' });
+    expect(bearer.client.snapshot().banned).toBe(true);
+  });
+
+  it('a socket closed with 4403 is recorded on the identity the device holds', async () => {
+    const s = setup({}, storedGuest());
+    await s.client.load();
+    await s.client.markBanned();
+    expect(await s.saved()).toMatchObject({ userId: 'u-guest', bannedAt: T0 });
+    expect(s.client.snapshot()).toMatchObject({ status: 'guest', banned: true });
+  });
+
+  it('a ban on somebody else’s account (a provider sign-in refused) does not mark this device’s identity', async () => {
+    const s = setup({ 'POST /api/auth/login': [BANNED] }, storedGuest({ session: null, signedOut: true }));
+    await expect(s.client.loginWithProvider('google', 'idtoken', 'nonce')).rejects.toMatchObject({ code: 'banned' });
+    expect(s.client.snapshot()).toMatchObject({ status: 'signed_out', banned: false });
+  });
+
+  it('the next session the server grants clears the ban, and an unconfirmed one is asked about again after a day', async () => {
+    const now = { t: T0 };
+    const s = setup({ 'POST /api/auth/guest/login': [BANNED, { status: 200, body: { session: session('mjs_back'), user: user('u-guest') } }] }, storedGuest({ session: null }), now);
+    await expect(s.client.ensureSession()).rejects.toMatchObject({ code: 'banned' });
+    expect(s.client.snapshot().banned).toBe(true);
+    now.t += BAN_MEMORY_MS - 1;
+    expect(s.client.snapshot().banned).toBe(true);
+    now.t += 2;
+    expect(s.client.snapshot().banned).toBe(false);
+    // The moderator lifted it: the guest signs in again and the record no longer says banned.
+    expect(await s.client.ensureSession()).toBe('mjs_back');
+    expect(s.client.snapshot()).toMatchObject({ status: 'guest', banned: false, hasSession: true });
+    expect((await s.saved())!.bannedAt).toBeUndefined();
   });
 });
 

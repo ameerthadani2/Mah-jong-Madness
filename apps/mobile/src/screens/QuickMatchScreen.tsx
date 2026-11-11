@@ -21,6 +21,8 @@ import { useT } from '../i18n';
 import { useOnlineGuard } from '../legal/useOnlineGuard';
 import { AgeBlocked, AgeGate } from '../components/AgeGate';
 import { SignInPrompt } from '../components/SignInPrompt';
+import { NameRefusedNotice } from '../components/NameRefusedNotice';
+import { acceptedName } from '../logic/profile';
 import { colors, space } from '../theme';
 import { Button, Card, H2, P, Pill, Row, ScreenHeader } from '../components/Ui';
 import { Icon } from '../components/Icons';
@@ -79,7 +81,7 @@ export function QuickMatchScreen() {
       search: () => {
         const q = startQuickMatch({
           signalUrl: app.signalUrl,
-          name: app.profile.name || t('common.player'),
+          name: acceptedName(app.profile) || t('common.player'),
           avatar: app.profile.avatar,
           userId: auth.user?.id || app.profile.userId || undefined,
           ...auth.tableAuth,
@@ -116,7 +118,7 @@ export function QuickMatchScreen() {
     }
     fail(outcome.message ? t(outcome.message.key, outcome.message.params) : friendlyError(outcome.error, t), outcome.final, outcome.retryAfterMs);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [app.signalUrl, app.profile.name, app.profile.avatar, auth, t]);
+  }, [app.signalUrl, app.profile.name, app.profile.refusedName, app.profile.avatar, auth, t]);
 
   // Start searching once the guard lets this player online; stop when the screen goes.
   const started = useRef(false);
@@ -165,6 +167,9 @@ export function QuickMatchScreen() {
   return (
     <ScrollView contentContainerStyle={styles.wrap}>
       <ScreenHeader title={t('quickmatch.title')} onBack={cancel} />
+      <View style={styles.card}>
+        <NameRefusedNotice />
+      </View>
       <Card style={styles.card} testID="quickmatch-card">
         <Row>
           <Icon name="users" size={30} color={colors.cta} />

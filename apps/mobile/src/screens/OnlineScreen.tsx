@@ -10,6 +10,8 @@ import { useT } from '../i18n';
 import { useOnlineGuard } from '../legal/useOnlineGuard';
 import { AgeBlocked, AgeGate } from '../components/AgeGate';
 import { SignInPrompt } from '../components/SignInPrompt';
+import { NameRefusedNotice } from '../components/NameRefusedNotice';
+import { acceptedName } from '../logic/profile';
 import { colors, fonts, space } from '../theme';
 import { Button, Card, H2, P, Row, ScreenHeader } from '../components/Ui';
 import { Icon } from '../components/Icons';
@@ -37,7 +39,7 @@ export function OnlineScreen() {
     try {
       const session = await createOnlineSession({
         signalUrl: app.signalUrl,
-        name: app.profile.name || t('common.player'),
+        name: acceptedName(app.profile) || t('common.player'),
         avatar: app.profile.avatar,
         userId: auth.user?.id || app.profile.userId || undefined,
         rules: app.settings.rules,
@@ -69,6 +71,7 @@ export function OnlineScreen() {
           {t('online.note')}
         </P>
       </View>
+      <NameRefusedNotice />
       <Card tone="gold" testID="online-quickmatch">
         <Row style={{ flexWrap: 'wrap', rowGap: 8 }}>
           <Icon name="users" size={26} color={colors.cta} />
@@ -104,7 +107,8 @@ export function OnlineScreen() {
           <Row>
             <Icon name="warning" size={24} />
             <P style={{ flex: 1 }}>{friendlyError(auth.error, t)}</P>
-            <Button small kind="secondary" title={t('online.retry')} onPress={() => void ensure()} disabled={auth.busy} />
+            {/* A ban is the server's final word: asking again gets the same answer. */}
+            {!auth.banned && <Button small kind="secondary" title={t('online.retry')} onPress={() => void ensure()} disabled={auth.busy} />}
           </Row>
         </Card>
       ) : null}

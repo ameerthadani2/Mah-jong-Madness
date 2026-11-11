@@ -17,6 +17,7 @@ import { createOnlineSession } from '../game/session';
 import { currentLocale, t } from '../i18n';
 import { gatingScreen, onlineEntry } from '../legal/online';
 import { ageGateLoaded, useAgeGate } from '../legal/useAgeGate';
+import { acceptedName } from '../logic/profile';
 import { useRemoteConfig } from '../telemetry/RemoteConfig';
 import { linkFromNotificationData, parseDeepLink, planLink, presentInForeground, type DeepLink } from './deeplink';
 import { attachRegistrar } from './hub';
@@ -94,7 +95,7 @@ export function PushBridge() {
       const au = authRef.current;
       const session = await createOnlineSession({
         signalUrl: a.signalUrl,
-        name: a.profile.name || t('common.player'),
+        name: acceptedName(a.profile) || t('common.player'),
         avatar: a.profile.avatar,
         userId: au.user?.id || a.profile.userId || undefined,
         rules: a.settings.rules,
