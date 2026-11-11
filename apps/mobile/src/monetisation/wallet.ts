@@ -24,7 +24,10 @@ export interface Wallet {
   v: 2;
   /** The server account this copy belongs to (null before the first sync). */
   userId: string | null;
-  /** Purchased diamonds (never expire). */
+  /**
+   * Purchased diamonds (never expire). Below zero after a refund of diamonds that were already
+   * spent: the server then refuses every spend until a top-up brings it back to zero or above.
+   */
   diamonds: number;
   /** Free and bonus diamonds (separate ledger; spent first). */
   bonusDiamonds: number;
@@ -63,6 +66,8 @@ export interface MeWallet {
 }
 
 const count = (n: unknown): number => (typeof n === 'number' && Number.isFinite(n) && n > 0 ? Math.floor(n) : 0);
+/** A whole number that may be negative (the purchased balance after a refund). */
+const signed = (n: unknown): number => (typeof n === 'number' && Number.isFinite(n) ? Math.trunc(n) : 0);
 
 const COSMETIC_UNLOCKS = new Set(COSMETICS.map((p) => p.unlocks).filter((u): u is string => !!u));
 
@@ -110,7 +115,7 @@ export function mirrorMe(wallet: Wallet, me: MeWallet, deviceNow: number): Walle
   return {
     v: 2,
     userId: typeof me.user?.id === 'string' ? me.user.id : wallet.userId,
-    diamonds: count(me.wallet?.diamonds),
+    diamonds: signed(me.wallet?.diamonds),
     bonusDiamonds: count(me.wallet?.bonusDiamonds),
     entitlements,
     cosmetics: [...cosmetics].sort(),
@@ -151,7 +156,7 @@ export function migrateWallet(raw: unknown): Wallet {
   return {
     v: 2,
     userId: typeof r.userId === 'string' ? r.userId : null,
-    diamonds: count(r.diamonds),
+    diamonds: signed(r.diamonds),
     bonusDiamonds: count(r.bonusDiamonds),
     entitlements,
     cosmetics,
@@ -220,13 +225,25 @@ export function ownsProduct(wallet: Wallet, productId: string): boolean {
   return !!p.unlocks && ownsCosmetic(wallet, p.unlocks);
 }
 
+/** The balance the counters show: purchased plus bonus diamonds. Negative while more is owed than the bonus holds. */
 export function totalDiamonds(wallet: Wallet): number {
   return wallet.diamonds + wallet.bonusDiamonds;
 }
 
-/** Whether the cached balance covers a diamond price (the server has the final word). */
+/** Diamonds owed after a refund of a pack that was already spent (0 when nothing is owed). */
+export function diamondsOwed(wallet: Wallet): number {
+  return Math.max(0, -wallet.diamonds);
+}
+
+/**
+ * Whether the cached balance covers a diamond price (the server has the final word), and the
+ * smallest top-up that would. While diamonds are owed nothing can be spent, bonus diamonds
+ * included: the top-up must first pay the debt back, and then cover what the bonus diamonds
+ * do not.
+ */
 export function canAfford(wallet: Wallet, diamondPrice: number): { ok: boolean; short: number } {
-  const short = Math.max(0, diamondPrice - totalDiamonds(wallet));
+  const owed = diamondsOwed(wallet);
+  const short = owed > 0 ? owed + Math.max(0, diamondPrice - wallet.bonusDiamonds) : Math.max(0, diamondPrice - totalDiamonds(wallet));
   return { ok: short === 0, short };
 }
 
@@ -253,7 +270,7 @@ export function consume(wallet: Wallet, meter: 'reviews' | 'rush', now: Date = n
   return { ...wallet, meters: { ...m, [meter]: m[meter] + 1 } };
 }
 
-/** True once `/api/me` shows the purchase: more diamonds, the cosmetic, or the tier. */
+/** True once `/api/me` shows the purchase: more diamonds (a debt that shrank counts), the cosmetic, or the tier. */
 export function showsPurchase(before: Wallet, after: Wallet, productId: string): boolean {
   const p = productById(productId);
   if (!p) return false;
