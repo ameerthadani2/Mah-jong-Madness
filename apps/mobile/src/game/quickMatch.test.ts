@@ -189,6 +189,14 @@ describe('an account still seated at a quick-match table', () => {
     expect(quickMatchFailure(await session.catch((e) => e))).toEqual({ kind: 'message', message: { key: 'quickmatch.errors.seatedFailed' }, final: false });
   });
 
+  it('asks for a few seconds when the server throttles the way back, instead of calling the table lost', async () => {
+    seatedServer(() => [{ t: 'error', message: 'Too many join attempts; please wait a few seconds' }]);
+    const { session } = startQuickMatch({ ...base, savedToken: () => undefined });
+    const error = await session.catch((e) => e);
+    expect(error).toMatchObject({ code: 'rate_limited', room: 'QM7777' });
+    expect(quickMatchFailure(error)).toEqual({ kind: 'message', message: { key: 'quickmatch.errors.rateLimited' }, final: false, retryAfterMs: RATE_LIMIT_WAIT_MS });
+  });
+
   it('a quick-match table resumed from the saved record is still a quick-match table', async () => {
     FakeSocket.reply = (f) => (f.t === 'join' ? [{ t: 'room', room: 'QM7777', peers: ['p-me', 'server-QM7777'], host: 'server-QM7777' }] : []);
     const resumed = await createOnlineSession({ ...base, rules: DEFAULT_RULES, action: 'join', code: 'QM7777', token: 'saved', quickMatch: true });

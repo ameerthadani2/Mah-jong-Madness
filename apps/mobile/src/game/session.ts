@@ -33,6 +33,7 @@ import {
   type WebSocketFactory,
   type WebSocketLike,
 } from '@mjm/net';
+import { friendlyErrorMessage } from '../logic/errors';
 import { CONNECTED, nextDelayMs, reconnectStep, type ConnectionStatus, type ReconnectEvent, type ReconnectState } from '../logic/reconnect';
 
 export type { ConnectionStatus } from '../logic/reconnect';
@@ -459,7 +460,7 @@ export const REJOIN_FAILED = 'rejoin_failed';
  * join): with the saved rejoin token when this device's saved table is that room, otherwise with
  * none, since a server-hosted table gives a verified account its own seat back and answers with a
  * new token, which is saved like any other. Only when that join fails does the promise reject,
- * with code `rejoin_failed`.
+ * with code `rejoin_failed` (or `rate_limited` when the server throttled the join).
  *
  * Otherwise the session promise rejects with a QueueError (`code` banned, age_missing, age_under,
  * rate_limited, sign_in, unavailable, replaced, cancelled) or the usual join errors. `cancel()`
@@ -493,7 +494,10 @@ export function startQuickMatch(opts: QuickMatchOptions): { session: Promise<Ses
     } catch (e) {
       // `openConnection` has already told the account layer about a ban.
       if ((e as { code?: unknown } | null)?.code === BANNED_CLOSE_CODE) throw new QueueError('This account has been banned', 'banned');
-      throw new QueueError((e as Error | null)?.message || 'Could not return to the table', REJOIN_FAILED, room);
+      const message = (e as Error | null)?.message || 'Could not return to the table';
+      // The queue and the join draw on one allowance: a throttled join is "wait a few seconds", not a lost table.
+      if (friendlyErrorMessage(e).key === 'errors.rateLimited') throw new QueueError(message, 'rate_limited', room);
+      throw new QueueError(message, REJOIN_FAILED, room);
     }
   };
   const attempt = async (): Promise<Session> => {
