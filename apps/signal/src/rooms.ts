@@ -470,6 +470,8 @@ export class RoomRegistry {
       now: this.opts.now,
       restore,
       isController: this.controllersOf(room),
+      // The user id in a table join is the account the socket's session proved (`bindUser`), never the client's claim: an account may take its own seat back without the rejoin token.
+      verifiedUserIds: true,
     });
     host.onEvent((event) => {
       // While a human holds a seat (connected or not) the table lives 15 minutes past its last activity.
