@@ -7,13 +7,14 @@
  *   npm run e2e:screens                                           (both steps)
  *
  * Writes <dir>/<width>x<height>-<screen>.png for home, table-mid, table-selected, table-claim (when a claim
- * came up), callout and win-hold (when they came up), result, review, learn, lesson, shop and settings, plus
- * exit-sheet (the red exit icon's confirmation) and, for each landscape viewport, table-xl (Extra-large tiles).
+ * came up), callout and win-hold (when they came up), result, review, learn, lesson, age-gate (the birth-year
+ * question a new player answers before the Shop), shop and settings, plus exit-sheet (the red exit icon's
+ * confirmation) and, for each landscape viewport, table-xl (Extra-large tiles).
  * Each viewport plays one hand against bots in its own browser context, all in parallel. Set
  * SCREENS_SIZES=390x844,667x375 to capture a subset.
  * Exits non-zero if a viewport cannot reach the result sheet, the page throws, or a hard check fails (one tap on
  * the exit icon leaves the table, the English claim buttons carry no gloss, an Extra-large hand scrolls or runs
- * off screen).
+ * off screen, the Shop does not open, a Home card button clips its label).
  */
 const http = require('http');
 const fs = require('fs');
@@ -79,6 +80,21 @@ async function run(browser, port, [w, h]) {
   await page.waitForSelector('[data-testid="start-match"]', { timeout: 30000 });
   await page.waitForTimeout(800);
   await shot('home');
+  // Home's card buttons are as wide as their card: a label (with its icon) wider than the button is cut off at both ends.
+  const clipped = await page.evaluate(() => {
+    const bad = [];
+    for (const id of ['start-match', 'open-clubs', 'open-quickmatch']) {
+      const el = [...document.querySelectorAll(`[data-testid="${id}"]`)].find((e) => e.getBoundingClientRect().width > 0);
+      if (!el) continue;
+      const parts = [...el.querySelectorAll('div[dir="auto"], svg')].map((c) => c.getBoundingClientRect()).filter((r) => r.width > 0);
+      if (!parts.length) continue;
+      const content = Math.max(...parts.map((r) => r.right)) - Math.min(...parts.map((r) => r.left));
+      // The button's 3 px border on each side is not room for the label.
+      if (content > el.getBoundingClientRect().width - 6) bad.push(`${id} (${Math.round(content)} in ${Math.round(el.getBoundingClientRect().width)})`);
+    }
+    return bad;
+  });
+  if (clipped.length) fails.push(`Home buttons clip their label: ${clipped.join(', ')}`);
 
   await tapSel(page, '[data-testid="start-match"]', 300);
   await page.waitForSelector('[data-testid^="tile-"]', { timeout: 15000 });
@@ -161,7 +177,14 @@ async function run(browser, port, [w, h]) {
   } else notes.push('no learn button');
 
   if (await tapSel(page, '[data-testid="open-shop"]', 1000)) {
-    await shot('shop');
+    // A new player is asked their birth year before the Shop opens: capture the question, answer it as an adult.
+    if (await visible(page, '[data-testid="age-gate"]')) {
+      await shot('age-gate');
+      await page.fill('[data-testid="age-year"]', '1990');
+      await tapSel(page, '[data-testid="age-continue"]', 1000);
+    }
+    if (await visible(page, '[data-testid="shop"]')) await shot('shop');
+    else fails.push('the Shop did not open from Home (the "shop" screenshot would show another screen)');
     await tapSel(page, '[data-testid="back"]', 800);
   } else notes.push('no shop button');
 

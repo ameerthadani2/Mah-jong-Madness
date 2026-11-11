@@ -1,6 +1,7 @@
 {
   "_review": "first pass, needs native review",
   "button": "快速配對",
+  "buttonShort": "快速配對",
   "buttonHint": "馬上和其他玩家對戰，空位由電腦補上。",
   "title": "快速配對",
   "rules": "台灣十六張標準規則，一般速度。電腦玩家都有清楚標示。",

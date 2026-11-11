@@ -1,6 +1,7 @@
 {
   "_review": "n/a",
   "button": "Quick match",
+  "buttonShort": "Match",
   "buttonHint": "Play with people now. Bots fill empty seats.",
   "title": "Quick match",
   "rules": "Standard Taiwanese rules at Normal speed. Bots are clearly labelled.",
