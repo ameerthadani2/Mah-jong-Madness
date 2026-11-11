@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { applyAction, BOT_WEIGHTS, chooseAction, hintFor, isLegal, kindOf, kindsFromString, newGame, rankDiscards, readOpponents, unseenCounts, viewFor, viewToState, waitsFor, type BotSkill, type GameState } from '../src/index';
 import { coachAction, currentShanten } from '../src/bot';
+import { GATE_HANDS, GATE_MAX_DROP, gateFailures, standing, summarise, termsVerdict, type GateReference } from './helpers/gate';
 import { replayReference, type ReferenceFile } from './helpers/reference';
 import { discard, offers, setup, tileTotal } from './helpers/state';
 
@@ -262,8 +263,9 @@ describe('bot decisions', () => {
 describe('Pro regression gate (recorded decisions)', () => {
   // Hands played by one Pro seat against three Club seats, recorded with `npm run sim -- --record-reference`.
   // Replaying their logs rebuilds every state with the rules engine alone; today's Pro must still make
-  // the recorded decision almost everywhere. The paired 2,000-hand ladder against a stored reference
-  // (`npm run sim -- --gate`) is the strength gate; this replay is the fast one every test run makes.
+  // the recorded decision almost everywhere. The 2,000 fixed-seed hands compared hand by hand with a
+  // stored reference (`npm run sim -- --gate`, rules tested below) are the strength gate; this replay
+  // is the fast one every test run makes.
   const ref = JSON.parse(readFileSync(new URL('./fixtures/pro-reference.json', import.meta.url), 'utf8')) as ReferenceFile;
 
   it('today’s Pro makes the recorded decision at 97% of the recorded points and keeps 95% of its recorded claims', () => {
@@ -286,6 +288,93 @@ describe('Pro regression gate (recorded decisions)', () => {
   }, 60_000);
 });
 
+describe('bot strength gate (the per-hand reference of `npm run sim -- --gate`)', () => {
+  // The gate plays fixed seeds, so a run differs from its reference only where the bots changed:
+  // it compares hand by hand and allows a drop of GATE_MAX_DROP points a hand (helpers/gate.ts).
+  //
+  // What the stored reference shows today, on its 2,000 hands (three Club bots around the test seat):
+  //   1. Pro minus Club: +1.04 pts/hand, se 4.36. No clear difference at 95%.
+  //   2. Pro minus Pro without its deal-in and 台 terms: -2.23 pts/hand, se 3.47. No measurable gain
+  //      from the terms. They change the seat's score in 798 of the 2,000 hands. With them Pro deals
+  //      in on 17.5% of hands against 19.8% without (Club: 19.2%), but it also wins less often
+  //      (25.7% against 26.5%) and the points do not come out ahead. On 3,000 other seeds the
+  //      deal-in counts went the other way (545 with the terms, 520 without), so a lower deal-in
+  //      rate is not established either.
+  // So the terms do change what Pro throws (the constructed states above pin the fold), but they do
+  // not yet show up as points in play. Nothing here says Pro folds better than that. The last test
+  // below holds this reading to the stored numbers: when a tuned Pro changes it, change that test,
+  // this comment, the gate paragraph in docs/ARCHITECTURE.md and the bot descriptions together.
+  const ref = JSON.parse(readFileSync(new URL('./fixtures/bot-gate.json', import.meta.url), 'utf8')) as GateReference;
+  const same = { proVsClub: ref.proVsClub.perHand, termsVsBare: ref.termsVsBare.perHand };
+  /** The series with `points` taken off each of its first `hands` hands. */
+  const lowered = (xs: readonly number[], hands: number, points: number): number[] => xs.map((x, i) => (i < hands ? x - points : x));
+
+  it('passes a run that scores what the reference scores, and one a little below it', () => {
+    expect(gateFailures(same, ref)).toEqual([]);
+    // 20 hands 80 points lower: 0.8 points a hand over 2,000 hands, inside the allowance.
+    expect(gateFailures({ ...same, proVsClub: lowered(same.proVsClub, 20, 80) }, ref)).toEqual([]);
+    expect(gateFailures({ ...same, termsVsBare: lowered(same.termsVsBare, 20, 80) }, ref)).toEqual([]);
+  });
+
+  it('fails on a drop of more than a point a hand, which a floor of two standard errors lets through', () => {
+    // 30 hands 80 points lower: 1.2 points a hand.
+    const run = { ...same, proVsClub: lowered(same.proVsClub, 30, 80) };
+    const mean = summarise(run.proVsClub).mean;
+    expect(mean).toBeCloseTo(summarise(same.proVsClub).mean - 1.2, 6);
+    expect(mean).toBeLessThan(ref.proVsClub.mean - GATE_MAX_DROP);
+    // The old rule (pass at the reference minus two standard errors) would have passed this run,
+    // and one seven points a hand lower.
+    expect(mean).toBeGreaterThan(ref.proVsClub.mean - 2 * ref.proVsClub.se);
+    expect(ref.proVsClub.mean - 7).toBeGreaterThan(ref.proVsClub.mean - 2 * ref.proVsClub.se);
+    const failures = gateFailures(run, ref);
+    expect(failures).toHaveLength(1);
+    expect(failures[0]).toMatch(/Pro against Club is 1\.20 pts\/hand below the stored reference/);
+    // The same floor guards the second series.
+    const second = gateFailures({ ...same, termsVsBare: lowered(same.termsVsBare, 30, 80) }, ref);
+    expect(second).toHaveLength(1);
+    expect(second[0]).toMatch(/without its deal-in and 台 terms is 1\.20 pts\/hand below/);
+  });
+
+  it('fails a Pro that is behind Club at 95%, even when the reference was recorded from it', () => {
+    const losing = same.proVsClub.map((x) => x - 12);
+    expect(standing(losing)).toBe('behind');
+    const recordedFromIt = { ...ref, proVsClub: { ...ref.proVsClub, perHand: losing } };
+    expect(gateFailures({ ...same, proVsClub: losing }, recordedFromIt)).toEqual(['Pro is behind Club at 95%']);
+  });
+
+  it('fails a Pro whose deal-in and 台 terms change no hand, or cost points at 95%', () => {
+    // Every term switched off: Pro and Pro without the terms score the same on every hand.
+    const inert = same.termsVsBare.map(() => 0);
+    const recordedInert = { ...ref, termsVsBare: { ...ref.termsVsBare, perHand: inert } };
+    expect(termsVerdict(inert)).toBe('the terms change no hand');
+    expect(gateFailures({ ...same, termsVsBare: inert }, recordedInert)).toEqual(['Pro’s deal-in and 台 terms change no hand: they are switched off or have no effect']);
+    const costly = same.termsVsBare.map((x) => x - 12);
+    expect(standing(costly)).toBe('behind');
+    const recordedCostly = { ...ref, termsVsBare: { ...ref.termsVsBare, perHand: costly } };
+    expect(gateFailures({ ...same, termsVsBare: costly }, recordedCostly)).toEqual(['Pro’s deal-in and 台 terms cost points at 95%']);
+  });
+
+  it('refuses a reference recorded for another number of hands', () => {
+    expect(() => gateFailures({ ...same, proVsClub: same.proVsClub.slice(1) }, ref)).toThrow(/record it again/);
+  });
+
+  it('the stored reference is consistent, and reads today as: Pro level with Club, no measurable gain from the terms', () => {
+    expect(ref.hands).toBe(GATE_HANDS);
+    for (const series of [ref.proVsClub, ref.termsVsBare]) {
+      expect(series.perHand).toHaveLength(GATE_HANDS);
+      const s = summarise(series.perHand);
+      expect(s.mean).toBeCloseTo(series.mean, 3);
+      expect(s.se).toBeCloseTo(series.se, 3);
+    }
+    expect(ref.handsChangedByTerms).toBe(ref.termsVsBare.perHand.filter((x) => x !== 0).length);
+    expect(ref.handsChangedByTerms).toBeGreaterThan(0);
+    // The reading the comment above and the docs give. See that comment before changing it.
+    expect(standing(ref.proVsClub.perHand)).toBe('level');
+    expect(standing(ref.termsVsBare.perHand)).toBe('level');
+    expect(termsVerdict(ref.termsVsBare.perHand)).toBe('no measurable gain from the terms (the 95% interval includes zero)');
+  });
+});
+
 describe('bot strength ladder (fixed seeds)', () => {
   it('Club wins clearly more often than Beginner', () => {
     const { test: beginner, club } = ladder('beginner', 80);
@@ -302,7 +391,8 @@ describe('bot strength ladder (fixed seeds)', () => {
 
   it('Beginner is clearly behind Club in a paired comparison on the same seeds', () => {
     // Pro against Club is gated by the recorded-decision replay above and by `npm run sim -- --gate`
-    // (2,000 paired hands): a few hundred hands swing by tens of points a hand and cannot rank them.
+    // (2,000 fixed-seed hands against a per-hand reference): a few hundred hands swing by tens of
+    // points a hand and cannot rank them. Even the 2,000 do not put Pro clearly ahead of Club today.
     const { mean, se } = pairedLadder('beginner', 120, 'paired');
     expect(se).toBeGreaterThan(0);
     expect(mean + 1.96 * se).toBeLessThan(0);

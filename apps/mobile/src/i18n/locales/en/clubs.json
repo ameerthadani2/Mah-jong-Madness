@@ -119,7 +119,8 @@
     "dealerTai": "dealer %{n}台",
     "dealerStreakTai": "連莊 +%{n}台 a hand",
     "deadWall": "dead wall %{n}",
-    "startingPoints": "start %{n}"
+    "startingPoints": "start %{n}",
+    "limitOff": "%{name} off"
   },
   "share": {
     "button": "Share",

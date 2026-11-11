@@ -131,6 +131,41 @@ function contract(name: string, repos: () => Repos) {
       expect(await r.wallet.findPurchase(transactionId)).toMatchObject({ userId: u, store: 'play_store', productId: 'diamonds.60' });
     });
 
+    it('keeps the end of the period a subscription purchase paid for; none for a pack', async () => {
+      const r = repos();
+      const u = await user();
+      const row = { userId: u, store: 'app_store', price: null, currency: null, eventId: null, raw: {}, createdAt: T0 };
+      const month = await r.wallet.recordPurchase({ ...row, transactionId: `tx-period-${u}`, productId: 'coach.gold.month', periodEndsAt: T0 + 30 * DAY });
+      expect([month.inserted, month.purchase.periodEndsAt]).toEqual([true, T0 + 30 * DAY]);
+      const pack = await r.wallet.recordPurchase({ ...row, transactionId: `tx-pack-${u}`, productId: 'diamonds.60' });
+      expect(pack.purchase.periodEndsAt).toBeNull();
+      // A repeat returns the stored row unchanged.
+      const again = await r.wallet.recordPurchase({ ...row, transactionId: `tx-period-${u}`, productId: 'coach.gold.month', periodEndsAt: T0 + 90 * DAY });
+      expect([again.inserted, again.purchase.periodEndsAt]).toEqual([false, T0 + 30 * DAY]);
+      expect((await r.wallet.listPurchases(u)).map((p) => p.periodEndsAt)).toEqual([T0 + 30 * DAY, null]);
+      expect((await r.wallet.findPurchase(`tx-period-${u}`))?.periodEndsAt).toBe(T0 + 30 * DAY);
+    });
+
+    it('a refund of an earlier month leaves the month now paid for; a refund of that one ends the plan', async () => {
+      const r = repos();
+      let t = T0;
+      const wallet = new WalletService(r, { now: () => t, log: () => {}, testerUserIds: [] });
+      const u = await user();
+      const plan = { storeProductId: 'fourwinds.month' };
+      const [m1, m2] = [T0 + 30 * DAY, T0 + 60 * DAY];
+      const expiry = async () => (await r.wallet.getEntitlements(u)).find((e) => e.entitlement === 'fourwinds.month')?.expiresAt;
+      expect((await wallet.applyStoreEvent(storeEvent(u, 'INITIAL_PURCHASE', { ...plan, transactionId: `m1-${u}`, expiresAt: m1 }))).outcome).toBe('entitled');
+      t = T0 + 29 * DAY;
+      expect((await wallet.applyStoreEvent(storeEvent(u, 'RENEWAL', { ...plan, transactionId: `m2-${u}`, purchasedAt: m1, expiresAt: m2 }))).outcome).toBe('extended');
+      t = T0 + 31 * DAY;
+      expect((await wallet.applyStoreEvent(storeEvent(u, 'CANCELLATION', { ...plan, transactionId: `m1-${u}`, cancelReason: 'CUSTOMER_SUPPORT', expiresAt: m1 }))).outcome).toBe('refunded');
+      expect(await expiry()).toBe(m2);
+      expect(await wallet.hasFourWinds(u)).toBe(true);
+      expect((await wallet.applyStoreEvent(storeEvent(u, 'CANCELLATION', { ...plan, transactionId: `m2-${u}`, cancelReason: 'CUSTOMER_SUPPORT', expiresAt: m2 }))).outcome).toBe('refunded');
+      expect(await expiry()).toBe(t);
+      expect(await wallet.hasFourWinds(u)).toBe(false);
+    });
+
     it('a pack refunded after Restore moved it to another account is taken back from the account that was credited', async () => {
       const r = repos();
       const wallet = new WalletService(r, { now: () => T0, log: () => {}, testerUserIds: [] });

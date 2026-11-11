@@ -399,7 +399,7 @@ function seatViews(s: GameState): PuzzleSeatView[] {
 // ===========================================================================
 
 /** Why a tile is safe, from strongest to weakest kind of safety. */
-export type DefenceReason = 'theirDiscard' | 'passed' | 'deadHonour' | 'lastHonour' | 'honour' | 'fewCopies' | 'terminal' | 'middle';
+export type DefenceReason = 'deadHonour' | 'theirDiscard' | 'passed' | 'lastHonour' | 'honour' | 'fewCopies' | 'terminal' | 'middle';
 
 export interface DefenceOption {
   kind: Kind;
@@ -411,7 +411,11 @@ export interface DefenceOption {
    * four concealed tiles could be (`exactWaitChances`). Kinds it threw or let pass are not waits.
    */
   exact: number;
-  /** Accepted: keeps the hand's shanten and is within `DEFENCE_TOLERANCE` of the safest such discard. */
+  /**
+   * Accepted: keeps the hand's shanten and is within `DEFENCE_TOLERANCE` of the safest such discard.
+   * Every shape-keeping discard that is not accepted has a strictly higher `exact` chance than every
+   * accepted one (a table where the model and the count disagree is not made into a puzzle).
+   */
   accepted: boolean;
   reason: DefenceReason;
 }
@@ -498,16 +502,20 @@ export function exactWaitChances(unseen: Counts, excluded: readonly boolean[]): 
 }
 
 function defenceReason(read: OpponentRead, kind: Kind, unseen: Counts): DefenceReason {
+  // A dead honour cannot win at all, whoever threw it: the one certain reason comes first.
+  if (isHonorKind(kind) && unseen[kind] === 0) return 'deadHonour';
   if (read.ownDiscards[kind]) return 'theirDiscard';
   if (read.passed[kind]) return 'passed';
-  if (isHonorKind(kind)) return unseen[kind] === 0 ? 'deadHonour' : unseen[kind] === 1 ? 'lastHonour' : 'honour';
+  if (isHonorKind(kind)) return unseen[kind] === 1 ? 'lastHonour' : 'honour';
   if (unseen[kind] <= 1) return 'fewCopies';
   return rankOfKind(kind) === 1 || rankOfKind(kind) === 9 ? 'terminal' : 'middle';
 }
 
 const pct = (x: number): string => `${(x * 100).toFixed(1)}%`;
+/** A positive chance to one decimal, or '' when it would print as "0.0%" (the text then says "under 0.1%"). */
+const smallPct = (x: number): string => (x < 0.0005 ? '' : pct(x));
 
-function defenceText(p: Pick<DefencePuzzle, 'answer' | 'answers' | 'threatSeat' | 'reason' | 'efficient' | 'opponents' | 'options'>): PuzzleExplanation {
+function defenceText(p: Pick<DefencePuzzle, 'answer' | 'answers' | 'threatSeat' | 'threatLevel' | 'reason' | 'efficient' | 'opponents' | 'options'>): PuzzleExplanation {
   const t = tileEn(p.answer);
   const tz = tileZh(p.answer);
   const who = SEAT_EN[p.threatSeat];
@@ -552,8 +560,25 @@ function defenceText(p: Pick<DefencePuzzle, 'answer' | 'answers' | 'threatSeat' 
   }
   const a = p.options.find((o) => o.kind === p.answer)!;
   const others = p.answers.filter((k) => k !== p.answer);
-  const numbersEn = ` If ${who} is ready, ${t} wins for them in about ${pct(a.exact)} of the hands they could hold.`;
-  const numbersZh = `如果${whoZh}已經聽牌，${tz}大約只在${pct(a.exact)}的牌型裡會放槍。`;
+  // The exact count leaves out every hand that waits on a tile the threat threw or let pass, so for
+  // such an answer it is 0 by assumption: quote the coach's own estimate, which is small but not
+  // zero. A dead honour needs no figure (nobody can win on it), and a true zero is said in words.
+  let numbersEn: string;
+  let numbersZh: string;
+  if (p.reason === 'theirDiscard' || p.reason === 'passed') {
+    const model = a.danger / p.threatLevel;
+    numbersEn = ` If ${who} is ready, the coach puts the chance that ${t} wins for them at ${smallPct(model) ? `about ${smallPct(model)}` : 'under 0.1%'}.`;
+    numbersZh = `如果${whoZh}已經聽牌，教練估計${tz}放槍的機率${smallPct(model) ? `大約${smallPct(model)}` : '不到0.1%'}。`;
+  } else if (p.reason === 'deadHonour') {
+    numbersEn = '';
+    numbersZh = '';
+  } else if (a.exact <= 0) {
+    numbersEn = ` If ${who} is ready and is not waiting on a tile they threw or let pass, none of the hands they could hold wins on ${t}.`;
+    numbersZh = `如果${whoZh}已經聽牌，而且不是聽自己打過或放過的牌，他可能的牌型沒有一種會胡${tz}。`;
+  } else {
+    numbersEn = ` If ${who} is ready, ${t} wins for them in ${smallPct(a.exact) ? `about ${smallPct(a.exact)}` : 'under 0.1%'} of the hands they could hold.`;
+    numbersZh = `如果${whoZh}已經聽牌，${tz}${smallPct(a.exact) ? `大約只在${smallPct(a.exact)}` : '只在不到0.1%'}的牌型裡會放槍。`;
+  }
   const alsoEn = others.length > 0 ? ` ${others.map(tileEn).join(' and ')} ${others.length > 1 ? 'are' : 'is'} about as safe, so ${others.length > 1 ? 'they count' : 'it counts'} too.` : '';
   const alsoZh = others.length > 0 ? `${others.map(tileZh).join('、')}差不多一樣安全，也算對。` : '';
   const keepEn = ' Throwing it also keeps your hand as close to ready as any other discard.';
@@ -575,7 +600,8 @@ const DEFENCE_PLANT: Record<PuzzleDifficulty, 'theirDiscard' | 'passed' | 'copie
  * the hand's shanten is rated by the bots' deal-in model (`readOpponents` / `waitChance`), and
  * every one within `DEFENCE_TOLERANCE` of the safest is accepted. A puzzle is kept only when the
  * exact enumeration (`exactWaitChances`) agrees: its safest kind is accepted, every accepted kind
- * is within 1.5 points of it, and at least one shape-keeping discard is clearly worse (2 points).
+ * is within 1.5 points of it, every discard that is not accepted is strictly more dangerous by that
+ * count than every accepted one, and at least one shape-keeping discard is clearly worse (2 points).
  * Difficulty decides what the table plants (tiles the threat threw, a tile let pass, visible
  * copies), not which rule the answer follows.
  */
@@ -699,6 +725,9 @@ function defenceAttempt(seed: string, difficulty: PuzzleDifficulty, rng: Rng): D
   const exactMin = Math.min(...kept.map((o) => o.exact));
   if (!kept.some((o) => o.accepted && o.exact <= exactMin + 1e-9)) return null;
   if (accepted.some((o) => o.exact > exactMin + 0.015)) return null;
+  // No tile is marked wrong that the count rates as safe as an accepted one, or safer.
+  const acceptedMax = Math.max(...accepted.map((o) => o.exact));
+  if (kept.some((o) => !o.accepted && o.exact <= acceptedMax + 1e-9)) return null;
   if (!kept.some((o) => !o.accepted && o.exact >= exactMin + 0.02)) return null;
   if (accepted.length > Math.max(2, Math.floor(kept.length / 2))) return null;
   const best = accepted.slice().sort((x, y) => x.danger - y.danger || x.exact - y.exact || x.kind - y.kind)[0];
@@ -712,14 +741,13 @@ function defenceAttempt(seed: string, difficulty: PuzzleDifficulty, rng: Rng): D
     }
   }
   const opponents = seatViews(s);
-  const base = { answer: best.kind, answers: accepted.map((o) => o.kind), threatSeat, reason: best.reason, efficient, opponents, options };
+  const base = { answer: best.kind, answers: accepted.map((o) => o.kind), threatSeat, threatLevel: read.tenpai, reason: best.reason, efficient, opponents, options };
   return {
     type: 'defence',
     seed,
     difficulty,
     hand: hand.slice().sort((a, b) => a - b),
     ownDiscards,
-    threatLevel: read.tenpai,
     bestShanten,
     ...base,
     ...defenceText(base),
@@ -1185,7 +1213,7 @@ export interface ValuePuzzle extends PuzzleExplanation {
   answer: Kind;
   /** The tempting alternative: the ready discard outside the accepted set with the most winning tiles. */
   rival: Kind;
-  /** The headline 台 item the answer keeps and the rival loses ('' when the answer wins on speed alone). */
+  /** The headline 台 item the answer keeps and the rival loses ('' when it loses none: see `valueReason`). */
   patternKey: string;
   patternEn: string;
   patternZh: string;
@@ -1276,6 +1304,26 @@ export function scoreWaits(
 
 const fmt1 = (x: number): string => (Math.round(x * 10) / 10).toString();
 
+/**
+ * Why the answer beats the rival, chosen so that the headline is true of the numbers shown:
+ *  - keepPattern / tradeSpeed: the answer keeps a headline pattern the rival loses (and gives up
+ *    winning tiles for it in the second case);
+ *  - speed: the answer has more winning tiles and the rival is the bigger hand (a higher average
+ *    or a higher best win);
+ *  - both: the answer has more winning tiles and its wins are no smaller on either measure;
+ *  - moreTai: the answer has no more winning tiles but more 台 a win, from items outside the
+ *    headline patterns (a single wait, 平胡, concealed pongs, a concealed hand).
+ * null when none of them is true (no more winning tiles and no more 台 a win on average: the
+ * answer leads only through the self-draw weighting, which no short reason explains).
+ */
+function valueReason(answer: ValueOption, rival: ValueOption, keepsPattern: boolean): string | null {
+  if (keepsPattern) return rival.acceptance! > answer.acceptance! ? 'puzzle.value.tradeSpeed' : 'puzzle.value.keepPattern';
+  const faster = answer.acceptance! > rival.acceptance!;
+  const rivalBigger = rival.expectedTai! > answer.expectedTai! || rival.bestTai! > answer.bestTai!;
+  if (faster) return rivalBigger ? 'puzzle.value.speed' : 'puzzle.value.both';
+  return answer.expectedTai! > rival.expectedTai! ? 'puzzle.value.moreTai' : null;
+}
+
 function valueText(p: Pick<ValuePuzzle, 'answer' | 'answers' | 'rival' | 'options' | 'patternEn' | 'patternZh' | 'patternTai'>, reasonKey: string): PuzzleExplanation {
   const a = p.options.find((o) => o.kind === p.answer)!;
   const r = p.options.find((o) => o.kind === p.rival)!;
@@ -1289,6 +1337,14 @@ function valueText(p: Pick<ValuePuzzle, 'answer' | 'answers' | 'rival' | 'option
   if (reasonKey === 'puzzle.value.speed') {
     en += ` More winning tiles beat the bigger hand here: counting 100 points a win plus 20 a 台, ${R} is worth only ${ratio}% of ${A}.`;
     zh += `這手牌速度比台數重要：以底100、每台20計算，打${Rz}的期望值只有打${Az}的${ratio}%。`;
+  } else if (reasonKey === 'puzzle.value.both') {
+    en += ` ${A} has more winning tiles and its wins are no smaller, so there is nothing to trade: counting 100 points a win plus 20 a 台, ${R} is worth only ${ratio}% of ${A}.`;
+    zh += `打${Az}聽的張數比較多，胡的台數也不會比較少，沒有什麼好取捨的：以底100、每台20計算，打${Rz}的期望值只有打${Az}的${ratio}%。`;
+  } else if (reasonKey === 'puzzle.value.moreTai') {
+    const tiles = a.acceptance! < r.acceptance! ? 'fewer winning tiles' : 'the same number of winning tiles';
+    const tilesZh = a.acceptance! < r.acceptance! ? '聽的張數比較少' : '聽的張數一樣';
+    en += ` ${A} has ${tiles}, but each win is worth more 台: counting 100 points a win plus 20 a 台, ${R} is worth only ${ratio}% of ${A}.`;
+    zh += `打${Az}${tilesZh}，但是每次胡的台數比較多：以底100、每台20計算，打${Rz}的期望值只有打${Az}的${ratio}%。`;
   } else {
     const keep = p.patternEn ? ` keeps ${p.patternEn} (${p.patternZh}, ${p.patternTai} 台), and` : '';
     const keepZh = p.patternZh ? `保住${p.patternZh}（${p.patternTai}台），` : '';
@@ -1418,7 +1474,8 @@ function valueAttempt(seed: string, difficulty: PuzzleDifficulty, rng: Rng): Val
   const pattern = lost[0];
   // A value-honour item is a pong (中 → 中的刻子); flushes and 碰碰胡 read as they are.
   const patternZh = !pattern ? '' : pattern.key.startsWith('dragon_') || pattern.key === 'seat_wind' || pattern.key === 'round_wind' ? `${pattern.nameZh}的刻子` : pattern.nameZh;
-  const reasonKey = !pattern ? 'puzzle.value.speed' : rival.acceptance! > answer.acceptance! ? 'puzzle.value.tradeSpeed' : 'puzzle.value.keepPattern';
+  const reasonKey = valueReason(answer, rival, !!pattern);
+  if (!reasonKey) return null;
   const base = {
     answer: answer.kind,
     answers: accepted.map((o) => o.kind),

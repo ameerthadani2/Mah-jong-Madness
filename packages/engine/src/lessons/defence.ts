@@ -116,8 +116,8 @@ export const DEFENCE_LESSONS: Lesson[] = [
       {
         title: 'Fresh information',
         titleZh: '最新的線索',
-        body: 'The strongest clue is fresh. If a tile was thrown after the threatening player’s last turn and they did not win on it, it was not a winning tile for them, because their hand has not changed since. That stays true until they draw again. They could have passed on purpose, hoping to 自摸, but that is rare; with 過水 on, a player who passes cannot win on any discard before their next draw.',
-        bodyZh: '最有用的線索是最新的。威脅你的那家上一次打牌之後，別人打出的牌他沒有胡，那張牌就不是他要的牌，因為他的手牌從那時起都沒變。這個判斷在他下一次摸牌之前都成立。他也可能故意不胡、想等自摸，但很少見；如果開了過水，放過不胡的人在下一次摸牌前，任何別人打的牌都不能胡。',
+        body: 'A fresh clue is a strong one. If a tile was thrown after the threatening player’s last turn and they did not win on it, it was not a winning tile for them, because their hand has not changed since. That stays true until they draw again. They could have passed on purpose, hoping to 自摸, but that is rare; with 過水 on, a player who passes cannot win on any discard before their next draw. The coach reads this from the table as the latest discard of each player sitting between them and you. A claim can change who threw last, so it rates such a tile as very safe, but a little less safe than one they threw themselves.',
+        bodyZh: '最新的線索也很有用。威脅你的那家上一次打牌之後，別人打出的牌他沒有胡，那張牌就不是他要的牌，因為他的手牌從那時起都沒變。這個判斷在他下一次摸牌之前都成立。他也可能故意不胡、想等自摸，但很少見；如果開了過水，放過不胡的人在下一次摸牌前，任何別人打的牌都不能胡。教練是從桌面上看：坐在他和你之間的每一家，最後打出的那一張。吃碰會改變誰最後出牌，所以教練把這種牌看得很安全，但比他自己打過的牌稍微差一點。',
       },
       {
         title: 'What the coach assumes',
@@ -202,8 +202,8 @@ export const DEFENCE_LESSONS: Lesson[] = [
       {
         title: 'A safety ladder',
         titleZh: '安全牌的順序',
-        body: 'From safest to most dangerous against a player who looks ready: honours with all four visible; a tile thrown since their last turn that they let pass; kinds they threw themselves (a shortcut, not a rule); honours with one copy unseen; other honours; terminals; then 2 to 8.',
-        bodyZh: '面對看起來已經聽牌的玩家，從最安全到最危險：四張都看得到的字牌；他上次打牌之後別人打過、他沒有胡的牌；他自己打過的牌（捷徑，不是規則）；只剩一張看不到的字牌；其他字牌；么九牌；最後才是 2 到 8 的中張。',
+        body: 'From safest to most dangerous against a player who looks ready, as the coach rates them: honours with all four visible; kinds they threw themselves (a shortcut, not a rule); then, about level, honours with one copy unseen and a tile thrown since their last turn that they let pass; other honours; terminals; then 2 to 8.',
+        bodyZh: '面對看起來已經聽牌的玩家，照教練的評估從最安全到最危險：四張都看得到的字牌；他自己打過的牌（捷徑，不是規則）；接下來差不多的兩種：只剩一張看不到的字牌，和他上次打牌之後別人打過、他沒有胡的牌；其他字牌；么九牌；最後才是 2 到 8 的中張。',
       },
     ],
   },
@@ -232,8 +232,8 @@ export const DEFENCE_LESSONS: Lesson[] = [
       {
         title: 'How dangerous each tile is',
         titleZh: '每張牌有多危險',
-        body: 'If an opponent is ready, how likely is each tile to be one of their winning tiles? A tile they threw themselves almost never is, and a tile someone threw after their last discard, which they did not win on, even less. An honour only finishes a pair or a pong, so it is safe once every other copy is visible and nearly safe with one left. Suited tiles are riskier towards the middle (3 to 7) and when more copies are unseen; a tile three away from one they threw (筋, a 1 behind their 4) is safer. If their exposed sets are all one suit and their discards avoid it, that suit is much more dangerous. The coach multiplies by the chance they are ready and adds up over the opponents.',
-        bodyZh: '如果對手已經聽牌，你手上每張牌有多大機會是他要的？他自己打過的牌幾乎不會是，他上一次打牌之後別人打過、他沒有胡的牌更不會是。字牌只能湊對或碰，其他幾張都看得到就安全，只剩一張也差不多安全。數字牌越靠中間（3到7）、看不到的張數越多就越危險；跟他打過的牌差三的筋牌（他打4，你的1）比較安全。如果他亮的面子都是同一門，打出來的牌又避開那一門，那一門就特別危險。教練把這個機率乘上他聽牌的機率，再把每一家加起來。',
+        body: 'If an opponent is ready, how likely is each tile to be one of their winning tiles? A tile they threw themselves almost never is, and a tile someone threw after their last discard, which they did not win on, only a little more often. An honour only finishes a pair or a pong, so it is safe once every other copy is visible and nearly safe with one left. Suited tiles are riskier towards the middle (3 to 7) and when more copies are unseen; a tile three away from one they threw (筋, a 1 behind their 4) is safer. If their exposed sets are all one suit and their discards avoid it, that suit is much more dangerous. The coach multiplies by the chance they are ready and adds up over the opponents.',
+        bodyZh: '如果對手已經聽牌，你手上每張牌有多大機會是他要的？他自己打過的牌幾乎不會是，他上一次打牌之後別人打過、他沒有胡的牌也只是稍微多一點。字牌只能湊對或碰，其他幾張都看得到就安全，只剩一張也差不多安全。數字牌越靠中間（3到7）、看不到的張數越多就越危險；跟他打過的牌差三的筋牌（他打4，你的1）比較安全。如果他亮的面子都是同一門，打出來的牌又避開那一門，那一門就特別危險。教練把這個機率乘上他聽牌的機率，再把每一家加起來。',
         hand: 'C 1m 5p',
       },
       {

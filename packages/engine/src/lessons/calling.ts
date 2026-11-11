@@ -146,8 +146,8 @@ export const CALLING_LESSONS: Lesson[] = [
       {
         title: 'Three kongs',
         titleZh: '三種槓',
-        body: '暗槓: four of a kind drawn yourself. 明槓: three in hand plus a discard. 加槓: the fourth tile added to a pong you already exposed. Each kong takes a replacement tile from the back of the wall (牌尾), so a kong is only possible while tiles are left to draw.',
-        bodyZh: '暗槓：自己摸齊四張。明槓：手上三張，槓別人打出的第四張。加槓：把第四張加到已經碰出來的刻子上。每次開槓都從牌尾補一張，所以牌牆還有牌可摸時才能槓。',
+        body: '暗槓: four of a kind drawn yourself. 明槓: three in hand plus a discard. 加槓: the fourth tile added to a pong you already exposed. Each kong takes a replacement tile from the back of the wall (牌尾), so a kong is only possible while tiles are left to draw. You declare a 暗槓 or a 加槓 on your own turn after you draw; straight after a 吃 or a 碰 you discard first.',
+        bodyZh: '暗槓：自己摸齊四張。明槓：手上三張，槓別人打出的第四張。加槓：把第四張加到已經碰出來的刻子上。每次開槓都從牌尾補一張，所以牌牆還有牌可摸時才能槓。暗槓和加槓要等自己摸牌之後才能開；吃、碰之後要先打一張，不能馬上槓。',
         hand: '5555p',
       },
       {

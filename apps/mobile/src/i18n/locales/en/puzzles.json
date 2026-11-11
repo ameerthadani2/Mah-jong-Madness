@@ -86,7 +86,9 @@
     "defencePassed": "Let pass since their last discard",
     "defenceFewCopies": "Few hands wait on it",
     "defenceMiddle": "The fewest hands wait on it",
-    "valueSpeed": "Speed beats size here"
+    "valueSpeed": "Speed beats size here",
+    "valueBoth": "Faster and at least as big",
+    "valueMoreTai": "Worth more 台 a win"
   },
   "defence": {
     "intro": "Someone looks close to winning. Keep your shape, but which discard is safest?",

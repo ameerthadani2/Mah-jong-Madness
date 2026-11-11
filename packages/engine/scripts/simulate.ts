@@ -19,9 +19,17 @@
  *                  shown per hand.
  *
  *   tsx scripts/simulate.ts --gate
- *       The CI strength gate: Pro against three Club bots on GATE_HANDS paired hands (seed prefix
- *       `gate`), compared with the reference stored in test/fixtures/bot-gate.json. Fails (exit 1)
- *       when the paired mean falls more than two reference standard errors below the reference.
+ *       The CI strength gate, on GATE_HANDS fixed seeds (prefix `gate`) with the per-hand reference
+ *       stored in test/fixtures/bot-gate.json. Each seed is played three times with three Club bots
+ *       around a rotating test seat: Pro in the seat, Club in the seat, and Pro without its deal-in
+ *       and 台 terms in the seat. The same seeds give the same scores on every run, so the gate
+ *       compares hand by hand and fails (exit 1) when
+ *         - Pro minus Club, or Pro minus Pro-without-the-terms, is more than GATE_MAX_DROP (1 point
+ *           a hand) below its reference;
+ *         - Pro is behind Club at 95%;
+ *         - the terms cost points at 95%, or change no hand at all.
+ *       It also prints what the terms are worth in results. That they show no measurable gain is
+ *       reported, not failed (rules and reasons: test/helpers/gate.ts).
  *       `--record` stores the current result as the new reference.
  *
  *   tsx scripts/simulate.ts --record-reference
@@ -35,6 +43,7 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { applyAction, BOT_WEIGHTS, chooseAction, hashState, isLegal, newGame, nextHand, tilesRemaining, type Action, type BotSkill, type GameState } from '../src/index';
+import { againstReference, GATE_HANDS, GATE_MAX_DROP, gateFailures, PRO_TERMS_OFF, summarise, termsVerdict, type GateReference, type SeatStats } from '../test/helpers/gate';
 import { recordHand, type ReferenceFile } from '../test/helpers/reference';
 
 function checkInvariants(s: GameState): void {
@@ -95,15 +104,6 @@ const tally = (): Tally => ({ seatHands: 0, wins: 0, dealIns: 0, points: 0, tai:
 
 const pct = (n: number, d: number): string => `${((n / Math.max(1, d)) * 100).toFixed(1)}%`;
 const perHand = (t: Tally): number => t.points / Math.max(1, t.seatHands);
-
-/** Mean, standard error and normal 95% interval of a sample. */
-function meanInterval(xs: readonly number[]): { mean: number; se: number; low: number; high: number } {
-  const n = xs.length;
-  const mean = xs.reduce((a, b) => a + b, 0) / Math.max(1, n);
-  const variance = n > 1 ? xs.reduce((a, b) => a + (b - mean) ** 2, 0) / (n - 1) : 0;
-  const se = Math.sqrt(variance / Math.max(1, n));
-  return { mean, se, low: mean - 1.96 * se, high: mean + 1.96 * se };
-}
 
 /** Add one finished hand to the per-seat tallies (`pick(seat)` says which tally a seat feeds). */
 function record(s: GameState, pick: (seat: number) => Tally): void {
@@ -181,7 +181,7 @@ function runLadder(o: LadderOptions): void {
   console.log(line(o.vs, others));
   console.log(`${o.skill} minus ${o.vs} (unpaired): ${(perHand(test) - perHand(others)).toFixed(2)} pts/hand; ${(ms / hands).toFixed(1)} ms per hand played`);
   for (const [skill, t] of timing) console.log(`${skill.padEnd(9)} decisions ${t.decisions}  avg ${(Number(t.ns) / Math.max(1, t.decisions) / 1e6).toFixed(3)} ms  illegal ${t.illegal}`);
-  const p = meanInterval(paired);
+  const p = summarise(paired);
   const scale = o.matches ? hands / o.n : 1;
   const per = (x: number) => (o.matches ? `${x.toFixed(1)} pts/match (${(x / scale).toFixed(2)} pts/hand)` : `${x.toFixed(2)} pts/hand`);
   console.log(`${o.skill} minus ${o.vs} (paired, same seeds and seat): ${per(p.mean)}, se ${p.se.toFixed(2)}, 95% interval [${p.low.toFixed(2)}, ${p.high.toFixed(2)}]`);
@@ -230,40 +230,93 @@ function countArg(v: string | undefined, fallback: number): number {
   return n;
 }
 
-const GATE_HANDS = 2000;
 const fixture = (name: string): string => fileURLToPath(new URL(`../test/fixtures/${name}`, import.meta.url));
 
-interface GateReference {
-  note: string;
-  prefix: string;
-  hands: number;
-  mean: number;
-  se: number;
+/** One series of the gate file on a line of its own, so a re-recorded reference stays a readable diff. */
+function gateJson(ref: GateReference): string {
+  const series = (x: GateReference['proVsClub']): string => `{ "mean": ${x.mean}, "se": ${x.se}, "perHand": ${JSON.stringify(x.perHand)} }`;
+  return [
+    '{',
+    `  "note": ${JSON.stringify(ref.note)},`,
+    `  "prefix": ${JSON.stringify(ref.prefix)},`,
+    `  "hands": ${ref.hands},`,
+    `  "proVsClub": ${series(ref.proVsClub)},`,
+    `  "termsVsBare": ${series(ref.termsVsBare)},`,
+    `  "handsChangedByTerms": ${ref.handsChangedByTerms},`,
+    `  "seat": ${JSON.stringify(ref.seat)}`,
+    '}',
+    '',
+  ].join('\n');
 }
 
 function runGate(record: boolean): void {
   const started = Date.now();
-  const diffs: number[] = [];
+  // The weights under test (the shipped ones, or a --weights override) and the same with the terms off.
+  const tested = { ...BOT_WEIGHTS };
+  const bare = { ...tested, ...PRO_TERMS_OFF };
+  const proVsClub: number[] = [];
+  const termsVsBare: number[] = [];
+  const stats = (): SeatStats => ({ wins: 0, dealIns: 0, tai: 0 });
+  const seat = { pro: stats(), bare: stats(), club: stats() };
+  const note = (t: SeatStats, s: GameState, testSeat: number): number => {
+    for (const w of s.result!.wins) {
+      if (w.seat === testSeat) {
+        t.wins++;
+        t.tai += w.score.tai;
+      }
+      if (!w.selfDrawn && w.fromSeat === testSeat) t.dealIns++;
+    }
+    return s.result!.scoreDelta[testSeat];
+  };
   for (let h = 0; h < GATE_HANDS; h++) {
     const testSeat = h % 4;
-    const a = playHand(newGame(`gate-${h}`), [0, 1, 2, 3].map((seat): BotSkill => (seat === testSeat ? 'pro' : 'club')));
-    const b = playHand(newGame(`gate-${h}`), ['club', 'club', 'club', 'club']);
-    diffs.push(a.result!.scoreDelta[testSeat] - b.result!.scoreDelta[testSeat]);
+    const withPro = [0, 1, 2, 3].map((x): BotSkill => (x === testSeat ? 'pro' : 'club'));
+    const pro = note(seat.pro, playHand(newGame(`gate-${h}`), withPro), testSeat);
+    const club = note(seat.club, playHand(newGame(`gate-${h}`), ['club', 'club', 'club', 'club']), testSeat);
+    Object.assign(BOT_WEIGHTS, bare);
+    const proBare = note(seat.bare, playHand(newGame(`gate-${h}`), withPro), testSeat);
+    Object.assign(BOT_WEIGHTS, tested);
+    proVsClub.push(pro - club);
+    termsVsBare.push(pro - proBare);
   }
-  const p = meanInterval(diffs);
-  const secs = (Date.now() - started) / 1000;
-  console.log(`gate: pro minus club over ${GATE_HANDS} paired hands: ${p.mean.toFixed(2)} pts/hand, se ${p.se.toFixed(2)} (${secs.toFixed(0)} s)`);
+  const c = summarise(proVsClub);
+  const t = summarise(termsVsBare);
+  const handsChangedByTerms = termsVsBare.filter((x) => x !== 0).length;
+  const interval = (x: { low: number; high: number }): string => `95% interval [${x.low.toFixed(2)}, ${x.high.toFixed(2)}]`;
+  const seatLine = (label: string, x: SeatStats): string => `  ${label.padEnd(22)} win ${pct(x.wins, GATE_HANDS).padStart(6)}  deal-in ${pct(x.dealIns, GATE_HANDS).padStart(6)}  台/win ${(x.tai / Math.max(1, x.wins)).toFixed(2)}`;
+  console.log(`gate: ${GATE_HANDS} paired hands, seed prefix gate (${((Date.now() - started) / 1000).toFixed(0)} s)`);
+  console.log(`1. pro minus club: ${c.mean.toFixed(2)} pts/hand, se ${c.se.toFixed(2)}, ${interval(c)}: ${c.low > 0 ? 'pro is ahead of club at 95%' : c.high < 0 ? 'pro is behind club at 95%' : 'no clear difference from club at 95%'}`);
+  console.log(`2. pro minus pro without its deal-in and 台 terms: ${t.mean.toFixed(2)} pts/hand, se ${t.se.toFixed(2)}, ${interval(t)}: ${termsVerdict(termsVsBare)}`);
+  console.log(`   the terms change the test seat's score in ${handsChangedByTerms} of ${GATE_HANDS} hands`);
+  console.log(seatLine('pro', seat.pro));
+  console.log(seatLine('pro without the terms', seat.bare));
+  console.log(seatLine('club', seat.club));
   if (record) {
-    const ref: GateReference = { note: 'Pro minus Club, paired, seed prefix gate. Regenerate: npm run sim -- --gate --record', prefix: 'gate', hands: GATE_HANDS, mean: Number(p.mean.toFixed(3)), se: Number(p.se.toFixed(3)) };
-    writeFileSync(fixture('bot-gate.json'), `${JSON.stringify(ref, null, 2)}\n`);
+    const round = (x: number): number => Number(x.toFixed(3));
+    const ref: GateReference = {
+      note: 'Per-hand paired scores of the bot strength gate (rules: test/helpers/gate.ts). Regenerate after an intentional change to Pro or Club: npm run sim -- --gate --record',
+      prefix: 'gate',
+      hands: GATE_HANDS,
+      proVsClub: { mean: round(c.mean), se: round(c.se), perHand: proVsClub },
+      termsVsBare: { mean: round(t.mean), se: round(t.se), perHand: termsVsBare },
+      handsChangedByTerms,
+      seat,
+    };
+    writeFileSync(fixture('bot-gate.json'), gateJson(ref));
     console.log('reference recorded');
     return;
   }
   const ref = JSON.parse(readFileSync(fixture('bot-gate.json'), 'utf8')) as GateReference;
-  const floor = ref.mean - 2 * ref.se;
-  console.log(`reference ${ref.mean.toFixed(2)} (se ${ref.se.toFixed(2)}): pass at ${floor.toFixed(2)} or more`);
-  if (p.mean < floor) {
-    console.log('GATE FAILED: Pro is weaker than the stored reference');
+  const refLine = (label: string, now: readonly number[], then: GateReference['proVsClub']): void => {
+    const d = againstReference(now, then.perHand);
+    console.log(`reference ${label}: ${then.mean.toFixed(2)}; this run ${d.change >= 0 ? '+' : ''}${d.change.toFixed(2)} pts/hand, ${d.differing} of ${GATE_HANDS} hands differ (fails below -${GATE_MAX_DROP.toFixed(2)})`);
+    if (d.change > GATE_MAX_DROP) console.log(`  more than ${GATE_MAX_DROP.toFixed(2)} above the reference: record it (--gate --record) so that the gain is protected`);
+  };
+  refLine('1', proVsClub, ref.proVsClub);
+  refLine('2', termsVsBare, ref.termsVsBare);
+  const failures = gateFailures({ proVsClub, termsVsBare }, ref);
+  if (failures.length > 0) {
+    for (const f of failures) console.log(`GATE FAILED: ${f}`);
     process.exitCode = 1;
   } else console.log('gate passed');
 }

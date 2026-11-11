@@ -22,6 +22,19 @@ describe('rulesSummary', () => {
     expect(rulesSummary(odd, en, 'en')).toBe(describeRules(odd));
   });
 
+  it('words a limit hand set to 0 as switched off, never as 0台', () => {
+    const off = { ...DEFAULT_RULES, heavenlyTai: 0, earthlyTai: 0, humanlyTai: 0 };
+    const english = rulesSummary(off, en, 'en');
+    expect(english).toBe(describeRules(off));
+    expect(english).toContain('天胡 off · 地胡 off · 人胡 off');
+    expect(english).not.toMatch(/胡0台/);
+    const chinese = rulesSummary(off, zh, 'zh-TW');
+    expect(chinese).toContain('不計天胡 · 不計地胡 · 不計人胡');
+    expect(chinese).not.toMatch(/胡0台|off/);
+    // A value above 0 still reads as a number of 台 in both languages.
+    expect(rulesSummary({ ...DEFAULT_RULES, heavenlyTai: 16 }, zh, 'zh-TW')).toContain('天胡16台');
+  });
+
   it('reads Chinese in zh-TW and keeps the stakes first', () => {
     const s = rulesSummary(DEFAULT_RULES, zh, 'zh-TW');
     expect(s.startsWith(rulesStakes(DEFAULT_RULES))).toBe(true);

@@ -145,14 +145,31 @@ describe('webhook events', () => {
   it('CANCELLATION keeps access to the period end; UNCANCELLATION and SUBSCRIPTION_EXTENDED carry on; a refund ends it', async () => {
     const f = fixture();
     const g = await f.guest();
-    await f.post(rc('INITIAL_PURCHASE', g.userId, { product_id: 'fourwinds:month' }));
+    await f.post(rc('INITIAL_PURCHASE', g.userId, { product_id: 'fourwinds:month', transaction_id: '2000000000000077' }));
     expect((await f.post(rc('CANCELLATION', g.userId, { product_id: 'fourwinds:month', cancel_reason: 'UNSUBSCRIBE' }))).json.outcome).toBe('recorded');
     expect((await f.me(g.auth)).coachTier).toBe('fourwinds');
     expect((await f.post(rc('UNCANCELLATION', g.userId, { product_id: 'fourwinds:month' }))).json.outcome).toBe('ignored_stale');
     expect((await f.post(rc('SUBSCRIPTION_EXTENDED', g.userId, { product_id: 'fourwinds:month', expiration_at_ms: T0 + 37 * DAY }))).json.outcome).toBe('extended');
     expect((await f.post(rc('SUBSCRIPTION_PAUSED', g.userId, { product_id: 'fourwinds:month', auto_resume_at_ms: T0 + 60 * DAY }))).json.outcome).toBe('recorded');
     f.advance(DAY);
-    expect((await f.post(rc('CANCELLATION', g.userId, { product_id: 'fourwinds:month', cancel_reason: 'CUSTOMER_SUPPORT', expiration_at_ms: f.now() }))).json.outcome).toBe('refunded');
+    // A refund names the transaction it refunds, and ends the time that transaction paid for (extensions of it included).
+    expect((await f.post(rc('CANCELLATION', g.userId, { product_id: 'fourwinds:month', transaction_id: '2000000000000077', cancel_reason: 'CUSTOMER_SUPPORT', expiration_at_ms: f.now() }))).json.outcome).toBe('refunded');
+    expect((await f.me(g.auth)).coachTier).toBe('free');
+  });
+
+  it('a refund of last month\'s charge leaves the month the player is paying for now', async () => {
+    const f = fixture();
+    const g = await f.guest();
+    const plan = { product_id: 'fourwinds:month', entitlement_ids: ['fourwinds'] };
+    await f.post(rc('INITIAL_PURCHASE', g.userId, { ...plan, transaction_id: '2000000000000101' }));
+    f.advance(29 * DAY);
+    expect((await f.post(rc('RENEWAL', g.userId, { ...plan, transaction_id: '2000000000000102', purchased_at_ms: T0 + 30 * DAY, expiration_at_ms: T0 + 60 * DAY }))).json.outcome).toBe('extended');
+    expect((await f.post(rc('CANCELLATION', g.userId, { ...plan, transaction_id: '2000000000000101', cancel_reason: 'CUSTOMER_SUPPORT' }))).json.outcome).toBe('refunded');
+    const me = await f.me(g.auth);
+    expect(me.coachTier).toBe('fourwinds');
+    expect(me.entitlements).toEqual([{ entitlement: 'fourwinds.month', expiresAt: new Date(T0 + 60 * DAY).toISOString(), active: true }]);
+    // The running month refunded as well: the plan ends.
+    expect((await f.post(rc('CANCELLATION', g.userId, { ...plan, transaction_id: '2000000000000102', cancel_reason: 'CUSTOMER_SUPPORT', purchased_at_ms: T0 + 30 * DAY, expiration_at_ms: T0 + 60 * DAY }))).json.outcome).toBe('refunded');
     expect((await f.me(g.auth)).coachTier).toBe('free');
   });
 
