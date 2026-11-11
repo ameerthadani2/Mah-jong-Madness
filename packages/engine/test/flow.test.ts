@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { applyAction, hashState, legalActions, matchSnapshot, newGame, replayHand, type Action, type GameState } from '../src/index';
-import { dealt, discard, keysOf, nonDiscard, offers, respond, setup, tileTotal } from './helpers/state';
+import { dealt, discard, find, keysOf, nonDiscard, offers, respond, setup, tileTotal } from './helpers/state';
 
 /** Hands that can never claim, win or form a pair: seven honours and nine spaced suited tiles. */
 const D1 = 'ESWN CFB 147m 258p 369s';
@@ -238,6 +238,59 @@ describe('過水 (passing a win)', () => {
   });
 });
 
+describe('kongs need a tile drawn this turn', () => {
+  // Seat 2 can pong the 7p and would then hold the fourth 7p and four East winds.
+  const hands = ['7p 123m 456m 789m 123s 456s 9s', '258m 258p 258s 14m 14p 1s W', '777p EEEE 345m 678m 3s 9s', '147m 369p 147s 36m 2s 6s SN'];
+
+  it('offers no added or concealed kong on a turn that began with a pong: the claimer discards', () => {
+    let s = respond(discard(setup({}, hands, 30), 0, '7p'), { 2: { type: 'pong' } });
+    expect([s.turn, s.phase, s.drawSource, s.lastDrawn]).toEqual([2, 'discard', 'claim', undefined]);
+    expect(s.players[2].hand.filter((t) => t >> 2 === 15)).toHaveLength(1); // the fourth 7p is in hand
+    expect(nonDiscard(s, 2)).toEqual([]);
+    expect(() => applyAction(s, 2, { type: 'kong', tile: find(s, 2, '7p') })).toThrow();
+    expect(() => applyAction(s, 2, { type: 'kong', tile: find(s, 2, 'E') })).toThrow();
+    // After the discard and a full round, seat 2 draws and may declare either kong.
+    s = discard(s, 2, '9s');
+    while (s.phase !== 'ended' && !(s.phase === 'discard' && s.turn === 2)) {
+      s = s.phase === 'claim' ? respond(s, {}) : applyAction(s, s.turn, { type: 'discard', tile: s.lastDrawn! });
+    }
+    expect(s.lastDrawn).not.toBeUndefined();
+    expect(nonDiscard(s, 2).map((a) => (a as { tile: number }).tile >> 2).sort((a, b) => a - b)).toEqual([15, 27]);
+  });
+
+  it('offers no kong on a turn that began with a chi either', () => {
+    // Seat 1 chis the 3m with 1m 2m and holds four South winds.
+    const chiHands = ['3m 147p 258p 369s 147s EWN C F', '12m SSSS 456p 789p 23s 5s 9m', '258m 369p 147m 36s 9s WNC B', '147s 258s 369m 14p 7p 9p ENB'];
+    let s = discard(setup({}, chiHands, 30), 0, '3m');
+    const chi = s.pending!.offers.find((o) => o.seat === 1)!.chi[0];
+    s = respond(s, { 1: { type: 'chi', tiles: chi } });
+    expect([s.turn, s.drawSource]).toEqual([1, 'claim']);
+    expect(nonDiscard(s, 1)).toEqual([]);
+  });
+
+  it('still offers a kong on the dealer\'s first turn and on the replacement drawn after a kong', () => {
+    // The dealer is dealt three East winds and draws the fourth as its 17th tile.
+    let s = dealt({}, ['EEE CFB 147p 258p 369s 2s', 'SWN CFB 258m 369p 147s 9m', 'SWN CFB 123m 456m 789m 1s', 'SWN 123p 456p 789p 258s 5s'], { front: ['E'], back: ['4s'] });
+    expect(nonDiscard(s, 0)).toEqual([{ type: 'kong', tile: find(s, 0, 'E') }]);
+    s = applyAction(s, 0, { type: 'kong', tile: find(s, 0, 'E') });
+    expect([s.turn, s.phase, s.drawSource]).toEqual([0, 'discard', 'kong']);
+    expect(s.lastDrawn).not.toBeUndefined();
+    // A replacement draw is a draw: holding a pong of 1m and the fourth 1m, the added kong is offered on it.
+    const again = setup(
+      {},
+      [
+        { hand: '1m 369p 147s 258s 2p', melds: [{ type: 'pong', tiles: '111m' }, { type: 'kong', tiles: 'EEEE', concealed: true }] },
+        'SWN CFB 258m 369p 147s 9m',
+        'SWN CFB 234m 567m 2s 5s 8s 4p',
+        'SWN 123p 456p 789p 36s 9s 7m',
+      ],
+      30,
+    );
+    again.drawSource = 'kong';
+    expect(nonDiscard(again, 0)).toEqual([{ type: 'kong', tile: find(again, 0, '1m') }]);
+  });
+});
+
 describe('海底撈月 (winning on the last tile)', () => {
   const hands = ['3m 69m 789p 139s SSS WWW N F', '12m 55m 123p 456p 789s 234s', '12m 456p 456s 789s EEE CC', '45m 333p 456s 567s 789m 22s'];
 
@@ -290,6 +343,33 @@ describe('天胡 / 地胡 / 人胡 from a real deal', () => {
     const w = win(s);
     expect(keysOf(w.score)).toEqual(['renhu']);
     expect(w.payments).toEqual([{ from: 0, to: 2, tai: 9, points: 100 + 9 * 20 }]);
+  });
+
+  it('a concealed kong by the dealer ends the first round: no 地胡, and no 人胡 on the dealer\'s first discard', () => {
+    // The dealer is dealt three East winds and draws the fourth, so its first turn opens with a concealed kong.
+    const dealer = 'EEE CFB 147m 258p 369s S';
+    const idle1 = 'SWN CFB 258m 369p 147s 9m';
+    const idle3 = 'SWN CFB 369m 147p 258s 6p';
+    // 地胡: after the kong the dealer discards its replacement, and seat 1 self-draws on its first draw.
+    let s = dealt({ earthlyTai: 12 }, [dealer, '123m 456m 789m 123p 456p 5s', idle1, idle3], { front: ['E', '5s'], back: ['9p'] });
+    s = applyAction(s, 0, { type: 'kong', tile: find(s, 0, 'E') });
+    expect(s.players[0].melds.map((m) => [m.type, m.concealed])).toEqual([['kong', true]]);
+    s = discard(s, 0, '9p');
+    expect(s.turn).toBe(1);
+    s = applyAction(s, 1, { type: 'hu' });
+    let w = win(s);
+    expect(w.seat).toBe(1);
+    expect(keysOf(w.score)).not.toContain('dihu');
+    expect(w.score.tai).toBeLessThan(12);
+
+    // 人胡: the same kong, then seat 2 wins on the dealer's first discard.
+    s = dealt({ humanlyTai: 8 }, [dealer, idle1, '123m 456m 789p 45s 678s 22p', idle3], { front: ['E'], back: ['3s'] });
+    s = applyAction(s, 0, { type: 'kong', tile: find(s, 0, 'E') });
+    s = discard(s, 0, '3s');
+    expect(offers(s)).toEqual({ 2: { hu: true, pong: false, kong: false, chi: 0 } });
+    s = respond(s, { 2: { type: 'hu' } });
+    w = win(s);
+    expect(keysOf(w.score)).toEqual(['all_chows', 'concealed']);
   });
 
   it('after any claim the same shapes score normally', () => {

@@ -121,7 +121,7 @@ export interface GameState {
   matchOver: boolean;
   actionLog: LoggedAction[];
   turnCounter: number;
-  /** Bookkeeping for 天胡 / 地胡 / 人胡. */
+  /** Bookkeeping for 天胡 / 地胡 / 人胡: true once anyone has called a chi, a pong or a kong of any kind this hand. */
   anyClaimThisHand: boolean;
   dealerDiscards: number;
   /** True when the tile just drawn was the last drawable tile. */
@@ -445,8 +445,9 @@ export function legalActions(s: GameState, seat: number): Action[] {
     const actions: Action[] = [];
     // A self-draw win needs a drawn tile; after pong/chi the player must discard (they could have called 胡 on the claim).
     if (s.lastDrawn !== undefined && isSelfDrawWin(s, seat)) actions.push({ type: 'hu' });
-    // Kongs (need a replacement tile available)
-    if (canDraw(s)) {
+    // Kongs need a replacement tile, and a tile drawn this turn (from the wall, the deal or a kong
+    // replacement): a turn that began with a chi or pong ends with a discard, as at the table.
+    if (s.lastDrawn !== undefined && canDraw(s)) {
       const counts = countsFromKinds(p.hand.map(kindOf));
       const seen = new Set<Kind>();
       for (const t of p.hand) {
@@ -578,9 +579,10 @@ function applyTurnAction(s: GameState, seat: number, action: Action): void {
       const k = kindOf(action.tile);
       const inHand = p.hand.filter((t) => kindOf(t) === k);
       if (inHand.length === 4) {
-        // 暗槓
+        // 暗槓. Like every call it ends the first uninterrupted round, so 地胡 and 人胡 are off.
         p.hand = p.hand.filter((t) => kindOf(t) !== k);
         p.melds.push({ type: 'kong', tiles: inHand, concealed: true });
+        s.anyClaimThisHand = true;
         drawFromWall(s, seat, 'kong');
         return;
       }
@@ -607,6 +609,7 @@ function completeAddedKong(s: GameState, seat: number, tile: TileId): void {
   meld.type = 'kong';
   meld.tiles.push(tile);
   meld.claimed = tile;
+  s.anyClaimThisHand = true;
   drawFromWall(s, seat, 'kong');
 }
 
