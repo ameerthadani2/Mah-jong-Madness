@@ -2,12 +2,12 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { ScrollView, Share, StyleSheet, Text, TextInput, View } from 'react-native';
 import { BOT_SKILLS, RULE_PRESETS, rulesFromPreset, type BotSkill, type RuleSet } from '@mjm/engine';
 import { useApp } from '../app-state';
-import { clubErrorMessage, clubLink, clubsApi, httpBase, ownerRestricted, type Club, type ClubContext, type ClubMember, type ClubTable } from '../api/clubs';
+import { clubErrorMessage, clubLink, clubListLine, clubsApi, httpBase, ownerRestricted, type Club, type ClubContext, type ClubListing, type ClubMember, type ClubTable } from '../api/clubs';
 import { useAuth } from '../auth/AuthProvider';
 import { APP_NAME, APP_SCHEMES, LINK_DOMAIN } from '../config';
 import { createOnlineSession } from '../game/session';
 import { friendlyError } from '../logic/errors';
-import { botLabel, presetName, rulesStakes, rulesSummary, sameRules } from '../logic/rules-text';
+import { botLabel, presetName, rulesSummary, sameRules } from '../logic/rules-text';
 import type { Translate } from '../logic/translate';
 import { canCreateClubs } from '../monetisation/wallet';
 import { useRemoteConfig } from '../telemetry/RemoteConfig';
@@ -64,7 +64,7 @@ export function ClubsScreen() {
   const { config } = useRemoteConfig();
   const [planNeeded, setPlanNeeded] = useState(false);
   const mayCreate = !planNeeded && (config?.storeEnabled !== true || canCreateClubs(app.wallet));
-  const [clubs, setClubs] = useState<Club[] | null>(null);
+  const [clubs, setClubs] = useState<ClubListing[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [joinCode, setJoinCode] = useState('');
   const [creating, setCreating] = useState(false);
@@ -209,7 +209,8 @@ export function ClubsScreen() {
                 <Pill text={c.code} size="sm" />
               </Row>
               <P dim style={{ fontSize: 12 }}>
-                {t('clubs.summary', { members: c.members?.length ?? c.memberCount ?? 0, tables: (c.tables ?? []).filter((tb) => tb.status !== 'finished').length, stakes: rulesStakes(c.rules) })}
+                {/* A club this player has only asked to join comes as the public view: no rules or tables to show. */}
+                {t(clubListLine(c).key, clubListLine(c).params)}
               </P>
             </View>
             {pending ? <Pill text={t('clubs.pending')} /> : <Pill text={roleName(me.role, t)} tone={me.role === 'owner' ? 'gold' : 'neutral'} />}

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Authoriser, FetchLike } from './http';
-import { clubErrorMessage, clubLink, clubsApi, ownerRestricted, OWNER_GRACE_DAYS } from './clubs';
+import { DEFAULT_RULES } from '@mjm/engine';
+import { clubErrorMessage, clubLink, clubListLine, clubsApi, ownerRestricted, OWNER_GRACE_DAYS } from './clubs';
 import { parseDeepLink } from '../push/deeplink';
 import { translator } from '../logic/translator.fixture';
 
@@ -102,5 +103,23 @@ describe('ownerRestricted', () => {
     expect(ownerRestricted({}, now)).toBe(false);
     expect(ownerRestricted({ ownerLapsedAt: now - (OWNER_GRACE_DAYS - 1) * 86_400_000 }, now)).toBe(false);
     expect(ownerRestricted({ ownerLapsedAt: now - OWNER_GRACE_DAYS * 86_400_000 }, now)).toBe(true);
+  });
+});
+
+describe('the line under a club in My clubs', () => {
+  it('shows members, open tables and stakes for a club this player belongs to', () => {
+    const line = clubListLine({ code: 'AB12', name: 'Dragon Gate', description: '', rules: DEFAULT_RULES, settings: { membersCanOpenTables: true, joinRequiresApproval: false }, members: [], memberCount: 3, tables: [] });
+    expect(line.key).toBe('clubs.summary');
+    expect(en(line.key, line.params)).toContain('0 members');
+    expect(en(line.key, line.params)).toContain('100');
+  });
+
+  it('shows the member count alone for a club the player has only asked to join (the server sends no rules)', () => {
+    // What GET /api/users/:id/clubs returns for a pending request: the public view.
+    const pending = { code: 'AB12', name: 'Dragon Gate', description: '', memberCount: 4, joinRequiresApproval: true };
+    const line = clubListLine(pending);
+    expect(line).toEqual({ key: 'clubs.memberCount', params: { n: 4 } });
+    expect(en(line.key, line.params)).toBe('4 members');
+    expect(zh(line.key, line.params)).toBe('4 位成員');
   });
 });
