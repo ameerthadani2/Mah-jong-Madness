@@ -42,6 +42,17 @@ describe('table text ids', () => {
     expect(themes).toMatch(/import \{[^}]*\bFREE_EMOTE_IDS\b[^}]*\bQUICK_CHAT_IDS\b[^}]*\} from '@mjm\/net';/);
   });
 
+  it('the table screen sends the phrase id and shows a line or an emote only for an id it knows', () => {
+    // The screen cannot be mounted here, so this reads its chat lines: the id goes out, never the
+    // translated phrase, and what comes in is drawn from the id in this reader's language.
+    const screen = source('screens', 'TableScreen.tsx');
+    expect(screen).toMatch(/session\.client\.chat\(id\)/);
+    expect(screen).not.toMatch(/session\.client\.chat\((?!id\))/);
+    expect(screen).toMatch(/isQuickChatId\(c\.text\) \? \[\{ name: c\.name, line: quickChatText\(c\.text\) \}\] : \[\]/);
+    expect(screen).toMatch(/isTableEmoteId\(x\.emote\)/);
+    expect(screen).not.toMatch(/\{c\.text\}/);
+  });
+
   it('every quick phrase has its text in both languages, and the locales list no other phrase', () => {
     for (const [name, tree] of [
       ['en', en],
