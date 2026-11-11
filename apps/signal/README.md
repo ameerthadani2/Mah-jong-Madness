@@ -74,7 +74,8 @@ With no environment at all the server runs: accounts, clubs and tables are kept 
 - **Tables**: every hosted table is written to `table_snapshots` (`host.serialize()`) 500 ms after it changes and at most every 2 s while a hand is played, and at once at the end of each hand and of the match. At boot every snapshot that has not finished is restored under its own code; players reclaim their seats with their rejoin tokens (bots play for them meanwhile). SIGTERM and `close()` write every table one last time without finishing it. Finished snapshots are pruned after 24 hours.
 - **Club listings** of restored tables stay open; listings whose table did not come back (ghosts) are removed at boot so they no longer count against the open-table cap; finished listings are dropped after 24 hours.
 - **Keep-alive**: a table with nobody connected is kept for 15 minutes after its last activity while a human holds a seat. A table opened over the socket closes as soon as its lobby empties; one opened through the API or restored waits 15 minutes for its first player.
-- **Results**: `match_results` gets a row at every `match_over`; club standings are updated from the same event when the match counts (a house-rules table with at least two human club members, no account in two seats).
+- **Results**: `match_results` gets a row at every `match_over`; club standings are updated from the same event when the match counts (a house-rules table that started with at least two human club members, no account in two seats). The members seated at the start are recorded on the table listing, and each is charged their seat's result even if they have left the club or the table since; a member who leaves keeps their standings on file (`club_former_members`), hidden, and gets them back on rejoining.
+- **Purged accounts**: the hourly purge returns the ids it removed and the club registry drops those members, join requests and standings on file from its clubs in memory (`ClubRegistry.dropPurged`); the Postgres club write also skips rows whose user no longer exists, so a club never stops saving because an account has gone.
 
 ## Limits
 
@@ -97,8 +98,11 @@ With no environment at all the server runs: accounts, clubs and tables are kept 
 | Database queries | 5 s each (and `statement_timeout` on a direct connection) | The request fails; `/health` answers 503 `db:"down"` after 2 s without an answer |
 | Clubs per user | 10 (owned, joined or pending) | `409 {error:"limit"}` |
 | Members per club | 200 (pending requests have the same cap) | `409 {error:"limit"}` |
+| Joining clubs over the API | 10 new memberships or requests an hour per address (all clubs), 60 an hour per club | `429 {error:"rate_limited"}`; a bulk reject gives the club its allowance back |
+| Pending join requests | kept 30 days | Dropped at the hourly prune or when the next person asks to join; the account may ask again |
 | Open tables per club | 5 (finished tables do not count); 1 once the owner's Four Winds Club plan has lapsed for 7 days while the store is live | `409 {error:"limit"}` |
-| Clubs owned per user | 3 | `409 {error:"limit"}` |
+| Clubs owned per user | 3: creating, being handed one, or inheriting one from a deleted owner. A merge, or a hand-over with nobody under the cap, can exceed it | `409 {error:"limit"}`; a club beyond the 3 a plan covers runs on the lapsed cap |
+| Standings kept for members who left | 1,000 per club | The longest gone are dropped |
 | Banned accounts per club | 500 | `409 {error:"limit"}` |
 | Player reports | 10 per reporter in any 24 hours | `429 {error:"rate_limited"}` |
 | Push notifications | 1 a minute per user for each kind | Skipped (not queued) |
@@ -132,19 +136,20 @@ JSON in and out. Errors are `{ "error": "<code>", "message": "<English sentence>
 | `DELETE /api/auth/identities/:provider` | bearer | | `204`, `409 last_identity` or `404 not_found` |
 | `GET /api/me` | bearer | | `{ user, wallet: { diamonds, bonusDiamonds }, entitlements: [{ entitlement, expiresAt, active }], cosmetics: ["theme.jade", …], coachTier: "free"\|"gold"\|"fourwinds", storeEnabled, identities: [{ provider, email? }], serverNow }` |
 | `PATCH /api/me` | bearer | `{ displayName?, avatar?, locale?, birthYear? }` | `{ user }`; the new name and avatar are written into every club the user is in. A name on the blocklist (slurs, profanity, staff titles; also club names and the guest bootstrap name) answers `400 name_not_allowed` |
-| `DELETE /api/me` | bearer | | `204`; soft delete, every session ends (sockets closed with 4401), club rows become "Deleted player", a club the user owned passes to its senior admin or earliest member (or is dissolved), the row is purged after 30 days |
+| `DELETE /api/me` | bearer | | `204`; soft delete, every session ends (sockets closed with 4401), club rows become "Deleted player", a club the user owned passes to its senior admin or earliest member who owns fewer than 3 clubs (or is dissolved when nobody live is left), the row is purged after 30 days and its club rows with it |
 | `POST /api/clubs` | bearer | `{ name, rules?, settings? }` | the club; the caller is its owner. With the store live, `403 fourwinds_required` without The Four Winds Club; at most 3 owned |
 | `DELETE /api/clubs/:code` | bearer (owner) | `{ confirm }` (the club's name or code) | `204`; its live tables close |
 | `GET /api/clubs/:code` | bearer | | members: the club; anyone else: `{ code, name, description, memberCount, joinRequiresApproval }` |
 | `PATCH /api/clubs/:code` | bearer (owner/admin) | `{ name?, description?, rules?, settings? }` | the club |
-| `POST /api/clubs/:code/join` | bearer | | `{ club, status: "joined"\|"pending"\|"already" }` (`club` is the public view until membership) |
+| `POST /api/clubs/:code/join` | bearer | | `{ club, status: "joined"\|"pending"\|"already" }` (`club` is the public view until membership); standings left on file come back; `429` past 10 an hour per address or 60 an hour per club |
 | `POST /api/clubs/:code/members/:userId/approve` | bearer (owner/admin) | | the club |
 | `POST /api/clubs/:code/members/:userId/reject` | bearer (owner/admin) | | the club |
+| `POST /api/clubs/:code/pending/reject-all` | bearer (owner/admin) | `{ userIds? }` | `{ club, rejected }`; every pending request, or only those named |
 | `POST /api/clubs/:code/bans` / `DELETE /api/clubs/:code/bans/:userId` | bearer (owner/admin) | `{ userId }` | the club; a banned account cannot rejoin, reapply or join the club's tables, and leaves its live tables |
 | `POST /api/clubs/:code/tables/:table/close` | bearer (owner/admin) | | the club; the table ends at once, nothing counts |
 | `POST /api/clubs/:code/tables/:table/evict` | bearer (owner/admin) | `{ userId }` | `{ seats }`; a bot plays the seat, the player is told and cannot come back to that table |
-| `POST /api/clubs/:code/members/:userId/role` | bearer (owner) | `{ role }` | the club |
-| `DELETE /api/clubs/:code/members/:userId` | bearer (self, owner or admin) | | the club (public view after leaving); a removed member also leaves the club's live tables |
+| `POST /api/clubs/:code/members/:userId/role` | bearer (owner) | `{ role }` | the club; `409 limit` when `owner` would give a member a fourth club |
+| `DELETE /api/clubs/:code/members/:userId` | bearer (self, owner or admin) | | the club (public view after leaving); a removed member also leaves the club's live tables; the member's standings stay on file and a match they started still counts |
 | `GET /api/clubs/:code/standings` | bearer (member) | | members by season points, each with `seasonPoints`, `lifetimePoints` (also `points`) and `season`; `403` for non-members |
 | `POST /api/clubs/:code/season` | bearer (owner) | | `{ club, archived: { season, startedAt, endedAt, standings } }`; season points reset to 0, lifetime points kept |
 | `GET /api/users/:userId/clubs` | bearer (self; `me` works) | | the caller's clubs and pending requests |

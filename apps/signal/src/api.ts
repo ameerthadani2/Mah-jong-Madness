@@ -518,12 +518,13 @@ export function buildRoutes(deps: ApiDeps, opts: Pick<ApiOptions, 'reportIpLimit
       // With the store live a club needs an owner with The Four Winds Club; before that anyone may create one.
       if (storeEnabled && !(await wallet.hasFourWinds(me.userId))) throw new HttpError(403, 'fourwinds_required', 'Creating a club needs The Four Winds Club');
       assertClubNameAllowed(ctx.body.name);
-      return clubs.createClub(me, ctx.body.name ?? '', ctx.body.rules ?? {}, ctx.body.settings ?? {});
+      return view(clubs.createClub(me, ctx.body.name ?? '', ctx.body.rules ?? {}, ctx.body.settings ?? {}), me.userId);
     }),
     r('GET', '/api/clubs/:code', async (ctx) => view(clubs.club(ctx.params.code), (await ctx.caller()).userId)),
     r('POST', '/api/clubs/:code/join', async (ctx) => {
       const me = await member(ctx);
-      const { club, status } = clubs.joinClub(ctx.params.code, me);
+      // A new member or join request is charged to this address and to the club (429 when either runs out).
+      const { club, status } = clubs.joinClub(ctx.params.code, me, { ip: ctx.ip });
       return { club: view(club, me.userId), status };
     }),
     r('PATCH', '/api/clubs/:code', async (ctx) => {
@@ -543,11 +544,17 @@ export function buildRoutes(deps: ApiDeps, opts: Pick<ApiOptions, 'reportIpLimit
       // The request was made under the name the user had then; approve them as they are now.
       const target = await repos.users.get(ctx.params.userId);
       if (target && target.deletedAt === null) clubs.refreshMember(memberIdentity(target));
-      return clubs.approve(ctx.params.code, me.userId, ctx.params.userId);
+      return view(clubs.approve(ctx.params.code, me.userId, ctx.params.userId), me.userId);
     }),
     r('POST', '/api/clubs/:code/members/:userId/reject', async (ctx) => {
       const me = await member(ctx);
       return view(clubs.reject(ctx.params.code, me.userId, ctx.params.userId), me.userId);
+    }),
+    // Owner or admin: turn down every pending request, or only those named in `userIds`.
+    r('POST', '/api/clubs/:code/pending/reject-all', async (ctx) => {
+      const me = await member(ctx);
+      const { club, rejected } = clubs.rejectAll(ctx.params.code, me.userId, ctx.body.userIds);
+      return { club: view(club, me.userId), rejected };
     }),
     r('POST', '/api/clubs/:code/members/:userId/role', async (ctx) => {
       const me = await member(ctx);
@@ -595,7 +602,8 @@ export function buildRoutes(deps: ApiDeps, opts: Pick<ApiOptions, 'reportIpLimit
     }),
     r('POST', '/api/clubs/:code/season', async (ctx) => {
       const me = await member(ctx);
-      return clubs.startSeason(ctx.params.code, me.userId);
+      const { club, archived } = clubs.startSeason(ctx.params.code, me.userId);
+      return { club: view(club, me.userId), archived };
     }),
     r('GET', '/api/users/:userId/clubs', async (ctx) => {
       const me = await ctx.caller();
@@ -642,6 +650,7 @@ const STATUS: Record<ClubError['code'], number> = {
   invalid: 400,
   pending: 400,
   unavailable: 503,
+  rate_limited: 429,
 };
 
 /** Set CORS headers only for an origin on the allow-list. Other browser origins are blocked by the browser. */

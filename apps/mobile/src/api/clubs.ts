@@ -72,7 +72,8 @@ export interface Club {
   memberCount?: number;
   joinRequiresApproval?: boolean;
   members?: ClubMember[];
-  pending?: Array<{ userId: string; name: string; avatar?: string }>;
+  /** Join requests waiting for the owner or an admin; one nobody answers expires 30 days after `requestedAt`. */
+  pending?: Array<{ userId: string; name: string; avatar?: string; requestedAt?: number }>;
   tables?: ClubTable[];
   /** Banned accounts; present for the owner and admins only. */
   bans?: ClubBan[];
@@ -90,6 +91,8 @@ export function clubErrorMessage(e: unknown): Message | null {
   if (code === 'fourwinds_required') return { key: 'clubs.create.fourWindsTitle' };
   const own = /^You can own at most (\d+) clubs/i.exec(message);
   if (own) return { key: 'clubs.errors.ownLimit', params: { max: Number(own[1]) } };
+  const theirs = /^That member already owns (\d+) clubs/i.exec(message);
+  if (theirs) return { key: 'clubs.errors.transferLimit', params: { max: Number(theirs[1]) } };
   const known: Array<[RegExp, string]> = [
     [/^You cannot join this club/i, 'clubs.errors.cannotJoin'],
     [/open table until its owner renews/i, 'clubs.errors.lapsedCap'],
@@ -99,6 +102,9 @@ export function clubErrorMessage(e: unknown): Message | null {
     [/^Only the owner can remove an admin/i, 'clubs.errors.adminOnAdmin'],
     [/^The owner cannot be removed/i, 'clubs.errors.ownerProtected'],
     [/^You cannot do that to yourself/i, 'clubs.errors.notYourself'],
+    [/^Too many clubs joined from this connection/i, 'clubs.errors.joinRateIp'],
+    [/a lot of join requests/i, 'clubs.errors.joinRateClub'],
+    [/too many pending requests/i, 'clubs.errors.queueFull'],
   ];
   const hit = known.find(([re]) => re.test(message));
   return hit ? { key: hit[1] } : null;
@@ -151,7 +157,9 @@ export const clubsApi = {
   approve: (ctx: ClubContext, code: string, userId: string) => call<Club>(ctx, 'POST', `/api/clubs/${enc(code)}/members/${enc(userId)}/approve`, {}),
   /** Owner or admin: turn down a pending request. */
   reject: (ctx: ClubContext, code: string, userId: string) => call<Club>(ctx, 'POST', `/api/clubs/${enc(code)}/members/${enc(userId)}/reject`, {}),
-  /** Owner or admin removing a member (they also leave the club's live tables), or a member leaving (their own id). */
+  /** Owner or admin: turn down every request in `userIds` (the ones on screen) in one call. */
+  rejectAll: (ctx: ClubContext, code: string, userIds: string[]) => call<{ club: Club; rejected: number }>(ctx, 'POST', `/api/clubs/${enc(code)}/pending/reject-all`, { userIds }),
+  /** Owner or admin removing a member (they also leave the club's live tables; their standings stay on file), or a member leaving (their own id). */
   remove: (ctx: ClubContext, code: string, userId: string) => call<Club>(ctx, 'DELETE', `/api/clubs/${enc(code)}/members/${enc(userId)}`, {}),
   /** Leave the club (the owner must pass it on first). */
   leave: (ctx: ClubContext, code: string, myUserId: string) => call<Club>(ctx, 'DELETE', `/api/clubs/${enc(code)}/members/${enc(myUserId)}`, {}),

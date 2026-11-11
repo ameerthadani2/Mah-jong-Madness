@@ -172,11 +172,12 @@ export async function deleteAccount(repos: Repos, userId: string, opts: { now?: 
  * The hard delete promised at soft deletion: remove user rows deleted (or merged away) more than
  * `PURGE_AFTER_MS` ago, and sessions that have expired or ended. Financial records (ledger,
  * purchases, store events) and reports carry no reference to the user row and stay. Run
- * periodically by the server; returns what was removed.
+ * periodically by the server; returns what was removed. `userIds` are the accounts that went: the
+ * caller passes them to `ClubRegistry.dropPurged`, because the registry's clubs still hold their rows.
  */
-export async function purgeDeletedUsers(repos: Repos, opts: { now?: () => number; after?: number } = {}): Promise<{ users: number; sessions: number }> {
+export async function purgeDeletedUsers(repos: Repos, opts: { now?: () => number; after?: number } = {}): Promise<{ users: number; sessions: number; userIds: string[] }> {
   const now = (opts.now ?? Date.now)();
-  const users = await repos.users.purgeDeleted(now - (opts.after ?? PURGE_AFTER_MS));
+  const userIds = await repos.users.purgeDeletedIds(now - (opts.after ?? PURGE_AFTER_MS));
   const sessions = await repos.sessions.pruneEnded(now);
-  return { users, sessions };
+  return { users: userIds.length, sessions, userIds };
 }
