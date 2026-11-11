@@ -15,9 +15,9 @@
  * the first (`{t:'queue_error', code:'replaced'}` to the old one) and keeps its place.
  *
  * Quick-match tables stay inside the server's limits: an account that is still at an unfinished
- * quick-match table (it holds a seat there, or the table is waiting for it to sit down) cannot
- * queue again and is told which table (`{t:'queue_error', code:'seated', room}`), so the app can
- * go back to it; and opening a table is charged to each matched player's create allowance and
+ * quick-match table (it holds a seat there that it has not left on purpose, or the table is
+ * waiting for it to sit down) cannot queue again and is told which table
+ * (`{t:'queue_error', code:'seated', room}`), so the app can go back to it; and opening a table is charged to each matched player's create allowance and
  * once to each address they came from, exactly as creating a table is. A player with no
  * allowance left keeps its place in the queue until it has some, and the rest of the group is
  * seated without it.

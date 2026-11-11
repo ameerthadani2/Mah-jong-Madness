@@ -42,6 +42,8 @@ function registry(opts: { fillMs?: number; maxHostedTables?: number } = {}) {
       return out[out.length - 1];
     };
     const sit = () => rooms.handle(id, { t: 'to', to: `server-${joined}`, data: { ch: 'game', msg: { t: 'join', name: 'x' } } });
+    /** Leave the table on purpose, as the app does when the player walks away from it. */
+    const walkAway = () => rooms.handle(id, { t: 'to', to: `server-${joined}`, data: { ch: 'game', msg: { t: 'leave' } } });
     /** Queue and wait out the fill time; returns the last queue frame. */
     const queue = async () => {
       const from = out.length;
@@ -54,7 +56,7 @@ function registry(opts: { fillMs?: number; maxHostedTables?: number } = {}) {
       }
       return out.slice(from).filter((m) => m.t === 'matched' || m.t === 'queue_error').at(-1) ?? out.at(-1)!;
     };
-    return { id, userId, out, enter, sit, queue, leave: () => rooms.disconnect(id) };
+    return { id, userId, out, enter, sit, walkAway, queue, leave: () => rooms.disconnect(id) };
   };
   /** Move the clock on in half-second ticks, as the server does. */
   const advance = (ms: number) => {
@@ -117,6 +119,42 @@ describe('one quick-match table per account', () => {
     expect(rooms.quickTableOf(b.userId)).toBeUndefined();
     const again = peer(b.userId);
     expect(await again.queue()).toMatchObject({ t: 'matched' });
+  });
+});
+
+describe('a player who left a quick-match table on purpose', () => {
+  it('may queue for another table once its create allowance allows; a dropped connection is not a leave', async () => {
+    const { rooms, peer, advance } = registry();
+    const a = peer();
+    const b = peer();
+    const [ma, mb] = await Promise.all([a.queue(), b.queue()]);
+    expect(ma.room).toBe(mb.room);
+    const room = ma.room as string;
+    for (const p of [a, b]) {
+      p.enter(room);
+      p.sit();
+    }
+    await flush();
+    expect(rooms.hostedTable(room)!.phase).not.toBe('lobby');
+    // a walks away: a bot plays its seat, which stays its own to come back to, but it is no longer held to this table.
+    a.walkAway();
+    expect(rooms.hostedTable(room)!.seatInfo().find((s) => s.userId === a.userId)).toMatchObject({ isBot: false, left: true });
+    expect(rooms.quickTableOf(a.userId)).toBeUndefined();
+    // b only lost its connection: its seat is waiting for it.
+    b.leave();
+    expect(rooms.quickTableOf(b.userId)).toBe(room);
+    // The next table is charged like the first: not within the cooldown, then yes.
+    const soon = peer(a.userId);
+    rooms.handle(soon.id, { t: 'queue' });
+    await flush();
+    advance(2_000);
+    expect(soon.out.some((m) => m.t === 'matched' || m.t === 'queue_error')).toBe(false);
+    advance(LIMITS.createCooldownMs);
+    const next = soon.out.find((m) => m.t === 'matched');
+    expect(next).toBeDefined();
+    expect(next!.room).not.toBe(room);
+    expect(await peer(b.userId).queue()).toMatchObject({ t: 'queue_error', code: 'seated', room });
+    expect(rooms.stats().hostedTables).toBe(2);
   });
 });
 
