@@ -37,7 +37,7 @@ export interface RuleSet {
   timeBankSeconds: number;
   /** Points each player starts a match with (for display / club standings). */
   startingPoints: number;
-  /** 台 for 天胡 (dealer wins on the deal). Charts vary: 24 is the most cited, some tables use 16. */
+  /** 台 for 天胡 (dealer wins on the deal). Charts vary: 24 is the most cited, some tables use 16. 0 for any of the three switches it off: the win is then scored on its own items. */
   heavenlyTai: number;
   /** 台 for 地胡 (non-dealer self-draws on their first draw with no claims yet). */
   earthlyTai: number;
@@ -219,12 +219,13 @@ export function ruleExtraText(e: RuleExtra): string {
       return '流局不連莊';
     case 'deadWall':
       return `dead wall ${e.value}`;
+    // 0 switches the limit hand off (the win is scored on its own items), so it is not "0台".
     case 'heavenlyTai':
-      return `天胡${e.value}台`;
+      return e.value > 0 ? `天胡${e.value}台` : '天胡 off';
     case 'earthlyTai':
-      return `地胡${e.value}台`;
+      return e.value > 0 ? `地胡${e.value}台` : '地胡 off';
     case 'humanlyTai':
-      return `人胡${e.value}台`;
+      return e.value > 0 ? `人胡${e.value}台` : '人胡 off';
     case 'startingPoints':
       return `start ${e.value}`;
   }

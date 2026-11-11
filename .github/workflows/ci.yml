@@ -34,7 +34,8 @@ jobs:
       - run: npm run i18n:check
       - run: npm test
       - run: npm run sim -- 40
-      # Bot strength gate: 2,000 paired Pro-vs-Club hands against a recorded reference; the old Pro regression fails it.
+      # Bot strength gate: 2,000 fixed-seed hands compared hand by hand with a recorded reference. Fails on a drop of more
+      # than 1 point a hand for Pro against Club or for Pro against Pro without its deal-in and 台 terms (docs/ARCHITECTURE.md).
       - run: npm run sim -- --gate
 
   docker:

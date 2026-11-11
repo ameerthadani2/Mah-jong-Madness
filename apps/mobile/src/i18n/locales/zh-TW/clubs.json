@@ -118,7 +118,8 @@
     "dealerTai": "莊家%{n}台",
     "dealerStreakTai": "連莊每次加%{n}台",
     "deadWall": "留%{n}張",
-    "startingPoints": "起始%{n}分"
+    "startingPoints": "起始%{n}分",
+    "limitOff": "不計%{name}"
   },
   "share": {
     "button": "分享",

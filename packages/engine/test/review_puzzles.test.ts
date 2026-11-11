@@ -315,6 +315,40 @@ describe('defence puzzles', () => {
     }
   }, 120_000);
 
+  it('never mark a discard wrong that the exact count rates as safe as an accepted one, or safer', () => {
+    // A wider sweep than the shared set: the model and the count disagree on about 3% of tables.
+    const sweep = [...puzzles];
+    for (let i = 0; i < 120; i++) sweep.push(defencePuzzle(`order-${i}`, (1 + (i % 3)) as PuzzleDifficulty));
+    for (const p of sweep) {
+      const kept = p.options.filter((o) => o.shanten === p.bestShanten);
+      const acceptedMax = Math.max(...kept.filter((o) => o.accepted).map((o) => o.exact));
+      for (const o of kept) if (!o.accepted) expect(o.exact, `${p.seed} d${p.difficulty} kind ${o.kind}`).toBeGreaterThan(acceptedMax);
+    }
+  });
+
+  it('never state a chance of 0.0% for a tile the text calls no guarantee', () => {
+    const seen = new Set<string>();
+    for (const p of puzzles) {
+      const a = p.options.find((o) => o.kind === p.answer)!;
+      seen.add(p.reason);
+      // No figure that prints as zero for something that can happen, in either language.
+      expect(p.explanation, p.seed).not.toMatch(/(^|[^0-9.])0\.0%/);
+      expect(p.explanationZh, p.seed).not.toMatch(/(^|[^0-9.])0\.0%/);
+      if (p.reason === 'theirDiscard' || p.reason === 'passed') {
+        // The count leaves these kinds out by assumption, so the text quotes the coach's estimate instead.
+        expect(a.exact).toBe(0);
+        expect(a.danger).toBeGreaterThan(0);
+        expect(p.explanation).toMatch(/the coach puts the chance .* at (about \d+\.\d%|under 0\.1%)/);
+        expect(p.explanation).not.toMatch(/of the hands they could hold/);
+        expect(p.explanationZh).toMatch(/教練估計.*放槍的機率(大約\d+\.\d%|不到0\.1%)/);
+      } else if (p.reason !== 'deadHonour' && a.exact > 0) {
+        expect(p.explanation).toMatch(/wins for them in (about \d+\.\d%|under 0\.1%) of the hands they could hold/);
+      }
+    }
+    expect(seen.has('theirDiscard')).toBe(true);
+    expect(seen.has('passed')).toBe(true);
+  });
+
   it('are not a fixed lookup rule: several reasons, several accepted answers, and deterministic', () => {
     // The old three-step rule ("their discard > fewest-unseen honour > terminal") reproduced every answer.
     let ruleHits = 0;
@@ -503,8 +537,57 @@ describe('value puzzles', () => {
     ).toBeGreaterThan(SEEDS * 0.9);
     // Several patterns turn up, and some answers win on speed rather than on a pattern.
     expect(new Set(puzzles.map((p) => p.patternKey)).size).toBeGreaterThanOrEqual(4);
-    expect(new Set(puzzles.map((p) => p.reasonKey)).size).toBe(3);
+    expect(new Set(puzzles.map((p) => p.reasonKey)).size).toBeGreaterThanOrEqual(3);
     for (let i = 0; i < puzzles.length; i += 15) expect(valuePuzzle(puzzles[i].seed, puzzles[i].difficulty)).toEqual(puzzles[i]);
+  });
+
+  it('give a reason that is true of the numbers shown: "speed beats size" only against a bigger, slower hand', () => {
+    const sweep = [...puzzles];
+    for (let i = 0; i < 300; i++) sweep.push(valuePuzzle(`reason-${i}`, (1 + (i % 3)) as PuzzleDifficulty));
+    const seen = new Set<string>();
+    for (const p of sweep) {
+      const a = p.options.find((x) => x.kind === p.answer)!;
+      const r = p.options.find((x) => x.kind === p.rival)!;
+      const faster = a.acceptance! > r.acceptance!;
+      const rivalBigger = r.expectedTai! > a.expectedTai! || r.bestTai! > a.bestTai!;
+      const where = `${p.seed} d${p.difficulty} ${p.reasonKey}`;
+      seen.add(p.reasonKey);
+      switch (p.reasonKey) {
+        case 'puzzle.value.speed':
+          expect(p.patternKey, where).toBe('');
+          expect(faster, where).toBe(true);
+          expect(rivalBigger, where).toBe(true);
+          expect(p.explanation).toContain('More winning tiles beat the bigger hand');
+          break;
+        case 'puzzle.value.both':
+          expect(p.patternKey, where).toBe('');
+          expect(faster, where).toBe(true);
+          expect(rivalBigger, where).toBe(false);
+          expect(p.explanation).toContain('has more winning tiles and its wins are no smaller');
+          break;
+        case 'puzzle.value.moreTai':
+          expect(p.patternKey, where).toBe('');
+          expect(faster, where).toBe(false);
+          expect(a.expectedTai!, where).toBeGreaterThan(r.expectedTai!);
+          expect(p.explanation).toContain(a.acceptance! < r.acceptance! ? 'has fewer winning tiles, but each win is worth more' : 'has the same number of winning tiles, but each win is worth more');
+          break;
+        case 'puzzle.value.tradeSpeed':
+          expect(p.patternKey, where).not.toBe('');
+          expect(r.acceptance!, where).toBeGreaterThan(a.acceptance!);
+          break;
+        case 'puzzle.value.keepPattern':
+          expect(p.patternKey, where).not.toBe('');
+          expect(r.acceptance!, where).toBeLessThanOrEqual(a.acceptance!);
+          break;
+        default:
+          throw new Error(`unknown value reason: ${where}`);
+      }
+      if (p.reasonKey !== 'puzzle.value.speed') {
+        expect(p.explanation, where).not.toContain('beat the bigger hand');
+        expect(p.explanationZh, where).not.toContain('速度比台數重要');
+      }
+    }
+    expect([...seen].sort()).toEqual(['puzzle.value.both', 'puzzle.value.keepPattern', 'puzzle.value.moreTai', 'puzzle.value.speed', 'puzzle.value.tradeSpeed']);
   });
 });
 
