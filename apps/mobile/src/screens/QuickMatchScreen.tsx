@@ -15,7 +15,7 @@ import type { QueueStatus } from '@mjm/net';
 import { useApp } from '../app-state';
 import { useAuth } from '../auth/AuthProvider';
 import { startQuickMatch, type Session } from '../game/session';
-import { quickMatchView, retryWaitSeconds, runQuickMatch, savedRejoinToken } from '../game/quickMatch';
+import { quickMatchAnnouncement, quickMatchView, retryWaitSeconds, runQuickMatch, savedRejoinToken } from '../game/quickMatch';
 import { friendlyError } from '../logic/errors';
 import { useT } from '../i18n';
 import { useOnlineGuard } from '../legal/useOnlineGuard';
@@ -36,11 +36,12 @@ interface Failure {
   retryAt: number;
 }
 
+/** The card's heading. Once there is a table the news is in the live region below, so the heading does not say it twice. */
 const HEADING: Record<Phase, string> = {
   connecting: 'quickmatch.connecting',
   searching: 'quickmatch.searching',
-  matched: 'quickmatch.matched',
-  returning: 'quickmatch.returning',
+  matched: 'quickmatch.title',
+  returning: 'quickmatch.title',
   failed: 'quickmatch.title',
 };
 
@@ -161,8 +162,10 @@ export function QuickMatchScreen() {
   if (entry === 'sign_in') return <SignInPrompt onBack={app.back} />;
 
   const view = quickMatchView(status?.s ?? null, status ? status.s.waitedMs + Math.max(0, now - status.at) : 0);
-  const found = t('quickmatch.humans', { count: view.humans });
   const waited = t('quickmatch.waited', { seconds: view.waitedSeconds });
+  // The one thing the live region holds (src/game/quickMatch.ts): players found, then the match.
+  const live = phase === 'searching' || phase === 'matched' || phase === 'returning' ? quickMatchAnnouncement(phase, view.humans) : null;
+  const news = live ? t(live.key, live.params) : '';
   const retryIn = failure ? retryWaitSeconds(failure.retryAt, now) : 0;
   return (
     <ScrollView contentContainerStyle={styles.wrap}>
@@ -175,17 +178,25 @@ export function QuickMatchScreen() {
           <Icon name="users" size={30} color={colors.cta} />
           <H2>{t(HEADING[phase])}</H2>
         </Row>
-        {phase === 'searching' || phase === 'matched' ? (
-          <View accessible accessibilityLiveRegion="polite" accessibilityLabel={t('quickmatch.a11y.status', { found, waited })} style={styles.status}>
-            <View style={styles.seats}>
+        {live ? (
+          <View style={styles.status}>
+            {/* The four seats repeat the count below as a picture. */}
+            <View style={styles.seats} aria-hidden accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
               {[0, 1, 2, 3].map((i) => (
                 <View key={i} style={[styles.seat, i < view.humans ? styles.seatFound : null]}>
                   <Icon name={i < view.humans ? 'smile' : 'hourglass'} size={22} />
                 </View>
               ))}
             </View>
-            <P style={styles.big}>{found}</P>
-            <P dim>{waited}</P>
+            {/* Spoken only when it changes: a player found, or the match. The wait below ticks every second, so it stays outside. */}
+            <View testID="quickmatch-live" accessible accessibilityLiveRegion="polite" accessibilityLabel={news}>
+              <P style={styles.big}>{news}</P>
+            </View>
+            {phase === 'searching' ? (
+              <View testID="quickmatch-waited">
+                <P dim>{waited}</P>
+              </View>
+            ) : null}
           </View>
         ) : null}
         <Pill icon="bot" tone="gold" wrap text={t('quickmatch.botsNote', { seconds: view.fillSeconds })} />

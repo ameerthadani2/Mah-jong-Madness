@@ -34,6 +34,18 @@ export function quickMatchView(status: QueueStatus | null, waitedMs?: number): Q
 }
 
 /**
+ * What a screen reader is told while a search runs: the number of players found, and then that a
+ * table was found (or that the player is being taken back to one). It is the whole content of the
+ * screen's live region, so it must change only when one of those does: the seconds waited are
+ * deliberately not part of it, or the reader would speak every second of the wait.
+ */
+export function quickMatchAnnouncement(phase: 'searching' | 'matched' | 'returning', humans: number): Message {
+  if (phase === 'matched') return { key: 'quickmatch.matched' };
+  if (phase === 'returning') return { key: 'quickmatch.returning' };
+  return { key: 'quickmatch.humans', params: { count: humans } };
+}
+
+/**
  * What a failed quick match leads to.
  *  - `age`: the server has no birth year for this account (`age_missing`): send the device's, queue again.
  *  - `message`: a localised sentence. `final` means trying again cannot help (banned, under 17), so no

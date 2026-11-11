@@ -18,9 +18,6 @@
   "cancel": "取消",
   "retry": "再試一次",
   "retryIn": "%{seconds} 秒後可再試",
-  "a11y": {
-    "status": "%{found}。%{waited}。"
-  },
   "errors": {
     "banned": "這個帳號已被禁止線上遊戲。如果你認為有誤，請聯絡客服。",
     "rateLimited": "嘗試次數太多了，請稍等幾秒再試。",

@@ -18,9 +18,6 @@
   "cancel": "Cancel",
   "retry": "Try again",
   "retryIn": "Try again in %{seconds} s",
-  "a11y": {
-    "status": "%{found}. %{waited}."
-  },
   "errors": {
     "banned": "This account has been banned from online play. If you think this is a mistake, contact support.",
     "rateLimited": "Too many tries in a row. Please wait a few seconds and try again.",

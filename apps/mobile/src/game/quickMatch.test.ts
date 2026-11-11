@@ -4,7 +4,7 @@ import { BANNED_CLOSE_CODE, BANNED_MESSAGE, QueueError } from '@mjm/net';
 import { hideBlocked, BlockedStore } from '../api/blocks';
 import en from '../i18n/locales/en/quickmatch.json';
 import zhTW from '../i18n/locales/zh-TW/quickmatch.json';
-import { quickMatchFailure, quickMatchView, RATE_LIMIT_WAIT_MS, retryWaitSeconds, runQuickMatch, savedRejoinToken } from './quickMatch';
+import { quickMatchAnnouncement, quickMatchFailure, quickMatchView, RATE_LIMIT_WAIT_MS, retryWaitSeconds, runQuickMatch, savedRejoinToken } from './quickMatch';
 import { createOnlineSession, startQuickMatch } from './session';
 
 type Frame = Record<string, unknown>;
@@ -294,6 +294,24 @@ describe('quick match copy', () => {
     expect(quickMatchView(null)).toEqual({ humans: 1, waitedSeconds: 0, fillSeconds: 20, botsInSeconds: 20 });
     expect(quickMatchView({ t: 'queue_status', position: 2, waitedMs: 12_400, humans: 3, fillMs: 20_000 })).toEqual({ humans: 3, waitedSeconds: 12, fillSeconds: 20, botsInSeconds: 8 });
     expect(quickMatchView({ t: 'queue_status', position: 1, waitedMs: 0, humans: 1, fillMs: 20_000 }, 25_000).botsInSeconds).toBe(0);
+  });
+
+  it('tells a screen reader about players found and the match, and never about the seconds ticking by', () => {
+    const status = (humans: number, waitedMs: number) => ({ t: 'queue_status' as const, position: 1, waitedMs, humans, fillMs: 20_000 });
+    const said = (humans: number, waitedMs: number) => quickMatchAnnouncement('searching', quickMatchView(status(humans, waitedMs), waitedMs).humans);
+    // Twenty seconds alone in the queue: one announcement, although the visible wait changed twenty times.
+    const alone = Array.from({ length: 20 }, (_, i) => JSON.stringify(said(1, i * 1000)));
+    expect(new Set(alone).size).toBe(1);
+    expect(new Set(Array.from({ length: 20 }, (_, i) => quickMatchView(status(1, i * 1000), i * 1000).waitedSeconds)).size).toBe(20);
+    expect(said(1, 0)).toEqual({ key: 'quickmatch.humans', params: { count: 1 } });
+    // A second player arrives: that is news.
+    expect(said(2, 7000)).toEqual({ key: 'quickmatch.humans', params: { count: 2 } });
+    expect(said(2, 7000)).not.toEqual(said(1, 7000));
+    // So is the match, and being taken back to a table.
+    expect(quickMatchAnnouncement('matched', 2)).toEqual({ key: 'quickmatch.matched' });
+    expect(quickMatchAnnouncement('returning', 1)).toEqual({ key: 'quickmatch.returning' });
+    // None of the announced sentences has the wait in it, in either language.
+    for (const locale of [en, zhTW]) for (const text of [locale.humans.one, locale.humans.other, locale.matched, locale.returning]) expect(text).not.toContain('%{seconds}');
   });
 
   it('routes age_missing to the birth-year path and gives every other refusal its own translated message', () => {
