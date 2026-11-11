@@ -42,6 +42,13 @@ export function ruleExtraLabel(e: RuleExtra, t: Translate): string {
       return t('clubs.rulesText.deadWall', { n: e.value });
     case 'startingPoints':
       return t('clubs.rulesText.startingPoints', { n: e.value });
+    // 0 switches a limit hand off (the win scores on its own items): say so, never "0台".
+    case 'heavenlyTai':
+      return e.value > 0 ? ruleExtraText(e) : t('clubs.rulesText.limitOff', { name: '天胡' });
+    case 'earthlyTai':
+      return e.value > 0 ? ruleExtraText(e) : t('clubs.rulesText.limitOff', { name: '地胡' });
+    case 'humanlyTai':
+      return e.value > 0 ? ruleExtraText(e) : t('clubs.rulesText.limitOff', { name: '人胡' });
     default:
       return ruleExtraText(e);
   }
