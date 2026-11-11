@@ -76,11 +76,8 @@ describe('the name check', () => {
     }
   });
 
-  it('answers 400 name_not_allowed for a guest name, a renamed account and a club name, after cleaning', async () => {
+  it('answers 400 name_not_allowed for a renamed account and a club name, after cleaning', async () => {
     const f = apiFixture();
-    const bad = await f.call('POST', '/api/auth/guest', { device: { id: randomUUID(), platform: 'ios' }, displayName: 'Admin' });
-    expect(bad.status).toBe(400);
-    expect(bad.json.error).toBe('name_not_allowed');
     const g = await f.guest('Mei');
     // Cleaning first: an invisible character between the letters does not get "Admin" through.
     const zw = String.fromCodePoint(0x200b);

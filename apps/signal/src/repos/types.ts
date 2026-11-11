@@ -124,12 +124,23 @@ export interface DeviceRecord {
   locale: string | null;
   createdAt: number;
   lastSeenAt: number;
+  /**
+   * The id the app's install sent when this device could not have it as its own `id` (an earlier
+   * account on the same install holds it). A ban covers it too, so "start fresh" on a banned
+   * player's phone is refused whichever of its accounts was banned. Absent otherwise.
+   */
+  installId?: string | null;
 }
 
 export type DevicePatch = Partial<Pick<DeviceRecord, 'platform' | 'appBuild' | 'pushToken' | 'locale' | 'lastSeenAt'>>;
 
 export interface DevicesRepo {
-  create(device: DeviceRecord): Promise<void>;
+  /**
+   * Registers the device. False (and nothing written) when its id is already registered: two
+   * sign-ups that carry one id at the same moment both get an answer, and the later one picks
+   * another id.
+   */
+  create(device: DeviceRecord): Promise<boolean>;
   get(id: string): Promise<DeviceRecord | null>;
   update(id: string, patch: DevicePatch): Promise<void>;
   listForUser(userId: string): Promise<DeviceRecord[]>;
@@ -265,9 +276,12 @@ export interface ReportRecord {
   details: string | null;
   status: 'open' | 'actioned' | 'dismissed';
   createdAt: number;
+  /** What the moderator who closed the report did, and when (both absent while it is open). */
+  resolution?: ReportResolution;
+  resolvedAt?: number;
 }
 
-export type NewReport = Omit<ReportRecord, 'id' | 'status'>;
+export type NewReport = Omit<ReportRecord, 'id' | 'status' | 'resolution' | 'resolvedAt'>;
 
 export interface ReportsRepo {
   create(report: NewReport): Promise<ReportRecord>;
@@ -281,9 +295,13 @@ export interface ReportsRepo {
   /** Reports in this status, oldest first (the moderators' queue). */
   listByStatus(status: ReportRecord['status'], limit?: number): Promise<ReportRecord[]>;
   /**
-   * Closes an open report with a moderator's decision: `dismiss` leaves it `dismissed`, anything
-   * else `actioned`. False when there is no such report or it is no longer open.
+   * Claims an open report for a moderator's decision, in one conditional write: `dismiss` leaves
+   * it `dismissed`, anything else `actioned`, and the decision and time are recorded. Returns the
+   * report as closed, or null when there is no such report or it is no longer open (of two
+   * moderators deciding at once exactly one gets the report; only that one applies its action).
    */
+  claim(id: number, resolution: ReportResolution, at: number): Promise<ReportRecord | null>;
+  /** `claim` as a yes or no. */
   resolve(id: number, resolution: ReportResolution, at: number): Promise<boolean>;
 }
 
@@ -327,9 +345,16 @@ export interface ModerationStatus {
 export interface ModerationRepo {
   /** The account's ban and mute; null when there is no such user. */
   status(userId: string): Promise<ModerationStatus | null>;
-  /** Bans the account (a second ban keeps the first time and takes the new reason); false when there is no such user. */
+  /**
+   * Bans the account (a second ban keeps the first time and takes the new reason) and, with it,
+   * every device registered to it (each device's id and its install id); false when there is no
+   * such user.
+   */
   ban(userId: string, at: number, reason: string | null): Promise<boolean>;
+  /** Lifts the ban and frees the devices it covered (a device another banned account also holds stays banned). */
   unban(userId: string): Promise<boolean>;
+  /** Whether this device id belongs to a banned account: no new guest account may be created from it. */
+  deviceBanned(deviceId: string): Promise<boolean>;
   /** Mutes the account until `until` (null lifts the mute); false when there is no such user. */
   mute(userId: string, until: number | null): Promise<boolean>;
   /** Accounts muted past `at`, for the tables to load at boot. */

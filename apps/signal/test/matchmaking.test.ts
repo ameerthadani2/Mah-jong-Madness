@@ -19,7 +19,7 @@ import { createSignalServer, type SignalServer } from '../src/server';
 type Msg = { t: string; [k: string]: unknown };
 
 /** A queue with a fake clock; tables are recorded instead of opened. */
-function queue(opts: { fillMs?: number; refuse?: Record<string, 'banned' | 'age_required'>; blocks?: Array<[string, string]> } = {}) {
+function queue(opts: { fillMs?: number; refuse?: Record<string, 'banned' | 'age_missing' | 'age_under'>; blocks?: Array<[string, string]> } = {}) {
   const clock = { now: 1_000_000 };
   const tables: string[][] = [];
   const mm = new Matchmaker({
@@ -120,11 +120,13 @@ describe('the quick-match queue', () => {
   });
 
   it('refuses banned and under-age accounts with their codes', async () => {
-    const q = queue({ refuse: { cheat: 'banned', kid: 'age_required' } });
+    const q = queue({ refuse: { cheat: 'banned', kid: 'age_under', unknown: 'age_missing' } });
     const cheat = await q.join('cheat');
     const kid = await q.join('kid');
+    const unknown = await q.join('unknown');
     expect(cheat.out).toEqual([{ t: 'queue_error', code: 'banned', message: expect.any(String) }]);
-    expect(kid.out).toEqual([{ t: 'queue_error', code: 'age_required', message: expect.any(String) }]);
+    expect(kid.out).toEqual([{ t: 'queue_error', code: 'age_under', message: expect.any(String) }]);
+    expect(unknown.out).toEqual([{ t: 'queue_error', code: 'age_missing', message: expect.any(String) }]);
     expect(q.mm.size()).toBe(0);
   });
 
@@ -178,8 +180,9 @@ describe('who may queue (the repositories)', () => {
     await repos.moderation.ban(banned, now, 'cheating');
     expect(await quickMatchCheck(repos, adult, now)).toBeNull();
     expect(await quickMatchCheck(repos, seventeen, now)).toBeNull();
-    expect(await quickMatchCheck(repos, sixteen, now)).toBe('age_required');
-    expect(await quickMatchCheck(repos, unknown, now)).toBe('age_required');
+    // Too young is one answer, no year on file another: only the second is something the app can fix.
+    expect(await quickMatchCheck(repos, sixteen, now)).toBe('age_under');
+    expect(await quickMatchCheck(repos, unknown, now)).toBe('age_missing');
     expect(await quickMatchCheck(repos, banned, now)).toBe('banned');
     await expect(quickMatchCheck(repos, randomUUID(), now)).rejects.toThrow();
     await repos.blocks.add(adult, sixteen, 1);
@@ -327,11 +330,11 @@ describe('quick-match tables', () => {
     b.enter(room);
     b.sit();
     const heard = () => b.socket.out.filter((m) => m.t === 'from' && ['chat', 'emote'].includes(((m.data as { msg: { t: string } }).msg ?? {}).t)).length;
-    a.table({ t: 'chat', text: 'hello' });
+    a.table({ t: 'chat', text: 'gg' });
     expect(heard()).toBe(1);
     mutes.set(a.userId, Date.now() + 60_000);
-    a.table({ t: 'chat', text: 'rude words' });
-    a.table({ t: 'emote', emote: 'laugh' });
+    a.table({ t: 'chat', text: 'nice' });
+    a.table({ t: 'emote', emote: 'lol' });
     expect(heard()).toBe(1);
   });
 
@@ -383,11 +386,11 @@ describe('quick match over real sockets', () => {
         },
       });
 
-    // No birth year on the server: refused with age_required.
+    // No birth year on the server: refused with age_missing.
     const young = await guest('Young', null);
     const yc = client(young.session.token);
     await yc.connect();
-    await expect(yc.findMatch().match).rejects.toMatchObject({ code: 'age_required' });
+    await expect(yc.findMatch().match).rejects.toMatchObject({ code: 'age_missing' });
     expect(QueueError).toBeDefined();
 
     const players = await Promise.all(['Mei', 'Kai', 'Lee'].map((n) => guest(n)));

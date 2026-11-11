@@ -5,6 +5,7 @@
  * (components/FeltPattern.tsx), drawn wherever the felt is.
  */
 import React from 'react';
+import { FREE_EMOTE_IDS, QUICK_CHAT_IDS, type QuickChatId } from '@mjm/net';
 import { t } from './i18n';
 import type { FeltPatternId } from './monetisation/cosmetics';
 
@@ -88,11 +89,19 @@ export function themeName(theme: TableTheme): string {
 
 export const TableThemeContext = React.createContext<TableTheme>(DEFAULT_TABLE_THEME);
 
-/** The free emote ids, drawn by components/Emotes.tsx; the paid packs are `EMOTE_PACKS` (components/EmotePacks.tsx). */
-export const EMOTES = ['thumbs', 'lol', 'wow', 'cry', 'fire', 'love', 'zzz', 'hu'];
-/** Quick-chat ids; the text (`table.quickChat.<id>`) is sent in the sender's language. */
-export const QUICK_CHATS = ['nice', 'sorry', 'gg', 'hurry', 'goodHand', 'dealtIn', 'oneMore', 'faster'] as const;
-export type QuickChatId = (typeof QUICK_CHATS)[number];
+/**
+ * The free emote ids, drawn by components/Emotes.tsx; the paid packs are `EMOTE_PACKS`
+ * (components/EmotePacks.tsx). The ids are the ones the table relays (@mjm/net tabletext.ts).
+ */
+export const EMOTES: readonly string[] = FREE_EMOTE_IDS;
+/**
+ * Quick-chat ids (@mjm/net tabletext.ts). Only the id travels: each player reads the phrase
+ * (`table.quickChat.<id>`) in their own language, and there is no free text at the table.
+ */
+export const QUICK_CHATS = QUICK_CHAT_IDS;
+export type { QuickChatId };
+/** What arrives at the table is shown only when it is one of these ids (a quick phrase, or an emote this app draws). */
+export { isQuickChatId, isTableEmoteId } from '@mjm/net';
 
 export function quickChatText(id: QuickChatId): string {
   return t(`table.quickChat.${id}`);

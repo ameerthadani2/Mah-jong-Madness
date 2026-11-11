@@ -41,7 +41,7 @@ import { WinCelebration } from '../components/Celebrations';
 import { useSfx, type TableEvent } from '../audio';
 
 import * as Haptics from 'expo-haptics';
-import { EMOTES, QUICK_CHATS, quickChatText, TableThemeContext, themeById } from '../themes';
+import { EMOTES, isQuickChatId, isTableEmoteId, QUICK_CHATS, quickChatText, TableThemeContext, themeById } from '../themes';
 import { emoteChoices } from '../monetisation/equipped';
 import { useOwnedEquipped } from '../monetisation/useEquipped';
 import { useT } from '../i18n';
@@ -283,7 +283,8 @@ export function TableScreen() {
   const seatName = (seat: number) => seatInfo(seat)?.name ?? t('table.seat', { n: seat + 1 });
   const now = Date.now();
   const latestEmote = (seat: number) => {
-    const e = hideBlocked(state.emotes, state.seats, blocked).reverse().find((x) => x.seat === seat && now - x.at < EMOTE_MS);
+    // Only an emote this app draws is shown; an id it does not know is never printed as text.
+    const e = hideBlocked(state.emotes, state.seats, blocked).reverse().find((x) => x.seat === seat && now - x.at < EMOTE_MS && isTableEmoteId(x.emote));
     return e?.emote;
   };
   const rules = state.rules;
@@ -311,7 +312,11 @@ export function TableScreen() {
     frame: seat === mySeat ? equipped.frame : null,
   });
 
-  const recentChat = hideBlocked(state.chat, state.seats, blocked).filter((c) => now - c.at < CHAT_MS).slice(-3);
+  // A chat line carries a quick-phrase id, read here in this player's language; anything else is not shown.
+  const recentChat = hideBlocked(state.chat, state.seats, blocked)
+    .filter((c) => now - c.at < CHAT_MS)
+    .flatMap((c) => (isQuickChatId(c.text) ? [{ name: c.name, line: quickChatText(c.text) }] : []))
+    .slice(-3);
   const relWind = (r: number) => WINDS[(seatAt(r) - view.dealerSeat + 4) % 4];
   const activeRel = turnSeat === null ? null : (turnSeat - mySeat + 4) % 4;
   const compass = <Compass prevailing={WINDS[view.prevailingWind]} drawsLeft={view.drawsLeft} seatWinds={[relWind(0), relWind(1), relWind(2), relWind(3)]} active={activeRel} size={L.compassSize} />;
@@ -421,7 +426,7 @@ export function TableScreen() {
                     accessibilityLabel={q}
                     hitSlop={8}
                     onPress={() => {
-                      session.client.chat(q);
+                      session.client.chat(id);
                       setEmotePicker(false);
                     }}
                     style={({ pressed }) => [styles.quickChat, pressed && { transform: [{ translateY: 1 }] }]}
@@ -438,7 +443,7 @@ export function TableScreen() {
             {recentChat.map((c, i) => (
               <View key={i} style={styles.chatBubble}>
                 <Text style={[styles.chatName, nameFont(c.name)]}>{c.name}</Text>
-                <Text style={[styles.chatText, nameFont(c.text, fonts.bodyBold)]}>{c.text}</Text>
+                <Text style={[styles.chatText, nameFont(c.line, fonts.bodyBold)]}>{c.line}</Text>
               </View>
             ))}
           </View>

@@ -2,7 +2,8 @@
  * Quick match (plan decision 3): instant seating with strangers.
  *
  * A signed-in socket (guests too) sends `{t:'queue'}`. The server checks the account (not banned,
- * a birth year on file that makes it 17 or older) and loads who it must never sit with (players it
+ * a birth year on file that makes it 17 or older: `age_missing` without one, `age_under` when it
+ * is too young; the year is write-once, see `PATCH /api/me`) and loads who it must never sit with (players it
  * blocked and players who blocked it), then answers `{t:'queue_status', position, waitedMs,
  * humans, fillMs}` at once and every `statusEveryMs` (2 s) while it waits. Players are grouped in
  * arrival order, four to a table, never two at one table where either blocked the other. A group
@@ -13,8 +14,16 @@
  * `{t:'leave_queue'}` or closing the socket leaves; a second socket of the same account replaces
  * the first (`{t:'queue_error', code:'replaced'}` to the old one) and keeps its place.
  *
- * Refusals are `{t:'queue_error', code, message}` with code `banned`, `age_required`,
- * `rate_limited`, `sign_in`, `unavailable` or `replaced`.
+ * Quick-match tables stay inside the server's limits: an account that is still at an unfinished
+ * quick-match table (it holds a seat there that it has not left on purpose, or the table is
+ * waiting for it to sit down) cannot queue again and is told which table
+ * (`{t:'queue_error', code:'seated', room}`), so the app can go back to it; and opening a table is charged to each matched player's create allowance and
+ * once to each address they came from, exactly as creating a table is. A player with no
+ * allowance left keeps its place in the queue until it has some, and the rest of the group is
+ * seated without it.
+ *
+ * Refusals are `{t:'queue_error', code, message}` with code `banned`, `age_missing`, `age_under`,
+ * `rate_limited`, `sign_in`, `unavailable`, `replaced` or `seated` (which also carries `room`).
  */
 
 /** Default for `MatchmakerOptions.fillMs` (QUICK_MATCH_FILL_MS). */
@@ -35,15 +44,19 @@ export const QUEUE_STATUS_MS = 2_000;
 export const QUICK_MATCH_MIN_AGE = 17;
 export const TABLE_SIZE = 4;
 
-export type QueueRefusal = 'banned' | 'age_required' | 'rate_limited' | 'sign_in' | 'unavailable' | 'replaced';
+export type QueueRefusal = 'banned' | 'age_missing' | 'age_under' | 'rate_limited' | 'sign_in' | 'unavailable' | 'replaced' | 'seated';
+/** What the account check can answer. */
+export type AccountRefusal = 'banned' | 'age_missing' | 'age_under';
 
 export const QUEUE_MESSAGES: Record<QueueRefusal, string> = {
   banned: 'This account has been banned',
-  age_required: 'Quick match needs your birth year, and players must be 17 or older',
+  age_missing: 'Quick match needs your birth year',
+  age_under: 'Quick match is for players aged 17 or older',
   rate_limited: 'Too many quick-match requests; please wait a few seconds',
   sign_in: 'Sign in to use quick match',
   unavailable: 'Quick match is not available right now; please try again',
   replaced: 'You joined quick match from another device',
+  seated: 'You are still at a quick-match table; go back to it, or wait for it to finish',
 };
 
 /** A socket asking to be matched (the room registry passes these in). */
@@ -66,11 +79,22 @@ export interface MatchmakerOptions {
   /** How often a waiting player is sent `queue_status` (default 2 s). */
   statusEveryMs?: number;
   /** Whether the account may queue: null, or why not. A throw answers `unavailable`. */
-  check(userId: string): Promise<'banned' | 'age_required' | null>;
+  check(userId: string): Promise<AccountRefusal | null>;
   /** The accounts this one must never share a table with (it blocked them, or they blocked it). */
   avoid(userId: string): Promise<Iterable<string>>;
   /** Open the table for a group, in seat order; returns its room code. A throw answers `unavailable`. */
   openTable(userIds: string[]): string;
+  /**
+   * The unfinished quick-match table this account is still at (it holds a seat there, or the
+   * table is waiting for it to sit down), if any: such an account is not queued again.
+   */
+  seatedAt?(userId: string): string | undefined;
+  /**
+   * Charge opening a table to these sockets (the create allowance of each account, and of each
+   * address once). Returns the peer ids with no allowance left: they stay in the queue, keeping
+   * their place, and the others are seated without them.
+   */
+  charge?(peerIds: string[]): string[];
   log?: (line: string) => void;
 }
 
@@ -88,7 +112,11 @@ export function minimumAge(birthYear: number, currentYear: number): number {
   return currentYear - birthYear - 1;
 }
 
-/** The repositories' answer to `MatchmakerOptions.check`: banned first, then the birth year. */
+/**
+ * The repositories' answer to `MatchmakerOptions.check`: banned first, then the birth year
+ * (`age_missing` when the server has none, so the app may send the one it holds; `age_under` when
+ * the year on file makes the account younger than 17, which nothing the app sends can change).
+ */
 export async function quickMatchCheck(
   repos: {
     users: { get(id: string): Promise<{ birthYear: number | null; deletedAt: number | null } | null> };
@@ -96,11 +124,12 @@ export async function quickMatchCheck(
   },
   userId: string,
   now: number,
-): Promise<'banned' | 'age_required' | null> {
+): Promise<AccountRefusal | null> {
   const [user, status] = await Promise.all([repos.users.get(userId), repos.moderation.status(userId)]);
   if (!user || user.deletedAt !== null) throw new Error('No such account');
   if (status && status.bannedAt !== null) return 'banned';
-  if (user.birthYear === null || minimumAge(user.birthYear, new Date(now).getUTCFullYear()) < QUICK_MATCH_MIN_AGE) return 'age_required';
+  if (user.birthYear === null) return 'age_missing';
+  if (minimumAge(user.birthYear, new Date(now).getUTCFullYear()) < QUICK_MATCH_MIN_AGE) return 'age_under';
   return null;
 }
 
@@ -155,6 +184,12 @@ export class Matchmaker implements QueueGate {
       if (refusal) {
         this.pending.delete(peer.peerId);
         return refuse(peer, refusal);
+      }
+      // One quick-match table per account: back to the one it is at, never a second.
+      const room = this.opts.seatedAt?.(peer.userId);
+      if (room !== undefined) {
+        this.pending.delete(peer.peerId);
+        return refuse(peer, 'seated', { room });
       }
       avoid = new Set(await this.opts.avoid(peer.userId));
     } catch (e) {
@@ -241,16 +276,21 @@ export class Matchmaker implements QueueGate {
     for (const g of this.groups()) {
       const full = g.length === TABLE_SIZE;
       if (!full && now - Math.min(...g.map((e) => e.joinedAt)) < this.fillMs) continue;
-      for (const e of g) this.entries.delete(e.peer.peerId);
+      // The table counts against its players' create allowance, like any table they open. A player
+      // with none left waits on (it is asked again at the next pass); the others are not held up.
+      const broke = new Set(this.opts.charge?.(g.map((e) => e.peer.peerId)) ?? []);
+      const seated = g.filter((e) => !broke.has(e.peer.peerId));
+      for (const e of seated) this.entries.delete(e.peer.peerId);
+      if (seated.length === 0) continue;
       let room: string;
       try {
-        room = this.opts.openTable(g.map((e) => e.peer.userId));
+        room = this.opts.openTable(seated.map((e) => e.peer.userId));
       } catch (e) {
         this.opts.log?.(`[signal] quick match table not opened: ${(e as Error).message}`);
-        for (const x of g) refuse(x.peer, 'unavailable');
+        for (const x of seated) refuse(x.peer, 'unavailable');
         continue;
       }
-      for (const e of g) e.peer.send({ t: 'matched', room, humans: g.length, bots: TABLE_SIZE - g.length });
+      for (const e of seated) e.peer.send({ t: 'matched', room, humans: seated.length, bots: TABLE_SIZE - seated.length });
     }
   }
 
@@ -267,6 +307,6 @@ function clash(a: Entry, b: Entry): boolean {
   return a.avoid.has(b.peer.userId) || b.avoid.has(a.peer.userId);
 }
 
-function refuse(peer: QueuePeer, code: QueueRefusal): void {
-  peer.send({ t: 'queue_error', code, message: QUEUE_MESSAGES[code] });
+function refuse(peer: QueuePeer, code: QueueRefusal, extra: { room?: string } = {}): void {
+  peer.send({ t: 'queue_error', code, message: QUEUE_MESSAGES[code], ...extra });
 }

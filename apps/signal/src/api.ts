@@ -196,6 +196,9 @@ function assertNameAllowed(name: string | undefined): void {
   if (name && !nameAllowed(name)) throw new HttpError(400, NAME_NOT_ALLOWED, 'That name is not allowed; please choose another');
 }
 
+/** The `error` code of `PATCH /api/me` for a birth year that differs from the one on file (409). */
+export const BIRTH_YEAR_LOCKED = 'birth_year_locked';
+
 /** Club names are checked here before the club registry cleans and stores them. */
 function assertClubNameAllowed(v: unknown): void {
   if (typeof v === 'string') assertNameAllowed(cleanField(v, 64));
@@ -287,12 +290,15 @@ export function buildRoutes(deps: ApiDeps, opts: Pick<ApiOptions, 'reportIpLimit
       '/api/auth/guest',
       async ({ body }) => {
         const device = deviceOf(body);
-        const displayName = optionalText(body.displayName, 'displayName', 24);
-        assertNameAllowed(displayName);
+        // A name the check refuses never blocks sign-in: the guest is created without it (the seat
+        // shows the default name) and the reply says so, so the app can ask for another name.
+        const requested = optionalText(body.displayName, 'displayName', 24);
+        const nameRefused = !!requested && !nameAllowed(requested);
+        const displayName = nameRefused ? undefined : requested;
         const avatar = optionalText(body.avatar, 'avatar', 16);
         const g = await createGuest(repos, peppers, device, { sessions, now, displayName, avatar, deviceId: device.id });
         const user = await liveUser(g.userId);
-        return new Reply(201, { userId: g.userId, guestSecret: g.guestSecret, session: await sessionJson(g.token, g.sessionId), user: userJson(user) });
+        return new Reply(201, { userId: g.userId, guestSecret: g.guestSecret, session: await sessionJson(g.token, g.sessionId), user: userJson(user), ...(nameRefused ? { nameRefused: true } : {}) });
       },
       true,
     ),
@@ -422,7 +428,11 @@ export function buildRoutes(deps: ApiDeps, opts: Pick<ApiOptions, 'reportIpLimit
       if (body.birthYear !== undefined) {
         const y = body.birthYear;
         if (y !== null && !(Number.isInteger(y) && (y as number) >= 1900 && (y as number) <= new Date(now()).getUTCFullYear())) throw new AuthError('invalid', 'birthYear must be a year');
-        patch.birthYear = y as number | null;
+        // Write-once: the year decides who may play with strangers, so an account cannot declare
+        // itself older (or forget its year) a second later. Sending the year on file again is fine.
+        const onFile = me.user.birthYear;
+        if (onFile !== null && y !== onFile) throw new HttpError(409, BIRTH_YEAR_LOCKED, 'Your birth year is already on file and cannot be changed here; contact support to correct it');
+        if (onFile === null && y !== null) patch.birthYear = y as number;
       }
       if (body.analyticsConsent !== undefined) {
         if (typeof body.analyticsConsent !== 'boolean' && body.analyticsConsent !== null) throw new AuthError('invalid', 'analyticsConsent must be true, false or null');

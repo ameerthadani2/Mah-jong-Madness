@@ -30,6 +30,7 @@ import {
   type PuzzleResultRecord,
   type PuzzleResultsRepo,
   type ReportReason,
+  type ReportResolution,
   type ReportRecord,
   type ReportsRepo,
   type Repos,
@@ -313,6 +314,7 @@ interface DeviceRow {
   locale: string | null;
   created_at: Date;
   last_seen_at: Date;
+  install_id: string | null;
 }
 
 const deviceFromRow = (r: DeviceRow): DeviceRecord => ({
@@ -324,13 +326,15 @@ const deviceFromRow = (r: DeviceRow): DeviceRecord => ({
   locale: r.locale,
   createdAt: r.created_at.getTime(),
   lastSeenAt: r.last_seen_at.getTime(),
+  ...(r.install_id ? { installId: r.install_id } : {}),
 });
 
 function pgDevices(q: Queryable): DevicesRepo {
-  const COLS = 'id, user_id, platform, app_build, push_token, locale, created_at, last_seen_at';
+  const COLS = 'id, user_id, platform, app_build, push_token, locale, created_at, last_seen_at, install_id';
   return {
     async create(d) {
-      await q.query('INSERT INTO devices (' + COLS + ') VALUES ($1, $2, $3, $4, $5, $6, $7, $8)', [
+      // A taken id writes nothing (and, inside a transaction, does not abort it): the caller picks another.
+      const res = await q.query('INSERT INTO devices (' + COLS + ') VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) ON CONFLICT (id) DO NOTHING', [
         d.id,
         d.userId,
         d.platform,
@@ -339,7 +343,9 @@ function pgDevices(q: Queryable): DevicesRepo {
         d.locale,
         toDate(d.createdAt),
         toDate(d.lastSeenAt),
+        d.installId ?? null,
       ]);
+      return (res.rowCount ?? 0) > 0;
     },
     async get(id) {
       if (!isUuid(id)) return null;
@@ -466,6 +472,8 @@ interface ReportRow {
   details: string | null;
   status: ReportRecord['status'];
   created_at: Date;
+  resolution: ReportResolution | null;
+  resolved_at: Date | null;
 }
 
 const reportFromRow = (r: ReportRow): ReportRecord => ({
@@ -477,10 +485,12 @@ const reportFromRow = (r: ReportRow): ReportRecord => ({
   details: r.details,
   status: r.status,
   createdAt: r.created_at.getTime(),
+  ...(r.resolution ? { resolution: r.resolution } : {}),
+  ...(r.resolved_at ? { resolvedAt: r.resolved_at.getTime() } : {}),
 });
 
 function pgReports(q: Queryable, tx: Tx): ReportsRepo {
-  const COLS = 'id, reporter_id, reported_user_id, room_code, reason, details, status, created_at';
+  const COLS = 'id, reporter_id, reported_user_id, room_code, reason, details, status, created_at, resolution, resolved_at';
   return {
     async create(r) {
       const res = await q.query<ReportRow>(
@@ -521,15 +531,19 @@ function pgReports(q: Queryable, tx: Tx): ReportsRepo {
       const res = await q.query<ReportRow>('SELECT ' + COLS + ' FROM reports WHERE status = $1 ORDER BY created_at, id LIMIT $2', [status, Math.max(1, Math.min(1000, Math.floor(limit)))]);
       return res.rows.map(reportFromRow);
     },
-    async resolve(id, resolution, at) {
-      if (!Number.isSafeInteger(id) || id < 1) return false;
-      const res = await q.query("UPDATE reports SET status = $2, resolution = $3, resolved_at = $4 WHERE id = $1 AND status = 'open'", [
+    async claim(id, resolution, at) {
+      if (!Number.isSafeInteger(id) || id < 1) return null;
+      // One conditional write: of two moderators deciding at once, the second finds the report closed.
+      const res = await q.query<ReportRow>("UPDATE reports SET status = $2, resolution = $3, resolved_at = $4 WHERE id = $1 AND status = 'open' RETURNING " + COLS, [
         id,
         resolution === 'dismiss' ? 'dismissed' : 'actioned',
         resolution,
         toDate(at),
       ]);
-      return (res.rowCount ?? 0) > 0;
+      return res.rows[0] ? reportFromRow(res.rows[0]) : null;
+    },
+    async resolve(id, resolution, at) {
+      return (await this.claim(id, resolution, at)) !== null;
     },
   };
 }
@@ -612,11 +626,37 @@ function pgModeration(q: Queryable): ModerationRepo {
     },
     async ban(userId, at, reason) {
       if (!isUuid(userId)) return false;
-      return changed(await q.query('UPDATE users SET banned_at = COALESCE(banned_at, $2), ban_reason = $3 WHERE id = $1', [userId, toDate(at), reason]));
+      // The ban and the devices it covers in one statement: each device's own id, and its install's.
+      const res = await q.query<{ id: string }>(
+        `WITH banned AS (
+           UPDATE users SET banned_at = COALESCE(banned_at, $2), ban_reason = $3 WHERE id = $1 RETURNING id
+         ), covered AS (
+           INSERT INTO banned_devices (device_id, user_id, banned_at)
+           SELECT DISTINCT ids.device_id, banned.id, $2::timestamptz
+           FROM banned
+           JOIN devices d ON d.user_id = banned.id
+           CROSS JOIN LATERAL (VALUES (d.id), (d.install_id)) AS ids (device_id)
+           WHERE ids.device_id IS NOT NULL
+           ON CONFLICT DO NOTHING
+         )
+         SELECT id FROM banned`,
+        [userId, toDate(at), reason],
+      );
+      return res.rows.length > 0;
     },
     async unban(userId) {
       if (!isUuid(userId)) return false;
-      return changed(await q.query('UPDATE users SET banned_at = NULL, ban_reason = NULL WHERE id = $1', [userId]));
+      const res = await q.query<{ id: string }>(
+        `WITH freed AS (DELETE FROM banned_devices WHERE user_id = $1)
+         UPDATE users SET banned_at = NULL, ban_reason = NULL WHERE id = $1 RETURNING id`,
+        [userId],
+      );
+      return res.rows.length > 0;
+    },
+    async deviceBanned(deviceId) {
+      if (!isUuid(deviceId)) return false;
+      const res = await q.query('SELECT 1 FROM banned_devices WHERE device_id = $1 LIMIT 1', [deviceId]);
+      return res.rows.length > 0;
     },
     async mute(userId, until) {
       if (!isUuid(userId)) return false;

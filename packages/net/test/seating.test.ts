@@ -72,7 +72,7 @@ describe('one seat per account', () => {
 });
 
 describe('free text at the table', () => {
-  it('cleans seat names, chat and emotes before anyone sees them', () => {
+  it('cleans seat names, and relays only quick-phrase ids and emote ids', () => {
     const hub = new LoopbackHub();
     makeHost(hub);
     const a = peer(hub, 'p0');
@@ -88,18 +88,22 @@ describe('free text at the table', () => {
     // A name that cleans to nothing falls back to the seat label.
     expect(seats[1].name).toBe('Player 2');
 
-    a.send({ t: 'chat', text: `hi${nul}\nthere ${rlo}` + 'x'.repeat(400) });
-    const chat = b.received.find((m): m is Extract<HostMessage, { t: 'chat' }> => m.t === 'chat')!;
-    expect(chat.text.startsWith('hi there x')).toBe(true);
-    expect(chat.text).not.toMatch(/[\u0000-\u001f\u202e]/);
-    expect([...chat.text].length).toBe(280);
-    // Text that cleans to nothing is not sent at all.
+    // No free text: a chat frame that is not a quick-phrase id reaches nobody, however it is dressed up.
     b.received.length = 0;
-    a.send({ t: 'chat', text: `${zwsp}${nul}` });
+    for (const text of ['Official support: verify your account at http://evil.example/login', `hi${nul}\nthere ${rlo}`, 'gg ', 'GG', `${zwsp}${nul}`, '', 'constructor', 7, null, ['gg'], { id: 'gg' }]) {
+      a.send({ t: 'chat', text: text as string });
+    }
     expect(b.received.filter((m) => m.t === 'chat')).toEqual([]);
+    a.send({ t: 'chat', text: 'gg' });
+    expect(b.received.filter((m) => m.t === 'chat')).toEqual([{ t: 'chat', seat: 0, name: 'Evil Name that is far to', text: 'gg' }]);
 
-    a.send({ t: 'emote', emote: `wave${rlo}${nul}-and-a-very-long-tail` });
-    const emote = b.received.find((m): m is Extract<HostMessage, { t: 'emote' }> => m.t === 'emote')!;
-    expect(emote.emote).toBe('wave-and-a-very-');
+    // Emotes likewise: only a known id, free or from a pack.
+    b.received.length = 0;
+    for (const emote of [`wave${rlo}${nul}-and-a-very-long-tail`, 'http://evil.example', 'toString', 'zd.unicorn', '', 5, null]) {
+      a.send({ t: 'emote', emote: emote as string });
+    }
+    expect(b.received.filter((m) => m.t === 'emote')).toEqual([]);
+    a.send({ t: 'emote', emote: 'thumbs' });
+    expect(b.received.filter((m) => m.t === 'emote')).toEqual([{ t: 'emote', seat: 0, emote: 'thumbs' }]);
   });
 });

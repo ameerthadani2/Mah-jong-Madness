@@ -29,7 +29,11 @@ export interface GuestOptions {
   now?: () => number;
   displayName?: string;
   avatar?: string;
-  /** The id the app generated for this install; used when it is a UUID not yet registered, otherwise a new one is assigned. */
+  /**
+   * The id the app generated for this install. The new device takes it when it is a UUID not yet
+   * registered; otherwise the device gets an id of its own and remembers this one as its install
+   * id. A sign-up from a device a banned account used is refused (403 `banned`).
+   */
   deviceId?: unknown;
 }
 
@@ -58,13 +62,14 @@ export async function createGuest(repos: Repos, pepper: Peppers, device: GuestDe
   const { current } = pepperSet(pepper);
   const userId = randomUUID();
   const wanted = typeof opts.deviceId === 'string' && UUID.test(opts.deviceId) ? opts.deviceId.toLowerCase() : null;
-  const deviceId = wanted && !(await repos.devices.get(wanted)) ? wanted : randomUUID();
+  // A ban covers the banned account's devices: "start fresh" on the same phone is not a way round it.
+  if (wanted && (await repos.moderation.deviceBanned(wanted))) throw new AuthError('banned', 'This device belongs to a banned account');
+  let deviceId = wanted ?? randomUUID();
   const guestSecret = randomHex(32);
   const locale = text(device.locale, 16);
   await repos.transaction(async (tx) => {
     await tx.users.create({ id: userId, kind: 'guest', displayName: cleanField(opts.displayName ?? '', 24), avatar: text(opts.avatar, 16), locale, createdAt: now });
-    await tx.devices.create({
-      id: deviceId,
+    const row = {
       userId,
       platform: text(device.platform, 16) ?? 'unknown',
       appBuild: text(device.appBuild, 32),
@@ -72,7 +77,14 @@ export async function createGuest(repos: Repos, pepper: Peppers, device: GuestDe
       locale,
       createdAt: now,
       lastSeenAt: now,
-    });
+    };
+    // The insert itself says whether the id is free: an earlier account on this install may hold
+    // it, and so may the same sign-up arriving twice at once (a double tap, a retry after a
+    // timeout). Either way this account gets a device id of its own and both requests succeed.
+    if (!(await tx.devices.create({ ...row, id: deviceId }))) {
+      deviceId = randomUUID();
+      await tx.devices.create({ ...row, id: deviceId, installId: wanted });
+    }
     await tx.identities.create({ provider: 'guest', subject: userId, userId, secretHash: hashToken(guestSecret, current), email: null, createdAt: now });
   });
   const { token, session } = await sessionsFor(repos, pepper, opts).create(userId, deviceId);

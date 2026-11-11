@@ -63,7 +63,9 @@ export type ClientMessage =
   /** Ask the host to start the match / add a bot (used when the host is a neutral server). */
   | { t: 'start' }
   | { t: 'add_bot' }
+  /** A quick phrase: `text` is its id (tabletext.ts `QUICK_CHAT_IDS`), never free text; the host drops anything else. */
   | { t: 'chat'; text: string }
+  /** An emote by id (tabletext.ts: a free emote, or one from a paid pack); the host drops anything else. */
   | { t: 'emote'; emote: string }
   | { t: 'ping'; at: number };
 
@@ -92,7 +94,9 @@ export type HostMessage =
   | { t: 'restored'; handNumber: number; turnCounter: number }
   /** `turnCounter`: on a refused action, the turn the player acted on (as it sent it). */
   | { t: 'error'; code: string; message: string; turnCounter?: number }
+  /** A seat's quick phrase: `text` is the phrase id, which each app shows in its reader's language. */
   | { t: 'chat'; seat: number; name: string; text: string }
+  /** A seat's emote, by id. */
   | { t: 'emote'; seat: number; emote: string }
   | { t: 'pong'; at: number; now: number };
 

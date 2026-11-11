@@ -115,20 +115,22 @@ describe('seat names and chat at a hosted table', () => {
     return { id, out, join };
   }
 
-  it("seats a player under the account's display name, and cleans a name the client chose", () => {
+  it("seats an account under its display name or the generated default, never under the name its client sends", () => {
     const reg = new RoomRegistry({ allowHosted: true, botDelayMs: 0 });
     const code = reg.createHostedRoom();
     const named = seatAt(reg, 'user-named-1', `Ah-Mei${NUL}`, {});
     reg.handle(named.id, { t: 'join', room: code });
     reg.handle(named.id, { t: 'to', to: `server-${code}`, data: { ch: 'game', msg: { t: 'join', name: 'Somebody Else' } } });
-    const anon = seatAt(reg, 'user-noname-1', `${ZWSP}`, {});
+    // No display name on the account: the generated default, whatever the client asks for.
+    const anon = seatAt(reg, 'abcd1234-0000-4000-8000-000000000001', `${ZWSP}`, {});
     reg.handle(anon.id, { t: 'join', room: code });
-    reg.handle(anon.id, { t: 'to', to: `server-${code}`, data: { ch: 'game', msg: { t: 'join', name: `Seat${NUL}${RLO}`, avatar: `gent${NUL}` } } });
-    const emoji = seatAt(reg, 'user-emoji-1', undefined, {});
-    reg.handle(emoji.id, { t: 'join', room: code });
-    reg.handle(emoji.id, { t: 'to', to: `server-${code}`, data: { ch: 'game', msg: { t: 'join', name: 'b'.repeat(23) + GRIN } } });
+    reg.handle(anon.id, { t: 'to', to: `server-${code}`, data: { ch: 'game', msg: { t: 'join', name: 'Official Admin', avatar: `gent${NUL}` } } });
+    // A display name the name check refuses (stored before the check existed, say): the default too.
+    const rude = seatAt(reg, 'beef5678-0000-4000-8000-000000000002', 'Admin', {});
+    reg.handle(rude.id, { t: 'join', room: code });
+    reg.handle(rude.id, { t: 'to', to: `server-${code}`, data: { ch: 'game', msg: { t: 'join', name: 'fuck you' } } });
     const seats = reg.hostedTable(code)!.seatInfo();
-    expect(seats.map((s) => s.name)).toEqual(['Ah-Mei', 'Seat', 'b'.repeat(23), '']);
+    expect(seats.map((s) => s.name)).toEqual(['Ah-Mei', 'Player ABCD', 'Player BEEF', '']);
     expect(seats[1].avatar).toBe('gent');
     // A renamed account sits down under its new name next time.
     reg.setPeerName(anon.id, 'Bo');
@@ -139,7 +141,22 @@ describe('seat names and chat at a hosted table', () => {
     expect(isClean(snapshot)).toBe(true);
   });
 
-  it('cleans chat lines and drops one that cleans to nothing', () => {
+  it('cleans and checks the name a peer without an account chose', () => {
+    const reg = new RoomRegistry({ allowHosted: true, botDelayMs: 0 });
+    const code = reg.createHostedRoom();
+    const sit = (name: string) => {
+      const p = seatAt(reg, undefined, undefined, {});
+      reg.handle(p.id, { t: 'join', room: code });
+      reg.handle(p.id, { t: 'to', to: `server-${code}`, data: { ch: 'game', msg: { t: 'join', name } } });
+    };
+    sit(`Seat${NUL}${RLO}`);
+    sit('b'.repeat(23) + GRIN);
+    sit('Official Admin');
+    // The table names a seat with no usable name after its number.
+    expect(reg.hostedTable(code)!.seatInfo().map((s) => s.name)).toEqual(['Seat', 'b'.repeat(23), 'Player 3', '']);
+  });
+
+  it('relays a quick-phrase id and drops every other chat line before it reaches the table', () => {
     const reg = new RoomRegistry({ allowHosted: true, botDelayMs: 0 });
     const code = reg.createHostedRoom();
     const p = seatAt(reg, 'user-chatty-1', 'Chatty', {});
@@ -148,8 +165,12 @@ describe('seat names and chat at a hosted table', () => {
     to({ t: 'join', name: 'Chatty' });
     const chats = () => p.out.filter((m) => m.data?.msg?.t === 'chat').map((m) => m.data!.msg!.text);
     to({ t: 'chat', text: `hi${NUL}${RLO} there` });
+    to({ t: 'chat', text: 'Official support: verify your account at http://evil.example/login' });
     to({ t: 'chat', text: `${NUL}${ZWSP}` });
-    expect(chats()).toEqual(['hi there']);
+    to({ t: 'chat', text: 7 });
+    to({ t: 'chat' });
+    to({ t: 'chat', text: 'goodHand' });
+    expect(chats()).toEqual(['goodHand']);
   });
 });
 
@@ -201,9 +222,10 @@ describe.skipIf(!PG_URL)('free text against Postgres', () => {
     const reg = new RoomRegistry({ allowHosted: true, botDelayMs: 0 });
     const code = reg.createHostedRoom();
     const s: Socket = { send: () => undefined, close: () => undefined };
-    const peer = reg.hello(reg.connect(s), id, undefined, undefined);
+    // The seat takes the account's name (cleaned), not the one in the table join.
+    const peer = reg.hello(reg.connect(s), id, undefined, `Seat${NUL}`);
     reg.handle(peer, { t: 'join', room: code });
-    reg.handle(peer, { t: 'to', to: `server-${code}`, data: { ch: 'game', msg: { t: 'join', name: `Seat${NUL}` } } });
+    reg.handle(peer, { t: 'to', to: `server-${code}`, data: { ch: 'game', msg: { t: 'join', name: `Other${NUL}` } } });
     await repos.tableSnapshots.save({ roomCode: code, clubCode: null, status: 'open', snapshot: reg.hostedTable(code)!.serialize(), updatedAt: Date.now() });
     expect(((await repos.tableSnapshots.get(code))!.snapshot as { seats: Array<{ name: string }> }).seats[0].name).toBe('Seat');
   });

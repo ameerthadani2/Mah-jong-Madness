@@ -3,12 +3,13 @@
  * can be unit-tested. Rooms are identified by short codes players can read out
  * loud (PokerBros-style club/table codes).
  */
-import { TableHost, type HostEvent, type SerializedHost, type Transport, type Unsubscribe } from '@mjm/net';
+import { emotePackOf, isQuickChatId, isTableEmoteId, TableHost, type HostEvent, type SerializedHost, type Transport, type Unsubscribe } from '@mjm/net';
 import { BOT_SKILLS, randomHex, sanitizeRules, type BotSkill, type RuleSet } from '@mjm/engine';
 import { uniqueCode, type HexSource } from './codes';
 import { LIMITS } from './config';
 import { BucketTable, cleanField } from './limits';
 import { QUEUE_MESSAGES, type QueueGate } from './matchmaking';
+import { nameAllowed } from './moderation';
 import type { LatencyWindow } from './metrics';
 
 export interface Socket {
@@ -39,7 +40,7 @@ interface Peer {
   sessionId?: string;
   /** The client address the socket came from, for the per-IP create and join buckets (absent in unit tests). */
   ip?: string;
-  /** The account's display name, cleaned; when set it is the name the peer sits down under. */
+  /** The account's display name, cleaned and passed by the name check; when set it is the name the peer sits down under. */
   name?: string;
 }
 
@@ -60,8 +61,12 @@ interface Room {
   createdBy?: string;
   /** Accounts the club took off this table: they may not come back to it. */
   evicted?: Set<string>;
-  /** A quick-match table: only these accounts may enter, and it starts by itself (see `autoStart`). */
-  quick?: { players: Set<string>; startBy: number; started: boolean };
+  /**
+   * A quick-match table: only these accounts may enter, and it starts by itself (see `autoStart`).
+   * `emptySince` is when its last peer left (or when it was opened or restored), null while anyone
+   * is connected: once started it closes `QUICK_ABANDONED_MS` after that.
+   */
+  quick?: { players: Set<string>; startBy: number; started: boolean; emptySince: number | null };
 }
 
 /**
@@ -163,6 +168,85 @@ export interface RoomRegistryOptions {
   queue?: QueueGate;
   /** Accounts whose chat lines and emotes are dropped at every table (a moderator's mute). */
   isMuted?: (userId: string | undefined) => boolean;
+  /**
+   * Who owns which paid emote pack. With it, an emote from a pack is relayed only when the
+   * sender's account owns that pack; without it (tests of the relay alone) every known emote is.
+   */
+  emotePacks?: EmotePackGate;
+}
+
+/** Ownership of the paid emote packs, as the tables ask it (see `EmotePackOwners`). */
+export interface EmotePackGate {
+  /** Whether the account owns the pack (a product id such as `emotes.zodiac`); a promise while the answer is being read. */
+  owns(userId: string, pack: string): boolean | Promise<boolean>;
+  /** The account sat down at a table: have the answer ready before its first emote. */
+  warm?(userId: string): void;
+}
+
+/** How long an account's emote packs are remembered. */
+export const EMOTE_PACKS_TTL_MS = 60_000;
+/** How soon a pack the account did not own is looked up again (so a pack bought mid-match works within seconds). */
+export const EMOTE_PACKS_RECHECK_MS = 10_000;
+/** Accounts remembered at most; the oldest answers go first. */
+const EMOTE_PACKS_MAX = 20_000;
+
+/**
+ * Each account's emote packs, read once (from the wallet's cosmetics) and remembered for about a
+ * minute, so an emote at the table does not cost a database round trip. A pack the account did
+ * not own when last read is looked up again after `recheckMs`. When the read fails the last known
+ * answer stands, and with none the emote is dropped.
+ */
+export class EmotePackOwners implements EmotePackGate {
+  private readonly known = new Map<string, { packs: ReadonlySet<string>; at: number }>();
+  private readonly reading = new Map<string, Promise<ReadonlySet<string>>>();
+  private readonly now: () => number;
+  private readonly ttlMs: number;
+  private readonly recheckMs: number;
+
+  constructor(
+    private readonly load: (userId: string) => Promise<Iterable<string>>,
+    opts: { now?: () => number; ttlMs?: number; recheckMs?: number } = {},
+  ) {
+    this.now = opts.now ?? Date.now;
+    this.ttlMs = opts.ttlMs ?? EMOTE_PACKS_TTL_MS;
+    this.recheckMs = opts.recheckMs ?? EMOTE_PACKS_RECHECK_MS;
+  }
+
+  owns(userId: string, pack: string): boolean | Promise<boolean> {
+    const hit = this.known.get(userId);
+    if (hit) {
+      const age = this.now() - hit.at;
+      if (age < (hit.packs.has(pack) ? this.ttlMs : this.recheckMs)) return hit.packs.has(pack);
+    }
+    return this.read(userId).then((packs) => packs.has(pack));
+  }
+
+  warm(userId: string): void {
+    const hit = this.known.get(userId);
+    if (!hit || this.now() - hit.at >= this.ttlMs) void this.read(userId);
+  }
+
+  /** Forget an account's answer (after a purchase, say). */
+  forget(userId: string): void {
+    this.known.delete(userId);
+  }
+
+  private read(userId: string): Promise<ReadonlySet<string>> {
+    let reading = this.reading.get(userId);
+    if (reading) return reading;
+    reading = this.load(userId)
+      .then((ids): ReadonlySet<string> => {
+        const packs = new Set(ids);
+        this.known.delete(userId);
+        this.known.set(userId, { packs, at: this.now() });
+        if (this.known.size > EMOTE_PACKS_MAX) this.known.delete(this.known.keys().next().value as string);
+        return packs;
+      })
+      .catch((): ReadonlySet<string> => this.known.get(userId)?.packs ?? new Set<string>())
+      .finally(() => this.reading.delete(userId));
+    this.reading.set(userId, reading);
+    return reading;
+  }
 }
 
 export interface HostedRoomOptions {
@@ -185,10 +269,19 @@ export interface HostedRoomOptions {
    * after it opened with bots in the seats still empty (closed instead if nobody came).
    */
   quickMatch?: { players: string[]; startAfterMs?: number };
+  /** Accounts taken off this table before a restart (from its snapshot): they still may not come back. */
+  evicted?: string[];
 }
 
 /** How long a quick-match table waits for its players before it starts with bots in the empty seats. */
 export const QUICK_START_MS = 15_000;
+/**
+ * How long a started quick-match table lives with none of its players connected. Much shorter
+ * than `KEEP_ALIVE_MS`: nobody else can enter it, so once its humans are gone it is only bots
+ * playing each other and a place taken from the server's table cap. The wait is for a player
+ * whose connection dropped; when every player left on purpose the table closes at once.
+ */
+export const QUICK_ABANDONED_MS = 2 * 60_000;
 /** Table frames a quick-match player may not send: the table starts itself and its bots are the server's. */
 const QUICK_BLOCKED = new Set(['start', 'add_bot']);
 /** Table frames a muted account's are dropped. */
@@ -250,7 +343,8 @@ export class RoomRegistry {
     const room: Room = { code, host: '', peers: new Set(), createdAt: this.now(), keepAliveUntil: this.now() + (opts.keepAliveMs ?? KEEP_ALIVE_MS), pinned: true };
     if (opts.clubCode) room.clubCode = opts.clubCode.toUpperCase();
     if (opts.createdBy) room.createdBy = opts.createdBy;
-    if (opts.quickMatch) room.quick = { players: new Set(opts.quickMatch.players), startBy: this.now() + (opts.quickMatch.startAfterMs ?? QUICK_START_MS), started: false };
+    if (opts.evicted?.length) room.evicted = new Set(opts.evicted);
+    if (opts.quickMatch) room.quick = { players: new Set(opts.quickMatch.players), startBy: this.now() + (opts.quickMatch.startAfterMs ?? QUICK_START_MS), started: false, emptySince: this.now() };
     this.attachTable(room, opts.rules, opts.botSkill, opts.restore);
     this.rooms.set(code, room);
     return code;
@@ -258,17 +352,59 @@ export class RoomRegistry {
 
   /**
    * Open a quick-match table for a matched group (decision 3): the default rules at Normal speed,
-   * Club bots, restricted to these accounts, never a club table and not counted against anyone's
-   * own table cap.
+   * Club bots, restricted to these accounts, never a club table. It is not counted against
+   * anyone's `maxTablesPerUser`; the queue keeps quick-match tables in bounds instead (one per
+   * account at a time, `quickTableOf`, and each one charged like a create, `chargeQuickMatch`),
+   * and a started one closes `QUICK_ABANDONED_MS` after its last player disconnected (at once
+   * when they all left on purpose).
    */
   createQuickMatchRoom(players: string[], opts: { startAfterMs?: number } = {}): string {
     return this.createHostedRoom({ botSkill: 'club', quickMatch: { players, startAfterMs: opts.startAfterMs } });
+  }
+
+  /**
+   * The unfinished quick-match table this account is still at, if any: one it holds a seat at
+   * (connected or not), or one that has not started and is waiting for it to sit down. A seat the
+   * player left on purpose (the table's `leave`, which the app sends when the player walks away;
+   * a bot plays it from then on) does not count: that player may queue for another table, which
+   * is charged like any other (`chargeQuickMatch`). A dropped connection is not a leave.
+   */
+  quickTableOf(userId: string): string | undefined {
+    for (const r of this.rooms.values()) {
+      if (!r.quick || !r.table || !r.quick.players.has(userId) || r.table.host.phase === 'match_over') continue;
+      if (!r.quick.started || r.table.host.seatInfo().some((s) => !s.isBot && s.userId === userId && !s.left)) return r.code;
+    }
+    return undefined;
+  }
+
+  /**
+   * Charge a quick-match table to the sockets it is opened for: one create from each account's
+   * allowance and one from each distinct address (the same buckets a `create` spends). Returns
+   * the peer ids that had none left; the queue keeps those waiting and seats the others.
+   */
+  chargeQuickMatch(peerIds: string[]): string[] {
+    const refused: string[] = [];
+    const byIp = new Map<string, string[]>();
+    for (const id of peerIds) {
+      const peer = this.peers.get(id);
+      if (!peer) continue;
+      if (!this.createsByUser.take(peer.userId ? `u:${peer.userId}` : `p:${peer.id}`)) refused.push(id);
+      else if (peer.ip !== undefined) byIp.set(peer.ip, [...(byIp.get(peer.ip) ?? []), id]);
+    }
+    for (const [ip, ids] of byIp) if (!this.createsByIp.take(ip)) refused.push(...ids);
+    return refused;
   }
 
   /** The accounts a quick-match table was opened for (undefined for any other room); for its snapshot. */
   quickPlayersOf(code: string): string[] | undefined {
     const quick = this.rooms.get(code.toUpperCase())?.quick;
     return quick ? [...quick.players] : undefined;
+  }
+
+  /** The accounts taken off a table, which may not come back to it (undefined when there are none); for its snapshot. */
+  evictedOf(code: string): string[] | undefined {
+    const evicted = this.rooms.get(code.toUpperCase())?.evicted;
+    return evicted?.size ? [...evicted] : undefined;
   }
 
   /** Whether a room is a quick-match table. */
@@ -433,14 +569,16 @@ export class RoomRegistry {
 
   /**
    * The account's display name, as the socket layer last read it (at `hello` and before each
-   * create or join). It replaces whatever name the client puts in its table `join`; an account
-   * without a usable name keeps the client's, cleaned.
+   * create or join). A peer with an account always sits down under it, or under the generated
+   * default (`Player XXXX`) when the account has no name or the name check refuses it: whatever
+   * name the client puts in its table `join` is ignored. Only a peer without an account (relay
+   * tests and development) keeps the client's name, cleaned and checked the same way.
    */
   setPeerName(peerId: string, name: string | undefined): void {
     const peer = this.peers.get(peerId);
     if (!peer) return;
     const clean = cleanField(name, SEAT_NAME_MAX);
-    if (clean) peer.name = clean;
+    if (clean && nameAllowed(clean)) peer.name = clean;
     else delete peer.name;
   }
 
@@ -560,6 +698,7 @@ export class RoomRegistry {
         this.opts.queue?.leave(peer.id);
         this.leave(peer);
         room.peers.add(peer.id);
+        if (room.quick) room.quick.emptySince = null;
         peer.room = room.code;
         this.sendRoom(peer, room);
         this.broadcast(room, { t: 'peer', peerId: peer.id, event: 'join' }, peer.id);
@@ -575,8 +714,11 @@ export class RoomRegistry {
           const t = tableFrameType(msg.data);
           if (room.quick && t !== undefined && QUICK_BLOCKED.has(t)) return peer.id;
           if (t !== undefined && MUTED_BLOCKED.has(t) && this.opts.isMuted?.(peer.userId)) return peer.id;
+          // No free text: only a quick-phrase id or a known emote id goes on to the table.
+          if (t === 'chat' && !isQuickChatId(tableFrameField(msg.data, 'text'))) return peer.id;
+          if (t === 'emote' && !this.mayEmote(peer, room, msg.data)) return peer.id;
           const data = bindUser(msg.data, peer.userId, peer.name);
-          if (data === null) return peer.id;
+          if (t === 'join' && peer.userId) this.opts.emotePacks?.warm?.(peer.userId);
           room.table.transport.receive(peer.id, data);
           if (timed) this.opts.actionLatency!.record(this.perfNow() - t0);
           return peer.id;
@@ -608,6 +750,29 @@ export class RoomRegistry {
       default:
         return peer.id;
     }
+  }
+
+  /**
+   * Whether an `emote` frame goes on to the table now: a free emote always, an emote from a paid
+   * pack only when the sender's account owns the pack. While ownership is still being read the
+   * frame waits for the answer and is delivered then (if the peer is still at the table).
+   */
+  private mayEmote(peer: Peer, room: Room, data: unknown): boolean {
+    const emote = tableFrameField(data, 'emote');
+    if (!isTableEmoteId(emote)) return false;
+    const pack = emotePackOf(emote);
+    const gate = this.opts.emotePacks;
+    if (!pack || !gate) return true;
+    if (!peer.userId) return false;
+    const owns = gate.owns(peer.userId, pack);
+    if (typeof owns === 'boolean') return owns;
+    owns.then(
+      (ok) => {
+        if (ok && !this.closed && peer.room === room.code && this.rooms.get(room.code) === room) room.table?.transport.receive(peer.id, data);
+      },
+      () => undefined,
+    );
+    return false;
   }
 
   disconnect(peerId: string): void {
@@ -642,6 +807,7 @@ export class RoomRegistry {
       return;
     }
     if (room.peers.size === 0) {
+      if (room.quick) room.quick.emptySince = this.now();
       if (room.keepAliveUntil !== undefined && room.keepAliveUntil > this.now()) {
         // Give players time to come back (bots play for them, or the table pauses between hands).
         room.keepAliveUntil = this.now() + KEEP_ALIVE_MS;
@@ -705,7 +871,11 @@ export class RoomRegistry {
       if (r.quick && !r.quick.started) this.autoStart(r);
       if (!this.rooms.has(r.code)) continue;
       r.table?.host.tick();
-      if (r.peers.size === 0 && r.keepAliveUntil !== undefined && r.keepAliveUntil <= this.now()) this.closeRoom(r);
+      if (r.peers.size !== 0) continue;
+      // A started quick-match table with nobody connected: two minutes for a player who dropped to
+      // come back, and none at all when every player walked away on purpose.
+      const abandoned = r.quick?.started && r.quick.emptySince !== null && (this.now() - r.quick.emptySince >= QUICK_ABANDONED_MS || !r.table?.host.seatInfo().some((s) => !s.isBot && !s.left));
+      if (abandoned || (r.keepAliveUntil !== undefined && r.keepAliveUntil <= this.now())) this.closeRoom(r);
     }
   }
 
@@ -745,7 +915,8 @@ export class RoomRegistry {
    * Take an account off a table (a club owner's eviction, a removed or banned member): its seat is
    * played by the table's bot to the end of the match (freed in the lobby), each of its sockets in
    * the room is told (`{t:'error', code:'closed', message}`) and leaves, and it may not come back
-   * to this table. Returns how many seats it held.
+   * to this table, after a restart either (the evicted accounts are written with the table's
+   * snapshot). Returns how many seats it held.
    */
   evictFromTable(code: string, userId: string, message = EVICTED_BY_CLUB): number {
     const room = this.rooms.get(code.toUpperCase());
@@ -759,6 +930,8 @@ export class RoomRegistry {
       peer.socket.send(closed);
       this.leave(peer);
     }
+    // The eviction is part of the table's snapshot, also when the account held no seat.
+    if (room.table && this.rooms.has(room.code)) for (const h of this.changeHandlers) h(room.code);
     return seats.length;
   }
 
@@ -821,6 +994,11 @@ function tableFrameType(data: unknown): string | undefined {
   return typeof env.msg.t === 'string' ? env.msg.t : undefined;
 }
 
+/** One field of a table frame's message (`{ch:'game', msg:{[field]}}`). */
+function tableFrameField(data: unknown, field: string): unknown {
+  return (data as { msg?: Record<string, unknown> } | null)?.msg?.[field];
+}
+
 /** A game action for the table (`{ch:'game', msg:{t:'action'}}`). */
 function isAction(data: unknown): boolean {
   const env = data as { ch?: unknown; msg?: { t?: unknown } } | null;
@@ -829,33 +1007,37 @@ function isAction(data: unknown): boolean {
 
 const PONG = JSON.stringify({ t: 'pong' });
 
-/** Longest seat name and chat line the table keeps (it cuts longer ones by UTF-16 units). */
+/** Longest seat name and avatar id the table keeps. */
 const SEAT_NAME_MAX = 24;
-const CHAT_MAX = 280;
 const AVATAR_MAX = 8;
+
+/** The seat name of an account that has no usable display name: `Player` and the first four hex digits of its id. */
+export function defaultSeatName(userId: string): string {
+  return `Player ${userId.replace(/-/g, '').slice(0, 4).toUpperCase()}`;
+}
 
 /**
  * The table's `join` carries the verified account, never the one the client claims, so the host
  * (which reads `msg.userId`) binds the seat to the user the session proved. An unauthenticated
- * peer's claim is dropped. The seat name is the account's display name when it has one, and
- * otherwise the client's, cleaned like every other piece of free text (a NUL in a seat name used
- * to stop the table's snapshot being saved); chat lines and avatars are cleaned too. Returns null
- * for a frame with nothing left to say (a chat line that cleans to nothing).
+ * peer's claim is dropped. An account's seat name is its display name (`accountName`, already
+ * cleaned and checked by `setPeerName`) or the generated default, never the name in the frame;
+ * a peer without an account keeps the frame's name, cleaned like every other piece of free text
+ * (a NUL in a seat name used to stop the table's snapshot being saved) and dropped when the name
+ * check refuses it. Avatars are cleaned too.
  */
 function bindUser(data: unknown, userId: string | undefined, accountName?: string): unknown {
   const env = data as { ch?: unknown; msg?: unknown } | null;
   if (!env || typeof env !== 'object' || env.ch !== 'game' || !env.msg || typeof env.msg !== 'object') return data;
   const t = (env.msg as { t?: unknown }).t;
-  if (t !== 'join' && t !== 'chat') return data;
+  if (t !== 'join') return data;
   const msg: Record<string, unknown> = { ...(env.msg as Record<string, unknown>) };
-  if (t === 'chat') {
-    if (typeof msg.text !== 'string') return data;
-    msg.text = cleanField(msg.text, CHAT_MAX);
-    return msg.text ? { ...env, msg } : null;
-  }
   if (userId) msg.userId = userId;
   else delete msg.userId;
-  const name = accountName || (typeof msg.name === 'string' ? cleanField(msg.name, SEAT_NAME_MAX) : '');
+  let name = accountName || (userId ? defaultSeatName(userId) : '');
+  if (!name && typeof msg.name === 'string') {
+    const claimed = cleanField(msg.name, SEAT_NAME_MAX);
+    if (claimed && nameAllowed(claimed)) name = claimed;
+  }
   if (name) msg.name = name;
   else delete msg.name;
   if (typeof msg.avatar === 'string') {
@@ -865,7 +1047,6 @@ function bindUser(data: unknown, userId: string | undefined, accountName?: strin
   }
   return { ...env, msg };
 }
-
 
 /** Transport for a table hosted by the server itself: a virtual peer inside the room. */
 export class ServerTransport implements Transport {

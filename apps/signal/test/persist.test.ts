@@ -36,7 +36,7 @@ function seat(rooms: RoomRegistry, code: string, token?: string) {
     },
     close: () => undefined,
   };
-  const id = rooms.hello(rooms.connect(socket), 'user-alice-1');
+  const id = rooms.hello(rooms.connect(socket), 'user-alice-1', undefined, 'Alice');
   rooms.handle(id, { t: 'join', room: code });
   const hostId = `server-${code}`;
   const link: Link = {

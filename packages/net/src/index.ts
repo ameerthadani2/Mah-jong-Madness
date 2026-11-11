@@ -6,3 +6,4 @@ export * from './host';
 export * from './client';
 export * from './signaling';
 export * from './text';
+export * from './tabletext';
