@@ -1213,7 +1213,7 @@ export interface ValuePuzzle extends PuzzleExplanation {
   answer: Kind;
   /** The tempting alternative: the ready discard outside the accepted set with the most winning tiles. */
   rival: Kind;
-  /** The headline 台 item the answer keeps and the rival loses ('' when the answer wins on speed alone). */
+  /** The headline 台 item the answer keeps and the rival loses ('' when it loses none: see `valueReason`). */
   patternKey: string;
   patternEn: string;
   patternZh: string;
@@ -1304,6 +1304,26 @@ export function scoreWaits(
 
 const fmt1 = (x: number): string => (Math.round(x * 10) / 10).toString();
 
+/**
+ * Why the answer beats the rival, chosen so that the headline is true of the numbers shown:
+ *  - keepPattern / tradeSpeed: the answer keeps a headline pattern the rival loses (and gives up
+ *    winning tiles for it in the second case);
+ *  - speed: the answer has more winning tiles and the rival is the bigger hand (a higher average
+ *    or a higher best win);
+ *  - both: the answer has more winning tiles and its wins are no smaller on either measure;
+ *  - moreTai: the answer has no more winning tiles but more 台 a win, from items outside the
+ *    headline patterns (a single wait, 平胡, concealed pongs, a concealed hand).
+ * null when none of them is true (no more winning tiles and no more 台 a win on average: the
+ * answer leads only through the self-draw weighting, which no short reason explains).
+ */
+function valueReason(answer: ValueOption, rival: ValueOption, keepsPattern: boolean): string | null {
+  if (keepsPattern) return rival.acceptance! > answer.acceptance! ? 'puzzle.value.tradeSpeed' : 'puzzle.value.keepPattern';
+  const faster = answer.acceptance! > rival.acceptance!;
+  const rivalBigger = rival.expectedTai! > answer.expectedTai! || rival.bestTai! > answer.bestTai!;
+  if (faster) return rivalBigger ? 'puzzle.value.speed' : 'puzzle.value.both';
+  return answer.expectedTai! > rival.expectedTai! ? 'puzzle.value.moreTai' : null;
+}
+
 function valueText(p: Pick<ValuePuzzle, 'answer' | 'answers' | 'rival' | 'options' | 'patternEn' | 'patternZh' | 'patternTai'>, reasonKey: string): PuzzleExplanation {
   const a = p.options.find((o) => o.kind === p.answer)!;
   const r = p.options.find((o) => o.kind === p.rival)!;
@@ -1317,6 +1337,14 @@ function valueText(p: Pick<ValuePuzzle, 'answer' | 'answers' | 'rival' | 'option
   if (reasonKey === 'puzzle.value.speed') {
     en += ` More winning tiles beat the bigger hand here: counting 100 points a win plus 20 a 台, ${R} is worth only ${ratio}% of ${A}.`;
     zh += `這手牌速度比台數重要：以底100、每台20計算，打${Rz}的期望值只有打${Az}的${ratio}%。`;
+  } else if (reasonKey === 'puzzle.value.both') {
+    en += ` ${A} has more winning tiles and its wins are no smaller, so there is nothing to trade: counting 100 points a win plus 20 a 台, ${R} is worth only ${ratio}% of ${A}.`;
+    zh += `打${Az}聽的張數比較多，胡的台數也不比較少，沒有什麼要取捨的：以底100、每台20計算，打${Rz}的期望值只有打${Az}的${ratio}%。`;
+  } else if (reasonKey === 'puzzle.value.moreTai') {
+    const tiles = a.acceptance! < r.acceptance! ? 'fewer winning tiles' : 'the same number of winning tiles';
+    const tilesZh = a.acceptance! < r.acceptance! ? '聽的張數比較少' : '聽的張數一樣';
+    en += ` ${A} has ${tiles}, but each win is worth more 台: counting 100 points a win plus 20 a 台, ${R} is worth only ${ratio}% of ${A}.`;
+    zh += `打${Az}${tilesZh}，但是每次胡的台數比較多：以底100、每台20計算，打${Rz}的期望值只有打${Az}的${ratio}%。`;
   } else {
     const keep = p.patternEn ? ` keeps ${p.patternEn} (${p.patternZh}, ${p.patternTai} 台), and` : '';
     const keepZh = p.patternZh ? `保住${p.patternZh}（${p.patternTai}台），` : '';
@@ -1446,7 +1474,8 @@ function valueAttempt(seed: string, difficulty: PuzzleDifficulty, rng: Rng): Val
   const pattern = lost[0];
   // A value-honour item is a pong (中 → 中的刻子); flushes and 碰碰胡 read as they are.
   const patternZh = !pattern ? '' : pattern.key.startsWith('dragon_') || pattern.key === 'seat_wind' || pattern.key === 'round_wind' ? `${pattern.nameZh}的刻子` : pattern.nameZh;
-  const reasonKey = !pattern ? 'puzzle.value.speed' : rival.acceptance! > answer.acceptance! ? 'puzzle.value.tradeSpeed' : 'puzzle.value.keepPattern';
+  const reasonKey = valueReason(answer, rival, !!pattern);
+  if (!reasonKey) return null;
   const base = {
     answer: answer.kind,
     answers: accepted.map((o) => o.kind),

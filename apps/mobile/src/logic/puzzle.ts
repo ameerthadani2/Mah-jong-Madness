@@ -136,6 +136,8 @@ const REASON_KEYS: Record<string, string> = {
   'puzzle.value.keepPattern': 'puzzles.reason.valueKeepPattern',
   'puzzle.value.tradeSpeed': 'puzzles.reason.valueTradeSpeed',
   'puzzle.value.speed': 'puzzles.reason.valueSpeed',
+  'puzzle.value.both': 'puzzles.reason.valueBoth',
+  'puzzle.value.moreTai': 'puzzles.reason.valueMoreTai',
 };
 
 /** The headline key for an engine reason key, or null for one the app does not know yet (then only the explanation shows). */

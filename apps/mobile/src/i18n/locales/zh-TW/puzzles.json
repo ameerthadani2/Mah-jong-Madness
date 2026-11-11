@@ -86,7 +86,9 @@
     "defencePassed": "他上一次打牌後別人打過",
     "defenceFewCopies": "能聽這張的牌型很少",
     "defenceMiddle": "能聽這張的牌型最少",
-    "valueSpeed": "這手牌速度比台數重要"
+    "valueSpeed": "這手牌速度比台數重要",
+    "valueBoth": "聽得多，台數也不少",
+    "valueMoreTai": "每次胡的台數比較多"
   },
   "defence": {
     "intro": "有人看起來快胡了。在保持牌型的前提下，打哪一張最安全？",

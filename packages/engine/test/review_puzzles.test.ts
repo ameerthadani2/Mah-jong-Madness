@@ -537,8 +537,57 @@ describe('value puzzles', () => {
     ).toBeGreaterThan(SEEDS * 0.9);
     // Several patterns turn up, and some answers win on speed rather than on a pattern.
     expect(new Set(puzzles.map((p) => p.patternKey)).size).toBeGreaterThanOrEqual(4);
-    expect(new Set(puzzles.map((p) => p.reasonKey)).size).toBe(3);
+    expect(new Set(puzzles.map((p) => p.reasonKey)).size).toBeGreaterThanOrEqual(3);
     for (let i = 0; i < puzzles.length; i += 15) expect(valuePuzzle(puzzles[i].seed, puzzles[i].difficulty)).toEqual(puzzles[i]);
+  });
+
+  it('give a reason that is true of the numbers shown: "speed beats size" only against a bigger, slower hand', () => {
+    const sweep = [...puzzles];
+    for (let i = 0; i < 300; i++) sweep.push(valuePuzzle(`reason-${i}`, (1 + (i % 3)) as PuzzleDifficulty));
+    const seen = new Set<string>();
+    for (const p of sweep) {
+      const a = p.options.find((x) => x.kind === p.answer)!;
+      const r = p.options.find((x) => x.kind === p.rival)!;
+      const faster = a.acceptance! > r.acceptance!;
+      const rivalBigger = r.expectedTai! > a.expectedTai! || r.bestTai! > a.bestTai!;
+      const where = `${p.seed} d${p.difficulty} ${p.reasonKey}`;
+      seen.add(p.reasonKey);
+      switch (p.reasonKey) {
+        case 'puzzle.value.speed':
+          expect(p.patternKey, where).toBe('');
+          expect(faster, where).toBe(true);
+          expect(rivalBigger, where).toBe(true);
+          expect(p.explanation).toContain('More winning tiles beat the bigger hand');
+          break;
+        case 'puzzle.value.both':
+          expect(p.patternKey, where).toBe('');
+          expect(faster, where).toBe(true);
+          expect(rivalBigger, where).toBe(false);
+          expect(p.explanation).toContain('has more winning tiles and its wins are no smaller');
+          break;
+        case 'puzzle.value.moreTai':
+          expect(p.patternKey, where).toBe('');
+          expect(faster, where).toBe(false);
+          expect(a.expectedTai!, where).toBeGreaterThan(r.expectedTai!);
+          expect(p.explanation).toContain(a.acceptance! < r.acceptance! ? 'has fewer winning tiles, but each win is worth more' : 'has the same number of winning tiles, but each win is worth more');
+          break;
+        case 'puzzle.value.tradeSpeed':
+          expect(p.patternKey, where).not.toBe('');
+          expect(r.acceptance!, where).toBeGreaterThan(a.acceptance!);
+          break;
+        case 'puzzle.value.keepPattern':
+          expect(p.patternKey, where).not.toBe('');
+          expect(r.acceptance!, where).toBeLessThanOrEqual(a.acceptance!);
+          break;
+        default:
+          throw new Error(`unknown value reason: ${where}`);
+      }
+      if (p.reasonKey !== 'puzzle.value.speed') {
+        expect(p.explanation, where).not.toContain('beat the bigger hand');
+        expect(p.explanationZh, where).not.toContain('速度比台數重要');
+      }
+    }
+    expect([...seen].sort()).toEqual(['puzzle.value.both', 'puzzle.value.keepPattern', 'puzzle.value.moreTai', 'puzzle.value.speed', 'puzzle.value.tradeSpeed']);
   });
 });
 
