@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { friendlyError, friendlyErrorMessage } from './errors';
 import { translator } from './translator.fixture';
+import { clubErrorMessage } from '../api/clubs';
 
 const en = translator('en');
 const zh = translator('zh-TW');
@@ -140,6 +141,14 @@ describe('friendlyError for the account API (docs/API.md codes)', () => {
   it('explains a refused table socket (4401)', () => {
     expect(friendlyErrorMessage(Object.assign(new Error('x'), { code: 4401 }))).toEqual({ key: 'errors.unauthorised' });
     expect(friendlyErrorMessage(new Error('Unauthorised: the game server did not accept this session.'))).toEqual({ key: 'errors.unauthorised' });
+  });
+
+  it('asks for a few seconds when a club table is opened too soon after another (429 rate_limited)', () => {
+    const refused = coded('rate_limited', 'Please wait a few seconds before opening another table');
+    // The club screen falls back to this mapping for anything its own list does not know.
+    expect(clubErrorMessage(refused)).toBeNull();
+    expect(friendlyErrorMessage(refused)).toEqual({ key: 'errors.rateLimited' });
+    expect(friendlyError(refused, zh)).not.toMatch(/[A-Za-z]{4,}/);
   });
 
   it('explains a banned account, whether the socket closed with 4403 or the server said so in words', () => {

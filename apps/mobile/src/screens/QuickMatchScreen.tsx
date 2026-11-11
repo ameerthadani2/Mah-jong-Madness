@@ -22,7 +22,7 @@ import { useOnlineGuard } from '../legal/useOnlineGuard';
 import { AgeBlocked, AgeGate } from '../components/AgeGate';
 import { SignInPrompt } from '../components/SignInPrompt';
 import { NameRefusedNotice } from '../components/NameRefusedNotice';
-import { acceptedName } from '../logic/profile';
+import { acceptedName, isNameRefused } from '../logic/profile';
 import { colors, space } from '../theme';
 import { Button, Card, H2, P, Pill, Row, ScreenHeader } from '../components/Ui';
 import { Icon } from '../components/Icons';
@@ -170,9 +170,12 @@ export function QuickMatchScreen() {
   return (
     <ScrollView contentContainerStyle={styles.wrap}>
       <ScreenHeader title={t('quickmatch.title')} onBack={cancel} />
-      <View style={styles.card}>
-        <NameRefusedNotice />
-      </View>
+      {isNameRefused(app.profile) ? (
+        // Strangers will see "Player" and a number at the table: say why before the match starts.
+        <View style={styles.card}>
+          <NameRefusedNotice />
+        </View>
+      ) : null}
       <Card style={styles.card} testID="quickmatch-card">
         <Row>
           <Icon name="users" size={30} color={colors.cta} />
