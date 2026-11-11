@@ -315,6 +315,17 @@ describe('defence puzzles', () => {
     }
   }, 120_000);
 
+  it('never mark a discard wrong that the exact count rates as safe as an accepted one, or safer', () => {
+    // A wider sweep than the shared set: the model and the count disagree on about 3% of tables.
+    const sweep = [...puzzles];
+    for (let i = 0; i < 120; i++) sweep.push(defencePuzzle(`order-${i}`, (1 + (i % 3)) as PuzzleDifficulty));
+    for (const p of sweep) {
+      const kept = p.options.filter((o) => o.shanten === p.bestShanten);
+      const acceptedMax = Math.max(...kept.filter((o) => o.accepted).map((o) => o.exact));
+      for (const o of kept) if (!o.accepted) expect(o.exact, `${p.seed} d${p.difficulty} kind ${o.kind}`).toBeGreaterThan(acceptedMax);
+    }
+  });
+
   it('are not a fixed lookup rule: several reasons, several accepted answers, and deterministic', () => {
     // The old three-step rule ("their discard > fewest-unseen honour > terminal") reproduced every answer.
     let ruleHits = 0;

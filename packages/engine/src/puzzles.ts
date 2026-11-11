@@ -411,7 +411,11 @@ export interface DefenceOption {
    * four concealed tiles could be (`exactWaitChances`). Kinds it threw or let pass are not waits.
    */
   exact: number;
-  /** Accepted: keeps the hand's shanten and is within `DEFENCE_TOLERANCE` of the safest such discard. */
+  /**
+   * Accepted: keeps the hand's shanten and is within `DEFENCE_TOLERANCE` of the safest such discard.
+   * Every shape-keeping discard that is not accepted has a strictly higher `exact` chance than every
+   * accepted one (a table where the model and the count disagree is not made into a puzzle).
+   */
   accepted: boolean;
   reason: DefenceReason;
 }
@@ -575,7 +579,8 @@ const DEFENCE_PLANT: Record<PuzzleDifficulty, 'theirDiscard' | 'passed' | 'copie
  * the hand's shanten is rated by the bots' deal-in model (`readOpponents` / `waitChance`), and
  * every one within `DEFENCE_TOLERANCE` of the safest is accepted. A puzzle is kept only when the
  * exact enumeration (`exactWaitChances`) agrees: its safest kind is accepted, every accepted kind
- * is within 1.5 points of it, and at least one shape-keeping discard is clearly worse (2 points).
+ * is within 1.5 points of it, every discard that is not accepted is strictly more dangerous by that
+ * count than every accepted one, and at least one shape-keeping discard is clearly worse (2 points).
  * Difficulty decides what the table plants (tiles the threat threw, a tile let pass, visible
  * copies), not which rule the answer follows.
  */
@@ -699,6 +704,9 @@ function defenceAttempt(seed: string, difficulty: PuzzleDifficulty, rng: Rng): D
   const exactMin = Math.min(...kept.map((o) => o.exact));
   if (!kept.some((o) => o.accepted && o.exact <= exactMin + 1e-9)) return null;
   if (accepted.some((o) => o.exact > exactMin + 0.015)) return null;
+  // No tile is marked wrong that the count rates as safe as an accepted one, or safer.
+  const acceptedMax = Math.max(...accepted.map((o) => o.exact));
+  if (kept.some((o) => !o.accepted && o.exact <= acceptedMax + 1e-9)) return null;
   if (!kept.some((o) => !o.accepted && o.exact >= exactMin + 0.02)) return null;
   if (accepted.length > Math.max(2, Math.floor(kept.length / 2))) return null;
   const best = accepted.slice().sort((x, y) => x.danger - y.danger || x.exact - y.exact || x.kind - y.kind)[0];
