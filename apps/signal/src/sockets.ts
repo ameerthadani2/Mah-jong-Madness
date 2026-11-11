@@ -52,7 +52,7 @@ const HELLO_TIMEOUT_MS = 10_000;
 /** Frames a client may send while its token is still being checked; they are handled in order once it passes. */
 const MAX_QUEUED_FRAMES = 16;
 
-export type SocketLimits = Pick<typeof LIMITS, 'socketsPerIp' | 'messagesPerSec' | 'messageBurst'> & {
+export type SocketLimits = Record<'socketsPerIp' | 'messagesPerSec' | 'messageBurst', number> & {
   /** How long a successful session check stands per socket (default `LIMITS.sessionRecheckMs`; 0 checks before every create, join and queue). */
   sessionRecheckMs?: number;
 };

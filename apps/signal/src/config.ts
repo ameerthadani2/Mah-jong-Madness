@@ -42,7 +42,10 @@ export interface SignalConfig {
   revenueCatWebhookSecret: string | null;
 }
 
-/** Fixed abuse limits. They are set generously for real play and cannot yet be configured per deployment. */
+/**
+ * Fixed abuse limits. They are set generously for real play and cannot yet be configured per deployment.
+ * "Per IP address" means per IPv4 address or per IPv6 /64 prefix everywhere (see `addressKey` in limits.ts).
+ */
 export const LIMITS = {
   /** Concurrent WebSockets allowed from one IP address. */
   socketsPerIp: 20,

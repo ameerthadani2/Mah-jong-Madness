@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BucketTable, clientIp, TokenBucket } from '../src/limits';
+import { addressKey, BucketTable, clientIp, TokenBucket } from '../src/limits';
 import { LIMITS, loadConfig, pepperFromEnv, providersFromEnv } from '../src/config';
 
 describe('TokenBucket', () => {
@@ -143,6 +143,61 @@ describe('clientIp', () => {
     const table = new BucketTable<string>(LIMITS.httpBurst, LIMITS.httpPerSec, { now: () => 0 });
     const allowed = Array.from({ length: 100 }, (_, i) => table.take(clientIp(req(`198.51.${i}.9, 203.0.113.7`), 1))).filter(Boolean).length;
     expect(allowed).toBe(LIMITS.httpBurst);
+  });
+});
+
+describe('the key of a client address for the per-address limits', () => {
+  it('keeps an IPv4 address whole', () => {
+    expect(addressKey('203.0.113.7')).toBe('203.0.113.7');
+    expect(addressKey(' 203.0.113.7 ')).toBe('203.0.113.7');
+    expect(addressKey('203.0.113.7')).not.toBe(addressKey('203.0.113.8'));
+  });
+
+  it('cuts an IPv6 address to its /64, however it is written', () => {
+    const key = '2001:db8:1234:5678::/64';
+    for (const a of ['2001:db8:1234:5678::1', '2001:db8:1234:5678:ffff:ffff:ffff:ffff', '2001:0DB8:1234:5678:0000:0000:0000:0001', '[2001:db8:1234:5678::9]', '[2001:db8:1234:5678::9]:443', '2001:db8:1234:5678::9%eth0', '2001:db8:1234:5678:1:2:198.51.100.7']) {
+      expect(addressKey(a)).toBe(key);
+    }
+    // The next /64 is another customer.
+    expect(addressKey('2001:db8:1234:5679::1')).toBe('2001:db8:1234:5679::/64');
+    expect(addressKey('2001:db8::1')).toBe('2001:db8:0:0::/64');
+    expect(addressKey('::1')).toBe('0:0:0:0::/64');
+    expect(addressKey('fe80::1%lo0')).toBe('fe80:0:0:0::/64');
+  });
+
+  it('reads an IPv4 address written as IPv6 as that IPv4 address', () => {
+    expect(addressKey('::ffff:203.0.113.7')).toBe('203.0.113.7');
+    expect(addressKey('::FFFF:203.0.113.7')).toBe('203.0.113.7');
+    expect(addressKey('::ffff:cb00:7107')).toBe('203.0.113.7');
+    expect(addressKey('0:0:0:0:0:ffff:cb00:7107')).toBe('203.0.113.7');
+    expect(addressKey('[::ffff:203.0.113.7]:8080')).toBe('203.0.113.7');
+    // Not the mapped range: an ordinary IPv6 address that happens to end in dotted form.
+    expect(addressKey('::203.0.113.7')).toBe('0:0:0:0::/64');
+  });
+
+  it('leaves anything that is not an address as it is', () => {
+    for (const a of ['unknown', '', 'not an address', '1.2.3', '1.2.3.4.5', '2001:db8:::1', ':::', '12345::1', '[::1', 'example.com']) expect(addressKey(a)).toBe(a);
+  });
+
+  it('is what clientIp returns, from the header and from the socket', () => {
+    const req = (xff: string | undefined, remoteAddress: string) => ({ headers: { 'x-forwarded-for': xff }, socket: { remoteAddress } });
+    expect(clientIp(req('2001:db8:1234:5678::1', '10.0.0.9'), 1)).toBe('2001:db8:1234:5678::/64');
+    expect(clientIp(req('6.6.6.6, 2001:db8:1234:5678:aaaa::2', '10.0.0.9'), 1)).toBe('2001:db8:1234:5678::/64');
+    expect(clientIp(req('::ffff:198.51.100.7', '10.0.0.9'), 1)).toBe('198.51.100.7');
+    expect(clientIp(req(undefined, '::ffff:127.0.0.1'), 0)).toBe('127.0.0.1');
+    expect(clientIp(req(undefined, '2001:db8:1234:5678::1'), 0)).toBe('2001:db8:1234:5678::/64');
+    expect(clientIp({ headers: {} }, 0)).toBe('unknown');
+  });
+
+  it('gives every address of one IPv6 /64 the same bucket, and IPv4 neighbours their own', () => {
+    const table = new BucketTable<string>(5, 0, { now: () => 0 });
+    const req = (xff: string) => ({ headers: { 'x-forwarded-for': xff }, socket: { remoteAddress: '10.0.0.9' } });
+    let v6 = 0;
+    for (let i = 1; i <= 30; i++) if (table.take(clientIp(req(`2001:db8:1234:5678::${i.toString(16)}`), 1))) v6++;
+    expect(v6).toBe(5);
+    let v4 = 0;
+    for (let i = 1; i <= 30; i++) if (table.take(clientIp(req(`198.51.100.${i}`), 1))) v4++;
+    expect(v4).toBe(30);
   });
 });
 
