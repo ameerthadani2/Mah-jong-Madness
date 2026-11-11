@@ -141,7 +141,8 @@ export function LobbyScreen() {
             small
             title={t(linkCopy(notice, 'lobby').leave)}
             onPress={() => {
-              // A table the server no longer has cannot be resumed: drop the saved record with the session.
+              // A table the server no longer has, or will not let a banned account back to, cannot be resumed:
+              // drop the saved record with the session.
               if (forgetsTable(notice)) app.setActiveSession(null);
               app.setSession(null);
               app.reset({ name: 'home' });

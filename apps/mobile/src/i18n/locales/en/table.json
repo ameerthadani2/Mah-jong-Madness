@@ -45,6 +45,7 @@
     "seatTakenTitle": "Opened on another device",
     "seatTakenText": "This seat was opened on another device, so this device has stopped playing it and will not reconnect by itself. To play here again, go back to Home and resume the table.",
     "madeWayTitle": "You made way for a player",
+    "bannedTitle": "Banned from online play",
     "reconnect": "Reconnect",
     "reconnectingTitle": "Reconnecting…",
     "reconnectingText": "Attempt %{n}. Your seat is saved; a bot plays for you until you are back.",

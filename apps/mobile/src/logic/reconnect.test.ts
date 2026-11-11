@@ -136,17 +136,49 @@ describe('what the lobby and the table say about the link', () => {
     expect(linkNotice(CONNECTED, down)).toBe('lost');
   });
 
-  it('forgets the saved table only when the server no longer has it', () => {
-    const all: LinkNotice[] = ['seatTaken', 'madeWay', 'reconnecting', 'gone', 'lost', null];
-    expect(all.filter(forgetsTable)).toEqual(['gone']);
-    expect(all.filter(linkEnded)).toEqual(['seatTaken', 'madeWay', 'gone', 'lost']);
+  it('says the account was banned, ahead of anything else that is true of the link', () => {
+    const banned = run([{ type: 'banned' }]);
+    expect(banned).toEqual({ status: 'lost', attempt: 0, reason: 'banned' });
+    expect(linkNotice(banned, down)).toBe('banned');
+    expect(linkNotice(banned, live)).toBe('banned');
+    // "Resume from Home" would be refused too, so the ban is said even at a seat opened elsewhere.
+    expect(linkNotice(banned, replaced)).toBe('banned');
+    // A ban that arrives on a rejoin, or after another ending, still shows as the ban.
+    expect(run([{ type: 'closed' }, { type: 'failed' }, { type: 'banned' }])).toEqual({ status: 'lost', attempt: 2, reason: 'banned' });
+    for (const before of [{ type: 'ended' }, { type: 'madeWay' }, { type: 'unauthorised' }] as const) expect(run([before, { type: 'banned' }]).reason).toBe('banned');
+    // Nothing afterwards changes it or starts a retry.
+    for (const after of [{ type: 'closed' }, { type: 'failed' }, { type: 'succeeded' }, { type: 'unauthorised' }, { type: 'ended' }, { type: 'madeWay' }, { type: 'banned' }] as const) {
+      expect(reconnectStep(banned, after), after.type).toBe(banned);
+    }
+    expect(nextDelayMs(banned)).toBeNull();
+  });
+
+  it('forgets the saved table only when the server no longer has it or will not give the seat back', () => {
+    const all: LinkNotice[] = ['banned', 'seatTaken', 'madeWay', 'reconnecting', 'gone', 'lost', null];
+    expect(all.filter(forgetsTable)).toEqual(['banned', 'gone']);
+    expect(all.filter(linkEnded)).toEqual(['banned', 'seatTaken', 'madeWay', 'gone', 'lost']);
+  });
+
+  it('shows a banned account the ban sentence and the way to Home, never "Reconnect"', () => {
+    const en = translator('en');
+    const zh = translator('zh-TW');
+    for (const where of ['table', 'lobby'] as const) {
+      const copy = linkCopy('banned', where);
+      expect(copy.text).toBe('settings.account.banned');
+      expect(en(copy.title)).toBe('Banned from online play');
+      expect(en(copy.text)).toMatch(/^This account has been banned from online play/);
+      expect(zh(copy.text)).toMatch(/^這個帳號已被禁止線上遊戲/);
+      expect(en(copy.text)).not.toMatch(/connection|reconnect/i);
+      expect(en(copy.leave)).toBe('Back to Home');
+      expect(zh(copy.leave)).toBe('回到首頁');
+    }
   });
 
   it('has a title, a sentence and a way out for every ending, in both languages and on both screens', () => {
     for (const locale of ['en', 'zh-TW'] as const) {
       const t = translator(locale);
       for (const where of ['table', 'lobby'] as const) {
-        for (const notice of ['seatTaken', 'madeWay', 'gone', 'lost'] as const) {
+        for (const notice of ['banned', 'seatTaken', 'madeWay', 'gone', 'lost'] as const) {
           const copy = linkCopy(notice, where);
           for (const key of [copy.title, copy.text, copy.leave]) expect(t(key), `${locale} ${where} ${notice} ${key}`).toBeTruthy();
           if (locale === 'zh-TW') expect(`${t(copy.title)}${t(copy.text)}${t(copy.leave)}`, `${where} ${notice}`).not.toMatch(/[A-Za-z]{3,}/);

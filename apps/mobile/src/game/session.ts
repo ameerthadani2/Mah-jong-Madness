@@ -341,6 +341,12 @@ class OnlineSession implements Session {
 
   private onDrop(connection: Connection, code: number | undefined, roomClosed?: string): void {
     if (this.closed || connection !== this.connection) return;
+    // Banned while at the table: the server's final word, whatever else the table had just said. The
+    // account layer is told, and the screens say so instead of "connection lost".
+    if (code === BANNED_CLOSE_CODE) {
+      void this.opts.onBanned?.();
+      return this.step({ type: 'banned' });
+    }
     const st = this.client.state;
     // The seat was opened on another device: reconnecting would take it back and start a tug of war.
     // A dropped link alone (`disconnected`) is what reconnecting is for.
@@ -351,10 +357,6 @@ class OnlineSession implements Session {
       this.step({ type: 'madeWay' });
       connection.signaling.close();
       return;
-    }
-    if (code === BANNED_CLOSE_CODE) {
-      void this.opts.onBanned?.();
-      return this.step({ type: 'ended' });
     }
     if (code === UNAUTHORISED_CLOSE) {
       void this.opts.onUnauthorised?.();
@@ -415,7 +417,7 @@ class OnlineSession implements Session {
       return;
     }
     // Banned while away: the server's final word, and `openConnection` has already told the account layer.
-    if ((failure as { code?: unknown } | null)?.code === BANNED_CLOSE_CODE) return this.step({ type: 'ended' });
+    if ((failure as { code?: unknown } | null)?.code === BANNED_CLOSE_CODE) return this.step({ type: 'banned' });
     const unauthorised = isUnauthorised(failure);
     if (unauthorised) void this.opts.onUnauthorised?.();
     // 'Room not found or full' is the server's final word (the table ended or was reaped while we were away):

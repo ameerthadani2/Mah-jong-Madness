@@ -471,7 +471,8 @@ export function TableScreen() {
         ) : ended ? (
           // The session will not come back by itself: ten failed attempts, a refused session (4401), the server
           // saying the table is gone (then the saved record goes too), the seat opened on another device (this
-          // one must not take it back unasked), or a watcher who made way for a player. Each says which.
+          // one must not take it back unasked), a watcher who made way for a player, or the account banned
+          // while at the table (the record goes too: no seat is given back to it). Each says which.
           <View style={styles.banner} accessibilityLiveRegion="assertive" testID={`link-${ended.notice}`}>
             <Icon name="warning" size={28} />
             <View style={{ flex: 1 }}>

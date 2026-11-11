@@ -13,10 +13,11 @@ class FakeSocket {
   static last: FakeSocket | null = null;
   static reply: (frame: Frame, ws: FakeSocket) => Frame | null = () => null;
   /**
-   * How the server treats a new connection: answer it, refuse the session (4401), be unreachable, or
-   * fail to finish checking the session before its hello timer fires (1013, "try again later").
+   * How the server treats a new connection: answer it, refuse the session (4401), refuse a banned
+   * account (4403), be unreachable, or fail to finish checking the session before its hello timer
+   * fires (1013, "try again later").
    */
-  static accept: (ws: FakeSocket) => 'ok' | 'unauthorised' | 'down' | 'busy' = () => 'ok';
+  static accept: (ws: FakeSocket) => 'ok' | 'unauthorised' | 'banned' | 'down' | 'busy' = () => 'ok';
   readyState = 0;
   sent: Frame[] = [];
   closed = false;
@@ -47,6 +48,10 @@ class FakeSocket {
       queueMicrotask(() => this.serverClose(UNAUTHORISED_CLOSE));
       return;
     }
+    if (frame.t === 'hello' && FakeSocket.accept(this) === 'banned') {
+      queueMicrotask(() => this.serverClose(BANNED_CLOSE));
+      return;
+    }
     if (frame.t === 'hello' && FakeSocket.accept(this) === 'busy') {
       queueMicrotask(() => this.serverClose(TRY_AGAIN_LATER));
       return;
@@ -73,6 +78,8 @@ class FakeSocket {
   }
 }
 
+/** The game server's close code for a banned account (BANNED_CLOSE_CODE in apps/signal/src/rooms.ts). */
+const BANNED_CLOSE = 4403;
 /** The game server's close code for a hello it could not finish checking in time (apps/signal/src/sockets.ts). */
 const TRY_AGAIN_LATER = 1013;
 /** The game server's sentence to a watcher whose place a player needed (WATCHER_DROPPED in apps/signal/src/rooms.ts). */
@@ -471,6 +478,60 @@ describe('online reconnect', () => {
     expect(s.status).toBe('lost');
     expect(s.lostReason).toBe('unauthorised');
     expect(onUnauthorised).toHaveBeenCalledTimes(1);
+    s.close();
+  });
+
+  it('an account banned while at the table is told so, and the session never reconnects', async () => {
+    const onBanned = vi.fn();
+    const onUnauthorised = vi.fn();
+    const { s, statuses, first } = await open({ auth: async () => 'mjs_x', onBanned, onUnauthorised });
+    first.push(welcome);
+    first.serverClose(BANNED_CLOSE);
+    expect(statuses).toEqual(['lost:0']);
+    expect(s.lostReason).toBe('banned');
+    // The account layer hears of it once, and the session token is not thrown away as merely stale.
+    expect(onBanned).toHaveBeenCalledTimes(1);
+    expect(onUnauthorised).not.toHaveBeenCalled();
+    // The table and the lobby say "banned", not "connection lost".
+    expect(linkNotice({ status: s.status, reason: s.lostReason }, s.client.state)).toBe('banned');
+    s.retryNow();
+    await vi.advanceTimersByTimeAsync(60 * 60_000);
+    expect(FakeSocket.all).toHaveLength(1);
+    expect(s.lostReason).toBe('banned');
+    s.close();
+  });
+
+  it('a ban found on the way back to the table ends the session with the same message', async () => {
+    const onBanned = vi.fn();
+    const { s, statuses, first } = await open({ auth: async () => 'mjs_x', onBanned });
+    first.push(welcome);
+    // The link drops, and the account is banned before the first attempt to come back.
+    FakeSocket.accept = () => 'banned';
+    first.serverClose(1006);
+    expect(s.status).toBe('reconnecting');
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(statuses).toEqual(['reconnecting:1', 'lost:1']);
+    expect(s.lostReason).toBe('banned');
+    expect(onBanned).toHaveBeenCalledTimes(1);
+    expect(linkNotice({ status: s.status, reason: s.lostReason }, s.client.state)).toBe('banned');
+    // One attempt was made, and no other follows.
+    await vi.advanceTimersByTimeAsync(60 * 60_000);
+    expect(FakeSocket.all).toHaveLength(2);
+    s.close();
+  });
+
+  it('a ban outranks a seat opened on another device: Home could not give the seat back', async () => {
+    const onBanned = vi.fn();
+    const { s, first } = await open({ onBanned });
+    first.push(welcome);
+    first.push(seatOpenedElsewhere);
+    expect(linkNotice({ status: s.status, reason: s.lostReason }, s.client.state)).toBe('seatTaken');
+    first.serverClose(BANNED_CLOSE);
+    expect(onBanned).toHaveBeenCalledTimes(1);
+    expect(s.lostReason).toBe('banned');
+    expect(linkNotice({ status: s.status, reason: s.lostReason }, s.client.state)).toBe('banned');
+    await vi.advanceTimersByTimeAsync(60 * 60_000);
+    expect(FakeSocket.all).toHaveLength(1);
     s.close();
   });
 

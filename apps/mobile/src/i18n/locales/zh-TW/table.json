@@ -45,6 +45,7 @@
     "seatTakenTitle": "已在另一台裝置開啟",
     "seatTakenText": "這個座位已在另一台裝置上開啟，所以這台裝置已經停止連線，也不會自動重連。想改回這台裝置玩，請回首頁繼續這張牌桌。",
     "madeWayTitle": "已讓位給玩家",
+    "bannedTitle": "帳號已被禁止線上遊戲",
     "reconnect": "重新連線",
     "reconnectingTitle": "重新連線中…",
     "reconnectingText": "第 %{n} 次嘗試。你的座位會保留，回來之前由電腦代打。",
