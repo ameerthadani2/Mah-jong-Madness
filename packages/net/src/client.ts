@@ -104,6 +104,12 @@ export interface ClientState {
   auditCaveats: string[];
   matchOver: boolean;
   finalScores: number[] | null;
+  /**
+   * The end of the match and `finalScores` follow from the hands this device verified. False while
+   * the match is on, and also when it ended but this device holds no chain of hands to check the
+   * end against (it lost its record, or missed hands whose records it was never shown).
+   */
+  matchEndVerified: boolean;
   /** Rejoin token from the host; persist it to resume after a crash. */
   token: string | null;
   /** Remaining time bank (seconds) and whether the clock is currently eating into it. */
@@ -351,6 +357,7 @@ export class TableClient {
     auditCaveats: [],
     matchOver: false,
     finalScores: null,
+    matchEndVerified: false,
     token: null,
     timeBank: 0,
     inTimeBank: false,
@@ -519,6 +526,7 @@ export class TableClient {
     this.openHand = isInt(d.openHand) ? d.openHand : null;
     this.handEpoch = isInt(d.handEpoch) ? d.handEpoch : -1;
     this.matchEnded = d.matchEnded === true;
+    this.state = { ...this.state, matchEndVerified: this.matchEnded && this.state.matchOver };
     this.atStart = d.atStart === true;
     this.gapHand = isInt(d.gapHand) ? d.gapHand : null;
     this.rewinds = Array.isArray(d.rewinds) ? d.rewinds.filter((x) => isObject(x) && isInt(x.hand) && isInt(x.tc)) : [];
@@ -858,7 +866,7 @@ export class TableClient {
     this.lapse = false;
     this.lapseHand = null;
     this.lapseDeal = false;
-    this.state = { ...this.state, matchOver: false, finalScores: null, view: null, lastResult: null };
+    this.state = { ...this.state, matchOver: false, finalScores: null, matchEndVerified: false, view: null, lastResult: null };
   }
 
   /** This client holds a record of the match being played: there is something a reset would wipe. */
@@ -875,9 +883,12 @@ export class TableClient {
   /**
    * Whether a `match_over` can be believed. `verified`: the last hand this client verified ends the
    * match with exactly these scores. `unverified`: this client cannot know (it holds no record of
-   * the match, the last hand already failed its audit, or its link was down and the table may have
-   * played on without it); the end is shown, but the match stays pinned. `refuse`: this client
-   * watched the table without a break and the match is not over, or not with these scores.
+   * the match, or its link was down, the table may have played on without it, and it has no chain
+   * of hands to follow: the last hand already failed its audit, or it missed hands whose records
+   * it was not shown); the end is shown, but the match stays pinned. `refuse`: the hands this
+   * client verified say the match is not over, or not with these scores. That holds after a lost
+   * link too: an honest host first sends a returning seat the record of every hand it missed, so
+   * a client with a chain to follow has followed it to the end before the `match_over` arrives.
    */
   private matchEndVerdict(scores: unknown[], view: TableView): 'verified' | 'unverified' | 'refuse' {
     const same = (a: unknown[], b: number[]) => a.length === b.length && b.every((x, i) => a[i] === x);
@@ -885,7 +896,7 @@ export class TableClient {
     const between = this.openHand === null;
     if (e?.matchOver && between) return same(scores, e.scores) && same(view.scores, e.scores) ? 'verified' : 'refuse';
     if (!this.hasEvidence()) return 'unverified';
-    if (between ? this.quietSince !== this.epoch : this.handEpoch !== this.epoch) return 'unverified';
+    if (between ? this.quietSince !== this.epoch : this.handEpoch !== this.epoch) return e || (this.atStart && this.gapHand === null) ? 'refuse' : 'unverified';
     if (!e && between && this.handsEnded.size > 0) {
       // The last hand failed its replay, so nothing chains from it: go by the rules' hand count and the result it showed.
       const v = this.state.view;
@@ -1190,12 +1201,13 @@ export class TableClient {
             return;
           }
           if (verdict === 'verified') this.matchEnded = true;
+          const matchEndVerified = this.matchEnded;
           // No hand is left to carry what was flagged since the last audit: put it on show now.
           for (const p of this.tamper.get(this.activeHand()) ?? []) this.failNow(p);
           // The last hand's verified view stays on show; the host's is used only when this device holds none.
           const own = this.state.view;
           const view = own && this.state.lastResult !== null && own.handNumber === m.view.handNumber ? own : m.view;
-          this.update({ view, matchOver: true, finalScores: m.scores.slice(), deadline: null });
+          this.update({ view, matchOver: true, finalScores: m.scores.slice(), matchEndVerified, deadline: null });
         }
         return;
       case 'chat':

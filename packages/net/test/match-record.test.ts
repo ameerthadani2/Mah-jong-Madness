@@ -131,6 +131,31 @@ describe('the end of a match is believed only when the verified hands say so', (
     expect(c.state.audits).toHaveLength(2);
   });
 
+  it('dropping the link first does not make an invented end believable: a returning seat would have been sent the hands it missed', () => {
+    const { clock, hub, host, h } = table('MO1D', 8);
+    const first = hub.create('p0');
+    const closers = new Set<() => void>();
+    const c = new TableClient({ ...transportLink(first, 'host'), onClose: (cb) => (closers.add(cb), () => closers.delete(cb)) }, 'Victim');
+    c.join();
+    host.start();
+    playOut(host, c, clock);
+    expect(c.state.auditStatus).toBe('ok');
+    const real = c.state.view!.scores.slice();
+    // The server cuts the link; the app reconnects on a new one and rejoins.
+    first.close();
+    for (const cb of [...closers]) cb();
+    c.rebind(transportLink(hub.create('p0r'), 'host'));
+    c.join();
+    expect(c.state.connected).toBe(true);
+    h.sendTo('p0r', { t: 'match_over', scores: [-5000, 5000, 0, 0], view: { ...c.state.view!, scores: [-5000, 5000, 0, 0] } });
+    expect(c.state.matchOver).toBe(false);
+    expect(c.state.matchEndVerified).toBe(false);
+    expect(c.state.finalScores).toBeNull();
+    expect(c.state.view!.scores).toEqual(real);
+    expect(c.state.auditStatus).toBe('failed');
+    expect(c.state.auditFailures.join(' ')).toContain('end of the match');
+  });
+
   it('an honest end is accepted with the chained scores; the right moment with the wrong scores is not', () => {
     for (const forge of [false, true]) {
       const { clock, hub, host, h } = table(forge ? 'MO2F' : 'MO2', 1);
@@ -153,6 +178,7 @@ describe('the end of a match is believed only when the verified hands say so', (
         expect(host.phase).toBe('match_over');
         expect(c.state.matchOver).toBe(true);
         expect(c.state.finalScores).toEqual(host.match().scores);
+        expect(c.state.matchEndVerified).toBe(true);
         expect(c.state.audits.every((a) => a.status === 'ok')).toBe(true);
       }
     }

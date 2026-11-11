@@ -30,6 +30,7 @@ export function FairnessScreen() {
         <P>{t('fairness.step1')}</P>
         <P>{t('fairness.step2')}</P>
         <P>{t('fairness.step3')}</P>
+        <P>{t('fairness.step4')}</P>
         <P>
           {t('fairness.partialBefore')}
           <Text style={{ color: colors.goldDim, fontFamily: fonts.bodyBold }}>{t('fairness.partialLabel')}</Text>
@@ -41,6 +42,12 @@ export function FairnessScreen() {
       </Card>
       <SectionLabel>{t('fairness.sessionHands')}</SectionLabel>
       {audits.length === 0 && <Pill text={t('fairness.none')} icon="hourglass" />}
+      {/* The end of a match is believed only when the hands this phone verified lead to it; say so when they do not. */}
+      {state?.matchOver && !state.matchEndVerified && (
+        <Text testID="fairness-end-unverified" style={{ color: colors.goldDim, fontSize: 12, fontFamily: fonts.bodyBold }}>
+          {t('fairness.endUnverified')}
+        </Text>
+      )}
       {audits
         .slice()
         .reverse()

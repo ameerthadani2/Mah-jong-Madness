@@ -5,12 +5,14 @@
   "step1": "1. Before each hand your phone picks a secret, and so does every other player. The table server adds a fifth secret of its own and picks the bots' secrets.",
   "step2": "2. All five SHA-256 fingerprints are published before anyone reveals. Your phone only reveals its secret once it holds all five, so no one can pick a secret after seeing yours. The shuffle seed is the hash of all five secrets together.",
   "step3": "3. When the hand ends, the secrets, any restarts of the deal and the full action log are published. Your phone checks the fingerprints, re-derives the seed, replays the hand, and checks the log against every move it sent, every table state it was shown and every move the table made for you.",
+  "step4": "4. Hands are checked as a chain. Each hand must start from the scores, dealer and wind the last one left, no hand can be skipped or dealt twice, and the final scores are accepted only when the hands your phone verified lead to them. The table may move for you only once your turn clock and time bank, as the table rules set them, have run out, and it may not turn away a move that was legal.",
   "partialBefore": "A hand marked ",
   "partialLabel": "Logged — the server could have picked this deal",
-  "partialAfter": " passed every check, but your phone cannot rule out that the server chose its deal: the server made your secret for you (you were late or away), you joined mid-hand, the deal was restarted, or your connection dropped while the deal was being agreed. Only a hand marked Verified had a deal your phone watched from start to finish in one attempt.",
+  "partialAfter": " passed every check, but your phone cannot rule out that the server chose its deal, or did not watch all of it: the server made your secret for you (you were late or away), you joined mid-hand, the deal was restarted, your connection dropped while the deal was being agreed, the hand was played while you were away, or the app or the server restarted around it. Only a hand marked Verified had a deal your phone watched from start to finish in one attempt.",
   "trust": "What no phone can check: the server knows the seed when it deals, so it sees every wall and could look at it during the hand or leak it to a player. It is trusted not to. To limit the damage a leak could do, each account gets only one seat per table, and quick match never seats players who have blocked each other. There is no \"luck balancing\", no streak engine, no hidden weights. The engine is deterministic and open; the only randomness is the seed above.",
   "sessionHands": "This table's hands",
   "none": "No hands finished yet.",
+  "endUnverified": "The match is over, but your phone could not check the final scores: it does not hold an unbroken record of this match's hands.",
   "hand": "Hand %{n}",
   "status": {
     "ok": "Verified",
@@ -27,7 +29,11 @@
     "joined": "You joined during this hand: its log checked out, but your secret was not part of the deal.",
     "restarted": "The deal was restarted, so the server could have picked which attempt to keep.",
     "linkLost": "Your connection dropped while the deal was being agreed, so your phone did not watch all of it.",
-    "missedAttempts": "Your phone did not see every attempt at this deal."
+    "missedAttempts": "Your phone did not see every attempt at this deal.",
+    "away": "Your phone was away when this hand ended. It checked the hand's record afterwards, but did not watch the play.",
+    "gap": "Your phone missed the hands before this one and was not shown their records, so it could not check the scores this hand started from.",
+    "serverRestart": "The server restarted during this hand, and some turns were played again.",
+    "appRestart": "The app was restarted around this deal, so your phone cannot vouch for all of it."
   },
   "seed": "seed %{seed}",
   "server": "server",
