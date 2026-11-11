@@ -12,6 +12,8 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { randomHex } from '@mjm/engine';
 import { createPool, type Pool } from '../src/db';
 import { listMigrations, migrate } from '../src/migrate';
+import { deleteAccount, purgeDeletedUsers } from '../src/auth';
+import { eventsFromSubscriber, Reconciler } from '../src/reconcile';
 import { createMemoryRepos, createPgRepos, type Repos } from '../src/repos';
 import { WalletService, type StoreEvent } from '../src/wallet';
 
@@ -163,6 +165,79 @@ function contract(name: string, repos: () => Repos) {
       expect(await wallet.applyStoreEvent(storeEvent(other, 'CANCELLATION', { ...pack, cancelReason: 'CUSTOMER_SUPPORT' }))).toMatchObject({ outcome: 'refunded', userId: account });
       expect(await r.wallet.get(account)).toMatchObject({ diamonds: 0, bonusDiamonds: 0 });
       expect(await r.wallet.get(other)).toMatchObject({ diamonds: 0, bonusDiamonds: 0 });
+    });
+
+    it('Restore on a new account grants the live plan although the store also lists a pack the old account bought', async () => {
+      const r = repos();
+      const lines: string[] = [];
+      const wallet = new WalletService(r, { now: () => T0, log: () => {}, testerUserIds: [] });
+      const [old, fresh] = [await user(), await user()];
+      const pack = `tx-pack-${old}`;
+      const plan = `tx-plan-${old}`;
+      expect((await wallet.applyStoreEvent(storeEvent(old, 'NON_RENEWING_PURCHASE', { storeProductId: 'diamonds.300', transactionId: pack }))).outcome).toBe('credited');
+      expect((await wallet.applyStoreEvent(storeEvent(old, 'INITIAL_PURCHASE', { storeProductId: 'fourwinds.month', transactionId: plan, expiresAt: T0 + 30 * DAY }))).outcome).toBe('entitled');
+      await deleteAccount(r, old, { now: () => T0 });
+      // The TRANSFER webhook was missed: after Restore the store lists the old account's purchases under the new one.
+      const client = {
+        subscriber: async () => ({
+          subscriber: {
+            non_subscriptions: { 'diamonds.300': [{ id: 'rc1', purchase_date: new Date(T0).toISOString(), store: 'app_store', is_sandbox: false, store_transaction_id: pack }] },
+            subscriptions: { 'fourwinds.month': { expires_date: new Date(T0 + 40 * DAY).toISOString(), purchase_date: new Date(T0).toISOString(), store: 'app_store', is_sandbox: false, store_transaction_id: plan } },
+          },
+        }),
+      };
+      const reconciler = new Reconciler({ repos: r, wallet, client, now: () => T0, log: (l) => lines.push(l) });
+      const first = await reconciler.syncUser(fresh);
+      expect(first.outcomes.map((o) => o.outcome)).toEqual(['duplicate', 'entitled']);
+      expect(first).toMatchObject({ applied: 1, failed: 0 });
+      expect(await wallet.tierOf(fresh)).toBe('fourwinds');
+      // The pack was credited once, to the account that bought it; it is never credited again.
+      expect(await r.wallet.get(fresh)).toMatchObject({ diamonds: 0, bonusDiamonds: 0 });
+      expect((await r.wallet.findPurchase(pack))?.userId).toBe(old);
+      expect((await reconciler.syncUser(fresh)).outcomes.map((o) => o.outcome)).toEqual(['duplicate', 'duplicate']);
+      // A webhook for the same pack that names the new account is a duplicate too, not an error.
+      expect((await wallet.applyStoreEvent(storeEvent(fresh, 'NON_RENEWING_PURCHASE', { storeProductId: 'diamonds.300', transactionId: pack }))).outcome).toBe('duplicate');
+      expect(lines.filter((l) => l.includes('failed'))).toEqual([]);
+    });
+
+    it('a plan the store moved to a new account is granted there although the old account was synced with it first', async () => {
+      const r = repos();
+      let now = T0;
+      const wallet = new WalletService(r, { now: () => now, log: () => {}, testerUserIds: [] });
+      const [old, fresh] = [await user(), await user()];
+      const expires = T0 + 365 * DAY;
+      const plan = { expires_date: new Date(expires).toISOString(), purchase_date: new Date(T0).toISOString(), store: 'app_store', is_sandbox: false, store_transaction_id: `tx-year-${old}` };
+      // The store lists the subscription under whichever app user id holds it.
+      let holder = old;
+      const client = { subscriber: async (id: string) => ({ subscriber: { non_subscriptions: {}, subscriptions: id === holder ? { 'fourwinds.year': plan } : {} } }) };
+      const reconciler = new Reconciler({ repos: r, wallet, client, now: () => now, log: () => {} });
+      // Synced while it was live (granted there), and again by the nightly run after the player deleted it.
+      expect((await reconciler.syncUser(old)).outcomes).toEqual([{ eventId: `sync:${old}:period:fourwinds.year:${expires}`, outcome: 'entitled' }]);
+      now = T0 + DAY;
+      await deleteAccount(r, old, { now: () => now });
+      now = T0 + 2 * DAY;
+      expect(await reconciler.syncUser(old)).toMatchObject({ checked: false, outcomes: [] });
+      now = T0 + 32 * DAY;
+      expect((await purgeDeletedUsers(r, { now: () => now })).userIds).toContain(old);
+      // The player makes a new account and taps Restore: the store moves the subscription, no TRANSFER reaches us.
+      holder = fresh;
+      expect((await reconciler.syncUser(fresh)).outcomes).toEqual([{ eventId: `sync:${fresh}:period:fourwinds.year:${expires}`, outcome: 'entitled' }]);
+      expect(await wallet.tierOf(fresh)).toBe('fourwinds');
+    });
+
+    it('a sync event on record that reached no account does not stop the same period being granted to another', async () => {
+      const r = repos();
+      const wallet = new WalletService(r, { now: () => T0, log: () => {}, testerUserIds: [] });
+      const fresh = await user();
+      const gone = randomUUID();
+      const expires = T0 + 365 * DAY;
+      const record = { subscriber: { subscriptions: { 'fourwinds.year': { expires_date: new Date(expires).toISOString(), purchase_date: new Date(T0).toISOString(), store: 'app_store', store_transaction_id: `tx-gone-${gone}` } } } };
+      const [forGone] = eventsFromSubscriber(gone, record, T0);
+      expect(await wallet.applyStoreEvent(forGone)).toMatchObject({ outcome: 'ignored_unknown_user', userId: null });
+      expect(await r.storeEvents.get(forGone.eventId)).toMatchObject({ outcome: 'ignored_unknown_user' });
+      const reconciler = new Reconciler({ repos: r, wallet, client: { subscriber: async () => record }, now: () => T0, log: () => {} });
+      expect((await reconciler.syncUser(fresh)).outcomes.map((o) => o.outcome)).toEqual(['entitled']);
+      expect(await wallet.tierOf(fresh)).toBe('fourwinds');
     });
   });
 }

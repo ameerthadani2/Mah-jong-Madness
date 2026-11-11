@@ -9,7 +9,8 @@
  *   It is idempotent on the event id: the event row is written first, in the same transaction as
  *   its effects, so a redelivered event changes nothing. Diamond credits are additionally keyed
  *   on the store transaction id (purchases.transaction_id is unique), so one purchase is never
- *   credited twice even under two event ids.
+ *   credited twice, under two event ids or under two accounts, and its refund is taken from the
+ *   account that holds the purchase.
  *
  * Diamonds and entitlements have no monetary value and cannot be redeemed or transferred between
  * players. Work for one user is serialised in this process (one game server machine), and on
@@ -283,6 +284,11 @@ export class WalletService {
     );
   }
 
+  /** The id of the live account this user id stands for now (following merges); null for a deleted, purged or unknown one. */
+  async liveAccount(userId: string): Promise<string | null> {
+    return (await this.resolveUser([userId]))?.id ?? null;
+  }
+
   /** The live account a store user id refers to (following merges), or null. */
   private async resolveUser(candidates: string[], repos: Repos = this.repos, includeDeleted = false): Promise<UserRecord | null> {
     for (const id of candidates) {
@@ -392,7 +398,9 @@ export class WalletService {
     if (product.kind === 'diamonds') {
       if (e.type === 'CANCELLATION') return this.refundDiamonds(tx, userId, product, transactionId, e.cancelReason, at);
       if (e.type !== 'NON_RENEWING_PURCHASE' && e.type !== 'INITIAL_PURCHASE') return { outcome: 'recorded', userId };
-      if ((await tx.wallet.listPurchases(userId)).some((p) => p.transactionId === transactionId)) return { outcome: 'duplicate', userId };
+      // A transaction already on record is never credited again, whichever account holds it: after
+      // a Restore the store lists the old account's packs under the new one.
+      if (await tx.wallet.findPurchase(transactionId)) return { outcome: 'duplicate', userId };
       if (await this.refunded(tx, userId, transactionId)) {
         // The refund got here first: keep the purchase on record, grant nothing.
         await this.recordPurchase(tx, e, userId, product.id, transactionId, at);
@@ -402,8 +410,9 @@ export class WalletService {
       const res = await tx.wallet.apply({ userId, delta: product.diamonds, bonus: product.bonus, reason: 'purchase', ref: `${e.store}:${transactionId}`, createdAt: at });
       if (!res) throw new Error('Diamond credit refused');
       const { inserted } = await this.recordPurchase(tx, e, userId, product.id, transactionId, at);
-      // Another delivery recorded this transaction meanwhile: roll back (Postgres) and let the retry see it.
-      if (!inserted) throw new Error(`Transaction ${transactionId} was recorded concurrently`);
+      // Only another process can have recorded this transaction since the check above (this one
+      // holds the transaction's lock): roll the credit back and let the retry answer `duplicate`.
+      if (!inserted) throw new Error(`Transaction ${transactionId} was recorded by another process meanwhile`);
       this.analytics.capture(userId, 'purchase_credited', { productId: product.id, diamonds: product.diamonds + product.bonus, store: e.store, environment: e.environment });
       return { outcome: 'credited', userId };
     }
