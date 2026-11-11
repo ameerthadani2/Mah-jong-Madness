@@ -13,10 +13,32 @@ import { randomHex } from '@mjm/engine';
 import { createPool, type Pool } from '../src/db';
 import { listMigrations, migrate } from '../src/migrate';
 import { createMemoryRepos, createPgRepos, type Repos } from '../src/repos';
-import { WalletService } from '../src/wallet';
+import { WalletService, type StoreEvent } from '../src/wallet';
 
 const PG_URL = process.env.DATABASE_URL_TEST?.trim();
 const T0 = Date.UTC(2026, 10, 9, 8, 0, 0);
+const DAY = 86_400_000;
+
+/** A store event naming `userId` (a TRANSFER names nobody: give `transferredFrom` and `transferredTo`). */
+const storeEvent = (userId: string | null, type: string, extra: Partial<StoreEvent> = {}): StoreEvent => ({
+  vendor: 'revenuecat',
+  eventId: randomUUID(),
+  type,
+  userIds: userId ? [userId] : [],
+  storeProductId: null,
+  transactionId: null,
+  expiresAt: null,
+  purchasedAt: T0,
+  price: null,
+  currency: null,
+  store: 'app_store',
+  environment: 'PRODUCTION',
+  cancelReason: null,
+  transferredFrom: [],
+  transferredTo: [],
+  raw: {},
+  ...extra,
+});
 
 function contract(name: string, repos: () => Repos) {
   describe(name, () => {
@@ -96,6 +118,51 @@ function contract(name: string, repos: () => Repos) {
       expect(await r.wallet.get(u)).toMatchObject({ diamonds: -300 });
       await wallet.credit(u, 0, 'grant', null, 400);
       await expect(wallet.spend(u, 'theme.imperial')).rejects.toMatchObject({ code: 'insufficient' });
+    });
+
+    it('finds a purchase by its store transaction id, whichever account holds it', async () => {
+      const r = repos();
+      const u = await user();
+      const transactionId = `tx-find-${u}`;
+      expect(await r.wallet.findPurchase(transactionId)).toBeNull();
+      await r.wallet.recordPurchase({ userId: u, store: 'play_store', transactionId, productId: 'diamonds.60', price: null, currency: null, eventId: null, raw: {}, createdAt: T0 });
+      expect(await r.wallet.findPurchase(transactionId)).toMatchObject({ userId: u, store: 'play_store', productId: 'diamonds.60' });
+    });
+
+    it('a pack refunded after Restore moved it to another account is taken back from the account that was credited', async () => {
+      const r = repos();
+      const wallet = new WalletService(r, { now: () => T0, log: () => {}, testerUserIds: [] });
+      const [a, c] = [await user(), await user()];
+      const pack = { storeProductId: 'diamonds.7500', transactionId: `tx-moved-${a}` };
+      expect((await wallet.applyStoreEvent(storeEvent(a, 'NON_RENEWING_PURCHASE', pack))).outcome).toBe('credited');
+      await wallet.spend(a, 'bundle.dragon');
+      const spent = await r.wallet.get(a);
+      // Restore on C: the store now reports the purchase, and its refund, under C. The diamonds stayed on A.
+      await wallet.applyStoreEvent(storeEvent(null, 'TRANSFER', { transferredFrom: [a], transferredTo: [c] }));
+      const refund = await wallet.applyStoreEvent(storeEvent(c, 'CANCELLATION', { ...pack, cancelReason: 'CUSTOMER_SUPPORT' }));
+      expect(refund).toMatchObject({ outcome: 'refunded', userId: a });
+      const after = await r.wallet.get(a);
+      expect(spent.diamonds + spent.bonusDiamonds - (after.diamonds + after.bonusDiamonds)).toBe(7500);
+      expect(after.diamonds).toBeLessThan(0);
+      expect(await r.wallet.get(c)).toMatchObject({ diamonds: 0, bonusDiamonds: 0 });
+      await expect(wallet.spend(a, 'theme.bamboo')).rejects.toMatchObject({ code: 'insufficient' });
+      // The same refund under another event id (the nightly sync also reports it) takes nothing more.
+      expect((await wallet.applyStoreEvent(storeEvent(c, 'CANCELLATION', { ...pack, cancelReason: 'CUSTOMER_SUPPORT' }))).outcome).toBe('duplicate');
+      expect((await wallet.applyStoreEvent(storeEvent(a, 'CANCELLATION', { ...pack, cancelReason: 'CUSTOMER_SUPPORT' }))).outcome).toBe('duplicate');
+      expect(await r.wallet.get(a)).toMatchObject({ diamonds: after.diamonds, bonusDiamonds: after.bonusDiamonds });
+    });
+
+    it('a refund follows a pack bought by a guest to the account the guest was merged into', async () => {
+      const r = repos();
+      const wallet = new WalletService(r, { now: () => T0, log: () => {}, testerUserIds: [] });
+      const [guest, account, other] = [await user(), await user(), await user()];
+      const pack = { storeProductId: 'diamonds.300', transactionId: `tx-merged-${guest}` };
+      await wallet.applyStoreEvent(storeEvent(guest, 'NON_RENEWING_PURCHASE', pack));
+      await r.wallet.mergeInto(guest, account, T0);
+      await r.users.update(guest, { deletedAt: T0, mergedInto: account });
+      expect(await wallet.applyStoreEvent(storeEvent(other, 'CANCELLATION', { ...pack, cancelReason: 'CUSTOMER_SUPPORT' }))).toMatchObject({ outcome: 'refunded', userId: account });
+      expect(await r.wallet.get(account)).toMatchObject({ diamonds: 0, bonusDiamonds: 0 });
+      expect(await r.wallet.get(other)).toMatchObject({ diamonds: 0, bonusDiamonds: 0 });
     });
   });
 }

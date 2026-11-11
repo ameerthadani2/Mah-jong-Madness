@@ -293,6 +293,16 @@ export class WalletService {
     return null;
   }
 
+  /**
+   * The account that holds the purchase recorded for this store transaction: the one it was
+   * credited to, or the account that one was merged into. A deleted account still counts until
+   * its rows are purged; null when no purchase is recorded or its account is gone.
+   */
+  private async purchaseHolder(repos: Repos, transactionId: string): Promise<UserRecord | null> {
+    const purchase = await repos.wallet.findPurchase(transactionId);
+    return purchase ? this.resolveUser([purchase.userId], repos, true) : null;
+  }
+
   /** The ledger ref that records a refund of this store transaction, whether or not it was ever credited. */
   private static refundRef(transactionId: string): string {
     return `refund:${transactionId}`;
@@ -321,6 +331,13 @@ export class WalletService {
     const product = productForStoreId(e.storeProductId);
     const resolved = e.type === 'TRANSFER' ? null : await this.resolveUser(e.userIds);
     const keys = [resolved?.id ?? '', ...e.transferredFrom, ...e.transferredTo].filter(Boolean);
+    if (product?.kind === 'diamonds' && e.transactionId) {
+      // One store transaction is worked on by one event at a time, whichever account each event
+      // names, and the account that holds its purchase waits too (a refund debits that account).
+      keys.push(`txn:${e.transactionId}`);
+      const holder = await this.purchaseHolder(this.repos, e.transactionId);
+      if (holder) keys.push(holder.id);
+    }
     try {
       return await this.serialise(keys, () =>
         this.repos.transaction(async (tx) => {
@@ -373,7 +390,7 @@ export class WalletService {
     const transactionId = e.transactionId ?? `${e.vendor}:${e.eventId}`;
 
     if (product.kind === 'diamonds') {
-      if (e.type === 'CANCELLATION') return { outcome: await this.refundDiamonds(tx, userId, product, transactionId, e.cancelReason, at), userId };
+      if (e.type === 'CANCELLATION') return this.refundDiamonds(tx, userId, product, transactionId, e.cancelReason, at);
       if (e.type !== 'NON_RENEWING_PURCHASE' && e.type !== 'INITIAL_PURCHASE') return { outcome: 'recorded', userId };
       if ((await tx.wallet.listPurchases(userId)).some((p) => p.transactionId === transactionId)) return { outcome: 'duplicate', userId };
       if (await this.refunded(tx, userId, transactionId)) {
@@ -458,27 +475,43 @@ export class WalletService {
   }
 
   /**
-   * A refunded diamond pack: take back everything it credited. Bonus diamonds come back first as
-   * far as they go; the rest comes off purchased diamonds, which may go below zero when the pack
-   * was already spent. A negative balance blocks every spend until a purchase covers it, so a
-   * buy, spend, refund cycle never ends with free looks. A refund that arrives before the purchase
-   * is remembered, so the purchase is not credited when it comes.
+   * A refunded diamond pack: take back everything it credited, from the account that holds the
+   * purchase. That is not always the account the refund names: after a Restore on another account
+   * the store reports the purchase (and its refund) under the new app user id, while the diamonds
+   * stayed where they were credited. Bonus diamonds come back first as far as they go; the rest
+   * comes off purchased diamonds, which may go below zero when the pack was already spent. A
+   * negative balance blocks every spend until a purchase covers it, so a buy, spend, refund cycle
+   * never ends with free looks. A refund that arrives before the purchase is remembered on the
+   * account it names, so the purchase is not credited when it comes.
    */
-  private async refundDiamonds(tx: Repos, userId: string, product: Extract<ServerProduct, { kind: 'diamonds' }>, transactionId: string, cancelReason: string | null, at: number): Promise<StoreOutcome> {
-    if (cancelReason !== 'CUSTOMER_SUPPORT') return 'recorded';
-    if (await this.refunded(tx, userId, transactionId)) return 'duplicate';
-    const credited = (await tx.wallet.listPurchases(userId)).some((p) => p.transactionId === transactionId);
-    if (!credited) {
-      await this.markRefunded(tx, userId, transactionId, at);
-      return 'refunded';
+  private async refundDiamonds(
+    tx: Repos,
+    namedUserId: string,
+    product: Extract<ServerProduct, { kind: 'diamonds' }>,
+    transactionId: string,
+    cancelReason: string | null,
+    at: number,
+  ): Promise<{ outcome: StoreOutcome; userId: string | null }> {
+    if (cancelReason !== 'CUSTOMER_SUPPORT') return { outcome: 'recorded', userId: namedUserId };
+    const purchase = await tx.wallet.findPurchase(transactionId);
+    if (!purchase) {
+      if (await this.refunded(tx, namedUserId, transactionId)) return { outcome: 'duplicate', userId: namedUserId };
+      await this.markRefunded(tx, namedUserId, transactionId, at);
+      return { outcome: 'refunded', userId: namedUserId };
     }
+    const holder = await this.resolveUser([purchase.userId], tx, true);
+    // The account that was credited has been purged: its wallet went with it, so nothing is left to take back.
+    if (!holder) return { outcome: 'recorded', userId: namedUserId };
+    const userId = holder.id;
+    if (await this.refunded(tx, userId, transactionId)) return { outcome: 'duplicate', userId };
     const w = await tx.wallet.get(userId);
     const bonus = Math.min(Math.max(0, w.bonusDiamonds), product.bonus);
     const delta = -(product.diamonds + product.bonus - bonus);
     const res = await tx.wallet.apply({ userId, delta, bonus: -bonus, reason: 'refund', ref: WalletService.refundRef(transactionId), createdAt: at }, { allowNegative: true });
     if (!res) throw new Error('Diamond refund refused');
+    if (userId !== namedUserId) this.log(`[signal] refund ${transactionId} names ${namedUserId}; the purchase is held by ${userId}, which was debited`);
     if (res.wallet.diamonds < 0) this.log(`[signal] refund ${transactionId} left ${userId} at ${res.wallet.diamonds} diamonds; spends are blocked until it is covered`);
-    return 'refunded';
+    return { outcome: 'refunded', userId };
   }
 
   /**

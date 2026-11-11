@@ -224,6 +224,8 @@ export interface WalletRepo {
   /** Idempotent on transaction id and event id: a repeat returns the stored row with inserted false. */
   recordPurchase(purchase: NewPurchase): Promise<{ purchase: PurchaseRecord; inserted: boolean }>;
   listPurchases(userId: string): Promise<PurchaseRecord[]>;
+  /** The purchase recorded for this store transaction, under whichever account holds it; null when none is. */
+  findPurchase(transactionId: string): Promise<PurchaseRecord | null>;
   getEntitlements(userId: string): Promise<EntitlementRecord[]>;
   setEntitlement(entitlement: EntitlementRecord): Promise<void>;
   deleteEntitlement(userId: string, entitlement: string): Promise<boolean>;
