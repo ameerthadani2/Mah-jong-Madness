@@ -3,7 +3,7 @@
  * can be unit-tested. Rooms are identified by short codes players can read out
  * loud (PokerBros-style club/table codes).
  */
-import { emotePackOf, isQuickChatId, isTableEmoteId, TableHost, type HostEvent, type SerializedHost, type Transport, type Unsubscribe } from '@mjm/net';
+import { emotePackOf, isQuickChatId, isTableEmoteId, TableHost, type HostEvent, type SeatInfo, type SerializedHost, type Transport, type Unsubscribe } from '@mjm/net';
 import { BOT_SKILLS, randomHex, sanitizeRules, type BotSkill, type RuleSet } from '@mjm/engine';
 import { uniqueCode, type HexSource } from './codes';
 import { LIMITS } from './config';
@@ -126,8 +126,13 @@ export const KEEP_ALIVE_MS = 15 * 60_000;
  * rejoin. A player who holds a human seat is always let back in, past this limit.
  */
 const MAX_ROOM_PEERS = 12;
-/** Places at a hosted table for peers who hold no seat (onlookers, and players about to sit down). */
+/**
+ * Places at a hosted table for peers who hold no seat (onlookers, and players about to sit down).
+ * An account has one of them at most, however many sockets it opens.
+ */
 const MAX_ROOM_WATCHERS = 4;
+/** Sent to a watcher whose place a player needed, as `{t:'error', code:'closed', message}`. */
+export const WATCHER_DROPPED = 'A player needed your place at this table; join again to sit down.';
 
 /** Thrown by `createHostedRoom` when the server cannot open another table. */
 export class RoomLimitError extends Error {
@@ -748,6 +753,7 @@ export class RoomRegistry {
         }
         this.opts.queue?.leave(peer.id);
         this.leave(peer);
+        this.makeRoomFor(room, peer);
         room.peers.add(peer.id);
         if (room.quick) room.quick.emptySince = null;
         peer.room = room.code;
@@ -868,19 +874,54 @@ export class RoomRegistry {
 
   /**
    * Whether `peer` may enter `room`: always when its account holds a human seat there (a player
-   * coming back after a drop), otherwise while the room is under `MAX_ROOM_PEERS` and, at a hosted
-   * table, while fewer than `MAX_ROOM_WATCHERS` peers without a seat are in it.
+   * coming back after a drop). Otherwise it would be a watcher, a peer without a seat, and an
+   * account gets one watcher place however many sockets it opens: a second one is refused. While
+   * the table is in its lobby with a seat still open, a would-be player is always admitted (if the
+   * room is at its limit, `makeRoomFor` gives it the place of the longest-idle watcher), so idle
+   * sockets can never keep invited players out. Past that, the room holds `MAX_ROOM_PEERS` peers
+   * and a hosted table `MAX_ROOM_WATCHERS` watchers.
    */
   private hasPlaceFor(room: Room, peer: Peer): boolean {
     if (room.peers.has(peer.id)) return true;
-    const seats = room.table?.host.seatInfo() ?? [];
+    const host = room.table?.host;
+    if (!host) return room.peers.size < MAX_ROOM_PEERS;
+    const seats = host.seatInfo();
     if (peer.userId && seats.some((s) => !s.isBot && s.userId === peer.userId)) return true;
+    const watchers = this.watchersOf(room, seats);
+    const key = watcherKey(peer);
+    if (watchers.some((w) => watcherKey(w) === key)) return false;
+    if (host.phase === 'lobby' && seats.some(isOpenSeat)) return true;
     if (room.peers.size >= MAX_ROOM_PEERS) return false;
-    if (!room.table) return true;
+    return watchers.length < MAX_ROOM_WATCHERS;
+  }
+
+  /** The peers in a hosted room that hold no seat, longest in the room first. */
+  private watchersOf(room: Room, seats: SeatInfo[]): Peer[] {
     const seated = new Set(seats.filter((s) => !s.isBot && s.peerId).map((s) => s.peerId));
-    let watchers = 0;
-    for (const id of room.peers) if (!seated.has(id)) watchers++;
-    return watchers < MAX_ROOM_WATCHERS;
+    const watchers: Peer[] = [];
+    for (const id of room.peers) {
+      const p = seated.has(id) ? undefined : this.peers.get(id);
+      if (p) watchers.push(p);
+    }
+    return watchers;
+  }
+
+  /**
+   * Called once `peer` is certain to enter `room`: when the room is at `MAX_ROOM_PEERS` (only a
+   * would-be player coming to a lobby with an open seat, or a seated player coming back, gets this
+   * far then), the watchers that have been there longest without sitting down are told
+   * (`{t:'error', code:'closed', message: WATCHER_DROPPED}`) and leave the room, so many idle
+   * accounts cannot fill a table's room either.
+   */
+  private makeRoomFor(room: Room, peer: Peer): void {
+    if (!room.table || room.peers.has(peer.id) || room.peers.size < MAX_ROOM_PEERS) return;
+    const dropped = JSON.stringify({ t: 'error', code: 'closed', message: WATCHER_DROPPED });
+    for (const w of this.watchersOf(room, room.table.host.seatInfo())) {
+      if (room.peers.size < MAX_ROOM_PEERS) break;
+      if (w.id === peer.id) continue;
+      w.socket.send(dropped);
+      this.leave(w);
+    }
   }
 
   private sendRoom(peer: Peer, room: Room): void {
@@ -1057,6 +1098,16 @@ function isAction(data: unknown): boolean {
 }
 
 const PONG = JSON.stringify({ t: 'pong' });
+
+/** What a peer without a seat counts as among a table's watchers: its account, or the socket itself without one. */
+function watcherKey(peer: Peer): string {
+  return peer.userId ? `u:${peer.userId}` : `p:${peer.id}`;
+}
+
+/** A seat nobody holds: not a bot's, no connection, and no player (connected or away) bound to it. */
+function isOpenSeat(s: SeatInfo): boolean {
+  return !s.isBot && !s.peerId && !s.userId && s.name === '';
+}
 
 /** Longest seat name and avatar id the table keeps. */
 const SEAT_NAME_MAX = 24;
