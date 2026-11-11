@@ -28,6 +28,7 @@
   "loadingClub": "Loading club…",
   "tableLabel": "%{name}'s table",
   "code": "Code %{code}",
+  "memberCount": "%{n} members",
   "members": {
     "makeAdmin": "Make admin",
     "makeMember": "Make member",

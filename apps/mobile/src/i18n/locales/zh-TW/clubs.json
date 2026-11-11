@@ -28,6 +28,7 @@
   "loadingClub": "載入俱樂部中…",
   "tableLabel": "%{name} 的牌桌",
   "code": "代碼 %{code}",
+  "memberCount": "%{n} 位成員",
   "members": {
     "makeAdmin": "設為管理員",
     "makeMember": "改為一般會員",

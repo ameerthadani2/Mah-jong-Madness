@@ -1,5 +1,5 @@
 /**
- * Translations. `t('home.play')` returns the string for the current locale; `useT()`
+ * Translations. `t('home.play.title')` returns the string for the current locale; `useT()`
  * does the same inside a component and re-renders it when the locale changes.
  *
  * The locale follows the device unless the player picks one in Settings

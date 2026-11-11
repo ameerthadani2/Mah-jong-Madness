@@ -434,7 +434,7 @@ export function ClubScreen({ code }: { code: string }) {
         sub={
           <Row gap={6} style={{ marginTop: 2 }}>
             <Pill text={t('clubs.code', { code: club.code })} tone="gold" size="sm" />
-            <Pill text={t('clubs.members', { n: club.members?.length ?? club.memberCount ?? 0 })} icon="users" size="sm" />
+            <Pill text={t('clubs.memberCount', { n: club.members?.length ?? club.memberCount ?? 0 })} icon="users" size="sm" />
             <Pill text={roleName(me ? me.role : 'guest', t)} size="sm" />
           </Row>
         }
