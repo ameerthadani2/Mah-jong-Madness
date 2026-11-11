@@ -1339,7 +1339,7 @@ function valueText(p: Pick<ValuePuzzle, 'answer' | 'answers' | 'rival' | 'option
     zh += `這手牌速度比台數重要：以底100、每台20計算，打${Rz}的期望值只有打${Az}的${ratio}%。`;
   } else if (reasonKey === 'puzzle.value.both') {
     en += ` ${A} has more winning tiles and its wins are no smaller, so there is nothing to trade: counting 100 points a win plus 20 a 台, ${R} is worth only ${ratio}% of ${A}.`;
-    zh += `打${Az}聽的張數比較多，胡的台數也不比較少，沒有什麼要取捨的：以底100、每台20計算，打${Rz}的期望值只有打${Az}的${ratio}%。`;
+    zh += `打${Az}聽的張數比較多，胡的台數也不會比較少，沒有什麼好取捨的：以底100、每台20計算，打${Rz}的期望值只有打${Az}的${ratio}%。`;
   } else if (reasonKey === 'puzzle.value.moreTai') {
     const tiles = a.acceptance! < r.acceptance! ? 'fewer winning tiles' : 'the same number of winning tiles';
     const tilesZh = a.acceptance! < r.acceptance! ? '聽的張數比較少' : '聽的張數一樣';
