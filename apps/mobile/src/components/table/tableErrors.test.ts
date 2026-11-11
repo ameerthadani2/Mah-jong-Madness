@@ -28,6 +28,10 @@ describe('table join and lobby errors', () => {
     expect(tableError({ code: 'already_seated', message: 'x' }, tr('en'))).toMatch(/one seat/i);
   });
 
+  it('reads a code only from its own list, never from the prototype', () => {
+    for (const code of ['toString', 'constructor', 'hasOwnProperty', '__proto__']) expect(tableErrorMessage({ code, message: '' }), code).toBeNull();
+  });
+
   it('leaves other errors to the general error copy', () => {
     expect(tableErrorMessage(new Error('Failed to fetch'))).toBeNull();
     expect(tableError(new Error('Failed to fetch'), tr('en'))).toBe(i18n.t('errors.unreachable', { locale: 'en' }));

@@ -37,6 +37,7 @@ const KNOWN: ReadonlyArray<{ test: RegExp; key: string; params?: (m: RegExpMatch
   { test: /^please wait a few seconds before creating another room/i, key: 'errors.createCooldown' },
   { test: /^the game server did not answer in time/i, key: 'errors.noAnswer' },
   { test: /^unauthori[sz]ed/i, key: 'errors.unauthorised' },
+  { test: /^banned: /i, key: 'errors.banned' },
   // Table host (packages/net/src/host.ts) and table client.
   { test: /^table is full/i, key: 'errors.tableFull' },
   { test: /^match already in progress/i, key: 'errors.matchInProgress' },
@@ -89,6 +90,8 @@ function numberField(e: unknown, key: string): number | undefined {
  */
 function fromCode(e: unknown): Message | null {
   if (numberField(e, 'code') === 4401) return { key: 'errors.unauthorised' };
+  // The game server closed the socket with 4403: the account is banned.
+  if (numberField(e, 'code') === 4403) return { key: 'errors.banned' };
   switch (field(e, 'code')) {
     case 'club_timeout':
       return { key: 'errors.clubTimeout', params: { seconds: numberField(e, 'seconds') ?? 15 } };

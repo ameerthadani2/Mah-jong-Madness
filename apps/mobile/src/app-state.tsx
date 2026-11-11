@@ -153,7 +153,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const record: ActiveSession =
         session.mode === 'local'
           ? { kind: 'local', host: session.host!.serialize(), token: st.token, name: profile.name, avatar: profile.avatar, savedAt: Date.now() }
-          : { kind: 'online', signalUrl: session.serverUrl ?? signalUrl, roomCode: session.roomCode, token: st.token, name: profile.name, avatar: profile.avatar, clubCode: session.clubCode, client: session.client.serialize(), savedAt: Date.now() };
+          : {
+              kind: 'online',
+              signalUrl: session.serverUrl ?? signalUrl,
+              roomCode: session.roomCode,
+              token: st.token,
+              name: profile.name,
+              avatar: profile.avatar,
+              clubCode: session.clubCode,
+              quickMatch: session.quickMatch || undefined,
+              client: session.client.serialize(),
+              savedAt: Date.now(),
+            };
       setActiveSessionState(record);
       void storage.saveActiveSession(record);
     };

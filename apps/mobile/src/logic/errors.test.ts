@@ -142,6 +142,13 @@ describe('friendlyError for the account API (docs/API.md codes)', () => {
     expect(friendlyErrorMessage(new Error('Unauthorised: the game server did not accept this session.'))).toEqual({ key: 'errors.unauthorised' });
   });
 
+  it('explains a banned account, whether the socket closed with 4403 or the server said so in words', () => {
+    expect(friendlyErrorMessage(Object.assign(new Error('x'), { code: 4403 }))).toEqual({ key: 'errors.banned' });
+    expect(friendlyErrorMessage(new Error('Banned: this account has been banned from online play.'))).toEqual({ key: 'errors.banned' });
+    expect(friendlyErrorMessage(coded('banned', 'This device belongs to a banned account'))).toEqual({ key: 'errors.banned' });
+    expect(friendlyError(new Error('Banned: this account has been banned from online play.'), zh)).not.toMatch(/[A-Za-z]{4,}/);
+  });
+
   it('renders the new keys in Traditional Chinese', () => {
     for (const c of ['invalid_credentials', 'session_expired', 'invalid_token', 'provider_disabled', 'not_linked', 'identity_in_use', 'last_identity', 'unavailable', 'auth_unreachable']) {
       const text = friendlyError(coded(c), zh);

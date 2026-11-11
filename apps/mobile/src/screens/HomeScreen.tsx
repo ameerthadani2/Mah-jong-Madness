@@ -81,7 +81,19 @@ export function HomeScreen() {
         app.go({ name: 'online' });
       } else {
         // Back to the server the table lives on (the stored serverUrl), with this player's session.
-        const session = await createOnlineSession({ signalUrl: rec.signalUrl, name: rec.name, avatar: rec.avatar, userId: app.profile.userId || undefined, rules: app.settings.rules, action: 'join', code: rec.roomCode, token: rec.token, clubCode: rec.clubCode, ...auth.tableAuth });
+        const session = await createOnlineSession({
+          signalUrl: rec.signalUrl,
+          name: rec.name,
+          avatar: rec.avatar,
+          userId: app.profile.userId || undefined,
+          rules: app.settings.rules,
+          action: 'join',
+          code: rec.roomCode,
+          token: rec.token,
+          clubCode: rec.clubCode,
+          quickMatch: rec.quickMatch,
+          ...auth.tableAuth,
+        });
         app.setSession(session);
         app.go({ name: 'lobby' });
       }

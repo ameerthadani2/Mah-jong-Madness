@@ -15,6 +15,7 @@
 import { DEFAULT_RULES, type BotSkill, type RuleSet } from '@mjm/engine';
 import {
   BANNED_CLOSE_CODE,
+  BANNED_MESSAGE,
   isRoomUnavailable,
   QueueError,
   LoopbackHub,
@@ -120,6 +121,10 @@ export interface OnlineOptions {
   auth?: () => Promise<string | undefined>;
   /** The server refused the session (4401): drop it so the next `auth()` brings a fresh one. */
   onUnauthorised?: () => Promise<void> | void;
+  /** The server closed the socket with 4403: this account is banned, which no new guest gets round. */
+  onBanned?: () => Promise<void> | void;
+  /** A quick-match table (resumed, or returned to after `seated`): nobody else can enter it and it starts by itself. */
+  quickMatch?: boolean;
   /** Tests inject a fake socket; defaults to the global WebSocket. */
   webSocket?: WebSocketFactory;
   /**
@@ -234,6 +239,10 @@ async function openConnection(opts: OnlineOptions, action: 'create' | 'join', co
     await signaling.connect();
   } catch (e) {
     if (closeCode() === UNAUTHORISED_CLOSE || isUnauthorised(e)) throw Object.assign(new Error(UNAUTHORISED_MESSAGE), { code: UNAUTHORISED_CLOSE });
+    if (closeCode() === BANNED_CLOSE_CODE) {
+      void opts.onBanned?.();
+      throw Object.assign(new Error(BANNED_MESSAGE), { code: BANNED_CLOSE_CODE });
+    }
     throw e;
   }
   try {
@@ -247,7 +256,7 @@ async function openConnection(opts: OnlineOptions, action: 'create' | 'join', co
 }
 
 class OnlineSession implements Session {
-  quickMatch = false;
+  readonly quickMatch: boolean;
   readonly host = null;
   readonly mode = 'online' as const;
   readonly transportKind = 'relay' as const;
@@ -274,6 +283,7 @@ class OnlineSession implements Session {
     this.roomCode = connection.room.room;
     this.serverUrl = opts.signalUrl;
     this.clubCode = opts.clubCode;
+    this.quickMatch = opts.quickMatch === true;
     this.unsubClient = client.onChange((s) => {
       // The seat was opened on another device: stop here, a reconnect would take it back.
       if (s.kicked && this.conn.status !== 'lost') this.step({ type: 'ended' });
@@ -312,7 +322,10 @@ class OnlineSession implements Session {
     // The seat was opened on another device: reconnecting would take it back and start a tug of war.
     // A dropped link alone (`disconnected`) is what reconnecting is for.
     if (st.kicked || st.matchOver) return this.step({ type: 'ended' });
-    if (code === BANNED_CLOSE_CODE) return this.step({ type: 'ended' });
+    if (code === BANNED_CLOSE_CODE) {
+      void this.opts.onBanned?.();
+      return this.step({ type: 'ended' });
+    }
     if (code === UNAUTHORISED_CLOSE) {
       void this.opts.onUnauthorised?.();
       return this.step({ type: 'unauthorised' });
@@ -368,6 +381,8 @@ class OnlineSession implements Session {
       for (const l of this.stateListeners) l(this.client.state);
       return;
     }
+    // Banned while away: the server's final word, and `openConnection` has already told the account layer.
+    if ((failure as { code?: unknown } | null)?.code === BANNED_CLOSE_CODE) return this.step({ type: 'ended' });
     const unauthorised = isUnauthorised(failure);
     if (unauthorised) void this.opts.onUnauthorised?.();
     // 'Room not found or full' is the server's final word (the table ended or was reaped while we were away):
@@ -415,29 +430,77 @@ export interface QuickMatchOptions {
   userId?: string;
   auth?: () => Promise<string | undefined>;
   onUnauthorised?: () => Promise<void> | void;
+  /** The account is banned (socket closed with 4403, or the queue said so). */
+  onBanned?: () => Promise<void> | void;
   webSocket?: WebSocketFactory;
   /** Each `queue_status` while the server looks for players. */
   onStatus?: (s: QueueStatus) => void;
   /** The server found a table and the session is joining it. */
   onMatched?: (room: string) => void;
+  /**
+   * The server answered `seated`: this account still holds a seat at the quick-match table `room`,
+   * and the session is going back to it instead of queueing.
+   */
+  onSeated?: (room: string) => void;
+  /** The rejoin token this device saved for `room`, when its saved table is that one. */
+  savedToken?: (room: string) => string | undefined;
 }
+
+/** `QueueError.code` when the account is seated at a quick-match table that could not be rejoined. */
+export const REJOIN_FAILED = 'rejoin_failed';
 
 /**
  * Quick match: queue on the game server, and once it has matched a table, join that table on
  * the same socket and return an ordinary online session (it reconnects and rejoins like any
- * other table; only the matched accounts may enter it, and it starts by itself). The session
- * promise rejects with a QueueError (`code` banned, age_required, rate_limited, unavailable,
- * replaced, cancelled) or the usual join errors. `cancel()` leaves the queue.
+ * other table; only the matched accounts may enter it, and it starts by itself).
+ *
+ * `seated` is not a failure: the account still holds a seat at an unfinished quick-match table,
+ * so the session goes back to it the way any saved table is resumed (`createOnlineSession`, a
+ * join): with the saved rejoin token when this device's saved table is that room, otherwise with
+ * none, since a server-hosted table gives a verified account its own seat back and answers with a
+ * new token, which is saved like any other. Only when that join fails does the promise reject,
+ * with code `rejoin_failed`.
+ *
+ * Otherwise the session promise rejects with a QueueError (`code` banned, age_missing, age_under,
+ * rate_limited, sign_in, unavailable, replaced, cancelled) or the usual join errors. `cancel()`
+ * leaves the queue.
  */
 export function startQuickMatch(opts: QuickMatchOptions): { session: Promise<Session>; cancel: () => void } {
   let cancelled = false;
   let leave: () => void = () => undefined;
+  const banned = () => {
+    void opts.onBanned?.();
+    return new QueueError('This account has been banned', 'banned');
+  };
+  const backToSeat = async (room: string): Promise<Session> => {
+    opts.onSeated?.(room);
+    try {
+      return await createOnlineSession({
+        signalUrl: opts.signalUrl,
+        name: opts.name,
+        avatar: opts.avatar,
+        userId: opts.userId,
+        auth: opts.auth,
+        onUnauthorised: opts.onUnauthorised,
+        onBanned: opts.onBanned,
+        webSocket: opts.webSocket,
+        rules: DEFAULT_RULES,
+        action: 'join',
+        code: room,
+        token: opts.savedToken?.(room),
+        quickMatch: true,
+      });
+    } catch (e) {
+      // `openConnection` has already told the account layer about a ban.
+      if ((e as { code?: unknown } | null)?.code === BANNED_CLOSE_CODE) throw new QueueError('This account has been banned', 'banned');
+      throw new QueueError((e as Error | null)?.message || 'Could not return to the table', REJOIN_FAILED, room);
+    }
+  };
   const attempt = async (): Promise<Session> => {
     const auth = opts.auth ? await opts.auth() : undefined;
     const { signaling, closeCode } = connectSignaling(opts.signalUrl, auth, opts.webSocket);
     const dropped: Connection['dropped'] = { handler: null };
     signaling.onClose(() => dropped.handler?.(closeCode()));
-    const banned = () => new QueueError('This account has been banned', 'banned');
     try {
       await signaling.connect();
     } catch (e) {
@@ -453,17 +516,21 @@ export function startQuickMatch(opts: QuickMatchOptions): { session: Promise<Ses
       try {
         room = await search.match;
       } catch (e) {
-        if (closeCode() === BANNED_CLOSE_CODE) throw banned();
+        if (closeCode() === BANNED_CLOSE_CODE || (e instanceof QueueError && e.code === 'banned')) throw banned();
+        if (e instanceof QueueError && e.code === 'seated' && e.room && !cancelled) {
+          // The queue socket has done its job: the table is resumed on a socket of its own.
+          signaling.close();
+          return backToSeat(e.room);
+        }
         throw e;
       }
       opts.onMatched?.(room);
       const transport = new RelayTransport(signaling, 'game');
       const info = await signaling.joinRoom(room);
       const connection: Connection = { signaling, link: transportLink(transport, info.host), room: info, dropped };
-      const online: OnlineOptions = { ...opts, rules: DEFAULT_RULES, action: 'join', code: info.room };
+      const online: OnlineOptions = { ...opts, rules: DEFAULT_RULES, action: 'join', code: info.room, quickMatch: true };
       const client = new TableClient(connection.link, opts.name, opts.avatar, { userId: opts.userId });
       const session = new OnlineSession(online, connection, client);
-      session.quickMatch = true;
       client.join();
       return session;
     } catch (e) {

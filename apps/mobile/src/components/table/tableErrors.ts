@@ -42,8 +42,9 @@ function str(e: unknown, key: 'code' | 'message'): string {
 
 /** The table-specific message for `e`, or null when it is not one of these refusals. */
 export function tableErrorMessage(e: unknown): Message | null {
-  const byCode = BY_CODE[str(e, 'code')];
-  if (byCode) return { key: byCode };
+  const code = str(e, 'code');
+  // Own keys only: a code such as 'toString' must not find something on the prototype.
+  if (Object.prototype.hasOwnProperty.call(BY_CODE, code)) return { key: BY_CODE[code] };
   const msg = str(e, 'message').trim();
   for (const [re, key] of BY_MESSAGE) if (re.test(msg)) return { key };
   return null;
