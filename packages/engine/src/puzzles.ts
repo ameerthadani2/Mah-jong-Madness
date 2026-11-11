@@ -399,7 +399,7 @@ function seatViews(s: GameState): PuzzleSeatView[] {
 // ===========================================================================
 
 /** Why a tile is safe, from strongest to weakest kind of safety. */
-export type DefenceReason = 'theirDiscard' | 'passed' | 'deadHonour' | 'lastHonour' | 'honour' | 'fewCopies' | 'terminal' | 'middle';
+export type DefenceReason = 'deadHonour' | 'theirDiscard' | 'passed' | 'lastHonour' | 'honour' | 'fewCopies' | 'terminal' | 'middle';
 
 export interface DefenceOption {
   kind: Kind;
@@ -502,16 +502,20 @@ export function exactWaitChances(unseen: Counts, excluded: readonly boolean[]): 
 }
 
 function defenceReason(read: OpponentRead, kind: Kind, unseen: Counts): DefenceReason {
+  // A dead honour cannot win at all, whoever threw it: the one certain reason comes first.
+  if (isHonorKind(kind) && unseen[kind] === 0) return 'deadHonour';
   if (read.ownDiscards[kind]) return 'theirDiscard';
   if (read.passed[kind]) return 'passed';
-  if (isHonorKind(kind)) return unseen[kind] === 0 ? 'deadHonour' : unseen[kind] === 1 ? 'lastHonour' : 'honour';
+  if (isHonorKind(kind)) return unseen[kind] === 1 ? 'lastHonour' : 'honour';
   if (unseen[kind] <= 1) return 'fewCopies';
   return rankOfKind(kind) === 1 || rankOfKind(kind) === 9 ? 'terminal' : 'middle';
 }
 
 const pct = (x: number): string => `${(x * 100).toFixed(1)}%`;
+/** A positive chance to one decimal, or '' when it would print as "0.0%" (the text then says "under 0.1%"). */
+const smallPct = (x: number): string => (x < 0.0005 ? '' : pct(x));
 
-function defenceText(p: Pick<DefencePuzzle, 'answer' | 'answers' | 'threatSeat' | 'reason' | 'efficient' | 'opponents' | 'options'>): PuzzleExplanation {
+function defenceText(p: Pick<DefencePuzzle, 'answer' | 'answers' | 'threatSeat' | 'threatLevel' | 'reason' | 'efficient' | 'opponents' | 'options'>): PuzzleExplanation {
   const t = tileEn(p.answer);
   const tz = tileZh(p.answer);
   const who = SEAT_EN[p.threatSeat];
@@ -556,8 +560,25 @@ function defenceText(p: Pick<DefencePuzzle, 'answer' | 'answers' | 'threatSeat' 
   }
   const a = p.options.find((o) => o.kind === p.answer)!;
   const others = p.answers.filter((k) => k !== p.answer);
-  const numbersEn = ` If ${who} is ready, ${t} wins for them in about ${pct(a.exact)} of the hands they could hold.`;
-  const numbersZh = `如果${whoZh}已經聽牌，${tz}大約只在${pct(a.exact)}的牌型裡會放槍。`;
+  // The exact count leaves out every hand that waits on a tile the threat threw or let pass, so for
+  // such an answer it is 0 by assumption: quote the coach's own estimate, which is small but not
+  // zero. A dead honour needs no figure (nobody can win on it), and a true zero is said in words.
+  let numbersEn: string;
+  let numbersZh: string;
+  if (p.reason === 'theirDiscard' || p.reason === 'passed') {
+    const model = a.danger / p.threatLevel;
+    numbersEn = ` If ${who} is ready, the coach puts the chance that ${t} wins for them at ${smallPct(model) ? `about ${smallPct(model)}` : 'under 0.1%'}.`;
+    numbersZh = `如果${whoZh}已經聽牌，教練估計${tz}放槍的機率${smallPct(model) ? `大約${smallPct(model)}` : '不到0.1%'}。`;
+  } else if (p.reason === 'deadHonour') {
+    numbersEn = '';
+    numbersZh = '';
+  } else if (a.exact <= 0) {
+    numbersEn = ` If ${who} is ready and is not waiting on a tile they threw or let pass, none of the hands they could hold wins on ${t}.`;
+    numbersZh = `如果${whoZh}已經聽牌，而且不是聽自己打過或放過的牌，他可能的牌型沒有一種會胡${tz}。`;
+  } else {
+    numbersEn = ` If ${who} is ready, ${t} wins for them in ${smallPct(a.exact) ? `about ${smallPct(a.exact)}` : 'under 0.1%'} of the hands they could hold.`;
+    numbersZh = `如果${whoZh}已經聽牌，${tz}${smallPct(a.exact) ? `大約只在${smallPct(a.exact)}` : '只在不到0.1%'}的牌型裡會放槍。`;
+  }
   const alsoEn = others.length > 0 ? ` ${others.map(tileEn).join(' and ')} ${others.length > 1 ? 'are' : 'is'} about as safe, so ${others.length > 1 ? 'they count' : 'it counts'} too.` : '';
   const alsoZh = others.length > 0 ? `${others.map(tileZh).join('、')}差不多一樣安全，也算對。` : '';
   const keepEn = ' Throwing it also keeps your hand as close to ready as any other discard.';
@@ -720,14 +741,13 @@ function defenceAttempt(seed: string, difficulty: PuzzleDifficulty, rng: Rng): D
     }
   }
   const opponents = seatViews(s);
-  const base = { answer: best.kind, answers: accepted.map((o) => o.kind), threatSeat, reason: best.reason, efficient, opponents, options };
+  const base = { answer: best.kind, answers: accepted.map((o) => o.kind), threatSeat, threatLevel: read.tenpai, reason: best.reason, efficient, opponents, options };
   return {
     type: 'defence',
     seed,
     difficulty,
     hand: hand.slice().sort((a, b) => a - b),
     ownDiscards,
-    threatLevel: read.tenpai,
     bestShanten,
     ...base,
     ...defenceText(base),

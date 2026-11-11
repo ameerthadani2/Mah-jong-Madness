@@ -326,6 +326,29 @@ describe('defence puzzles', () => {
     }
   });
 
+  it('never state a chance of 0.0% for a tile the text calls no guarantee', () => {
+    const seen = new Set<string>();
+    for (const p of puzzles) {
+      const a = p.options.find((o) => o.kind === p.answer)!;
+      seen.add(p.reason);
+      // No figure that prints as zero for something that can happen, in either language.
+      expect(p.explanation, p.seed).not.toMatch(/(^|[^0-9.])0\.0%/);
+      expect(p.explanationZh, p.seed).not.toMatch(/(^|[^0-9.])0\.0%/);
+      if (p.reason === 'theirDiscard' || p.reason === 'passed') {
+        // The count leaves these kinds out by assumption, so the text quotes the coach's estimate instead.
+        expect(a.exact).toBe(0);
+        expect(a.danger).toBeGreaterThan(0);
+        expect(p.explanation).toMatch(/the coach puts the chance .* at (about \d+\.\d%|under 0\.1%)/);
+        expect(p.explanation).not.toMatch(/of the hands they could hold/);
+        expect(p.explanationZh).toMatch(/教練估計.*放槍的機率(大約\d+\.\d%|不到0\.1%)/);
+      } else if (p.reason !== 'deadHonour' && a.exact > 0) {
+        expect(p.explanation).toMatch(/wins for them in (about \d+\.\d%|under 0\.1%) of the hands they could hold/);
+      }
+    }
+    expect(seen.has('theirDiscard')).toBe(true);
+    expect(seen.has('passed')).toBe(true);
+  });
+
   it('are not a fixed lookup rule: several reasons, several accepted answers, and deterministic', () => {
     // The old three-step rule ("their discard > fewest-unseen honour > terminal") reproduced every answer.
     let ruleHits = 0;
