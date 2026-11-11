@@ -278,7 +278,8 @@ export const QUICK_START_MS = 15_000;
 /**
  * How long a started quick-match table lives with none of its players connected. Much shorter
  * than `KEEP_ALIVE_MS`: nobody else can enter it, so once its humans are gone it is only bots
- * playing each other and a place taken from the server's table cap.
+ * playing each other and a place taken from the server's table cap. The wait is for a player
+ * whose connection dropped; when every player left on purpose the table closes at once.
  */
 export const QUICK_ABANDONED_MS = 2 * 60_000;
 /** Table frames a quick-match player may not send: the table starts itself and its bots are the server's. */
@@ -354,7 +355,8 @@ export class RoomRegistry {
    * Club bots, restricted to these accounts, never a club table. It is not counted against
    * anyone's `maxTablesPerUser`; the queue keeps quick-match tables in bounds instead (one per
    * account at a time, `quickTableOf`, and each one charged like a create, `chargeQuickMatch`),
-   * and a started one closes `QUICK_ABANDONED_MS` after its last player disconnected.
+   * and a started one closes `QUICK_ABANDONED_MS` after its last player disconnected (at once
+   * when they all left on purpose).
    */
   createQuickMatchRoom(players: string[], opts: { startAfterMs?: number } = {}): string {
     return this.createHostedRoom({ botSkill: 'club', quickMatch: { players, startAfterMs: opts.startAfterMs } });
@@ -870,7 +872,9 @@ export class RoomRegistry {
       if (!this.rooms.has(r.code)) continue;
       r.table?.host.tick();
       if (r.peers.size !== 0) continue;
-      const abandoned = r.quick?.started && r.quick.emptySince !== null && this.now() - r.quick.emptySince >= QUICK_ABANDONED_MS;
+      // A started quick-match table with nobody connected: two minutes for a player who dropped to
+      // come back, and none at all when every player walked away on purpose.
+      const abandoned = r.quick?.started && r.quick.emptySince !== null && (this.now() - r.quick.emptySince >= QUICK_ABANDONED_MS || !r.table?.host.seatInfo().some((s) => !s.isBot && !s.left));
       if (abandoned || (r.keepAliveUntil !== undefined && r.keepAliveUntil <= this.now())) this.closeRoom(r);
     }
   }

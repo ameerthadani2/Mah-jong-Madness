@@ -197,7 +197,7 @@ Server → client
 | `{t:"from", from, data}` | Relayed data |
 | `{t:"error", code?, message}` | Sent once in reply to a refused `create` or `join`. `code:"room_unavailable"` (`Room not found or full`) is definitive, so a client stops reconnecting to that room |
 | `{t:"queue_status", position, waitedMs, humans, fillMs}` | While queued: at once and every 2 s |
-| `{t:"matched", room, humans, bots}` | A quick-match table is ready: join it by code. Only the matched accounts may; it starts by itself once all of them sit, or after 15 s with bots in the empty seats, and closes 2 minutes after its last player disconnected |
+| `{t:"matched", room, humans, bots}` | A quick-match table is ready: join it by code. Only the matched accounts may; it starts by itself once all of them sit, or after 15 s with bots in the empty seats, and closes 2 minutes after its last player disconnected (at once when every player left it on purpose) |
 | `{t:"queue_error", code, message, room?}` | Queue refusal: `banned`, `age_missing` (no birth year on the server), `age_under` (under 17), `seated` (still holding a seat at an unfinished quick-match table, or expected at one just opened: `room` is its code), `rate_limited`, `sign_in`, `unavailable`, or `replaced` (the account queued from another socket) |
 | `{t:"error", code:"closed", message}` | The host of a relay-only room left, so the room has closed. Sent unprompted to every peer still in it; they are no longer in a room |
 

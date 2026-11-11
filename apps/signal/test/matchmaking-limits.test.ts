@@ -69,6 +69,12 @@ function registry(opts: { fillMs?: number; maxHostedTables?: number } = {}) {
   return { rooms, mm, clock, peer, advance };
 }
 
+/** The rejoin token the table sent this socket in its `welcome`. */
+function tokenOf(out: Msg[]): string {
+  const welcome = out.map((m) => (m.t === 'from' ? ((m.data as { msg?: Msg } | undefined)?.msg ?? null) : null)).find((m) => m?.t === 'welcome');
+  return welcome!.token as string;
+}
+
 describe('one quick-match table per account', () => {
   it('an account that holds a seat at an unfinished quick-match table is not queued again and is told its table', async () => {
     const { rooms, mm, peer, advance } = registry();
@@ -265,6 +271,36 @@ describe('an abandoned quick-match table', () => {
     back.leave();
     advance(QUICK_ABANDONED_MS);
     expect(rooms.hasRoom(room)).toBe(false);
+  });
+
+  it('closes at once when every player walked away on purpose, and waits for one whose connection dropped', async () => {
+    const { rooms, peer, advance } = registry();
+    const a = peer();
+    const b = peer();
+    const [ma] = await Promise.all([a.queue(), b.queue()]);
+    const room = ma.room as string;
+    for (const p of [a, b]) {
+      p.enter(room);
+      p.sit();
+    }
+    await flush();
+    // a walks away and b's connection drops: the table waits for b.
+    a.walkAway();
+    a.leave();
+    b.leave();
+    advance(5_000);
+    expect(rooms.hasRoom(room)).toBe(true);
+    // b comes back only to walk away too: nobody is coming back now.
+    const back = peer(b.userId);
+    back.enter(room);
+    rooms.handle(back.id, { t: 'to', to: `server-${room}`, data: { ch: 'game', msg: { t: 'join', name: 'x', token: tokenOf(b.out) } } });
+    expect(rooms.hostedTable(room)!.seatInfo().find((s) => s.userId === b.userId)).toMatchObject({ connected: true });
+    back.walkAway();
+    expect(rooms.hasRoom(room)).toBe(true);
+    back.leave();
+    advance(500);
+    expect(rooms.hasRoom(room)).toBe(false);
+    expect(rooms.stats().hostedTables).toBe(0);
   });
 
   it('a table a player opened for friends still waits fifteen minutes', async () => {
