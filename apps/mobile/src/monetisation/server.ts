@@ -15,6 +15,8 @@ export interface SyncReply {
   /** False when the server has no store key (nothing was read from the store). */
   synced: boolean;
   applied: number;
+  /** Purchases the server read but could not apply this time (absent on older servers). */
+  failed?: number;
   wallet: { diamonds: number; bonusDiamonds: number };
   cosmetics?: string[];
 }

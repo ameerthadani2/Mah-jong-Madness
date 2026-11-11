@@ -228,15 +228,15 @@ Entitlements are decided by the server from store notifications; the app never g
 | `fourwinds.month`, `fourwinds.year` | auto-renewing | The Four Winds Club (everything in Coach Gold, unlimited hand reviews, creating and running clubs): an entitlement named after the plan until the store's expiry |
 | `theme.nightmarket`, `theme.bamboo`, `theme.imperial` (300 💎), `theme.jade` (400 💎) | diamonds only | permanent entitlement with the product id |
 
-App Store product ids are these ids. A Google Play subscription arrives as `<subscription>:<base plan>`, so create the Play subscriptions `coach.gold` and `fourwinds` with base plans `month` and `year`. The tier is the best active plan; refunding or ending one plan never cuts another. Sandbox events (TestFlight, Play testing) grant only to accounts in `TESTER_USER_IDS` and are otherwise recorded as `ignored_sandbox`. A refunded diamond pack takes back its diamonds even if that leaves a negative balance, which blocks spending until it is paid back. Anything else (avatar and emote packs, VIP cards, club tiers, Coach Diamond, Table Pass) is not sold: events and spends for it grant nothing.
+App Store product ids are these ids. A Google Play subscription arrives as `<subscription>:<base plan>`, so create the Play subscriptions `coach.gold` and `fourwinds` with base plans `month` and `year`. The tier is the best active plan; refunding or ending one plan never cuts another. Sandbox events (TestFlight, Play testing) grant only when the account that would receive the grant is in `TESTER_USER_IDS` (for a `TRANSFER`, the account the purchases move to; a tester id among the event's aliases does not count) and are otherwise recorded as `ignored_sandbox`. A refunded diamond pack takes back its diamonds even if that leaves a negative balance, which blocks spending until it is paid back; `GET /api/me` then reports a negative `wallet.diamonds`, and the app shows the balance owed. Anything else (avatar and emote packs, VIP cards, club tiers, Coach Diamond, Table Pass) is not sold: events and spends for it grant nothing.
 
 ### `POST /api/wallet/sync` (bearer)
 
-Asks the server to fetch this account's purchases from RevenueCat and apply any the webhook missed (the app calls it after Restore). → `{ synced, applied, wallet, cosmetics, coachTier }`. `synced:false` when the server has no `REVENUECAT_SECRET_KEY`. Errors: `429 rate_limited` (4 a minute), `502 store_unreachable`. A nightly job does the same for accounts with store activity in the last 7 days.
+Asks the server to fetch this account's purchases from RevenueCat and apply any the webhook missed (the app calls it after Restore). → `{ synced, applied, failed, wallet, cosmetics, coachTier }`. `synced:false` when the server has no `REVENUECAT_SECRET_KEY`. Each purchase is applied on its own: `applied` counts those that were missing, `failed` those that could not be applied this time (the others still were; the app then tells the player the check was incomplete instead of "restored"). A diamond pack already recorded under any account is a duplicate, never a second credit: after a Restore the store lists the old account's packs under the new one, and they stay where they were credited. Errors: `429 rate_limited` (4 a minute), `502 store_unreachable` (RevenueCat could not be read; the app shows the same warning). A nightly job does the same for accounts with store activity in the last 7 days; deleted accounts are skipped. The events a sync writes to `store_events` have ids `sync:<account id>:…`, so the same subscription seen for an old account never blocks its grant to the account it was restored to.
 
 ### `POST /api/admin/grant` (`Authorization: Bearer <ADMIN_TOKEN>`)
 
-Support grant. Body `{ userId, diamonds?, bonus?, entitlement?, days?, note }`; writes a `support` ledger entry or an entitlement. `401` wrong token, `404` unknown user, `503` when `ADMIN_TOKEN` is unset.
+Support grant. Body `{ userId, diamonds?, bonus?, entitlement?, days?, note }`; writes a `support` ledger entry or an entitlement. A plan from support is kept apart from the same plan bought in the store (its own row, `support:<plan>`; `GET /api/me` shows one line per plan with the later expiry), so a store refund, expiry or `TRANSFER` never takes time that support granted. `401` wrong token, `404` unknown user, `503` when `ADMIN_TOKEN` is unset.
 
 ### `POST /api/wallet/spend` (bearer)
 
@@ -259,15 +259,15 @@ Header `Authorization: Bearer <REVENUECAT_WEBHOOK_SECRET>` (set exactly that as 
 | Event type | Effect |
 | --- | --- |
 | `INITIAL_PURCHASE`, `RENEWAL` | Subscription: entitlement until `expiration_at_ms` (never shortened by a late, older event); purchase row recorded. A consumable sent as `INITIAL_PURCHASE` is credited like `NON_RENEWING_PURCHASE` |
-| `NON_RENEWING_PURCHASE` | Diamond pack credited (diamonds + bonus), once per `transaction_id` |
-| `CANCELLATION` | Auto-renew off: nothing changes until expiry. `cancel_reason: CUSTOMER_SUPPORT` (a refund): subscription ends now; for a diamond pack what is left of it is taken back (never below zero). The refund is remembered by `transaction_id`, so a purchase or renewal event for that transaction delivered later (a retry) grants nothing and answers `refunded` |
+| `NON_RENEWING_PURCHASE` | Diamond pack credited (diamonds + bonus), once per `transaction_id` across all accounts: a transaction already recorded under another account answers `duplicate` |
+| `CANCELLATION` | Auto-renew off: nothing changes until expiry. `cancel_reason: CUSTOMER_SUPPORT` (a refund): the store's time on that plan ends now (time granted by support stays); for a diamond pack the whole pack is taken back, bonus first, from the account that holds the purchase (found by `transaction_id`, which after a Restore or a merge may not be the account the event names), and purchased diamonds may go below zero, which blocks every spend until a purchase covers the debt. The refund is remembered by `transaction_id`, so a purchase or renewal event for that transaction delivered later (a retry) grants nothing and answers `refunded` |
 | `UNCANCELLATION`, `SUBSCRIPTION_EXTENDED` | Entitlement carried to `expiration_at_ms` if that is later |
 | `EXPIRATION` | Entitlement ends (ignored when a later renewal already extended it) |
 | `BILLING_ISSUE`, `PRODUCT_CHANGE`, `SUBSCRIPTION_PAUSED` | Recorded only (the store retries billing; the new product arrives with its `RENEWAL`; a pause ends with an `EXPIRATION`) |
-| `TRANSFER` | Store-granted entitlements move from `transferred_from` to the first known `transferred_to` account (later expiry wins); diamonds stay |
+| `TRANSFER` | Store-granted plans bought on the event's `store` move from `transferred_from` to the first known `transferred_to` account (later expiry wins). A plan the old account bought on another store stays, as do support grants and diamonds; a plan with no purchase on record moves |
 | `TEST` | Recorded only |
 
-`outcome` is one of `credited`, `entitled`, `extended`, `expired`, `refunded`, `transferred`, `recorded`, `test`, `duplicate`, `ignored_unknown_user`, `ignored_unknown_product`, `ignored_stale`, `ignored_type`.
+`outcome` is one of `credited`, `entitled`, `extended`, `expired`, `refunded`, `transferred`, `recorded`, `test`, `duplicate`, `ignored_unknown_user`, `ignored_unknown_product`, `ignored_sandbox`, `ignored_stale`, `ignored_type`.
 
 ## Reports (Phase 4)
 

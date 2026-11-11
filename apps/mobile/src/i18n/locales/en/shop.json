@@ -39,6 +39,11 @@
   "restore": "Restore purchases",
   "restoring": "Restoring…",
   "restored": "Purchases restored.",
+  "restoredUnchecked": "Your store sent your purchases, but the game server could not check them just now. If something is missing, tap Restore purchases again in a minute.",
+  "owed": {
+    "title": "%{n} diamonds owed after a refund",
+    "body": "A diamond pack was refunded after its diamonds had been spent, so your balance is below zero. Diamonds cannot be spent until it is back to zero: the next %{n} diamonds you buy pay it back."
+  },
   "errors": {
     "store_product_missing": "This item is not on sale in your store yet.",
     "store_not_signed_in": "Connect to the game server first, so the purchase reaches your account.",

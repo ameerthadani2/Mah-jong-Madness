@@ -32,7 +32,7 @@ export interface DeletionLosses {
 export function deletionLosses(wallet: Wallet, now: number = trustedNow(wallet)): DeletionLosses {
   const tier = coachTier(wallet, now);
   const subscription = tier === 'free' ? null : { tier, renewsAt: coachRenewal(wallet, now) };
-  return { subscription, diamonds: totalDiamonds(wallet), looks: wallet.cosmetics.length, needsSubscriptionAck: subscription !== null };
+  return { subscription, diamonds: Math.max(0, totalDiamonds(wallet)), looks: wallet.cosmetics.length, needsSubscriptionAck: subscription !== null };
 }
 
 /** The delete button works once the word is typed and, with a live plan, the billing notice is acknowledged. */

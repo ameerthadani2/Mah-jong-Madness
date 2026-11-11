@@ -116,6 +116,24 @@ describe('spending diamonds', () => {
     expect(r.status === 'need_diamonds' && r.short).toBe(280);
   });
 
+  it('with diamonds owed after a refund, the shortfall is the debt plus what the bonus does not cover', async () => {
+    const refuse = { spend: async () => Promise.reject(new ApiError('Not enough diamonds', 'insufficient', 409)) };
+    const withBonus = await buyWithDiamonds(productById('frame.bamboo')!, EMPTY_WALLET, deps([{ wallet: { diamonds: -500, bonusDiamonds: 400 } }], refuse).d);
+    expect(withBonus.status === 'need_diamonds' && withBonus.short).toBe(500);
+    expect(withBonus.wallet.diamonds).toBe(-500);
+    const price = productById('theme.jade')!.diamondPrice!;
+    const noBonus = await buyWithDiamonds(productById('theme.jade')!, EMPTY_WALLET, deps([{ wallet: { diamonds: -300, bonusDiamonds: 0 } }], refuse).d);
+    expect(noBonus.status === 'need_diamonds' && noBonus.short).toBe(300 + price);
+  });
+
+  it('a pack bought while diamonds are owed is credited when the debt shrinks, not left pending', async () => {
+    const store = storeThat({ status: 'purchased' });
+    const { d } = deps([{ wallet: { diamonds: -500, bonusDiamonds: 400 } }, { wallet: { diamonds: -440, bonusDiamonds: 400 } }]);
+    const r = await buyWithMoney(productById('diamonds.60')!, EMPTY_WALLET, store, d);
+    expect(r.status).toBe('credited');
+    expect(r.wallet.diamonds).toBe(-440);
+  });
+
   it('a product with no diamond price is refused without a request', async () => {
     const { d, log } = deps([{}]);
     expect((await buyWithDiamonds(productById('coach.gold.month')!, EMPTY_WALLET, d)).status).toBe('failed');
@@ -141,6 +159,21 @@ describe('restore purchases', () => {
     expect(r.ok && totalDiamonds(r.wallet)).toBe(300);
     const failing = deps([{}], { syncStore: async () => Promise.reject(new Error('502')) });
     expect((await restorePurchases(EMPTY_WALLET, store, failing.d)).ok).toBe(true);
+  });
+
+  it('says whether the server checked the store: a failed or partial sync is not reported as restored', async () => {
+    const store = storeThat({ status: 'purchased' });
+    const outcome = async (extra: Partial<WalletDeps>) => {
+      const r = await restorePurchases(EMPTY_WALLET, store, deps([{}], extra).d);
+      return r.ok ? r.serverSync : 'not ok';
+    };
+    expect(await outcome({ syncStore: async () => ({ synced: true, applied: 1, failed: 0 }) })).toBe('ok');
+    expect(await outcome({ syncStore: async () => ({ synced: true, applied: 0 }) })).toBe('ok');
+    expect(await outcome({ syncStore: async () => Promise.reject(new ApiError('The store could not be reached', 'store_unreachable', 502)) })).toBe('failed');
+    expect(await outcome({ syncStore: async () => ({ synced: true, applied: 1, failed: 2 }) })).toBe('failed');
+    // A server without a store key reads nothing: the webhooks are the only path, which is not a failure.
+    expect(await outcome({ syncStore: async () => ({ synced: false, applied: 0 }) })).toBe('skipped');
+    expect(await outcome({})).toBe('skipped');
   });
 
   it('reports a store that cannot restore', async () => {

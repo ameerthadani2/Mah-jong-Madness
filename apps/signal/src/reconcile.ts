@@ -11,8 +11,13 @@
  * - a refunded subscription becomes a CANCELLATION with reason CUSTOMER_SUPPORT.
  *
  * Sandbox purchases follow the same tester rule as the webhook. Synthesised events are recorded
- * in `store_events` like the webhook's (vendor `revenuecat`, ids starting `sync:`), so running a
- * sync twice changes nothing the second time.
+ * in `store_events` like the webhook's (vendor `revenuecat`), so running a sync twice changes
+ * nothing the second time. Their ids start `sync:<account id>:`, the account they were applied
+ * to: the store reports one subscription under whichever app user id holds it now, so the same
+ * period seen for an old account and later for the account it was restored on are two events,
+ * and the first can never stand in the way of the second. An account that is deleted, purged or
+ * unknown is not synced at all, and each event is applied on its own: one that fails is logged
+ * and counted, and the rest still apply.
  *
  * It runs after Restore (`POST /api/wallet/sync`, admin.ts) and nightly for every account with
  * store activity in the last 7 days (`startReconcileJob`). Without REVENUECAT_SECRET_KEY there is
@@ -104,14 +109,16 @@ function baseEvent(userId: string, eventId: string, type: string, productId: str
 }
 
 /**
- * The store events a subscriber record implies for `userId`, oldest information first. Purchases
- * without a store transaction id are skipped: without it a webhook credit and a sync credit
- * could not be told apart.
+ * The store events a subscriber record implies for the account `userId`, oldest information
+ * first. Every event id carries that account id. Purchases without a store transaction id are
+ * skipped: without it a webhook credit and a sync credit could not be told apart.
  */
 export function eventsFromSubscriber(userId: string, body: unknown, now: number): StoreEvent[] {
   const sub = isObject(body) && isObject(body.subscriber) ? body.subscriber : null;
   if (!sub) return [];
   const out: StoreEvent[] = [];
+  // store_events.event_id holds at most 255 characters.
+  const id = (kind: string, ...parts: Array<string | number>) => ['sync', userId, kind, ...parts].join(':').slice(0, 255);
   const ones = isObject(sub.non_subscriptions) ? sub.non_subscriptions : {};
   for (const [productId, list] of Object.entries(ones)) {
     if (!Array.isArray(list)) continue;
@@ -120,9 +127,9 @@ export function eventsFromSubscriber(userId: string, body: unknown, now: number)
       const txn = text(item.store_transaction_id);
       if (!txn) continue;
       if (time(item.refunded_at) !== null) {
-        out.push({ ...baseEvent(userId, `sync:refund:${txn}`, 'CANCELLATION', productId, item, item), cancelReason: 'CUSTOMER_SUPPORT' });
+        out.push({ ...baseEvent(userId, id('refund', txn), 'CANCELLATION', productId, item, item), cancelReason: 'CUSTOMER_SUPPORT' });
       } else {
-        out.push(baseEvent(userId, `sync:purchase:${txn}`, 'NON_RENEWING_PURCHASE', productId, item, item));
+        out.push(baseEvent(userId, id('purchase', txn), 'NON_RENEWING_PURCHASE', productId, item, item));
       }
     }
   }
@@ -133,12 +140,12 @@ export function eventsFromSubscriber(userId: string, body: unknown, now: number)
     const txn = text(item.store_transaction_id);
     const refundedAt = time(item.refunded_at);
     if (refundedAt !== null) {
-      out.push({ ...baseEvent(userId, `sync:refund:${productId}:${txn ?? refundedAt}`, 'CANCELLATION', productId, item, item), cancelReason: 'CUSTOMER_SUPPORT', expiresAt: refundedAt });
+      out.push({ ...baseEvent(userId, id('refund', productId, txn ?? refundedAt), 'CANCELLATION', productId, item, item), cancelReason: 'CUSTOMER_SUPPORT', expiresAt: refundedAt });
       continue;
     }
     // Only a live period needs granting; an expired one has already ended on its own.
     if (expires === null || expires <= now) continue;
-    out.push(baseEvent(userId, `sync:period:${productId}:${expires}`, 'SUBSCRIPTION_EXTENDED', productId, item, item));
+    out.push(baseEvent(userId, id('period', productId, expires), 'SUBSCRIPTION_EXTENDED', productId, item, item));
   }
   return out;
 }
@@ -147,10 +154,12 @@ export interface ReconcileResult {
   userId: string;
   /** False when there is no RevenueCat client (no REVENUECAT_SECRET_KEY). */
   checked: boolean;
-  /** Outcome of each event applied, by event id (duplicates included). */
-  outcomes: Array<{ eventId: string; outcome: StoreResult['outcome'] }>;
+  /** Outcome of each event, by event id (duplicates included); `failed` for one that could not be applied. */
+  outcomes: Array<{ eventId: string; outcome: StoreResult['outcome'] | 'failed' }>;
   /** How many changed something (not duplicate, not ignored). */
   applied: number;
+  /** How many could not be applied this time (the next sync tries them again). */
+  failed: number;
 }
 
 const CHANGED = new Set(['credited', 'entitled', 'extended', 'refunded']);
@@ -170,22 +179,38 @@ export class Reconciler {
     return this.deps.client !== null;
   }
 
-  /** Read this user's purchases from the store and apply what the server is missing. */
+  /**
+   * Read this user's purchases from the store and apply what the server is missing, to the live
+   * account the id stands for (a merged guest's purchases go to the account it was merged into).
+   * A deleted, purged or unknown account is not read at all (`checked` false). Throws only when
+   * the store cannot be read; an event that fails is counted in `failed` and the others go on.
+   */
   async syncUser(userId: string): Promise<ReconcileResult> {
     const client = this.deps.client;
-    if (!client) return { userId, checked: false, outcomes: [], applied: 0 };
+    const none: ReconcileResult = { userId, checked: false, outcomes: [], applied: 0, failed: 0 };
+    if (!client) return none;
+    const account = await this.deps.wallet.liveAccount(userId);
+    if (!account) return none;
     const body = await client.subscriber(userId);
     const outcomes: ReconcileResult['outcomes'] = [];
-    for (const e of eventsFromSubscriber(userId, body, this.now())) {
-      const r = await this.deps.wallet.applyStoreEvent(e);
-      outcomes.push({ eventId: e.eventId, outcome: r.outcome });
+    for (const e of eventsFromSubscriber(account, body, this.now())) {
+      try {
+        const r = await this.deps.wallet.applyStoreEvent(e);
+        // The account went away while this ran. Nothing was granted, so nothing is kept either.
+        if (r.outcome === 'ignored_unknown_user') await this.deps.repos.storeEvents.delete(e.eventId);
+        outcomes.push({ eventId: e.eventId, outcome: r.outcome });
+      } catch (err) {
+        outcomes.push({ eventId: e.eventId, outcome: 'failed' });
+        this.log(`[signal] store sync event ${e.eventId} failed: ${(err as Error).message}`);
+      }
     }
     const applied = outcomes.filter((o) => CHANGED.has(o.outcome)).length;
-    if (applied) this.log(`[signal] store sync applied ${applied} missed event(s) for ${userId}`);
-    return { userId, checked: true, outcomes, applied };
+    const failed = outcomes.filter((o) => o.outcome === 'failed').length;
+    if (applied) this.log(`[signal] store sync applied ${applied} missed event(s) for ${account}`);
+    return { userId, checked: true, outcomes, applied, failed };
   }
 
-  /** Sync every account with store activity since `since` (default: the last 7 days). One failure never stops the rest. */
+  /** Sync every account with store activity since `since` (default: the last 7 days). One failure never stops the rest; `failed` counts the accounts that had one. */
   async syncRecent(since: number = this.now() - 7 * 86_400_000): Promise<{ users: number; applied: number; failed: number }> {
     if (!this.deps.client) return { users: 0, applied: 0, failed: 0 };
     const users = await this.deps.repos.storeEvents.usersActiveSince(since);
@@ -193,7 +218,9 @@ export class Reconciler {
     let failed = 0;
     for (const userId of users) {
       try {
-        applied += (await this.syncUser(userId)).applied;
+        const res = await this.syncUser(userId);
+        applied += res.applied;
+        if (res.failed) failed++;
       } catch (e) {
         failed++;
         this.log(`[signal] store sync for ${userId} failed: ${(e as Error).message}`);

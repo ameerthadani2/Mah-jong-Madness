@@ -103,11 +103,16 @@ describe('events from a subscriber record', () => {
     });
     const events = eventsFromSubscriber('u1', body, T0);
     expect(events.map((e) => [e.eventId, e.type, e.storeProductId, e.transactionId, e.environment, e.cancelReason])).toEqual([
-      ['sync:purchase:TX300', 'NON_RENEWING_PURCHASE', 'diamonds.300', 'TX300', 'PRODUCTION', null],
-      [`sync:period:fourwinds.month:${T0 + 20 * DAY}`, 'SUBSCRIPTION_EXTENDED', 'fourwinds.month', 'GPA.1', 'SANDBOX', null],
-      ['sync:refund:coach.gold.year:Y1', 'CANCELLATION', 'coach.gold.year', 'Y1', 'PRODUCTION', 'CUSTOMER_SUPPORT'],
+      ['sync:u1:purchase:TX300', 'NON_RENEWING_PURCHASE', 'diamonds.300', 'TX300', 'PRODUCTION', null],
+      [`sync:u1:period:fourwinds.month:${T0 + 20 * DAY}`, 'SUBSCRIPTION_EXTENDED', 'fourwinds.month', 'GPA.1', 'SANDBOX', null],
+      ['sync:u1:refund:coach.gold.year:Y1', 'CANCELLATION', 'coach.gold.year', 'Y1', 'PRODUCTION', 'CUSTOMER_SUPPORT'],
     ]);
     expect(eventsFromSubscriber('u1', { nope: true }, T0)).toEqual([]);
+    // The same record read for another account gives different event ids: neither can pass for the other.
+    const other = new Set(eventsFromSubscriber('u2', body, T0).map((e) => e.eventId));
+    expect(events.some((e) => other.has(e.eventId))).toBe(false);
+    const long = subscriber({ non_subscriptions: { 'diamonds.60': [{ id: 'x', purchase_date: iso(T0), store: 'app_store', store_transaction_id: 'T'.repeat(255) }] } });
+    expect(eventsFromSubscriber(randomUUID(), long, T0)[0].eventId.length).toBeLessThanOrEqual(255);
   });
 });
 
@@ -119,7 +124,7 @@ describe('Reconciler', () => {
     expect((await reconciler.syncUser(u)).applied).toBe(1);
     expect(await balance(repos, u)).toEqual([3000, 450]);
     const again = await reconciler.syncUser(u);
-    expect(again).toMatchObject({ checked: true, applied: 0, outcomes: [{ eventId: 'sync:purchase:MISSED-1', outcome: 'duplicate' }] });
+    expect(again).toMatchObject({ checked: true, applied: 0, failed: 0, outcomes: [{ eventId: `sync:${u}:purchase:MISSED-1`, outcome: 'duplicate' }] });
     expect(await balance(repos, u)).toEqual([3000, 450]);
   });
 
@@ -194,11 +199,73 @@ describe('Reconciler', () => {
     expect(await reconciler.syncRecent()).toEqual({ users: 2, applied: 0, failed: 2 });
   });
 
+  it('applies each purchase on its own: one that fails is counted and logged, and the rest still apply', async () => {
+    const { repos, wallet, rc, user, now } = await setup();
+    const lines: string[] = [];
+    const reconciler = new Reconciler({ repos, wallet, client: createRevenueCatClient({ secretKey: 'sk', fetch: rc.fetch }), now, log: (l) => lines.push(l) });
+    const u = await user();
+    rc.records[u] = subscriber({
+      non_subscriptions: { 'diamonds.60': [{ id: 'p1', purchase_date: iso(T0), store: 'app_store', store_transaction_id: 'BAD-1' }], 'diamonds.300': [{ id: 'p2', purchase_date: iso(T0), store: 'app_store', store_transaction_id: 'GOOD-1' }] },
+      subscriptions: { 'fourwinds.month': { expires_date: iso(T0 + 20 * DAY), purchase_date: iso(T0 - 10 * DAY), store: 'app_store', store_transaction_id: 'FW-9' } },
+    });
+    const apply = wallet.applyStoreEvent.bind(wallet);
+    const spy = vi.spyOn(wallet, 'applyStoreEvent').mockImplementation(async (e) => {
+      if (e.transactionId === 'BAD-1') throw new Error('database away');
+      return apply(e);
+    });
+    const res = await reconciler.syncUser(u);
+    expect(res).toMatchObject({ checked: true, applied: 2, failed: 1 });
+    expect(res.outcomes.map((o) => o.outcome)).toEqual(['failed', 'credited', 'entitled']);
+    expect(lines.some((l) => l.includes(`sync:${u}:purchase:BAD-1`) && l.includes('database away'))).toBe(true);
+    expect(await balance(repos, u)).toEqual([300, 0]);
+    expect(await wallet.tierOf(u)).toBe('fourwinds');
+    // The route says how many failed; the nightly run counts the account as failed. The next run applies it.
+    const { call } = routes({ repos, wallet, reconciler, now, adminToken: null });
+    expect(await call('POST', '/api/wallet/sync', { userId: u })).toMatchObject({ status: 200, json: { synced: true, applied: 0, failed: 1, coachTier: 'fourwinds' } });
+    expect(await reconciler.syncRecent()).toEqual({ users: 1, applied: 0, failed: 1 });
+    spy.mockRestore();
+    expect(await reconciler.syncUser(u)).toMatchObject({ applied: 1, failed: 0 });
+    expect(await balance(repos, u)).toEqual([360, 0]);
+  });
+
+  it('does not read the store for a deleted account, and applies a merged guest\'s purchases to the account it became', async () => {
+    const { repos, wallet, rc, reconciler, user } = await setup();
+    const gone = await user();
+    rc.records[gone] = subscriber({ subscriptions: { 'fourwinds.year': { expires_date: iso(T0 + 300 * DAY), purchase_date: iso(T0), store: 'app_store', store_transaction_id: 'GONE-1' } } });
+    await repos.users.update(gone, { deletedAt: T0 });
+    expect(await reconciler.syncUser(gone)).toEqual({ userId: gone, checked: false, outcomes: [], applied: 0, failed: 0 });
+    expect(rc.calls).toEqual([]);
+    expect(await repos.storeEvents.get(`sync:${gone}:period:fourwinds.year:${T0 + 300 * DAY}`)).toBeNull();
+    const [guest, account] = [await user(), await user()];
+    await repos.users.update(guest, { deletedAt: T0, mergedInto: account });
+    rc.records[guest] = subscriber({ non_subscriptions: { 'diamonds.60': [{ id: 'p', purchase_date: iso(T0), store: 'app_store', store_transaction_id: 'GUEST-1' }] } });
+    expect((await reconciler.syncUser(guest)).outcomes).toEqual([{ eventId: `sync:${account}:purchase:GUEST-1`, outcome: 'credited' }]);
+    expect(await balance(repos, account)).toEqual([60, 0]);
+    expect(await wallet.liveAccount(guest)).toBe(account);
+    expect(await wallet.liveAccount(gone)).toBeNull();
+  });
+
+  it('an account deleted while its sync runs leaves no event on record', async () => {
+    const { repos, wallet, rc, user, now } = await setup();
+    const u = await user();
+    const record = subscriber({ subscriptions: { 'fourwinds.year': { expires_date: iso(T0 + 300 * DAY), purchase_date: iso(T0), store: 'app_store', store_transaction_id: 'RACE-1' } } });
+    const client = {
+      async subscriber() {
+        await repos.users.update(u, { deletedAt: T0 });
+        return record;
+      },
+    };
+    const res = await new Reconciler({ repos, wallet, client, now, log: () => {} }).syncUser(u);
+    expect(res.outcomes).toEqual([{ eventId: `sync:${u}:period:fourwinds.year:${T0 + 300 * DAY}`, outcome: 'ignored_unknown_user' }]);
+    expect(await repos.storeEvents.get(res.outcomes[0].eventId)).toBeNull();
+    expect(rc.calls).toEqual([]);
+  });
+
   it('does nothing without a client, and the nightly job runs once a day', async () => {
     const { repos, wallet } = await setup();
     const off = new Reconciler({ repos, wallet, client: null });
     expect(off.enabled).toBe(false);
-    expect(await off.syncUser('u')).toEqual({ userId: 'u', checked: false, outcomes: [], applied: 0 });
+    expect(await off.syncUser('u')).toEqual({ userId: 'u', checked: false, outcomes: [], applied: 0, failed: 0 });
     expect(await off.syncRecent()).toEqual({ users: 0, applied: 0, failed: 0 });
     vi.useFakeTimers();
     const on = new Reconciler({ repos, wallet, client: { subscriber: async () => null } });
@@ -244,7 +311,7 @@ describe('POST /api/wallet/sync', () => {
     const u = await user();
     rc.records[u] = subscriber({ non_subscriptions: { 'diamonds.300': [{ id: 'p', purchase_date: iso(T0), store: 'app_store', store_transaction_id: 'R-1' }] } });
     const { call } = routes({ repos, wallet, reconciler, now, adminToken: null });
-    expect(await call('POST', '/api/wallet/sync', { userId: u })).toEqual({ status: 200, json: { synced: true, applied: 1, wallet: { diamonds: 300, bonusDiamonds: 0 }, cosmetics: [], coachTier: 'free' } });
+    expect(await call('POST', '/api/wallet/sync', { userId: u })).toEqual({ status: 200, json: { synced: true, applied: 1, failed: 0, wallet: { diamonds: 300, bonusDiamonds: 0 }, cosmetics: [], coachTier: 'free' } });
     const offline = routes({ repos, wallet, now, env: {}, adminToken: null });
     expect(await offline.call('POST', '/api/wallet/sync', { userId: u })).toMatchObject({ status: 200, json: { synced: false, applied: 0, wallet: { diamonds: 300 } } });
   });
@@ -287,9 +354,14 @@ describe('POST /api/admin/grant', () => {
     expect((await repos.wallet.listLedger(u)).at(-1)).toMatchObject({ delta: 300, bonus: 50, reason: 'support', ref: 'support:Ticket 42: pack never arrived' });
     const plan = await call('POST', '/api/admin/grant', { authorization: auth, body: { userId: u, entitlement: 'fourwinds.month', days: 30, note: 'Ticket 43' } });
     expect(plan).toMatchObject({ status: 200, json: { coachTier: 'fourwinds', granted: { entitlement: 'fourwinds.month', expiresAt: iso(T0 + 30 * DAY) } } });
-    expect((await repos.wallet.getEntitlements(u)).find((e) => e.entitlement === 'fourwinds.month')).toMatchObject({ source: 'support', expiresAt: T0 + 30 * DAY });
+    // A plan from support has its own row, apart from the one the store writes; the app sees one line for the plan.
+    expect((await repos.wallet.getEntitlements(u)).map((e) => [e.entitlement, e.source, e.expiresAt])).toEqual([['support:fourwinds.month', 'support', T0 + 30 * DAY]]);
+    expect((await wallet.summary(u)).entitlements).toEqual([{ entitlement: 'fourwinds.month', expiresAt: T0 + 30 * DAY, active: true }]);
+    // A shorter grant never shortens it; a longer one extends it.
+    await call('POST', '/api/admin/grant', { authorization: auth, body: { userId: u, entitlement: 'fourwinds.month', days: 5, note: 'Ticket 43b' } });
+    expect((await wallet.summary(u)).entitlements[0].expiresAt).toBe(T0 + 30 * DAY);
     expect((await call('POST', '/api/admin/grant', { authorization: auth, body: { userId: u, entitlement: 'theme.jade', note: 'Ticket 44' } })).json).toMatchObject({ cosmetics: ['theme.jade'] });
-    expect((await repos.wallet.listLedger(u)).filter((l) => l.reason === 'support').map((l) => l.ref)).toEqual(['support:Ticket 42: pack never arrived', 'support:fourwinds.month:Ticket 43', 'support:theme.jade:Ticket 44']);
+    expect((await repos.wallet.listLedger(u)).filter((l) => l.reason === 'support').map((l) => l.ref)).toEqual(['support:Ticket 42: pack never arrived', 'support:fourwinds.month:Ticket 43', 'support:fourwinds.month:Ticket 43b', 'support:theme.jade:Ticket 44']);
   });
 
   it('refuses unknown accounts and entitlements, plans without days, nonsense amounts and grants without a note', async () => {

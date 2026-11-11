@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { allowedBotSkill, canAfford, canCreateClubs, canUse, coachRenewal, coachTier, consume, EMPTY_WALLET, hasTier, migrateWallet, mirrorMe, ownsCosmetic, showsPurchase, totalDiamonds, trustedNow, walletForUser, type MeWallet } from './wallet';
+import { allowedBotSkill, canAfford, canCreateClubs, canUse, coachRenewal, coachTier, consume, diamondsOwed, EMPTY_WALLET, hasTier, migrateWallet, mirrorMe, ownsCosmetic, showsPurchase, totalDiamonds, trustedNow, walletForUser, type MeWallet } from './wallet';
 
 const DAY = 86400_000;
 const SERVER_NOW = '2026-11-05T12:00:00.000Z';
@@ -55,9 +55,20 @@ describe('wallet mirror', () => {
   });
 
   it('ignores junk balances and treats an unreadable expiry as expired', () => {
-    const w = mirrorMe(EMPTY_WALLET, me({ wallet: { diamonds: -5, bonusDiamonds: Number.NaN }, entitlements: [{ entitlement: 'fourwinds', expiresAt: 'soon' }] }), S);
+    const w = mirrorMe(EMPTY_WALLET, me({ wallet: { diamonds: 'lots' as unknown as number, bonusDiamonds: Number.NaN }, entitlements: [{ entitlement: 'fourwinds', expiresAt: 'soon' }] }), S);
     expect(totalDiamonds(w)).toBe(0);
     expect(coachTier(w, S)).toBe('free');
+    // Bonus diamonds never go below zero on the server; a negative one is junk.
+    expect(mirrorMe(EMPTY_WALLET, me({ wallet: { diamonds: 10, bonusDiamonds: -40 } }), S)).toMatchObject({ diamonds: 10, bonusDiamonds: 0 });
+  });
+
+  it('keeps a purchased balance below zero (a refund of diamonds already spent), also in the cached copy', () => {
+    const w = mirrorMe(EMPTY_WALLET, me({ wallet: { diamonds: -500, bonusDiamonds: 400 } }), S);
+    expect(w).toMatchObject({ diamonds: -500, bonusDiamonds: 400 });
+    expect(diamondsOwed(w)).toBe(500);
+    expect(totalDiamonds(w)).toBe(-100);
+    expect(migrateWallet(JSON.parse(JSON.stringify(w)))).toMatchObject({ diamonds: -500, bonusDiamonds: 400 });
+    expect(diamondsOwed(mirrorMe(EMPTY_WALLET, me({ wallet: { diamonds: 0, bonusDiamonds: 400 } }), S))).toBe(0);
   });
 
   it('an old device-only wallet (the mock store’s) loads with nothing granted', () => {
@@ -135,6 +146,23 @@ describe('purchase detection and affordability', () => {
     const w = mirrorMe(EMPTY_WALLET, me({ wallet: { diamonds: 150, bonusDiamonds: 30 } }), S);
     expect(canAfford(w, 180)).toEqual({ ok: true, short: 0 });
     expect(canAfford(w, 240)).toEqual({ ok: false, short: 60 });
+  });
+
+  it('diamonds owed block every spend, bonus diamonds included: the shortfall is the debt plus what the bonus does not cover', () => {
+    const owing = mirrorMe(EMPTY_WALLET, me({ wallet: { diamonds: -500, bonusDiamonds: 400 } }), S);
+    // The bonus would cover 150, but the server spends nothing until the 500 are paid back.
+    expect(canAfford(owing, 150)).toEqual({ ok: false, short: 500 });
+    expect(canAfford(owing, 600)).toEqual({ ok: false, short: 700 });
+    const noBonus = mirrorMe(EMPTY_WALLET, me({ wallet: { diamonds: -300, bonusDiamonds: 0 } }), S);
+    expect(canAfford(noBonus, 200)).toEqual({ ok: false, short: 500 });
+  });
+
+  it('a top-up that only pays part of a debt back still shows as received', () => {
+    const owing = mirrorMe(EMPTY_WALLET, me({ wallet: { diamonds: -500, bonusDiamonds: 400 } }), S);
+    const after = mirrorMe(owing, me({ wallet: { diamonds: -440, bonusDiamonds: 400 } }), S);
+    expect(showsPurchase(owing, after, 'diamonds.60')).toBe(true);
+    expect(showsPurchase(owing, owing, 'diamonds.60')).toBe(false);
+    expect(diamondsOwed(after)).toBe(440);
   });
 });
 

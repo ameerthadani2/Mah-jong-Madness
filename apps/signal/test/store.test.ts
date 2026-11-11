@@ -135,6 +135,28 @@ describe('sandbox purchases', () => {
     expect(await f.post(rc('NON_RENEWING_PURCHASE', player.userId, { product_id: 'diamonds.60' }))).toBe('credited');
   });
 
+  it('only the account that receives the grant is tested: a tester id elsewhere in the event lends nothing', async () => {
+    const f = fixture();
+    const tester = await f.guest('Tess');
+    const player = await f.guest('Pat');
+    f.testers.add(tester.userId);
+    const sandbox = { environment: 'SANDBOX' };
+    // The store attached a tester's id as an alias (or as the original id) of a player who is not one.
+    expect(await f.post(rc('NON_RENEWING_PURCHASE', player.userId, { ...sandbox, product_id: 'diamonds.7500', aliases: [player.userId, tester.userId] }))).toBe('ignored_sandbox');
+    expect(await f.post(rc('INITIAL_PURCHASE', player.userId, { ...sandbox, product_id: 'fourwinds.year', original_app_user_id: tester.userId }))).toBe('ignored_sandbox');
+    expect(await f.me(player.auth)).toMatchObject({ coachTier: 'free', wallet: { diamonds: 0, bonusDiamonds: 0 } });
+    // A sandbox TRANSFER grants only when the account the purchases move to is a tester.
+    await f.post(rc('INITIAL_PURCHASE', tester.userId, { ...sandbox, product_id: 'fourwinds.year', expiration_at_ms: T0 + 365 * DAY }));
+    const transfer = (from: string, to: string) => ({ api_version: '1.0', event: { id: randomUUID(), type: 'TRANSFER', transferred_from: [from], transferred_to: [to], store: 'APP_STORE', ...sandbox } });
+    expect(await f.post(transfer(tester.userId, player.userId))).toBe('ignored_sandbox');
+    expect((await f.me(tester.auth)).coachTier).toBe('fourwinds');
+    expect((await f.me(player.auth)).coachTier).toBe('free');
+    const second = await f.guest('Tom');
+    f.testers.add(second.userId);
+    expect(await f.post(transfer(tester.userId, second.userId))).toBe('transferred');
+    expect((await f.me(second.auth)).coachTier).toBe('fourwinds');
+  });
+
   it('reads the tester list from TESTER_USER_IDS', () => {
     expect([...testerIdsFromEnv({ TESTER_USER_IDS: ' A1b2 , ,c3 ' })]).toEqual(['a1b2', 'c3']);
     expect(testerIdsFromEnv({}).size).toBe(0);
