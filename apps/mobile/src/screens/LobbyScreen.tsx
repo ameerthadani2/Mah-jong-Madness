@@ -10,6 +10,7 @@ import { AvatarPlate, seatAvatarId } from '../components/Avatars';
 import { Icon } from '../components/Icons';
 import { APP_NAME, APP_SCHEMES, LINK_DOMAIN } from '../config';
 import { tableLink } from '../push/deeplink';
+import { lobbyControls } from '../logic/lobby';
 
 export function LobbyScreen() {
   const app = useApp();
@@ -34,6 +35,8 @@ export function LobbyScreen() {
     );
   }
 
+  // A quick-match table is closed to everyone but the matched players and starts by itself (src/logic/lobby.ts).
+  const controls = lobbyControls(session);
   // Online tables run on the game server and have no host player, so every seated human may start or add bots.
   const localHost = session.mode === 'local' ? session.host : null;
   const humans = state.seats.filter((s) => s.peerId && !s.isBot).length;
@@ -48,30 +51,42 @@ export function LobbyScreen() {
 
   return (
     <ScrollView contentContainerStyle={styles.wrap}>
-      <ScreenHeader title={t('lobby.title', { code: session.roomCode })} onBack={leave} />
+      <ScreenHeader title={controls.share ? t('lobby.title', { code: session.roomCode }) : t('lobby.quickTable')} onBack={leave} />
       <View style={styles.cols}>
-        <Card style={[styles.col, { alignItems: 'center' }]}>
-          <P dim>{t('lobby.shareCode')}</P>
-          <View style={styles.codeBox}>
-            <StrokeText style={styles.code} strokeWidth={2.5} drop={2.5}>
-              {session.roomCode}
-            </StrokeText>
-          </View>
-          <Row style={{ flexWrap: 'wrap', justifyContent: 'center', rowGap: 6 }}>
-            <Button
-              small
-              kind="secondary"
-              icon="share"
-              title={t('lobby.share')}
-              onPress={() =>
-                void Share.share({
-                  message: t('lobby.shareMessage', { app: t('common.appName', { name: APP_NAME }), code: session.roomCode, link: tableLink(session.roomCode, { scheme: APP_SCHEMES[0] ?? 'mahjongmania', domain: LINK_DOMAIN }) }),
-                })
-              }
-            />
-            <Pill text={session.mode === 'online' ? t('lobby.serverTable') : t('lobby.onDevice')} icon="shield" tone="gold" />
-          </Row>
-        </Card>
+        {!controls.share ? (
+          // No code and no invite link here: nobody but the matched players can enter this table.
+          <Card style={[styles.col, { alignItems: 'center', justifyContent: 'center' }]} testID="lobby-quick">
+            <Icon name="users" size={36} color={colors.cta} />
+            <H2>{t('lobby.quickTable')}</H2>
+            <P dim style={{ textAlign: 'center' }}>
+              {t('lobby.quickClosed')}
+            </P>
+            <Pill text={t('lobby.serverTable')} icon="shield" tone="gold" />
+          </Card>
+        ) : (
+          <Card style={[styles.col, { alignItems: 'center' }]} testID="lobby-share">
+            <P dim>{t('lobby.shareCode')}</P>
+            <View style={styles.codeBox}>
+              <StrokeText style={styles.code} strokeWidth={2.5} drop={2.5}>
+                {session.roomCode}
+              </StrokeText>
+            </View>
+            <Row style={{ flexWrap: 'wrap', justifyContent: 'center', rowGap: 6 }}>
+              <Button
+                small
+                kind="secondary"
+                icon="share"
+                title={t('lobby.share')}
+                onPress={() =>
+                  void Share.share({
+                    message: t('lobby.shareMessage', { app: t('common.appName', { name: APP_NAME }), code: session.roomCode, link: tableLink(session.roomCode, { scheme: APP_SCHEMES[0] ?? 'mahjongmania', domain: LINK_DOMAIN }) }),
+                  })
+                }
+              />
+              <Pill text={session.mode === 'online' ? t('lobby.serverTable') : t('lobby.onDevice')} icon="shield" tone="gold" />
+            </Row>
+          </Card>
+        )}
         <Card style={styles.col}>
           <H2>{t('lobby.seats')}</H2>
           {state.seats.map((s) => {
@@ -94,7 +109,7 @@ export function LobbyScreen() {
               </Row>
             );
           })}
-          {session.quickMatch ? (
+          {!controls.addBot ? (
             <P dim style={{ fontSize: 12 }}>{t('lobby.quickStarts')}</P>
           ) : (
             <Row style={{ flexWrap: 'wrap', rowGap: 6 }}>
@@ -106,7 +121,7 @@ export function LobbyScreen() {
           )}
         </Card>
       </View>
-      {!session.quickMatch && <Button large title={humans > 1 ? t('lobby.start') : t('lobby.startWithBots')} icon="play" onPress={start} style={{ alignSelf: 'center' }} />}
+      {controls.start && <Button large title={humans > 1 ? t('lobby.start') : t('lobby.startWithBots')} icon="play" onPress={start} style={{ alignSelf: 'center' }} />}
       {conn.status === 'reconnecting' ? (
         <Row style={{ flexWrap: 'wrap', rowGap: 6, alignItems: 'center' }} gap={8}>
           <Pill tone="gold" icon="hourglass" text={t('lobby.reconnecting', { n: conn.attempt })} />

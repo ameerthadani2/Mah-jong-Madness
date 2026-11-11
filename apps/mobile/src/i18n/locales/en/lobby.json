@@ -19,5 +19,7 @@
   "reconnect": "Reconnect",
   "reconnecting": "Reconnecting… (attempt %{n})",
   "retryNow": "Retry now",
-  "quickStarts": "Quick match: the table starts by itself once everyone is seated, or within 15 seconds with bots in any empty seat."
+  "quickStarts": "Quick match: the table starts by itself once everyone is seated, or within 15 seconds with bots in any empty seat.",
+  "quickTable": "Quick-match table",
+  "quickClosed": "Only the players matched here can sit at this table, so there is no code to share. To play with friends, create a table of your own and share its code."
 }
