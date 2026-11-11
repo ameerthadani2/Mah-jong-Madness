@@ -67,6 +67,7 @@ export const AUDIT_CAVEATS = {
   away: 'This device was away when the hand ended; its record was checked afterwards, the play was not watched',
   gap: 'This device missed the hands before this one and was not shown their records, so the scores it started from could not be checked',
   serverRestart: 'The server restarted during this hand and some turns were played again',
+  appRestart: 'This app was restarted around this deal, so it cannot vouch for all of it',
 } as const;
 
 export type AuditCaveat = keyof typeof AUDIT_CAVEATS;
@@ -322,6 +323,8 @@ export interface SerializedClient {
   atStart: boolean;
   gapHand: number | null;
   rewinds: Array<{ hand: number; tc: number; undone: boolean }>;
+  lapseHand: number | null;
+  lapseDeal: boolean;
 }
 
 export interface TableClientOptions {
@@ -397,6 +400,8 @@ export class TableClient {
   private epoch = 0;
   /** Epoch of the last commit request. */
   private ceremonyEpoch = -1;
+  /** Epoch in which the view on show arrived. */
+  private viewEpoch = -1;
   /** Epoch in which this client last watched a hand end (or first sat down): no link loss since means it saw everything after. */
   private quietSince = -1;
   /**
@@ -422,6 +427,15 @@ export class TableClient {
    * (-1: before the deal). `undone`: this client had been shown more than that, and dropped it.
    */
   private rewinds: Array<{ hand: number; tc: number; undone: boolean }> = [];
+  /**
+   * This client was restored from a saved record, which may be a moment older than the last thing
+   * the app did before it stopped: `lapse` until it next hears of a hand, then `lapseHand` is that
+   * hand, whose deal it may have taken part in without a note of it surviving.
+   */
+  private lapse = false;
+  private lapseHand: number | null = null;
+  /** The restored record did not show `lapseHand` as dealt: its deal was agreed, or may have begun, around the restart. */
+  private lapseDeal = false;
   private readonly listeners = new Set<(s: ClientState) => void>();
   private unsubMessage: Unsubscribe = () => undefined;
   private unsubClose: Unsubscribe = () => undefined;
@@ -453,7 +467,8 @@ export class TableClient {
     const c = new TableClient(link, name, avatar, identity, opts);
     if (!isObject(saved) || saved.version !== CLIENT_SNAPSHOT_VERSION || !isObject(saved.state)) return c;
     try {
-      c.load(saved as unknown as SerializedClient);
+      // A copy: the client goes on to change its records, and the caller may restore from `saved` again.
+      c.load(JSON.parse(JSON.stringify(saved)) as SerializedClient);
     } catch {
       return new TableClient(link, name, avatar, identity, opts);
     }
@@ -503,6 +518,9 @@ export class TableClient {
     this.atStart = d.atStart === true;
     this.gapHand = isInt(d.gapHand) ? d.gapHand : null;
     this.rewinds = Array.isArray(d.rewinds) ? d.rewinds.filter((x) => isObject(x) && isInt(x.hand) && isInt(x.tc)) : [];
+    this.lapseHand = isInt(d.lapseHand) ? d.lapseHand : null;
+    this.lapseDeal = d.lapseDeal === true;
+    this.lapse = true;
     // The app stopped: the link it had is gone. Moves sent just before the last save may be missing
     // from the ledger, so it vouches for the current hand's log only from the next state it sees.
     this.noteLinkLost();
@@ -545,6 +563,8 @@ export class TableClient {
       atStart: this.atStart,
       gapHand: this.gapHand,
       rewinds: this.rewinds,
+      lapseHand: this.lapseHand,
+      lapseDeal: this.lapseDeal,
     };
   }
 
@@ -604,6 +624,8 @@ export class TableClient {
 
   act(action: Action): void {
     if (this.state.seat === null) return;
+    // A view from before the link was lost says nothing about the table now: wait for the first state on this link.
+    if (this.viewEpoch !== this.epoch) return;
     const v = this.state.view;
     const tc = v && isInt(v.turnCounter) ? v.turnCounter : undefined;
     if (v && tc !== undefined) {
@@ -738,6 +760,13 @@ export class TableClient {
    * are a gap, noted on this hand's audit, unless the host has shown their records (see `missed`).
    */
   private enterHand(h: number): void {
+    if (this.lapse) {
+      this.lapse = false;
+      // A second restart during the same hand does not make its deal any better watched.
+      const before = this.lapseHand === h && this.lapseDeal;
+      this.lapseHand = h;
+      this.lapseDeal = before || !this.recordFor(h)?.dealt;
+    }
     if (this.openHand === h) {
       this.handEpoch = this.epoch;
       return;
@@ -819,6 +848,9 @@ export class TableClient {
     this.atStart = false;
     this.gapHand = null;
     this.rewinds = [];
+    this.lapse = false;
+    this.lapseHand = null;
+    this.lapseDeal = false;
     this.state = { ...this.state, matchOver: false, finalScores: null, view: null, lastResult: null };
   }
 
@@ -937,15 +969,22 @@ export class TableClient {
         let rec = this.recordFor(h);
         const last = rec?.attempts[rec.attempts.length - 1];
         const n = isInt(m.attempt) && m.attempt >= 1 ? m.attempt : (last?.n ?? 0) + 1;
+        // A commitment lost with the link never reached the host, which asks for it again when the seat
+        // returns. That is harmless as long as this client has not revealed in the attempt: nothing of
+        // its share has been seen. After a reveal, the same attempt again would be a second deal.
+        const again = !!last && n === last.n && !last.revealed && !last.stoodIn && this.ceremonyEpoch !== this.epoch;
         if (!rec) {
           // Watched from the start only when the first request it hears of is attempt 1.
           rec = { hand: h, attempts: [], fromStart: n === 1, linkLost: false, dealt: false };
           this.records.push(rec);
           if (this.records.length > 3) this.records.shift();
           if (n !== 1 && !this.noHistory && this.quietSince === this.epoch) this.flag(h, `Host never asked this seat to commit to attempts 1–${n - 1} of this hand`);
+        } else if (again) {
+          // The same attempt, asked again after a lost link: a fresh secret takes the place of the one that never arrived.
         } else if (last && n <= last.n) this.flag(h, `Host ran attempt ${n} of this hand's deal twice`);
         else if (last && n !== last.n + 1 && this.ceremonyEpoch === this.epoch) this.flag(h, `Host never asked this seat to commit to attempt ${last.n + 1} of this hand`);
-        rec.attempts.push({ n, committed: true, revealed: false, stoodIn: false });
+        if (again && last) last.committed = true;
+        else rec.attempts.push({ n, committed: true, revealed: false, stoodIn: false });
         this.ceremonyEpoch = this.epoch;
         this.secret = makeSecret();
         this.commits = null;
@@ -1069,6 +1108,7 @@ export class TableClient {
         const rec = this.recordFor(h);
         if (rec) rec.dealt = true;
         this.noteState(v, m);
+        this.viewEpoch = this.epoch;
         this.update({ view: v, stateHash: m.hash, deadline: m.deadline, timeBank: m.timeBank, inTimeBank: m.inTimeBank, lastResult: null, lastError: null, ceremony: 'idle' });
         return;
       }
@@ -1275,7 +1315,8 @@ export class TableClient {
       target.rejected = code;
       target.refusedAt = at;
     }
-    if (isInt(m.turnCounter) && at !== undefined) {
+    // Only a refusal of a move made in this hand counts here (a stray answer to an older hand's move does not).
+    if (target && isInt(m.turnCounter) && at !== undefined) {
       play.refusals = [...(play.refusals ?? []), { tc: m.turnCounter, at }].slice(-MAX_SENT);
     }
   }
@@ -1420,9 +1461,14 @@ export class TableClient {
 
     // 3. Participation: we committed, or the host told us it made our share.
     const stoodIn = this.standInHand === h;
-    const tookPart = this.commitHand === h || stoodIn;
+    // A record restored after an app restart may lack the last thing the app did: if it holds no
+    // note of the attempt that was dealt, this client cannot say whether its share was used.
+    const rec = this.recordFor(h);
+    const forgot = this.lapseHand === h && !stoodIn && !rec?.attempts.some((a) => a.n === audit.ceremonyAttempts);
+    const tookPart = (this.commitHand === h && !forgot) || stoodIn;
     const joined = !tookPart && this.joinedHand === h;
     if (joined) caveats.push(AUDIT_CAVEATS.joined);
+    else if (forgot) caveats.push(AUDIT_CAVEATS.appRestart);
     else if (!tookPart) failures.push('Host never asked this seat to commit');
 
     // 4. Our own share.
@@ -1435,12 +1481,17 @@ export class TableClient {
     }
 
     // 5. The commitments we were shown before revealing (only our own share depended on them).
-    if (this.commits && this.commitsHand === h) {
+    if (forgot) {
+      // Whatever set this client holds belongs to an attempt before the one that was dealt.
+    } else if (this.commits && this.commitsHand === h) {
       for (const c of this.commits) {
         const a = commitsOk ? audit.commits.find((x) => x.seat === c.seat) : undefined;
         if (!a || a.hash !== c.hash) failures.push(`Commitment for seat ${c.seat} changed after the fact`);
       }
-    } else if (tookPart && !stoodIn) failures.push('The commitments for this hand never arrived');
+    } else if (tookPart && !stoodIn) {
+      if (this.lapseHand === h) caveats.push(AUDIT_CAVEATS.appRestart);
+      else failures.push('The commitments for this hand never arrived');
+    }
 
     // 6. Reveals, seed and replay.
     this.checkSeed(audit, commitsOk && revealsOk, failures);
@@ -1473,12 +1524,13 @@ export class TableClient {
     failures.push(...this.checkAccounting(audit));
 
     // 8. Green only for a deal this device watched whole, in one attempt, over one unbroken link.
-    const rec = this.recordFor(h);
     if (isInt(audit.ceremonyAttempts) && audit.ceremonyAttempts > 1) caveats.push(AUDIT_CAVEATS.restarted);
     if (rec?.linkLost) caveats.push(AUDIT_CAVEATS.linkLost);
     else if (tookPart && !stoodIn && rec && !rec.fromStart) caveats.push(AUDIT_CAVEATS.missedAttempts);
     if (this.gapHand === h) caveats.push(AUDIT_CAVEATS.gap);
     if (this.rewinds.some((x) => x.hand === h && x.undone)) caveats.push(AUDIT_CAVEATS.serverRestart);
+    // An app restart around the deal: this device cannot say it watched all of it, whatever its record now shows.
+    if (this.lapseHand === h && this.lapseDeal && !caveats.includes(AUDIT_CAVEATS.appRestart)) caveats.push(AUDIT_CAVEATS.appRestart);
 
     const status: AuditStatus = failures.length > 0 ? 'failed' : caveats.length > 0 ? 'partial' : 'ok';
     return { check: { status, failures, caveats }, replayed };
@@ -1528,7 +1580,8 @@ export class TableClient {
           if (play.ledgerFrom !== null && isInt(n) && n >= play.ledgerFrom) {
             // Any move this client sent and the log has not used yet may be the one: a move that reaches
             // the table late (after its clock ran out, say) is played on the seat's next turn if still legal.
-            const match = sent.find((x) => !x.used && x.tc <= n && sameActionSafe(x.action, entry.action, s, me));
+            // Of several, the likeliest: one the host did not refuse, made on the latest turn.
+            const match = sent.filter((x) => !x.used && x.tc <= n && sameActionSafe(x.action, entry.action, s, me)).sort((a, b) => Number(!!a.rejected) - Number(!!b.rejected) || b.tc - a.tc)[0];
             if (match) {
               match.used = true;
               // The host cannot have played this move before this device sent it: a fixed point between the two clocks.
@@ -1546,9 +1599,10 @@ export class TableClient {
           }
           if (couldWin && entry.action?.type !== 'hu') problems.add(`The table played for this seat and passed up its win (turn ${String(n)})`);
           if (isInt(n) && this.autoWasEarly(play, n, end, rules, anchors)) problems.add(`The table played for this seat while it was connected and its clock had not run out (turn ${n})`);
-          // A legal move this device sent for this turn long before, over a link that never dropped, was left lying.
+          // A legal move this device sent for this turn long before, over a link that never dropped, was left
+          // lying. (Only moves sent since this client began vouching for the log: before that none are matched.)
           const after = isInt(n) ? frameAfter(n) : null;
-          if (after && sent.some((x) => !x.used && x.tc <= n && x.epoch === after.epoch && typeof x.at === 'number' && after.at - x.at > MOVE_SLACK_MS && !(x.refusedAt !== undefined && x.refusedAt <= n) && legalFor(s, me, x.action) && !sameActionSafe(x.action, entry.action, s, me))) {
+          if (after && play.ledgerFrom !== null && sent.some((x) => !x.used && x.tc >= (play.ledgerFrom as number) && x.tc <= n && x.epoch === after.epoch && typeof x.at === 'number' && after.at - x.at > MOVE_SLACK_MS && !(x.refusedAt !== undefined && x.refusedAt <= n) && legalFor(s, me, x.action) && !sameActionSafe(x.action, entry.action, s, me))) {
             problems.add(`The table ignored a move this seat sent in good time and played its own instead (turn ${n})`);
           }
         }

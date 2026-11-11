@@ -645,10 +645,52 @@ describe('the client’s record survives an app restart', () => {
     back.join();
     back.ready();
     playOut(host, back, clock);
+    // The saved record is a moment older than the app's last act: the restarted app cannot know
+    // that it had not already taken part in this deal, so it does not vouch for it. The chain holds.
     expect(back.state.audits.map((a) => [a.audit.handNumber, a.status])).toEqual([
       [0, 'ok'],
-      [1, 'ok'],
+      [1, 'partial'],
     ]);
+    expect(back.state.auditCaveats).toEqual([AUDIT_CAVEATS.appRestart]);
+    expect(back.state.auditFailures).toEqual([]);
+    // The deal after that is watched whole by the restarted app, and is green again.
+    back.ready();
+    playOut(host, back, clock);
+    expect(back.state.audits.map((a) => [a.audit.handNumber, a.status])).toEqual([
+      [0, 'ok'],
+      [1, 'partial'],
+      [2, 'ok'],
+    ]);
+  });
+
+  it('a second restart during the same hand does not turn its deal green', () => {
+    const clock = { now: 1_000_000 };
+    const hub = new LoopbackHub();
+    const queue: Array<() => void> = [];
+    const host = makeHost(hub, clock, 'SR2', withRules({ handsPerMatch: 4 }), queue);
+    const first = droppable(hub, 'p0');
+    const c = new TableClient(first.link, 'Victim', undefined, {}, { now: () => clock.now });
+    c.join();
+    host.start();
+    playOut(host, c, clock, queue);
+    // Restart between the hands, then again once the next hand has been dealt.
+    const saved = JSON.parse(JSON.stringify(c.serialize())) as SerializedClient;
+    first.drop();
+    const second = droppable(hub, 'p0b');
+    const mid = TableClient.restore(saved, second.link, 'Victim', undefined, { token: saved.state.token! }, { now: () => clock.now });
+    mid.join();
+    mid.ready();
+    expect(host.phase).toBe('playing');
+    expect(mid.state.view?.handNumber).toBe(1);
+    const again = JSON.parse(JSON.stringify(mid.serialize())) as SerializedClient;
+    second.drop();
+    const back = TableClient.restore(again, droppable(hub, 'p0c').link, 'Victim', undefined, { token: again.state.token! }, { now: () => clock.now });
+    back.join();
+    playOut(host, back, clock, queue);
+    expect(back.state.lastAudit?.handNumber).toBe(1);
+    expect(back.state.auditStatus).toBe('partial');
+    expect(back.state.auditCaveats).toContain(AUDIT_CAVEATS.appRestart);
+    expect(back.state.auditFailures).toEqual([]);
   });
 
   it('keeps only the last 50 audits, and an unknown snapshot gives a client with no history', () => {

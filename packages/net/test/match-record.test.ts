@@ -5,7 +5,7 @@
  * verified keeps the result, view and audit this client checked.
  */
 import { describe, expect, it } from 'vitest';
-import { chooseAction, countsFromKinds, dealFromSnapshot, kindOf, legalActions, NUM_PLAY_KINDS, shanten, viewFor, withRules, type GameState, type MatchSnapshot } from '@mjm/engine';
+import { chooseAction, dealFromSnapshot, legalActions, viewFor, withRules, type GameState, type MatchSnapshot } from '@mjm/engine';
 import { deriveSeed, LoopbackHub, TableClient, TableHost, transportLink, type Audit, type HostMessage, type Reveal, type SeatInfo } from '../src/index';
 import { seededDeals } from './support';
 
@@ -82,10 +82,6 @@ function playOut(host: TableHost, c: TableClient, clock: { now: number }) {
     }
   }
   expect(host.phase).toBe('hand_over');
-}
-
-function startShanten(g: GameState): number {
-  return shanten(countsFromKinds(g.players[0].hand.map(kindOf).filter((k) => k < NUM_PLAY_KINDS)), 5);
 }
 
 /**
