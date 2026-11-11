@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { ScrollView, Share, StyleSheet, Text, TextInput, View } from 'react-native';
 import { BOT_SKILLS, RULE_PRESETS, rulesFromPreset, type BotSkill, type RuleSet } from '@mjm/engine';
 import { useApp } from '../app-state';
-import { clubErrorMessage, clubLink, clubListLine, clubsApi, httpBase, ownerRestricted, type Club, type ClubContext, type ClubListing, type ClubMember, type ClubTable } from '../api/clubs';
+import { clubErrorText, clubLink, clubListLine, clubsApi, httpBase, ownerRestricted, type Club, type ClubContext, type ClubListing, type ClubMember, type ClubTable } from '../api/clubs';
 import { useAuth } from '../auth/AuthProvider';
 import { APP_NAME, APP_SCHEMES, LINK_DOMAIN } from '../config';
 import { createOnlineSession } from '../game/session';
@@ -27,12 +27,6 @@ import { canStartSeason, sortStandings, standingPoints, type StandingsView } fro
 import { useOnlineGuard } from '../legal/useOnlineGuard';
 
 const roleName = (role: ClubMember['role'] | 'guest', t: Translate) => t(`common.roles.${role}`);
-
-/** A club call's failure as copy: the owner-tool and Four Winds refusals have their own lines, the rest the generic mapping. */
-function clubErrorText(e: unknown, t: Translate): string {
-  const m = clubErrorMessage(e);
-  return m ? t(m.key, m.params) : friendlyError(e, t);
-}
 
 /** Club calls authenticated with the signed-in session. */
 function useClubContext(): ClubContext {
@@ -318,6 +312,8 @@ export function ClubScreen({ code }: { code: string }) {
 
   const openTable = async (rules?: RuleSet) => {
     setBusy(true);
+    // A refusal from the last try (the server allows one new table every few seconds) is not left standing over this one.
+    setError(null);
     try {
       // The server opens a member's table under the house rules and the club's bots; only owners and admins send rules.
       const table = await clubsApi.openTable(ctx, club.code, { label: t('clubs.tableLabel', { name: user.name }), ...(rules ? { rules } : {}) });
@@ -441,7 +437,11 @@ export function ClubScreen({ code }: { code: string }) {
           </Row>
         }
       />
-      {error && <Pill tone="danger" icon="warning" wrap text={error} />}
+      {error && (
+        <View testID="club-error" accessibilityRole="alert" accessibilityLiveRegion="assertive">
+          <Pill tone="danger" icon="warning" wrap text={error} />
+        </View>
+      )}
       {notice && <Pill tone="ok" icon="check" wrap text={notice} />}
       {restricted && (
         <Card tone="gold" style={{ gap: 6 }}>

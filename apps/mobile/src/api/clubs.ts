@@ -4,7 +4,8 @@
 import type { BotSkill, RuleSet } from '@mjm/engine';
 import { authorisedJson, globalFetch, type Authoriser, type FetchLike } from './http';
 import type { ReportPayload } from '../legal/reports';
-import type { Message } from '../logic/translate';
+import { friendlyError } from '../logic/errors';
+import type { Message, Translate } from '../logic/translate';
 import { rulesStakes } from '../logic/rules-text';
 
 export { ApiError as ClubApiError, httpBase } from './http';
@@ -122,6 +123,16 @@ export function clubErrorMessage(e: unknown): Message | null {
   ];
   const hit = known.find(([re]) => re.test(message));
   return hit ? { key: hit[1] } : null;
+}
+
+/**
+ * A club call's failure as copy: the owner-tool and Four Winds refusals have their own lines, the
+ * rest the generic mapping (src/logic/errors.ts), which is where a 429 `rate_limited` for a table
+ * opened too soon after another becomes "wait a few seconds and try again".
+ */
+export function clubErrorText(e: unknown, t: Translate): string {
+  const m = clubErrorMessage(e);
+  return m ? t(m.key, m.params) : friendlyError(e, t);
 }
 
 /** A link to share a club: `https://<domain>/c/<CODE>` with a link domain (the form `push/deeplink.ts` opens), else `<scheme>://club/<CODE>`. */

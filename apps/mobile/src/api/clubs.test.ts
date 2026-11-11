@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Authoriser, FetchLike } from './http';
 import { DEFAULT_RULES } from '@mjm/engine';
-import { clubErrorMessage, clubLink, clubListLine, clubsApi, ownerRestricted, OWNER_GRACE_DAYS } from './clubs';
+import { clubErrorMessage, clubErrorText, clubLink, clubListLine, clubsApi, ownerRestricted, OWNER_GRACE_DAYS } from './clubs';
 import { parseDeepLink } from '../push/deeplink';
 import { translator } from '../logic/translator.fixture';
 
@@ -121,5 +121,51 @@ describe('the line under a club in My clubs', () => {
     expect(line).toEqual({ key: 'clubs.memberCount', params: { n: 4 } });
     expect(en(line.key, line.params)).toBe('4 members');
     expect(zh(line.key, line.params)).toBe('4 位成員');
+  });
+});
+
+describe('opening a club table too soon after another', () => {
+  /** Answers each request with the next reply in the list (the last one for any further request). */
+  function sequence(replies: Array<{ status: number; body: unknown }>) {
+    let n = 0;
+    const fetch: FetchLike = async () => {
+      const r = replies[Math.min(n++, replies.length - 1)];
+      return { ok: r.status < 400, status: r.status, text: async () => JSON.stringify(r.body) };
+    };
+    const auth: Authoriser = { token: async () => 'mjs_tok', onUnauthorised: () => undefined };
+    return { ctx: { base: 'https://game.example', auth, fetch }, calls: () => n };
+  }
+  // The server's reply when the account's or the address's allowance for new tables is spent (apps/signal/src/api.ts).
+  const refused = { status: 429, body: { error: 'rate_limited', message: 'Please wait a few seconds before opening another table' } };
+  const table = { code: 'T1', label: "Tester's table", rules: DEFAULT_RULES };
+
+  it('asks the player to wait a few seconds, in the language of the app', async () => {
+    const { ctx } = sequence([refused]);
+    const failure = await clubsApi.openTable(ctx, 'AB12', { label: 'x' }).catch((e: unknown) => e);
+    expect(failure).toMatchObject({ code: 'rate_limited', status: 429 });
+    expect(clubErrorText(failure, en)).toBe(en('errors.rateLimited'));
+    expect(clubErrorText(failure, en)).toMatch(/wait a few seconds/i);
+    expect(clubErrorText(failure, zh)).toBe(zh('errors.rateLimited'));
+    expect(clubErrorText(failure, zh)).toMatch(/請稍等幾秒/);
+    // Never the server's English sentence or its error code.
+    expect(clubErrorText(failure, zh)).not.toMatch(/[A-Za-z]{3,}/);
+  });
+
+  it('reads the same when the whole address is being slowed down, whatever the sentence', async () => {
+    const { ctx } = sequence([{ status: 429, body: { error: 'rate_limited', message: 'Too many requests' } }]);
+    const failure = await clubsApi.openTable(ctx, 'AB12', {}).catch((e: unknown) => e);
+    expect(clubErrorText(failure, zh)).toBe(zh('errors.rateLimited'));
+  });
+
+  it('is not remembered: the next try reaches the server and opens the table', async () => {
+    const { ctx, calls } = sequence([refused, { status: 200, body: table }]);
+    await expect(clubsApi.openTable(ctx, 'AB12', {})).rejects.toMatchObject({ code: 'rate_limited' });
+    await expect(clubsApi.openTable(ctx, 'AB12', {})).resolves.toMatchObject({ code: 'T1' });
+    expect(calls()).toBe(2);
+  });
+
+  it('keeps its own lines for the refusals a club has words for', () => {
+    expect(clubErrorText({ code: 'not_found', message: 'Table not found' }, en)).toBe(en('clubs.errors.tableNotFound'));
+    expect(clubErrorText({ code: 'rate_limited', message: 'This club is getting a lot of join requests; try again later' }, zh)).toBe(zh('clubs.errors.joinRateClub'));
   });
 });
