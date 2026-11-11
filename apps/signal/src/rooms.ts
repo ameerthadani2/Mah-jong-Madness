@@ -395,6 +395,21 @@ export class RoomRegistry {
     return refused;
   }
 
+  /**
+   * Charge a table opened outside the socket (a club table over the HTTP API) like a `create`: one
+   * from the account's allowance (one per `createCooldownMs`) and one from the address's
+   * (`createsPerIpPerMinute`), the same buckets a socket `create` and a quick-match table spend.
+   * False when either is spent; the caller answers 429 and opens nothing. Call it after every
+   * other check that can refuse the table, so a refusal does not cost the next create. A table
+   * `createHostedRoom` is about to refuse (hosting off, the server full, the account at its table
+   * cap) is not charged either: that refusal is the answer.
+   */
+  chargeCreate(userId: string, ip?: string): boolean {
+    if (!this.opts.allowHosted || this.hostedCount() >= this.maxHostedTables() || this.openTablesOf(userId) >= this.maxTablesPerUser()) return true;
+    if (!this.createsByUser.take(`u:${userId}`)) return false;
+    return ip === undefined || this.createsByIp.take(ip);
+  }
+
   /** The accounts a quick-match table was opened for (undefined for any other room); for its snapshot. */
   quickPlayersOf(code: string): string[] | undefined {
     const quick = this.rooms.get(code.toUpperCase())?.quick;

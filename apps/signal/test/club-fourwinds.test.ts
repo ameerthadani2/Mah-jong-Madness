@@ -120,7 +120,11 @@ describe("an owner's lapsed plan", () => {
     const club = (await f.call('POST', '/api/clubs', { name: 'Dev' }, owner.auth)).json as unknown as Club;
     now += 25 * DAY;
     await f.clubs.checkOwnerPlans();
-    for (let i = 0; i < 3; i++) expect((await f.call('POST', `/api/clubs/${club.code}/tables`, {}, owner.auth)).status).toBe(200);
+    // One table every ten seconds: opening one over the API costs the account's create allowance.
+    for (let i = 0; i < 3; i++) {
+      expect((await f.call('POST', `/api/clubs/${club.code}/tables`, {}, owner.auth)).status).toBe(200);
+      now += 10_000;
+    }
     expect(f.clubs.club(club.code).ownerLapsedAt).toBeNull();
   });
 });
@@ -197,6 +201,7 @@ describe('the three-club cap on every way of coming to own a club', () => {
     expect(f.clubs.ownerRestricted(f.clubs.club(own[0]))).toBe(false);
     // Deleting one of the three makes room: the plan covers this club again.
     expect((await f.call('DELETE', `/api/clubs/${own[1]}`, { confirm: own[1] }, sub.auth)).status).toBe(204);
+    f.advance(10_000); // the account's next table, ten seconds after its last
     expect((await f.call('POST', `/api/clubs/${club.code}/tables`, {}, sub.auth)).status).toBe(200);
     expect(fourth.ownerLapsedAt).toBeNull();
   });

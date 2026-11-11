@@ -4,6 +4,8 @@
  * server (probe squat2: one guest token reached MAX_HOSTED_TABLES in eight seconds).
  */
 import { describe, expect, it } from 'vitest';
+import type { Club } from '../src/clubs';
+import { LIMITS } from '../src/config';
 import { createMemoryRepos } from '../src/repos';
 import { TablePersister } from '../src/persist';
 import {
@@ -16,6 +18,8 @@ import {
   type RoomRegistryOptions,
   type Socket,
 } from '../src/rooms';
+
+import { apiFixture } from './helpers';
 
 type Out = { t: string; code?: string; message?: string; room?: string };
 
@@ -224,5 +228,81 @@ describe('open tables per account', () => {
     await new TablePersister(next.reg, repo, { log: () => undefined }).restore();
     expect(next.reg.openTablesOf('owner')).toBe(2);
     expect(() => next.reg.createHostedRoom({ createdBy: 'owner' })).toThrow(TABLE_CAP);
+  });
+});
+
+describe('a club table opened over the API is charged like a create over the socket', () => {
+  function fixture(rooms: RoomRegistryOptions = {}) {
+    const clock = { now: Date.UTC(2026, 10, 11) };
+    const f = apiFixture({ now: () => clock.now, rooms: { botDelayMs: 0, ...rooms } });
+    const club = async (owner: { auth: Record<string, string> }, name: string) => (await f.call('POST', '/api/clubs', { name }, owner.auth)).json as unknown as Club;
+    const open = (code: string, who: { auth: Record<string, string> }, ip?: string) => f.call('POST', `/api/clubs/${code}/tables`, {}, who.auth, ip);
+    return { ...f, clock, club, open };
+  }
+
+  it('allows one table per account every ten seconds and answers 429 in between, opening nothing', async () => {
+    const f = fixture();
+    const owner = await f.guest('Owner');
+    const club = await f.club(owner, 'Friday');
+    expect((await f.open(club.code, owner)).status).toBe(200);
+    const again = await f.open(club.code, owner);
+    expect(again.status).toBe(429);
+    expect(again.json.error).toBe('rate_limited');
+    expect(again.headers['retry-after']).toBe('12');
+    expect(f.rooms.stats().hostedTables).toBe(1);
+    expect(f.clubs.club(club.code).tables).toHaveLength(1);
+    // It is the same allowance a socket create spends, in both directions.
+    const out: Out[] = [];
+    const peer = f.rooms.hello(f.rooms.connect({ send: (j) => out.push(JSON.parse(j) as Out), close: () => undefined }, '203.0.113.50'), owner.userId);
+    f.rooms.handle(peer, { t: 'create', hosted: true });
+    expect(out[out.length - 1]).toEqual({ t: 'error', message: CREATE_COOLDOWN });
+    f.clock.now += LIMITS.createCooldownMs;
+    f.rooms.handle(peer, { t: 'create', hosted: true });
+    expect(out[out.length - 1].t).toBe('room');
+    expect((await f.open(club.code, owner)).status).toBe(429);
+    f.clock.now += LIMITS.createCooldownMs;
+    expect((await f.open(club.code, owner)).status).toBe(200);
+  });
+
+  it('allows six tables a minute from one address, whatever the accounts', async () => {
+    const f = fixture();
+    const ip = '203.0.113.7';
+    const statuses: number[] = [];
+    for (let i = 0; i < LIMITS.createsPerIpPerMinute + 2; i++) {
+      const owner = await f.guest(`Owner ${i}`);
+      statuses.push((await f.open((await f.club(owner, `Club ${i}`)).code, owner, ip)).status);
+    }
+    expect(statuses).toEqual([...Array<number>(LIMITS.createsPerIpPerMinute).fill(200), 429, 429]);
+    expect(f.rooms.stats().hostedTables).toBe(LIMITS.createsPerIpPerMinute);
+    // Another address is not affected, and the first one's allowance comes back over the minute.
+    const elsewhere = await f.guest('Elsewhere');
+    expect((await f.open((await f.club(elsewhere, 'Elsewhere')).code, elsewhere, '198.51.100.9')).status).toBe(200);
+    f.clock.now += 10_000;
+    const later = await f.guest('Later');
+    expect((await f.open((await f.club(later, 'Later')).code, later, ip)).status).toBe(200);
+  });
+
+  it('does not charge a table that is refused for another reason', async () => {
+    const f = fixture({ maxTablesPerUser: 1, maxHostedTables: 2 });
+    const owner = await f.guest('Owner');
+    const member = await f.guest('Member');
+    const club = await f.club(owner, 'Closed shop');
+    await f.call('PATCH', `/api/clubs/${club.code}`, { settings: { membersCanOpenTables: false } }, owner.auth);
+    await f.call('POST', `/api/clubs/${club.code}/join`, {}, member.auth);
+    // Not allowed by the club: 403, and the member's allowance is untouched.
+    expect((await f.open(club.code, member)).status).toBe(403);
+    expect(f.rooms.chargeCreate(member.userId)).toBe(true);
+    // At the account's table cap: the cap is the answer, also inside the cooldown, and it costs nothing.
+    expect((await f.open(club.code, owner)).status).toBe(200);
+    const capped = await f.open(club.code, owner);
+    expect(capped.status).toBe(503);
+    expect(capped.json.message).toBe(TABLE_CAP);
+    // A full server likewise.
+    f.rooms.createHostedRoom();
+    const other = await f.guest('Other');
+    const full = await f.open((await f.club(other, 'Other')).code, other);
+    expect(full.status).toBe(503);
+    f.rooms.closeRoomByCode(f.rooms.hostedRooms()[1]);
+    expect((await f.open(f.clubs.clubsForUser(other.userId)[0].code, other)).status).toBe(200);
   });
 });

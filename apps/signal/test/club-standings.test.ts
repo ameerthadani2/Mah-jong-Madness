@@ -12,8 +12,11 @@ import { apiFixture, type Guest } from './helpers';
 type Fixture = ReturnType<typeof apiFixture>;
 type Row = ClubMember & { seasonPoints: number; lifetimePoints: number };
 
+/** The fixtures' clock: each table a member opens costs that account's create allowance (one per 10 s), so it moves on with every table. */
+const clock = { now: Date.UTC(2026, 10, 11) };
+
 async function league(opts: Parameters<typeof apiFixture>[0] = {}) {
-  const f = apiFixture(opts);
+  const f = apiFixture({ now: () => clock.now, ...opts });
   const [owner, alice, bob] = [await f.guest('Owner'), await f.guest('Alice'), await f.guest('Bob')];
   const club = (await f.call('POST', '/api/clubs', { name: 'League' }, owner.auth)).json as unknown as Club;
   for (const g of [alice, bob]) expect((await f.call('POST', `/api/clubs/${club.code}/join`, {}, g.auth)).json.status).toBe('joined');
@@ -24,7 +27,10 @@ const seatOf = (seat: number, who?: Guest): SeatInfo => ({ seat, name: `P${seat}
 function event(type: HostEvent['type'], room: string, seats: SeatInfo[], scores = [0, 0, 0, 0], handNumber = 0, handsWon = [0, 0, 0, 0]): HostEvent {
   return { type, roomCode: room, matchId: `m-${room}`, seats, scores, handNumber, handsWon };
 }
-const openTable = async (f: Fixture, club: Club, by: Guest) => ((await f.call('POST', `/api/clubs/${club.code}/tables`, {}, by.auth)).json as unknown as ClubTable).code;
+const openTable = async (f: Fixture, club: Club, by: Guest) => {
+  clock.now += 10_000;
+  return ((await f.call('POST', `/api/clubs/${club.code}/tables`, {}, by.auth)).json as unknown as ClubTable).code;
+};
 const standings = async (f: Fixture, club: Club, as: Guest) => {
   const res = await f.call('GET', `/api/clubs/${club.code}/standings`, undefined, as.auth);
   return Object.fromEntries((JSON.parse(res.body) as Row[]).map((m) => [m.name, [m.seasonPoints, m.lifetimePoints, m.matchesPlayed, m.matchesWon]]));

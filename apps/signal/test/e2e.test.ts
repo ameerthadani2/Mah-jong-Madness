@@ -215,7 +215,9 @@ describe('game server end to end', () => {
   }, 60_000);
 
   it('keeps non-members out of club tables, over the socket and the API', async () => {
-    const { base, wsUrl, server } = await start();
+    // The owner opens two tables in a row; each costs the account's create allowance (one per 10 s), so the server's clock moves on between them.
+    let ahead = 0;
+    const { base, wsUrl, server } = await start(undefined, undefined, { now: () => Date.now() + ahead });
     const owner = await guest(base, 'Owner');
     const outsider = await guest(base, 'Outsider');
     const club = (await api(base, 'POST', '/api/clubs', { name: 'Members only' }, owner.token)).json as { code: string };
@@ -229,6 +231,7 @@ describe('game server end to end', () => {
     expect(server.rooms.clubOf(table.room)).toBe(club.code);
     await expect(x.client.joinRoom(table.room)).rejects.toThrow('Join the club first');
     // A table opened through the API is gated the same way, and listed in the club.
+    ahead += 10_000;
     const apiTable = (await api(base, 'POST', `/api/clubs/${club.code}/tables`, {}, owner.token)).json as { code: string };
     await expect(x.client.joinRoom(apiTable.code)).rejects.toThrow('Join the club first');
     const listed = (await api(base, 'GET', `/api/clubs/${club.code}`, undefined, owner.token)).json as { tables: Array<{ code: string }> };
