@@ -34,6 +34,7 @@ import type { TurnClock } from '../components/table/turnClock';
 import { exitPlan, type ExitChoice } from '../components/table/exit';
 import { celebrationFor } from '../components/table/celebrate';
 import { tableError } from '../components/table/tableErrors';
+import { forgetsTable, linkCopy, linkNotice } from '../logic/reconnect';
 import { autoDiscarded, callHaptic, plateScore, resultHaptic, type Haptic } from '../components/table/feedback';
 import { useTapHint } from '../components/table/useTapHint';
 import { tileLabel } from '../components/table/tileLabel';
@@ -204,11 +205,10 @@ export function TableScreen() {
   const tapHint = useTapHint();
 
   // VoiceOver ignores the banners' live regions: announce them on iOS.
-  const linkBanner =
-    !state || state.matchOver ? null
-    : conn.status === 'reconnecting' ? t('table.connection.reconnectingTitle')
-    : conn.status === 'lost' || state.disconnected ? `${t(conn.reason === 'gone' ? 'table.connection.goneTitle' : 'table.connection.lostTitle')}. ${t(conn.reason === 'gone' ? 'table.connection.goneText' : 'table.connection.lostText')}`
-    : null;
+  // What the link banner says (src/logic/reconnect.ts): rejoining, or why this device has stopped for good.
+  const notice = !state || state.matchOver ? null : linkNotice(conn, state);
+  const ended = notice && notice !== 'reconnecting' ? { notice, copy: linkCopy(notice, 'table') } : null;
+  const linkBanner = notice === 'reconnecting' ? t('table.connection.reconnectingTitle') : ended ? `${t(ended.copy.title)}. ${t(ended.copy.text)}` : null;
   useAnnounce(linkBanner);
 
   if (!session || !state) {
@@ -458,7 +458,7 @@ export function TableScreen() {
         )}
         {state.lastResult && showResult && <ResultSheet result={state.lastResult} view={view} state={state} mySeat={mySeat} onNext={() => session.client.ready()} onLeave={leave} onReview={() => app.go({ name: 'review' })} onFairness={() => app.go({ name: 'fairness' })} />}
         {state.matchOver && <MatchOverSheet state={state} onLeave={leave} />}
-        {conn.status === 'reconnecting' && !state.matchOver ? (
+        {notice === 'reconnecting' ? (
           // The session is rejoining on its own (1, 2, 4 … 60 s); the player may skip the wait.
           <View style={styles.banner} accessibilityLiveRegion="polite">
             <Icon name="hourglass" size={28} />
@@ -468,20 +468,21 @@ export function TableScreen() {
             </View>
             <Button small title={t('table.connection.retryNow')} onPress={() => session.retryNow()} />
           </View>
-        ) : !state.matchOver && (conn.status === 'lost' || state.disconnected) ? (
-          // Only after ten failed attempts, a refused session (4401), the seat opening elsewhere, or the
-          // server saying the table is gone (then there is nothing to come back to: the saved record goes too).
-          <View style={styles.banner} accessibilityLiveRegion="assertive">
+        ) : ended ? (
+          // The session will not come back by itself: ten failed attempts, a refused session (4401), the server
+          // saying the table is gone (then the saved record goes too), the seat opened on another device (this
+          // one must not take it back unasked), or a watcher who made way for a player. Each says which.
+          <View style={styles.banner} accessibilityLiveRegion="assertive" testID={`link-${ended.notice}`}>
             <Icon name="warning" size={28} />
             <View style={{ flex: 1 }}>
-              <Text style={styles.bannerTitle}>{t(conn.reason === 'gone' ? 'table.connection.goneTitle' : 'table.connection.lostTitle')}</Text>
-              <Text style={styles.bannerText}>{t(conn.reason === 'gone' ? 'table.connection.goneText' : 'table.connection.lostText')}</Text>
+              <Text style={styles.bannerTitle}>{t(ended.copy.title)}</Text>
+              <Text style={styles.bannerText}>{t(ended.copy.text)}</Text>
             </View>
             <Button
               small
-              title={t(conn.reason === 'gone' ? 'table.connection.goneLeave' : 'table.connection.reconnect')}
+              title={t(ended.copy.leave)}
               onPress={() => {
-                if (conn.reason === 'gone') app.setActiveSession(null);
+                if (forgetsTable(ended.notice)) app.setActiveSession(null);
                 app.setSession(null);
                 app.reset({ name: 'home' });
               }}

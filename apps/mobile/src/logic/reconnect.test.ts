@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { backoffSeconds, CONNECTED, MAX_RECONNECT_ATTEMPTS, nextDelayMs, reconnectStep, type ReconnectEvent, type ReconnectState } from './reconnect';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { backoffSeconds, CONNECTED, forgetsTable, isWatcherMadeWay, linkCopy, linkEnded, linkNotice, MAX_RECONNECT_ATTEMPTS, nextDelayMs, reconnectStep, type LinkNotice, type ReconnectEvent, type ReconnectState } from './reconnect';
+import { translator } from './translator.fixture';
 
 const run = (events: ReconnectEvent[], from: ReconnectState = CONNECTED) => events.reduce((s, e) => reconnectStep(s, e), from);
 
@@ -69,5 +73,115 @@ describe('reconnectStep', () => {
 
   it('stops when the match ends or the player leaves', () => {
     expect(run([{ type: 'closed' }, { type: 'ended' }])).toMatchObject({ status: 'lost', reason: 'ended' });
+  });
+});
+
+describe('a watcher who made way for a player', () => {
+  it('is lost at once, from a live link or a reconnect, and is never retried', () => {
+    const lost = reconnectStep(CONNECTED, { type: 'madeWay' });
+    expect(lost).toEqual({ status: 'lost', attempt: 0, reason: 'madeWay' });
+    expect(nextDelayMs(lost)).toBeNull();
+    expect(run([{ type: 'closed' }, { type: 'failed' }, { type: 'madeWay' }])).toEqual({ status: 'lost', attempt: 2, reason: 'madeWay' });
+    // Nothing that happens to the dead socket afterwards starts a reconnect.
+    for (const e of [{ type: 'closed' }, { type: 'failed' }, { type: 'succeeded' }] as ReconnectEvent[]) expect(reconnectStep(lost, e)).toBe(lost);
+  });
+
+  it('does not replace an ending that came first', () => {
+    const ended = run([{ type: 'ended' }]);
+    expect(reconnectStep(ended, { type: 'madeWay' })).toBe(ended);
+    const gone = run([{ type: 'closed' }, { type: 'failed', gone: true }]);
+    expect(reconnectStep(gone, { type: 'madeWay' })).toBe(gone);
+  });
+
+  it('is recognised by the sentence the game server sends', () => {
+    // The sentence as the server has it today: if it is reworded there, this fails here.
+    const rooms = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'signal', 'src', 'rooms.ts'), 'utf8');
+    const sentence = /export const WATCHER_DROPPED = '([^']+)';/.exec(rooms)?.[1];
+    expect(sentence).toBeTruthy();
+    expect(isWatcherMadeWay(sentence)).toBe(true);
+    expect(isWatcherMadeWay('A player needed your place at this table; join again to sit down.')).toBe(true);
+    for (const other of ['The club closed this table.', 'The host left, so the room has closed', 'The club removed you from this table.', '', undefined, null, 7]) expect(isWatcherMadeWay(other), String(other)).toBe(false);
+  });
+});
+
+describe('what the lobby and the table say about the link', () => {
+  const live = { kicked: false, disconnected: false };
+  const down = { kicked: false, disconnected: true };
+  const replaced = { kicked: true, disconnected: false };
+
+  it('is silent while connected', () => {
+    expect(linkNotice(CONNECTED, live)).toBeNull();
+    expect(linkNotice(CONNECTED, null)).toBeNull();
+    expect(linkEnded(null)).toBe(false);
+  });
+
+  it('says "reconnecting" while the session is rejoining by itself', () => {
+    const s = run([{ type: 'closed' }]);
+    expect(linkNotice(s, down)).toBe('reconnecting');
+    expect(linkEnded('reconnecting')).toBe(false);
+  });
+
+  it('says the seat was opened on another device, whatever else is true of the link', () => {
+    expect(linkNotice(run([{ type: 'ended' }]), replaced)).toBe('seatTaken');
+    // Before the session has caught up, and after the socket has dropped as well.
+    expect(linkNotice(CONNECTED, replaced)).toBe('seatTaken');
+    expect(linkNotice(run([{ type: 'ended' }]), { kicked: true, disconnected: true })).toBe('seatTaken');
+    expect(linkNotice(run([{ type: 'closed' }]), replaced)).toBe('seatTaken');
+  });
+
+  it('tells a watcher who made way from a table that is gone and from a lost link', () => {
+    expect(linkNotice(run([{ type: 'madeWay' }]), down)).toBe('madeWay');
+    expect(linkNotice(run([{ type: 'closed' }, { type: 'failed', gone: true }]), down)).toBe('gone');
+    expect(linkNotice(run([{ type: 'unauthorised' }]), down)).toBe('lost');
+    expect(linkNotice(CONNECTED, down)).toBe('lost');
+  });
+
+  it('forgets the saved table only when the server no longer has it', () => {
+    const all: LinkNotice[] = ['seatTaken', 'madeWay', 'reconnecting', 'gone', 'lost', null];
+    expect(all.filter(forgetsTable)).toEqual(['gone']);
+    expect(all.filter(linkEnded)).toEqual(['seatTaken', 'madeWay', 'gone', 'lost']);
+  });
+
+  it('has a title, a sentence and a way out for every ending, in both languages and on both screens', () => {
+    for (const locale of ['en', 'zh-TW'] as const) {
+      const t = translator(locale);
+      for (const where of ['table', 'lobby'] as const) {
+        for (const notice of ['seatTaken', 'madeWay', 'gone', 'lost'] as const) {
+          const copy = linkCopy(notice, where);
+          for (const key of [copy.title, copy.text, copy.leave]) expect(t(key), `${locale} ${where} ${notice} ${key}`).toBeTruthy();
+          if (locale === 'zh-TW') expect(`${t(copy.title)}${t(copy.text)}${t(copy.leave)}`, `${where} ${notice}`).not.toMatch(/[A-Za-z]{3,}/);
+        }
+      }
+    }
+  });
+
+  it('says exactly that the seat was opened on another device, and that this one will not reconnect by itself', () => {
+    const en = translator('en');
+    const zh = translator('zh-TW');
+    for (const where of ['table', 'lobby'] as const) {
+      const copy = linkCopy('seatTaken', where);
+      expect(en(copy.text)).toMatch(/^This seat was opened on another device/);
+      expect(en(copy.text)).toMatch(/will not reconnect by itself/);
+      expect(zh(copy.text)).toMatch(/^這個座位已在另一台裝置上開啟/);
+      expect(zh(copy.text)).toMatch(/不會自動重連/);
+      // The way out leads to Home; "Reconnect" is offered only for a plain lost link.
+      expect(en(copy.leave)).toBe('Back to Home');
+      expect(zh(copy.leave)).toBe('回到首頁');
+    }
+    expect(en(linkCopy('lost', 'table').leave)).toBe('Reconnect');
+    expect(en(linkCopy('lost', 'lobby').leave)).toBe('Reconnect');
+  });
+
+  it('tells a watcher who made way to join again, not that the table closed', () => {
+    const en = translator('en');
+    const zh = translator('zh-TW');
+    for (const where of ['table', 'lobby'] as const) {
+      const copy = linkCopy('madeWay', where);
+      expect(copy.text).toBe('online.errors.watcherDropped');
+      expect(en(copy.text)).toBe('A player needed your place at this table. Join the table again to sit down.');
+      expect(zh(copy.text)).toMatch(/重新加入牌桌/);
+      expect(en(copy.text)).not.toMatch(/closed|over|no longer/i);
+      expect(en(copy.leave)).toBe('Back to Home');
+    }
   });
 });

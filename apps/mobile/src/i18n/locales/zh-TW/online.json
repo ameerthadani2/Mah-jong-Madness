@@ -25,7 +25,8 @@
     "notController": "只有開桌的玩家或俱樂部管理員可以加入電腦或開始比賽。",
     "tableClosedByClub": "俱樂部已關閉這一桌。",
     "evictedByClub": "俱樂部已請你離開這一桌。",
-    "clubDeleted": "俱樂部已刪除，這一桌也已關閉。"
+    "clubDeleted": "俱樂部已刪除，這一桌也已關閉。",
+    "watcherDropped": "有玩家要入座，所以先請你把這張牌桌的位置讓出來了。想入座的話，請重新加入牌桌。"
   },
   "quick": {
     "title": "快速配對",

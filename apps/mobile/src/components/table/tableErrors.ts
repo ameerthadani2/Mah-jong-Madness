@@ -7,6 +7,7 @@
  * toast, Home's resume card).
  */
 import { friendlyError } from '../../logic/errors';
+import { WATCHER_MADE_WAY } from '../../logic/reconnect';
 import type { Message, Translate } from '../../logic/translate';
 
 const BY_CODE: Readonly<Record<string, string>> = {
@@ -29,6 +30,8 @@ const BY_MESSAGE: ReadonlyArray<readonly [RegExp, string]> = [
   [/^the club closed this table/i, 'online.errors.tableClosedByClub'],
   [/^the club removed you from this table/i, 'online.errors.evictedByClub'],
   [/^the club was deleted, so this table has closed/i, 'online.errors.clubDeleted'],
+  // A watcher who made way for a player: the signalling error `closed` with this sentence (WATCHER_DROPPED).
+  [WATCHER_MADE_WAY, 'online.errors.watcherDropped'],
 ];
 
 function str(e: unknown, key: 'code' | 'message'): string {

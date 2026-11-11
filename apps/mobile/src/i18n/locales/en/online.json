@@ -25,7 +25,8 @@
     "notController": "Only the player who opened the table, or a club admin, can add bots or start the match.",
     "tableClosedByClub": "The club closed this table.",
     "evictedByClub": "The club removed you from this table.",
-    "clubDeleted": "The club was deleted, so this table has closed."
+    "clubDeleted": "The club was deleted, so this table has closed.",
+    "watcherDropped": "A player needed your place at this table. Join the table again to sit down."
   },
   "quick": {
     "title": "Quick match",

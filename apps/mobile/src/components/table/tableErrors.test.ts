@@ -36,4 +36,15 @@ describe('table join and lobby errors', () => {
     expect(tableErrorMessage(new Error('Failed to fetch'))).toBeNull();
     expect(tableError(new Error('Failed to fetch'), tr('en'))).toBe(i18n.t('errors.unreachable', { locale: 'en' }));
   });
+
+  it('tells a watcher who made way for a player to join again', () => {
+    // The signalling error as the game server sends it: code `closed` and its sentence.
+    const dropped = { code: 'closed', message: 'A player needed your place at this table; join again to sit down.' };
+    expect(tableErrorMessage(dropped)).toEqual({ key: 'online.errors.watcherDropped' });
+    expect(tableErrorMessage(dropped.message)).toEqual({ key: 'online.errors.watcherDropped' });
+    expect(tableError(dropped, tr('en'))).toBe('A player needed your place at this table. Join the table again to sit down.');
+    expect(tableError(dropped, tr('zh-TW'))).not.toMatch(/[A-Za-z]{4,}/);
+    // Another room that closed keeps its own line.
+    expect(tableErrorMessage({ code: 'closed', message: 'The club closed this table.' })).toEqual({ key: 'online.errors.tableClosedByClub' });
+  });
 });

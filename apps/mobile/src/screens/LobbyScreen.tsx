@@ -11,6 +11,7 @@ import { Icon } from '../components/Icons';
 import { APP_NAME, APP_SCHEMES, LINK_DOMAIN } from '../config';
 import { tableLink } from '../push/deeplink';
 import { lobbyControls } from '../logic/lobby';
+import { forgetsTable, linkCopy, linkNotice } from '../logic/reconnect';
 
 export function LobbyScreen() {
   const app = useApp();
@@ -37,6 +38,8 @@ export function LobbyScreen() {
 
   // A quick-match table is closed to everyone but the matched players and starts by itself (src/logic/lobby.ts).
   const controls = lobbyControls(session);
+  // Rejoining, or why this device has stopped for good (src/logic/reconnect.ts).
+  const notice = linkNotice(conn, state);
   // Online tables run on the game server and have no host player, so every seated human may start or add bots.
   const localHost = session.mode === 'local' ? session.host : null;
   const humans = state.seats.filter((s) => s.peerId && !s.isBot).length;
@@ -122,21 +125,24 @@ export function LobbyScreen() {
         </Card>
       </View>
       {controls.start && <Button large title={humans > 1 ? t('lobby.start') : t('lobby.startWithBots')} icon="play" onPress={start} style={{ alignSelf: 'center' }} />}
-      {conn.status === 'reconnecting' ? (
+      {notice === 'reconnecting' ? (
         <Row style={{ flexWrap: 'wrap', rowGap: 6, alignItems: 'center' }} gap={8}>
           <Pill tone="gold" icon="hourglass" text={t('lobby.reconnecting', { n: conn.attempt })} />
           <Button small title={t('lobby.retryNow')} onPress={() => session.retryNow()} />
         </Row>
-      ) : conn.status === 'lost' || state.disconnected ? (
-        // Leaving via the header would forget the table; this path keeps the saved record so Home can resume it.
+      ) : notice ? (
+        // Leaving via the header would forget the table; this path keeps the saved record so Home can resume it
+        // (also after the seat was opened on another device: taking it back is then the player's choice).
         <Row style={{ flexWrap: 'wrap', rowGap: 6, alignItems: 'center' }} gap={8}>
-          <Pill tone="danger" icon="warning" text={t(conn.reason === 'gone' ? 'lobby.tableGone' : 'lobby.connectionLost')} />
+          <View testID={`link-${notice}`} accessibilityRole="alert" accessibilityLiveRegion="assertive" style={{ flexShrink: 1 }}>
+            <Pill tone="danger" icon="warning" wrap text={t(linkCopy(notice, 'lobby').text)} />
+          </View>
           <Button
             small
-            title={t(conn.reason === 'gone' ? 'common.back' : 'lobby.reconnect')}
+            title={t(linkCopy(notice, 'lobby').leave)}
             onPress={() => {
               // A table the server no longer has cannot be resumed: drop the saved record with the session.
-              if (conn.reason === 'gone') app.setActiveSession(null);
+              if (forgetsTable(notice)) app.setActiveSession(null);
               app.setSession(null);
               app.reset({ name: 'home' });
             }}

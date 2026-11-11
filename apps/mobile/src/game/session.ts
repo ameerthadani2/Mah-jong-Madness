@@ -34,7 +34,7 @@ import {
   type WebSocketLike,
 } from '@mjm/net';
 import { friendlyErrorMessage } from '../logic/errors';
-import { CONNECTED, nextDelayMs, reconnectStep, type ConnectionStatus, type ReconnectEvent, type ReconnectState } from '../logic/reconnect';
+import { CONNECTED, isWatcherMadeWay, nextDelayMs, reconnectStep, type ConnectionStatus, type ReconnectEvent, type ReconnectState } from '../logic/reconnect';
 
 export type { ConnectionStatus } from '../logic/reconnect';
 
@@ -173,8 +173,24 @@ const defaultSocket: WebSocketFactory = (u) => new (globalThis as unknown as { W
  * docs/API.md specifies. With the new constructor this becomes
  * `new SignalingClient(url, { auth, webSocket: wrapped })`; the wrapper still supplies the close code.
  */
-export function connectSignaling(url: string, auth: string | undefined, webSocket: WebSocketFactory = defaultSocket): { signaling: SignalingClient; closeCode(): number | undefined } {
+export function connectSignaling(
+  url: string,
+  auth: string | undefined,
+  webSocket: WebSocketFactory = defaultSocket,
+): { signaling: SignalingClient; closeCode(): number | undefined; roomClosed(): string | undefined } {
   let lastCode: number | undefined;
+  // The sentence of the last `{t:'error', code:'closed'}` frame: the signalling client reports that frame
+  // like a closed socket, before anything can read why, and the reason decides whether to come back.
+  let closedWhy: string | undefined;
+  const noteClosed = (data: unknown) => {
+    if (typeof data !== 'string' || !data.includes('"closed"')) return;
+    try {
+      const frame = JSON.parse(data) as { t?: unknown; code?: unknown; message?: unknown };
+      if (frame.t === 'error' && frame.code === 'closed') closedWhy = typeof frame.message === 'string' ? frame.message : '';
+    } catch {
+      /* not JSON: the signalling client ignores it too */
+    }
+  };
   const wrapped: WebSocketFactory = (u) => {
     const ws = webSocket(u);
     const proxy: WebSocketLike = {
@@ -200,7 +216,10 @@ export function connectSignaling(url: string, auth: string | undefined, webSocke
     };
     ws.onopen = (ev) => proxy.onopen?.(ev);
     ws.onerror = (ev) => proxy.onerror?.(ev);
-    ws.onmessage = (ev) => proxy.onmessage?.(ev);
+    ws.onmessage = (ev) => {
+      noteClosed((ev as { data?: unknown } | null)?.data);
+      proxy.onmessage?.(ev);
+    };
     ws.onclose = (ev) => {
       const code = (ev as { code?: unknown } | null)?.code;
       lastCode = typeof code === 'number' ? code : undefined;
@@ -208,7 +227,7 @@ export function connectSignaling(url: string, auth: string | undefined, webSocke
     };
     return proxy;
   };
-  return { signaling: new SignalingClient(url, { auth, webSocket: wrapped }), closeCode: () => lastCode };
+  return { signaling: new SignalingClient(url, { auth, webSocket: wrapped }), closeCode: () => lastCode, roomClosed: () => closedWhy };
 }
 
 /**
@@ -225,17 +244,20 @@ interface Connection {
   signaling: SignalingClient;
   link: TableLink;
   room: RoomInfo;
-  /** Set by the session: runs before the client's own close handler. */
-  dropped: { handler: ((code: number | undefined) => void) | null };
+  /**
+   * Set by the session: runs before the client's own close handler, with the socket's close code and,
+   * when the server closed the room under us instead (`{t:'error', code:'closed'}`), its sentence.
+   */
+  dropped: { handler: ((code: number | undefined, roomClosed?: string) => void) | null };
 }
 
 /** Connects, authenticates, and creates or joins the room. The caller binds a client to `link`. */
 async function openConnection(opts: OnlineOptions, action: 'create' | 'join', code: string): Promise<Connection> {
   const auth = opts.auth ? await opts.auth() : undefined;
-  const { signaling, closeCode } = connectSignaling(opts.signalUrl, auth, opts.webSocket);
+  const { signaling, closeCode, roomClosed } = connectSignaling(opts.signalUrl, auth, opts.webSocket);
   const dropped: Connection['dropped'] = { handler: null };
   // Registered first so the session sees the drop before the client marks itself disconnected.
-  signaling.onClose(() => dropped.handler?.(closeCode()));
+  signaling.onClose(() => dropped.handler?.(closeCode(), roomClosed()));
   try {
     await signaling.connect();
   } catch (e) {
@@ -314,15 +336,22 @@ class OnlineSession implements Session {
 
   private attach(connection: Connection): void {
     this.connection = connection;
-    connection.dropped.handler = (code) => this.onDrop(connection, code);
+    connection.dropped.handler = (code, roomClosed) => this.onDrop(connection, code, roomClosed);
   }
 
-  private onDrop(connection: Connection, code: number | undefined): void {
+  private onDrop(connection: Connection, code: number | undefined, roomClosed?: string): void {
     if (this.closed || connection !== this.connection) return;
     const st = this.client.state;
     // The seat was opened on another device: reconnecting would take it back and start a tug of war.
     // A dropped link alone (`disconnected`) is what reconnecting is for.
     if (st.kicked || st.matchOver) return this.step({ type: 'ended' });
+    // A watcher the server moved out for a player: coming straight back would take the place again.
+    // The socket itself is still open and has no room; it is of no more use.
+    if (isWatcherMadeWay(roomClosed)) {
+      this.step({ type: 'madeWay' });
+      connection.signaling.close();
+      return;
+    }
     if (code === BANNED_CLOSE_CODE) {
       void this.opts.onBanned?.();
       return this.step({ type: 'ended' });
@@ -331,6 +360,8 @@ class OnlineSession implements Session {
       void this.opts.onUnauthorised?.();
       return this.step({ type: 'unauthorised' });
     }
+    // Every other close is a link to win back: a drop (1006), a restart (1001, 1012), or a server that
+    // could not finish checking the session in time (1013). The session and its token are kept.
     this.step({ type: 'closed' });
   }
 
@@ -368,7 +399,8 @@ class OnlineSession implements Session {
       failure = e;
     }
     this.inFlight = false;
-    if (this.closed) {
+    // Left meanwhile, or told to stop (the seat opened elsewhere, the match ended): the new link is not used.
+    if (this.closed || this.conn.status !== 'reconnecting') {
       connection?.signaling.close();
       return;
     }
@@ -502,9 +534,9 @@ export function startQuickMatch(opts: QuickMatchOptions): { session: Promise<Ses
   };
   const attempt = async (): Promise<Session> => {
     const auth = opts.auth ? await opts.auth() : undefined;
-    const { signaling, closeCode } = connectSignaling(opts.signalUrl, auth, opts.webSocket);
+    const { signaling, closeCode, roomClosed } = connectSignaling(opts.signalUrl, auth, opts.webSocket);
     const dropped: Connection['dropped'] = { handler: null };
-    signaling.onClose(() => dropped.handler?.(closeCode()));
+    signaling.onClose(() => dropped.handler?.(closeCode(), roomClosed()));
     try {
       await signaling.connect();
     } catch (e) {
