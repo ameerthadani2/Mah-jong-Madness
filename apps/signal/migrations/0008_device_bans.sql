@@ -1,4 +1,4 @@
--- 0007_device_bans: a ban covers the banned account's devices.
+-- 0008_device_bans: a ban covers the banned account's devices.
 -- Applied by src/migrate.ts inside one transaction. Never edit a migration that has shipped.
 
 -- The id an app install sends with a guest sign-up becomes the device's id when it is free. When
