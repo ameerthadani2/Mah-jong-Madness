@@ -154,6 +154,21 @@ function contract(name: string, repos: () => Repos) {
       expect(await r.wallet.get(a)).toMatchObject({ diamonds: after.diamonds, bonusDiamonds: after.bonusDiamonds });
     });
 
+    it('a refund that names an account we no longer know is still taken from the account that holds the pack', async () => {
+      const r = repos();
+      const wallet = new WalletService(r, { now: () => T0, log: () => {}, testerUserIds: [] });
+      const a = await user();
+      const pack = { storeProductId: 'diamonds.300', transactionId: `tx-anon-${a}` };
+      await wallet.applyStoreEvent(storeEvent(a, 'NON_RENEWING_PURCHASE', pack));
+      // The store names an id that is not an account here (an anonymous id, or an account since purged).
+      const stranger = `$RCAnonymousID:${randomUUID()}`;
+      expect(await wallet.applyStoreEvent(storeEvent(stranger, 'CANCELLATION', { ...pack, cancelReason: 'CUSTOMER_SUPPORT' }))).toMatchObject({ outcome: 'refunded', userId: a });
+      expect(await r.wallet.get(a)).toMatchObject({ diamonds: 0, bonusDiamonds: 0 });
+      // With no purchase on record there is nobody to take it from: recorded only, as before.
+      expect(await wallet.applyStoreEvent(storeEvent(stranger, 'CANCELLATION', { storeProductId: 'diamonds.300', transactionId: `tx-none-${a}`, cancelReason: 'CUSTOMER_SUPPORT' }))).toMatchObject({ outcome: 'ignored_unknown_user', userId: null });
+      expect(await wallet.applyStoreEvent(storeEvent(stranger, 'CANCELLATION', { ...pack, cancelReason: 'UNSUBSCRIBE' }))).toMatchObject({ outcome: 'ignored_unknown_user', userId: null });
+    });
+
     it('a refund follows a pack bought by a guest to the account the guest was merged into', async () => {
       const r = repos();
       const wallet = new WalletService(r, { now: () => T0, log: () => {}, testerUserIds: [] });

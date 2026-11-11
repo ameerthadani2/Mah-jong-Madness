@@ -404,6 +404,12 @@ export class WalletService {
     if (!this.grantable(e, user)) return this.sandboxRefused(e, user);
     if (!(STORE_EVENT_TYPES as readonly string[]).includes(e.type)) return { outcome: 'ignored_type', userId: user?.id ?? null };
     if (!user) {
+      // A refunded pack is still taken back from the account that holds it when the event names
+      // an account we no longer know (the store moved the purchase to one that was since deleted).
+      if (product?.kind === 'diamonds' && e.type === 'CANCELLATION' && e.transactionId) {
+        const refund = await this.refundDiamonds(tx, null, product, e.transactionId, e.cancelReason, at);
+        if (refund.userId) return refund;
+      }
       this.log(`[signal] store event ${e.eventId} (${e.type}) names no account we know; recorded only`);
       return { outcome: 'ignored_unknown_user', userId: null };
     }
@@ -512,11 +518,12 @@ export class WalletService {
    * comes off purchased diamonds, which may go below zero when the pack was already spent. A
    * negative balance blocks every spend until a purchase covers it, so a buy, spend, refund cycle
    * never ends with free looks. A refund that arrives before the purchase is remembered on the
-   * account it names, so the purchase is not credited when it comes.
+   * account it names, so the purchase is not credited when it comes. `namedUserId` is null when
+   * the event names no account we know: the result then has a user only if a holder was debited.
    */
   private async refundDiamonds(
     tx: Repos,
-    namedUserId: string,
+    namedUserId: string | null,
     product: Extract<ServerProduct, { kind: 'diamonds' }>,
     transactionId: string,
     cancelReason: string | null,
@@ -525,6 +532,7 @@ export class WalletService {
     if (cancelReason !== 'CUSTOMER_SUPPORT') return { outcome: 'recorded', userId: namedUserId };
     const purchase = await tx.wallet.findPurchase(transactionId);
     if (!purchase) {
+      if (!namedUserId) return { outcome: 'ignored_unknown_user', userId: null };
       if (await this.refunded(tx, namedUserId, transactionId)) return { outcome: 'duplicate', userId: namedUserId };
       await this.markRefunded(tx, namedUserId, transactionId, at);
       return { outcome: 'refunded', userId: namedUserId };
@@ -539,7 +547,7 @@ export class WalletService {
     const delta = -(product.diamonds + product.bonus - bonus);
     const res = await tx.wallet.apply({ userId, delta, bonus: -bonus, reason: 'refund', ref: WalletService.refundRef(transactionId), createdAt: at }, { allowNegative: true });
     if (!res) throw new Error('Diamond refund refused');
-    if (userId !== namedUserId) this.log(`[signal] refund ${transactionId} names ${namedUserId}; the purchase is held by ${userId}, which was debited`);
+    if (userId !== namedUserId) this.log(`[signal] refund ${transactionId} names ${namedUserId ?? 'no account we know'}; the purchase is held by ${userId}, which was debited`);
     if (res.wallet.diamonds < 0) this.log(`[signal] refund ${transactionId} left ${userId} at ${res.wallet.diamonds} diamonds; spends are blocked until it is covered`);
     return { outcome: 'refunded', userId };
   }
