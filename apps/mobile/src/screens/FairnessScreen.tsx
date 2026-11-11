@@ -1,18 +1,12 @@
 import React from 'react';
 import { ScrollView, StyleSheet, Text } from 'react-native';
-import { caveatKey } from '@mjm/net';
 import { useApp } from '../app-state';
 import { useSession } from '../game/useTable';
 import { colors, fonts, space } from '../theme';
 import { Card, H2, P, Pill, Row, ScreenHeader, SectionLabel } from '../components/Ui';
 import { Icon } from '../components/Icons';
 import { useT } from '../i18n';
-
-/** A caveat from the table client in the player's language (unknown texts are shown as they are). */
-export function caveatText(t: (key: string) => string, text: string): string {
-  const key = caveatKey(text);
-  return key ? t(`fairness.caveat.${key}`) : text;
-}
+import { caveatText, failureText } from '../logic/fairnessText';
 
 export function FairnessScreen() {
   const app = useApp();
@@ -79,7 +73,7 @@ export function FairnessScreen() {
             ))}
             {failures.map((f, i) => (
               <Text key={i} style={{ color: colors.dangerText, fontSize: 12, fontFamily: fonts.bodyBold }}>
-                {t('fairness.note', { text: f })}
+                {t('fairness.note', { text: failureText(t, f) })}
               </Text>
             ))}
           </Card>

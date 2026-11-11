@@ -1,6 +1,6 @@
 /** End of hand: the result sheet (winner cards with a 台 roll-up, scores, audit, next hand) and the match-over card. */
 import React, { useState } from 'react';
-import { caveatText } from '../../screens/FairnessScreen';
+import { caveatText, failureText } from '../../logic/fairnessText';
 import { Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import type { HandResult, TableView, WinRecord } from '@mjm/engine';
 import type { ClientState } from '@mjm/net';
@@ -154,7 +154,7 @@ export function ResultSheet({ result, view, state, mySeat, onNext, onLeave, onRe
       </Pressable>
       {state.auditFailures.map((f, i) => (
         <Text key={`f${i}`} style={{ color: colors.dangerText, fontSize: 12 }}>
-          {t('fairness.note', { text: f })}
+          {t('fairness.note', { text: failureText(t, f) })}
         </Text>
       ))}
       {state.auditCaveats.map((c, i) => (
