@@ -226,6 +226,7 @@ type Pending =
   | { kind: 'close'; table: ClubTable }
   | { kind: 'evict'; table: ClubTable; userId: string; name: string }
   | { kind: 'remove' | 'ban' | 'transfer'; userId: string; name: string }
+  | { kind: 'rejectAll'; userIds: string[] }
   | { kind: 'leave' };
 
 export function ClubScreen({ code }: { code: string }) {
@@ -379,6 +380,8 @@ export function ClubScreen({ code }: { code: string }) {
         return t('clubs.members.banConfirm', { name: p.name });
       case 'transfer':
         return t('clubs.members.transferConfirm', { name: p.name });
+      case 'rejectAll':
+        return t('clubs.tables.rejectAllConfirm', { n: p.userIds.length });
       case 'leave':
         return t('clubs.members.leaveConfirm', { name: club.name });
     }
@@ -395,6 +398,9 @@ export function ClubScreen({ code }: { code: string }) {
         return void act(() => clubsApi.ban(ctx, club.code, p.userId));
       case 'transfer':
         return void act(() => clubsApi.setRole(ctx, club.code, p.userId, 'owner'));
+      case 'rejectAll':
+        // Only the requests that were on screen when the button was pressed: one that arrived since stays.
+        return void act(async () => (await clubsApi.rejectAll(ctx, club.code, p.userIds)).club, t('clubs.tables.rejectedAll'));
       case 'leave':
         if (await act(() => clubsApi.leave(ctx, club.code, user.userId))) app.back();
         return;
@@ -415,7 +421,7 @@ export function ClubScreen({ code }: { code: string }) {
         </Row>
       </Card>
     ) : null;
-  const aboutUser = (userId: string) => (p: Pending) => p.kind !== 'close' && p.kind !== 'evict' && p.kind !== 'leave' && p.userId === userId;
+  const aboutUser = (userId: string) => (p: Pending) => p.kind !== 'close' && p.kind !== 'evict' && p.kind !== 'leave' && p.kind !== 'rejectAll' && p.userId === userId;
 
   const live = (club.tables ?? []).filter((t) => t.status !== 'finished');
   const restricted = ownerRestricted(club);
@@ -512,7 +518,20 @@ export function ClubScreen({ code }: { code: string }) {
           })}
           {pendingList.length > 0 && isAdmin && (
             <Card>
-              <H2>{t('clubs.tables.pendingRequests')}</H2>
+              <Row style={{ justifyContent: 'space-between', flexWrap: 'wrap', rowGap: 6 }}>
+                <H2>{t('clubs.tables.pendingRequests')}</H2>
+                {pendingList.length > 1 && (
+                  <Button
+                    small
+                    kind="ghost"
+                    testID="club-reject-all"
+                    title={t('clubs.tables.rejectAll')}
+                    onPress={() => setPending({ kind: 'rejectAll', userIds: pendingList.map((p) => p.userId) })}
+                    disabled={busy}
+                  />
+                )}
+              </Row>
+              {confirmHere((p) => p.kind === 'rejectAll')}
               {pendingList.map((p) => (
                 <Row key={p.userId} style={{ justifyContent: 'space-between', flexWrap: 'wrap', rowGap: 6 }}>
                   <Row>

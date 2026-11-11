@@ -146,7 +146,10 @@ function memoryUsers(s: MemoryState): UsersRepo {
       return true;
     },
     async purgeDeleted(before) {
-      let n = 0;
+      return (await this.purgeDeletedIds(before)).length;
+    },
+    async purgeDeletedIds(before) {
+      const purged: string[] = [];
       for (const [id, u] of [...s.users]) {
         if (u.deletedAt === null || u.deletedAt >= before) continue;
         if ([...s.clubs.values()].some((c) => c.ownerId === id)) continue;
@@ -165,10 +168,11 @@ function memoryUsers(s: MemoryState): UsersRepo {
         for (const club of s.clubs.values()) {
           club.members = club.members.filter((m) => m.userId !== id);
           club.pending = club.pending.filter((p) => p.userId !== id);
+          if (club.former) club.former = club.former.filter((f) => f.userId !== id);
         }
-        n++;
+        purged.push(id);
       }
-      return n;
+      return purged;
     },
   };
 }

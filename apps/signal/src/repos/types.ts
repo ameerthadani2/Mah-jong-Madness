@@ -57,6 +57,11 @@ export interface UsersRepo {
    * still owns a club is kept. Returns how many rows went.
    */
   purgeDeleted(before: number): Promise<number>;
+  /**
+   * `purgeDeleted`, returning the ids of the users removed, so a cache that still holds their rows
+   * (the club registry) can drop them.
+   */
+  purgeDeletedIds(before: number): Promise<string[]>;
 }
 
 export const IDENTITY_PROVIDERS = ['guest', 'apple', 'google', 'facebook'] as const;
@@ -367,7 +372,11 @@ export interface ClubMembership {
 }
 
 export interface ClubsRepo {
-  /** Writes one club in full (row, members, pending requests, tables); rows no longer present are removed. */
+  /**
+   * Writes one club in full (row, members, pending requests, tables, bans, standings on file);
+   * rows no longer present are removed. A member, request or filed row whose account no longer
+   * exists is left out rather than failing the write.
+   */
   save(club: Club): Promise<void>;
   delete(code: string): Promise<boolean>;
   get(code: string): Promise<Club | null>;
@@ -378,15 +387,18 @@ export interface ClubsRepo {
   /**
    * Account merge: moves `fromUserId`'s memberships and pending requests to `to`. Where both have
    * a row the stronger one stays (member beats pending; on a tie `to`'s row is kept); clubs
-   * owned by `fromUserId` transfer to `to`. Returns the codes of every club changed, so a
-   * cache such as ClubRegistry can reload them.
+   * owned by `fromUserId` transfer to `to` (all of them: see `moveMembershipsIn` in clubs.ts,
+   * which every implementation runs). Standings on file and an owner lapse on file follow the
+   * account. Returns the codes of every club changed, so a cache such as ClubRegistry can reload them.
    */
   moveMemberships(fromUserId: string, to: Identity): Promise<string[]>;
   /**
    * Account deletion: renames the user's rows to "Deleted player", clears avatars, drops pending
-   * requests. A club the user owned passes to its senior admin, else its earliest member (the
-   * deleted row stays as a plain member); one with nobody else in it is deleted. Returns the
-   * clubs changed (the dissolved ones included).
+   * requests. A club the user owned passes to its senior admin, else its earliest member, who
+   * owns fewer than 3 clubs and has not deleted their own account (the deleted row stays as a
+   * plain member); when everyone left owns 3 the senior one takes it, and a club with nobody live
+   * left in it is deleted (`anonymiseUserIn` in clubs.ts, which every implementation runs).
+   * Returns the clubs changed (the dissolved ones included).
    */
   anonymiseUser(userId: string): Promise<string[]>;
 }

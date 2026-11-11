@@ -34,7 +34,7 @@
     "transfer": "轉讓負責人",
     "transferConfirm": "要把俱樂部轉讓給 %{name} 嗎？你會改為管理員。",
     "remove": "移除",
-    "removeConfirm": "要將 %{name} 移出俱樂部嗎？他也會離開正在進行的俱樂部牌桌。",
+    "removeConfirm": "要將 %{name} 移出俱樂部嗎？他也會離開正在進行的俱樂部牌桌。他的排名成績會保留，重新加入後就會恢復。",
     "ban": "封鎖",
     "banConfirm": "要封鎖 %{name} 嗎？他會離開俱樂部和牌桌，解除封鎖前無法再加入。",
     "bannedTitle": "已封鎖",
@@ -43,7 +43,7 @@
     "confirm": "確認",
     "danger": "退出或刪除",
     "leave": "退出俱樂部",
-    "leaveConfirm": "要退出「%{name}」嗎？之後仍可再申請加入。",
+    "leaveConfirm": "要退出「%{name}」嗎？你的排名成績會保留，重新加入後就會恢復；正在進行的對局不論輸贏仍會照常計分。",
     "ownerLeave": "退出前請先把俱樂部轉讓給其他會員。",
     "delete": "刪除俱樂部",
     "deleteBody": "這會刪除俱樂部、排名和所有紀錄，並關閉所有牌桌。請輸入俱樂部名稱確認。",
@@ -79,7 +79,10 @@
     "evictConfirm": "要請 %{name} 離開這一桌嗎？他的位置會由電腦代打，而且不能再回到這一桌。",
     "evicted": "已請 %{name} 離桌。",
     "reject": "拒絕",
-    "ban": "封鎖"
+    "ban": "封鎖",
+    "rejectAll": "全部拒絕",
+    "rejectAllConfirm": "要拒絕全部 %{n} 筆申請嗎？對方之後仍可再申請加入。",
+    "rejectedAll": "已拒絕所有申請。"
   },
   "standing": "%{played} 場 · %{won} 勝",
   "rules": {
@@ -122,7 +125,7 @@
     "message": "來 %{app} 加入我的俱樂部「%{name}」！俱樂部代碼 %{code}：%{link}"
   },
   "owner": {
-    "restricted": "俱樂部負責人的四風俱樂部會員已過期，續訂前只能同時開一桌。",
+    "restricted": "這個俱樂部目前不在有效的四風俱樂部會員涵蓋範圍內（負責人的會員已過期，或已用於另外 3 個俱樂部），在負責人續訂或轉讓俱樂部之前，只能同時開一桌。",
     "renew": "續訂"
   },
   "ruleEditor": {
@@ -176,6 +179,10 @@
     "notBanned": "這個帳號沒有被封鎖。",
     "adminOnAdmin": "只有負責人可以移除或封鎖管理員。",
     "ownerProtected": "負責人不能被移除或封鎖。",
-    "notYourself": "你不能對自己這麼做。"
+    "notYourself": "你不能對自己這麼做。",
+    "transferLimit": "這位會員已經經營 %{max} 個俱樂部，已達每個帳號的上限。",
+    "joinRateIp": "這個網路連線加入的俱樂部太多了，請一小時後再試。",
+    "joinRateClub": "這個俱樂部目前收到太多加入申請，請稍後再試。",
+    "queueFull": "這個俱樂部待審核的申請太多了，請稍後再試。"
   }
 }
