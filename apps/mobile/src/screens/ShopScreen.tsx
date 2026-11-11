@@ -161,7 +161,7 @@ export function ShopScreen({ focus }: { focus?: 'fourwinds' } = {}) {
 
   return (
     <ScrollView contentContainerStyle={[styles.wrap, { padding: pad }]} testID="shop">
-      <ScreenHeader title={t('shop.title')} onBack={app.back} backTestID="back" right={<GemCounter amount={totalDiamonds(wallet)} onPress={() => setTab('diamonds')} />} />
+      <ScreenHeader title={t('shop.title')} onBack={app.back} backTestID="back" right={<GemCounter amount={totalDiamonds(wallet)} owed={owed} onPress={() => setTab('diamonds')} />} />
       <View style={styles.trust}>
         <Icon name="shield" size={20} />
         <Text style={styles.trustText} numberOfLines={2}>

@@ -6,6 +6,7 @@ import { slopFor } from './table/layout';
 import { t } from '../i18n';
 import { useDisplayScale } from '../display/DisplayScale';
 import { scaleTextStyle } from '../display/scale';
+import { gemCounter } from '../logic/gems';
 
 /** Screen-reader name for an icon-only button, when the caller gives none. */
 function iconLabel(icon: IconName): string {
@@ -333,13 +334,18 @@ export function Chip({ label, selected, onPress, locked, dark }: { label: string
   );
 }
 
-/** Gem balance capsule with a green "+" (opens the shop). */
-export function GemCounter({ amount, onPress, testID }: { amount: number; onPress?: () => void; testID?: string }) {
+/**
+ * Gem balance capsule with a green "+" (opens the shop). `owed` is what a refund left to pay back
+ * (`diamondsOwed`): the balance can then be below zero, so the capsule turns red, prints a real
+ * minus sign, and its label says how many diamonds are owed instead of reading a bare number.
+ */
+export function GemCounter({ amount, owed, onPress, testID }: { amount: number; owed?: number; onPress?: () => void; testID?: string }) {
+  const view = gemCounter(t, amount, owed);
   return (
-    <Pressable testID={testID} onPress={onPress} hitSlop={6} accessibilityRole="button" accessibilityLabel={t('table.a11y.gems', { n: amount })} style={({ pressed }) => [styles.gemWrap, pressed && { transform: [{ translateY: 2 }] }]}>
-      <View style={styles.gemPill}>
+    <Pressable testID={testID} onPress={onPress} hitSlop={6} accessibilityRole="button" accessibilityLabel={view.label} style={({ pressed }) => [styles.gemWrap, pressed && { transform: [{ translateY: 2 }] }]}>
+      <View style={[styles.gemPill, view.owed && styles.gemPillOwed]}>
         <StrokeText style={{ fontSize: 17 }} strokeWidth={1.5} drop={1}>
-          {amount.toLocaleString()}
+          {view.text}
         </StrokeText>
       </View>
       <View style={styles.gemIcon}>
@@ -415,6 +421,7 @@ const styles = StyleSheet.create({
   chipText: { color: colors.ink, fontSize: 13 },
   gemWrap: { flexDirection: 'row', alignItems: 'center', paddingLeft: 14, height: 40 },
   gemPill: { minWidth: 76, height: 30, borderRadius: 15, borderWidth: 3, borderColor: colors.ink, backgroundColor: 'rgba(16,20,47,0.55)', justifyContent: 'center', paddingLeft: 22, paddingRight: 24 },
+  gemPillOwed: { backgroundColor: colors.dangerShelf },
   gemIcon: { position: 'absolute', left: 0, top: 4 },
   gemPlus: { position: 'absolute', right: -6, top: 7, width: 26, height: 26, borderRadius: 13, backgroundColor: colors.cta, borderWidth: 3, borderColor: colors.ink, alignItems: 'center', justifyContent: 'center' },
   header: { flexDirection: 'row', alignItems: 'center', gap: space.md, minHeight: 52 },

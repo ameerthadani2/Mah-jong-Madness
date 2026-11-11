@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BOT_SKILLS, type BotSkill } from '@mjm/engine';
-import { allowedBotSkill, hasTier, totalDiamonds } from '../monetisation/wallet';
+import { allowedBotSkill, diamondsOwed, hasTier, totalDiamonds } from '../monetisation/wallet';
 import { useWallet } from '../monetisation/useWallet';
 import { gateFor } from '../legal/age';
 import { useOnlineGuard } from '../legal/useOnlineGuard';
@@ -113,6 +113,8 @@ export function HomeScreen() {
   const streak = effectiveStreak(app.progress);
   const lessonsDone = Object.keys(app.progress.lessonsDone).length;
   const gems = totalDiamonds(app.wallet);
+  // After a refund of spent diamonds the balance is below zero: the counter says so, and a line under the bar says why.
+  const gemsOwed = diamondsOwed(app.wallet);
   const goClubs = () => {
     if (needsName) saveName();
     app.go({ name: 'clubs' });
@@ -245,7 +247,7 @@ export function HomeScreen() {
           </View>
         )}
         <Row gap={10} style={wide ? { flex: needsName ? 1 : undefined, justifyContent: 'flex-end' } : undefined}>
-          <GemCounter testID="open-shop" amount={gems} onPress={() => app.go({ name: 'shop' })} />
+          <GemCounter testID="open-shop" amount={gems} owed={gemsOwed} onPress={() => app.go({ name: 'shop' })} />
           <IconButton icon="cog" kind="ghost" size={42} testID="open-settings" onPress={() => app.go({ name: 'settings' })} />
         </Row>
       </View>
@@ -254,6 +256,12 @@ export function HomeScreen() {
         <View style={{ alignItems: 'center', paddingVertical: 6 }}>
           <Logo size={1.25} />
         </View>
+      )}
+
+      {gemsOwed > 0 && (
+        <Pressable testID="home-diamonds-owed" onPress={() => app.go({ name: 'shop' })} hitSlop={slopFor(30)} accessibilityRole="button" accessibilityLabel={t('home.shop.owed', { n: gemsOwed.toLocaleString() })} style={{ alignSelf: wide ? 'flex-end' : 'center', maxWidth: '100%' }}>
+          <Pill tone="gold" icon="gem" wrap text={t('home.shop.owed', { n: gemsOwed.toLocaleString() })} />
+        </Pressable>
       )}
 
       <NameRefusedNotice />

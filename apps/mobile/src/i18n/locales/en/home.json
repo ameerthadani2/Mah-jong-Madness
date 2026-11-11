@@ -23,7 +23,8 @@
   "shop": {
     "title": "Shop",
     "blurb": "Table looks and coaching. Never luck.",
-    "open": "Open"
+    "open": "Open",
+    "owed": "%{n} diamonds owed after a refund. See why in the Shop."
   },
   "profile": {
     "meta": "%{hands} hands · %{wins}",

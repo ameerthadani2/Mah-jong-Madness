@@ -139,6 +139,7 @@
       "pencil": "Edit"
     },
     "gems": "%{n} diamonds, open the shop",
+    "gemsOwed": "Diamond balance %{balance}: %{n} owed after a refund. Open the shop.",
     "claimWith": "%{verb}: %{tiles}",
     "pass": "Pass",
     "chi": "Chow",

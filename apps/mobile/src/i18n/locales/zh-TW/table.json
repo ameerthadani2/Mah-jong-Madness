@@ -139,6 +139,7 @@
       "pencil": "編輯"
     },
     "gems": "%{n} 顆鑽石，開啟商店",
+    "gemsOwed": "鑽石餘額 %{balance}，退款後尚欠 %{n} 顆。開啟商店。",
     "claimWith": "%{verb}：%{tiles}",
     "pass": "過",
     "chi": "吃",
