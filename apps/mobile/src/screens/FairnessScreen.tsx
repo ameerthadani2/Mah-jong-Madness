@@ -6,7 +6,7 @@ import { colors, fonts, space } from '../theme';
 import { Card, H2, P, Pill, Row, ScreenHeader, SectionLabel } from '../components/Ui';
 import { Icon } from '../components/Icons';
 import { useT } from '../i18n';
-import { caveatText, failureText } from '../logic/fairnessText';
+import { caveatText, endUnverified, failureText } from '../logic/fairnessText';
 
 export function FairnessScreen() {
   const app = useApp();
@@ -37,7 +37,7 @@ export function FairnessScreen() {
       <SectionLabel>{t('fairness.sessionHands')}</SectionLabel>
       {audits.length === 0 && <Pill text={t('fairness.none')} icon="hourglass" />}
       {/* The end of a match is believed only when the hands this phone verified lead to it; say so when they do not. */}
-      {state?.matchOver && !state.matchEndVerified && (
+      {endUnverified(state) && (
         <Text testID="fairness-end-unverified" style={{ color: colors.goldDim, fontSize: 12, fontFamily: fonts.bodyBold }}>
           {t('fairness.endUnverified')}
         </Text>

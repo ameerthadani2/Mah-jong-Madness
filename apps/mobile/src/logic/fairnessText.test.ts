@@ -1,7 +1,10 @@
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { AUDIT_CAVEATS, AUDIT_FAILURES, type AuditFailure } from '@mjm/net';
 import { en, zhTW } from '../i18n/locales';
-import { caveatText, failureText } from './fairnessText';
+import { caveatText, endUnverified, failureText } from './fairnessText';
 import { translator } from './translator.fixture';
 
 /**
@@ -97,5 +100,34 @@ describe('audit failure texts in the app', () => {
   it('shows a caveat by its key', () => {
     expect(caveatText(translator('zh-TW'), AUDIT_CAVEATS.appRestart)).toBe(zhTW.fairness.caveat.appRestart);
     expect(caveatText(translator('en'), AUDIT_CAVEATS.standIn)).toBe(en.fairness.caveat.standIn);
+  });
+});
+
+describe('final scores this phone could not check', () => {
+  it('are marked only when the match is over and the verified hands do not lead to its end', () => {
+    expect(endUnverified({ matchOver: true, matchEndVerified: false })).toBe(true);
+    expect(endUnverified({ matchOver: true, matchEndVerified: true })).toBe(false);
+    // During a match there are no final scores to mark, whatever the flag says.
+    expect(endUnverified({ matchOver: false, matchEndVerified: false })).toBe(false);
+    expect(endUnverified({ matchOver: false, matchEndVerified: true })).toBe(false);
+  });
+
+  it('are marked when a saved record from an older build carries no verdict, and never without a table', () => {
+    expect(endUnverified({ matchOver: true } as { matchOver: boolean; matchEndVerified: boolean })).toBe(true);
+    expect(endUnverified(null)).toBe(false);
+    expect(endUnverified(undefined)).toBe(false);
+  });
+
+  it('has a sentence for it in both languages', () => {
+    expect(translator('en')('fairness.endUnverified')).toMatch(/could not check the final scores/);
+    expect(translator('zh-TW')('fairness.endUnverified')).toMatch(/無法核對最終分數/);
+  });
+
+  it('is what both sheets that show final scores ask before they show the note', () => {
+    const sheet = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'components', 'table', 'ResultSheet.tsx'), 'utf8');
+    // The hand result at the end of a match (both layouts) and the match-over ranking.
+    expect(sheet.match(/<EndUnverifiedNote state=\{state\} testID="result-end-unverified" \/>/g)).toHaveLength(2);
+    expect(sheet.match(/<EndUnverifiedNote state=\{state\} testID="match-end-unverified" \/>/g)).toHaveLength(1);
+    expect(sheet).toContain('if (!endUnverified(state)) return null;');
   });
 });

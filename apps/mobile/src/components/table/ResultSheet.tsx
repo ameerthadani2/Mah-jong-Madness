@@ -1,6 +1,6 @@
 /** End of hand: the result sheet (winner cards with a 台 roll-up, scores, audit, next hand) and the match-over card. */
 import React, { useState } from 'react';
-import { caveatText, failureText } from '../../logic/fairnessText';
+import { caveatText, endUnverified, failureText } from '../../logic/fairnessText';
 import { Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import type { HandResult, TableView, WinRecord } from '@mjm/engine';
 import type { ClientState } from '@mjm/net';
@@ -97,6 +97,21 @@ function ScoreChip({ name, avatar, total, delta, mine, small, cols }: { name: st
   );
 }
 
+/**
+ * Beside final scores this phone could not check: the match is over, but the hands it verified do
+ * not lead to that end. Amber like a logged hand, never a failure.
+ */
+function EndUnverifiedNote({ state, testID }: { state: ClientState; testID: string }) {
+  const { t } = useT();
+  const { fontFactor } = useDisplayScale();
+  if (!endUnverified(state)) return null;
+  return (
+    <Text testID={testID} style={scaleTextStyle(styles.endNote, fontFactor)}>
+      {t('fairness.endUnverified')}
+    </Text>
+  );
+}
+
 export function ResultSheet({ result, view, state, mySeat, onNext, onLeave, onReview, onFairness }: { result: HandResult; view: TableView; state: ClientState; mySeat: number; onNext: () => void; onLeave: () => void; onReview: () => void; onFairness: () => void }) {
   const { t } = useT();
   const [ready, setReady] = useState(false);
@@ -186,6 +201,7 @@ export function ResultSheet({ result, view, state, mySeat, onNext, onLeave, onRe
           </ScrollView>
           <ScrollView style={{ flex: 1 }} contentContainerStyle={{ flexGrow: 1, gap: 8, justifyContent: 'space-between' }}>
             {scores}
+            <EndUnverifiedNote state={state} testID="result-end-unverified" />
             {auditRow}
             <View style={{ gap: 6 }}>
               {next}
@@ -206,6 +222,7 @@ export function ResultSheet({ result, view, state, mySeat, onNext, onLeave, onRe
           {ribbonView}
           {results}
           {scores}
+          <EndUnverifiedNote state={state} testID="result-end-unverified" />
           {auditRow}
           {layout.stackButtons ? (
             // Narrow phones: one full-width primary, the two secondary actions sharing a row at equal widths.
@@ -255,6 +272,7 @@ export function MatchOverSheet({ state, onLeave }: { state: ClientState; onLeave
             </Row>
           );
         })}
+        <EndUnverifiedNote state={state} testID="match-end-unverified" />
         <Button large title={t('table.backHome')} onPress={onLeave} />
       </View>
     </View>
@@ -286,4 +304,5 @@ const styles = StyleSheet.create({
   rankNum: { width: 30, height: 30, borderRadius: 15, borderWidth: 2.5, borderColor: colors.ink, backgroundColor: colors.creamDeep, alignItems: 'center', justifyContent: 'center' },
   rankNumText: { fontFamily: fonts.display, color: colors.ink, fontSize: 16 },
   rankScore: { fontFamily: fonts.display, fontSize: 20 },
+  endNote: { color: colors.goldDim, fontSize: 12, fontFamily: fonts.bodyBold },
 });
