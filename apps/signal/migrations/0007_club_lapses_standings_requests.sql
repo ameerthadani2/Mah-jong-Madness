@@ -1,4 +1,4 @@
--- 0009_club_lapses_standings_requests: the owner-lapse file, standings kept for members who left,
+-- 0007_club_lapses_standings_requests: the owner-lapse file, standings kept for members who left,
 -- and the age of join requests.
 -- Applied by src/migrate.ts inside one transaction. Never edit a migration that has shipped.
 
