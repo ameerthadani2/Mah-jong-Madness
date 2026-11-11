@@ -28,6 +28,11 @@
     "title": "This device cannot run fair games",
     "body": "Mahjong Mania needs the system's secure random number generator to shuffle fairly, and it is not available here. Please update the app or your device's system software."
   },
+  "crash": {
+    "title": "Something went wrong",
+    "body": "This screen ran into a problem. Your progress and any table in progress are saved.",
+    "home": "Back to Home"
+  },
   "rules": {
     "summary": "底%{base} / 台%{tai} · %{hands} rotations · %{speed} (%{turn}s + %{bank}s bank)"
   }
