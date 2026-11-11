@@ -77,7 +77,7 @@ export type ServerMessage =
   /** A quick match was found: join `room` by its code as usual (only the matched players may). */
   | { t: 'matched'; room: string; humans?: number; bots?: number }
   /** The queue refused or dropped this socket; `code` is one of `QueueErrorCode`. */
-  | { t: 'queue_error'; code: string; message: string }
+  | { t: 'queue_error'; code: string; message: string; room?: string }
   /** The answer to `leave_queue`. */
   | { t: 'queue_left' };
 
@@ -94,17 +94,20 @@ export interface QueueStatus {
 }
 
 /**
- * Why the queue refused or dropped a socket: `banned` (the account is banned), `age_required` (no
- * birth year on the server, or under 17), `rate_limited`, `sign_in` (no account), `unavailable`
- * (try again), `replaced` (the same account queued from another socket).
+ * Why the queue refused or dropped a socket: `banned` (the account is banned), `age_missing` (the
+ * server has no birth year: send it once and queue again), `age_under` (the year on file is under
+ * 17: final), `rate_limited`, `sign_in` (no account), `unavailable` (try again), `replaced` (the
+ * same account queued from another socket), `seated` (the account still has a seat at an
+ * unfinished quick-match table: `room` names it).
  */
-export type QueueErrorCode = 'banned' | 'age_required' | 'rate_limited' | 'sign_in' | 'unavailable' | 'replaced';
+export type QueueErrorCode = 'banned' | 'age_missing' | 'age_under' | 'rate_limited' | 'sign_in' | 'unavailable' | 'replaced' | 'seated';
 
-/** A quick match the server refused or ended, with its `code`. */
+/** A quick match the server refused or ended, with its `code` (and, for `seated`, the table's `room`). */
 export class QueueError extends Error {
   constructor(
     message: string,
     readonly code: string,
+    readonly room?: string,
   ) {
     super(message);
     this.name = 'QueueError';
@@ -378,7 +381,7 @@ export class SignalingClient {
       const offMsg = this.onMessage((m) => {
         if (m.t === 'queue_status') onStatus(m);
         else if (m.t === 'matched') finish(null, m.room);
-        else if (m.t === 'queue_error') finish(new QueueError(m.message, m.code));
+        else if (m.t === 'queue_error') finish(new QueueError(m.message, m.code, typeof m.room === 'string' ? m.room : undefined));
       });
       const offClose = this.onClose(() => finish(new Error('Connection closed')));
       cancel = () => {
