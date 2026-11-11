@@ -239,6 +239,69 @@ function contract(name: string, repos: () => Repos) {
       expect((await reconciler.syncUser(fresh)).outcomes.map((o) => o.outcome)).toEqual(['entitled']);
       expect(await wallet.tierOf(fresh)).toBe('fourwinds');
     });
+
+    it('refunding a store month never takes time that support granted on the same plan, whichever came first', async () => {
+      const r = repos();
+      const wallet = new WalletService(r, { now: () => T0, log: () => {}, testerUserIds: [] });
+      const month = (u: string, n: number) => ({ storeProductId: 'fourwinds.month', transactionId: `tx-month-${n}-${u}`, expiresAt: T0 + 30 * DAY });
+      const plan = async (u: string) => (await wallet.summary(u)).entitlements.filter((e) => e.entitlement === 'fourwinds.month');
+
+      // The store month first, then 180 days from support.
+      const a = await user();
+      await wallet.applyStoreEvent(storeEvent(a, 'INITIAL_PURCHASE', month(a, 1)));
+      await wallet.grantSupport(a, 'fourwinds.month', T0 + 180 * DAY, 'Ticket 7');
+      expect(await plan(a)).toEqual([{ entitlement: 'fourwinds.month', expiresAt: T0 + 180 * DAY, active: true }]);
+      expect((await wallet.applyStoreEvent(storeEvent(a, 'CANCELLATION', { ...month(a, 1), cancelReason: 'CUSTOMER_SUPPORT' }))).outcome).toBe('refunded');
+      expect(await wallet.tierOf(a)).toBe('fourwinds');
+      expect(await plan(a)).toEqual([{ entitlement: 'fourwinds.month', expiresAt: T0 + 180 * DAY, active: true }]);
+      expect((await r.wallet.getEntitlements(a)).map((e) => [e.entitlement, e.source, e.expiresAt]).sort()).toEqual([
+        ['fourwinds.month', 'store', T0],
+        ['support:fourwinds.month', 'support', T0 + 180 * DAY],
+      ]);
+
+      // Ten days from support first, then a store month that is refunded: the ten days stay.
+      const b = await user();
+      await wallet.grantSupport(b, 'fourwinds.month', T0 + 10 * DAY, 'Ticket 8');
+      expect((await wallet.applyStoreEvent(storeEvent(b, 'INITIAL_PURCHASE', month(b, 2)))).outcome).toBe('entitled');
+      expect(await plan(b)).toEqual([{ entitlement: 'fourwinds.month', expiresAt: T0 + 30 * DAY, active: true }]);
+      await wallet.applyStoreEvent(storeEvent(b, 'CANCELLATION', { ...month(b, 2), cancelReason: 'CUSTOMER_SUPPORT' }));
+      expect(await plan(b)).toEqual([{ entitlement: 'fourwinds.month', expiresAt: T0 + 10 * DAY, active: true }]);
+      expect(await wallet.hasFourWinds(b)).toBe(true);
+
+      // A row support wrote under the plan's own name (older grants) is not cut by a store refund either.
+      const c = await user();
+      await r.wallet.setEntitlement({ userId: c, entitlement: 'fourwinds.month', expiresAt: T0 + 90 * DAY, source: 'support', updatedAt: T0 });
+      await wallet.applyStoreEvent(storeEvent(c, 'CANCELLATION', { ...month(c, 3), cancelReason: 'CUSTOMER_SUPPORT' }));
+      expect(await plan(c)).toEqual([{ entitlement: 'fourwinds.month', expiresAt: T0 + 90 * DAY, active: true }]);
+    });
+
+    it('a TRANSFER moves only the plans bought on the store it came from; support grants and other stores stay', async () => {
+      const r = repos();
+      const wallet = new WalletService(r, { now: () => T0, log: () => {}, testerUserIds: [] });
+      const [a, c] = [await user(), await user()];
+      await wallet.applyStoreEvent(storeEvent(a, 'INITIAL_PURCHASE', { store: 'play_store', storeProductId: 'fourwinds:year', transactionId: `GPA.${a}`, expiresAt: T0 + 365 * DAY }));
+      await wallet.applyStoreEvent(storeEvent(a, 'INITIAL_PURCHASE', { store: 'app_store', storeProductId: 'coach.gold.month', transactionId: `ios-${a}`, expiresAt: T0 + 30 * DAY }));
+      await wallet.grantSupport(a, 'coach.gold.year', T0 + 60 * DAY, 'Ticket 9');
+      const live = async (u: string) => (await wallet.summary(u)).entitlements.filter((e) => e.active).map((e) => e.entitlement).sort();
+      // Restore on a shared iPad signed in as C: only the App Store receipt moves.
+      expect((await wallet.applyStoreEvent(storeEvent(null, 'TRANSFER', { store: 'app_store', transferredFrom: [a], transferredTo: [c] }))).outcome).toBe('transferred');
+      expect(await live(a)).toEqual(['coach.gold.year', 'fourwinds.year']);
+      expect(await wallet.tierOf(a)).toBe('fourwinds');
+      expect(await live(c)).toEqual(['coach.gold.month']);
+      expect(await wallet.tierOf(c)).toBe('gold');
+      // The same again moves nothing; a transfer from Google Play then moves the Play plan.
+      expect((await wallet.applyStoreEvent(storeEvent(null, 'TRANSFER', { store: 'app_store', transferredFrom: [a], transferredTo: [c] }))).outcome).toBe('recorded');
+      expect((await wallet.applyStoreEvent(storeEvent(null, 'TRANSFER', { store: 'play_store', transferredFrom: [a], transferredTo: [c] }))).outcome).toBe('transferred');
+      expect(await live(a)).toEqual(['coach.gold.year']);
+      expect(await wallet.tierOf(c)).toBe('fourwinds');
+      // A plan with no purchase on record (granted by a sync), or an event that names no store, moves as before.
+      const [d, f] = [await user(), await user()];
+      await r.wallet.setEntitlement({ userId: d, entitlement: 'coach.gold.year', expiresAt: T0 + 300 * DAY, source: 'store', updatedAt: T0 });
+      expect((await wallet.applyStoreEvent(storeEvent(null, 'TRANSFER', { store: 'app_store', transferredFrom: [d], transferredTo: [f] }))).outcome).toBe('transferred');
+      expect(await wallet.tierOf(f)).toBe('gold');
+      expect((await wallet.applyStoreEvent(storeEvent(null, 'TRANSFER', { store: 'unknown', transferredFrom: [c], transferredTo: [f] }))).outcome).toBe('transferred');
+      expect(await wallet.tierOf(f)).toBe('fourwinds');
+    });
   });
 }
 

@@ -354,9 +354,14 @@ describe('POST /api/admin/grant', () => {
     expect((await repos.wallet.listLedger(u)).at(-1)).toMatchObject({ delta: 300, bonus: 50, reason: 'support', ref: 'support:Ticket 42: pack never arrived' });
     const plan = await call('POST', '/api/admin/grant', { authorization: auth, body: { userId: u, entitlement: 'fourwinds.month', days: 30, note: 'Ticket 43' } });
     expect(plan).toMatchObject({ status: 200, json: { coachTier: 'fourwinds', granted: { entitlement: 'fourwinds.month', expiresAt: iso(T0 + 30 * DAY) } } });
-    expect((await repos.wallet.getEntitlements(u)).find((e) => e.entitlement === 'fourwinds.month')).toMatchObject({ source: 'support', expiresAt: T0 + 30 * DAY });
+    // A plan from support has its own row, apart from the one the store writes; the app sees one line for the plan.
+    expect((await repos.wallet.getEntitlements(u)).map((e) => [e.entitlement, e.source, e.expiresAt])).toEqual([['support:fourwinds.month', 'support', T0 + 30 * DAY]]);
+    expect((await wallet.summary(u)).entitlements).toEqual([{ entitlement: 'fourwinds.month', expiresAt: T0 + 30 * DAY, active: true }]);
+    // A shorter grant never shortens it; a longer one extends it.
+    await call('POST', '/api/admin/grant', { authorization: auth, body: { userId: u, entitlement: 'fourwinds.month', days: 5, note: 'Ticket 43b' } });
+    expect((await wallet.summary(u)).entitlements[0].expiresAt).toBe(T0 + 30 * DAY);
     expect((await call('POST', '/api/admin/grant', { authorization: auth, body: { userId: u, entitlement: 'theme.jade', note: 'Ticket 44' } })).json).toMatchObject({ cosmetics: ['theme.jade'] });
-    expect((await repos.wallet.listLedger(u)).filter((l) => l.reason === 'support').map((l) => l.ref)).toEqual(['support:Ticket 42: pack never arrived', 'support:fourwinds.month:Ticket 43', 'support:theme.jade:Ticket 44']);
+    expect((await repos.wallet.listLedger(u)).filter((l) => l.reason === 'support').map((l) => l.ref)).toEqual(['support:Ticket 42: pack never arrived', 'support:fourwinds.month:Ticket 43', 'support:fourwinds.month:Ticket 43b', 'support:theme.jade:Ticket 44']);
   });
 
   it('refuses unknown accounts and entitlements, plans without days, nonsense amounts and grants without a note', async () => {

@@ -11,7 +11,8 @@
  *
  * Each subscription plan is its own entitlement (`coach.gold.month`, `coach.gold.year`,
  * `fourwinds.month`, `fourwinds.year`): refunding or expiring one plan never ends another, and the
- * player's tier is the best plan still live (`tierOfEntitlements`).
+ * player's tier is the best plan still live (`tierOfEntitlements`). Time that support grants on a
+ * plan is kept apart from what the store sold (`support:<plan>`, see `supportPlanKey`).
  *
  * Store product ids: App Store products use these ids as they are. A Google Play subscription
  * arrives as `<subscription id>:<base plan id>`; `productForStoreId` reads `coach.gold:month` as
@@ -160,11 +161,27 @@ export function tierOfEntitlement(entitlement: string): PaidTier | null {
   return TIER_BY_ENTITLEMENT.get(entitlement) ?? null;
 }
 
-/** The best tier among these live entitlements. */
+/**
+ * A plan granted by support is kept in its own entitlement row, `support:<plan>`, beside the row
+ * the store writes for the same plan: a store refund, expiry or transfer then never touches time
+ * that support gave, and a support grant never hides what the store sold.
+ */
+export const SUPPORT_PLAN_PREFIX = 'support:';
+
+/** The row a support grant of this plan is kept in. */
+export const supportPlanKey = (plan: string): string => `${SUPPORT_PLAN_PREFIX}${plan}`;
+
+/** The plan an entitlement row grants: the plan of a support row, otherwise the name itself. */
+export function planOfEntitlement(name: string): string {
+  const plan = name.startsWith(SUPPORT_PLAN_PREFIX) ? name.slice(SUPPORT_PLAN_PREFIX.length) : name;
+  return plan !== name && tierOfEntitlement(plan) ? plan : name;
+}
+
+/** The best tier among these live entitlements (store rows and support rows alike). */
 export function tierOfEntitlements(entitlements: Iterable<string>): CoachTier {
   let best: CoachTier = 'free';
   for (const e of entitlements) {
-    const tier = tierOfEntitlement(e);
+    const tier = tierOfEntitlement(planOfEntitlement(e));
     if (tier && TIER_RANK[tier] > TIER_RANK[best]) best = tier;
   }
   return best;
