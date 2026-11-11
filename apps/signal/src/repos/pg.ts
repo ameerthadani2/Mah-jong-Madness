@@ -697,6 +697,7 @@ interface PurchaseRow {
   event_id: string | null;
   raw: unknown;
   created_at: Date;
+  period_ends_at: Date | null;
 }
 interface EntitlementRow {
   user_id: string;
@@ -727,6 +728,7 @@ const purchaseFromRow = (r: PurchaseRow): PurchaseRecord => ({
   eventId: r.event_id,
   raw: r.raw,
   createdAt: r.created_at.getTime(),
+  periodEndsAt: r.period_ends_at ? r.period_ends_at.getTime() : null,
 });
 const entitlementFromRow = (r: EntitlementRow): EntitlementRecord => ({
   userId: r.user_id,
@@ -738,7 +740,7 @@ const entitlementFromRow = (r: EntitlementRow): EntitlementRecord => ({
 
 function pgWallet(q: Queryable, tx: Tx): WalletRepo {
   const LEDGER_COLS = 'id, user_id, delta, bonus, reason, ref, created_at';
-  const PURCHASE_COLS = 'id, user_id, store, transaction_id, product_id, price, currency, event_id, raw, created_at';
+  const PURCHASE_COLS = 'id, user_id, store, transaction_id, product_id, price, currency, event_id, raw, created_at, period_ends_at';
   return {
     async get(userId) {
       if (!isUuid(userId)) return { userId, diamonds: 0, bonusDiamonds: 0, updatedAt: 0 };
@@ -775,9 +777,9 @@ function pgWallet(q: Queryable, tx: Tx): WalletRepo {
     },
     async recordPurchase(p) {
       const ins = await q.query<PurchaseRow>(
-        `INSERT INTO purchases (user_id, store, transaction_id, product_id, price, currency, event_id, raw, created_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9) ON CONFLICT DO NOTHING RETURNING ` + PURCHASE_COLS,
-        [p.userId, p.store, p.transactionId, p.productId, p.price, p.currency, p.eventId, json(p.raw), toDate(p.createdAt)],
+        `INSERT INTO purchases (user_id, store, transaction_id, product_id, price, currency, event_id, raw, created_at, period_ends_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10) ON CONFLICT DO NOTHING RETURNING ` + PURCHASE_COLS,
+        [p.userId, p.store, p.transactionId, p.productId, p.price, p.currency, p.eventId, json(p.raw), toDate(p.createdAt), toDate(p.periodEndsAt ?? null)],
       );
       if (ins.rows[0]) return { purchase: purchaseFromRow(ins.rows[0]), inserted: true };
       const existing = await q.query<PurchaseRow>('SELECT ' + PURCHASE_COLS + ' FROM purchases WHERE transaction_id = $1 OR ($2::text IS NOT NULL AND event_id = $2) ORDER BY id LIMIT 1', [

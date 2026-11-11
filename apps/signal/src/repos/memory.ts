@@ -512,7 +512,7 @@ function memoryWallet(s: MemoryState): WalletRepo {
     async recordPurchase(p) {
       const existing = s.purchases.find((x) => x.transactionId === p.transactionId || (p.eventId !== null && x.eventId === p.eventId));
       if (existing) return { purchase: copy(existing), inserted: false };
-      const row: PurchaseRecord = { ...copy(p), id: ++s.purchaseSeq };
+      const row: PurchaseRecord = { ...copy(p), periodEndsAt: p.periodEndsAt ?? null, id: ++s.purchaseSeq };
       s.purchases.push(row);
       return { purchase: copy(row), inserted: true };
     },

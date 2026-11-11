@@ -456,7 +456,8 @@ export class WalletService {
       case 'UNCANCELLATION':
       case 'SUBSCRIPTION_EXTENDED': {
         const until = e.expiresAt ?? (e.purchasedAt ?? at) + PERIOD_MS[product.period];
-        if (e.type === 'INITIAL_PURCHASE' || e.type === 'RENEWAL') await this.recordPurchase(tx, e, userId, product.id, transactionId, at);
+        // The period end is kept only under the store's own transaction id, which a refund names.
+        if (e.type === 'INITIAL_PURCHASE' || e.type === 'RENEWAL') await this.recordPurchase(tx, e, userId, product.id, transactionId, at, e.transactionId ? until : null);
         // Events can arrive out of order: a period refunded before its purchase or renewal event
         // got here is never granted, and a subscription a later event extended is never shortened.
         if (await this.refunded(tx, userId, transactionId)) return { outcome: 'refunded', userId };
@@ -468,14 +469,19 @@ export class WalletService {
         return { outcome: current && isLive(current, at) ? 'extended' : 'entitled', userId };
       }
       case 'CANCELLATION': {
-        // Auto-renew off: access continues to the end of the period. A refund ends it now, and is
-        // remembered so that the refunded period's own event cannot grant it later.
+        // Auto-renew off: access continues to the end of the period. A refund ends the refunded
+        // period now, and is remembered so that the period's own event cannot grant it later.
         if (e.cancelReason !== 'CUSTOMER_SUPPORT') return { outcome: 'recorded', userId };
         await this.markRefunded(tx, userId, transactionId, at);
         // Only time the store sold is taken back: a row that support wrote under the plan's own
         // name (before support grants had their own row) stays as it is.
         if (!current || current.source !== STORE_SOURCE) return { outcome: 'refunded', userId };
-        const end = Math.min(e.expiresAt ?? at, at);
+        // A refund names one transaction and takes back that transaction's time only. Another
+        // period of the plan that was paid for and not refunded still stands: the running period
+        // when last month's charge is refunded, or the rest of this month when the renewal the
+        // store charged a day early is refunded. A refund that names no transaction ends the plan.
+        const stands = e.transactionId ? await this.paidUntil(tx, userId, product.entitlement, transactionId) : 0;
+        const end = Math.max(Math.min(e.expiresAt ?? at, at), stands);
         if (current.expiresAt === null || current.expiresAt > end) await tx.wallet.setEntitlement({ ...current, expiresAt: end, updatedAt: at });
         return { outcome: 'refunded', userId };
       }
@@ -495,7 +501,8 @@ export class WalletService {
     }
   }
 
-  private recordPurchase(tx: Repos, e: StoreEvent, userId: string, productId: string, transactionId: string, at: number) {
+  /** `periodEndsAt`: for a subscription's first purchase or renewal, the end of the period it paid for. */
+  private recordPurchase(tx: Repos, e: StoreEvent, userId: string, productId: string, transactionId: string, at: number, periodEndsAt: number | null = null) {
     const currency = e.currency && /^[A-Z]{3}$/.test(e.currency) ? e.currency : null;
     return tx.wallet.recordPurchase({
       userId,
@@ -507,7 +514,27 @@ export class WalletService {
       eventId: `${e.vendor}:${e.eventId}`,
       raw: e.raw,
       createdAt: at,
+      periodEndsAt,
     });
+  }
+
+  /**
+   * How far this account's paid periods of a plan reach once `refundedTransaction` is left out:
+   * the latest period end among its recorded purchases of that plan that were not refunded
+   * themselves; 0 when there is none. Only purchases on record count (the first purchase and each
+   * renewal the store reported), so a refund never leaves more than was demonstrably paid for.
+   */
+  private async paidUntil(tx: Repos, userId: string, entitlement: string, refundedTransaction: string): Promise<number> {
+    const refunds = new Set((await tx.wallet.listLedger(userId)).filter((l) => l.reason === 'refund').map((l) => l.ref));
+    let until = 0;
+    for (const p of await tx.wallet.listPurchases(userId)) {
+      if (p.periodEndsAt === null || p.transactionId === refundedTransaction) continue;
+      const product = serverProduct(p.productId);
+      if (product?.kind !== 'subscription' || product.entitlement !== entitlement) continue;
+      if (refunds.has(WalletService.refundRef(p.transactionId))) continue;
+      until = Math.max(until, p.periodEndsAt);
+    }
+    return until;
   }
 
   /**

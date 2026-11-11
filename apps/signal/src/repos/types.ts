@@ -197,9 +197,14 @@ export interface PurchaseRecord {
   eventId: string | null;
   raw: unknown;
   createdAt: number;
+  /**
+   * For a subscription's first purchase or renewal: when the period this transaction paid for
+   * ends. Null for a diamond pack, and for rows written before the column existed.
+   */
+  periodEndsAt: number | null;
 }
 
-export type NewPurchase = Omit<PurchaseRecord, 'id'>;
+export type NewPurchase = Omit<PurchaseRecord, 'id' | 'periodEndsAt'> & { periodEndsAt?: number | null };
 
 export interface EntitlementRecord {
   userId: string;
