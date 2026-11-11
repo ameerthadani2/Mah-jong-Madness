@@ -8,7 +8,7 @@ import { BUNDLES, bundlePrice, COSMETIC_CATEGORIES, COSMETICS, DIAMOND_PACKS, pr
 import { EMOTE_PACKS, tileBackById, type CelebrationId } from '../monetisation/cosmetics';
 import { slotOf } from '../monetisation/equipped';
 import { setEquipped, useOwnedEquipped } from '../monetisation/useEquipped';
-import { coachRenewal, coachTier, ownsProduct, totalDiamonds, type Wallet } from '../monetisation/wallet';
+import { coachRenewal, coachTier, diamondsOwed, ownsProduct, totalDiamonds, type Wallet } from '../monetisation/wallet';
 import { StoreError } from '../monetisation/providers';
 import { shopStoreState } from '../monetisation/store-mode';
 import { useRemoteConfig } from '../telemetry/RemoteConfig';
@@ -123,7 +123,10 @@ export function ShopScreen({ focus }: { focus?: 'fourwinds' } = {}) {
     setMsg(null);
     try {
       const r = await shop.restore();
-      setMsg(r.ok ? { text: t('shop.restored'), tone: 'ok' } : { text: shopError(r.error, t), tone: 'danger' });
+      if (!r.ok) setMsg({ text: shopError(r.error, t), tone: 'danger' });
+      // The store answered, but the game server could not check the purchases: say so instead of "restored".
+      else if (r.serverSync === 'failed') setMsg({ text: t('shop.restoredUnchecked'), tone: 'gold' });
+      else setMsg({ text: t('shop.restored'), tone: 'ok' });
     } finally {
       setBusy(null);
     }
@@ -145,6 +148,7 @@ export function ShopScreen({ focus }: { focus?: 'fourwinds' } = {}) {
   ];
   const tier = coachTier(wallet);
   const renewal = coachRenewal(wallet);
+  const owed = diamondsOwed(wallet);
   const pad = width >= 1000 ? 28 : space.lg;
   const inner = width - pad * 2;
   const cols = Math.max(2, Math.min(6, Math.floor(inner / 182)));
@@ -177,6 +181,17 @@ export function ShopScreen({ focus }: { focus?: 'fourwinds' } = {}) {
       )}
       {shop.storeKind === 'mock' && <Pill tone="premium" icon="warning" text={t('shop.mock')} />}
       {offline && <Pill icon="warning" text={t('shop.offline')} />}
+      {owed > 0 && (
+        <Card tone="gold" testID="diamonds-owed" style={{ flexDirection: 'row', gap: space.md, alignItems: 'center' }}>
+          <Icon name="gem" size={30} />
+          <View style={{ flex: 1, gap: 2 }}>
+            <H2>{t('shop.owed.title', { n: owed.toLocaleString() })}</H2>
+            <P dim style={{ fontSize: 13, lineHeight: 18 }}>
+              {t('shop.owed.body', { n: owed.toLocaleString() })}
+            </P>
+          </View>
+        </Card>
+      )}
       <View style={[styles.tabs, narrowTabs && { alignSelf: 'stretch', gap: 2 }]}>
         {tabs.map(([id, label, icon]) => {
           const on = tab === id;

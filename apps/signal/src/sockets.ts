@@ -10,9 +10,13 @@
  *
  * With a session verifier (the real server), the first frame must be `{t:'hello', auth}`; until
  * the token is verified nothing else is routed (frames sent meanwhile wait, in order), and a
- * missing or rejected token closes the socket with 4401 (4403 for a banned account). The token is
- * checked again before every `create`, `join` and `queue`, so a session that has since expired or been revoked cannot open or enter a
- * table; a revocation also closes the socket at once through `RoomRegistry.endSessions`.
+ * missing or rejected token closes the socket with 4401 (4403 for a banned account); a check that
+ * has not answered when the hello timer fires closes it with 1013 (try again later), because a slow
+ * database says nothing about the session. The token is checked again before a `create`, `join` or
+ * `queue`, so a session that has since expired cannot open or enter a table, but never more often
+ * than every `sessionRecheckMs` per socket, and never for a frame whose create or join allowance is
+ * already spent (that frame is refused without touching the database). A logout, ban, deletion or
+ * revocation through the API closes the socket at once through `RoomRegistry.endSessions`.
  */
 import type { IncomingMessage, Server } from 'node:http';
 import type { Duplex } from 'node:stream';
@@ -43,12 +47,15 @@ export class VerifyUnavailable extends Error {
   }
 }
 const HEARTBEAT_MS = 30_000;
-/** How long a new socket has to send a verified `hello` before it is closed with 4401. */
+/** How long a new socket has to send a verified `hello` before it is closed (4401 with none sent, 1013 while its token is being checked). */
 const HELLO_TIMEOUT_MS = 10_000;
 /** Frames a client may send while its token is still being checked; they are handled in order once it passes. */
 const MAX_QUEUED_FRAMES = 16;
 
-export type SocketLimits = Pick<typeof LIMITS, 'socketsPerIp' | 'messagesPerSec' | 'messageBurst'>;
+export type SocketLimits = Record<'socketsPerIp' | 'messagesPerSec' | 'messageBurst', number> & {
+  /** How long a successful session check stands per socket (default `LIMITS.sessionRecheckMs`; 0 checks before every create, join and queue). */
+  sessionRecheckMs?: number;
+};
 
 /** What a verifier says about a session token: the user, the session itself when known, and the account's display name. */
 export type VerifiedToken = string | { userId: string; sessionId?: string; name?: string };
@@ -57,14 +64,17 @@ export interface SocketAuthOptions {
   /**
    * Resolve the session token in the first frame (`{t:'hello', auth}`) to its user id (and session
    * id), or reject. When set, every socket must authenticate before anything else, and the token
-   * is checked again before each `create` or `join`; when absent (unit tests of the relay alone),
-   * `hello` needs no token and peers have no user.
+   * is checked again before a `create`, `join` or `queue` once the last check is older than
+   * `SocketLimits.sessionRecheckMs`; when absent (unit tests of the relay alone), `hello` needs no
+   * token and peers have no user.
    */
   verify?: (token: unknown) => Promise<VerifiedToken>;
   helloTimeoutMs?: number;
+  /** Clock for the session re-check window (default `Date.now`). */
+  now?: () => number;
 }
 
-/** Frames that open or enter a table, or ask for one: the session is verified again before each one (a ban since `hello` closes the socket with 4403). */
+/** Frames that open or enter a table, or ask for one: the session must have been verified within `sessionRecheckMs` (a ban found by that check closes the socket with 4403). */
 const RECHECKED = new Set<string>(['create', 'join', 'queue']);
 
 /** Attach the connection handler to `wss`. Returns a function that reports open sockets per IP (for tests and health checks). */
@@ -77,6 +87,8 @@ export function attachSocketHandlers(
 ): () => ReadonlyMap<string, number> {
   /** Open sockets per client IP. */
   const socketsByIp = new Map<string, number>();
+  const now = auth.now ?? Date.now;
+  const recheckMs = limits.sessionRecheckMs ?? LIMITS.sessionRecheckMs;
 
   wss.on('error', (e: Error) => console.error('[signal] socket server error', e.message));
 
@@ -121,7 +133,15 @@ export function attachSocketHandlers(
       else if ((e as { code?: unknown } | null)?.code === 'banned') ws.close(BANNED_CLOSE_CODE, 'Banned');
       else ws.close(UNAUTHORISED, 'Unauthorised');
     };
-    const helloTimer = auth.verify ? setTimeout(() => stage !== 'ready' && unauthorised(), auth.helloTimeoutMs ?? HELLO_TIMEOUT_MS) : null;
+    const helloTimer = auth.verify
+      ? setTimeout(() => {
+          if (stage === 'ready' || closed) return;
+          // A token that is still being checked is not a refused one: the database is slow, and the
+          // app must come back with the same session instead of dropping it.
+          if (stage === 'verifying') ws.close(TRY_AGAIN_LATER, 'Try again later');
+          else unauthorised();
+        }, auth.helloTimeoutMs ?? HELLO_TIMEOUT_MS)
+      : null;
     ws.on('close', () => helloTimer && clearTimeout(helloTimer));
     const dispatch = (msg: Inbound) => {
       try {
@@ -132,8 +152,10 @@ export function attachSocketHandlers(
         reportError(e, { where: 'socket', frame: msg.t });
       }
     };
-    /** The token the socket proved in `hello`, checked again before each create or join. */
+    /** The token the socket proved in `hello`, checked again before a create, join or queue once `verifiedAt` is too old. */
     let sessionToken: string | null = null;
+    /** When the token last passed the verifier. */
+    let verifiedAt = 0;
     const authenticate = (msg: Inbound) => {
       const token = (msg as { auth?: unknown }).auth;
       if (msg.t !== 'hello' || typeof token !== 'string' || !token) return unauthorised();
@@ -143,6 +165,7 @@ export function attachSocketHandlers(
           if (closed) return;
           stage = 'ready';
           sessionToken = token;
+          verifiedAt = now();
           if (helloTimer) clearTimeout(helloTimer);
           const { userId, sessionId, name } = typeof verified === 'string' ? { userId: verified, sessionId: undefined, name: undefined } : verified;
           peerId = rooms.hello(peerId, userId, sessionId, name);
@@ -151,7 +174,7 @@ export function attachSocketHandlers(
         (e: unknown) => unauthorised(e),
       );
     };
-    /** Check the session still stands before a create or join; the frame (and any that follow) waits for the answer. */
+    /** Check the session still stands before a create, join or queue; the frame (and any that follow) waits for the answer. */
     const recheck = (msg: Inbound) => {
       stage = 'verifying';
       queued.push(msg);
@@ -159,6 +182,7 @@ export function attachSocketHandlers(
         (verified) => {
           if (closed) return;
           stage = 'ready';
+          verifiedAt = now();
           // The player may have renamed themselves since `hello`: sit down under the current name.
           if (typeof verified !== 'string') rooms.setPeerName(peerId, verified.name);
           for (const m of queued.splice(0)) dispatch(m);
@@ -188,7 +212,12 @@ export function attachSocketHandlers(
         else queued.push(msg);
         return;
       }
-      if (sessionToken !== null && RECHECKED.has(msg.t)) return recheck(msg);
+      if (sessionToken !== null && RECHECKED.has(msg.t)) {
+        // The buckets first: a frame they refuse is answered here and costs no database work.
+        if (rooms.throttled(peerId, msg)) return;
+        // Then the database, unless this socket's session passed moments ago.
+        if (now() - verifiedAt >= recheckMs) return recheck(msg);
+      }
       dispatch(msg);
     });
     ws.on('close', () => rooms.disconnect(peerId));

@@ -4,8 +4,10 @@
  *
  * - `POST /api/wallet/sync` (bearer session): after Restore, read the player's purchases from the
  *   store (reconcile.ts) and apply anything the webhook missed, then answer the wallet like
- *   `POST /api/wallet/spend` does. Without REVENUECAT_SECRET_KEY it only answers the wallet
- *   (`synced: false`). Limited to a few calls a minute per account.
+ *   `POST /api/wallet/spend` does, with `applied` (purchases that were missing) and `failed`
+ *   (purchases that could not be applied this time; the rest still were). Without
+ *   REVENUECAT_SECRET_KEY it only answers the wallet (`synced: false`). `502 store_unreachable`
+ *   when the store itself cannot be read. Limited to a few calls a minute per account.
  * - `POST /api/admin/grant` (`Authorization: Bearer <ADMIN_TOKEN>`, compared in constant time):
  *   support grants diamonds (a ledger entry with reason `support`) or an entitlement (source
  *   `support`, also noted on the ledger) to one account, with a required note. Without
@@ -78,16 +80,18 @@ export function storeRoutes<R>(r: RouteFactory<R>, deps: StoreRouteDeps): R[] {
       if (!syncs.take(me.userId)) throw new WalletError('rate_limited', 'Too many store syncs; try again in a minute');
       let synced = false;
       let applied = 0;
+      let failed = 0;
       if (reconciler.enabled) {
         try {
           const res = await reconciler.syncUser(me.userId);
           synced = res.checked;
           applied = res.applied;
+          failed = res.failed;
         } catch (e) {
           throw new WalletError('store_unreachable', `The store could not be reached: ${(e as Error).message}`);
         }
       }
-      return { synced, applied, ...(await walletReply(me.userId)) };
+      return { synced, applied, failed, ...(await walletReply(me.userId)) };
     }),
 
     r('POST', '/api/admin/grant', async (ctx) => {

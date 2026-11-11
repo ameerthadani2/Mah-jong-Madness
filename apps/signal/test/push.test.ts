@@ -125,7 +125,8 @@ describe('push triggers', () => {
   });
 
   it('signing out takes the push token off that device, so the next club event does not reach the phone', async () => {
-    const f = fixture();
+    let now = Date.now();
+    const f = fixture({ now: () => now });
     const { owner, members, code } = await club(f);
     const alice = members[0];
     await f.register(alice, token('alice'));
@@ -137,6 +138,7 @@ describe('push triggers', () => {
     // Signing in again on the phone registers the token afresh and the pushes resume.
     const back = (await f.call('POST', '/api/auth/guest/login', { userId: alice.userId, guestSecret: alice.guestSecret })).json.session as { token: string };
     await f.call('POST', '/api/push/token', { token: token('alice'), platform: 'ios' }, { authorization: `Bearer ${back.token}` });
+    now += 10_000; // the owner's next table, ten seconds after the last
     await f.call('POST', `/api/clubs/${code}/tables`, { label: 'Later' }, owner.auth);
     await vi.waitFor(() => expect(f.client!.sent).toHaveLength(1));
     expect(f.client!.sent[0].to).toBe(token('alice'));

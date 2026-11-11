@@ -9,13 +9,14 @@
  *   It is idempotent on the event id: the event row is written first, in the same transaction as
  *   its effects, so a redelivered event changes nothing. Diamond credits are additionally keyed
  *   on the store transaction id (purchases.transaction_id is unique), so one purchase is never
- *   credited twice even under two event ids.
+ *   credited twice, under two event ids or under two accounts, and its refund is taken from the
+ *   account that holds the purchase.
  *
  * Diamonds and entitlements have no monetary value and cannot be redeemed or transferred between
  * players. Work for one user is serialised in this process (one game server machine), and on
  * Postgres every operation is one transaction.
  */
-import { bundlePrice, COSMETIC_ENTITLEMENTS, PERIOD_MS, productForStoreId, serverProduct, TIER_RANK, tierOfEntitlements, type CoachTier, type ServerProduct } from './catalog';
+import { bundlePrice, COSMETIC_ENTITLEMENTS, PERIOD_MS, planOfEntitlement, productForStoreId, serverProduct, supportPlanKey, TIER_RANK, tierOfEntitlement, tierOfEntitlements, type CoachTier, type ServerProduct } from './catalog';
 import { NO_ANALYTICS, withConsent, type Analytics } from './observability';
 import type { EntitlementRecord, Repos, UserRecord, WalletRecord } from './repos/types';
 
@@ -175,11 +176,20 @@ export class WalletService {
     this.testers = opts.testerUserIds instanceof Set ? opts.testerUserIds : opts.testerUserIds ? new Set([...opts.testerUserIds].map((id) => id.trim().toLowerCase())) : testerIdsFromEnv();
   }
 
-  /** True when this event may grant: a production event, or a sandbox event for an account on the tester list. */
-  private grantable(e: StoreEvent, user: UserRecord | null): boolean {
-    if (!isSandbox(e)) return true;
-    const ids = [user?.id, ...e.userIds, ...e.transferredTo].filter((x): x is string => !!x);
-    return ids.some((id) => this.testers.has(id.toLowerCase()));
+  /**
+   * True when this event may grant: a production event, or a sandbox event whose grant goes to an
+   * account on the tester list. Only the account that would receive the grant counts (for a
+   * TRANSFER, the account the purchases move to): another id in the event, such as an alias the
+   * store attached, lends nobody a tester's sandbox purchases.
+   */
+  private grantable(e: StoreEvent, recipient: UserRecord | null): boolean {
+    return !isSandbox(e) || (recipient !== null && this.testers.has(recipient.id.toLowerCase()));
+  }
+
+  /** The outcome of a sandbox event that may not grant, with a log line. */
+  private sandboxRefused(e: StoreEvent, recipient: UserRecord | null): { outcome: StoreOutcome; userId: string | null } {
+    this.log(`[signal] sandbox store event ${e.eventId} (${e.type}) for an account not on TESTER_USER_IDS; recorded only`);
+    return { outcome: 'ignored_sandbox', userId: recipient?.id ?? null };
   }
 
   /**
@@ -208,9 +218,17 @@ export class WalletService {
     const [w, ents] = await Promise.all([this.repos.wallet.get(userId), this.repos.wallet.getEntitlements(userId)]);
     const at = this.now();
     const live = ents.filter((e) => isLive(e, at));
+    // A plan held from the store and from support is one line for the app: the later expiry.
+    const byName = new Map<string, { entitlement: string; expiresAt: number | null }>();
+    for (const e of ents) {
+      const entitlement = planOfEntitlement(e.entitlement);
+      const seen = byName.get(entitlement);
+      if (!seen) byName.set(entitlement, { entitlement, expiresAt: e.expiresAt });
+      else seen.expiresAt = seen.expiresAt === null || e.expiresAt === null ? null : Math.max(seen.expiresAt, e.expiresAt);
+    }
     return {
       wallet: { diamonds: w.diamonds, bonusDiamonds: w.bonusDiamonds },
-      entitlements: ents.map((e) => ({ entitlement: e.entitlement, expiresAt: e.expiresAt, active: isLive(e, at) })),
+      entitlements: [...byName.values()].map((e) => ({ ...e, active: isLive(e, at) })),
       cosmetics: live.filter((e) => COSMETIC_ENTITLEMENTS.has(e.entitlement)).map((e) => e.entitlement).sort(),
       coachTier: tierOfEntitlements(live.map((e) => e.entitlement)),
     };
@@ -241,15 +259,19 @@ export class WalletService {
 
   /**
    * A support grant of an entitlement (`POST /api/admin/grant`): written with source `support`,
-   * never shortening one the user already has, and noted on the ledger as a zero entry.
+   * never shortening a grant the user already has, and noted on the ledger as a zero entry. A
+   * plan is kept in its own row (`support:<plan>`), apart from the row store events write for
+   * the same plan, so refunding or transferring a store purchase never takes support's time and
+   * the grant never hides a store subscription. A look is one permanent row either way.
    */
   async grantSupport(userId: string, entitlement: string, expiresAt: number | null, note: string): Promise<void> {
+    const key = tierOfEntitlement(entitlement) ? supportPlanKey(entitlement) : entitlement;
     await this.serialise([userId], () =>
       this.repos.transaction(async (tx) => {
         const at = this.now();
-        const current = (await tx.wallet.getEntitlements(userId)).find((e) => e.entitlement === entitlement);
+        const current = (await tx.wallet.getEntitlements(userId)).find((e) => e.entitlement === key);
         const keeps = current && (current.expiresAt === null || (expiresAt !== null && current.expiresAt >= expiresAt));
-        if (!keeps) await tx.wallet.setEntitlement({ userId, entitlement, expiresAt, source: SUPPORT_SOURCE, updatedAt: at });
+        if (!keeps) await tx.wallet.setEntitlement({ userId, entitlement: key, expiresAt, source: SUPPORT_SOURCE, updatedAt: at });
         await tx.wallet.apply({ userId, delta: 0, bonus: 0, reason: 'support', ref: `support:${entitlement}:${note}`.slice(0, 255), createdAt: at });
       }),
     );
@@ -283,6 +305,11 @@ export class WalletService {
     );
   }
 
+  /** The id of the live account this user id stands for now (following merges); null for a deleted, purged or unknown one. */
+  async liveAccount(userId: string): Promise<string | null> {
+    return (await this.resolveUser([userId]))?.id ?? null;
+  }
+
   /** The live account a store user id refers to (following merges), or null. */
   private async resolveUser(candidates: string[], repos: Repos = this.repos, includeDeleted = false): Promise<UserRecord | null> {
     for (const id of candidates) {
@@ -291,6 +318,16 @@ export class WalletService {
       if (user && (user.deletedAt === null || (includeDeleted && user.mergedInto === null))) return user;
     }
     return null;
+  }
+
+  /**
+   * The account that holds the purchase recorded for this store transaction: the one it was
+   * credited to, or the account that one was merged into. A deleted account still counts until
+   * its rows are purged; null when no purchase is recorded or its account is gone.
+   */
+  private async purchaseHolder(repos: Repos, transactionId: string): Promise<UserRecord | null> {
+    const purchase = await repos.wallet.findPurchase(transactionId);
+    return purchase ? this.resolveUser([purchase.userId], repos, true) : null;
   }
 
   /** The ledger ref that records a refund of this store transaction, whether or not it was ever credited. */
@@ -321,6 +358,13 @@ export class WalletService {
     const product = productForStoreId(e.storeProductId);
     const resolved = e.type === 'TRANSFER' ? null : await this.resolveUser(e.userIds);
     const keys = [resolved?.id ?? '', ...e.transferredFrom, ...e.transferredTo].filter(Boolean);
+    if (product?.kind === 'diamonds' && e.transactionId) {
+      // One store transaction is worked on by one event at a time, whichever account each event
+      // names, and the account that holds its purchase waits too (a refund debits that account).
+      keys.push(`txn:${e.transactionId}`);
+      const holder = await this.purchaseHolder(this.repos, e.transactionId);
+      if (holder) keys.push(holder.id);
+    }
     try {
       return await this.serialise(keys, () =>
         this.repos.transaction(async (tx) => {
@@ -354,14 +398,18 @@ export class WalletService {
   private async applyEffects(tx: Repos, e: StoreEvent, product: ServerProduct | undefined, user: UserRecord | null): Promise<{ outcome: StoreOutcome; userId: string | null }> {
     const at = this.now();
     if (e.type === 'TEST') return { outcome: 'test', userId: user?.id ?? null };
-    // Sandbox purchases cost nothing: only accounts on the tester list get them.
-    if (!this.grantable(e, user)) {
-      this.log(`[signal] sandbox store event ${e.eventId} (${e.type}) for an account not on TESTER_USER_IDS; recorded only`);
-      return { outcome: 'ignored_sandbox', userId: user?.id ?? null };
-    }
+    // A TRANSFER names its accounts itself, and applies the sandbox rule to the one that receives.
     if (e.type === 'TRANSFER') return this.transfer(tx, e, at);
+    // Sandbox purchases cost nothing: only accounts on the tester list get them.
+    if (!this.grantable(e, user)) return this.sandboxRefused(e, user);
     if (!(STORE_EVENT_TYPES as readonly string[]).includes(e.type)) return { outcome: 'ignored_type', userId: user?.id ?? null };
     if (!user) {
+      // A refunded pack is still taken back from the account that holds it when the event names
+      // an account we no longer know (the store moved the purchase to one that was since deleted).
+      if (product?.kind === 'diamonds' && e.type === 'CANCELLATION' && e.transactionId) {
+        const refund = await this.refundDiamonds(tx, null, product, e.transactionId, e.cancelReason, at);
+        if (refund.userId) return refund;
+      }
       this.log(`[signal] store event ${e.eventId} (${e.type}) names no account we know; recorded only`);
       return { outcome: 'ignored_unknown_user', userId: null };
     }
@@ -373,9 +421,11 @@ export class WalletService {
     const transactionId = e.transactionId ?? `${e.vendor}:${e.eventId}`;
 
     if (product.kind === 'diamonds') {
-      if (e.type === 'CANCELLATION') return { outcome: await this.refundDiamonds(tx, userId, product, transactionId, e.cancelReason, at), userId };
+      if (e.type === 'CANCELLATION') return this.refundDiamonds(tx, userId, product, transactionId, e.cancelReason, at);
       if (e.type !== 'NON_RENEWING_PURCHASE' && e.type !== 'INITIAL_PURCHASE') return { outcome: 'recorded', userId };
-      if ((await tx.wallet.listPurchases(userId)).some((p) => p.transactionId === transactionId)) return { outcome: 'duplicate', userId };
+      // A transaction already on record is never credited again, whichever account holds it: after
+      // a Restore the store lists the old account's packs under the new one.
+      if (await tx.wallet.findPurchase(transactionId)) return { outcome: 'duplicate', userId };
       if (await this.refunded(tx, userId, transactionId)) {
         // The refund got here first: keep the purchase on record, grant nothing.
         await this.recordPurchase(tx, e, userId, product.id, transactionId, at);
@@ -385,8 +435,9 @@ export class WalletService {
       const res = await tx.wallet.apply({ userId, delta: product.diamonds, bonus: product.bonus, reason: 'purchase', ref: `${e.store}:${transactionId}`, createdAt: at });
       if (!res) throw new Error('Diamond credit refused');
       const { inserted } = await this.recordPurchase(tx, e, userId, product.id, transactionId, at);
-      // Another delivery recorded this transaction meanwhile: roll back (Postgres) and let the retry see it.
-      if (!inserted) throw new Error(`Transaction ${transactionId} was recorded concurrently`);
+      // Only another process can have recorded this transaction since the check above (this one
+      // holds the transaction's lock): roll the credit back and let the retry answer `duplicate`.
+      if (!inserted) throw new Error(`Transaction ${transactionId} was recorded by another process meanwhile`);
       this.analytics.capture(userId, 'purchase_credited', { productId: product.id, diamonds: product.diamonds + product.bonus, store: e.store, environment: e.environment });
       return { outcome: 'credited', userId };
     }
@@ -421,7 +472,9 @@ export class WalletService {
         // remembered so that the refunded period's own event cannot grant it later.
         if (e.cancelReason !== 'CUSTOMER_SUPPORT') return { outcome: 'recorded', userId };
         await this.markRefunded(tx, userId, transactionId, at);
-        if (!current) return { outcome: 'refunded', userId };
+        // Only time the store sold is taken back: a row that support wrote under the plan's own
+        // name (before support grants had their own row) stays as it is.
+        if (!current || current.source !== STORE_SOURCE) return { outcome: 'refunded', userId };
         const end = Math.min(e.expiresAt ?? at, at);
         if (current.expiresAt === null || current.expiresAt > end) await tx.wallet.setEntitlement({ ...current, expiresAt: end, updatedAt: at });
         return { outcome: 'refunded', userId };
@@ -458,47 +511,78 @@ export class WalletService {
   }
 
   /**
-   * A refunded diamond pack: take back everything it credited. Bonus diamonds come back first as
-   * far as they go; the rest comes off purchased diamonds, which may go below zero when the pack
-   * was already spent. A negative balance blocks every spend until a purchase covers it, so a
-   * buy, spend, refund cycle never ends with free looks. A refund that arrives before the purchase
-   * is remembered, so the purchase is not credited when it comes.
+   * A refunded diamond pack: take back everything it credited, from the account that holds the
+   * purchase. That is not always the account the refund names: after a Restore on another account
+   * the store reports the purchase (and its refund) under the new app user id, while the diamonds
+   * stayed where they were credited. Bonus diamonds come back first as far as they go; the rest
+   * comes off purchased diamonds, which may go below zero when the pack was already spent. A
+   * negative balance blocks every spend until a purchase covers it, so a buy, spend, refund cycle
+   * never ends with free looks. A refund that arrives before the purchase is remembered on the
+   * account it names, so the purchase is not credited when it comes. `namedUserId` is null when
+   * the event names no account we know: the result then has a user only if a holder was debited.
    */
-  private async refundDiamonds(tx: Repos, userId: string, product: Extract<ServerProduct, { kind: 'diamonds' }>, transactionId: string, cancelReason: string | null, at: number): Promise<StoreOutcome> {
-    if (cancelReason !== 'CUSTOMER_SUPPORT') return 'recorded';
-    if (await this.refunded(tx, userId, transactionId)) return 'duplicate';
-    const credited = (await tx.wallet.listPurchases(userId)).some((p) => p.transactionId === transactionId);
-    if (!credited) {
-      await this.markRefunded(tx, userId, transactionId, at);
-      return 'refunded';
+  private async refundDiamonds(
+    tx: Repos,
+    namedUserId: string | null,
+    product: Extract<ServerProduct, { kind: 'diamonds' }>,
+    transactionId: string,
+    cancelReason: string | null,
+    at: number,
+  ): Promise<{ outcome: StoreOutcome; userId: string | null }> {
+    if (cancelReason !== 'CUSTOMER_SUPPORT') return { outcome: 'recorded', userId: namedUserId };
+    const purchase = await tx.wallet.findPurchase(transactionId);
+    if (!purchase) {
+      if (!namedUserId) return { outcome: 'ignored_unknown_user', userId: null };
+      if (await this.refunded(tx, namedUserId, transactionId)) return { outcome: 'duplicate', userId: namedUserId };
+      await this.markRefunded(tx, namedUserId, transactionId, at);
+      return { outcome: 'refunded', userId: namedUserId };
     }
+    const holder = await this.resolveUser([purchase.userId], tx, true);
+    // The account that was credited has been purged: its wallet went with it, so nothing is left to take back.
+    if (!holder) return { outcome: 'recorded', userId: namedUserId };
+    const userId = holder.id;
+    if (await this.refunded(tx, userId, transactionId)) return { outcome: 'duplicate', userId };
     const w = await tx.wallet.get(userId);
     const bonus = Math.min(Math.max(0, w.bonusDiamonds), product.bonus);
     const delta = -(product.diamonds + product.bonus - bonus);
     const res = await tx.wallet.apply({ userId, delta, bonus: -bonus, reason: 'refund', ref: WalletService.refundRef(transactionId), createdAt: at }, { allowNegative: true });
     if (!res) throw new Error('Diamond refund refused');
+    if (userId !== namedUserId) this.log(`[signal] refund ${transactionId} names ${namedUserId ?? 'no account we know'}; the purchase is held by ${userId}, which was debited`);
     if (res.wallet.diamonds < 0) this.log(`[signal] refund ${transactionId} left ${userId} at ${res.wallet.diamonds} diamonds; spends are blocked until it is covered`);
-    return 'refunded';
+    return { outcome: 'refunded', userId };
   }
 
   /**
    * The store moved purchases between app user ids (a Restore signed into another account).
-   * Store-granted entitlements move to the first known recipient, the later expiry winning;
-   * diamonds already credited stay where they were spent or credited. A deleted account's
-   * subscriptions move too (until its rows are purged), so a player who deleted an account with
-   * a live subscription gets it back with Restore on a new one; after the purge, reconciliation
-   * (reconcile.ts) reads the subscription from the store instead.
+   * Store-granted plans bought on the store the event came from move to the first known
+   * recipient, the later expiry winning; a plan the old account bought on another store stays (a
+   * Restore on an iPad moves App Store receipts, not a Google Play subscription), and a plan with
+   * no purchase on record, or an event that names no store, moves as before. Diamonds already
+   * credited stay where they were spent or credited. A deleted account's subscriptions move too
+   * (until its rows are purged), so a player who deleted an account with a live subscription gets
+   * it back with Restore on a new one; after the purge, reconciliation (reconcile.ts) reads the
+   * subscription from the store instead.
    */
   private async transfer(tx: Repos, e: StoreEvent, at: number): Promise<{ outcome: StoreOutcome; userId: string | null }> {
     const to = await this.resolveUser(e.transferredTo, tx);
+    if (!this.grantable(e, to)) return this.sandboxRefused(e, to);
     if (!to) return { outcome: 'ignored_unknown_user', userId: null };
     const theirs = new Map((await tx.wallet.getEntitlements(to.id)).map((x) => [x.entitlement, x]));
+    const eventStore = e.store && e.store !== 'unknown' ? e.store : null;
     let moved = 0;
     for (const fromId of e.transferredFrom) {
       const from = await this.resolveUser([fromId], tx, true);
       if (!from || from.id === to.id) continue;
+      // The store each plan was last bought or renewed on (purchases are listed oldest first).
+      const boughtOn = new Map<string, string>();
+      for (const p of await tx.wallet.listPurchases(from.id)) {
+        const product = serverProduct(p.productId);
+        if (product?.kind === 'subscription') boughtOn.set(product.entitlement, p.store);
+      }
       for (const ent of await tx.wallet.getEntitlements(from.id)) {
         if (ent.source !== STORE_SOURCE) continue;
+        const store = boughtOn.get(ent.entitlement);
+        if (eventStore && store && store !== eventStore) continue;
         const mine = theirs.get(ent.entitlement);
         const expiresAt = !mine ? ent.expiresAt : mine.expiresAt === null || ent.expiresAt === null ? null : Math.max(mine.expiresAt, ent.expiresAt);
         const next: EntitlementRecord = { userId: to.id, entitlement: ent.entitlement, expiresAt, source: STORE_SOURCE, updatedAt: at };

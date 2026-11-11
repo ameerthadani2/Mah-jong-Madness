@@ -42,13 +42,22 @@ export interface SignalConfig {
   revenueCatWebhookSecret: string | null;
 }
 
-/** Fixed abuse limits. They are set generously for real play and cannot yet be configured per deployment. */
+/**
+ * Fixed abuse limits. They are set generously for real play and cannot yet be configured per deployment.
+ * "Per IP address" means per IPv4 address or per IPv6 /64 prefix everywhere (see `addressKey` in limits.ts).
+ */
 export const LIMITS = {
   /** Concurrent WebSockets allowed from one IP address. */
   socketsPerIp: 20,
   /** Per-socket message bucket: sustained rate and burst size. Exceeding it closes the socket. */
   messagesPerSec: 30,
   messageBurst: 60,
+  /**
+   * How long a socket's successful session check stands before a `create`, `join` or `queue` has it
+   * checked against the database again. A logout, ban or deletion closes the socket at once whatever
+   * this is; a session that ended any other way (it expired) is noticed within this time.
+   */
+  sessionRecheckMs: 5_000,
   /** Per-IP HTTP bucket: sustained rate and burst size. Exceeding it returns 429. */
   httpPerSec: 10,
   httpBurst: 30,

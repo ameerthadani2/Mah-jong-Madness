@@ -21,6 +21,11 @@ describe('account deletion with a live subscription', () => {
     expect(canConfirmDeletion(' DELETE ', 'DELETE', losses, false)).toBe(true);
   });
 
+  it('an account that owes diamonds after a refund loses none by deleting', () => {
+    const losses = deletionLosses(mirrorMe(EMPTY_WALLET, me({ wallet: { diamonds: -500, bonusDiamonds: 400 } }), S), S);
+    expect(losses.diamonds).toBe(0);
+  });
+
   it('links to the store page that cancels the subscription', () => {
     expect(manageSubscriptionUrl('ios')).toBe('https://apps.apple.com/account/subscriptions');
     expect(manageSubscriptionUrl('android')).toBe('https://play.google.com/store/account/subscriptions');

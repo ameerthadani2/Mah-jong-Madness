@@ -6,7 +6,7 @@
  */
 import { bundlePrice, type Product } from './catalog';
 import type { StoreProvider } from './providers';
-import { mirrorMe, ownsProduct, showsPurchase, type MeWallet, type Wallet } from './wallet';
+import { canAfford, mirrorMe, ownsProduct, showsPurchase, type MeWallet, type Wallet } from './wallet';
 
 export interface WalletDeps {
   /** A usable session; resolves to the server user id (bootstraps a guest the first time). */
@@ -86,7 +86,7 @@ export async function buyWithDiamonds(product: Product, wallet: Wallet, deps: Wa
     if (code === 'insufficient') {
       const fresh = await syncWallet(wallet, deps).catch(() => wallet);
       const price = product.contains ? bundlePrice(product, (id) => ownsProduct(fresh, id)) : product.diamondPrice;
-      return { status: 'need_diamonds', wallet: fresh, short: Math.max(1, price - Math.max(0, fresh.diamonds) - fresh.bonusDiamonds) };
+      return { status: 'need_diamonds', wallet: fresh, short: Math.max(1, canAfford(fresh, price).short) };
     }
     if (code === 'owned') return { status: 'credited', wallet: await syncWallet(wallet, deps).catch(() => wallet) };
     return { status: 'failed', wallet, error };
@@ -95,11 +95,25 @@ export async function buyWithDiamonds(product: Product, wallet: Wallet, deps: Wa
 }
 
 /**
+ * What `POST /api/wallet/sync` did during a Restore: `ok` (the server read the store and applied
+ * what it found), `skipped` (this server does not read the store; webhooks are the only path) or
+ * `failed` (the server could not read the store, or could not apply everything it read).
+ */
+export type ServerSync = 'ok' | 'skipped' | 'failed';
+
+function syncOutcome(reply: unknown): ServerSync {
+  const r = reply && typeof reply === 'object' ? (reply as { synced?: unknown; failed?: unknown }) : {};
+  if (typeof r.failed === 'number' && r.failed > 0) return 'failed';
+  return r.synced === false ? 'skipped' : 'ok';
+}
+
+/**
  * Restore Purchases: the store re-sends receipts, the server re-grants (and, through
  * `POST /api/wallet/sync`, reads the store itself for anything a webhook missed), and the app
- * re-reads `/api/me`. A failed server sync is not a failed restore: the webhooks still arrive.
+ * re-reads `/api/me`. A failed server sync is not a failed restore (the webhooks still arrive),
+ * but it is reported as `serverSync: 'failed'` so the Shop does not claim everything is back.
  */
-export async function restorePurchases(wallet: Wallet, store: StoreProvider, deps: WalletDeps): Promise<{ ok: true; wallet: Wallet } | { ok: false; wallet: Wallet; error: unknown }> {
+export async function restorePurchases(wallet: Wallet, store: StoreProvider, deps: WalletDeps): Promise<{ ok: true; wallet: Wallet; serverSync: ServerSync } | { ok: false; wallet: Wallet; error: unknown }> {
   try {
     const userId = await deps.ensureUser();
     await store.identify(userId);
@@ -107,11 +121,11 @@ export async function restorePurchases(wallet: Wallet, store: StoreProvider, dep
   } catch (error) {
     return { ok: false, wallet, error };
   }
-  await deps.syncStore?.().catch(() => undefined);
+  const serverSync: ServerSync = deps.syncStore ? await deps.syncStore().then(syncOutcome, () => 'failed' as const) : 'skipped';
   let latest = wallet;
   for (const ms of CREDIT_POLL_MS.slice(0, 3)) {
     await deps.sleep(ms);
     latest = await syncWallet(latest, deps).catch(() => latest);
   }
-  return { ok: true, wallet: latest };
+  return { ok: true, wallet: latest, serverSync };
 }

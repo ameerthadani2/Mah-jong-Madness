@@ -54,7 +54,8 @@ describe('club house rules on the API path', () => {
   });
 
   it("plays every club table with the club's bot skill, whatever the opener asks for", async () => {
-    const { call, guest, rooms } = apiFixture();
+    let now = Date.UTC(2026, 10, 11);
+    const { call, guest, rooms } = apiFixture({ now: () => now });
     const owner = await guest('Owner');
     const club = (await call('POST', '/api/clubs', { name: 'Pros', settings: { botSkill: 'pro' } }, owner.auth)).json as unknown as Club;
     expect(club.settings.botSkill).toBe('pro');
@@ -63,6 +64,7 @@ describe('club house rules on the API path', () => {
     // An unknown skill is still a 400, and a club that never chose one plays Club bots.
     expect((await call('POST', `/api/clubs/${club.code}/tables`, { botSkill: 'godlike' }, owner.auth)).status).toBe(400);
     const plain = (await call('POST', '/api/clubs', { name: 'Plain' }, owner.auth)).json as unknown as Club;
+    now += 10_000; // the owner's next table, ten seconds after the last
     const t2 = (await call('POST', `/api/clubs/${plain.code}/tables`, { botSkill: 'beginner' }, owner.auth)).json as unknown as ClubTable;
     expect(rooms.hostedTable(t2.code)!.serialize().botSkill).toBe('club');
   });

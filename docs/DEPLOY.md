@@ -192,7 +192,10 @@ one for a pull request, never deploys.
    - the **release command** applies new migrations in a temporary machine with the app's
      secrets (it prints a note and succeeds when there is no database yet);
    - the machine is replaced (rolling), and Fly waits for `/health` to pass. The new process takes
-     the host lock as soon as the old one has written its tables and let go of it.
+     the host lock as soon as the old one has written its tables and let go of it. If the lock's
+     connection is lost while the new process is still starting (a database restart in the middle
+     of the deploy), that process exits 1 without listening or writing any table, and Fly starts
+     it again.
 3. It polls `/health` at `SIGNAL_URL` (turned into `https://`), or at
    `https://<app in fly.toml>.fly.dev` without the variable, for up to two minutes.
 4. It runs the smoke test against the same address and fails the job if it fails.
@@ -213,7 +216,12 @@ the database does not answer within 2 s, so Fly's check and proxy notice a froze
 database. Every query gives up after 5 s (and on the direct connection Postgres cancels the
 statement), so a hung database slows requests down without hanging the process. If the host
 lock's connection fails or stops answering, the server freezes its tables, writes what it can and
-exits 1, and Fly starts it again.
+exits 1, and Fly starts it again (a lock lost before the server was listening stops the boot the
+same way, with nothing written). A table socket whose session could not be checked in time is
+closed with 1013 (try again later), never 4401, so the app keeps its session and reconnects.
+
+Per-address limits count an IPv4 address or an IPv6 /64 prefix (Fly passes IPv6 client addresses
+in `x-forwarded-for`), so the addresses of one IPv6 customer share one allowance.
 
 **Rotating the pepper.** Set `AUTH_PEPPER_PREVIOUS` to the old value and `AUTH_PEPPER` to a new one
 in a single `fly secrets set`. Sessions and guest secrets hashed with the old pepper keep working

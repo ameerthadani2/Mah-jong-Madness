@@ -791,6 +791,10 @@ function pgWallet(q: Queryable, tx: Tx): WalletRepo {
       const res = await q.query<PurchaseRow>('SELECT ' + PURCHASE_COLS + ' FROM purchases WHERE user_id = $1 ORDER BY created_at, id', [userId]);
       return res.rows.map(purchaseFromRow);
     },
+    async findPurchase(transactionId) {
+      const res = await q.query<PurchaseRow>('SELECT ' + PURCHASE_COLS + ' FROM purchases WHERE transaction_id = $1', [transactionId]);
+      return res.rows[0] ? purchaseFromRow(res.rows[0]) : null;
+    },
     async getEntitlements(userId) {
       if (!isUuid(userId)) return [];
       const res = await q.query<EntitlementRow>('SELECT user_id, entitlement, expires_at, source, updated_at FROM entitlements WHERE user_id = $1 ORDER BY entitlement', [userId]);

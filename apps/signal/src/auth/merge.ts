@@ -8,7 +8,9 @@
  * 2. P is linked to V and U is a guest: merge U into V. U's wallet, purchases, entitlements,
  *    puzzle history, devices, reports, blocks and club memberships move to V (where both are in a club,
  *    the stronger row stays; clubs U owns transfer); U's sessions end; U is soft-deleted with
- *    merged_into = V and its profile scrubbed; the device gets a V session.
+ *    merged_into = V and its profile scrubbed; the device gets a V session. U's birth year goes
+ *    to V when V has none (the year is write-once, and an under-17 declaration must not be shed
+ *    by linking); when both have one, V's stays.
  * 3. P is linked to V and U already has a provider: 409 identity_in_use (two real accounts are
  *    never merged automatically).
  * 4. Unlinking needs another provider to remain; signing in with an unlinked P is 404 not_linked
@@ -108,8 +110,11 @@ export async function link(repos: Repos, userId: string, identity: VerifiedIdent
       await tx.blocks.moveToUser(user.id, target.id);
       await tx.sessions.revokeAllForUser(user.id, now);
       await tx.identities.deleteForUser(user.id);
+      // The guest's declared birth year survives the merge when the account has none; the account's own always stays.
+      const [from, into] = [await tx.users.get(user.id), await tx.users.get(target.id)];
+      const birthYear = into && into.birthYear === null ? (from?.birthYear ?? null) : null;
       await tx.users.update(user.id, { deletedAt: now, mergedInto: target.id, displayName: '', avatar: null, email: null, birthYear: null, locale: null });
-      await tx.users.update(target.id, { lastSeenAt: now });
+      await tx.users.update(target.id, { lastSeenAt: now, ...(birthYear !== null ? { birthYear } : {}) });
       return clubs;
     });
     const { token, session } = await opts.sessions.create(target.id, opts.deviceId ?? null);

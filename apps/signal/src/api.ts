@@ -632,6 +632,7 @@ export function buildRoutes(deps: ApiDeps, opts: Pick<ApiOptions, 'reportIpLimit
       const club = clubs.club(code);
       // House rules: a member's table uses the club's rules and every table the club's bots (decision 1).
       const { rules, botSkill } = clubs.tableSetup(code, me.userId, body.rules);
+      if (!rooms.chargeCreate(me.userId, ctx.ip)) throw new HttpError(429, 'rate_limited', 'Please wait a few seconds before opening another table');
       let room: string;
       try {
         room = rooms.createHostedRoom({ rules, botSkill, clubCode: club.code, createdBy: me.userId });

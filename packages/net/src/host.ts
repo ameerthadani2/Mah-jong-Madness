@@ -76,6 +76,15 @@ export interface HostOptions {
    * Absent: every seated player may (local play, and tables opened without an account).
    */
   isController?: (userId: string | undefined) => boolean;
+  /**
+   * The `userId` on every `join` this host receives was verified by whoever feeds it its messages
+   * (the game server writes the account its session token proved into the frame and drops any id
+   * the client wrote). With it, an account that holds a seat gets that seat back by joining again,
+   * without the rejoin token: a player who reinstalled the app or moved to another device is not
+   * locked out of their own match. Never set it at a table a device hosts, where the id in a join
+   * is whatever the client claims; there the rejoin token stays the only way back.
+   */
+  verifiedUserIds?: boolean;
 }
 
 export interface HostEvent {
@@ -193,6 +202,7 @@ export class TableHost {
   /** Per-seat chat and emote allowances. */
   private readonly buckets = new Map<string, { tokens: number; at: number }>();
   private readonly isController?: (userId: string | undefined) => boolean;
+  private readonly verifiedUserIds: boolean;
 
   constructor(
     private readonly transport: Transport,
@@ -210,6 +220,7 @@ export class TableHost {
     this.botNames = opts.botNames ?? DEFAULT_BOT_NAMES;
     this.botSkill = opts.botSkill ?? opts.restore?.botSkill ?? 'club';
     this.isController = opts.isController;
+    this.verifiedUserIds = opts.verifiedUserIds === true;
     if (opts.restore) this.restore(opts.restore);
     this.unsubs.push(transport.onMessage((from, msg) => this.handle(from, msg as ClientMessage)));
     this.unsubs.push(
@@ -644,7 +655,7 @@ export class TableHost {
     let seat = this.seats.find((s) => s.peerId === from && s.connected);
     let newOccupant = false;
     if (!seat && token) {
-      // Reconnect with the rejoin token — the only way to reclaim a seat. Names and user ids are public and never trusted.
+      // Reconnect with the rejoin token: at a table a device hosts, the only way to reclaim a seat. Names are public, and so are user ids there: neither is trusted.
       seat = this.seats.find((s) => s.token === token);
       if (seat && this.seatedElsewhere(userId, seat)) return this.refuseSecondSeat(from);
       if (seat) {
@@ -653,6 +664,18 @@ export class TableHost {
           this.sendTo(seat.peerId, { t: 'disconnected' });
         }
         seat.peerId = from;
+      }
+    }
+    if (!seat && this.verifiedUserIds && userId) {
+      // Where the user id is the account the server verified, the account itself reclaims its seat:
+      // no token (a reinstall, another device) or one that no longer matches. Only ever the seat
+      // bound to this very account; the connection that held it is told and dropped, as with a token.
+      seat = this.seats.find((s) => !s.isBot && s.userId === userId);
+      if (seat) {
+        if (seat.connected && seat.peerId && seat.peerId !== from) this.sendTo(seat.peerId, { t: 'disconnected' });
+        seat.peerId = from;
+        // The old token is not what proved this join: it stops working and the welcome carries a new one.
+        seat.token = undefined;
       }
     }
     if (!seat) {
