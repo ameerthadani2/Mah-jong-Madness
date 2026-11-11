@@ -429,8 +429,9 @@ export class TableClient {
   private rewinds: Array<{ hand: number; tc: number; undone: boolean }> = [];
   /**
    * This client was restored from a saved record, which may be a moment older than the last thing
-   * the app did before it stopped: `lapse` until it next hears of a hand, then `lapseHand` is that
-   * hand, whose deal it may have taken part in without a note of it surviving.
+   * the app did before it stopped, or built from a rejoin token with no record at all: `lapse`
+   * until it next hears of a hand, then `lapseHand` is that hand, whose deal it may have taken
+   * part in without a note of it surviving.
    */
   private lapse = false;
   private lapseHand: number | null = null;
@@ -455,6 +456,9 @@ export class TableClient {
     if (identity.token) {
       this.state = { ...this.state, token: identity.token };
       this.noHistory = true;
+      // Whatever an earlier run of the app did at this table is unknown: the deal of the first hand
+      // this client hears of may have been agreed, in part, before it existed.
+      this.lapse = true;
     }
   }
 
@@ -788,6 +792,9 @@ export class TableClient {
       this.carryFlags(base ? base.handNumber : Math.max(...this.handsEnded) + 1, h);
       if (this.quietSince === this.epoch) this.flag(h, 'Host dealt a hand out of turn');
       else this.noteGap(h);
+    } else if (!base && this.noHistory && this.handsEnded.size === 0 && h > 0) {
+      // Sat down from a token alone, part-way through the match: nothing this client holds says where this hand should start.
+      this.noteGap(h);
     }
     this.noteOpenHand(h);
   }
@@ -1530,7 +1537,8 @@ export class TableClient {
     if (this.gapHand === h) caveats.push(AUDIT_CAVEATS.gap);
     if (this.rewinds.some((x) => x.hand === h && x.undone)) caveats.push(AUDIT_CAVEATS.serverRestart);
     // An app restart around the deal: this device cannot say it watched all of it, whatever its record now shows.
-    if (this.lapseHand === h && this.lapseDeal && !caveats.includes(AUDIT_CAVEATS.appRestart)) caveats.push(AUDIT_CAVEATS.appRestart);
+    // (A seat that joined mid-hand has already said it took no part in the deal.)
+    if (this.lapseHand === h && this.lapseDeal && !joined && !caveats.includes(AUDIT_CAVEATS.appRestart)) caveats.push(AUDIT_CAVEATS.appRestart);
 
     const status: AuditStatus = failures.length > 0 ? 'failed' : caveats.length > 0 ? 'partial' : 'ok';
     return { check: { status, failures, caveats }, replayed };

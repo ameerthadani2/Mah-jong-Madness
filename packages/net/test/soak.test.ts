@@ -2,14 +2,14 @@
  * Soak: several hundred hands at honest tables, played over a simulated network by clients that
  * misbehave the way real phones do. Links carry frames late (up to a few seconds, with stalls),
  * drop at random and at the worst moments (while the deal is being agreed, mid-hand, as a result
- * goes out), stay down for seconds or for several hands, and come back by reconnecting or by an
- * app restart from a record saved a moment earlier. Players think, dither into their time bank,
+ * goes out), stay down for seconds or for several hands, and come back by reconnecting, by an app
+ * restart from a record saved a moment earlier, or by an app restart that finds no record at all. Players think, dither into their time bank,
  * or walk away and are timed out. Every device's clock is hours off the server's, drifts, and
  * steps when it reconnects. Some servers crash and restore from a stale snapshot.
  *
  * Through all of it no hand may fail its audit, a hand may be `ok` only when that device watched
- * the deal whole in one attempt over one link, and every device ends the match with verified
- * final scores.
+ * the deal whole in one attempt over one link, and every device that kept its record ends the
+ * match with verified final scores.
  */
 import { describe, expect, it } from 'vitest';
 import { chooseAction, legalActions, withRules, type RuleSet } from '@mjm/engine';
@@ -105,12 +105,12 @@ interface Problem {
 }
 
 /** One table from the lobby to the end of its match. Returns the hands played and what went wrong. */
-function runMatch(index: number, r: Rng, opts: { crash: boolean }): { hands: number; problems: Problem[]; ok: number; partial: number; caveats: Map<string, number>; timeouts: number; drops: number; restores: number; crashes: number } {
+function runMatch(index: number, r: Rng, opts: { crash: boolean }): { hands: number; problems: Problem[]; ok: number; partial: number; caveats: Map<string, number>; timeouts: number; drops: number; restores: number; amnesia: number; crashes: number } {
   const sim = new Sim();
   sim.time = 1_700_000_000_000 + index * 86_400_000;
   const problems: Problem[] = [];
   const caveats = new Map<string, number>();
-  const stats = { drops: 0, restores: 0, crashes: 0 };
+  const stats = { drops: 0, restores: 0, amnesia: 0, crashes: 0 };
   const speed = r.pick(SPEEDS);
   const rules = withRules({ handsPerMatch: r.pick([2, 4, 4, 8]), ...speed });
   const code = `SOAK${index}`;
@@ -235,23 +235,33 @@ function runMatch(index: number, r: Rng, opts: { crash: boolean }): { hands: num
       this.connect('new');
     }
     private clock = () => Math.round(sim.time + this.skew + (sim.time - this.t0) * this.drift + this.step);
-    private connect(how: 'new' | 'rebind' | 'restore'): void {
+    private connect(how: 'new' | 'rebind' | 'restore' | 'token'): void {
       this.wire = new Wire(this);
       if (how === 'new') this.client = new TableClient(this.wire.link, this.name, undefined, {}, { now: this.clock });
-      else if (how === 'restore' && this.saved) {
+      else if (how === 'token' && this.saved) {
+        // The saved record is lost or unreadable: all the app has is its rejoin token.
+        stats.amnesia++;
+        this.lostRecord = true;
+        const token = (JSON.parse(this.saved) as SerializedClient).state.token ?? undefined;
+        this.client = new TableClient(this.wire.link, this.name, undefined, { token }, { now: this.clock });
+        this.seenAudits = 0;
+        this.saved = null;
+      } else if (how === 'restore' && this.saved) {
         stats.restores++;
         const saved = JSON.parse(this.saved) as SerializedClient;
         this.client = TableClient.restore(saved, this.wire.link, this.name, undefined, { token: saved.state.token ?? undefined }, { now: this.clock });
         this.seenAudits = Math.min(this.seenAudits, this.client.state.audits.length);
       } else this.client.rebind(this.wire.link);
-      if (how !== 'rebind' || !this.listening) {
-        this.listening = true;
+      if (this.client !== this.heard) {
+        this.heard = this.client;
         this.client.onChange((s) => this.changed(s));
       }
       this.away = false;
       this.client.join();
     }
-    private listening = false;
+    private heard: TableClient | null = null;
+    /** The app came back at least once with nothing but its token: it may hold no hand to check the match's end against. */
+    lostRecord = false;
     /** A frame is about to reach the client over `wire`. */
     saw(m: HostMessage, wire: Wire): void {
       if (m.t === 'commit_request') this.asked.set(m.handNumber, m.attempt === 1 && !this.asked.has(m.handNumber) ? wire.id : -1);
@@ -316,13 +326,14 @@ function runMatch(index: number, r: Rng, opts: { crash: boolean }): { hands: num
       const kind = r.next();
       const gone = forMs ?? (kind < 0.4 ? r.between(300, 6_000) : kind < 0.7 ? r.between(8_000, 70_000) : kind < 0.92 ? r.between(120_000, 480_000) : r.between(600_000, 1_500_000));
       const restart = r.chance(0.3) && this.saved !== null;
+      const amnesia = restart && r.chance(0.12);
       // The server may notice at once, or only when its heartbeat gives up (the player may be back first).
       this.wire.kill(r.chance(0.7) ? r.between(0, 1_000) : r.between(1_000, 22_000), restart ? null : r.between(0, 2_500));
       sim.at(gone, () => {
         // A phone that reconnects has often just had its clock corrected.
         this.step += r.chance(0.3) ? r.between(-2_000, 2_000) : 0;
         this.thinking = '';
-        this.connect(restart ? 'restore' : 'rebind');
+        this.connect(amnesia && this.saved ? 'token' : restart && this.saved ? 'restore' : 'rebind');
       });
     }
     chaos(): void {
@@ -387,7 +398,7 @@ function runMatch(index: number, r: Rng, opts: { crash: boolean }): { hands: num
     const s = p.client.state;
     if (!s.matchOver) problems.push({ match: index, player: p.name, hand: -1, what: `did not see the match end (connected ${s.connected}, error ${String(s.lastError)})` });
     else if (JSON.stringify(s.finalScores) !== JSON.stringify(host.match().scores)) problems.push({ match: index, player: p.name, hand: -1, what: 'final scores differ from the table’s' });
-    if (!(p.client.serialize() as unknown as { matchEnded: boolean }).matchEnded) problems.push({ match: index, player: p.name, hand: -1, what: 'the end of the match was not verified from the hands' });
+    if (!p.lostRecord && !(p.client.serialize() as unknown as { matchEnded: boolean }).matchEnded) problems.push({ match: index, player: p.name, hand: -1, what: 'the end of the match was not verified from the hands' });
     for (const a of s.audits) {
       if (a.status === 'ok') {
         ok++;
@@ -404,13 +415,13 @@ function runMatch(index: number, r: Rng, opts: { crash: boolean }): { hands: num
 describe('soak: honest tables over a bad network', () => {
   it('300+ hands with drops, rejoins, app restarts, timeouts, late frames, skewed clocks and server crashes: no failed audit, green only for deals watched whole', () => {
     const r = rng(Number(process.env.SOAK_SEED ?? 20261110));
-    const total = { hands: 0, ok: 0, partial: 0, timeouts: 0, drops: 0, restores: 0, crashes: 0, matches: 0 };
+    const total = { hands: 0, ok: 0, partial: 0, timeouts: 0, drops: 0, restores: 0, amnesia: 0, crashes: 0, matches: 0 };
     const caveats = new Map<string, number>();
     const problems: Problem[] = [];
     for (let i = 0; total.hands < 300 && i < 400; i++) {
-      const m = runMatch(i, r, { crash: i % 5 === 3 });
+      const m = runMatch(i, r, { crash: i % 3 === 1 });
       total.matches++;
-      for (const k of ['hands', 'ok', 'partial', 'timeouts', 'drops', 'restores', 'crashes'] as const) total[k] += m[k];
+      for (const k of ['hands', 'ok', 'partial', 'timeouts', 'drops', 'restores', 'amnesia', 'crashes'] as const) total[k] += m[k];
       for (const [k, v] of m.caveats) caveats.set(k, (caveats.get(k) ?? 0) + v);
       problems.push(...m.problems);
     }
@@ -420,10 +431,11 @@ describe('soak: honest tables over a bad network', () => {
     // The run did what it says: plenty of trouble, and plenty of hands still verified outright.
     expect(total.drops).toBeGreaterThan(100);
     expect(total.restores).toBeGreaterThan(10);
+    expect(total.amnesia).toBeGreaterThan(3);
     expect(total.timeouts).toBeGreaterThan(50);
-    expect(total.crashes).toBeGreaterThan(2);
+    expect(total.crashes).toBeGreaterThan(5);
     expect(total.ok).toBeGreaterThan(total.hands / 2);
     expect(total.partial).toBeGreaterThan(20);
-    for (const k of ['standIn', 'linkLost', 'restarted', 'away']) expect(caveats.get(k) ?? 0, `caveat ${k}`).toBeGreaterThan(0);
+    for (const k of ['standIn', 'linkLost', 'restarted', 'away', 'gap', 'joined', 'appRestart', 'serverRestart']) expect(caveats.get(k) ?? 0, `caveat ${k}`).toBeGreaterThan(0);
   }, 600_000);
 });

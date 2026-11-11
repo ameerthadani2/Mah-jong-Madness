@@ -693,6 +693,85 @@ describe('the client’s record survives an app restart', () => {
     expect(back.state.auditFailures).toEqual([]);
   });
 
+  it('X1 with a client built from the token alone: it holds no record of the deal it revealed in, so the re-deal is partial, never green', () => {
+    const clock = { now: 1_000_000 };
+    const hub = new LoopbackHub();
+    const host = makeHost(hub, clock, 'X1T');
+    const h = internals(host);
+    let link = droppable(hub, 'p0', (m) => (m.t === 'reveal' ? 'hold' : true));
+    let c = new TableClient(link.link, 'Victim', undefined, {}, { now: () => clock.now });
+    const orig = h.checkCeremony.bind(host);
+    let drops = 0;
+    let attacking = false;
+    h.checkCeremony = () => {
+      if (attacking) return;
+      if (!h.ceremonyBusy && h.phase === 'reveal' && h.seats.every((s) => s.secret) && drops === 0) {
+        drops++;
+        attacking = true;
+        // The server drops the player after seeing its secret; the app comes back with no saved record.
+        const token = c.state.token!;
+        link.drop();
+        link = droppable(hub, 'p0r');
+        c = new TableClient(link.link, 'Victim', undefined, { token }, { now: () => clock.now });
+        c.join();
+        attacking = false;
+        h.ceremonyHand = -1;
+        h.beginHand();
+        return;
+      }
+      orig();
+    };
+    c.join();
+    host.start();
+    link.release();
+    playOut(host, c, clock);
+    expect(h.audits[0].ceremonyAttempts).toBe(1);
+    expect(c.state.auditStatus).toBe('partial');
+    expect(c.state.auditCaveats).toEqual([AUDIT_CAVEATS.appRestart]);
+  });
+
+  it('N3 with a client built from the token alone, part-way through the match: the scores it starts from are a stated gap', () => {
+    const clock = { now: 1_000_000 };
+    const hub = new LoopbackHub();
+    const ht = hub.create('host');
+    const hsend = ht.send.bind(ht);
+    // The server does not re-send the finished hand to the returning seat.
+    ht.send = (to: string, msg: unknown) => {
+      const m = msg as { t?: string; audit?: { handNumber: number } };
+      if (to === 'p0r' && m.t === 'hand_over' && m.audit?.handNumber === 0) return;
+      hsend(to, msg);
+    };
+    const host = new TableHost(ht, { roomCode: 'N3T', rules: withRules({ handsPerMatch: 4 }), now: () => clock.now, matchId: 'n3-t' });
+    const first = droppable(hub, 'p0');
+    const c = new TableClient(first.link, 'Victim', undefined, {}, { now: () => clock.now });
+    c.join();
+    host.start();
+    playOut(host, c, clock);
+    const token = c.state.token!;
+    first.drop();
+    const back = new TableClient(droppable(hub, 'p0r').link, 'Victim', undefined, { token }, { now: () => clock.now });
+    back.join();
+    back.ready();
+    if (host.phase === 'hand_over') {
+      clock.now += 60_000;
+      host.tick();
+    }
+    playOut(host, back, clock);
+    expect(back.state.audits.map((a) => [a.audit.handNumber, a.status])).toEqual([[1, 'partial']]);
+    expect(back.state.auditCaveats).toEqual([AUDIT_CAVEATS.gap, AUDIT_CAVEATS.appRestart]);
+    // From there on it has a record, and the next deal it watches whole is green.
+    back.ready();
+    if (host.phase === 'hand_over') {
+      clock.now += 60_000;
+      host.tick();
+    }
+    playOut(host, back, clock);
+    expect(back.state.audits.map((a) => [a.audit.handNumber, a.status])).toEqual([
+      [1, 'partial'],
+      [2, 'ok'],
+    ]);
+  });
+
   it('keeps only the last 50 audits, and an unknown snapshot gives a client with no history', () => {
     const hub = new LoopbackHub();
     const c = new TableClient(transportLink(hub.create('p0'), 'host'), 'A');
