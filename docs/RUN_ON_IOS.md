@@ -125,6 +125,7 @@ The runtime version is a fingerprint of the native project and the resolved app 
 * **QR code opens Camera but nothing happens** — the development build must be installed first (step 1); the QR encodes a link only it can open.
 * **"Cannot find native module" or a red screen naming RNSentry, ExpoNotifications or RNPurchases** — the app was opened in Expo Go or in a development build older than the native change; rebuild the development build.
 * **Table says "Could not connect"** — the phone cannot reach the server. In a development build, check the laptop firewall allows port 8787 and that you used the LAN IP, not `localhost`; in a TestFlight build, check `https://<app>.fly.dev/health` or run `npm run smoke -w @mjm/signal -- <server>`.
+* **The app still talks to the old server after `SIGNAL_URL` changed on your laptop** — Metro keeps the resolved app config in its cache: add `--clear` to `npx expo start` or `npx expo export` once after changing `SIGNAL_URL` (or any other variable `app.config.js` reads). Builds on GitHub and EAS start from an empty cache and are not affected.
 * **The workflow fails at "Check SIGNAL_URL"** — set the repository variable `SIGNAL_URL` to the deployed server's `wss://` address.
 * **The workflow is skipped** — a secret is missing; the run summary names it.
 * **The workflow stops with "APP_STORE_ID is needed to submit"** — create the app record and set the variable (route 2, step 3), or untick *submit* to build only.
