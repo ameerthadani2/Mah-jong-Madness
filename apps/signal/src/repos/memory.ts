@@ -10,6 +10,8 @@
  */
 import { anonymiseUserIn, moveMembershipsIn, type Club } from '../clubs';
 import {
+  DELETED_PLAYER_NAME,
+  withoutName,
   type BlockRecord,
   type BlocksRepo,
   type ClubMembership,
@@ -365,6 +367,17 @@ function memoryReports(s: MemoryState): ReportsRepo {
       }
       return n;
     },
+    async redactName(userId, name) {
+      let n = 0;
+      for (const r of s.reports) {
+        if ((r.reporterId !== userId && r.reportedUserId !== userId) || r.details === null) continue;
+        const details = withoutName(r.details, name);
+        if (details === r.details) continue;
+        r.details = details;
+        n++;
+      }
+      return n;
+    },
     async get(id) {
       const row = s.reports.find((r) => r.id === id);
       return row ? copy(row) : null;
@@ -628,6 +641,29 @@ function memoryMatchResults(s: MemoryState): MatchResultsRepo {
     },
     async listForRoom(roomCode) {
       return s.matches.filter((r) => r.roomCode === roomCode).map(copy);
+    },
+    async anonymiseUser(userId, opts = {}) {
+      let n = 0;
+      for (const r of s.matches) {
+        const seats = r.players.filter((p) => p.userId === userId);
+        if (!seats.length) continue;
+        for (const p of seats) {
+          p.name = DELETED_PLAYER_NAME;
+          if (opts.forget) p.userId = null;
+        }
+        n++;
+      }
+      return n;
+    },
+    async moveToUser(fromUserId, toUserId) {
+      let n = 0;
+      for (const r of s.matches) {
+        const seats = r.players.filter((p) => p.userId === fromUserId);
+        if (!seats.length) continue;
+        for (const p of seats) p.userId = toUserId;
+        n++;
+      }
+      return n;
     },
   };
 }

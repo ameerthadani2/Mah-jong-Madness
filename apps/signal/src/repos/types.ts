@@ -298,6 +298,12 @@ export interface ReportsRepo {
   listAbout(reportedUserId: string, limit?: number): Promise<ReportRecord[]>;
   /** Account merge: reports filed by or about `fromUserId` now name `toUserId` (a report between the two is dropped). */
   moveToUser(fromUserId: string, toUserId: string): Promise<number>;
+  /**
+   * Account deletion: a report row holds no name of its own, but the note a player typed may.
+   * Takes `name` out of the notes of the reports filed by or about `userId` (`withoutName`); the
+   * reports themselves stay as moderation records. Returns the reports changed.
+   */
+  redactName(userId: string, name: string): Promise<number>;
   get(id: number): Promise<ReportRecord | null>;
   /** Reports in this status, oldest first (the moderators' queue). */
   listByStatus(status: ReportRecord['status'], limit?: number): Promise<ReportRecord[]>;
@@ -454,6 +460,14 @@ export interface MatchResultsRepo {
   /** Newest first. */
   listForClub(clubCode: string, limit?: number): Promise<MatchResultRecord[]>;
   listForRoom(roomCode: string): Promise<MatchResultRecord[]>;
+  /**
+   * Account deletion: the seats this account held in finished matches keep their scores and lose
+   * the name ("Deleted player"). With `forget` (the purge, when the account row itself goes) they
+   * lose the account id as well. Returns the matches changed.
+   */
+  anonymiseUser(userId: string, opts?: { forget?: boolean }): Promise<number>;
+  /** Account merge: the seats `fromUserId` held now belong to `toUserId` (the name stays as it was played). */
+  moveToUser(fromUserId: string, toUserId: string): Promise<number>;
 }
 
 export interface PuzzleResultRecord {
@@ -499,5 +513,23 @@ export interface Repos {
   transaction<T>(fn: (tx: Repos) => Promise<T>): Promise<T>;
 }
 
-/** Display name written over a deleted user's club rows and profile. */
+/** Display name written over a deleted user's profile, club rows, finished seasons and match results. */
 export const DELETED_PLAYER_NAME = 'Deleted player';
+
+/** The longest note a report carries (the API's limit and the column's). */
+export const REPORT_DETAILS_MAX = 1000;
+
+/**
+ * `text` with every mention of a player's display name replaced by "Deleted player", whatever
+ * the letter case. A name that starts or ends with a Latin letter or a digit is matched only as
+ * a whole word ("Al" is not taken out of "also"); one-character names are left alone, since they
+ * cannot be told from ordinary text. The result is cut to the length a report note may have.
+ */
+export function withoutName(text: string, name: string): string {
+  const needle = name.trim();
+  if ([...needle].length < 2 || needle === DELETED_PLAYER_NAME) return text;
+  const word = (ch: string) => /[A-Za-z0-9]/.test(ch);
+  const escaped = needle.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&');
+  const pattern = (word(needle[0]) ? '(?<![A-Za-z0-9])' : '') + escaped + (word(needle[needle.length - 1]) ? '(?![A-Za-z0-9])' : '');
+  return text.replace(new RegExp(pattern, 'giu'), DELETED_PLAYER_NAME).slice(0, REPORT_DETAILS_MAX);
+}
