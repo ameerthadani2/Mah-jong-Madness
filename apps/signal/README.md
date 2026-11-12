@@ -48,7 +48,7 @@ With no environment at all the server runs: accounts, clubs and tables are kept 
 | `AUTH_PEPPER_PREVIOUS` | none | The pepper used before a rotation, or several separated by commas, newest first. A session or guest secret stored under one is still accepted and is stored again under `AUTH_PEPPER` when it is next presented. Keep it set for at least the 30-day session lifetime, and in practice for good: a guest secret is presented only when the app signs in again, so a guest who has not done so since the rotation is locked out once the old value is removed (`docs/DEPLOY.md`, "Rotating the pepper") |
 | `APPLE_CLIENT_ID` | none | Sign in with Apple: the bundle id (and Services ID), comma-separated. Absent: Apple sign-in is off and hidden in the app |
 | `GOOGLE_CLIENT_IDS` | none | Google OAuth client ids (iOS, Android, web), comma-separated. Absent: Google sign-in is off |
-| `FACEBOOK_APP_ID` | none | Facebook Limited Login. Absent: off |
+| `FACEBOOK_APP_ID` | none | Facebook Limited Login, server side only: the app has no Facebook button yet, so leave it unset. Absent: off |
 | `HOST_TABLES` | on | Set to `0` to stop the server hosting tables. A hosted `create` is then refused with `Hosted tables are disabled` (never turned into a relay-only room) |
 | `MAX_HOSTED_TABLES` | `500` | Maximum number of tables the server hosts at once |
 | `MAX_TABLES_PER_USER` | `3` | Unfinished tables one account may have opened (socket or API); restored tables count |
@@ -67,6 +67,10 @@ With no environment at all the server runs: accounts, clubs and tables are kept 
 | `POSTHOG_KEY` | none | PostHog project key for the server events `purchase_credited` and `report_filed`. Absent: none are sent. `POSTHOG_HOST` is optional (PostHog's US cloud by default; `https://eu.i.posthog.com` for the EU) |
 | `DATABASE_URL_TEST` | none | Tests only: a database the Postgres repository and migration tests may create and drop schemas in. Absent: those tests are skipped |
 | `DATA_DIR` | — | No longer read (clubs used to live in `clubs.json`); the server warns if it is still set |
+| `MIGRATIONS_DIR` | the folder shipped with the code | Where the `*.sql` migrations are read from (`apps/signal/migrations`, or `./migrations` beside the production bundle). Leave unset |
+| `NODE_ENV` | unset | `production` (set by `fly.toml` and the Docker image) makes the server fail closed without `DATABASE_URL` and `AUTH_PEPPER`; see `ALLOW_EPHEMERAL` |
+| `FLY_IMAGE_REF` | set by Fly | The image the machine runs; reported as `/health.image` and used as the Sentry release when `SENTRY_RELEASE` is unset |
+| `SMOKE_URL`, `SMOKE_EXPECT_STORAGE` | none | Read by the smoke test (`npm run smoke -w @mjm/signal`), not by the server: the address to test when none is given, and the storage `/health` must report (`pg` or `memory`, the same as `--expect-storage`) |
 
 ## Persistence
 

@@ -122,14 +122,14 @@ Create exactly these ids (the server's catalogue, `apps/signal/src/catalog.ts`, 
 | `MIN_BUILD` | fly secret | Turns away builds older than this build number ("Update required"). Default 0. |
 | `MAINTENANCE_MESSAGE` | fly secret | Shows a message instead of online play while you work on the server; unset to reopen. |
 | `AUTH_PEPPER_PREVIOUS` | fly secret | From the day you rotate `AUTH_PEPPER`: the old value (several, newest first, separated by commas). Keep it for at least 30 days and in practice for good: guest accounts that have not signed in again since the rotation are locked out the moment it is removed ([`DEPLOY.md`](DEPLOY.md), "Rotating the pepper"). |
-| `FACEBOOK_APP_ID` | fly secret | Optional Facebook Limited Login. |
+| `FACEBOOK_APP_ID` | fly secret | Leave unset. It only makes the server accept Facebook Limited Login tokens; the app has no Facebook button yet, so a Facebook app would be created for nothing. |
 | `TRUST_PROXY` | `fly.toml` (already `1`) | Proxies in front of the server, for per-IP limits. |
-| `EXPO_PUBLIC_STORE_MODE=mock` | GitHub variable | Development builds only: a local mock store. Release builds ignore it. |
+| `EXPO_PUBLIC_STORE_MODE=mock` | a local `apps/mobile/.env`, or the EAS `development` environment | Development builds only: a local mock store. The build workflows do not read it and release builds ignore it, so it does nothing as a GitHub variable. |
 | Audio | files in `apps/mobile/assets/audio/` | Recorded calls and effects under the manifest names, with licence records. |
 | zh-TW review | a native reviewer | `apps/mobile/src/i18n/locales/zh-TW/*.json` and the store listings in both languages. |
 | Validation | your time | 20–30 player interviews, 3–5 beta clubs, a small acquisition test; recorded hands for the golden scoring check. |
 
-Read by the code but never needed from you: `SENTRY_URL` (self-hosted Sentry only), `EXPO_BASE_URL` (set by the web-preview workflow), and the server's local-run switches in `apps/signal/README.md` (`PORT`, `HOST_TABLES`, `MAX_HOSTED_TABLES`, `P2P_ROOMS`, `MIGRATE_ON_BOOT`, `DATA_DIR`, `MIGRATIONS_DIR`, `DATABASE_URL_TEST`, `ALLOW_EPHEMERAL`).
+Read by the code but never needed from you: `SENTRY_URL` (self-hosted Sentry only), `EXPO_BASE_URL` (set by the web-preview workflow), and the server's tuning and local-run switches in `apps/signal/README.md`, each also named in `apps/signal/.env.example`: `PORT`, `HOST_TABLES`, `MAX_HOSTED_TABLES` and `MAX_TABLES_PER_USER` (both already set in `fly.toml`), `QUICK_MATCH_FILL_MS`, `P2P_ROOMS`, `MIGRATE_ON_BOOT`, `MIGRATIONS_DIR`, `DATA_DIR`, `DATABASE_URL_TEST`, `ALLOW_EPHEMERAL` (first deploy without a database only, with the repository variable `SMOKE_EXPECT_STORAGE=memory`; [`DEPLOY.md`](DEPLOY.md) step 3), `SENTRY_ENVIRONMENT` and `SENTRY_RELEASE` (the defaults, `production` and Fly's image reference, are right), and the smoke test's `SMOKE_URL` and `SMOKE_EXPECT_STORAGE`.
 
 ## What it costs a month
 

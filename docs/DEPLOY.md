@@ -287,8 +287,9 @@ in `x-forwarded-for`), so the addresses of one IPv6 customer share one allowance
 
 `fly.toml` already sets `PORT=8787`, `HOST_TABLES=1`, `TRUST_PROXY=1` (Fly's proxy supplies
 `x-forwarded-for`), `NODE_ENV=production`, `MAX_HOSTED_TABLES=200` and `MAX_TABLES_PER_USER=3`;
-`apps/signal/.env.example` lists the rest (`MIN_BUILD`, `MAINTENANCE_MESSAGE`,
-`MIGRATE_ON_BOOT`).
+`apps/signal/.env.example` names every variable the server reads, with notes (`MIN_BUILD`,
+`MAINTENANCE_MESSAGE`, `MIGRATE_ON_BOOT`, …); a test keeps that file and the README's table
+complete.
 
 **Capacity.** `MAX_HOSTED_TABLES=200` fits one `shared-cpu-1x` machine with 512 MB: 200 tables of
 four players are 800 WebSockets, under the `[http_service.concurrency]` `hard_limit` of 1000 with
