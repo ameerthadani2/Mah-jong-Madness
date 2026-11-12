@@ -2,7 +2,7 @@ import React, { createContext, useContext, useEffect, useMemo, useRef, useState 
 import { BackHandler, Platform } from 'react-native';
 import { DEFAULT_PROFILE, DEFAULT_PROGRESS, DEFAULT_SETTINGS, storage, type ActiveSession, type Profile, type Progress, type Settings } from './storage';
 import { saveScheduler } from './game/persist';
-import { setSavedClientSource, type Session } from './game/session';
+import { setSavedClientSource, type CloseOptions, type Session } from './game/session';
 import { acceptedName } from './logic/profile';
 import { hardwareBackPlan } from './logic/back';
 import { APP_BUILD, resolveSignalUrl } from './config';
@@ -14,10 +14,10 @@ import { requestPushAfterClub } from './push/hub';
 
 export type Screen =
   | { name: 'home' }
-  | { name: 'online' }
+  | { name: 'online'; /** Why a table link or notification could not be followed, shown once on arrival. */ notice?: string }
   | { name: 'quickmatch' }
   | { name: 'clubs' }
-  | { name: 'club'; code: string }
+  | { name: 'club'; code: string; /** Why a link to one of the club's tables could not be followed. */ notice?: string }
   | { name: 'lobby' }
   | { name: 'table' }
   | { name: 'review' }
@@ -52,7 +52,8 @@ interface AppState {
   progress: Progress;
   setProgress(p: Progress | ((prev: Progress) => Progress)): void;
   session: Session | null;
-  setSession(s: Session | null): void;
+  /** Replaces the table; the one before it is closed (`closing.keepSeat`: without giving its seat up, game/session.ts). */
+  setSession(s: Session | null, closing?: CloseOptions): void;
   /** Persisted pointer to a table that can be resumed after a crash/relaunch. */
   activeSession: ActiveSession | null;
   setActiveSession(s: ActiveSession | null): void;
@@ -232,9 +233,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         });
       },
       session,
-      setSession: (s) => {
+      setSession: (s, closing) => {
         setSessionState((prev) => {
-          if (prev && prev !== s) prev.close();
+          if (prev && prev !== s) prev.close(closing);
           return s;
         });
       },

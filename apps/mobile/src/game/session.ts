@@ -65,7 +65,17 @@ export interface Session {
   onStatus(cb: (s: ReconnectState) => void): Unsubscribe;
   /** Skip the backoff wait and try now (while reconnecting). */
   retryNow(): void;
-  close(): void;
+  /**
+   * Close the table on this device. It tells the table the player left on purpose (`leave`), unless
+   * `keepSeat` is set: then only the link is closed, which the table treats like a dropped connection
+   * (a bot plays the seat and the player may come back). A quick-match table needs that to stay open
+   * for a player who only stepped away: it closes at once when every player left on purpose.
+   */
+  close(opts?: CloseOptions): void;
+}
+
+export interface CloseOptions {
+  keepSeat?: boolean;
 }
 
 export interface LocalOptions {
@@ -425,14 +435,56 @@ class OnlineSession implements Session {
     this.step({ type: 'failed', unauthorised, gone: isRoomUnavailable(failure) });
   }
 
-  close(): void {
+  close(opts: CloseOptions = {}): void {
+    if (this.closed) return;
     this.closed = true;
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
     this.unsubClient();
+    // Stepping away: the socket goes without a `leave`, so the table sees a dropped player, not one who gave the seat up.
+    if (opts.keepSeat) this.connection.signaling.close();
     // Leaving closes the relay transport, which closes the signalling socket.
-    this.client.leave();
+    else this.client.leave();
   }
+}
+
+/** The table host's answers to a join it will not seat (packages/net/src/host.ts). */
+const JOIN_REFUSALS: ReadonlySet<string> = new Set(['full', 'already_seated']);
+
+/**
+ * Wait until the table has seated this session's player, or refused to. The socket joining the room is not
+ * a seat: a full table (or a match already under way) answers the join with a refusal, and a lobby shown
+ * then has no seat, no controls that work and never changes. On a refusal the session is closed and the
+ * promise rejects with the table's sentence and code, which the screens show like any other join error
+ * (components/table/tableErrors.ts). A table that says nothing for `timeoutMs` is left to the lobby.
+ */
+export function seatOrRefusal(session: Session, timeoutMs = 6000): Promise<void> {
+  const verdict = (st: ClientState): 'seated' | Error | null => {
+    if (st.seat !== null) return 'seated';
+    if (st.lastErrorCode && JOIN_REFUSALS.has(st.lastErrorCode)) return Object.assign(new Error(st.lastError ?? 'Table is full.'), { code: st.lastErrorCode });
+    return null;
+  };
+  return new Promise((resolve, reject) => {
+    let unsub: Unsubscribe = () => undefined;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const settle = (v: 'seated' | Error | null): boolean => {
+      if (v === null) return false;
+      unsub();
+      if (timer) clearTimeout(timer);
+      if (v === 'seated') resolve();
+      else {
+        session.close();
+        reject(v);
+      }
+      return true;
+    };
+    if (settle(verdict(session.client.state))) return;
+    unsub = session.onChange((st) => void settle(verdict(st)));
+    timer = setTimeout(() => {
+      unsub();
+      resolve();
+    }, timeoutMs);
+  });
 }
 
 export async function createOnlineSession(opts: OnlineOptions): Promise<Session> {

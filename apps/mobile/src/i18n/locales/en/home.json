@@ -41,6 +41,7 @@
     "title": "Table in progress",
     "local": "Offline match vs bots · hand %{hand}",
     "online": "Online table %{code}",
+    "quick": "Quick-match table",
     "club": " · club %{code}",
     "resume": "Resume",
     "reconnecting": "Reconnecting…",

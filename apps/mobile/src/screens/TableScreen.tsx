@@ -238,7 +238,7 @@ export function TableScreen() {
           </P>
           <Button kind="ghost" title={t('table.leave')} onPress={() => setLeaveAsk(true)} />
         </View>
-        <LeaveSheet visible={leaveAsk} online={session.mode === 'online'} onChoose={exit} />
+        <LeaveSheet visible={leaveAsk} online={session.mode === 'online'} quickMatch={session.quickMatch} onChoose={exit} />
       </View>
     );
   }
@@ -254,8 +254,8 @@ export function TableScreen() {
   };
   function exit(choice: ExitChoice) {
     setLeaveAsk(false);
-    const plan = exitPlan(choice);
-    if (plan.closeSession) app.setSession(null);
+    const plan = exitPlan(choice, { quickMatch: session?.quickMatch });
+    if (plan.closeSession) app.setSession(null, { keepSeat: plan.keepSeat });
     if (plan.forgetTable) app.setActiveSession(null);
     if (plan.goHome) app.reset({ name: 'home' });
   }
@@ -351,6 +351,7 @@ export function TableScreen() {
         <TableHud
           view={view}
           roomCode={session.roomCode}
+          quickMatch={session.quickMatch === true}
           portrait={L.portrait}
           clock={clock}
           myMove={myMove}
@@ -364,7 +365,7 @@ export function TableScreen() {
           onLeave={() => setLeaveAsk(true)}
         />
         <ClockTicker clock={clock} myMove={myMove} onTick={() => sfx.sfx('tick')} />
-        <LeaveSheet visible={leaveAsk} online={session.mode === 'online'} onChoose={exit} />
+        <LeaveSheet visible={leaveAsk} online={session.mode === 'online'} quickMatch={session.quickMatch} onChoose={exit} />
 
         <ReportPlayerSheet visible={reporting !== null} target={reporting} onClose={() => setReporting(null)} />
         <Felt

@@ -144,3 +144,13 @@ export function savedRejoinToken(saved: { kind: string; signalUrl?: string; room
 export function retryWaitSeconds(retryAt: number, now: number): number {
   return Math.max(0, Math.ceil((retryAt - now) / 1000));
 }
+
+/**
+ * How to close a table that arrived after the Quick match screen had gone (Back was pressed meanwhile).
+ * A freshly matched table is given up with the table's `leave`. A table the player was only being taken
+ * back to (`seated`) keeps its seat: they never asked to leave it, and with no other human there the
+ * server would close it at once.
+ */
+export function unseenTableClose(returningToSeat: boolean): { keepSeat: boolean } {
+  return { keepSeat: returningToSeat };
+}

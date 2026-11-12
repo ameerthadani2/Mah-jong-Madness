@@ -15,7 +15,7 @@ import type { QueueStatus } from '@mjm/net';
 import { useApp } from '../app-state';
 import { useAuth } from '../auth/AuthProvider';
 import { startQuickMatch, type Session } from '../game/session';
-import { quickMatchAnnouncement, quickMatchView, retryWaitSeconds, runQuickMatch, savedRejoinToken } from '../game/quickMatch';
+import { quickMatchAnnouncement, quickMatchView, retryWaitSeconds, runQuickMatch, savedRejoinToken, unseenTableClose } from '../game/quickMatch';
 import { friendlyError } from '../logic/errors';
 import { useT } from '../i18n';
 import { useOnlineGuard } from '../legal/useOnlineGuard';
@@ -61,6 +61,8 @@ export function QuickMatchScreen() {
   const latest = useRef({ gate, saved: app.activeSession });
   latest.current = { gate, saved: app.activeSession };
 
+  // Set when the server answers `seated`: the session that follows is a table this player already sits at.
+  const returning = useRef(false);
   const begin = useCallback(async () => {
     const fail = (text: string, final = false, retryAfterMs = 0) => {
       setFailure({ text, final, retryAt: Date.now() + retryAfterMs });
@@ -70,6 +72,7 @@ export function QuickMatchScreen() {
     setFailure(null);
     setStatus(null);
     setPhase('connecting');
+    returning.current = false;
     try {
       await auth.client.ensureSession();
     } catch (e) {
@@ -92,7 +95,10 @@ export function QuickMatchScreen() {
             setStatus({ s, at: Date.now() });
           },
           onMatched: () => alive.current && setPhase('matched'),
-          onSeated: () => alive.current && setPhase('returning'),
+          onSeated: () => {
+            returning.current = true;
+            if (alive.current) setPhase('returning');
+          },
           savedToken: (room) => savedRejoinToken(latest.current.saved, app.signalUrl, room),
         });
         search.current = q;
@@ -104,7 +110,9 @@ export function QuickMatchScreen() {
       sendBirthYear: () => latest.current.gate.sendToServer(),
     });
     if (outcome.kind === 'session') {
-      if (!alive.current) return outcome.session.close();
+      // The screen has gone (Back was pressed while the answer was on its way): the table is not shown, and a
+      // seat the player was only being taken back to is not given up (src/game/quickMatch.ts).
+      if (!alive.current) return outcome.session.close(unseenTableClose(returning.current));
       app.setSession(outcome.session);
       // Home, then the table: leaving the table goes home, not back into the queue.
       app.reset({ name: 'home' });

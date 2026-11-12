@@ -225,7 +225,7 @@ type Pending =
   | { kind: 'rejectAll'; userIds: string[] }
   | { kind: 'leave' };
 
-export function ClubScreen({ code }: { code: string }) {
+export function ClubScreen({ code, notice: linkNotice }: { code: string; /** Why a link to one of this club's tables could not be followed. */ notice?: string }) {
   const app = useApp();
   const auth = useAuth();
   const { t, locale } = useT();
@@ -437,6 +437,11 @@ export function ClubScreen({ code }: { code: string }) {
           </Row>
         }
       />
+      {linkNotice && !error && (
+        <View testID="club-link-notice" accessibilityRole="alert" accessibilityLiveRegion="assertive">
+          <Pill tone="danger" icon="warning" wrap text={linkNotice} />
+        </View>
+      )}
       {error && (
         <View testID="club-error" accessibilityRole="alert" accessibilityLiveRegion="assertive">
           <Pill tone="danger" icon="warning" wrap text={error} />

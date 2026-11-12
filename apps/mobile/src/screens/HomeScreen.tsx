@@ -8,7 +8,7 @@ import { gateFor } from '../legal/age';
 import { useOnlineGuard } from '../legal/useOnlineGuard';
 import { AgeBlocked, AgeGate } from '../components/AgeGate';
 import { useApp } from '../app-state';
-import { createLocalSession, createOnlineSession } from '../game/session';
+import { createLocalSession, createOnlineSession, seatOrRefusal } from '../game/session';
 import { useAuth } from '../auth/AuthProvider';
 import { AVATARS, effectiveStreak, todayKey } from '../storage';
 import { acceptedName } from '../logic/profile';
@@ -111,6 +111,8 @@ export function HomeScreen() {
           quickMatch: rec.quickMatch,
           ...auth.tableAuth,
         });
+        // The table may no longer give this seat back (the match went on without it): say so on the card.
+        await seatOrRefusal(session);
         app.setSession(session);
         app.go({ name: 'lobby' });
       }
@@ -329,7 +331,10 @@ export function HomeScreen() {
             <P dim style={{ fontSize: 13 }} numberOfLines={2}>
               {app.activeSession.kind === 'local'
                 ? t('home.resume.local', { hand: app.activeSession.host.snapshot.handNumber + 1 })
-                : `${t('home.resume.online', { code: app.activeSession.roomCode })}${app.activeSession.clubCode ? t('home.resume.club', { code: app.activeSession.clubCode }) : ''}`}
+                : app.activeSession.quickMatch
+                  ? // A quick-match table has no code anyone can use (src/logic/lobby.ts): the card names the kind of table.
+                    t('home.resume.quick')
+                  : `${t('home.resume.online', { code: app.activeSession.roomCode })}${app.activeSession.clubCode ? t('home.resume.club', { code: app.activeSession.clubCode }) : ''}`}
             </P>
             {resumeError && <P style={{ color: colors.dangerText, fontSize: 12 }}>{resumeError}</P>}
           </View>

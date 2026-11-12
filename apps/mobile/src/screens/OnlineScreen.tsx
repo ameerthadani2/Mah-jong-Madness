@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { useApp } from '../app-state';
-import { createOnlineSession } from '../game/session';
+import { createOnlineSession, seatOrRefusal } from '../game/session';
 import { useAuth } from '../auth/AuthProvider';
 import { friendlyError } from '../logic/errors';
 import { tableError } from '../components/table/tableErrors';
@@ -31,7 +31,8 @@ export function OnlineScreen() {
     void ensure().finally(() => setChecking(false));
   }, [ensure, entry]);
   const [busy, setBusy] = useState<'create' | 'join' | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  // A table link or notification that could not be followed lands here with the reason (src/push/PushBridge.tsx).
+  const [error, setError] = useState<string | null>(app.screen.name === 'online' ? (app.screen.notice ?? null) : null);
 
   const run = async (action: 'create' | 'join') => {
     setBusy(action);
@@ -48,6 +49,8 @@ export function OnlineScreen() {
         botSkill: app.settings.botSkill,
         ...auth.tableAuth,
       });
+      // In the room is not at the table: a full table, or one already playing, refuses the seat (the session is closed then).
+      await seatOrRefusal(session);
       app.setSession(session);
       app.go({ name: 'lobby' });
     } catch (e) {
@@ -113,7 +116,7 @@ export function OnlineScreen() {
         </Card>
       ) : null}
       {error && (
-        <Card tone="danger">
+        <Card tone="danger" testID="online-error">
           <Row>
             <Icon name="warning" size={24} />
             <P style={{ flex: 1 }}>{error}</P>

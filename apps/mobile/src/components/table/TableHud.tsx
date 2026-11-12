@@ -8,10 +8,12 @@ import { Icon } from '../Icons';
 import { IconButton, Row } from '../Ui';
 import { HudClock } from './ClockParts';
 import type { TurnClock } from './turnClock';
+import { hudShowsCode } from '../../logic/lobby';
 
 export function TableHud({
   view,
   roomCode,
+  quickMatch,
   portrait,
   clock,
   myMove,
@@ -26,6 +28,8 @@ export function TableHud({
 }: {
   view: TableView;
   roomCode: string;
+  /** A quick-match table: its code lets nobody in, so the header does not show it (src/logic/lobby.ts). */
+  quickMatch?: boolean;
   portrait: boolean;
   /** The turn clock (counted down by HudClock itself, so the table does not re-render every second). */
   clock: TurnClock;
@@ -55,8 +59,8 @@ export function TableHud({
           <Icon name="wall" size={18} />
           <Text style={styles.hudChipText}>{view.drawsLeft}</Text>
         </View>
-        {roomCode !== 'LOCAL' && !portrait && (
-          <View style={styles.hudChip}>
+        {hudShowsCode({ roomCode, quickMatch }, portrait) && (
+          <View style={styles.hudChip} testID="hud-room-code">
             <Text style={styles.hudChipText}>{roomCode}</Text>
           </View>
         )}

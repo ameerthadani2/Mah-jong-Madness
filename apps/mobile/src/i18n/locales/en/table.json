@@ -161,6 +161,7 @@
   "leaveSheet": {
     "title": "Leave the table?",
     "bodyOnline": "A bot plays your seat while you are away. You can come back from Home with Resume. Abandoning gives up your seat for good.",
+    "bodyQuick": "A bot plays your seat while you are away, and you can come back from Home with Resume. A quick-match table with no player left at it closes after two minutes. Abandoning gives up your seat for good.",
     "bodyLocal": "The table waits for you. You can come back from Home with Resume. Abandoning ends this match.",
     "stay": "Keep playing",
     "away": "Back to Home",

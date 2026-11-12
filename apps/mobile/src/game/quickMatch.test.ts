@@ -4,7 +4,7 @@ import { BANNED_CLOSE_CODE, BANNED_MESSAGE, QueueError } from '@mjm/net';
 import { hideBlocked, BlockedStore } from '../api/blocks';
 import en from '../i18n/locales/en/quickmatch.json';
 import zhTW from '../i18n/locales/zh-TW/quickmatch.json';
-import { quickMatchAnnouncement, quickMatchFailure, quickMatchView, RATE_LIMIT_WAIT_MS, retryWaitSeconds, runQuickMatch, savedRejoinToken } from './quickMatch';
+import { quickMatchAnnouncement, quickMatchFailure, quickMatchView, RATE_LIMIT_WAIT_MS, retryWaitSeconds, runQuickMatch, savedRejoinToken, unseenTableClose } from './quickMatch';
 import { createOnlineSession, startQuickMatch } from './session';
 
 type Frame = Record<string, unknown>;
@@ -390,5 +390,23 @@ describe('blocked players at the table', () => {
     await store.load(list, 'me');
     expect([...store.get()].sort()).toEqual(['a', 'b']);
     expect(seen.length).toBeGreaterThan(3);
+  });
+});
+
+describe('a table that arrives after the Quick match screen has gone', () => {
+  it('keeps the seat when the player was only being taken back to a table they already sit at', () => {
+    expect(unseenTableClose(true)).toEqual({ keepSeat: true });
+  });
+
+  it('gives up a freshly matched table', () => {
+    expect(unseenTableClose(false)).toEqual({ keepSeat: false });
+  });
+
+  it('is how the screen closes it', async () => {
+    const { readFileSync } = await import('fs');
+    const { join } = await import('path');
+    const src = readFileSync(join(__dirname, '../screens/QuickMatchScreen.tsx'), 'utf8');
+    expect(src).toContain('if (!alive.current) return outcome.session.close(unseenTableClose(returning.current));');
+    expect(src).toMatch(/onSeated: \(\) => \{\s+returning\.current = true;/);
   });
 });

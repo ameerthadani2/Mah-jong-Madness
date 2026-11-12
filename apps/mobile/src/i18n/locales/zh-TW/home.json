@@ -41,6 +41,7 @@
     "title": "牌局進行中",
     "local": "離線電腦對戰 · 第 %{hand} 局",
     "online": "線上牌桌 %{code}",
+    "quick": "快速配對牌桌",
     "club": " · 俱樂部 %{code}",
     "resume": "繼續",
     "reconnecting": "重新連線中…",

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { chooseAction, DEFAULT_RULES, legalActions, withRules } from '@mjm/engine';
 import { LoopbackHub, TableClient, TableHost, transportLink, type ClientState, type SerializedClient } from '@mjm/net';
-import { connectSignaling, createLocalSession, createOnlineSession, isUnauthorised, setSavedClientSource, UNAUTHORISED_CLOSE, type Session } from './session';
+import { connectSignaling, createLocalSession, createOnlineSession, isUnauthorised, seatOrRefusal, setSavedClientSource, UNAUTHORISED_CLOSE, type Session } from './session';
 import { friendlyErrorMessage } from '../logic/errors';
 import { linkNotice } from '../logic/reconnect';
 
@@ -181,6 +181,104 @@ describe('createOnlineSession', () => {
     FakeSocket.accept = () => 'unauthorised';
     const err = await createOnlineSession({ ...base, action: 'create', auth: async () => 'bad' }).catch((e: unknown) => e);
     expect(isUnauthorised(err)).toBe(true);
+  });
+});
+
+describe('a seat at the table, or the refusal', () => {
+  const fromTable = (msg: Frame): Frame => ({ t: 'from', from: 'server-1', data: { ch: 'game', msg } });
+  const welcomeFrame = fromTable({ t: 'welcome', seat: 2, roomCode: 'ABC123', rules: DEFAULT_RULES, seats: [], matchId: 'm1', token: TOKEN });
+
+  it('resolves once the table has seated the player', async () => {
+    const s = await createOnlineSession({ ...base, action: 'join', code: 'ABC123' });
+    const ws = FakeSocket.last!;
+    const waiting = seatOrRefusal(s);
+    ws.push(welcomeFrame);
+    await expect(waiting).resolves.toBeUndefined();
+    expect(s.client.state.seat).toBe(2);
+    expect(ws.closed).toBe(false);
+    s.close();
+  });
+
+  it('a full table is a failed join: the session is closed and the table\'s sentence comes back', async () => {
+    const s = await createOnlineSession({ ...base, action: 'join', code: 'ABC123' });
+    const ws = FakeSocket.last!;
+    const waiting = seatOrRefusal(s);
+    ws.push(fromTable({ t: 'error', code: 'full', message: 'Table is full.' }));
+    const err = await waiting.catch((e: unknown) => e);
+    expect(err).toMatchObject({ message: 'Table is full.', code: 'full' });
+    expect(ws.closed).toBe(true);
+  });
+
+  it('a match already under way and a second seat for one account are refusals too', async () => {
+    for (const [code, message] of [['full', 'Match already in progress.'], ['already_seated', 'This account already has a seat at this table.']] as const) {
+      const s = await createOnlineSession({ ...base, action: 'join', code: 'ABC123' });
+      const ws = FakeSocket.last!;
+      ws.push(fromTable({ t: 'error', code, message }));
+      await expect(seatOrRefusal(s)).rejects.toMatchObject({ message, code });
+      expect(ws.closed).toBe(true);
+    }
+  });
+
+  it('another table error while waiting is not a refusal of the seat', async () => {
+    const s = await createOnlineSession({ ...base, action: 'join', code: 'ABC123' });
+    const ws = FakeSocket.last!;
+    const waiting = seatOrRefusal(s);
+    ws.push(fromTable({ t: 'error', code: 'not_controller', message: 'Only the table opener or a club admin can add bots.' }));
+    ws.push(welcomeFrame);
+    await expect(waiting).resolves.toBeUndefined();
+    s.close();
+  });
+
+  it('a table that says nothing is left to the lobby after the wait', async () => {
+    vi.useFakeTimers();
+    const s = await createOnlineSession({ ...base, action: 'join', code: 'ABC123' });
+    const ws = FakeSocket.last!;
+    let settled = false;
+    const waiting = seatOrRefusal(s, 6000).then(() => (settled = true));
+    await vi.advanceTimersByTimeAsync(5900);
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(200);
+    await waiting;
+    expect(settled).toBe(true);
+    expect(ws.closed).toBe(false);
+    s.close();
+  });
+
+  it('a local table seats its player at once', async () => {
+    const s = createLocalSession('Tester', 'lady', DEFAULT_RULES);
+    await expect(seatOrRefusal(s)).resolves.toBeUndefined();
+    s.close();
+  });
+});
+
+describe('stepping away from a table', () => {
+  const sentLeave = (ws: FakeSocket) => ws.sent.some((f) => f.t === 'to' && (f.data as { msg?: { t?: string } }).msg?.t === 'leave');
+
+  it('closing with keepSeat closes the socket without telling the table the player left on purpose', async () => {
+    const s = await createOnlineSession({ ...base, action: 'join', code: 'ABC123', quickMatch: true });
+    const ws = FakeSocket.last!;
+    s.close({ keepSeat: true });
+    expect(ws.closed).toBe(true);
+    // Leaving the room is how a socket goes; the table hears it as a player who dropped. Only the table's own
+    // `leave` marks the seat as given up, and that one is not sent.
+    expect(sentLeave(ws)).toBe(false);
+  });
+
+  it('a plain close still sends the leave', async () => {
+    const s = await createOnlineSession({ ...base, action: 'join', code: 'ABC123', quickMatch: true });
+    const ws = FakeSocket.last!;
+    s.close();
+    expect(sentLeave(ws)).toBe(true);
+    expect(ws.closed).toBe(true);
+  });
+
+  it('a session closed keeping its seat never reconnects', async () => {
+    vi.useFakeTimers();
+    const s = await createOnlineSession({ ...base, action: 'join', code: 'ABC123', token: TOKEN });
+    s.close({ keepSeat: true });
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(FakeSocket.all).toHaveLength(1);
+    expect(s.status).toBe('connected');
   });
 });
 

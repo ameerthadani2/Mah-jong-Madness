@@ -10,7 +10,7 @@ import { AvatarPlate, seatAvatarId } from '../components/Avatars';
 import { Icon } from '../components/Icons';
 import { APP_NAME, APP_SCHEMES, LINK_DOMAIN } from '../config';
 import { tableLink } from '../push/deeplink';
-import { lobbyControls } from '../logic/lobby';
+import { lobbyControls, lobbySeated } from '../logic/lobby';
 import { forgetsTable, linkCopy, linkNotice } from '../logic/reconnect';
 
 export function LobbyScreen() {
@@ -42,6 +42,24 @@ export function LobbyScreen() {
           <Button title={t('common.back')} onPress={app.back} />
         </Card>
       </View>
+    );
+  }
+
+  // Not seated: the table has not answered the join yet, or it refused the seat (full, or already playing).
+  // Nothing of the lobby works without a seat, so only the reason and the way back are shown.
+  if (!lobbySeated(state)) {
+    const refusal = state.lastError ? tableError({ code: state.lastErrorCode ?? undefined, message: state.lastError }, t) : null;
+    return (
+      <ScrollView contentContainerStyle={styles.wrap}>
+        <ScreenHeader title={session.quickMatch ? t('lobby.quickTable') : t('lobby.title', { code: session.roomCode })} onBack={leave} />
+        <Card style={{ alignItems: 'center' }} testID="lobby-no-seat">
+          <Icon name={refusal ? 'warning' : 'hourglass'} size={32} />
+          <View accessibilityRole={refusal ? 'alert' : undefined} accessibilityLiveRegion={refusal ? 'assertive' : 'polite'}>
+            <P style={{ textAlign: 'center' }}>{refusal ?? t('lobby.joining')}</P>
+          </View>
+          <Button title={t('common.back')} icon="back" onPress={leave} />
+        </Card>
+      </ScrollView>
     );
   }
 

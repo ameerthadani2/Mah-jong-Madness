@@ -54,7 +54,7 @@ function Router() {
     case 'clubs':
       return <ClubsScreen />;
     case 'club':
-      return <ClubScreen code={screen.code} />;
+      return <ClubScreen code={screen.code} notice={screen.notice} />;
     case 'review':
       return <ReviewScreen />;
     case 'fairness':
