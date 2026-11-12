@@ -10,8 +10,9 @@
 ## Modes
 
 ### Play
-* **Clubs**: create by code, roles (owner/admin/member), approval queue, house rules (底/台, speed, 連莊, 一炮多響, 過水, flowers), server-hosted tables, standings, LINE/WhatsApp invite links (roadmap), inter-club matches (roadmap).
-* **Quick table**: a 6-letter code; every online table is hosted by the game server and verified by every player.
+* **Clubs**: create by code, roles (owner/admin/member), approval queue, house rules (底/台, speed, 連莊, 一炮多響, 過水, flowers), server-hosted tables, standings by season, invite links through the phone's share sheet (so LINE, WhatsApp or any other app), owner tools (close a table, remove or ban a player, pass the club on), inter-club matches (roadmap). Joining and playing is free; creating and running a club needs The Four Winds Club.
+* **Quick table**: a six-character code; every online table is hosted by the game server and verified by every player.
+* **Quick match**: seated with strangers in arrival order, bots in the empty seats after a short wait, default rules at Normal speed. Adults only (a birth year of 18 or over on the server), no free chat, and report and block from any seat; two players who blocked each other are never seated together.
 * **Vs bots**: three skill levels with distinct policies; a rated ladder (roadmap).
 * **Speeds**: Relaxed / Normal / Fast / Turbo / Hyper with per-hand time banks; the bot plays for you when you run out; disconnect protection is free.
 

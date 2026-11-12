@@ -14,7 +14,7 @@ Nothing in the UI is an emoji or a system icon. Every icon, avatar, illustration
 | `components/Ui.tsx` | Panels, two-tone pressable buttons, chips, toggles, steppers, `StrokeText` display type, screen header |
 | `components/Tile.tsx` | SVG tiles: ivory gradient face, bevel, thickness layer, suit art per kind, patterned backs, highlights |
 | `components/Avatars.tsx`, `components/portraits/` | Twelve PokerBros-style caricature portraits (auntie, uncle, grandma, boss, lady, shades, hoops, cowboy, student, chef, sporty, gent) on dark violet spotlight discs, and the seat plate with a thin gold ring, turn timer, dealer badge and seat wind. Open the web build with `#avatars` for a gallery |
-| `components/Scenes.tsx` | Mode-card illustrations: mahjong table, clubhouse, scroll, treasure chest, gem piles, VIP cards, coach medals |
+| `components/Scenes.tsx` | Mode-card illustrations: mahjong table, clubhouse, scroll, treasure chest, gem piles, coach medals |
 | `components/Icons.tsx` | About 30 drawn icons |
 | `components/Emotes.tsx` | Eight drawn emotes and the quick-chat picker |
 | `components/Backdrop.tsx`, `Logo.tsx` | Sky gradient with sunburst and clouds; the wordmark |
@@ -33,7 +33,7 @@ Nothing in the UI is an emoji or a system icon. Every icon, avatar, illustration
 | Cream panel | `#FFF6E5`, shelf `#E2B878` | Cards and dialogs |
 | Primary green | `#52C41A` | Main actions (Play, Buy) |
 | Blue | `#2F8CFF` | Clubs and secondary actions |
-| Gold | `#FFC53D` | Coins, highlights, the active seat |
+| Gold | `#FFC53D` | Highlights, gold gems, the active seat (the Shop shows no coins or money) |
 | Purple | `#B35CFF` | Learn |
 | Red | `#FF5A5F` | Leave, danger, low time |
 | Gem | `#38D6FF` | Premium currency |

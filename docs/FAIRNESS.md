@@ -7,7 +7,7 @@ Mahjong Mania exists because players are tired of card and tile apps where the d
 1. **Real luck only.** The tiles you draw are determined by a shuffle seed built from five secret shares: yours, the other players' and the table server's. When your phone watched the whole deal in one attempt and its share went into the seed (a **Verified** hand), nobody (another player, a club owner, the server or us) could have picked the seed after seeing your share. When it could not watch the whole deal, the hand says so in amber. There is no "luck balancing", no engagement tuning, no rubber-banding, no hidden player tiers, no streak engine. The engine has exactly one source of randomness and it is auditable.
 2. **Same rules for everyone.** The rules engine is deterministic and the same code runs on every device. The host validates every action with the same function your phone uses to show you your legal moves.
 3. **Every hand can be checked.** After every hand, every player's device re-derives the shuffle, replays the hand from the published log, and checks the log against every move it sent and every table state it was shown. Hands are checked as a chain, from the first deal to the final scores. If anything does not match, the app says so on the result screen, in red.
-4. **Nothing in the shop touches the table.** Purchases are cosmetic, coaching or club capacity. No item reveals information, changes odds or buys time that other players do not get.
+4. **Nothing in the shop touches the table.** Purchases are cosmetic, coaching or club ownership. No item reveals information, changes odds or buys time that other players do not get.
 
 ## The mechanism
 
@@ -74,4 +74,4 @@ In priority order: a plain-language and technical spec page (this document plus 
 
 * A green **✓ Shuffle & log verified** badge on every result screen when your phone watched the whole deal in one attempt with your own share in it; amber **Logged — the server could have picked this deal** (no shield) with the reason when everything checked out but the server could have chosen the deal or your phone did not watch all of the hand (a restart of the deal, the app or the server, a dropped link, hands played while you were away); red **⚠ Audit failed** with the reason if anything is off.
 * A **Fair play** screen listing each hand's seed, commitments, secrets, action count and hash, for the last 50 hands at this table (kept across reconnects and app restarts).
-* Open source engine and protocol in this repository.
+* Planned, not yet true: the engine and the protocol published under an open licence, with a standalone verifier (see "Publishing and testing the generator"). No licence has been chosen yet and all rights are reserved (`docs/OWNER_TODO.md`).
