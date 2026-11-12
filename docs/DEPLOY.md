@@ -70,7 +70,7 @@ and set them later the same way (each `fly secrets set` restarts the machine):
 | --- | --- | --- |
 | `DATABASE_URL` | Accounts, clubs, wallets and tables survive restarts and deploys | boot refused in production |
 | `DATABASE_URL_DIRECT` | Migrations and the single-host lock over a direct connection | both use `DATABASE_URL`, with a warning; through the pooler the lock is not reliable |
-| `AUTH_PEPPER` | Sessions and guest secrets that survive restarts. Keep a copy in your password manager: losing it signs every player out | boot refused in production |
+| `AUTH_PEPPER` | Sessions and guest secrets that survive restarts. Keep a copy in your password manager: losing it signs every player out and locks every guest account out for good, because the secret on the phone is a guest's only credential (see "Rotating the pepper") | boot refused in production |
 | `ADMIN_TOKEN` | Support grants (`POST /api/admin/grant`) and the moderation endpoints | those routes answer 503 |
 | `REVENUECAT_WEBHOOK_SECRET` | Real purchases: the store webhook, and `storeEnabled` in `/api/config`. Put the same value in RevenueCat → Integrations → Webhooks as `Bearer <value>`, URL `https://<name>.fly.dev/api/webhooks/revenuecat` | the app shows "Store unavailable" |
 | `REVENUECAT_SECRET_KEY` | Reconciliation after Restore and nightly (RevenueCat → API keys → a secret v1 key) | a purchase whose webhook was lost stays missing until support grants it |
@@ -223,10 +223,31 @@ closed with 1013 (try again later), never 4401, so the app keeps its session and
 Per-address limits count an IPv4 address or an IPv6 /64 prefix (Fly passes IPv6 client addresses
 in `x-forwarded-for`), so the addresses of one IPv6 customer share one allowance.
 
-**Rotating the pepper.** Set `AUTH_PEPPER_PREVIOUS` to the old value and `AUTH_PEPPER` to a new one
-in a single `fly secrets set`. Sessions and guest secrets hashed with the old pepper keep working
-and are re-hashed with the new one on first use. Remove `AUTH_PEPPER_PREVIOUS` after 30 days
-(the session lifetime).
+**Rotating the pepper.** In a single `fly secrets set`, put the old value in
+`AUTH_PEPPER_PREVIOUS` and a new one in `AUTH_PEPPER` (generate it, show it and save it first, as
+in step 3). Nobody notices: a session or a guest secret stored under the old pepper is still
+accepted, and is stored again under the new one when it is next presented. Then **leave
+`AUTH_PEPPER_PREVIOUS` set**:
+
+- Keep it for at least 30 days, the session lifetime. A session is presented on every request,
+  so by then every session still in use has moved to the new pepper.
+- Keep it for as long as guest accounts from before the rotation should be able to sign in, which
+  in practice means for good. A guest account's only credential is the secret on the phone; the
+  server stores its hash and never the secret, so it can move the hash only when the app signs in
+  with the secret again, and the app does that only when its session has lapsed. A guest who
+  plays every week may not present the secret for months; one who stayed away has not presented
+  it at all. Keeping the old value costs one extra hash when a lookup misses.
+- For a second rotation list every earlier value, newest first, separated by commas:
+  `AUTH_PEPPER_PREVIOUS='<previous>,<the one before>'`.
+
+What breaks when an earlier pepper is taken off the list, or when `AUTH_PEPPER` is replaced
+without it, or lost: every session stored under it ends, so those players sign in again (an
+Apple or Google account signs in and has lost nothing); and every guest account whose secret has
+not been stored again since the rotation can no longer be reached by its owner
+(`POST /api/auth/guest/login` answers 401 and the app shows a fresh, signed-out state), with its
+diamonds, cosmetics, clubs and progress. Nothing is deleted: putting the old value back in
+`AUTH_PEPPER_PREVIOUS` lets those accounts in again. The server cannot tell you how many guest
+accounts still depend on an earlier pepper, which is why the rule is not to remove it.
 
 `fly.toml` already sets `PORT=8787`, `HOST_TABLES=1`, `TRUST_PROXY=1` (Fly's proxy supplies
 `x-forwarded-for`), `NODE_ENV=production`, `MAX_HOSTED_TABLES=200` and `MAX_TABLES_PER_USER=3`;

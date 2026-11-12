@@ -65,6 +65,10 @@ async function main(): Promise<void> {
   const repos = createRepos({ databaseUrl: env.DATABASE_URL });
   if (repos.kind === 'memory') warn('[signal] DATABASE_URL is not set: accounts, clubs and tables are kept in memory and lost on restart');
   const sessions = new SessionService(repos.repos, pepperFromEnv(env, warn));
+  if (sessions.previousPeppers.length) {
+    const n = sessions.previousPeppers.length;
+    console.log(`[signal] AUTH_PEPPER_PREVIOUS: ${n} earlier pepper${n === 1 ? '' : 's'} still accepted; a session or guest account stored under one is stored again under AUTH_PEPPER when it next signs in`);
+  }
   let hostLock;
   if (repos.kind === 'pg') {
     const direct = (env.DATABASE_URL_DIRECT ?? '').trim();

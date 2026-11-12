@@ -44,8 +44,8 @@ With no environment at all the server runs: accounts, clubs and tables are kept 
 | `DATABASE_URL_DIRECT` | `DATABASE_URL` | Direct (unpooled) string, used by migrations and by the single-host advisory lock |
 | `ALLOW_EPHEMERAL` | off | `1` lets `NODE_ENV=production` start without `DATABASE_URL`/`AUTH_PEPPER` (in-memory storage, random pepper). Without it a production boot missing either refuses to start |
 | `MIGRATE_ON_BOOT` | off | `1` applies pending migrations before the server starts (`fly.toml` also runs them as the release command) |
-| `AUTH_PEPPER` | random per process | Secret mixed into every stored session and guest-secret hash. Without it every session ends when the process stops. Keep a copy: losing it signs every player out |
-| `AUTH_PEPPER_PREVIOUS` | none | The old pepper during a rotation; tokens hashed with it keep working and are re-hashed on first use |
+| `AUTH_PEPPER` | random per process | Secret mixed into every stored session and guest-secret hash. Without it every session ends when the process stops. Keep a copy: losing it signs every player out and locks every guest account out for good (the secret on the phone is a guest's only credential) |
+| `AUTH_PEPPER_PREVIOUS` | none | The pepper used before a rotation, or several separated by commas, newest first. A session or guest secret stored under one is still accepted and is stored again under `AUTH_PEPPER` when it is next presented. Keep it set for at least the 30-day session lifetime, and in practice for good: a guest secret is presented only when the app signs in again, so a guest who has not done so since the rotation is locked out once the old value is removed (`docs/DEPLOY.md`, "Rotating the pepper") |
 | `APPLE_CLIENT_ID` | none | Sign in with Apple: the bundle id (and Services ID), comma-separated. Absent: Apple sign-in is off and hidden in the app |
 | `GOOGLE_CLIENT_IDS` | none | Google OAuth client ids (iOS, Android, web), comma-separated. Absent: Google sign-in is off |
 | `FACEBOOK_APP_ID` | none | Facebook Limited Login. Absent: off |

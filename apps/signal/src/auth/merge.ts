@@ -90,7 +90,7 @@ export async function link(repos: Repos, userId: string, identity: VerifiedIdent
       if (!linked) continue;
       await opts.sessions.revokeAll(userId, opts.currentSessionId);
       // The old guest secret may be on other devices; from now on only the one that linked has a working copy.
-      const guestSecret = await rotateGuestSecret(repos, { current: opts.sessions.pepper, previous: opts.sessions.previousPepper }, userId);
+      const guestSecret = await rotateGuestSecret(repos, { current: opts.sessions.pepper, previous: opts.sessions.previousPeppers }, userId);
       return { userId, merged: false, affectedClubs: [], ...(guestSecret ? { guestSecret } : {}) };
     }
     if (existing.userId === userId) return { userId, merged: false, affectedClubs: [] };

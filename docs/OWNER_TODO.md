@@ -26,7 +26,7 @@ Step by step in [`DEPLOY.md`](DEPLOY.md) ("First deploy, in order").
 
 - [ ] Fly app created and its name put in `fly.toml`; **GitHub secret** `FLY_API_TOKEN` (`fly tokens create deploy -a <app>`). Unblocks: the deploy workflow.
 - [ ] Neon project in Singapore; **fly secrets** `DATABASE_URL` (pooled, `-pooler` host) and `DATABASE_URL_DIRECT` (direct). Unblocks: durable accounts, clubs, wallets and tables; migrations; the single-host lock.
-- [ ] **fly secret** `AUTH_PEPPER` (`openssl rand -hex 32`; keep a copy). Unblocks: sessions that survive restarts. Without it and the database the production server refuses to start.
+- [ ] **fly secret** `AUTH_PEPPER` (`openssl rand -hex 32`; keep a copy in your password manager: without the value every guest account is locked out for good). Unblocks: sessions and guest accounts that survive restarts. Without it and the database the production server refuses to start.
 - [ ] **fly secret** `ADMIN_TOKEN` (`openssl rand -hex 32`). Unblocks: support grants (`POST /api/admin/grant`) and the moderation endpoints (reports, bans, mutes).
 - [ ] Deploy: Actions → **Deploy signal server** → Run workflow on the working branch. It runs the tests, deploys, checks `/health` and plays one hand with the smoke test. Then `fly scale count 1 -a <app>`.
 - [ ] **GitHub variable** `SIGNAL_URL` = `wss://<app>.fly.dev` (also as **EAS env** if you build from a laptop). Unblocks: both mobile build workflows, which refuse to build without a public `wss://` address, and the deploy workflow checks this address from then on.
@@ -118,7 +118,7 @@ Create exactly these ids (the server's catalogue, `apps/signal/src/catalog.ts`, 
 | `MIN_BUILD` | fly secret | Turns away builds older than this build number ("Update required"). Default 0. |
 | `MAINTENANCE_MESSAGE` | fly secret | Shows a message instead of online play while you work on the server; unset to reopen. |
 | `CORS_ORIGINS` | fly secret | Web origins allowed to call the API (the web preview); native apps need nothing. |
-| `AUTH_PEPPER_PREVIOUS` | fly secret | Only while rotating the pepper ([`DEPLOY.md`](DEPLOY.md)); remove after 30 days. |
+| `AUTH_PEPPER_PREVIOUS` | fly secret | From the day you rotate `AUTH_PEPPER`: the old value (several, newest first, separated by commas). Keep it for at least 30 days and in practice for good: guest accounts that have not signed in again since the rotation are locked out the moment it is removed ([`DEPLOY.md`](DEPLOY.md), "Rotating the pepper"). |
 | `FACEBOOK_APP_ID` | fly secret | Optional Facebook Limited Login. |
 | `TRUST_PROXY` | `fly.toml` (already `1`) | Proxies in front of the server, for per-IP limits. |
 | `EXPO_PUBLIC_STORE_MODE=mock` | GitHub variable | Development builds only: a local mock store. Release builds ignore it. |

@@ -227,7 +227,7 @@ export function buildRoutes(deps: ApiDeps, opts: Pick<ApiOptions, 'reportIpLimit
     onBanned: (userId: string) => deps.matchmaker?.removeUser(userId),
     ...(deps.adminToken !== undefined ? { adminToken: deps.adminToken } : {}),
   };
-  const peppers: Peppers = { current: sessions.pepper, previous: sessions.previousPepper };
+  const peppers: Peppers = { current: sessions.pepper, previous: sessions.previousPeppers };
 
   const r = (method: string, path: string, handler: Handler, auth = false): Route => {
     const keys: string[] = [];

@@ -3,8 +3,8 @@
  * sha256(pepper + ':' + token), so a database leak yields nothing usable without the pepper
  * (an environment secret). Sessions last 30 days and slide forward while used; a refresh
  * rotates the token, and the old one keeps working for a short grace window so a request
- * already in flight does not fail. During a pepper rotation the previous pepper is still
- * accepted and the stored hash is upgraded on first use.
+ * already in flight does not fail. After a pepper rotation the earlier peppers that are still
+ * configured are accepted, and a hash found under one is stored again under the current pepper.
  */
 import { randomUUID, timingSafeEqual } from 'node:crypto';
 import { randomHex, sha256Hex } from '@mjm/engine';
@@ -33,10 +33,23 @@ export function digestsEqual(a: string, b: string): boolean {
   return x.length === y.length && timingSafeEqual(x, y);
 }
 
+/**
+ * The earlier peppers still accepted, newest first: trimmed, without blanks, repeats or the
+ * current pepper.
+ */
+export function previousPepperList(previous: string | readonly string[] | undefined, current: string): string[] {
+  const out: string[] = [];
+  for (const raw of previous === undefined ? [] : typeof previous === 'string' ? [previous] : previous) {
+    const p = typeof raw === 'string' ? raw.trim() : '';
+    if (p && p !== current && !out.includes(p)) out.push(p);
+  }
+  return out;
+}
+
 export interface SessionOptions {
   pepper: string;
-  /** The pepper in use before the last rotation; tokens hashed with it still verify. */
-  previousPepper?: string;
+  /** The pepper, or peppers (newest first), in use before a rotation; tokens hashed with one still verify. */
+  previousPepper?: string | readonly string[];
   ttlDays?: number;
   graceMinutes?: number;
   now?: () => number;
@@ -58,10 +71,16 @@ export interface IssuedSession {
 
 export class SessionService {
   readonly pepper: string;
-  readonly previousPepper: string | undefined;
+  /** Earlier peppers still accepted, newest first. */
+  readonly previousPeppers: readonly string[];
   private readonly ttlMs: number;
   private readonly graceMs: number;
   private readonly now: () => number;
+
+  /** The newest earlier pepper, if any is configured. */
+  get previousPepper(): string | undefined {
+    return this.previousPeppers[0];
+  }
 
   constructor(
     private readonly repos: Repos,
@@ -69,7 +88,7 @@ export class SessionService {
   ) {
     if (!opts.pepper) throw new Error('SessionService needs a pepper');
     this.pepper = opts.pepper;
-    this.previousPepper = opts.previousPepper || undefined;
+    this.previousPeppers = previousPepperList(opts.previousPepper, opts.pepper);
     this.ttlMs = (opts.ttlDays ?? 30) * DAY_MS;
     this.graceMs = (opts.graceMinutes ?? 5) * MINUTE_MS;
     this.now = opts.now ?? Date.now;
@@ -96,9 +115,11 @@ export class SessionService {
   async verify(token: unknown): Promise<VerifiedSession> {
     if (typeof token !== 'string' || !TOKEN_SHAPE.test(token)) throw new AuthError('invalid_session', 'Malformed session token');
     let session = await this.repos.sessions.findByHash(hashToken(token, this.pepper));
-    if (!session && this.previousPepper) {
-      session = await this.repos.sessions.findByHash(hashToken(token, this.previousPepper));
+    for (const previous of this.previousPeppers) {
+      if (session) break;
+      session = await this.repos.sessions.findByHash(hashToken(token, previous));
       if (session) {
+        // Stored again under the current pepper: this session no longer needs the earlier one.
         const upgraded = hashToken(token, this.pepper);
         await this.repos.sessions.update(session.id, { tokenHash: upgraded });
         session.tokenHash = upgraded;

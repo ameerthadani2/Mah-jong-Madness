@@ -9,12 +9,13 @@ import { randomHex } from '@mjm/engine';
 import { cleanField } from '../limits';
 import type { Repos } from '../repos/types';
 import { AuthError, assertNotBanned } from './errors';
-import { digestsEqual, hashToken, SessionService } from './tokens';
+import { digestsEqual, hashToken, previousPepperList, SessionService } from './tokens';
 
-/** The current pepper, or the current and previous ones during a rotation. */
-export type Peppers = string | { current: string; previous?: string };
+/** The current pepper, or the current one with the earlier ones (newest first) kept after a rotation. */
+export type Peppers = string | { current: string; previous?: string | readonly string[] };
 
-const pepperSet = (p: Peppers): { current: string; previous?: string } => (typeof p === 'string' ? { current: p } : p);
+const pepperSet = (p: Peppers): { current: string; previous: string[] } =>
+  typeof p === 'string' ? { current: p, previous: [] } : { current: p.current, previous: previousPepperList(p.previous, p.current) };
 
 export interface GuestDevice {
   platform?: unknown;
@@ -126,8 +127,12 @@ export async function loginGuest(
   const identity = await repos.identities.get('guest', userId);
   const stored = identity?.secretHash ?? DUMMY_DIGEST;
   let ok = digestsEqual(stored, hashToken(guestSecret, p.current));
-  if (!ok && p.previous && digestsEqual(stored, hashToken(guestSecret, p.previous))) {
+  // Every earlier pepper is tried, hit or miss, so the time taken does not say which one matched.
+  let underPrevious = false;
+  for (const previous of p.previous) if (digestsEqual(stored, hashToken(guestSecret, previous))) underPrevious = true;
+  if (!ok && underPrevious) {
     ok = true;
+    // Stored again under the current pepper: this account no longer needs the earlier one.
     if (identity) await repos.identities.updateSecretHash('guest', userId, hashToken(guestSecret, p.current));
   }
   if (!ok || !identity) throw fail();
