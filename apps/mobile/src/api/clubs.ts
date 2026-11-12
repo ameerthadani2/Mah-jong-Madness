@@ -97,6 +97,14 @@ export function isMemberView(club: ClubListing, userId: string): club is Club {
   return !!club.rules && !!club.settings && (club.members ?? []).some((m) => m.userId === userId);
 }
 
+/** True while "My clubs" lists a club this player has only asked to join (it comes as the public view, without them among the members). */
+export function hasPendingRequest(clubs: readonly ClubListing[], userId: string): boolean {
+  return clubs.some((c) => !(c.members ?? []).some((m) => m.userId === userId));
+}
+
+/** How often "My clubs" is read again while a request to join is waiting. */
+export const PENDING_POLL_MS = 15_000;
+
 /** How many members a club has, from either view. */
 export function clubMemberCount(c: Pick<ClubListing, 'members' | 'memberCount'>): number {
   return c.members?.length ?? c.memberCount ?? 0;

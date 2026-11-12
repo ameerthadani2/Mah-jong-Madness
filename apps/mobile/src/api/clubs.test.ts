@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { Authoriser, FetchLike } from './http';
 import { DEFAULT_RULES } from '@mjm/engine';
-import { clubErrorMessage, clubErrorText, clubLink, clubListLine, clubMemberCount, clubsApi, isMemberView, ownerRestricted, OWNER_GRACE_DAYS } from './clubs';
+import { clubErrorMessage, clubErrorText, clubLink, clubListLine, clubMemberCount, clubsApi, hasPendingRequest, isMemberView, ownerRestricted, OWNER_GRACE_DAYS, PENDING_POLL_MS } from './clubs';
 import { parseDeepLink } from '../push/deeplink';
 import { rulesStakes } from '../logic/rules-text';
 import { translator } from '../logic/translator.fixture';
@@ -152,6 +152,16 @@ describe('the member view and the public view of a club', () => {
     expect(isMemberView(full, 'someone-else')).toBe(false);
     expect(isMemberView(publicView, 'me')).toBe(false);
     expect(isMemberView({ ...full, members: undefined }, 'me')).toBe(false);
+  });
+
+  it('knows when My clubs still holds a request waiting for an answer, so the list is read again', () => {
+    expect(hasPendingRequest([full], 'me')).toBe(false);
+    expect(hasPendingRequest([full, publicView], 'me')).toBe(true);
+    expect(hasPendingRequest([], 'me')).toBe(false);
+    const screen = readFileSync(join(__dirname, '..', 'screens', 'ClubsScreen.tsx'), 'utf8');
+    expect(screen).toMatch(/const waiting = hasPendingRequest\(clubs \?\? \[\], user\.userId\);/);
+    expect(screen).toMatch(/setInterval\(\(\) => void refresh\(\), PENDING_POLL_MS\)/);
+    expect(PENDING_POLL_MS).toBeGreaterThanOrEqual(10_000);
   });
 
   it('counts members from either view', () => {

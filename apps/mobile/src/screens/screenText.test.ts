@@ -36,6 +36,8 @@ describe('results and errors away from the table are spoken by a screen reader',
     const rush = read('screens/PuzzleScreens.tsx');
     expect(rush).toMatch(/accessibilityLabel=\{t\('learn\.rush\.solved', \{ count: score \}\)\}/);
     expect(rush).toMatch(/accessibilityLabel=\{t\('learn\.rush\.strikes', \{ n: strikes, max: RUSH_STRIKES \}\)\} accessibilityLiveRegion="polite"/);
+    expect(rush).toMatch(/accessibilityLabel=\{t\('learn\.rush\.timeLeft', \{ minutes: Math\.floor\(left \/ 60\), seconds: left % 60 \}\)\}/);
+    expect(translator('en')('learn.rush.timeLeft', { minutes: 2, seconds: 45 })).toBe('Time left: 2 min 45 s');
     expect(translator('en')('learn.rush.strikes', { n: 1, max: 3 })).toBe('Strikes: 1 of 3');
     expect(translator('en')('learn.rush.solved', { count: 3 })).toBe('3 solved');
     expect(translator('zh-TW')('learn.rush.solved', { count: 3 })).toBe('已解 3 題');

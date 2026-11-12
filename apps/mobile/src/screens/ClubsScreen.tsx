@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useReducer, useRef, useState } 
 import { ScrollView, Share, StyleSheet, Text, TextInput, View } from 'react-native';
 import { BOT_SKILLS, RULE_PRESETS, rulesFromPreset, type BotSkill, type RuleSet } from '@mjm/engine';
 import { useApp } from '../app-state';
-import { clubErrorText, clubLink, clubListLine, clubMemberCount, clubsApi, httpBase, isMemberView, ownerRestricted, type ClubContext, type ClubListing, type ClubMember, type ClubTable } from '../api/clubs';
+import { clubErrorText, clubLink, clubListLine, clubMemberCount, clubsApi, hasPendingRequest, httpBase, isMemberView, ownerRestricted, PENDING_POLL_MS, type ClubContext, type ClubListing, type ClubMember, type ClubTable } from '../api/clubs';
 import { useAuth } from '../auth/AuthProvider';
 import { APP_NAME, APP_SCHEMES, LINK_DOMAIN } from '../config';
 import { createOnlineSession } from '../game/session';
@@ -122,6 +122,13 @@ export function ClubsScreen() {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+  // While a request to join is waiting, look again now and then: an approval, a refusal or a ban shows without leaving the screen.
+  const waiting = hasPendingRequest(clubs ?? [], user.userId);
+  useEffect(() => {
+    if (!waiting) return;
+    const id = setInterval(() => void refresh(), PENDING_POLL_MS);
+    return () => clearInterval(id);
+  }, [waiting, refresh]);
 
   const create = async () => {
     tell({ type: 'actionStarted' });

@@ -184,7 +184,10 @@ function PuzzleRushRun({ onAgain, onStart }: { onAgain: () => void; /** The firs
         onNo={() => setAskLeave(false)}
       />
       <Row style={{ flexWrap: 'wrap', rowGap: 6 }}>
-        <Pill icon="clock" text={`${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}`} tone={left <= 20 ? 'danger' : 'neutral'} />
+        {/* Named, but not a live region: it changes every second. */}
+        <View accessible accessibilityRole="text" accessibilityLabel={t('learn.rush.timeLeft', { minutes: Math.floor(left / 60), seconds: left % 60 })} testID="rush-clock">
+          <Pill icon="clock" text={`${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}`} tone={left <= 20 ? 'danger' : 'neutral'} />
+        </View>
         <View accessible accessibilityRole="text" accessibilityLabel={t('learn.rush.solved', { count: score })} testID="rush-score">
           <Pill icon="check" text={`${score}`} tone="ok" />
         </View>

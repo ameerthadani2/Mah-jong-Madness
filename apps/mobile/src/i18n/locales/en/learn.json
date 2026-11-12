@@ -14,6 +14,7 @@
       "other": "%{count} solved"
     },
     "strikes": "Strikes: %{n} of %{max}",
+    "timeLeft": "Time left: %{minutes} min %{seconds} s",
     "title": "Puzzle Rush",
     "text": "Three minutes, three strikes, puzzles that get harder.",
     "stat": "Best %{best} · %{runs} runs",
