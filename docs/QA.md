@@ -38,7 +38,7 @@ Before you start: the server is deployed and its last deploy run passed the smok
 - [ ] Delete account (Settings): with a live subscription the app shows it with a "Manage subscription" link and asks for an explicit confirmation; after deletion the account is gone and a fresh guest starts.
 
 ## 7. Quick match
-- [ ] Home → **Quick match** (behind the online guard: the age gate and terms first): the queue screen shows your position, a running timer, a Cancel button and "bots join after 20 s".
+- [ ] Home → **Quick match** (behind the online guard: the age gate and terms first): the queue screen shows how many players have been found ("1 player found (you)"), the seconds waited, "Bots fill empty seats after 20 seconds" (then a countdown, "Bots join in … s") and a Cancel button. It shows no position in a queue.
 - [ ] Alone: after about 20 s the table starts with you and clearly labelled bots, at default rules and Normal speed.
 - [ ] Two phones queueing together land at the same table in arrival order, each in its own seat.
 - [ ] Cancel leaves the queue at once; queueing again works.
@@ -47,7 +47,7 @@ Before you start: the server is deployed and its last deploy run passed the smok
 - [ ] The finished match does not show up in any club's standings.
 
 ## 8. Clubs and owner tools
-- [ ] Without The Four Winds Club (store live): **Create club** opens The Four Winds Club paywall. With it (or before the store is live): create a club; the house rules editor shows every rule, grouped; a preset sets a baseline without silently wiping your edits.
+- [ ] Without The Four Winds Club (store live): **New club** (Clubs screen) opens The Four Winds Club paywall. With it (or before the store is live): create a club; the house rules editor shows every rule, grouped; a preset sets a baseline without silently wiping your edits.
 - [ ] The second phone joins by code (or a request the owner accepts or rejects). Member-opened tables always use the house rules; the owner can open a **variant** table, labelled "Variant · not ranked".
 - [ ] At a club table only the opener or an admin can add bots or start.
 - [ ] Owner tools: **Close table** (the match ends and counts for nothing); **Remove** a player from a table (a bot takes the seat and they cannot return to it); remove a member (they leave its live tables too); **Ban** and **Unban** (a banned player cannot join or rejoin); **Make owner** (you become an admin); leave; delete the club after typing its name.
@@ -69,7 +69,7 @@ Before you start: the server is deployed and its last deploy run passed the smok
 ## 11. Store (sandbox, with a tester account)
 - [ ] The Shop lists prices from your store region; subscription terms are shown before buying.
 - [ ] Buy the smallest diamond pack: diamonds arrive within a minute; buy a cosmetic with them and equip it in Settings.
-- [ ] Subscribe to Coach Gold monthly: Pro bots and unlimited Puzzle Rush unlock. Upgrade to The Four Winds Club: unlimited hand reviews and Create club unlock.
+- [ ] Subscribe to Coach Gold monthly: Pro bots and unlimited Puzzle Rush unlock. Upgrade to The Four Winds Club: unlimited hand reviews and creating a club (**New club**) unlock.
 - [ ] Fresh install (or the second phone) with the same store account and game account: **Restore purchases** brings the subscriptions back.
 - [ ] Refund: iOS — App Store Connect sandbox or a StoreKit refund request; Android — Play Console → Order management → refund the test order. Within a few minutes the refunded plan ends (another plan you hold stays), and a refunded pack takes its diamonds back (a negative balance blocks spending until it is topped up).
 - [ ] A purchase on an account **not** in `TESTER_USER_IDS` grants nothing (sandbox purchases are recorded and ignored).

@@ -210,9 +210,10 @@ fly deploy -a <name> --image registry.fly.io/<name>:deployment-<id> --ha=false  
 npm run smoke -w @mjm/signal -- https://<name>.fly.dev
 ```
 
-Tables survive a rollback the same way they survive a deploy (below). Migrations so far only add
-tables and columns or relax a constraint, and are never undone: an older image runs against the newer schema, and its release
-command finds nothing to apply. If a migration itself is the problem, restore the database from
+Tables survive a rollback the same way they survive a deploy (below). Migrations are never
+undone. They add tables and columns, backfill them or relax a constraint, so an older image runs
+against the newer schema and its release command finds nothing to apply (the one exception is
+`0004`, which renamed stored entitlement values: never roll back to an image from before it). If a migration itself is the problem, restore the database from
 Neon's point-in-time history to a moment before the deploy ("Backups and recovery" → Restoring:
 stop the server first), then deploy the last good image. Fix forward on the branch and dispatch
 again when ready. "A deploy that fails half-way" lists what is running after each kind of failure.

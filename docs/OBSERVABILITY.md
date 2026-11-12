@@ -1,6 +1,6 @@
 # Observability (game server)
 
-What the server measures, where to look when something goes wrong, and how to roll back. Everything here is optional: with no keys set the server logs to stdout only and every hook is a no-op. The app's own crash reporting and analytics (`EXPO_PUBLIC_SENTRY_DSN`, `EXPO_PUBLIC_POSTHOG_KEY`) are documented with the mobile app.
+What the server measures, where to look when something goes wrong, and how to roll back. Everything here is optional: with no keys set the server logs to stdout only and every hook is a no-op. The app's own crash reporting and analytics are switched on by the build variables `EXPO_PUBLIC_SENTRY_DSN`, `EXPO_PUBLIC_POSTHOG_KEY` and `EXPO_PUBLIC_POSTHOG_HOST` (and `SENTRY_ORG`, `SENTRY_PROJECT` and the EAS secret `SENTRY_AUTH_TOKEN` for readable stacks): [`OWNER_TODO.md`](OWNER_TODO.md), step 12.
 
 ## What is measured
 
@@ -46,7 +46,7 @@ The server writes plain lines to stdout and nothing else: no log files, no reque
 
 ## Rollback
 
-1. **Redeploy the previous image.** `fly releases -a <app>` lists the releases with their image; then `fly deploy -a <app> --image <previous image ref>`. Machines restart one by one; players reconnect and reclaim their seats.
-2. **Snapshots are forward-compatible.** Tables are restored from `table_snapshots`, whose `SerializedHost.version` the host checks; a snapshot written by a newer build that an older build cannot read is skipped (the table is lost, not corrupted) and logged.
-3. **Migrations are additive.** Each migration only adds tables and columns (`0002` adds `store_events`, `reports` and the club season columns), so the previous image runs on the newer schema: it simply ignores what it does not know. Never roll a migration back by hand; if a schema change must be undone, ship a new numbered migration.
-4. **Turning a feature off** needs no deploy: `fly secrets unset REVENUECAT_WEBHOOK_SECRET` (store off; RevenueCat retries its webhooks for up to 72 hours, and the events apply once the secret is back), `EXPO_ACCESS_TOKEN` (push off), `SENTRY_DSN`, `POSTHOG_KEY`. Unsetting a secret restarts the machines.
+The procedure, with the exact commands, is in [`DEPLOY.md`](DEPLOY.md) ("Rollback", and "A deploy that fails half-way" for what is running after each kind of failure): redeploy the last good image with `--ha=false`, then run the smoke test. There is one machine, so a rollback is one restart; players reconnect and reclaim their seats. Migrations are never undone. They add tables and columns, backfill them or relax a constraint, which an older image tolerates, so the previous image runs on the newer schema; the one exception is `0004`, which renamed stored entitlement values, so never roll back to an image from before it. If a schema change must be undone, ship a new numbered migration. Two things DEPLOY.md does not cover:
+
+- **Snapshots after a rollback.** Tables are restored from `table_snapshots`, whose `SerializedHost.version` the host checks; a snapshot written by a newer build that an older build cannot read is skipped (the table is lost, not corrupted) and logged.
+- **Turning a feature off** needs no deploy: `fly secrets unset REVENUECAT_WEBHOOK_SECRET` (store off; RevenueCat retries its webhooks for up to 72 hours, and the events apply once the secret is back), `EXPO_ACCESS_TOKEN` (push off), `SENTRY_DSN`, `POSTHOG_KEY`. Unsetting a secret restarts the machine; tables survive it.
