@@ -257,6 +257,89 @@ describe('SIGNAL_URL for a release build', () => {
   });
 });
 
+describe('Sign in with Apple beside Google sign-in on iOS', () => {
+  type Problem = (o: { googleIosClientId?: string; appleClientId?: string; bundleId: string }) => string | null;
+  type AppConfig = ((a: { config: Record<string, unknown> }) => { ios: { usesAppleSignIn: boolean; privacyManifests: { NSPrivacyCollectedDataTypes: Array<Record<string, unknown>> } }; extra: { googleClientIds?: Record<string, string> } }) & { appleSignInProblem: Problem };
+  const appConfig = require(join(ROOT, 'apps/mobile/app.config.js')) as AppConfig;
+  const appJson = require(join(ROOT, 'apps/mobile/app.json')) as { expo: Record<string, unknown> };
+  const BUNDLE = 'com.mahjongmania.app';
+  const GOOGLE = '1234-abc.apps.googleusercontent.com';
+  const KEYS = ['EAS_BUILD_PROFILE', 'EAS_BUILD_PLATFORM', 'SIGNAL_URL', 'APP_BUNDLE_ID', 'EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID', 'EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID', 'APPLE_CLIENT_ID'];
+  /** The app config as a build with exactly these variables would resolve it. */
+  const build = (vars: Record<string, string>) => {
+    const before = Object.fromEntries(KEYS.map((k) => [k, process.env[k]]));
+    for (const k of KEYS) delete process.env[k];
+    Object.assign(process.env, { SIGNAL_URL: 'wss://mahjong-signal.fly.dev', ...vars });
+    try {
+      return appConfig({ config: structuredClone(appJson.expo) });
+    } finally {
+      for (const k of KEYS) if (before[k] === undefined) delete process.env[k]; else process.env[k] = before[k];
+    }
+  };
+
+  it('has nothing to say about a build without Google sign-in on iOS', () => {
+    expect(appConfig.appleSignInProblem({ bundleId: BUNDLE })).toBeNull();
+    expect(appConfig.appleSignInProblem({ googleIosClientId: '  ', appleClientId: '', bundleId: BUNDLE })).toBeNull();
+  });
+
+  it('refuses Google sign-in on iOS until APPLE_CLIENT_ID names the bundle id, and says what to set', () => {
+    expect(appConfig.appleSignInProblem({ googleIosClientId: GOOGLE, bundleId: BUNDLE })).toMatch(/APPLE_CLIENT_ID is not set.*guideline 4\.8.*fly secrets set/);
+    expect(appConfig.appleSignInProblem({ googleIosClientId: GOOGLE, appleClientId: ' , ', bundleId: BUNDLE })).toMatch(/APPLE_CLIENT_ID is not set/);
+    expect(appConfig.appleSignInProblem({ googleIosClientId: GOOGLE, appleClientId: 'com.other.app', bundleId: BUNDLE })).toMatch(/'com\.other\.app'\) does not name the bundle id 'com\.mahjongmania\.app'/);
+    expect(appConfig.appleSignInProblem({ googleIosClientId: GOOGLE, appleClientId: BUNDLE, bundleId: BUNDLE })).toBeNull();
+    // The server's value may list a web Services ID beside the bundle id.
+    expect(appConfig.appleSignInProblem({ googleIosClientId: GOOGLE, appleClientId: `com.mahjongmania.web, ${BUNDLE}`, bundleId: BUNDLE })).toBeNull();
+  });
+
+  it('stops an iOS production or preview build on EAS that would offer Google sign-in alone', () => {
+    for (const profile of ['production', 'preview']) {
+      const ios = { EAS_BUILD_PROFILE: profile, EAS_BUILD_PLATFORM: 'ios', EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID: GOOGLE };
+      expect(() => build(ios), profile).toThrow(new RegExp(`This iOS ${profile} build cannot be made: it offers Google sign-in .* APPLE_CLIENT_ID is not set`));
+      expect(() => build({ ...ios, APPLE_CLIENT_ID: 'com.other.app' }), profile).toThrow(/does not name the bundle id/);
+      // A renamed app: the Apple value must follow the bundle id of this build.
+      expect(() => build({ ...ios, APPLE_CLIENT_ID: BUNDLE, APP_BUNDLE_ID: 'com.example.renamed' }), profile).toThrow(/does not name the bundle id 'com\.example\.renamed'/);
+      const ok = build({ ...ios, APPLE_CLIENT_ID: BUNDLE });
+      expect(ok.extra.googleClientIds).toEqual({ ios: GOOGLE });
+      expect(ok.ios.usesAppleSignIn).toBe(true);
+      // No Google sign-in on iOS: nothing to prove.
+      expect(build({ EAS_BUILD_PROFILE: profile, EAS_BUILD_PLATFORM: 'ios', EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID: GOOGLE }).extra.googleClientIds).toEqual({ android: GOOGLE });
+    }
+  });
+
+  it('leaves Android builds, development builds and local runs alone', () => {
+    expect(build({ EAS_BUILD_PROFILE: 'production', EAS_BUILD_PLATFORM: 'android', EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID: GOOGLE }).extra.googleClientIds).toEqual({ ios: GOOGLE });
+    expect(build({ EAS_BUILD_PROFILE: 'development', EAS_BUILD_PLATFORM: 'ios', EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID: GOOGLE }).extra.googleClientIds).toEqual({ ios: GOOGLE });
+    expect(build({ EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID: GOOGLE }).extra.googleClientIds).toEqual({ ios: GOOGLE });
+  });
+
+  it('is checked by the iOS workflow before anything is built, and the value reaches the EAS builder', () => {
+    const step = workflowStepScript('ios-testflight.yml', 'name: Check Sign in with Apple');
+    const run = (env: Record<string, string>) => runStep(step, env, { cwd: ROOT });
+    expect(run({}).status).toBe(0);
+    expect(run({}).stdout).toContain('No Google sign-in in this build');
+    const alone = run({ EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID: GOOGLE });
+    expect(alone.status).toBe(1);
+    expect(alone.stdout).toContain('::error title=Google sign-in on iOS needs Sign in with Apple::');
+    expect(alone.stdout).toContain('APPLE_CLIENT_ID is not set');
+    expect(run({ EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID: GOOGLE, APPLE_CLIENT_ID: BUNDLE, APP_BUNDLE_ID: 'com.example.renamed' }).status).toBe(1);
+    const both = run({ EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID: GOOGLE, APPLE_CLIENT_ID: 'com.example.renamed', APP_BUNDLE_ID: 'com.example.renamed' });
+    expect(both.status).toBe(0);
+    expect(both.stdout).toContain('both configured for com.example.renamed');
+    const text = readFileSync(join(ROOT, '.github/workflows/ios-testflight.yml'), 'utf8');
+    expect(text).toMatch(/APPLE_CLIENT_ID: \$\{\{ vars\.APPLE_CLIENT_ID \}\}/);
+    expect(text.indexOf('name: Check Sign in with Apple')).toBeGreaterThan(text.indexOf('- uses: actions/checkout@v4'));
+    expect(text.indexOf('name: Check Sign in with Apple')).toBeLessThan(text.indexOf('eas build'));
+    const eas = applyBuildEnv(JSON.parse(readFileSync(join(ROOT, 'apps/mobile/eas.json'), 'utf8')) as EasJson, { PROFILE: 'production', PLATFORM: 'ios', APPLE_CLIENT_ID: ` ${BUNDLE} ` });
+    expect(eas.build.production.env).toMatchObject({ APPLE_CLIENT_ID: BUNDLE });
+  });
+
+  it('declares usage data and purchases as linked to the account and used for analytics, as the server sends them', () => {
+    const byType = Object.fromEntries(build({}).ios.privacyManifests.NSPrivacyCollectedDataTypes.map((d) => [d.NSPrivacyCollectedDataType as string, d]));
+    expect(byType.NSPrivacyCollectedDataTypeProductInteraction).toMatchObject({ NSPrivacyCollectedDataTypeLinked: true, NSPrivacyCollectedDataTypeTracking: false, NSPrivacyCollectedDataTypePurposes: ['NSPrivacyCollectedDataTypePurposeAnalytics'] });
+    expect(byType.NSPrivacyCollectedDataTypePurchaseHistory).toMatchObject({ NSPrivacyCollectedDataTypeLinked: true, NSPrivacyCollectedDataTypePurposes: ['NSPrivacyCollectedDataTypePurposeAppFunctionality', 'NSPrivacyCollectedDataTypePurposeAnalytics'] });
+  });
+});
+
 describe('workflow hygiene', () => {
   const workflows = readdirSync(join(ROOT, '.github/workflows')).filter((f) => f.endsWith('.yml'));
 

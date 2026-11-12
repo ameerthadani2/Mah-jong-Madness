@@ -16,6 +16,8 @@ const BUILD_VARIABLES = [
   'SENTRY_ORG', 'SENTRY_PROJECT', 'EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID', 'EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID',
   'EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID', 'EXPO_PUBLIC_REVENUECAT_IOS_KEY', 'EXPO_PUBLIC_REVENUECAT_ANDROID_KEY',
   'EXPO_PUBLIC_TERMS_URL', 'EXPO_PUBLIC_PRIVACY_URL',
+  // Not read by the app: app.config.js checks it on the builder (an iOS build with Google sign-in needs Sign in with Apple).
+  'APPLE_CLIENT_ID',
 ];
 
 /** App Store Connect's numeric app id ("Apple ID" under App information). */

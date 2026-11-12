@@ -12,6 +12,10 @@
 // - EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID, EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID, EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID:
 //   Google sign-in OAuth client ids, exposed as extra.googleClientIds; a platform without one hides the button.
 //   Sign in with Apple needs no env here (the capability is declared below; the server's APPLE_CLIENT_ID enables it).
+// - APPLE_CLIENT_ID: the value given to the server's APPLE_CLIENT_ID secret (it must name the bundle id). Needed
+//   only by an iOS release build that also carries EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID: App Review guideline 4.8
+//   refuses an app that offers Google sign-in without Sign in with Apple, so such a build stops with a clear error
+//   until this says the server offers it (appleSignInProblem below; the iOS workflow runs the same check first).
 // - EXPO_PUBLIC_SENTRY_DSN, EXPO_PUBLIC_POSTHOG_KEY, EXPO_PUBLIC_POSTHOG_HOST: crash reports and analytics; read by
 //   src/config.ts at bundle time (absent → that service is off and its privacy toggle hidden).
 // - SENTRY_AUTH_TOKEN, SENTRY_ORG, SENTRY_PROJECT: source map and debug symbol upload during EAS builds. The Sentry
@@ -50,7 +54,9 @@ const collected = (type, linked, purposes) => ({
 /**
  * Apple's privacy manifest. Required-reason APIs: UserDefaults (AsyncStorage, app-only data: CA92.1) and file
  * timestamps (files inside the app container: C617.1). Collected data matches docs/store/listing/en.md, plus crash
- * data for Sentry. Nothing is used for tracking.
+ * data for Sentry. Nothing is used for tracking. Usage data and purchases are declared as linked to the account
+ * and used for analytics: for a player who agreed to usage statistics the server sends its own events
+ * (purchase_credited, report_filed) under the account id. Crash data carries no account id.
  */
 const PRIVACY_MANIFEST = {
   NSPrivacyTracking: false,
@@ -60,8 +66,8 @@ const PRIVACY_MANIFEST = {
     collected('NSPrivacyCollectedDataTypeEmailAddress', true, ['NSPrivacyCollectedDataTypePurposeAppFunctionality']),
     collected('NSPrivacyCollectedDataTypeUserID', true, ['NSPrivacyCollectedDataTypePurposeAppFunctionality']),
     collected('NSPrivacyCollectedDataTypeDeviceID', true, ['NSPrivacyCollectedDataTypePurposeAppFunctionality']),
-    collected('NSPrivacyCollectedDataTypePurchaseHistory', true, ['NSPrivacyCollectedDataTypePurposeAppFunctionality']),
-    collected('NSPrivacyCollectedDataTypeProductInteraction', false, ['NSPrivacyCollectedDataTypePurposeAnalytics']),
+    collected('NSPrivacyCollectedDataTypePurchaseHistory', true, ['NSPrivacyCollectedDataTypePurposeAppFunctionality', 'NSPrivacyCollectedDataTypePurposeAnalytics']),
+    collected('NSPrivacyCollectedDataTypeProductInteraction', true, ['NSPrivacyCollectedDataTypePurposeAnalytics']),
     collected('NSPrivacyCollectedDataTypeCrashData', false, ['NSPrivacyCollectedDataTypePurposeAppFunctionality']),
     // The display name players choose (users.display_name, and the names on match results) is stored with their account.
     collected('NSPrivacyCollectedDataTypeName', true, ['NSPrivacyCollectedDataTypePurposeAppFunctionality']),
@@ -106,14 +112,38 @@ function releaseSignalUrlProblem(value) {
   return null;
 }
 
+/**
+ * App Review guideline 4.8: an iOS app that offers another sign-in must offer Sign in with Apple
+ * beside it. Why an iOS release build with these values would break that, or null when it would
+ * not. The build offers Google sign-in on iOS when it carries a Google iOS client id. Sign in with
+ * Apple is offered when the server's APPLE_CLIENT_ID names this build's bundle id (the audience of
+ * the token iOS issues); the build cannot ask the server, so the owner repeats that value as the
+ * build variable APPLE_CLIENT_ID (a comma-separated list, as on the server).
+ */
+function appleSignInProblem({ googleIosClientId, appleClientId, bundleId }) {
+  const text = (v) => (typeof v === 'string' ? v.trim() : '');
+  if (!text(googleIosClientId)) return null;
+  const apple = text(appleClientId).split(',').map((s) => s.trim()).filter(Boolean);
+  const fix = `Set the server secret APPLE_CLIENT_ID to the bundle id '${bundleId}' (fly secrets set), set the build variable APPLE_CLIENT_ID to the same value, or build without EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID.`;
+  if (!apple.length) return `it offers Google sign-in (EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID is set) and APPLE_CLIENT_ID is not set, so nothing says Sign in with Apple is offered too. App Review refuses an iOS app that offers Google sign-in alone (guideline 4.8). ${fix}`;
+  if (!apple.includes(bundleId)) return `it offers Google sign-in and APPLE_CLIENT_ID ('${apple.join(', ')}') does not name the bundle id '${bundleId}', so Sign in with Apple would fail on this build (the token iOS issues is addressed to the bundle id). ${fix}`;
+  return null;
+}
+
 module.exports = ({ config }) => {
   // On EAS the build profile is in the environment: stop a release build that has no usable server address.
   const profile = env('EAS_BUILD_PROFILE', undefined);
-  if (profile === 'production' || profile === 'preview') {
+  const release = profile === 'production' || profile === 'preview';
+  if (release) {
     const problem = releaseSignalUrlProblem(process.env.SIGNAL_URL);
     if (problem) throw new Error(`SIGNAL_URL cannot be used for a ${profile} build: ${problem} Set it as a repository variable (the build workflows copy it) or as an EAS environment variable for a build started with eas build.`);
   }
   const bundleId = env('APP_BUNDLE_ID', IDENTITY_DEFAULTS.bundleId);
+  // An iOS release build (EAS names the platform on its builders) never offers Google sign-in without Sign in with Apple.
+  if (release && env('EAS_BUILD_PLATFORM', undefined) === 'ios') {
+    const problem = appleSignInProblem({ googleIosClientId: process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID, appleClientId: process.env.APPLE_CLIENT_ID, bundleId });
+    if (problem) throw new Error(`This iOS ${profile} build cannot be made: ${problem}`);
+  }
   if (!ANDROID_PACKAGE.test(bundleId)) {
     throw new Error(`APP_BUNDLE_ID '${bundleId}' cannot be the Android package: use dot-separated segments that start with a letter, with letters, digits and '_' only (e.g. com.mahjongmania.app)`);
   }
@@ -171,3 +201,4 @@ module.exports = ({ config }) => {
 };
 
 module.exports.releaseSignalUrlProblem = releaseSignalUrlProblem;
+module.exports.appleSignInProblem = appleSignInProblem;
