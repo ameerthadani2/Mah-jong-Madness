@@ -3,10 +3,10 @@ import { StyleSheet, View } from 'react-native';
 import type { DefencePuzzle } from '@mjm/engine';
 import { colors } from '../../theme';
 import { useT } from '../../i18n';
-import { checkPuzzleAnswer, defenceSeats, defenceVerdicts, percent, SEAT_KEYS, threatKey, tileName } from '../../logic/puzzle';
+import { checkPuzzleAnswer, explanationFor, defenceSeats, defenceVerdicts, percent, SEAT_KEYS, threatKey, tileName } from '../../logic/puzzle';
 import { Tile } from '../Tile';
 import { P, Pill, Row } from '../Ui';
-import { Explanation, KindMeld, KindRow, Label, NextButton, partStyles, useAnswer, Verdict, type ThemeViewProps } from './PuzzleParts';
+import { Answer, Explanation, KindMeld, KindRow, Label, NextButton, partStyles, useAnswer, Verdict, type ThemeViewProps } from './PuzzleParts';
 
 /**
  * Defence: your 17 tiles, the threatening seat's exposed sets and discards (the other seats'
@@ -63,7 +63,7 @@ export function DefencePuzzleView({ puzzle, onResult, onNext, nextLabel, autoAdv
         ))}
       </View>
       {answered !== null && (
-        <View style={{ gap: 6 }}>
+        <Answer spoken={[t(answered ? 'puzzles.defence.safe' : 'puzzles.defence.unsafe'), ...(answered ? [] : [t('puzzles.defence.answer', { tile: tileName(puzzle.answer, locale) })]), explanationFor(puzzle, locale)].join(' ')}>
           <Verdict good={answered} goodKey="puzzles.defence.safe" badKey="puzzles.defence.unsafe" />
           {!answered && <P>{t('puzzles.defence.answer', { tile: tileName(puzzle.answer, locale) })}</P>}
           <Explanation puzzle={puzzle} />
@@ -78,7 +78,7 @@ export function DefencePuzzleView({ puzzle, onResult, onNext, nextLabel, autoAdv
             ))}
           </View>
           <NextButton onNext={onNext} autoAdvance={autoAdvance} label={nextLabel} />
-        </View>
+        </Answer>
       )}
     </View>
   );

@@ -64,5 +64,13 @@
     "allDone": "That was the last lesson: you've finished every track. The daily puzzle has a new hand every day.",
     "nextCta": "Next lesson",
     "back": "Back to Learn"
-  }
+  },
+  "rush": {
+    "solved": {
+      "one": "%{count} solved",
+      "other": "%{count} solved"
+    },
+    "strikes": "Strikes: %{n} of %{max}"
+  },
+  "cardButton": "%{action}: %{title}"
 }

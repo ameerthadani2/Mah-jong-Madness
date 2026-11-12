@@ -184,8 +184,10 @@ function PuzzleRushRun({ onAgain, onStart }: { onAgain: () => void; /** The firs
       />
       <Row style={{ flexWrap: 'wrap', rowGap: 6 }}>
         <Pill icon="clock" text={`${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}`} tone={left <= 20 ? 'danger' : 'neutral'} />
-        <Pill icon="check" text={`${score}`} tone="ok" />
-        <View style={styles.strikes}>
+        <View accessible accessibilityRole="text" accessibilityLabel={t('learn.rush.solved', { count: score })} testID="rush-score">
+          <Pill icon="check" text={`${score}`} tone="ok" />
+        </View>
+        <View style={styles.strikes} accessible accessibilityRole="text" accessibilityLabel={t('learn.rush.strikes', { n: strikes, max: RUSH_STRIKES })} accessibilityLiveRegion="polite" testID="rush-strikes">
           {Array.from({ length: RUSH_STRIKES }).map((_, i) => (
             <View key={i} style={[styles.strike, i < strikes && { backgroundColor: colors.danger }]}>
               {i < strikes && <Icon name="cross" size={14} />}

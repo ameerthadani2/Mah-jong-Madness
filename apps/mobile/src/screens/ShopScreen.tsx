@@ -16,6 +16,7 @@ import { useWallet } from '../monetisation/useWallet';
 import { ApiError } from '../api/http';
 import { friendlyError } from '../logic/errors';
 import { useT } from '../i18n';
+import { Live } from '../components/Live';
 import type { Translate } from '../logic/translate';
 import { gateFor } from '../legal/age';
 import { useAgeGate } from '../legal/useAgeGate';
@@ -203,7 +204,11 @@ export function ShopScreen({ focus }: { focus?: 'fourwinds' } = {}) {
           );
         })}
       </View>
-      {msg && <Pill text={msg.text} tone={msg.tone} icon={msg.tone === 'ok' ? 'check' : 'warning'} />}
+      {msg && (
+        <Live message={msg.text} assertive={msg.tone === 'danger'} testID="shop-message">
+          <Pill wrap text={msg.text} tone={msg.tone} icon={msg.tone === 'ok' ? 'check' : 'warning'} />
+        </Live>
+      )}
 
       {tab === 'diamonds' && (
         <>

@@ -3,11 +3,11 @@ import { StyleSheet, View } from 'react-native';
 import type { ClaimPuzzle } from '@mjm/engine';
 import { colors } from '../../theme';
 import { useT } from '../../i18n';
-import { checkPuzzleAnswer, claimButtons, claimOutcomeKey, SEAT_KEYS, seatRelation, tileName, type ClaimButton } from '../../logic/puzzle';
+import { checkPuzzleAnswer, explanationFor, claimButtons, claimOutcomeKey, SEAT_KEYS, seatRelation, tileName, type ClaimButton } from '../../logic/puzzle';
 import { Tile } from '../Tile';
 import { Button, P, Pill, Row } from '../Ui';
 import { Icon } from '../Icons';
-import { Explanation, KindMeld, KindRow, Label, NextButton, partStyles, useAnswer, Verdict, type ThemeViewProps } from './PuzzleParts';
+import { Answer, Explanation, KindMeld, KindRow, Label, NextButton, partStyles, useAnswer, Verdict, type ThemeViewProps } from './PuzzleParts';
 
 /**
  * Claim window: your hand and sets, the tile just thrown and who threw it (上家 / 對家 /
@@ -83,12 +83,12 @@ export function ClaimPuzzleView({ puzzle, onResult, onNext, nextLabel, autoAdvan
         })}
       </View>
       {answered !== null && (
-        <View style={{ gap: 6 }}>
+        <Answer spoken={[t(answered ? 'puzzles.claim.right' : 'puzzles.claim.wrong'), ...(answered ? [] : [t('puzzles.claim.answer', { label: t(best.label.key, best.label.params) })]), explanationFor(puzzle, locale)].join(' ')}>
           <Verdict good={answered} goodKey="puzzles.claim.right" badKey="puzzles.claim.wrong" />
           {!answered && <P>{t('puzzles.claim.answer', { label: t(best.label.key, best.label.params) })}</P>}
           <Explanation puzzle={puzzle} />
           <NextButton onNext={onNext} autoAdvance={autoAdvance} label={nextLabel} />
-        </View>
+        </Answer>
       )}
     </View>
   );

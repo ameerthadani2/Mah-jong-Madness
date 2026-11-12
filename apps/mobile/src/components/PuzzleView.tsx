@@ -1,12 +1,12 @@
 import React, { useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
-import { kindsToString, type AnyPuzzle, type DiscardPuzzle, type Kind, type WaitsPuzzle } from '@mjm/engine';
+import type { AnyPuzzle, DiscardPuzzle, Kind, WaitsPuzzle } from '@mjm/engine';
 import { colors, fonts } from '../theme';
 import { useT } from '../i18n';
-import { checkPuzzleAnswer, puzzleStatus, tileName, type PuzzleResult } from '../logic/puzzle';
+import { checkPuzzleAnswer, puzzleStatus, tileListText, tileName, type PuzzleResult } from '../logic/puzzle';
 import { Tile } from './Tile';
 import { Button, P, Pill, Row } from './Ui';
-import { NextButton, partStyles, useAnswer, Verdict, type ThemeViewProps } from './puzzles/PuzzleParts';
+import { Answer, NextButton, partStyles, useAnswer, Verdict, type ThemeViewProps } from './puzzles/PuzzleParts';
 import { DefencePuzzleView } from './puzzles/DefencePuzzleView';
 import { ClaimPuzzleView } from './puzzles/ClaimPuzzleView';
 import { ValuePuzzleView } from './puzzles/ValuePuzzleView';
@@ -47,6 +47,9 @@ function DiscardPuzzleView({ puzzle, onResult, onNext, nextLabel, autoAdvance }:
   const good = answered === true;
   const shape = (shanten: number) => (shanten <= 0 ? t('puzzles.view.ready') : t('puzzles.view.fromReady', { n: shanten }));
   const status = puzzleStatus(puzzle.currentShanten);
+  const pickedText = (o: NonNullable<typeof pickedOpt>) => t('puzzles.view.picked', { tile: tileName(o.kind, locale), shape: shape(o.shanten), kinds: o.accepts.length, tiles: o.acceptance });
+  // The tiles that improve the hand are listed by name, as the rest of the sentence names tiles.
+  const bestText = t('puzzles.view.best', { tile: tileName(bestOpt.kind, locale), shape: shape(bestOpt.shanten), kinds: bestOpt.accepts.length, tiles: bestOpt.acceptance, list: tileListText(bestOpt.accepts, locale) });
   return (
     <View style={{ gap: 8 }}>
       <P dim>{t('puzzles.view.discardIntro', { status: t(status.key, status.params) })}</P>
@@ -56,12 +59,12 @@ function DiscardPuzzleView({ puzzle, onResult, onNext, nextLabel, autoAdvance }:
         ))}
       </View>
       {answered !== null && pickedOpt && (
-        <View style={{ gap: 6 }}>
+        <Answer spoken={[t(good ? 'puzzles.view.good' : 'puzzles.view.better'), pickedText(pickedOpt), ...(good ? [] : [bestText])].join(' ')}>
           <Verdict good={good} goodKey="puzzles.view.good" badKey="puzzles.view.better" />
-          <P>{t('puzzles.view.picked', { tile: tileName(pickedOpt.kind, locale), shape: shape(pickedOpt.shanten), kinds: pickedOpt.accepts.length, tiles: pickedOpt.acceptance })}</P>
-          {!good && <P>{t('puzzles.view.best', { tile: tileName(bestOpt.kind, locale), shape: shape(bestOpt.shanten), kinds: bestOpt.accepts.length, tiles: bestOpt.acceptance, list: kindsToString(bestOpt.accepts) })}</P>}
+          <P>{pickedText(pickedOpt)}</P>
+          {!good && <P>{bestText}</P>}
           <NextButton onNext={onNext} autoAdvance={autoAdvance} label={nextLabel} />
-        </View>
+        </Answer>
       )}
     </View>
   );
@@ -96,7 +99,7 @@ function WaitsPuzzleView({ puzzle, onResult, onNext, nextLabel, autoAdvance }: T
       {!checked ? (
         <Button title={t('puzzles.view.check')} onPress={() => report(checkPuzzleAnswer(puzzle, [...chosen]))} disabled={chosen.size === 0} />
       ) : (
-        <View style={{ gap: 6 }}>
+        <Answer spoken={`${t(answered === true ? 'puzzles.view.exact' : 'puzzles.view.notAll')} ${t('puzzles.view.waits')} ${tileListText(puzzle.answers, locale)}`}>
           <Verdict good={answered === true} goodKey="puzzles.view.exact" badKey="puzzles.view.notAll" />
           <Row style={{ flexWrap: 'wrap' }}>
             <Text style={{ color: colors.ink, fontFamily: fonts.uiBold }}>{t('puzzles.view.waits')}</Text>
@@ -105,7 +108,7 @@ function WaitsPuzzleView({ puzzle, onResult, onNext, nextLabel, autoAdvance }: T
             ))}
           </Row>
           <NextButton onNext={onNext} autoAdvance={autoAdvance} label={nextLabel} />
-        </View>
+        </Answer>
       )}
     </View>
   );
