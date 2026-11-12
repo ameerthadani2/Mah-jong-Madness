@@ -67,6 +67,8 @@
     "sevenRob": "七搶一 · %{name}",
     "taiLabel": "台",
     "tai": "%{tai} 台",
+    "capped": "封頂：這手牌算出 %{counted} 台，但這桌的規則一手最多算 %{cap} 台。",
+    "cappedDealer": "封頂：這手牌算出 %{counted} 台，但這桌的規則一手最多算 %{cap} 台；莊家的 %{dealer} 台另計，合計 %{tai} 台。",
     "payment": "%{from} → %{to}：%{points}（%{tai} 台，含莊家）"
   },
   "result": {

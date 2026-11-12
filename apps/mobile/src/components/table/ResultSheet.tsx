@@ -15,6 +15,7 @@ import { scaleTextStyle } from '../../display/scale';
 import { Button, P, Pill, Row, StrokeText } from '../Ui';
 import { matchOverLayout, resultLayout } from './layout';
 import { useRollUp } from './Motion';
+import { taiCapNote } from '../../logic/taiCap';
 
 const signed = (n: number) => `${n >= 0 ? '+' : ''}${n}`;
 
@@ -23,6 +24,8 @@ function WinCard({ w, state }: { w: WinRecord; state: ClientState }) {
   const seatOf = (seat: number) => state.seats.find((s) => s.seat === seat);
   const name = (seat: number) => seatOf(seat)?.name ?? t('table.seat', { n: seat + 1 });
   const tai = useRollUp(w.score.tai);
+  // The rules' 台 cap (封頂) bit: the items below add up to more than the total, so say why.
+  const capNote = taiCapNote(w.score);
   // Settings → Display: the winning hand grows with the tile size (the row wraps), the 台 list with the text size.
   const { tileScale, fontFactor } = useDisplayScale();
   const tileSize = scaledTile('sm', tileScale);
@@ -41,13 +44,18 @@ function WinCard({ w, state }: { w: WinRecord; state: ClientState }) {
           <Text style={[styles.winTitle, nameFont(name(w.seat))]}>{t('table.win.title', { name: name(w.seat) })}</Text>
           <Text style={styles.winSub}>{how}</Text>
         </View>
-        <View style={styles.taiBadge} accessible accessibilityLabel={t('table.win.tai', { tai: w.score.tai })} testID="tai-total">
+        <View style={styles.taiBadge} accessible accessibilityLabel={capNote ? `${t('table.win.tai', { tai: w.score.tai })}. ${t(capNote.key, capNote.params)}` : t('table.win.tai', { tai: w.score.tai })} testID="tai-total">
           <StrokeText style={{ fontSize: 24 }} strokeWidth={2} drop={1.5}>
             {tai}
           </StrokeText>
           <Text style={styles.taiLabel}>{t('table.win.taiLabel')}</Text>
         </View>
       </Row>
+      {capNote && (
+        <Text testID="tai-capped" style={scaleTextStyle(styles.capNote, fontFactor)}>
+          {t(capNote.key, capNote.params)}
+        </Text>
+      )}
       <Row style={{ flexWrap: 'wrap', rowGap: 4 }} gap={2}>
         {w.melds.map((m, i) => (
           <MeldView key={i} meld={m} size={tileSize} />
@@ -310,6 +318,7 @@ const styles = StyleSheet.create({
   itemEn: { color: colors.inkDim, fontWeight: '600', fontSize: 12 },
   itemTai: { color: colors.goldDim, fontWeight: '900', fontSize: 14 },
   payment: { color: colors.inkDim, fontSize: 12, fontWeight: '700' },
+  capNote: { color: colors.ink, fontSize: 12, lineHeight: 16, fontWeight: '700', backgroundColor: colors.gold, borderWidth: 2, borderColor: colors.ink, borderRadius: 10, paddingHorizontal: 8, paddingVertical: 3, overflow: 'hidden' },
   scoreRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   scoreChip: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: '#FFFFFF', borderWidth: 2, borderColor: colors.ink, borderRadius: 999, paddingLeft: 3, paddingRight: 12, paddingVertical: 3 },
   scoreName: { color: colors.ink, fontSize: 12, maxWidth: 110 },

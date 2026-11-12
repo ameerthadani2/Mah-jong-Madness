@@ -67,6 +67,8 @@
     "sevenRob": "七搶一 · %{name}",
     "taiLabel": "台",
     "tai": "%{tai} tai",
+    "capped": "Capped (封頂): this hand counts %{counted} 台, and this table's rules cap a hand at %{cap}.",
+    "cappedDealer": "Capped (封頂): this hand counts %{counted} 台, and this table's rules cap a hand at %{cap}. The dealer's %{dealer} 台 are added on top: %{tai} 台.",
     "payment": "%{from} → %{to}: %{points} (%{tai} 台 incl. dealer)"
   },
   "result": {
