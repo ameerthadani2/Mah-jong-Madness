@@ -28,14 +28,14 @@ import { RESULT_HOLD_MS } from '../components/table/feel';
 import { MatchOverSheet, ResultSheet } from '../components/table/ResultSheet';
 import { TableHud } from '../components/table/TableHud';
 import { LeaveSheet } from '../components/table/LeaveSheet';
-import { ClockTicker } from '../components/table/ClockParts';
+import { ClockAnnouncer, ClockTicker } from '../components/table/ClockParts';
 import { useAnnounce } from '../components/table/announce';
 import type { TurnClock } from '../components/table/turnClock';
 import { exitPlan, type ExitChoice } from '../components/table/exit';
 import { celebrationFor } from '../components/table/celebrate';
 import { tableError } from '../components/table/tableErrors';
 import { forgetsTable, linkCopy, linkNotice } from '../logic/reconnect';
-import { autoDiscarded, callHaptic, plateScore, resultHaptic, type Haptic } from '../components/table/feedback';
+import { autoClaimed, autoDiscarded, callHaptic, plateScore, resultHaptic, type Haptic } from '../components/table/feedback';
 import { useTapHint } from '../components/table/useTapHint';
 import { tileLabel } from '../components/table/tileLabel';
 import { WinCelebration } from '../components/Celebrations';
@@ -182,9 +182,10 @@ export function TableScreen() {
   }, [state?.lastResult]);
 
   // A turn timeout that discarded for the player gets a short notice (and a buzz), never a silent tile leaving the hand.
+  // (testID "auto-discard-notice" is kept for both kinds: the e2e and probes look for it.)
   const sentDiscard = useRef(false);
   const pond = useRef<{ hand: number; count: number } | null>(null);
-  const [autoNotice, setAutoNotice] = useState<{ tile: number; key: number } | null>(null);
+  const [autoNotice, setAutoNotice] = useState<{ tile: number; key: number } | { call: 'chi' | 'pong' | 'kong'; key: number } | null>(null);
   const myPond = view ? view.players[mySeat]?.discards : undefined;
   useEffect(() => {
     if (!view || !myPond) return;
@@ -202,7 +203,27 @@ export function TableScreen() {
     const id = setTimeout(() => setAutoNotice((n) => (n && n.key === autoNotice.key ? null : n)), AUTO_DISCARD_NOTICE_MS);
     return () => clearTimeout(id);
   }, [autoNotice]);
-  const autoNoticeText = autoNotice ? t('table.autoDiscard', { tile: tileLabel(kindOf(autoNotice.tile as TileId), locale) }) : null;
+  // The same for a claim prompt that ran out: the table may call for the player, which opens their hand.
+  const sentClaim = useRef(false);
+  const meldCount = useRef<{ hand: number; count: number } | null>(null);
+  const myMelds = view ? view.players[mySeat]?.melds : undefined;
+  useEffect(() => {
+    if (!view || !myMelds) return;
+    const next = { hand: view.handNumber, count: myMelds.length };
+    if (autoClaimed(meldCount.current, next, sentClaim.current)) {
+      const made = myMelds[myMelds.length - 1].type;
+      setAutoNotice({ call: made === 'chow' ? 'chi' : made, key: ++eventKey });
+      buzz('dealin');
+    }
+    if (!meldCount.current || next.count !== meldCount.current.count || next.hand !== meldCount.current.hand) sentClaim.current = false;
+    meldCount.current = next;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [myMelds?.length, view?.handNumber]);
+  const autoNoticeText = !autoNotice
+    ? null
+    : 'tile' in autoNotice
+      ? t('table.autoDiscard', { tile: tileLabel(kindOf(autoNotice.tile as TileId), locale) })
+      : t('table.autoClaim', { call: [t(`table.claimGloss.${autoNotice.call}`), t(`table.callout.${autoNotice.call}`)].filter(Boolean).join(' ') });
   useAnnounce(autoNoticeText, autoNotice?.key);
   const tapHint = useTapHint();
 
@@ -244,6 +265,7 @@ export function TableScreen() {
   }
 
   const act = (a: Action) => {
+    if (a.type === 'chi' || a.type === 'pong' || a.type === 'kong') sentClaim.current = true;
     if (a.type !== 'discard') sfx.sfx('tap');
     else {
       sentDiscard.current = true;
@@ -365,6 +387,7 @@ export function TableScreen() {
           onLeave={() => setLeaveAsk(true)}
         />
         <ClockTicker clock={clock} myMove={myMove} onTick={() => sfx.sfx('tick')} />
+        <ClockAnnouncer clock={clock} myMove={myMove} />
         <LeaveSheet visible={leaveAsk} online={session.mode === 'online'} quickMatch={session.quickMatch} onChoose={exit} />
 
         <ReportPlayerSheet visible={reporting !== null} target={reporting} onClose={() => setReporting(null)} />

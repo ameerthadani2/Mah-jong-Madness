@@ -156,7 +156,11 @@
     "tapToSelect": "Tap to select for discard",
     "emote": "Send emote %{name}",
     "reportHint": "Long press to report this player",
-    "tileBack": "Face-down tile"
+    "tileBack": "Face-down tile",
+    "clockNow": "Your clock: %{s} seconds left",
+    "clockBankNow": "Your time bank: %{s} seconds left",
+    "clockLow": "%{s} seconds left",
+    "clockBank": "Your time bank has started: %{s} seconds"
   },
   "leaveSheet": {
     "title": "Leave the table?",
@@ -176,5 +180,6 @@
     "win": "Win",
     "selfDrawWin": "Self-draw"
   },
-  "autoDiscard": "Time ran out: %{tile} was discarded for you."
+  "autoDiscard": "Time ran out: %{tile} was discarded for you.",
+  "autoClaim": "Time ran out: the table called %{call} for you."
 }

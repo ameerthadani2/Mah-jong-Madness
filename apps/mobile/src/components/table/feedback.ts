@@ -1,6 +1,6 @@
 /**
  * Feedback rules for the table, pure so they are tested: which haptic a table event earns, when a turn
- * timeout discarded for the player, and which score a seat plate shows while the result is held back.
+ * timeout discarded or claimed for the player, and which score a seat plate shows while the result is held back.
  */
 
 export type Haptic = 'claim' | 'win' | 'dealin';
@@ -29,6 +29,15 @@ export interface PondCount {
  * and the table discarded for them.
  */
 export function autoDiscarded(prev: PondCount | null, next: PondCount, sentByMe: boolean): boolean {
+  return !!prev && prev.hand === next.hand && next.count === prev.count + 1 && !sentByMe;
+}
+
+/**
+ * The player's melds grew in the same hand without them sending a claim: a claim prompt ran out of time and
+ * the table called for them (it plays the seat like a bot then, and a bot may take the tile). Like a
+ * discard made for them, it must not pass in silence: the hand was opened and the time bank is gone.
+ */
+export function autoClaimed(prev: PondCount | null, next: PondCount, sentByMe: boolean): boolean {
   return !!prev && prev.hand === next.hand && next.count === prev.count + 1 && !sentByMe;
 }
 

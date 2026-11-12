@@ -156,7 +156,11 @@
     "tapToSelect": "點一下選取要打的牌",
     "emote": "送出表情 %{name}",
     "reportHint": "長按即可檢舉這位玩家",
-    "tileBack": "背面朝上的牌"
+    "tileBack": "背面朝上的牌",
+    "clockNow": "你的出牌時間：剩 %{s} 秒",
+    "clockBankNow": "你的備用時間：剩 %{s} 秒",
+    "clockLow": "剩 %{s} 秒",
+    "clockBank": "開始用備用時間：%{s} 秒"
   },
   "leaveSheet": {
     "title": "要離開牌桌嗎？",
@@ -176,5 +180,6 @@
     "win": "",
     "selfDrawWin": ""
   },
-  "autoDiscard": "時間到了：已替你打出%{tile}。"
+  "autoDiscard": "時間到了：已替你打出%{tile}。",
+  "autoClaim": "時間到了：已替你喊「%{call}」。"
 }
