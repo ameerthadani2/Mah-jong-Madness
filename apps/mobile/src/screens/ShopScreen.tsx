@@ -174,7 +174,8 @@ export function ShopScreen({ focus }: { focus?: ShopFocus } = {}) {
       <ScreenHeader title={t('shop.title')} onBack={app.back} backTestID="back" right={<GemCounter amount={totalDiamonds(wallet)} owed={owed} onPress={() => setTab('diamonds')} />} />
       <View style={styles.trust}>
         <Icon name="shield" size={20} />
-        <Text style={styles.trustText} numberOfLines={2}>
+        {/* Shown whole: the sentence ends with "joining clubs is free", which two lines cut off on a phone. */}
+        <Text style={styles.trustText}>
           {t('shop.trust')}
         </Text>
       </View>

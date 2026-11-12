@@ -59,6 +59,12 @@ describe('a yearly plan', () => {
     expect(JSON.stringify(en.shop)).not.toMatch(/billed once\./);
   });
 
+  it('shows the Shop\'s promise whole, down to "joining clubs is free"', () => {
+    const shop = read('screens/ShopScreen.tsx');
+    expect(shop).toMatch(/<Text style=\{styles\.trustText\}>\s*\{t\('shop\.trust'\)\}/);
+    expect(en.shop.trust).toMatch(/joining clubs is free\.$/);
+  });
+
   it('shows a plan card\'s terms whole', () => {
     expect(read('screens/ShopScreen.tsx')).toMatch(/numberOfLines=\{p\.kind === 'subscription' \? undefined : 2\}/);
   });
