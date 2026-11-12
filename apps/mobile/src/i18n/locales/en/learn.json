@@ -9,6 +9,11 @@
     "cta": "Solve"
   },
   "rush": {
+    "solved": {
+      "one": "%{count} solved",
+      "other": "%{count} solved"
+    },
+    "strikes": "Strikes: %{n} of %{max}",
     "title": "Puzzle Rush",
     "text": "Three minutes, three strikes, puzzles that get harder.",
     "stat": "Best %{best} · %{runs} runs",
@@ -64,13 +69,6 @@
     "allDone": "That was the last lesson: you've finished every track. The daily puzzle has a new hand every day.",
     "nextCta": "Next lesson",
     "back": "Back to Learn"
-  },
-  "rush": {
-    "solved": {
-      "one": "%{count} solved",
-      "other": "%{count} solved"
-    },
-    "strikes": "Strikes: %{n} of %{max}"
   },
   "cardButton": "%{action}: %{title}"
 }
