@@ -71,3 +71,27 @@ describe('EAS profiles (eas.json)', () => {
     expect(eas.build.production.channel).toBe('production');
   });
 });
+
+describe('over-the-air updates (app.json)', () => {
+  const runtime = () => (config() as unknown as { runtimeVersion?: unknown; updates?: { enabled?: boolean } });
+
+  it('tie an update to the native build it was made for: the runtime version is a fingerprint of the native inputs', () => {
+    // 'sdkVersion' would hand a JavaScript update to any binary on the same Expo SDK, whatever native modules,
+    // permissions or entitlements that binary was built with.
+    expect(appJson.expo.runtimeVersion).toEqual({ policy: 'fingerprint' });
+    expect((appJson.expo.updates as { enabled?: boolean }).enabled).toBe(true);
+  });
+
+  it('app.config.js passes the policy through unchanged, whatever the build environment', () => {
+    expect(runtime().runtimeVersion).toEqual({ policy: 'fingerprint' });
+    process.env.APP_VERSION = '2.0.0';
+    process.env.APP_BUNDLE_ID = 'tw.example.mahjong_mania';
+    expect(runtime().runtimeVersion).toEqual({ policy: 'fingerprint' });
+    expect(runtime().updates?.enabled).toBe(true);
+  });
+
+  it('needs no extra package: the fingerprint tooling ships with expo', () => {
+    expect(() => require.resolve('expo/fingerprint')).not.toThrow();
+    expect(() => require.resolve('expo-updates/package.json')).not.toThrow();
+  });
+});
