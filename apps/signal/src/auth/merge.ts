@@ -9,7 +9,7 @@
  *    puzzle history, devices, reports, blocks and club memberships move to V (where both are in a club,
  *    the stronger row stays; clubs U owns transfer); U's sessions end; U is soft-deleted with
  *    merged_into = V and its profile scrubbed; the device gets a V session. U's birth year goes
- *    to V when V has none (the year is write-once, and an under-17 declaration must not be shed
+ *    to V when V has none (the year is write-once, and an under-18 declaration must not be shed
  *    by linking); when both have one, V's stays.
  * 3. P is linked to V and U already has a provider: 409 identity_in_use (two real accounts are
  *    never merged automatically).

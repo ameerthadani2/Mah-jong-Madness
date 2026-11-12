@@ -2,7 +2,7 @@
  * Quick match (plan decision 3): instant seating with strangers.
  *
  * A signed-in socket (guests too) sends `{t:'queue'}`. The server checks the account (not banned,
- * a birth year on file that makes it 17 or older: `age_missing` without one, `age_under` when it
+ * a birth year on file that makes it 18 or older: `age_missing` without one, `age_under` when it
  * is too young; the year is write-once, see `PATCH /api/me`) and loads who it must never sit with (players it
  * blocked and players who blocked it), then answers `{t:'queue_status', position, waitedMs,
  * humans, fillMs}` at once and every `statusEveryMs` (2 s) while it waits. Players are grouped in
@@ -41,7 +41,7 @@ export function fillMsFromEnv(env: Record<string, string | undefined>): number {
 /** How often a waiting player hears how the search is going. */
 export const QUEUE_STATUS_MS = 2_000;
 /** The age a quick-match account must be, as the app's age gate counts it (src/legal/age.ts). */
-export const QUICK_MATCH_MIN_AGE = 17;
+export const QUICK_MATCH_MIN_AGE = 18;
 export const TABLE_SIZE = 4;
 
 export type QueueRefusal = 'banned' | 'age_missing' | 'age_under' | 'rate_limited' | 'sign_in' | 'unavailable' | 'replaced' | 'seated';
@@ -51,7 +51,7 @@ export type AccountRefusal = 'banned' | 'age_missing' | 'age_under';
 export const QUEUE_MESSAGES: Record<QueueRefusal, string> = {
   banned: 'This account has been banned',
   age_missing: 'Quick match needs your birth year',
-  age_under: 'Quick match is for players aged 17 or older',
+  age_under: `Quick match is for players aged ${QUICK_MATCH_MIN_AGE} or older`,
   rate_limited: 'Too many quick-match requests; please wait a few seconds',
   sign_in: 'Sign in to use quick match',
   unavailable: 'Quick match is not available right now; please try again',
@@ -115,7 +115,7 @@ export function minimumAge(birthYear: number, currentYear: number): number {
 /**
  * The repositories' answer to `MatchmakerOptions.check`: banned first, then the birth year
  * (`age_missing` when the server has none, so the app may send the one it holds; `age_under` when
- * the year on file makes the account younger than 17, which nothing the app sends can change).
+ * the year on file makes the account younger than 18, which nothing the app sends can change).
  */
 export async function quickMatchCheck(
   repos: {

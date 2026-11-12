@@ -21,7 +21,7 @@ With no environment at all the server runs: accounts, clubs and tables are kept 
 | `src/rooms.ts` | Rooms, hosted tables, the club table gate, keep-alive |
 | `src/clubs.ts` | Clubs, members, standings and seasons, table listings; writes each changed club through `repos.clubs`; emits `table_opened` / `member_approved` for push |
 | `src/catalog.ts` | The server's product table (diamond packs, Coach Gold and The Four Winds Club, cosmetics and sets); ids match `apps/mobile/src/monetisation/catalog.ts` |
-| `src/matchmaking.ts` | The quick-match queue: arrival-order groups of four, Club bots after `QUICK_MATCH_FILL_MS`, blocked pairs apart, banned and under-17 accounts refused, one quick-match table per account, each table charged to its players' create allowance |
+| `src/matchmaking.ts` | The quick-match queue: arrival-order groups of four, Club bots after `QUICK_MATCH_FILL_MS`, blocked pairs apart, banned and under-18 accounts refused, one quick-match table per account, each table charged to its players' create allowance |
 | `src/moderation.ts` | The name check (look-alike letters, accents, digits and symbols for letters, Traditional and Simplified), `/api/blocks`, and the moderators' routes behind `ADMIN_TOKEN` (report queue, ban with the account's devices, mute, birth-year correction) with the in-memory mute list the tables ask |
 | `src/admin.ts` | `POST /api/wallet/sync` (store reconciliation after Restore) and `POST /api/admin/grant` (support grants behind `ADMIN_TOKEN`) |
 | `src/reconcile.ts` | RevenueCat REST client and the nightly reconciliation of missed store events |
@@ -193,7 +193,7 @@ Client → server
 | `{t:"to", to, data}` | Relay `data` to a peer in the same room. A game `join` sent to the hosted table always carries the verified `userId`, whatever the client put there; at a hosted table that account gets its own seat back even without the rejoin token |
 | `{t:"leave"}` | Leave the room |
 | `{t:"ping"}` | Heartbeat; answered with `{t:"pong"}`. The app sends one every 15 s and reconnects after 10 s without an answer |
-| `{t:"queue", preset?:"normal"}` | Quick match: wait to be seated with strangers (see docs/API.md, "Quick match"). Needs an account that is not banned, a birth year making it 17 or older, and no seat at an unfinished quick-match table (one it left on purpose does not count); spends the `join` allowance, and the table it is seated at spends its `create` allowance |
+| `{t:"queue", preset?:"normal"}` | Quick match: wait to be seated with strangers (see docs/API.md, "Quick match"). Needs an account that is not banned, a birth year making it 18 or older, and no seat at an unfinished quick-match table (one it left on purpose does not count); spends the `join` allowance, and the table it is seated at spends its `create` allowance |
 | `{t:"leave_queue"}` | Leave the quick-match queue (answered `{t:"queue_left"}`) |
 
 Server → client
@@ -205,7 +205,7 @@ Server → client
 | `{t:"error", code?, message}` | Sent once in reply to a refused `create` or `join`. `code:"room_unavailable"` (`Room not found or full`) is definitive, so a client stops reconnecting to that room |
 | `{t:"queue_status", position, waitedMs, humans, fillMs}` | While queued: at once and every 2 s |
 | `{t:"matched", room, humans, bots}` | A quick-match table is ready: join it by code. Only the matched accounts may; it starts by itself once all of them sit, or after 15 s with bots in the empty seats, and closes 2 minutes after its last player disconnected (at once when every player left it on purpose) |
-| `{t:"queue_error", code, message, room?}` | Queue refusal: `banned`, `age_missing` (no birth year on the server), `age_under` (under 17), `seated` (still holding a seat at an unfinished quick-match table, or expected at one just opened: `room` is its code), `rate_limited`, `sign_in`, `unavailable`, or `replaced` (the account queued from another socket) |
+| `{t:"queue_error", code, message, room?}` | Queue refusal: `banned`, `age_missing` (no birth year on the server), `age_under` (under 18), `seated` (still holding a seat at an unfinished quick-match table, or expected at one just opened: `room` is its code), `rate_limited`, `sign_in`, `unavailable`, or `replaced` (the account queued from another socket) |
 | `{t:"error", code:"closed", message}` | The host of a relay-only room left, so the room has closed. Sent unprompted to every peer still in it; they are no longer in a room |
 
 The host role never moves: a relay-only room closes when its host leaves, because a guest promoted to host would hold none of the table's state.

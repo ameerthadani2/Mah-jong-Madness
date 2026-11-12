@@ -1,7 +1,7 @@
 /**
  * The birth year across an account merge, on the memory repositories and (with DATABASE_URL_TEST)
  * on Postgres. The server's birth year is write-once and decides who may use quick match; a guest
- * that declared an under-17 year used to shed it by linking to an account that had none, because
+ * that declared an under-18 year used to shed it by linking to an account that had none, because
  * the merge dropped the guest's year. The guest's year now goes to the surviving account when
  * that account has none, and the account's own year always stays.
  */
@@ -34,7 +34,7 @@ function suite(name: string, open: () => Repos) {
       return { repos, v, u, merge };
     }
 
-    it("carries the guest's birth year to an account that has none, so an under-17 declaration survives linking", async () => {
+    it("carries the guest's birth year to an account that has none, so an under-18 declaration survives linking", async () => {
       const { repos, v, u, merge } = await pair({ account: null, guest: 2012 });
       expect(await quickMatchCheck(repos, u.userId, NOW)).toBe('age_under');
       expect(await quickMatchCheck(repos, v.userId, NOW)).toBe('age_missing');

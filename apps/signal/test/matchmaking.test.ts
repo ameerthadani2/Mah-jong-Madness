@@ -168,26 +168,26 @@ describe('the quick-match queue', () => {
 });
 
 describe('who may queue (the repositories)', () => {
-  it('banned first, then a birth year that makes the player at least 17; guests are fine', async () => {
+  it('banned first, then a birth year that makes the player at least 18; guests are fine', async () => {
     const repos = createMemoryRepos();
     const now = Date.UTC(2026, 10, 9);
     const mk = async (birthYear: number | null, kind: 'guest' | 'account' = 'guest') => (await repos.users.create({ id: randomUUID(), kind, birthYear, createdAt: 0 })).id;
     const adult = await mk(1990);
+    const eighteen = await mk(2007);
     const seventeen = await mk(2008);
-    const sixteen = await mk(2009);
     const unknown = await mk(null);
     const banned = await mk(1990, 'account');
     await repos.moderation.ban(banned, now, 'cheating');
     expect(await quickMatchCheck(repos, adult, now)).toBeNull();
-    expect(await quickMatchCheck(repos, seventeen, now)).toBeNull();
+    expect(await quickMatchCheck(repos, eighteen, now)).toBeNull();
     // Too young is one answer, no year on file another: only the second is something the app can fix.
-    expect(await quickMatchCheck(repos, sixteen, now)).toBe('age_under');
+    expect(await quickMatchCheck(repos, seventeen, now)).toBe('age_under');
     expect(await quickMatchCheck(repos, unknown, now)).toBe('age_missing');
     expect(await quickMatchCheck(repos, banned, now)).toBe('banned');
     await expect(quickMatchCheck(repos, randomUUID(), now)).rejects.toThrow();
-    await repos.blocks.add(adult, sixteen, 1);
+    await repos.blocks.add(adult, seventeen, 1);
     await repos.blocks.add(unknown, adult, 2);
-    expect((await blockedEitherWay(repos, adult)).sort()).toEqual([sixteen, unknown].sort());
+    expect((await blockedEitherWay(repos, adult)).sort()).toEqual([seventeen, unknown].sort());
   });
 });
 
