@@ -27,9 +27,11 @@ Step by step in [`DEPLOY.md`](DEPLOY.md) ("First deploy, in order").
 - [ ] Fly app created and its name put in `fly.toml`; **GitHub secret** `FLY_API_TOKEN` (`fly tokens create deploy -a <app>`). Unblocks: the deploy workflow.
 - [ ] Neon project in Singapore; **fly secrets** `DATABASE_URL` (pooled, `-pooler` host) and `DATABASE_URL_DIRECT` (direct). Unblocks: durable accounts, clubs, wallets and tables; migrations; the single-host lock.
 - [ ] **fly secret** `AUTH_PEPPER` (`openssl rand -hex 32`; keep a copy in your password manager: without the value every guest account is locked out for good). Unblocks: sessions and guest accounts that survive restarts. Without it and the database the production server refuses to start.
-- [ ] **fly secret** `ADMIN_TOKEN` (`openssl rand -hex 32`). Unblocks: support grants (`POST /api/admin/grant`) and the moderation endpoints (reports, bans, mutes).
+- [ ] **fly secret** `ADMIN_TOKEN` (`openssl rand -hex 32`; keep a copy: it is the `Bearer` value of every admin call, and Fly never shows a secret again). Unblocks: support grants (`POST /api/admin/grant`) and the moderation endpoints (reports, bans, mutes). [`DEPLOY.md`](DEPLOY.md) step 3 generates this one and the pepper, shows them to you once and then sets them.
+- [ ] Not yet: `REVENUECAT_WEBHOOK_SECRET`. It switches the store on, and with the store on creating a club needs The Four Winds Club; it belongs to step 7, when the products can be bought.
 - [ ] Deploy: Actions → **Deploy signal server** → Run workflow on the working branch. It runs the tests, deploys, checks `/health` and plays one hand with the smoke test. Then `fly scale count 1 -a <app>`.
 - [ ] **GitHub variable** `SIGNAL_URL` = `wss://<app>.fly.dev` (also as **EAS env** if you build from a laptop). Unblocks: both mobile build workflows, which refuse to build without a public `wss://` address, and the deploy workflow checks this address from then on.
+- [ ] **fly secret** `CORS_ORIGINS` = `https://<your GitHub user or organisation>.github.io` (scheme and host only, no path; several origins separated by commas). Unblocks: online play in the web preview. Without it the browser blocks every call the website makes to the server, so it cannot sign in, open a table or join a club; the Web preview run's summary tells you whether the server accepts the site. The native apps do not need it.
 
 ### 3. Expo
 
@@ -75,9 +77,9 @@ Create exactly these ids (the server's catalogue, `apps/signal/src/catalog.ts`, 
 
 - [ ] Project with the App Store app and the Play app; import the products above; one offering with all of them; entitlements `gold` (attach `coach.gold.month`, `coach.gold.year`) and `fourwinds` (attach `fourwinds.month`, `fourwinds.year`).
 - [ ] **GitHub variables** `EXPO_PUBLIC_REVENUECAT_IOS_KEY`, `EXPO_PUBLIC_REVENUECAT_ANDROID_KEY` (RevenueCat → API keys → the public app keys). Unblocks: purchases in the app (the Shop shows "Store unavailable" without them).
-- [ ] **fly secret** `REVENUECAT_WEBHOOK_SECRET` (`openssl rand -hex 32`); RevenueCat → Integrations → Webhooks: URL `https://<app>.fly.dev/api/webhooks/revenuecat`, Authorization `Bearer <the same value>`; send the test event (the server answers `{"outcome":"test"}`). Unblocks: the server granting purchases, and `storeEnabled` in `/api/config`.
+- [ ] **fly secret** `REVENUECAT_WEBHOOK_SECRET`, last in this step, when the products above can be bought in a build: generate it and look at it first (`S="$(openssl rand -hex 32)"; echo "$S"`), because RevenueCat needs the same value and Fly never shows it again. RevenueCat → Integrations → Webhooks: URL `https://<app>.fly.dev/api/webhooks/revenuecat`, Authorization `Bearer <the same value>`; send the test event (the server answers `{"outcome":"test"}`). Unblocks: the server granting purchases, and `storeEnabled` in `/api/config`. Setting it is what makes the store live (next line).
 - [ ] **fly secret** `REVENUECAT_SECRET_KEY` (RevenueCat → API keys → a secret v1 key; never in the app). Unblocks: reconciliation after Restore and nightly, for purchases whose webhook was lost.
-- [ ] Once the store is live, club ownership needs The Four Winds Club (before that, anyone may create clubs).
+- [ ] Once the store is live (the webhook secret is set), club ownership needs The Four Winds Club: creating a club without the plan answers `fourwinds_required`. Before that, anyone may create clubs. If you set the secret too early, `fly secrets unset -a <app> REVENUECAT_WEBHOOK_SECRET` opens club creation again.
 
 ### 8. Testers and the sandbox
 
@@ -117,7 +119,6 @@ Create exactly these ids (the server's catalogue, `apps/signal/src/catalog.ts`, 
 | --- | --- | --- |
 | `MIN_BUILD` | fly secret | Turns away builds older than this build number ("Update required"). Default 0. |
 | `MAINTENANCE_MESSAGE` | fly secret | Shows a message instead of online play while you work on the server; unset to reopen. |
-| `CORS_ORIGINS` | fly secret | Web origins allowed to call the API (the web preview); native apps need nothing. |
 | `AUTH_PEPPER_PREVIOUS` | fly secret | From the day you rotate `AUTH_PEPPER`: the old value (several, newest first, separated by commas). Keep it for at least 30 days and in practice for good: guest accounts that have not signed in again since the rotation are locked out the moment it is removed ([`DEPLOY.md`](DEPLOY.md), "Rotating the pepper"). |
 | `FACEBOOK_APP_ID` | fly secret | Optional Facebook Limited Login. |
 | `TRUST_PROXY` | `fly.toml` (already `1`) | Proxies in front of the server, for per-IP limits. |

@@ -50,21 +50,34 @@ these steps in its summary).
 
 ### 3. Set the server's secrets
 
+Generate the two secrets the server needs from you, **look at them, and save both in your
+password manager before going on**. Fly stores secrets write-only: once set, a value can never
+be read back, and you will need both again (the pepper to restore or move the server, the admin
+token for every support and moderation call).
+
 ```bash
+PEPPER="$(openssl rand -hex 32)"; ADMIN="$(openssl rand -hex 32)"
+echo "AUTH_PEPPER=$PEPPER"      # save it now: without it every guest account is locked out for good
+echo "ADMIN_TOKEN=$ADMIN"       # save it now: the Bearer value for /api/admin/*
+
 fly secrets set -a <name> \
   DATABASE_URL='postgres://…-pooler….neon.tech/neondb?sslmode=require' \
   DATABASE_URL_DIRECT='postgres://….neon.tech/neondb?sslmode=require' \
-  AUTH_PEPPER="$(openssl rand -hex 32)" \
-  ADMIN_TOKEN="$(openssl rand -hex 32)" \
-  REVENUECAT_WEBHOOK_SECRET="$(openssl rand -hex 32)" \
-  REVENUECAT_SECRET_KEY='sk_…' \
-  TESTER_USER_IDS='<player id>,<player id>'
+  AUTH_PEPPER="$PEPPER" \
+  ADMIN_TOKEN="$ADMIN"
 ```
 
-Only the first three are needed to start: the server **fails closed** and, with
-`NODE_ENV=production` (set in `fly.toml`), refuses to boot without `DATABASE_URL` and
-`AUTH_PEPPER`. The others switch features on as they arrive, so leave out any you do not have yet
-and set them later the same way (each `fly secrets set` restarts the machine):
+That is everything for the first deploy. The server **fails closed**: with `NODE_ENV=production`
+(set in `fly.toml`) it refuses to boot without `DATABASE_URL` and `AUTH_PEPPER`. The other
+secrets switch features on as they arrive; set each later the same way (each `fly secrets set`
+restarts the machine, and tables survive it), and show and save any value you generate before
+you set it.
+
+**Do not set `REVENUECAT_WEBHOOK_SECRET` yet.** Setting it makes the store live: from that
+moment creating a club needs The Four Winds Club, and until the products exist in the stores and
+in RevenueCat and a build carries the purchase keys, nobody can buy that plan, so nobody could
+create a club. Set it, with `REVENUECAT_SECRET_KEY` and `TESTER_USER_IDS`, when
+[`OWNER_TODO.md`](OWNER_TODO.md) steps 6 to 8 are done.
 
 | Secret | What it unblocks | Absent |
 | --- | --- | --- |
@@ -72,9 +85,10 @@ and set them later the same way (each `fly secrets set` restarts the machine):
 | `DATABASE_URL_DIRECT` | Migrations and the single-host lock over a direct connection | both use `DATABASE_URL`, with a warning; through the pooler the lock is not reliable |
 | `AUTH_PEPPER` | Sessions and guest secrets that survive restarts. Keep a copy in your password manager: losing it signs every player out and locks every guest account out for good, because the secret on the phone is a guest's only credential (see "Rotating the pepper") | boot refused in production |
 | `ADMIN_TOKEN` | Support grants (`POST /api/admin/grant`) and the moderation endpoints | those routes answer 503 |
-| `REVENUECAT_WEBHOOK_SECRET` | Real purchases: the store webhook, and `storeEnabled` in `/api/config`. Put the same value in RevenueCat → Integrations → Webhooks as `Bearer <value>`, URL `https://<name>.fly.dev/api/webhooks/revenuecat` | the app shows "Store unavailable" |
+| `REVENUECAT_WEBHOOK_SECRET` | Real purchases: the store webhook, and `storeEnabled` in `/api/config`. Generate it, show it and save it (`S="$(openssl rand -hex 32)"; echo "$S"`), set it, and put the same value in RevenueCat → Integrations → Webhooks as `Bearer <value>`, URL `https://<name>.fly.dev/api/webhooks/revenuecat`. **Setting it makes the store live: from then on creating a club needs The Four Winds Club**, so set it only when the products can be bought (OWNER_TODO steps 6 and 7) | the app shows "Store unavailable", and anyone may create a club |
 | `REVENUECAT_SECRET_KEY` | Reconciliation after Restore and nightly (RevenueCat → API keys → a secret v1 key) | a purchase whose webhook was lost stays missing until support grants it |
 | `TESTER_USER_IDS` | Sandbox purchases (TestFlight, Play testing) are granted to these accounts only. Ids come from Settings → Account → "Player id" on each tester's phone, so this one is usually set after the first builds | every sandbox purchase is recorded and ignored |
+| `CORS_ORIGINS` | The web preview (and any other web page) may call the API: the origins allowed, comma-separated, e.g. `https://<owner>.github.io` (scheme and host only, no path). The native apps need nothing | a browser blocks every API call from the web build ("Failed to fetch"), so it cannot sign in, open a table or join a club; the server's boot line says `CORS same origin only` |
 
 Sign-in providers, push, Sentry and PostHog have their own secrets (`APPLE_CLIENT_ID`,
 `GOOGLE_CLIENT_IDS`, `EXPO_ACCESS_TOKEN`, `SENTRY_DSN`, `POSTHOG_KEY`, …): see
