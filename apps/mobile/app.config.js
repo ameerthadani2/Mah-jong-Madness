@@ -23,6 +23,8 @@
 // - EXPO_PUBLIC_REVENUECAT_IOS_KEY, EXPO_PUBLIC_REVENUECAT_ANDROID_KEY: store SDK keys (absent → 'Store unavailable').
 // - EXPO_PUBLIC_STORE_MODE=mock: development builds only; release builds ignore it.
 // - EXPO_PUBLIC_TERMS_URL, EXPO_PUBLIC_PRIVACY_URL: hosted legal texts (absent → the bundled DRAFT texts).
+// - EXPO_PUBLIC_SUPPORT_EMAIL, EXPO_PUBLIC_SUPPORT_URL: the support address (or an https help page); read by
+//   src/legal/support.ts at bundle time (absent → no Contact support link, and the drafts keep their placeholder).
 // - APP_STORE_ID: the numeric App Store id, for the 'Update required' link (the Play link comes from the bundle id).
 // - GOOGLE_SERVICES_JSON: path to google-services.json (an EAS file variable), needed for Android push (FCM).
 // - APP_VERSION: the version players see (iOS short version, Android versionName), e.g. 1.0.0; default app.json's.

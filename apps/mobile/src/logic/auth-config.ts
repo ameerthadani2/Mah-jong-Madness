@@ -39,11 +39,19 @@ export function googleClientIdFor(ids: GoogleClientIds, platform: Platform): str
 
 export type SignInProvider = 'apple' | 'google';
 
-/** Sign-in buttons to show, in display order. */
+/**
+ * Sign-in buttons to show, in display order.
+ *
+ * On a device that can sign in with Apple (an iPhone or iPad), Google is offered only beside Apple:
+ * the App Store requires Sign in with Apple wherever another sign-in service is offered. The build
+ * check in `app.config.js` covers a build made without it; this covers a server that stops offering
+ * Apple after the build shipped.
+ */
 export function visibleProviders(o: { serverProviders: readonly string[] | null; appleAvailable: boolean; googleClientId: string | undefined }): SignInProvider[] {
   const server = new Set(o.serverProviders ?? []);
   const out: SignInProvider[] = [];
-  if (o.appleAvailable && server.has('apple')) out.push('apple');
-  if (o.googleClientId && server.has('google')) out.push('google');
+  const apple = o.appleAvailable && server.has('apple');
+  if (apple) out.push('apple');
+  if (o.googleClientId && server.has('google') && (apple || !o.appleAvailable)) out.push('google');
   return out;
 }

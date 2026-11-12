@@ -105,7 +105,7 @@ const TERMS_ZH: LegalDocument = {
       paragraphs: [
         '鑽石與積分沒有金錢價值，不能兌換或轉讓。不論在 App 內外，都不能換成金錢、商品或任何有價物，不能出售，也不能轉給其他玩家。',
         '鑽石與桌布是在 App 內使用數位內容的有限、個人、可撤銷的授權。購買的鑽石不會過期。鑽石只能用來購買商店中列出的商品，價格以商店顯示為準。',
-        '訂閱方案（教練 金、四風俱樂部）分為月繳和年繳。月繳方案每月自動續訂並扣款一次，年繳方案每年一次，直到你在 App Store 或 Google Play 帳號設定中取消為止。付款、續訂與退款由你購買時使用的商店依其條款處理。',
+        '訂閱方案（黃金教練、四風俱樂部）分為月繳和年繳。月繳方案每月自動續訂並扣款一次，年繳方案每年一次，直到你在 App Store 或 Google Play 帳號設定中取消為止。付款、續訂與退款由你購買時使用的商店依其條款處理。',
         '任何可購買的東西都不會改變你拿到的牌、你在牌桌上能看到的資訊或計時。',
       ],
     },
@@ -169,7 +169,7 @@ const PRIVACY_EN: LegalDocument = {
     },
     {
       heading: '6. How long we keep it',
-      paragraphs: ['Account data is kept while your account exists. When you delete your account in Settings we remove your name, avatar, email, sign-in methods, devices, push notification tokens, block list and sessions at once, and replace your name with "Deleted player" in your club entries, in match results and in archived club seasons. What remains of the account is erased within 30 days.', 'Three kinds of record are kept after that, none of them carrying your name: match results and archived club standings, which stay as long as the club or table history they belong to; reports you made and reports made about you, kept as moderation records for as long as the service runs; and purchase and wallet records, kept for as long as tax and accounting law requires.'],
+      paragraphs: ['Account data is kept while your account exists. When you delete your account in Settings we remove your name, avatar, email, sign-in methods, devices, push notification tokens, block list and sessions at once, and replace your name with "Deleted player" in your club entries, in match results and in archived club seasons. What remains of the account is erased within 30 days.', 'Three kinds of record are kept after that, none of them carrying your name: match results and archived club standings, which stay as long as the club or table history they belong to; reports you made and reports made about you, kept as moderation records for as long as the service runs; and purchase and wallet records, kept for as long as tax and accounting law requires.', 'Server logs hold no names, email addresses, IP addresses or message text. They hold table and club codes, store event and transaction ids and account ids, and our hosting provider keeps them for a short time only.'],
     },
     {
       heading: '7. Your choices and rights',
@@ -219,7 +219,7 @@ const PRIVACY_ZH: LegalDocument = {
     },
     {
       heading: '6. 保存期間',
-      paragraphs: ['帳號存在期間會保存帳號資料。你在「設定」中刪除帳號時，我們會立即移除你的名稱、頭像、電子郵件、登入方式、裝置、推播通知權杖、封鎖名單與工作階段，並把你在俱樂部紀錄、比賽結果和已封存俱樂部賽季中的名稱改為「已刪除的玩家」。帳號剩下的資料會在 30 天內清除。', '在那之後仍會保留三類紀錄，而且都不含你的名稱：比賽結果與已封存的俱樂部排行，隨所屬俱樂部或牌桌的歷史紀錄一起保存；你提出的檢舉和別人對你提出的檢舉，在服務營運期間作為管理紀錄保存；購買與錢包紀錄，依稅務與會計法規要求的期間保存。'],
+      paragraphs: ['帳號存在期間會保存帳號資料。你在「設定」中刪除帳號時，我們會立即移除你的名稱、頭像、電子郵件、登入方式、裝置、推播通知權杖、封鎖名單與工作階段，並把你在俱樂部紀錄、比賽結果和已封存俱樂部賽季中的名稱改為「已刪除的玩家」。帳號剩下的資料會在 30 天內清除。', '在那之後仍會保留三類紀錄，而且都不含你的名稱：比賽結果與已封存的俱樂部排行，隨所屬俱樂部或牌桌的歷史紀錄一起保存；你提出的檢舉和別人對你提出的檢舉，在服務營運期間作為管理紀錄保存；購買與錢包紀錄，依稅務與會計法規要求的期間保存。', '伺服器記錄檔不含名稱、電子郵件、IP 位址或訊息內容，只有牌桌與俱樂部代碼、商店事件與交易編號，以及帳號編號，並且只由主機服務商短期保存。'],
     },
     {
       heading: '7. 你的選擇與權利',

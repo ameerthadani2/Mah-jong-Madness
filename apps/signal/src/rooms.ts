@@ -370,8 +370,8 @@ export class RoomRegistry {
   /**
    * The unfinished quick-match table this account is still at, if any: one it holds a seat at
    * (connected or not), or one that has not started and is waiting for it to sit down. A seat the
-   * player left on purpose (the table's `leave`, which the app sends when the player walks away;
-   * a bot plays it from then on) does not count: that player may queue for another table, which
+   * player left on purpose (the table's `leave`, which the app sends when the player abandons the
+   * match; a bot plays it from then on) does not count: that player may queue for another table, which
    * is charged like any other (`chargeQuickMatch`). A dropped connection is not a leave.
    */
   quickTableOf(userId: string): string | undefined {

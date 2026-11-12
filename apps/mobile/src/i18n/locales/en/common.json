@@ -23,8 +23,8 @@
   "typeValue": "Tap to type a number",
   "bots": {
     "beginner": "Makes efficiency mistakes and never folds. Good for learning the flow.",
-    "club": "Solid tile efficiency, claims when it helps, basic defence.",
-    "pro": "Fast and efficient, folds against ready players and keeps scoring tiles."
+    "club": "Solid tile efficiency, claims when it helps, and leans away from a player who looks ready.",
+    "pro": "Estimates how dangerous each discard is and may fold against a player who looks ready. It plays by the policy the coach's advice comes from."
   },
   "boot": {
     "title": "This device cannot run fair games",

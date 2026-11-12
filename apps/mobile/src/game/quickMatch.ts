@@ -48,7 +48,7 @@ export function quickMatchAnnouncement(phase: 'searching' | 'matched' | 'returni
 /**
  * What a failed quick match leads to.
  *  - `age`: the server has no birth year for this account (`age_missing`): send the device's, queue again.
- *  - `message`: a localised sentence. `final` means trying again cannot help (banned, under 17), so no
+ *  - `message`: a localised sentence. `final` means trying again cannot help (banned, under the minimum age), so no
  *    retry is offered; `retryAfterMs` asks the player to wait that long before the retry is offered.
  */
 export type QuickMatchFailure =

@@ -175,8 +175,8 @@ export function bundlePrice(b: Pick<Product, 'diamondPrice' | 'contains'>, owns:
 }
 
 export const SUBSCRIPTIONS: Product[] = [
-  { id: 'coach.gold.month', storeId: 'coach.gold.month', kind: 'subscription', tier: 'gold', title: 'Coach Gold', titleZh: '教練 金', description: 'Pro bots and unlimited Puzzle Rush.', priceUsd: 6.99, period: 'month' },
-  { id: 'coach.gold.year', storeId: 'coach.gold.year', kind: 'subscription', tier: 'gold', title: 'Coach Gold (yearly)', titleZh: '教練 金 年繳', description: 'Coach Gold, billed once a year. Renews every year until cancelled.', priceUsd: 49.99, period: 'year', badge: 'Yearly' },
+  { id: 'coach.gold.month', storeId: 'coach.gold.month', kind: 'subscription', tier: 'gold', title: 'Coach Gold', titleZh: '黃金教練', description: 'Pro bots and unlimited Puzzle Rush.', priceUsd: 6.99, period: 'month' },
+  { id: 'coach.gold.year', storeId: 'coach.gold.year', kind: 'subscription', tier: 'gold', title: 'Coach Gold (yearly)', titleZh: '黃金教練 年繳', description: 'Coach Gold, billed once a year. Renews every year until cancelled.', priceUsd: 49.99, period: 'year', badge: 'Yearly' },
   {
     id: 'fourwinds.month',
     storeId: 'fourwinds.month',

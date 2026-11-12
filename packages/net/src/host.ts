@@ -493,12 +493,27 @@ export class TableHost {
       this.banks[seat] = 0;
       this.clocks.delete(seat);
       if (!this.game || legalActions(this.game, seat).length === 0) continue;
-      // A timed-out human is auto-played at Club strength at least, so a Beginner table never punishes a lost connection with 1%-win play.
-      const a = chooseAction(this.game, seat, { seed: `timeout:${seat}`, skill: this.botSkill === 'beginner' ? 'club' : this.botSkill }) ?? { type: 'pass' };
-      this.apply(seat, a, 'timeout');
+      this.apply(seat, this.timeoutAction(this.game, seat), 'timeout');
       return; // apply() re-arms clocks and may change phase
     }
     if (changed) this.broadcastState();
+  }
+
+  /**
+   * What the table plays for a seat whose time has run out.
+   *
+   * Its own turn is played as a bot would play it, at Club strength at least, so a Beginner table
+   * never punishes a lost connection with 1%-win play. An offer on another seat's discard is
+   * different: the table takes it only when it is a win, and passes otherwise. A Chow, Pong or Kong
+   * of a discard opens the player's hand for good, and that is theirs to decide, not the table's.
+   */
+  private timeoutAction(game: GameState, seat: number): Action {
+    if (game.phase === 'claim') {
+      const offered = legalActions(game, seat);
+      if (offered.some((a) => a.type === 'hu')) return { type: 'hu' };
+      if (offered.some((a) => a.type === 'pass')) return { type: 'pass' };
+    }
+    return chooseAction(game, seat, { seed: `timeout:${seat}`, skill: this.botSkill === 'beginner' ? 'club' : this.botSkill }) ?? { type: 'pass' };
   }
 
   /** Deadline (ms) shown to a seat: base clock, or base + remaining bank once in the bank. */

@@ -209,7 +209,8 @@ export function TableScreen() {
     const id = setTimeout(() => setAutoNotice((n) => (n && n.key === autoNotice.key ? null : n)), AUTO_DISCARD_NOTICE_MS);
     return () => clearTimeout(id);
   }, [autoNotice]);
-  // The same for a claim prompt that ran out: the table may call for the player, which opens their hand.
+  // The same for a meld the table made for the player: a Kong on a turn of their own that ran out. (An offer on
+  // another seat's discard that runs out is passed, or taken when it is a win: the table opens no hand.)
   const sentClaim = useRef(false);
   const meldCount = useRef<{ hand: number; count: number } | null>(null);
   const myMelds = view ? view.players[mySeat]?.melds : undefined;

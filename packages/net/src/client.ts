@@ -435,6 +435,7 @@ export interface SerializedClient {
   matchEnded: boolean;
   atStart: boolean;
   gapHand: number | null;
+  chainGap?: boolean;
   rewinds: Array<{ hand: number; tc: number; undone: boolean }>;
   lapseHand: number | null;
   lapseDeal: boolean;
@@ -534,6 +535,12 @@ export class TableClient {
   private atStart = false;
   /** A hand reached after hands this client missed with no record of them: its starting scores cannot be checked. */
   private gapHand: number | null = null;
+  /**
+   * Some hand of this match began from scores this client could not check (see `noteGap`). The hands
+   * after it chain from it, so the final scores rest on it: the end of the match may be real, but
+   * its scores are not shown as verified.
+   */
+  private chainGap = false;
   /** The entry `failNow` last put on the list of audits (so the next failure about the same hand adds to it). */
   private liveFailure: ClientState['audits'][number] | null = null;
   /**
@@ -633,9 +640,10 @@ export class TableClient {
     this.openHand = isInt(d.openHand) ? d.openHand : null;
     this.handEpoch = isInt(d.handEpoch) ? d.handEpoch : -1;
     this.matchEnded = d.matchEnded === true;
-    this.state = { ...this.state, matchEndVerified: this.matchEnded && this.state.matchOver };
     this.atStart = d.atStart === true;
     this.gapHand = isInt(d.gapHand) ? d.gapHand : null;
+    this.chainGap = d.chainGap === true || this.gapHand !== null;
+    this.state = { ...this.state, matchEndVerified: this.matchEnded && !this.chainGap && this.state.matchOver };
     this.rewinds = Array.isArray(d.rewinds) ? d.rewinds.filter((x) => isObject(x) && isInt(x.hand) && isInt(x.tc)) : [];
     this.lapseHand = isInt(d.lapseHand) ? d.lapseHand : null;
     this.lapseDeal = d.lapseDeal === true;
@@ -681,6 +689,7 @@ export class TableClient {
       matchEnded: this.matchEnded,
       atStart: this.atStart,
       gapHand: this.gapHand,
+      chainGap: this.chainGap,
       rewinds: this.rewinds,
       lapseHand: this.lapseHand,
       lapseDeal: this.lapseDeal,
@@ -917,6 +926,7 @@ export class TableClient {
   /** Hands were played while this client's link was down and it holds no record of them: nothing chains into `h`. */
   private noteGap(h: number): void {
     this.gapHand = h;
+    this.chainGap = true;
     this.expected = null;
     this.chainChecked = null;
     this.atStart = false;
@@ -969,6 +979,7 @@ export class TableClient {
     this.matchEnded = false;
     this.atStart = false;
     this.gapHand = null;
+    this.chainGap = false;
     this.rewinds = [];
     this.lapse = false;
     this.lapseHand = null;
@@ -1308,7 +1319,8 @@ export class TableClient {
             return;
           }
           if (verdict === 'verified') this.matchEnded = true;
-          const matchEndVerified = this.matchEnded;
+          // The end itself is checked (and frees the record for a new match), but scores that rest on a hand whose start could not be checked are not shown as verified.
+          const matchEndVerified = this.matchEnded && !this.chainGap;
           // No hand is left to carry what was flagged since the last audit: put it on show now.
           for (const p of this.tamper.get(this.activeHand()) ?? []) this.failNow(p);
           // The last hand's verified view stays on show; the host's is used only when this device holds none.

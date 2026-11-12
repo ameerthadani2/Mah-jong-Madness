@@ -8,7 +8,7 @@ export interface SeatInfo {
   isBot: boolean;
   connected: boolean;
   avatar?: string;
-  /** Stable player id across devices/sessions (client-generated for now). */
+  /** Stable player id across devices and sessions. At a server-hosted table it is the verified account id: the server overwrites whatever the client sent. */
   userId?: string;
   /** Remaining time bank in seconds for the current hand. */
   timeBank?: number;

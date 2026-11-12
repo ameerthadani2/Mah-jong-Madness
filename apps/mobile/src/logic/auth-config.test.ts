@@ -41,7 +41,14 @@ describe('visibleProviders', () => {
     expect(visibleProviders({ serverProviders: ['apple', 'google'], appleAvailable: true, googleClientId: 'id' })).toEqual(['apple', 'google']);
     expect(visibleProviders({ serverProviders: ['apple', 'google'], appleAvailable: false, googleClientId: 'id' })).toEqual(['google']);
     expect(visibleProviders({ serverProviders: ['apple', 'google'], appleAvailable: true, googleClientId: undefined })).toEqual(['apple']);
-    expect(visibleProviders({ serverProviders: ['google', 'facebook'], appleAvailable: true, googleClientId: 'id' })).toEqual(['google']);
+    expect(visibleProviders({ serverProviders: ['google', 'facebook'], appleAvailable: false, googleClientId: 'id' })).toEqual(['google']);
+  });
+
+  it('never offers Google without Apple on a device that can sign in with Apple', () => {
+    expect(visibleProviders({ serverProviders: ['google'], appleAvailable: true, googleClientId: 'id' })).toEqual([]);
+    expect(visibleProviders({ serverProviders: ['google', 'facebook'], appleAvailable: true, googleClientId: 'id' })).toEqual([]);
+    expect(visibleProviders({ serverProviders: ['apple', 'google'], appleAvailable: true, googleClientId: 'id' })).toEqual(['apple', 'google']);
+    expect(visibleProviders({ serverProviders: ['google'], appleAvailable: false, googleClientId: 'id' })).toEqual(['google']);
   });
 
   it('shows nothing without a server answer', () => {

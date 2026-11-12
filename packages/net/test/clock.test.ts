@@ -262,6 +262,68 @@ describe('the table plays for a connected seat only after its time has run out',
   });
 });
 
+describe('what the table plays for a seat whose time has run out', () => {
+  /** Runs the seat out of time on the first offer that matches, and reports what the table then played for it. */
+  function timedOutOffer(code: string, wanted: (offered: Action[], asABot: Action | null) => boolean) {
+    const t = table(code);
+    const origApply = t.h.apply.bind(t.host);
+    const played: Action[] = [];
+    t.h.apply = (seat, action, source) => {
+      if (seat === 0 && source === 'timeout') played.push(action);
+      origApply(seat, action, source);
+    };
+    let melds = -1;
+    let after = -1;
+    play(t, () => {
+      const s = t.c.localState()!;
+      if (melds >= 0 || s.phase !== 'claim' || !wanted(legalActions(s, 0), chooseAction(t.host.game!, 0, { seed: 'timeout:0', skill: 'club' }))) return false;
+      melds = t.host.game!.players[0].melds.length;
+      wait(t, TURN + BANK + 1_000);
+      after = t.host.game?.players[0].melds.length ?? -1;
+      return true;
+    });
+    need(melds >= 0);
+    return { t, played, melds, after };
+  }
+
+  deal('a Chow, Pong or Kong offered on a discard is passed, never taken: the table does not open a hand for its player', () => {
+    // The offer is one a bot in the seat would take, so playing the seat as a bot would open the hand.
+    const r = timedOutOffer('TO1', (offered, asABot) => !offered.some((a) => a.type === 'hu') && (asABot?.type === 'chi' || asABot?.type === 'pong' || asABot?.type === 'kong'));
+    expect(r.played[0]).toEqual({ type: 'pass' });
+    expect(r.after).toBe(r.melds);
+    expect([r.t.c.state.auditStatus, r.t.c.state.auditFailures]).toEqual(['ok', []]);
+  });
+
+  // A win on a discard comes up in few hands, so this one is given more deals to find it (the deals are seeded: the same one every run).
+  it('a win offered on a discard is taken', () =>
+    scenario(() => {
+      const r = timedOutOffer('TO2', (offered) => offered.some((a) => a.type === 'hu'));
+      expect(r.played[0]).toEqual({ type: 'hu' });
+      expect(r.t.host.phase).toBe('hand_over');
+      expect([r.t.c.state.auditStatus, r.t.c.state.auditFailures]).toEqual(['ok', []]);
+    }, 400));
+
+  deal('its own turn is still played as a bot would play it', () => {
+    const t = table('TO3');
+    const origApply = t.h.apply.bind(t.host);
+    const played: Array<{ action: Action; expected: Action | null }> = [];
+    t.h.apply = (seat, action, source) => {
+      if (seat === 0 && source === 'timeout') played.push({ action, expected: chooseAction(t.host.game!, 0, { seed: 'timeout:0', skill: 'club' }) });
+      origApply(seat, action, source);
+    };
+    let done = false;
+    play(t, () => {
+      const s = t.c.localState()!;
+      if (done || s.phase !== 'discard') return false;
+      done = true;
+      wait(t, TURN + BANK + 1_000);
+      return true;
+    });
+    need(done && played.length > 0);
+    expect(played[0].action).toEqual(played[0].expected);
+  });
+});
+
 describe('the table may not turn the seat’s own moves away', () => {
   deal('a legal move refused as "illegal", then played by the table after the clock ran out, fails', () => {
     const t = table('RF1');

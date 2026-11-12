@@ -272,7 +272,7 @@ The app side lives in `apps/mobile/src/monetisation/` (store and wallet), `apps/
 - `/api/me.identities` lists provider identities only (never `guest`); `User.avatar` and `User.locale` are `null` when unset.
 - The `email` field in `POST /api/auth/link` is ignored; only a provider-verified email is stored.
 - Auth `429` responses carry `retry-after: 12`.
-- `/health` also reports `storage` (`memory` | `pg`) and, on Postgres, `db: ok | down`.
+- `/health` also reports `storage` (`memory` | `pg`), `snapshots` and `image` (see Health) and, on Postgres, `db: ok | down`.
 - `GET /api/users/:userId/clubs` only serves the caller's own id (or `me`); others get `403`.
 
 ## Push notifications
@@ -281,7 +281,7 @@ The app side lives in `apps/mobile/src/monetisation/` (store and wallet), `apps/
 
 ## Environment (server)
 
-`DATABASE_URL` (absent → in-memory repositories: nothing survives a restart; sign-in methods do not depend on it: a server is guest-only when neither `APPLE_CLIENT_ID` nor `GOOGLE_CLIENT_IDS` is set), `DATABASE_URL_DIRECT`, `MIGRATE_ON_BOOT`, `AUTH_PEPPER` (+ `AUTH_PEPPER_PREVIOUS`), `APPLE_CLIENT_ID`, `GOOGLE_CLIENT_IDS` (comma-separated), `FACEBOOK_APP_ID`, `CORS_ORIGINS`, `TRUST_PROXY`, `MAX_HOSTED_TABLES`, `PORT`. See `apps/signal/README.md` and `docs/DEPLOY.md`.
+`DATABASE_URL` (absent → in-memory repositories: nothing survives a restart; sign-in methods do not depend on it: a server is guest-only when neither `APPLE_CLIENT_ID` nor `GOOGLE_CLIENT_IDS` is set), `DATABASE_URL_DIRECT`, `MIGRATE_ON_BOOT`, `AUTH_PEPPER` (+ `AUTH_PEPPER_PREVIOUS`: the earlier pepper, or several comma-separated, newest first; keep it set), `APPLE_CLIENT_ID`, `GOOGLE_CLIENT_IDS` (comma-separated), `FACEBOOK_APP_ID`, `CORS_ORIGINS`, `TRUST_PROXY`, `MAX_HOSTED_TABLES`, `PORT`. See `apps/signal/README.md` and `docs/DEPLOY.md`.
 
 ## Store, wallet and entitlements (Phase 4)
 
@@ -383,7 +383,7 @@ Copy is English, or Traditional Chinese when the device locale starts with `zh`.
 
 ## Health (Phase 6)
 
-`GET /health` → `{ "ok": true, "peers", "rooms", "hostedTables", "tables", "actionLatency": { "samples", "p50Ms", "p95Ms", "maxMs", "windowSeconds": 300 } | null, "pushEnabled", "storeEnabled", "storage": "memory" | "pg", "db"?: "ok" | "down" }`. `actionLatency` is the time from a player's action frame reaching a hosted table to the resulting state having been sent, over the last five minutes. See `docs/OBSERVABILITY.md`.
+`GET /health` → `{ "ok": true, "peers", "rooms", "hostedTables", "tables", "actionLatency": { "samples", "p50Ms", "p95Ms", "maxMs", "windowSeconds": 300 } | null, "pushEnabled", "storeEnabled", "storage": "memory" | "pg", "snapshots": { "saved", "failed", "lastSavedAt", "lastFailedAt" }, "image": string | null, "db"?: "ok" | "down" }`. `snapshots` counts table snapshot writes since boot (a growing `failed` means tables are not reaching storage); `image` is `FLY_IMAGE_REF`, so a check can tell which build answered. `actionLatency` is the time from a player's action frame reaching a hosted table to the resulting state having been sent, over the last five minutes. See `docs/OBSERVABILITY.md`.
 
 ## Environment (server, Phases 4 and 6)
 

@@ -90,7 +90,7 @@ Create exactly these ids (the server's catalogue, `apps/signal/src/catalog.ts`, 
 ### 9. Legal and support
 
 - [ ] Counsel-approved terms of service and privacy policy hosted on your domain (https). **GitHub variables** `EXPO_PUBLIC_TERMS_URL`, `EXPO_PUBLIC_PRIVACY_URL`. Unblocks: submission (without them the app opens bundled texts marked DRAFT). Also replace `[Company name]`, `[support email]` and `[jurisdiction]` in `apps/mobile/src/legal/documents.ts`.
-- [ ] A support e-mail for Settings and the store listings.
+- [ ] A support e-mail for Settings and the store listings. **GitHub variables** `EXPO_PUBLIC_SUPPORT_EMAIL` (or `EXPO_PUBLIC_SUPPORT_URL` for an https help page). Read by `apps/mobile/src/legal/support.ts` at bundle time; without either there is no Contact support link anywhere in the app and the `[support email]` placeholder stays in the bundled draft texts.
 - [ ] Who reads player reports and how often (they land in the `reports` table, `status = 'open'`; the admin endpoints use `ADMIN_TOKEN`).
 
 ### 10. Shared table links

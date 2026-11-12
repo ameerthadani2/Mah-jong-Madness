@@ -5,7 +5,7 @@
  */
 import React from 'react';
 import Svg, { Circle, Ellipse, G, Line, Path, Polygon, Rect, Text as SvgText } from 'react-native-svg';
-import { colors, fonts } from '../theme';
+import { colors } from '../theme';
 import type { TableTheme } from '../themes';
 import { Gem } from './Icons';
 import { FeltPattern } from './FeltPattern';
@@ -298,34 +298,6 @@ export function MedalScene({ tier, width, height }: { tier: 'gold' | 'fourwinds'
         <Path d="M60 42 L64.5 52 L75 53 L67 60 L69.5 71 L60 65.5 L50.5 71 L53 60 L45 53 L55.5 52 Z" fill="#FFFFFF" stroke={INK} strokeWidth={2.6} strokeLinejoin="round" />
       )}
       <Sparkle x={98} y={22} s={0.9} />
-    </Svg>
-  );
-}
-
-const VIP = {
-  bronze: { fill: '#E0955A', light: '#F2B886', shade: '#A9632B' },
-  silver: { fill: '#C9D2E0', light: '#E8EDF5', shade: '#8E9AB0' },
-  gold: { fill: colors.gold, light: colors.goldLight, shade: colors.goldShelf },
-} as const;
-
-/** Prepaid VIP card with a crown. */
-export function VipCardScene({ tier, width, height }: { tier: 'bronze' | 'silver' | 'gold'; width: number | string; height: number | string }) {
-  const v = VIP[tier];
-  return (
-    <Svg width={width} height={height} viewBox="0 0 120 100">
-      <G transform="rotate(-8 60 52)">
-        <Rect x={16} y={24} width={88} height={58} rx={10} fill={v.shade} stroke={INK} strokeWidth={4} />
-        <Rect x={16} y={22} width={88} height={54} rx={10} fill={v.fill} stroke={INK} strokeWidth={4} />
-        <Rect x={20} y={26} width={80} height={20} rx={7} fill={v.light} />
-        <Path d="M30 36 L38 44 L46 30 L54 44 L62 36 L58 54 H34 Z" fill="#FFFFFF" stroke={INK} strokeWidth={3} strokeLinejoin="round" />
-        <SvgText x={84} y={68} fontSize={22} fontFamily={fonts.display} fill={INK} stroke={INK} strokeWidth={5} strokeLinejoin="round" textAnchor="middle">
-          VIP
-        </SvgText>
-        <SvgText x={84} y={68} fontSize={22} fontFamily={fonts.display} fill="#FFFFFF" textAnchor="middle">
-          VIP
-        </SvgText>
-      </G>
-      <Sparkle x={104} y={16} s={1} />
     </Svg>
   );
 }

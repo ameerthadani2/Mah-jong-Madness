@@ -188,6 +188,33 @@ describe('an honest host and a player who misses hands', () => {
     expect(failuresOf(t.a)).toEqual([]);
     expect(t.a.state.audits[1].caveats).toContain(AUDIT_CAVEATS.gap);
   });
+
+  deal('final scores that rest on such a gap are not shown as verified, although the end of the match is', () => {
+    const t = table('AW5', 4);
+    t.until(() => handNow(t) === 1 && t.host.phase === 'playing' && t.host.game!.turnCounter >= 6);
+    t.leave();
+    t.until(() => handNow(t) === 3 && t.host.phase === 'playing' && t.host.game!.turnCounter >= 4);
+    t.back('rebind', (m) => (m.t === 'hand_missed' ? null : m));
+    t.until(() => t.host.phase === 'match_over');
+    expect(t.a.state.matchOver).toBe(true);
+    expect(failuresOf(t.a)).toEqual([]);
+    expect(t.a.state.audits.some((x) => x.caveats.includes(AUDIT_CAVEATS.gap))).toBe(true);
+    // The hands after the gap chain from it and say the match is over, so a new match may start a fresh record...
+    expect((t.a.serialize() as unknown as { matchEnded: boolean }).matchEnded).toBe(true);
+    // ...but the scores the gap hand started from were never checked, and every later score rests on them.
+    expect(t.a.state.matchEndVerified).toBe(false);
+    // The same after the app restarts on the final screen.
+    const saved = JSON.parse(JSON.stringify(t.a.serialize()));
+    const again = TableClient.restore(saved, droppable(t.hub, 'pAz').link, 'A', undefined, { token: saved.state.token }, { now: () => t.clock.now });
+    expect([again.state.matchOver, again.state.matchEndVerified]).toEqual([true, false]);
+  });
+
+  deal('with no gap the final scores are shown as verified', () => {
+    const t = table('AW6', 2);
+    t.until(() => t.host.phase === 'match_over');
+    expect(failuresOf(t.a)).toEqual([]);
+    expect([t.a.state.matchOver, t.a.state.matchEndVerified]).toEqual([true, true]);
+  });
 });
 
 describe('a dishonest gap still fails', () => {

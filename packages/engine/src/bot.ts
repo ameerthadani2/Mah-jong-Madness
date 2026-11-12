@@ -409,10 +409,15 @@ export interface BotOptions {
   skill?: BotSkill;
 }
 
+/**
+ * The three tiers as the app names them. `rating` only orders the tiers (it is not a measured
+ * strength and is shown nowhere): the measured gap between Pro and Club is in `docs/ARCHITECTURE.md`
+ * and is checked by the gate (`npm run sim -- --gate`).
+ */
 export const BOT_SKILLS: Record<BotSkill, { label: string; labelZh: string; description: string; rating: number }> = {
   beginner: { label: 'Beginner', labelZh: '新手', description: 'Makes efficiency mistakes and never folds. Good for learning the flow.', rating: 800 },
-  club: { label: 'Club player', labelZh: '牌友', description: 'Solid tile efficiency, claims when it helps, basic defence.', rating: 1400 },
-  pro: { label: 'Pro', labelZh: '高手', description: 'Fast and efficient, folds against ready players and keeps scoring tiles.', rating: 1900 },
+  club: { label: 'Club player', labelZh: '牌友', description: 'Solid tile efficiency, claims when it helps, and leans away from a player who looks ready.', rating: 1400 },
+  pro: { label: 'Pro', labelZh: '高手', description: "Estimates how dangerous each discard is and may fold against a player who looks ready. It plays by the policy the coach's advice comes from.", rating: 1900 },
 };
 
 /** Decide an action for `seat`, or null if it is not their move. */

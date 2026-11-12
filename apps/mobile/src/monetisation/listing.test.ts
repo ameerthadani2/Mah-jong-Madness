@@ -56,7 +56,7 @@ describe('store listings', () => {
     expect(en).toMatch(/unlimited hand reviews, and creating and running your own clubs/);
     expect(en).toMatch(/renew automatically/);
     const zh = section(read('zh-TW'), '說明');
-    expect(zh).toContain('教練 金');
+    expect(zh).toContain('黃金教練');
     expect(zh).toContain('四風俱樂部');
     expect(zh).toMatch(/自動續訂/);
     for (const p of SUBSCRIPTIONS) expect(read('en'), p.id).toContain(`\`${p.storeId}\``);

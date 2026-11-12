@@ -33,7 +33,9 @@ const tool = (() => {
     try {
       execFileSync(t, ['-version'], { stdio: 'ignore' });
       return t;
-    } catch {}
+    } catch {
+      // Not installed under this name: try the next one.
+    }
   }
   throw new Error('ImageMagick is required (magick or convert)');
 })();
@@ -92,7 +94,7 @@ for (const name of fs.readdirSync(dir).sort()) {
   let info = '';
   try {
     info = identify(src + '[0]');
-  } catch (e) {
+  } catch {
     console.warn(`skip ${name}: unreadable image`);
     continue;
   }
