@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { backoffSeconds, CONNECTED, forgetsTable, isWatcherMadeWay, linkCopy, linkEnded, linkNotice, MAX_RECONNECT_ATTEMPTS, nextDelayMs, reconnectStep, type LinkNotice, type ReconnectEvent, type ReconnectState } from './reconnect';
+import { backoffSeconds, CONNECTED, forgetsTable, isWatcherMadeWay, linkCopy, linkEnded, linkNotice, MAX_RECONNECT_ATTEMPTS, nextDelayMs, reconnectStep, type LinkNotice, type ReconnectEvent, type ReconnectState, canRetry } from './reconnect';
 import { translator } from './translator.fixture';
 
 const run = (events: ReconnectEvent[], from: ReconnectState = CONNECTED) => events.reduce((s, e) => reconnectStep(s, e), from);
@@ -215,5 +215,37 @@ describe('what the lobby and the table say about the link', () => {
       expect(en(copy.text)).not.toMatch(/closed|over|no longer/i);
       expect(en(copy.leave)).toBe('Back to Home');
     }
+  });
+});
+
+describe('the "Reconnect" button on a lost link', () => {
+  const lost = (reason: ReconnectState['reason']): ReconnectState => ({ status: 'lost', attempt: 10, reason });
+
+  it('starts the attempts again after they ran out, and after a refused session', () => {
+    expect(canRetry(lost('exhausted'))).toBe(true);
+    expect(canRetry(lost('unauthorised'))).toBe(true);
+    expect(reconnectStep(lost('exhausted'), { type: 'retry' })).toEqual({ status: 'reconnecting', attempt: 1, reason: null });
+    expect(reconnectStep(lost('unauthorised'), { type: 'retry' })).toEqual({ status: 'reconnecting', attempt: 1, reason: null });
+  });
+
+  it('never restarts an ending that is final or was the server\'s doing: another device, a watcher who made way, a table that is gone, a ban', () => {
+    for (const reason of ['ended', 'madeWay', 'gone', 'banned'] as const) {
+      expect(canRetry(lost(reason)), reason).toBe(false);
+      expect(reconnectStep(lost(reason), { type: 'retry' }), reason).toEqual(lost(reason));
+    }
+  });
+
+  it('does nothing while the link is up or already being won back', () => {
+    expect(canRetry(CONNECTED)).toBe(false);
+    expect(reconnectStep(CONNECTED, { type: 'retry' })).toBe(CONNECTED);
+    const trying: ReconnectState = { status: 'reconnecting', attempt: 3, reason: null };
+    expect(reconnectStep(trying, { type: 'retry' })).toBe(trying);
+  });
+
+  it('is what the table and the lobby do before they fall back to closing the table', async () => {
+    const { readFileSync } = await import('fs');
+    const { join } = await import('path');
+    expect(readFileSync(join(__dirname, '../screens/TableScreen.tsx'), 'utf8')).toContain("if (ended.notice === 'lost' && session.reconnect()) return;");
+    expect(readFileSync(join(__dirname, '../screens/LobbyScreen.tsx'), 'utf8')).toContain("if (notice === 'lost' && session.reconnect()) return;");
   });
 });

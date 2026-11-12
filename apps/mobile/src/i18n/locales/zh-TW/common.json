@@ -12,6 +12,7 @@
   "open": "開啟",
   "player": "玩家",
   "bot": "電腦",
+  "botName": "%{name}（電腦）",
   "you": "你",
   "roles": {
     "owner": "會長",

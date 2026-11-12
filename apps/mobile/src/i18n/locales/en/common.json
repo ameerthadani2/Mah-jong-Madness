@@ -12,6 +12,7 @@
   "open": "Open",
   "player": "Player",
   "bot": "Bot",
+  "botName": "%{name} (Bot)",
   "you": "you",
   "roles": {
     "owner": "owner",

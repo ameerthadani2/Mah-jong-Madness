@@ -81,21 +81,43 @@ export function fitHand(width: number, height: number, L: Pick<TableLayout, 'por
     return { ...base, tile, meldTile: Math.round(smW * scale), scroll: false, perRow, rows: wrapRows(slots, tile, room) };
   }
 
-  if (scale === 1) return { ...base, meldTile: smW, scroll: false, perRow: slots, rows: 1 };
-  // Landscape: my melds share the rail with the hand, so they grow only while they take under 40 % of the width.
-  // …and only while the hand still fits beside them at its Normal size.
-  const meldRoom = Math.min(width * 0.4, width - 24 - base.plateW - 10 - rowWidth(slots, base.tile));
-  const meldCap = meldTiles > 0 ? Math.floor((meldRoom - meldCount * 8) / meldTiles) - 1 : smW;
-  const meldTile = Math.max(smW, Math.min(Math.round(smW * scale), meldCap));
-  const meldW = meldTiles * (meldTile + 1) + meldCount * 8;
-  const avail = width - 24 - base.plateW - (meldW ? meldW + 10 : 0);
+  // Landscape: the hand row and my melds share the rail. Both are measured as they are drawn (each meld has a
+  // tile lying on its side), or the drawn tile at the end of the hand runs over the first meld.
+  const rail = width - 24 - base.plateW;
+  const used = (tile: number, meld: number) => rowWidth(slots, tile) + (meldTiles > 0 ? 10 + myMeldsWidth(meldTiles, meldCount, meld) : 0);
+  // What does not fit gives way a pixel at a time, the melds before the hand, neither below its floor.
+  const settle = (tile: number, meldTile: number): HandFit => {
+    while (used(tile, meldTile) > rail && meldTile > MIN_MY_MELD) meldTile--;
+    while (used(tile, meldTile) > rail && tile > MIN_RAIL_TILE) tile--;
+    return { ...base, tile, meldTile, scroll: used(tile, meldTile) > rail, perRow: slots, rows: 1 };
+  };
+  if (scale === 1) return settle(base.tile, smW);
+  // My melds grow only while they take under 40 % of the width, and only while the hand still fits beside
+  // them at its Normal size.
+  const meldRoom = Math.min(width * 0.4, rail - 10 - rowWidth(slots, base.tile));
   // A tile is 1.4× as tall as it is wide; the rail may take a fifth of the screen height.
   const heightCap = Math.floor((height * 0.2) / 1.4);
+  const room = (meld: number) => rail - (meldTiles > 0 ? 10 + myMeldsWidth(meldTiles, meldCount, meld) : 0);
+  let meldTile = Math.max(smW, Math.round(smW * scale));
+  while (meldTile > smW && (myMeldsWidth(meldTiles, meldCount, meldTile) > meldRoom || fitRowTile(slots, room(meldTile)) < base.tile)) meldTile--;
   // The scaled row shrinks to the rail's width rather than scrolling sideways (a hidden tile is a tile the
-  // player cannot see); it never goes below the Normal size, which always fits.
-  const widthCap = fitRowTile(slots, avail);
+  // player cannot see); it never goes below the Normal size unless that itself does not fit beside the melds.
+  const widthCap = fitRowTile(slots, room(meldTile));
   const tile = Math.max(base.tile, Math.min(90, heightCap, widthCap, Math.round(base.tile * scale)));
-  return { ...base, tile, meldTile, scroll: rowWidth(slots, tile) > avail, perRow: slots, rows: 1 };
+  return settle(tile, meldTile);
+}
+
+/** The smallest my melds and my hand tiles are drawn on the landscape rail when both must give way. */
+export const MIN_MY_MELD = 22;
+export const MIN_RAIL_TILE = 22;
+
+/**
+ * Width of my melds on the landscape rail as HandRail draws them: every tile a pixel from the next, one
+ * tile of each meld lying on its side (the claimed one), and 5 px after each meld.
+ */
+export function myMeldsWidth(meldTiles: number, meldCount: number, tile: number): number {
+  if (meldTiles <= 0 || meldCount <= 0) return 0;
+  return meldTiles * tile + (meldTiles - meldCount) + meldCount * (Math.round(tile * 1.4) - tile + 5);
 }
 
 /** The widest tile that puts a row of `count` hand tiles (with the drawn tile's gap and the padding) inside `room` px. */

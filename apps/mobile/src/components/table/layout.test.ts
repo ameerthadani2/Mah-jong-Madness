@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { calloutMs, RESULT_HOLD_MS, rollUp, rollUpMs, slideFrom } from './feel';
 import { readFileSync } from 'fs';
 import { join } from 'path';
-import { ACTION_DOCK_H, coachBubbleHeight, coachBudget, coachTextLines, COACH_MAX_ADVICE_LINES, COACH_STATUS_LINE_H, compactCompassSize, dockHeight, fitTile, fitWallSize, handLayout, landscapeWallSize, MIN_TOUCH, resultLayout, slopFor, tableLayout, TAP_HINT_DOCK_H } from './layout';
+import { ACTION_DOCK_H, coachBubbleHeight, coachBudget, coachTextLines, COACH_MAX_ADVICE_LINES, COACH_STATUS_LINE_H, compactCompassSize, dockHeight, fitTile, fitWallSize, handLayout, landscapeWallSize, matchOverLayout, MIN_TOUCH, resultLayout, slopFor, tableLayout, TAP_HINT_DOCK_H } from './layout';
 
 describe('tableLayout', () => {
   it('docks the claim buttons over the centre column in landscape, never over a side pond', () => {
@@ -219,5 +219,36 @@ describe('feel', () => {
     expect(slideFrom(1).x).toBeGreaterThan(0);
     expect(slideFrom(2).y).toBeLessThan(0);
     expect(slideFrom(3).x).toBeLessThan(0);
+  });
+});
+
+describe('matchOverLayout', () => {
+  it('never lets the card be taller than the window: it scrolls inside it', () => {
+    for (const h of [375, 390, 740, 768, 844]) {
+      const L = matchOverLayout(h);
+      expect(L.maxHeight).toBe(h - 2 * L.pad);
+      expect(L.maxHeight).toBeLessThan(h);
+    }
+  });
+
+  it('takes its small sizes on a short landscape phone, where the usual card was taller than the window', () => {
+    expect(matchOverLayout(375)).toMatchObject({ compact: true, pad: 8, title: 22, avatar: 26 });
+    expect(matchOverLayout(390).compact).toBe(true);
+    expect(matchOverLayout(768)).toMatchObject({ compact: false, pad: 16, title: 28, avatar: 34 });
+    // Four ranks, the ribbon and the button at the small sizes, as measured: well inside 375 px.
+    const L = matchOverLayout(375);
+    const ranks = 4 * (L.avatar + 2 * L.rowPad + 2);
+    expect(16 + (L.title + 12) + ranks + 46 + 5 * 6).toBeLessThanOrEqual(L.maxHeight);
+  });
+
+  it('is what the match-over card is drawn with, inside a scroll view', async () => {
+    const { readFileSync } = await import('fs');
+    const { join } = await import('path');
+    const sheet = readFileSync(join(__dirname, 'ResultSheet.tsx'), 'utf8');
+    const card = sheet.slice(sheet.indexOf('export function MatchOverSheet'));
+    expect(card).toContain('const L = matchOverLayout(height);');
+    expect(card).toContain('{ maxHeight: L.maxHeight }');
+    expect(card.indexOf('<ScrollView')).toBeGreaterThan(0);
+    expect(card.indexOf('<ScrollView')).toBeLessThan(card.indexOf("t('table.backHome')"));
   });
 });

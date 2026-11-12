@@ -98,10 +98,52 @@
     "sorry": "Sorry!",
     "gg": "GG",
     "hurry": "Hurry up!",
-    "goodHand": "好牌!",
-    "dealtIn": "放槍了…",
-    "oneMore": "再來一局",
-    "faster": "快點啦"
+    "goodHand": "Nice hand!",
+    "dealtIn": "I dealt in…",
+    "oneMore": "One more game?",
+    "faster": "I'm growing old here…"
+  },
+  "emoteName": {
+    "thumbs": "Thumbs up",
+    "lol": "Laughing",
+    "wow": "Wow",
+    "cry": "Crying",
+    "fire": "On fire",
+    "love": "Heart",
+    "zzz": "Sleepy",
+    "hu": "Win (胡)",
+    "th": {
+      "tea": "Tea",
+      "bun": "Steamed bun",
+      "dumpling": "Dumpling",
+      "noodles": "Noodles",
+      "mooncake": "Mooncake",
+      "tangerine": "Tangerine"
+    },
+    "nm": {
+      "boba": "Bubble tea",
+      "skewer": "Skewer",
+      "shavedice": "Shaved ice",
+      "corn": "Grilled corn",
+      "lantern": "Lantern",
+      "firecracker": "Firecracker"
+    },
+    "fs": {
+      "firework": "Fireworks",
+      "knot": "Lucky knot",
+      "drum": "Drum",
+      "kite": "Kite",
+      "moon": "Full moon",
+      "dragonboat": "Dragon boat"
+    },
+    "zd": {
+      "rat": "Rat",
+      "ox": "Ox",
+      "tiger": "Tiger",
+      "rabbit": "Rabbit",
+      "dragon": "Dragon",
+      "rooster": "Rooster"
+    }
   },
   "themes": {
     "classic": "Classic Felt",
@@ -155,7 +197,7 @@
     "tileSelected": "%{tile}, selected",
     "tapToDiscard": "Tap again to discard",
     "tapToSelect": "Tap to select for discard",
-    "emote": "Send emote %{name}",
+    "emote": "Send emote: %{name}",
     "reportHint": "Long press to report this player",
     "tileBack": "Face-down tile",
     "clockNow": "Your clock: %{s} seconds left",

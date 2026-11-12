@@ -13,7 +13,7 @@ import { scaledTile, Tile } from '../Tile';
 import { useDisplayScale } from '../../display/DisplayScale';
 import { scaleTextStyle } from '../../display/scale';
 import { Button, P, Pill, Row, StrokeText } from '../Ui';
-import { resultLayout } from './layout';
+import { matchOverLayout, resultLayout } from './layout';
 import { useRollUp } from './Motion';
 
 const signed = (n: number) => `${n >= 0 ? '+' : ''}${n}`;
@@ -257,32 +257,37 @@ export function ResultSheet({ result, view, state, mySeat, autoNext, onNext, onL
 
 export function MatchOverSheet({ state, onLeave }: { state: ClientState; onLeave: () => void }) {
   const { t } = useT();
+  const { height } = useWindowDimensions();
+  const L = matchOverLayout(height);
   const scores = state.finalScores ?? [];
   const order = scores.map((s, i) => ({ s, i })).sort((a, b) => b.s - a.s);
   return (
-    <View style={styles.overlay}>
-      <View style={[styles.overlayCard, { maxWidth: 460 }]}>
-        <View style={[styles.ribbon, { backgroundColor: colors.gold }]} accessibilityRole="header">
-          <Icon name="trophy" size={34} />
-          <StrokeText style={{ fontSize: 28 }} strokeWidth={2.5} drop={2}>
-            {t('table.matchOver')}
-          </StrokeText>
-        </View>
-        {order.map(({ s, i }, rank) => {
-          const info = state.seats.find((x) => x.seat === i);
-          return (
-            <Row key={i} style={styles.rankRow}>
-              <View style={[styles.rankNum, rank === 0 && { backgroundColor: colors.gold }]}>
-                <Text style={styles.rankNumText}>{rank + 1}</Text>
-              </View>
-              <AvatarPlate id={seatAvatarId(info, i)} size={34} />
-              <Text style={[styles.itemText, { flex: 1 }, nameFont(info?.name)]}>{info?.name}</Text>
-              <Text style={[styles.rankScore, { color: s >= 0 ? colors.okText : colors.dangerText }]}>{signed(s)}</Text>
-            </Row>
-          );
-        })}
-        <EndUnverifiedNote state={state} testID="match-end-unverified" />
-        <Button large title={t('table.backHome')} onPress={onLeave} />
+    <View style={[styles.overlay, { padding: L.pad }]}>
+      {/* Never taller than the window: the ranks scroll inside the card (a short phone, a large text size, the note). */}
+      <View style={[styles.overlayCard, styles.matchCard, { maxHeight: L.maxHeight }, L.compact && { paddingVertical: 8 }]} testID="match-over">
+        <ScrollView style={{ flexGrow: 0 }} contentContainerStyle={{ gap: L.compact ? 6 : space.md }} testID="match-over-scroll">
+          <View style={[styles.ribbon, { backgroundColor: colors.gold }, L.compact && { paddingVertical: 2 }]} accessibilityRole="header">
+            <Icon name="trophy" size={L.trophy} />
+            <StrokeText style={{ fontSize: L.title }} strokeWidth={2.5} drop={2}>
+              {t('table.matchOver')}
+            </StrokeText>
+          </View>
+          {order.map(({ s, i }, rank) => {
+            const info = state.seats.find((x) => x.seat === i);
+            return (
+              <Row key={i} style={[styles.rankRow, { paddingVertical: L.rowPad }]}>
+                <View style={[styles.rankNum, rank === 0 && { backgroundColor: colors.gold }, L.compact && styles.rankNumSmall]}>
+                  <Text style={styles.rankNumText}>{rank + 1}</Text>
+                </View>
+                <AvatarPlate id={seatAvatarId(info, i)} size={L.avatar} />
+                <Text style={[styles.itemText, { flex: 1 }, nameFont(info?.name)]}>{info?.name}</Text>
+                <Text style={[styles.rankScore, { color: s >= 0 ? colors.okText : colors.dangerText }]}>{signed(s)}</Text>
+              </Row>
+            );
+          })}
+          <EndUnverifiedNote state={state} testID="match-end-unverified" />
+          <Button large={!L.compact} title={t('table.backHome')} onPress={onLeave} testID="match-over-home" />
+        </ScrollView>
       </View>
     </View>
   );
@@ -309,7 +314,9 @@ const styles = StyleSheet.create({
   scoreChip: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: '#FFFFFF', borderWidth: 2, borderColor: colors.ink, borderRadius: 999, paddingLeft: 3, paddingRight: 12, paddingVertical: 3 },
   scoreName: { color: colors.ink, fontSize: 12, maxWidth: 110 },
   scoreNum: { color: colors.ink, fontFamily: fonts.display, fontSize: 13 },
+  matchCard: { maxWidth: 460, flexShrink: 1 },
   rankRow: { paddingVertical: 4, borderBottomWidth: 2, borderBottomColor: colors.creamDeep },
+  rankNumSmall: { width: 26, height: 26, borderRadius: 13 },
   rankNum: { width: 30, height: 30, borderRadius: 15, borderWidth: 2.5, borderColor: colors.ink, backgroundColor: colors.creamDeep, alignItems: 'center', justifyContent: 'center' },
   rankNumText: { fontFamily: fonts.display, color: colors.ink, fontSize: 16 },
   rankScore: { fontFamily: fonts.display, fontSize: 20 },

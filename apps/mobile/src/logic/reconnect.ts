@@ -48,7 +48,9 @@ export type ReconnectEvent =
   /** The server took this watcher out of the room because a player needed the place: joining again is the player's choice. */
   | { type: 'madeWay' }
   /** The socket closed with 4403, now or on a rejoin: the account is banned, and no retry or new session changes that. */
-  | { type: 'banned' };
+  | { type: 'banned' }
+  /** The player pressed "Reconnect" on a lost link: start trying again (only where trying can help, `canRetry`). */
+  | { type: 'retry' };
 
 export const CONNECTED: ReconnectState = { status: 'connected', attempt: 0, reason: null };
 
@@ -73,7 +75,19 @@ export function reconnectStep(s: ReconnectState, e: ReconnectEvent, maxAttempts 
     case 'banned':
       // The server's last word on the account, whatever the link was doing or had already been told.
       return s.reason === 'banned' ? s : { status: 'lost', attempt: s.attempt, reason: 'banned' };
+    case 'retry':
+      return canRetry(s) ? { status: 'reconnecting', attempt: 1, reason: null } : s;
   }
+}
+
+/**
+ * Whether the player's "Reconnect" can do what it says: the link was given up after its attempts ran out
+ * (the server may be back by now), or the session was refused (a fresh one is fetched for the next try).
+ * Every other ending is final or the player's own choice (another device, a watcher who made way, a table
+ * that is gone, a ban): there the button leads back to Home.
+ */
+export function canRetry(s: Pick<ReconnectState, 'status' | 'reason'>): boolean {
+  return s.status === 'lost' && (s.reason === 'exhausted' || s.reason === 'unauthorised');
 }
 
 /** How long to wait before the attempt `s` is on (null when no attempt is due). */
@@ -149,7 +163,8 @@ const TABLE_COPY: Readonly<Record<Exclude<LinkNotice, null | 'reconnecting'>, Li
 
 /**
  * The copy for an ended link at the table or in the lobby. Only a plain lost link offers
- * "Reconnect" (Home's Resume card brings the seat back); every other ending leads back to Home.
+ * "Reconnect", which starts the session trying again (`canRetry`; where it cannot, the button closes the
+ * table and Home's Resume card brings the seat back); every other ending leads back to Home.
  */
 export function linkCopy(notice: Exclude<LinkNotice, null | 'reconnecting'>, where: 'table' | 'lobby'): LinkCopy {
   const copy = TABLE_COPY[notice];

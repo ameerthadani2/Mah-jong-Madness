@@ -128,6 +128,17 @@ describe('final scores this phone could not check', () => {
     expect(endUnverified(undefined)).toBe(false);
   });
 
+  it('are marked when the last hand could not check the scores it started from, even if that hand itself ends the match as told', () => {
+    // A phone that missed earlier hands and was not shown their records: the last hand carries the gap caveat.
+    expect(endUnverified({ matchOver: true, matchEndVerified: true, auditCaveats: [AUDIT_CAVEATS.gap] })).toBe(true);
+    expect(endUnverified({ matchOver: true, matchEndVerified: true, auditCaveats: [AUDIT_CAVEATS.standIn, AUDIT_CAVEATS.gap] })).toBe(true);
+    // Other caveats are about the deal, not about the scores: the end stays checked.
+    expect(endUnverified({ matchOver: true, matchEndVerified: true, auditCaveats: [AUDIT_CAVEATS.standIn, AUDIT_CAVEATS.appRestart] })).toBe(false);
+    expect(endUnverified({ matchOver: true, matchEndVerified: true, auditCaveats: [] })).toBe(false);
+    // And never while the match is still on.
+    expect(endUnverified({ matchOver: false, matchEndVerified: true, auditCaveats: [AUDIT_CAVEATS.gap] })).toBe(false);
+  });
+
   it('has a sentence for it in both languages', () => {
     expect(translator('en')('fairness.endUnverified')).toMatch(/could not check the final scores/);
     expect(translator('zh-TW')('fairness.endUnverified')).toMatch(/無法核對最終分數/);

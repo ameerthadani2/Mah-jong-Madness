@@ -34,7 +34,7 @@ import {
   type WebSocketLike,
 } from '@mjm/net';
 import { friendlyErrorMessage } from '../logic/errors';
-import { CONNECTED, isWatcherMadeWay, nextDelayMs, reconnectStep, type ConnectionStatus, type ReconnectEvent, type ReconnectState } from '../logic/reconnect';
+import { canRetry, CONNECTED, isWatcherMadeWay, nextDelayMs, reconnectStep, type ConnectionStatus, type ReconnectEvent, type ReconnectState } from '../logic/reconnect';
 
 export type { ConnectionStatus } from '../logic/reconnect';
 
@@ -65,6 +65,11 @@ export interface Session {
   onStatus(cb: (s: ReconnectState) => void): Unsubscribe;
   /** Skip the backoff wait and try now (while reconnecting). */
   retryNow(): void;
+  /**
+   * Start reconnecting again after the session gave up (`canRetry` in src/logic/reconnect.ts), trying at once.
+   * Returns false when there is nothing to retry: the caller then closes the table instead.
+   */
+  reconnect(): boolean;
   /**
    * Close the table on this device. It tells the table the player left on purpose (`leave`), unless
    * `keepSeat` is set: then only the link is closed, which the table treats like a dropped connection
@@ -108,6 +113,7 @@ export function createLocalSession(name: string, avatar: string, rules: RuleSet,
     onChange: (cb) => client.onChange(cb),
     onStatus: () => () => undefined,
     retryNow: () => undefined,
+    reconnect: () => false,
     close: () => {
       client.leave();
       host.close();
@@ -397,6 +403,13 @@ class OnlineSession implements Session {
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
     void this.tryOnce();
+  }
+
+  reconnect(): boolean {
+    if (this.closed || !canRetry(this.conn)) return false;
+    this.step({ type: 'retry' });
+    this.retryNow();
+    return true;
   }
 
   private async tryOnce(): Promise<void> {

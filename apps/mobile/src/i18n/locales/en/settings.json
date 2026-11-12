@@ -102,7 +102,7 @@
   "display": {
     "title": "Display",
     "tiles": "Tile size",
-    "tilesHelp": "Your hand, melds, ponds and the results. Extra large wraps the portrait hand into three rows; in landscape the hand scrolls sideways.",
+    "tilesHelp": "Your hand, melds, ponds and the results. Extra large wraps the upright hand into three rows. Held sideways the hand stays in one row and grows only as far as the screen is wide, so on a small phone it changes little there: hold the phone upright for the largest tiles.",
     "text": "Text size",
     "textHelp": "Lessons, puzzles and other reading text.",
     "normal": "Normal",

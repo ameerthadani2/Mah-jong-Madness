@@ -101,7 +101,49 @@
     "goodHand": "好牌!",
     "dealtIn": "放槍了…",
     "oneMore": "再來一局",
-    "faster": "快點啦"
+    "faster": "等到花兒都謝了…"
+  },
+  "emoteName": {
+    "thumbs": "讚",
+    "lol": "大笑",
+    "wow": "哇",
+    "cry": "哭哭",
+    "fire": "手氣正旺",
+    "love": "愛心",
+    "zzz": "想睡了",
+    "hu": "胡了",
+    "th": {
+      "tea": "熱茶",
+      "bun": "包子",
+      "dumpling": "水餃",
+      "noodles": "麵",
+      "mooncake": "月餅",
+      "tangerine": "橘子"
+    },
+    "nm": {
+      "boba": "珍珠奶茶",
+      "skewer": "串燒",
+      "shavedice": "剉冰",
+      "corn": "烤玉米",
+      "lantern": "燈籠",
+      "firecracker": "鞭炮"
+    },
+    "fs": {
+      "firework": "煙火",
+      "knot": "中國結",
+      "drum": "大鼓",
+      "kite": "風箏",
+      "moon": "滿月",
+      "dragonboat": "龍舟"
+    },
+    "zd": {
+      "rat": "鼠",
+      "ox": "牛",
+      "tiger": "虎",
+      "rabbit": "兔",
+      "dragon": "龍",
+      "rooster": "雞"
+    }
   },
   "themes": {
     "classic": "經典綠",
@@ -155,7 +197,7 @@
     "tileSelected": "%{tile}，已選取",
     "tapToDiscard": "再點一次打出",
     "tapToSelect": "點一下選取要打的牌",
-    "emote": "送出表情 %{name}",
+    "emote": "送出表情：%{name}",
     "reportHint": "長按即可檢舉這位玩家",
     "tileBack": "背面朝上的牌",
     "clockNow": "你的出牌時間：剩 %{s} 秒",

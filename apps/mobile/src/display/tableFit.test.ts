@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { handLayout, tableLayout } from '../components/table/layout';
 import { TILE_SCALES } from './scale';
-import { fitHand, fitPools, MAX_HAND_ROWS, portraitRowRoom, rowWidth, wrapRows, fitSideColumn, fitSideSeat, meldWidth, MIN_SIDE_MELD, MIN_SIDE_POND, SIDE_GAP, sidePondPerRow, sideSeatHeight } from './tableFit';
+import { en, zhTW } from '../i18n/locales';
+import { fitHand, fitPools, MAX_HAND_ROWS, portraitRowRoom, rowWidth, wrapRows, fitSideColumn, fitSideSeat, meldWidth, MIN_MY_MELD, MIN_RAIL_TILE, MIN_SIDE_MELD, MIN_SIDE_POND, myMeldsWidth, SIDE_GAP, sidePondPerRow, sideSeatHeight } from './tableFit';
 
 const VIEWPORTS: Array<[number, number]> = [
   [390, 844],
@@ -29,12 +30,44 @@ describe('fitHand', () => {
       for (const [n, mt, mc] of [[17, 0, 0], [11, 6, 2], [5, 12, 4]] as const) {
         const fit = fitHand(w, h, L, n, mt, mc, 1);
         const base = handLayout(w, L, n, mt, mc);
-        expect(fit.tile, `${w}x${h}`).toBe(base.tile);
         expect(fit.plateW).toBe(base.plateW);
-        expect(fit.meldTile).toBe(28);
         expect(fit.scroll).toBe(false);
+        // …except where the hand and my melds, measured as the rail draws them, would run into each other
+        // (three or four melds on a 667 px wide phone): there the melds give way a little, and the hand only after them.
+        const rail = w - 24 - base.plateW;
+        const asDrawn = (tile: number, meld: number) => rowWidth(Math.max(n, 17 - 3 * mc, 2), tile) + (mt ? 10 + myMeldsWidth(mt, mc, meld) : 0);
+        if (L.portrait || asDrawn(base.tile, 28) <= rail) {
+          expect(fit.tile, `${w}x${h}`).toBe(base.tile);
+          expect(fit.meldTile).toBe(28);
+        } else {
+          expect(fit.meldTile, `${w}x${h}`).toBeLessThan(28);
+          expect(fit.meldTile).toBeGreaterThanOrEqual(MIN_MY_MELD);
+          expect(fit.tile).toBeGreaterThanOrEqual(MIN_RAIL_TILE);
+          expect(asDrawn(fit.tile, fit.meldTile), `${w}x${h}`).toBeLessThanOrEqual(rail);
+        }
       }
     }
+  });
+
+  it('at Normal lets my melds give way by a pixel or two where they would touch the drawn tile, and never the hand', () => {
+    // Where the reference viewports stand today (the hand sizes listed are layout.ts's own).
+    const changed: string[] = [];
+    for (const [w, h] of VIEWPORTS) {
+      const L = tableLayout(w, h);
+      for (const [n, mt, mc] of [[17, 0, 0], [14, 3, 1], [11, 6, 2], [8, 9, 3], [5, 12, 4]] as const) {
+        const fit = fitHand(w, h, L, n, mt, mc, 1);
+        expect(fit.tile, `${w}x${h} ${mc}`).toBe(handLayout(w, L, n, mt, mc).tile);
+        if (fit.meldTile !== 28) changed.push(`${w}x${h} ${mc} melds: hand ${fit.tile}, melds ${fit.meldTile}`);
+      }
+    }
+    expect(changed).toMatchInlineSnapshot(`
+      [
+        "667x375 1 melds: hand 29, melds 27",
+        "667x375 3 melds: hand 28, melds 26",
+        "667x375 4 melds: hand 27, melds 26",
+        "1024x768 2 melds: hand 57, melds 27",
+      ]
+    `);
   });
 
   it('grows the hand with the tile scale, never shrinking it', () => {
@@ -95,6 +128,31 @@ describe('fitHand', () => {
     const four = fitHand(844, 390, L, 5, 12, 4, 1.5);
     expect(four.meldTile).toBe(28);
     expect(four.tile).toBeGreaterThanOrEqual(handLayout(844, L, 5, 12, 4).tile);
+  });
+});
+
+describe('my melds beside an enlarged hand in landscape', () => {
+  it('measures a meld as the rail draws it: a tile on its side and the gap after it', () => {
+    // A pong at 28 px: three tiles, two 1 px gaps, the claimed tile 11 px wider on its side, 5 px after it.
+    expect(myMeldsWidth(3, 1, 28)).toBe(3 * 28 + 2 + 11 + 5);
+    expect(myMeldsWidth(0, 0, 28)).toBe(0);
+  });
+
+  it('keeps the drawn tile clear of the first meld with three and four melds at Large and Extra-large', () => {
+    for (const [w, h] of [[844, 390], [1024, 768], [667, 375]] as const) {
+      const L = tableLayout(w, h);
+      for (const scale of TILE_SCALES.filter((x) => x > 1)) {
+        for (const melds of [[3, 3, 3], [3, 3, 3, 3], [4, 3, 3], [4, 4, 3, 3]]) {
+          const meldTiles = melds.reduce((n, m) => n + m, 0);
+          // My turn: the hand holds its drawn tile.
+          const handCount = 17 - 3 * melds.length;
+          const fit = fitHand(w, h, L, handCount, meldTiles, melds.length, scale);
+          const used = rowWidth(handCount, fit.tile) + 10 + myMeldsWidth(meldTiles, melds.length, fit.meldTile);
+          expect(used, `${w}x${h} at ${scale} with melds ${melds.join('')}`).toBeLessThanOrEqual(w - 24 - fit.plateW);
+          expect(fit.scroll).toBe(false);
+        }
+      }
+    }
   });
 });
 
@@ -208,5 +266,24 @@ describe('a side seat in landscape', () => {
     expect(felt).toContain('{fit.showHand && hidden}');
     expect(felt).toContain('<DiscardPool tiles={p.discards} size={fit.pool} perRow={fit.perRow}');
     expect(felt).toContain('onContentSizeChange={() => sideScroll.current[r]?.scrollToEnd({ animated: false })}');
+  });
+});
+
+describe('what Settings says about the tile size', () => {
+  it('matches what the landscape hand does: one row that never scrolls, and little room to grow on a small phone', () => {
+    const L = tableLayout(667, 375);
+    const normal = fitHand(667, 375, L, 17, 0, 0, 1);
+    const xl = fitHand(667, 375, L, 17, 0, 0, 1.5);
+    // The limit the help text explains: a full hand on a 667 px wide phone has two or three pixels to grow.
+    expect(xl.scroll).toBe(false);
+    expect(xl.tile - normal.tile).toBeLessThanOrEqual(3);
+    // Upright, the same setting does grow the hand.
+    const P = tableLayout(375, 667);
+    expect(fitHand(375, 667, P, 17, 0, 0, 1.5).tile).toBeGreaterThan(fitHand(375, 667, P, 17, 0, 0, 1).tile + 8);
+    expect(en.settings.display.tilesHelp).not.toMatch(/scrolls sideways/);
+    expect(en.settings.display.tilesHelp).toMatch(/one row/);
+    expect(en.settings.display.tilesHelp).toMatch(/upright/);
+    expect(zhTW.settings.display.tilesHelp).not.toMatch(/左右滑動/);
+    expect(zhTW.settings.display.tilesHelp).toMatch(/直向/);
   });
 });

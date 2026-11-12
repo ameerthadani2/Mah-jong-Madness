@@ -383,6 +383,39 @@ describe('online reconnect', () => {
     }
   });
 
+  it('"Reconnect" after the attempts ran out starts them again at once, and the same client comes back', async () => {
+    vi.useFakeTimers();
+    const { s, first } = await open();
+    FakeSocket.accept = () => 'down';
+    first.serverClose(1006);
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+    expect(s.status).toBe('lost');
+    expect(s.lostReason).toBe('exhausted');
+    const made = FakeSocket.all.length;
+    // The server is back: one press, no trip through Home.
+    FakeSocket.accept = () => 'ok';
+    expect(s.reconnect()).toBe(true);
+    await vi.advanceTimersByTimeAsync(50);
+    expect(FakeSocket.all.length).toBe(made + 1);
+    expect(s.status).toBe('connected');
+    expect(tableJoins(FakeSocket.last!)).toHaveLength(1);
+    // Connected again: there is nothing more to retry.
+    expect(s.reconnect()).toBe(false);
+    s.close();
+  });
+
+  it('"Reconnect" does nothing for a seat that was opened on another device', async () => {
+    vi.useFakeTimers();
+    const { s, first } = await open();
+    first.push({ t: 'from', from: 'server-1', data: { ch: 'game', msg: { t: 'disconnected' } } });
+    first.serverClose(1006);
+    expect(s.status).toBe('lost');
+    expect(s.reconnect()).toBe(false);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(FakeSocket.all).toHaveLength(1);
+    s.close();
+  });
+
   it('"Retry now" skips the wait', async () => {
     const { s, first } = await open();
     first.serverClose(1006);

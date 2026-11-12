@@ -10,6 +10,7 @@ import { hintFor, kindOf, legalActions, viewToState, WINDS, type Action, type Ga
 import { useApp, useHardwareBack } from '../app-state';
 import { useConnection, useSession, useTableEvents } from '../game/useTable';
 import { nextFadeDelay } from '../logic/fade';
+import { BOT_NAME_SLOT, botNamer, withBotLabels } from '../logic/seatName';
 import { justReturned, RETURNED_NOTICE_MS } from '../logic/back';
 import { colors, fonts, nameFont } from '../theme';
 import { Tile } from '../components/Tile';
@@ -43,7 +44,7 @@ import { WinCelebration } from '../components/Celebrations';
 import { useSfx, type TableEvent } from '../audio';
 
 import * as Haptics from 'expo-haptics';
-import { EMOTES, isQuickChatId, isTableEmoteId, QUICK_CHATS, quickChatText, TableThemeContext, themeById } from '../themes';
+import { emoteName, EMOTES, isQuickChatId, isTableEmoteId, QUICK_CHATS, quickChatText, TableThemeContext, themeById } from '../themes';
 import { emoteChoices } from '../monetisation/equipped';
 import { useOwnedEquipped } from '../monetisation/useEquipped';
 import { useT } from '../i18n';
@@ -83,7 +84,10 @@ export function TableScreen() {
   const equipped = useOwnedEquipped();
   const { t, locale } = useT();
   const session = app.session;
-  const state = useSession(session);
+  // Bot seats carry the app's own label in the reader's language (src/logic/seatName.ts).
+  const tableState = useSession(session);
+  const botLabel = t('common.botName', { name: BOT_NAME_SLOT });
+  const state = useMemo(() => (tableState ? withBotLabels(tableState, botNamer(botLabel)) : null), [tableState, botLabel]);
   const conn = useConnection(session);
   const sfx = useSfx();
   const { tileScale } = useDisplayScale();
@@ -444,7 +448,7 @@ export function TableScreen() {
                   key={e}
                   hitSlop={slopFor(48)}
                   accessibilityRole="button"
-                  accessibilityLabel={t('table.a11y.emote', { name: e })}
+                  accessibilityLabel={t('table.a11y.emote', { name: emoteName(e, t) })}
                   onPress={() => {
                     session.client.emote(e);
                     setEmotePicker(false);
@@ -529,6 +533,9 @@ export function TableScreen() {
               small
               title={t(ended.copy.leave)}
               onPress={() => {
+                // "Reconnect" on a lost link does what it says when trying again can help; otherwise the table is
+                // closed here and Home's Resume card is the way back.
+                if (ended.notice === 'lost' && session.reconnect()) return;
                 if (forgetsTable(ended.notice)) app.setActiveSession(null);
                 app.setSession(null);
                 app.reset({ name: 'home' });

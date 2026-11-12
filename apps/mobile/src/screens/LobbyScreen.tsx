@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useMemo } from 'react';
 import { ScrollView, Share, StyleSheet, Text, View } from 'react-native';
 import { useApp, useHardwareBack } from '../app-state';
 import { useConnection, useSession } from '../game/useTable';
@@ -11,13 +11,17 @@ import { Icon } from '../components/Icons';
 import { APP_NAME, APP_SCHEMES, LINK_DOMAIN } from '../config';
 import { tableLink } from '../push/deeplink';
 import { lobbyControls, lobbySeated } from '../logic/lobby';
+import { BOT_NAME_SLOT, botNamer, withBotLabels } from '../logic/seatName';
 import { forgetsTable, linkCopy, linkNotice } from '../logic/reconnect';
 
 export function LobbyScreen() {
   const app = useApp();
   const { t } = useT();
   const session = app.session;
-  const state = useSession(session);
+  // Bot seats carry the app's own label in the reader's language (src/logic/seatName.ts).
+  const tableState = useSession(session);
+  const botLabel = t('common.botName', { name: BOT_NAME_SLOT });
+  const state = useMemo(() => (tableState ? withBotLabels(tableState, botNamer(botLabel)) : null), [tableState, botLabel]);
   const conn = useConnection(session);
 
   // Android's Back key does what the header's Back arrow does: it never leaves the table open behind another screen.
@@ -162,6 +166,8 @@ export function LobbyScreen() {
             small
             title={t(linkCopy(notice, 'lobby').leave)}
             onPress={() => {
+              // "Reconnect" on a lost link starts the session trying again when that can help.
+              if (notice === 'lost' && session.reconnect()) return;
               // A table the server no longer has, or will not let a banned account back to, cannot be resumed:
               // drop the saved record with the session.
               if (forgetsTable(notice)) app.setActiveSession(null);
