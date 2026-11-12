@@ -6,7 +6,7 @@ Four routes. Route 2 (TestFlight from GitHub) is the one for testers and needs n
 git clone https://github.com/ameerthadani2/Mah-jong-Madness.git
 cd Mah-jong-Madness
 git checkout <branch>   # the branch you work on
-npm install          # Node 20 or newer
+npm install          # Node 22.13 or newer (what Expo, React Native and Metro require)
 npm test             # optional sanity check
 ```
 

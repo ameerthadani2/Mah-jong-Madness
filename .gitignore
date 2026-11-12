@@ -10,6 +10,24 @@ ios/
 android/
 *.tgz
 .env
+.env.*
+!.env.example
 .claude/
 # Written by the android-play workflow for the submit step only.
 apps/mobile/google-play-service-account.json
+# Keys and credentials the guides have you download. None of them belongs in the repository:
+# they go into GitHub secrets, EAS credentials or a password manager.
+*.p8
+*.p12
+*.pem
+*.jks
+*.keystore
+*.mobileprovision
+google-services.json
+GoogleService-Info.plist
+credentials.json
+*service-account*.json
+*service_account*.json
+play-key*.json
+# Database dumps (docs/DEPLOY.md, Backups and recovery) hold personal data.
+*.dump

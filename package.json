@@ -21,7 +21,7 @@
     "i18n:check": "npm run i18n:check -w @mjm/mobile"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22.13"
   },
   "devDependencies": {
     "eslint": "^9.39.5",

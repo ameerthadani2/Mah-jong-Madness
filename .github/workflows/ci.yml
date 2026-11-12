@@ -3,9 +3,24 @@ on:
   push:
     branches: ['**']
   pull_request:
+
+# The jobs only read the repository; nothing here needs more.
+permissions:
+  contents: read
+
+# A newer push to a working branch replaces the run for the older one. Runs on main are never
+# cancelled: the deploy workflow starts from a finished CI run of main.
+concurrency:
+  group: ci-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 jobs:
   test:
+    # A pull request from a branch of this repository is already tested by its push; only a pull
+    # request from a fork runs here, so the suite does not run twice for one commit.
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     # The signal server's Postgres repository and migration tests run against this database
     # (each run creates and drops its own schema); without DATABASE_URL_TEST they are skipped.
     services:
@@ -43,7 +58,9 @@ jobs:
     # answers /health with no secrets (in-memory storage, guest-only sign-in). The image sets
     # NODE_ENV=production, which refuses to start without DATABASE_URL and AUTH_PEPPER unless
     # ALLOW_EPHEMERAL=1 says the in-memory server is wanted.
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - name: Build the signal server image
@@ -72,7 +89,9 @@ jobs:
           docker rm -f signal > /dev/null 2>&1 || true
 
   e2e:
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

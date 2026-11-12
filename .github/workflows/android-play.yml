@@ -40,6 +40,7 @@ permissions:
 jobs:
   check:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
       ready: ${{ steps.gate.outputs.ready }}
       submit: ${{ steps.gate.outputs.submit }}
@@ -74,6 +75,9 @@ jobs:
     needs: check
     if: needs.check.outputs.ready == 'true'
     runs-on: ubuntu-latest
+    # The EAS queue can be slow on the free plan. If this limit ends the run, the cloud build
+    # carries on: find it on expo.dev -> Builds, and submit it with eas submit or a new run.
+    timeout-minutes: 120
     permissions:
       contents: write
     env:

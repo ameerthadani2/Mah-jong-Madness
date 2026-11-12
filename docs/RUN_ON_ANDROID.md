@@ -59,7 +59,7 @@ A local build with Android Studio: `npx expo run:android` (emulator or a phone w
 
 ## Troubleshooting
 
-* **"SIGNAL_URL is not set" / "must start with wss://"**: set the repository variable to the deployed server, e.g. `wss://mahjong-signal.fly.dev`.
+* **"SIGNAL_URL cannot be used for a release build"**: set the repository variable to the deployed server, e.g. `wss://mahjong-signal.fly.dev` (`wss://` and a public host name; an IP address, `localhost` or a private name is refused).
 * **"APP_BUNDLE_ID … cannot be the Android package"**: Android packages allow letters, digits, `_` and dots only, each part starting with a letter; choose an id both stores accept before the first upload.
 * **Submit fails with "Package not found" or "only releases with status draft may be created on draft app"**: the first upload must be by hand (above); the draft release status is already set.
 * **Submit fails with a permission error**: the service account needs Release permissions on this app in Play Console → Users and permissions (it can take a few minutes to apply).

@@ -20,6 +20,7 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     outputs:
       pages_ready: ${{ steps.pages.outcome == 'success' }}
     steps:
@@ -59,6 +60,7 @@ jobs:
     needs: build
     if: needs.build.outputs.pages_ready == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}

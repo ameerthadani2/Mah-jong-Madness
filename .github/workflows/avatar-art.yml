@@ -19,6 +19,7 @@ concurrency:
 jobs:
   import:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -33,9 +34,16 @@ jobs:
       - name: Resize and register portraits
         id: import
         run: |
-          node apps/mobile/scripts/import-avatars.cjs | tee import.log
-          echo "## Avatar art" >> $GITHUB_STEP_SUMMARY
-          sed 's/^/    /' import.log >> $GITHUB_STEP_SUMMARY
+          # Without pipefail the step would take tee's exit status and report a failed import as done.
+          set -o pipefail
+          STATUS=0
+          node apps/mobile/scripts/import-avatars.cjs 2>&1 | tee import.log || STATUS=$?
+          echo "## Avatar art" >> "$GITHUB_STEP_SUMMARY"
+          sed 's/^/    /' import.log >> "$GITHUB_STEP_SUMMARY"
+          if [ "$STATUS" -ne 0 ]; then
+            echo "::error title=Avatar import failed::The import script stopped with exit code $STATUS; nothing was imported (the job summary has its output)."
+            exit "$STATUS"
+          fi
       - name: Commit the processed images
         run: |
           git add -A apps/mobile/assets/avatars apps/mobile/src/components/portraits/images.ts

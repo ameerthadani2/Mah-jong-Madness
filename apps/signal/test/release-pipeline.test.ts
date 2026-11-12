@@ -5,7 +5,7 @@
  * - the steps of the build workflows that decide whether a run may start, run as shell scripts
  *   with stand-in values.
  */
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -254,5 +254,39 @@ describe('SIGNAL_URL for a release build', () => {
       expect(text.indexOf('name: Check SIGNAL_URL')).toBeGreaterThan(text.indexOf('- uses: actions/checkout@v4'));
       expect(text.indexOf('name: Check SIGNAL_URL')).toBeLessThan(text.indexOf('eas build'));
     }
+  });
+});
+
+describe('workflow hygiene', () => {
+  const workflows = readdirSync(join(ROOT, '.github/workflows')).filter((f) => f.endsWith('.yml'));
+
+  it('gives every job a time limit and every workflow an explicit token scope', () => {
+    expect(workflows.length).toBeGreaterThanOrEqual(6);
+    for (const file of workflows) {
+      const text = readFileSync(join(ROOT, '.github/workflows', file), 'utf8');
+      const jobs = text.match(/^ {4}runs-on: /gm)?.length ?? 0;
+      expect(jobs, file).toBeGreaterThan(0);
+      // Without a limit a hung build or deploy holds its concurrency group for GitHub's six hours.
+      expect(text.match(/^ {4}timeout-minutes: \d+$/gm)?.length ?? 0, `${file}: jobs with a time limit`).toBe(jobs);
+      expect(text, `${file}: top-level permissions`).toMatch(/^permissions:\n {2}contents: (read|write)$/m);
+    }
+    expect(readFileSync(join(ROOT, '.github/workflows/ci.yml'), 'utf8')).toMatch(/^permissions:\n {2}contents: read\n\n/m);
+  });
+
+  it('fails the avatar import step when the import script fails, and still shows its output', () => {
+    const step = workflowStepScript('avatar-art.yml', 'name: Resize and register portraits');
+    const run = (exitCode: number) => {
+      const dir = mkdtempSync(join(tmpdir(), 'mjm-avatar-'));
+      mkdirSync(join(dir, 'apps/mobile/scripts'), { recursive: true });
+      writeFileSync(join(dir, 'apps/mobile/scripts/import-avatars.cjs'), `console.log('importing'); if (${exitCode}) { console.error('Error: ImageMagick is required'); process.exit(${exitCode}); }\n`);
+      return runStep(step, {}, { cwd: dir });
+    };
+    const failed = run(1);
+    expect(failed.status).toBe(1);
+    expect(failed.summary).toContain('Error: ImageMagick is required');
+    expect(failed.stdout).toContain('::error title=Avatar import failed::');
+    const ok = run(0);
+    expect(ok.status).toBe(0);
+    expect(ok.summary).toContain('importing');
   });
 });
