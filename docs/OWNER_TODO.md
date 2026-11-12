@@ -108,6 +108,8 @@ Create exactly these ids (the server's catalogue, `apps/signal/src/catalog.ts`, 
 - [ ] **GitHub variables** `EXPO_PUBLIC_SENTRY_DSN`, `SENTRY_ORG`, `SENTRY_PROJECT` (a second Sentry project for the app) and **EAS env** secret `SENTRY_AUTH_TOKEN` (scope `project:releases`; never a GitHub variable). Unblocks: app crash reports with readable stacks (all three plus the token are needed for the upload).
 - [ ] **fly secret** `POSTHOG_KEY` (optional `POSTHOG_HOST`) and **GitHub variables** `EXPO_PUBLIC_POSTHOG_KEY`, `EXPO_PUBLIC_POSTHOG_HOST` (`https://eu.i.posthog.com` for an EU project). Unblocks: server events and the app funnel (consent-gated, off by default for minors).
 - [ ] An uptime alert on `https://<app>.fly.dev/health` (Fly dashboard or any monitor), and Sentry alerts on new issues.
+- [ ] Backups: on Neon's paid plan set the history retention to at least 7 days, take a weekly `pg_dump` to storage outside Neon, and do one restore drill before launch ([`DEPLOY.md`](DEPLOY.md), "Backups and recovery"). Unblocks: getting accounts and purchases back after a bad migration, a mistake or a lost Neon project.
+- [ ] Logs: Fly keeps only recent lines. If you want history (for support or a dispute), ship the logs to a log store ([`OBSERVABILITY.md`](OBSERVABILITY.md), "Logs").
 
 ### 13. Device QA
 
@@ -128,3 +130,22 @@ Create exactly these ids (the server's catalogue, `apps/signal/src/catalog.ts`, 
 | Validation | your time | 20–30 player interviews, 3–5 beta clubs, a small acquisition test; recorded hands for the golden scoring check. |
 
 Read by the code but never needed from you: `SENTRY_URL` (self-hosted Sentry only), `EXPO_BASE_URL` (set by the web-preview workflow), and the server's local-run switches in `apps/signal/README.md` (`PORT`, `HOST_TABLES`, `MAX_HOSTED_TABLES`, `P2P_ROOMS`, `MIGRATE_ON_BOOT`, `DATA_DIR`, `MIGRATIONS_DIR`, `DATABASE_URL_TEST`, `ALLOW_EPHEMERAL`).
+
+## What it costs a month
+
+Rough figures in US dollars for a small launch, to plan with, not to budget from: they are from the providers' published prices as remembered when this was written and were **not checked against the current price pages** (no access from here). Check each link in the provider's dashboard before you rely on a number.
+
+| What | Rough cost | Assumption |
+| --- | --- | --- |
+| Fly.io machine | 5–15 a month | One always-on `shared-cpu-1x` with 512 MB in Singapore, modest traffic. A dedicated IPv4 address, if you add one, is about 2 a month more; a larger machine for more than 200 tables costs more |
+| Neon Postgres | 5–25 a month | The paid plan (needed so the database never sleeps and keeps days of history), a small database, one region |
+| Apple Developer Program | 99 a year (about 8 a month) | Company membership |
+| Google Play developer account | 25 once | |
+| Expo EAS builds | 0, or from about 19 a month | The free plan's monthly allowance of low-priority builds covers a few builds a week; a paid plan when the queue wait matters |
+| RevenueCat | 0, then about 1% of tracked revenue | Free below a monthly revenue threshold (about 2,500) |
+| Store commission | 15–30% of every purchase | Taken by Apple and Google before you are paid (15% in their small-business programmes) |
+| Sentry, PostHog | 0 | Free tiers, at this size |
+| GitHub Actions | 0, or a few dollars | Free for a public repository; a private one has a monthly allowance of minutes, and one push runs three CI jobs (roughly 15–25 minutes in total) |
+| A domain for table links and the legal pages | 10–20 a year | Static pages hosted free |
+
+Before any revenue that is roughly 20 to 50 a month, plus Apple's yearly fee and Play's one-time fee. The first deploy can start on Neon's free plan and Fly's smallest machine; move Neon to the paid plan before real players arrive.

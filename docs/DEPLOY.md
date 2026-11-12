@@ -11,8 +11,8 @@ warning). `apps/signal/README.md` lists every variable and route.
 ## First deploy, in order
 
 About an hour the first time. You need a Fly.io account with a payment method (a `shared-cpu-1x`
-machine with 512 MB is about US$5–15 a month), a Neon account, and admin rights on the GitHub
-repository. Every command runs from the repository root.
+machine with 512 MB is about US$5–15 a month; the whole stack's rough monthly cost is in
+[`OWNER_TODO.md`](OWNER_TODO.md)), a Neon account, and admin rights on the GitHub repository. Every command runs from the repository root.
 
 ### 1. Create the Fly app and name it in `fly.toml`
 
@@ -45,8 +45,9 @@ these steps in its summary).
      single-host lock is a session advisory lock that does not survive a transaction pooler, so
      both use this one. This is `DATABASE_URL_DIRECT`.
 3. Before launch, move Neon to a paid plan so the database never suspends (the free tier sleeps
-   when idle, and the first query after that takes a few seconds). Neon keeps point-in-time
-   backups; a branch of the database makes a cheap staging copy.
+   when idle, and the first query after that takes a few seconds), and set how far back its
+   point-in-time history reaches ("Backups and recovery" below: the free plan keeps very little).
+   A branch of the database makes a cheap staging copy.
 
 ### 3. Set the server's secrets
 
@@ -209,8 +210,9 @@ npm run smoke -w @mjm/signal -- https://<name>.fly.dev
 Tables survive a rollback the same way they survive a deploy (below). Migrations so far only add
 tables and columns or relax a constraint, and are never undone: an older image runs against the newer schema, and its release
 command finds nothing to apply. If a migration itself is the problem, restore the database from
-Neon's point-in-time history (Branches → Restore) to a moment before the deploy, then deploy the
-last good image. Fix forward on the branch and dispatch again when ready.
+Neon's point-in-time history to a moment before the deploy ("Backups and recovery" → Restoring:
+stop the server first), then deploy the last good image. Fix forward on the branch and dispatch
+again when ready. "A deploy that fails half-way" lists what is running after each kind of failure.
 
 ## What a deploy does
 
@@ -283,6 +285,166 @@ closed with 1013 (try again later), never 4401, so the app keeps its session and
 Per-address limits count an IPv4 address or an IPv6 /64 prefix (Fly passes IPv6 client addresses
 in `x-forwarded-for`), so the addresses of one IPv6 customer share one allowance.
 
+`fly.toml` already sets `PORT=8787`, `HOST_TABLES=1`, `TRUST_PROXY=1` (Fly's proxy supplies
+`x-forwarded-for`), `NODE_ENV=production`, `MAX_HOSTED_TABLES=200` and `MAX_TABLES_PER_USER=3`;
+`apps/signal/.env.example` lists the rest (`MIN_BUILD`, `MAINTENANCE_MESSAGE`,
+`MIGRATE_ON_BOOT`).
+
+**Capacity.** `MAX_HOSTED_TABLES=200` fits one `shared-cpu-1x` machine with 512 MB: 200 tables of
+four players are 800 WebSockets, under the `[http_service.concurrency]` `hard_limit` of 1000 with
+room for onlookers and reconnects. Raise both together (and the machine size) when the tables run
+out: the hard limit must stay above 4 x `MAX_HOSTED_TABLES` plus onlookers.
+
+## Backups and recovery
+
+The database holds everything players own: accounts and their only credential hashes, wallets,
+purchases, entitlements, clubs, standings and the tables in play. The machine holds nothing that
+outlives it. So recovery is about two things: getting the database back, and getting a machine
+running against it.
+
+Steps marked **(not tried here)** need your Fly or Neon account and could not be run while this
+runbook was written; the rest was run against the production bundle and a local Postgres 16.
+
+### Backups
+
+1. **Neon's history (not tried here).** Neon keeps a point-in-time history of every branch and
+   can restore to any moment inside it. How far back it reaches is a setting of the project
+   (Settings → Storage → history retention) and is capped by the plan: the free plan keeps very
+   little, a paid plan can keep days. Before launch, on the paid plan, set it to at least 7 days
+   and note the value here. This is the backup for "a bad migration" or "we deleted the wrong
+   rows an hour ago".
+2. **A weekly dump kept outside Neon.** History inside Neon does not help when the Neon project
+   itself is lost, suspended or deleted. Once a week (and before every risky change) dump the
+   database from a laptop through the **direct** URL, and keep the file somewhere that is not
+   Neon and not the laptop (an encrypted bucket or drive). The server can stay up while it runs:
+
+   ```bash
+   pg_dump --no-owner --no-acl -Fc -f mahjong-$(date +%F).dump "$DATABASE_URL_DIRECT"
+   ```
+
+   Use a `pg_dump` at least as new as the server's Postgres. The file holds personal data
+   (display names, linked e-mail addresses, purchase records) and the credential hashes, so treat
+   it like the database itself and delete copies older than you need. Keeping `AUTH_PEPPER` in
+   your password manager is part of the backup: without it a restored database signs nobody in.
+3. **A restore drill before launch.** Restore the latest dump into a scratch database and run the
+   server and the smoke test against it once (the commands of "Restoring" and "By hand"), so the
+   first restore is not the one that matters.
+
+### Restoring
+
+The order matters: a running server keeps writing table snapshots and holds the host lock.
+
+1. **Stop the server (not tried here):** `fly scale count 0 -a <name>`. Players see "Could not
+   connect" until step 4. Put up a `MAINTENANCE_MESSAGE` first if you have a minute.
+2. **Restore the data**, one of:
+   - **Neon, to a moment in its history (not tried here):** Neon console → Branches → the main
+     branch → Restore, to a time just before the damage. The connection strings stay the same.
+   - **From a dump, into an empty database** (a new Neon database or project when the old one is
+     gone; then set both URLs again with `fly secrets set`):
+
+     ```bash
+     pg_restore --no-owner --no-acl --exit-on-error -d "$DATABASE_URL_DIRECT" mahjong-2026-11-12.dump
+     ```
+3. **Bring the schema up to the code** if the backup is older than the last migration:
+   `DATABASE_URL="$DATABASE_URL_DIRECT" npm run migrate -w @mjm/signal` from a laptop (it prints
+   "database is up to date" when there is nothing to do), or let the next deploy's release
+   command do it.
+4. **Start the server (not tried here)** with `fly scale count 1 -a <name>`, or start the
+   **Deploy signal server** workflow, which also runs migrations, the health check and the smoke
+   test. Then `npm run smoke -w @mjm/signal -- https://<name>.fly.dev --expect-storage pg`.
+
+What a restore costs players is everything after the restore point:
+
+- **Accounts created after it are gone.** Such a phone still holds a guest id and secret the
+  server no longer knows; signing in answers 401 and the app starts again as a new guest. (Tried
+  here: an account from before the dump signed in after the restore, one created after it got
+  401.) Apple and Google accounts sign in again and get a new, empty account.
+- **Purchases made after it are missing from the server but not from the stores.** With
+  `REVENUECAT_SECRET_KEY` set, the server re-applies them for accounts that still exist: when the
+  player taps Restore purchases (`POST /api/wallet/sync`) and in the nightly reconciliation.
+  Purchases of accounts that no longer exist need a support grant (`POST /api/admin/grant`).
+- **Diamonds spent or earned, cosmetics bought, club changes, results and standings** go back to
+  what they were.
+- **Tables** come back as they were at the restore point: each waits 15 minutes for its players
+  and then closes.
+
+Tell players what happened and from when; the store listing's support address will hear about it.
+
+### The machine is gone
+
+What happens by itself: when the process crashes or the host restarts it, the next process takes
+the host lock, restores every unfinished table from `table_snapshots` and listens again; the apps
+reconnect and reclaim their seats. Tried here by killing the server with SIGKILL in the middle of
+a hand: the next process was listening and had restored the tables in under a second, and a
+record of a hand interrupted that way reads "partial" with the note that the server restarted
+(Logged instead of Verified). A crash costs a few replayed turns, not the table.
+
+When it does not come back (**not tried here**, these need the Fly account):
+
+```bash
+fly status -a <name>                    # is there a machine, and what state is it in?
+fly logs -a <name>                      # why it stopped (a refused boot names the missing secret)
+fly machine list -a <name>
+fly machine start <machine id> -a <name>          # a stopped machine
+fly scale count 0 -a <name> && fly scale count 1 -a <name>   # no machine, or a broken one: a new one from the last release
+fly scale count 1 --region nrt -a <name>          # the region itself is down: start it elsewhere
+```
+
+A machine in another region still talks to the database in Singapore (slower queries, same
+data); if Neon's region is down too, nothing serves until it returns, unless you restore a dump
+into a database elsewhere and point both URLs at it. If an old machine is half alive and still
+holds the host lock, the new one waits 30 s and exits: `fly machine destroy <old id> --force`,
+then start again. Afterwards `fly scale count 1` must show exactly one machine.
+
+### A deploy that fails half-way
+
+| Where it stops | What is running afterwards | What to do |
+| --- | --- | --- |
+| The deploy job's tests, or the address check | The old version; nothing was built | Fix and run again |
+| The image build on Fly's builder | The old version | Read the build log; run again |
+| The release command (a migration fails) | The old version. Each migration runs in its own transaction, so the failing one leaves nothing behind; migrations before it in the same release stay applied, which the old version tolerates (they only add) | Fix the migration and deploy again. Do not edit the database by hand |
+| The new machine never passes `/health` (**not tried here**) | The new version, failing: with one machine a rolling deploy replaces it in place, and Fly does not go back by itself | Roll back (below), then read `fly logs` |
+| `/health` passes, the smoke test fails | The new version, live | Roll back or fix forward; the run summary shows the commands |
+
+The rollback is always the same two commands (step 8 above):
+
+```bash
+fly releases -a <name> --image
+fly deploy -a <name> --image registry.fly.io/<name>:deployment-<id> --ha=false
+```
+
+It restarts the one machine on the older image; tables survive as in any deploy. The deploy
+workflow does not know about it: its "deployed commit" is still the last one it shipped, so ship
+the fix with **Run workflow** or with a server change on `main`.
+
+## Rotating secrets
+
+Every `fly secrets set` restarts the machine once. Players at a table see a reconnect of a few
+seconds and keep their seats; nobody is signed out. Generate each new value, **show it and save
+it before setting it** (Fly never shows a secret again). What each rotation costs beyond that
+restart:
+
+| Secret | How to rotate it | What players notice |
+| --- | --- | --- |
+| `AUTH_PEPPER` | See below: the old value moves to `AUTH_PEPPER_PREVIOUS` and stays there | Nothing, as long as the old value stays listed |
+| `ADMIN_TOKEN` | Set a new value; update wherever you call `/api/admin/*` from | Nothing |
+| `DATABASE_URL`, `DATABASE_URL_DIRECT` | Reset the role's password in Neon, then set both URLs in one `fly secrets set`, back to back | Requests fail for the minute between the reset and the restart (`/health` answers 503 `db: down`), and a table that could not be saved in that minute comes back as of its last snapshot. Do it at a quiet hour |
+| `REVENUECAT_WEBHOOK_SECRET` | Change it in RevenueCat → Integrations → Webhooks and in Fly in the same minute | Nothing. An event sent in between gets 401 and RevenueCat sends it again; the nightly reconciliation catches anything it gave up on |
+| `REVENUECAT_SECRET_KEY` | Create a new secret key in RevenueCat, set it, delete the old one | Nothing, unless a webhook was lost meanwhile: Restore purchases and the nightly reconciliation cannot ask the store while the key is invalid |
+| `EXPO_ACCESS_TOKEN` | Create a new token on expo.dev, set it, revoke the old one | No push notifications between the revoke and the set |
+| `SENTRY_DSN`, `POSTHOG_KEY` | Replace the value (they are write-only keys, not credentials to your data) | Nothing |
+| GitHub secret `FLY_API_TOKEN` | `fly tokens create deploy -a <name>`, replace the GitHub secret, revoke the old token (`fly tokens list`, `fly tokens revoke`) | Nothing; deploys fail while it is wrong |
+| GitHub secret `EXPO_TOKEN` | expo.dev → Access tokens: create, replace the secret, revoke the old one | Nothing; builds are skipped or fail while it is wrong |
+| GitHub secrets `ASC_KEY_ID`, `ASC_ISSUER_ID`, `ASC_KEY_P8` | App Store Connect → Users and Access → Integrations → Team Keys: generate a new key, replace the three secrets, revoke the old key | Nothing; the iOS workflow cannot sign or submit while they are wrong |
+| GitHub secret `GOOGLE_PLAY_SERVICE_ACCOUNT_JSON` | Google Cloud → the service account → Keys: add a key, replace the secret, delete the old key | Nothing; the Android workflow cannot submit while it is wrong |
+| EAS secret `SENTRY_AUTH_TOKEN` | Sentry → Auth tokens: create, replace it in EAS, revoke the old one | Nothing; builds upload no source maps while it is wrong |
+
+`APPLE_CLIENT_ID`, `GOOGLE_CLIENT_IDS` and the `EXPO_PUBLIC_*` values are identifiers that ship
+inside the app, not secrets; they change only when the app's identity does. The rotations in the
+table were not tried against the real services here (they need the owner's accounts); the two
+that involve server behaviour were: a webhook with the wrong secret answers 401, and the pepper
+rotation below.
+
 **Rotating the pepper.** In a single `fly secrets set`, put the old value in
 `AUTH_PEPPER_PREVIOUS` and a new one in `AUTH_PEPPER` (generate it, show it and save it first, as
 in step 3). Nobody notices: a session or a guest secret stored under the old pepper is still
@@ -308,16 +470,6 @@ not been stored again since the rotation can no longer be reached by its owner
 diamonds, cosmetics, clubs and progress. Nothing is deleted: putting the old value back in
 `AUTH_PEPPER_PREVIOUS` lets those accounts in again. The server cannot tell you how many guest
 accounts still depend on an earlier pepper, which is why the rule is not to remove it.
-
-`fly.toml` already sets `PORT=8787`, `HOST_TABLES=1`, `TRUST_PROXY=1` (Fly's proxy supplies
-`x-forwarded-for`), `NODE_ENV=production`, `MAX_HOSTED_TABLES=200` and `MAX_TABLES_PER_USER=3`;
-`apps/signal/.env.example` lists the rest (`MIN_BUILD`, `MAINTENANCE_MESSAGE`,
-`MIGRATE_ON_BOOT`).
-
-**Capacity.** `MAX_HOSTED_TABLES=200` fits one `shared-cpu-1x` machine with 512 MB: 200 tables of
-four players are 800 WebSockets, under the `[http_service.concurrency]` `hard_limit` of 1000 with
-room for onlookers and reconnects. Raise both together (and the machine size) when the tables run
-out: the hard limit must stay above 4 x `MAX_HOSTED_TABLES` plus onlookers.
 
 ## By hand
 

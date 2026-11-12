@@ -17,7 +17,7 @@ What the server measures, where to look when something goes wrong, and how to ro
 | Product events | PostHog (`POSTHOG_KEY`): `purchase_credited` `{ productId, diamonds? , entitlement?, store, environment }` when a store event credits diamonds or starts or renews a subscription; `report_filed` `{ reason, hasRoom, hasDetails }`. The distinct id is the user's opaque id; no names, emails, chat or report text. Every event carries `source: "server"` | PostHog → Activity, or an insight on those event names. The app's funnel events (app_open, match_start, purchase_start/success, …) arrive from the app under PostHog's anonymous id: the app creates its client with `personProfiles: 'never'` and never calls `identify`, so they are not joined to the server's user id (the iOS privacy manifest's ProductInteraction entry is `linked: false` for that reason). Compare the two streams side by side, not per user |
 | Store notifications | Every RevenueCat webhook is stored raw in `store_events` with its `outcome` (`credited`, `entitled`, `duplicate`, `ignored_unknown_user`, …) | `SELECT type, outcome, count(*) FROM store_events WHERE received_at > now() - interval '1 day' GROUP BY 1, 2;` and RevenueCat → Integrations → Webhooks (delivery log) |
 | Player reports | `reports` table, `status = 'open'` | `SELECT reason, count(*) FROM reports WHERE status = 'open' GROUP BY 1;` |
-| Logs | stdout: boot summary (which features are on), warnings for missing configuration, `[signal] … error` lines | `fly logs -a <app>` |
+| Logs | stdout: boot summary (which features are on), warnings for missing configuration, `[signal] … error` lines (see "Logs" below for what they hold and how long they last) | `fly logs -a <app>` |
 
 The boot line lists every switch, for example `listening on :8787 (storage pg, sign-in guest apple google, …, store on, push on, Sentry on, PostHog on)`.
 
@@ -28,6 +28,15 @@ The boot line lists every switch, for example `listening on :8787 (storage pg, s
 - **Tables feel slow.** `/health.actionLatency.p95Ms`. If it is high, the server is CPU-bound (bots and hosting many tables): check `tables` against `MAX_HOSTED_TABLES` and the machine size. If it is low but players see lag, it is the network path (region, Fly edge).
 - **Errors spike after a deploy.** Sentry → Issues for the new release; roll back (below).
 - **Database.** `/health.db: down` means `SELECT 1` failed; Neon's console shows whether the project is suspended or over its limits.
+
+## Logs
+
+The server writes plain lines to stdout and nothing else: no log files, no request log.
+
+- **What is in them.** The boot line (which features are on), warnings for missing configuration, one line per restart, shutdown and restored table, and one line per failure (`api error`, `snapshot not saved`, `match result … not saved`, a failed store sync, a lost host lock) with the error's message. They name room and club codes, store event, transaction and product ids, and opaque account ids (on refund and store-sync lines).
+- **What is not.** No display names, e-mail addresses, client addresses, chat or report text, guest secrets, session tokens or other secrets. A probe in the review drove sign-up with a name, a rename with a birth year, a failed login, malformed JSON, store events carrying an e-mail attribute, a wrong admin token and an account deletion against the production bundle: no log line contained any of them.
+- **How long they last.** `fly logs -a <app>` shows only what Fly still holds, which is recent lines, not an archive (the exact window is Fly's and was not measured here). For history, ship the logs to a log store with Fly's log shipper; nothing in the repository sets that up. Whatever store you choose, give it a retention period and list it in the privacy policy's table of processors, since account ids in the logs are personal data once they can be joined to the database.
+- **What outlasts the logs anyway.** Every store notification is kept in `store_events`, every report in `reports`, every finished match in `match_results`, and Sentry keeps the errors: most questions that start in the logs are answered there.
 
 ## Alerts
 
