@@ -80,10 +80,14 @@ Sign-in providers, push, Sentry and PostHog have their own secrets (`APPLE_CLIEN
 `GOOGLE_CLIENT_IDS`, `EXPO_ACCESS_TOKEN`, `SENTRY_DSN`, `POSTHOG_KEY`, …): see
 [`OWNER_TODO.md`](OWNER_TODO.md) and `apps/signal/README.md`.
 
-To deploy before the database exists, say so explicitly with
-`fly secrets set -a <name> ALLOW_EPHEMERAL=1` (in-memory storage and a random pepper: everything
-is lost at each restart), and `fly secrets unset -a <name> ALLOW_EPHEMERAL` once the secrets
-above are set.
+To deploy before the database exists, say so explicitly, to the server and to the deploy
+workflow: `fly secrets set -a <name> ALLOW_EPHEMERAL=1` (in-memory storage and a random pepper:
+everything is lost at each restart) and the repository variable `SMOKE_EXPECT_STORAGE` =
+`memory` (GitHub → Settings → Secrets and variables → Actions → Variables). Without the variable
+the workflow's health check and smoke test fail, because a deployed server is expected to be on
+Postgres. Once the secrets above are set, undo both: `fly secrets unset -a <name>
+ALLOW_EPHEMERAL` and delete the variable. From then on a deploy that finds the server on memory
+(the database secret was removed, or `ALLOW_EPHEMERAL` was left on) goes red instead of green.
 
 ### 4. Keep exactly one machine
 
@@ -103,16 +107,27 @@ restoring or hosting anything (it never listens).
 GitHub → Actions → **Deploy signal server** → Run workflow → pick the branch (the working branch
 first; `main` once it is merged) → Run. The run:
 
-1. typechecks and runs the net and server tests, the Postgres cases included, on the exact commit;
-2. builds `apps/signal/Dockerfile` on Fly's remote builder and deploys one machine; Fly's release
+1. typechecks and runs the engine, net and server tests, the Postgres cases included, on the
+   exact commit (a manual run does not wait for CI, so the deploy job tests what it ships);
+2. works out the address it will check (`SIGNAL_URL`, or the app in `fly.toml`) and stops here,
+   with nothing deployed, if `SIGNAL_URL` is malformed;
+3. builds `apps/signal/Dockerfile` on Fly's remote builder and deploys one machine; Fly's release
    command (`node dist/server.cjs migrate`) applies new migrations first, through
    `DATABASE_URL_DIRECT`, and a failed migration stops the release with the old version still
    running;
-3. waits up to two minutes for `/health`;
-4. runs the smoke test (step 6) and fails the job if it fails, with its output in the run summary.
+4. waits up to two minutes for `/health` to answer `{"ok":true}` with `storage: pg` (a redirect,
+   another site's page or a server on memory does not count);
+5. runs the smoke test (step 6) with `--expect-storage pg` and fails the job if it fails, with its
+   output in the run summary. When the new version is live but a check failed, the summary shows
+   the rollback commands (step 8).
 
-After this first time, every push to `main` that touches the server deploys by itself once CI
-has passed (see "What a deploy does").
+A manual run always deploys the head of the branch you picked. Re-running an older run from the
+Actions list is refused when its commit is no longer the head of that branch: start a new run
+instead.
+
+After this first time, a push to `main` deploys by itself once CI has passed whenever the head of
+`main` differs, in anything the server is built from, from the commit that is deployed (see
+"What a deploy does").
 
 ### 6. Smoke test
 
@@ -124,23 +139,33 @@ npm run smoke -w @mjm/signal -- https://<name>.fly.dev      # or wss://<name>.fl
 
 It checks `/health` (and that the database is `ok`), reads `/api/config`, creates a guest named
 "Smoke test" (device id and platform marked `smoke`), opens a socket, opens a hosted table, adds
-three bots, plays one whole hand for its own seat, checks that the hand's audit verifies, leaves,
-and deletes the account with `DELETE /api/me` (also when a step fails). It prints each step's
-time and exits non-zero naming the failing step:
+three bots, plays one whole hand for its own seat, checks that the hand's audit verifies, reads
+`/health` again and fails if the table was not written to storage during the hand or any snapshot
+write failed, leaves, deletes the account with `DELETE /api/me` (also when a step fails) and
+checks that the deleted account's session now answers 401. It prints each step's time and exits
+non-zero naming the failing step:
 
 ```text
-ok    health         43 ms  storage pg, db ok, 0 tables
+ok    health         49 ms  storage pg, db ok, 0 tables, image registry.fly.io/<name>:deployment-01JC…
 ok    config          4 ms  providers [], store off, minBuild 0
-ok    guest          26 ms  user 735447e3-…
-ok    socket         14 ms  peer p-d640baef44729767
-ok    table          25 ms  room WEV8M3, seat 0
-ok    bots           21 ms  Smoke test, bot 小美 (Bot), bot 老王 (Bot), bot 阿花 (Bot)
-ok    hand        27924 ms  12 own moves, 58 logged actions, won by seat 2
+ok    guest          42 ms  user 7d657622-…
+ok    socket         14 ms  peer p-5621d169b14f64dc
+ok    table          27 ms  room YEF649, seat 0
+ok    bots           24 ms  Smoke test, bot 小美 (Bot), bot 老王 (Bot), bot 阿花 (Bot)
+ok    hand        29502 ms  18 own moves, 66 logged actions, won by seat 0
 ok    audit           0 ms  hand 0 verified, 1 ceremony attempt(s)
+ok    snapshot        8 ms  16 written during the hand, none failed, last at 2026-11-12T17:33:01.264Z
 ok    leave           0 ms
-ok    delete         14 ms
-PASSED in 28071 ms
+ok    delete         18 ms  the session no longer works
+PASSED in 29689 ms
 ```
+
+Add `--expect-storage pg` for a deployed server (the workflow does): the run then fails at the
+first step unless `/health` reports Postgres storage with the database answering. Without it a
+server on memory passes, which is right for a local run and wrong for production, where memory
+means every account and table is lost at the next restart. The `image` on the first line is the
+build that answered (`FLY_IMAGE_REF`): compare it with `fly releases -a <name> --image` when you
+doubt that the address points at the machine you just deployed.
 
 The hand takes 15–60 s because server bots wait 0.6 s per move (`--hand-timeout <seconds>`
 raises the 300 s limit). The table it opened stays listed with its bots for up to 15 minutes
@@ -176,17 +201,32 @@ last good image. Fix forward on the branch and dispatch again when ready.
 ## What a deploy does
 
 The workflow (`.github/workflows/deploy-signal.yml`) runs when the **CI** workflow has finished
-successfully for a push to `main` (`workflow_run`), for that same commit, if the commit touches
-`apps/signal`, the engine or net packages, the lockfile, `fly.toml` or the workflow itself; and on
-**Run workflow** in the Actions tab (any branch, always deploys). A failed or cancelled CI run, or
-one for a pull request, never deploys.
+successfully for a push to `main` (`workflow_run`), and on **Run workflow** in the Actions tab
+(any branch, always deploys the head of that branch). A failed or cancelled CI run, or one for a
+pull request, never deploys.
 
-1. **check**: picks the commit (the one CI tested, or the head of the dispatched branch) and
-   whether it changes the server. If `FLY_API_TOKEN` is not set, the run stops here and the job
-   summary lists the setup steps. Nothing fails.
+1. **check** decides whether the commit CI tested is deployed:
+   - Only the head of `main` is. If CI finished (or was re-run) for a commit that is no longer
+     the head, the run ends green with "not the head of main" in its summary: an older commit is
+     never deployed over a newer one, and the run for the head decides.
+   - The head is compared with **the commit that is deployed**: the commit of the newest run of
+     this workflow whose `deploy` job succeeded (read with `gh run list` and `gh run view`). It
+     deploys when anything the image is built from differs between the two (`apps/signal`, the
+     engine and net packages, `package.json`, the lockfile, `tsconfig.base.json`, `fly.toml` or
+     the workflow itself), so a server change is shipped even when the last commit of the push
+     touched only documents or the app. It also deploys when no earlier deploy is found, when
+     the list of runs cannot be read, or when the deployed commit is not an ancestor of the head
+     (it was deployed by hand from another branch).
+   - If `FLY_API_TOKEN` is not set, the run stops here and the job summary lists the setup
+     steps. Nothing fails.
+
+   What the check cannot know: a rollback or a `fly deploy` done by hand is not a workflow run,
+   so afterwards "the deployed commit" is still the last one the workflow shipped. After a manual
+   rollback, deploy the fix with **Run workflow** (or any server change on `main`).
 2. **deploy**: checks out that commit, installs the server's workspaces, typechecks and runs the
-   net and server tests against a `postgres:16` service (so the repository, migration, timeout
-   and host-lock cases run), then `flyctl deploy --remote-only --ha=false` with flyctl from
+   engine, net and server tests against a `postgres:16` service (so the repository, migration,
+   timeout and host-lock cases run), settles the address to check (a malformed `SIGNAL_URL` stops
+   the run before anything is deployed), then `flyctl deploy --remote-only --ha=false` with flyctl from
    `superfly/flyctl-actions/setup-flyctl` pinned to release 1.6. Fly's builder builds
    `apps/signal/Dockerfile`, then:
    - the **release command** applies new migrations in a temporary machine with the app's
@@ -197,8 +237,14 @@ one for a pull request, never deploys.
      of the deploy), that process exits 1 without listening or writing any table, and Fly starts
      it again.
 3. It polls `/health` at `SIGNAL_URL` (turned into `https://`), or at
-   `https://<app in fly.toml>.fly.dev` without the variable, for up to two minutes.
-4. It runs the smoke test against the same address and fails the job if it fails.
+   `https://<app in fly.toml>.fly.dev` without the variable, for up to two minutes, until the
+   answer is the server's own report with `"ok":true` and `storage: pg` (or `memory`, when the
+   repository variable `SMOKE_EXPECT_STORAGE` says the deployment has no database on purpose).
+4. It runs the smoke test against the same address, with the same expected storage, and fails
+   the job if it fails.
+
+The jobs have time limits (10 minutes for the check, 40 for the deploy), so a hung build or
+rollout cannot hold the next deploy back for hours.
 
 **Tables survive a deploy.** On SIGTERM (Fly sends it, then waits `kill_timeout = 30s`) the
 server stops accepting requests and socket upgrades (`/health` answers 503 `draining`), writes
@@ -308,7 +354,7 @@ the upload includes `node_modules`; the image is the same, only slower to build.
 | `apps/signal/migrations/*.sql` | Schema migrations, applied in filename order by `src/migrate.ts`. |
 | `apps/signal/scripts/smoke.ts` | The smoke test (`npm run smoke -w @mjm/signal -- <url>`); `test/smoke.test.ts` runs it against the real server on port 0. |
 | `fly.toml` | Fly app config: region `sin`, port 8787, HTTPS forced, one machine always running (`min_machines_running = 1`, `auto_stop_machines = false`), `MAX_HOSTED_TABLES=200` sized for that machine, `/health` checks, and a release command that runs migrations. |
-| `.github/workflows/deploy-signal.yml` | Deploys after CI has passed on `main` for a commit that touches the server, and on manual dispatch from any branch; re-runs the server tests with Postgres first, deploys one machine (`--ha=false`), then health-checks and smoke-tests it. |
+| `.github/workflows/deploy-signal.yml` | Deploys the head of `main` after CI has passed when it differs from the deployed commit in anything the server is built from, and on manual dispatch from the head of any branch; re-runs the engine, net and server tests with Postgres first, deploys one machine (`--ha=false`), then health-checks and smoke-tests it on Postgres storage. `apps/signal/test/deploy-workflow.test.ts` runs its decision steps against scratch repositories. |
 
 ## Database tests
 

@@ -2,7 +2,7 @@
  * Runs the shell steps of the GitHub workflows locally, the way the runner does, so their
  * decisions (deploy or not, build or stop) can be tested with stand-in values.
  */
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -50,4 +50,26 @@ export function runStep(script: string, env: Record<string, string>, opts: { cwd
   });
   const outputs = Object.fromEntries(readFileSync(files.output, 'utf8').split('\n').filter((l) => l.includes('=')).map((l) => [l.slice(0, l.indexOf('=')), l.slice(l.indexOf('=') + 1)]));
   return { status: r.status ?? -1, outputs, summary: readFileSync(files.summary, 'utf8'), stdout: `${r.stdout}${r.stderr}` };
+}
+
+/** The same, without blocking this process (for a step that talks to a server this test runs). */
+export function runStepAsync(script: string, env: Record<string, string>, opts: { cwd?: string } = {}): Promise<{ status: number; outputs: Record<string, string>; summary: string; stdout: string }> {
+  const dir = mkdtempSync(join(tmpdir(), 'mjm-step-'));
+  const files = { script: join(dir, 'step.sh'), output: join(dir, 'output'), summary: join(dir, 'summary') };
+  writeFileSync(files.script, script);
+  for (const f of [files.output, files.summary]) writeFileSync(f, '');
+  return new Promise((resolve, reject) => {
+    const child = spawn('bash', ['--noprofile', '--norc', '-e', files.script], {
+      cwd: opts.cwd ?? dir,
+      env: { PATH: process.env.PATH ?? '', HOME: dir, RUNNER_TEMP: dir, GITHUB_OUTPUT: files.output, GITHUB_STEP_SUMMARY: files.summary, ...env },
+    });
+    let stdout = '';
+    child.stdout.on('data', (d: Buffer) => (stdout += d.toString()));
+    child.stderr.on('data', (d: Buffer) => (stdout += d.toString()));
+    child.on('error', reject);
+    child.on('close', (code) => {
+      const outputs = Object.fromEntries(readFileSync(files.output, 'utf8').split('\n').filter((l) => l.includes('=')).map((l) => [l.slice(0, l.indexOf('=')), l.slice(l.indexOf('=') + 1)]));
+      resolve({ status: code ?? -1, outputs, summary: readFileSync(files.summary, 'utf8'), stdout });
+    });
+  });
 }
