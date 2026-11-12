@@ -94,9 +94,10 @@ export function PuzzleRushScreen() {
             <Icon name="lock" size={30} />
             <H2>{t('puzzles.rush.usedTitle')}</H2>
           </Row>
-          <P dim>{t('puzzles.rush.usedText')}</P>
+          {/* The plan is named as the Shop names it, in either language. */}
+          <P dim>{t('shop.rushUsed', { plan: t('shop.tiers.gold') })}</P>
           <Row>
-            <Button title={t('puzzles.rush.seePlans')} onPress={() => app.go({ name: 'shop' })} />
+            <Button title={t('puzzles.rush.seePlans')} onPress={() => app.go({ name: 'shop', focus: 'gold' })} />
             <Button kind="ghost" title={t('puzzles.rush.dailyInstead')} onPress={() => app.go({ name: 'daily' })} />
           </Row>
         </Card>

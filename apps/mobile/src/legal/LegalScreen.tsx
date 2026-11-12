@@ -11,10 +11,11 @@ import { Card, fontFor, H2, P, ScreenHeader } from '../components/Ui';
 import { Icon } from '../components/Icons';
 import { legalDocument } from './documents';
 import type { LegalDoc } from './links';
+import { SUPPORT, supportAddress } from './support';
 
 export function LegalScreen({ doc, onBack }: { doc: LegalDoc; onBack: () => void }) {
   const { t, locale } = useT();
-  const d = legalDocument(doc, locale);
+  const d = legalDocument(doc, locale, supportAddress(SUPPORT));
   return (
     <ScrollView contentContainerStyle={styles.wrap} testID={`legal-${doc}`}>
       <ScreenHeader title={d.title} onBack={onBack} backTestID="legal-back" />

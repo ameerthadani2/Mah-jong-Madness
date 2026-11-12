@@ -18,6 +18,7 @@
   "notOnSale": "尚未販售",
   "priceLoading": "…",
   "diamondsUse": "鑽石可以購買桌布、牌背、頭像框、表情包和胡牌慶祝（每款 150 到 600，套組更划算）。會優先使用贈送的鑽石。",
+  "rushUsed": "免費帳號每天可以玩一次謎題衝刺。訂閱「%{plan}」就不限次數。",
   "tiers": {
     "gold": "教練 金",
     "fourwinds": "四風俱樂部"
@@ -273,7 +274,7 @@
     },
     "coach_gold_year": {
       "title": "教練 金 年繳",
-      "description": "一次付清，使用一年教練 金。",
+      "description": "教練 金年繳方案，每年扣款一次，取消前每年自動續訂。",
       "badge": "年繳"
     },
     "fourwinds_month": {
@@ -283,7 +284,7 @@
     },
     "fourwinds_year": {
       "title": "四風俱樂部 年繳",
-      "description": "一次付清，使用一年四風俱樂部。",
+      "description": "四風俱樂部年繳方案，每年扣款一次，取消前每年自動續訂。",
       "badge": "年繳"
     }
   },

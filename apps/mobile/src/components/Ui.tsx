@@ -1,6 +1,6 @@
 import React from 'react';
 import { Pressable, StyleSheet, Text, View, type StyleProp, type TextStyle, type ViewStyle } from 'react-native';
-import { colors, fonts, hasCJK, radius, space } from '../theme';
+import { colors, fonts, hasCJK, pillTones, radius, space, type PillTone } from '../theme';
 import { Icon, type IconName } from './Icons';
 import { slopFor } from './table/layout';
 import { t } from '../i18n';
@@ -261,16 +261,8 @@ function scaledType(style: StyleProp<TextStyle>, factor: number): TextStyle {
   return scaleTextStyle(base, factor);
 }
 
-export type PillTone = 'neutral' | 'gold' | 'ok' | 'danger' | 'premium' | 'info' | 'dark';
-const PILL: Record<PillTone, { bg: string; fg: string }> = {
-  neutral: { bg: colors.creamLight, fg: colors.ink },
-  gold: { bg: colors.gold, fg: colors.ink },
-  ok: { bg: colors.cta, fg: '#FFFFFF' },
-  danger: { bg: colors.danger, fg: '#FFFFFF' },
-  premium: { bg: colors.premium, fg: '#FFFFFF' },
-  info: { bg: colors.info, fg: '#FFFFFF' },
-  dark: { bg: 'rgba(16,20,47,0.72)', fg: '#FFFFFF' },
-};
+export type { PillTone } from '../theme';
+const PILL = pillTones;
 
 /**
  * A short label. `wrap` lets a sentence (an error, a notice) break onto further lines instead of being

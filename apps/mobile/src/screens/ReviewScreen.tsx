@@ -64,7 +64,7 @@ export function ReviewScreen() {
         <H1 style={{ fontSize: 26 }}>{t('review.dailyUsedTitle')}</H1>
         <P style={{ textAlign: 'center', maxWidth: 420 }}>{t('review.dailyUsedText')}</P>
         <Row>
-          <Button title={t('review.seePlans')} onPress={() => app.go({ name: 'shop' })} />
+          <Button title={t('review.seePlans')} onPress={() => app.go({ name: 'shop', focus: 'fourwinds' })} />
           <Button kind="ghost" title={t('review.back')} onPress={app.back} />
         </Row>
       </View>

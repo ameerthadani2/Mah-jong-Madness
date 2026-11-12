@@ -176,7 +176,7 @@ export function bundlePrice(b: Pick<Product, 'diamondPrice' | 'contains'>, owns:
 
 export const SUBSCRIPTIONS: Product[] = [
   { id: 'coach.gold.month', storeId: 'coach.gold.month', kind: 'subscription', tier: 'gold', title: 'Coach Gold', titleZh: '教練 金', description: 'Pro bots and unlimited Puzzle Rush.', priceUsd: 6.99, period: 'month' },
-  { id: 'coach.gold.year', storeId: 'coach.gold.year', kind: 'subscription', tier: 'gold', title: 'Coach Gold (yearly)', titleZh: '教練 金 年繳', description: 'Coach Gold for a year, billed once.', priceUsd: 49.99, period: 'year', badge: 'Yearly' },
+  { id: 'coach.gold.year', storeId: 'coach.gold.year', kind: 'subscription', tier: 'gold', title: 'Coach Gold (yearly)', titleZh: '教練 金 年繳', description: 'Coach Gold, billed once a year. Renews every year until cancelled.', priceUsd: 49.99, period: 'year', badge: 'Yearly' },
   {
     id: 'fourwinds.month',
     storeId: 'fourwinds.month',
@@ -189,7 +189,7 @@ export const SUBSCRIPTIONS: Product[] = [
     period: 'month',
     badge: 'Run your own club',
   },
-  { id: 'fourwinds.year', storeId: 'fourwinds.year', kind: 'subscription', tier: 'fourwinds', title: 'The Four Winds Club (yearly)', titleZh: '四風俱樂部 年繳', description: 'The Four Winds Club for a year, billed once.', priceUsd: 79.99, period: 'year', badge: 'Yearly' },
+  { id: 'fourwinds.year', storeId: 'fourwinds.year', kind: 'subscription', tier: 'fourwinds', title: 'The Four Winds Club (yearly)', titleZh: '四風俱樂部 年繳', description: 'The Four Winds Club, billed once a year. Renews every year until cancelled.', priceUsd: 79.99, period: 'year', badge: 'Yearly' },
 ];
 
 export const ALL_PRODUCTS: Product[] = [...DIAMOND_PACKS, ...COSMETICS, ...BUNDLES, ...SUBSCRIPTIONS];

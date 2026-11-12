@@ -8,10 +8,8 @@ import { Linking, View, type StyleProp, type ViewStyle } from 'react-native';
 import { useAuth } from '../auth/AuthProvider';
 import { APP_NAME } from '../config';
 import { useT } from '../i18n';
-import { readSupportEnv, supportContact, supportHref } from '../legal/support';
+import { SUPPORT, supportHref } from '../legal/support';
 import { Button, P } from './Ui';
-
-export const SUPPORT = supportContact(readSupportEnv());
 
 export function SupportLink({ reason, style }: { /** The sentence above the link: why support is the way out here. */ reason?: 'mistake' | 'birthYear'; style?: StyleProp<ViewStyle> }) {
   const auth = useAuth();

@@ -27,6 +27,9 @@ export function supportContact(env: SupportEnv): SupportContact | null {
   return url ? { kind: 'url', url } : null;
 }
 
+/** This build's support contact, read once. */
+export const SUPPORT: SupportContact | null = supportContact(readSupportEnv());
+
 /**
  * What the "Contact support" link opens: the help page, or a message to the address with the subject and,
  * when the player has an account, its id on the first line (support cannot find an account without it).

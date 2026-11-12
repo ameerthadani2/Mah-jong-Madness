@@ -70,7 +70,8 @@ const styles = StyleSheet.create({
   sheet: { flex: 1, backgroundColor: colors.sky },
   row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, flexWrap: 'wrap' },
   link: { minHeight: 32, justifyContent: 'center' },
-  linkText: { fontFamily: fonts.uiBold, color: colors.infoShelf, fontSize: 13, textDecorationLine: 'underline' },
+  // Ink, underlined: the links also sit straight on the sky backdrop (the Shop's foot), where blue was 4.2:1.
+  linkText: { fontFamily: fonts.uiBold, color: colors.inkSoft, fontSize: 13, textDecorationLine: 'underline' },
   dot: { color: colors.inkDim, fontSize: 13 },
   notice: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'rgba(255,255,255,0.75)', borderWidth: 2, borderColor: colors.ink, borderRadius: 12, paddingHorizontal: 10, paddingVertical: 5 },
   noticeText: { flex: 1, fontFamily: fonts.bodyBold, color: colors.ink, fontSize: 12, lineHeight: 16 },
