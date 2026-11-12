@@ -22,13 +22,30 @@
   },
   "mine": "My clubs",
   "none": "You are not in any club yet.",
-  "summary": "%{members} members · %{tables} tables open · %{stakes}",
+  "summary": "%{members} · %{tables} · %{stakes}",
+  "tablesOpen": {
+    "one": "%{count} table open",
+    "other": "%{count} tables open"
+  },
+  "retry": "Try again",
   "pending": "Pending approval",
   "open": "Open",
+  "openNamed": "Open %{name}",
   "loadingClub": "Loading club…",
   "tableLabel": "%{name}'s table",
   "code": "Code %{code}",
-  "memberCount": "%{n} members",
+  "memberCount": {
+    "one": "%{count} member",
+    "other": "%{count} members"
+  },
+  "guest": {
+    "body": "You are not a member of this club yet. Join to see its tables, standings and house rules.",
+    "approvalBody": "You are not a member of this club yet. Its owner or an admin approves each new member: ask to join, and the club appears under My clubs once they agree.",
+    "join": "Join this club",
+    "ask": "Ask to join",
+    "requested": "Request sent. The club appears under My clubs once an admin approves you.",
+    "removed": "You are no longer a member of this club."
+  },
   "members": {
     "makeAdmin": "Make admin",
     "makeMember": "Make member",

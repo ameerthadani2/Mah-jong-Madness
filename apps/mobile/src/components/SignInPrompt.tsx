@@ -15,6 +15,7 @@ import { friendlyError } from '../logic/errors';
 import type { SignInProvider } from '../logic/auth-config';
 import { colors, space } from '../theme';
 import { Button, Card, H2, P, Row, ScreenHeader } from './Ui';
+import { SupportLink } from './SupportLink';
 
 const SIGN_IN_KEY: Record<SignInProvider, string> = { apple: 'settings.account.apple', google: 'settings.account.google' };
 
@@ -43,6 +44,7 @@ export function SignInPrompt({ onBack }: { onBack?: () => void }) {
         {auth.banned ? (
           <Card tone="danger" testID="sign-in-banned">
             <P style={styles.small}>{t('settings.account.banned')}</P>
+            <SupportLink reason="mistake" />
           </Card>
         ) : null}
         {!offersStartFresh(auth) ? null : !confirmFresh ? (

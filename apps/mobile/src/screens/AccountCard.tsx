@@ -16,6 +16,8 @@ import type { SignInProvider } from '../logic/auth-config';
 import { colors, fonts } from '../theme';
 import { Button, Card, H2, P, Pill, Row } from '../components/Ui';
 import { Icon } from '../components/Icons';
+import { Live } from '../components/Live';
+import { SupportLink } from '../components/SupportLink';
 
 const LINKED_KEY: Record<SignInProvider, string> = { apple: 'settings.account.linkedApple', google: 'settings.account.linkedGoogle' };
 const SIGN_IN_KEY: Record<SignInProvider, string> = { apple: 'settings.account.apple', google: 'settings.account.google' };
@@ -56,7 +58,12 @@ export function AccountCard() {
           {!auth.banned && <P dim style={styles.small}>{t('settings.account.signedOutBody', { name: auth.user?.displayName || t('common.player') })}</P>}
         </>
       )}
-      {auth.banned && <Pill tone="danger" icon="warning" wrap text={t('settings.account.banned')} />}
+      {auth.banned && (
+        <View testID="account-banned" style={{ gap: 6 }}>
+          <Pill tone="danger" icon="warning" wrap text={t('settings.account.banned')} />
+          <SupportLink reason="mistake" />
+        </View>
+      )}
       {auth.user && <P dim style={styles.tiny}>{t('settings.account.id', { id: auth.user.id })}</P>}
 
       <Row style={{ flexWrap: 'wrap', rowGap: 8 }} gap={8}>
@@ -73,8 +80,17 @@ export function AccountCard() {
       </Row>
       {online && auth.providers.length === 0 && <P dim style={styles.tiny}>{t('settings.account.noProviders')}</P>}
       {auth.busy && <P dim style={styles.tiny}>{t('settings.account.busy')}</P>}
-      {auth.error ? <Pill tone="danger" icon="warning" wrap text={friendlyError(auth.error, t)} /> : null}
-      {notice && <Pill tone="ok" icon="check" wrap text={notice} />}
+      {/* A ban is already said above, in full: the refusal that revealed it is not repeated as a second banner. */}
+      {auth.error && !auth.banned ? (
+        <Live message={friendlyError(auth.error, t)} assertive testID="account-error">
+          <Pill tone="danger" icon="warning" wrap text={friendlyError(auth.error, t)} />
+        </Live>
+      ) : null}
+      {notice && (
+        <Live message={notice} testID="account-notice">
+          <Pill tone="ok" icon="check" wrap text={notice} />
+        </Live>
+      )}
 
       {online && !confirmSignOut && !deleting && (
         <Row style={{ flexWrap: 'wrap', rowGap: 8 }} gap={8}>

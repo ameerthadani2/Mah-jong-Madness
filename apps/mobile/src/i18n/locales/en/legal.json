@@ -18,6 +18,13 @@
     "blockedBody": "This game includes simulated gambling and is for players aged %{age} and over, so it is not available to you yet. You are welcome back from 1 January %{year}.",
     "back": "Back"
   },
+  "support": {
+    "contact": "Contact support",
+    "mistake": "If you think this is a mistake, contact support.",
+    "birthYear": "If the birth year was entered by mistake, support can correct it.",
+    "subject": "%{app} support",
+    "idLine": "Player ID: %{id}"
+  },
   "report": {
     "title": "Report %{name}",
     "body": "Moderators review every report with the table's hand records. False reports can lead to action against the reporter.",

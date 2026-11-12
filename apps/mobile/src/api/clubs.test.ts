@@ -1,8 +1,11 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { Authoriser, FetchLike } from './http';
 import { DEFAULT_RULES } from '@mjm/engine';
-import { clubErrorMessage, clubErrorText, clubLink, clubListLine, clubsApi, ownerRestricted, OWNER_GRACE_DAYS } from './clubs';
+import { clubErrorMessage, clubErrorText, clubLink, clubListLine, clubMemberCount, clubsApi, isMemberView, ownerRestricted, OWNER_GRACE_DAYS } from './clubs';
 import { parseDeepLink } from '../push/deeplink';
+import { rulesStakes } from '../logic/rules-text';
 import { translator } from '../logic/translator.fixture';
 
 const en = translator('en');
@@ -107,20 +110,71 @@ describe('ownerRestricted', () => {
 });
 
 describe('the line under a club in My clubs', () => {
+  const mine = (members: number, open: number) => ({
+    code: 'AB12',
+    name: 'Dragon Gate',
+    description: '',
+    rules: DEFAULT_RULES,
+    settings: { membersCanOpenTables: true, joinRequiresApproval: false },
+    members: Array.from({ length: members }, (_, i) => ({ userId: `u${i}`, name: `P${i}`, role: 'member' as const, joinedAt: 0, points: 0, matchesPlayed: 0, matchesWon: 0, handsWon: 0 })),
+    tables: Array.from({ length: open + 1 }, (_, i) => ({ code: `T${i}`, label: 't', rules: DEFAULT_RULES, createdBy: 'u0', createdAt: 0, status: i < open ? ('open' as const) : ('finished' as const), players: [], handNumber: 0, scores: [] })),
+  });
+
   it('shows members, open tables and stakes for a club this player belongs to', () => {
-    const line = clubListLine({ code: 'AB12', name: 'Dragon Gate', description: '', rules: DEFAULT_RULES, settings: { membersCanOpenTables: true, joinRequiresApproval: false }, members: [], memberCount: 3, tables: [] });
-    expect(line.key).toBe('clubs.summary');
-    expect(en(line.key, line.params)).toContain('0 members');
-    expect(en(line.key, line.params)).toContain('100');
+    expect(clubListLine(mine(3, 2), en)).toBe(`3 members · 2 tables open · ${rulesStakes(DEFAULT_RULES)}`);
+    expect(clubListLine(mine(3, 2), zh)).toBe(`3 位成員 · 2 張牌桌開放中 · ${rulesStakes(DEFAULT_RULES)}`);
+    expect(clubListLine(mine(0, 0), en)).toContain('0 members · 0 tables open');
+  });
+
+  it('says "1 member" and "1 table open", not "1 members"', () => {
+    expect(clubListLine(mine(1, 1), en)).toBe(`1 member · 1 table open · ${rulesStakes(DEFAULT_RULES)}`);
+    expect(en('clubs.memberCount', { count: 1 })).toBe('1 member');
+    expect(en('clubs.memberCount', { count: 2 })).toBe('2 members');
+    expect(zh('clubs.memberCount', { count: 1 })).toBe('1 位成員');
   });
 
   it('shows the member count alone for a club the player has only asked to join (the server sends no rules)', () => {
     // What GET /api/users/:id/clubs returns for a pending request: the public view.
     const pending = { code: 'AB12', name: 'Dragon Gate', description: '', memberCount: 4, joinRequiresApproval: true };
-    const line = clubListLine(pending);
-    expect(line).toEqual({ key: 'clubs.memberCount', params: { n: 4 } });
-    expect(en(line.key, line.params)).toBe('4 members');
-    expect(zh(line.key, line.params)).toBe('4 位成員');
+    expect(clubListLine(pending, en)).toBe('4 members');
+    expect(clubListLine(pending, zh)).toBe('4 位成員');
+  });
+});
+
+describe('the member view and the public view of a club', () => {
+  const member = { userId: 'me', name: 'Me', role: 'member' as const, joinedAt: 0, points: 0, matchesPlayed: 0, matchesWon: 0, handsWon: 0 };
+  const full = { code: 'AB12', name: 'Dragon Gate', description: '', rules: DEFAULT_RULES, settings: { membersCanOpenTables: true, joinRequiresApproval: false }, members: [member], tables: [] };
+  // What GET /api/clubs/:code answers anyone who is not a member: no rules, settings, members or tables.
+  const publicView = { code: 'AB12', name: 'Dragon Gate', description: '', memberCount: 2, joinRequiresApproval: true };
+
+  it('is the member view only with rules, settings and this player among the members', () => {
+    expect(isMemberView(full, 'me')).toBe(true);
+    expect(isMemberView(full, 'someone-else')).toBe(false);
+    expect(isMemberView(publicView, 'me')).toBe(false);
+    expect(isMemberView({ ...full, members: undefined }, 'me')).toBe(false);
+  });
+
+  it('counts members from either view', () => {
+    expect(clubMemberCount(full)).toBe(1);
+    expect(clubMemberCount(publicView)).toBe(2);
+    expect(clubMemberCount({})).toBe(0);
+  });
+
+  it('the club screen shows a non-member the join card and never reads rules or settings before that check', () => {
+    const code = readFileSync(join(__dirname, '..', 'screens', 'ClubsScreen.tsx'), 'utf8');
+    const screen = code.slice(code.indexOf('export function ClubScreen'));
+    const guard = screen.indexOf('if (!isMemberView(club, user.userId))');
+    expect(guard).toBeGreaterThan(0);
+    // Everything above the guard works on the public view: no member-only field is read there.
+    expect(screen.slice(0, guard)).not.toMatch(/club\.(rules|settings|members|tables)\b/);
+    const guest = screen.slice(guard, screen.indexOf('const members = club.members'));
+    expect(guest).toMatch(/testID="club-join"/);
+    expect(guest).toMatch(/clubsApi\.join\(ctx, club\.code\)/);
+    expect(guest).not.toMatch(/club\.(rules|settings)\b/);
+    expect(guest).not.toMatch(/clubs\.tabs\./);
+    // A member whose view turns public on a refresh is told why the screen changed.
+    expect(screen).toMatch(/if \(wasMember\.current && !member\) setLostMembership\(true\)/);
+    expect(guest).toMatch(/clubs\.guest\.removed/);
   });
 });
 

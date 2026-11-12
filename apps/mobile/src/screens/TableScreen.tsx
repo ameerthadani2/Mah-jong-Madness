@@ -53,6 +53,7 @@ import { hideBlocked, useBlockedIds } from '../api/blocks';
 import { httpBase } from '../api/http';
 import { useAuth } from '../auth/AuthProvider';
 import type { ReportTarget } from '../legal/reports';
+import { SupportLink } from '../components/SupportLink';
 
 /** How long an emote bubble and a chat line stay on screen. */
 const EMOTE_MS = 3500;
@@ -528,6 +529,7 @@ export function TableScreen() {
             <View style={{ flex: 1 }}>
               <Text style={styles.bannerTitle}>{t(ended.copy.title)}</Text>
               <Text style={styles.bannerText}>{t(ended.copy.text)}</Text>
+              {ended.notice === 'banned' ? <SupportLink reason="mistake" style={{ marginTop: 4 }} /> : null}
             </View>
             <Button
               small

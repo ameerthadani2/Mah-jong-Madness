@@ -89,11 +89,25 @@ export interface Club {
  */
 export type ClubListing = Omit<Club, 'rules' | 'settings'> & { rules?: RuleSet; settings?: ClubSettings };
 
+/**
+ * True when the server sent the member's view of a club. The public view (a player who is not a member, or is
+ * one no longer) has no rules, settings or member list, and a screen that reads them from it would crash.
+ */
+export function isMemberView(club: ClubListing, userId: string): club is Club {
+  return !!club.rules && !!club.settings && (club.members ?? []).some((m) => m.userId === userId);
+}
+
+/** How many members a club has, from either view. */
+export function clubMemberCount(c: Pick<ClubListing, 'members' | 'memberCount'>): number {
+  return c.members?.length ?? c.memberCount ?? 0;
+}
+
 /** The line under a club's name in "My clubs": members, open tables and stakes, or the member count alone for a pending request. */
-export function clubListLine(c: ClubListing): Message {
-  const members = c.members?.length ?? c.memberCount ?? 0;
-  if (!c.rules) return { key: 'clubs.memberCount', params: { n: members } };
-  return { key: 'clubs.summary', params: { members, tables: (c.tables ?? []).filter((tb) => tb.status !== 'finished').length, stakes: rulesStakes(c.rules) } };
+export function clubListLine(c: ClubListing, t: Translate): string {
+  const members = t('clubs.memberCount', { count: clubMemberCount(c) });
+  if (!c.rules) return members;
+  const tables = t('clubs.tablesOpen', { count: (c.tables ?? []).filter((tb) => tb.status !== 'finished').length });
+  return t('clubs.summary', { members, tables, stakes: rulesStakes(c.rules) });
 }
 
 /**

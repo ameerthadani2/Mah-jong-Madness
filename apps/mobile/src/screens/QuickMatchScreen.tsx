@@ -26,6 +26,8 @@ import { acceptedName, isNameRefused } from '../logic/profile';
 import { colors, space } from '../theme';
 import { Button, Card, H2, P, Pill, Row, ScreenHeader } from '../components/Ui';
 import { Icon } from '../components/Icons';
+import { SupportLink } from '../components/SupportLink';
+import { supportReason } from '../legal/support';
 
 type Phase = 'connecting' | 'searching' | 'matched' | 'returning' | 'failed';
 
@@ -34,6 +36,8 @@ interface Failure {
   text: string;
   final: boolean;
   retryAt: number;
+  /** Set when only support can help (a ban, a birth year typed wrong): the sentence and link under the text. */
+  support: 'mistake' | 'birthYear' | null;
 }
 
 /** The card's heading. Once there is a table the news is in the live region below, so the heading does not say it twice. */
@@ -64,8 +68,8 @@ export function QuickMatchScreen() {
   // Set when the server answers `seated`: the session that follows is a table this player already sits at.
   const returning = useRef(false);
   const begin = useCallback(async () => {
-    const fail = (text: string, final = false, retryAfterMs = 0) => {
-      setFailure({ text, final, retryAt: Date.now() + retryAfterMs });
+    const fail = (text: string, final = false, retryAfterMs = 0, support: Failure['support'] = null) => {
+      setFailure({ text, final, retryAt: Date.now() + retryAfterMs, support });
       setNow(Date.now());
       setPhase('failed');
     };
@@ -77,7 +81,8 @@ export function QuickMatchScreen() {
       await auth.client.ensureSession();
     } catch (e) {
       // No account to queue with: the server is out of reach, or it refuses this device (a ban is final).
-      if (alive.current) fail(friendlyError(e, t), (e as { code?: unknown } | null)?.code === 'banned');
+      const banned = (e as { code?: unknown } | null)?.code === 'banned';
+      if (alive.current) fail(friendlyError(e, t), banned, 0, banned ? 'mistake' : null);
       return;
     }
     if (!alive.current) return;
@@ -125,7 +130,7 @@ export function QuickMatchScreen() {
       setNeedAge(true);
       return;
     }
-    fail(outcome.message ? t(outcome.message.key, outcome.message.params) : friendlyError(outcome.error, t), outcome.final, outcome.retryAfterMs);
+    fail(outcome.message ? t(outcome.message.key, outcome.message.params) : friendlyError(outcome.error, t), outcome.final, outcome.retryAfterMs, supportReason(outcome.message?.key));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [app.signalUrl, app.profile.name, app.profile.refusedName, app.profile.avatar, auth, t]);
 
@@ -220,6 +225,7 @@ export function QuickMatchScreen() {
               <Icon name="warning" size={24} />
               <P style={{ flex: 1 }}>{failure.text}</P>
             </Row>
+            {failure.support ? <SupportLink reason={failure.support} /> : null}
           </Card>
         ) : null}
         <Row style={{ flexWrap: 'wrap', rowGap: 8 }}>

@@ -28,6 +28,7 @@ import { Icon } from '../components/Icons';
 import { LegalLinks, NoValueNotice } from '../components/LegalLinks';
 import { SoundSettings } from '../components/SoundSettings';
 import { PrivacyToggles } from '../components/PrivacyToggles';
+import { SupportLink } from '../components/SupportLink';
 import { DisplaySettings } from '../components/DisplaySettings';
 
 const SLOT_KEYS: Record<EquipSlot, string> = { tileBack: 'settings.looks.tileBack', frame: 'settings.looks.frame', emotes: 'settings.looks.emotes', celebration: 'settings.looks.celebration' };
@@ -232,6 +233,7 @@ export function SettingsScreen() {
           {t('settings.legal.body')}
         </P>
         <LegalLinks style={{ justifyContent: 'flex-start' }} />
+        <SupportLink />
         <NoValueNotice />
       </Card>
       {__DEV__ && (

@@ -66,7 +66,7 @@
     "signedIn": "Signed in",
     "signedOut": "Signed out",
     "signedOutBody": "The game server no longer accepts this device’s session for %{name}. Sign in again to get back to that account, or start fresh as a new guest.",
-    "banned": "This account has been banned from online play, and a new guest on this device would be refused as well. If you think this is a mistake, contact support.",
+    "banned": "This account has been banned from online play, and a new guest on this device would be refused as well.",
     "prompt": {
       "title": "Sign in to play online",
       "body": "This device remembers %{name}, but the game server needs you to sign in again before you can join a table or a club.",

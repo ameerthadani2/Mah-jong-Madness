@@ -20,13 +20,13 @@
   "retry": "Try again",
   "retryIn": "Try again in %{seconds} s",
   "errors": {
-    "banned": "This account has been banned from online play. If you think this is a mistake, contact support.",
+    "banned": "This account has been banned from online play.",
     "rateLimited": "Too many tries in a row. Please wait a few seconds and try again.",
     "unavailable": "Quick match is not available right now. Please try again in a moment.",
     "replaced": "You started quick match on another device, so this search stopped.",
     "signIn": "Sign in to play quick match.",
     "ageSync": "We could not confirm your age with the server. Please try again.",
-    "ageUnder": "Quick match is for players aged 17 and over, and the birth year on this account is too recent. It can only be corrected by support.",
+    "ageUnder": "Quick match is for players aged 18 and over, and the birth year on this account is too recent. It cannot be changed in the app.",
     "seatedFailed": "You still had a seat at a quick-match table, but we could not take you back to it. It may have just ended. Please try again."
   }
 }

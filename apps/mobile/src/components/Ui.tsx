@@ -361,12 +361,30 @@ export function GemCounter({ amount, owed, onPress, testID }: { amount: number; 
 }
 
 /** Screen title row: round back button, stroked title, optional right-hand items. */
-export function ScreenHeader({ title, onBack, backTestID = 'back', right, sub }: { title: string; onBack?: () => void; backTestID?: string; right?: React.ReactNode; sub?: React.ReactNode }) {
+export function ScreenHeader({
+  title,
+  onBack,
+  backTestID = 'back',
+  right,
+  sub,
+  titleLines = 1,
+  titleSize,
+}: {
+  title: string;
+  onBack?: () => void;
+  backTestID?: string;
+  right?: React.ReactNode;
+  sub?: React.ReactNode;
+  /** Lines the title may take; 0 for as many as it needs (a name the player typed is shown whole). */
+  titleLines?: number;
+  /** A smaller size for a long title (src/logic/titleFit.ts). */
+  titleSize?: number;
+}) {
   return (
     <View style={styles.header}>
       {onBack && <IconButton testID={backTestID} icon="back" kind="secondary" size={44} onPress={onBack} />}
       <View style={{ flex: 1, minWidth: 0 }}>
-        <StrokeText style={styles.headerTitle} strokeWidth={2.5} drop={2.5} numberOfLines={1}>
+        <StrokeText style={[styles.headerTitle, titleSize ? { fontSize: titleSize, lineHeight: Math.round(titleSize * 1.2) } : null]} strokeWidth={2.5} drop={2.5} numberOfLines={titleLines || undefined}>
           {title}
         </StrokeText>
         {sub}
