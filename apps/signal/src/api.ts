@@ -209,6 +209,16 @@ function assertClubNameAllowed(v: unknown): void {
   if (typeof v === 'string') assertNameAllowed(cleanField(v, 64));
 }
 
+/**
+ * A club's description is free text that anyone holding the club code is sent, so it passes the
+ * same blocklist as the name (400 `name_not_allowed`), checked on the text as it will be stored.
+ */
+function assertClubDescriptionAllowed(v: unknown): void {
+  if (typeof v !== 'string') return;
+  const text = cleanField(v, 280, { multiline: true });
+  if (text && !nameAllowed(text)) throw new HttpError(400, NAME_NOT_ALLOWED, 'That description is not allowed; please change it');
+}
+
 export function buildRoutes(deps: ApiDeps, opts: Pick<ApiOptions, 'reportIpLimiter'> = {}): Route[] {
   const { clubs, rooms, repos, sessions } = deps;
   const now = deps.now ?? Date.now;
@@ -554,6 +564,7 @@ export function buildRoutes(deps: ApiDeps, opts: Pick<ApiOptions, 'reportIpLimit
       const me = await member(ctx);
       const { body } = ctx;
       assertClubNameAllowed(body.name);
+      assertClubDescriptionAllowed(body.description);
       return view(clubs.update(ctx.params.code, me.userId, { name: body.name, description: body.description, rules: body.rules, settings: body.settings }), me.userId);
     }),
     // Owner only, with the club's name typed again; its live tables close first.
