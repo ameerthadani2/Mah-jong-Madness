@@ -1,4 +1,7 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { en, zhTW } from '../i18n/locales';
 import { DEFAULT_RULES } from '@mjm/engine';
 import { migrateSettings, parseLocalePreference } from './settings';
 import type { Settings } from '../storage';
@@ -44,5 +47,32 @@ describe('parseLocalePreference', () => {
     expect(parseLocalePreference('en')).toBe('en');
     expect(parseLocalePreference('zh-Hant')).toBe('auto');
     expect(parseLocalePreference(undefined)).toBe('auto');
+  });
+});
+
+describe('what the app says about the bot tiers', () => {
+  const tiers = ['beginner', 'club', 'pro'] as const;
+
+  it('describes what each tier does and never ranks Pro above Club or promises scoring play', () => {
+    for (const locale of [en, zhTW]) {
+      for (const k of tiers) expect(locale.settings.botAbout[k].length).toBeGreaterThan(10);
+      const pro = locale.settings.botAbout.pro;
+      expect(pro).not.toMatch(/fast and efficient|keeps scoring tiles|strong|best|beats|出牌快|加台|最強|更強/i);
+    }
+    expect(en.settings.botAbout.pro).toMatch(/how dangerous each discard is and may fold/);
+    expect(en.settings.botAbout.pro).toMatch(/the policy the coach's advice comes from/);
+    expect(zhTW.settings.botAbout.pro).toMatch(/放槍風險/);
+    expect(zhTW.settings.botAbout.pro).toMatch(/教練/);
+    // The Chinese description the engine's helper falls back on says the same.
+    expect(zhTW.common.bots.pro).toBe(zhTW.settings.botAbout.pro);
+    expect(zhTW.common.bots.club).toBe(zhTW.settings.botAbout.club);
+  });
+
+  it('is shown from the app\'s own strings in both languages, under a heading that does not rank the tiers', () => {
+    const screen = readFileSync(join(__dirname, '..', 'screens', 'SettingsScreen.tsx'), 'utf8');
+    expect(screen).toMatch(/t\(`settings\.botAbout\.\$\{settings\.botSkill\}`\)/);
+    expect(screen).not.toMatch(/botDescription\(/);
+    expect(en.settings.botStrength).not.toMatch(/strength/i);
+    expect(zhTW.settings.botStrength).not.toMatch(/強/);
   });
 });

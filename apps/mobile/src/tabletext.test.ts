@@ -63,4 +63,34 @@ describe('table text ids', () => {
       for (const id of QUICK_CHAT_IDS) expect(phrases[id].trim().length, `${name} ${id}`).toBeGreaterThan(0);
     }
   });
+
+  it('an English reader can read every quick phrase: none is left in Chinese', () => {
+    const phrases = (en as { quickChat: Record<string, string> }).quickChat;
+    for (const id of QUICK_CHAT_IDS) expect(phrases[id], id).not.toMatch(/[\u3400-\u9fff]/);
+    // No two phrases say the same thing in either language.
+    for (const tree of [en, zhTW]) {
+      const texts = Object.values((tree as { quickChat: Record<string, string> }).quickChat);
+      expect(new Set(texts).size).toBe(texts.length);
+    }
+    expect((zhTW as { quickChat: Record<string, string> }).quickChat.faster).not.toBe('快點啦');
+  });
+
+  it('every emote the picker can show has a spoken name in both languages, and the button is named by it, not by its id', () => {
+    const ids = [...FREE_EMOTE_IDS, ...Object.values(EMOTE_PACK_IDS).flat()];
+    for (const [name, tree] of [
+      ['en', en],
+      ['zh-TW', zhTW],
+    ] as const) {
+      const names = (tree as unknown as { emoteName: Record<string, unknown> }).emoteName;
+      const at = (id: string) => id.split('.').reduce<unknown>((o, k) => (o && typeof o === 'object' ? (o as Record<string, unknown>)[k] : undefined), names);
+      for (const id of ids) {
+        expect(typeof at(id), `${name} ${id}`).toBe('string');
+        expect(String(at(id)).trim().length, `${name} ${id}`).toBeGreaterThan(0);
+        expect(String(at(id)), `${name} ${id}`).not.toBe(id);
+      }
+    }
+    const screen = source('screens', 'TableScreen.tsx');
+    expect(screen).toContain("accessibilityLabel={t('table.a11y.emote', { name: emoteName(e, t) })}");
+    expect(screen).not.toContain("t('table.a11y.emote', { name: e })");
+  });
 });

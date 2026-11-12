@@ -1,13 +1,15 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { ScrollView, Share, StyleSheet, Text, TextInput, View } from 'react-native';
 import { BOT_SKILLS, RULE_PRESETS, rulesFromPreset, type BotSkill, type RuleSet } from '@mjm/engine';
 import { useApp } from '../app-state';
-import { clubErrorMessage, clubLink, clubsApi, httpBase, ownerRestricted, type Club, type ClubContext, type ClubMember, type ClubTable } from '../api/clubs';
+import { clubErrorText, clubLink, clubListLine, clubMemberCount, clubsApi, hasPendingRequest, httpBase, isMemberView, ownerRestricted, PENDING_POLL_MS, type ClubContext, type ClubListing, type ClubMember, type ClubTable } from '../api/clubs';
 import { useAuth } from '../auth/AuthProvider';
 import { APP_NAME, APP_SCHEMES, LINK_DOMAIN } from '../config';
 import { createOnlineSession } from '../game/session';
 import { friendlyError } from '../logic/errors';
-import { botLabel, presetName, rulesStakes, rulesSummary, sameRules } from '../logic/rules-text';
+import { clubTitleSize } from '../logic/titleFit';
+import { messagesAfter, NO_MESSAGES, NOTICE_MS, shownError, type ScreenMessages } from '../logic/screenMessages';
+import { botLabel, presetName, rulesSummary, sameRules } from '../logic/rules-text';
 import type { Translate } from '../logic/translate';
 import { canCreateClubs } from '../monetisation/wallet';
 import { useRemoteConfig } from '../telemetry/RemoteConfig';
@@ -21,17 +23,15 @@ import { NoValueNotice } from '../components/LegalLinks';
 import { ReportPlayerSheet } from '../components/ReportPlayerSheet';
 import { RuleEditor } from '../components/RuleEditor';
 import { SignInPrompt } from '../components/SignInPrompt';
+import { Live } from '../components/Live';
+import { NameRefusedNotice } from '../components/NameRefusedNotice';
+import { SupportLink } from '../components/SupportLink';
+import { acceptedName } from '../logic/profile';
 import type { ReportTarget } from '../legal/reports';
 import { canStartSeason, sortStandings, standingPoints, type StandingsView } from '../legal/standings';
 import { useOnlineGuard } from '../legal/useOnlineGuard';
 
 const roleName = (role: ClubMember['role'] | 'guest', t: Translate) => t(`common.roles.${role}`);
-
-/** A club call's failure as copy: the owner-tool and Four Winds refusals have their own lines, the rest the generic mapping. */
-function clubErrorText(e: unknown, t: Translate): string {
-  const m = clubErrorMessage(e);
-  return m ? t(m.key, m.params) : friendlyError(e, t);
-}
 
 /** Club calls authenticated with the signed-in session. */
 function useClubContext(): ClubContext {
@@ -41,12 +41,46 @@ function useClubContext(): ClubContext {
   return useMemo(() => ({ base, auth: auth.client }), [base, auth.client]);
 }
 
+/**
+ * The screen's error and notice lines (src/logic/screenMessages.ts): what a background refresh reports never
+ * wipes the answer to something the player pressed, and a success notice goes after a few seconds.
+ */
+function useScreenMessages(): [ScreenMessages, React.Dispatch<Parameters<typeof messagesAfter>[1]>] {
+  const [messages, tell] = useReducer(messagesAfter, NO_MESSAGES);
+  const { notice } = messages;
+  useEffect(() => {
+    if (!notice) return;
+    const id = setTimeout(() => tell({ type: 'noticeExpired' }), NOTICE_MS);
+    return () => clearTimeout(id);
+  }, [notice]);
+  return [messages, tell];
+}
+
+/** The error (spoken at once) and the notice (spoken politely) of a club screen, in that order. */
+function MessageLines({ messages, errorTone = 'danger' }: { messages: ScreenMessages; errorTone?: 'danger' | 'gold' }) {
+  const error = shownError(messages);
+  return (
+    <>
+      {error && (
+        <Live message={error} assertive testID="club-error">
+          <Pill tone={errorTone} icon="warning" wrap text={error} />
+        </Live>
+      )}
+      {messages.notice && (
+        <Live message={messages.notice} testID="club-notice">
+          <Pill tone="ok" icon="check" wrap text={messages.notice} />
+        </Live>
+      )}
+    </>
+  );
+}
+
 export function ClubsScreen() {
   const app = useApp();
   const auth = useAuth();
   const { t, locale } = useT();
   const ctx = useClubContext();
-  const user = { userId: auth.user?.id ?? '', name: app.profile.name || t('common.player'), avatar: app.profile.avatar };
+  const user = { userId: auth.user?.id ?? '', name: acceptedName(app.profile) || t('common.player'), avatar: app.profile.avatar };
   // Clubs need the server: the guest account is made here the first time, never at launch.
   const [connection, setConnection] = useState<'checking' | 'ready' | 'offline'>('checking');
   const { ensure } = auth;
@@ -64,8 +98,9 @@ export function ClubsScreen() {
   const { config } = useRemoteConfig();
   const [planNeeded, setPlanNeeded] = useState(false);
   const mayCreate = !planNeeded && (config?.storeEnabled !== true || canCreateClubs(app.wallet));
-  const [clubs, setClubs] = useState<Club[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [clubs, setClubs] = useState<ClubListing[] | null>(null);
+  const [messages, tell] = useScreenMessages();
+  const [loading, setLoading] = useState(false);
   const [joinCode, setJoinCode] = useState('');
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState('');
@@ -74,18 +109,29 @@ export function ClubsScreen() {
 
   const refresh = useCallback(async () => {
     if (connection !== 'ready' || !user.userId) return;
+    setLoading(true);
     try {
       setClubs(await clubsApi.mine(ctx, user.userId));
-      setError(null);
+      tell({ type: 'loaded' });
     } catch (e) {
-      setError(friendlyError(e, t));
+      tell({ type: 'loadFailed', text: friendlyError(e, t) });
+    } finally {
+      setLoading(false);
     }
-  }, [ctx, connection, user.userId, t]);
+  }, [ctx, connection, user.userId, t, tell]);
   useEffect(() => {
     void refresh();
   }, [refresh]);
+  // While a request to join is waiting, look again now and then: an approval, a refusal or a ban shows without leaving the screen.
+  const waiting = hasPendingRequest(clubs ?? [], user.userId);
+  useEffect(() => {
+    if (!waiting) return;
+    const id = setInterval(() => void refresh(), PENDING_POLL_MS);
+    return () => clearInterval(id);
+  }, [waiting, refresh]);
 
   const create = async () => {
+    tell({ type: 'actionStarted' });
     try {
       const club = await clubsApi.create(ctx, name, rulesFromPreset(presetId), { joinRequiresApproval: approval });
       setCreating(false);
@@ -100,25 +146,44 @@ export function ClubsScreen() {
         setCreating(false);
         return;
       }
-      setError(clubErrorText(e, t));
+      tell({ type: 'actionFailed', text: clubErrorText(e, t) });
     }
   };
   const join = async () => {
+    tell({ type: 'actionStarted' });
     try {
       const r = await clubsApi.join(ctx, joinCode.trim().toUpperCase());
       setJoinCode('');
       app.clubJoined('join', r.status);
       await refresh();
-      if (r.status === 'pending') setError(t('clubs.join.requestSent'));
+      if (r.status === 'pending') tell({ type: 'actionDone', notice: t('clubs.join.requestSent') });
       else app.go({ name: 'club', code: r.club.code });
     } catch (e) {
-      setError(clubErrorText(e, t));
+      tell({ type: 'actionFailed', text: clubErrorText(e, t) });
+      // A refusal can mean the list on screen is stale (a request turned down, a ban): read it again.
+      void refresh();
     }
   };
 
   if (entry === 'blocked') return <AgeBlocked onBack={app.back} />;
   if (entry === 'ask') return <AgeGate onBack={app.back} />;
   if (entry === 'sign_in') return <SignInPrompt onBack={app.back} />;
+
+  // A banned account can do nothing here: one card says so, instead of forms that would each be refused.
+  if (auth.banned) {
+    return (
+      <ScrollView contentContainerStyle={styles.wrap}>
+        <ScreenHeader title={t('clubs.title')} onBack={app.back} />
+        <Card tone="danger" testID="clubs-banned" style={{ gap: 8 }}>
+          <Row>
+            <Icon name="warning" size={24} />
+            <P style={{ flex: 1, fontSize: 14, lineHeight: 20 }}>{t('settings.account.banned')}</P>
+          </Row>
+          <SupportLink reason="mistake" />
+        </Card>
+      </ScrollView>
+    );
+  }
 
   if (connection !== 'ready') {
     return (
@@ -147,7 +212,8 @@ export function ClubsScreen() {
         <P style={{ flex: 1, fontSize: 13, lineHeight: 18 }}>{t('clubs.note')}</P>
       </View>
       <NoValueNotice />
-      {error && <Pill tone="gold" icon="warning" wrap text={error} />}
+      <NameRefusedNotice />
+      <MessageLines messages={messages} errorTone="gold" />
       <View style={styles.cols}>
         <Card style={styles.col}>
           <H2>{t('clubs.join.title')}</H2>
@@ -193,7 +259,8 @@ export function ClubsScreen() {
         </Card>
       </View>
       <SectionLabel>{t('clubs.mine')}</SectionLabel>
-      {clubs === null && !error && <Pill text={t('common.loading')} icon="hourglass" />}
+      {clubs === null && !messages.loadError && <Pill text={t('common.loading')} icon="hourglass" />}
+      {clubs === null && messages.loadError && <Button testID="clubs-retry" kind="secondary" title={loading ? t('common.loading') : t('clubs.retry')} onPress={() => void refresh()} disabled={loading} style={{ alignSelf: 'flex-start' }} />}
       {clubs?.length === 0 && <Pill text={t('clubs.none')} icon="users" />}
       {clubs?.map((c) => {
         const me = (c.members ?? []).find((m) => m.userId === user.userId);
@@ -209,11 +276,12 @@ export function ClubsScreen() {
                 <Pill text={c.code} size="sm" />
               </Row>
               <P dim style={{ fontSize: 12 }}>
-                {t('clubs.summary', { members: c.members?.length ?? c.memberCount ?? 0, tables: (c.tables ?? []).filter((tb) => tb.status !== 'finished').length, stakes: rulesStakes(c.rules) })}
+                {/* A club this player has only asked to join comes as the public view: no rules or tables to show. */}
+                {clubListLine(c, t)}
               </P>
             </View>
             {pending ? <Pill text={t('clubs.pending')} /> : <Pill text={roleName(me.role, t)} tone={me.role === 'owner' ? 'gold' : 'neutral'} />}
-            {!pending && <Button small kind="secondary" title={t('clubs.open')} onPress={() => app.go({ name: 'club', code: c.code })} />}
+            {!pending && <Button small kind="secondary" title={t('clubs.open')} accessibilityLabel={t('clubs.openNamed', { name: c.name })} onPress={() => app.go({ name: 'club', code: c.code })} />}
           </Card>
         );
       })}
@@ -229,19 +297,24 @@ type Pending =
   | { kind: 'rejectAll'; userIds: string[] }
   | { kind: 'leave' };
 
-export function ClubScreen({ code }: { code: string }) {
+export function ClubScreen({ code, notice: linkNotice }: { code: string; /** Why a link to one of this club's tables could not be followed. */ notice?: string }) {
   const app = useApp();
   const auth = useAuth();
   const { t, locale } = useT();
   const ctx = useClubContext();
-  const user = { userId: auth.user?.id ?? '', name: app.profile.name || t('common.player'), avatar: app.profile.avatar };
-  const [club, setClub] = useState<Club | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const user = { userId: auth.user?.id ?? '', name: acceptedName(app.profile) || t('common.player'), avatar: app.profile.avatar };
+  const [club, setClub] = useState<ClubListing | null>(null);
+  const [messages, tell] = useScreenMessages();
+  const error = shownError(messages);
+  /** True once a refresh has turned the member's view into the public one: removed, banned, or the club passed on without them. */
+  const [lostMembership, setLostMembership] = useState(false);
+  const wasMember = useRef(false);
+  /** A request to join sent from this screen is waiting for an owner or admin. */
+  const [asked, setAsked] = useState(false);
   const [busy, setBusy] = useState(false);
   const [tab, setTab] = useState<'tables' | 'standings' | 'members' | 'rules'>('tables');
   const [view, setView] = useState<StandingsView>('season');
   const [confirmSeason, setConfirmSeason] = useState(false);
-  const [notice, setNotice] = useState<string | null>(null);
   const [reporting, setReporting] = useState<ReportTarget | null>(null);
   const [pending, setPending] = useState<Pending | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -255,14 +328,20 @@ export function ClubScreen({ code }: { code: string }) {
   // A club reached from a notification or a link is gated like the Clubs list: no server call before 'ok'.
   const { entry } = useOnlineGuard();
 
+  const userId = user.userId;
   const refresh = useCallback(async () => {
     try {
-      setClub(await clubsApi.get(ctx, code));
-      setError(null);
+      const next = await clubsApi.get(ctx, code);
+      const member = isMemberView(next, userId);
+      if (wasMember.current && !member) setLostMembership(true);
+      if (member) setLostMembership(false);
+      wasMember.current = member;
+      setClub(next);
+      tell({ type: 'loaded' });
     } catch (e) {
-      setError(friendlyError(e, t));
+      tell({ type: 'loadFailed', text: friendlyError(e, t) });
     }
-  }, [ctx, code, t]);
+  }, [ctx, code, t, tell, userId]);
   useEffect(() => {
     if (entry !== 'ok') return;
     void refresh();
@@ -279,6 +358,56 @@ export function ClubScreen({ code }: { code: string }) {
         <P>{error ?? t('clubs.loadingClub')}</P>
         <Button title={t('common.back')} onPress={app.back} />
       </View>
+    );
+  }
+  // Not a member (a shared link, a notification, or removed since): the server sends the public view, which has no
+  // rules, settings, members or tables. One card with the way in, and none of the tabs that read them.
+  if (!isMemberView(club, user.userId)) {
+    const approval = club.joinRequiresApproval === true;
+    const joinClub = async () => {
+      setBusy(true);
+      tell({ type: 'actionStarted' });
+      try {
+        const r = await clubsApi.join(ctx, club.code);
+        app.clubJoined('join', r.status);
+        if (r.status === 'pending') setAsked(true);
+        else await refresh();
+      } catch (e) {
+        tell({ type: 'actionFailed', text: clubErrorText(e, t) });
+      } finally {
+        setBusy(false);
+      }
+    };
+    return (
+      <ScrollView contentContainerStyle={styles.wrap}>
+        <ScreenHeader title={club.name} titleSize={clubTitleSize(club.name)} titleLines={0} onBack={app.back} />
+        <NameRefusedNotice />
+        {linkNotice && !error && (
+          <Live message={linkNotice} assertive testID="club-link-notice">
+            <Pill tone="danger" icon="warning" wrap text={linkNotice} />
+          </Live>
+        )}
+        {lostMembership && (
+          <Live message={t('clubs.guest.removed')} assertive testID="club-removed">
+            <Pill tone="gold" icon="warning" wrap text={t('clubs.guest.removed')} />
+          </Live>
+        )}
+        <Card testID="club-join-card" style={{ gap: 10 }}>
+          <Row style={{ flexWrap: 'wrap', rowGap: 6 }} gap={6}>
+            <Pill text={t('clubs.code', { code: club.code })} tone="gold" size="sm" />
+            <Pill text={t('clubs.memberCount', { count: clubMemberCount(club) })} icon="users" size="sm" />
+          </Row>
+          <P style={{ fontSize: 14, lineHeight: 20 }}>{t(approval ? 'clubs.guest.approvalBody' : 'clubs.guest.body')}</P>
+          {asked ? (
+            <Live message={t('clubs.guest.requested')} testID="club-join-asked">
+              <Pill tone="ok" icon="check" wrap text={t('clubs.guest.requested')} />
+            </Live>
+          ) : (
+            <Button testID="club-join" title={busy ? '…' : t(approval ? 'clubs.guest.ask' : 'clubs.guest.join')} accessibilityLabel={t(approval ? 'clubs.guest.ask' : 'clubs.guest.join')} onPress={() => void joinClub()} disabled={busy} style={{ alignSelf: 'flex-start' }} />
+          )}
+          <MessageLines messages={messages} />
+        </Card>
+      </ScrollView>
     );
   }
   const members = club.members ?? [];
@@ -298,15 +427,15 @@ export function ClubScreen({ code }: { code: string }) {
   /** Run an owner action; a club in the reply replaces the one shown. */
   const act = async (run: () => Promise<unknown>, done?: string) => {
     setBusy(true);
+    tell({ type: 'actionStarted' });
     try {
       const next = await run();
-      if (next && typeof next === 'object' && 'code' in next && 'name' in next) setClub(next as Club);
+      if (next && typeof next === 'object' && 'code' in next && 'name' in next) setClub(next as ClubListing);
       else await refresh();
-      setError(null);
-      setNotice(done ?? null);
+      tell({ type: 'actionDone', notice: done });
       return true;
     } catch (e) {
-      setError(clubErrorText(e, t));
+      tell({ type: 'actionFailed', text: clubErrorText(e, t) });
       return false;
     } finally {
       setBusy(false);
@@ -316,13 +445,15 @@ export function ClubScreen({ code }: { code: string }) {
 
   const openTable = async (rules?: RuleSet) => {
     setBusy(true);
+    // A refusal from the last try (the server allows one new table every few seconds) is not left standing over this one.
+    tell({ type: 'actionStarted' });
     try {
       // The server opens a member's table under the house rules and the club's bots; only owners and admins send rules.
       const table = await clubsApi.openTable(ctx, club.code, { label: t('clubs.tableLabel', { name: user.name }), ...(rules ? { rules } : {}) });
       setVariant(null);
       await joinTable(table.code, table.rules);
     } catch (e) {
-      setError(clubErrorText(e, t));
+      tell({ type: 'actionFailed', text: clubErrorText(e, t) });
     } finally {
       setBusy(false);
     }
@@ -334,7 +465,7 @@ export function ClubScreen({ code }: { code: string }) {
       app.setSession(session);
       app.go({ name: 'lobby' });
     } catch (e) {
-      setError(clubErrorText(e, t));
+      tell({ type: 'actionFailed', text: clubErrorText(e, t) });
     } finally {
       setBusy(false);
     }
@@ -354,15 +485,16 @@ export function ClubScreen({ code }: { code: string }) {
   const season = club.season ?? 1;
   const startSeason = async () => {
     setBusy(true);
+    tell({ type: 'actionStarted' });
     try {
       await clubsApi.startSeason(ctx, club.code);
       const next = await clubsApi.get(ctx, club.code);
       setClub(next);
       setConfirmSeason(false);
       setView('season');
-      setNotice(t('clubs.season.started', { n: next.season ?? season + 1 }));
+      tell({ type: 'actionDone', notice: t('clubs.season.started', { n: next.season ?? season + 1 }) });
     } catch (e) {
-      setError(friendlyError(e, t));
+      tell({ type: 'actionFailed', text: friendlyError(e, t) });
     } finally {
       setBusy(false);
     }
@@ -427,20 +559,21 @@ export function ClubScreen({ code }: { code: string }) {
   const restricted = ownerRestricted(club);
   return (
     <ScrollView contentContainerStyle={styles.wrap}>
-      <ScreenHeader
-        title={club.name}
-        onBack={app.back}
-        right={<Button small kind="secondary" icon="share" title={t('clubs.share.button')} onPress={share} testID="club-share" />}
-        sub={
-          <Row gap={6} style={{ marginTop: 2 }}>
-            <Pill text={t('clubs.code', { code: club.code })} tone="gold" size="sm" />
-            <Pill text={t('clubs.members', { n: club.members?.length ?? club.memberCount ?? 0 })} icon="users" size="sm" />
-            <Pill text={roleName(me ? me.role : 'guest', t)} size="sm" />
-          </Row>
-        }
-      />
-      {error && <Pill tone="danger" icon="warning" wrap text={error} />}
-      {notice && <Pill tone="ok" icon="check" wrap text={notice} />}
+      <ScreenHeader title={club.name} titleSize={clubTitleSize(club.name)} titleLines={0} onBack={app.back} />
+      {/* Under the title at full width, so a long name is never cut and no pill runs under the Share button. */}
+      <Row gap={6} style={{ flexWrap: 'wrap', rowGap: 6 }}>
+        <Pill text={t('clubs.code', { code: club.code })} tone="gold" size="sm" />
+        <Pill text={t('clubs.memberCount', { count: members.length })} icon="users" size="sm" />
+        <Pill text={roleName(me ? me.role : 'guest', t)} size="sm" />
+        <Button small kind="secondary" icon="share" title={t('clubs.share.button')} onPress={share} testID="club-share" style={{ marginLeft: 'auto' }} />
+      </Row>
+      <NameRefusedNotice />
+      {linkNotice && !error && (
+        <Live message={linkNotice} assertive testID="club-link-notice">
+          <Pill tone="danger" icon="warning" wrap text={linkNotice} />
+        </Live>
+      )}
+      <MessageLines messages={messages} />
       {restricted && (
         <Card tone="gold" style={{ gap: 6 }}>
           <P style={{ fontSize: 13, lineHeight: 18 }}>{t('clubs.owner.restricted')}</P>
@@ -453,7 +586,10 @@ export function ClubScreen({ code }: { code: string }) {
             key={id}
             label={id === 'tables' ? t('clubs.tabs.tables', { n: live.length }) : id === 'members' ? t('clubs.tabs.members', { n: members.length }) : id === 'standings' ? t('clubs.tabs.standings') : t('clubs.tabs.rules')}
             selected={tab === id}
-            onPress={() => setTab(id)}
+            onPress={() => {
+              setTab(id);
+              tell({ type: 'moved' });
+            }}
           />
         ))}
       </Row>

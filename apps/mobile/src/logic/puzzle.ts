@@ -112,6 +112,28 @@ export function tileName(kind: Kind, locale: string): string {
   return locale === 'zh-TW' ? info.nameZh : info.nameEn;
 }
 
+/**
+ * A list of tiles in words, grouped by suit so that eighteen kinds still read as one line:
+ * "6, 7, 8 Characters; 5, 7 Dots; North Wind, Green Dragon" / 「六、七、八萬；五、七筒；北、發」.
+ * (The engine's short codes, 6m 7p N F, are riichi notation that nothing in the app explains.)
+ */
+export function tileListText(kinds: readonly Kind[], locale: string): string {
+  const zh = locale === 'zh-TW';
+  const comma = zh ? '、' : ', ';
+  const groups: string[] = [];
+  const sorted = [...new Set(kinds)].sort((x, y) => x - y).map((k) => kindInfo(k));
+  for (const suit of ['m', 'p', 's'] as const) {
+    const ranks = sorted.filter((i) => i.suit === suit);
+    if (!ranks.length) continue;
+    // 「六萬」 is rank then suit; "6 Characters" is rank, a space, then suit.
+    const suitName = zh ? ranks[0].nameZh.slice(1) : ranks[0].nameEn.slice(ranks[0].nameEn.indexOf(' '));
+    groups.push(ranks.map((i) => (zh ? i.nameZh.slice(0, 1) : String(i.rank))).join(comma) + suitName);
+  }
+  const others = sorted.filter((i) => i.suit !== 'm' && i.suit !== 'p' && i.suit !== 's');
+  if (others.length) groups.push(others.map((i) => (zh ? i.nameZh : i.nameEn)).join(comma));
+  return groups.join(zh ? '；' : '; ');
+}
+
 /** The engine writes each explanation in English and Taiwanese Mandarin; pick the app's language. */
 export function explanationFor(p: { explanation: string; explanationZh: string }, locale: string): string {
   return locale === 'zh-TW' ? p.explanationZh : p.explanation;

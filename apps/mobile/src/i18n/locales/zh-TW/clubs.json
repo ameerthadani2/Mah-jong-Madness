@@ -22,12 +22,30 @@
   },
   "mine": "我的俱樂部",
   "none": "你還沒有加入任何俱樂部。",
-  "summary": "%{members} 位成員 · %{tables} 張牌桌開放中 · %{stakes}",
+  "summary": "%{members} · %{tables} · %{stakes}",
+  "tablesOpen": {
+    "one": "%{count} 張牌桌開放中",
+    "other": "%{count} 張牌桌開放中"
+  },
+  "retry": "再試一次",
   "pending": "等待核准",
   "open": "進入",
+  "openNamed": "進入「%{name}」",
   "loadingClub": "載入俱樂部中…",
   "tableLabel": "%{name} 的牌桌",
   "code": "代碼 %{code}",
+  "memberCount": {
+    "one": "%{count} 位成員",
+    "other": "%{count} 位成員"
+  },
+  "guest": {
+    "body": "你還不是這個俱樂部的成員。加入後就能看到牌桌、排行榜和俱樂部規則。",
+    "approvalBody": "你還不是這個俱樂部的成員。新成員要先經過會長或管理員核准：送出申請，核准後俱樂部就會出現在「我的俱樂部」。",
+    "join": "加入這個俱樂部",
+    "ask": "申請加入",
+    "requested": "已送出申請。管理員核准後，俱樂部就會出現在「我的俱樂部」。",
+    "removed": "你已經不是這個俱樂部的成員了。"
+  },
   "members": {
     "makeAdmin": "設為管理員",
     "makeMember": "改為一般會員",

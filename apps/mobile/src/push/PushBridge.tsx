@@ -13,10 +13,12 @@ import { useApp } from '../app-state';
 import { useAuth } from '../auth/AuthProvider';
 import { httpBase } from '../api/http';
 import { APP_SCHEMES, LINK_DOMAIN } from '../config';
-import { createOnlineSession } from '../game/session';
+import { createOnlineSession, seatOrRefusal } from '../game/session';
+import { tableError } from '../components/table/tableErrors';
 import { currentLocale, t } from '../i18n';
 import { gatingScreen, onlineEntry } from '../legal/online';
 import { ageGateLoaded, useAgeGate } from '../legal/useAgeGate';
+import { acceptedName } from '../logic/profile';
 import { useRemoteConfig } from '../telemetry/RemoteConfig';
 import { linkFromNotificationData, parseDeepLink, planLink, presentInForeground, type DeepLink } from './deeplink';
 import { attachRegistrar } from './hub';
@@ -87,14 +89,15 @@ export function PushBridge() {
       a.go({ name: 'club', code: plan.club });
       return;
     }
-    const fallback = () => a.go(plan.club ? { name: 'club', code: plan.club } : { name: 'online' });
+    // Where a link that cannot be followed lands, with the reason when there is one to give.
+    const fallback = (notice?: string) => a.go(plan.club ? { name: 'club', code: plan.club, notice } : { name: 'online', notice });
     // Seated at another table: never walk away from it; show the club instead.
     if (a.session) return fallback();
     try {
       const au = authRef.current;
       const session = await createOnlineSession({
         signalUrl: a.signalUrl,
-        name: a.profile.name || t('common.player'),
+        name: acceptedName(a.profile) || t('common.player'),
         avatar: a.profile.avatar,
         userId: au.user?.id || a.profile.userId || undefined,
         rules: a.settings.rules,
@@ -103,10 +106,13 @@ export function PushBridge() {
         clubCode: plan.club,
         ...au.tableAuth,
       });
+      // A full table, or a match already under way, refuses the seat: that is a link that could not be followed.
+      await seatOrRefusal(session);
       a.setSession(session);
       a.go({ name: 'lobby' });
-    } catch {
-      fallback();
+    } catch (e) {
+      // The table is gone, full or already playing: say which, as the Online screen's own Join does.
+      fallback(tableError(e, t));
     }
   }).current;
 

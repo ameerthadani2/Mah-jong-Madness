@@ -118,4 +118,26 @@ describe('locale keys', () => {
       .map(([k]) => k);
     expect(mismatched).toEqual([]);
   });
+
+  it('no locale file names a key twice in one group (the second would silently replace the first)', () => {
+    const repeated: string[] = [];
+    for (const locale of Object.keys(LOCALES)) {
+      for (const ns of NAMESPACES) {
+        // Walk the file's own text: JSON.parse keeps only the last of two equal keys, so the parsed tree cannot show it.
+        const text = readFileSync(join(__dirname, locale, `${ns}.json`), 'utf8');
+        const stack: Array<Set<string>> = [];
+        // Each string is taken whole (so a brace inside a value is not a group), and is a key when a colon follows.
+        for (const m of text.matchAll(/"((?:[^"\\]|\\.)*)"(\s*:)?|[{}]/g)) {
+          if (m[0] === '{') stack.push(new Set());
+          else if (m[0] === '}') stack.pop();
+          else if (m[2]) {
+            const keys = stack[stack.length - 1];
+            if (keys.has(m[1])) repeated.push(`${locale}/${ns}.json: "${m[1]}"`);
+            keys.add(m[1]);
+          }
+        }
+      }
+    }
+    expect(repeated).toEqual([]);
+  });
 });

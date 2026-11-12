@@ -12,6 +12,7 @@ import { useApp } from '../app-state';
 import { httpBase } from '../api/http';
 import { GOOGLE_CLIENT_ID } from '../config';
 import { visibleProviders, type SignInProvider } from '../logic/auth-config';
+import { acceptedName, withAcceptedName, withRefusedName } from '../logic/profile';
 import { walletForUser } from '../monetisation/wallet';
 import { forgetPushRegistration } from '../push/hub';
 import { ApiError, AuthClient, type AuthSnapshot, type AuthStatus } from './client';
@@ -26,6 +27,11 @@ export interface ProviderState {
 
 export interface AuthContextValue {
   status: AuthStatus;
+  /**
+   * The server has said this account or device is banned (403 `banned`, or a socket closed with 4403).
+   * Final: a new guest from this device gets the same refusal, so nothing offers "start fresh".
+   */
+  banned: boolean;
   user: { id: string; displayName: string | null; kind: 'guest' | 'account' } | null;
   /** Sign-in methods this device and server offer (empty offline or when none are configured). */
   providers: ProviderState[];
@@ -48,10 +54,13 @@ export interface AuthContextValue {
   startFresh(): Promise<boolean>;
   /** Re-read the server config and, when signed in, the account. */
   refresh(): Promise<void>;
-  /** Push the local name and avatar to the server (debounced; skipped offline). */
+  /**
+   * Push the local name and avatar to the server (debounced; skipped offline). A name the server refuses
+   * is recorded on the profile (`refusedName`), which is what the name field and the notices read.
+   */
   syncProfile(displayName: string, avatar: string): void;
-  /** Spread into createOnlineSession: the session token for the table socket, and what to do on a 4401. */
-  tableAuth: { auth: () => Promise<string>; onUnauthorised: () => Promise<void> };
+  /** Spread into createOnlineSession: the session token for the table socket, and what to do on a 4401 or a 4403. */
+  tableAuth: { auth: () => Promise<string>; onUnauthorised: () => Promise<void>; onBanned: () => Promise<void> };
 }
 
 const Ctx = createContext<AuthContextValue | null>(null);
@@ -61,9 +70,27 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const base = httpBase(app.signalUrl);
   const profileRef = useRef(app.profile);
   profileRef.current = app.profile;
+  const setProfileRef = useRef(app.setProfile);
+  setProfileRef.current = app.setProfile;
+  /** The server's verdict on a name this device sent: remembered on the profile, or an old refusal of it dropped. */
+  const nameVerdict = useCallback((sent: string, refused: boolean) => {
+    const p = profileRef.current;
+    const next = refused ? withRefusedName(p, sent) : withAcceptedName(p, sent);
+    if (next === p) return;
+    profileRef.current = next;
+    setProfileRef.current(next);
+  }, []);
   const client = useMemo(
-    () => new AuthClient({ base, store: platformStore, device: deviceInfo, profile: () => ({ displayName: profileRef.current.name || undefined, avatar: profileRef.current.avatar }) }),
-    [base],
+    () =>
+      new AuthClient({
+        base,
+        store: platformStore,
+        device: deviceInfo,
+        // A name the server has already refused is not offered to it again as a new guest's name.
+        profile: () => ({ displayName: acceptedName(profileRef.current).trim() || undefined, avatar: profileRef.current.avatar }),
+        onNameRefused: (name) => nameVerdict(name, true),
+      }),
+    [base, nameVerdict],
   );
   const [snap, setSnap] = useState<AuthSnapshot>(client.snapshot());
   const [config, setConfig] = useState<ServerConfig | null>(null);
@@ -90,7 +117,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!loaded || !authLoaded) return;
     const id = snap.userId ?? '';
-    if (id !== profile.userId) setProfile({ ...profile, userId: id });
+    if (id === profile.userId) return;
+    // From the ref, not this render's copy: a name verdict may have landed since the render (see nameVerdict).
+    const next = { ...profileRef.current, userId: id };
+    profileRef.current = next;
+    setProfile(next);
   }, [loaded, authLoaded, snap.userId, profile, setProfile]);
 
   // Tell the server this account's analytics choice once per signed-in account, so server-side
@@ -194,6 +225,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const providers = visibleProviders({ serverProviders: config?.authProviders ?? null, appleAvailable: apple, googleClientId: GOOGLE_CLIENT_ID }).map((id) => ({ id, linked: linked.has(id) }));
     return {
       status: snap.status,
+      banned: snap.banned,
       user: snap.userId ? { id: snap.userId, displayName: snap.displayName, kind: snap.kind ?? 'guest' } : null,
       providers,
       linkedCount: linked.size,
@@ -202,7 +234,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       client,
       ensure,
       refresh,
-      tableAuth: { auth: () => client.ensureSession(), onUnauthorised: () => client.invalidate() },
+      tableAuth: { auth: () => client.ensureSession(), onUnauthorised: () => client.invalidate(), onBanned: () => client.markBanned() },
       signInApple: () => signIn('apple', signInWithApple),
       signInGoogle: () => signIn('google', () => (GOOGLE_CLIENT_ID ? signInWithGoogle(GOOGLE_CLIENT_ID) : Promise.resolve(null))),
       unlink: (provider) =>
@@ -233,11 +265,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (syncTimer.current) clearTimeout(syncTimer.current);
         syncTimer.current = setTimeout(() => {
           if (!client.snapshot().hasSession) return;
-          void client.updateMe({ displayName: displayName.trim() || undefined, avatar }).catch(() => undefined);
+          void client
+            .syncProfile(displayName, avatar)
+            .then((r) => nameVerdict(displayName, r.nameRefused))
+            .catch(() => undefined);
         }, 800);
       },
     };
-  }, [snap, me, config, apple, busy, error, client, ensure, refresh, signIn, run, loadConfig]);
+  }, [snap, me, config, apple, busy, error, client, ensure, refresh, signIn, run, loadConfig, nameVerdict]);
 
   useEffect(
     () => () => {

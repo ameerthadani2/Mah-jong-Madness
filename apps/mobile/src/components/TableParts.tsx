@@ -307,7 +307,8 @@ export function Compass({ prevailing, drawsLeft, seatWinds, active, size = 72 }:
 const styles = StyleSheet.create({
   meld: { flexDirection: 'row', alignItems: 'flex-end', gap: 1, marginRight: 5 },
   meldRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'flex-end', rowGap: 3 },
-  flowers: { flexDirection: 'row', gap: 1, alignItems: 'flex-end' },
+  // Wraps inside a narrow column (a side seat with many flowers) instead of running out of it.
+  flowers: { flexDirection: 'row', flexWrap: 'wrap', gap: 1, rowGap: 3, alignItems: 'flex-end', maxWidth: '100%' },
   strip: { flexDirection: 'row', flexWrap: 'wrap', gap: 2 },
   seat: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   seatVertical: { flexDirection: 'column', gap: 0 },

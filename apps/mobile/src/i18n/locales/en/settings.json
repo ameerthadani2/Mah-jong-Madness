@@ -6,6 +6,11 @@
   "languageAuto": "Follow device",
   "profile": "Profile",
   "namePlaceholder": "Name",
+  "nameRefused": {
+    "notice": "The name “%{name}” was not accepted, so you are playing online without a name. Choose another one in Settings, under Profile.",
+    "change": "Change name",
+    "field": "This name is not allowed. Please choose another one."
+  },
   "tableLook": "Table look",
   "looks": {
     "tileBack": "Tile back",
@@ -19,7 +24,12 @@
   "openShop": "Open Shop",
   "coachBots": "Coach & bots",
   "coachToggle": "Show the coach at bot tables (never online)",
-  "botStrength": "Bot strength",
+  "botStrength": "Bot opponents",
+  "botAbout": {
+    "beginner": "Makes efficiency mistakes and never folds. Good for learning the flow.",
+    "club": "Solid tile efficiency, claims when it helps, and leans away from a player who looks ready.",
+    "pro": "Estimates how dangerous each discard is and may fold against a player who looks ready. It plays by the policy the coach's advice comes from."
+  },
   "houseRules": "House rules (台灣麻將)",
   "presets": {
     "title": "Presets",
@@ -61,6 +71,7 @@
     "signedIn": "Signed in",
     "signedOut": "Signed out",
     "signedOutBody": "The game server no longer accepts this device’s session for %{name}. Sign in again to get back to that account, or start fresh as a new guest.",
+    "banned": "This account has been banned from online play, and a new guest on this device would be refused as well.",
     "prompt": {
       "title": "Sign in to play online",
       "body": "This device remembers %{name}, but the game server needs you to sign in again before you can join a table or a club.",
@@ -96,7 +107,7 @@
   "display": {
     "title": "Display",
     "tiles": "Tile size",
-    "tilesHelp": "Your hand, melds, ponds and the results. Extra large wraps the portrait hand into three rows; in landscape the hand scrolls sideways.",
+    "tilesHelp": "Your hand, melds, ponds and the results. Extra large wraps the upright hand into three rows. Held sideways the hand stays in one row and grows only as far as the screen is wide, so on a small phone it changes little there: hold the phone upright for the largest tiles.",
     "text": "Text size",
     "textHelp": "Lessons, puzzles and other reading text.",
     "normal": "Normal",

@@ -7,13 +7,17 @@
  *   npm run e2e:screens                                           (both steps)
  *
  * Writes <dir>/<width>x<height>-<screen>.png for home, table-mid, table-selected, table-claim (when a claim
- * came up), callout and win-hold (when they came up), result, review, learn, lesson, shop and settings, plus
- * exit-sheet (the red exit icon's confirmation) and, for each landscape viewport, table-xl (Extra-large tiles).
+ * came up), callout and win-hold (when they came up), result, review, replace-table (Home asking before a new
+ * match replaces a saved table), learn, lesson, age-gate (the birth-year
+ * question a new player answers before the Shop), shop and settings, plus exit-sheet (the red exit icon's
+ * confirmation) and, for each landscape viewport, table-xl (Extra-large tiles).
  * Each viewport plays one hand against bots in its own browser context, all in parallel. Set
  * SCREENS_SIZES=390x844,667x375 to capture a subset.
  * Exits non-zero if a viewport cannot reach the result sheet, the page throws, or a hard check fails (one tap on
- * the exit icon leaves the table, the English claim buttons carry no gloss, an Extra-large hand scrolls or runs
- * off screen).
+ * the exit icon or on the result sheet's "Leave table" leaves the table, Start match replaces a saved table
+ * without asking, the English claim buttons carry no gloss, an Extra-large hand scrolls or runs off screen, the
+ * Shop does not open, a Home card button clips its label in English or in Traditional Chinese (each viewport also
+ * opens Home in zh-TW and writes <size>-home-zh.png), or Home's cards run past the bottom edge at 844x390).
  */
 const http = require('http');
 const fs = require('fs');
@@ -61,6 +65,57 @@ const tapSel = async (page, sel, wait = 900) => {
   return true;
 };
 
+/**
+ * Home's hard checks, run on the page as it stands. Card buttons are as wide as their card, so a label (with its
+ * icon) wider than the button is cut off at both ends. And where the cards sit side by side on a phone held
+ * sideways (844x390), everything must end above the bottom edge: the page must not need to scroll.
+ */
+async function homeFit(page) {
+  return page.evaluate(() => {
+    const bad = [];
+    for (const id of ['start-match', 'open-clubs', 'open-quickmatch', 'open-learn', 'open-shop-card']) {
+      const el = [...document.querySelectorAll(`[data-testid="${id}"]`)].find((e) => e.getBoundingClientRect().width > 0);
+      if (!el) continue;
+      const parts = [...el.querySelectorAll('div[dir="auto"], svg')].map((c) => c.getBoundingClientRect()).filter((r) => r.width > 0);
+      if (!parts.length) continue;
+      const content = Math.max(...parts.map((r) => r.right)) - Math.min(...parts.map((r) => r.left));
+      // The button's 3 px border on each side is not room for the label.
+      if (content > el.getBoundingClientRect().width - 6) bad.push(`button ${id} clips its label (${Math.round(content)} in ${Math.round(el.getBoundingClientRect().width)})`);
+    }
+    if (innerWidth >= 800 && innerHeight < 420) {
+      let scroller = null;
+      for (const e of document.querySelectorAll('div')) {
+        const st = getComputedStyle(e);
+        if ((st.overflowY === 'auto' || st.overflowY === 'scroll') && (!scroller || e.clientHeight * e.clientWidth > scroller.clientHeight * scroller.clientWidth)) scroller = e;
+      }
+      if (scroller && scroller.scrollHeight > scroller.clientHeight + 1) bad.push(`the cards run past the bottom edge (${scroller.scrollHeight} in ${scroller.clientHeight})`);
+    }
+    return bad;
+  });
+}
+
+/** Home in Traditional Chinese at one viewport: the same hard checks, on the longer of the two languages' labels. */
+async function runHomeZh(browser, port, [w, h]) {
+  const tag = `${w}x${h}`;
+  const ctx = await browser.newContext({ viewport: { width: w, height: h }, locale: 'zh-TW' });
+  await ctx.addInitScript(() => {
+    localStorage.setItem('mjm.profile', JSON.stringify({ userId: 'user-e2e-1234567', userSecret: '0123456789abcdef0123456789abcdef', name: 'Tester', avatar: 'panda' }));
+  });
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await page.goto(`http://localhost:${port}/`);
+  await page.waitForSelector('[data-testid="start-match"]', { timeout: 30000 });
+  await page.waitForTimeout(800);
+  await page.screenshot({ path: path.join(out, `${tag}-home-zh.png`) });
+  const fails = [];
+  // The page must really be in Chinese, or the check would pass on English labels.
+  if (!(await page.evaluate(() => /[\u4e00-\u9fff]/.test(document.querySelector('[data-testid="open-clubs"]')?.textContent || '')))) fails.push('Home (zh-TW): the page is not in Chinese');
+  fails.push(...(await homeFit(page)).map((f) => `Home (zh-TW): ${f}`));
+  await ctx.close();
+  return { size: `${tag} zh-TW`, finished: true, shots: ['home-zh'], notes: [], fails, errors };
+}
+
 async function run(browser, port, [w, h]) {
   const tag = `${w}x${h}`;
   const notes = [];
@@ -79,6 +134,7 @@ async function run(browser, port, [w, h]) {
   await page.waitForSelector('[data-testid="start-match"]', { timeout: 30000 });
   await page.waitForTimeout(800);
   await shot('home');
+  fails.push(...(await homeFit(page)).map((f) => `Home (en): ${f}`));
 
   await tapSel(page, '[data-testid="start-match"]', 300);
   await page.waitForSelector('[data-testid^="tile-"]', { timeout: 15000 });
@@ -144,12 +200,30 @@ async function run(browser, port, [w, h]) {
       await shot('review');
       await tapSel(page, '[data-testid="back"]', 900);
     } else notes.push('no review button');
-    if (!(await tapSel(page, 'text=Leave table', 1200))) {
-      await tapSel(page, '[data-testid="leave-table"]', 700);
-      await tapSel(page, '[data-testid="leave-confirm"]', 1200);
-    }
+    // The result sheet's "Leave table" asks like the exit icon does: one tap must not give the match up.
+    if (await tapSel(page, 'text=Leave table', 900)) {
+      if (!(await visible(page, '[data-testid="leave-sheet"]'))) fails.push('"Leave table" on the result sheet left without asking');
+    } else await tapSel(page, '[data-testid="leave-table"]', 700);
+    // Step away: Home keeps the table behind its Resume card.
+    await tapSel(page, '[data-testid="leave-away"]', 1200);
   }
   await page.waitForSelector('[data-testid="start-match"]', { timeout: 15000 }).catch(() => notes.push('did not return home'));
+  if (finished) {
+    if (!(await visible(page, '[data-testid="resume-card"]'))) fails.push('no Resume card on Home after stepping away from the table');
+    // A new match would take the saved table's place: Home asks first, and "Keep my table" changes nothing.
+    await tapSel(page, '[data-testid="start-match"]', 900);
+    if (!(await visible(page, '[data-testid="replace-table"]'))) fails.push('Start match replaced the saved table without asking');
+    else await shot('replace-table');
+    await tapSel(page, '[data-testid="confirm-no"]', 700);
+    if (!(await visible(page, '[data-testid="resume-card"]'))) fails.push('"Keep my table" did not keep the saved table');
+    // Back to the table through Resume, then give it up for the rest of the walk.
+    await tapSel(page, '[data-testid="resume-table"]', 1500);
+    if (!(await visible(page, 'text=Next hand'))) fails.push('Resume did not bring the result sheet back');
+    await tapSel(page, 'text=Leave table', 900);
+    await tapSel(page, '[data-testid="leave-confirm"]', 1200);
+    await page.waitForSelector('[data-testid="start-match"]', { timeout: 15000 }).catch(() => notes.push('did not return home after abandoning'));
+    if (await visible(page, '[data-testid="resume-card"]')) fails.push('an abandoned table still shows a Resume card');
+  }
 
   if (await tapSel(page, '[data-testid="open-learn"]', 1000)) {
     await shot('learn');
@@ -161,7 +235,14 @@ async function run(browser, port, [w, h]) {
   } else notes.push('no learn button');
 
   if (await tapSel(page, '[data-testid="open-shop"]', 1000)) {
-    await shot('shop');
+    // A new player is asked their birth year before the Shop opens: capture the question, answer it as an adult.
+    if (await visible(page, '[data-testid="age-gate"]')) {
+      await shot('age-gate');
+      await page.fill('[data-testid="age-year"]', '1990');
+      await tapSel(page, '[data-testid="age-continue"]', 1000);
+    }
+    if (await visible(page, '[data-testid="shop"]')) await shot('shop');
+    else fails.push('the Shop did not open from Home (the "shop" screenshot would show another screen)');
     await tapSel(page, '[data-testid="back"]', 800);
   } else notes.push('no shop button');
 
@@ -230,6 +311,7 @@ async function runXL(browser, port, [w, h]) {
   const results = await Promise.all([
     ...SIZES.map((s) => run(browser, port, s).catch((e) => ({ size: `${s[0]}x${s[1]}`, finished: false, notes: [e.message], errors: [] }))),
     ...XL.map((s) => runXL(browser, port, s).catch((e) => ({ size: `${s[0]}x${s[1]} xl`, finished: false, notes: [e.message], errors: [] }))),
+    ...SIZES.map((s) => runHomeZh(browser, port, s).catch((e) => ({ size: `${s[0]}x${s[1]} zh-TW`, finished: false, notes: [e.message], errors: [] }))),
   ]);
   for (const r of results) console.log(JSON.stringify(r));
   await browser.close();

@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { ScrollView, StyleSheet, View } from 'react-native';
-import { kindInfo, kindOf, reviewHand, type MoveGrade, type ReviewedMove } from '@mjm/engine';
+import { kindOf, reviewHand, type MoveGrade, type ReviewedMove } from '@mjm/engine';
+import { reviewAction, reviewReasonParams } from '../logic/reviewText';
 import { useApp } from '../app-state';
 import { canUse, consume } from '../monetisation/store';
 import { rollingAccuracy } from '../logic/accuracy';
@@ -63,7 +64,7 @@ export function ReviewScreen() {
         <H1 style={{ fontSize: 26 }}>{t('review.dailyUsedTitle')}</H1>
         <P style={{ textAlign: 'center', maxWidth: 420 }}>{t('review.dailyUsedText')}</P>
         <Row>
-          <Button title={t('review.seePlans')} onPress={() => app.go({ name: 'shop' })} />
+          <Button title={t('review.seePlans')} onPress={() => app.go({ name: 'shop', focus: 'fourwinds' })} />
           <Button kind="ghost" title={t('review.back')} onPress={app.back} />
         </Row>
       </View>
@@ -118,26 +119,13 @@ export function ReviewScreen() {
 }
 
 function MoveCard({ move, compact }: { move: ReviewedMove; compact?: boolean }) {
-  const { t } = useT();
+  const { t, locale } = useT();
   const g = GRADE_STYLE[move.grade];
   const label = t(`review.grade.${move.grade}`);
+  // Tiles are named in the reader's language, as the puzzles name them (src/logic/reviewText.ts).
   const describe = (a: ReviewedMove['actual'] | null) => {
-    if (!a) return t('review.action.none');
-    switch (a.type) {
-      case 'discard':
-        return t('review.action.discard', { tile: kindInfo(kindOf(a.tile)).nameZh });
-      case 'chi':
-        return t('review.action.chi', { tiles: a.tiles.map((tile) => kindInfo(kindOf(tile)).nameZh).join('') });
-      case 'kong':
-        return t('review.action.kong', { tile: kindInfo(kindOf(a.tile)).nameZh });
-      case 'hu':
-        return t('review.action.hu');
-      case 'pong':
-        return t('review.action.pong');
-      default:
-        // The only action left is a pass.
-        return t('review.action.pass');
-    }
+    const m = reviewAction(a, locale);
+    return t(m.key, m.params);
   };
   return (
     <Card style={{ gap: 6 }}>
@@ -160,7 +148,7 @@ function MoveCard({ move, compact }: { move: ReviewedMove; compact?: boolean }) 
               <Tile key={`${t}-${i}`} tile={t} size="sm" highlight={move.highlightBest === kindOf(t) ? 'good' : move.highlightActual === kindOf(t) ? 'bad' : undefined} />
             ))}
           </View>
-          <P style={{ fontSize: 13 }}>{t(`engine.${move.reasonKey}`, move.reasonParams)}</P>
+          <P style={{ fontSize: 13 }}>{t(`engine.${move.reasonKey}`, reviewReasonParams(move.reasonKey, move.reasonParams, locale, t))}</P>
         </>
       )}
     </Card>

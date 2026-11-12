@@ -1,6 +1,6 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useMemo } from 'react';
 import { ScrollView, Share, StyleSheet, Text, View } from 'react-native';
-import { useApp } from '../app-state';
+import { useApp, useHardwareBack } from '../app-state';
 import { useConnection, useSession } from '../game/useTable';
 import { useT } from '../i18n';
 import { tableError } from '../components/table/tableErrors';
@@ -10,18 +10,33 @@ import { AvatarPlate, seatAvatarId } from '../components/Avatars';
 import { Icon } from '../components/Icons';
 import { APP_NAME, APP_SCHEMES, LINK_DOMAIN } from '../config';
 import { tableLink } from '../push/deeplink';
+import { lobbyControls, lobbySeated } from '../logic/lobby';
+import { BOT_NAME_SLOT, botNamer, withBotLabels } from '../logic/seatName';
+import { forgetsTable, linkCopy, linkNotice } from '../logic/reconnect';
 
 export function LobbyScreen() {
   const app = useApp();
   const { t } = useT();
   const session = app.session;
-  const state = useSession(session);
+  // Bot seats carry the app's own label in the reader's language (src/logic/seatName.ts).
+  const tableState = useSession(session);
+  const botLabel = t('common.botName', { name: BOT_NAME_SLOT });
+  const state = useMemo(() => (tableState ? withBotLabels(tableState, botNamer(botLabel)) : null), [tableState, botLabel]);
   const conn = useConnection(session);
+
+  // Android's Back key does what the header's Back arrow does: it never leaves the table open behind another screen.
+  useHardwareBack(() => leave());
 
   useEffect(() => {
     if (state?.view) app.go({ name: 'table' });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state?.view]);
+
+  function leave() {
+    app.setSession(null);
+    app.setActiveSession(null);
+    app.reset({ name: 'home' });
+  }
 
   if (!session || !state) {
     return (
@@ -34,44 +49,72 @@ export function LobbyScreen() {
     );
   }
 
+  // Not seated: the table has not answered the join yet, or it refused the seat (full, or already playing).
+  // Nothing of the lobby works without a seat, so only the reason and the way back are shown.
+  if (!lobbySeated(state)) {
+    const refusal = state.lastError ? tableError({ code: state.lastErrorCode ?? undefined, message: state.lastError }, t) : null;
+    return (
+      <ScrollView contentContainerStyle={styles.wrap}>
+        <ScreenHeader title={session.quickMatch ? t('lobby.quickTable') : t('lobby.title', { code: session.roomCode })} onBack={leave} />
+        <Card style={{ alignItems: 'center' }} testID="lobby-no-seat">
+          <Icon name={refusal ? 'warning' : 'hourglass'} size={32} />
+          <View accessibilityRole={refusal ? 'alert' : undefined} accessibilityLiveRegion={refusal ? 'assertive' : 'polite'}>
+            <P style={{ textAlign: 'center' }}>{refusal ?? t('lobby.joining')}</P>
+          </View>
+          <Button title={t('common.back')} icon="back" onPress={leave} />
+        </Card>
+      </ScrollView>
+    );
+  }
+
+  // A quick-match table is closed to everyone but the matched players and starts by itself (src/logic/lobby.ts).
+  const controls = lobbyControls(session);
+  // Rejoining, or why this device has stopped for good (src/logic/reconnect.ts).
+  const notice = linkNotice(conn, state);
   // Online tables run on the game server and have no host player, so every seated human may start or add bots.
   const localHost = session.mode === 'local' ? session.host : null;
   const humans = state.seats.filter((s) => s.peerId && !s.isBot).length;
   const addBot = () => (localHost ? localHost.addBot() : session.client.requestBot());
   const start = () => (localHost ? localHost.start() : session.client.requestStart());
 
-  const leave = () => {
-    app.setSession(null);
-    app.setActiveSession(null);
-    app.reset({ name: 'home' });
-  };
-
   return (
     <ScrollView contentContainerStyle={styles.wrap}>
-      <ScreenHeader title={t('lobby.title', { code: session.roomCode })} onBack={leave} />
+      <ScreenHeader title={controls.share ? t('lobby.title', { code: session.roomCode }) : t('lobby.quickTable')} onBack={leave} />
       <View style={styles.cols}>
-        <Card style={[styles.col, { alignItems: 'center' }]}>
-          <P dim>{t('lobby.shareCode')}</P>
-          <View style={styles.codeBox}>
-            <StrokeText style={styles.code} strokeWidth={2.5} drop={2.5}>
-              {session.roomCode}
-            </StrokeText>
-          </View>
-          <Row style={{ flexWrap: 'wrap', justifyContent: 'center', rowGap: 6 }}>
-            <Button
-              small
-              kind="secondary"
-              icon="share"
-              title={t('lobby.share')}
-              onPress={() =>
-                void Share.share({
-                  message: t('lobby.shareMessage', { app: t('common.appName', { name: APP_NAME }), code: session.roomCode, link: tableLink(session.roomCode, { scheme: APP_SCHEMES[0] ?? 'mahjongmania', domain: LINK_DOMAIN }) }),
-                })
-              }
-            />
-            <Pill text={session.mode === 'online' ? t('lobby.serverTable') : t('lobby.onDevice')} icon="shield" tone="gold" />
-          </Row>
-        </Card>
+        {!controls.share ? (
+          // No code and no invite link here: nobody but the matched players can enter this table.
+          <Card style={[styles.col, { alignItems: 'center', justifyContent: 'center' }]} testID="lobby-quick">
+            <Icon name="users" size={36} color={colors.cta} />
+            <H2>{t('lobby.quickTable')}</H2>
+            <P dim style={{ textAlign: 'center' }}>
+              {t('lobby.quickClosed')}
+            </P>
+            <Pill text={t('lobby.serverTable')} icon="shield" tone="gold" />
+          </Card>
+        ) : (
+          <Card style={[styles.col, { alignItems: 'center' }]} testID="lobby-share">
+            <P dim>{t('lobby.shareCode')}</P>
+            <View style={styles.codeBox}>
+              <StrokeText style={styles.code} strokeWidth={2.5} drop={2.5}>
+                {session.roomCode}
+              </StrokeText>
+            </View>
+            <Row style={{ flexWrap: 'wrap', justifyContent: 'center', rowGap: 6 }}>
+              <Button
+                small
+                kind="secondary"
+                icon="share"
+                title={t('lobby.share')}
+                onPress={() =>
+                  void Share.share({
+                    message: t('lobby.shareMessage', { app: t('common.appName', { name: APP_NAME }), code: session.roomCode, link: tableLink(session.roomCode, { scheme: APP_SCHEMES[0] ?? 'mahjongmania', domain: LINK_DOMAIN }) }),
+                  })
+                }
+              />
+              <Pill text={session.mode === 'online' ? t('lobby.serverTable') : t('lobby.onDevice')} icon="shield" tone="gold" />
+            </Row>
+          </Card>
+        )}
         <Card style={styles.col}>
           <H2>{t('lobby.seats')}</H2>
           {state.seats.map((s) => {
@@ -94,7 +137,7 @@ export function LobbyScreen() {
               </Row>
             );
           })}
-          {session.quickMatch ? (
+          {!controls.addBot ? (
             <P dim style={{ fontSize: 12 }}>{t('lobby.quickStarts')}</P>
           ) : (
             <Row style={{ flexWrap: 'wrap', rowGap: 6 }}>
@@ -106,22 +149,28 @@ export function LobbyScreen() {
           )}
         </Card>
       </View>
-      {!session.quickMatch && <Button large title={humans > 1 ? t('lobby.start') : t('lobby.startWithBots')} icon="play" onPress={start} style={{ alignSelf: 'center' }} />}
-      {conn.status === 'reconnecting' ? (
+      {controls.start && <Button large title={humans > 1 ? t('lobby.start') : t('lobby.startWithBots')} icon="play" onPress={start} style={{ alignSelf: 'center' }} />}
+      {notice === 'reconnecting' ? (
         <Row style={{ flexWrap: 'wrap', rowGap: 6, alignItems: 'center' }} gap={8}>
           <Pill tone="gold" icon="hourglass" text={t('lobby.reconnecting', { n: conn.attempt })} />
           <Button small title={t('lobby.retryNow')} onPress={() => session.retryNow()} />
         </Row>
-      ) : conn.status === 'lost' || state.disconnected ? (
-        // Leaving via the header would forget the table; this path keeps the saved record so Home can resume it.
+      ) : notice ? (
+        // Leaving via the header would forget the table; this path keeps the saved record so Home can resume it
+        // (also after the seat was opened on another device: taking it back is then the player's choice).
         <Row style={{ flexWrap: 'wrap', rowGap: 6, alignItems: 'center' }} gap={8}>
-          <Pill tone="danger" icon="warning" text={t(conn.reason === 'gone' ? 'lobby.tableGone' : 'lobby.connectionLost')} />
+          <View testID={`link-${notice}`} accessibilityRole="alert" accessibilityLiveRegion="assertive" style={{ flexShrink: 1 }}>
+            <Pill tone="danger" icon="warning" wrap text={t(linkCopy(notice, 'lobby').text)} />
+          </View>
           <Button
             small
-            title={t(conn.reason === 'gone' ? 'common.back' : 'lobby.reconnect')}
+            title={t(linkCopy(notice, 'lobby').leave)}
             onPress={() => {
-              // A table the server no longer has cannot be resumed: drop the saved record with the session.
-              if (conn.reason === 'gone') app.setActiveSession(null);
+              // "Reconnect" on a lost link starts the session trying again when that can help.
+              if (notice === 'lost' && session.reconnect()) return;
+              // A table the server no longer has, or will not let a banned account back to, cannot be resumed:
+              // drop the saved record with the session.
+              if (forgetsTable(notice)) app.setActiveSession(null);
               app.setSession(null);
               app.reset({ name: 'home' });
             }}

@@ -15,6 +15,7 @@
 import { DEFAULT_RULES, type BotSkill, type RuleSet } from '@mjm/engine';
 import {
   BANNED_CLOSE_CODE,
+  BANNED_MESSAGE,
   isRoomUnavailable,
   QueueError,
   LoopbackHub,
@@ -32,7 +33,8 @@ import {
   type WebSocketFactory,
   type WebSocketLike,
 } from '@mjm/net';
-import { CONNECTED, nextDelayMs, reconnectStep, type ConnectionStatus, type ReconnectEvent, type ReconnectState } from '../logic/reconnect';
+import { friendlyErrorMessage } from '../logic/errors';
+import { canRetry, CONNECTED, isWatcherMadeWay, nextDelayMs, reconnectStep, type ConnectionStatus, type ReconnectEvent, type ReconnectState } from '../logic/reconnect';
 
 export type { ConnectionStatus } from '../logic/reconnect';
 
@@ -63,7 +65,22 @@ export interface Session {
   onStatus(cb: (s: ReconnectState) => void): Unsubscribe;
   /** Skip the backoff wait and try now (while reconnecting). */
   retryNow(): void;
-  close(): void;
+  /**
+   * Start reconnecting again after the session gave up (`canRetry` in src/logic/reconnect.ts), trying at once.
+   * Returns false when there is nothing to retry: the caller then closes the table instead.
+   */
+  reconnect(): boolean;
+  /**
+   * Close the table on this device. It tells the table the player left on purpose (`leave`), unless
+   * `keepSeat` is set: then only the link is closed, which the table treats like a dropped connection
+   * (a bot plays the seat and the player may come back). A quick-match table needs that to stay open
+   * for a player who only stepped away: it closes at once when every player left on purpose.
+   */
+  close(opts?: CloseOptions): void;
+}
+
+export interface CloseOptions {
+  keepSeat?: boolean;
 }
 
 export interface LocalOptions {
@@ -96,6 +113,7 @@ export function createLocalSession(name: string, avatar: string, rules: RuleSet,
     onChange: (cb) => client.onChange(cb),
     onStatus: () => () => undefined,
     retryNow: () => undefined,
+    reconnect: () => false,
     close: () => {
       client.leave();
       host.close();
@@ -120,6 +138,10 @@ export interface OnlineOptions {
   auth?: () => Promise<string | undefined>;
   /** The server refused the session (4401): drop it so the next `auth()` brings a fresh one. */
   onUnauthorised?: () => Promise<void> | void;
+  /** The server closed the socket with 4403: this account is banned, which no new guest gets round. */
+  onBanned?: () => Promise<void> | void;
+  /** A quick-match table (resumed, or returned to after `seated`): nobody else can enter it and it starts by itself. */
+  quickMatch?: boolean;
   /** Tests inject a fake socket; defaults to the global WebSocket. */
   webSocket?: WebSocketFactory;
   /**
@@ -167,8 +189,24 @@ const defaultSocket: WebSocketFactory = (u) => new (globalThis as unknown as { W
  * docs/API.md specifies. With the new constructor this becomes
  * `new SignalingClient(url, { auth, webSocket: wrapped })`; the wrapper still supplies the close code.
  */
-export function connectSignaling(url: string, auth: string | undefined, webSocket: WebSocketFactory = defaultSocket): { signaling: SignalingClient; closeCode(): number | undefined } {
+export function connectSignaling(
+  url: string,
+  auth: string | undefined,
+  webSocket: WebSocketFactory = defaultSocket,
+): { signaling: SignalingClient; closeCode(): number | undefined; roomClosed(): string | undefined } {
   let lastCode: number | undefined;
+  // The sentence of the last `{t:'error', code:'closed'}` frame: the signalling client reports that frame
+  // like a closed socket, before anything can read why, and the reason decides whether to come back.
+  let closedWhy: string | undefined;
+  const noteClosed = (data: unknown) => {
+    if (typeof data !== 'string' || !data.includes('"closed"')) return;
+    try {
+      const frame = JSON.parse(data) as { t?: unknown; code?: unknown; message?: unknown };
+      if (frame.t === 'error' && frame.code === 'closed') closedWhy = typeof frame.message === 'string' ? frame.message : '';
+    } catch {
+      /* not JSON: the signalling client ignores it too */
+    }
+  };
   const wrapped: WebSocketFactory = (u) => {
     const ws = webSocket(u);
     const proxy: WebSocketLike = {
@@ -194,7 +232,10 @@ export function connectSignaling(url: string, auth: string | undefined, webSocke
     };
     ws.onopen = (ev) => proxy.onopen?.(ev);
     ws.onerror = (ev) => proxy.onerror?.(ev);
-    ws.onmessage = (ev) => proxy.onmessage?.(ev);
+    ws.onmessage = (ev) => {
+      noteClosed((ev as { data?: unknown } | null)?.data);
+      proxy.onmessage?.(ev);
+    };
     ws.onclose = (ev) => {
       const code = (ev as { code?: unknown } | null)?.code;
       lastCode = typeof code === 'number' ? code : undefined;
@@ -202,7 +243,7 @@ export function connectSignaling(url: string, auth: string | undefined, webSocke
     };
     return proxy;
   };
-  return { signaling: new SignalingClient(url, { auth, webSocket: wrapped }), closeCode: () => lastCode };
+  return { signaling: new SignalingClient(url, { auth, webSocket: wrapped }), closeCode: () => lastCode, roomClosed: () => closedWhy };
 }
 
 /**
@@ -219,21 +260,28 @@ interface Connection {
   signaling: SignalingClient;
   link: TableLink;
   room: RoomInfo;
-  /** Set by the session: runs before the client's own close handler. */
-  dropped: { handler: ((code: number | undefined) => void) | null };
+  /**
+   * Set by the session: runs before the client's own close handler, with the socket's close code and,
+   * when the server closed the room under us instead (`{t:'error', code:'closed'}`), its sentence.
+   */
+  dropped: { handler: ((code: number | undefined, roomClosed?: string) => void) | null };
 }
 
 /** Connects, authenticates, and creates or joins the room. The caller binds a client to `link`. */
 async function openConnection(opts: OnlineOptions, action: 'create' | 'join', code: string): Promise<Connection> {
   const auth = opts.auth ? await opts.auth() : undefined;
-  const { signaling, closeCode } = connectSignaling(opts.signalUrl, auth, opts.webSocket);
+  const { signaling, closeCode, roomClosed } = connectSignaling(opts.signalUrl, auth, opts.webSocket);
   const dropped: Connection['dropped'] = { handler: null };
   // Registered first so the session sees the drop before the client marks itself disconnected.
-  signaling.onClose(() => dropped.handler?.(closeCode()));
+  signaling.onClose(() => dropped.handler?.(closeCode(), roomClosed()));
   try {
     await signaling.connect();
   } catch (e) {
     if (closeCode() === UNAUTHORISED_CLOSE || isUnauthorised(e)) throw Object.assign(new Error(UNAUTHORISED_MESSAGE), { code: UNAUTHORISED_CLOSE });
+    if (closeCode() === BANNED_CLOSE_CODE) {
+      void opts.onBanned?.();
+      throw Object.assign(new Error(BANNED_MESSAGE), { code: BANNED_CLOSE_CODE });
+    }
     throw e;
   }
   try {
@@ -247,7 +295,7 @@ async function openConnection(opts: OnlineOptions, action: 'create' | 'join', co
 }
 
 class OnlineSession implements Session {
-  quickMatch = false;
+  readonly quickMatch: boolean;
   readonly host = null;
   readonly mode = 'online' as const;
   readonly transportKind = 'relay' as const;
@@ -274,6 +322,7 @@ class OnlineSession implements Session {
     this.roomCode = connection.room.room;
     this.serverUrl = opts.signalUrl;
     this.clubCode = opts.clubCode;
+    this.quickMatch = opts.quickMatch === true;
     this.unsubClient = client.onChange((s) => {
       // The seat was opened on another device: stop here, a reconnect would take it back.
       if (s.kicked && this.conn.status !== 'lost') this.step({ type: 'ended' });
@@ -303,20 +352,34 @@ class OnlineSession implements Session {
 
   private attach(connection: Connection): void {
     this.connection = connection;
-    connection.dropped.handler = (code) => this.onDrop(connection, code);
+    connection.dropped.handler = (code, roomClosed) => this.onDrop(connection, code, roomClosed);
   }
 
-  private onDrop(connection: Connection, code: number | undefined): void {
+  private onDrop(connection: Connection, code: number | undefined, roomClosed?: string): void {
     if (this.closed || connection !== this.connection) return;
+    // Banned while at the table: the server's final word, whatever else the table had just said. The
+    // account layer is told, and the screens say so instead of "connection lost".
+    if (code === BANNED_CLOSE_CODE) {
+      void this.opts.onBanned?.();
+      return this.step({ type: 'banned' });
+    }
     const st = this.client.state;
     // The seat was opened on another device: reconnecting would take it back and start a tug of war.
     // A dropped link alone (`disconnected`) is what reconnecting is for.
     if (st.kicked || st.matchOver) return this.step({ type: 'ended' });
-    if (code === BANNED_CLOSE_CODE) return this.step({ type: 'ended' });
+    // A watcher the server moved out for a player: coming straight back would take the place again.
+    // The socket itself is still open and has no room; it is of no more use.
+    if (isWatcherMadeWay(roomClosed)) {
+      this.step({ type: 'madeWay' });
+      connection.signaling.close();
+      return;
+    }
     if (code === UNAUTHORISED_CLOSE) {
       void this.opts.onUnauthorised?.();
       return this.step({ type: 'unauthorised' });
     }
+    // Every other close is a link to win back: a drop (1006), a restart (1001, 1012), or a server that
+    // could not finish checking the session in time (1013). The session and its token are kept.
     this.step({ type: 'closed' });
   }
 
@@ -342,6 +405,13 @@ class OnlineSession implements Session {
     void this.tryOnce();
   }
 
+  reconnect(): boolean {
+    if (this.closed || !canRetry(this.conn)) return false;
+    this.step({ type: 'retry' });
+    this.retryNow();
+    return true;
+  }
+
   private async tryOnce(): Promise<void> {
     if (this.closed || this.conn.status !== 'reconnecting' || this.inFlight) return;
     this.timer = null;
@@ -354,7 +424,8 @@ class OnlineSession implements Session {
       failure = e;
     }
     this.inFlight = false;
-    if (this.closed) {
+    // Left meanwhile, or told to stop (the seat opened elsewhere, the match ended): the new link is not used.
+    if (this.closed || this.conn.status !== 'reconnecting') {
       connection?.signaling.close();
       return;
     }
@@ -368,6 +439,8 @@ class OnlineSession implements Session {
       for (const l of this.stateListeners) l(this.client.state);
       return;
     }
+    // Banned while away: the server's final word, and `openConnection` has already told the account layer.
+    if ((failure as { code?: unknown } | null)?.code === BANNED_CLOSE_CODE) return this.step({ type: 'banned' });
     const unauthorised = isUnauthorised(failure);
     if (unauthorised) void this.opts.onUnauthorised?.();
     // 'Room not found or full' is the server's final word (the table ended or was reaped while we were away):
@@ -375,14 +448,56 @@ class OnlineSession implements Session {
     this.step({ type: 'failed', unauthorised, gone: isRoomUnavailable(failure) });
   }
 
-  close(): void {
+  close(opts: CloseOptions = {}): void {
+    if (this.closed) return;
     this.closed = true;
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
     this.unsubClient();
+    // Stepping away: the socket goes without a `leave`, so the table sees a dropped player, not one who gave the seat up.
+    if (opts.keepSeat) this.connection.signaling.close();
     // Leaving closes the relay transport, which closes the signalling socket.
-    this.client.leave();
+    else this.client.leave();
   }
+}
+
+/** The table host's answers to a join it will not seat (packages/net/src/host.ts). */
+const JOIN_REFUSALS: ReadonlySet<string> = new Set(['full', 'already_seated']);
+
+/**
+ * Wait until the table has seated this session's player, or refused to. The socket joining the room is not
+ * a seat: a full table (or a match already under way) answers the join with a refusal, and a lobby shown
+ * then has no seat, no controls that work and never changes. On a refusal the session is closed and the
+ * promise rejects with the table's sentence and code, which the screens show like any other join error
+ * (components/table/tableErrors.ts). A table that says nothing for `timeoutMs` is left to the lobby.
+ */
+export function seatOrRefusal(session: Session, timeoutMs = 6000): Promise<void> {
+  const verdict = (st: ClientState): 'seated' | Error | null => {
+    if (st.seat !== null) return 'seated';
+    if (st.lastErrorCode && JOIN_REFUSALS.has(st.lastErrorCode)) return Object.assign(new Error(st.lastError ?? 'Table is full.'), { code: st.lastErrorCode });
+    return null;
+  };
+  return new Promise((resolve, reject) => {
+    let unsub: Unsubscribe = () => undefined;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const settle = (v: 'seated' | Error | null): boolean => {
+      if (v === null) return false;
+      unsub();
+      if (timer) clearTimeout(timer);
+      if (v === 'seated') resolve();
+      else {
+        session.close();
+        reject(v);
+      }
+      return true;
+    };
+    if (settle(verdict(session.client.state))) return;
+    unsub = session.onChange((st) => void settle(verdict(st)));
+    timer = setTimeout(() => {
+      unsub();
+      resolve();
+    }, timeoutMs);
+  });
 }
 
 export async function createOnlineSession(opts: OnlineOptions): Promise<Session> {
@@ -415,29 +530,80 @@ export interface QuickMatchOptions {
   userId?: string;
   auth?: () => Promise<string | undefined>;
   onUnauthorised?: () => Promise<void> | void;
+  /** The account is banned (socket closed with 4403, or the queue said so). */
+  onBanned?: () => Promise<void> | void;
   webSocket?: WebSocketFactory;
   /** Each `queue_status` while the server looks for players. */
   onStatus?: (s: QueueStatus) => void;
   /** The server found a table and the session is joining it. */
   onMatched?: (room: string) => void;
+  /**
+   * The server answered `seated`: this account still holds a seat at the quick-match table `room`,
+   * and the session is going back to it instead of queueing.
+   */
+  onSeated?: (room: string) => void;
+  /** The rejoin token this device saved for `room`, when its saved table is that one. */
+  savedToken?: (room: string) => string | undefined;
 }
+
+/** `QueueError.code` when the account is seated at a quick-match table that could not be rejoined. */
+export const REJOIN_FAILED = 'rejoin_failed';
 
 /**
  * Quick match: queue on the game server, and once it has matched a table, join that table on
  * the same socket and return an ordinary online session (it reconnects and rejoins like any
- * other table; only the matched accounts may enter it, and it starts by itself). The session
- * promise rejects with a QueueError (`code` banned, age_required, rate_limited, unavailable,
- * replaced, cancelled) or the usual join errors. `cancel()` leaves the queue.
+ * other table; only the matched accounts may enter it, and it starts by itself).
+ *
+ * `seated` is not a failure: the account still holds a seat at an unfinished quick-match table,
+ * so the session goes back to it the way any saved table is resumed (`createOnlineSession`, a
+ * join): with the saved rejoin token when this device's saved table is that room, otherwise with
+ * none, since a server-hosted table gives a verified account its own seat back and answers with a
+ * new token, which is saved like any other. Only when that join fails does the promise reject,
+ * with code `rejoin_failed` (or `rate_limited` when the server throttled the join).
+ *
+ * Otherwise the session promise rejects with a QueueError (`code` banned, age_missing, age_under,
+ * rate_limited, sign_in, unavailable, replaced, cancelled) or the usual join errors. `cancel()`
+ * leaves the queue.
  */
 export function startQuickMatch(opts: QuickMatchOptions): { session: Promise<Session>; cancel: () => void } {
   let cancelled = false;
   let leave: () => void = () => undefined;
+  const banned = () => {
+    void opts.onBanned?.();
+    return new QueueError('This account has been banned', 'banned');
+  };
+  const backToSeat = async (room: string): Promise<Session> => {
+    opts.onSeated?.(room);
+    try {
+      return await createOnlineSession({
+        signalUrl: opts.signalUrl,
+        name: opts.name,
+        avatar: opts.avatar,
+        userId: opts.userId,
+        auth: opts.auth,
+        onUnauthorised: opts.onUnauthorised,
+        onBanned: opts.onBanned,
+        webSocket: opts.webSocket,
+        rules: DEFAULT_RULES,
+        action: 'join',
+        code: room,
+        token: opts.savedToken?.(room),
+        quickMatch: true,
+      });
+    } catch (e) {
+      // `openConnection` has already told the account layer about a ban.
+      if ((e as { code?: unknown } | null)?.code === BANNED_CLOSE_CODE) throw new QueueError('This account has been banned', 'banned');
+      const message = (e as Error | null)?.message || 'Could not return to the table';
+      // The queue and the join draw on one allowance: a throttled join is "wait a few seconds", not a lost table.
+      if (friendlyErrorMessage(e).key === 'errors.rateLimited') throw new QueueError(message, 'rate_limited', room);
+      throw new QueueError(message, REJOIN_FAILED, room);
+    }
+  };
   const attempt = async (): Promise<Session> => {
     const auth = opts.auth ? await opts.auth() : undefined;
-    const { signaling, closeCode } = connectSignaling(opts.signalUrl, auth, opts.webSocket);
+    const { signaling, closeCode, roomClosed } = connectSignaling(opts.signalUrl, auth, opts.webSocket);
     const dropped: Connection['dropped'] = { handler: null };
-    signaling.onClose(() => dropped.handler?.(closeCode()));
-    const banned = () => new QueueError('This account has been banned', 'banned');
+    signaling.onClose(() => dropped.handler?.(closeCode(), roomClosed()));
     try {
       await signaling.connect();
     } catch (e) {
@@ -453,17 +619,21 @@ export function startQuickMatch(opts: QuickMatchOptions): { session: Promise<Ses
       try {
         room = await search.match;
       } catch (e) {
-        if (closeCode() === BANNED_CLOSE_CODE) throw banned();
+        if (closeCode() === BANNED_CLOSE_CODE || (e instanceof QueueError && e.code === 'banned')) throw banned();
+        if (e instanceof QueueError && e.code === 'seated' && e.room && !cancelled) {
+          // The queue socket has done its job: the table is resumed on a socket of its own.
+          signaling.close();
+          return backToSeat(e.room);
+        }
         throw e;
       }
       opts.onMatched?.(room);
       const transport = new RelayTransport(signaling, 'game');
       const info = await signaling.joinRoom(room);
       const connection: Connection = { signaling, link: transportLink(transport, info.host), room: info, dropped };
-      const online: OnlineOptions = { ...opts, rules: DEFAULT_RULES, action: 'join', code: info.room };
+      const online: OnlineOptions = { ...opts, rules: DEFAULT_RULES, action: 'join', code: info.room, quickMatch: true };
       const client = new TableClient(connection.link, opts.name, opts.avatar, { userId: opts.userId });
       const session = new OnlineSession(online, connection, client);
-      session.quickMatch = true;
       client.join();
       return session;
     } catch (e) {

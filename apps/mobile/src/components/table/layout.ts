@@ -206,6 +206,31 @@ export function resultLayout(width: number, height: number): ResultLayout {
   return { twoCol, scoreCols: twoCol ? (height < 420 ? 2 : 1) : width < 480 ? 2 : 4, stackButtons: !twoCol && width < 480 };
 }
 
+export interface MatchOverLayout {
+  /** Short landscape (under 420 px tall): the card takes its small sizes. */
+  compact: boolean;
+  /** The overlay's padding, and the most height the card may take: past it the card scrolls. */
+  pad: number;
+  maxHeight: number;
+  /** Ribbon title size, trophy size, portrait size and the rank rows' vertical padding. */
+  title: number;
+  trophy: number;
+  avatar: number;
+  rowPad: number;
+}
+
+/**
+ * The match-over card: four ranks, the note beside final scores this phone could not check, and the way
+ * home. On a 375 px high phone the usual sizes are taller than the window, so the card takes smaller ones
+ * there and, at any size, scrolls inside the window rather than running off it (a larger text setting or
+ * the note can always add lines).
+ */
+export function matchOverLayout(height: number): MatchOverLayout {
+  const compact = height < 420;
+  const pad = compact ? 8 : 16;
+  return { compact, pad, maxHeight: Math.max(120, height - 2 * pad), title: compact ? 22 : 28, trophy: compact ? 26 : 34, avatar: compact ? 26 : 34, rowPad: compact ? 1 : 4 };
+}
+
 /** Largest tile width (≤ max) that puts `count` tiles with `gap` px between them inside `room` px. */
 export function fitTile(room: number, count: number, max: number, gap = 2, min = 18): number {
   if (count <= 0) return max;

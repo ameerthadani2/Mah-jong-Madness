@@ -1,17 +1,26 @@
 import React, { useEffect, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { BOT_SKILLS, type BotSkill } from '@mjm/engine';
-import { allowedBotSkill, hasTier, totalDiamonds } from '../monetisation/wallet';
+import { BOT_SKILLS, LESSON_TRACKS, LESSONS, type BotSkill } from '@mjm/engine';
+import { allowedBotSkill, diamondsOwed, hasTier, totalDiamonds } from '../monetisation/wallet';
 import { useWallet } from '../monetisation/useWallet';
 import { gateFor } from '../legal/age';
 import { useOnlineGuard } from '../legal/useOnlineGuard';
 import { AgeBlocked, AgeGate } from '../components/AgeGate';
+import { ConsentQuestion } from '../components/ConsentQuestion';
+import { telemetryAvailable, useConsent } from '../telemetry';
+import { shouldAskConsent } from '../telemetry/consent';
 import { useApp } from '../app-state';
-import { createLocalSession, createOnlineSession } from '../game/session';
+import { createLocalSession, createOnlineSession, seatOrRefusal } from '../game/session';
 import { useAuth } from '../auth/AuthProvider';
 import { AVATARS, effectiveStreak, todayKey } from '../storage';
+import { acceptedName } from '../logic/profile';
+import { NameRefusedNotice } from '../components/NameRefusedNotice';
 import { tableError } from '../components/table/tableErrors';
+import { ConfirmSheet } from '../components/table/ConfirmSheet';
+import { replacesTable } from '../logic/back';
+import { homeSmallWindowHeight, homeWindowHeight, isShortHome, LINK_HEIGHT } from '../logic/homeFit';
+import { learnSummary } from '../logic/learn';
 import { botLabel, rulesSummary } from '../logic/rules-text';
 import { useT } from '../i18n';
 import { colors, fonts, nameFont, space } from '../theme';
@@ -39,6 +48,8 @@ export function HomeScreen() {
   const { width, height } = useWindowDimensions();
   const [name, setName] = useState(app.profile.name);
   const needsName = !app.profile.name;
+  // A name the server refused is not shown as the player's (src/logic/profile.ts); the notice below says why.
+  const shownName = acceptedName(app.profile) || t('common.player');
   const wide = width >= 700;
   // Any landscape phone (667×375 is not "wide"): the first-run Play button goes beside the name field.
   const landscape = width > height;
@@ -46,11 +57,16 @@ export function HomeScreen() {
 
   const saveName = () => app.setProfile({ ...app.profile, name: name.trim() || t('common.player') });
 
+  // A table still open on this device and not over: the Resume card goes back to it rather than opening it again.
+  const liveTable = app.session && !app.session.client.state.matchOver ? app.session : null;
   const [resuming, setResuming] = useState(false);
   const [resumeError, setResumeError] = useState<string | null>(null);
 
   // The age gate comes first on a fresh install (src/legal/age.ts, gateFor); `entry` guards the online resume.
   const { entry, gate } = useOnlineGuard();
+  // The one-time privacy question exists only in a build that has a service to ask about (never the web preview).
+  const asksConsent = telemetryAvailable.analytics || telemetryAvailable.crash;
+  const consentState = useConsent();
   // Mirror the server wallet when this device already has a session (never bootstraps one).
   const { refresh: refreshWallet } = useWallet({ loadPrices: false });
   const accountId = auth.user?.id;
@@ -58,9 +74,16 @@ export function HomeScreen() {
     if (app.loaded && accountId) void refreshWallet();
   }, [app.loaded, accountId, refreshWallet]);
 
+  // A new match takes the place of a table in progress (the saved record is one slot): ask before it does.
+  const [askReplace, setAskReplace] = useState(false);
   const playBots = () => {
     if (needsName) saveName();
-    const session = createLocalSession(app.profile.name || name.trim() || t('common.player'), app.profile.avatar, app.settings.rules, { botSkill: allowedBotSkill(app.settings.botSkill, app.wallet) });
+    if (replacesTable(app.activeSession, app.session)) setAskReplace(true);
+    else startBots();
+  };
+  const startBots = () => {
+    setAskReplace(false);
+    const session = createLocalSession(acceptedName(app.profile) || (needsName ? name.trim() : '') || t('common.player'), app.profile.avatar, app.settings.rules, { botSkill: allowedBotSkill(app.settings.botSkill, app.wallet) });
     app.setSession(session);
     session.host!.start();
     app.go({ name: 'table' });
@@ -69,11 +92,13 @@ export function HomeScreen() {
   const resume = async () => {
     const rec = app.activeSession;
     if (!rec) return;
+    // The table is still open on this device (it was left behind without closing): go back to it as it is.
+    if (liveTable) return app.go({ name: liveTable.client.state.view ? 'table' : 'lobby' });
     setResuming(true);
     setResumeError(null);
     try {
       if (rec.kind === 'local') {
-        const session = createLocalSession(rec.name, rec.avatar, rec.host.rules, { restore: { host: rec.host, token: rec.token } });
+        const session = createLocalSession(rec.name || t('common.player'), rec.avatar, rec.host.rules, { restore: { host: rec.host, token: rec.token } });
         app.setSession(session);
         app.go({ name: 'table' });
       } else if (entry !== 'ok') {
@@ -81,7 +106,21 @@ export function HomeScreen() {
         app.go({ name: 'online' });
       } else {
         // Back to the server the table lives on (the stored serverUrl), with this player's session.
-        const session = await createOnlineSession({ signalUrl: rec.signalUrl, name: rec.name, avatar: rec.avatar, userId: app.profile.userId || undefined, rules: app.settings.rules, action: 'join', code: rec.roomCode, token: rec.token, clubCode: rec.clubCode, ...auth.tableAuth });
+        const session = await createOnlineSession({
+          signalUrl: rec.signalUrl,
+          name: rec.name || t('common.player'),
+          avatar: rec.avatar,
+          userId: app.profile.userId || undefined,
+          rules: app.settings.rules,
+          action: 'join',
+          code: rec.roomCode,
+          token: rec.token,
+          clubCode: rec.clubCode,
+          quickMatch: rec.quickMatch,
+          ...auth.tableAuth,
+        });
+        // The table may no longer give this seat back (the match went on without it): say so on the card.
+        await seatOrRefusal(session);
         app.setSession(session);
         app.go({ name: 'lobby' });
       }
@@ -95,8 +134,11 @@ export function HomeScreen() {
   const winRate = app.progress.handsPlayed ? Math.round((app.progress.handsWon / app.progress.handsPlayed) * 100) : null;
   const dailyDone = app.progress.dailySolved[todayKey()] !== undefined;
   const streak = effectiveStreak(app.progress);
-  const lessonsDone = Object.keys(app.progress.lessonsDone).length;
+  // The same count Learn shows: lessons that still exist, out of all of them.
+  const lessons = learnSummary(LESSONS, LESSON_TRACKS, app.progress.lessonsDone);
   const gems = totalDiamonds(app.wallet);
+  // After a refund of spent diamonds the balance is below zero: the counter says so, and a line under the bar says why.
+  const gemsOwed = diamondsOwed(app.wallet);
   const goClubs = () => {
     if (needsName) saveName();
     app.go({ name: 'clubs' });
@@ -112,8 +154,11 @@ export function HomeScreen() {
   };
 
   const phoneLand = wide && !tablet;
-  const windowH = tablet ? Math.min(250, Math.round(height * 0.28)) : wide ? Math.max(70, Math.min(150, Math.round(height * 0.22))) : 104;
-  const smallWindow = tablet ? windowH : wide ? windowH : 100;
+  // A phone held sideways is about 390 pt tall: the art shrinks and the blurbs go, so the four cards, their buttons and
+  // the links under them all fit above the bottom edge (src/logic/homeFit.ts).
+  const short = isShortHome({ wide, tablet, height });
+  const windowH = homeWindowHeight({ wide, tablet, height });
+  const smallWindow = homeSmallWindowHeight({ wide, tablet, height });
 
   const skillChips = (
     <Row style={{ flexWrap: 'wrap', rowGap: 6 }} gap={6}>
@@ -126,7 +171,8 @@ export function HomeScreen() {
 
   const playCard = (
     <ModeCard key="play" colorsPair={WINDOWS.play} windowH={windowH} scene={<TableScene width="100%" height="100%" />} title={t('home.play.title')} style={wide ? { flex: 1.55 } : undefined} horizontal={!wide}>
-      <P dim style={styles.cardText} numberOfLines={phoneLand ? 1 : 2}>
+      {/* The whole rules line, clocks included: it wraps rather than ending in an ellipsis. */}
+      <P dim style={styles.cardText} numberOfLines={phoneLand ? 2 : undefined}>
         {rulesSummary(app.settings.rules, t, locale)}
       </P>
       {skillChips}
@@ -139,16 +185,18 @@ export function HomeScreen() {
   const compact = !wide;
   const clubsCard = (
     <ModeCard key="clubs" colorsPair={WINDOWS.clubs} windowH={smallWindow} scene={<ClubhouseScene width="100%" height="100%" />} title={tablet ? t('home.clubs.titleWide') : t('home.clubs.title')} compact={compact} style={{ flex: 1 }}>
-      {!compact && (
-        <P dim style={styles.cardText} numberOfLines={2}>
+      {!compact && !short && (
+        <P dim style={styles.cardText}>
           {t('home.clubs.blurb')}
         </P>
       )}
       <View style={styles.cardFoot}>
-        <Button testID="open-clubs" title={t('home.clubs.open')} kind="secondary" small={compact} large={tablet} onPress={goClubs} />
-        <Button testID="open-quickmatch" title={t('quickmatch.button')} icon="users" accessibilityLabel={`${t('quickmatch.button')}. ${t('quickmatch.buttonHint')}`} small={compact} large={tablet} onPress={goQuickMatch} />
+        {/* The short label on a portrait phone, as for quick match below: the full one is wider than the card's button in Chinese. */}
+        <Button testID="open-clubs" title={t(compact && !landscape ? 'home.clubs.openShort' : 'home.clubs.open')} accessibilityLabel={t('home.clubs.open')} kind="secondary" small={compact} large={tablet} onPress={goClubs} />
+        {/* No icon, and the short label on a portrait phone: the card's button is as narrow as 73 pt there, and a clipped label is worse than a short one. */}
+        <Button testID="open-quickmatch" title={t(compact && !landscape ? 'quickmatch.buttonShort' : 'quickmatch.button')} accessibilityLabel={`${t('quickmatch.button')}. ${t('quickmatch.buttonHint')}`} small={compact} large={tablet} onPress={goQuickMatch} />
         {!compact && (
-          <Pressable onPress={goOnline} hitSlop={slopFor(20)} style={styles.link} accessibilityRole="link" accessibilityLabel={t('home.clubs.quickTable')}>
+          <Pressable onPress={goOnline} hitSlop={slopFor(LINK_HEIGHT)} style={styles.link} accessibilityRole="link" accessibilityLabel={t('home.clubs.quickTable')}>
             <Icon name="users" size={18} />
             <Text style={[styles.linkText, fontFor(t('home.clubs.quickTable'), fonts.uiBold)]}>{t('home.clubs.quickTable')}</Text>
           </Pressable>
@@ -169,7 +217,7 @@ export function HomeScreen() {
     >
       {!compact && (
         <Row style={{ flexWrap: 'wrap', rowGap: 6 }} gap={6}>
-          <Pill text={t('home.learn.lessons', { done: lessonsDone, total: 6 })} icon="book" size="sm" />
+          <Pill text={t('home.learn.lessons', { done: lessons.done, total: lessons.total })} icon="book" size="sm" />
           <Pill text={t('home.learn.streak', { days: streak })} icon="flame" tone={streak > 0 ? 'gold' : 'neutral'} size="sm" />
           <Pill text={t('home.learn.rating', { n: app.progress.puzzleRating })} icon="target" tone="info" size="sm" />
         </Row>
@@ -177,7 +225,7 @@ export function HomeScreen() {
       <View style={styles.cardFoot}>
         <Button testID="open-learn" title={t('home.learn.open')} kind="premium" small={compact} large={tablet} onPress={() => app.go({ name: 'learn' })} />
         {!compact && (
-          <Pressable onPress={() => app.go({ name: 'daily' })} hitSlop={slopFor(20)} style={styles.link} accessibilityRole="link" accessibilityLabel={dailyDone ? t('home.learn.dailyDone') : t('home.learn.daily')}>
+          <Pressable onPress={() => app.go({ name: 'daily' })} hitSlop={slopFor(LINK_HEIGHT)} style={styles.link} accessibilityRole="link" accessibilityLabel={dailyDone ? t('home.learn.dailyDone') : t('home.learn.daily')}>
             <Icon name={dailyDone ? 'check' : 'scroll'} size={18} color={colors.cta} />
             <Text style={[styles.linkText, fontFor(t('home.learn.daily'), fonts.uiBold)]}>{dailyDone ? t('home.learn.dailyDone') : t('home.learn.daily')}</Text>
           </Pressable>
@@ -187,13 +235,13 @@ export function HomeScreen() {
   );
   const shopCard = (
     <ModeCard key="shop" colorsPair={WINDOWS.shop} windowH={smallWindow} scene={<ChestScene width="100%" height="100%" />} title={t('home.shop.title')} compact={compact} style={{ flex: 1 }}>
-      {!compact && (
-        <P dim style={styles.cardText} numberOfLines={2}>
+      {!compact && !short && (
+        <P dim style={styles.cardText}>
           {t('home.shop.blurb')}
         </P>
       )}
       <View style={styles.cardFoot}>
-        <Button title={t('home.shop.open')} kind="gold" small={compact} large={tablet} onPress={() => app.go({ name: 'shop' })} />
+        <Button testID="open-shop-card" title={t('home.shop.open')} kind="gold" small={compact} large={tablet} onPress={() => app.go({ name: 'shop' })} />
       </View>
     </ModeCard>
   );
@@ -203,6 +251,11 @@ export function HomeScreen() {
   const gateState = gateFor('home', gate.status, needsName);
   if (gateState === 'blocked') return <AgeBlocked />;
   if (gateState === 'ask') return <AgeGate />;
+  // Once, after the age gate: may the app send usage statistics and crash reports? Off until the player says yes.
+  if (asksConsent) {
+    if (!consentState.loaded) return null;
+    if (gate.status === 'allowed' && shouldAskConsent(consentState.record, telemetryAvailable)) return <ConsentQuestion />;
+  }
 
   return (
     <ScrollView contentContainerStyle={[styles.wrap, wide && { paddingTop: 8 }, tablet && { padding: 28, gap: 22 }]}>
@@ -214,10 +267,10 @@ export function HomeScreen() {
           <Pressable onPress={() => app.go({ name: 'settings' })} hitSlop={slopFor(50)} style={({ pressed }) => [styles.profile, pressed && { transform: [{ translateY: 2 }] }, { flex: wide ? undefined : 1 }]} accessibilityRole="button" accessibilityLabel={`${app.profile.name}. ${t('settings.title')}`}>
             <AvatarPlate id={app.profile.avatar} size={tablet ? 54 : 44} frame={frame} />
             <View style={{ flexShrink: 1 }}>
-              <Text numberOfLines={1} style={[styles.profileName, nameFont(app.profile.name)]}>
-                {app.profile.name}
+              <Text numberOfLines={1} style={[styles.profileName, nameFont(shownName)]}>
+                {shownName}
               </Text>
-              <Text numberOfLines={1} style={styles.profileMeta}>
+              <Text numberOfLines={wide ? 1 : 2} style={styles.profileMeta}>
                 {t('home.profile.meta', { hands: app.progress.handsPlayed, wins: winRate === null ? t('home.profile.noWins') : t('home.profile.winRate', { rate: winRate }) })}
               </Text>
             </View>
@@ -229,7 +282,7 @@ export function HomeScreen() {
           </View>
         )}
         <Row gap={10} style={wide ? { flex: needsName ? 1 : undefined, justifyContent: 'flex-end' } : undefined}>
-          <GemCounter testID="open-shop" amount={gems} onPress={() => app.go({ name: 'shop' })} />
+          <GemCounter testID="open-shop" amount={gems} owed={gemsOwed} onPress={() => app.go({ name: 'shop' })} />
           <IconButton icon="cog" kind="ghost" size={42} testID="open-settings" onPress={() => app.go({ name: 'settings' })} />
         </Row>
       </View>
@@ -239,6 +292,14 @@ export function HomeScreen() {
           <Logo size={1.25} />
         </View>
       )}
+
+      {gemsOwed > 0 && (
+        <Pressable testID="home-diamonds-owed" onPress={() => app.go({ name: 'shop' })} hitSlop={slopFor(30)} accessibilityRole="button" accessibilityLabel={t('home.shop.owed', { n: gemsOwed.toLocaleString() })} style={{ alignSelf: wide ? 'flex-end' : 'center', maxWidth: '100%' }}>
+          <Pill tone="gold" icon="gem" wrap text={t('home.shop.owed', { n: gemsOwed.toLocaleString() })} />
+        </Pressable>
+      )}
+
+      <NameRefusedNotice />
 
       {needsName && (
         <Card style={wide ? { flexDirection: 'row', alignItems: 'center', gap: space.lg } : undefined}>
@@ -281,20 +342,31 @@ export function HomeScreen() {
         </Card>
       )}
 
-      {app.activeSession && !app.session && (
-        <Card tone="gold" style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: space.md }}>
+      {app.activeSession && (!app.session || liveTable) && (
+        <Card tone="gold" testID="resume-card" style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: space.md }}>
           <Icon name="hourglass" size={34} />
           <View style={{ flex: 1, minWidth: 170 }}>
             <Text style={[styles.resumeTitle, fontFor(t('home.resume.title'), fonts.display)]}>{t('home.resume.title')}</Text>
             <P dim style={{ fontSize: 13 }} numberOfLines={2}>
               {app.activeSession.kind === 'local'
                 ? t('home.resume.local', { hand: app.activeSession.host.snapshot.handNumber + 1 })
-                : `${t('home.resume.online', { code: app.activeSession.roomCode })}${app.activeSession.clubCode ? t('home.resume.club', { code: app.activeSession.clubCode }) : ''}`}
+                : app.activeSession.quickMatch
+                  ? // A quick-match table has no code anyone can use (src/logic/lobby.ts): the card names the kind of table.
+                    t('home.resume.quick')
+                  : `${t('home.resume.online', { code: app.activeSession.roomCode })}${app.activeSession.clubCode ? t('home.resume.club', { code: app.activeSession.clubCode }) : ''}`}
             </P>
             {resumeError && <P style={{ color: colors.dangerText, fontSize: 12 }}>{resumeError}</P>}
           </View>
-          <Button title={resuming ? t('home.resume.reconnecting') : t('home.resume.resume')} onPress={() => void resume()} disabled={resuming} />
-          <Button small kind="ghost" title={t('home.resume.discard')} onPress={() => app.setActiveSession(null)} />
+          <Button testID="resume-table" title={resuming ? t('home.resume.reconnecting') : t('home.resume.resume')} onPress={() => void resume()} disabled={resuming} />
+          <Button
+            small
+            kind="ghost"
+            title={t('home.resume.discard')}
+            onPress={() => {
+              if (liveTable) app.setSession(null);
+              app.setActiveSession(null);
+            }}
+          />
         </Card>
       )}
 
@@ -317,6 +389,7 @@ export function HomeScreen() {
           </View>
         </View>
       )}
+      <ConfirmSheet testID="replace-table" visible={askReplace} title={t('home.replace.title')} body={t('home.replace.body')} yes={t('home.replace.yes')} no={t('home.replace.no')} onYes={startBots} onNo={() => setAskReplace(false)} />
     </ScrollView>
   );
 }
@@ -376,7 +449,7 @@ const styles = StyleSheet.create({
   cardTitle: { fontFamily: fonts.display, color: colors.ink, fontSize: 22, letterSpacing: 0.3 },
   cardText: { fontSize: 12, lineHeight: 16 },
   cardFoot: { marginTop: 'auto', gap: 8, paddingTop: 2 },
-  link: { flexDirection: 'row', alignItems: 'center', gap: 6, alignSelf: 'center' },
+  link: { flexDirection: 'row', alignItems: 'center', gap: 6, alignSelf: 'center', minHeight: LINK_HEIGHT },
   linkText: { fontFamily: fonts.uiBold, color: colors.infoShelf, fontSize: 14, textDecorationLine: 'underline' },
   notify: { width: 26, height: 26, borderRadius: 13, backgroundColor: colors.danger, borderWidth: 3, borderColor: colors.ink, alignItems: 'center', justifyContent: 'center' },
   notifyText: { color: '#FFFFFF', fontFamily: fonts.display, fontSize: 15 },

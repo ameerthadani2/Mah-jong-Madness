@@ -12,6 +12,7 @@
   "open": "Open",
   "player": "Player",
   "bot": "Bot",
+  "botName": "%{name} (Bot)",
   "you": "you",
   "roles": {
     "owner": "owner",
@@ -19,6 +20,7 @@
     "member": "member",
     "guest": "guest"
   },
+  "typeValue": "Tap to type a number",
   "bots": {
     "beginner": "Makes efficiency mistakes and never folds. Good for learning the flow.",
     "club": "Solid tile efficiency, claims when it helps, basic defence.",
@@ -27,6 +29,11 @@
   "boot": {
     "title": "This device cannot run fair games",
     "body": "Mahjong Mania needs the system's secure random number generator to shuffle fairly, and it is not available here. Please update the app or your device's system software."
+  },
+  "crash": {
+    "title": "Something went wrong",
+    "body": "This screen ran into a problem. Your progress and any table in progress are saved.",
+    "home": "Back to Home"
   },
   "rules": {
     "summary": "底%{base} / 台%{tai} · %{hands} rotations · %{speed} (%{turn}s + %{bank}s bank)"

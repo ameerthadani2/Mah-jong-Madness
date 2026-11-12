@@ -78,6 +78,113 @@ export function caveatKey(text: string): AuditCaveat | null {
   return null;
 }
 
+/**
+ * Why a hand failed its checks, or what the host did that it must not. The sentences written in
+ * the checks below stay as they are (tests and logs read them); the app shows each one in the
+ * player's language by its key (see `failureKey`). An entry is the exact sentence, or a pattern
+ * for a sentence that carries a number or a name, whose named groups are the values it carries.
+ */
+export const AUDIT_FAILURES = {
+  // What the host did between hands and around the table.
+  dealtPlayedHand: 'Host asked to deal a hand that was already played',
+  startedBeforeEnd: 'Host started another hand before the one in progress had ended',
+  dealtAfterMatch: 'Host dealt another hand after the match was over',
+  dealtOutOfTurn: 'Host dealt a hand out of turn',
+  matchStartChanged: /^The match started with (?<fields>[A-Za-z, ]+) different from a new match$/,
+  handStartChanged: /^Hand started with (?<fields>[A-Za-z, ]+) different from where the previous hand left them$/,
+  botsChanged: 'Host changed which seats are bots during the match',
+  movedMatch: 'Host moved this seat into a different match mid-match',
+  movedSeat: 'Host moved this seat to another seat mid-match',
+  rulesChanged: 'Host changed the rules mid-match',
+  redealt: 'Host re-dealt a hand in progress',
+  wentBack: 'Host went back to a hand that had already ended',
+  resentOtherMatch: 'Host re-sent a hand under a different match id',
+  auditChanged: 'Host sent a different audit for a hand it had already ended',
+  resultChanged: 'Host re-sent a different result for a hand it had already ended',
+  endUnsupported: 'Host announced the end of the match, which the hands this device verified do not support',
+  twoStates: /^Host showed two different states for turn (?<turn>-?\d+)$/,
+  restartedTwice: 'Host said it restarted this hand more than once',
+  // The hands this device was away for.
+  missedOtherMatch: 'Host sent the record of a hand from a different match',
+  missedBroken: 'The record of the hands this device missed does not follow from the last hand it verified',
+  missedWhileConnected: 'Host reported a hand as missed although this device was connected throughout',
+  awayHandFailed: /^The record of hand (?<hand>-?\d+), played while this device was away, failed its checks$/,
+  // Agreeing the deal.
+  skippedFirstAttempts: /^Host never asked this seat to commit to attempts 1–(?<last>-?\d+) of this hand$/,
+  attemptTwice: /^Host ran attempt (?<n>-?\d+) of this hand's deal twice$/,
+  skippedAttempt: /^Host never asked this seat to commit to attempt (?<n>-?\d+) of this hand$/,
+  commitsMalformed: 'Host published a malformed set of commitments',
+  commitsChanged: 'Host changed the commitments after publishing them',
+  myCommitDiffers: 'Host published a different commitment for my seat',
+  earlyReveal: 'Host asked for my secret before publishing all commitments',
+  neverAskedToCommit: 'Host never asked this seat to commit',
+  commitsNeverArrived: 'The commitments for this hand never arrived',
+  // The record of a hand.
+  noContext: 'No match context',
+  auditMalformed: 'The audit is malformed',
+  auditOtherMatch: 'The audit is for a different match than the one this seat is in',
+  myCommitAltered: 'Host altered my commitment',
+  mySecretAltered: 'Host altered my secret',
+  commitChangedAfter: /^Commitment for seat (?<seat>-?\d+) changed after the fact$/,
+  commitCount: 'Audit must list exactly one commitment for each of seats 0–4',
+  revealCount: 'Audit must list exactly one secret for each of seats 0–4',
+  revealsMismatch: /^Reveals do not match commitments for seats (?<seats>[\d, ]*)$/,
+  seedMismatch: 'Seed was not derived from the revealed secrets',
+  unknownShuffle: /^Unknown shuffle construction (?<version>[\s\S]*)$/,
+  // Replaying the hand.
+  replayMismatch: 'Replaying the action log does not reproduce the final state',
+  replayFailed: /^Replay failed: (?<detail>[\s\S]*)$/,
+  resultDiffers: 'Announced result differs from the replayed hand',
+  scoresDiffer: 'Announced scores differ from the replayed hand',
+  myHandDiffers: 'My final hand differs from the replay',
+  shownStateMissing: /^The state this seat was shown at turn (?<turn>-?\d+) is not in the replay$/,
+  // This seat's own moves and the moves made for it.
+  legalMoveRefused: /^The host refused a legal move this seat made \(turn (?<turn>[^)]*)\)$/,
+  moveChanged: /^The log changed a move this seat made \(turn (?<turn>[^)]*)\)$/,
+  moveInvented: /^The log shows a move this seat never made \(turn (?<turn>[^)]*)\)$/,
+  passedUpWin: /^The table played for this seat and passed up its win \(turn (?<turn>[^)]*)\)$/,
+  playedEarly: /^The table played for this seat while it was connected and its clock had not run out \(turn (?<turn>[^)]*)\)$/,
+  moveIgnored: /^The table ignored a move this seat sent in good time and played its own instead \(turn (?<turn>[^)]*)\)$/,
+  // The account of how many times the deal was tried, and why.
+  attemptsMissing: 'Audit does not say how many ceremonies were run',
+  restartsMissing: 'Audit does not list the ceremony restarts',
+  restartCount: /^Audit lists (?<restarts>-?\d+) restarts for (?<attempts>-?\d+) ceremony attempts$/,
+  tooManyAttempts: /^(?<attempts>-?\d+) ceremony attempts is more than (?<most>-?\d+), the most an honest table with (?<humans>-?\d+) human seats needs$/,
+  restartMalformed: /^Restart (?<n>-?\d+) is malformed$/,
+  restartBadSeat: /^Restart (?<n>-?\d+) names seat (?<seat>[\s\S]*), which is not a player seat$/,
+  restartBlamesBot: /^Restart (?<n>-?\d+) blames seat (?<seat>-?\d+), which is a bot$/,
+  restartBlamesAgain: /^Restart (?<n>-?\d+) blames seat (?<seat>-?\d+) again after the host had stood it in$/,
+  attemptsBelowSeen: /^Audit reports (?<attempts>-?\d+) ceremony attempts but this seat was asked to commit in attempt (?<seen>-?\d+)$/,
+  attemptsNotSeen: /^Audit reports (?<attempts>-?\d+) ceremony attempts but this seat was asked to commit (?<times>-?\d+) times$/,
+  restartBlamesNoOne: /^Restart (?<n>-?\d+) blames no seat, yet this seat saw every attempt without losing its link$/,
+  restartBlamesMeStoodIn: /^Restart (?<n>-?\d+) blames this seat although the host had stood it in$/,
+  restartBlamesMeRevealed: /^Restart (?<n>-?\d+) blames this seat although it revealed, and the host then asked it for a new share instead of standing it in$/,
+  blamedButUsed: 'The audit blames this seat for a restart, yet the deal used a new share from it instead of standing it in',
+} as const satisfies Record<string, string | RegExp>;
+
+export type AuditFailure = keyof typeof AUDIT_FAILURES;
+
+/**
+ * The key of a failure text produced by this client and the values it carries (a turn, a seat, a
+ * count: always as text), or null for any other text.
+ */
+export function auditFailure(text: string): { key: AuditFailure; params: Record<string, string> } | null {
+  for (const [k, v] of Object.entries(AUDIT_FAILURES) as Array<[AuditFailure, string | RegExp]>) {
+    if (typeof v === 'string') {
+      if (v === text) return { key: k, params: {} };
+      continue;
+    }
+    const m = v.exec(text);
+    if (m) return { key: k, params: { ...(m.groups ?? {}) } };
+  }
+  return null;
+}
+
+/** The key of a failure text produced by this client, or null for any other text. */
+export function failureKey(text: string): AuditFailure | null {
+  return auditFailure(text)?.key ?? null;
+}
+
 export interface ChatLine {
   seat: number;
   name: string;

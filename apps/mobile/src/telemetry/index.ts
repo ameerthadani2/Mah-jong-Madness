@@ -1,8 +1,9 @@
 /**
  * The app's telemetry: `track(event, props)` for the funnel, `captureError` for failures, and the
- * player's privacy choices. Starts when first imported (from App.tsx); crash reporting itself begins
- * once the stored consent has loaded with it allowed (errors caught before that wait for the
- * answer). With no keys in the build every call is a no-op.
+ * player's privacy choices. Starts when first imported (from App.tsx). Both services are opt-in: nothing
+ * is captured or sent until the player has said yes (the one-time question after the age gate, or the
+ * switches in Settings), and crash reporting itself begins only then. With no keys in the build every
+ * call is a no-op.
  *
  *   track('purchase_start', { product: 'diamonds_120' })
  *   markConsentGiven({ minor: false })   // from the first-run age gate
@@ -40,7 +41,7 @@ export function captureError(e: unknown, source: EventProps['error']['source'] =
   telemetry.captureError(e, source, fatal);
 }
 
-/** The first-run age gate calls this once the player has confirmed it; a minor keeps analytics off by default. */
+/** The first-run age gate calls this once the player has confirmed it; a minor is never asked to share anything. */
 export function markConsentGiven(o: { minor?: boolean } = {}): void {
   consent.dispatch({ type: 'given', minor: o.minor });
 }
@@ -50,15 +51,15 @@ export const wrapRoot = telemetryPlatform.wrapRoot;
 /** Which services this build has keys for. */
 export const telemetryAvailable = telemetry.available;
 
-let snapshot: { effective: EffectiveConsent; record: ConsentRecord } = { effective: consent.effective, record: consent.current };
+let snapshot: { effective: EffectiveConsent; record: ConsentRecord; loaded: boolean } = { effective: consent.effective, record: consent.current, loaded: consent.loaded };
 const listeners = new Set<() => void>();
 consent.subscribe((effective, record) => {
-  snapshot = { effective, record };
+  snapshot = { effective, record, loaded: consent.loaded };
   for (const l of listeners) l();
 });
 
 /** The player's privacy choices, re-rendering when they change. */
-export function useConsent(): { effective: EffectiveConsent; record: ConsentRecord } {
+export function useConsent(): { effective: EffectiveConsent; record: ConsentRecord; /** The stored choice has been read. */ loaded: boolean } {
   return useSyncExternalStore(
     (l) => {
       listeners.add(l);

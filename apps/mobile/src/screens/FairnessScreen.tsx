@@ -1,24 +1,20 @@
 import React from 'react';
-import { ScrollView, StyleSheet, Text } from 'react-native';
-import { caveatKey } from '@mjm/net';
+import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useApp } from '../app-state';
 import { useSession } from '../game/useTable';
 import { colors, fonts, space } from '../theme';
-import { Card, H2, P, Pill, Row, ScreenHeader, SectionLabel } from '../components/Ui';
+import { Card, fontFor, H2, P, Pill, Row, ScreenHeader, SectionLabel } from '../components/Ui';
 import { Icon } from '../components/Icons';
 import { useT } from '../i18n';
-
-/** A caveat from the table client in the player's language (unknown texts are shown as they are). */
-export function caveatText(t: (key: string) => string, text: string): string {
-  const key = caveatKey(text);
-  return key ? t(`fairness.caveat.${key}`) : text;
-}
+import { caveatText, endUnverified, failureText } from '../logic/fairnessText';
 
 export function FairnessScreen() {
   const app = useApp();
   const { t } = useT();
   const state = useSession(app.session);
   const audits = state?.audits ?? [];
+  // Against bots the phone is the only party: it deals and it checks itself. Say so, and do not call the fifth secret a server's.
+  const local = app.session?.mode === 'local';
   return (
     <ScrollView contentContainerStyle={styles.wrap}>
       <ScreenHeader title={t('fairness.title')} onBack={app.back} />
@@ -27,6 +23,12 @@ export function FairnessScreen() {
           <Icon name="shield" size={34} />
           <H2>{t('fairness.howTitle')}</H2>
         </Row>
+        {local && (
+          <View testID="fairness-local" style={styles.local}>
+            <Icon name="bot" size={22} />
+            <Text style={[styles.localText, fontFor(t('fairness.localNote'), fonts.bodyBold, '700')]}>{t('fairness.localNote')}</Text>
+          </View>
+        )}
         <P>{t('fairness.step1')}</P>
         <P>{t('fairness.step2')}</P>
         <P>{t('fairness.step3')}</P>
@@ -43,7 +45,7 @@ export function FairnessScreen() {
       <SectionLabel>{t('fairness.sessionHands')}</SectionLabel>
       {audits.length === 0 && <Pill text={t('fairness.none')} icon="hourglass" />}
       {/* The end of a match is believed only when the hands this phone verified lead to it; say so when they do not. */}
-      {state?.matchOver && !state.matchEndVerified && (
+      {endUnverified(state) && (
         <Text testID="fairness-end-unverified" style={{ color: colors.goldDim, fontSize: 12, fontFamily: fonts.bodyBold }}>
           {t('fairness.endUnverified')}
         </Text>
@@ -66,7 +68,7 @@ export function FairnessScreen() {
             <Text style={styles.mono}>{t('fairness.seed', { seed: audit.seed })}</Text>
             {audit.commits.map((c) => (
               <Text key={c.seat} style={styles.mono}>
-                {t('fairness.commit', { who: c.seat === 4 ? t('fairness.server') : t('fairness.seat', { n: c.seat + 1 }), hash: c.hash.slice(0, 16), secret: audit.reveals.find((r) => r.seat === c.seat)?.secret.slice(0, 8) ?? '' })}
+                {t('fairness.commit', { who: c.seat === 4 ? t(local ? 'fairness.table' : 'fairness.server') : t('fairness.seat', { n: c.seat + 1 }), hash: c.hash.slice(0, 16), secret: audit.reveals.find((r) => r.seat === c.seat)?.secret.slice(0, 8) ?? '' })}
               </Text>
             ))}
             <Text style={styles.mono}>
@@ -79,7 +81,7 @@ export function FairnessScreen() {
             ))}
             {failures.map((f, i) => (
               <Text key={i} style={{ color: colors.dangerText, fontSize: 12, fontFamily: fonts.bodyBold }}>
-                {t('fairness.note', { text: f })}
+                {t('fairness.note', { text: failureText(t, f) })}
               </Text>
             ))}
           </Card>
@@ -91,4 +93,6 @@ export function FairnessScreen() {
 const styles = StyleSheet.create({
   wrap: { padding: space.lg, gap: space.md },
   mono: { color: colors.inkDim, fontSize: 11, fontFamily: 'monospace' },
+  local: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: colors.gold, borderWidth: 2, borderColor: colors.ink, borderRadius: 12, paddingHorizontal: 10, paddingVertical: 6 },
+  localText: { flex: 1, color: colors.ink, fontSize: 13, lineHeight: 18 },
 });

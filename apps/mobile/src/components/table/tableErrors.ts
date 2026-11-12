@@ -7,6 +7,7 @@
  * toast, Home's resume card).
  */
 import { friendlyError } from '../../logic/errors';
+import { WATCHER_MADE_WAY } from '../../logic/reconnect';
 import type { Message, Translate } from '../../logic/translate';
 
 const BY_CODE: Readonly<Record<string, string>> = {
@@ -29,6 +30,8 @@ const BY_MESSAGE: ReadonlyArray<readonly [RegExp, string]> = [
   [/^the club closed this table/i, 'online.errors.tableClosedByClub'],
   [/^the club removed you from this table/i, 'online.errors.evictedByClub'],
   [/^the club was deleted, so this table has closed/i, 'online.errors.clubDeleted'],
+  // A watcher who made way for a player: the signalling error `closed` with this sentence (WATCHER_DROPPED).
+  [WATCHER_MADE_WAY, 'online.errors.watcherDropped'],
 ];
 
 function str(e: unknown, key: 'code' | 'message'): string {
@@ -42,8 +45,9 @@ function str(e: unknown, key: 'code' | 'message'): string {
 
 /** The table-specific message for `e`, or null when it is not one of these refusals. */
 export function tableErrorMessage(e: unknown): Message | null {
-  const byCode = BY_CODE[str(e, 'code')];
-  if (byCode) return { key: byCode };
+  const code = str(e, 'code');
+  // Own keys only: a code such as 'toString' must not find something on the prototype.
+  if (Object.prototype.hasOwnProperty.call(BY_CODE, code)) return { key: BY_CODE[code] };
   const msg = str(e, 'message').trim();
   for (const [re, key] of BY_MESSAGE) if (re.test(msg)) return { key };
   return null;

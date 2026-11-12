@@ -1,7 +1,11 @@
 import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { BackHandler, Platform } from 'react-native';
 import { DEFAULT_PROFILE, DEFAULT_PROGRESS, DEFAULT_SETTINGS, storage, type ActiveSession, type Profile, type Progress, type Settings } from './storage';
-import { setSavedClientSource, type Session } from './game/session';
+import { saveScheduler } from './game/persist';
+import { setSavedClientSource, type CloseOptions, type Session } from './game/session';
+import { acceptedName } from './logic/profile';
+import type { ShopFocus } from './logic/shopFocus';
+import { backToDealtTable, betweenHands, hardwareBackPlan } from './logic/back';
 import { APP_BUILD, resolveSignalUrl } from './config';
 import { EMPTY_WALLET, loadWallet, saveWallet, type Wallet } from './monetisation/store';
 import { currentLocale, setLocalePreference } from './i18n';
@@ -11,12 +15,12 @@ import { requestPushAfterClub } from './push/hub';
 
 export type Screen =
   | { name: 'home' }
-  | { name: 'online' }
+  | { name: 'online'; /** Why a table link or notification could not be followed, shown once on arrival. */ notice?: string }
   | { name: 'quickmatch' }
   | { name: 'clubs' }
-  | { name: 'club'; code: string }
+  | { name: 'club'; code: string; /** Why a link to one of the club's tables could not be followed. */ notice?: string }
   | { name: 'lobby' }
-  | { name: 'table' }
+  | { name: 'table'; /** Set when the table took the player back from Review or Fair play because the next hand was dealt (src/logic/back.ts). */ returnedAt?: number }
   | { name: 'review' }
   | { name: 'fairness' }
   | { name: 'learn' }
@@ -24,13 +28,20 @@ export type Screen =
   | { name: 'drill'; kind: 'discard' | 'waits' }
   | { name: 'daily' }
   | { name: 'rush' }
-  | { name: 'shop'; focus?: 'fourwinds' }
+  | { name: 'shop'; focus?: ShopFocus }
   | { name: 'settings' };
 
 interface AppState {
   screen: Screen;
   go(screen: Screen): void;
   back(): void;
+  /**
+   * The Android hardware Back key (src/logic/back.ts): pops a screen, or at a live table asks the screen on
+   * top to answer it (`useHardwareBack`). Returns false when the system should handle the key.
+   */
+  hardwareBack(): boolean;
+  /** Counts the Back presses handed to the screen on top; `useHardwareBack` follows it. */
+  backAsked: number;
   /** Replace the whole stack (e.g. after leaving a table). */
   reset(screen: Screen): void;
   profile: Profile;
@@ -42,7 +53,8 @@ interface AppState {
   progress: Progress;
   setProgress(p: Progress | ((prev: Progress) => Progress)): void;
   session: Session | null;
-  setSession(s: Session | null): void;
+  /** Replaces the table; the one before it is closed (`closing.keepSeat`: without giving its seat up, game/session.ts). */
+  setSession(s: Session | null, closing?: CloseOptions): void;
   /** Persisted pointer to a table that can be resumed after a crash/relaunch. */
   activeSession: ActiveSession | null;
   setActiveSession(s: ActiveSession | null): void;
@@ -68,7 +80,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [activeSession, setActiveSessionState] = useState<ActiveSession | null>(null);
   const [wallet, setWalletState] = useState<Wallet>(EMPTY_WALLET);
   const [loaded, setLoaded] = useState(false);
-  const persistTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const signalUrl = resolveSignalUrl(settings.devSignalUrl);
 
   useEffect(() => {
@@ -114,19 +125,34 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     });
   }, [session]);
 
-  // Android hardware back pops the screen stack instead of leaving the app (the web has no such key and logs an error for the listener).
+  // Android hardware back pops the screen stack instead of leaving the app, except at a live table, where the
+  // table (or its lobby) answers it: popping would leave the match running unseen (src/logic/back.ts).
+  // (The web has no such key and logs an error for the listener.)
+  const [backAsked, setBackAsked] = useState(0);
+  const backRef = useRef({ stack, session });
+  backRef.current = { stack, session };
+  const hardwareBack = useRef((): boolean => {
+    const plan = hardwareBackPlan(backRef.current.stack, backRef.current.session !== null);
+    if (plan === 'ask') setBackAsked((n) => n + 1);
+    else if (plan === 'pop') setStack((st) => (st.length > 1 ? st.slice(0, -1) : st));
+    return plan !== 'system';
+  }).current;
   useEffect(() => {
     if (Platform.OS !== 'android') return;
-    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
-      let handled = false;
-      setStack((st) => {
-        handled = st.length > 1;
-        return handled ? st.slice(0, -1) : st;
-      });
-      return handled;
-    });
+    const sub = BackHandler.addEventListener('hardwareBackPress', hardwareBack);
     return () => sub.remove();
-  }, []);
+  }, [hardwareBack]);
+
+  // The next hand dealt while Review or Fair play is open over the table: back to the table, where the player's
+  // clock is running (src/logic/back.ts). The table says why for a few seconds.
+  useEffect(() => {
+    if (!session) return;
+    let waiting = betweenHands(session.client.state);
+    return session.onChange((st) => {
+      if (waiting && !betweenHands(st)) setStack((stk) => backToDealtTable(stk, Date.now()) as Screen[]);
+      waiting = betweenHands(st);
+    });
+  }, [session]);
 
   // A cold resume (Home's Resume card) restores the saved table client's record when it is for the same table and seat.
   const activeRef = useRef<ActiveSession | null>(null);
@@ -139,7 +165,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     return () => setSavedClientSource(null);
   }, []);
 
-  // Keep the resumable-session record in sync with whatever table we are at.
+  // Keep the resumable-session record in sync with whatever table we are at. A name the server refused
+  // is not carried into it (the resume falls back to "Player").
+  const shown = acceptedName(profile);
   useEffect(() => {
     if (!session) return;
     const save = () => {
@@ -152,25 +180,35 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       if (!st.token) return;
       const record: ActiveSession =
         session.mode === 'local'
-          ? { kind: 'local', host: session.host!.serialize(), token: st.token, name: profile.name, avatar: profile.avatar, savedAt: Date.now() }
-          : { kind: 'online', signalUrl: session.serverUrl ?? signalUrl, roomCode: session.roomCode, token: st.token, name: profile.name, avatar: profile.avatar, clubCode: session.clubCode, client: session.client.serialize(), savedAt: Date.now() };
+          ? { kind: 'local', host: session.host!.serialize(), token: st.token, name: shown, avatar: profile.avatar, savedAt: Date.now() }
+          : {
+              kind: 'online',
+              signalUrl: session.serverUrl ?? signalUrl,
+              roomCode: session.roomCode,
+              token: st.token,
+              name: shown,
+              avatar: profile.avatar,
+              clubCode: session.clubCode,
+              quickMatch: session.quickMatch || undefined,
+              client: session.client.serialize(),
+              savedAt: Date.now(),
+            };
       setActiveSessionState(record);
       void storage.saveActiveSession(record);
     };
-    const schedule = () => {
-      if (persistTimer.current) clearTimeout(persistTimer.current);
-      persistTimer.current = setTimeout(save, 400);
-    };
+    // Saved a moment after a change, or at once while the client is agreeing a deal (src/game/persist.ts).
+    const scheduler = saveScheduler(save);
     // The session forwards its client's state (one client per table, kept across reconnects).
-    const unsubClient = session.onChange(schedule);
-    const unsubHost = session.host?.onChange(schedule);
-    schedule();
+    // A local table's record holds its host, not the client's record: nothing there is worth an early write.
+    const unsubClient = session.onChange((st) => scheduler.changed(session.mode === 'local' ? undefined : st.ceremony));
+    const unsubHost = session.host?.onChange(() => scheduler.changed());
+    scheduler.changed();
     return () => {
       unsubClient();
       unsubHost?.();
-      if (persistTimer.current) clearTimeout(persistTimer.current);
+      scheduler.cancel();
     };
-  }, [session, profile.name, profile.avatar, signalUrl]);
+  }, [session, shown, profile.avatar, signalUrl]);
 
   const value = useMemo<AppState>(
     () => ({
@@ -180,6 +218,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         setStack((st) => [...st, screen]);
       },
       back: () => setStack((st) => (st.length > 1 ? st.slice(0, -1) : st)),
+      hardwareBack,
+      backAsked,
       reset: (screen) => {
         trackAll(screenEvents(screen, stack[stack.length - 1]));
         setStack([screen]);
@@ -205,9 +245,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         });
       },
       session,
-      setSession: (s) => {
+      setSession: (s, closing) => {
         setSessionState((prev) => {
-          if (prev && prev !== s) prev.close();
+          if (prev && prev !== s) prev.close(closing);
           return s;
         });
       },
@@ -229,9 +269,25 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       },
       loaded,
     }),
-    [stack, profile, settings, signalUrl, progress, session, activeSession, wallet, loaded],
+    [stack, profile, settings, signalUrl, progress, session, activeSession, wallet, loaded, hardwareBack, backAsked],
   );
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
+}
+
+/**
+ * Answer the hardware Back key on a screen the provider does not pop by itself (a live table and its lobby):
+ * `onBack` runs once for each press made while this screen is mounted.
+ */
+export function useHardwareBack(onBack: () => void): void {
+  const { backAsked } = useApp();
+  const seen = useRef(backAsked);
+  const handler = useRef(onBack);
+  handler.current = onBack;
+  useEffect(() => {
+    if (backAsked === seen.current) return;
+    seen.current = backAsked;
+    handler.current();
+  }, [backAsked]);
 }
 
 export function useApp(): AppState {

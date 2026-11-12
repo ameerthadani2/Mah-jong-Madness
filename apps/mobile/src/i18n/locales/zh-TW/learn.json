@@ -9,6 +9,12 @@
     "cta": "解題"
   },
   "rush": {
+    "solved": {
+      "one": "已解 %{count} 題",
+      "other": "已解 %{count} 題"
+    },
+    "strikes": "失誤 %{n} 次，最多 %{max} 次",
+    "timeLeft": "剩餘時間：%{minutes} 分 %{seconds} 秒",
     "title": "謎題衝刺",
     "text": "三分鐘、三次機會，題目越來越難。",
     "stat": "最佳 %{best} · 已玩 %{runs} 次",
@@ -64,5 +70,6 @@
     "allDone": "這是最後一課，所有單元都完成了。每日謎題每天都有新的一手牌。",
     "nextCta": "下一課",
     "back": "回到學習"
-  }
+  },
+  "cardButton": "%{action}：%{title}"
 }

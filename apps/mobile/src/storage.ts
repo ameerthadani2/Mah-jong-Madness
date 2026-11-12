@@ -56,7 +56,19 @@ export interface Progress {
  * client goes on checking the deal where it left off instead of starting with no history.
  */
 export type ActiveSession =
-  | { kind: 'online'; signalUrl: string; roomCode: string; token: string; name: string; avatar: string; clubCode?: string; client?: SerializedClient; savedAt: number }
+  | {
+      kind: 'online';
+      signalUrl: string;
+      roomCode: string;
+      token: string;
+      name: string;
+      avatar: string;
+      clubCode?: string;
+      /** A quick-match table: resumed as one (no share code, no start button; it runs by itself). */
+      quickMatch?: boolean;
+      client?: SerializedClient;
+      savedAt: number;
+    }
   | { kind: 'local'; host: SerializedHost; token: string; name: string; avatar: string; savedAt: number };
 
 const KEYS = { profile: 'mjm.profile', settings: 'mjm.settings', progress: 'mjm.progress', session: 'mjm.activeSession', age: 'mjm.age' } as const;

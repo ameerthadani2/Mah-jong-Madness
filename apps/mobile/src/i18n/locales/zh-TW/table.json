@@ -42,6 +42,10 @@
     "goneTitle": "牌桌已結束",
     "goneText": "遊戲伺服器上已沒有這張牌桌：它在你離開時結束或被關閉了。",
     "goneLeave": "回到首頁",
+    "seatTakenTitle": "已在另一台裝置開啟",
+    "seatTakenText": "這個座位已在另一台裝置上開啟，所以這台裝置已經停止連線，也不會自動重連。想改回這台裝置玩，請回首頁繼續這張牌桌。",
+    "madeWayTitle": "已讓位給玩家",
+    "bannedTitle": "帳號已被禁止線上遊戲",
     "reconnect": "重新連線",
     "reconnectingTitle": "重新連線中…",
     "reconnectingText": "第 %{n} 次嘗試。你的座位會保留，回來之前由電腦代打。",
@@ -63,6 +67,8 @@
     "sevenRob": "七搶一 · %{name}",
     "taiLabel": "台",
     "tai": "%{tai} 台",
+    "capped": "封頂：這手牌算出 %{counted} 台，但這桌的規則一手最多算 %{cap} 台。",
+    "cappedDealer": "封頂：這手牌算出 %{counted} 台，但這桌的規則一手最多算 %{cap} 台；莊家的 %{dealer} 台另計，合計 %{tai} 台。",
     "payment": "%{from} → %{to}：%{points}（%{tai} 台，含莊家）"
   },
   "result": {
@@ -78,7 +84,8 @@
     "waiting": "等待其他玩家…",
     "review": "複盤",
     "reviewMyHand": "複盤這一局",
-    "leaveTable": "離開牌桌"
+    "leaveTable": "離開牌桌",
+    "autoNext": "線上牌桌過幾秒就會自動開下一局。"
   },
   "audit": {
     "okShort": "已驗證 · 詳情",
@@ -96,7 +103,49 @@
     "goodHand": "好牌!",
     "dealtIn": "放槍了…",
     "oneMore": "再來一局",
-    "faster": "快點啦"
+    "faster": "等到花兒都謝了…"
+  },
+  "emoteName": {
+    "thumbs": "讚",
+    "lol": "大笑",
+    "wow": "哇",
+    "cry": "哭哭",
+    "fire": "手氣正旺",
+    "love": "愛心",
+    "zzz": "想睡了",
+    "hu": "胡了",
+    "th": {
+      "tea": "熱茶",
+      "bun": "包子",
+      "dumpling": "水餃",
+      "noodles": "麵",
+      "mooncake": "月餅",
+      "tangerine": "橘子"
+    },
+    "nm": {
+      "boba": "珍珠奶茶",
+      "skewer": "串燒",
+      "shavedice": "剉冰",
+      "corn": "烤玉米",
+      "lantern": "燈籠",
+      "firecracker": "鞭炮"
+    },
+    "fs": {
+      "firework": "煙火",
+      "knot": "中國結",
+      "drum": "大鼓",
+      "kite": "風箏",
+      "moon": "滿月",
+      "dragonboat": "龍舟"
+    },
+    "zd": {
+      "rat": "鼠",
+      "ox": "牛",
+      "tiger": "虎",
+      "rabbit": "兔",
+      "dragon": "龍",
+      "rooster": "雞"
+    }
   },
   "themes": {
     "classic": "經典綠",
@@ -135,6 +184,7 @@
       "pencil": "編輯"
     },
     "gems": "%{n} 顆鑽石，開啟商店",
+    "gemsOwed": "鑽石餘額 %{balance}，退款後尚欠 %{n} 顆。開啟商店。",
     "claimWith": "%{verb}：%{tiles}",
     "pass": "過",
     "chi": "吃",
@@ -149,13 +199,18 @@
     "tileSelected": "%{tile}，已選取",
     "tapToDiscard": "再點一次打出",
     "tapToSelect": "點一下選取要打的牌",
-    "emote": "送出表情 %{name}",
+    "emote": "送出表情：%{name}",
     "reportHint": "長按即可檢舉這位玩家",
-    "tileBack": "背面朝上的牌"
+    "tileBack": "背面朝上的牌",
+    "clockNow": "你的出牌時間：剩 %{s} 秒",
+    "clockBankNow": "你的備用時間：剩 %{s} 秒",
+    "clockLow": "剩 %{s} 秒",
+    "clockBank": "開始用備用時間：%{s} 秒"
   },
   "leaveSheet": {
     "title": "要離開牌桌嗎？",
     "bodyOnline": "你離開時由電腦代打。之後可以在首頁按「繼續」回來。放棄牌桌則會永久讓出座位。",
+    "bodyQuick": "你離開時由電腦代打，之後可以在首頁按「繼續」回來。不過快速配對的牌桌要是沒有任何玩家在場，兩分鐘後就會關閉。放棄牌桌則會永久讓出座位。",
     "bodyLocal": "牌桌會等你回來。之後可以在首頁按「繼續」回來。放棄牌桌則會結束這場比賽。",
     "stay": "繼續打",
     "away": "回到首頁",
@@ -170,5 +225,7 @@
     "win": "",
     "selfDrawWin": ""
   },
-  "autoDiscard": "時間到了：已替你打出%{tile}。"
+  "autoDiscard": "時間到了：已替你打出%{tile}。",
+  "autoClaim": "時間到了：已替你喊「%{call}」。",
+  "nextHandStarted": "下一局開始了。"
 }

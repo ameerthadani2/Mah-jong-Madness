@@ -1,15 +1,16 @@
 import React from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
-import { BOT_SKILLS, DEFAULT_RULES, RULE_PRESETS, rulesFromPreset, SPEED_PRESETS, withSpeed, type BotSkill, type GameSpeed } from '@mjm/engine';
+import { BOT_SKILLS, DEFAULT_RULES, type BotSkill } from '@mjm/engine';
 import { useApp } from '../app-state';
 import { useAuth } from '../auth/AuthProvider';
 import type { Profile } from '../storage';
 import { AccountCard } from './AccountCard';
 import { LOCALE_NAMES, SUPPORTED_LOCALES, useT, type LocalePreference } from '../i18n';
-import { botDescription, botLabel, presetName, rulesSummary, speedLabel } from '../logic/rules-text';
+import { botLabel, rulesSummary } from '../logic/rules-text';
 import { localized } from '../logic/translate';
 import { BUILD_SIGNAL_URL } from '../config';
 import { AVATARS } from '../storage';
+import { isNameRefused } from '../logic/profile';
 import { TABLE_THEMES } from '../themes';
 import { hasTier, ownsCosmetic } from '../monetisation/wallet';
 import { COSMETICS, productText } from '../monetisation/catalog';
@@ -20,13 +21,15 @@ import { TileBackPreview } from '../components/Tile';
 import { PackEmote } from '../components/EmotePacks';
 import { WinCelebration } from '../components/Celebrations';
 import { colors, fonts, space } from '../theme';
-import { Button, Card, Chip, fontFor, H2, P, Row, ScreenHeader, Stepper, Toggle } from '../components/Ui';
+import { Button, Card, Chip, fontFor, H2, P, Row, ScreenHeader, Toggle } from '../components/Ui';
 import { AvatarPlate, avatarName } from '../components/Avatars';
 import { ThemeScene } from '../components/Scenes';
 import { Icon } from '../components/Icons';
 import { LegalLinks, NoValueNotice } from '../components/LegalLinks';
 import { SoundSettings } from '../components/SoundSettings';
 import { PrivacyToggles } from '../components/PrivacyToggles';
+import { RuleEditor } from '../components/RuleEditor';
+import { SupportLink } from '../components/SupportLink';
 import { DisplaySettings } from '../components/DisplaySettings';
 
 const SLOT_KEYS: Record<EquipSlot, string> = { tileBack: 'settings.looks.tileBack', frame: 'settings.looks.frame', emotes: 'settings.looks.emotes', celebration: 'settings.looks.celebration' };
@@ -62,9 +65,9 @@ export function SettingsScreen() {
     if (p.name !== profile.name || p.avatar !== profile.avatar) auth.syncProfile(p.name, p.avatar);
   };
   const { t, locale } = useT();
+  const nameRefused = isNameRefused(profile);
   const rules = settings.rules;
   const languages: Array<[LocalePreference, string]> = [['auto', t('settings.languageAuto')], ...SUPPORTED_LOCALES.map((l): [LocalePreference, string] => [l, LOCALE_NAMES[l]])];
-  const setRule = <K extends keyof typeof rules>(k: K, v: (typeof rules)[K]) => setSettings({ ...settings, rules: { ...rules, [k]: v } });
 
   return (
     <ScrollView contentContainerStyle={styles.wrap}>
@@ -73,8 +76,23 @@ export function SettingsScreen() {
         <H2>{t('settings.profile')}</H2>
         <Row gap={12}>
           <AvatarPlate id={profile.avatar} size={56} frame={equipped.frame} />
-          <TextInput value={profile.name} onChangeText={(name) => setProfile({ ...profile, name })} placeholder={t('settings.namePlaceholder')} placeholderTextColor="#9AA0BF" style={[styles.input, { flex: 1 }]} maxLength={24} />
+          <TextInput
+            testID="profile-name"
+            value={profile.name}
+            onChangeText={(name) => setProfile({ ...profile, name })}
+            placeholder={t('settings.namePlaceholder')}
+            placeholderTextColor="#9AA0BF"
+            accessibilityLabel={nameRefused ? `${t('settings.namePlaceholder')}. ${t('settings.nameRefused.field')}` : t('settings.namePlaceholder')}
+            style={[styles.input, { flex: 1 }, nameRefused && { borderColor: colors.dangerText }]}
+            maxLength={24}
+          />
         </Row>
+        {nameRefused && (
+          // The server refused this name (a guest sign-up's nameRefused, or PATCH /api/me 400 name_not_allowed).
+          <View testID="profile-name-refused" accessibilityLiveRegion="polite">
+            <P style={{ color: colors.dangerText, fontSize: 13 }}>{t('settings.nameRefused.field')}</P>
+          </View>
+        )}
         <Row style={{ flexWrap: 'wrap', rowGap: 8 }} gap={8}>
           {AVATARS.map((a) => (
             <Pressable
@@ -177,36 +195,14 @@ export function SettingsScreen() {
             return <Chip key={k} label={botLabel(k, locale)} selected={settings.botSkill === k} locked={locked} onPress={() => (locked ? app.go({ name: 'shop' }) : setSettings({ ...settings, botSkill: k }))} />;
           })}
         </Row>
-        <P dim style={{ fontSize: 12 }}>{botDescription(settings.botSkill, t, locale)}</P>
+        {/* What each tier does, as measured (docs/ARCHITECTURE.md, the bot tiers): no claim that one beats another. */}
+        <P dim style={{ fontSize: 12 }}>{t(`settings.botAbout.${settings.botSkill}`)}</P>
       </Card>
       <Card>
         <H2>{t('settings.houseRules')}</H2>
         <P dim style={{ fontSize: 13 }}>{rulesSummary(rules, t, locale)}</P>
-        <P dim style={{ fontSize: 12 }}>{t('settings.presets.title')}</P>
-        <Row style={{ flexWrap: 'wrap', rowGap: 6 }}>
-          {RULE_PRESETS.map((p) => (
-            <Chip key={p.id} label={presetName(p, locale)} onPress={() => setSettings({ ...settings, rules: rulesFromPreset(p.id) })} />
-          ))}
-        </Row>
-        <P dim style={{ fontSize: 12 }}>{t('settings.speed')}</P>
-        <Row style={{ flexWrap: 'wrap', rowGap: 6 }}>
-          {(Object.keys(SPEED_PRESETS) as GameSpeed[]).map((sp) => (
-            <Chip key={sp} label={t('settings.speedChip', { label: speedLabel(sp, locale), turn: SPEED_PRESETS[sp].turnSeconds, bank: SPEED_PRESETS[sp].timeBankSeconds })} selected={rules.speed === sp} onPress={() => setSettings({ ...settings, rules: withSpeed(rules, sp) })} />
-          ))}
-        </Row>
-        <Stepper label={t('settings.basePoints')} value={rules.basePoints} step={50} min={0} max={5000} onChange={(v) => setRule('basePoints', v)} />
-        <Stepper label={t('settings.taiPoints')} value={rules.taiPoints} step={10} min={0} max={2000} onChange={(v) => setRule('taiPoints', v)} />
-        <Stepper label={t('settings.maxTai')} value={rules.maxTai} step={1} min={0} max={64} onChange={(v) => setRule('maxTai', v)} />
-        <Stepper label={t('settings.dealerStreakTai')} value={rules.dealerStreakTai} step={1} min={0} max={4} onChange={(v) => setRule('dealerStreakTai', v)} />
-        <Stepper label={t('settings.handsPerMatch')} value={rules.handsPerMatch} step={4} min={4} max={32} onChange={(v) => setRule('handsPerMatch', v)} format={(v) => t('settings.handsFormat', { hands: v, rounds: v / 4 })} />
-        <Stepper label={t('settings.turnSeconds')} value={rules.turnSeconds} step={1} min={3} max={60} onChange={(v) => setRule('turnSeconds', v)} />
-        <Stepper label={t('settings.timeBank')} value={rules.timeBankSeconds} step={5} min={0} max={120} onChange={(v) => setRule('timeBankSeconds', v)} />
-        <Stepper label={t('settings.deadWall')} value={rules.deadWallSize} step={2} min={0} max={32} onChange={(v) => setRule('deadWallSize', v)} />
-        <Toggle label={t('settings.allowChi')} value={rules.allowChi} onChange={(v) => setRule('allowChi', v)} />
-        <Toggle label={t('settings.drawKeepsDealer')} value={rules.drawKeepsDealer} onChange={(v) => setRule('drawKeepsDealer', v)} />
-        <Toggle label={t('settings.multipleWinners')} value={rules.multipleWinners} onChange={(v) => setRule('multipleWinners', v)} />
-        <Toggle label={t('settings.passRule')} value={rules.passRule} onChange={(v) => setRule('passRule', v)} />
-        <Toggle label={t('settings.noFlowerTai')} value={rules.noFlowerTai} onChange={(v) => setRule('noFlowerTai', v)} />
+        {/* The same editor, names, steps and limits as a club's rules (components/RuleEditor.tsx), so a table of either kind can play the same rules. */}
+        <RuleEditor value={rules} onChange={(next) => setSettings({ ...settings, rules: next })} />
         <Button small kind="ghost" title={t('settings.reset')} onPress={() => setSettings({ ...settings, rules: DEFAULT_RULES })} style={{ alignSelf: 'flex-start' }} />
       </Card>
       <Card testID="settings-legal">
@@ -215,6 +211,7 @@ export function SettingsScreen() {
           {t('settings.legal.body')}
         </P>
         <LegalLinks style={{ justifyContent: 'flex-start' }} />
+        <SupportLink />
         <NoValueNotice />
       </Card>
       {__DEV__ && (

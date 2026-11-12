@@ -12,6 +12,7 @@ import { Button, Card, fontFor, P, ScreenHeader } from './Ui';
 import { Icon } from './Icons';
 import { Logo } from './Logo';
 import { LegalLinks } from './LegalLinks';
+import { Live } from './Live';
 
 export function AgeGate({ onBack }: { onBack?: () => void }) {
   const { t } = useT();
@@ -49,7 +50,11 @@ export function AgeGate({ onBack }: { onBack?: () => void }) {
           />
           <Button testID="age-continue" title={t('legal.age.continue')} onPress={submit} disabled={year.length !== 4} />
         </View>
-        {invalid && <P style={{ color: colors.dangerText, fontSize: 13 }}>{t('legal.age.invalid')}</P>}
+        {invalid && (
+          <Live message={t('legal.age.invalid')} assertive testID="age-invalid">
+            <P style={{ color: colors.dangerText, fontSize: 13 }}>{t('legal.age.invalid')}</P>
+          </Live>
+        )}
         <P dim style={{ fontSize: 12 }}>
           {t('legal.age.note')}
         </P>

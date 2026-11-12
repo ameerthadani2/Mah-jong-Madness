@@ -70,6 +70,35 @@ export const colors = {
   panelStrong: 'rgba(16,20,47,0.78)',
 };
 
+export type PillTone = 'neutral' | 'gold' | 'ok' | 'danger' | 'premium' | 'info' | 'dark';
+
+/**
+ * Fill and text of a Pill (and of the Shop's ribbons, which use the danger fill). Pills carry small text
+ * (11 to 13 px), so each pair keeps at least 4.5:1: ink on the bright fills, white only on the dark one.
+ */
+export const pillTones: Record<PillTone, { bg: string; fg: string }> = {
+  neutral: { bg: colors.creamLight, fg: colors.ink },
+  gold: { bg: colors.gold, fg: colors.ink },
+  ok: { bg: colors.cta, fg: colors.ink },
+  danger: { bg: colors.danger, fg: colors.ink },
+  premium: { bg: colors.premium, fg: colors.ink },
+  info: { bg: colors.info, fg: colors.ink },
+  dark: { bg: 'rgba(16,20,47,0.72)', fg: '#FFFFFF' },
+};
+
+/** WCAG relative luminance of a #RRGGBB colour. */
+export function luminance(hex: string): number {
+  const n = parseInt(hex.replace('#', ''), 16);
+  const lin = (c: number) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
+  return 0.2126 * lin(((n >> 16) & 255) / 255) + 0.7152 * lin(((n >> 8) & 255) / 255) + 0.0722 * lin((n & 255) / 255);
+}
+
+/** WCAG contrast ratio of two #RRGGBB colours (1 to 21). */
+export function contrast(a: string, b: string): number {
+  const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+  return (hi + 0.05) / (lo + 0.05);
+}
+
 export const radius = { sm: 10, md: 16, lg: 24, xl: 28 };
 export const space = { xs: 4, sm: 8, md: 12, lg: 16, xl: 24 };
 /** Outline weights: panels 3, buttons 3, small chips 2. */

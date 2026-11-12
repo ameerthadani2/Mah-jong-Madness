@@ -106,3 +106,8 @@ export { isQuickChatId, isTableEmoteId } from '@mjm/net';
 export function quickChatText(id: QuickChatId): string {
   return t(`table.quickChat.${id}`);
 }
+
+/** An emote's name in the reader's language (`table.emoteName.<id>`), for screen readers: never the internal id. */
+export function emoteName(id: string, translate: (key: string) => string = t): string {
+  return translate(`table.emoteName.${id}`);
+}

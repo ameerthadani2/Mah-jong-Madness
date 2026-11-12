@@ -94,9 +94,10 @@ export function PuzzleRushScreen() {
             <Icon name="lock" size={30} />
             <H2>{t('puzzles.rush.usedTitle')}</H2>
           </Row>
-          <P dim>{t('puzzles.rush.usedText')}</P>
+          {/* The plan is named as the Shop names it, in either language. */}
+          <P dim>{t('shop.rushUsed', { plan: t('shop.tiers.gold') })}</P>
           <Row>
-            <Button title={t('puzzles.rush.seePlans')} onPress={() => app.go({ name: 'shop' })} />
+            <Button title={t('puzzles.rush.seePlans')} onPress={() => app.go({ name: 'shop', focus: 'gold' })} />
             <Button kind="ghost" title={t('puzzles.rush.dailyInstead')} onPress={() => app.go({ name: 'daily' })} />
           </Row>
         </Card>
@@ -183,9 +184,14 @@ function PuzzleRushRun({ onAgain, onStart }: { onAgain: () => void; /** The firs
         onNo={() => setAskLeave(false)}
       />
       <Row style={{ flexWrap: 'wrap', rowGap: 6 }}>
-        <Pill icon="clock" text={`${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}`} tone={left <= 20 ? 'danger' : 'neutral'} />
-        <Pill icon="check" text={`${score}`} tone="ok" />
-        <View style={styles.strikes}>
+        {/* Named, but not a live region: it changes every second. */}
+        <View accessible accessibilityRole="text" accessibilityLabel={t('learn.rush.timeLeft', { minutes: Math.floor(left / 60), seconds: left % 60 })} testID="rush-clock">
+          <Pill icon="clock" text={`${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}`} tone={left <= 20 ? 'danger' : 'neutral'} />
+        </View>
+        <View accessible accessibilityRole="text" accessibilityLabel={t('learn.rush.solved', { count: score })} testID="rush-score">
+          <Pill icon="check" text={`${score}`} tone="ok" />
+        </View>
+        <View style={styles.strikes} accessible accessibilityRole="text" accessibilityLabel={t('learn.rush.strikes', { n: strikes, max: RUSH_STRIKES })} accessibilityLiveRegion="polite" testID="rush-strikes">
           {Array.from({ length: RUSH_STRIKES }).map((_, i) => (
             <View key={i} style={[styles.strike, i < strikes && { backgroundColor: colors.danger }]}>
               {i < strikes && <Icon name="cross" size={14} />}

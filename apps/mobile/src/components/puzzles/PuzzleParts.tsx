@@ -7,6 +7,7 @@ import { explanationFor, reasonTitleKey, type PuzzleResult } from '../../logic/p
 import { Tile, type TileSize } from '../Tile';
 import { Button, fontFor, H2, P, Row } from '../Ui';
 import { Icon } from '../Icons';
+import { Live } from '../Live';
 
 /** Props every theme's view takes. */
 export interface ThemeViewProps<P> {
@@ -49,6 +50,19 @@ export function Verdict({ good, goodKey, badKey }: { good: boolean; goodKey: str
       <Icon name={good ? 'check' : 'cross'} size={26} color={good ? colors.cta : colors.danger} />
       <H2 style={{ color: good ? colors.okText : colors.dangerText }}>{t(good ? goodKey : badKey)}</H2>
     </Row>
+  );
+}
+
+/**
+ * Everything shown once a puzzle is answered: the verdict, the explanation, the way on. It appears below the
+ * hand, away from the tile or button that was pressed, so it is a live region and a screen reader speaks it
+ * (`spoken` is what iOS announces: the verdict and the sentence that explains it).
+ */
+export function Answer({ spoken, children }: { spoken: string; children: React.ReactNode }) {
+  return (
+    <Live message={spoken} testID="puzzle-answer" style={{ gap: 6 }}>
+      {children}
+    </Live>
   );
 }
 

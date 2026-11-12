@@ -18,6 +18,7 @@
   "notOnSale": "Not on sale",
   "priceLoading": "…",
   "diamondsUse": "Diamonds buy table looks, tile backs, avatar frames, emote packs and win celebrations (150 to 600 each, sets for less). Bonus diamonds are spent first.",
+  "rushUsed": "Free accounts get one Puzzle Rush a day. %{plan} makes it unlimited.",
   "tiers": {
     "gold": "Coach Gold",
     "fourwinds": "The Four Winds Club"
@@ -273,7 +274,7 @@
     },
     "coach_gold_year": {
       "title": "Coach Gold (yearly)",
-      "description": "Coach Gold for a year, billed once.",
+      "description": "Coach Gold, billed once a year. Renews every year until cancelled.",
       "badge": "Yearly"
     },
     "fourwinds_month": {
@@ -283,7 +284,7 @@
     },
     "fourwinds_year": {
       "title": "The Four Winds Club (yearly)",
-      "description": "The Four Winds Club for a year, billed once.",
+      "description": "The Four Winds Club, billed once a year. Renews every year until cancelled.",
       "badge": "Yearly"
     }
   },

@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { chooseAction, DEFAULT_RULES, legalActions, withRules } from '@mjm/engine';
 import { LoopbackHub, TableClient, TableHost, transportLink, type ClientState, type SerializedClient } from '@mjm/net';
-import { connectSignaling, createLocalSession, createOnlineSession, isUnauthorised, setSavedClientSource, UNAUTHORISED_CLOSE, type Session } from './session';
+import { connectSignaling, createLocalSession, createOnlineSession, isUnauthorised, seatOrRefusal, setSavedClientSource, UNAUTHORISED_CLOSE, type Session } from './session';
+import { friendlyErrorMessage } from '../logic/errors';
+import { linkNotice } from '../logic/reconnect';
 
 type Frame = Record<string, unknown>;
 
@@ -10,8 +12,12 @@ class FakeSocket {
   static all: FakeSocket[] = [];
   static last: FakeSocket | null = null;
   static reply: (frame: Frame, ws: FakeSocket) => Frame | null = () => null;
-  /** How the server treats a new connection: answer it, refuse the session (4401), or be unreachable. */
-  static accept: (ws: FakeSocket) => 'ok' | 'unauthorised' | 'down' = () => 'ok';
+  /**
+   * How the server treats a new connection: answer it, refuse the session (4401), refuse a banned
+   * account (4403), be unreachable, or fail to finish checking the session before its hello timer
+   * fires (1013, "try again later").
+   */
+  static accept: (ws: FakeSocket) => 'ok' | 'unauthorised' | 'banned' | 'down' | 'busy' = () => 'ok';
   readyState = 0;
   sent: Frame[] = [];
   closed = false;
@@ -42,6 +48,14 @@ class FakeSocket {
       queueMicrotask(() => this.serverClose(UNAUTHORISED_CLOSE));
       return;
     }
+    if (frame.t === 'hello' && FakeSocket.accept(this) === 'banned') {
+      queueMicrotask(() => this.serverClose(BANNED_CLOSE));
+      return;
+    }
+    if (frame.t === 'hello' && FakeSocket.accept(this) === 'busy') {
+      queueMicrotask(() => this.serverClose(TRY_AGAIN_LATER));
+      return;
+    }
     const answer = frame.t === 'hello' ? { t: 'hello', peerId: 'p-me', id: 'p-me', userId: 'u-1' } : FakeSocket.reply(frame, this);
     if (answer) queueMicrotask(() => this.onmessage?.({ data: JSON.stringify(answer) }));
   }
@@ -64,6 +78,12 @@ class FakeSocket {
   }
 }
 
+/** The game server's close code for a banned account (BANNED_CLOSE_CODE in apps/signal/src/rooms.ts). */
+const BANNED_CLOSE = 4403;
+/** The game server's close code for a hello it could not finish checking in time (apps/signal/src/sockets.ts). */
+const TRY_AGAIN_LATER = 1013;
+/** The game server's sentence to a watcher whose place a player needed (WATCHER_DROPPED in apps/signal/src/rooms.ts). */
+const WATCHER_DROPPED = 'A player needed your place at this table; join again to sit down.';
 const TOKEN = '0123456789abcdef0123456789abcdef';
 const base = { signalUrl: 'wss://game.example/ws', name: 'Tester', avatar: 'lady', userId: 'user-123456', rules: DEFAULT_RULES };
 const roomReply = (f: Frame): Frame | null => (f.t === 'create' || f.t === 'join' ? { t: 'room', room: 'ABC123', peers: ['p-me', 'server-1'], host: 'server-1' } : null);
@@ -144,10 +164,121 @@ describe('createOnlineSession', () => {
     s.close();
   });
 
+  it('a first hello closed with 1013 fails as "try again", and the session token is not replaced', async () => {
+    FakeSocket.accept = () => 'busy';
+    const onUnauthorised = vi.fn();
+    const err = await createOnlineSession({ ...base, action: 'create', auth: async () => 'mjs_good', onUnauthorised }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect(isUnauthorised(err)).toBe(false);
+    expect(onUnauthorised).not.toHaveBeenCalled();
+    // One socket: the app did not sign in again and retry as it does for a 4401.
+    expect(FakeSocket.all).toHaveLength(1);
+    // The player reads "cannot reach the game server … try again", not "your session was not accepted".
+    expect(friendlyErrorMessage(err)).toEqual({ key: 'errors.unreachable' });
+  });
+
   it('reports a refused session as unauthorised', async () => {
     FakeSocket.accept = () => 'unauthorised';
     const err = await createOnlineSession({ ...base, action: 'create', auth: async () => 'bad' }).catch((e: unknown) => e);
     expect(isUnauthorised(err)).toBe(true);
+  });
+});
+
+describe('a seat at the table, or the refusal', () => {
+  const fromTable = (msg: Frame): Frame => ({ t: 'from', from: 'server-1', data: { ch: 'game', msg } });
+  const welcomeFrame = fromTable({ t: 'welcome', seat: 2, roomCode: 'ABC123', rules: DEFAULT_RULES, seats: [], matchId: 'm1', token: TOKEN });
+
+  it('resolves once the table has seated the player', async () => {
+    const s = await createOnlineSession({ ...base, action: 'join', code: 'ABC123' });
+    const ws = FakeSocket.last!;
+    const waiting = seatOrRefusal(s);
+    ws.push(welcomeFrame);
+    await expect(waiting).resolves.toBeUndefined();
+    expect(s.client.state.seat).toBe(2);
+    expect(ws.closed).toBe(false);
+    s.close();
+  });
+
+  it('a full table is a failed join: the session is closed and the table\'s sentence comes back', async () => {
+    const s = await createOnlineSession({ ...base, action: 'join', code: 'ABC123' });
+    const ws = FakeSocket.last!;
+    const waiting = seatOrRefusal(s);
+    ws.push(fromTable({ t: 'error', code: 'full', message: 'Table is full.' }));
+    const err = await waiting.catch((e: unknown) => e);
+    expect(err).toMatchObject({ message: 'Table is full.', code: 'full' });
+    expect(ws.closed).toBe(true);
+  });
+
+  it('a match already under way and a second seat for one account are refusals too', async () => {
+    for (const [code, message] of [['full', 'Match already in progress.'], ['already_seated', 'This account already has a seat at this table.']] as const) {
+      const s = await createOnlineSession({ ...base, action: 'join', code: 'ABC123' });
+      const ws = FakeSocket.last!;
+      ws.push(fromTable({ t: 'error', code, message }));
+      await expect(seatOrRefusal(s)).rejects.toMatchObject({ message, code });
+      expect(ws.closed).toBe(true);
+    }
+  });
+
+  it('another table error while waiting is not a refusal of the seat', async () => {
+    const s = await createOnlineSession({ ...base, action: 'join', code: 'ABC123' });
+    const ws = FakeSocket.last!;
+    const waiting = seatOrRefusal(s);
+    ws.push(fromTable({ t: 'error', code: 'not_controller', message: 'Only the table opener or a club admin can add bots.' }));
+    ws.push(welcomeFrame);
+    await expect(waiting).resolves.toBeUndefined();
+    s.close();
+  });
+
+  it('a table that says nothing is left to the lobby after the wait', async () => {
+    vi.useFakeTimers();
+    const s = await createOnlineSession({ ...base, action: 'join', code: 'ABC123' });
+    const ws = FakeSocket.last!;
+    let settled = false;
+    const waiting = seatOrRefusal(s, 6000).then(() => (settled = true));
+    await vi.advanceTimersByTimeAsync(5900);
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(200);
+    await waiting;
+    expect(settled).toBe(true);
+    expect(ws.closed).toBe(false);
+    s.close();
+  });
+
+  it('a local table seats its player at once', async () => {
+    const s = createLocalSession('Tester', 'lady', DEFAULT_RULES);
+    await expect(seatOrRefusal(s)).resolves.toBeUndefined();
+    s.close();
+  });
+});
+
+describe('stepping away from a table', () => {
+  const sentLeave = (ws: FakeSocket) => ws.sent.some((f) => f.t === 'to' && (f.data as { msg?: { t?: string } }).msg?.t === 'leave');
+
+  it('closing with keepSeat closes the socket without telling the table the player left on purpose', async () => {
+    const s = await createOnlineSession({ ...base, action: 'join', code: 'ABC123', quickMatch: true });
+    const ws = FakeSocket.last!;
+    s.close({ keepSeat: true });
+    expect(ws.closed).toBe(true);
+    // Leaving the room is how a socket goes; the table hears it as a player who dropped. Only the table's own
+    // `leave` marks the seat as given up, and that one is not sent.
+    expect(sentLeave(ws)).toBe(false);
+  });
+
+  it('a plain close still sends the leave', async () => {
+    const s = await createOnlineSession({ ...base, action: 'join', code: 'ABC123', quickMatch: true });
+    const ws = FakeSocket.last!;
+    s.close();
+    expect(sentLeave(ws)).toBe(true);
+    expect(ws.closed).toBe(true);
+  });
+
+  it('a session closed keeping its seat never reconnects', async () => {
+    vi.useFakeTimers();
+    const s = await createOnlineSession({ ...base, action: 'join', code: 'ABC123', token: TOKEN });
+    s.close({ keepSeat: true });
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(FakeSocket.all).toHaveLength(1);
+    expect(s.status).toBe('connected');
   });
 });
 
@@ -252,6 +383,39 @@ describe('online reconnect', () => {
     }
   });
 
+  it('"Reconnect" after the attempts ran out starts them again at once, and the same client comes back', async () => {
+    vi.useFakeTimers();
+    const { s, first } = await open();
+    FakeSocket.accept = () => 'down';
+    first.serverClose(1006);
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+    expect(s.status).toBe('lost');
+    expect(s.lostReason).toBe('exhausted');
+    const made = FakeSocket.all.length;
+    // The server is back: one press, no trip through Home.
+    FakeSocket.accept = () => 'ok';
+    expect(s.reconnect()).toBe(true);
+    await vi.advanceTimersByTimeAsync(50);
+    expect(FakeSocket.all.length).toBe(made + 1);
+    expect(s.status).toBe('connected');
+    expect(tableJoins(FakeSocket.last!)).toHaveLength(1);
+    // Connected again: there is nothing more to retry.
+    expect(s.reconnect()).toBe(false);
+    s.close();
+  });
+
+  it('"Reconnect" does nothing for a seat that was opened on another device', async () => {
+    vi.useFakeTimers();
+    const { s, first } = await open();
+    first.push({ t: 'from', from: 'server-1', data: { ch: 'game', msg: { t: 'disconnected' } } });
+    first.serverClose(1006);
+    expect(s.status).toBe('lost');
+    expect(s.reconnect()).toBe(false);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(FakeSocket.all).toHaveLength(1);
+    s.close();
+  });
+
   it('"Retry now" skips the wait', async () => {
     const { s, first } = await open();
     first.serverClose(1006);
@@ -293,6 +457,211 @@ describe('online reconnect', () => {
     first.serverClose(1006);
     expect(s.status).toBe('lost');
     await vi.advanceTimersByTimeAsync(5000);
+    expect(FakeSocket.all).toHaveLength(1);
+    s.close();
+  });
+
+  const welcome = { t: 'from', from: 'server-1', data: { ch: 'game', msg: { t: 'welcome', seat: 0, roomCode: 'ABC123', rules: DEFAULT_RULES, seats: [], matchId: 'm1', token: TOKEN } } };
+  const seatOpenedElsewhere = { t: 'from', from: 'server-1', data: { ch: 'game', msg: { t: 'disconnected' } } };
+
+  it('a device whose seat was opened elsewhere never comes back by itself, however long it waits', async () => {
+    const { s, statuses, first } = await open();
+    first.push(welcome);
+    // The same account sat down on another device: the server-hosted table tells this one.
+    first.push(seatOpenedElsewhere);
+    expect(s.client.state.kicked).toBe(true);
+    expect(s.client.state.lastError).toBe('This seat was opened on another device.');
+    expect(statuses).toEqual(['lost:0']);
+    expect(s.lostReason).toBe('ended');
+    // The screens say that, and not "connection lost".
+    expect(linkNotice({ status: s.status, reason: s.lostReason }, s.client.state)).toBe('seatTaken');
+    // The socket may drop now or much later, the player may poke at it: this device opens no new one.
+    first.serverClose(1006);
+    s.retryNow();
+    await vi.advanceTimersByTimeAsync(30 * 60_000);
+    s.retryNow();
+    await vi.advanceTimersByTimeAsync(30 * 60_000);
+    expect(FakeSocket.all).toHaveLength(1);
+    expect(tableJoins(first)).toHaveLength(1);
+    expect(s.status).toBe('lost');
+    expect(statuses).toEqual(['lost:0']);
+    s.close();
+  });
+
+  it('two devices of one account do not take the seat from each other in turns', async () => {
+    // Device A is seated; device B joins with the same account and takes the seat.
+    const a = await open();
+    a.first.push(welcome);
+    const b = await createOnlineSession({ ...base, action: 'join', code: 'ABC123' });
+    const socketB = FakeSocket.last!;
+    socketB.push(welcome);
+    a.first.push(seatOpenedElsewhere);
+    const opened = FakeSocket.all.length;
+    // A stays down for good; B, which holds the seat, is not disturbed by anything A does afterwards.
+    a.first.serverClose(1006);
+    await vi.advanceTimersByTimeAsync(60 * 60_000);
+    expect(FakeSocket.all).toHaveLength(opened);
+    expect(a.s.status).toBe('lost');
+    expect(b.status).toBe('connected');
+    expect(b.client.state.kicked).toBe(false);
+    expect(socketB.closed).toBe(false);
+    a.s.close();
+    b.close();
+  });
+
+  it('a rejoin that completes after the seat was opened elsewhere is dropped, not used', async () => {
+    const { s, first } = await open();
+    first.push(welcome);
+    // The link drops, and the server is slow to answer the rejoin: the attempt is still in the air…
+    FakeSocket.reply = () => null;
+    first.serverClose(1006);
+    await vi.advanceTimersByTimeAsync(1000);
+    const second = FakeSocket.last!;
+    expect(second).not.toBe(first);
+    expect(second.sent.some((f) => f.t === 'join')).toBe(true);
+    // …when the last frame of the old link says the seat now belongs to another device.
+    first.push(seatOpenedElsewhere);
+    expect(s.status).toBe('lost');
+    // The slow answer arrives: this device must not sit down again.
+    second.push({ t: 'room', room: 'ABC123', peers: ['p-me', 'server-1'], host: 'server-1' });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(tableJoins(second)).toEqual([]);
+    expect(second.closed).toBe(true);
+    expect(s.status).toBe('lost');
+    await vi.advanceTimersByTimeAsync(30 * 60_000);
+    expect(FakeSocket.all).toHaveLength(2);
+    s.close();
+  });
+
+  it('a watcher who made way for a player is told so and does not walk back in', async () => {
+    // No welcome: this device is in the room without a seat.
+    const { s, statuses, first } = await open();
+    first.push({ t: 'error', code: 'closed', message: WATCHER_DROPPED });
+    expect(statuses).toEqual(['lost:0']);
+    expect(s.lostReason).toBe('madeWay');
+    expect(linkNotice({ status: s.status, reason: s.lostReason }, s.client.state)).toBe('madeWay');
+    // The socket had no room left and is closed; nothing is opened in its place.
+    expect(first.closed).toBe(true);
+    s.retryNow();
+    await vi.advanceTimersByTimeAsync(30 * 60_000);
+    expect(FakeSocket.all).toHaveLength(1);
+    expect(s.status).toBe('lost');
+    s.close();
+  });
+
+  it('a room closed for any other reason is still looked for again', async () => {
+    const { s, statuses, first } = await open();
+    first.push(welcome);
+    // The server answers the rejoin with its final word, as it does for a table a club closed.
+    FakeSocket.reply = (f) => (f.t === 'join' ? { t: 'error', message: 'Room not found or full', code: 'room_unavailable' } : null);
+    first.push({ t: 'error', code: 'closed', message: 'The club closed this table.' });
+    expect(s.status).toBe('reconnecting');
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(statuses).toEqual(['reconnecting:1', 'lost:1']);
+    expect(s.lostReason).toBe('gone');
+    s.close();
+  });
+
+  it('a socket closed with 1013 mid-game is a link to win back, not a refused session', async () => {
+    const onUnauthorised = vi.fn();
+    const { s, statuses, first } = await open({ auth: async () => 'mjs_x', onUnauthorised });
+    first.push(welcome);
+    first.serverClose(TRY_AGAIN_LATER);
+    expect(s.status).toBe('reconnecting');
+    expect(s.attempt).toBe(1);
+    await vi.advanceTimersByTimeAsync(1000);
+    // The same session token and the same rejoin token: nothing was thrown away.
+    const second = FakeSocket.last!;
+    expect(second.sent[0]).toEqual({ t: 'hello', auth: 'mjs_x' });
+    expect(tableJoins(second)).toEqual([expect.objectContaining({ t: 'join', token: TOKEN })]);
+    expect(statuses).toEqual(['reconnecting:1', 'connected:0']);
+    expect(onUnauthorised).not.toHaveBeenCalled();
+    s.close();
+  });
+
+  it('a hello the server could not check in time (1013) is tried again with backoff, and only 4401 ends the session', async () => {
+    const onUnauthorised = vi.fn();
+    const { s, statuses, first } = await open({ auth: async () => 'mjs_x', onUnauthorised });
+    first.push(welcome);
+    // The server's database is slow: every hello is closed with 1013 for a while.
+    FakeSocket.accept = () => 'busy';
+    first.serverClose(1006);
+    for (const [i, wait] of [1, 2, 4].entries()) {
+      expect(s.status).toBe('reconnecting');
+      expect(s.attempt).toBe(i + 1);
+      await vi.advanceTimersByTimeAsync(wait * 1000 - 1);
+      expect(FakeSocket.all).toHaveLength(1 + i);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(FakeSocket.all).toHaveLength(2 + i);
+    }
+    expect(statuses).toEqual(['reconnecting:1', 'reconnecting:2', 'reconnecting:3', 'reconnecting:4']);
+    expect(s.lostReason).toBeNull();
+    expect(onUnauthorised).not.toHaveBeenCalled();
+    // The server recovers: the next attempt gets the seat back.
+    FakeSocket.accept = () => 'ok';
+    await vi.advanceTimersByTimeAsync(8000);
+    expect(s.status).toBe('connected');
+    expect(onUnauthorised).not.toHaveBeenCalled();
+    // A refused session is the one close that is final.
+    FakeSocket.accept = () => 'unauthorised';
+    FakeSocket.last!.serverClose(1006);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(s.status).toBe('lost');
+    expect(s.lostReason).toBe('unauthorised');
+    expect(onUnauthorised).toHaveBeenCalledTimes(1);
+    s.close();
+  });
+
+  it('an account banned while at the table is told so, and the session never reconnects', async () => {
+    const onBanned = vi.fn();
+    const onUnauthorised = vi.fn();
+    const { s, statuses, first } = await open({ auth: async () => 'mjs_x', onBanned, onUnauthorised });
+    first.push(welcome);
+    first.serverClose(BANNED_CLOSE);
+    expect(statuses).toEqual(['lost:0']);
+    expect(s.lostReason).toBe('banned');
+    // The account layer hears of it once, and the session token is not thrown away as merely stale.
+    expect(onBanned).toHaveBeenCalledTimes(1);
+    expect(onUnauthorised).not.toHaveBeenCalled();
+    // The table and the lobby say "banned", not "connection lost".
+    expect(linkNotice({ status: s.status, reason: s.lostReason }, s.client.state)).toBe('banned');
+    s.retryNow();
+    await vi.advanceTimersByTimeAsync(60 * 60_000);
+    expect(FakeSocket.all).toHaveLength(1);
+    expect(s.lostReason).toBe('banned');
+    s.close();
+  });
+
+  it('a ban found on the way back to the table ends the session with the same message', async () => {
+    const onBanned = vi.fn();
+    const { s, statuses, first } = await open({ auth: async () => 'mjs_x', onBanned });
+    first.push(welcome);
+    // The link drops, and the account is banned before the first attempt to come back.
+    FakeSocket.accept = () => 'banned';
+    first.serverClose(1006);
+    expect(s.status).toBe('reconnecting');
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(statuses).toEqual(['reconnecting:1', 'lost:1']);
+    expect(s.lostReason).toBe('banned');
+    expect(onBanned).toHaveBeenCalledTimes(1);
+    expect(linkNotice({ status: s.status, reason: s.lostReason }, s.client.state)).toBe('banned');
+    // One attempt was made, and no other follows.
+    await vi.advanceTimersByTimeAsync(60 * 60_000);
+    expect(FakeSocket.all).toHaveLength(2);
+    s.close();
+  });
+
+  it('a ban outranks a seat opened on another device: Home could not give the seat back', async () => {
+    const onBanned = vi.fn();
+    const { s, first } = await open({ onBanned });
+    first.push(welcome);
+    first.push(seatOpenedElsewhere);
+    expect(linkNotice({ status: s.status, reason: s.lostReason }, s.client.state)).toBe('seatTaken');
+    first.serverClose(BANNED_CLOSE);
+    expect(onBanned).toHaveBeenCalledTimes(1);
+    expect(s.lostReason).toBe('banned');
+    expect(linkNotice({ status: s.status, reason: s.lostReason }, s.client.state)).toBe('banned');
+    await vi.advanceTimersByTimeAsync(60 * 60_000);
     expect(FakeSocket.all).toHaveLength(1);
     s.close();
   });

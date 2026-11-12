@@ -149,20 +149,21 @@ function LessonCard({ lesson: l, n, width, done, next, onOpen }: { lesson: Lesso
           {/* English shows the Chinese name alongside; in zh-TW the title already is the Chinese name. */}
           {locale !== 'zh-TW' && <Text style={styles.titleZh}>{l.titleZh}</Text>}
         </Row>
-        <P dim style={{ fontSize: 12, lineHeight: 16 }} numberOfLines={2}>
+        <P dim style={{ fontSize: 12, lineHeight: 16 }}>
           {lessonSummary(l, locale)}
         </P>
       </View>
       <View style={{ alignItems: 'flex-end', gap: 6 }}>
         {next && <Pill text={t('learn.upNext')} tone="premium" size="sm" />}
         <Pill text={t('learn.minutes', { n: l.minutes })} icon={done ? 'check' : 'clock'} tone={done ? 'ok' : 'neutral'} size="sm" />
-        <Button small kind={done ? 'ghost' : next ? 'primary' : 'secondary'} title={t(done ? 'learn.review' : 'learn.start')} onPress={onOpen} />
+        <Button small kind={done ? 'ghost' : next ? 'primary' : 'secondary'} title={t(done ? 'learn.review' : 'learn.start')} accessibilityLabel={t('learn.cardButton', { action: t(done ? 'learn.review' : 'learn.start'), title: lessonTitle(l, locale) })} onPress={onOpen} />
       </View>
     </Card>
   );
 }
 
 function DrillCard({ w, icon, tint, title, text, stat, statIcon, statTone, cta, kind, onPress }: { w?: number; icon: IconName; tint: string; title: string; text: string; stat?: string; statIcon?: IconName; statTone?: 'gold' | 'neutral'; cta: string; kind: 'gold' | 'danger' | 'primary' | 'secondary'; onPress: () => void }) {
+  const { t } = useT();
   const plateIcon = (
     <View style={[styles.iconPlate, { backgroundColor: tint }]}>
       <View style={styles.iconShine} />
@@ -172,7 +173,7 @@ function DrillCard({ w, icon, tint, title, text, stat, statIcon, statTone, cta, 
   const foot = (
     <Row style={{ justifyContent: 'space-between', flexWrap: 'wrap', rowGap: 6, marginTop: 'auto' }}>
       {stat ? <Pill text={stat} icon={statIcon} tone={statTone ?? 'neutral'} size="sm" /> : <View />}
-      <Button small kind={kind} title={cta} onPress={onPress} />
+      <Button small kind={kind} title={cta} accessibilityLabel={t('learn.cardButton', { action: cta, title })} onPress={onPress} />
     </Row>
   );
   // Narrow columns (four across on tablets) stack the card vertically.
@@ -183,7 +184,7 @@ function DrillCard({ w, icon, tint, title, text, stat, statIcon, statTone, cta, 
           {plateIcon}
           <Text style={[styles.drillTitle, { flex: 1 }]}>{title}</Text>
         </Row>
-        <P dim style={{ fontSize: 12, lineHeight: 16 }} numberOfLines={3}>
+        <P dim style={{ fontSize: 12, lineHeight: 16 }}>
           {text}
         </P>
         {foot}
@@ -195,7 +196,7 @@ function DrillCard({ w, icon, tint, title, text, stat, statIcon, statTone, cta, 
       {plateIcon}
       <View style={{ flex: 1, gap: 4, alignSelf: 'stretch' }}>
         <Text style={styles.drillTitle}>{title}</Text>
-        <P dim style={{ fontSize: 12, lineHeight: 16 }} numberOfLines={2}>
+        <P dim style={{ fontSize: 12, lineHeight: 16 }}>
           {text}
         </P>
         {foot}
@@ -351,7 +352,7 @@ function LessonEnd({ lesson, done }: { lesson: Lesson; done: Record<string, bool
               <Text style={styles.title}>{lessonTitle(next.lesson, locale)}</Text>
               {locale !== 'zh-TW' && <Text style={styles.titleZh}>{next.lesson.titleZh}</Text>}
             </Row>
-            <P dim style={{ fontSize: 12, lineHeight: 16 }} numberOfLines={2}>
+            <P dim style={{ fontSize: 12, lineHeight: 16 }}>
               {lessonSummary(next.lesson, locale)}
             </P>
           </View>

@@ -1,6 +1,6 @@
 /** End of hand: the result sheet (winner cards with a 台 roll-up, scores, audit, next hand) and the match-over card. */
 import React, { useState } from 'react';
-import { caveatText } from '../../screens/FairnessScreen';
+import { caveatText, endUnverified, failureText } from '../../logic/fairnessText';
 import { Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import type { HandResult, TableView, WinRecord } from '@mjm/engine';
 import type { ClientState } from '@mjm/net';
@@ -13,8 +13,9 @@ import { scaledTile, Tile } from '../Tile';
 import { useDisplayScale } from '../../display/DisplayScale';
 import { scaleTextStyle } from '../../display/scale';
 import { Button, P, Pill, Row, StrokeText } from '../Ui';
-import { resultLayout } from './layout';
+import { matchOverLayout, resultLayout } from './layout';
 import { useRollUp } from './Motion';
+import { taiCapNote } from '../../logic/taiCap';
 
 const signed = (n: number) => `${n >= 0 ? '+' : ''}${n}`;
 
@@ -23,6 +24,8 @@ function WinCard({ w, state }: { w: WinRecord; state: ClientState }) {
   const seatOf = (seat: number) => state.seats.find((s) => s.seat === seat);
   const name = (seat: number) => seatOf(seat)?.name ?? t('table.seat', { n: seat + 1 });
   const tai = useRollUp(w.score.tai);
+  // The rules' 台 cap (封頂) bit: the items below add up to more than the total, so say why.
+  const capNote = taiCapNote(w.score);
   // Settings → Display: the winning hand grows with the tile size (the row wraps), the 台 list with the text size.
   const { tileScale, fontFactor } = useDisplayScale();
   const tileSize = scaledTile('sm', tileScale);
@@ -41,13 +44,18 @@ function WinCard({ w, state }: { w: WinRecord; state: ClientState }) {
           <Text style={[styles.winTitle, nameFont(name(w.seat))]}>{t('table.win.title', { name: name(w.seat) })}</Text>
           <Text style={styles.winSub}>{how}</Text>
         </View>
-        <View style={styles.taiBadge} accessible accessibilityLabel={t('table.win.tai', { tai: w.score.tai })} testID="tai-total">
+        <View style={styles.taiBadge} accessible accessibilityLabel={capNote ? `${t('table.win.tai', { tai: w.score.tai })}. ${t(capNote.key, capNote.params)}` : t('table.win.tai', { tai: w.score.tai })} testID="tai-total">
           <StrokeText style={{ fontSize: 24 }} strokeWidth={2} drop={1.5}>
             {tai}
           </StrokeText>
           <Text style={styles.taiLabel}>{t('table.win.taiLabel')}</Text>
         </View>
       </Row>
+      {capNote && (
+        <Text testID="tai-capped" style={scaleTextStyle(styles.capNote, fontFactor)}>
+          {t(capNote.key, capNote.params)}
+        </Text>
+      )}
       <Row style={{ flexWrap: 'wrap', rowGap: 4 }} gap={2}>
         {w.melds.map((m, i) => (
           <MeldView key={i} meld={m} size={tileSize} />
@@ -97,7 +105,22 @@ function ScoreChip({ name, avatar, total, delta, mine, small, cols }: { name: st
   );
 }
 
-export function ResultSheet({ result, view, state, mySeat, onNext, onLeave, onReview, onFairness }: { result: HandResult; view: TableView; state: ClientState; mySeat: number; onNext: () => void; onLeave: () => void; onReview: () => void; onFairness: () => void }) {
+/**
+ * Beside final scores this phone could not check: the match is over, but the hands it verified do
+ * not lead to that end. Amber like a logged hand, never a failure.
+ */
+function EndUnverifiedNote({ state, testID }: { state: ClientState; testID: string }) {
+  const { t } = useT();
+  const { fontFactor } = useDisplayScale();
+  if (!endUnverified(state)) return null;
+  return (
+    <Text testID={testID} style={scaleTextStyle(styles.endNote, fontFactor)}>
+      {t('fairness.endUnverified')}
+    </Text>
+  );
+}
+
+export function ResultSheet({ result, view, state, mySeat, autoNext, onNext, onLeave, onReview, onFairness }: { result: HandResult; view: TableView; state: ClientState; mySeat: number; /** An online table: the next hand is dealt by itself a few seconds after this one, ready or not. */ autoNext?: boolean; onNext: () => void; onLeave: () => void; onReview: () => void; onFairness: () => void }) {
   const { t } = useT();
   const [ready, setReady] = useState(false);
   const { width, height } = useWindowDimensions();
@@ -154,7 +177,7 @@ export function ResultSheet({ result, view, state, mySeat, onNext, onLeave, onRe
       </Pressable>
       {state.auditFailures.map((f, i) => (
         <Text key={`f${i}`} style={{ color: colors.dangerText, fontSize: 12 }}>
-          {t('fairness.note', { text: f })}
+          {t('fairness.note', { text: failureText(t, f) })}
         </Text>
       ))}
       {state.auditCaveats.map((c, i) => (
@@ -176,6 +199,12 @@ export function ResultSheet({ result, view, state, mySeat, onNext, onLeave, onRe
       }}
     />
   );
+  // Online the table does not wait for this sheet: say so, or a player reading on finds a hand already under way.
+  const autoNextNote = autoNext ? (
+    <Text testID="result-auto-next" style={styles.autoNext}>
+      {t('table.result.autoNext')}
+    </Text>
+  ) : null;
   if (twoCol) {
     return (
       <View style={[styles.overlay, { padding: height < 420 ? 8 : space.md }]}>
@@ -186,8 +215,10 @@ export function ResultSheet({ result, view, state, mySeat, onNext, onLeave, onRe
           </ScrollView>
           <ScrollView style={{ flex: 1 }} contentContainerStyle={{ flexGrow: 1, gap: 8, justifyContent: 'space-between' }}>
             {scores}
+            <EndUnverifiedNote state={state} testID="result-end-unverified" />
             {auditRow}
             <View style={{ gap: 6 }}>
+              {autoNextNote}
               {next}
               <Row gap={6}>
                 <Button small kind="secondary" title={t('table.result.review')} onPress={onReview} style={{ flex: 1 }} />
@@ -206,10 +237,12 @@ export function ResultSheet({ result, view, state, mySeat, onNext, onLeave, onRe
           {ribbonView}
           {results}
           {scores}
+          <EndUnverifiedNote state={state} testID="result-end-unverified" />
           {auditRow}
           {layout.stackButtons ? (
             // Narrow phones: one full-width primary, the two secondary actions sharing a row at equal widths.
             <View style={{ gap: 8 }}>
+              {autoNextNote}
               {next}
               <Row gap={8}>
                 <Button kind="secondary" title={t('table.result.reviewMyHand')} onPress={onReview} style={{ flex: 1 }} />
@@ -218,6 +251,7 @@ export function ResultSheet({ result, view, state, mySeat, onNext, onLeave, onRe
             </View>
           ) : (
             <Row style={{ flexWrap: 'wrap', rowGap: 8 }}>
+              {autoNextNote && <View style={{ flexBasis: '100%' }}>{autoNextNote}</View>}
               {next}
               <Button kind="secondary" title={t('table.result.reviewMyHand')} onPress={onReview} />
               <Button kind="ghost" title={t('table.result.leaveTable')} onPress={onLeave} />
@@ -231,31 +265,37 @@ export function ResultSheet({ result, view, state, mySeat, onNext, onLeave, onRe
 
 export function MatchOverSheet({ state, onLeave }: { state: ClientState; onLeave: () => void }) {
   const { t } = useT();
+  const { height } = useWindowDimensions();
+  const L = matchOverLayout(height);
   const scores = state.finalScores ?? [];
   const order = scores.map((s, i) => ({ s, i })).sort((a, b) => b.s - a.s);
   return (
-    <View style={styles.overlay}>
-      <View style={[styles.overlayCard, { maxWidth: 460 }]}>
-        <View style={[styles.ribbon, { backgroundColor: colors.gold }]} accessibilityRole="header">
-          <Icon name="trophy" size={34} />
-          <StrokeText style={{ fontSize: 28 }} strokeWidth={2.5} drop={2}>
-            {t('table.matchOver')}
-          </StrokeText>
-        </View>
-        {order.map(({ s, i }, rank) => {
-          const info = state.seats.find((x) => x.seat === i);
-          return (
-            <Row key={i} style={styles.rankRow}>
-              <View style={[styles.rankNum, rank === 0 && { backgroundColor: colors.gold }]}>
-                <Text style={styles.rankNumText}>{rank + 1}</Text>
-              </View>
-              <AvatarPlate id={seatAvatarId(info, i)} size={34} />
-              <Text style={[styles.itemText, { flex: 1 }, nameFont(info?.name)]}>{info?.name}</Text>
-              <Text style={[styles.rankScore, { color: s >= 0 ? colors.okText : colors.dangerText }]}>{signed(s)}</Text>
-            </Row>
-          );
-        })}
-        <Button large title={t('table.backHome')} onPress={onLeave} />
+    <View style={[styles.overlay, { padding: L.pad }]}>
+      {/* Never taller than the window: the ranks scroll inside the card (a short phone, a large text size, the note). */}
+      <View style={[styles.overlayCard, styles.matchCard, { maxHeight: L.maxHeight }, L.compact && { paddingVertical: 8 }]} testID="match-over">
+        <ScrollView style={{ flexGrow: 0 }} contentContainerStyle={{ gap: L.compact ? 6 : space.md }} testID="match-over-scroll">
+          <View style={[styles.ribbon, { backgroundColor: colors.gold }, L.compact && { paddingVertical: 2 }]} accessibilityRole="header">
+            <Icon name="trophy" size={L.trophy} />
+            <StrokeText style={{ fontSize: L.title }} strokeWidth={2.5} drop={2}>
+              {t('table.matchOver')}
+            </StrokeText>
+          </View>
+          {order.map(({ s, i }, rank) => {
+            const info = state.seats.find((x) => x.seat === i);
+            return (
+              <Row key={i} style={[styles.rankRow, { paddingVertical: L.rowPad }]}>
+                <View style={[styles.rankNum, rank === 0 && { backgroundColor: colors.gold }, L.compact && styles.rankNumSmall]}>
+                  <Text style={styles.rankNumText}>{rank + 1}</Text>
+                </View>
+                <AvatarPlate id={seatAvatarId(info, i)} size={L.avatar} />
+                <Text style={[styles.itemText, { flex: 1 }, nameFont(info?.name)]}>{info?.name}</Text>
+                <Text style={[styles.rankScore, { color: s >= 0 ? colors.okText : colors.dangerText }]}>{signed(s)}</Text>
+              </Row>
+            );
+          })}
+          <EndUnverifiedNote state={state} testID="match-end-unverified" />
+          <Button large={!L.compact} title={t('table.backHome')} onPress={onLeave} testID="match-over-home" />
+        </ScrollView>
       </View>
     </View>
   );
@@ -278,12 +318,17 @@ const styles = StyleSheet.create({
   itemEn: { color: colors.inkDim, fontWeight: '600', fontSize: 12 },
   itemTai: { color: colors.goldDim, fontWeight: '900', fontSize: 14 },
   payment: { color: colors.inkDim, fontSize: 12, fontWeight: '700' },
+  capNote: { color: colors.ink, fontSize: 12, lineHeight: 16, fontWeight: '700', backgroundColor: colors.gold, borderWidth: 2, borderColor: colors.ink, borderRadius: 10, paddingHorizontal: 8, paddingVertical: 3, overflow: 'hidden' },
   scoreRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   scoreChip: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: '#FFFFFF', borderWidth: 2, borderColor: colors.ink, borderRadius: 999, paddingLeft: 3, paddingRight: 12, paddingVertical: 3 },
   scoreName: { color: colors.ink, fontSize: 12, maxWidth: 110 },
   scoreNum: { color: colors.ink, fontFamily: fonts.display, fontSize: 13 },
+  matchCard: { maxWidth: 460, flexShrink: 1 },
   rankRow: { paddingVertical: 4, borderBottomWidth: 2, borderBottomColor: colors.creamDeep },
+  rankNumSmall: { width: 26, height: 26, borderRadius: 13 },
   rankNum: { width: 30, height: 30, borderRadius: 15, borderWidth: 2.5, borderColor: colors.ink, backgroundColor: colors.creamDeep, alignItems: 'center', justifyContent: 'center' },
   rankNumText: { fontFamily: fonts.display, color: colors.ink, fontSize: 16 },
   rankScore: { fontFamily: fonts.display, fontSize: 20 },
+  autoNext: { color: colors.inkDim, fontSize: 12, fontFamily: fonts.bodyBold },
+  endNote: { color: colors.goldDim, fontSize: 12, fontFamily: fonts.bodyBold },
 });

@@ -18,6 +18,7 @@ import { t } from './src/i18n';
 import { colors, fonts } from './src/theme';
 import { SkyBackdrop, TableBackdrop } from './src/components/Backdrop';
 import { Logo } from './src/components/Logo';
+import { ErrorBoundary } from './src/components/ErrorBoundary';
 import { HomeScreen } from './src/screens/HomeScreen';
 import { OnlineScreen } from './src/screens/OnlineScreen';
 import { QuickMatchScreen } from './src/screens/QuickMatchScreen';
@@ -53,7 +54,7 @@ function Router() {
     case 'clubs':
       return <ClubsScreen />;
     case 'club':
-      return <ClubScreen code={screen.code} />;
+      return <ClubScreen code={screen.code} notice={screen.notice} />;
     case 'review':
       return <ReviewScreen />;
     case 'fairness':
@@ -86,9 +87,11 @@ function Router() {
  * longer serves sees only the update screen; a maintenance message sits above Home.
  */
 function Shell() {
-  const { screen } = useApp();
+  const { screen, reset } = useApp();
   const { gate } = useRemoteConfig();
   const blocked = gate.kind === 'update';
+  // A screen that throws shows a card with a way Home instead of blanking the app; another screen clears it.
+  const screenKey = screen.name === 'club' ? `club:${screen.code}` : screen.name === 'lesson' ? `lesson:${screen.id}` : screen.name;
   return (
     <View style={styles.root}>
       {screen.name === 'table' && !blocked ? <TableBackdrop /> : <SkyBackdrop />}
@@ -98,7 +101,9 @@ function Shell() {
         ) : (
           <>
             {gate.maintenance && screen.name === 'home' ? <MaintenanceBanner message={gate.maintenance} /> : null}
-            <Router />
+            <ErrorBoundary resetKey={screenKey} onHome={() => reset({ name: 'home' })}>
+              <Router />
+            </ErrorBoundary>
           </>
         )}
       </SafeAreaView>

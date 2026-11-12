@@ -14,6 +14,11 @@ export { ApiError } from '../api/http';
 /** Refresh the session once it is this old (the server's expiry slides by 30 days on each refresh). */
 export const REFRESH_AFTER_MS = 24 * 3600_000;
 export const AUTH_REQUEST_TIMEOUT_MS = 15_000;
+/**
+ * How long the app goes on treating a ban as standing without hearing it again. Only a moderator lifts a
+ * ban, and nothing tells the device when; after a day the app lets the player ask the server once more.
+ */
+export const BAN_MEMORY_MS = 24 * 3600_000;
 
 /**
  * 'offline' until this device has a server identity; 'signed_out' when it remembers an account (or a
@@ -30,6 +35,29 @@ export interface AuthSnapshot {
   /** What the stored identity is, whatever its session state (null offline). */
   kind: 'guest' | 'account' | null;
   hasSession: boolean;
+  /**
+   * The server has said, within the last day, that this account or this device is banned. Final for the
+   * app: a new guest would get the same refusal, so "start fresh" is not offered.
+   */
+  banned: boolean;
+}
+
+/** The server's refusal of a banned account, or of a new guest from a banned account's device (403). */
+export function isBanned(e: unknown): boolean {
+  return e instanceof ApiError && e.status === 403 && e.code === 'banned';
+}
+
+/**
+ * Whether the sign-in prompt may offer "continue as a new guest". Never after a ban: the ban covers
+ * this device, so the server would refuse the new guest exactly as it refused the old identity.
+ */
+export function offersStartFresh(s: Pick<AuthSnapshot, 'status' | 'banned'>): boolean {
+  return s.status === 'signed_out' && !s.banned;
+}
+
+/** PATCH /api/me or the profile sync refused the display name (400). */
+export function isNameRefused(e: unknown): boolean {
+  return e instanceof ApiError && e.code === 'name_not_allowed';
 }
 
 export const SIGNED_OUT_MESSAGE = 'Signed out: sign in again to play online.';
@@ -59,6 +87,12 @@ export interface AuthClientOptions {
   fetch?: FetchLike;
   /** Name and avatar sent with a new guest so the server knows them from the start. */
   profile?: () => { displayName?: string; avatar?: string };
+  /**
+   * The server made the guest but refused the name it was given (`nameRefused` in the reply): the
+   * account has no display name. Called with the refused name so the app can stop showing it and ask
+   * for another.
+   */
+  onNameRefused?: (name: string) => void;
   now?: () => number;
   timeoutMs?: number;
 }
@@ -83,6 +117,8 @@ export class AuthClient implements Authoriser {
   private cached: StoredAuth | null = null;
   private loaded = false;
   private pending: Promise<string> | null = null;
+  /** A ban heard while nothing is stored (a new guest refused on a banned device): kept for this run only. */
+  private deviceBannedAt: number | null = null;
   /** Bumped by every clear(): a session attempt that started before a sign-out must not store its result. */
   private generation = 0;
   private readonly listeners = new Set<(s: AuthSnapshot) => void>();
@@ -119,7 +155,33 @@ export class AuthClient implements Authoriser {
 
   snapshot(): AuthSnapshot {
     const s = this.cached;
-    return { status: s ? (signedOut(s) ? 'signed_out' : s.kind) : 'offline', userId: s?.userId ?? null, displayName: s?.displayName ?? null, kind: s?.kind ?? null, hasSession: !!s?.session };
+    const bannedAt = s ? s.bannedAt : this.deviceBannedAt;
+    const banned = typeof bannedAt === 'number' && Math.abs(this.now() - bannedAt) < BAN_MEMORY_MS;
+    return { status: s ? (signedOut(s) ? 'signed_out' : s.kind) : 'offline', userId: s?.userId ?? null, displayName: s?.displayName ?? null, kind: s?.kind ?? null, hasSession: !!s?.session, banned };
+  }
+
+  /**
+   * The server said this account (or, with nothing stored, this device) is banned: a 403 `banned` from
+   * the account API, or a table socket closed with 4403. The identity stays as it is; the snapshot's
+   * `banned` tells screens not to offer a new guest.
+   */
+  async markBanned(): Promise<void> {
+    const s = await this.load();
+    if (s) await this.save({ ...s, bannedAt: this.now() });
+    else {
+      this.deviceBannedAt = this.now();
+      this.emit();
+    }
+  }
+
+  /** Runs `job`; a ban it meets is remembered before the error goes on to the caller. */
+  private async watchingForBan<T>(job: () => Promise<T>): Promise<T> {
+    try {
+      return await job();
+    } catch (e) {
+      if (isBanned(e)) await this.markBanned().catch(() => undefined);
+      throw e;
+    }
   }
 
   subscribe(cb: (s: AuthSnapshot) => void): () => void {
@@ -172,6 +234,8 @@ export class AuthClient implements Authoriser {
       session: { token: session.token, expiresAt: session.expiresAt, refreshedAt: this.now() },
       expired: false,
       signedOut: false,
+      // The server granted a session, so whatever ban there was has been lifted.
+      bannedAt: undefined,
     };
   }
 
@@ -181,9 +245,11 @@ export class AuthClient implements Authoriser {
     return requestJson<T>({ fetch: this.fetch, base: this.opts.base, method, path, body, token, timeoutMs: this.opts.timeoutMs ?? AUTH_REQUEST_TIMEOUT_MS, scope: 'auth', label: 'game server' });
   }
 
-  /** A bearer request; a session 401 replaces the token once and retries. */
+  /** A bearer request; a session 401 replaces the token once and retries. A 403 `banned` is remembered. */
   authorised<T>(method: string, path: string, body?: unknown): Promise<T> {
-    return authorisedJson<T>(this, { fetch: this.fetch, base: this.opts.base, method, path, body, timeoutMs: this.opts.timeoutMs ?? AUTH_REQUEST_TIMEOUT_MS, scope: 'auth', label: 'game server' });
+    return this.watchingForBan(() =>
+      authorisedJson<T>(this, { fetch: this.fetch, base: this.opts.base, method, path, body, timeoutMs: this.opts.timeoutMs ?? AUTH_REQUEST_TIMEOUT_MS, scope: 'auth', label: 'game server' }),
+    );
   }
 
   // ── Authoriser ───────────────────────────────────────────────────────
@@ -219,7 +285,8 @@ export class AuthClient implements Authoriser {
    */
   ensureSession(): Promise<string> {
     if (!this.pending) {
-      this.pending = this.ensureInner().finally(() => {
+      // Every step of this is about this device's own identity, so a ban met on the way is its ban.
+      this.pending = this.watchingForBan(() => this.ensureInner()).finally(() => {
         this.pending = null;
       });
     }
@@ -238,6 +305,8 @@ export class AuthClient implements Authoriser {
         return (await this.commit(generation, this.withSession(s, r.session))).session!.token;
       } catch (e) {
         if (isSignedOut(e)) throw e;
+        // A ban is the server's answer, not a refresh that failed to arrive: the old token opens nothing now.
+        if (isBanned(e)) throw e;
         const rejected = e instanceof ApiError && e.status === 401;
         // A refresh that merely failed to arrive leaves a still-valid token usable.
         if (!rejected && !s.expired && !pastExpiry) return s.session.token;
@@ -262,24 +331,42 @@ export class AuthClient implements Authoriser {
     return (await this.bootstrapGuest()).session!.token;
   }
 
-  /** Creates a guest account on the server and stores its id, secret and session. */
-  async bootstrapGuest(device?: DeviceInfo): Promise<StoredAuth> {
-    const generation = this.generation;
+  /**
+   * Asks the server for a new guest (POST /api/auth/guest) without storing anything. A name the server
+   * refuses does not fail the sign-up: the guest is made with no display name and `refusedName` is the
+   * name that was turned down. A banned account's device is refused outright (403 `banned`).
+   */
+  private async requestGuest(device?: DeviceInfo): Promise<{ fresh: StoredAuth; refusedName: string | null }> {
     const p = this.opts.profile?.() ?? {};
     const body: Record<string, unknown> = { device: device ?? (await this.opts.device()) };
     if (p.displayName) body.displayName = p.displayName;
     if (p.avatar) body.avatar = p.avatar;
-    const r = await this.request<{ userId: string; guestSecret: string; session: ApiSession; user?: ApiUser }>('POST', '/api/auth/guest', body);
+    const r = await this.request<{ userId: string; guestSecret: string; session: ApiSession; user?: ApiUser; nameRefused?: boolean }>('POST', '/api/auth/guest', body);
     const fresh: StoredAuth = { v: 1, userId: r.userId, guestSecret: r.guestSecret, kind: 'guest', displayName: r.user?.displayName, session: null };
-    return this.commit(generation, this.withSession(fresh, r.session, r.user));
+    return { fresh: this.withSession(fresh, r.session, r.user), refusedName: r.nameRefused === true && p.displayName ? p.displayName : null };
+  }
+
+  /** Creates a guest account on the server and stores its id, secret and session. */
+  async bootstrapGuest(device?: DeviceInfo): Promise<StoredAuth> {
+    const generation = this.generation;
+    const { fresh, refusedName } = await this.requestGuest(device);
+    const stored = await this.commit(generation, fresh);
+    this.deviceBannedAt = null;
+    if (refusedName !== null) this.opts.onNameRefused?.(refusedName);
+    return stored;
   }
 
   /**
    * The player chose to leave a signed-out identity behind: it is kept under a side key (nothing
    * stored here is ever overwritten) and a new guest takes its place.
+   *
+   * The new guest is asked for first. When the server refuses it (a banned account's device gets
+   * 403 `banned`) or cannot be reached, the remembered identity stays exactly where it was; a ban is
+   * recorded on it, so the choice is not offered again.
    */
   async startFresh(): Promise<StoredAuth> {
     const s = await this.load();
+    const { fresh, refusedName } = await this.watchingForBan(() => this.requestGuest());
     if (s) {
       try {
         await this.opts.store.setItem(`${this.key}.previous`, JSON.stringify({ ...s, session: null }));
@@ -288,7 +375,10 @@ export class AuthClient implements Authoriser {
       }
     }
     await this.clear();
-    return this.bootstrapGuest();
+    this.deviceBannedAt = null;
+    const stored = await this.save(fresh);
+    if (refusedName !== null) this.opts.onNameRefused?.(refusedName);
+    return stored;
   }
 
   /**
@@ -360,6 +450,23 @@ export class AuthClient implements Authoriser {
     const r = await this.authorised<{ user: ApiUser }>('PATCH', '/api/me', patch);
     await this.remember(r.user);
     return r.user;
+  }
+
+  /**
+   * Sends the local name and avatar. A name the server refuses (400 `name_not_allowed`, which applies
+   * nothing of the request) is reported rather than thrown, and the avatar is sent again on its own so
+   * a picture change is not lost with it. Any other failure throws.
+   */
+  async syncProfile(displayName: string, avatar: string): Promise<{ nameRefused: boolean }> {
+    const name = displayName.trim();
+    try {
+      await this.updateMe({ displayName: name || undefined, avatar });
+      return { nameRefused: false };
+    } catch (e) {
+      if (!isNameRefused(e)) throw e;
+      await this.updateMe({ avatar }).catch(() => undefined);
+      return { nameRefused: true };
+    }
   }
 
   private async remember(user: ApiUser): Promise<void> {

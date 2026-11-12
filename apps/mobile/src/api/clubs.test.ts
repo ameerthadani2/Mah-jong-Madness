@@ -1,7 +1,11 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { Authoriser, FetchLike } from './http';
-import { clubErrorMessage, clubLink, clubsApi, ownerRestricted, OWNER_GRACE_DAYS } from './clubs';
+import { DEFAULT_RULES } from '@mjm/engine';
+import { clubErrorMessage, clubErrorText, clubLink, clubListLine, clubMemberCount, clubsApi, hasPendingRequest, isMemberView, ownerRestricted, OWNER_GRACE_DAYS, PENDING_POLL_MS } from './clubs';
 import { parseDeepLink } from '../push/deeplink';
+import { rulesStakes } from '../logic/rules-text';
 import { translator } from '../logic/translator.fixture';
 
 const en = translator('en');
@@ -102,5 +106,130 @@ describe('ownerRestricted', () => {
     expect(ownerRestricted({}, now)).toBe(false);
     expect(ownerRestricted({ ownerLapsedAt: now - (OWNER_GRACE_DAYS - 1) * 86_400_000 }, now)).toBe(false);
     expect(ownerRestricted({ ownerLapsedAt: now - OWNER_GRACE_DAYS * 86_400_000 }, now)).toBe(true);
+  });
+});
+
+describe('the line under a club in My clubs', () => {
+  const mine = (members: number, open: number) => ({
+    code: 'AB12',
+    name: 'Dragon Gate',
+    description: '',
+    rules: DEFAULT_RULES,
+    settings: { membersCanOpenTables: true, joinRequiresApproval: false },
+    members: Array.from({ length: members }, (_, i) => ({ userId: `u${i}`, name: `P${i}`, role: 'member' as const, joinedAt: 0, points: 0, matchesPlayed: 0, matchesWon: 0, handsWon: 0 })),
+    tables: Array.from({ length: open + 1 }, (_, i) => ({ code: `T${i}`, label: 't', rules: DEFAULT_RULES, createdBy: 'u0', createdAt: 0, status: i < open ? ('open' as const) : ('finished' as const), players: [], handNumber: 0, scores: [] })),
+  });
+
+  it('shows members, open tables and stakes for a club this player belongs to', () => {
+    expect(clubListLine(mine(3, 2), en)).toBe(`3 members · 2 tables open · ${rulesStakes(DEFAULT_RULES)}`);
+    expect(clubListLine(mine(3, 2), zh)).toBe(`3 位成員 · 2 張牌桌開放中 · ${rulesStakes(DEFAULT_RULES)}`);
+    expect(clubListLine(mine(0, 0), en)).toContain('0 members · 0 tables open');
+  });
+
+  it('says "1 member" and "1 table open", not "1 members"', () => {
+    expect(clubListLine(mine(1, 1), en)).toBe(`1 member · 1 table open · ${rulesStakes(DEFAULT_RULES)}`);
+    expect(en('clubs.memberCount', { count: 1 })).toBe('1 member');
+    expect(en('clubs.memberCount', { count: 2 })).toBe('2 members');
+    expect(zh('clubs.memberCount', { count: 1 })).toBe('1 位成員');
+  });
+
+  it('shows the member count alone for a club the player has only asked to join (the server sends no rules)', () => {
+    // What GET /api/users/:id/clubs returns for a pending request: the public view.
+    const pending = { code: 'AB12', name: 'Dragon Gate', description: '', memberCount: 4, joinRequiresApproval: true };
+    expect(clubListLine(pending, en)).toBe('4 members');
+    expect(clubListLine(pending, zh)).toBe('4 位成員');
+  });
+});
+
+describe('the member view and the public view of a club', () => {
+  const member = { userId: 'me', name: 'Me', role: 'member' as const, joinedAt: 0, points: 0, matchesPlayed: 0, matchesWon: 0, handsWon: 0 };
+  const full = { code: 'AB12', name: 'Dragon Gate', description: '', rules: DEFAULT_RULES, settings: { membersCanOpenTables: true, joinRequiresApproval: false }, members: [member], tables: [] };
+  // What GET /api/clubs/:code answers anyone who is not a member: no rules, settings, members or tables.
+  const publicView = { code: 'AB12', name: 'Dragon Gate', description: '', memberCount: 2, joinRequiresApproval: true };
+
+  it('is the member view only with rules, settings and this player among the members', () => {
+    expect(isMemberView(full, 'me')).toBe(true);
+    expect(isMemberView(full, 'someone-else')).toBe(false);
+    expect(isMemberView(publicView, 'me')).toBe(false);
+    expect(isMemberView({ ...full, members: undefined }, 'me')).toBe(false);
+  });
+
+  it('knows when My clubs still holds a request waiting for an answer, so the list is read again', () => {
+    expect(hasPendingRequest([full], 'me')).toBe(false);
+    expect(hasPendingRequest([full, publicView], 'me')).toBe(true);
+    expect(hasPendingRequest([], 'me')).toBe(false);
+    const screen = readFileSync(join(__dirname, '..', 'screens', 'ClubsScreen.tsx'), 'utf8');
+    expect(screen).toMatch(/const waiting = hasPendingRequest\(clubs \?\? \[\], user\.userId\);/);
+    expect(screen).toMatch(/setInterval\(\(\) => void refresh\(\), PENDING_POLL_MS\)/);
+    expect(PENDING_POLL_MS).toBeGreaterThanOrEqual(10_000);
+  });
+
+  it('counts members from either view', () => {
+    expect(clubMemberCount(full)).toBe(1);
+    expect(clubMemberCount(publicView)).toBe(2);
+    expect(clubMemberCount({})).toBe(0);
+  });
+
+  it('the club screen shows a non-member the join card and never reads rules or settings before that check', () => {
+    const code = readFileSync(join(__dirname, '..', 'screens', 'ClubsScreen.tsx'), 'utf8');
+    const screen = code.slice(code.indexOf('export function ClubScreen'));
+    const guard = screen.indexOf('if (!isMemberView(club, user.userId))');
+    expect(guard).toBeGreaterThan(0);
+    // Everything above the guard works on the public view: no member-only field is read there.
+    expect(screen.slice(0, guard)).not.toMatch(/club\.(rules|settings|members|tables)\b/);
+    const guest = screen.slice(guard, screen.indexOf('const members = club.members'));
+    expect(guest).toMatch(/testID="club-join"/);
+    expect(guest).toMatch(/clubsApi\.join\(ctx, club\.code\)/);
+    expect(guest).not.toMatch(/club\.(rules|settings)\b/);
+    expect(guest).not.toMatch(/clubs\.tabs\./);
+    // A member whose view turns public on a refresh is told why the screen changed.
+    expect(screen).toMatch(/if \(wasMember\.current && !member\) setLostMembership\(true\)/);
+    expect(guest).toMatch(/clubs\.guest\.removed/);
+  });
+});
+
+describe('opening a club table too soon after another', () => {
+  /** Answers each request with the next reply in the list (the last one for any further request). */
+  function sequence(replies: Array<{ status: number; body: unknown }>) {
+    let n = 0;
+    const fetch: FetchLike = async () => {
+      const r = replies[Math.min(n++, replies.length - 1)];
+      return { ok: r.status < 400, status: r.status, text: async () => JSON.stringify(r.body) };
+    };
+    const auth: Authoriser = { token: async () => 'mjs_tok', onUnauthorised: () => undefined };
+    return { ctx: { base: 'https://game.example', auth, fetch }, calls: () => n };
+  }
+  // The server's reply when the account's or the address's allowance for new tables is spent (apps/signal/src/api.ts).
+  const refused = { status: 429, body: { error: 'rate_limited', message: 'Please wait a few seconds before opening another table' } };
+  const table = { code: 'T1', label: "Tester's table", rules: DEFAULT_RULES };
+
+  it('asks the player to wait a few seconds, in the language of the app', async () => {
+    const { ctx } = sequence([refused]);
+    const failure = await clubsApi.openTable(ctx, 'AB12', { label: 'x' }).catch((e: unknown) => e);
+    expect(failure).toMatchObject({ code: 'rate_limited', status: 429 });
+    expect(clubErrorText(failure, en)).toBe(en('errors.rateLimited'));
+    expect(clubErrorText(failure, en)).toMatch(/wait a few seconds/i);
+    expect(clubErrorText(failure, zh)).toBe(zh('errors.rateLimited'));
+    expect(clubErrorText(failure, zh)).toMatch(/請稍等幾秒/);
+    // Never the server's English sentence or its error code.
+    expect(clubErrorText(failure, zh)).not.toMatch(/[A-Za-z]{3,}/);
+  });
+
+  it('reads the same when the whole address is being slowed down, whatever the sentence', async () => {
+    const { ctx } = sequence([{ status: 429, body: { error: 'rate_limited', message: 'Too many requests' } }]);
+    const failure = await clubsApi.openTable(ctx, 'AB12', {}).catch((e: unknown) => e);
+    expect(clubErrorText(failure, zh)).toBe(zh('errors.rateLimited'));
+  });
+
+  it('is not remembered: the next try reaches the server and opens the table', async () => {
+    const { ctx, calls } = sequence([refused, { status: 200, body: table }]);
+    await expect(clubsApi.openTable(ctx, 'AB12', {})).rejects.toMatchObject({ code: 'rate_limited' });
+    await expect(clubsApi.openTable(ctx, 'AB12', {})).resolves.toMatchObject({ code: 'T1' });
+    expect(calls()).toBe(2);
+  });
+
+  it('keeps its own lines for the refusals a club has words for', () => {
+    expect(clubErrorText({ code: 'not_found', message: 'Table not found' }, en)).toBe(en('clubs.errors.tableNotFound'));
+    expect(clubErrorText({ code: 'rate_limited', message: 'This club is getting a lot of join requests; try again later' }, zh)).toBe(zh('clubs.errors.joinRateClub'));
   });
 });

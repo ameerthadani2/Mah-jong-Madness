@@ -1,11 +1,13 @@
-import React from 'react';
-import { Pressable, StyleSheet, Text, View, type StyleProp, type TextStyle, type ViewStyle } from 'react-native';
-import { colors, fonts, hasCJK, radius, space } from '../theme';
+import React, { useEffect, useRef, useState } from 'react';
+import { Pressable, StyleSheet, Text, TextInput, View, type StyleProp, type TextStyle, type ViewStyle } from 'react-native';
+import { atLimit, HOLD_DELAY_MS, HOLD_REPEAT_MS, holdMultiplier, stepped, typedValue } from '../logic/stepper';
+import { colors, fonts, hasCJK, pillTones, radius, space, type PillTone } from '../theme';
 import { Icon, type IconName } from './Icons';
 import { slopFor } from './table/layout';
 import { t } from '../i18n';
 import { useDisplayScale } from '../display/DisplayScale';
 import { scaleTextStyle } from '../display/scale';
+import { gemCounter } from '../logic/gems';
 
 /** Screen-reader name for an icon-only button, when the caller gives none. */
 function iconLabel(icon: IconName): string {
@@ -171,13 +173,40 @@ export function Button({
 }
 
 /** Round chunky icon button (back, settings, emotes...). */
-export function IconButton({ icon, onPress, kind = 'secondary', size = 44, testID, disabled, badge, label, selected }: { icon: IconName; onPress?: () => void; kind?: ButtonKind; size?: number; testID?: string; disabled?: boolean; badge?: React.ReactNode; label?: string; selected?: boolean }) {
+export function IconButton({
+  icon,
+  onPress,
+  onPressIn,
+  onPressOut,
+  kind = 'secondary',
+  size = 44,
+  testID,
+  disabled,
+  badge,
+  label,
+  selected,
+}: {
+  icon: IconName;
+  onPress?: () => void;
+  /** For a button that repeats while held (the rule editor's − and +). */
+  onPressIn?: () => void;
+  onPressOut?: () => void;
+  kind?: ButtonKind;
+  size?: number;
+  testID?: string;
+  disabled?: boolean;
+  badge?: React.ReactNode;
+  label?: string;
+  selected?: boolean;
+}) {
   const k = KIND[kind];
   const shelf = size >= 44 ? 5 : 4;
   return (
     <Pressable
       testID={testID}
       onPress={onPress}
+      onPressIn={onPressIn}
+      onPressOut={onPressOut}
       disabled={disabled}
       hitSlop={slopFor(size, 6)}
       accessibilityRole="button"
@@ -260,16 +289,8 @@ function scaledType(style: StyleProp<TextStyle>, factor: number): TextStyle {
   return scaleTextStyle(base, factor);
 }
 
-export type PillTone = 'neutral' | 'gold' | 'ok' | 'danger' | 'premium' | 'info' | 'dark';
-const PILL: Record<PillTone, { bg: string; fg: string }> = {
-  neutral: { bg: colors.creamLight, fg: colors.ink },
-  gold: { bg: colors.gold, fg: colors.ink },
-  ok: { bg: colors.cta, fg: '#FFFFFF' },
-  danger: { bg: colors.danger, fg: '#FFFFFF' },
-  premium: { bg: colors.premium, fg: '#FFFFFF' },
-  info: { bg: colors.info, fg: '#FFFFFF' },
-  dark: { bg: 'rgba(16,20,47,0.72)', fg: '#FFFFFF' },
-};
+export type { PillTone } from '../theme';
+const PILL = pillTones;
 
 /**
  * A short label. `wrap` lets a sentence (an error, a notice) break onto further lines instead of being
@@ -309,22 +330,85 @@ export function Toggle({ label, value, onChange }: { label: string; value: boole
 }
 
 export function Stepper({ label, value, onChange, step = 1, min = 0, max = 9999, format }: { label: string; value: number; onChange: (v: number) => void; step?: number; min?: number; max?: number; format?: (v: number) => string }) {
+  const limits = { min, max, step };
+  // The latest value and callback, for the repeat timer of a held button.
+  const live = useRef({ value, onChange, limits });
+  live.current = { value, onChange, limits };
+  const hold = useRef<{ timer: ReturnType<typeof setTimeout> | null; repeats: number; held: boolean }>({ timer: null, repeats: 0, held: false });
+  const stopTimer = () => {
+    if (hold.current.timer) clearTimeout(hold.current.timer);
+    hold.current.timer = null;
+  };
+  const release = () => {
+    stopTimer();
+    // The press event that ends a hold comes right after this one and must not step again (see `press`); a finger
+    // that slid off the button sends none, so the mark is also dropped by itself, or the next tap would be lost.
+    const ended = hold.current;
+    if (ended.held) setTimeout(() => (ended.held = false), 120);
+  };
+  useEffect(() => stopTimer, []);
+  const press = (dir: -1 | 1) => {
+    // A press that ends a hold has already stepped: the release is not one more step.
+    if (hold.current.held) return void (hold.current.held = false);
+    onChange(stepped(value, dir, limits));
+  };
+  const startHold = (dir: -1 | 1) => {
+    stopTimer();
+    hold.current = { timer: null, repeats: 0, held: false };
+    const tick = () => {
+      const now = live.current;
+      if (atLimit(now.value, dir, now.limits)) return stopTimer();
+      hold.current.held = true;
+      now.onChange(stepped(now.value, dir, now.limits, holdMultiplier(hold.current.repeats++)));
+      hold.current.timer = setTimeout(tick, HOLD_REPEAT_MS);
+    };
+    hold.current.timer = setTimeout(tick, HOLD_DELAY_MS);
+  };
+  // Tapping the value opens a field to type it (a large value is out of reach by steps alone).
+  const [typing, setTyping] = useState<string | null>(null);
+  const commit = () => {
+    const typed = typing === null ? null : typedValue(typing, limits);
+    setTyping(null);
+    if (typed !== null && typed !== value) onChange(typed);
+  };
+  const shown = format ? format(value) : String(value);
   return (
     <View style={styles.toggleRow}>
       <Text style={[styles.p, fontFor(label, fonts.bodyBold, '700'), { flex: 1 }]}>{label}</Text>
       <Row>
-        <IconButton size={34} kind="ghost" icon="minus" label={`${label} −`} onPress={() => onChange(Math.max(min, value - step))} />
-        <Text style={[styles.stepValue, fontFor(format ? format(value) : String(value), fonts.display)]}>{format ? format(value) : value}</Text>
-        <IconButton size={34} kind="ghost" icon="plus" label={`${label} +`} onPress={() => onChange(Math.min(max, value + step))} />
+        <IconButton size={34} kind="ghost" icon="minus" label={`${label} −`} disabled={atLimit(value, -1, limits)} onPress={() => press(-1)} onPressIn={() => startHold(-1)} onPressOut={release} />
+        {typing !== null ? (
+          <TextInput
+            autoFocus
+            value={typing}
+            onChangeText={setTyping}
+            onBlur={commit}
+            onSubmitEditing={commit}
+            keyboardType="number-pad"
+            inputMode="numeric"
+            maxLength={9}
+            selectTextOnFocus
+            accessibilityLabel={label}
+            style={[styles.stepValue, styles.stepInput]}
+          />
+        ) : (
+          <Pressable onPress={() => setTyping(String(value))} hitSlop={slopFor(24, 4)} accessibilityRole="button" accessibilityLabel={`${label}: ${shown}`} accessibilityHint={t('common.typeValue')}>
+            <Text style={[styles.stepValue, styles.stepTap, fontFor(shown, fonts.display)]}>{shown}</Text>
+          </Pressable>
+        )}
+        <IconButton size={34} kind="ghost" icon="plus" label={`${label} +`} disabled={atLimit(value, 1, limits)} onPress={() => press(1)} onPressIn={() => startHold(1)} onPressOut={release} />
       </Row>
     </View>
   );
 }
 
 /** Selectable chip (filters, presets). */
+/** A chip is drawn at least this tall whatever the font's metrics, so its hitSlop reaches the 44 pt target in every language. */
+export const CHIP_HEIGHT = 34;
+
 export function Chip({ label, selected, onPress, locked, dark }: { label: string; selected?: boolean; onPress?: () => void; locked?: boolean; dark?: boolean }) {
   return (
-    <Pressable onPress={onPress} hitSlop={slopFor(34, 4)} accessibilityRole="button" accessibilityLabel={label} accessibilityState={{ selected: !!selected, disabled: !!locked }} style={({ pressed }) => [styles.chip, dark && styles.chipDark, selected && styles.chipOn, pressed && { transform: [{ translateY: 1 }] }]}>
+    <Pressable onPress={onPress} hitSlop={slopFor(CHIP_HEIGHT, 4)} accessibilityRole="button" accessibilityLabel={label} accessibilityState={{ selected: !!selected, disabled: !!locked }} style={({ pressed }) => [styles.chip, dark && styles.chipDark, selected && styles.chipOn, pressed && { transform: [{ translateY: 1 }] }]}>
       {locked && <Icon name="lock" size={15} />}
       <Text numberOfLines={1} style={[styles.chipText, fontFor(label, fonts.uiBold), dark && !selected && { color: '#FFFFFF' }]}>
         {label}
@@ -333,13 +417,18 @@ export function Chip({ label, selected, onPress, locked, dark }: { label: string
   );
 }
 
-/** Gem balance capsule with a green "+" (opens the shop). */
-export function GemCounter({ amount, onPress, testID }: { amount: number; onPress?: () => void; testID?: string }) {
+/**
+ * Gem balance capsule with a green "+" (opens the shop). `owed` is what a refund left to pay back
+ * (`diamondsOwed`): the balance can then be below zero, so the capsule turns red, prints a real
+ * minus sign, and its label says how many diamonds are owed instead of reading a bare number.
+ */
+export function GemCounter({ amount, owed, onPress, testID }: { amount: number; owed?: number; onPress?: () => void; testID?: string }) {
+  const view = gemCounter(t, amount, owed);
   return (
-    <Pressable testID={testID} onPress={onPress} hitSlop={6} accessibilityRole="button" accessibilityLabel={t('table.a11y.gems', { n: amount })} style={({ pressed }) => [styles.gemWrap, pressed && { transform: [{ translateY: 2 }] }]}>
-      <View style={styles.gemPill}>
+    <Pressable testID={testID} onPress={onPress} hitSlop={6} accessibilityRole="button" accessibilityLabel={view.label} style={({ pressed }) => [styles.gemWrap, pressed && { transform: [{ translateY: 2 }] }]}>
+      <View style={[styles.gemPill, view.owed && styles.gemPillOwed]}>
         <StrokeText style={{ fontSize: 17 }} strokeWidth={1.5} drop={1}>
-          {amount.toLocaleString()}
+          {view.text}
         </StrokeText>
       </View>
       <View style={styles.gemIcon}>
@@ -355,12 +444,30 @@ export function GemCounter({ amount, onPress, testID }: { amount: number; onPres
 }
 
 /** Screen title row: round back button, stroked title, optional right-hand items. */
-export function ScreenHeader({ title, onBack, backTestID = 'back', right, sub }: { title: string; onBack?: () => void; backTestID?: string; right?: React.ReactNode; sub?: React.ReactNode }) {
+export function ScreenHeader({
+  title,
+  onBack,
+  backTestID = 'back',
+  right,
+  sub,
+  titleLines = 1,
+  titleSize,
+}: {
+  title: string;
+  onBack?: () => void;
+  backTestID?: string;
+  right?: React.ReactNode;
+  sub?: React.ReactNode;
+  /** Lines the title may take; 0 for as many as it needs (a name the player typed is shown whole). */
+  titleLines?: number;
+  /** A smaller size for a long title (src/logic/titleFit.ts). */
+  titleSize?: number;
+}) {
   return (
     <View style={styles.header}>
       {onBack && <IconButton testID={backTestID} icon="back" kind="secondary" size={44} onPress={onBack} />}
       <View style={{ flex: 1, minWidth: 0 }}>
-        <StrokeText style={styles.headerTitle} strokeWidth={2.5} drop={2.5} numberOfLines={1}>
+        <StrokeText style={[styles.headerTitle, titleSize ? { fontSize: titleSize, lineHeight: Math.round(titleSize * 1.2) } : null]} strokeWidth={2.5} drop={2.5} numberOfLines={titleLines || undefined}>
           {title}
         </StrokeText>
         {sub}
@@ -409,12 +516,15 @@ const styles = StyleSheet.create({
   toggleTop: { position: 'absolute', top: 0, left: 0, right: 0, height: '45%', backgroundColor: '#DDE2F0' },
   knob: { width: 22, height: 22, borderRadius: 11, backgroundColor: '#FFFFFF', borderWidth: 2.5, borderColor: colors.ink },
   stepValue: { color: colors.ink, fontSize: 18, minWidth: 64, textAlign: 'center' },
-  chip: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: colors.creamLight, borderWidth: 2, borderColor: colors.ink, paddingHorizontal: 11, paddingVertical: 5, borderRadius: 999, borderBottomWidth: 4 },
+  stepTap: { textDecorationLine: 'underline', textDecorationStyle: 'dotted' },
+  stepInput: { fontFamily: fonts.display, backgroundColor: '#FFFFFF', borderWidth: 2, borderColor: colors.ink, borderRadius: 8, paddingVertical: 2, paddingHorizontal: 4, width: 96 },
+  chip: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: colors.creamLight, borderWidth: 2, borderColor: colors.ink, paddingHorizontal: 11, paddingVertical: 5, borderRadius: 999, borderBottomWidth: 4, minHeight: CHIP_HEIGHT },
   chipDark: { backgroundColor: 'rgba(16,20,47,0.55)' },
   chipOn: { backgroundColor: colors.gold },
   chipText: { color: colors.ink, fontSize: 13 },
   gemWrap: { flexDirection: 'row', alignItems: 'center', paddingLeft: 14, height: 40 },
   gemPill: { minWidth: 76, height: 30, borderRadius: 15, borderWidth: 3, borderColor: colors.ink, backgroundColor: 'rgba(16,20,47,0.55)', justifyContent: 'center', paddingLeft: 22, paddingRight: 24 },
+  gemPillOwed: { backgroundColor: colors.dangerShelf },
   gemIcon: { position: 'absolute', left: 0, top: 4 },
   gemPlus: { position: 'absolute', right: -6, top: 7, width: 26, height: 26, borderRadius: 13, backgroundColor: colors.cta, borderWidth: 3, borderColor: colors.ink, alignItems: 'center', justifyContent: 'center' },
   header: { flexDirection: 'row', alignItems: 'center', gap: space.md, minHeight: 52 },

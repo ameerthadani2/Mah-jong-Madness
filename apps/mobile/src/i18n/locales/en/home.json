@@ -9,6 +9,7 @@
     "titleWide": "Clubs & Friends",
     "blurb": "Your rules, your members. Share a code and play anywhere.",
     "open": "My clubs",
+    "openShort": "My clubs",
     "quickTable": "Quick table"
   },
   "learn": {
@@ -23,7 +24,8 @@
   "shop": {
     "title": "Shop",
     "blurb": "Table looks and coaching. Never luck.",
-    "open": "Open"
+    "open": "Open",
+    "owed": "%{n} diamonds owed after a refund. See why in the Shop."
   },
   "profile": {
     "meta": "%{hands} hands · %{wins}",
@@ -40,9 +42,16 @@
     "title": "Table in progress",
     "local": "Offline match vs bots · hand %{hand}",
     "online": "Online table %{code}",
+    "quick": "Quick-match table",
     "club": " · club %{code}",
     "resume": "Resume",
     "reconnecting": "Reconnecting…",
     "discard": "Discard"
+  },
+  "replace": {
+    "title": "Start a new match?",
+    "body": "You have a table in progress. A new match takes its place, and you will not be able to resume it.",
+    "yes": "Start new match",
+    "no": "Keep my table"
   }
 }

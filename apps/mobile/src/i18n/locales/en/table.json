@@ -42,6 +42,10 @@
     "goneTitle": "Table over",
     "goneText": "The game server no longer has this table: it ended or was closed while you were away.",
     "goneLeave": "Back to Home",
+    "seatTakenTitle": "Opened on another device",
+    "seatTakenText": "This seat was opened on another device, so this device has stopped playing it and will not reconnect by itself. To play here again, go back to Home and resume the table.",
+    "madeWayTitle": "You made way for a player",
+    "bannedTitle": "Banned from online play",
     "reconnect": "Reconnect",
     "reconnectingTitle": "Reconnecting…",
     "reconnectingText": "Attempt %{n}. Your seat is saved; a bot plays for you until you are back.",
@@ -63,6 +67,8 @@
     "sevenRob": "七搶一 · %{name}",
     "taiLabel": "台",
     "tai": "%{tai} tai",
+    "capped": "Capped (封頂): this hand counts %{counted} 台, and this table's rules cap a hand at %{cap}.",
+    "cappedDealer": "Capped (封頂): this hand counts %{counted} 台, and this table's rules cap a hand at %{cap}. The dealer's %{dealer} 台 are added on top: %{tai} 台.",
     "payment": "%{from} → %{to}: %{points} (%{tai} 台 incl. dealer)"
   },
   "result": {
@@ -78,7 +84,8 @@
     "waiting": "Waiting for others…",
     "review": "Review",
     "reviewMyHand": "Review my hand",
-    "leaveTable": "Leave table"
+    "leaveTable": "Leave table",
+    "autoNext": "Online, the next hand starts by itself in a few seconds."
   },
   "audit": {
     "okShort": "Verified · details",
@@ -93,10 +100,52 @@
     "sorry": "Sorry!",
     "gg": "GG",
     "hurry": "Hurry up!",
-    "goodHand": "好牌!",
-    "dealtIn": "放槍了…",
-    "oneMore": "再來一局",
-    "faster": "快點啦"
+    "goodHand": "Nice hand!",
+    "dealtIn": "I dealt in…",
+    "oneMore": "One more game?",
+    "faster": "I'm growing old here…"
+  },
+  "emoteName": {
+    "thumbs": "Thumbs up",
+    "lol": "Laughing",
+    "wow": "Wow",
+    "cry": "Crying",
+    "fire": "On fire",
+    "love": "Heart",
+    "zzz": "Sleepy",
+    "hu": "Win (胡)",
+    "th": {
+      "tea": "Tea",
+      "bun": "Steamed bun",
+      "dumpling": "Dumpling",
+      "noodles": "Noodles",
+      "mooncake": "Mooncake",
+      "tangerine": "Tangerine"
+    },
+    "nm": {
+      "boba": "Bubble tea",
+      "skewer": "Skewer",
+      "shavedice": "Shaved ice",
+      "corn": "Grilled corn",
+      "lantern": "Lantern",
+      "firecracker": "Firecracker"
+    },
+    "fs": {
+      "firework": "Fireworks",
+      "knot": "Lucky knot",
+      "drum": "Drum",
+      "kite": "Kite",
+      "moon": "Full moon",
+      "dragonboat": "Dragon boat"
+    },
+    "zd": {
+      "rat": "Rat",
+      "ox": "Ox",
+      "tiger": "Tiger",
+      "rabbit": "Rabbit",
+      "dragon": "Dragon",
+      "rooster": "Rooster"
+    }
   },
   "themes": {
     "classic": "Classic Felt",
@@ -135,6 +184,7 @@
       "pencil": "Edit"
     },
     "gems": "%{n} diamonds, open the shop",
+    "gemsOwed": "Diamond balance %{balance}: %{n} owed after a refund. Open the shop.",
     "claimWith": "%{verb}: %{tiles}",
     "pass": "Pass",
     "chi": "Chow",
@@ -149,13 +199,18 @@
     "tileSelected": "%{tile}, selected",
     "tapToDiscard": "Tap again to discard",
     "tapToSelect": "Tap to select for discard",
-    "emote": "Send emote %{name}",
+    "emote": "Send emote: %{name}",
     "reportHint": "Long press to report this player",
-    "tileBack": "Face-down tile"
+    "tileBack": "Face-down tile",
+    "clockNow": "Your clock: %{s} seconds left",
+    "clockBankNow": "Your time bank: %{s} seconds left",
+    "clockLow": "%{s} seconds left",
+    "clockBank": "Your time bank has started: %{s} seconds"
   },
   "leaveSheet": {
     "title": "Leave the table?",
     "bodyOnline": "A bot plays your seat while you are away. You can come back from Home with Resume. Abandoning gives up your seat for good.",
+    "bodyQuick": "A bot plays your seat while you are away, and you can come back from Home with Resume. A quick-match table with no player left at it closes after two minutes. Abandoning gives up your seat for good.",
     "bodyLocal": "The table waits for you. You can come back from Home with Resume. Abandoning ends this match.",
     "stay": "Keep playing",
     "away": "Back to Home",
@@ -170,5 +225,7 @@
     "win": "Win",
     "selfDrawWin": "Self-draw"
   },
-  "autoDiscard": "Time ran out: %{tile} was discarded for you."
+  "autoDiscard": "Time ran out: %{tile} was discarded for you.",
+  "autoClaim": "Time ran out: the table called %{call} for you.",
+  "nextHandStarted": "The next hand has started."
 }

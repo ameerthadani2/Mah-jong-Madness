@@ -3,7 +3,7 @@ import { join } from 'path';
 import { describe, expect, it } from 'vitest';
 import en from '../../i18n/locales/en/table.json';
 import zh from '../../i18n/locales/zh-TW/table.json';
-import { autoDiscarded, callHaptic, plateScore, resultHaptic } from './feedback';
+import { autoClaimed, autoDiscarded, callHaptic, plateScore, resultHaptic } from './feedback';
 import { TAP_HINT_DISCARDS, TAP_HINT_KEY, TapHintStore, tapHintVisible, type KeyValueStore } from './tapHint';
 
 const read = (p: string) => readFileSync(join(__dirname, p), 'utf8');
@@ -85,5 +85,31 @@ describe('English gloss on the Chinese table chrome', () => {
 
   it('drops the English 台 names from the zh-TW result sheet', () => {
     expect(read('./ResultSheet.tsx')).toMatch(/locale !== 'zh-TW' && <Text style=\{itemEn\}>/);
+  });
+});
+
+describe('a claim the table made when the prompt ran out of time', () => {
+  it('is noticed when the melds grow by one in the same hand without the player sending a claim', () => {
+    expect(autoClaimed({ hand: 1, count: 0 }, { hand: 1, count: 1 }, false)).toBe(true);
+    expect(autoClaimed({ hand: 1, count: 2 }, { hand: 1, count: 3 }, false)).toBe(true);
+  });
+
+  it("is not noticed for the player's own claim, a new hand, the first view or an unchanged hand", () => {
+    expect(autoClaimed({ hand: 1, count: 0 }, { hand: 1, count: 1 }, true)).toBe(false);
+    expect(autoClaimed({ hand: 1, count: 3 }, { hand: 2, count: 0 }, false)).toBe(false);
+    expect(autoClaimed(null, { hand: 1, count: 2 }, false)).toBe(false);
+    expect(autoClaimed({ hand: 1, count: 2 }, { hand: 1, count: 2 }, false)).toBe(false);
+  });
+
+  it('is told to the player like a discard made for them, naming the call in their language', async () => {
+    const { readFileSync } = await import('fs');
+    const { join } = await import('path');
+    const { en, zhTW } = await import('../../i18n/locales');
+    const src = readFileSync(join(__dirname, '../../screens/TableScreen.tsx'), 'utf8');
+    expect(src).toContain('if (autoClaimed(meldCount.current, next, sentClaim.current)) {');
+    expect(src).toContain("if (a.type === 'chi' || a.type === 'pong' || a.type === 'kong') sentClaim.current = true;");
+    expect(src).toContain("t('table.autoClaim', {");
+    expect(en.table.autoClaim).toContain('%{call}');
+    expect(zhTW.table.autoClaim).toContain('%{call}');
   });
 });

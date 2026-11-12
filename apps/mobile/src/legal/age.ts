@@ -1,14 +1,18 @@
 /**
  * The first-run age gate (docs/STORE_COMPLIANCE.md, "Age rating"). The app asks for a birth
  * year only; with no birthday it assumes the latest one in that year, so a player counts as
- * 17 from 1 January of the year they turn 18. That errs on the side of keeping minors out.
+ * 18 from 1 January of the year they turn 19. That errs on the side of keeping minors out.
  *
  * The answer is stored on the device (src/storage.ts) and sent with `PATCH /api/me` once the
  * device has a server session (`users.birth_year`). Pure, so the rules are unit-tested.
  */
 
-/** The store age rating (simulated gambling, frequent → 17+). */
-export const AGE_LIMIT = 17;
+/**
+ * The store age rating: frequent simulated gambling is 18+ on the App Store's current scale (17+ only on
+ * devices before OS 26), and the gate is never below the rating. The server's quick-match rule is the same
+ * age or lower, so a player this gate lets in is never refused there for age.
+ */
+export const AGE_LIMIT = 18;
 
 /** Oldest birth year accepted as plausible. */
 export const MAX_AGE = 120;

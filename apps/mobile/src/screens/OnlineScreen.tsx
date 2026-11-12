@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { useApp } from '../app-state';
-import { createOnlineSession } from '../game/session';
+import { createOnlineSession, seatOrRefusal } from '../game/session';
 import { useAuth } from '../auth/AuthProvider';
 import { friendlyError } from '../logic/errors';
 import { tableError } from '../components/table/tableErrors';
@@ -10,6 +10,8 @@ import { useT } from '../i18n';
 import { useOnlineGuard } from '../legal/useOnlineGuard';
 import { AgeBlocked, AgeGate } from '../components/AgeGate';
 import { SignInPrompt } from '../components/SignInPrompt';
+import { NameRefusedNotice } from '../components/NameRefusedNotice';
+import { acceptedName } from '../logic/profile';
 import { colors, fonts, space } from '../theme';
 import { Button, Card, H2, P, Row, ScreenHeader } from '../components/Ui';
 import { Icon } from '../components/Icons';
@@ -29,7 +31,8 @@ export function OnlineScreen() {
     void ensure().finally(() => setChecking(false));
   }, [ensure, entry]);
   const [busy, setBusy] = useState<'create' | 'join' | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  // A table link or notification that could not be followed lands here with the reason (src/push/PushBridge.tsx).
+  const [error, setError] = useState<string | null>(app.screen.name === 'online' ? (app.screen.notice ?? null) : null);
 
   const run = async (action: 'create' | 'join') => {
     setBusy(action);
@@ -37,7 +40,7 @@ export function OnlineScreen() {
     try {
       const session = await createOnlineSession({
         signalUrl: app.signalUrl,
-        name: app.profile.name || t('common.player'),
+        name: acceptedName(app.profile) || t('common.player'),
         avatar: app.profile.avatar,
         userId: auth.user?.id || app.profile.userId || undefined,
         rules: app.settings.rules,
@@ -46,6 +49,8 @@ export function OnlineScreen() {
         botSkill: app.settings.botSkill,
         ...auth.tableAuth,
       });
+      // In the room is not at the table: a full table, or one already playing, refuses the seat (the session is closed then).
+      await seatOrRefusal(session);
       app.setSession(session);
       app.go({ name: 'lobby' });
     } catch (e) {
@@ -69,6 +74,7 @@ export function OnlineScreen() {
           {t('online.note')}
         </P>
       </View>
+      <NameRefusedNotice />
       <Card tone="gold" testID="online-quickmatch">
         <Row style={{ flexWrap: 'wrap', rowGap: 8 }}>
           <Icon name="users" size={26} color={colors.cta} />
@@ -104,12 +110,13 @@ export function OnlineScreen() {
           <Row>
             <Icon name="warning" size={24} />
             <P style={{ flex: 1 }}>{friendlyError(auth.error, t)}</P>
-            <Button small kind="secondary" title={t('online.retry')} onPress={() => void ensure()} disabled={auth.busy} />
+            {/* A ban is the server's final word: asking again gets the same answer. */}
+            {!auth.banned && <Button small kind="secondary" title={t('online.retry')} onPress={() => void ensure()} disabled={auth.busy} />}
           </Row>
         </Card>
       ) : null}
       {error && (
-        <Card tone="danger">
+        <Card tone="danger" testID="online-error">
           <Row>
             <Icon name="warning" size={24} />
             <P style={{ flex: 1 }}>{error}</P>

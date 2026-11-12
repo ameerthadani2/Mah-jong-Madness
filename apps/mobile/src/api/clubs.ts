@@ -4,7 +4,9 @@
 import type { BotSkill, RuleSet } from '@mjm/engine';
 import { authorisedJson, globalFetch, type Authoriser, type FetchLike } from './http';
 import type { ReportPayload } from '../legal/reports';
-import type { Message } from '../logic/translate';
+import { friendlyError } from '../logic/errors';
+import type { Message, Translate } from '../logic/translate';
+import { rulesStakes } from '../logic/rules-text';
 
 export { ApiError as ClubApiError, httpBase } from './http';
 
@@ -82,6 +84,41 @@ export interface Club {
 }
 
 /**
+ * A club in "My clubs": the member's view, or, for a club this player has only asked to join, the public
+ * view, which carries no rules, settings, members or tables.
+ */
+export type ClubListing = Omit<Club, 'rules' | 'settings'> & { rules?: RuleSet; settings?: ClubSettings };
+
+/**
+ * True when the server sent the member's view of a club. The public view (a player who is not a member, or is
+ * one no longer) has no rules, settings or member list, and a screen that reads them from it would crash.
+ */
+export function isMemberView(club: ClubListing, userId: string): club is Club {
+  return !!club.rules && !!club.settings && (club.members ?? []).some((m) => m.userId === userId);
+}
+
+/** True while "My clubs" lists a club this player has only asked to join (it comes as the public view, without them among the members). */
+export function hasPendingRequest(clubs: readonly ClubListing[], userId: string): boolean {
+  return clubs.some((c) => !(c.members ?? []).some((m) => m.userId === userId));
+}
+
+/** How often "My clubs" is read again while a request to join is waiting. */
+export const PENDING_POLL_MS = 15_000;
+
+/** How many members a club has, from either view. */
+export function clubMemberCount(c: Pick<ClubListing, 'members' | 'memberCount'>): number {
+  return c.members?.length ?? c.memberCount ?? 0;
+}
+
+/** The line under a club's name in "My clubs": members, open tables and stakes, or the member count alone for a pending request. */
+export function clubListLine(c: ClubListing, t: Translate): string {
+  const members = t('clubs.memberCount', { count: clubMemberCount(c) });
+  if (!c.rules) return members;
+  const tables = t('clubs.tablesOpen', { count: (c.tables ?? []).filter((tb) => tb.status !== 'finished').length });
+  return t('clubs.summary', { members, tables, stakes: rulesStakes(c.rules) });
+}
+
+/**
  * The club server's owner-tool and Four Winds refusals as translated copy (`clubs.errors.*` and
  * `clubs.create.fourWindsTitle`); null for anything else, which the generic error mapping handles.
  */
@@ -108,6 +145,16 @@ export function clubErrorMessage(e: unknown): Message | null {
   ];
   const hit = known.find(([re]) => re.test(message));
   return hit ? { key: hit[1] } : null;
+}
+
+/**
+ * A club call's failure as copy: the owner-tool and Four Winds refusals have their own lines, the
+ * rest the generic mapping (src/logic/errors.ts), which is where a 429 `rate_limited` for a table
+ * opened too soon after another becomes "wait a few seconds and try again".
+ */
+export function clubErrorText(e: unknown, t: Translate): string {
+  const m = clubErrorMessage(e);
+  return m ? t(m.key, m.params) : friendlyError(e, t);
 }
 
 /** A link to share a club: `https://<domain>/c/<CODE>` with a link domain (the form `push/deeplink.ts` opens), else `<scheme>://club/<CODE>`. */
@@ -152,7 +199,7 @@ export const clubsApi = {
   join: (ctx: ClubContext, code: string) => call<{ club: Club; status: 'joined' | 'pending' | 'already' }>(ctx, 'POST', `/api/clubs/${enc(code)}/join`, {}),
   get: (ctx: ClubContext, code: string) => call<Club>(ctx, 'GET', `/api/clubs/${enc(code)}`),
   /** The signed-in player's clubs; `userId` is the server account id. */
-  mine: (ctx: ClubContext, userId: string) => call<Club[]>(ctx, 'GET', `/api/users/${enc(userId)}/clubs`),
+  mine: (ctx: ClubContext, userId: string) => call<ClubListing[]>(ctx, 'GET', `/api/users/${enc(userId)}/clubs`),
   update: (ctx: ClubContext, code: string, patch: { name?: string; description?: string; rules?: Partial<RuleSet>; settings?: Partial<ClubSettings> }) => call<Club>(ctx, 'PATCH', `/api/clubs/${enc(code)}`, patch),
   approve: (ctx: ClubContext, code: string, userId: string) => call<Club>(ctx, 'POST', `/api/clubs/${enc(code)}/members/${enc(userId)}/approve`, {}),
   /** Owner or admin: turn down a pending request. */

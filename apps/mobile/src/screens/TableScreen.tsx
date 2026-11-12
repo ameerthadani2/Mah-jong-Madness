@@ -7,9 +7,11 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { hintFor, kindOf, legalActions, viewToState, WINDS, type Action, type GameState, type Hint, type TileId } from '@mjm/engine';
-import { useApp } from '../app-state';
+import { useApp, useHardwareBack } from '../app-state';
 import { useConnection, useSession, useTableEvents } from '../game/useTable';
 import { nextFadeDelay } from '../logic/fade';
+import { BOT_NAME_SLOT, botNamer, withBotLabels } from '../logic/seatName';
+import { justReturned, RETURNED_NOTICE_MS } from '../logic/back';
 import { colors, fonts, nameFont } from '../theme';
 import { Tile } from '../components/Tile';
 import { Compass } from '../components/TableParts';
@@ -28,20 +30,21 @@ import { RESULT_HOLD_MS } from '../components/table/feel';
 import { MatchOverSheet, ResultSheet } from '../components/table/ResultSheet';
 import { TableHud } from '../components/table/TableHud';
 import { LeaveSheet } from '../components/table/LeaveSheet';
-import { ClockTicker } from '../components/table/ClockParts';
+import { ClockAnnouncer, ClockTicker } from '../components/table/ClockParts';
 import { useAnnounce } from '../components/table/announce';
 import type { TurnClock } from '../components/table/turnClock';
 import { exitPlan, type ExitChoice } from '../components/table/exit';
 import { celebrationFor } from '../components/table/celebrate';
 import { tableError } from '../components/table/tableErrors';
-import { autoDiscarded, callHaptic, plateScore, resultHaptic, type Haptic } from '../components/table/feedback';
+import { forgetsTable, linkCopy, linkNotice } from '../logic/reconnect';
+import { autoClaimed, autoDiscarded, callHaptic, plateScore, resultHaptic, type Haptic } from '../components/table/feedback';
 import { useTapHint } from '../components/table/useTapHint';
 import { tileLabel } from '../components/table/tileLabel';
 import { WinCelebration } from '../components/Celebrations';
 import { useSfx, type TableEvent } from '../audio';
 
 import * as Haptics from 'expo-haptics';
-import { EMOTES, isQuickChatId, isTableEmoteId, QUICK_CHATS, quickChatText, TableThemeContext, themeById } from '../themes';
+import { emoteName, EMOTES, isQuickChatId, isTableEmoteId, QUICK_CHATS, quickChatText, TableThemeContext, themeById } from '../themes';
 import { emoteChoices } from '../monetisation/equipped';
 import { useOwnedEquipped } from '../monetisation/useEquipped';
 import { useT } from '../i18n';
@@ -50,6 +53,7 @@ import { hideBlocked, useBlockedIds } from '../api/blocks';
 import { httpBase } from '../api/http';
 import { useAuth } from '../auth/AuthProvider';
 import type { ReportTarget } from '../legal/reports';
+import { SupportLink } from '../components/SupportLink';
 
 /** How long an emote bubble and a chat line stay on screen. */
 const EMOTE_MS = 3500;
@@ -81,7 +85,10 @@ export function TableScreen() {
   const equipped = useOwnedEquipped();
   const { t, locale } = useT();
   const session = app.session;
-  const state = useSession(session);
+  // Bot seats carry the app's own label in the reader's language (src/logic/seatName.ts).
+  const tableState = useSession(session);
+  const botLabel = t('common.botName', { name: BOT_NAME_SLOT });
+  const state = useMemo(() => (tableState ? withBotLabels(tableState, botNamer(botLabel)) : null), [tableState, botLabel]);
   const conn = useConnection(session);
   const sfx = useSfx();
   const { tileScale } = useDisplayScale();
@@ -101,6 +108,8 @@ export function TableScreen() {
   const [emotePicker, setEmotePicker] = useState(false);
   // The red exit icon asks first (components/table/exit.ts): only "Abandon table" forgets the table.
   const [leaveAsk, setLeaveAsk] = useState(false);
+  // Android's Back key asks the same question (src/logic/back.ts); once the match is over there is nothing to keep.
+  useHardwareBack(() => (state?.matchOver ? leave() : setLeaveAsk(true)));
   const theme = themeById(app.settings.tableTheme);
   // Re-render once when the next emote bubble or chat line is due to fade, rather than on a fixed tick.
   const [fadeTick, forceTick] = useState(0);
@@ -179,9 +188,10 @@ export function TableScreen() {
   }, [state?.lastResult]);
 
   // A turn timeout that discarded for the player gets a short notice (and a buzz), never a silent tile leaving the hand.
+  // (testID "auto-discard-notice" is kept for both kinds: the e2e and probes look for it.)
   const sentDiscard = useRef(false);
   const pond = useRef<{ hand: number; count: number } | null>(null);
-  const [autoNotice, setAutoNotice] = useState<{ tile: number; key: number } | null>(null);
+  const [autoNotice, setAutoNotice] = useState<{ tile: number; key: number } | { call: 'chi' | 'pong' | 'kong'; key: number } | null>(null);
   const myPond = view ? view.players[mySeat]?.discards : undefined;
   useEffect(() => {
     if (!view || !myPond) return;
@@ -199,16 +209,45 @@ export function TableScreen() {
     const id = setTimeout(() => setAutoNotice((n) => (n && n.key === autoNotice.key ? null : n)), AUTO_DISCARD_NOTICE_MS);
     return () => clearTimeout(id);
   }, [autoNotice]);
-  const autoNoticeText = autoNotice ? t('table.autoDiscard', { tile: tileLabel(kindOf(autoNotice.tile as TileId), locale) }) : null;
+  // The same for a claim prompt that ran out: the table may call for the player, which opens their hand.
+  const sentClaim = useRef(false);
+  const meldCount = useRef<{ hand: number; count: number } | null>(null);
+  const myMelds = view ? view.players[mySeat]?.melds : undefined;
+  useEffect(() => {
+    if (!view || !myMelds) return;
+    const next = { hand: view.handNumber, count: myMelds.length };
+    if (autoClaimed(meldCount.current, next, sentClaim.current)) {
+      const made = myMelds[myMelds.length - 1].type;
+      setAutoNotice({ call: made === 'chow' ? 'chi' : made, key: ++eventKey });
+      buzz('dealin');
+    }
+    if (!meldCount.current || next.count !== meldCount.current.count || next.hand !== meldCount.current.hand) sentClaim.current = false;
+    meldCount.current = next;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [myMelds?.length, view?.handNumber]);
+  const autoNoticeText = !autoNotice
+    ? null
+    : 'tile' in autoNotice
+      ? t('table.autoDiscard', { tile: tileLabel(kindOf(autoNotice.tile as TileId), locale) })
+      : t('table.autoClaim', { call: [t(`table.claimGloss.${autoNotice.call}`), t(`table.callout.${autoNotice.call}`)].filter(Boolean).join(' ') });
   useAnnounce(autoNoticeText, autoNotice?.key);
   const tapHint = useTapHint();
 
+  // Brought back from Review or Fair play because the next hand was dealt (src/logic/back.ts): say so, briefly.
+  const [returned, setReturned] = useState(() => justReturned(app.screen, Date.now()));
+  useEffect(() => {
+    if (!returned) return;
+    const id = setTimeout(() => setReturned(false), RETURNED_NOTICE_MS);
+    return () => clearTimeout(id);
+  }, [returned]);
+  const returnedText = returned ? t('table.nextHandStarted') : null;
+  useAnnounce(returnedText);
+
   // VoiceOver ignores the banners' live regions: announce them on iOS.
-  const linkBanner =
-    !state || state.matchOver ? null
-    : conn.status === 'reconnecting' ? t('table.connection.reconnectingTitle')
-    : conn.status === 'lost' || state.disconnected ? `${t(conn.reason === 'gone' ? 'table.connection.goneTitle' : 'table.connection.lostTitle')}. ${t(conn.reason === 'gone' ? 'table.connection.goneText' : 'table.connection.lostText')}`
-    : null;
+  // What the link banner says (src/logic/reconnect.ts): rejoining, or why this device has stopped for good.
+  const notice = !state || state.matchOver ? null : linkNotice(conn, state);
+  const ended = notice && notice !== 'reconnecting' ? { notice, copy: linkCopy(notice, 'table') } : null;
+  const linkBanner = notice === 'reconnecting' ? t('table.connection.reconnectingTitle') : ended ? `${t(ended.copy.title)}. ${t(ended.copy.text)}` : null;
   useAnnounce(linkBanner);
 
   if (!session || !state) {
@@ -234,13 +273,15 @@ export function TableScreen() {
           <P dim style={{ textAlign: 'center' }}>
             {t(state.ceremony === 'idle' ? 'table.ceremony.idle' : state.ceremony === 'committed' ? 'table.ceremony.committed' : 'table.ceremony.revealed')}
           </P>
-          <Button kind="ghost" title={t('table.leave')} onPress={leave} />
+          <Button kind="ghost" title={t('table.leave')} onPress={() => setLeaveAsk(true)} />
         </View>
+        <LeaveSheet visible={leaveAsk} online={session.mode === 'online'} quickMatch={session.quickMatch} onChoose={exit} />
       </View>
     );
   }
 
   const act = (a: Action) => {
+    if (a.type === 'chi' || a.type === 'pong' || a.type === 'kong') sentClaim.current = true;
     if (a.type !== 'discard') sfx.sfx('tap');
     else {
       sentDiscard.current = true;
@@ -251,12 +292,13 @@ export function TableScreen() {
   };
   function exit(choice: ExitChoice) {
     setLeaveAsk(false);
-    const plan = exitPlan(choice);
-    if (plan.closeSession) app.setSession(null);
+    const plan = exitPlan(choice, { quickMatch: session?.quickMatch });
+    if (plan.closeSession) app.setSession(null, { keepSeat: plan.keepSeat });
     if (plan.forgetTable) app.setActiveSession(null);
     if (plan.goHome) app.reset({ name: 'home' });
   }
-  // The result and match-over sheets' explicit "Leave table" buttons and the ceremony's Leave: the table is done with.
+  // The match-over sheet's button: the table is done with. Every other way out (the exit icon, the result
+  // sheet's "Leave table", the ceremony's Leave, Android's Back key) opens the exit sheet first.
   function leave() {
     exit('abandon');
   }
@@ -347,6 +389,7 @@ export function TableScreen() {
         <TableHud
           view={view}
           roomCode={session.roomCode}
+          quickMatch={session.quickMatch === true}
           portrait={L.portrait}
           clock={clock}
           myMove={myMove}
@@ -360,7 +403,8 @@ export function TableScreen() {
           onLeave={() => setLeaveAsk(true)}
         />
         <ClockTicker clock={clock} myMove={myMove} onTick={() => sfx.sfx('tick')} />
-        <LeaveSheet visible={leaveAsk} online={session.mode === 'online'} onChoose={exit} />
+        <ClockAnnouncer clock={clock} myMove={myMove} />
+        <LeaveSheet visible={leaveAsk} online={session.mode === 'online'} quickMatch={session.quickMatch} onChoose={exit} />
 
         <ReportPlayerSheet visible={reporting !== null} target={reporting} onClose={() => setReporting(null)} />
         <Felt
@@ -405,7 +449,7 @@ export function TableScreen() {
                   key={e}
                   hitSlop={slopFor(48)}
                   accessibilityRole="button"
-                  accessibilityLabel={t('table.a11y.emote', { name: e })}
+                  accessibilityLabel={t('table.a11y.emote', { name: emoteName(e, t) })}
                   onPress={() => {
                     session.client.emote(e);
                     setEmotePicker(false);
@@ -450,15 +494,22 @@ export function TableScreen() {
         )}
 
         {celebration && <WinCelebration id={celebration} width={winW} height={height} />}
+        {returnedText && !autoNoticeText && (
+          <View style={styles.autoNotice} accessibilityLiveRegion="polite" testID="next-hand-notice" pointerEvents="none">
+            <Icon name="play" size={22} />
+            <Text style={[styles.toastText, nameFont(returnedText, fonts.bodyBold)]}>{returnedText}</Text>
+          </View>
+        )}
         {autoNoticeText && (
           <View style={styles.autoNotice} accessibilityLiveRegion="polite" testID="auto-discard-notice" pointerEvents="none">
             <Icon name="clock" size={22} />
             <Text style={[styles.toastText, nameFont(autoNoticeText, fonts.bodyBold)]}>{autoNoticeText}</Text>
           </View>
         )}
-        {state.lastResult && showResult && <ResultSheet result={state.lastResult} view={view} state={state} mySeat={mySeat} onNext={() => session.client.ready()} onLeave={leave} onReview={() => app.go({ name: 'review' })} onFairness={() => app.go({ name: 'fairness' })} />}
+        {/* Not under the match-over card: its buttons would stay reachable there, and "Leave table" asks first while a match is on. */}
+        {state.lastResult && showResult && !state.matchOver && <ResultSheet result={state.lastResult} view={view} state={state} mySeat={mySeat} autoNext={session.mode === 'online'} onNext={() => session.client.ready()} onLeave={() => setLeaveAsk(true)} onReview={() => app.go({ name: 'review' })} onFairness={() => app.go({ name: 'fairness' })} />}
         {state.matchOver && <MatchOverSheet state={state} onLeave={leave} />}
-        {conn.status === 'reconnecting' && !state.matchOver ? (
+        {notice === 'reconnecting' ? (
           // The session is rejoining on its own (1, 2, 4 … 60 s); the player may skip the wait.
           <View style={styles.banner} accessibilityLiveRegion="polite">
             <Icon name="hourglass" size={28} />
@@ -468,20 +519,26 @@ export function TableScreen() {
             </View>
             <Button small title={t('table.connection.retryNow')} onPress={() => session.retryNow()} />
           </View>
-        ) : !state.matchOver && (conn.status === 'lost' || state.disconnected) ? (
-          // Only after ten failed attempts, a refused session (4401), the seat opening elsewhere, or the
-          // server saying the table is gone (then there is nothing to come back to: the saved record goes too).
-          <View style={styles.banner} accessibilityLiveRegion="assertive">
+        ) : ended ? (
+          // The session will not come back by itself: ten failed attempts, a refused session (4401), the server
+          // saying the table is gone (then the saved record goes too), the seat opened on another device (this
+          // one must not take it back unasked), a watcher who made way for a player, or the account banned
+          // while at the table (the record goes too: no seat is given back to it). Each says which.
+          <View style={styles.banner} accessibilityLiveRegion="assertive" testID={`link-${ended.notice}`}>
             <Icon name="warning" size={28} />
             <View style={{ flex: 1 }}>
-              <Text style={styles.bannerTitle}>{t(conn.reason === 'gone' ? 'table.connection.goneTitle' : 'table.connection.lostTitle')}</Text>
-              <Text style={styles.bannerText}>{t(conn.reason === 'gone' ? 'table.connection.goneText' : 'table.connection.lostText')}</Text>
+              <Text style={styles.bannerTitle}>{t(ended.copy.title)}</Text>
+              <Text style={styles.bannerText}>{t(ended.copy.text)}</Text>
+              {ended.notice === 'banned' ? <SupportLink reason="mistake" style={{ marginTop: 4 }} /> : null}
             </View>
             <Button
               small
-              title={t(conn.reason === 'gone' ? 'table.connection.goneLeave' : 'table.connection.reconnect')}
+              title={t(ended.copy.leave)}
               onPress={() => {
-                if (conn.reason === 'gone') app.setActiveSession(null);
+                // "Reconnect" on a lost link does what it says when trying again can help; otherwise the table is
+                // closed here and Home's Resume card is the way back.
+                if (ended.notice === 'lost' && session.reconnect()) return;
+                if (forgetsTable(ended.notice)) app.setActiveSession(null);
                 app.setSession(null);
                 app.reset({ name: 'home' });
               }}

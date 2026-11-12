@@ -1,5 +1,6 @@
 import { track } from '../telemetry';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
+import { plansInOrder, shopTabFor, type ShopFocus, type ShopTab } from '../logic/shopFocus';
 import { Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useApp } from '../app-state';
@@ -16,6 +17,7 @@ import { useWallet } from '../monetisation/useWallet';
 import { ApiError } from '../api/http';
 import { friendlyError } from '../logic/errors';
 import { useT } from '../i18n';
+import { Live } from '../components/Live';
 import type { Translate } from '../logic/translate';
 import { gateFor } from '../legal/age';
 import { useAgeGate } from '../legal/useAgeGate';
@@ -31,7 +33,7 @@ import { TileBackPreview } from '../components/Tile';
 import { AgeBlocked, AgeGate } from '../components/AgeGate';
 import { LegalLinks, NoValueNotice } from '../components/LegalLinks';
 
-type Tab = 'diamonds' | 'looks' | 'coach';
+type Tab = ShopTab;
 
 function shopError(e: unknown, t: Translate): string {
   if (e instanceof StoreError) return t(`shop.errors.${e.code}`);
@@ -39,14 +41,22 @@ function shopError(e: unknown, t: Translate): string {
   return t('shop.purchaseFailed');
 }
 
-/** `focus: 'fourwinds'` opens on the plans, where The Four Winds Club is (club owners arrive here). */
-export function ShopScreen({ focus }: { focus?: 'fourwinds' } = {}) {
+/** `focus` opens on the plans with that plan first and in view (club owners, a used Puzzle Rush or hand review arrive here). */
+export function ShopScreen({ focus }: { focus?: ShopFocus } = {}) {
   const app = useApp();
   const gate = useAgeGate();
   const { t } = useT();
   const { width, height } = useWindowDimensions();
   const shop = useWallet();
-  const [tab, setTab] = useState<Tab>(focus === 'fourwinds' ? 'coach' : 'diamonds');
+  const [tab, setTab] = useState<Tab>(shopTabFor(focus));
+  // Sent here for a plan: bring the plan cards into view once they are laid out (they start below the first screen).
+  const scroller = useRef<React.ComponentRef<typeof ScrollView>>(null);
+  const scrolledToPlans = useRef(false);
+  const showPlans = (y: number) => {
+    if (!focus || scrolledToPlans.current) return;
+    scrolledToPlans.current = true;
+    scroller.current?.scrollTo({ y: Math.max(0, y - 8), animated: false });
+  };
   const [shelf, setShelf] = useState<CosmeticCategory>('table');
   const equipped = useOwnedEquipped();
   const [busy, setBusy] = useState<string | null>(null);
@@ -160,11 +170,12 @@ export function ShopScreen({ focus }: { focus?: 'fourwinds' } = {}) {
   const grid = (items: React.ReactNode[]) => <View style={[styles.grid, { gap }]}>{items}</View>;
 
   return (
-    <ScrollView contentContainerStyle={[styles.wrap, { padding: pad }]} testID="shop">
-      <ScreenHeader title={t('shop.title')} onBack={app.back} backTestID="back" right={<GemCounter amount={totalDiamonds(wallet)} onPress={() => setTab('diamonds')} />} />
+    <ScrollView ref={scroller} contentContainerStyle={[styles.wrap, { padding: pad }]} testID="shop">
+      <ScreenHeader title={t('shop.title')} onBack={app.back} backTestID="back" right={<GemCounter amount={totalDiamonds(wallet)} owed={owed} onPress={() => setTab('diamonds')} />} />
       <View style={styles.trust}>
         <Icon name="shield" size={20} />
-        <Text style={styles.trustText} numberOfLines={2}>
+        {/* Shown whole: the sentence ends with "joining clubs is free", which two lines cut off on a phone. */}
+        <Text style={styles.trustText}>
           {t('shop.trust')}
         </Text>
       </View>
@@ -203,11 +214,19 @@ export function ShopScreen({ focus }: { focus?: 'fourwinds' } = {}) {
           );
         })}
       </View>
-      {msg && <Pill text={msg.text} tone={msg.tone} icon={msg.tone === 'ok' ? 'check' : 'warning'} />}
+      {msg && (
+        <Live message={msg.text} assertive={msg.tone === 'danger'} testID="shop-message">
+          <Pill wrap text={msg.text} tone={msg.tone} icon={msg.tone === 'ok' ? 'check' : 'warning'} />
+        </Live>
+      )}
 
       {tab === 'diamonds' && (
         <>
-          <P style={styles.note}>{t('shop.diamondsUse')}</P>
+          {/* Ink on a cream strip, like the trust line: white on the sky was 2:1. */}
+          <View style={styles.trust}>
+            <Icon name="gem" size={22} />
+            <Text style={[styles.trustText, fontFor(t('shop.diamondsUse'), fonts.bodyBold, '700')]}>{t('shop.diamondsUse')}</Text>
+          </View>
           {grid(DIAMOND_PACKS.map((p, i) => <ProductCard key={p.id} w={cardW} short={shortScreen} p={p} price={priceLabel(p)} busy={busy === p.id} onBuy={() => void buy(p)} art={<GemPile tier={i} width="100%" height="100%" />} bg={['#E9DBFF', '#B79BFF']} amount={p.diamonds} />))}
         </>
       )}
@@ -248,6 +267,10 @@ export function ShopScreen({ focus }: { focus?: 'fourwinds' } = {}) {
 
       {tab === 'coach' && (
         <>
+          {/* The plans first, the explanation under them: the cards and their prices are what the player came for. */}
+          <View testID="shop-plans" onLayout={(e) => showPlans(e.nativeEvent.layout.y)}>
+            {grid(plansInOrder(SUBSCRIPTIONS, focus).map((p) => <ProductCard key={p.id} w={cardW} p={p} price={priceLabel(p)} busy={busy === p.id} onBuy={() => void buy(p)} art={<MedalScene tier={p.tier === 'fourwinds' ? 'fourwinds' : 'gold'} width="100%" height="100%" />} bg={['#FFF3C4', '#FFD36B']} />))}
+          </View>
           <Card style={{ flexDirection: 'row', gap: space.md, alignItems: 'flex-start' }}>
             <Icon name="cap" size={40} />
             <View style={{ flex: 1, gap: 4 }}>
@@ -258,7 +281,6 @@ export function ShopScreen({ focus }: { focus?: 'fourwinds' } = {}) {
               {tier !== 'free' && renewal !== null && <Pill text={t('shop.coach.renews', { date: new Date(renewal).toLocaleDateString() })} tone="ok" />}
             </View>
           </Card>
-          {grid(SUBSCRIPTIONS.map((p) => <ProductCard key={p.id} w={cardW} p={p} price={priceLabel(p)} busy={busy === p.id} onBuy={() => void buy(p)} art={<MedalScene tier={p.tier === 'fourwinds' ? 'fourwinds' : 'gold'} width="100%" height="100%" />} bg={['#FFF3C4', '#FFD36B']} />))}
         </>
       )}
 
@@ -383,7 +405,8 @@ function ProductCard({
             {text.title}
           </Text>
         )}
-        <Text style={[styles.sub, fontFor(sub, fonts.body, '700'), amount !== undefined && { textAlign: 'center' }]} numberOfLines={2}>
+        {/* A plan's line carries its billing terms, so it is never cut; other cards keep two lines. */}
+        <Text style={[styles.sub, fontFor(sub, fonts.body, '700'), amount !== undefined && { textAlign: 'center' }]} numberOfLines={p.kind === 'subscription' ? undefined : 2}>
           {sub}
         </Text>
         {note && <Text style={[styles.sub, { color: colors.okText }]}>{note}</Text>}
@@ -410,7 +433,6 @@ const styles = StyleSheet.create({
   wrap: { gap: space.md },
   trust: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: 'rgba(255,255,255,0.75)', borderWidth: 2, borderColor: colors.ink, borderRadius: 14, paddingHorizontal: 10, paddingVertical: 6 },
   trustText: { flex: 1, fontFamily: fonts.bodyBold, color: colors.ink, fontSize: 12 },
-  note: { color: '#FFFFFF', fontSize: 13, fontFamily: fonts.bodyBold },
   tabs: { flexDirection: 'row', gap: 6, backgroundColor: 'rgba(16,20,47,0.55)', borderRadius: 18, borderWidth: 3, borderColor: colors.ink, padding: 4, alignSelf: 'flex-start', maxWidth: '100%' },
   tab: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 12, minHeight: 44 },
   tabNarrow: { flex: 1, flexDirection: 'column', gap: 0, paddingHorizontal: 2, paddingVertical: 4, justifyContent: 'center' },
@@ -420,7 +442,8 @@ const styles = StyleSheet.create({
   window: { height: 96, borderWidth: 3, borderColor: colors.ink, borderRadius: 14, overflow: 'hidden' },
   shine: { position: 'absolute', top: -30, left: -16, width: 90, height: 90, borderRadius: 45, backgroundColor: 'rgba(255,255,255,0.35)' },
   ribbon: { position: 'absolute', top: 2, right: 2, backgroundColor: colors.danger, borderWidth: 2, borderColor: colors.ink, borderRadius: 10, paddingHorizontal: 8, paddingVertical: 2, transform: [{ rotate: '6deg' }] },
-  ribbonText: { fontFamily: fonts.display, color: '#FFFFFF', fontSize: 12 },
+  // Ink on the red ribbon (5.9:1); white was 3:1.
+  ribbonText: { fontFamily: fonts.display, color: colors.ink, fontSize: 12 },
   title: { fontFamily: fonts.uiBold, color: colors.ink, fontSize: 15, lineHeight: 18 },
   sub: { color: colors.inkDim, fontSize: 11, lineHeight: 14 },
   owned: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, paddingVertical: 8 },

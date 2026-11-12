@@ -2,10 +2,11 @@
  * The player's privacy choices: product analytics and crash reports, each on or off.
  *
  * Rules (tested in consent.test.ts):
- * - Analytics stay off until the first-run age gate records consent (`given`), and stay off by
- *   default for a player the gate marks as a minor. After that they default to on.
- * - Crash reports default to on (they carry no gameplay or account data) until switched off.
- * - An explicit choice in Settings always wins over either default.
+ * - Both are opt-in: off until the player says yes. Nothing is captured, queued or sent before that.
+ * - The app asks once, after the age gate (`shouldAskConsent`, components/ConsentQuestion.tsx). The answer
+ *   sets both switches and is remembered, a "no" included: the question is not asked again.
+ * - Either switch can be changed at any time in Settings; a player who set one there before the question
+ *   was shown has chosen already and is not asked.
  *
  * Pure TypeScript: storage is an injected key-value store (AsyncStorage in the app, a map in tests).
  * The record lives under its own key, so no other module's storage migration can touch it.
@@ -22,32 +23,46 @@ export interface ConsentRecord {
   /** Explicit choices; null follows the default. */
   analytics: boolean | null;
   crash: boolean | null;
+  /** The one-time question has been answered (yes or no), or a switch was set in Settings: do not ask again. */
+  asked: boolean;
 }
 
-export const DEFAULT_CONSENT: ConsentRecord = { v: 1, given: false, minor: false, analytics: null, crash: null };
+export const DEFAULT_CONSENT: ConsentRecord = { v: 1, given: false, minor: false, analytics: null, crash: null, asked: false };
 
 export interface EffectiveConsent {
   analytics: boolean;
   crash: boolean;
 }
 
-export type ConsentAction = { type: 'given'; minor?: boolean } | { type: 'analytics'; on: boolean } | { type: 'crash'; on: boolean } | { type: 'reset' };
+export type ConsentAction = { type: 'given'; minor?: boolean } | { type: 'answer'; agree: boolean; /** The services the question listed (this build's); a yes covers only these. */ about?: { analytics: boolean; crash: boolean } } | { type: 'analytics'; on: boolean } | { type: 'crash'; on: boolean } | { type: 'reset' };
 
 export function consentReducer(s: ConsentRecord, a: ConsentAction): ConsentRecord {
   switch (a.type) {
     case 'given':
       return { ...s, given: true, minor: !!a.minor };
+    case 'answer':
+      return { ...s, asked: true, analytics: a.agree && (a.about?.analytics ?? true), crash: a.agree && (a.about?.crash ?? true) };
     case 'analytics':
-      return { ...s, analytics: a.on };
+      return { ...s, asked: true, analytics: a.on };
     case 'crash':
-      return { ...s, crash: a.on };
+      return { ...s, asked: true, crash: a.on };
     case 'reset':
       return DEFAULT_CONSENT;
   }
 }
 
+/** Opt-in: a switch the player has not set is off. */
 export function effectiveConsent(s: ConsentRecord): EffectiveConsent {
-  return { analytics: s.analytics ?? (s.given && !s.minor), crash: s.crash ?? true };
+  return { analytics: s.analytics ?? false, crash: s.crash ?? false };
+}
+
+/**
+ * Whether to show the one-time question now: only in a build that has a service to ask about, only to a player
+ * who has neither answered it nor set a switch, and never to one the age gate marked as a minor (theirs stay off).
+ */
+export function shouldAskConsent(s: ConsentRecord, available: { analytics: boolean; crash: boolean }): boolean {
+  if (!available.analytics && !available.crash) return false;
+  return !s.asked && !s.minor && s.analytics === null && s.crash === null;
 }
 
 const optBool = (x: unknown): boolean | null => (typeof x === 'boolean' ? x : null);
@@ -58,7 +73,10 @@ export function parseConsent(raw: string | null): ConsentRecord {
   try {
     const o = JSON.parse(raw) as Record<string, unknown>;
     if (!o || typeof o !== 'object' || o.v !== 1) return DEFAULT_CONSENT;
-    return { v: 1, given: o.given === true, minor: o.minor === true, analytics: optBool(o.analytics), crash: optBool(o.crash) };
+    const analytics = optBool(o.analytics);
+    const crash = optBool(o.crash);
+    // A record from before the question existed: a switch set in Settings then is a choice made.
+    return { v: 1, given: o.given === true, minor: o.minor === true, analytics, crash, asked: o.asked === true || analytics !== null || crash !== null };
   } catch {
     return DEFAULT_CONSENT;
   }

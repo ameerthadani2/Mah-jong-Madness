@@ -3,10 +3,10 @@ import { StyleSheet, Text, View } from 'react-native';
 import { KIND_WIND, type ValuePuzzle } from '@mjm/engine';
 import { colors, fonts } from '../../theme';
 import { useT } from '../../i18n';
-import { checkPuzzleAnswer, taiFigure, tileName, valueProjections, type ValueProjection } from '../../logic/puzzle';
+import { checkPuzzleAnswer, explanationFor, taiFigure, tileName, valueProjections, type ValueProjection } from '../../logic/puzzle';
 import { Tile } from '../Tile';
 import { P, Pill, Row } from '../Ui';
-import { Explanation, KindMeld, KindRow, Label, NextButton, partStyles, useAnswer, Verdict, type ThemeViewProps } from './PuzzleParts';
+import { Answer, Explanation, KindMeld, KindRow, Label, NextButton, partStyles, useAnswer, Verdict, type ThemeViewProps } from './PuzzleParts';
 
 /**
  * Value: several discards leave the hand ready; they differ in how many winning tiles stay live
@@ -55,7 +55,7 @@ export function ValuePuzzleView({ puzzle, onResult, onNext, nextLabel, autoAdvan
         ))}
       </View>
       {answered !== null && (
-        <View style={{ gap: 6 }}>
+        <Answer spoken={[t(answered ? 'puzzles.value.good' : 'puzzles.value.bad'), explanationFor(puzzle, locale)].join(' ')}>
           <Verdict good={answered} goodKey="puzzles.value.good" badKey="puzzles.value.bad" />
           <Label>{t('puzzles.value.projections')}</Label>
           <Row style={{ flexWrap: 'wrap', alignItems: 'stretch', rowGap: 6 }}>
@@ -65,7 +65,7 @@ export function ValuePuzzleView({ puzzle, onResult, onNext, nextLabel, autoAdvan
           </Row>
           <Explanation puzzle={puzzle} />
           <NextButton onNext={onNext} autoAdvance={autoAdvance} label={nextLabel} />
-        </View>
+        </Answer>
       )}
     </View>
   );
