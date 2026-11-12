@@ -24,7 +24,12 @@
   "openShop": "Open Shop",
   "coachBots": "Coach & bots",
   "coachToggle": "Show the coach at bot tables (never online)",
-  "botStrength": "Bot strength",
+  "botStrength": "Bot opponents",
+  "botAbout": {
+    "beginner": "Makes efficiency mistakes and never folds. Good for learning the flow.",
+    "club": "Solid tile efficiency, claims when it helps, and leans away from a player who looks ready.",
+    "pro": "Estimates how dangerous each discard is and may fold against a player who looks ready. It plays by the policy the coach's advice comes from."
+  },
   "houseRules": "House rules (台灣麻將)",
   "presets": {
     "title": "Presets",

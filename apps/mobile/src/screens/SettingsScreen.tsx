@@ -6,7 +6,7 @@ import { useAuth } from '../auth/AuthProvider';
 import type { Profile } from '../storage';
 import { AccountCard } from './AccountCard';
 import { LOCALE_NAMES, SUPPORTED_LOCALES, useT, type LocalePreference } from '../i18n';
-import { botDescription, botLabel, presetName, rulesSummary, speedLabel } from '../logic/rules-text';
+import { botLabel, presetName, rulesSummary, speedLabel } from '../logic/rules-text';
 import { localized } from '../logic/translate';
 import { BUILD_SIGNAL_URL } from '../config';
 import { AVATARS } from '../storage';
@@ -195,7 +195,8 @@ export function SettingsScreen() {
             return <Chip key={k} label={botLabel(k, locale)} selected={settings.botSkill === k} locked={locked} onPress={() => (locked ? app.go({ name: 'shop' }) : setSettings({ ...settings, botSkill: k }))} />;
           })}
         </Row>
-        <P dim style={{ fontSize: 12 }}>{botDescription(settings.botSkill, t, locale)}</P>
+        {/* What each tier does, as measured (docs/ARCHITECTURE.md, the bot tiers): no claim that one beats another. */}
+        <P dim style={{ fontSize: 12 }}>{t(`settings.botAbout.${settings.botSkill}`)}</P>
       </Card>
       <Card>
         <H2>{t('settings.houseRules')}</H2>
