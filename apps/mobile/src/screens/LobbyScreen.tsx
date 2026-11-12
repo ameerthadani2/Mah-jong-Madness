@@ -1,6 +1,6 @@
 import React, { useEffect } from 'react';
 import { ScrollView, Share, StyleSheet, Text, View } from 'react-native';
-import { useApp } from '../app-state';
+import { useApp, useHardwareBack } from '../app-state';
 import { useConnection, useSession } from '../game/useTable';
 import { useT } from '../i18n';
 import { tableError } from '../components/table/tableErrors';
@@ -20,10 +20,19 @@ export function LobbyScreen() {
   const state = useSession(session);
   const conn = useConnection(session);
 
+  // Android's Back key does what the header's Back arrow does: it never leaves the table open behind another screen.
+  useHardwareBack(() => leave());
+
   useEffect(() => {
     if (state?.view) app.go({ name: 'table' });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state?.view]);
+
+  function leave() {
+    app.setSession(null);
+    app.setActiveSession(null);
+    app.reset({ name: 'home' });
+  }
 
   if (!session || !state) {
     return (
@@ -45,12 +54,6 @@ export function LobbyScreen() {
   const humans = state.seats.filter((s) => s.peerId && !s.isBot).length;
   const addBot = () => (localHost ? localHost.addBot() : session.client.requestBot());
   const start = () => (localHost ? localHost.start() : session.client.requestStart());
-
-  const leave = () => {
-    app.setSession(null);
-    app.setActiveSession(null);
-    app.reset({ name: 'home' });
-  };
 
   return (
     <ScrollView contentContainerStyle={styles.wrap}>

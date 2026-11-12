@@ -45,5 +45,11 @@
     "resume": "Resume",
     "reconnecting": "Reconnecting…",
     "discard": "Discard"
+  },
+  "replace": {
+    "title": "Start a new match?",
+    "body": "You have a table in progress. A new match takes its place, and you will not be able to resume it.",
+    "yes": "Start new match",
+    "no": "Keep my table"
   }
 }

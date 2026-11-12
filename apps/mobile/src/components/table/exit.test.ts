@@ -28,4 +28,20 @@ describe('table exit', () => {
     expect(hud).toMatch(/onLeave=\{\(\) => setLeaveAsk\(true\)\}/);
     expect(src).toContain('<LeaveSheet');
   });
+
+  it('asks before leaving from the result sheet, the shuffle screen and the Android Back key while a match is on', () => {
+    const src = readFileSync(join(__dirname, '../../screens/TableScreen.tsx'), 'utf8');
+    const sheet = src.slice(src.indexOf('<ResultSheet'), src.indexOf('/>', src.indexOf('<ResultSheet')));
+    expect(sheet).toMatch(/onLeave=\{\(\) => setLeaveAsk\(true\)\}/);
+    expect(src).toMatch(/title=\{t\('table\.leave'\)\} onPress=\{\(\) => setLeaveAsk\(true\)\}/);
+    expect(src).toContain('useHardwareBack(() => (state?.matchOver ? leave() : setLeaveAsk(true)));');
+    // Only the match-over card leaves directly.
+    expect(src.match(/onLeave=\{leave\}/g)).toHaveLength(1);
+    expect(src).toContain('<MatchOverSheet state={state} onLeave={leave} />');
+  });
+
+  it("takes the last hand's result sheet away once the match-over card is up", () => {
+    const src = readFileSync(join(__dirname, '../../screens/TableScreen.tsx'), 'utf8');
+    expect(src).toContain('{state.lastResult && showResult && !state.matchOver && <ResultSheet');
+  });
 });

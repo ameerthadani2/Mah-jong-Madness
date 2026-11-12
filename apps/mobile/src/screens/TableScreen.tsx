@@ -7,7 +7,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { hintFor, kindOf, legalActions, viewToState, WINDS, type Action, type GameState, type Hint, type TileId } from '@mjm/engine';
-import { useApp } from '../app-state';
+import { useApp, useHardwareBack } from '../app-state';
 import { useConnection, useSession, useTableEvents } from '../game/useTable';
 import { nextFadeDelay } from '../logic/fade';
 import { colors, fonts, nameFont } from '../theme';
@@ -102,6 +102,8 @@ export function TableScreen() {
   const [emotePicker, setEmotePicker] = useState(false);
   // The red exit icon asks first (components/table/exit.ts): only "Abandon table" forgets the table.
   const [leaveAsk, setLeaveAsk] = useState(false);
+  // Android's Back key asks the same question (src/logic/back.ts); once the match is over there is nothing to keep.
+  useHardwareBack(() => (state?.matchOver ? leave() : setLeaveAsk(true)));
   const theme = themeById(app.settings.tableTheme);
   // Re-render once when the next emote bubble or chat line is due to fade, rather than on a fixed tick.
   const [fadeTick, forceTick] = useState(0);
@@ -234,8 +236,9 @@ export function TableScreen() {
           <P dim style={{ textAlign: 'center' }}>
             {t(state.ceremony === 'idle' ? 'table.ceremony.idle' : state.ceremony === 'committed' ? 'table.ceremony.committed' : 'table.ceremony.revealed')}
           </P>
-          <Button kind="ghost" title={t('table.leave')} onPress={leave} />
+          <Button kind="ghost" title={t('table.leave')} onPress={() => setLeaveAsk(true)} />
         </View>
+        <LeaveSheet visible={leaveAsk} online={session.mode === 'online'} onChoose={exit} />
       </View>
     );
   }
@@ -256,7 +259,8 @@ export function TableScreen() {
     if (plan.forgetTable) app.setActiveSession(null);
     if (plan.goHome) app.reset({ name: 'home' });
   }
-  // The result and match-over sheets' explicit "Leave table" buttons and the ceremony's Leave: the table is done with.
+  // The match-over sheet's button: the table is done with. Every other way out (the exit icon, the result
+  // sheet's "Leave table", the ceremony's Leave, Android's Back key) opens the exit sheet first.
   function leave() {
     exit('abandon');
   }
@@ -456,7 +460,8 @@ export function TableScreen() {
             <Text style={[styles.toastText, nameFont(autoNoticeText, fonts.bodyBold)]}>{autoNoticeText}</Text>
           </View>
         )}
-        {state.lastResult && showResult && <ResultSheet result={state.lastResult} view={view} state={state} mySeat={mySeat} onNext={() => session.client.ready()} onLeave={leave} onReview={() => app.go({ name: 'review' })} onFairness={() => app.go({ name: 'fairness' })} />}
+        {/* Not under the match-over card: its buttons would stay reachable there, and "Leave table" asks first while a match is on. */}
+        {state.lastResult && showResult && !state.matchOver && <ResultSheet result={state.lastResult} view={view} state={state} mySeat={mySeat} onNext={() => session.client.ready()} onLeave={() => setLeaveAsk(true)} onReview={() => app.go({ name: 'review' })} onFairness={() => app.go({ name: 'fairness' })} />}
         {state.matchOver && <MatchOverSheet state={state} onLeave={leave} />}
         {notice === 'reconnecting' ? (
           // The session is rejoining on its own (1, 2, 4 … 60 s); the player may skip the wait.

@@ -14,6 +14,8 @@ import { AVATARS, effectiveStreak, todayKey } from '../storage';
 import { acceptedName } from '../logic/profile';
 import { NameRefusedNotice } from '../components/NameRefusedNotice';
 import { tableError } from '../components/table/tableErrors';
+import { ConfirmSheet } from '../components/table/ConfirmSheet';
+import { replacesTable } from '../logic/back';
 import { botLabel, rulesSummary } from '../logic/rules-text';
 import { useT } from '../i18n';
 import { colors, fonts, nameFont, space } from '../theme';
@@ -50,6 +52,8 @@ export function HomeScreen() {
 
   const saveName = () => app.setProfile({ ...app.profile, name: name.trim() || t('common.player') });
 
+  // A table still open on this device and not over: the Resume card goes back to it rather than opening it again.
+  const liveTable = app.session && !app.session.client.state.matchOver ? app.session : null;
   const [resuming, setResuming] = useState(false);
   const [resumeError, setResumeError] = useState<string | null>(null);
 
@@ -62,8 +66,15 @@ export function HomeScreen() {
     if (app.loaded && accountId) void refreshWallet();
   }, [app.loaded, accountId, refreshWallet]);
 
+  // A new match takes the place of a table in progress (the saved record is one slot): ask before it does.
+  const [askReplace, setAskReplace] = useState(false);
   const playBots = () => {
     if (needsName) saveName();
+    if (replacesTable(app.activeSession, app.session)) setAskReplace(true);
+    else startBots();
+  };
+  const startBots = () => {
+    setAskReplace(false);
     const session = createLocalSession(acceptedName(app.profile) || (needsName ? name.trim() : '') || t('common.player'), app.profile.avatar, app.settings.rules, { botSkill: allowedBotSkill(app.settings.botSkill, app.wallet) });
     app.setSession(session);
     session.host!.start();
@@ -73,6 +84,8 @@ export function HomeScreen() {
   const resume = async () => {
     const rec = app.activeSession;
     if (!rec) return;
+    // The table is still open on this device (it was left behind without closing): go back to it as it is.
+    if (liveTable) return app.go({ name: liveTable.client.state.view ? 'table' : 'lobby' });
     setResuming(true);
     setResumeError(null);
     try {
@@ -308,8 +321,8 @@ export function HomeScreen() {
         </Card>
       )}
 
-      {app.activeSession && !app.session && (
-        <Card tone="gold" style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: space.md }}>
+      {app.activeSession && (!app.session || liveTable) && (
+        <Card tone="gold" testID="resume-card" style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: space.md }}>
           <Icon name="hourglass" size={34} />
           <View style={{ flex: 1, minWidth: 170 }}>
             <Text style={[styles.resumeTitle, fontFor(t('home.resume.title'), fonts.display)]}>{t('home.resume.title')}</Text>
@@ -320,8 +333,16 @@ export function HomeScreen() {
             </P>
             {resumeError && <P style={{ color: colors.dangerText, fontSize: 12 }}>{resumeError}</P>}
           </View>
-          <Button title={resuming ? t('home.resume.reconnecting') : t('home.resume.resume')} onPress={() => void resume()} disabled={resuming} />
-          <Button small kind="ghost" title={t('home.resume.discard')} onPress={() => app.setActiveSession(null)} />
+          <Button testID="resume-table" title={resuming ? t('home.resume.reconnecting') : t('home.resume.resume')} onPress={() => void resume()} disabled={resuming} />
+          <Button
+            small
+            kind="ghost"
+            title={t('home.resume.discard')}
+            onPress={() => {
+              if (liveTable) app.setSession(null);
+              app.setActiveSession(null);
+            }}
+          />
         </Card>
       )}
 
@@ -344,6 +365,7 @@ export function HomeScreen() {
           </View>
         </View>
       )}
+      <ConfirmSheet testID="replace-table" visible={askReplace} title={t('home.replace.title')} body={t('home.replace.body')} yes={t('home.replace.yes')} no={t('home.replace.no')} onYes={startBots} onNo={() => setAskReplace(false)} />
     </ScrollView>
   );
 }

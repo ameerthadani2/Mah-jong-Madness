@@ -4,6 +4,7 @@ import { DEFAULT_PROFILE, DEFAULT_PROGRESS, DEFAULT_SETTINGS, storage, type Acti
 import { saveScheduler } from './game/persist';
 import { setSavedClientSource, type Session } from './game/session';
 import { acceptedName } from './logic/profile';
+import { hardwareBackPlan } from './logic/back';
 import { APP_BUILD, resolveSignalUrl } from './config';
 import { EMPTY_WALLET, loadWallet, saveWallet, type Wallet } from './monetisation/store';
 import { currentLocale, setLocalePreference } from './i18n';
@@ -33,6 +34,13 @@ interface AppState {
   screen: Screen;
   go(screen: Screen): void;
   back(): void;
+  /**
+   * The Android hardware Back key (src/logic/back.ts): pops a screen, or at a live table asks the screen on
+   * top to answer it (`useHardwareBack`). Returns false when the system should handle the key.
+   */
+  hardwareBack(): boolean;
+  /** Counts the Back presses handed to the screen on top; `useHardwareBack` follows it. */
+  backAsked: number;
   /** Replace the whole stack (e.g. after leaving a table). */
   reset(screen: Screen): void;
   profile: Profile;
@@ -115,19 +123,23 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     });
   }, [session]);
 
-  // Android hardware back pops the screen stack instead of leaving the app (the web has no such key and logs an error for the listener).
+  // Android hardware back pops the screen stack instead of leaving the app, except at a live table, where the
+  // table (or its lobby) answers it: popping would leave the match running unseen (src/logic/back.ts).
+  // (The web has no such key and logs an error for the listener.)
+  const [backAsked, setBackAsked] = useState(0);
+  const backRef = useRef({ stack, session });
+  backRef.current = { stack, session };
+  const hardwareBack = useRef((): boolean => {
+    const plan = hardwareBackPlan(backRef.current.stack, backRef.current.session !== null);
+    if (plan === 'ask') setBackAsked((n) => n + 1);
+    else if (plan === 'pop') setStack((st) => (st.length > 1 ? st.slice(0, -1) : st));
+    return plan !== 'system';
+  }).current;
   useEffect(() => {
     if (Platform.OS !== 'android') return;
-    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
-      let handled = false;
-      setStack((st) => {
-        handled = st.length > 1;
-        return handled ? st.slice(0, -1) : st;
-      });
-      return handled;
-    });
+    const sub = BackHandler.addEventListener('hardwareBackPress', hardwareBack);
     return () => sub.remove();
-  }, []);
+  }, [hardwareBack]);
 
   // A cold resume (Home's Resume card) restores the saved table client's record when it is for the same table and seat.
   const activeRef = useRef<ActiveSession | null>(null);
@@ -193,6 +205,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         setStack((st) => [...st, screen]);
       },
       back: () => setStack((st) => (st.length > 1 ? st.slice(0, -1) : st)),
+      hardwareBack,
+      backAsked,
       reset: (screen) => {
         trackAll(screenEvents(screen, stack[stack.length - 1]));
         setStack([screen]);
@@ -242,9 +256,25 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       },
       loaded,
     }),
-    [stack, profile, settings, signalUrl, progress, session, activeSession, wallet, loaded],
+    [stack, profile, settings, signalUrl, progress, session, activeSession, wallet, loaded, hardwareBack, backAsked],
   );
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
+}
+
+/**
+ * Answer the hardware Back key on a screen the provider does not pop by itself (a live table and its lobby):
+ * `onBack` runs once for each press made while this screen is mounted.
+ */
+export function useHardwareBack(onBack: () => void): void {
+  const { backAsked } = useApp();
+  const seen = useRef(backAsked);
+  const handler = useRef(onBack);
+  handler.current = onBack;
+  useEffect(() => {
+    if (backAsked === seen.current) return;
+    seen.current = backAsked;
+    handler.current();
+  }, [backAsked]);
 }
 
 export function useApp(): AppState {
