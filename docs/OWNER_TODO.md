@@ -18,7 +18,7 @@ Everything engineering needs from you, as one ordered checklist. Nothing here bl
 - [ ] Trademark search for "Mahjong Mania" and 麻將狂熱 (US, UK, TW) by counsel. Store title "Mahjong Mania: Taiwan 16"; 瘋麻將 is taken.
 - [ ] **GitHub variables** `APP_NAME` (default `Mahjong Mania`), `APP_SLUG` (`mahjongmania`, the EAS project slug), `APP_SCHEME` (`mahjongmania`, letters only), `APP_BUNDLE_ID` (`com.mahjongmania.app`; also the Android package, so letters, digits, `_` and dots only, no `-`). Set them only if you change a default, and **before** the first build: the bundle id and package can never change after the first store upload, and changing the slug later creates a second EAS project. Unblocks: the store records and every build.
 - [ ] Optional **GitHub variable** `APP_VERSION` (e.g. `1.0.0`): the version players see. Default `0.1.0` from `app.json`. Build numbers need nothing: EAS raises the iOS build number and the Android version code on every production build.
-- [ ] Repository: make it private, or add a licence (public with no licence is "all rights reserved" but readable by anyone).
+- [ ] Licence: none has been chosen, so all rights are reserved and the documents say so (README, FAIRNESS). Decide: keep the repository private, or choose a licence and add a `LICENSE` file (a public repository with no licence is still "all rights reserved", but readable by anyone). The fairness page lists publishing the engine and the verifier under an open licence as planned work, which needs this decision.
 
 ### 2. Game server (Fly + Neon), then `SIGNAL_URL`
 
@@ -84,7 +84,8 @@ Create exactly these ids (the server's catalogue, `apps/signal/src/catalog.ts`, 
 ### 8. Testers and the sandbox
 
 - [ ] Apple: App Store Connect → Users and Access → Sandbox → testers. Google: Play Console → Settings → License testing → add the testers' Google accounts.
-- [ ] Each tester opens the app once online and reads Settings → Account → "Player id". **fly secret** `TESTER_USER_IDS` = those ids, comma-separated (add App Review's demo account later). Unblocks: sandbox purchases granting anything; everyone else's are recorded as `ignored_sandbox`, so free test purchases never become real balances.
+- [ ] Each tester opens the app once online and reads Settings → Account → "Player id". **fly secret** `TESTER_USER_IDS` = those ids, comma-separated. Unblocks: sandbox purchases granting anything; everyone else's are recorded as `ignored_sandbox`, so free test purchases never become real balances.
+- [ ] Before each store submission: a demo account for the reviewer that is already on that list. App Review buys in the sandbox, and a reviewer's own fresh guest account can never be on the list in advance, so without this every purchase the reviewer makes grants nothing and "create a club" keeps asking for the plan. On a test device make an account, link it to an Apple or Google identity created for the purpose (Settings → Account), add its Player id to `TESTER_USER_IDS`, check on a TestFlight build that a sandbox subscription arrives and a club can be created, and put that identity's e-mail and password in the review notes ([`STORE_COMPLIANCE.md`](STORE_COMPLIANCE.md), "App Review notes"; `docs/store/listing/*.md`, "Review notes"). If a reviewer writes back with the Player id of another account, add that id and ask them to buy again.
 
 ### 9. Legal and support
 
@@ -106,7 +107,7 @@ Create exactly these ids (the server's catalogue, `apps/signal/src/catalog.ts`, 
 
 - [ ] **fly secret** `SENTRY_DSN` (a Sentry project for the server). Unblocks: server error reports.
 - [ ] **GitHub variables** `EXPO_PUBLIC_SENTRY_DSN`, `SENTRY_ORG`, `SENTRY_PROJECT` (a second Sentry project for the app) and **EAS env** secret `SENTRY_AUTH_TOKEN` (scope `project:releases`; never a GitHub variable). Unblocks: app crash reports with readable stacks (all three plus the token are needed for the upload).
-- [ ] **fly secret** `POSTHOG_KEY` (optional `POSTHOG_HOST`) and **GitHub variables** `EXPO_PUBLIC_POSTHOG_KEY`, `EXPO_PUBLIC_POSTHOG_HOST` (`https://eu.i.posthog.com` for an EU project). Unblocks: server events and the app funnel (consent-gated, off by default for minors).
+- [ ] **fly secret** `POSTHOG_KEY` (optional `POSTHOG_HOST`) and **GitHub variables** `EXPO_PUBLIC_POSTHOG_KEY`, `EXPO_PUBLIC_POSTHOG_HOST` (`https://eu.i.posthog.com` for an EU project). Unblocks: server events and the app funnel. Both are opt-in: the app asks once after the age question and sends nothing until the player agrees; whether that is enough in each launch market is a question for counsel.
 - [ ] An uptime alert on `https://<app>.fly.dev/health` (Fly dashboard or any monitor), and Sentry alerts on new issues.
 - [ ] Backups: on Neon's paid plan set the history retention to at least 7 days, take a weekly `pg_dump` to storage outside Neon, and do one restore drill before launch ([`DEPLOY.md`](DEPLOY.md), "Backups and recovery"). Unblocks: getting accounts and purchases back after a bad migration, a mistake or a lost Neon project.
 - [ ] Logs: Fly keeps only recent lines. If you want history (for support or a dispute), ship the logs to a log store ([`OBSERVABILITY.md`](OBSERVABILITY.md), "Logs").

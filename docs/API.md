@@ -12,18 +12,26 @@ The contract between the app and `apps/signal`. The server side is implemented b
 | `error` code | Status | Meaning |
 | --- | --- | --- |
 | `invalid` | 400 | Malformed body or unknown provider |
+| `name_not_allowed` | 400 | A display name, club name or club description the name check refuses (see Names) |
 | `invalid_credentials` | 401 | Guest id or secret does not match |
 | `invalid_session` / `session_expired` / `session_revoked` / `session_rotated` | 401 | The bearer token is not usable; the app should refresh or bootstrap again |
 | `invalid_token` | 401 | The provider token failed verification |
 | `unauthorised` | 401 | The RevenueCat webhook secret is missing or wrong |
 | `forbidden` | 403 | The caller may not do this: not a member, not an owner or admin, not the user whose data is asked for |
+| `banned` | 403 | The account is banned, or the device belongs to a banned account (see Moderation). Signing in again does not help |
+| `fourwinds_required` | 403 | Creating a club needs The Four Winds Club (while the store is live) |
 | `provider_disabled` | 404 | That sign-in method is not configured on this server (`GET /api/config.authProviders` lists the enabled ones) |
 | `not_linked` | 404 | `login` for a provider identity that has no account; offer "attach to this guest" |
 | `not_found` | 404 | No such user, identity, club or route |
 | `identity_in_use` | 409 | The identity already belongs to another account that also has a provider |
 | `last_identity` | 409 | Cannot unlink the only sign-in method |
 | `limit` | 409 | A club cap was hit |
+| `birth_year_locked` | 409 | The account already has a different birth year on file (it is write-once) |
+| `resolved` | 409 | The report was already closed by a moderator |
+| `insufficient` / `owned` | 409 | `POST /api/wallet/spend`: not enough diamonds, or already owned |
+| `too_large` | 413 | The request body is over 64 KiB |
 | `rate_limited` | 429 | Too many requests |
+| `store_unreachable` | 502 | `POST /api/wallet/sync`: the store's records could not be read; try again |
 | `unavailable` | 503 | The server is at capacity (tables) or a dependency is down |
 | `internal` | 500 | An unexpected error; nothing was applied, retry later |
 
@@ -50,8 +58,8 @@ The app stores `userId` and `guestSecret` in secure storage; they are the only w
 - `POST /api/auth/logout` (bearer) → `204`. Revokes this session only, removes the push token from this session's device (the phone is no longer this account's) and closes the table socket this session opened with `4401`.
 - `GET /api/me` (bearer) → `{ "user": User, "wallet": { "diamonds", "bonusDiamonds" }, "entitlements": [{ "entitlement", "expiresAt" }], "identities": [{ "provider", "email"? }], "serverNow" }`.
 - `PATCH /api/me` (bearer) body `{ "displayName"?, "avatar"?, "locale"?, "birthYear"?, "analyticsConsent"?: true|false|null }` → `{ "user": User }`. `analyticsConsent` is the player's product-analytics choice; server-side events (`purchase_credited`, `report_filed`) are sent only for players who chose `true`. A refused `displayName` answers `400 name_not_allowed`.
-- **The birth year is write-once.** `birthYear` is accepted while the account has none. After that, sending the year on file again changes nothing and succeeds; any other year, or `null`, answers `409 { "error": "birth_year_locked" }` and nothing in the request is applied. Only a moderator can correct it (`POST /api/admin/users/:id/birth-year`). The year decides who may use quick match, so an account that declared itself under 17 cannot declare itself older a moment later.
-- `DELETE /api/me` (bearer) → `204`. Soft-deletes the account: the profile is scrubbed at once, every session is revoked and every table socket of the account is closed with `4401`, identities and devices (with their push tokens) go, club rows become "Deleted player" (a club the user owned passes to its senior admin, else its earliest member, and is dissolved when nobody else is in it), and an hourly job hard-deletes the row 30 days later. Purchase records, the wallet ledger and reports are kept.
+- **The birth year is write-once.** `birthYear` is accepted while the account has none. After that, sending the year on file again changes nothing and succeeds; any other year, or `null`, answers `409 { "error": "birth_year_locked" }` and nothing in the request is applied. Only a moderator can correct it (`POST /api/admin/users/:id/birth-year`). The year decides who may use quick match, so an account that declared itself under 18 cannot declare itself older a moment later. The app therefore sends the year only when the server has none: it reads `user.birthYear` from `GET /api/me` first, sends the year the player gave at the age gate when that is `null` (or after quick match answered `age_missing`), and treats `409 birth_year_locked` as "already on file".
+- `DELETE /api/me` (bearer) → `204`. Soft-deletes the account: the profile is scrubbed at once (name, avatar, email, birth year, language), every session is revoked and every table socket of the account is closed with `4401`, identities, devices (with their push tokens) and blocks go, club rows become "Deleted player" (a club the user owned passes to its senior admin, else its earliest member, and is dissolved when nobody else is in it), and an hourly job hard-deletes the row 30 days later. The records that outlive the account lose its name in the same transaction: its seats in finished matches (`match_results.players`) and its rows in finished club seasons (`seasons[].standings`, also in clubs it had left) read "Deleted player" and keep their scores, and the notes of reports filed by or about it have the name replaced (any letter case; whole words only when the name starts or ends with a Latin letter or digit; a one-character name is left alone). The purge repeats this for matches recorded in between and clears the account id from them. What stays for good: purchase records and the wallet ledger (financial records), match results and season rows without the name, and reports (reason, note, table code, outcome, under the account ids) as moderation records.
 
 `User` = `{ "id", "kind": "guest"|"account", "displayName", "avatar", "locale", "birthYear": number|null, "createdAt" }`.
 
@@ -64,7 +72,7 @@ The app obtains an identity token from the provider SDK with a fresh `nonce` (th
 - `nonce` is required on both: a request without one is `400 invalid`, and a token whose nonce claim is missing or differs is `401 invalid_token`.
 - `DELETE /api/auth/identities/:provider` (bearer) → `204` or `409 last_identity`.
 
-Merge rules: (1) identity unlinked → linked to the current user, who becomes `kind: "account"`; the user's other sessions (and their table sockets) end and the guest secret is rotated; (2) identity belongs to V and the current user is a guest → the guest is merged into V (progress, wallet, purchases, club memberships, devices and reports move; the guest's sessions are revoked and its sockets closed with `4401`) and the device receives a V session; (3) identity belongs to V and the current user already has a provider → `409 identity_in_use`; (4) unlink only while another provider remains.
+Merge rules: (1) identity unlinked → linked to the current user, who becomes `kind: "account"`; the user's other sessions (and their table sockets) end and the guest secret is rotated; (2) identity belongs to V and the current user is a guest → the guest is merged into V (progress, wallet, purchases, club memberships, devices, reports, blocks, the guest's seats in finished matches and its rows in finished club seasons move, the season points being added where both accounts have a row; the guest's sessions are revoked and its sockets closed with `4401`) and the device receives a V session; (3) identity belongs to V and the current user already has a provider → `409 identity_in_use`; (4) unlink only while another provider remains.
 
 ## WebSocket (tables)
 
@@ -76,6 +84,77 @@ Merge rules: (1) identity unlinked → linked to the current user, who becomes `
 
 6. A banned account is refused at `hello` and at each recheck with close code `4403` (not `4401`: signing in again will not help), and a moderator's ban closes its open sockets with `4403` at once.
 
+### Signalling frames (the socket itself)
+
+Besides `hello`, `create`, `join`, `queue` and `leave_queue` (above and under Quick match):
+
+| Frame | Direction | Purpose |
+| --- | --- | --- |
+| `{ "t": "to", "to": "<peer id>", "data": … }` | client → server | Relay `data` to a peer in the same room; at a hosted table the peer is the room's `host` |
+| `{ "t": "from", "from": "<peer id>", "data": … }` | server → client | Relayed data |
+| `{ "t": "peer", "peerId", "event": "join" \| "leave" }` | server → client | A peer entered or left the room |
+| `{ "t": "leave" }` | client → server | Leave the room (the seat stays reclaimable; the table's own `leave` frame, below, gives it up) |
+| `{ "t": "ping" }` → `{ "t": "pong" }` | both | Heartbeat. The app sends one every 15 s and reconnects after 10 s without an answer |
+| `{ "t": "error", "code": "table_cap", "message" }` | server → client | The account already has `MAX_TABLES_PER_USER` (default 3) unfinished tables open; `create` is refused |
+| `{ "t": "error", "code": "closed", "message" }` | server → client | The room has closed (a relay-only room whose host left, a club table closed by the club, an eviction); the socket is no longer in a room |
+
+Game traffic travels inside `to` / `from` as `{ "ch": "game", "msg": <table frame> }`, so other channels can share the socket.
+
+### Table frames (`packages/net/src/messages.ts`)
+
+The table host (the server, for every online table) and each seat exchange these inside the `game` channel. `Commitment` is `{ seat, hash }`, `Audit` the hand's record (seed, commitments, reveals, action log, final hash, ceremony attempts and restarts; see `docs/FAIRNESS.md`), `TableView` what one seat may see.
+
+Client → host:
+
+| Frame | Purpose |
+| --- | --- |
+| `{ "t": "join", "name", "avatar"?, "wantSeat"?, "token"?, "userId"?, "have"? }` | Sit down, or come back to a seat. `token` is the rejoin token from `welcome`. The server overwrites `userId` with the account the socket proved and `name` with that account's display name. `wantSeat` asks for a seat number in the lobby. `have`, on a rejoin, is the last hand of this match whose end the client holds (-1: none); the host answers with a `hand_missed` for each later hand |
+| `{ "t": "leave" }` | Give up the seat on purpose (a bot plays it mid-match; a dropped connection is not a leave) |
+| `{ "t": "ready" }` | After `hand_over`: the seat is ready for the next hand, which is dealt once every connected human is |
+| `{ "t": "start" }`, `{ "t": "add_bot" }` | Start the match, or put a bot in an empty seat. Only the table's controller (see "Who controls a table"). After a failed seed ceremony any seated player's `start` deals the hand again |
+| `{ "t": "commit", "hash": "<64 hex>" }` | Answer to `commit_request`: the SHA-256 of this seat's secret for the coming hand |
+| `{ "t": "reveal", "secret": "<hex>" }` | Answer to `reveal_request`: the secret behind the commitment |
+| `{ "t": "action", "seat", "action", "expectHash"?, "turnCounter"? }` | A move (discard, chi, pong, kong, win, pass …) for the sender's own seat. `expectHash` is the state hash the player acted on; `turnCounter` the turn of that view, echoed if the move is refused |
+| `{ "t": "chat", "text" }`, `{ "t": "emote", "emote" }` | A quick phrase or an emote, by id (next section) |
+| `{ "t": "ping", "at" }` | Clock probe; answered `{ "t": "pong", "at", "now" }` with the host's clock, which the countdowns use |
+
+Host → client:
+
+| Frame | Purpose |
+| --- | --- |
+| `{ "t": "welcome", "seat", "roomCode", "rules", "seats", "matchId", "token" }` | The seat is yours. `token` is the rejoin token (a new one each time the seat is taken back) |
+| `{ "t": "lobby", "seats" }` | Who sits where; sent whenever a seat changes. A seat is `{ seat, name, peerId, isBot, connected, avatar?, userId?, timeBank?, left? }` |
+| `{ "t": "commit_request", "handNumber", "attempt"? }` | Start of the seed ceremony for a hand: send `commit`. `attempt` is above 1 when the ceremony was run again |
+| `{ "t": "commits", "handNumber", "commits" }` | Every seat's commitment and the host's own (seat 4), before anything is revealed |
+| `{ "t": "reveal_request", "handNumber" }` | Send `reveal` |
+| `{ "t": "stand_in", "handNumber", "attempt"? }` | This seat did not commit in time, so the host used a stand-in secret for it; the app marks the hand as not verified by this seat's own share |
+| `{ "t": "state", "view", "hash", "deadline", "timeBank", "inTimeBank", "now"? }` | The table as this seat may see it, after every action. `deadline` and `now` are on the host's clock |
+| `{ "t": "hand_over", "result", "audit", "view", "now"? }` | A hand ended: its result and the audit the app verifies |
+| `{ "t": "match_over", "scores", "view" }` | The match ended |
+| `{ "t": "hand_missed", "audit" }` | To a returning seat: the audit of a hand that ended while it was away, one frame per hand, in order |
+| `{ "t": "restored", "handNumber", "turnCounter" }` | To a returning seat: the table was restored from a saved snapshot after a server restart, at this hand and turn (-1: before the deal); anything shown beyond that point is void |
+| `{ "t": "disconnected" }` | This connection no longer holds the seat (the account took it back from another device) |
+| `{ "t": "chat", … }`, `{ "t": "emote", … }` | A seat's phrase or emote (next section) |
+| `{ "t": "pong", "at", "now" }` | Answer to `ping` |
+| `{ "t": "error", "code", "message", "turnCounter"? }` | A refusal; the codes are below |
+
+Table error codes, and what the app does:
+
+| `code` | When | The app |
+| --- | --- | --- |
+| `full` | The table has no free seat, or the match has started and this account has no seat in it | Tells the player; does not retry |
+| `already_seated` | The account already holds another seat at this table | Tells the player |
+| `not_seated` | A frame other than `join` from a connection without a seat | Joins again |
+| `not_controller` | `start` or `add_bot` from a seat that does not control the table | Tells the player who can |
+| `cannot_start` | `start` refused: the table is not full (`add_bot` fills empty seats) | Shows the message |
+| `bad_commit`, `bad_reveal` | A commitment that is not a SHA-256 digest; a secret that is not hex or does not match the commitment | Never sent by a correct app; logged |
+| `ceremony_failed` | The seed ceremony for a hand could not be completed after its retries; sent to every seat. The table returns to its lobby and tries the hand again after a short pause, on a seated player's `start`, or when a player rejoins | Shows the message and waits |
+| `not_playing` | An `action` when no hand is in progress | Drops the move and waits for the next `state` |
+| `wrong_seat` | An `action` for a seat that is not the sender's | Never sent by a correct app |
+| `illegal` | The engine refused the move (out of turn, a tile not held, a call that is not allowed). `turnCounter` says which view the move was made on | Puts the tile back and shows the current state |
+| `evicted` | A club owner or admin removed the player from the table | Leaves the table and says so |
+| `table_closed` | The club closed the table | Leaves the table and says so |
+
 ### Chat and emotes (table frames)
 
 There is no free text at a table. Players say things with a fixed set of quick phrases and emotes, sent as ids (`packages/net/src/tabletext.ts`), and each app shows the phrase in its reader's language.
@@ -86,14 +165,14 @@ There is no free text at a table. Players say things with a fixed set of quick p
 
 ### Quick match (WebSocket)
 
-Plan decision 3: instant seating with strangers. Any signed-in account may queue, guests included, provided it is not banned and the server holds a birth year that makes it 17 or older (the app sends it with `PATCH /api/me` after the age gate, once: the year is write-once; the age counts as `currentYear - birthYear - 1`).
+Plan decision 3: instant seating with strangers. Any signed-in account may queue, guests included, provided it is not banned and the server holds a birth year that makes it 18 or older (`QUICK_MATCH_MIN_AGE`; the app sends the year with `PATCH /api/me` after the age gate, and only when the server has none: the year is write-once; the age counts as `currentYear - birthYear - 1`, so a player is let in from 1 January of the year they turn 19).
 
 - `{ "t": "queue", "preset"?: "normal" }` → at once and every 2 s while waiting: `{ "t": "queue_status", "position": 1, "waitedMs": 4000, "humans": 2, "fillMs": 20000 }` (`humans`: players in the group this one would be seated with now, itself included), then `{ "t": "matched", "room": "QM2345", "humans": 2, "bots": 2 }`. Join the room with `{t:"join", room}` and the table `join` as usual; reconnects use the rejoin token like any table.
 - `{ "t": "leave_queue" }` → `{ "t": "queue_left" }`. Closing the socket, or a `create`/`join`, also leaves.
 - Refusals: `{ "t": "queue_error", "code", "message" }` with `code`:
   - `banned`;
   - `age_missing`: the server has no birth year for the account. The app sends the year it holds with `PATCH /api/me` and queues again;
-  - `age_under`: the year on file makes the account younger than 17. Nothing the app sends changes that (see the write-once rule); it shows the message and does not retry. (`age_required`, which older servers sent for both cases, is no longer sent);
+  - `age_under`: the year on file makes the account younger than 18. Nothing the app sends changes that (see the write-once rule); it shows the message and does not retry. (`age_required`, which older servers sent for both cases, is no longer sent);
   - `seated`, with `"room": "<code>"`: the account is still at an unfinished quick-match table (it holds a seat there, connected or not, or the table has just been opened for it and is waiting for it to sit down). It is not queued again; the app goes back to that table by joining that room, with the saved rejoin token or without one (a server-hosted table gives an account its own seat back and issues a new token). A seat the player left on purpose does not count (the table's `{"t":"leave"}`, which the app sends when the player walks away from a table; a dropped connection or a closed app is not a leave): that player may queue again, and the next table is charged like any other;
   - `rate_limited` (the same per-account and per-address allowance as `join`);
   - `sign_in` (a socket without an account);
@@ -124,9 +203,11 @@ Compared in constant time. Without `ADMIN_TOKEN` every route here answers `503 u
 
 ## Names
 
-Display names (`POST /api/auth/guest`, `PATCH /api/me`), club names (`POST /api/clubs`, `PATCH /api/clubs/:code`) and seat names are cleaned (`cleanText`) and then checked against a small English and Chinese blocklist: slurs and profanity, and names that pose as staff (admin, moderator, official, staff, support, GM, 官方, 管理員, 管理者, 客服 and the like). The check reads through the usual disguises: accents and combining marks are removed, Cyrillic, Greek and small-capital look-alikes are read as the Latin letters they resemble, digits and symbols stand for letters (`4dm1n`, `$hit`), an asterisk stands for any letter (`f*ck`), and Chinese entries are listed in Traditional and Simplified. It is also written not to refuse real names: staff words are matched within one word (never across a space, so "Brad Min" passes), single letters are joined only when three or more spell a word ("G. M. Lee" passes), stretched spellings are refused only for a listed set of words ("Rappe" and "Nazzi" pass), and words that only contain a blocked one (Badminton, Stafford, Scunthorpe, Dickens) pass.
+Display names (`POST /api/auth/guest`, `PATCH /api/me`), club names (`POST /api/clubs`, `PATCH /api/clubs/:code`), club descriptions (`PATCH /api/clubs/:code`; no build of the app shows or edits one yet, but anyone holding the club code is sent it) and seat names are cleaned (`cleanText`) and then checked against a small English and Chinese blocklist: slurs and profanity, and names that pose as staff (admin, moderator, official, staff, support, GM, 官方, 管理員, 管理者, 客服 and the like). The check reads through the usual disguises: accents and combining marks are removed, Cyrillic, Greek and small-capital look-alikes are read as the Latin letters they resemble, digits and symbols stand for letters (`4dm1n`, `$hit`), an asterisk stands for any letter (`f*ck`), and Chinese entries are listed in Traditional and Simplified. It is also written not to refuse real names: staff words are matched within one word (never across a space, so "Brad Min" passes), single letters are joined only when three or more spell a word ("G. M. Lee" passes), stretched spellings are refused only for a listed set of words ("Rappe" and "Nazzi" pass), and words that only contain a blocked one (Badminton, Stafford, Scunthorpe, Dickens) pass.
 
 What a refused name does depends on where it arrives: `PATCH /api/me` and the club routes answer `400 { "error": "name_not_allowed" }`; `POST /api/auth/guest` creates the guest without the name and says `"nameRefused": true`; and at a table a refused name is never shown (the seat reads `Player XXXX`).
+
+On the device: a name the server refused is remembered as refused and masked (the app shows and sends no name, so the player reads as `Player XXXX` everywhere and is asked to choose another) until the player changes it; typing a different name clears the mark.
 
 ## Clubs
 
@@ -146,10 +227,10 @@ All `/api/clubs*` routes take the bearer session (the caller's user id is the me
 
 | Route | Auth | Body | Answer |
 | --- | --- | --- | --- |
-| `POST /api/clubs` | bearer | `{ "name", "rules"?, "settings"? }` | `200 Club`; the caller is its owner. `400 invalid` (name), `403 fourwinds_required` (store live, no plan), `409 limit` (clubs per user, or 3 owned) |
+| `POST /api/clubs` | bearer | `{ "name", "rules"?, "settings"? }` | `200 Club`; the caller is its owner. `400 invalid` (name), `400 name_not_allowed`, `403 fourwinds_required` (store live, no plan), `409 limit` (clubs per user, or 3 owned) |
 | `DELETE /api/clubs/:code` | bearer (owner) | `{ "confirm": "<the club's name or code>" }` | `204`; the club, its standings and bans go, and each live table closes (players are told the club was deleted). `400 invalid` (confirmation), `403 forbidden` |
 | `GET /api/clubs/:code` | bearer | | members: `Club`; anyone else: the public view. `404 not_found` |
-| `PATCH /api/clubs/:code` | bearer (owner or admin) | `{ "name"?, "description"?, "rules"?, "settings"? }` | `200 Club`; `403 forbidden` |
+| `PATCH /api/clubs/:code` | bearer (owner or admin) | `{ "name"?, "description"?, "rules"?, "settings"? }` | `200 Club`; `400 name_not_allowed` (a name or a description the name check refuses), `403 forbidden` |
 | `POST /api/clubs/:code/join` | bearer | | `200 { "club", "status": "joined"\|"pending"\|"already" }` (`club` is the public view until membership); standings the account left on file here come back with it. `403 forbidden` (banned), `409 limit` (members, pending requests, or clubs per user), `429 rate_limited` (10 an hour per address, 60 an hour per club; see Join requests) |
 | `POST /api/clubs/:code/members/:userId/approve` | bearer (owner or admin) | | `200 Club`; `403 forbidden`, `404 not_found` (no such request) |
 | `POST /api/clubs/:code/members/:userId/reject` | bearer (owner or admin) | | `200 Club`; the request is dropped (the player may ask again). `404 not_found` (no such request) |
@@ -167,16 +248,19 @@ All `/api/clubs*` routes take the bearer session (the caller's user id is the me
 
 Every club route answers `404 not_found` for an unknown code and `429 rate_limited` under the per-IP HTTP limit.
 
-When an account is purged (30 days after `DELETE /api/me`), its member rows, join requests and standings on file leave every club; bans it made, and bans of it, stay. The Postgres club write only stores rows whose account still exists, so a club can always be saved.
+When an account is purged (30 days after `DELETE /api/me`), its member rows, join requests and standings on file leave every club; bans it made, and bans of it, stay, and so do its rows in finished seasons (the points, under "Deleted player"). The Postgres club write only stores rows whose account still exists, so a club can always be saved.
 
 ## Store, wallet, reports and seasons: what the app relies on
 
 The app side lives in `apps/mobile/src/monetisation/` (store and wallet), `apps/mobile/src/api/wallet.ts`, `apps/mobile/src/api/clubs.ts` and `apps/mobile/src/legal/`. The server's own section of this file is authoritative for status codes and limits; these are the parts the app depends on.
 
 - **The wallet is the server's.** The app's copy mirrors `GET /api/me` and is cached for offline display only. It reads `wallet.diamonds`, `wallet.bonusDiamonds`, `entitlements[]` (one per subscription plan: `coach.gold.month`, `coach.gold.year`, `fourwinds.month`, `fourwinds.year`; a cosmetic entitlement is its product id, e.g. `theme.jade`) and the optional `cosmetics[]` (product ids). `serverNow` sets the clock that subscription expiry and the free-tier meters are judged by.
-- **Purchases.** The app configures RevenueCat with the server user id as the app user id (`Purchases.logIn(userId)` after sign-in), buys with the store, then polls `GET /api/me` for about 8 seconds until the purchase shows; if it has not arrived yet the Shop says so and the next sync picks it up. Nothing is granted on the device. Store ids are the `catalog.ts` ids; a Google Play subscription arrives as `coach.gold:month`.
-- **`POST /api/wallet/spend`** body `{ "productId": "theme.jade" }` (bearer) → `{ spent, entitlement, wallet, cosmetics }` (a `bundle.*` id also returns `granted: [...]`, the items the set unlocked). The app maps `409 insufficient` to "you need N more diamonds" and `409 owned` to success, then re-reads `/api/me`.
+- **Purchases.** The app configures RevenueCat with the server user id as the app user id (`Purchases.logIn(userId)` after sign-in), buys with the store, then polls `GET /api/me` for 8 seconds (five reads, `CREDIT_POLL_MS`) until the purchase shows; if it has not arrived yet the Shop says so and the next sync picks it up. Nothing is granted on the device. Store ids are the `catalog.ts` ids; a Google Play subscription arrives as `coach.gold:month`.
+- **`POST /api/wallet/spend`** body `{ "productId": "theme.jade" }` (bearer) → `{ spent, entitlement, wallet, cosmetics }` (for a `bundle.*` id, `cosmetics` then lists the items the set unlocked; there is no separate `granted` field). The app maps `409 insufficient` to "you need N more diamonds" and `409 owned` to success, then re-reads `/api/me`.
 - **`PATCH /api/me` `{ "birthYear" }`** is sent once the device has a session, after the age gate (the app keeps the answer on the device until then). The server takes it once: the app sends it only while `user.birthYear` is null (or after `age_missing`), and treats `409 birth_year_locked` as "already on file".
+- **A ban is remembered on the device for 24 hours.** After `403 banned` (or socket close `4403`) the app stops calling the server for that identity and does not offer "Start fresh": the ban covers the device, so a new guest would be refused too. Only a moderator lifts a ban and nothing tells the device when, so after 24 hours the app asks the server once more.
+- **Start fresh asks first.** When a signed-out device chooses to continue as a new guest, the app requests the new guest (`POST /api/auth/guest`) before it touches the identity it holds; only when the server has answered is the old identity set aside (kept under a side key, never overwritten) and the new one stored. A refusal (`403 banned`) or an unreachable server leaves the old identity exactly where it was.
+- **A refused name is masked.** When `POST /api/auth/guest` answers `nameRefused: true`, or `PATCH /api/me` answers `400 name_not_allowed`, the app keeps the name on the device marked as refused and neither shows nor sends it until the player changes it (see Names).
 - **`POST /api/reports`** body `{ "reportedUserId", "reason", "details"?, "roomCode"? }` with `reason` one of `cheating`, `collusion`, `abusive_chat`, `offensive_name`, `stalling`, `other`; the app trims `details` to 500 characters.
 - **`POST /api/clubs/:code/season`** (owner) starts the next season; the app then re-reads the club. Standings rows carry `points` (all time) and `seasonPoints`; the club carries `season`. An older server without seasons is shown with `points` in both views.
 
@@ -197,11 +281,11 @@ The app side lives in `apps/mobile/src/monetisation/` (store and wallet), `apps/
 
 ## Environment (server)
 
-`DATABASE_URL` (absent → in-memory repos, guest-only), `DATABASE_URL_DIRECT`, `MIGRATE_ON_BOOT`, `AUTH_PEPPER` (+ `AUTH_PEPPER_PREVIOUS`), `APPLE_CLIENT_ID`, `GOOGLE_CLIENT_IDS` (comma-separated), `FACEBOOK_APP_ID`, `CORS_ORIGINS`, `TRUST_PROXY`, `MAX_HOSTED_TABLES`, `PORT`. See `apps/signal/README.md` and `docs/DEPLOY.md`.
+`DATABASE_URL` (absent → in-memory repositories: nothing survives a restart; sign-in methods do not depend on it: a server is guest-only when neither `APPLE_CLIENT_ID` nor `GOOGLE_CLIENT_IDS` is set), `DATABASE_URL_DIRECT`, `MIGRATE_ON_BOOT`, `AUTH_PEPPER` (+ `AUTH_PEPPER_PREVIOUS`), `APPLE_CLIENT_ID`, `GOOGLE_CLIENT_IDS` (comma-separated), `FACEBOOK_APP_ID`, `CORS_ORIGINS`, `TRUST_PROXY`, `MAX_HOSTED_TABLES`, `PORT`. See `apps/signal/README.md` and `docs/DEPLOY.md`.
 
 ## Store, wallet and entitlements (Phase 4)
 
-Entitlements are decided by the server from store notifications; the app never grants anything itself and only reads `GET /api/me`. The app configures RevenueCat with the server user id as the RevenueCat **app user id** (call `Purchases.logIn(userId)` after the guest bootstrap or a sign-in), and must re-read `/api/me` after a purchase or a Restore (the webhook usually lands within a few seconds; poll `/api/me` for up to ~10 s).
+Entitlements are decided by the server from store notifications; the app never grants anything itself and only reads `GET /api/me`. The app configures RevenueCat with the server user id as the RevenueCat **app user id** (call `Purchases.logIn(userId)` after the guest bootstrap or a sign-in), and must re-read `/api/me` after a purchase or a Restore (the webhook usually lands within a few seconds; the app polls `/api/me` for 8 s).
 
 `GET /api/config.storeEnabled` is `true` only when the server has `REVENUECAT_WEBHOOK_SECRET`. When it is `false` the app shows "Store unavailable" and offers no purchase.
 
@@ -216,7 +300,7 @@ Entitlements are decided by the server from store notifications; the app never g
 }
 ```
 
-`active` is computed on the server clock (`serverNow`), so a device clock rolled back changes nothing. `cosmetics` lists the table looks the user owns (product ids; the app maps them to `unlocks` through its catalogue).
+`active` is computed on the server clock (`serverNow`), so a device clock rolled back changes nothing. `cosmetics` lists every cosmetic the user owns (table looks, tile backs, avatar frames, emote packs and win celebrations, as product ids; the app maps them to `unlocks` through its catalogue).
 
 ### Catalogue (server side: `apps/signal/src/catalog.ts`)
 
@@ -226,9 +310,10 @@ Entitlements are decided by the server from store notifications; the app never g
 | `diamonds.1300`, `diamonds.3450`, `diamonds.7500` | consumable | 1,200 + 100 bonus / 3,000 + 450 bonus (15 %) / 6,000 + 1,500 bonus (25 %) |
 | `coach.gold.month`, `coach.gold.year` | auto-renewing | Coach Gold: an entitlement named after the plan until the store's expiry |
 | `fourwinds.month`, `fourwinds.year` | auto-renewing | The Four Winds Club (everything in Coach Gold, unlimited hand reviews, creating and running clubs): an entitlement named after the plan until the store's expiry |
-| `theme.nightmarket`, `theme.bamboo`, `theme.imperial` (300 💎), `theme.jade` (400 💎) | diamonds only | permanent entitlement with the product id |
+| Cosmetics: 12 table looks (`theme.*`), 10 tile backs (`back.*`), 12 avatar frames (`frame.*`), 4 emote packs (`emotes.*`), 4 win celebrations (`win.*`), 150 to 600 💎 each | diamonds only | permanent entitlement with the product id |
+| 4 sets (`bundle.nightmarket`, `bundle.festival`, `bundle.dragon`, `bundle.garden`), 850 to 1,750 💎 | diamonds only | a permanent entitlement for each item of the set the player does not own yet, at the set's price scaled to the share still missing (`bundlePrice`); `409 owned` when nothing is missing. A set is never an entitlement itself |
 
-App Store product ids are these ids. A Google Play subscription arrives as `<subscription>:<base plan>`, so create the Play subscriptions `coach.gold` and `fourwinds` with base plans `month` and `year`. The tier is the best active plan; refunding or ending one plan never cuts another. Sandbox events (TestFlight, Play testing) grant only when the account that would receive the grant is in `TESTER_USER_IDS` (for a `TRANSFER`, the account the purchases move to; a tester id among the event's aliases does not count) and are otherwise recorded as `ignored_sandbox`. A refunded diamond pack takes back its diamonds even if that leaves a negative balance, which blocks spending until it is paid back; `GET /api/me` then reports a negative `wallet.diamonds`, and the app shows the balance owed. Anything else (avatar and emote packs, VIP cards, club tiers, Coach Diamond, Table Pass) is not sold: events and spends for it grant nothing.
+App Store product ids are these ids. A Google Play subscription arrives as `<subscription>:<base plan>`, so create the Play subscriptions `coach.gold` and `fourwinds` with base plans `month` and `year`. The tier is the best active plan; refunding or ending one plan never cuts another. Sandbox events (TestFlight, Play testing) grant only when the account that would receive the grant is in `TESTER_USER_IDS` (for a `TRANSFER`, the account the purchases move to; a tester id among the event's aliases does not count) and are otherwise recorded as `ignored_sandbox`. A refunded diamond pack takes back its diamonds even if that leaves a negative balance, which blocks spending until it is paid back; `GET /api/me` then reports a negative `wallet.diamonds`, and the app shows the balance owed. Anything else (VIP cards, club tiers, Coach Diamond, Table Pass) is not sold: events and spends for it grant nothing.
 
 ### `POST /api/wallet/sync` (bearer)
 
@@ -240,7 +325,7 @@ Support grant. Body `{ userId, diamonds?, bonus?, entitlement?, days?, note }`; 
 
 ### `POST /api/wallet/spend` (bearer)
 
-Body `{ "productId": "theme.jade" }` → `200 { "spent": 400, "entitlement": "theme.jade", "wallet": { "diamonds", "bonusDiamonds" }, "cosmetics": [...] }`. The debit and the grant are one transaction; bonus diamonds are spent first.
+Body `{ "productId": "theme.jade" }` → `200 { "spent": 400, "entitlement": "theme.jade", "wallet": { "diamonds", "bonusDiamonds" }, "cosmetics": [...] }`. Any cosmetic or set of the catalogue may be bought this way. The debit and the grant are one transaction; bonus diamonds are spent first. For a set, `entitlement` is the set's id, `spent` the scaled price, and `cosmetics` (everything the account now owns) includes the items it unlocked.
 
 | `error` | Status | Meaning |
 | --- | --- | --- |
@@ -260,7 +345,7 @@ Header `Authorization: Bearer <REVENUECAT_WEBHOOK_SECRET>` (set exactly that as 
 | --- | --- |
 | `INITIAL_PURCHASE`, `RENEWAL` | Subscription: entitlement until `expiration_at_ms` (never shortened by a late, older event); purchase row recorded. A consumable sent as `INITIAL_PURCHASE` is credited like `NON_RENEWING_PURCHASE` |
 | `NON_RENEWING_PURCHASE` | Diamond pack credited (diamonds + bonus), once per `transaction_id` across all accounts: a transaction already recorded under another account answers `duplicate` |
-| `CANCELLATION` | Auto-renew off: nothing changes until expiry. `cancel_reason: CUSTOMER_SUPPORT` (a refund): the store's time on that plan ends now (time granted by support stays); for a diamond pack the whole pack is taken back, bonus first, from the account that holds the purchase (found by `transaction_id`, which after a Restore or a merge may not be the account the event names), and purchased diamonds may go below zero, which blocks every spend until a purchase covers the debt. The refund is remembered by `transaction_id`, so a purchase or renewal event for that transaction delivered later (a retry) grants nothing and answers `refunded` |
+| `CANCELLATION` | Auto-renew off: nothing changes until expiry. `cancel_reason: CUSTOMER_SUPPORT` (a refund): the time the refunded transaction paid for ends now, and no more than that. Each first purchase and renewal is recorded with the end of the period it paid for (`purchases.period_ends_at`, migration `0009_purchase_periods.sql`), and another period of the same plan that was paid for and not itself refunded stands: a refund of last month's charge leaves the running month, and a renewal the store charged early and then refunded leaves the rest of the month already paid for. A refund that names no transaction ends the plan at once. Only purchases on record count: a period granted by reconciliation alone (`POST /api/wallet/sync`, the nightly job) has no purchase row and does not hold up a refunded one, and rows older than the migration have no period end and are treated the same way. Time granted by support always stays. For a diamond pack the whole pack is taken back, bonus first, from the account that holds the purchase (found by `transaction_id`, which after a Restore or a merge may not be the account the event names), and purchased diamonds may go below zero, which blocks every spend until a purchase covers the debt. The refund is remembered by `transaction_id`, so a purchase or renewal event for that transaction delivered later (a retry) grants nothing and answers `refunded` |
 | `UNCANCELLATION`, `SUBSCRIPTION_EXTENDED` | Entitlement carried to `expiration_at_ms` if that is later |
 | `EXPIRATION` | Entitlement ends (ignored when a later renewal already extended it) |
 | `BILLING_ISSUE`, `PRODUCT_CHANGE`, `SUBSCRIPTION_PAUSED` | Recorded only (the store retries billing; the new product arrives with its `RENEWAL`; a pause ends with an `EXPIRATION`) |
