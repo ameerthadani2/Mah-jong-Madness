@@ -149,17 +149,9 @@ jobs:
         # EAS cloud builds do not inherit this job's environment; the profile's env does reach them.
         # Only public values go here (they end up in the app bundle anyway). The edit is not committed.
         working-directory: apps/mobile
-        run: |
-          node -e "
-            const fs = require('fs');
-            const eas = JSON.parse(fs.readFileSync('eas.json', 'utf8'));
-            const keys = ['SIGNAL_URL', 'APP_NAME', 'APP_SLUG', 'APP_SCHEME', 'APP_BUNDLE_ID', 'APP_VERSION', 'APP_STORE_ID', 'EXPO_PUBLIC_LINK_DOMAIN', 'EXPO_PUBLIC_SENTRY_DSN', 'EXPO_PUBLIC_POSTHOG_KEY', 'EXPO_PUBLIC_POSTHOG_HOST', 'SENTRY_ORG', 'SENTRY_PROJECT', 'EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID', 'EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID', 'EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID', 'EXPO_PUBLIC_REVENUECAT_IOS_KEY', 'EXPO_PUBLIC_REVENUECAT_ANDROID_KEY', 'EXPO_PUBLIC_TERMS_URL', 'EXPO_PUBLIC_PRIVACY_URL'];
-            const profile = eas.build[process.env.PROFILE];
-            profile.env = { ...(profile.env || {}) };
-            for (const k of keys) if (process.env[k]) profile.env[k] = process.env[k];
-            fs.writeFileSync('eas.json', JSON.stringify(eas, null, 2));
-            console.log('Build variables set: ' + (Object.keys(profile.env).join(', ') || 'none'));
-          "
+        env:
+          PLATFORM: android
+        run: node ../../.github/scripts/eas-build-env.cjs eas.json
       - name: Build on EAS
         id: build
         working-directory: apps/mobile

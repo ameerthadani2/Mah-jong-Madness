@@ -39,8 +39,9 @@ Step by step in [`DEPLOY.md`](DEPLOY.md) ("First deploy, in order").
 
 - [ ] Apple Developer Program (company account, D-U-N-S), agreements, bank and tax forms signed (paid apps and in-app purchases need them).
 - [ ] App Store Connect → Users and Access → Integrations → Team Keys → a key with the App Manager role: **GitHub secrets** `ASC_KEY_ID`, `ASC_ISSUER_ID`, `ASC_KEY_P8` (the whole `.p8` file), and `APPLE_TEAM_ID` (developer.apple.com → Membership). Unblocks: the iOS TestFlight workflow.
-- [ ] Run Actions → **iOS TestFlight build**. EAS registers the bundle id and creates the App Store Connect record on the first submission; then add testers ([`RUN_ON_IOS.md`](RUN_ON_IOS.md)).
-- [ ] **GitHub variable** `APP_STORE_ID` (App Store Connect → App information → Apple ID, numeric). Unblocks: the "Update required" link.
+- [ ] Create the app record by hand: App Store Connect → Apps → + → New App, with your bundle id, a name and any SKU. An API key cannot create it, so the workflow cannot either. If the bundle id is not offered yet, run Actions → **iOS TestFlight build** once with *submit* unticked: the first build registers it.
+- [ ] **GitHub variable** `APP_STORE_ID` (the new app → App Information → Apple ID, digits only). Unblocks: the workflow's submission to TestFlight (with *submit* ticked and no `APP_STORE_ID` the run stops before building and its summary lists these steps) and the "Update required" link.
+- [ ] Run Actions → **iOS TestFlight build** with *submit* ticked; then add testers ([`RUN_ON_IOS.md`](RUN_ON_IOS.md)).
 - [ ] Sign in with Apple: enable the capability for the bundle id, then **fly secret** `APPLE_CLIENT_ID` = the bundle id. Unblocks: the Apple button (hidden without it).
 
 ### 5. Google: Play internal testing

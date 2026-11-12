@@ -7,6 +7,9 @@ name: iOS TestFlight build
 #   ASC_KEY_P8            full contents of the downloaded AuthKey_XXXX.p8 file
 #   APPLE_TEAM_ID         10-character team id (developer.apple.com → Membership)
 # Without any of them the run is skipped with a summary of what to set up.
+# Submitting also needs the repository variable APP_STORE_ID: the numeric Apple ID of the app record
+# you create by hand in App Store Connect (an API key cannot create it). With "submit" ticked and no
+# APP_STORE_ID the run stops before anything is built and its summary says what to do.
 # Repository variables copied into the build (the same as android-play.yml; see docs/OWNER_TODO.md):
 #   SIGNAL_URL (required, wss://), APP_NAME, APP_SLUG, APP_SCHEME, APP_BUNDLE_ID, APP_VERSION,
 #   APP_STORE_ID, EXPO_PUBLIC_LINK_DOMAIN, EXPO_PUBLIC_SENTRY_DSN, EXPO_PUBLIC_POSTHOG_KEY,
@@ -52,13 +55,39 @@ jobs:
           HAS_ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID != '' }}
           HAS_ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 != '' }}
           HAS_APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID != '' }}
+          SUBMIT: ${{ inputs.submit }}
+          APP_STORE_ID: ${{ vars.APP_STORE_ID }}
         run: |
           MISSING=""
           for name in EXPO_TOKEN ASC_KEY_ID ASC_ISSUER_ID ASC_KEY_P8 APPLE_TEAM_ID; do
             var="HAS_$name"
             if [ "${!var}" != "true" ]; then MISSING="${MISSING:+$MISSING, }$name"; fi
           done
-          if [ -z "$MISSING" ]; then echo "ready=true" >> "$GITHUB_OUTPUT"; exit 0; fi
+          if [ -z "$MISSING" ]; then
+            # A submission with nobody at the keyboard needs the App Store Connect app id in the submit
+            # profile; without it EAS would build for 10-20 minutes and then refuse to submit.
+            APP_STORE_ID="$(printf '%s' "$APP_STORE_ID" | tr -d '\r\n\t' | sed -E 's/^ +//; s/ +$//')"
+            if [ "$SUBMIT" = "true" ] && ! printf '%s' "$APP_STORE_ID" | grep -Eq '^[0-9]{1,30}$'; then
+              echo "ready=false" >> "$GITHUB_OUTPUT"
+              if [ -z "$APP_STORE_ID" ]; then WHAT="the repository variable APP_STORE_ID is not set"; else WHAT="APP_STORE_ID is '$APP_STORE_ID', which is not a numeric App Store Connect app id"; fi
+              {
+                echo "## iOS build stopped: $WHAT"
+                echo ""
+                echo "Submitting to TestFlight needs the app record's id, and an API key cannot create the record."
+                echo ""
+                echo "1. App Store Connect -> Apps -> + -> New App: platform iOS, your bundle id (\`APP_BUNDLE_ID\`, default \`com.mahjongmania.app\`), a name and any SKU."
+                echo "   If the bundle id is not offered yet, run this workflow once with *submit* unticked: the first build registers it."
+                echo "2. Open the new app -> App Information -> copy the **Apple ID** (digits only, e.g. 1234567890)."
+                echo "3. GitHub -> Settings -> Secrets and variables -> Actions -> Variables: set \`APP_STORE_ID\` to that number."
+                echo "4. Run this workflow again (docs/RUN_ON_IOS.md, route 2)."
+                echo ""
+                echo "Nothing was built. To build without submitting, untick *submit*."
+              } >> "$GITHUB_STEP_SUMMARY"
+              echo "::error title=APP_STORE_ID is needed to submit::$WHAT. Create the app record in App Store Connect and set the repository variable APP_STORE_ID to its Apple ID, or run with submit unticked (the job summary lists the steps)."
+              exit 1
+            fi
+            echo "ready=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
           echo "ready=false" >> "$GITHUB_OUTPUT"
           {
             echo "## iOS build skipped: missing secret $MISSING"
@@ -67,7 +96,8 @@ jobs:
             echo "2. App Store Connect -> Users and Access -> Integrations -> Team Keys -> a key with the App Manager role: save its id as \`ASC_KEY_ID\`, the issuer id as \`ASC_ISSUER_ID\` and the whole .p8 file as \`ASC_KEY_P8\`."
             echo "3. developer.apple.com -> Membership: save the team id as \`APPLE_TEAM_ID\`."
             echo "4. Set the repository variable \`SIGNAL_URL\` to the deployed server (\`wss://...\`)."
-            echo "5. Re-run this workflow (docs/RUN_ON_IOS.md)."
+            echo "5. To submit: create the app record in App Store Connect and set the repository variable \`APP_STORE_ID\` to its Apple ID (digits)."
+            echo "6. Re-run this workflow (docs/RUN_ON_IOS.md)."
           } >> "$GITHUB_STEP_SUMMARY"
           echo "::notice::$MISSING missing; skipping the iOS build (the job summary lists the setup steps)"
 
@@ -159,21 +189,14 @@ jobs:
             git commit -m "Link EAS project (automated)"
             git push
           fi
-      - name: Pass build-time variables to the EAS build profile
+      - name: Pass build-time variables and the App Store Connect app id to eas.json
         # EAS cloud builds do not inherit this job's environment; the profile's env does reach them.
-        # Only public values go here (they end up in the app bundle anyway). The edit is not committed.
+        # Only public values go here (they end up in the app bundle anyway). APP_STORE_ID also becomes
+        # the submit profile's ascAppId. The edit is not committed.
         working-directory: apps/mobile
-        run: |
-          node -e "
-            const fs = require('fs');
-            const eas = JSON.parse(fs.readFileSync('eas.json', 'utf8'));
-            const keys = ['SIGNAL_URL', 'APP_NAME', 'APP_SLUG', 'APP_SCHEME', 'APP_BUNDLE_ID', 'APP_VERSION', 'APP_STORE_ID', 'EXPO_PUBLIC_LINK_DOMAIN', 'EXPO_PUBLIC_SENTRY_DSN', 'EXPO_PUBLIC_POSTHOG_KEY', 'EXPO_PUBLIC_POSTHOG_HOST', 'SENTRY_ORG', 'SENTRY_PROJECT', 'EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID', 'EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID', 'EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID', 'EXPO_PUBLIC_REVENUECAT_IOS_KEY', 'EXPO_PUBLIC_REVENUECAT_ANDROID_KEY', 'EXPO_PUBLIC_TERMS_URL', 'EXPO_PUBLIC_PRIVACY_URL'];
-            const profile = eas.build[process.env.PROFILE];
-            profile.env = { ...(profile.env || {}) };
-            for (const k of keys) if (process.env[k]) profile.env[k] = process.env[k];
-            fs.writeFileSync('eas.json', JSON.stringify(eas, null, 2));
-            console.log('Build variables set: ' + (Object.keys(profile.env).join(', ') || 'none'));
-          "
+        env:
+          PLATFORM: ios
+        run: node ../../.github/scripts/eas-build-env.cjs eas.json
       - name: Build (and submit) on EAS
         working-directory: apps/mobile
         env:
