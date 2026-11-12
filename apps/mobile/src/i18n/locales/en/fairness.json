@@ -107,6 +107,8 @@
   },
   "seed": "seed %{seed}",
   "server": "server",
+  "table": "table",
+  "localNote": "This match is played on your phone against bots: your phone deals and checks its own deal, so nobody else is there to keep it honest. The steps below matter at online tables.",
   "seat": "seat %{n}",
   "commit": "%{who} commit %{hash}… secret %{secret}…",
   "log": "%{n} actions · final hash %{hash}",

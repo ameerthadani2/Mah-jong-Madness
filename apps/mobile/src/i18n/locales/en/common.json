@@ -20,6 +20,7 @@
     "member": "member",
     "guest": "guest"
   },
+  "typeValue": "Tap to type a number",
   "bots": {
     "beginner": "Makes efficiency mistakes and never folds. Good for learning the flow.",
     "club": "Solid tile efficiency, claims when it helps, basic defence.",

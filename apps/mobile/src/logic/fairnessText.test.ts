@@ -152,3 +152,27 @@ describe('final scores this phone could not check', () => {
     expect(sheet).toContain('if (!endUnverified(state)) return null;');
   });
 });
+
+describe('the Fair play screen after a match against bots', () => {
+  const screen = readFileSync(join(__dirname, '..', 'screens', 'FairnessScreen.tsx'), 'utf8');
+
+  it('says the phone dealt and checked its own deal, above the steps written for online tables', () => {
+    expect(screen).toMatch(/const local = app\.session\?\.mode === 'local';/);
+    expect(screen.indexOf('testID="fairness-local"')).toBeGreaterThan(0);
+    expect(screen.indexOf('testID="fairness-local"')).toBeLessThan(screen.indexOf("t('fairness.step1')"));
+    expect(translator('en')('fairness.localNote')).toMatch(/your phone deals and checks its own deal/);
+    expect(translator('zh-TW')('fairness.localNote')).toMatch(/你的手機自己來/);
+  });
+
+  it('does not call the fifth secret a server\'s when no server took part', () => {
+    expect(screen).toMatch(/t\(local \? 'fairness\.table' : 'fairness\.server'\)/);
+    expect(translator('en')('fairness.table')).toBe('table');
+  });
+
+  it('uses one Chinese name for quick match everywhere', () => {
+    const all = JSON.stringify(zhTW);
+    expect(all).not.toContain('快速配桌');
+    expect(zhTW.fairness.trust).toContain('快速配對');
+    expect(zhTW.lobby.quickStarts).toContain('快速配對');
+  });
+});

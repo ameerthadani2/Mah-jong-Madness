@@ -1,5 +1,6 @@
-import React from 'react';
-import { Pressable, StyleSheet, Text, View, type StyleProp, type TextStyle, type ViewStyle } from 'react-native';
+import React, { useEffect, useRef, useState } from 'react';
+import { Pressable, StyleSheet, Text, TextInput, View, type StyleProp, type TextStyle, type ViewStyle } from 'react-native';
+import { atLimit, HOLD_DELAY_MS, HOLD_REPEAT_MS, holdMultiplier, stepped, typedValue } from '../logic/stepper';
 import { colors, fonts, hasCJK, pillTones, radius, space, type PillTone } from '../theme';
 import { Icon, type IconName } from './Icons';
 import { slopFor } from './table/layout';
@@ -172,13 +173,40 @@ export function Button({
 }
 
 /** Round chunky icon button (back, settings, emotes...). */
-export function IconButton({ icon, onPress, kind = 'secondary', size = 44, testID, disabled, badge, label, selected }: { icon: IconName; onPress?: () => void; kind?: ButtonKind; size?: number; testID?: string; disabled?: boolean; badge?: React.ReactNode; label?: string; selected?: boolean }) {
+export function IconButton({
+  icon,
+  onPress,
+  onPressIn,
+  onPressOut,
+  kind = 'secondary',
+  size = 44,
+  testID,
+  disabled,
+  badge,
+  label,
+  selected,
+}: {
+  icon: IconName;
+  onPress?: () => void;
+  /** For a button that repeats while held (the rule editor's − and +). */
+  onPressIn?: () => void;
+  onPressOut?: () => void;
+  kind?: ButtonKind;
+  size?: number;
+  testID?: string;
+  disabled?: boolean;
+  badge?: React.ReactNode;
+  label?: string;
+  selected?: boolean;
+}) {
   const k = KIND[kind];
   const shelf = size >= 44 ? 5 : 4;
   return (
     <Pressable
       testID={testID}
       onPress={onPress}
+      onPressIn={onPressIn}
+      onPressOut={onPressOut}
       disabled={disabled}
       hitSlop={slopFor(size, 6)}
       accessibilityRole="button"
@@ -302,13 +330,66 @@ export function Toggle({ label, value, onChange }: { label: string; value: boole
 }
 
 export function Stepper({ label, value, onChange, step = 1, min = 0, max = 9999, format }: { label: string; value: number; onChange: (v: number) => void; step?: number; min?: number; max?: number; format?: (v: number) => string }) {
+  const limits = { min, max, step };
+  // The latest value and callback, for the repeat timer of a held button.
+  const live = useRef({ value, onChange, limits });
+  live.current = { value, onChange, limits };
+  const hold = useRef<{ timer: ReturnType<typeof setTimeout> | null; repeats: number; held: boolean }>({ timer: null, repeats: 0, held: false });
+  const release = () => {
+    if (hold.current.timer) clearTimeout(hold.current.timer);
+    hold.current.timer = null;
+  };
+  useEffect(() => release, []);
+  const press = (dir: -1 | 1) => {
+    // A press that ends a hold has already stepped: the release is not one more step.
+    if (hold.current.held) return void (hold.current.held = false);
+    onChange(stepped(value, dir, limits));
+  };
+  const startHold = (dir: -1 | 1) => {
+    release();
+    hold.current = { timer: null, repeats: 0, held: false };
+    const tick = () => {
+      const now = live.current;
+      if (atLimit(now.value, dir, now.limits)) return release();
+      hold.current.held = true;
+      now.onChange(stepped(now.value, dir, now.limits, holdMultiplier(hold.current.repeats++)));
+      hold.current.timer = setTimeout(tick, HOLD_REPEAT_MS);
+    };
+    hold.current.timer = setTimeout(tick, HOLD_DELAY_MS);
+  };
+  // Tapping the value opens a field to type it (a large value is out of reach by steps alone).
+  const [typing, setTyping] = useState<string | null>(null);
+  const commit = () => {
+    const typed = typing === null ? null : typedValue(typing, limits);
+    setTyping(null);
+    if (typed !== null && typed !== value) onChange(typed);
+  };
+  const shown = format ? format(value) : String(value);
   return (
     <View style={styles.toggleRow}>
       <Text style={[styles.p, fontFor(label, fonts.bodyBold, '700'), { flex: 1 }]}>{label}</Text>
       <Row>
-        <IconButton size={34} kind="ghost" icon="minus" label={`${label} −`} onPress={() => onChange(Math.max(min, value - step))} />
-        <Text style={[styles.stepValue, fontFor(format ? format(value) : String(value), fonts.display)]}>{format ? format(value) : value}</Text>
-        <IconButton size={34} kind="ghost" icon="plus" label={`${label} +`} onPress={() => onChange(Math.min(max, value + step))} />
+        <IconButton size={34} kind="ghost" icon="minus" label={`${label} −`} disabled={atLimit(value, -1, limits)} onPress={() => press(-1)} onPressIn={() => startHold(-1)} onPressOut={release} />
+        {typing !== null ? (
+          <TextInput
+            autoFocus
+            value={typing}
+            onChangeText={setTyping}
+            onBlur={commit}
+            onSubmitEditing={commit}
+            keyboardType="number-pad"
+            inputMode="numeric"
+            maxLength={9}
+            selectTextOnFocus
+            accessibilityLabel={label}
+            style={[styles.stepValue, styles.stepInput]}
+          />
+        ) : (
+          <Pressable onPress={() => setTyping(String(value))} hitSlop={slopFor(24, 4)} accessibilityRole="button" accessibilityLabel={`${label}: ${shown}`} accessibilityHint={t('common.typeValue')}>
+            <Text style={[styles.stepValue, styles.stepTap, fontFor(shown, fonts.display)]}>{shown}</Text>
+          </Pressable>
+        )}
+        <IconButton size={34} kind="ghost" icon="plus" label={`${label} +`} disabled={atLimit(value, 1, limits)} onPress={() => press(1)} onPressIn={() => startHold(1)} onPressOut={release} />
       </Row>
     </View>
   );
@@ -428,6 +509,8 @@ const styles = StyleSheet.create({
   toggleTop: { position: 'absolute', top: 0, left: 0, right: 0, height: '45%', backgroundColor: '#DDE2F0' },
   knob: { width: 22, height: 22, borderRadius: 11, backgroundColor: '#FFFFFF', borderWidth: 2.5, borderColor: colors.ink },
   stepValue: { color: colors.ink, fontSize: 18, minWidth: 64, textAlign: 'center' },
+  stepTap: { textDecorationLine: 'underline', textDecorationStyle: 'dotted' },
+  stepInput: { fontFamily: fonts.display, backgroundColor: '#FFFFFF', borderWidth: 2, borderColor: colors.ink, borderRadius: 8, paddingVertical: 2, paddingHorizontal: 4, width: 96 },
   chip: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: colors.creamLight, borderWidth: 2, borderColor: colors.ink, paddingHorizontal: 11, paddingVertical: 5, borderRadius: 999, borderBottomWidth: 4, minHeight: CHIP_HEIGHT },
   chipDark: { backgroundColor: 'rgba(16,20,47,0.55)' },
   chipOn: { backgroundColor: colors.gold },
