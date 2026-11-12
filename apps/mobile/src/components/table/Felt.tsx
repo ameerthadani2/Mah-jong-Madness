@@ -2,14 +2,14 @@
  * The felt: three opponents (left, across, right) with their hands, melds and ponds, the compass and wall in
  * the middle, my pond, the coach bubble and the claim buttons. Geometry comes from ./layout.ts.
  */
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import type { Hint, PlayerView, TableView, TileId } from '@mjm/engine';
 import { DiscardPool, FeltFrame, MeldsAndFlowers, SeatBadge, WallRing } from '../TableParts';
 import { HiddenHand, scaledTile } from '../Tile';
 import { tileDims } from '../tileDims';
 import { useDisplayScale } from '../../display/DisplayScale';
-import { fitPools } from '../../display/tableFit';
+import { fitPools, fitSideColumn, SIDE_GAP } from '../../display/tableFit';
 import { Row } from '../Ui';
 import { CoachPanel } from './CoachPanel';
 import { slideFrom } from './feel';
@@ -98,16 +98,74 @@ export function Felt({
     );
   };
 
+  // Landscape: a side seat's melds, flowers and pond share the short column under its plate. They shrink to fit
+  // it (display/tableFit.ts fitSideSeat); if they still do not, the row of face-down tiles goes (its count is
+  // what the melds leave of sixteen), and past that the column scrolls, kept at its end, where the newest
+  // discards are. (Portrait scrolls the whole felt instead.)
+  const [sideBox, setSideBox] = useState<Record<string, number>>({});
+  const measure = (key: string) => (e: { nativeEvent: { layout: { height: number } } }) => {
+    const h = Math.round(e.nativeEvent.layout.height);
+    setSideBox((s) => (s[key] === h ? s : { ...s, [key]: h }));
+  };
+  const sideScroll = useRef<{ 1: React.ElementRef<typeof ScrollView> | null; 3: React.ElementRef<typeof ScrollView> | null }>({ 1: null, 3: null });
   const sideSeat = (r: 1 | 3) => {
     const seat = seatAt(r);
     const p = view.players[seat];
     const slim = Math.max(5, Math.min(11, Math.floor((sideWidth - 6) / Math.max(1, p.handCount)) + 1));
+    const handH = tablet ? 22 : 15;
+    const badge = <SeatBadge {...plateProps(seat)} size={plate} vertical={portrait} maxNameWidth={portrait ? sideWidth : sideWidth - plate - 12} />;
+    const hidden = <HiddenHand count={p.handCount} tileW={slim} tileH={handH} />;
+    const meldStyle = [{ maxWidth: sideWidth }, r === 1 ? { justifyContent: 'flex-end' as const } : undefined];
+    const align = r === 1 ? 'flex-end' : 'flex-start';
+    if (portrait) {
+      return (
+        <View style={[styles.sideSeat, { width: sideWidth }, r === 1 && { alignItems: 'flex-end' }]} key={seat}>
+          {badge}
+          {hidden}
+          <MeldsAndFlowers player={p} size={sideMeld} style={meldStyle} />
+          <DiscardPool tiles={p.discards} size={pool} perRow={sidePerRow} align={align} latest={latestFor(seat)} enterFrom={slideFrom(r)} />
+        </View>
+      );
+    }
+    const fit = fitSideColumn({
+      width: sideWidth,
+      column: sideBox[`col${r}`] ?? 0,
+      plate: sideBox[`plate${r}`] ?? 0,
+      hand: p.handCount > 0 ? handH + 2 : 0,
+      melds: p.melds.map((m) => m.tiles.length),
+      flowers: p.flowers.length,
+      discards: p.discards.length,
+      meld: tileDims(sideMeld).w,
+      pool: tileDims(pool).w,
+    });
+    const body = (
+      <>
+        <MeldsAndFlowers player={p} size={fit.meld} flowerSize={fit.meld} style={meldStyle} />
+        <DiscardPool tiles={p.discards} size={fit.pool} perRow={fit.perRow} align={align} latest={latestFor(seat)} enterFrom={slideFrom(r)} />
+      </>
+    );
     return (
-      <View style={[styles.sideSeat, { width: sideWidth }, r === 1 && { alignItems: 'flex-end' }]} key={seat}>
-        <SeatBadge {...plateProps(seat)} size={plate} vertical={portrait} maxNameWidth={portrait ? sideWidth : sideWidth - plate - 12} />
-        <HiddenHand count={p.handCount} tileW={slim} tileH={tablet ? 22 : 15} />
-        <MeldsAndFlowers player={p} size={sideMeld} style={[{ maxWidth: sideWidth }, r === 1 ? { justifyContent: 'flex-end' } : undefined]} />
-        <DiscardPool tiles={p.discards} size={pool} perRow={sidePerRow} align={r === 1 ? 'flex-end' : 'flex-start'} latest={latestFor(seat)} enterFrom={slideFrom(r)} />
+      // The left seat is stretched by the felt's row; the right one shares a column with the coach and takes what is left of it.
+      <View style={[styles.sideSeat, { width: sideWidth }, r === 1 && { alignItems: 'flex-end', flex: 1, minHeight: 0 }]} key={seat} onLayout={measure(`col${r}`)}>
+        <View onLayout={measure(`plate${r}`)}>{badge}</View>
+        {fit.showHand && hidden}
+        {fit.scroll ? (
+          <ScrollView
+            ref={(el) => {
+              sideScroll.current[r] = el;
+            }}
+            style={styles.sideBody}
+            contentContainerStyle={[styles.sideBodyContent, { alignItems: align }]}
+            testID={`side-seat-${r}`}
+            onContentSizeChange={() => sideScroll.current[r]?.scrollToEnd({ animated: false })}
+          >
+            {body}
+          </ScrollView>
+        ) : (
+          <View style={[styles.sideBodyContent, { alignItems: align }]} testID={`side-seat-${r}`}>
+            {body}
+          </View>
+        )}
       </View>
     );
   };
@@ -247,7 +305,9 @@ export function Felt({
 const styles = StyleSheet.create({
   cross: { flex: 1, flexDirection: 'row', gap: 8, padding: 6 },
   portraitBody: { flexGrow: 1, paddingBottom: 8 },
-  sideSeat: { gap: 6 },
+  sideSeat: { gap: SIDE_GAP },
+  sideBody: { flex: 1, minHeight: 0, alignSelf: 'stretch' },
+  sideBodyContent: { gap: SIDE_GAP },
   centerCol: { flex: 1, alignItems: 'center', gap: 6, minWidth: 0 },
   topSeat: { alignItems: 'center', gap: 6, alignSelf: 'stretch' },
   topRow: { justifyContent: 'center', flexWrap: 'wrap', rowGap: 4, maxWidth: '100%' },
