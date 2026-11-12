@@ -193,9 +193,12 @@ GitHub → Settings → Secrets and variables → Actions → Variables → New 
 **`SIGNAL_URL`** = `wss://<name>.fly.dev` (or your own domain if you add a certificate with
 `fly certs add`). The deploy workflow then health-checks and smoke-tests that address instead of
 `https://<name>.fly.dev`, and the iOS and Android build workflows bake it into the apps; they
-refuse to build without it, or with anything other than a `wss://` address on a public host. For
-builds started from a laptop with `eas build`, also set it as an EAS environment variable
-(expo.dev → project → Environment variables, `preview` and `production`).
+refuse to build without it, or with anything other than a `wss://` address on a public host name
+(no IP address, no `localhost` or private name, no credentials in the address). For builds
+started from a laptop with `eas build`, also set it as an EAS environment variable (expo.dev →
+project → Environment variables, `preview` and `production`); `app.config.js` applies the same
+rule there, so a `production` or `preview` build without it fails instead of pointing at
+localhost.
 
 ### 8. Rollback
 

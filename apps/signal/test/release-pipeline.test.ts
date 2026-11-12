@@ -187,3 +187,72 @@ describe('iOS TestFlight workflow: the check before a build', () => {
     expect(android).toMatch(/PLATFORM: android\n\s+run: node \.\.\/\.\.\/\.github\/scripts\/eas-build-env\.cjs eas\.json/);
   });
 });
+
+describe('SIGNAL_URL for a release build', () => {
+  type AppConfig = ((a: { config: Record<string, unknown> }) => { extra: { signalUrl?: string } }) & { releaseSignalUrlProblem(value: unknown): string | null };
+  const appConfig = require(join(ROOT, 'apps/mobile/app.config.js')) as AppConfig;
+  const appJson = require(join(ROOT, 'apps/mobile/app.json')) as { expo: Record<string, unknown> };
+  const ACCEPTED = ['wss://mahjong-signal.fly.dev', 'wss://mahjong-signal.fly.dev/', 'wss://play.example.com:8443', '  wss://mahjong-signal.fly.dev \n', 'wss://MAHJONG.example.co.uk/socket'];
+  const REFUSED = [
+    '', '   ', 'ws://mahjong-signal.fly.dev', 'https://mahjong-signal.fly.dev', 'WSS://mahjong-signal.fly.dev', 'mahjong-signal.fly.dev',
+    'wss://', 'wss:///path', 'wss://localhost:8787', 'wss://app.localhost', 'wss://localhost.:8787', 'wss://user@localhost:8787', 'wss://user:pw@mahjong-signal.fly.dev',
+    'wss://127.0.0.1:8787', 'wss://0.0.0.0', 'wss://0:8787', 'wss://10.0.0.5', 'wss://192.168.1.20:8787', 'wss://172.16.0.5:8787', 'wss://172.31.9.9', 'wss://169.254.1.1', 'wss://8.8.8.8',
+    'wss://[::1]:8787', 'wss://[fe80::1]', 'wss://mybox', 'wss://mybox.lan', 'wss://mybox.local', 'wss://db.internal', 'wss://mahjong-signal.fly.dev.', 'wss://mahjong signal.fly.dev',
+  ];
+
+  it('accepts a wss:// address on a public host name', () => {
+    for (const value of ACCEPTED) expect(appConfig.releaseSignalUrlProblem(value), JSON.stringify(value)).toBeNull();
+  });
+
+  it('refuses an unset value, another scheme, an IP address, a local or private name and credentials, each with a reason', () => {
+    for (const value of REFUSED) {
+      const problem = appConfig.releaseSignalUrlProblem(value);
+      expect(problem, JSON.stringify(value)).toEqual(expect.any(String));
+      expect(problem!.length).toBeGreaterThan(20);
+    }
+    expect(appConfig.releaseSignalUrlProblem(undefined)).toMatch(/not set/);
+    expect(appConfig.releaseSignalUrlProblem('wss://192.168.1.20:8787')).toMatch(/IP address/);
+    expect(appConfig.releaseSignalUrlProblem('wss://mybox.lan')).toMatch(/local or private name/);
+  });
+
+  it('stops a production or preview build on EAS that has no usable address, and leaves other builds alone', () => {
+    const before = { profile: process.env.EAS_BUILD_PROFILE, url: process.env.SIGNAL_URL };
+    const build = (profile: string | undefined, url: string | undefined) => {
+      if (profile === undefined) delete process.env.EAS_BUILD_PROFILE; else process.env.EAS_BUILD_PROFILE = profile;
+      if (url === undefined) delete process.env.SIGNAL_URL; else process.env.SIGNAL_URL = url;
+      return appConfig({ config: structuredClone(appJson.expo) });
+    };
+    try {
+      for (const profile of ['production', 'preview']) {
+        expect(() => build(profile, undefined), profile).toThrow(/SIGNAL_URL cannot be used for a (production|preview) build: it is not set/);
+        expect(() => build(profile, 'ws://localhost:8787'), profile).toThrow(/does not start with wss:\/\//);
+        expect(build(profile, ' wss://mahjong-signal.fly.dev ').extra.signalUrl).toBe('wss://mahjong-signal.fly.dev');
+      }
+      // A development build, a local `expo start` and the web export keep working with any address or none.
+      expect(build('development', 'ws://192.168.1.20:8787').extra.signalUrl).toBe('ws://192.168.1.20:8787');
+      expect(build(undefined, undefined).extra.signalUrl).toBeUndefined();
+    } finally {
+      if (before.profile === undefined) delete process.env.EAS_BUILD_PROFILE; else process.env.EAS_BUILD_PROFILE = before.profile;
+      if (before.url === undefined) delete process.env.SIGNAL_URL; else process.env.SIGNAL_URL = before.url;
+    }
+  });
+
+  it('is checked the same way by both build workflows before anything is built', () => {
+    for (const workflow of ['ios-testflight.yml', 'android-play.yml']) {
+      const step = workflowStepScript(workflow, 'name: Check SIGNAL_URL');
+      for (const value of ['wss://mahjong-signal.fly.dev', ' wss://play.example.com:8443 ']) {
+        const r = runStep(step, { SIGNAL_URL: value }, { cwd: ROOT });
+        expect(r.status, `${workflow} ${value}`).toBe(0);
+        expect(r.stdout).toContain(`Building against ${value.trim()}`);
+      }
+      for (const value of ['', 'wss://', 'wss://[::1]:8787', 'wss://172.16.0.5:8787', 'wss://user@localhost:8787', 'wss://mybox.lan', 'ws://mahjong-signal.fly.dev']) {
+        const r = runStep(step, { SIGNAL_URL: value }, { cwd: ROOT });
+        expect(r.status, `${workflow} ${JSON.stringify(value)}`).toBe(1);
+        expect(r.stdout).toContain('::error title=SIGNAL_URL cannot be used for a release build::');
+      }
+      const text = readFileSync(join(ROOT, '.github/workflows', workflow), 'utf8');
+      expect(text.indexOf('name: Check SIGNAL_URL')).toBeGreaterThan(text.indexOf('- uses: actions/checkout@v4'));
+      expect(text.indexOf('name: Check SIGNAL_URL')).toBeLessThan(text.indexOf('eas build'));
+    }
+  });
+});

@@ -5,6 +5,9 @@
 // - EXPO_PUBLIC_LINK_DOMAIN: the web domain for shared table links (https://<domain>/t/<code>); absent → the
 //   app scheme (<scheme>://table/<code>). Read by src/config.ts at bundle time.
 // - SIGNAL_URL: the deployed game server (wss://…) baked into the build; the app reads it on every launch.
+//   A release build (EAS profile production or preview) stops with a clear error unless it is a wss://
+//   address on a public host name: without it the app would silently talk to ws://localhost:8787. The
+//   build workflows run the same check (releaseSignalUrlProblem below) before anything is built.
 // - EXPO_BASE_URL: serve the web export under a sub-path (GitHub Pages uses /<repo-name>/).
 // - EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID, EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID, EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID:
 //   Google sign-in OAuth client ids, exposed as extra.googleClientIds; a platform without one hides the button.
@@ -76,7 +79,40 @@ const ANDROID_PACKAGE = /^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+$/;
 /** What iOS accepts as CFBundleShortVersionString (and Play shows as versionName): up to three numbers. */
 const APP_VERSION = /^\d+(\.\d+){0,2}$/;
 
+/** Host name endings that only resolve on a private network or nowhere at all. */
+const PRIVATE_SUFFIXES = ['localhost', 'local', 'localdomain', 'internal', 'lan', 'home', 'home.arpa', 'test', 'invalid', 'example'];
+
+/**
+ * Why `value` cannot be the game server of a release build, or null when it can. A release build
+ * must reach the deployed server over TLS from anywhere: wss://, a public host name (not an IP
+ * address, not a name that only a private network resolves), no credentials in the address.
+ */
+function releaseSignalUrlProblem(value) {
+  const v = typeof value === 'string' ? value.trim() : '';
+  if (!v) return 'it is not set. Set it to the deployed game server, e.g. wss://mahjong-signal.fly.dev; without it the build would talk to a development address.';
+  if (/\s/.test(v)) return `'${v}' contains white space.`;
+  if (!v.startsWith('wss://')) return `'${v}' does not start with wss:// (lower case). A release build talks to the deployed server over TLS.`;
+  let url;
+  try {
+    url = new URL(v);
+  } catch {
+    return `'${v}' is not an address. Use wss://<your server>, e.g. wss://mahjong-signal.fly.dev.`;
+  }
+  if (url.username || url.password) return `'${v}' carries a user name or password; the address is baked into the app, so it must not.`;
+  const host = url.hostname.toLowerCase();
+  if (host.startsWith('[') || /^\d+(\.\d+){3}$/.test(host)) return `'${v}' points at an IP address. Use the server's host name (a certificate is issued for a name, and a private address is unreachable from a phone).`;
+  if (!host.includes('.') || host.endsWith('.')) return `'${v}' has no public host name (the host is '${host}'). Use the deployed server, e.g. wss://mahjong-signal.fly.dev.`;
+  if (PRIVATE_SUFFIXES.some((s) => host === s || host.endsWith('.' + s))) return `'${v}' points at a local or private name ('${host}'). A release build must never point at localhost or a private network.`;
+  return null;
+}
+
 module.exports = ({ config }) => {
+  // On EAS the build profile is in the environment: stop a release build that has no usable server address.
+  const profile = env('EAS_BUILD_PROFILE', undefined);
+  if (profile === 'production' || profile === 'preview') {
+    const problem = releaseSignalUrlProblem(process.env.SIGNAL_URL);
+    if (problem) throw new Error(`SIGNAL_URL cannot be used for a ${profile} build: ${problem} Set it as a repository variable (the build workflows copy it) or as an EAS environment variable for a build started with eas build.`);
+  }
   const bundleId = env('APP_BUNDLE_ID', IDENTITY_DEFAULTS.bundleId);
   if (!ANDROID_PACKAGE.test(bundleId)) {
     throw new Error(`APP_BUNDLE_ID '${bundleId}' cannot be the Android package: use dot-separated segments that start with a letter, with letters, digits and '_' only (e.g. com.mahjongmania.app)`);
@@ -133,3 +169,5 @@ module.exports = ({ config }) => {
   if (baseUrl) out.experiments = { ...(config.experiments || {}), baseUrl };
   return out;
 };
+
+module.exports.releaseSignalUrlProblem = releaseSignalUrlProblem;

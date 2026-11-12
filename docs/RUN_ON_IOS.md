@@ -52,7 +52,7 @@ The **iOS TestFlight build** workflow (`.github/workflows/ios-testflight.yml`) b
 
 One-time setup:
 
-1. **Server and `SIGNAL_URL`**: deploy the server ([`DEPLOY.md`](DEPLOY.md)) and set the repository variable `SIGNAL_URL` to its `wss://` address. The workflow refuses to build without it, or with anything that is not `wss://` on a public host: a release build must never point at localhost.
+1. **Server and `SIGNAL_URL`**: deploy the server ([`DEPLOY.md`](DEPLOY.md)) and set the repository variable `SIGNAL_URL` to its `wss://` address. The workflow refuses to build without it, or with anything that is not `wss://` on a public host name (an IP address, `localhost`, a `.local`/`.lan`/`.internal` name or an address with a user name in it are all refused): a release build must never point at localhost.
 2. **Repository secrets** (Settings → Secrets and variables → Actions): `EXPO_TOKEN` (expo.dev → Access tokens); from App Store Connect → Users and Access → Integrations → Team Keys, a key with the App Manager role: `ASC_KEY_ID`, `ASC_ISSUER_ID` and `ASC_KEY_P8` (the whole downloaded `.p8` file); and `APPLE_TEAM_ID` (developer.apple.com → Membership). Without any of them the run skips itself and its summary lists what to set up.
 3. **The App Store Connect app record and `APP_STORE_ID`**: App Store Connect → Apps → + → New App, with the bundle id `com.mahjongmania.app` (or your `APP_BUNDLE_ID`), name "Mahjong Mania: Taiwan 16" and any SKU. (An API key cannot create the record, so this is the one manual step; the bundle id appears in the list once EAS has registered it, which the first build does. If it is not listed yet, run the workflow once with *submit* unticked, then create the record.) Then open the app → App Information, copy its **Apple ID** (digits only) and save it as the repository variable `APP_STORE_ID`. The workflow writes it into the submit profile (`ascAppId`); with *submit* ticked and no `APP_STORE_ID` the run stops before anything is built and its summary repeats this step.
 4. Optional repository variables copied into the build: `APP_NAME`, `APP_SLUG`, `APP_SCHEME`, `APP_BUNDLE_ID`, `APP_VERSION`, `EXPO_PUBLIC_LINK_DOMAIN`, the `EXPO_PUBLIC_GOOGLE_*`, `EXPO_PUBLIC_REVENUECAT_*`, `EXPO_PUBLIC_TERMS_URL`, `EXPO_PUBLIC_PRIVACY_URL`, Sentry and PostHog values ([`OWNER_TODO.md`](OWNER_TODO.md)).
@@ -74,7 +74,7 @@ eas login                 # free Expo account; create one at expo.dev if needed
 eas init                  # creates the EAS project and writes its id into app.json
 ```
 
-A laptop build does not see GitHub variables: set `SIGNAL_URL` (and any other value you use) as an EAS environment variable first (expo.dev → project → Environment variables, `preview` and `production`). The workflow's checks do not run here, so make sure it is the deployed `wss://` address.
+A laptop build does not see GitHub variables: set `SIGNAL_URL` (and any other value you use) as an EAS environment variable first (expo.dev → project → Environment variables, `preview` and `production`). The workflow's check does not run here, but `app.config.js` makes the same one inside the EAS build: a `production` or `preview` build without a public `wss://` address stops with "SIGNAL_URL cannot be used" instead of shipping an app that talks to `ws://localhost:8787`.
 
 First build and TestFlight upload (EAS does the Apple paperwork for you):
 

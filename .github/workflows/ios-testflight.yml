@@ -16,8 +16,9 @@ name: iOS TestFlight build
 #   EXPO_PUBLIC_POSTHOG_HOST, SENTRY_ORG, SENTRY_PROJECT, EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID,
 #   EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID, EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID, EXPO_PUBLIC_REVENUECAT_IOS_KEY,
 #   EXPO_PUBLIC_REVENUECAT_ANDROID_KEY, EXPO_PUBLIC_TERMS_URL, EXPO_PUBLIC_PRIVACY_URL.
-# A missing SIGNAL_URL, or one that is not wss:// or points at a local address, fails the run
-# before anything is built: a release build must reach the deployed server.
+# A missing SIGNAL_URL, or one that is not wss:// on a public host name (an IP address, localhost
+# or a private name, credentials in the address), fails the run before anything is built: a
+# release build must reach the deployed server.
 # SENTRY_AUTH_TOKEN and google-services.json belong in EAS environment variables (secret / file),
 # never here.
 # The app uses native modules (notifications, Sentry, purchases), so it runs only in builds like this one
@@ -132,24 +133,19 @@ jobs:
       EXPO_PUBLIC_TERMS_URL: ${{ vars.EXPO_PUBLIC_TERMS_URL }}
       EXPO_PUBLIC_PRIVACY_URL: ${{ vars.EXPO_PUBLIC_PRIVACY_URL }}
     steps:
-      - name: Check SIGNAL_URL (a release build must reach the deployed server)
-        run: |
-          if [ -z "$SIGNAL_URL" ]; then
-            echo "::error title=SIGNAL_URL is not set::Set the repository variable SIGNAL_URL to the deployed game server, e.g. wss://mahjong-signal.fly.dev (Settings -> Secrets and variables -> Actions -> Variables). Without it the build would talk to a development address."
-            exit 1
-          fi
-          case "$SIGNAL_URL" in
-            wss://*) ;;
-            *) echo "::error title=SIGNAL_URL must start with wss://::SIGNAL_URL is '$SIGNAL_URL'. A release build talks to the deployed server over TLS: use wss://<your server> (docs/DEPLOY.md)."; exit 1 ;;
-          esac
-          HOST=$(printf '%s' "$SIGNAL_URL" | sed -E 's#^wss://([^/:?]+).*#\1#' | tr 'A-Z' 'a-z')
-          case "$HOST" in
-            ""|localhost|*.localhost|127.*|0.0.0.0|10.*|192.168.*|*.local|*.internal)
-              echo "::error title=SIGNAL_URL points at a local address::SIGNAL_URL is '$SIGNAL_URL'. A release build must never point at localhost or a private network: use the deployed server."
-              exit 1 ;;
-          esac
-          echo "Building against $SIGNAL_URL"
       - uses: actions/checkout@v4
+      - name: Check SIGNAL_URL (a release build must reach the deployed server)
+        # The same check app.config.js makes on EAS, run here so a bad address stops the run before
+        # anything is built: wss://, a public host name, no IP address, no credentials.
+        run: |
+          node -e "
+            const problem = require('./apps/mobile/app.config.js').releaseSignalUrlProblem(process.env.SIGNAL_URL);
+            if (problem) {
+              console.log('::error title=SIGNAL_URL cannot be used for a release build::The repository variable SIGNAL_URL: ' + problem + ' (Settings -> Secrets and variables -> Actions -> Variables; docs/DEPLOY.md)');
+              process.exit(1);
+            }
+            console.log('Building against ' + process.env.SIGNAL_URL.trim());
+          "
       - uses: actions/setup-node@v4
         with:
           node-version: 22
