@@ -96,7 +96,7 @@ describe('coach accuracy', () => {
       }
     }
     expect(cases).toBeGreaterThan(0);
-  });
+  }, 60_000); // sixty full hands with a hint at every kong: seconds on a busy machine, so no default 5 s limit
 
   it('review explains a discard win as a win', () => {
     let found = false;
