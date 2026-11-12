@@ -335,22 +335,29 @@ export function Stepper({ label, value, onChange, step = 1, min = 0, max = 9999,
   const live = useRef({ value, onChange, limits });
   live.current = { value, onChange, limits };
   const hold = useRef<{ timer: ReturnType<typeof setTimeout> | null; repeats: number; held: boolean }>({ timer: null, repeats: 0, held: false });
-  const release = () => {
+  const stopTimer = () => {
     if (hold.current.timer) clearTimeout(hold.current.timer);
     hold.current.timer = null;
   };
-  useEffect(() => release, []);
+  const release = () => {
+    stopTimer();
+    // The press event that ends a hold comes right after this one and must not step again (see `press`); a finger
+    // that slid off the button sends none, so the mark is also dropped by itself, or the next tap would be lost.
+    const ended = hold.current;
+    if (ended.held) setTimeout(() => (ended.held = false), 120);
+  };
+  useEffect(() => stopTimer, []);
   const press = (dir: -1 | 1) => {
     // A press that ends a hold has already stepped: the release is not one more step.
     if (hold.current.held) return void (hold.current.held = false);
     onChange(stepped(value, dir, limits));
   };
   const startHold = (dir: -1 | 1) => {
-    release();
+    stopTimer();
     hold.current = { timer: null, repeats: 0, held: false };
     const tick = () => {
       const now = live.current;
-      if (atLimit(now.value, dir, now.limits)) return release();
+      if (atLimit(now.value, dir, now.limits)) return stopTimer();
       hold.current.held = true;
       now.onChange(stepped(now.value, dir, now.limits, holdMultiplier(hold.current.repeats++)));
       hold.current.timer = setTimeout(tick, HOLD_REPEAT_MS);
