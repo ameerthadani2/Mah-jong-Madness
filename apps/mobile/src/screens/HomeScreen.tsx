@@ -7,6 +7,9 @@ import { useWallet } from '../monetisation/useWallet';
 import { gateFor } from '../legal/age';
 import { useOnlineGuard } from '../legal/useOnlineGuard';
 import { AgeBlocked, AgeGate } from '../components/AgeGate';
+import { ConsentQuestion } from '../components/ConsentQuestion';
+import { telemetryAvailable, useConsent } from '../telemetry';
+import { shouldAskConsent } from '../telemetry/consent';
 import { useApp } from '../app-state';
 import { createLocalSession, createOnlineSession, seatOrRefusal } from '../game/session';
 import { useAuth } from '../auth/AuthProvider';
@@ -61,6 +64,9 @@ export function HomeScreen() {
 
   // The age gate comes first on a fresh install (src/legal/age.ts, gateFor); `entry` guards the online resume.
   const { entry, gate } = useOnlineGuard();
+  // The one-time privacy question exists only in a build that has a service to ask about (never the web preview).
+  const asksConsent = telemetryAvailable.analytics || telemetryAvailable.crash;
+  const consentState = useConsent();
   // Mirror the server wallet when this device already has a session (never bootstraps one).
   const { refresh: refreshWallet } = useWallet({ loadPrices: false });
   const accountId = auth.user?.id;
@@ -245,6 +251,11 @@ export function HomeScreen() {
   const gateState = gateFor('home', gate.status, needsName);
   if (gateState === 'blocked') return <AgeBlocked />;
   if (gateState === 'ask') return <AgeGate />;
+  // Once, after the age gate: may the app send usage statistics and crash reports? Off until the player says yes.
+  if (asksConsent) {
+    if (!consentState.loaded) return null;
+    if (gate.status === 'allowed' && shouldAskConsent(consentState.record, telemetryAvailable)) return <ConsentQuestion />;
+  }
 
   return (
     <ScrollView contentContainerStyle={[styles.wrap, wide && { paddingTop: 8 }, tablet && { padding: 28, gap: 22 }]}>

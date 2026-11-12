@@ -7,6 +7,8 @@ import PostHog from 'posthog-react-native';
 import type { TelemetryPlatform } from './platform';
 
 let sentryStarted = false;
+/** A DSN is baked into this build, so crash reports may start now or later, when the player agrees. */
+let crashConfigured = false;
 
 interface ErrorUtilsLike {
   getGlobalHandler(): (e: unknown, fatal?: boolean) => void;
@@ -16,6 +18,7 @@ interface ErrorUtilsLike {
 export const telemetryPlatform: TelemetryPlatform = {
   createCrash(dsn, allowed) {
     if (!dsn) return null;
+    crashConfigured = true;
     // Sentry starts only from `start()`: once the stored consent has loaded with crash reports on. The JS
     // `beforeSend` below never reaches the native SDK (it is stripped before initNativeSdk), so native crash
     // handling and auto sessions can only be switched off by not initialising, and `stop()` closes the SDK
@@ -82,5 +85,10 @@ export const telemetryPlatform: TelemetryPlatform = {
     });
   },
 
-  wrapRoot: (root) => (sentryStarted ? Sentry.wrap(root) : root),
+  // The root is wrapped once, when the app registers it, which is before the stored consent has loaded and long
+  // before a new player answers the question: so it is wrapped whenever this build can report crashes at all.
+  // Until `start()` runs there is no Sentry client, and the wrapper's touch breadcrumbs and profiler do nothing
+  // without one (@sentry/core addBreadcrumb and the profiler both return when getClient() is empty): nothing is
+  // recorded or sent before the player has agreed.
+  wrapRoot: (root) => (crashConfigured ? Sentry.wrap(root) : root),
 };

@@ -3,7 +3,11 @@ import { Telemetry, type AnalyticsSink, type CrashSink } from './client';
 import { ConsentStore, type KeyValueStore } from './consent';
 
 const kv = (raw: string | null): KeyValueStore => ({ getItem: async () => raw, setItem: async () => undefined });
-const given = JSON.stringify({ v: 1, given: true });
+// The stored record of a player who answered yes to the one-time question.
+const given = JSON.stringify({ v: 1, given: true, asked: true, analytics: true, crash: true });
+// A player who passed the age gate and has not been asked yet, or was asked and said no.
+const notAsked = JSON.stringify({ v: 1, given: true });
+const declined = JSON.stringify({ v: 1, given: true, asked: true, analytics: false, crash: false });
 
 function fakeSink() {
   const calls: Array<[string, Record<string, unknown>]> = [];
@@ -29,17 +33,58 @@ describe('telemetry client', () => {
     expect(() => tel.captureError(new Error('x'), 'boot')).not.toThrow();
   });
 
-  it('sends nothing before the age gate, then sends once consent is given', async () => {
+  it('captures nothing until the player agrees: not before the age gate, not after it, not after a no', async () => {
     const consent = new ConsentStore(kv(null));
     await consent.load();
     const a = fakeSink();
-    const tel = new Telemetry({ consent, analytics: a.factory });
+    const captured: unknown[] = [];
+    const started: string[] = [];
+    const tel = new Telemetry({ consent, analytics: a.factory, crash: { capture: (e) => captured.push(e), start: () => started.push('start') } });
     tel.track('shop_view', { from: 'home' });
-    expect(a.calls).toEqual([]);
-    expect(a.state.created).toBe(0);
+    tel.captureError(new Error('early'), 'caught');
+    // Passing the age gate is not agreement.
     consent.dispatch({ type: 'given' });
     tel.track('shop_view', { from: 'home' });
+    tel.captureError(new Error('after the gate'), 'caught');
+    expect(a.calls).toEqual([]);
+    expect(a.state.created).toBe(0);
+    expect(captured).toEqual([]);
+    expect(started).toEqual([]);
+    expect(tel.crashAllowed()).toBe(false);
+    // Yes: from now on, and nothing from before is sent after the fact.
+    consent.dispatch({ type: 'answer', agree: true });
+    expect(started).toEqual(['start']);
+    expect(a.calls).toEqual([]);
+    expect(captured).toEqual([]);
+    tel.track('shop_view', { from: 'home' });
     expect(a.calls).toEqual([['shop_view', { from: 'home' }]]);
+
+    const no = new ConsentStore(kv(null));
+    await no.load();
+    const b = fakeSink();
+    const telNo = new Telemetry({ consent: no, analytics: b.factory, crash: { capture: (e) => captured.push(e), start: () => started.push('second start') } });
+    no.dispatch({ type: 'answer', agree: false });
+    telNo.track('shop_view', { from: 'home' });
+    telNo.captureError(new Error('declined'), 'caught');
+    expect(b.calls).toEqual([]);
+    expect(b.state.created).toBe(0);
+    expect(started).toEqual(['start']);
+  });
+
+  it('drops what was buffered at launch for a player who has not been asked or said no', async () => {
+    for (const stored of [null, notAsked, declined]) {
+      const consent = new ConsentStore(kv(stored));
+      const a = fakeSink();
+      const captured: unknown[] = [];
+      const tel = new Telemetry({ consent, analytics: a.factory, crash: { capture: (e) => captured.push(e) } });
+      tel.track('app_open', { platform: 'ios', build: '1', locale: 'en' });
+      tel.captureError(new Error('boot'), 'boot', true);
+      await consent.load();
+      // Agreeing later does not bring the launch events back.
+      consent.dispatch({ type: 'answer', agree: true });
+      expect(a.calls, String(stored)).toEqual([]);
+      expect(captured, String(stored)).toEqual([]);
+    }
   });
 
   it('buffers events until the stored consent loads, then sends or drops them', async () => {
@@ -109,7 +154,9 @@ describe('telemetry client', () => {
     };
     expect(await run(JSON.stringify({ v: 1, given: true, crash: false }))).toEqual([]);
     expect((await run(given)).map((e) => (e as Error).message)).toEqual(['boot error']);
-    expect((await run(null)).map((e) => (e as Error).message)).toEqual(['boot error']);
+    // Opt-in: with no stored yes (a new player, or one not asked yet) the boot error is dropped.
+    expect(await run(null)).toEqual([]);
+    expect(await run(notAsked)).toEqual([]);
   });
 
   it('starts the crash reporter only once consent allows it, and stops it when the toggle goes off', async () => {

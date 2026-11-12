@@ -2,10 +2,19 @@
   "_review": "n/a",
   "title": "Privacy",
   "analytics": "Share usage statistics",
-  "analyticsHelp": "Which screens and features are used, so we know what to improve. Not linked to your name and never used for advertising.",
+  "analyticsHelp": "Which screens and features are used, so we know what to improve. Off unless you switch it on. Not linked to your name and never used for advertising.",
   "crash": "Send crash reports",
-  "crashHelp": "When the app fails, a technical report of what went wrong (device model, app version, the failing code).",
+  "crashHelp": "When the app fails, a technical report of what went wrong (device model, app version, the failing code). Off unless you switch it on.",
   "never": "We never sell data or track you across other apps. Chat, names and club details are never included.",
+  "ask": {
+    "title": "Usage statistics and crash reports",
+    "body": "May the app send these? Both are off unless you say yes, and the game works the same either way.",
+    "analytics": "Usage statistics",
+    "crash": "Crash reports",
+    "yes": "Yes, send them",
+    "no": "No, do not send",
+    "note": "You can switch either one on or off at any time in Settings, under Privacy."
+  },
   "update": {
     "title": "Update required",
     "body": "This version of the app no longer works with the game server. Install the latest version to keep playing; your progress and account are kept.",
