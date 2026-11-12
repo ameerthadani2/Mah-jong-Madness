@@ -89,6 +89,7 @@ async function main(): Promise<void> {
     push,
     analytics,
     hostLock,
+    imageRef: (env.FLY_IMAGE_REF ?? '').trim() || null,
     onHostLockLost: () => {
       void repos
         .close()

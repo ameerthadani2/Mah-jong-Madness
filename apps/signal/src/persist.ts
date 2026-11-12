@@ -24,6 +24,14 @@ import type { RoomRegistry } from './rooms';
 
 const DAY_MS = 86_400_000;
 
+/** Counts of table snapshot writes since this process started, and when the last ones happened (ms). */
+export interface SnapshotWrites {
+  saved: number;
+  failed: number;
+  lastSavedAt: number | null;
+  lastFailedAt: number | null;
+}
+
 export interface TablePersisterOptions {
   /** Quiet period before a changed table is written (default 500 ms). */
   debounceMs?: number;
@@ -63,8 +71,13 @@ export class TablePersister {
   private readonly now: () => number;
   private readonly log: (line: string) => void;
   private stopped = false;
-  /** Number of snapshot writes that reached the store (tests). */
+  /** Number of snapshot writes that reached the store. */
   writes = 0;
+  /** Number of snapshot writes the store refused or that never answered. */
+  failures = 0;
+  /** When the last snapshot write succeeded and when the last one failed (`now()`), or null. */
+  lastSavedAt: number | null = null;
+  lastFailedAt: number | null = null;
 
   constructor(
     private readonly rooms: RoomRegistry,
@@ -75,6 +88,20 @@ export class TablePersister {
     this.minIntervalMs = opts.minIntervalMs ?? 2_000;
     this.now = opts.now ?? Date.now;
     this.log = opts.log ?? ((line) => console.log(line));
+  }
+
+  /**
+   * Whether tables are reaching the store, for `/health`: a deploy whose writes fail would lose
+   * every table at the next restart while looking healthy.
+   */
+  status(): SnapshotWrites {
+    return { saved: this.writes, failed: this.failures, lastSavedAt: this.lastSavedAt, lastFailedAt: this.lastFailedAt };
+  }
+
+  private failed(what: string, e: Error): void {
+    this.failures++;
+    this.lastFailedAt = this.now();
+    console.error(what, e.message);
   }
 
   /** Start following the registry's hosted tables. */
@@ -134,7 +161,7 @@ export class TablePersister {
       void this.repo
         .get(code)
         .then((s) => (s && s.status !== 'finished' ? this.repo.save({ ...s, status: 'finished', updatedAt: this.now() }) : undefined))
-        .catch((e: Error) => console.error(`[signal] table ${code} snapshot not closed:`, e.message));
+        .catch((e: Error) => this.failed(`[signal] table ${code} snapshot not closed:`, e));
       return;
     }
     t.closed = true;
@@ -160,9 +187,10 @@ export class TablePersister {
         if (evicted) snapshot.evicted = evicted;
         await this.repo.save({ roomCode: code, clubCode: t.clubCode, status: t.closed ? 'finished' : tableStatus(t.host), snapshot, updatedAt: this.now() });
         this.writes++;
+        this.lastSavedAt = this.now();
         if (t.closed && this.tables.get(code) === t && !t.queued) this.tables.delete(code);
       })
-      .catch((e: Error) => console.error(`[signal] table ${code} snapshot not saved:`, e.message));
+      .catch((e: Error) => this.failed(`[signal] table ${code} snapshot not saved:`, e));
     return t.chain;
   }
 

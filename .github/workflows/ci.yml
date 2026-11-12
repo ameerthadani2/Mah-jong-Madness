@@ -63,7 +63,8 @@ jobs:
           cache: npm
       - run: npm ci --workspace @mjm/signal --workspace @mjm/engine --workspace @mjm/net
       - name: Play a hand against the image (the same smoke test that runs after a deploy)
-        run: npm run smoke -w @mjm/signal -- http://127.0.0.1:8787
+        # The image runs on memory here on purpose (no database in this job), so say so.
+        run: npm run smoke -w @mjm/signal -- http://127.0.0.1:8787 --expect-storage memory
       - name: Stop the container
         if: always()
         run: |

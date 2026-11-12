@@ -128,7 +128,7 @@ JSON in and out. Errors are `{ "error": "<code>", "message": "<English sentence>
 
 | Route | Auth | Body | Answer |
 | --- | --- | --- | --- |
-| `GET /health` | none | | `{ ok, peers, rooms, hostedTables, tables, actionLatency: { samples, p50Ms, p95Ms, maxMs, windowSeconds } \| null, pushEnabled, storeEnabled, storage: "memory"\|"pg", db?: "ok"\|"down" }` (see `docs/OBSERVABILITY.md`) |
+| `GET /health` | none | | `{ ok, peers, rooms, hostedTables, tables, actionLatency: { samples, p50Ms, p95Ms, maxMs, windowSeconds } \| null, pushEnabled, storeEnabled, storage: "memory"\|"pg", snapshots: { saved, failed, lastSavedAt, lastFailedAt }, image: string \| null, db?: "ok"\|"down" }`: `snapshots` counts the table writes since boot (a growing `failed` means tables are not reaching storage), `image` is `FLY_IMAGE_REF` (see `docs/OBSERVABILITY.md`) |
 | `GET /api/config` | none | | `{ authProviders, storeEnabled, pushEnabled, minBuild, maintenance, serverNow }` |
 | `POST /api/auth/guest` | none | `{ device: { id, platform, appBuild, locale }, displayName?, avatar? }` | `201 { userId, guestSecret, session: { token, expiresAt }, user }` |
 | `POST /api/auth/guest/login` | none | `{ userId, guestSecret, device }` | `{ session, user }` or `401 invalid_credentials`; five failures a minute per IP and user id → `429` (the user's own auth bucket is spent only by a correct secret) |
