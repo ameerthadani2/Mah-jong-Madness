@@ -64,7 +64,7 @@ const BANNED: QuickMatchFailure = { kind: 'message', message: { key: 'quickmatch
 
 const BY_CODE: Readonly<Record<string, QuickMatchFailure>> = {
   banned: BANNED,
-  // The year on file is under 17 and the server takes a year only once: nothing the app sends changes it.
+  // The year on file is under the server's quick-match age (18; 17 on an older server) and the server takes a year only once: nothing the app sends changes it.
   age_under: { kind: 'message', message: { key: 'quickmatch.errors.ageUnder' }, final: true },
   age_missing: { kind: 'age' },
   rate_limited: { kind: 'message', message: { key: 'quickmatch.errors.rateLimited' }, final: false, retryAfterMs: RATE_LIMIT_WAIT_MS },

@@ -35,7 +35,7 @@ const TERMS_EN: LegalDocument = {
     },
     {
       heading: '2. Who may play',
-      paragraphs: ['The app contains simulated gambling and is rated 17+. You must be at least 17 years old to use it. We ask for your birth year when you first open the app and may close accounts that we believe belong to someone younger.'],
+      paragraphs: ['The app contains simulated gambling and is rated 18+. You must be at least 18 years old to use it. We ask for your birth year when you first open the app and may close accounts that we believe belong to someone younger.'],
     },
     {
       heading: '3. Your account',
@@ -91,7 +91,7 @@ const TERMS_ZH: LegalDocument = {
     },
     {
       heading: '2. 誰可以玩',
-      paragraphs: ['本 App 含有模擬賭博內容，分級為 17 歲以上。你必須年滿 17 歲才能使用。首次開啟時我們會詢問你的出生年份，並可能關閉我們認為屬於未滿年齡者的帳號。'],
+      paragraphs: ['本 App 含有模擬賭博內容，分級為 18 歲以上。你必須年滿 18 歲才能使用。首次開啟時我們會詢問你的出生年份，並可能關閉我們認為屬於未滿年齡者的帳號。'],
     },
     {
       heading: '3. 你的帳號',
@@ -177,7 +177,7 @@ const PRIVACY_EN: LegalDocument = {
     },
     {
       heading: '8. Children',
-      paragraphs: ['The app is for people aged 17 and over. If you have entered a birth year under the limit the app does not let you in; if we learn an account belongs to a child we delete it.'],
+      paragraphs: ['The app is for people aged 18 and over. If you have entered a birth year under the limit the app does not let you in; if we learn an account belongs to a child we delete it.'],
     },
     {
       heading: '9. Changes',
@@ -227,7 +227,7 @@ const PRIVACY_ZH: LegalDocument = {
     },
     {
       heading: '8. 兒童',
-      paragraphs: ['本 App 適用於 17 歲以上的使用者。若你輸入的出生年份未達年齡限制，App 不會讓你進入；若我們得知帳號屬於兒童，會將其刪除。'],
+      paragraphs: ['本 App 適用於 18 歲以上的使用者。若你輸入的出生年份未達年齡限制，App 不會讓你進入；若我們得知帳號屬於兒童，會將其刪除。'],
     },
     {
       heading: '9. 變更',

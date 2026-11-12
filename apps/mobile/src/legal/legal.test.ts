@@ -1,6 +1,7 @@
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { describe, expect, it } from 'vitest';
+import { en, zhTW } from '../i18n/locales';
 import { translator } from '../logic/translator.fixture';
 import { AGE_LIMIT, ageStatus, allowedFromYear, gateFor, migrateAgeRecord, needsServerSync, parseBirthYear } from './age';
 import { LEGAL_DOCUMENTS, legalDocument } from './documents';
@@ -12,17 +13,29 @@ const YEAR = 2026;
 const rec = (birthYear: number) => ({ birthYear, at: 0, synced: false });
 
 describe('age gate', () => {
-  it('limits play to 17 and over, counting the youngest a birth year allows', () => {
-    expect(AGE_LIMIT).toBe(17);
+  it('limits play to 18 and over, counting the youngest a birth year allows', () => {
+    expect(AGE_LIMIT).toBe(18);
     expect(ageStatus(null, YEAR)).toBe('unknown');
     expect(ageStatus(rec(1990), YEAR)).toBe('allowed');
-    // Born 2008: certainly 17 by 1 January 2026.
-    expect(ageStatus(rec(2008), YEAR)).toBe('allowed');
-    // Born 2009: may still be 16 on any day of 2026.
-    expect(ageStatus(rec(2009), YEAR)).toBe('blocked');
+    // Born 2007: certainly 18 by 1 January 2026.
+    expect(ageStatus(rec(2007), YEAR)).toBe('allowed');
+    // Born 2008: may still be 17 on any day of 2026.
+    expect(ageStatus(rec(2008), YEAR)).toBe('blocked');
     expect(ageStatus(rec(2015), YEAR)).toBe('blocked');
-    expect(allowedFromYear(2009)).toBe(2027);
-    expect(ageStatus(rec(2009), 2027)).toBe('allowed');
+    expect(allowedFromYear(2008)).toBe(2027);
+    expect(ageStatus(rec(2008), 2027)).toBe('allowed');
+  });
+
+  it('says 18 wherever the app states the age, in both languages', () => {
+    const texts = [...(['terms', 'privacy'] as const).flatMap((d) => (['en', 'zh-TW'] as const).map((l) => JSON.stringify(legalDocument(d, l)))), en.quickmatch.errors.ageUnder, zhTW.quickmatch.errors.ageUnder];
+    for (const text of texts) expect(text).not.toMatch(/\b17\b/);
+    expect(JSON.stringify(legalDocument('terms', 'en'))).toMatch(/rated 18\+\. You must be at least 18 years old/);
+    expect(JSON.stringify(legalDocument('privacy', 'zh-TW'))).toMatch(/18 歲以上/);
+    expect(en.quickmatch.errors.ageUnder).toMatch(/aged 18 and over/);
+    expect(zhTW.quickmatch.errors.ageUnder).toMatch(/18 歲以上/);
+    // The blocked screen takes the age from the same constant.
+    expect(en.legal.age.blockedBody).toContain('%{age}');
+    expect(readFileSync(join(__dirname, '..', 'components', 'AgeGate.tsx'), 'utf8')).toMatch(/age: AGE_LIMIT/);
   });
 
   it('accepts only a plausible four-digit year', () => {
