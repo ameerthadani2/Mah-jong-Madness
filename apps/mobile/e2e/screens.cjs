@@ -16,7 +16,8 @@
  * Exits non-zero if a viewport cannot reach the result sheet, the page throws, or a hard check fails (one tap on
  * the exit icon or on the result sheet's "Leave table" leaves the table, Start match replaces a saved table
  * without asking, the English claim buttons carry no gloss, an Extra-large hand scrolls or runs off screen, the
- * Shop does not open, a Home card button clips its label).
+ * Shop does not open, a Home card button clips its label in English or in Traditional Chinese (each viewport also
+ * opens Home in zh-TW and writes <size>-home-zh.png), or Home's cards run past the bottom edge at 844x390).
  */
 const http = require('http');
 const fs = require('fs');
@@ -64,6 +65,57 @@ const tapSel = async (page, sel, wait = 900) => {
   return true;
 };
 
+/**
+ * Home's hard checks, run on the page as it stands. Card buttons are as wide as their card, so a label (with its
+ * icon) wider than the button is cut off at both ends. And where the cards sit side by side on a phone held
+ * sideways (844x390), everything must end above the bottom edge: the page must not need to scroll.
+ */
+async function homeFit(page) {
+  return page.evaluate(() => {
+    const bad = [];
+    for (const id of ['start-match', 'open-clubs', 'open-quickmatch', 'open-learn', 'open-shop-card']) {
+      const el = [...document.querySelectorAll(`[data-testid="${id}"]`)].find((e) => e.getBoundingClientRect().width > 0);
+      if (!el) continue;
+      const parts = [...el.querySelectorAll('div[dir="auto"], svg')].map((c) => c.getBoundingClientRect()).filter((r) => r.width > 0);
+      if (!parts.length) continue;
+      const content = Math.max(...parts.map((r) => r.right)) - Math.min(...parts.map((r) => r.left));
+      // The button's 3 px border on each side is not room for the label.
+      if (content > el.getBoundingClientRect().width - 6) bad.push(`button ${id} clips its label (${Math.round(content)} in ${Math.round(el.getBoundingClientRect().width)})`);
+    }
+    if (innerWidth >= 800 && innerHeight < 420) {
+      let scroller = null;
+      for (const e of document.querySelectorAll('div')) {
+        const st = getComputedStyle(e);
+        if ((st.overflowY === 'auto' || st.overflowY === 'scroll') && (!scroller || e.clientHeight * e.clientWidth > scroller.clientHeight * scroller.clientWidth)) scroller = e;
+      }
+      if (scroller && scroller.scrollHeight > scroller.clientHeight + 1) bad.push(`the cards run past the bottom edge (${scroller.scrollHeight} in ${scroller.clientHeight})`);
+    }
+    return bad;
+  });
+}
+
+/** Home in Traditional Chinese at one viewport: the same hard checks, on the longer of the two languages' labels. */
+async function runHomeZh(browser, port, [w, h]) {
+  const tag = `${w}x${h}`;
+  const ctx = await browser.newContext({ viewport: { width: w, height: h }, locale: 'zh-TW' });
+  await ctx.addInitScript(() => {
+    localStorage.setItem('mjm.profile', JSON.stringify({ userId: 'user-e2e-1234567', userSecret: '0123456789abcdef0123456789abcdef', name: 'Tester', avatar: 'panda' }));
+  });
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await page.goto(`http://localhost:${port}/`);
+  await page.waitForSelector('[data-testid="start-match"]', { timeout: 30000 });
+  await page.waitForTimeout(800);
+  await page.screenshot({ path: path.join(out, `${tag}-home-zh.png`) });
+  const fails = [];
+  // The page must really be in Chinese, or the check would pass on English labels.
+  if (!(await page.evaluate(() => /[\u4e00-\u9fff]/.test(document.querySelector('[data-testid="open-clubs"]')?.textContent || '')))) fails.push('Home (zh-TW): the page is not in Chinese');
+  fails.push(...(await homeFit(page)).map((f) => `Home (zh-TW): ${f}`));
+  await ctx.close();
+  return { size: `${tag} zh-TW`, finished: true, shots: ['home-zh'], notes: [], fails, errors };
+}
+
 async function run(browser, port, [w, h]) {
   const tag = `${w}x${h}`;
   const notes = [];
@@ -82,21 +134,7 @@ async function run(browser, port, [w, h]) {
   await page.waitForSelector('[data-testid="start-match"]', { timeout: 30000 });
   await page.waitForTimeout(800);
   await shot('home');
-  // Home's card buttons are as wide as their card: a label (with its icon) wider than the button is cut off at both ends.
-  const clipped = await page.evaluate(() => {
-    const bad = [];
-    for (const id of ['start-match', 'open-clubs', 'open-quickmatch']) {
-      const el = [...document.querySelectorAll(`[data-testid="${id}"]`)].find((e) => e.getBoundingClientRect().width > 0);
-      if (!el) continue;
-      const parts = [...el.querySelectorAll('div[dir="auto"], svg')].map((c) => c.getBoundingClientRect()).filter((r) => r.width > 0);
-      if (!parts.length) continue;
-      const content = Math.max(...parts.map((r) => r.right)) - Math.min(...parts.map((r) => r.left));
-      // The button's 3 px border on each side is not room for the label.
-      if (content > el.getBoundingClientRect().width - 6) bad.push(`${id} (${Math.round(content)} in ${Math.round(el.getBoundingClientRect().width)})`);
-    }
-    return bad;
-  });
-  if (clipped.length) fails.push(`Home buttons clip their label: ${clipped.join(', ')}`);
+  fails.push(...(await homeFit(page)).map((f) => `Home (en): ${f}`));
 
   await tapSel(page, '[data-testid="start-match"]', 300);
   await page.waitForSelector('[data-testid^="tile-"]', { timeout: 15000 });
@@ -273,6 +311,7 @@ async function runXL(browser, port, [w, h]) {
   const results = await Promise.all([
     ...SIZES.map((s) => run(browser, port, s).catch((e) => ({ size: `${s[0]}x${s[1]}`, finished: false, notes: [e.message], errors: [] }))),
     ...XL.map((s) => runXL(browser, port, s).catch((e) => ({ size: `${s[0]}x${s[1]} xl`, finished: false, notes: [e.message], errors: [] }))),
+    ...SIZES.map((s) => runHomeZh(browser, port, s).catch((e) => ({ size: `${s[0]}x${s[1]} zh-TW`, finished: false, notes: [e.message], errors: [] }))),
   ]);
   for (const r of results) console.log(JSON.stringify(r));
   await browser.close();

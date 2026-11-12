@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { BOT_SKILLS, type BotSkill } from '@mjm/engine';
+import { BOT_SKILLS, LESSON_TRACKS, LESSONS, type BotSkill } from '@mjm/engine';
 import { allowedBotSkill, diamondsOwed, hasTier, totalDiamonds } from '../monetisation/wallet';
 import { useWallet } from '../monetisation/useWallet';
 import { gateFor } from '../legal/age';
@@ -16,6 +16,8 @@ import { NameRefusedNotice } from '../components/NameRefusedNotice';
 import { tableError } from '../components/table/tableErrors';
 import { ConfirmSheet } from '../components/table/ConfirmSheet';
 import { replacesTable } from '../logic/back';
+import { homeSmallWindowHeight, homeWindowHeight, isShortHome, LINK_HEIGHT } from '../logic/homeFit';
+import { learnSummary } from '../logic/learn';
 import { botLabel, rulesSummary } from '../logic/rules-text';
 import { useT } from '../i18n';
 import { colors, fonts, nameFont, space } from '../theme';
@@ -126,7 +128,8 @@ export function HomeScreen() {
   const winRate = app.progress.handsPlayed ? Math.round((app.progress.handsWon / app.progress.handsPlayed) * 100) : null;
   const dailyDone = app.progress.dailySolved[todayKey()] !== undefined;
   const streak = effectiveStreak(app.progress);
-  const lessonsDone = Object.keys(app.progress.lessonsDone).length;
+  // The same count Learn shows: lessons that still exist, out of all of them.
+  const lessons = learnSummary(LESSONS, LESSON_TRACKS, app.progress.lessonsDone);
   const gems = totalDiamonds(app.wallet);
   // After a refund of spent diamonds the balance is below zero: the counter says so, and a line under the bar says why.
   const gemsOwed = diamondsOwed(app.wallet);
@@ -145,8 +148,11 @@ export function HomeScreen() {
   };
 
   const phoneLand = wide && !tablet;
-  const windowH = tablet ? Math.min(250, Math.round(height * 0.28)) : wide ? Math.max(70, Math.min(150, Math.round(height * 0.22))) : 104;
-  const smallWindow = tablet ? windowH : wide ? windowH : 100;
+  // A phone held sideways is about 390 pt tall: the art shrinks and the blurbs go, so the four cards, their buttons and
+  // the links under them all fit above the bottom edge (src/logic/homeFit.ts).
+  const short = isShortHome({ wide, tablet, height });
+  const windowH = homeWindowHeight({ wide, tablet, height });
+  const smallWindow = homeSmallWindowHeight({ wide, tablet, height });
 
   const skillChips = (
     <Row style={{ flexWrap: 'wrap', rowGap: 6 }} gap={6}>
@@ -159,7 +165,8 @@ export function HomeScreen() {
 
   const playCard = (
     <ModeCard key="play" colorsPair={WINDOWS.play} windowH={windowH} scene={<TableScene width="100%" height="100%" />} title={t('home.play.title')} style={wide ? { flex: 1.55 } : undefined} horizontal={!wide}>
-      <P dim style={styles.cardText} numberOfLines={phoneLand ? 1 : 2}>
+      {/* The whole rules line, clocks included: it wraps rather than ending in an ellipsis. */}
+      <P dim style={styles.cardText} numberOfLines={phoneLand ? 2 : undefined}>
         {rulesSummary(app.settings.rules, t, locale)}
       </P>
       {skillChips}
@@ -172,17 +179,18 @@ export function HomeScreen() {
   const compact = !wide;
   const clubsCard = (
     <ModeCard key="clubs" colorsPair={WINDOWS.clubs} windowH={smallWindow} scene={<ClubhouseScene width="100%" height="100%" />} title={tablet ? t('home.clubs.titleWide') : t('home.clubs.title')} compact={compact} style={{ flex: 1 }}>
-      {!compact && (
-        <P dim style={styles.cardText} numberOfLines={2}>
+      {!compact && !short && (
+        <P dim style={styles.cardText}>
           {t('home.clubs.blurb')}
         </P>
       )}
       <View style={styles.cardFoot}>
-        <Button testID="open-clubs" title={t('home.clubs.open')} kind="secondary" small={compact} large={tablet} onPress={goClubs} />
+        {/* The short label on a portrait phone, as for quick match below: the full one is wider than the card's button in Chinese. */}
+        <Button testID="open-clubs" title={t(compact && !landscape ? 'home.clubs.openShort' : 'home.clubs.open')} accessibilityLabel={t('home.clubs.open')} kind="secondary" small={compact} large={tablet} onPress={goClubs} />
         {/* No icon, and the short label on a portrait phone: the card's button is as narrow as 73 pt there, and a clipped label is worse than a short one. */}
         <Button testID="open-quickmatch" title={t(compact && !landscape ? 'quickmatch.buttonShort' : 'quickmatch.button')} accessibilityLabel={`${t('quickmatch.button')}. ${t('quickmatch.buttonHint')}`} small={compact} large={tablet} onPress={goQuickMatch} />
         {!compact && (
-          <Pressable onPress={goOnline} hitSlop={slopFor(20)} style={styles.link} accessibilityRole="link" accessibilityLabel={t('home.clubs.quickTable')}>
+          <Pressable onPress={goOnline} hitSlop={slopFor(LINK_HEIGHT)} style={styles.link} accessibilityRole="link" accessibilityLabel={t('home.clubs.quickTable')}>
             <Icon name="users" size={18} />
             <Text style={[styles.linkText, fontFor(t('home.clubs.quickTable'), fonts.uiBold)]}>{t('home.clubs.quickTable')}</Text>
           </Pressable>
@@ -203,7 +211,7 @@ export function HomeScreen() {
     >
       {!compact && (
         <Row style={{ flexWrap: 'wrap', rowGap: 6 }} gap={6}>
-          <Pill text={t('home.learn.lessons', { done: lessonsDone, total: 6 })} icon="book" size="sm" />
+          <Pill text={t('home.learn.lessons', { done: lessons.done, total: lessons.total })} icon="book" size="sm" />
           <Pill text={t('home.learn.streak', { days: streak })} icon="flame" tone={streak > 0 ? 'gold' : 'neutral'} size="sm" />
           <Pill text={t('home.learn.rating', { n: app.progress.puzzleRating })} icon="target" tone="info" size="sm" />
         </Row>
@@ -211,7 +219,7 @@ export function HomeScreen() {
       <View style={styles.cardFoot}>
         <Button testID="open-learn" title={t('home.learn.open')} kind="premium" small={compact} large={tablet} onPress={() => app.go({ name: 'learn' })} />
         {!compact && (
-          <Pressable onPress={() => app.go({ name: 'daily' })} hitSlop={slopFor(20)} style={styles.link} accessibilityRole="link" accessibilityLabel={dailyDone ? t('home.learn.dailyDone') : t('home.learn.daily')}>
+          <Pressable onPress={() => app.go({ name: 'daily' })} hitSlop={slopFor(LINK_HEIGHT)} style={styles.link} accessibilityRole="link" accessibilityLabel={dailyDone ? t('home.learn.dailyDone') : t('home.learn.daily')}>
             <Icon name={dailyDone ? 'check' : 'scroll'} size={18} color={colors.cta} />
             <Text style={[styles.linkText, fontFor(t('home.learn.daily'), fonts.uiBold)]}>{dailyDone ? t('home.learn.dailyDone') : t('home.learn.daily')}</Text>
           </Pressable>
@@ -221,13 +229,13 @@ export function HomeScreen() {
   );
   const shopCard = (
     <ModeCard key="shop" colorsPair={WINDOWS.shop} windowH={smallWindow} scene={<ChestScene width="100%" height="100%" />} title={t('home.shop.title')} compact={compact} style={{ flex: 1 }}>
-      {!compact && (
-        <P dim style={styles.cardText} numberOfLines={2}>
+      {!compact && !short && (
+        <P dim style={styles.cardText}>
           {t('home.shop.blurb')}
         </P>
       )}
       <View style={styles.cardFoot}>
-        <Button title={t('home.shop.open')} kind="gold" small={compact} large={tablet} onPress={() => app.go({ name: 'shop' })} />
+        <Button testID="open-shop-card" title={t('home.shop.open')} kind="gold" small={compact} large={tablet} onPress={() => app.go({ name: 'shop' })} />
       </View>
     </ModeCard>
   );
@@ -251,7 +259,7 @@ export function HomeScreen() {
               <Text numberOfLines={1} style={[styles.profileName, nameFont(shownName)]}>
                 {shownName}
               </Text>
-              <Text numberOfLines={1} style={styles.profileMeta}>
+              <Text numberOfLines={wide ? 1 : 2} style={styles.profileMeta}>
                 {t('home.profile.meta', { hands: app.progress.handsPlayed, wins: winRate === null ? t('home.profile.noWins') : t('home.profile.winRate', { rate: winRate }) })}
               </Text>
             </View>
@@ -430,7 +438,7 @@ const styles = StyleSheet.create({
   cardTitle: { fontFamily: fonts.display, color: colors.ink, fontSize: 22, letterSpacing: 0.3 },
   cardText: { fontSize: 12, lineHeight: 16 },
   cardFoot: { marginTop: 'auto', gap: 8, paddingTop: 2 },
-  link: { flexDirection: 'row', alignItems: 'center', gap: 6, alignSelf: 'center' },
+  link: { flexDirection: 'row', alignItems: 'center', gap: 6, alignSelf: 'center', minHeight: LINK_HEIGHT },
   linkText: { fontFamily: fonts.uiBold, color: colors.infoShelf, fontSize: 14, textDecorationLine: 'underline' },
   notify: { width: 26, height: 26, borderRadius: 13, backgroundColor: colors.danger, borderWidth: 3, borderColor: colors.ink, alignItems: 'center', justifyContent: 'center' },
   notifyText: { color: '#FFFFFF', fontFamily: fonts.display, fontSize: 15 },

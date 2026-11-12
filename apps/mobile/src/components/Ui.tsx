@@ -323,9 +323,12 @@ export function Stepper({ label, value, onChange, step = 1, min = 0, max = 9999,
 }
 
 /** Selectable chip (filters, presets). */
+/** A chip is drawn at least this tall whatever the font's metrics, so its hitSlop reaches the 44 pt target in every language. */
+export const CHIP_HEIGHT = 34;
+
 export function Chip({ label, selected, onPress, locked, dark }: { label: string; selected?: boolean; onPress?: () => void; locked?: boolean; dark?: boolean }) {
   return (
-    <Pressable onPress={onPress} hitSlop={slopFor(34, 4)} accessibilityRole="button" accessibilityLabel={label} accessibilityState={{ selected: !!selected, disabled: !!locked }} style={({ pressed }) => [styles.chip, dark && styles.chipDark, selected && styles.chipOn, pressed && { transform: [{ translateY: 1 }] }]}>
+    <Pressable onPress={onPress} hitSlop={slopFor(CHIP_HEIGHT, 4)} accessibilityRole="button" accessibilityLabel={label} accessibilityState={{ selected: !!selected, disabled: !!locked }} style={({ pressed }) => [styles.chip, dark && styles.chipDark, selected && styles.chipOn, pressed && { transform: [{ translateY: 1 }] }]}>
       {locked && <Icon name="lock" size={15} />}
       <Text numberOfLines={1} style={[styles.chipText, fontFor(label, fonts.uiBold), dark && !selected && { color: '#FFFFFF' }]}>
         {label}
@@ -433,7 +436,7 @@ const styles = StyleSheet.create({
   toggleTop: { position: 'absolute', top: 0, left: 0, right: 0, height: '45%', backgroundColor: '#DDE2F0' },
   knob: { width: 22, height: 22, borderRadius: 11, backgroundColor: '#FFFFFF', borderWidth: 2.5, borderColor: colors.ink },
   stepValue: { color: colors.ink, fontSize: 18, minWidth: 64, textAlign: 'center' },
-  chip: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: colors.creamLight, borderWidth: 2, borderColor: colors.ink, paddingHorizontal: 11, paddingVertical: 5, borderRadius: 999, borderBottomWidth: 4 },
+  chip: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: colors.creamLight, borderWidth: 2, borderColor: colors.ink, paddingHorizontal: 11, paddingVertical: 5, borderRadius: 999, borderBottomWidth: 4, minHeight: CHIP_HEIGHT },
   chipDark: { backgroundColor: 'rgba(16,20,47,0.55)' },
   chipOn: { backgroundColor: colors.gold },
   chipText: { color: colors.ink, fontSize: 13 },
