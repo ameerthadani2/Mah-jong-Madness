@@ -2,16 +2,27 @@ name: Deploy signal server
 # Builds apps/signal/Dockerfile on Fly's remote builder and rolls it out with fly.toml, as one
 # machine (--ha=false): the server keeps its tables in memory and holds a database lock, so a
 # second machine could never host tables anyway.
-# Runs after CI has passed on main for the same commit (workflow_run), when that commit touches
-# the server, and on manual dispatch from any branch (Actions -> Deploy signal server -> Run
-# workflow -> pick the branch; the first deploy is the working branch). Either way the deploy job
-# runs the server's typecheck and tests again, the Postgres cases included, on the exact commit
-# it ships.
-# After the deploy it waits for /health and runs the production smoke test (apps/signal/scripts/
-# smoke.ts: a guest marked as a smoke test plays one hand with bots, the hand's audit must verify,
-# and the account is deleted); a failed smoke test fails the job. The address is the repository
-# variable SIGNAL_URL (what the app connects to, e.g. wss://mahjong-signal.fly.dev; https:// works
-# too), turned into https:// for the checks; without it, https://<app in fly.toml>.fly.dev.
+# Runs after CI has passed for a push to main (workflow_run), and on manual dispatch from any
+# branch (Actions -> Deploy signal server -> Run workflow -> pick the branch; the first deploy is
+# the working branch).
+# - After CI it deploys only the head of main: a CI run that finishes, or is re-run, for an older
+#   commit never rolls production back. It then compares that head with the commit of the last
+#   run of this workflow whose deploy job succeeded, and deploys when anything the server is built
+#   from differs (or when that commit is unknown or not an ancestor), so a server change is not
+#   missed because a later commit in the same push touched something else.
+# - A dispatch always deploys the head of its branch; a re-run of an older dispatch is refused.
+# Either way the deploy job runs the server's typecheck and the engine, net and server tests
+# again, the Postgres cases included, on the exact commit it ships.
+# After the deploy it waits for /health to answer {"ok":true} on the expected storage and runs the
+# production smoke test (apps/signal/scripts/smoke.ts: a guest marked as a smoke test plays one
+# hand with bots, the hand's audit must verify, the table must have reached storage with no failed
+# snapshot write, and the account is deleted and its session checked dead); a failed smoke test
+# fails the job. The address is the repository variable SIGNAL_URL (what the app connects to, e.g.
+# wss://mahjong-signal.fly.dev; https:// works too), turned into https:// for the checks; without
+# it, https://<app in fly.toml>.fly.dev. A malformed SIGNAL_URL stops the run before the deploy.
+# The checks expect Postgres storage. For a deployment that runs on memory on purpose
+# (ALLOW_EPHEMERAL=1, before the database exists) set the repository variable
+# SMOKE_EXPECT_STORAGE to memory, and remove it with ALLOW_EPHEMERAL.
 # Needs one repository secret, FLY_API_TOKEN; without it the run is skipped with a summary of
 # what to set up (see docs/DEPLOY.md).
 on:
@@ -38,28 +49,89 @@ jobs:
     # A CI run only counts when it passed, for a push (not a pull request from a fork).
     if: github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      # To read which commit the last successful deploy shipped.
+      actions: read
     outputs:
       ready: ${{ steps.gate.outputs.ready }}
       sha: ${{ steps.commit.outputs.sha }}
     steps:
       - id: commit
         # The commit CI tested (workflow_run), or the head of the dispatched branch.
-        run: echo "sha=${{ github.event.workflow_run.head_sha || github.sha }}" >> "$GITHUB_OUTPUT"
+        env:
+          SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+        run: echo "sha=$SHA" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@v4
         with:
           ref: ${{ steps.commit.outputs.sha }}
-          fetch-depth: 2
+          # Full history: the comparison below is with the deployed commit, however far back it is.
+          fetch-depth: 0
       - id: changed
-        # After CI, deploy only when the commit touches what the server is built from; a dispatch always deploys.
+        # Decides whether this commit is deployed. Only the head of a branch ever is; after CI the
+        # head of main is compared with the commit that is deployed. The deploy job below must keep
+        # the name "deploy": the last deployed commit is found by that job's conclusion.
+        env:
+          EVENT: ${{ github.event_name }}
+          SHA: ${{ steps.commit.outputs.sha }}
+          BRANCH: ${{ github.event.workflow_run.head_branch || github.ref_name }}
+          REF_TYPE: ${{ github.ref_type }}
+          GH_TOKEN: ${{ github.token }}
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ] || ! git rev-parse -q --verify HEAD~1 > /dev/null; then
-            echo "server=true" >> "$GITHUB_OUTPUT"
-          elif git diff --quiet HEAD~1 HEAD -- apps/signal packages/engine packages/net package-lock.json fly.toml .github/workflows/deploy-signal.yml; then
+          PATHS="apps/signal packages/engine packages/net package.json package-lock.json tsconfig.base.json fly.toml .github/workflows/deploy-signal.yml"
+          deploy() { echo "server=true" >> "$GITHUB_OUTPUT"; echo "$1"; exit 0; }
+          skip() {
             echo "server=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::This commit does not change the server; nothing to deploy"
-          else
-            echo "server=true" >> "$GITHUB_OUTPUT"
+            { echo "## Signal server not deployed"; echo ""; echo "$1"; } >> "$GITHUB_STEP_SUMMARY"
+            echo "::notice::$1"
+            exit 0
+          }
+
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            if [ "$REF_TYPE" != "branch" ]; then
+              echo "::error title=Deploy from a branch::This run was started from a $REF_TYPE. Start it from a branch: Actions -> Deploy signal server -> Run workflow."
+              exit 1
+            fi
+            HEAD_NOW=$(git ls-remote origin "refs/heads/$BRANCH" | cut -f1)
+            if [ "$HEAD_NOW" != "$SHA" ]; then
+              MESSAGE="This run would deploy ${SHA:0:7}, which is no longer the head of $BRANCH (now ${HEAD_NOW:0:7}). A re-run of an older run never deploys: start a new one from Actions -> Deploy signal server -> Run workflow."
+              { echo "## Signal server not deployed"; echo ""; echo "$MESSAGE"; } >> "$GITHUB_STEP_SUMMARY"
+              echo "::error title=Not the head of $BRANCH::$MESSAGE"
+              exit 1
+            fi
+            deploy "Manual run from the head of $BRANCH: deploying ${SHA:0:7}"
           fi
+
+          HEAD_OF_MAIN=$(git ls-remote origin refs/heads/main | cut -f1)
+          if [ "$HEAD_OF_MAIN" != "$SHA" ]; then
+            skip "CI passed for ${SHA:0:7}, which is not the head of main (${HEAD_OF_MAIN:0:7}). An older commit is never deployed over a newer one; the run for the head of main decides what ships."
+          fi
+
+          # The commit of the newest run of this workflow whose deploy job succeeded. Runs that
+          # skipped the deploy (nothing to ship, no token) also end green, so the job is checked.
+          LAST=""
+          if RUNS=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow deploy-signal.yml --status success --limit 30 --json databaseId,headSha --jq '.[] | "\(.databaseId) \(.headSha)"'); then
+            while read -r RUN_ID RUN_SHA; do
+              [ -n "$RUN_ID" ] || continue
+              DEPLOYED=$(gh run view "$RUN_ID" --repo "$GITHUB_REPOSITORY" --json jobs --jq '[.jobs[] | select(.name == "deploy" and .conclusion == "success")] | length' || echo 0)
+              if [ "$DEPLOYED" = "1" ]; then LAST="$RUN_SHA"; break; fi
+            done <<< "$RUNS"
+          else
+            echo "::warning::Could not list the earlier runs of this workflow; deploying to be safe"
+          fi
+
+          if [ -z "$LAST" ]; then deploy "No earlier successful deploy found: deploying ${SHA:0:7}"; fi
+          if [ "$LAST" = "$SHA" ]; then skip "${SHA:0:7} is the commit the last successful deploy shipped; nothing to deploy."; fi
+          if ! git cat-file -e "$LAST^{commit}" 2> /dev/null || ! git merge-base --is-ancestor "$LAST" "$SHA"; then
+            deploy "The deployed commit ${LAST:0:7} is not an ancestor of ${SHA:0:7} (it was deployed from another branch, or history changed): deploying"
+          fi
+          # shellcheck disable=SC2086
+          if git diff --quiet "$LAST" "$SHA" -- $PATHS; then
+            skip "Nothing the server is built from changed between the deployed commit ${LAST:0:7} and ${SHA:0:7}; nothing to deploy."
+          fi
+          # shellcheck disable=SC2086
+          deploy "Changed since the deployed commit ${LAST:0:7}: $(git diff --name-only "$LAST" "$SHA" -- $PATHS | head -n 5 | tr '\n' ' ')"
       - id: gate
         env:
           HAS_TOKEN: ${{ secrets.FLY_API_TOKEN != '' }}
@@ -81,10 +153,13 @@ jobs:
             echo "::notice::FLY_API_TOKEN secret missing; skipping the deploy (the job summary lists the setup steps)"
           fi
 
+  # Keep this job's name: the check job finds the deployed commit by the conclusion of "deploy".
   deploy:
     needs: check
     if: needs.check.outputs.ready == 'true'
     runs-on: ubuntu-latest
+    # Tests, a remote image build, the rollout, two minutes of health checks and a ten-minute smoke test.
+    timeout-minutes: 40
     # The server's Postgres tests (repositories, migrations, timeouts, the host lock) run here too.
     services:
       postgres:
@@ -111,70 +186,105 @@ jobs:
       - name: Install the server's workspaces
         run: npm ci --workspace @mjm/signal --workspace @mjm/engine --workspace @mjm/net
       - name: Typecheck and test before shipping
+        # The image bundles the engine (rules, scoring, bots), so its tests gate the deploy too: a
+        # manual run does not wait for CI.
         run: |
           npm run typecheck --workspace @mjm/signal
+          npm test --workspace @mjm/engine
           npm test --workspace @mjm/net
           npm test --workspace @mjm/signal
-      # Pinned to the commit of release 1.6 (a moving ref such as @master could change under us).
-      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1 # 1.6
-      - name: Deploy
-        env:
-          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
-        # One machine only: a second one would wait for the host lock and then fail to start.
-        run: flyctl deploy --remote-only --config fly.toml --ha=false
-      - name: Find the deployed address
+      - name: Find the address to check
         id: url
+        # Before the deploy: a malformed SIGNAL_URL must stop the run while the old version is still live.
         env:
           SIGNAL_URL: ${{ vars.SIGNAL_URL }}
+          EXPECT_STORAGE: ${{ vars.SMOKE_EXPECT_STORAGE || 'pg' }}
         run: |
+          SIGNAL_URL=$(printf '%s' "$SIGNAL_URL" | tr -d '[:space:]')
           # wss://host/any/path -> https://host (the health route and the socket share the origin).
           if [ -n "$SIGNAL_URL" ]; then
+            if ! printf '%s' "$SIGNAL_URL" | grep -Eq '^(wss?|https?)://[A-Za-z0-9.-]+(:[0-9]+)?(/.*)?$'; then
+              echo "::error title=SIGNAL_URL is not an address::The repository variable SIGNAL_URL is '$SIGNAL_URL'. It must be the server's address starting with wss:// (or https://), lower case, e.g. wss://mahjong-signal.fly.dev. Nothing was deployed."
+              exit 1
+            fi
             BASE=$(printf '%s' "$SIGNAL_URL" | sed -E 's#^ws(s?)://#http\1://#; s#^(https?://[^/]+).*#\1#')
             FROM="the SIGNAL_URL variable"
           else
             APP=$(sed -nE 's/^app *= *"([^"]+)".*/\1/p' fly.toml | head -n 1)
+            if [ -z "$APP" ]; then echo "::error::fly.toml names no app (app = \"...\"). Nothing was deployed."; exit 1; fi
             BASE="https://$APP.fly.dev"
             FROM="the app name in fly.toml; set the SIGNAL_URL variable to check another address"
           fi
-          case "$BASE" in
-            http://*|https://*) ;;
-            *) echo "::error::SIGNAL_URL must start with wss://, ws://, https:// or http:// (got '$SIGNAL_URL')"; exit 1 ;;
+          case "$EXPECT_STORAGE" in
+            pg|memory) ;;
+            *) echo "::error title=SMOKE_EXPECT_STORAGE::The repository variable SMOKE_EXPECT_STORAGE is '$EXPECT_STORAGE'; use memory (a deployment without a database, on purpose) or remove it (Postgres). Nothing was deployed."; exit 1 ;;
           esac
           echo "base=$BASE" >> "$GITHUB_OUTPUT"
-          echo "Checking $BASE (from $FROM)"
+          echo "storage=$EXPECT_STORAGE" >> "$GITHUB_OUTPUT"
+          echo "Checking $BASE (from $FROM), expecting storage $EXPECT_STORAGE"
+      # Pinned to the commit of release 1.6 (a moving ref such as @master could change under us).
+      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1 # 1.6
+      - name: Deploy
+        id: deploy
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        # One machine only: a second one would wait for the host lock and then fail to start.
+        run: flyctl deploy --remote-only --config fly.toml --ha=false
       - name: Health check
+        id: health
         env:
           BASE: ${{ steps.url.outputs.base }}
+          EXPECT_STORAGE: ${{ steps.url.outputs.storage }}
         run: |
+          # 200 is not enough: a redirect or another service's page must not pass, the body has to
+          # be this server's health report, on the storage a deployed server must use.
+          WHY="no answer"
           for i in $(seq 1 12); do
-            if curl -fsS --max-time 10 "$BASE/health"; then echo; exit 0; fi
+            if BODY=$(curl -fsSL --max-time 10 "$BASE/health"); then
+              if printf '%s' "$BODY" | grep -Eq '"ok": ?true'; then
+                if printf '%s' "$BODY" | grep -Eq "\"storage\": ?\"$EXPECT_STORAGE\""; then
+                  printf '%s\n' "$BODY"
+                  exit 0
+                fi
+                WHY="it answers, but not on storage '$EXPECT_STORAGE': $(printf '%s' "$BODY" | head -c 300)"
+              else
+                WHY="the answer is not this server's health report: $(printf '%s' "$BODY" | head -c 300)"
+              fi
+            else
+              WHY="no 200 answer"
+            fi
             sleep 10
           done
-          echo "::error::$BASE/health did not answer 200 within two minutes of the deploy (fly logs -a <app> shows why)"
+          echo "::error title=Health check failed::$BASE/health did not report ok on storage '$EXPECT_STORAGE' within two minutes of the deploy ($WHY). fly logs -a <app> shows why; the job summary has the rollback steps."
           exit 1
-      - name: Smoke test (one hand with bots, audit verified, account deleted)
+      - name: Smoke test (one hand with bots, audit verified, table stored, account deleted)
         id: smoke
         # Always after CI; on a dispatch unless the smoke input was unticked.
         if: github.event_name != 'workflow_dispatch' || inputs.smoke
         timeout-minutes: 10
         env:
           BASE: ${{ steps.url.outputs.base }}
+          EXPECT_STORAGE: ${{ steps.url.outputs.storage }}
         run: |
           set -o pipefail
-          npm run smoke --workspace @mjm/signal -- "$BASE" 2>&1 | tee "$RUNNER_TEMP/smoke.txt"
+          npm run smoke --workspace @mjm/signal -- "$BASE" --expect-storage "$EXPECT_STORAGE" 2>&1 | tee "$RUNNER_TEMP/smoke.txt"
       - name: Summary
         if: always()
         env:
           DEPLOYED_SHA: ${{ needs.check.outputs.sha }}
           BRANCH: ${{ github.event.workflow_run.head_branch || github.ref_name }}
           BASE: ${{ steps.url.outputs.base }}
+          DEPLOY: ${{ steps.deploy.outcome }}
+          HEALTH: ${{ steps.health.outcome }}
           SMOKE: ${{ steps.smoke.outcome }}
         run: |
           {
             echo "## Signal server deploy"
-            echo "- Commit: \`${DEPLOYED_SHA::7}\` on \`$BRANCH\`"
+            echo "- Commit: \`${DEPLOYED_SHA:0:7}\` on \`$BRANCH\`"
             echo "- Config: \`fly.toml\` (one machine, always on)"
             if [ -n "$BASE" ]; then echo "- Server: $BASE (health checked at /health)"; fi
+            echo "- Deploy: ${DEPLOY:-not run}"
+            echo "- Health check: ${HEALTH:-not run}"
             echo "- Smoke test: ${SMOKE:-not run}"
             if [ -f "$RUNNER_TEMP/smoke.txt" ]; then
               echo ""
@@ -182,8 +292,16 @@ jobs:
               cat "$RUNNER_TEMP/smoke.txt"
               echo '```'
             fi
-            if [ "$SMOKE" = "failure" ]; then
+            if [ "$DEPLOY" = "success" ] && { [ "$HEALTH" = "failure" ] || [ "$SMOKE" = "failure" ]; }; then
               echo ""
-              echo "The new version is live but failed the smoke test: roll back (docs/DEPLOY.md, Rollback) or fix forward."
+              echo "**The new version is live but failed its checks.** Roll back to the last good image, then fix forward (docs/DEPLOY.md, Rollback):"
+              echo ""
+              echo '```'
+              echo "fly releases -a <app> --image"
+              echo "fly deploy -a <app> --image registry.fly.io/<app>:deployment-<id> --ha=false"
+              echo '```'
+            elif [ "$DEPLOY" = "failure" ]; then
+              echo ""
+              echo "The deploy itself failed. When the release command (migrations) or the image build fails, the old version keeps running; \`fly status -a <app>\` and \`fly logs -a <app>\` show the state (docs/DEPLOY.md, A deploy that fails half-way)."
             fi
           } >> "$GITHUB_STEP_SUMMARY"

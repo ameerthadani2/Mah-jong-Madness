@@ -348,6 +348,45 @@ function restoreStandings(club: Club, m: ClubMember): void {
 }
 
 /**
+ * Account merge: the rows `fromUserId` has in the club's finished seasons pass to `to`, under its
+ * name. Where both accounts have a row in a season they are one person's, so the points are added
+ * and the standings put back in order. True when a row changed.
+ */
+function moveSeasonRows(club: Club, fromUserId: string, to: Identity): boolean {
+  let moved = false;
+  for (const season of club.seasons ?? []) {
+    const from = season.standings.find((r) => r.userId === fromUserId);
+    if (!from) continue;
+    moved = true;
+    const kept = season.standings.find((r) => r.userId === to.userId);
+    if (kept) {
+      kept.points += from.points;
+      season.standings = season.standings.filter((r) => r !== from).sort((a, b) => b.points - a.points);
+    } else {
+      from.userId = to.userId;
+      from.name = to.name;
+    }
+  }
+  return moved;
+}
+
+/**
+ * Account deletion (and the purge that follows it): the account's rows in the club's finished
+ * seasons keep their points and lose the name. True when a row changed.
+ */
+export function anonymiseSeasonRows(club: Club, userId: string): boolean {
+  let renamed = false;
+  for (const season of club.seasons ?? []) {
+    for (const row of season.standings) {
+      if (row.userId !== userId || row.name === DELETED_PLAYER_NAME) continue;
+      row.name = DELETED_PLAYER_NAME;
+      renamed = true;
+    }
+  }
+  return renamed;
+}
+
+/**
  * Account merge, applied in place to clubs held in memory: `fromUserId`'s memberships and pending
  * requests pass to `to` (where both have a row the stronger one stays: member beats pending; on a
  * tie `to`'s row is kept), clubs `fromUserId` owns transfer, and its table listings are re-attributed.
@@ -355,7 +394,8 @@ function restoreStandings(club: Club, m: ClubMember): void {
  * `CLUB_LIMITS.ownedClubsPerUser`: the plan covers only the first three (see `ClubRegistry.covered`),
  * and the rest run as lapsed clubs until they are passed on. A lapse on file for `fromUserId` as an
  * owner follows it too. Standings on file for either account in a club (it had left) are added to
- * the member row `to` ends up with, or stay on file under `to`. Returns the codes of the clubs
+ * the member row `to` ends up with, or stay on file under `to`, and its rows in finished seasons
+ * pass to `to` (`moveSeasonRows`). Returns the codes of the clubs
  * changed. The memory repository, the Postgres one and the registry all use this, so the rows in
  * the store and the clubs in memory always agree. `at` is the time of the merge.
  */
@@ -375,7 +415,8 @@ export function moveMembershipsIn(clubs: Iterable<Club>, fromUserId: string, to:
     const fromBan = bans.find((b) => b.userId === fromUserId);
     const fromLapse = (club.ownerLapses ?? []).find((l) => l.userId === fromUserId);
     const fromFormer = (club.former ?? []).find((f) => f.userId === fromUserId);
-    if (!fromMember && !fromPending && !ownsIt && !fromBan && !fromLapse && !fromFormer) continue;
+    const inSeasons = moveSeasonRows(club, fromUserId, to);
+    if (!fromMember && !fromPending && !ownsIt && !fromBan && !fromLapse && !fromFormer && !inSeasons) continue;
     changed.push(club.code);
     if (fromLapse) {
       const toLapse = club.ownerLapses!.find((l) => l.userId === to.userId);
@@ -445,7 +486,8 @@ export function moveMembershipsIn(clubs: Iterable<Club>, fromUserId: string, to:
 
 /**
  * Account deletion, applied in place: the user's member rows become "Deleted player" with no
- * avatar, pending requests are dropped, and a club they owned passes to its senior admin (the
+ * avatar, so do their rows in the finished seasons (whether or not they are still a member),
+ * pending requests are dropped, and a club they owned passes to its senior admin (the
  * earliest-joined one), else its earliest member, skipping accounts that already own
  * `CLUB_LIMITS.ownedClubsPerUser` clubs and members who have deleted their own account. When
  * everyone left is at the cap the senior one takes it all the same (a club needs an owner), and it
@@ -474,6 +516,7 @@ export function anonymiseUserIn(clubs: Map<string, Club>, userId: string, ownedC
       b.name = DELETED_PLAYER_NAME;
       touched = true;
     }
+    if (anonymiseSeasonRows(club, userId)) touched = true;
     if (club.ownerId === userId) {
       touched = true;
       const candidates = club.members
@@ -884,7 +927,8 @@ export class ClubRegistry {
    * The hard delete of accounts (30 days after they were deleted) has removed these users, and in
    * Postgres their club rows with them. Drop their member rows and join requests from the clubs in
    * memory too, with any standings on file for them, so the next write of a club matches the store. Bans they made, and bans of them,
-   * stay (a ban row names an account, it does not need one). A club one of them still owned (the
+   * stay (a ban row names an account, it does not need one), and so do their rows in finished
+   * seasons: the points, under "Deleted player". A club one of them still owned (the
    * store refuses to purge an owner, so this is a registry that had fallen behind) passes on as at
    * deletion, or is removed when nobody else is in it. Returns the clubs changed.
    */
@@ -896,6 +940,8 @@ export class ClubRegistry {
       if (this.ownedBy(id).length) for (const code of this.anonymiseMember(id)) changed.add(code);
     }
     for (const club of this.clubs.values()) {
+      // The name went from the finished seasons at deletion; make sure of it now that the account is gone for good.
+      for (const id of gone) if (anonymiseSeasonRows(club, id)) changed.add(club.code);
       const members = club.members.filter((m) => !gone.has(m.userId));
       const pending = club.pending.filter((p) => !gone.has(p.userId));
       const lapses = (club.ownerLapses ?? []).filter((l) => !gone.has(l.userId));

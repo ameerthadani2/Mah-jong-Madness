@@ -109,7 +109,7 @@ function suite(name: string, open: () => Repos) {
         expect((await f.repos.users.get(g.userId))!.birthYear).toBe(2014);
       });
 
-      it('an account that declared itself under 17 stays out of quick match whatever it sends afterwards', async () => {
+      it('an account that declared itself under 18 stays out of quick match whatever it sends afterwards', async () => {
         const repos = open();
         const f = api(repos);
         const g = await f.guest('Kid');

@@ -43,8 +43,7 @@
       "ios": {
         "ascApiKeyPath": "$EXPO_ASC_API_KEY_PATH",
         "ascApiKeyId": "$EXPO_ASC_KEY_ID",
-        "ascApiKeyIssuerId": "$EXPO_ASC_ISSUER_ID",
-        "appleTeamId": "$EXPO_APPLE_TEAM_ID"
+        "ascApiKeyIssuerId": "$EXPO_ASC_ISSUER_ID"
       },
       "android": {
         "serviceAccountKeyPath": "./google-play-service-account.json",
@@ -56,8 +55,7 @@
       "ios": {
         "ascApiKeyPath": "$EXPO_ASC_API_KEY_PATH",
         "ascApiKeyId": "$EXPO_ASC_KEY_ID",
-        "ascApiKeyIssuerId": "$EXPO_ASC_ISSUER_ID",
-        "appleTeamId": "$EXPO_APPLE_TEAM_ID"
+        "ascApiKeyIssuerId": "$EXPO_ASC_ISSUER_ID"
       }
     }
   }

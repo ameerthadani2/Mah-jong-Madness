@@ -9,7 +9,7 @@
  *    puzzle history, devices, reports, blocks and club memberships move to V (where both are in a club,
  *    the stronger row stays; clubs U owns transfer); U's sessions end; U is soft-deleted with
  *    merged_into = V and its profile scrubbed; the device gets a V session. U's birth year goes
- *    to V when V has none (the year is write-once, and an under-17 declaration must not be shed
+ *    to V when V has none (the year is write-once, and an under-18 declaration must not be shed
  *    by linking); when both have one, V's stays.
  * 3. P is linked to V and U already has a provider: 409 identity_in_use (two real accounts are
  *    never merged automatically).
@@ -19,8 +19,12 @@
  * Deletion is soft: profile fields are scrubbed, identities, sessions and devices (with their
  * push tokens) are deleted, club rows become "Deleted player" (a club the user owned passes to
  * its senior admin, else its earliest member, or is dissolved when nobody is left), and purchases
- * and the wallet ledger stay as financial records. `purgeDeletedUsers` (run hourly by the server)
- * hard-deletes the row after 30 days.
+ * and the wallet ledger stay as financial records. The records that outlive the account lose the
+ * name as well: the seats it held in finished matches and its rows in finished club seasons keep
+ * their scores under "Deleted player", and the notes of reports filed by or about it have the
+ * name taken out (the reports stay as moderation records, under the account id).
+ * `purgeDeletedUsers` (run hourly by the server) hard-deletes the row after 30 days, and then
+ * takes the name and the account id out of any match recorded in between.
  */
 import type { Repos, UserRecord } from '../repos/types';
 import { DELETED_PLAYER_NAME } from '../repos/types';
@@ -90,7 +94,7 @@ export async function link(repos: Repos, userId: string, identity: VerifiedIdent
       if (!linked) continue;
       await opts.sessions.revokeAll(userId, opts.currentSessionId);
       // The old guest secret may be on other devices; from now on only the one that linked has a working copy.
-      const guestSecret = await rotateGuestSecret(repos, { current: opts.sessions.pepper, previous: opts.sessions.previousPepper }, userId);
+      const guestSecret = await rotateGuestSecret(repos, { current: opts.sessions.pepper, previous: opts.sessions.previousPeppers }, userId);
       return { userId, merged: false, affectedClubs: [], ...(guestSecret ? { guestSecret } : {}) };
     }
     if (existing.userId === userId) return { userId, merged: false, affectedClubs: [] };
@@ -107,6 +111,7 @@ export async function link(repos: Repos, userId: string, identity: VerifiedIdent
       await tx.puzzleResults.moveToUser(user.id, target.id);
       await tx.devices.moveToUser(user.id, target.id);
       await tx.reports.moveToUser(user.id, target.id);
+      await tx.matchResults.moveToUser(user.id, target.id);
       await tx.blocks.moveToUser(user.id, target.id);
       await tx.sessions.revokeAllForUser(user.id, now);
       await tx.identities.deleteForUser(user.id);
@@ -160,6 +165,10 @@ export async function deleteAccount(repos: Repos, userId: string, opts: { now?: 
     await tx.identities.deleteForUser(userId);
     await tx.blocks.deleteForUser(userId);
     const clubs = await tx.clubs.anonymiseUser(userId);
+    // The name goes from the records that outlive the account too: finished matches keep the
+    // scores, and reports keep the reason and the note, without it.
+    await tx.matchResults.anonymiseUser(userId);
+    if (user.displayName) await tx.reports.redactName(userId, user.displayName);
     await tx.users.update(userId, {
       deletedAt: user.deletedAt ?? now,
       displayName: DELETED_PLAYER_NAME,
@@ -176,13 +185,20 @@ export async function deleteAccount(repos: Repos, userId: string, opts: { now?: 
 /**
  * The hard delete promised at soft deletion: remove user rows deleted (or merged away) more than
  * `PURGE_AFTER_MS` ago, and sessions that have expired or ended. Financial records (ledger,
- * purchases, store events) and reports carry no reference to the user row and stay. Run
+ * purchases, store events) and reports carry no reference to the user row and stay; finished
+ * matches stay with the seat renamed "Deleted player" and its account id cleared. Run
  * periodically by the server; returns what was removed. `userIds` are the accounts that went: the
  * caller passes them to `ClubRegistry.dropPurged`, because the registry's clubs still hold their rows.
  */
 export async function purgeDeletedUsers(repos: Repos, opts: { now?: () => number; after?: number } = {}): Promise<{ users: number; sessions: number; userIds: string[] }> {
   const now = (opts.now ?? Date.now)();
-  const userIds = await repos.users.purgeDeletedIds(now - (opts.after ?? PURGE_AFTER_MS));
+  const userIds = await repos.transaction(async (tx) => {
+    const ids = await tx.users.purgeDeletedIds(now - (opts.after ?? PURGE_AFTER_MS));
+    // A match that finished after the account was deleted was recorded under the seat's name: take
+    // the name out again, and the account id with it, now that the id belongs to nobody.
+    for (const id of ids) await tx.matchResults.anonymiseUser(id, { forget: true });
+    return ids;
+  });
   const sessions = await repos.sessions.pruneEnded(now);
   return { users: userIds.length, sessions, userIds };
 }

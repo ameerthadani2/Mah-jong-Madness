@@ -6,7 +6,8 @@
  *
  * The address may be http(s):// or ws(s)://; only its origin is used. The socket address is the
  * same origin with ws:// or wss://. In order it:
- *   1. checks /health (ok, and the database ok when the server reports one),
+ *   1. checks /health (ok, the database ok when the server reports one, and with --expect-storage
+ *      the storage in use), and notes which image answered and the snapshot writes so far,
  *   2. reads GET /api/config,
  *   3. creates a guest account marked as a smoke test (display name 'Smoke test', a device id and
  *      platform starting with 'smoke'),
@@ -14,11 +15,15 @@
  *   5. opens a server-hosted table, sits down, and adds three bots,
  *   6. plays one full hand for its own seat with the engine's chooseAction through a TableClient,
  *   7. checks that the hand's fairness audit verifies ('ok'),
- *   8. leaves the table and deletes the account (DELETE /api/me).
+ *   8. reads /health again: the table must have been written to storage during the hand and no
+ *      snapshot write may have failed (a server that stores nothing loses every table at a restart),
+ *   9. leaves the table, deletes the account (DELETE /api/me) and checks that its session is dead.
  * The account is deleted even when a step fails. It prints each step's time and exits non-zero
  * with the failing step's message on any failure. Nothing here needs a secret.
  *
  * Options: --hand-timeout <seconds> (default 300: server bots wait about 0.6 s per move),
+ * --expect-storage pg|memory (fail unless the server reports that storage; `pg` also requires
+ * the database to answer; the deploy workflow passes `pg`; also SMOKE_EXPECT_STORAGE),
  * --json (print the result as JSON as well).
  */
 import { randomUUID } from 'node:crypto';
@@ -54,6 +59,36 @@ export interface SmokeOptions {
   stepTimeoutMs?: number;
   /** Progress lines (default: none). */
   log?: (line: string) => void;
+  /**
+   * Fail unless `/health` reports this storage. A deployed server must be on `pg`: one on
+   * `memory` plays a perfect hand and loses every account and table at the next restart.
+   */
+  expectStorage?: SmokeStorage;
+}
+
+export type SmokeStorage = 'pg' | 'memory';
+
+/** The storage named by --expect-storage or SMOKE_EXPECT_STORAGE; undefined for none; throws on anything else. */
+export function smokeStorage(value: string | undefined): SmokeStorage | undefined {
+  const v = (value ?? '').trim().toLowerCase();
+  if (!v) return undefined;
+  if (v === 'pg' || v === 'postgres') return 'pg';
+  if (v === 'memory') return 'memory';
+  throw new SmokeError(`--expect-storage takes 'pg' or 'memory', not '${value}'`);
+}
+
+interface SnapshotWrites {
+  saved: number;
+  failed: number;
+  lastSavedAt: string | null;
+  lastFailedAt: string | null;
+}
+
+/** `/health.snapshots`, or null when the server does not report it (a build from before it existed). */
+function snapshotWrites(health: Record<string, unknown>): SnapshotWrites | null {
+  const s = health.snapshots;
+  if (!isRecord(s) || typeof s.saved !== 'number' || typeof s.failed !== 'number') return null;
+  return { saved: s.saved, failed: s.failed, lastSavedAt: typeof s.lastSavedAt === 'string' ? s.lastSavedAt : null, lastFailedAt: typeof s.lastFailedAt === 'string' ? s.lastFailedAt : null };
 }
 
 export class SmokeError extends Error {}
@@ -148,12 +183,21 @@ export async function runSmoke(input: string, opts: SmokeOptions = {}): Promise<
   };
 
   let error: string | undefined;
+  let before: SnapshotWrites | null = null;
   try {
     await step('health', async () => {
       const res = await http(base, 'GET', '/health', stepMs);
       if (res.status !== 200 || res.json.ok !== true) throw new SmokeError(`/health answered ${res.status}: ${brief(res.text)}`);
       if ('db' in res.json && res.json.db !== 'ok') throw new SmokeError(`/health reports the database as '${String(res.json.db)}'`);
-      return `storage ${String(res.json.storage ?? 'unknown')}${'db' in res.json ? ', db ok' : ''}, ${String(res.json.tables ?? 0)} tables`;
+      const storage = String(res.json.storage ?? 'unknown');
+      if (opts.expectStorage && storage !== opts.expectStorage) {
+        const why = storage === 'memory' ? ': accounts, clubs and tables are lost at every restart (DATABASE_URL is not set, or ALLOW_EPHEMERAL=1 is still on)' : '';
+        throw new SmokeError(`/health reports storage '${storage}', expected '${opts.expectStorage}'${why}`);
+      }
+      if (opts.expectStorage === 'pg' && res.json.db !== 'ok') throw new SmokeError('/health does not report the database as ok');
+      before = snapshotWrites(res.json);
+      const image = typeof res.json.image === 'string' && res.json.image ? `, image ${res.json.image}` : '';
+      return `storage ${storage}${'db' in res.json ? ', db ok' : ''}, ${String(res.json.tables ?? 0)} tables${image}`;
     });
 
     await step('config', async () => {
@@ -260,6 +304,29 @@ export async function runSmoke(input: string, opts: SmokeOptions = {}): Promise<
       return `hand ${a.audit.handNumber} verified, ${a.audit.ceremonyAttempts} ceremony attempt(s)`;
     });
 
+    await step('snapshot', async () => {
+      // The end of a hand is written at once; give the write a moment to land, then judge.
+      const start = before as SnapshotWrites | null;
+      const deadline = Date.now() + stepMs;
+      for (;;) {
+        const res = await http(base, 'GET', '/health', stepMs);
+        if (res.status !== 200 || res.json.ok !== true) throw new SmokeError(`/health answered ${res.status} after the hand: ${brief(res.text)}`);
+        const now = snapshotWrites(res.json);
+        if (!now || !start) {
+          if (opts.expectStorage) throw new SmokeError('/health does not report table snapshot writes (an older build answered?)');
+          return 'not reported by this server';
+        }
+        const failed = now.failed - start.failed;
+        if (failed > 0) {
+          throw new SmokeError(`${failed} table snapshot write${failed === 1 ? '' : 's'} failed during the hand${now.lastFailedAt ? ` (last at ${now.lastFailedAt})` : ''}: tables would not survive a restart; the server log says why ("snapshot not saved")`);
+        }
+        const saved = now.saved - start.saved;
+        if (saved > 0) return `${saved} written during the hand, none failed${now.lastSavedAt ? `, last at ${now.lastSavedAt}` : ''}`;
+        if (Date.now() > deadline) throw new SmokeError('no table snapshot was written during the hand: tables would not survive a restart');
+        await new Promise((r) => setTimeout(r, 200));
+      }
+    });
+
     await step('leave', async () => {
       const c = table!;
       table = null;
@@ -271,6 +338,9 @@ export async function runSmoke(input: string, opts: SmokeOptions = {}): Promise<
       const res = await http(base, 'DELETE', '/api/me', stepMs, undefined, token!);
       if (res.status !== 204) throw new SmokeError(`DELETE /api/me answered ${res.status}: ${brief(res.text)}`);
       deleted = true;
+      const after = await http(base, 'GET', '/api/me', stepMs, undefined, token!);
+      if (after.status !== 401) throw new SmokeError(`the deleted account's session still works: GET /api/me answered ${after.status} instead of 401`);
+      return 'the session no longer works';
     });
   } catch (e) {
     error = (e as Error).message;
@@ -291,30 +361,43 @@ export async function runSmoke(input: string, opts: SmokeOptions = {}): Promise<
   return { ok: !error, base, wsUrl, steps, totalMs: Date.now() - started, ...(error ? { error } : {}) };
 }
 
-function parseArgs(argv: string[]): { url?: string; handTimeoutMs?: number; json: boolean } {
-  const out: { url?: string; handTimeoutMs?: number; json: boolean } = { json: false };
+/** The command line: the server address and the options (see the file comment). Throws SmokeError on a bad option. */
+export function parseArgs(argv: string[], env: Record<string, string | undefined> = {}): { url?: string; handTimeoutMs?: number; expectStorage?: SmokeStorage; json: boolean } {
+  const out: { url?: string; handTimeoutMs?: number; expectStorage?: SmokeStorage; json: boolean } = { json: false };
+  let storage = env.SMOKE_EXPECT_STORAGE;
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--json') out.json = true;
     else if (a === '--hand-timeout') out.handTimeoutMs = Number(argv[++i]) * 1000;
-    else if (!a.startsWith('--')) out.url = a;
+    else if (a === '--expect-storage') storage = argv[++i] ?? '?';
+    else if (a.startsWith('--expect-storage=')) storage = a.slice('--expect-storage='.length) || '?';
+    else if (a.startsWith('--')) throw new SmokeError(`Unknown option '${a}'`);
+    else out.url = a;
   }
+  const expectStorage = smokeStorage(storage);
+  if (expectStorage) out.expectStorage = expectStorage;
   return out;
 }
 
 async function main(): Promise<void> {
-  const args = parseArgs(process.argv.slice(2));
+  let args: ReturnType<typeof parseArgs>;
+  try {
+    args = parseArgs(process.argv.slice(2), process.env);
+  } catch (e) {
+    console.error((e as Error).message);
+    process.exit(2);
+  }
   const url = args.url ?? process.env.SMOKE_URL;
   if (!url) {
-    console.error('Usage: npm run smoke -w @mjm/signal -- <server url>   (https://..., http://..., wss://... or ws://...)');
+    console.error('Usage: npm run smoke -w @mjm/signal -- <server url> [--expect-storage pg] [--hand-timeout <seconds>] [--json]   (https://..., http://..., wss://... or ws://...)');
     process.exit(2);
   }
   if (args.handTimeoutMs !== undefined && !(args.handTimeoutMs > 0)) {
     console.error('--hand-timeout takes a number of seconds');
     process.exit(2);
   }
-  console.log(`Smoke test against ${url}`);
-  const result = await runSmoke(url, { handTimeoutMs: args.handTimeoutMs, log: (line) => console.log(line) });
+  console.log(`Smoke test against ${url}${args.expectStorage ? ` (storage must be ${args.expectStorage})` : ''}`);
+  const result = await runSmoke(url, { handTimeoutMs: args.handTimeoutMs, expectStorage: args.expectStorage, log: (line) => console.log(line) });
   console.log(`${result.ok ? 'PASSED' : 'FAILED'} in ${result.totalMs} ms (${result.base}, ${result.wsUrl || 'no socket'})`);
   if (args.json) console.log(JSON.stringify(result));
   if (!result.ok) {

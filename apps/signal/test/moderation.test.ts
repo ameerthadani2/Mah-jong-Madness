@@ -96,6 +96,26 @@ describe('the name check', () => {
     expect(rename.status).toBe(400);
     expect(rename.json.error).toBe('name_not_allowed');
   });
+
+  it("holds a club's description to the same list as its name, since anyone with the code is sent it", async () => {
+    const f = apiFixture();
+    const g = await f.guest('Mei');
+    const club = await f.call('POST', '/api/clubs', { name: 'Tea House' }, g.auth);
+    const code = club.json.code as string;
+    const zw = String.fromCodePoint(0x200b);
+    for (const description of ['Run by the Official Mahjong staff', `Ask an ad${zw}min`, '官方客服在這裡']) {
+      const res = await f.call('PATCH', `/api/clubs/${code}`, { description }, g.auth);
+      expect(res.status, description).toBe(400);
+      expect(res.json.error).toBe('name_not_allowed');
+    }
+    expect((await f.call('GET', `/api/clubs/${code}`, undefined, g.auth)).json.description).toBe('');
+    const ok = await f.call('PATCH', `/api/clubs/${code}`, { description: 'Thursday league.\nBadminton players welcome' }, g.auth);
+    expect(ok.status).toBe(200);
+    expect(ok.json.description).toBe('Thursday league.\nBadminton players welcome');
+    // Clearing it, or leaving it out, is still fine.
+    expect((await f.call('PATCH', `/api/clubs/${code}`, { description: '' }, g.auth)).status).toBe(200);
+    expect((await f.call('PATCH', `/api/clubs/${code}`, { settings: { joinRequiresApproval: true } }, g.auth)).status).toBe(200);
+  });
 });
 
 describe('blocks', () => {

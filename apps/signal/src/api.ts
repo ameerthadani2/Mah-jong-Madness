@@ -41,6 +41,7 @@ import { adminModerationRoutes, blockRoutes, ModerationError, MuteList, NAME_NOT
 import { EXPO_PUSH_TOKEN, type PushService } from './push';
 import { REPORT_REASONS, type ReportReason, type Repos, type UserRecord } from './repos/types';
 import { parseRevenueCatWebhook, webhookAuthorised } from './revenuecat';
+import type { SnapshotWrites } from './persist';
 import { BANNED_CLOSE_CODE, isBotSkill, RoomLimitError, type RoomRegistry } from './rooms';
 import { WalletError, WalletService } from './wallet';
 
@@ -63,6 +64,10 @@ export interface ApiDeps {
   actionLatency?: LatencyWindow;
   /** `memory` or `pg`, shown on `/health`. */
   storage?: Repos['kind'];
+  /** Table snapshot writes since boot, shown on `/health` (absent: not reported). */
+  snapshots?: () => SnapshotWrites;
+  /** The image this process runs from (`FLY_IMAGE_REF`), shown on `/health` so a check can tell which build answered. */
+  image?: string | null;
   /** Database check for `/health` (absent: not reported). A check slower than `healthTimeoutMs` counts as down. */
   healthy?: () => Promise<boolean>;
   /** How long `/health` waits for `healthy` (default 2 s). */
@@ -204,6 +209,16 @@ function assertClubNameAllowed(v: unknown): void {
   if (typeof v === 'string') assertNameAllowed(cleanField(v, 64));
 }
 
+/**
+ * A club's description is free text that anyone holding the club code is sent, so it passes the
+ * same blocklist as the name (400 `name_not_allowed`), checked on the text as it will be stored.
+ */
+function assertClubDescriptionAllowed(v: unknown): void {
+  if (typeof v !== 'string') return;
+  const text = cleanField(v, 280, { multiline: true });
+  if (text && !nameAllowed(text)) throw new HttpError(400, NAME_NOT_ALLOWED, 'That description is not allowed; please change it');
+}
+
 export function buildRoutes(deps: ApiDeps, opts: Pick<ApiOptions, 'reportIpLimiter'> = {}): Route[] {
   const { clubs, rooms, repos, sessions } = deps;
   const now = deps.now ?? Date.now;
@@ -227,7 +242,7 @@ export function buildRoutes(deps: ApiDeps, opts: Pick<ApiOptions, 'reportIpLimit
     onBanned: (userId: string) => deps.matchmaker?.removeUser(userId),
     ...(deps.adminToken !== undefined ? { adminToken: deps.adminToken } : {}),
   };
-  const peppers: Peppers = { current: sessions.pepper, previous: sessions.previousPepper };
+  const peppers: Peppers = { current: sessions.pepper, previous: sessions.previousPeppers };
 
   const r = (method: string, path: string, handler: Handler, auth = false): Route => {
     const keys: string[] = [];
@@ -257,6 +272,12 @@ export function buildRoutes(deps: ApiDeps, opts: Pick<ApiOptions, 'reportIpLimit
     for (const room of rooms.clubRooms(clubCode)) rooms.evictFromTable(room, userId);
   };
 
+  const snapshotWrites = deps.snapshots
+    ? () => {
+        const s = deps.snapshots!();
+        return { saved: s.saved, failed: s.failed, lastSavedAt: s.lastSavedAt === null ? null : iso(s.lastSavedAt), lastFailedAt: s.lastFailedAt === null ? null : iso(s.lastFailedAt) };
+      }
+    : null;
   return [
     // 503 while shutting down or while the database is down or slower than `healthTimeoutMs`, so
     // the platform's checks and proxy stop sending players to a machine that cannot serve them.
@@ -269,6 +290,8 @@ export function buildRoutes(deps: ApiDeps, opts: Pick<ApiOptions, 'reportIpLimit
         pushEnabled: deps.push?.enabled ?? false,
         storeEnabled,
         storage: deps.storage ?? repos.kind,
+        ...(snapshotWrites ? { snapshots: snapshotWrites() } : {}),
+        image: deps.image?.trim() || null,
       };
       if (deps.draining?.()) return new Reply(503, { ok: false, draining: true, ...body });
       const db = deps.healthy ? ((await withTimeout(deps.healthy(), deps.healthTimeoutMs ?? HEALTH_TIMEOUT_MS)) ? 'ok' : 'down') : undefined;
@@ -541,6 +564,7 @@ export function buildRoutes(deps: ApiDeps, opts: Pick<ApiOptions, 'reportIpLimit
       const me = await member(ctx);
       const { body } = ctx;
       assertClubNameAllowed(body.name);
+      assertClubDescriptionAllowed(body.description);
       return view(clubs.update(ctx.params.code, me.userId, { name: body.name, description: body.description, rules: body.rules, settings: body.settings }), me.userId);
     }),
     // Owner only, with the club's name typed again; its live tables close first.

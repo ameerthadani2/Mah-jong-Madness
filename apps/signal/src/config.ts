@@ -160,11 +160,23 @@ export function missingProductionEnvMessage(missing: string[]): string {
   );
 }
 
-/** The session pepper: AUTH_PEPPER, or a random one for this process only (with a warning). */
-export function pepperFromEnv(env: Env, warn: (line: string) => void): { pepper: string; previousPepper?: string } {
-  const pepper = (env.AUTH_PEPPER ?? '').trim();
-  const previous = (env.AUTH_PEPPER_PREVIOUS ?? '').trim() || undefined;
-  if (pepper) return { pepper, previousPepper: previous };
-  warn('[signal] AUTH_PEPPER is not set: using a random pepper, so every session ends when this process stops');
-  return { pepper: randomBytes(32).toString('hex'), previousPepper: previous };
+/**
+ * The session pepper: AUTH_PEPPER, or a random one for this process only (with a warning).
+ * AUTH_PEPPER_PREVIOUS holds the pepper used before a rotation, or several separated by commas
+ * (newest first): sessions and guest secrets stored under one of them are still accepted and are
+ * stored again under the current pepper when they are next presented. One earlier pepper comes
+ * back as a string, several as a list.
+ */
+export function pepperFromEnv(env: Env, warn: (line: string) => void): { pepper: string; previousPepper?: string | string[] } {
+  let pepper = (env.AUTH_PEPPER ?? '').trim();
+  if (!pepper) {
+    warn('[signal] AUTH_PEPPER is not set: using a random pepper, so every session ends when this process stops');
+    pepper = randomBytes(32).toString('hex');
+  }
+  const listed = (env.AUTH_PEPPER_PREVIOUS ?? '')
+    .split(',')
+    .map((p) => p.trim())
+    .filter(Boolean);
+  const previous = [...new Set(listed)].filter((p) => p !== pepper);
+  return { pepper, previousPepper: previous.length > 1 ? previous : previous[0] };
 }

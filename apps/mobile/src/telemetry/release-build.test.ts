@@ -62,11 +62,12 @@ describe('EAS profiles (eas.json)', () => {
     expect(eas.submit.production.android).toEqual({ serviceAccountKeyPath: './google-play-service-account.json', track: 'internal', releaseStatus: 'draft' });
   });
 
-  it('leaves the iOS build and TestFlight submission as they were', () => {
+  it('leaves the iOS build as it was, and reads only the App Store Connect key from the environment to submit', () => {
     expect(eas.build.production.ios).toBeUndefined();
     expect(eas.build.simulator.ios).toEqual({ simulator: true });
     for (const profile of ['production', 'preview']) {
-      expect(eas.submit[profile].ios).toEqual({ ascApiKeyPath: '$EXPO_ASC_API_KEY_PATH', ascApiKeyId: '$EXPO_ASC_KEY_ID', ascApiKeyIssuerId: '$EXPO_ASC_ISSUER_ID', appleTeamId: '$EXPO_APPLE_TEAM_ID' });
+      // The team id comes from EXPO_APPLE_TEAM_ID in the environment: the submit profile cannot expand a placeholder for it.
+      expect(eas.submit[profile].ios).toEqual({ ascApiKeyPath: '$EXPO_ASC_API_KEY_PATH', ascApiKeyId: '$EXPO_ASC_KEY_ID', ascApiKeyIssuerId: '$EXPO_ASC_ISSUER_ID' });
     }
     expect(eas.build.production.channel).toBe('production');
   });

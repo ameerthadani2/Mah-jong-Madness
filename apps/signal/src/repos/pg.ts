@@ -10,6 +10,8 @@
 import { anonymiseUserIn, moveMembershipsIn, type Club, type ClubBan, type ClubMember, type ClubSettings, type ClubTable, type FormerMember, type Identity, type OwnerLapse, type SeasonRecord } from '../clubs';
 import type { Pool, Queryable } from '../db';
 import {
+  DELETED_PLAYER_NAME,
+  withoutName,
   type BlockRecord,
   type BlocksRepo,
   type ClubMembership,
@@ -520,6 +522,23 @@ function pgReports(q: Queryable, tx: Tx): ReportsRepo {
         const filed = await c.query('UPDATE reports SET reporter_id = $2 WHERE reporter_id = $1', [fromUserId, toUserId]);
         const about = await c.query('UPDATE reports SET reported_user_id = $2 WHERE reported_user_id = $1', [fromUserId, toUserId]);
         return (dropped.rowCount ?? 0) + (filed.rowCount ?? 0) + (about.rowCount ?? 0);
+      });
+    },
+    async redactName(userId, name) {
+      if (!isUuid(userId)) return 0;
+      return tx(async (c) => {
+        const rows = await c.query<{ id: string; details: string }>(
+          'SELECT id, details FROM reports WHERE (reporter_id = $1 OR reported_user_id = $1) AND details IS NOT NULL ORDER BY id FOR UPDATE',
+          [userId],
+        );
+        let n = 0;
+        for (const r of rows.rows) {
+          const details = withoutName(r.details, name);
+          if (details === r.details) continue;
+          await c.query('UPDATE reports SET details = $2 WHERE id = $1', [r.id, details]);
+          n++;
+        }
+        return n;
       });
     },
     async get(id) {
@@ -1139,6 +1158,7 @@ function pgClubs(q: Queryable, tx: Tx): ClubsRepo {
        UNION SELECT club_code FROM club_bans WHERE user_id = $1
        UNION SELECT club_code FROM club_former_members WHERE user_id = $1
        UNION SELECT code FROM clubs WHERE owner_lapses @> jsonb_build_array(jsonb_build_object('userId', $1::text))
+       UNION SELECT code FROM clubs WHERE season_history @> jsonb_build_array(jsonb_build_object('standings', jsonb_build_array(jsonb_build_object('userId', $1::text))))
        ORDER BY code`,
       [userId],
     );
@@ -1290,6 +1310,27 @@ function pgMatchResults(q: Queryable): MatchResultsRepo {
     async listForRoom(roomCode) {
       const res = await q.query<MatchRow>('SELECT ' + COLS + ' FROM match_results WHERE room_code = $1 ORDER BY id', [roomCode]);
       return res.rows.map(matchFromRow);
+    },
+    async anonymiseUser(userId, opts = {}) {
+      // `players` is a JSON array of seats: rewrite the seats this account held, in seat order, in the rows that name it.
+      const res = await q.query(
+        `UPDATE match_results SET players = (
+           SELECT jsonb_agg(CASE WHEN p->>'userId' = $1 THEN p || jsonb_build_object('name', $2::text) || CASE WHEN $3::boolean THEN '{"userId": null}'::jsonb ELSE '{}'::jsonb END ELSE p END ORDER BY ord)
+           FROM jsonb_array_elements(players) WITH ORDINALITY AS seat(p, ord))
+         WHERE players @> jsonb_build_array(jsonb_build_object('userId', $1::text))`,
+        [userId, DELETED_PLAYER_NAME, opts.forget === true],
+      );
+      return res.rowCount ?? 0;
+    },
+    async moveToUser(fromUserId, toUserId) {
+      const res = await q.query(
+        `UPDATE match_results SET players = (
+           SELECT jsonb_agg(CASE WHEN p->>'userId' = $1 THEN p || jsonb_build_object('userId', $2::text) ELSE p END ORDER BY ord)
+           FROM jsonb_array_elements(players) WITH ORDINALITY AS seat(p, ord))
+         WHERE players @> jsonb_build_array(jsonb_build_object('userId', $1::text))`,
+        [fromUserId, toUserId],
+      );
+      return res.rowCount ?? 0;
     },
   };
 }

@@ -20,6 +20,7 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     outputs:
       pages_ready: ${{ steps.pages.outcome == 'success' }}
     steps:
@@ -59,12 +60,42 @@ jobs:
     needs: build
     if: needs.build.outputs.pages_ready == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - id: deployment
         uses: actions/deploy-pages@v4
-      - run: |
-          echo "## Play it" >> $GITHUB_STEP_SUMMARY
-          echo "${{ steps.deployment.outputs.page_url }}" >> $GITHUB_STEP_SUMMARY
+      - name: Where to play, and whether the server accepts this site
+        # A browser only lets this site call the game server when the server lists the site's
+        # origin in CORS_ORIGINS; native apps need nothing. Ask the server, and say what to set.
+        env:
+          PAGE_URL: ${{ steps.deployment.outputs.page_url }}
+          SIGNAL_URL: ${{ vars.SIGNAL_URL }}
+        run: |
+          ORIGIN=$(printf '%s' "$PAGE_URL" | sed -E 's#^(https?://[^/]+).*#\1#')
+          {
+            echo "## Play it"
+            echo "$PAGE_URL"
+            echo ""
+          } >> "$GITHUB_STEP_SUMMARY"
+          SIGNAL_URL=$(printf '%s' "$SIGNAL_URL" | tr -d '[:space:]')
+          if [ -z "$SIGNAL_URL" ]; then
+            echo "Offline play only: the repository variable \`SIGNAL_URL\` is not set, so clubs and online tables are off (docs/RUN_FROM_PHONE.md, step 1)." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          BASE=$(printf '%s' "$SIGNAL_URL" | sed -E 's#^ws(s?)://#http\1://#; s#^(https?://[^/]+).*#\1#')
+          ALLOWED=$(curl -s --max-time 15 -o /dev/null -D - -X OPTIONS -H "Origin: $ORIGIN" -H "Access-Control-Request-Method: POST" -H "Access-Control-Request-Headers: content-type" "$BASE/api/auth/guest" | tr -d '\r' | grep -i '^access-control-allow-origin:' | head -n 1 | sed -E 's/^[^:]+: *//' || true)
+          if [ "$ALLOWED" = "$ORIGIN" ] || [ "$ALLOWED" = "*" ]; then
+            echo "Online play: the server at $BASE accepts this site ($ORIGIN)." >> "$GITHUB_STEP_SUMMARY"
+          else
+            {
+              echo "**Online play does not work from this site yet.** The server at $BASE does not list this site's origin, so the browser blocks sign-in, clubs and tables. Run once (origin only, no path), then reload the page:"
+              echo ""
+              echo '```'
+              echo "fly secrets set -a <app> CORS_ORIGINS=$ORIGIN"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::warning title=The server does not accept this site::Set CORS_ORIGINS=$ORIGIN on the game server (fly secrets set), or clubs and online tables stay unreachable from the web preview (docs/RUN_FROM_PHONE.md, step 1)."
+          fi

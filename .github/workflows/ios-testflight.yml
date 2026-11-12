@@ -7,14 +7,22 @@ name: iOS TestFlight build
 #   ASC_KEY_P8            full contents of the downloaded AuthKey_XXXX.p8 file
 #   APPLE_TEAM_ID         10-character team id (developer.apple.com → Membership)
 # Without any of them the run is skipped with a summary of what to set up.
+# Submitting also needs the repository variable APP_STORE_ID: the numeric Apple ID of the app record
+# you create by hand in App Store Connect (an API key cannot create it). With "submit" ticked and no
+# APP_STORE_ID the run stops before anything is built and its summary says what to do.
 # Repository variables copied into the build (the same as android-play.yml; see docs/OWNER_TODO.md):
 #   SIGNAL_URL (required, wss://), APP_NAME, APP_SLUG, APP_SCHEME, APP_BUNDLE_ID, APP_VERSION,
 #   APP_STORE_ID, EXPO_PUBLIC_LINK_DOMAIN, EXPO_PUBLIC_SENTRY_DSN, EXPO_PUBLIC_POSTHOG_KEY,
 #   EXPO_PUBLIC_POSTHOG_HOST, SENTRY_ORG, SENTRY_PROJECT, EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID,
 #   EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID, EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID, EXPO_PUBLIC_REVENUECAT_IOS_KEY,
-#   EXPO_PUBLIC_REVENUECAT_ANDROID_KEY, EXPO_PUBLIC_TERMS_URL, EXPO_PUBLIC_PRIVACY_URL.
-# A missing SIGNAL_URL, or one that is not wss:// or points at a local address, fails the run
-# before anything is built: a release build must reach the deployed server.
+#   EXPO_PUBLIC_REVENUECAT_ANDROID_KEY, EXPO_PUBLIC_TERMS_URL, EXPO_PUBLIC_PRIVACY_URL, APPLE_CLIENT_ID.
+# With EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID set the build offers Google sign-in, and App Review then
+# requires Sign in with Apple beside it (guideline 4.8): the run fails before anything is built
+# unless the variable APPLE_CLIENT_ID repeats the server's APPLE_CLIENT_ID secret and names the
+# bundle id.
+# A missing SIGNAL_URL, or one that is not wss:// on a public host name (an IP address, localhost
+# or a private name, credentials in the address), fails the run before anything is built: a
+# release build must reach the deployed server.
 # SENTRY_AUTH_TOKEN and google-services.json belong in EAS environment variables (secret / file),
 # never here.
 # The app uses native modules (notifications, Sentry, purchases), so it runs only in builds like this one
@@ -42,6 +50,7 @@ permissions:
 jobs:
   check:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
       ready: ${{ steps.gate.outputs.ready }}
     steps:
@@ -52,13 +61,39 @@ jobs:
           HAS_ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID != '' }}
           HAS_ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 != '' }}
           HAS_APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID != '' }}
+          SUBMIT: ${{ inputs.submit }}
+          APP_STORE_ID: ${{ vars.APP_STORE_ID }}
         run: |
           MISSING=""
           for name in EXPO_TOKEN ASC_KEY_ID ASC_ISSUER_ID ASC_KEY_P8 APPLE_TEAM_ID; do
             var="HAS_$name"
             if [ "${!var}" != "true" ]; then MISSING="${MISSING:+$MISSING, }$name"; fi
           done
-          if [ -z "$MISSING" ]; then echo "ready=true" >> "$GITHUB_OUTPUT"; exit 0; fi
+          if [ -z "$MISSING" ]; then
+            # A submission with nobody at the keyboard needs the App Store Connect app id in the submit
+            # profile; without it EAS would build for 10-20 minutes and then refuse to submit.
+            APP_STORE_ID="$(printf '%s' "$APP_STORE_ID" | tr -d '\r\n\t' | sed -E 's/^ +//; s/ +$//')"
+            if [ "$SUBMIT" = "true" ] && ! printf '%s' "$APP_STORE_ID" | grep -Eq '^[0-9]{1,30}$'; then
+              echo "ready=false" >> "$GITHUB_OUTPUT"
+              if [ -z "$APP_STORE_ID" ]; then WHAT="the repository variable APP_STORE_ID is not set"; else WHAT="APP_STORE_ID is '$APP_STORE_ID', which is not a numeric App Store Connect app id"; fi
+              {
+                echo "## iOS build stopped: $WHAT"
+                echo ""
+                echo "Submitting to TestFlight needs the app record's id, and an API key cannot create the record."
+                echo ""
+                echo "1. App Store Connect -> Apps -> + -> New App: platform iOS, your bundle id (\`APP_BUNDLE_ID\`, default \`com.mahjongmania.app\`), a name and any SKU."
+                echo "   If the bundle id is not offered yet, run this workflow once with *submit* unticked: the first build registers it."
+                echo "2. Open the new app -> App Information -> copy the **Apple ID** (digits only, e.g. 1234567890)."
+                echo "3. GitHub -> Settings -> Secrets and variables -> Actions -> Variables: set \`APP_STORE_ID\` to that number."
+                echo "4. Run this workflow again (docs/RUN_ON_IOS.md, route 2)."
+                echo ""
+                echo "Nothing was built. To build without submitting, untick *submit*."
+              } >> "$GITHUB_STEP_SUMMARY"
+              echo "::error title=APP_STORE_ID is needed to submit::$WHAT. Create the app record in App Store Connect and set the repository variable APP_STORE_ID to its Apple ID, or run with submit unticked (the job summary lists the steps)."
+              exit 1
+            fi
+            echo "ready=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
           echo "ready=false" >> "$GITHUB_OUTPUT"
           {
             echo "## iOS build skipped: missing secret $MISSING"
@@ -67,7 +102,8 @@ jobs:
             echo "2. App Store Connect -> Users and Access -> Integrations -> Team Keys -> a key with the App Manager role: save its id as \`ASC_KEY_ID\`, the issuer id as \`ASC_ISSUER_ID\` and the whole .p8 file as \`ASC_KEY_P8\`."
             echo "3. developer.apple.com -> Membership: save the team id as \`APPLE_TEAM_ID\`."
             echo "4. Set the repository variable \`SIGNAL_URL\` to the deployed server (\`wss://...\`)."
-            echo "5. Re-run this workflow (docs/RUN_ON_IOS.md)."
+            echo "5. To submit: create the app record in App Store Connect and set the repository variable \`APP_STORE_ID\` to its Apple ID (digits)."
+            echo "6. Re-run this workflow (docs/RUN_ON_IOS.md)."
           } >> "$GITHUB_STEP_SUMMARY"
           echo "::notice::$MISSING missing; skipping the iOS build (the job summary lists the setup steps)"
 
@@ -75,6 +111,9 @@ jobs:
     needs: check
     if: needs.check.outputs.ready == 'true'
     runs-on: ubuntu-latest
+    # The EAS queue can be slow on the free plan. If this limit ends the run, the cloud build
+    # carries on: find it on expo.dev -> Builds, and submit it with eas submit or a new run.
+    timeout-minutes: 120
     permissions:
       contents: write
     env:
@@ -101,25 +140,35 @@ jobs:
       EXPO_PUBLIC_REVENUECAT_ANDROID_KEY: ${{ vars.EXPO_PUBLIC_REVENUECAT_ANDROID_KEY }}
       EXPO_PUBLIC_TERMS_URL: ${{ vars.EXPO_PUBLIC_TERMS_URL }}
       EXPO_PUBLIC_PRIVACY_URL: ${{ vars.EXPO_PUBLIC_PRIVACY_URL }}
+      APPLE_CLIENT_ID: ${{ vars.APPLE_CLIENT_ID }}
     steps:
-      - name: Check SIGNAL_URL (a release build must reach the deployed server)
-        run: |
-          if [ -z "$SIGNAL_URL" ]; then
-            echo "::error title=SIGNAL_URL is not set::Set the repository variable SIGNAL_URL to the deployed game server, e.g. wss://mahjong-signal.fly.dev (Settings -> Secrets and variables -> Actions -> Variables). Without it the build would talk to a development address."
-            exit 1
-          fi
-          case "$SIGNAL_URL" in
-            wss://*) ;;
-            *) echo "::error title=SIGNAL_URL must start with wss://::SIGNAL_URL is '$SIGNAL_URL'. A release build talks to the deployed server over TLS: use wss://<your server> (docs/DEPLOY.md)."; exit 1 ;;
-          esac
-          HOST=$(printf '%s' "$SIGNAL_URL" | sed -E 's#^wss://([^/:?]+).*#\1#' | tr 'A-Z' 'a-z')
-          case "$HOST" in
-            ""|localhost|*.localhost|127.*|0.0.0.0|10.*|192.168.*|*.local|*.internal)
-              echo "::error title=SIGNAL_URL points at a local address::SIGNAL_URL is '$SIGNAL_URL'. A release build must never point at localhost or a private network: use the deployed server."
-              exit 1 ;;
-          esac
-          echo "Building against $SIGNAL_URL"
       - uses: actions/checkout@v4
+      - name: Check Sign in with Apple (required beside Google sign-in on iOS)
+        # The same check app.config.js makes on EAS: a build that offers Google sign-in on iOS needs
+        # the server to offer Sign in with Apple for this bundle id (App Review guideline 4.8).
+        run: |
+          node -e "
+            const text = (v) => (typeof v === 'string' && v.trim() ? v.trim() : undefined);
+            const bundleId = text(process.env.APP_BUNDLE_ID) || 'com.mahjongmania.app';
+            const problem = require('./apps/mobile/app.config.js').appleSignInProblem({ googleIosClientId: process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID, appleClientId: process.env.APPLE_CLIENT_ID, bundleId });
+            if (problem) {
+              console.log('::error title=Google sign-in on iOS needs Sign in with Apple::This iOS build cannot be made: ' + problem + ' (repository variables: Settings -> Secrets and variables -> Actions -> Variables; docs/OWNER_TODO.md)');
+              process.exit(1);
+            }
+            console.log(text(process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID) ? 'Google sign-in and Sign in with Apple are both configured for ' + bundleId : 'No Google sign-in in this build');
+          "
+      - name: Check SIGNAL_URL (a release build must reach the deployed server)
+        # The same check app.config.js makes on EAS, run here so a bad address stops the run before
+        # anything is built: wss://, a public host name, no IP address, no credentials.
+        run: |
+          node -e "
+            const problem = require('./apps/mobile/app.config.js').releaseSignalUrlProblem(process.env.SIGNAL_URL);
+            if (problem) {
+              console.log('::error title=SIGNAL_URL cannot be used for a release build::The repository variable SIGNAL_URL: ' + problem + ' (Settings -> Secrets and variables -> Actions -> Variables; docs/DEPLOY.md)');
+              process.exit(1);
+            }
+            console.log('Building against ' + process.env.SIGNAL_URL.trim());
+          "
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -159,21 +208,14 @@ jobs:
             git commit -m "Link EAS project (automated)"
             git push
           fi
-      - name: Pass build-time variables to the EAS build profile
+      - name: Pass build-time variables and the App Store Connect app id to eas.json
         # EAS cloud builds do not inherit this job's environment; the profile's env does reach them.
-        # Only public values go here (they end up in the app bundle anyway). The edit is not committed.
+        # Only public values go here (they end up in the app bundle anyway). APP_STORE_ID also becomes
+        # the submit profile's ascAppId. The edit is not committed.
         working-directory: apps/mobile
-        run: |
-          node -e "
-            const fs = require('fs');
-            const eas = JSON.parse(fs.readFileSync('eas.json', 'utf8'));
-            const keys = ['SIGNAL_URL', 'APP_NAME', 'APP_SLUG', 'APP_SCHEME', 'APP_BUNDLE_ID', 'APP_VERSION', 'APP_STORE_ID', 'EXPO_PUBLIC_LINK_DOMAIN', 'EXPO_PUBLIC_SENTRY_DSN', 'EXPO_PUBLIC_POSTHOG_KEY', 'EXPO_PUBLIC_POSTHOG_HOST', 'SENTRY_ORG', 'SENTRY_PROJECT', 'EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID', 'EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID', 'EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID', 'EXPO_PUBLIC_REVENUECAT_IOS_KEY', 'EXPO_PUBLIC_REVENUECAT_ANDROID_KEY', 'EXPO_PUBLIC_TERMS_URL', 'EXPO_PUBLIC_PRIVACY_URL'];
-            const profile = eas.build[process.env.PROFILE];
-            profile.env = { ...(profile.env || {}) };
-            for (const k of keys) if (process.env[k]) profile.env[k] = process.env[k];
-            fs.writeFileSync('eas.json', JSON.stringify(eas, null, 2));
-            console.log('Build variables set: ' + (Object.keys(profile.env).join(', ') || 'none'));
-          "
+        env:
+          PLATFORM: ios
+        run: node ../../.github/scripts/eas-build-env.cjs eas.json
       - name: Build (and submit) on EAS
         working-directory: apps/mobile
         env:

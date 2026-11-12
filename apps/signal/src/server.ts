@@ -49,6 +49,8 @@ export interface SignalServerOptions {
   botDelayMs?: number;
   /** Quiet period before a changed table is written (default 500 ms). */
   persistDebounceMs?: number;
+  /** The image this process runs from (`FLY_IMAGE_REF` on Fly), reported by `/health`. */
+  imageRef?: string | null;
   /** Socket limits (default `LIMITS`). */
   socketLimits?: SocketLimits;
   /** How long a quick-match group short of four waits for bots (default QUICK_MATCH_FILL_MS, else 20 s). */
@@ -250,6 +252,8 @@ export async function createSignalServer(opts: SignalServerOptions): Promise<Sig
       providers: opts.providers,
       config,
       storage: repos.kind,
+      snapshots: () => persister.status(),
+      image: opts.imageRef ?? null,
       healthy: repos.kind === 'pg' ? () => repos.healthy() : undefined,
       draining: () => draining,
       now,

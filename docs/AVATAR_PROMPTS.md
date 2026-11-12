@@ -1,6 +1,6 @@
 # Avatar image prompts
 
-Twelve player portraits in the PokerBros vibe: 3D-rendered caricature busts with big heads, big grins and glossy lighting. Generate them with any image model (ChatGPT image generation, Midjourney, Ideogram, Leonardo, Flux…), then upload them to the repo and the app picks them up automatically.
+Twelve player portraits in the style of a club card-game app: 3D-rendered caricature busts with big heads, big grins and glossy lighting. The prompts below are written for an image generator in general, not for one product: make the portraits with whichever one you use, then upload them to the repo and the app picks them up automatically.
 
 ## Rules that make them fit the app
 
@@ -11,9 +11,9 @@ Twelve player portraits in the PokerBros vibe: 3D-rendered caricature busts with
 
 ## How to keep all twelve consistent
 
-* **ChatGPT**: generate #1 (Lady), then in the same chat say *"Same style, lighting, framing and background as the last image. Now: …"* followed by the next character line.
-* **Midjourney**: generate #1, then add `--sref <url of #1>` to the rest; add `--ar 1:1 --style raw` to every prompt.
-* **Others**: use the first good image as a style or image reference for the rest.
+* **A generator that keeps a conversation**: generate #1 (Lady), then in the same conversation say *"Same style, lighting, framing and background as the last image. Now: …"* followed by the next character line.
+* **A generator that takes a style reference**: generate #1, then give its image as the style reference for the rest, and ask for a square (1:1) image in every prompt.
+* **Any other**: use the first good image as a style or image reference for the rest.
 * Regenerate any face that looks creepy, stiff or off-model. Twelve good ones beat twelve fast ones.
 
 ## Prompts
@@ -93,7 +93,7 @@ Upload a better version any time by uploading a file with the same name.
 
 The table already animates every portrait in code: breathing, a pulsing halo on your turn, call-outs (碰 吃 槓 胡牌 自摸), a sparkle burst for winners and a shake for whoever dealt in. Clips add life *inside* the portrait.
 
-Make them with any image-to-video AI (Kling, Runway, Luma Dream Machine, Hailuo, Pika, Sora, Veo): give it the finished still for a character as the start frame and use one of these prompts. 4–5 seconds is enough; the import keeps the first 4 s (idle) or 3 s (win, lose).
+Make them with any image-to-video tool: give it the finished still for a character as the start frame and use one of these prompts. 4–5 seconds is enough; the import keeps the first 4 s (idle) or 3 s (win, lose).
 
 **Idle** — save as `<id>-idle.mp4` (plays all the time in that seat, so it must loop cleanly; if the tool offers an end frame, use the same image as start and end)
 ```
