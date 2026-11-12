@@ -112,7 +112,7 @@ function EndUnverifiedNote({ state, testID }: { state: ClientState; testID: stri
   );
 }
 
-export function ResultSheet({ result, view, state, mySeat, onNext, onLeave, onReview, onFairness }: { result: HandResult; view: TableView; state: ClientState; mySeat: number; onNext: () => void; onLeave: () => void; onReview: () => void; onFairness: () => void }) {
+export function ResultSheet({ result, view, state, mySeat, autoNext, onNext, onLeave, onReview, onFairness }: { result: HandResult; view: TableView; state: ClientState; mySeat: number; /** An online table: the next hand is dealt by itself a few seconds after this one, ready or not. */ autoNext?: boolean; onNext: () => void; onLeave: () => void; onReview: () => void; onFairness: () => void }) {
   const { t } = useT();
   const [ready, setReady] = useState(false);
   const { width, height } = useWindowDimensions();
@@ -191,6 +191,12 @@ export function ResultSheet({ result, view, state, mySeat, onNext, onLeave, onRe
       }}
     />
   );
+  // Online the table does not wait for this sheet: say so, or a player reading on finds a hand already under way.
+  const autoNextNote = autoNext ? (
+    <Text testID="result-auto-next" style={styles.autoNext}>
+      {t('table.result.autoNext')}
+    </Text>
+  ) : null;
   if (twoCol) {
     return (
       <View style={[styles.overlay, { padding: height < 420 ? 8 : space.md }]}>
@@ -204,6 +210,7 @@ export function ResultSheet({ result, view, state, mySeat, onNext, onLeave, onRe
             <EndUnverifiedNote state={state} testID="result-end-unverified" />
             {auditRow}
             <View style={{ gap: 6 }}>
+              {autoNextNote}
               {next}
               <Row gap={6}>
                 <Button small kind="secondary" title={t('table.result.review')} onPress={onReview} style={{ flex: 1 }} />
@@ -227,6 +234,7 @@ export function ResultSheet({ result, view, state, mySeat, onNext, onLeave, onRe
           {layout.stackButtons ? (
             // Narrow phones: one full-width primary, the two secondary actions sharing a row at equal widths.
             <View style={{ gap: 8 }}>
+              {autoNextNote}
               {next}
               <Row gap={8}>
                 <Button kind="secondary" title={t('table.result.reviewMyHand')} onPress={onReview} style={{ flex: 1 }} />
@@ -235,6 +243,7 @@ export function ResultSheet({ result, view, state, mySeat, onNext, onLeave, onRe
             </View>
           ) : (
             <Row style={{ flexWrap: 'wrap', rowGap: 8 }}>
+              {autoNextNote && <View style={{ flexBasis: '100%' }}>{autoNextNote}</View>}
               {next}
               <Button kind="secondary" title={t('table.result.reviewMyHand')} onPress={onReview} />
               <Button kind="ghost" title={t('table.result.leaveTable')} onPress={onLeave} />
@@ -304,5 +313,6 @@ const styles = StyleSheet.create({
   rankNum: { width: 30, height: 30, borderRadius: 15, borderWidth: 2.5, borderColor: colors.ink, backgroundColor: colors.creamDeep, alignItems: 'center', justifyContent: 'center' },
   rankNumText: { fontFamily: fonts.display, color: colors.ink, fontSize: 16 },
   rankScore: { fontFamily: fonts.display, fontSize: 20 },
+  autoNext: { color: colors.inkDim, fontSize: 12, fontFamily: fonts.bodyBold },
   endNote: { color: colors.goldDim, fontSize: 12, fontFamily: fonts.bodyBold },
 });

@@ -10,6 +10,7 @@ import { hintFor, kindOf, legalActions, viewToState, WINDS, type Action, type Ga
 import { useApp, useHardwareBack } from '../app-state';
 import { useConnection, useSession, useTableEvents } from '../game/useTable';
 import { nextFadeDelay } from '../logic/fade';
+import { justReturned, RETURNED_NOTICE_MS } from '../logic/back';
 import { colors, fonts, nameFont } from '../theme';
 import { Tile } from '../components/Tile';
 import { Compass } from '../components/TableParts';
@@ -226,6 +227,16 @@ export function TableScreen() {
       : t('table.autoClaim', { call: [t(`table.claimGloss.${autoNotice.call}`), t(`table.callout.${autoNotice.call}`)].filter(Boolean).join(' ') });
   useAnnounce(autoNoticeText, autoNotice?.key);
   const tapHint = useTapHint();
+
+  // Brought back from Review or Fair play because the next hand was dealt (src/logic/back.ts): say so, briefly.
+  const [returned, setReturned] = useState(() => justReturned(app.screen, Date.now()));
+  useEffect(() => {
+    if (!returned) return;
+    const id = setTimeout(() => setReturned(false), RETURNED_NOTICE_MS);
+    return () => clearTimeout(id);
+  }, [returned]);
+  const returnedText = returned ? t('table.nextHandStarted') : null;
+  useAnnounce(returnedText);
 
   // VoiceOver ignores the banners' live regions: announce them on iOS.
   // What the link banner says (src/logic/reconnect.ts): rejoining, or why this device has stopped for good.
@@ -478,6 +489,12 @@ export function TableScreen() {
         )}
 
         {celebration && <WinCelebration id={celebration} width={winW} height={height} />}
+        {returnedText && !autoNoticeText && (
+          <View style={styles.autoNotice} accessibilityLiveRegion="polite" testID="next-hand-notice" pointerEvents="none">
+            <Icon name="play" size={22} />
+            <Text style={[styles.toastText, nameFont(returnedText, fonts.bodyBold)]}>{returnedText}</Text>
+          </View>
+        )}
         {autoNoticeText && (
           <View style={styles.autoNotice} accessibilityLiveRegion="polite" testID="auto-discard-notice" pointerEvents="none">
             <Icon name="clock" size={22} />
@@ -485,7 +502,7 @@ export function TableScreen() {
           </View>
         )}
         {/* Not under the match-over card: its buttons would stay reachable there, and "Leave table" asks first while a match is on. */}
-        {state.lastResult && showResult && !state.matchOver && <ResultSheet result={state.lastResult} view={view} state={state} mySeat={mySeat} onNext={() => session.client.ready()} onLeave={() => setLeaveAsk(true)} onReview={() => app.go({ name: 'review' })} onFairness={() => app.go({ name: 'fairness' })} />}
+        {state.lastResult && showResult && !state.matchOver && <ResultSheet result={state.lastResult} view={view} state={state} mySeat={mySeat} autoNext={session.mode === 'online'} onNext={() => session.client.ready()} onLeave={() => setLeaveAsk(true)} onReview={() => app.go({ name: 'review' })} onFairness={() => app.go({ name: 'fairness' })} />}
         {state.matchOver && <MatchOverSheet state={state} onLeave={leave} />}
         {notice === 'reconnecting' ? (
           // The session is rejoining on its own (1, 2, 4 … 60 s); the player may skip the wait.

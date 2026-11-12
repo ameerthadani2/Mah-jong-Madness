@@ -82,7 +82,8 @@
     "waiting": "等待其他玩家…",
     "review": "複盤",
     "reviewMyHand": "複盤這一局",
-    "leaveTable": "離開牌桌"
+    "leaveTable": "離開牌桌",
+    "autoNext": "線上牌桌過幾秒就會自動開下一局。"
   },
   "audit": {
     "okShort": "已驗證 · 詳情",
@@ -181,5 +182,6 @@
     "selfDrawWin": ""
   },
   "autoDiscard": "時間到了：已替你打出%{tile}。",
-  "autoClaim": "時間到了：已替你喊「%{call}」。"
+  "autoClaim": "時間到了：已替你喊「%{call}」。",
+  "nextHandStarted": "下一局開始了。"
 }

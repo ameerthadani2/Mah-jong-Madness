@@ -82,7 +82,8 @@
     "waiting": "Waiting for others…",
     "review": "Review",
     "reviewMyHand": "Review my hand",
-    "leaveTable": "Leave table"
+    "leaveTable": "Leave table",
+    "autoNext": "Online, the next hand starts by itself in a few seconds."
   },
   "audit": {
     "okShort": "Verified · details",
@@ -181,5 +182,6 @@
     "selfDrawWin": "Self-draw"
   },
   "autoDiscard": "Time ran out: %{tile} was discarded for you.",
-  "autoClaim": "Time ran out: the table called %{call} for you."
+  "autoClaim": "Time ran out: the table called %{call} for you.",
+  "nextHandStarted": "The next hand has started."
 }

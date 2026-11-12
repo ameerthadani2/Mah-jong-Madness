@@ -4,7 +4,7 @@ import { DEFAULT_PROFILE, DEFAULT_PROGRESS, DEFAULT_SETTINGS, storage, type Acti
 import { saveScheduler } from './game/persist';
 import { setSavedClientSource, type CloseOptions, type Session } from './game/session';
 import { acceptedName } from './logic/profile';
-import { hardwareBackPlan } from './logic/back';
+import { backToDealtTable, betweenHands, hardwareBackPlan } from './logic/back';
 import { APP_BUILD, resolveSignalUrl } from './config';
 import { EMPTY_WALLET, loadWallet, saveWallet, type Wallet } from './monetisation/store';
 import { currentLocale, setLocalePreference } from './i18n';
@@ -19,7 +19,7 @@ export type Screen =
   | { name: 'clubs' }
   | { name: 'club'; code: string; /** Why a link to one of the club's tables could not be followed. */ notice?: string }
   | { name: 'lobby' }
-  | { name: 'table' }
+  | { name: 'table'; /** Set when the table took the player back from Review or Fair play because the next hand was dealt (src/logic/back.ts). */ returnedAt?: number }
   | { name: 'review' }
   | { name: 'fairness' }
   | { name: 'learn' }
@@ -141,6 +141,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const sub = BackHandler.addEventListener('hardwareBackPress', hardwareBack);
     return () => sub.remove();
   }, [hardwareBack]);
+
+  // The next hand dealt while Review or Fair play is open over the table: back to the table, where the player's
+  // clock is running (src/logic/back.ts). The table says why for a few seconds.
+  useEffect(() => {
+    if (!session) return;
+    let waiting = betweenHands(session.client.state);
+    return session.onChange((st) => {
+      if (waiting && !betweenHands(st)) setStack((stk) => backToDealtTable(stk, Date.now()) as Screen[]);
+      waiting = betweenHands(st);
+    });
+  }, [session]);
 
   // A cold resume (Home's Resume card) restores the saved table client's record when it is for the same table and seat.
   const activeRef = useRef<ActiveSession | null>(null);
