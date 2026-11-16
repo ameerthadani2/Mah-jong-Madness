@@ -3,7 +3,7 @@ import { StyleSheet, Text, View } from 'react-native';
 import type { Kind, PuzzleDifficulty, PuzzleMeld, PuzzleType } from '@mjm/engine';
 import { colors, fonts } from '../../theme';
 import { useT } from '../../i18n';
-import { explanationFor, reasonTitleKey, type PuzzleResult } from '../../logic/puzzle';
+import { explanationFor, reasonTitleKey, wireAnswer, type PuzzleAnswer, type PuzzleResult } from '../../logic/puzzle';
 import { Tile, type TileSize } from '../Tile';
 import { Button, fontFor, H2, P, Row } from '../Ui';
 import { Icon } from '../Icons';
@@ -33,10 +33,10 @@ export function useAnswer(type: PuzzleType, difficulty: PuzzleDifficulty | undef
     },
     [],
   );
-  const report = (correct: boolean) => {
+  const report = (correct: boolean, answer: PuzzleAnswer) => {
     if (answered !== null) return;
     setAnswered(correct);
-    onResult({ correct, ms: Date.now() - started, type, ...(difficulty ? { difficulty } : {}) });
+    onResult({ correct, ms: Date.now() - started, type, ...(difficulty ? { difficulty } : {}), answer: wireAnswer(answer) });
     if (autoAdvance && onNext) timer.current = setTimeout(onNext, correct ? 700 : 2600);
   };
   return { answered, report };

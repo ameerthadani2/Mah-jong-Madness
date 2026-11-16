@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ScrollView, StyleSheet, View } from 'react-native';
-import { dailyPuzzle, dailySeed, RUSH_SECONDS, RUSH_STRIKES, rushScore } from '@mjm/engine';
+import { dailyPuzzle, dailySeed, RUSH_SECONDS, RUSH_STRIKES, rushScore, type PuzzleAnswerInput } from '@mjm/engine';
 import { randomHex } from '@mjm/net';
 import { useApp } from '../app-state';
 import { effectiveStreak, todayKey } from '../storage';
@@ -10,6 +10,9 @@ import { dailyDifficulty, puzzleDifficultyOf, PUZZLE_TYPE_KEYS, type PuzzleResul
 import { rateAnswer, recordRush } from '../logic/rating';
 import { rushDifficulty, rushOutcome, rushPuzzleAt } from '../logic/rush';
 import { canUse, consume } from '../monetisation/store';
+import { puzzleErrorText } from '../api/puzzles';
+import { openDaily, openRush, serverRating, submitDaily, submitRush, type DailyLink, type DailyOutcome, type RushLink, type RushOutcome } from '../logic/puzzleSync';
+import { usePuzzleServer, useShownRating } from '../components/puzzles/usePuzzleServer';
 import { colors, fonts, space } from '../theme';
 import { PuzzleView } from '../components/PuzzleView';
 import { RatingPill } from '../components/puzzles/RatingPill';
@@ -30,6 +33,19 @@ export function DailyPuzzleScreen() {
   const [done, setDone] = useState(attemptedBefore);
   const [wasCorrect, setWasCorrect] = useState<boolean | null>(null);
   const streak = effectiveStreak(app.progress);
+  // With a session, opening the puzzle starts the server's clock (the same attempt on every reopening), and the
+  // answer finishes it; without one, or when the server cannot be reached, it plays here, unranked.
+  const { server, userId } = usePuzzleServer();
+  const link = useRef<Promise<DailyLink> | null>(null);
+  const [linked, setLinked] = useState<DailyLink | null>(null);
+  const [sending, setSending] = useState(false);
+  const [outcome, setOutcome] = useState<DailyOutcome | null>(null);
+  useEffect(() => {
+    if (attemptedBefore || link.current || !server) return;
+    link.current = openDaily(server, today);
+    void link.current.then(setLinked);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [server]);
 
   const onResult = (r: PuzzleResult) => {
     setDone(true);
@@ -39,6 +55,19 @@ export function DailyPuzzleScreen() {
       const next = nextDailyProgress(p, r.correct, today);
       return next === p ? p : rateAnswer({ ...next, drillsPlayed: p.drillsPlayed + 1, drillsCorrect: p.drillsCorrect + (r.correct ? 1 : 0) }, 'discard', difficulty, r.correct, Date.now());
     });
+    if (attemptedBefore) return;
+    // The verdict, time and rating shown are the server's once it answers.
+    serverRating.clearChange();
+    setSending(true);
+    const pending = link.current ?? openDaily(server, today);
+    void pending
+      .then((l) => submitDaily(server, l, r.answer, r.correct))
+      .then((o) => {
+        if (o.ranked && userId) serverRating.submitted(userId, o.rating, Date.now());
+        if (o.ranked && o.mismatch) setWasCorrect(o.correct);
+        setOutcome(o);
+        setSending(false);
+      });
   };
 
   return (
@@ -49,6 +78,8 @@ export function DailyPuzzleScreen() {
         <Pill icon="flame" text={t('puzzles.daily.streak', { n: streak })} tone={streak > 0 ? 'gold' : 'neutral'} />
         <RatingPill rating={app.progress.puzzleRating} history={app.progress.ratingHistory} showChange={wasCorrect !== null} />
         {attemptedBefore && <Pill text={t(app.progress.dailySolved[today] === 'correct' ? 'puzzles.daily.solvedToday' : 'puzzles.daily.attemptedToday')} tone={app.progress.dailySolved[today] === 'correct' ? 'ok' : 'neutral'} />}
+        {outcome?.ranked && <Pill icon="check" text={t('puzzles.server.ranked')} tone="ok" />}
+        {outcome?.ranked && <Pill icon="clock" text={t('puzzles.server.time', { n: outcome.seconds })} />}
       </Row>
       <Card>
         {attemptedBefore && wasCorrect === null ? (
@@ -64,8 +95,38 @@ export function DailyPuzzleScreen() {
           <PuzzleView puzzle={puzzle} onResult={onResult} onNext={app.back} nextLabel={t(done ? 'puzzles.daily.done' : 'puzzles.daily.next')} />
         )}
       </Card>
+      {!attemptedBefore && <ServerNote link={linked} outcome={outcome} sending={sending} testID="daily-server-note" />}
+      {outcome?.ranked && outcome.mismatch && (
+        <View testID="daily-server-verdict">
+          <P>{t(outcome.correct ? 'puzzles.server.verdictRight' : 'puzzles.server.verdictWrong')}</P>
+        </View>
+      )}
       <PuzzleFoot about={t('puzzles.daily.about')} />
     </ScrollView>
+  );
+}
+
+/**
+ * A quiet line under a puzzle about the server: checking, not ranked (the server cannot be reached; the
+ * result stays on this device) or why the server refused it (already played on another device, an expired run).
+ */
+function ServerNote({ link, outcome, sending, testID }: { link: { ranked: boolean; error?: unknown; down?: boolean } | null; outcome: { ranked: boolean; error?: unknown; down?: boolean } | null; sending: boolean; testID: string }) {
+  const { t } = useT();
+  if (sending)
+    return (
+      <View testID={testID}>
+        <P dim style={styles.note}>{t('puzzles.server.checking')}</P>
+      </View>
+    );
+  const failed = outcome && !outcome.ranked ? outcome : link && !link.ranked ? link : null;
+  if (!failed) return null;
+  const text = failed.down || failed.error === undefined ? t('puzzles.server.unranked') : puzzleErrorText(failed.error, t);
+  return (
+    <View testID={testID}>
+      <P dim style={styles.note}>
+        {text}
+      </P>
+    </View>
   );
 }
 
@@ -117,7 +178,22 @@ export function PuzzleRushScreen() {
 function PuzzleRushRun({ onAgain, onStart }: { onAgain: () => void; /** The first answer: the run counts from here (and spends a free run). */ onStart: () => void }) {
   const app = useApp();
   const { t } = useT();
-  const [runSeed] = useState(() => `rush-${randomHex(4)}`);
+  // Online the server issues the run (its seed) before the first puzzle; offline the run is seeded here, unranked.
+  const { server, userId } = usePuzzleServer();
+  const [localSeed] = useState(() => `rush-${randomHex(4)}`);
+  const [link, setLink] = useState<RushLink | null>(null);
+  useEffect(() => {
+    let live = true;
+    serverRating.clearChange();
+    void openRush(server, localSeed).then((l) => live && setLink(l));
+    return () => {
+      live = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const answers = useRef<PuzzleAnswerInput[]>([]);
+  const [outcome, setOutcome] = useState<RushOutcome | null>(null);
+  const [sending, setSending] = useState(false);
   // The saved best is raised as soon as the run ends, so judge the run against the best from before it.
   const [prevBest] = useState(() => app.progress.rushBestScore);
   const [index, setIndex] = useState(0);
@@ -126,17 +202,18 @@ function PuzzleRushRun({ onAgain, onStart }: { onAgain: () => void; /** The firs
   const [left, setLeft] = useState(RUSH_SECONDS);
   const [over, setOver] = useState(false);
   const recorded = useRef(false);
-  const puzzle = useMemo(() => rushPuzzleAt(runSeed, index), [runSeed, index]);
+  const puzzle = useMemo(() => (link ? rushPuzzleAt(link.seed, index) : null), [link, index]);
   const [answeredOnce, setAnsweredOnce] = useState(false);
   // Seconds played so far: the clock stops when the run ends, so this is the run's time once over.
   const elapsed = RUSH_SECONDS - left;
-  const points = rushScore(score, elapsed);
+  // The server's score once it has scored the run (its clock may make it a little lower than this estimate).
+  const points = outcome?.ranked ? outcome.score : rushScore(score, elapsed);
 
   useEffect(() => {
-    if (over) return;
+    if (over || !link) return;
     const id = setInterval(() => setLeft((l) => (l <= 1 ? 0 : l - 1)), 1000);
     return () => clearInterval(id);
-  }, [over]);
+  }, [over, link]);
   useEffect(() => {
     if ((left === 0 || strikes >= RUSH_STRIKES) && !over) setOver(true);
   }, [left, strikes, over]);
@@ -144,6 +221,15 @@ function PuzzleRushRun({ onAgain, onStart }: { onAgain: () => void; /** The firs
     if (recorded.current) return;
     recorded.current = true;
     app.setProgress((p) => recordRush(p, score, elapsed).progress);
+    // A run the server issued is finished once, with every answer in order (also when the player leaves mid-run).
+    if (link?.ranked && answers.current.length > 0) {
+      setSending(true);
+      void submitRush(server, link, [...answers.current], score).then((o) => {
+        if (o.ranked && userId) serverRating.submitted(userId, o.rating, Date.now());
+        setOutcome(o);
+        setSending(false);
+      });
+    }
   };
   useEffect(() => {
     if (over) record();
@@ -160,10 +246,11 @@ function PuzzleRushRun({ onAgain, onStart }: { onAgain: () => void; /** The firs
 
   const onResult = (r: PuzzleResult) => {
     if (!answeredOnce) onStart();
+    answers.current.push(r.answer);
     if (r.correct) setScore((s) => s + 1);
     else setStrikes((s) => s + 1);
     setAnsweredOnce(true);
-    const difficulty = r.difficulty ?? puzzleDifficultyOf(puzzle, rushDifficulty(index));
+    const difficulty = r.difficulty ?? (puzzle ? puzzleDifficultyOf(puzzle, rushDifficulty(index)) : rushDifficulty(index));
     app.setProgress((p) => rateAnswer(p, r.type, difficulty, r.correct, Date.now()));
   };
 
@@ -197,6 +284,7 @@ function PuzzleRushRun({ onAgain, onStart }: { onAgain: () => void; /** The firs
         </View>
         <Pill icon="trophy" text={t('puzzles.rush.bestScore', { n: app.progress.rushBestScore })} tone="gold" />
         <RatingPill rating={app.progress.puzzleRating} history={app.progress.ratingHistory} showChange={answeredOnce} />
+        {outcome?.ranked && <Pill icon="check" text={t('puzzles.server.ranked')} tone="ok" />}
       </Row>
       <Card>
         {over ? (
@@ -204,13 +292,17 @@ function PuzzleRushRun({ onAgain, onStart }: { onAgain: () => void; /** The firs
             <StrokeText style={styles.big} strokeWidth={3} drop={3}>
               {String(points)}
             </StrokeText>
-            <Pill icon="check" text={t('puzzles.rush.solved', { n: score })} tone="ok" />
+            <Pill icon="check" text={t('puzzles.rush.solved', { n: outcome?.ranked ? outcome.solved : score })} tone="ok" />
             <H2>{t(`puzzles.rush.outcome.${rushOutcome(prevBest, points).kind}`)}</H2>
             <P dim>{t(strikes >= RUSH_STRIKES ? 'puzzles.rush.endStrikes' : 'puzzles.rush.endTime')}</P>
             <Row>
-              <Button title={t('puzzles.rush.playAgain')} onPress={onAgain} />
+              <Button title={t(outcome && !outcome.ranked && !outcome.down && isRunGone(outcome.error) ? 'puzzles.server.newRun' : 'puzzles.rush.playAgain')} onPress={onAgain} />
               <Button kind="ghost" title={t('puzzles.rush.backToLearn')} onPress={app.back} />
             </Row>
+          </View>
+        ) : !link || !puzzle ? (
+          <View testID="rush-starting">
+            <P dim>{t('puzzles.server.starting')}</P>
           </View>
         ) : (
           <>
@@ -221,10 +313,14 @@ function PuzzleRushRun({ onAgain, onStart }: { onAgain: () => void; /** The firs
           </>
         )}
       </Card>
+      <ServerNote link={link} outcome={outcome} sending={sending} testID="rush-server-note" />
       <PuzzleFoot />
     </ScrollView>
   );
 }
+
+/** A run the server no longer takes (expired, unknown or already finished): the next one is a new run. */
+const isRunGone = (e: unknown) => ['run_expired', 'run_not_found', 'run_finished'].includes(String((e as { code?: unknown } | null)?.code ?? ''));
 
 /**
  * The bottom of a puzzle screen: the player's puzzle record and a tip, so tall phones are not left with half a
@@ -234,6 +330,8 @@ export function PuzzleFoot({ about }: { /** A line about this screen, shown abov
   const app = useApp();
   const { t } = useT();
   const p = app.progress;
+  // The server's rating when this screen has read it, else the device's.
+  const rating = useShownRating(p.puzzleRating, null, false).rating;
   const acc = p.drillsPlayed ? Math.round((p.drillsCorrect / p.drillsPlayed) * 100) : null;
   const tips = ['puzzles.foot.tip1', 'puzzles.foot.tip2', 'puzzles.foot.tip3'];
   // One tip per day, the same all day.
@@ -254,7 +352,7 @@ export function PuzzleFoot({ about }: { /** A line about this screen, shown abov
       <Card tone="sky" style={{ gap: space.sm }}>
         <H2>{t('puzzles.foot.title')}</H2>
         <View style={styles.stats}>
-          {stat('target', String(p.puzzleRating), t('puzzles.foot.rating'))}
+          {stat('target', String(rating), t('puzzles.foot.rating'))}
           {stat('flame', String(effectiveStreak(p)), t('puzzles.foot.streak'))}
           {stat('trophy', String(p.rushBestScore), t('puzzles.foot.rushBest'))}
           {stat('check', acc === null ? '–' : `${acc}%`, t('puzzles.foot.accuracy'))}
@@ -279,5 +377,6 @@ const styles = StyleSheet.create({
   tip: { backgroundColor: 'rgba(255,255,255,0.75)', borderWidth: 2, borderColor: colors.ink, borderRadius: 14, paddingHorizontal: 10, paddingVertical: 8, alignItems: 'center' },
   big: { fontSize: 64, fontFamily: fonts.display },
   strikes: { flexDirection: 'row', gap: 4, alignItems: 'center' },
+  note: { fontSize: 12 },
   strike: { width: 24, height: 24, borderRadius: 12, borderWidth: 2.5, borderColor: colors.ink, backgroundColor: colors.creamLight, alignItems: 'center', justifyContent: 'center' },
 });

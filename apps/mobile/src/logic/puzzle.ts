@@ -36,6 +36,8 @@ export interface PuzzleResult {
   type: PuzzleType;
   /** The puzzle's own difficulty when it carries one (defence, claim and value do). */
   difficulty?: PuzzleDifficulty;
+  /** The answer as the server takes it (`wireAnswer`), so a ranked puzzle can be sent to be verified. */
+  answer: PuzzleAnswerInput;
 }
 
 /**

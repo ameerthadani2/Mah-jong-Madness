@@ -161,6 +161,10 @@
     "unranked": "Not ranked: the game server cannot be reached. Your result is saved on this device.",
     "time": "Time %{n} s",
     "newRun": "New run",
+    "checking": "Checking with the game server…",
+    "starting": "Starting the run…",
+    "verdictRight": "The game server counted your answer as right.",
+    "verdictWrong": "The game server counted your answer as wrong.",
     "errors": {
       "invalid": "The game server could not read that request. Try again.",
       "invalidAnswer": "The game server could not read that answer.",

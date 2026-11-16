@@ -22,7 +22,7 @@ export function ValuePuzzleView({ puzzle, onResult, onNext, nextLabel, autoAdvan
   const pick = (i: number) => {
     if (answered !== null) return;
     setPicked(i);
-    report(checkPuzzleAnswer(puzzle, puzzle.hand[i]));
+    report(checkPuzzleAnswer(puzzle, puzzle.hand[i]), puzzle.hand[i]);
   };
   return (
     <View style={{ gap: 8 }}>

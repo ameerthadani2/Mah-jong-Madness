@@ -23,7 +23,7 @@ export function DefencePuzzleView({ puzzle, onResult, onNext, nextLabel, autoAdv
   const pick = (i: number) => {
     if (answered !== null) return;
     setPicked(i);
-    report(checkPuzzleAnswer(puzzle, puzzle.hand[i]));
+    report(checkPuzzleAnswer(puzzle, puzzle.hand[i]), puzzle.hand[i]);
   };
   const threat = threatKey(puzzle);
   return (

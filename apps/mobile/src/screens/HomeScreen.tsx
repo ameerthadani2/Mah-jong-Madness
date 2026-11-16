@@ -31,6 +31,7 @@ import { slopFor } from '../components/table/layout';
 import { ChestScene, ClubhouseScene, ScrollScene, TableScene } from '../components/Scenes';
 import { Icon } from '../components/Icons';
 import { Logo } from '../components/Logo';
+import { useShownRating } from '../components/puzzles/usePuzzleServer';
 
 const WINDOWS = {
   play: ['#FFF0B8', '#FFD36B'] as const,
@@ -45,6 +46,8 @@ export function HomeScreen() {
   const { frame } = useOwnedEquipped();
   const auth = useAuth();
   const { t, locale } = useT();
+  // The server's puzzle rating once a puzzle screen has read it, else the device's.
+  const shownRating = useShownRating(app.progress.puzzleRating, null, false).rating;
   const { width, height } = useWindowDimensions();
   const [name, setName] = useState(app.profile.name);
   const needsName = !app.profile.name;
@@ -226,7 +229,7 @@ export function HomeScreen() {
         <Row style={{ flexWrap: 'wrap', rowGap: 6 }} gap={6}>
           <Pill text={t('home.learn.lessons', { done: lessons.done, total: lessons.total })} icon="book" size="sm" />
           <Pill text={t('home.learn.streak', { days: streak })} icon="flame" tone={streak > 0 ? 'gold' : 'neutral'} size="sm" />
-          <Pill text={t('home.learn.rating', { n: app.progress.puzzleRating })} icon="target" tone="info" size="sm" />
+          <Pill text={t('home.learn.rating', { n: shownRating })} icon="target" tone="info" size="sm" />
         </Row>
       )}
       <View style={styles.cardFoot}>

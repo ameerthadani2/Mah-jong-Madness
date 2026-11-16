@@ -23,7 +23,7 @@ export function ClaimPuzzleView({ puzzle, onResult, onNext, nextLabel, autoAdvan
   const choose = (b: ClaimButton) => {
     if (answered !== null) return;
     setPicked(b.id);
-    report(checkPuzzleAnswer(puzzle, b.option));
+    report(checkPuzzleAnswer(puzzle, b.option), b.option);
   };
   const best = buttons.find((b) => b.id === puzzle.answer.id)!;
   // After answering, the hand tiles the best claim uses light up.

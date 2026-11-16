@@ -40,7 +40,7 @@ function DiscardPuzzleView({ puzzle, onResult, onNext, nextLabel, autoAdvance }:
   const pick = (i: number) => {
     if (answered !== null) return;
     setPicked(i);
-    report(checkPuzzleAnswer(puzzle, puzzle.hand[i]));
+    report(checkPuzzleAnswer(puzzle, puzzle.hand[i]), puzzle.hand[i]);
   };
   const pickedOpt = picked !== null ? puzzle.options.find((o) => o.kind === puzzle.hand[picked]) : null;
   const bestOpt = puzzle.options.find((o) => o.kind === puzzle.best)!;
@@ -97,7 +97,7 @@ function WaitsPuzzleView({ puzzle, onResult, onNext, nextLabel, autoAdvance }: T
         ))}
       </View>
       {!checked ? (
-        <Button title={t('puzzles.view.check')} onPress={() => report(checkPuzzleAnswer(puzzle, [...chosen]))} disabled={chosen.size === 0} />
+        <Button title={t('puzzles.view.check')} onPress={() => report(checkPuzzleAnswer(puzzle, [...chosen]), [...chosen])} disabled={chosen.size === 0} />
       ) : (
         <Answer spoken={`${t(answered === true ? 'puzzles.view.exact' : 'puzzles.view.notAll')} ${t('puzzles.view.waits')} ${tileListText(puzzle.answers, locale)}`}>
           <Verdict good={answered === true} goodKey="puzzles.view.exact" badKey="puzzles.view.notAll" />
