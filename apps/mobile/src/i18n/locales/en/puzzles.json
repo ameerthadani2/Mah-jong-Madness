@@ -180,5 +180,93 @@
       "unreachable": "Cannot reach the game server, so this result is not ranked.",
       "badReply": "The game server sent an unreadable reply, so this result is not ranked."
     }
+  },
+  "boards": {
+    "title": "Leaderboards",
+    "open": "Leaderboards",
+    "seeBoard": "See the leaderboard",
+    "tabs": {
+      "daily": "Daily puzzle",
+      "rush": "Puzzle Rush",
+      "rating": "Rating"
+    },
+    "tabA11y": "%{board} leaderboard",
+    "periods": {
+      "day": "Today",
+      "week": "This week",
+      "all": "All time"
+    },
+    "periodA11y": "Puzzle Rush scores: %{period}",
+    "scopeLabel": "Show",
+    "everyone": "Everyone",
+    "scopeA11y": "Show: %{name}",
+    "notes": {
+      "daily": "Today's puzzle: solved first, then the fastest.",
+      "rush": "Each player's best score in this period.",
+      "rating": "Players with at least %{count} rated answers, highest first."
+    },
+    "columns": {
+      "rank": "Rank",
+      "player": "Player",
+      "daily": "Time",
+      "rush": "Score",
+      "rating": "Rating"
+    },
+    "seconds": "%{n} s",
+    "minutes": "%{m}:%{s}",
+    "secondsSpoken": {
+      "one": "%{count} second",
+      "other": "%{count} seconds"
+    },
+    "minutesSpoken": {
+      "one": "%{count} minute",
+      "other": "%{count} minutes"
+    },
+    "minutesSecondsSpoken": "%{m} %{s}",
+    "notSolved": "Not solved",
+    "solvedIn": "solved in %{time}",
+    "scoreSpoken": {
+      "one": "%{count} point",
+      "other": "%{count} points"
+    },
+    "rushSolved": {
+      "one": "%{count} solved",
+      "other": "%{count} solved"
+    },
+    "ratingSpoken": "rating %{n}",
+    "rated": {
+      "one": "%{count} rated answer",
+      "other": "%{count} rated answers"
+    },
+    "rankSpoken": "Rank %{rank}",
+    "youNamed": "you (%{name})",
+    "you": "You",
+    "listSeparator": ", ",
+    "yourPlace": "Your place",
+    "hiddenTitle": "You are hidden from leaderboards",
+    "hiddenBody": "Other players do not see you on any board. Only you see your own place.",
+    "hiddenCta": "Change in Settings",
+    "loading": "Loading the leaderboard…",
+    "offlineTitle": "Can't reach the game server",
+    "offlineBody": "Leaderboards need a connection. Check your connection and try again.",
+    "retry": "Try again",
+    "empty": {
+      "daily": "Nobody is on today's board yet. Be the first!",
+      "dailyClub": "Nobody in this club has played today's puzzle yet.",
+      "rush": "No Puzzle Rush scores in this period yet.",
+      "rushClub": "Nobody in this club has a Puzzle Rush score in this period yet.",
+      "rating": "Players appear here after %{count} rated puzzle answers."
+    },
+    "playDaily": "Play today's puzzle",
+    "playRush": "Play Puzzle Rush",
+    "errors": {
+      "invalid": "The game server could not read that leaderboard request. Try again.",
+      "forbidden": "Only members can see this club's leaderboard. Showing everyone instead.",
+      "notFound": "That club no longer exists. Showing everyone instead.",
+      "rateLimited": "Too many leaderboard requests in a short time. Wait a few seconds and try again.",
+      "badReply": "The game server sent an unreadable reply. Try again.",
+      "server": "The game server had a problem. Try again in a moment.",
+      "banned": "This account is banned, so it cannot see leaderboards."
+    }
   }
 }

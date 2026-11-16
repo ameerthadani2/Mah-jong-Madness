@@ -5,6 +5,7 @@ import { saveScheduler } from './game/persist';
 import { setSavedClientSource, type CloseOptions, type Session } from './game/session';
 import { acceptedName } from './logic/profile';
 import type { ShopFocus } from './logic/shopFocus';
+import type { BoardKind } from './api/puzzles';
 import { backToDealtTable, betweenHands, hardwareBackPlan } from './logic/back';
 import { APP_BUILD, resolveSignalUrl } from './config';
 import { EMPTY_WALLET, loadWallet, saveWallet, type Wallet } from './monetisation/store';
@@ -28,6 +29,7 @@ export type Screen =
   | { name: 'drill'; kind: 'discard' | 'waits' }
   | { name: 'daily' }
   | { name: 'rush' }
+  | { name: 'leaderboards'; /** The board shown first (today's daily puzzle when not given). */ board?: BoardKind }
   | { name: 'shop'; focus?: ShopFocus }
   | { name: 'settings' };
 

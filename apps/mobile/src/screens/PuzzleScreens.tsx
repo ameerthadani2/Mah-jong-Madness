@@ -91,13 +91,21 @@ export function DailyPuzzleScreen() {
               <H2>{t('puzzles.daily.alreadyTitle')}</H2>
             </Row>
             <P dim>{t('puzzles.daily.alreadyText')}</P>
-            <Button title={t('puzzles.daily.rush')} onPress={() => app.go({ name: 'rush' })} />
+            <Row style={{ flexWrap: 'wrap', rowGap: 8 }}>
+              <Button title={t('puzzles.daily.rush')} onPress={() => app.go({ name: 'rush' })} />
+              <Button kind="secondary" icon="trophy" title={t('puzzles.boards.seeBoard')} onPress={() => app.go({ name: 'leaderboards', board: 'daily' })} testID="daily-leaderboard" />
+            </Row>
           </>
         ) : (
           <PuzzleView puzzle={puzzle} onResult={onResult} onNext={app.back} nextLabel={t(done ? 'puzzles.daily.done' : 'puzzles.daily.next')} />
         )}
       </Card>
       {!playedAtOpen && <ServerNote link={linked} outcome={outcome} sending={sending} testID="daily-server-note" />}
+      {done && wasCorrect !== null && (
+        <Row style={{ flexWrap: 'wrap' }}>
+          <Button kind="secondary" icon="trophy" title={t('puzzles.boards.seeBoard')} onPress={() => app.go({ name: 'leaderboards', board: 'daily' })} testID="daily-leaderboard" />
+        </Row>
+      )}
       {outcome?.ranked && outcome.mismatch && (
         <View testID="daily-server-verdict">
           <P>{t(outcome.correct ? 'puzzles.server.verdictRight' : 'puzzles.server.verdictWrong')}</P>
@@ -299,8 +307,9 @@ function PuzzleRushRun({ onAgain, onStart }: { onAgain: () => void; /** The firs
             <Pill icon="check" text={t('puzzles.rush.solved', { n: outcome?.ranked ? outcome.solved : score })} tone="ok" />
             <H2>{t(`puzzles.rush.outcome.${rushOutcome(prevBest, points).kind}`)}</H2>
             <P dim>{t(strikes >= RUSH_STRIKES ? 'puzzles.rush.endStrikes' : 'puzzles.rush.endTime')}</P>
-            <Row>
+            <Row style={{ flexWrap: 'wrap', rowGap: 8, justifyContent: 'center' }}>
               <Button title={t(outcome && !outcome.ranked && !outcome.down && isRunGone(outcome.error) ? 'puzzles.server.newRun' : 'puzzles.rush.playAgain')} onPress={onAgain} />
+              <Button kind="secondary" icon="trophy" title={t('puzzles.boards.seeBoard')} onPress={() => app.go({ name: 'leaderboards', board: 'rush' })} testID="rush-leaderboard" />
               <Button kind="ghost" title={t('puzzles.rush.backToLearn')} onPress={app.back} />
             </Row>
           </View>

@@ -82,7 +82,10 @@ export function LearnScreen() {
         </Card>
       )}
       <View style={styles.grid}>
-        <RatingPill rating={app.progress.puzzleRating} history={app.progress.ratingHistory} />
+        <Row style={styles.ratingRow}>
+          <RatingPill rating={app.progress.puzzleRating} history={app.progress.ratingHistory} />
+          <Button small kind="secondary" icon="trophy" title={t('puzzles.boards.open')} onPress={() => app.go({ name: 'leaderboards' })} testID="open-leaderboards" />
+        </Row>
         <DrillCard w={drillW} icon="scroll" tint={colors.gold} title={t('learn.daily.title')} text={t('learn.daily.text')} stat={t('learn.daily.streak', { n: streak })} statIcon="flame" statTone={streak > 0 ? 'gold' : 'neutral'} cta={t('learn.daily.cta')} kind="gold" onPress={() => app.go({ name: 'daily' })} />
         <DrillCard w={drillW} icon="bolt" tint={colors.danger} title={t('learn.rush.title')} text={t('learn.rush.text')} stat={t('learn.rush.stat', { best: app.progress.rushBest, runs: app.progress.rushRuns })} statIcon="trophy" cta={t('learn.rush.cta')} kind="danger" onPress={() => app.go({ name: 'rush' })} />
         <DrillCard w={drillW} icon="target" tint={colors.cta} title={t('learn.discard.title')} text={t('learn.discard.text')} stat={acc === null ? t('learn.discard.none') : t('learn.discard.stat', { pct: acc, n: app.progress.drillsPlayed })} statIcon="check" cta={t('learn.discard.cta')} kind="primary" onPress={() => app.go({ name: 'drill', kind: 'discard' })} />
@@ -380,6 +383,7 @@ function LessonEnd({ lesson, done }: { lesson: Lesson; done: Record<string, bool
 const styles = StyleSheet.create({
   wrap: { padding: space.lg, gap: space.md },
   grid: { flexDirection: 'row', flexWrap: 'wrap', gap: space.md },
+  ratingRow: { width: '100%', flexWrap: 'wrap', rowGap: 6, justifyContent: 'space-between' },
   iconPlate: { width: 64, height: 64, borderRadius: 20, borderWidth: 3, borderColor: colors.ink, alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
   iconShine: { position: 'absolute', top: 0, left: 0, right: 0, height: '45%', backgroundColor: 'rgba(255,255,255,0.3)' },
   drillTitle: { fontFamily: fonts.display, color: colors.ink, fontSize: 19 },

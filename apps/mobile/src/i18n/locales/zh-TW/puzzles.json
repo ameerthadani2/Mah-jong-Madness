@@ -180,5 +180,93 @@
       "unreachable": "無法連上遊戲伺服器，這次成績不列入排名。",
       "badReply": "遊戲伺服器的回覆無法讀取，這次成績不列入排名。"
     }
+  },
+  "boards": {
+    "title": "排行榜",
+    "open": "排行榜",
+    "seeBoard": "查看排行榜",
+    "tabs": {
+      "daily": "每日謎題",
+      "rush": "謎題衝刺",
+      "rating": "謎題積分"
+    },
+    "tabA11y": "%{board}排行榜",
+    "periods": {
+      "day": "今日",
+      "week": "本週",
+      "all": "總榜"
+    },
+    "periodA11y": "謎題衝刺分數：%{period}",
+    "scopeLabel": "範圍",
+    "everyone": "所有玩家",
+    "scopeA11y": "顯示：%{name}",
+    "notes": {
+      "daily": "今天的謎題：先比是否解出，再比誰最快。",
+      "rush": "每位玩家在這段期間的最佳分數。",
+      "rating": "至少有 %{count} 次計分作答的玩家，積分高者在前。"
+    },
+    "columns": {
+      "rank": "名次",
+      "player": "玩家",
+      "daily": "用時",
+      "rush": "分數",
+      "rating": "積分"
+    },
+    "seconds": "%{n} 秒",
+    "minutes": "%{m}:%{s}",
+    "secondsSpoken": {
+      "one": "%{count} 秒",
+      "other": "%{count} 秒"
+    },
+    "minutesSpoken": {
+      "one": "%{count} 分鐘",
+      "other": "%{count} 分鐘"
+    },
+    "minutesSecondsSpoken": "%{m} %{s}",
+    "notSolved": "未解出",
+    "solvedIn": "用時 %{time} 解出",
+    "scoreSpoken": {
+      "one": "%{count} 分",
+      "other": "%{count} 分"
+    },
+    "rushSolved": {
+      "one": "解出 %{count} 題",
+      "other": "解出 %{count} 題"
+    },
+    "ratingSpoken": "積分 %{n}",
+    "rated": {
+      "one": "%{count} 次計分作答",
+      "other": "%{count} 次計分作答"
+    },
+    "rankSpoken": "第 %{rank} 名",
+    "youNamed": "你（%{name}）",
+    "you": "你",
+    "listSeparator": "，",
+    "yourPlace": "你的名次",
+    "hiddenTitle": "你已在排行榜上隱藏",
+    "hiddenBody": "其他玩家在任何排行榜上都看不到你，只有你看得到自己的名次。",
+    "hiddenCta": "到設定中更改",
+    "loading": "正在載入排行榜…",
+    "offlineTitle": "無法連上遊戲伺服器",
+    "offlineBody": "排行榜需要連線。請檢查網路連線後再試一次。",
+    "retry": "再試一次",
+    "empty": {
+      "daily": "今天的排行榜還沒有人上榜，搶先成為第一名吧！",
+      "dailyClub": "這個俱樂部今天還沒有人玩過每日謎題。",
+      "rush": "這段期間還沒有謎題衝刺分數。",
+      "rushClub": "這個俱樂部在這段期間還沒有人留下謎題衝刺分數。",
+      "rating": "完成 %{count} 次計分作答後，就會出現在這裡。"
+    },
+    "playDaily": "玩今天的謎題",
+    "playRush": "玩謎題衝刺",
+    "errors": {
+      "invalid": "遊戲伺服器無法讀取這個排行榜請求，請再試一次。",
+      "forbidden": "只有俱樂部成員才能查看這個俱樂部的排行榜。改為顯示所有玩家。",
+      "notFound": "這個俱樂部已不存在。改為顯示所有玩家。",
+      "rateLimited": "短時間內查看排行榜太多次。請稍等幾秒再試。",
+      "badReply": "遊戲伺服器的回覆無法讀取，請再試一次。",
+      "server": "遊戲伺服器發生問題，請稍後再試。",
+      "banned": "這個帳號已被停權，無法查看排行榜。"
+    }
   }
 }

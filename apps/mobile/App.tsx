@@ -31,6 +31,7 @@ import { ClubScreen, ClubsScreen } from './src/screens/ClubsScreen';
 import { ReviewScreen } from './src/screens/ReviewScreen';
 import { FairnessScreen } from './src/screens/FairnessScreen';
 import { DailyPuzzleScreen, PuzzleRushScreen } from './src/screens/PuzzleScreens';
+import { LeaderboardScreen } from './src/screens/LeaderboardScreen';
 import { ShopScreen } from './src/screens/ShopScreen';
 import { AvatarGallery } from './src/screens/AvatarGallery';
 import { captureError } from './src/telemetry';
@@ -63,6 +64,8 @@ function Router() {
       return <DailyPuzzleScreen />;
     case 'rush':
       return <PuzzleRushScreen />;
+    case 'leaderboards':
+      return <LeaderboardScreen board={screen.board} />;
     case 'shop':
       return <ShopScreen focus={screen.focus} />;
     case 'lobby':
