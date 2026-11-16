@@ -8,7 +8,7 @@ import React, { useMemo, useState } from 'react';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { AppStateContext, type AppState, type Screen } from '../app-state';
 import { AuthContext, type AuthContextValue } from '../auth/AuthProvider';
-import type { AuthClient } from '../auth/client';
+import type { AuthClient, AuthSnapshot } from '../auth/client';
 import type { Session } from '../game/session';
 import { DEFAULT_PROFILE, DEFAULT_PROGRESS, DEFAULT_SETTINGS, type ActiveSession } from '../storage';
 import { EMPTY_WALLET, type Wallet } from '../monetisation/wallet';
@@ -17,6 +17,16 @@ const done = async () => true;
 
 /** A phone in portrait with no notch, so the safe area adds nothing (the real provider wraps the app in App.tsx). */
 const PHONE = { frame: { x: 0, y: 0, width: 390, height: 844 }, insets: { top: 0, left: 0, right: 0, bottom: 0 } };
+
+/**
+ * The sign-in client of a device that has never reached the server: it says so when asked, and any call that would
+ * reach the server is a test mistake, so it fails loudly.
+ */
+const OFFLINE: AuthSnapshot = { status: 'offline', userId: null, displayName: null, kind: null, hasSession: false, banned: false };
+const offlineClient = new Proxy(
+  { snapshot: () => OFFLINE, subscribe: () => () => undefined },
+  { get: (known, key) => (key in known ? known[key as keyof typeof known] : () => Promise.reject(new Error(`fake auth client: ${String(key)} called`))) },
+) as unknown as AuthClient;
 
 /** A device with no server session: offline, no account, nothing linked. */
 export function fakeAuth(over: Partial<AuthContextValue> = {}): AuthContextValue {
@@ -28,8 +38,7 @@ export function fakeAuth(over: Partial<AuthContextValue> = {}): AuthContextValue
     linkedCount: 0,
     busy: false,
     error: null,
-    // No test reaches the server: a call through this client is a test mistake, and fails loudly.
-    client: new Proxy({}, { get: (_t, key) => () => Promise.reject(new Error(`fake auth client: ${String(key)} called`)) }) as AuthClient,
+    client: offlineClient,
     ensure: async () => false,
     signInApple: done,
     signInGoogle: done,
