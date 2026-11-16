@@ -278,6 +278,10 @@ reclaim their seats with their rejoin tokens, and bots play for anyone not back 
 table waits 15 minutes for its players. (With in-memory storage there is nothing to restore from,
 so a deploy ends every table.)
 
+## Server first, then the app
+
+When a change touches the table protocol, deploy the server before the app build that carries it, or with it. Since 16 November 2026 the app checks that the table plays a dropped player's turn only after that player's clock has run out. A server from before that date plays a dropped seat at once, so an app built after it would show honest hands in red against it. The first deploy and the first app builds have no such gap; later releases go server first.
+
 ## Health and a slow database
 
 `/health` answers 200 `{ok:true, db:"ok", ...}` normally, and 503 `{ok:false, db:"down"}` when
