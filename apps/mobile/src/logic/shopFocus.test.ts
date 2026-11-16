@@ -60,6 +60,10 @@ describe('a yearly plan', () => {
   });
 
   it('shows a plan card\'s terms whole', () => {
-    expect(read('screens/ShopScreen.tsx')).toMatch(/numberOfLines=\{p\.kind === 'subscription' \? undefined : 2\}/);
+    // Every card's description is shown whole now (a plan's carries its billing terms): no line limit on it at all.
+    const shop = read('screens/ShopScreen.tsx');
+    const line = shop.slice(shop.indexOf('<Text style={[styles.sub, fontFor(sub'), shop.indexOf('{sub}'));
+    expect(line).toContain('styles.sub');
+    expect(line).not.toMatch(/numberOfLines/);
   });
 });
