@@ -4,18 +4,17 @@
  * (plus parameters) or data, never English text, so components only call t().
  */
 import {
-  checkClaimAnswer,
-  checkDefenceAnswer,
-  checkDiscardAnswer,
-  checkValueAnswer,
-  checkWaitsAnswer,
+  dailyPuzzleDifficulty,
+  judgePuzzleAnswer,
   kindInfo,
+  puzzleDifficulty,
   type AnyPuzzle,
   type ClaimChoice,
   type ClaimOption,
   type ClaimPuzzle,
   type DefencePuzzle,
   type Kind,
+  type PuzzleAnswerInput,
   type PuzzleDifficulty,
   type PuzzleMeld,
   type PuzzleType,
@@ -62,32 +61,25 @@ export const PUZZLE_TYPE_KEYS: Record<PuzzleType, string> = {
 /** An answer in the shape its theme takes: a tile, a set of tiles (waits) or a claim option / id. */
 export type PuzzleAnswer = Kind | readonly Kind[] | ClaimOption | string;
 
-/** Checks an answer with the theme's own engine checker; an answer of the wrong shape is wrong. */
+/** An answer as the server takes it (`PuzzleAnswerInput`): a claim option travels as its id. */
+export function wireAnswer(answer: PuzzleAnswer): PuzzleAnswerInput {
+  if (typeof answer === 'object' && !Array.isArray(answer) && answer !== null) return (answer as ClaimOption).id;
+  return answer as PuzzleAnswerInput;
+}
+
+/**
+ * Checks an answer with the theme's own engine checker; an answer of the wrong shape is wrong.
+ * The engine's `judgePuzzleAnswer`, the very rule the server verifies with, so the two cannot drift.
+ */
 export function checkPuzzleAnswer(p: AnyPuzzle, answer: PuzzleAnswer): boolean {
-  switch (p.type) {
-    case 'discard':
-      return typeof answer === 'number' && checkDiscardAnswer(p, answer);
-    case 'waits':
-      return Array.isArray(answer) && checkWaitsAnswer(p, [...answer]);
-    case 'defence':
-      return typeof answer === 'number' && checkDefenceAnswer(p, answer);
-    case 'claim':
-      return (typeof answer === 'string' || (typeof answer === 'object' && !Array.isArray(answer) && answer !== null)) && checkClaimAnswer(p, answer as ClaimOption | string);
-    case 'value':
-      return typeof answer === 'number' && checkValueAnswer(p, answer);
-  }
+  return judgePuzzleAnswer(p, wireAnswer(answer));
 }
 
-/** The puzzle's difficulty: its own field when it has one, else `fallback` (discard and waits puzzles carry none). */
-export function puzzleDifficultyOf(p: AnyPuzzle, fallback: PuzzleDifficulty): PuzzleDifficulty {
-  return 'difficulty' in p ? p.difficulty : fallback;
-}
+/** The puzzle's difficulty: its own field when it has one, else `fallback` (discard and waits puzzles carry none). The engine's `puzzleDifficulty`. */
+export const puzzleDifficultyOf: (p: AnyPuzzle, fallback: PuzzleDifficulty) => PuzzleDifficulty = puzzleDifficulty;
 
-/** The daily puzzle's difficulty for a (UTC) date, as `dailyPuzzle` picks it: weekends 3, even weekdays 2, odd 1. */
-export function dailyDifficulty(date: Date): PuzzleDifficulty {
-  const day = date.getUTCDay();
-  return day === 0 || day === 6 ? 3 : day % 2 === 0 ? 2 : 1;
-}
+/** The daily puzzle's difficulty for a (UTC) date, as `dailyPuzzle` picks it: weekends 3, even weekdays 2, odd 1. The engine's `dailyPuzzleDifficulty`. */
+export const dailyDifficulty: (date: Date) => PuzzleDifficulty = dailyPuzzleDifficulty;
 
 /** Where a seat sits from yours (seat 0): 1 is on your right (下家), 2 opposite (對家), 3 on your left (上家). */
 export type SeatRelation = 'right' | 'opposite' | 'left';

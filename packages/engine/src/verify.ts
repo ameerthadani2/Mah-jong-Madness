@@ -5,10 +5,10 @@
  * the same accepted sets, and moves the rating exactly as the app does. Nothing here trusts a
  * client's own "correct".
  *
- * The app keeps its own copies of these rules (apps/mobile/src/logic/puzzle.ts `checkPuzzleAnswer`
- * and `puzzleDifficultyOf`, rush.ts `rushDifficulty` and `rushPuzzleAt`, rating.ts `rateAnswer`,
- * PuzzleScreens.tsx `RUSH_SECONDS` and `RUSH_STRIKES`); test/verify.test.ts pins both to the same
- * results, and the app can switch to these exports.
+ * The app judges, rates and builds Rush runs with these same exports (apps/mobile/src/logic/puzzle.ts
+ * `checkPuzzleAnswer`, `puzzleDifficultyOf` and `dailyDifficulty`, rush.ts `rushDifficulty` and
+ * `rushPuzzleAt`, rating.ts `rateAnswer`, PuzzleScreens.tsx `RUSH_SECONDS` and `RUSH_STRIKES`), so
+ * the app and the server cannot drift; test/verify.test.ts pins the results.
  */
 import { NUM_PLAY_KINDS, type Kind } from './tiles';
 import {

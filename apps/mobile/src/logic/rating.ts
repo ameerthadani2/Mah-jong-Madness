@@ -4,14 +4,13 @@
  * progress, keeps a short history for the trend and repairs old or damaged saves.
  * Pure TypeScript: no React Native, so it is unit-tested directly.
  */
-import { DEFAULT_PUZZLE_RATING, MIN_PUZZLE_RATING, PUZZLE_TYPES, puzzleRatingFor, rushScore, updateRating, type PuzzleDifficulty, type PuzzleType } from '@mjm/engine';
+import { DEFAULT_PUZZLE_RATING, MAX_PUZZLE_RATING, MIN_PUZZLE_RATING, PUZZLE_TYPES, ratePuzzleAnswer, rushScore, type PuzzleDifficulty, type PuzzleType } from '@mjm/engine';
 
-export { DEFAULT_PUZZLE_RATING, MIN_PUZZLE_RATING } from '@mjm/engine';
+/** A stored rating above `MAX_PUZZLE_RATING` (4000) is treated as damage (the hardest puzzle plays at 1550). */
+export { DEFAULT_PUZZLE_RATING, MAX_PUZZLE_RATING, MIN_PUZZLE_RATING } from '@mjm/engine';
 
 /** How many answered puzzles the history keeps (newest last). */
 export const RATING_HISTORY_MAX = 30;
-/** A stored rating above this is treated as damage (the hardest puzzle plays at 1550). */
-export const MAX_PUZZLE_RATING = 4000;
 
 /** One answered puzzle: the rating after it and how much it moved. */
 export interface RatingEntry {
@@ -35,14 +34,13 @@ const isType = (t: unknown): t is PuzzleType => (PUZZLE_TYPES as readonly unknow
 const isRating = (r: unknown): r is number => typeof r === 'number' && Number.isFinite(r) && r >= MIN_PUZZLE_RATING && r <= MAX_PUZZLE_RATING;
 
 /**
- * Progress after answering one puzzle: the rating moves by `updateRating` against the
- * puzzle's own rating, and the answer joins the (capped) history. Deterministic: the
- * same state and answer always give the same result.
+ * Progress after answering one puzzle: the rating moves by the engine's `ratePuzzleAnswer` (the
+ * step the server applies to its own rating) against the puzzle's own rating, and the answer joins
+ * the (capped) history. Deterministic: the same state and answer always give the same result.
  */
 export function rateAnswer<T extends RatingState>(state: T, type: PuzzleType, difficulty: PuzzleDifficulty, solved: boolean, at: number): T {
-  const before = isRating(state.puzzleRating) ? Math.round(state.puzzleRating) : DEFAULT_PUZZLE_RATING;
-  const rating = Math.min(MAX_PUZZLE_RATING, updateRating(before, puzzleRatingFor(type, difficulty), solved));
-  const entry: RatingEntry = { rating, delta: rating - before, type, difficulty, solved, at };
+  const { rating, delta } = ratePuzzleAnswer(state.puzzleRating, type, difficulty, solved);
+  const entry: RatingEntry = { rating, delta, type, difficulty, solved, at };
   const history = [...(Array.isArray(state.ratingHistory) ? state.ratingHistory : []), entry].slice(-RATING_HISTORY_MAX);
   return { ...state, puzzleRating: rating, ratingHistory: history };
 }

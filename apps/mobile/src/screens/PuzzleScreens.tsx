@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ScrollView, StyleSheet, View } from 'react-native';
-import { dailyPuzzle, dailySeed, rushScore } from '@mjm/engine';
+import { dailyPuzzle, dailySeed, RUSH_SECONDS, RUSH_STRIKES, rushScore } from '@mjm/engine';
 import { randomHex } from '@mjm/net';
 import { useApp } from '../app-state';
 import { effectiveStreak, todayKey } from '../storage';
@@ -68,9 +68,6 @@ export function DailyPuzzleScreen() {
     </ScrollView>
   );
 }
-
-const RUSH_SECONDS = 180;
-const RUSH_STRIKES = 3;
 
 export function PuzzleRushScreen() {
   const app = useApp();
