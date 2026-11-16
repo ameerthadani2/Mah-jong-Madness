@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BOT_WEIGHTS, countsFromKinds, kindFromCode, kindsFromString, NUM_PLAY_KINDS, rankDiscards, readOpponents, readyLookahead, readyWaitAfterDraw, shapeFactor, unseenCounts, waitChance, type Counts } from '../src/index';
+import { applyAction, BOT_WEIGHTS, chooseAction, countsFromKinds, newGame, kindFromCode, kindsFromString, NUM_PLAY_KINDS, rankDiscards, readOpponents, readyLookahead, readyWaitAfterDraw, shapeFactor, unseenCounts, waitChance, type Counts, type GameState } from '../src/index';
 import { setup } from './helpers/state';
 
 const k = kindFromCode;
@@ -119,5 +119,55 @@ describe('shape read of a wait (proShapeRead)', () => {
     const club = rankDiscards(s, 0, 'club');
     withWeights({ proShapeRead: 1 }, () => expect(rankDiscards(s, 0, 'club')).toEqual(club));
     expect(plain.some((r) => r.danger > 0)).toBe(true);
+  });
+});
+
+/** Every discard decision of a few Club tables (seeded), as states to rank. */
+function discardStates(seeds: number): GameState[] {
+  const out: GameState[] = [];
+  for (let h = 0; h < seeds; h++) {
+    let s = newGame(`model-${h}`);
+    while (s.phase !== 'ended') {
+      for (let q = 0; q < 4; q++) {
+        const a = chooseAction(s, q, { seed: `m${q}`, skill: 'club' });
+        if (!a) continue;
+        if (s.phase === 'discard') out.push(s);
+        s = applyAction(s, q, a);
+        break;
+      }
+    }
+  }
+  return out;
+}
+
+describe('push when close to ready (proPushShanten)', () => {
+  const states = discardStates(6);
+
+  it('is off by default', () => {
+    expect(BOT_WEIGHTS.proPushShanten).toBe(-1);
+  });
+
+  it('one from ready and closer, Pro never gives up a tile of acceptance for its lean or 台 terms; further away it ranks as before', () => {
+    let close = 0;
+    let gaveUp = 0;
+    for (const s of states) {
+      const plain = rankDiscards(s, s.turn, 'pro');
+      withWeights({ proPushShanten: 1 }, () => {
+        const on = rankDiscards(s, s.turn, 'pro');
+        const best = Math.min(...on.map((r) => r.shanten));
+        if (best > 1) {
+          expect(on).toEqual(plain);
+          return;
+        }
+        close++;
+        const top = Math.max(...on.filter((r) => r.shanten === best).map((r) => r.acceptance));
+        expect(on[0].shanten).toBe(best);
+        expect(on[0].acceptance).toBe(top);
+        if (plain[0].shanten === best && plain[0].acceptance < top) gaveUp++;
+      });
+    }
+    expect(close).toBeGreaterThan(50);
+    // Today's Pro does give up acceptance there now and then: that is what the switch changes.
+    expect(gaveUp).toBeGreaterThan(0);
   });
 });

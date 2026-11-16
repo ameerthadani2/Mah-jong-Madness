@@ -330,7 +330,18 @@ export const BOT_WEIGHTS = {
    * (`shapeFactor`): a shape whose tiles are all in sight cannot be held, so the wait is less likely.
    */
   proShapeRead: 0,
+  /**
+   * Pro pushes from this shanten (after its discard) and closer: the deal-in lean and the 台 terms only
+   * break ties (`PUSH_TIEBREAK`) and never cost a tile of acceptance. -1: never (today's Pro).
+   */
+  proPushShanten: -1,
 };
+
+/**
+ * When Pro pushes (`proPushShanten`), everything after shanten and acceptance (tie-breaks, lean, 台
+ * terms) moves a score by at most this, so two such sums differ by less than one tile of acceptance (10).
+ */
+const PUSH_TIEBREAK = 4.9;
 
 /**
  * Live tiles of the best wait a one-from-ready hand reaches by drawing `draw`: `counts` is the hand
@@ -386,6 +397,8 @@ export function rankDiscards(s: GameState, seat: number, skill: BotSkill = 'club
   const values = valueKinds(s, seat);
   const shapes = skill === 'pro' && BOT_WEIGHTS.proShapeRead > 0;
   const bestShanten = Math.min(...options.map((o) => o.shanten));
+  // Pro close to ready plays for speed: the lean and the 台 terms only break ties.
+  const push = skill === 'pro' && bestShanten <= BOT_WEIGHTS.proPushShanten;
   // Everyone but a Beginner leans away from danger a little; a Pro also folds against a seat that is
   // probably ready, at the exchange rate of the win chance one step of shanten gives up.
   const lean = !threatened ? 0 : skill === 'pro' ? BOT_WEIGHTS.proLean : skill === 'club' ? BOT_WEIGHTS.clubDefence : 0;
@@ -424,6 +437,7 @@ export function rankDiscards(s: GameState, seat: number, skill: BotSkill = 'club
     let score = -o.shanten * 1000 + o.acceptance * 10;
     const l = look.get(o.kind);
     if (l !== undefined) score += BOT_WEIGHTS.proLookahead * 10 * (l - o.acceptance);
+    const speedOnly = score;
     // Prefer throwing isolated honours/terminals when otherwise equal, but keep honours that score:
     // the more 台 a pong of it is worth, the longer it stays (東 as the East-round dealer is worth 2).
     if (isHonorKind(o.kind)) score += skill !== 'beginner' ? 3 - 3 * honourTai(s, seat, o.kind) : 3;
@@ -441,6 +455,7 @@ export function rankDiscards(s: GameState, seat: number, skill: BotSkill = 'club
         score += (BOT_WEIGHTS.proFlush * (reach + 1 - flush!.offSuit)) / reach;
       }
     }
+    if (push) score = speedOnly + Math.max(-PUSH_TIEBREAK, Math.min(PUSH_TIEBREAK, score - speedOnly));
     out.push({ tile, kind: o.kind, shanten: o.shanten, acceptance: o.acceptance, accepts: o.accepts, danger: risk, score });
   }
   return out.sort((a, b) => b.score - a.score || a.kind - b.kind);
