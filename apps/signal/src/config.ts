@@ -76,6 +76,12 @@ export const LIMITS = {
   reportsPerDay: 10,
   /** Player reports one IP address may file in 24 hours, whatever the accounts (guests are free to make). */
   reportsPerDayPerIp: 30,
+  /** Puzzle submissions (daily answers, Rush starts and finishes) one account may make a minute. */
+  puzzleSubmitsPerMinute: 20,
+  /** Leaderboard and own-rating reads one account may make a minute. */
+  leaderboardReadsPerMinute: 30,
+  /** Puzzle Rush runs one IP address may start in an hour, whatever the accounts (guests are free to make; finishing a run is the server's dearest puzzle work). */
+  rushStartsPerHourPerIp: 60,
 } as const;
 
 type Env = Record<string, string | undefined>;

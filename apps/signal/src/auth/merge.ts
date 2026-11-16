@@ -109,6 +109,9 @@ export async function link(repos: Repos, userId: string, identity: VerifiedIdent
       await tx.wallet.mergeInto(user.id, target.id, now);
       const clubs = await tx.clubs.moveMemberships(user.id, target.avatar ? { userId: target.id, name: target.displayName, avatar: target.avatar } : { userId: target.id, name: target.displayName });
       await tx.puzzleResults.moveToUser(user.id, target.id);
+      // The account keeps the better-supported puzzle rating (more verified answers; its own on a tie).
+      await tx.puzzleRatings.mergeInto(user.id, target.id);
+      await tx.rushRuns.moveToUser(user.id, target.id);
       await tx.devices.moveToUser(user.id, target.id);
       await tx.reports.moveToUser(user.id, target.id);
       await tx.matchResults.moveToUser(user.id, target.id);

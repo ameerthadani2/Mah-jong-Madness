@@ -769,12 +769,20 @@ function memoryRushRuns(s: MemoryState): RushRunsRepo {
     },
     async moveToUser(fromUserId, toUserId) {
       let n = 0;
-      for (const run of s.rushRuns.values()) if (run.userId === fromUserId) (run.userId = toUserId), n++;
+      for (const run of s.rushRuns.values()) {
+        if (run.userId !== fromUserId) continue;
+        run.userId = toUserId;
+        n++;
+      }
       return n;
     },
     async pruneUnfinished(before) {
       let n = 0;
-      for (const [id, run] of [...s.rushRuns]) if (run.finishedAt === null && run.expiresAt < before) s.rushRuns.delete(id), n++;
+      for (const [id, run] of [...s.rushRuns]) {
+        if (run.finishedAt !== null || run.expiresAt >= before) continue;
+        s.rushRuns.delete(id);
+        n++;
+      }
       return n;
     },
   };

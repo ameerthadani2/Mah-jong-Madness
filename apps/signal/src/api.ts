@@ -39,6 +39,7 @@ import { NO_ANALYTICS, reportError, withConsent, type Analytics } from './observ
 import { storeRoutes } from './admin';
 import { adminModerationRoutes, blockRoutes, ModerationError, MuteList, NAME_NOT_ALLOWED, nameAllowed } from './moderation';
 import { EXPO_PUSH_TOKEN, type PushService } from './push';
+import { PuzzleError, puzzleRoutes, type PuzzleDeps } from './puzzles';
 import { REPORT_REASONS, type ReportReason, type Repos, type UserRecord } from './repos/types';
 import { parseRevenueCatWebhook, webhookAuthorised } from './revenuecat';
 import type { SnapshotWrites } from './persist';
@@ -79,6 +80,8 @@ export interface ApiDeps {
   mutes?: MuteList;
   /** Quick match, told when a player's blocks change and when an account is banned. */
   matchmaker?: { blocksChanged(userId: string): void; removeUser(userId: string): void };
+  /** Puzzle and leaderboard route options (limiters, the Rush yield); tests replace them. */
+  puzzles?: Partial<Pick<PuzzleDeps, 'yieldTurn' | 'submitLimiter' | 'readLimiter' | 'rushIpLimiter'>>;
   /** The moderators' token (default: ADMIN_TOKEN from the environment; blank turns the moderation routes off). */
   adminToken?: string | null;
 }
@@ -432,6 +435,7 @@ export function buildRoutes(deps: ApiDeps, opts: Pick<ApiOptions, 'reportIpLimit
         coachTier: summary.coachTier,
         storeEnabled,
         identities: identities.filter((i) => i.provider !== 'guest').map((i) => (i.email ? { provider: i.provider, email: i.email } : { provider: i.provider })),
+        leaderboardVisible: await repos.users.getLeaderboardVisible(me.userId),
         serverNow: iso(now()),
       };
     }),
@@ -461,9 +465,13 @@ export function buildRoutes(deps: ApiDeps, opts: Pick<ApiOptions, 'reportIpLimit
         if (typeof body.analyticsConsent !== 'boolean' && body.analyticsConsent !== null) throw new AuthError('invalid', 'analyticsConsent must be true, false or null');
         await repos.users.setAnalyticsConsent(me.userId, body.analyticsConsent as boolean | null);
       }
+      if (body.leaderboardVisible !== undefined) {
+        if (typeof body.leaderboardVisible !== 'boolean') throw new AuthError('invalid', 'leaderboardVisible must be true or false');
+        await repos.users.setLeaderboardVisible(me.userId, body.leaderboardVisible);
+      }
       const user = (await repos.users.update(me.userId, patch)) ?? me.user;
       clubs.refreshMember(memberIdentity(user));
-      return { user: userJson(user) };
+      return { user: userJson(user), leaderboardVisible: await repos.users.getLeaderboardVisible(me.userId) };
     }),
     r('DELETE', '/api/me', async (ctx) => {
       const me = await ctx.caller();
@@ -496,6 +504,9 @@ export function buildRoutes(deps: ApiDeps, opts: Pick<ApiOptions, 'reportIpLimit
     // ------------------------------------------------------------------ blocks and moderation
     ...blockRoutes(r, moderation),
     ...adminModerationRoutes(r, moderation),
+
+    // ------------------------------------------------------------------ puzzles and leaderboards
+    ...puzzleRoutes(r, { repos, clubs, now, reply: (status, body) => new Reply(status, body), ...deps.puzzles }),
 
     // ------------------------------------------------------------------ reports and push
     r('POST', '/api/reports', async (ctx) => {
@@ -774,6 +785,10 @@ export function createApiHandler(deps: ApiDeps, opts: ApiOptions = {}): (req: In
         if (e instanceof ClubError) return send(res, STATUS[e.code] ?? 400, { error: e.code, message: e.message });
         if (e instanceof WalletError) return send(res, e.status, { error: e.code, message: e.message });
         if (e instanceof ModerationError) return send(res, e.status, { error: e.code, message: e.message });
+        if (e instanceof PuzzleError) {
+          if (e.status === 429) res.setHeader('retry-after', '12');
+          return send(res, e.status, { error: e.code, message: e.message });
+        }
         if (e instanceof HttpError) {
           if (e.status === 429) res.setHeader('retry-after', '12');
           return send(res, e.status, { error: e.code, message: e.message });
