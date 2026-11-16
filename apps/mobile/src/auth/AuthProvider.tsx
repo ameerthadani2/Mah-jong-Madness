@@ -64,6 +64,8 @@ export interface AuthContextValue {
 }
 
 const Ctx = createContext<AuthContextValue | null>(null);
+/** For render tests only (src/test/providers.tsx): a screen under test reads a fake sign-in state from here. */
+export const AuthContext = Ctx;
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const app = useApp();

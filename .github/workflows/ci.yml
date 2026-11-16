@@ -51,6 +51,8 @@ jobs:
       # Every workspace's tests (what `npm test` runs) with coverage. Fails when a test fails or a workspace falls below a
       # floor in its vitest.config.ts (coverage.thresholds; docs/ARCHITECTURE.md, How the app is tested).
       - run: npm run coverage
+      # The app's render tests: components and screens rendered under jest (apps/mobile/jest.config.js).
+      - run: npm run test:render
       - run: npm run sim -- 40
       # Bot strength gate: 2,000 fixed-seed hands compared hand by hand with a recorded reference. Fails on a drop of more
       # than 1 point a hand for Pro against Club or for Pro against Pro without its deal-in and 台 terms (docs/ARCHITECTURE.md).

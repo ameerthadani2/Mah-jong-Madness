@@ -33,7 +33,7 @@ export type Screen =
   | { name: 'shop'; focus?: ShopFocus }
   | { name: 'settings' };
 
-interface AppState {
+export interface AppState {
   screen: Screen;
   go(screen: Screen): void;
   back(): void;
@@ -72,6 +72,8 @@ interface AppState {
 }
 
 const Ctx = createContext<AppState | null>(null);
+/** For render tests only (src/test/providers.tsx): a screen under test reads a fake app state from here. */
+export const AppStateContext = Ctx;
 
 export function AppProvider({ children }: { children: React.ReactNode }) {
   const [stack, setStack] = useState<Screen[]>([{ name: 'home' }]);

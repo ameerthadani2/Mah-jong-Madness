@@ -3,6 +3,7 @@ import { defineConfig } from 'vitest/config';
 // Coverage (`vitest run --coverage`) runs the code about four times slower, so a test's default time limit grows with it.
 const coverageRun = process.argv.includes('--coverage');
 // Pure TypeScript only: a test here must not import React Native or Expo modules (keep platform code behind injected interfaces).
+// Components and screens are rendered under jest instead (*.render.test.tsx, `npm run test:render`, jest.config.js).
 export default defineConfig({
   test: {
     testTimeout: coverageRun ? 60_000 : 5_000,
