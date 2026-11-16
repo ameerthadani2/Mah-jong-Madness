@@ -2,10 +2,11 @@ name: Deploy signal server
 # Builds apps/signal/Dockerfile on Fly's remote builder and rolls it out with fly.toml, as one
 # machine (--ha=false): the server keeps its tables in memory and holds a database lock, so a
 # second machine could never host tables anyway.
-# Runs after CI has passed for a push to main (workflow_run), and on manual dispatch from any
-# branch (Actions -> Deploy signal server -> Run workflow -> pick the branch; the first deploy is
-# the working branch).
-# - After CI it deploys only the head of main: a CI run that finishes, or is re-run, for an older
+# Runs after CI has passed for a push to the repository's default branch (workflow_run), and on
+# manual dispatch from any branch (Actions -> Deploy signal server -> Run workflow -> pick the
+# branch). The default branch is read from the event, never named here: a trigger filter cannot
+# use an expression, so the check job decides, and a renamed default branch still deploys.
+# - After CI it deploys only the head of the default branch: a CI run that finishes, or is re-run, for an older
 #   commit never rolls production back. It then compares that head with the commit of the last
 #   run of this workflow whose deploy job succeeded, and deploys when anything the server is built
 #   from differs (or when that commit is unknown or not an ancestor), so a server change is not
@@ -29,7 +30,6 @@ on:
   workflow_run:
     workflows: [CI]
     types: [completed]
-    branches: [main]
   workflow_dispatch:
     inputs:
       smoke:
@@ -46,8 +46,9 @@ permissions:
 
 jobs:
   check:
-    # A CI run only counts when it passed, for a push (not a pull request from a fork).
-    if: github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
+    # A CI run only counts when it passed, for a push (not a pull request from a fork) to the
+    # repository's default branch, whatever that branch is called.
+    if: github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == github.event.repository.default_branch)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -70,13 +71,14 @@ jobs:
           fetch-depth: 0
       - id: changed
         # Decides whether this commit is deployed. Only the head of a branch ever is; after CI the
-        # head of main is compared with the commit that is deployed. The deploy job below must keep
+        # head of the default branch is compared with the commit that is deployed. The deploy job below must keep
         # the name "deploy": the last deployed commit is found by that job's conclusion.
         env:
           EVENT: ${{ github.event_name }}
           SHA: ${{ steps.commit.outputs.sha }}
           BRANCH: ${{ github.event.workflow_run.head_branch || github.ref_name }}
           REF_TYPE: ${{ github.ref_type }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
           GH_TOKEN: ${{ github.token }}
         run: |
           PATHS="apps/signal packages/engine packages/net package.json package-lock.json tsconfig.base.json fly.toml .github/workflows/deploy-signal.yml"
@@ -103,9 +105,12 @@ jobs:
             deploy "Manual run from the head of $BRANCH: deploying ${SHA:0:7}"
           fi
 
-          HEAD_OF_MAIN=$(git ls-remote origin refs/heads/main | cut -f1)
-          if [ "$HEAD_OF_MAIN" != "$SHA" ]; then
-            skip "CI passed for ${SHA:0:7}, which is not the head of main (${HEAD_OF_MAIN:0:7}). An older commit is never deployed over a newer one; the run for the head of main decides what ships."
+          if [ -z "$DEFAULT_BRANCH" ] || [ "$BRANCH" != "$DEFAULT_BRANCH" ]; then
+            skip "CI passed for ${SHA:0:7} on $BRANCH, which is not the repository's default branch (${DEFAULT_BRANCH:-unknown}). Only the default branch deploys by itself; use Run workflow to deploy another branch."
+          fi
+          HEAD_OF_DEFAULT=$(git ls-remote origin "refs/heads/$DEFAULT_BRANCH" | cut -f1)
+          if [ "$HEAD_OF_DEFAULT" != "$SHA" ]; then
+            skip "CI passed for ${SHA:0:7}, which is not the head of $DEFAULT_BRANCH (${HEAD_OF_DEFAULT:0:7}). An older commit is never deployed over a newer one; the run for the head of $DEFAULT_BRANCH decides what ships."
           fi
 
           # The commit of the newest run of this workflow whose deploy job succeeded. Runs that

@@ -119,8 +119,8 @@ restoring or hosting anything (it never listens).
 
 ### 5. Deploy by dispatch
 
-GitHub → Actions → **Deploy signal server** → Run workflow → pick the branch (the working branch
-first; `main` once it is merged) → Run. The run:
+GitHub → Actions → **Deploy signal server** → Run workflow → pick the branch (any branch; the run
+deploys that branch's head) → Run. The run:
 
 1. typechecks and runs the engine, net and server tests, the Postgres cases included, on the
    exact commit (a manual run does not wait for CI, so the deploy job tests what it ships);
@@ -140,8 +140,9 @@ A manual run always deploys the head of the branch you picked. Re-running an old
 Actions list is refused when its commit is no longer the head of that branch: start a new run
 instead.
 
-After this first time, a push to `main` deploys by itself once CI has passed whenever the head of
-`main` differs, in anything the server is built from, from the commit that is deployed (see
+After this first time, a push to the repository's default branch (whatever it is called; the
+workflow reads it from GitHub, it is not written into the file) deploys by itself once CI has
+passed whenever the head of that branch differs, in anything the server is built from, from the commit that is deployed (see
 "What a deploy does").
 
 ### 6. Smoke test
@@ -221,13 +222,15 @@ again when ready. "A deploy that fails half-way" lists what is running after eac
 ## What a deploy does
 
 The workflow (`.github/workflows/deploy-signal.yml`) runs when the **CI** workflow has finished
-successfully for a push to `main` (`workflow_run`), and on **Run workflow** in the Actions tab
+successfully for a push to the repository's default branch (`workflow_run`; the branch is read
+from the event, so no branch name is written in the workflow), and on **Run workflow** in the Actions tab
 (any branch, always deploys the head of that branch). A failed or cancelled CI run, or one for a
 pull request, never deploys.
 
 1. **check** decides whether the commit CI tested is deployed:
-   - Only the head of `main` is. If CI finished (or was re-run) for a commit that is no longer
-     the head, the run ends green with "not the head of main" in its summary: an older commit is
+   - Only the head of the default branch is. A CI run for any other branch is skipped. If CI
+     finished (or was re-run) for a commit that is no longer the head, the run ends green with
+     "not the head of <default branch>" in its summary: an older commit is
      never deployed over a newer one, and the run for the head decides.
    - The head is compared with **the commit that is deployed**: the commit of the newest run of
      this workflow whose `deploy` job succeeded (read with `gh run list` and `gh run view`). It
@@ -242,7 +245,7 @@ pull request, never deploys.
 
    What the check cannot know: a rollback or a `fly deploy` done by hand is not a workflow run,
    so afterwards "the deployed commit" is still the last one the workflow shipped. After a manual
-   rollback, deploy the fix with **Run workflow** (or any server change on `main`).
+   rollback, deploy the fix with **Run workflow** (or any server change on the default branch).
 2. **deploy**: checks out that commit, installs the server's workspaces, typechecks and runs the
    engine, net and server tests against a `postgres:16` service (so the repository, migration,
    timeout and host-lock cases run), settles the address to check (a malformed `SIGNAL_URL` stops
@@ -420,7 +423,7 @@ fly deploy -a <name> --image registry.fly.io/<name>:deployment-<id> --ha=false
 
 It restarts the one machine on the older image; tables survive as in any deploy. The deploy
 workflow does not know about it: its "deployed commit" is still the last one it shipped, so ship
-the fix with **Run workflow** or with a server change on `main`.
+the fix with **Run workflow** or with a server change on the default branch.
 
 ## Rotating secrets
 
@@ -525,7 +528,7 @@ the upload includes `node_modules`; the image is the same, only slower to build.
 | `apps/signal/migrations/*.sql` | Schema migrations, applied in filename order by `src/migrate.ts` (`0001` to `0009`; `0009_purchase_periods.sql` adds `purchases.period_ends_at`, the end of the period each subscription charge paid for, which the refund rule needs). |
 | `apps/signal/scripts/smoke.ts` | The smoke test (`npm run smoke -w @mjm/signal -- <url>`); `test/smoke.test.ts` runs it against the real server on port 0. |
 | `fly.toml` | Fly app config: region `sin`, port 8787, HTTPS forced, one machine always running (`min_machines_running = 1`, `auto_stop_machines = false`), `MAX_HOSTED_TABLES=200` sized for that machine, `/health` checks, and a release command that runs migrations. |
-| `.github/workflows/deploy-signal.yml` | Deploys the head of `main` after CI has passed when it differs from the deployed commit in anything the server is built from, and on manual dispatch from the head of any branch; re-runs the engine, net and server tests with Postgres first, deploys one machine (`--ha=false`), then health-checks and smoke-tests it on Postgres storage. `apps/signal/test/deploy-workflow.test.ts` runs its decision steps against scratch repositories. |
+| `.github/workflows/deploy-signal.yml` | Deploys the head of the default branch after CI has passed when it differs from the deployed commit in anything the server is built from, and on manual dispatch from the head of any branch; re-runs the engine, net and server tests with Postgres first, deploys one machine (`--ha=false`), then health-checks and smoke-tests it on Postgres storage. `apps/signal/test/deploy-workflow.test.ts` runs its decision steps against scratch repositories. |
 
 ## Database tests
 

@@ -340,6 +340,50 @@ describe('Sign in with Apple beside Google sign-in on iOS', () => {
   });
 });
 
+describe('workflows that act for the default branch', () => {
+  const read = (file: string): string => readFileSync(join(ROOT, '.github/workflows', file), 'utf8');
+  /** The `on:` block of a workflow: from that line to the next top-level key. */
+  const triggers = (text: string): string => {
+    const lines = text.split('\n');
+    const start = lines.indexOf('on:');
+    const end = lines.findIndex((l, i) => i > start && /^[A-Za-z]/.test(l));
+    return lines.slice(start, end).join('\n');
+  };
+
+  it('name no branch in a trigger filter: a filter cannot follow a default branch that is not called main', () => {
+    for (const file of ['deploy-signal.yml', 'web-preview.yml']) {
+      const named = [...triggers(read(file)).matchAll(/^\s*branches(?:-ignore)?:\s*\[(.*)\]\s*$/gm)].flatMap((m) => m[1].split(',').map((b) => b.trim().replace(/['"]/g, ''))).filter((b) => b !== '**');
+      expect(named, file).toEqual([]);
+      expect(triggers(read(file)), file).not.toMatch(/^\s*branches(?:-ignore)?:\s*$/m);
+    }
+  });
+
+  it('deploy after CI only when the finished run was a passed push to the default branch', () => {
+    const text = read('deploy-signal.yml');
+    expect(triggers(text)).toContain('workflow_run:');
+    const condition = /^ {2}check:\n(?: {4}#.*\n)* {4}if: (.*)$/m.exec(text)?.[1] ?? '';
+    expect(condition).toContain("github.event_name == 'workflow_dispatch' || (");
+    for (const part of ["github.event.workflow_run.conclusion == 'success'", "github.event.workflow_run.event == 'push'", 'github.event.workflow_run.head_branch == github.event.repository.default_branch']) expect(condition).toContain(part);
+    // The step that checks the commit is still the head asks about the default branch, not a named one.
+    expect(text).toContain('DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}');
+    expect(workflowStepScript('deploy-signal.yml', 'id: changed')).not.toMatch(/refs\/heads\/main\b/);
+  });
+
+  it('never cancel a CI run of the default branch, which the deploy starts from', () => {
+    expect(read('ci.yml')).toContain("cancel-in-progress: ${{ github.ref != format('refs/heads/{0}', github.event.repository.default_branch) }}");
+  });
+
+  it('build the web preview only for the default branch or a manual run', () => {
+    const text = read('web-preview.yml');
+    expect(triggers(text)).toMatch(/^ {2}push:$/m);
+    expect(triggers(text)).toMatch(/^ {2}workflow_dispatch:/m);
+    const condition = /^ {2}build:\n(?: {4}#.*\n)* {4}if: (.*)$/m.exec(text)?.[1] ?? '';
+    expect(condition).toBe("github.event_name == 'workflow_dispatch' || github.ref_name == github.event.repository.default_branch");
+    // The publishing job still waits for the build.
+    expect(text).toMatch(/^ {4}needs: build$/m);
+  });
+});
+
 describe('workflow hygiene', () => {
   const workflows = readdirSync(join(ROOT, '.github/workflows')).filter((f) => f.endsWith('.yml'));
 

@@ -8,11 +8,12 @@ on:
 permissions:
   contents: read
 
-# A newer push to a working branch replaces the run for the older one. Runs on main are never
-# cancelled: the deploy workflow starts from a finished CI run of main.
+# A newer push to a working branch replaces the run for the older one. Runs on the default
+# branch (read from the event, whatever it is called) are never cancelled: the deploy workflow
+# starts from a finished CI run of that branch.
 concurrency:
   group: ci-${{ github.event_name }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+  cancel-in-progress: ${{ github.ref != format('refs/heads/{0}', github.event.repository.default_branch) }}
 
 jobs:
   test:

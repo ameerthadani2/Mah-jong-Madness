@@ -8,11 +8,11 @@ No computer needed. GitHub builds everything; you tap buttons in Safari.
 2. **Actions → Web preview (GitHub Pages) → Run workflow** (pick the branch you work on).
 3. Open **https://ameerthadani2.github.io/Mah-jong-Madness/** in Safari. Share → *Add to Home Screen* makes it feel like an app.
 
-Every push to `main` republishes it; for any other branch, run the workflow by hand. Offline play, the coach, puzzles, lessons, review and the shop work immediately; clubs and online tables need step 1.
+Every push to the repository's default branch republishes it; for any other branch, run the workflow by hand. Offline play, the coach, puzzles, lessons, review and the shop work immediately; clubs and online tables need step 1.
 
 ## Step 1 — host the game server (about 20 minutes once; Fly.io asks for a payment method)
 
-1. Follow `docs/DEPLOY.md` from a laptop once (Fly.io app + Neon database). The deploy workflow then redeploys by itself after each push to `main` that changes the server.
+1. Follow `docs/DEPLOY.md` from a laptop once (Fly.io app + Neon database). The deploy workflow then redeploys by itself after each push to the default branch that changes the server.
 2. The server address is `https://<your-fly-app>.fly.dev`.
 3. GitHub → **Settings → Secrets and variables → Actions → Variables → New repository variable**: name `SIGNAL_URL`, value the same address with `wss://` instead of `https://`.
 4. Let the website talk to the server, once, from the laptop: `fly secrets set -a <your-fly-app> CORS_ORIGINS=https://ameerthadani2.github.io` (your Pages address without the path). A browser refuses every call from the website to a server that does not list the site, so without this the website cannot sign in, open a table or join a club. The apps from the stores do not need it.

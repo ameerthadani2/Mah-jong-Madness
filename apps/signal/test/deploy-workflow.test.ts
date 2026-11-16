@@ -1,7 +1,7 @@
 /**
  * The deploy workflow's decisions, run as the shell steps GitHub runs, against scratch git
  * repositories, a stand-in `gh` and a local HTTP server:
- * - after CI only the head of main is deployed, and whether it is deployed is decided by
+ * - after CI only the head of the repository's default branch is deployed, whatever it is called, and whether it is deployed is decided by
  *   comparing it with the commit the last successful deploy shipped;
  * - a manual run deploys the head of its branch and a re-run of an older one is refused;
  * - a malformed address stops the run before the deploy, and the health check accepts only this
@@ -29,8 +29,8 @@ interface Scratch {
   runs(list: { sha: string; deployed: boolean }[]): void;
 }
 
-/** A clone of a bare "origin" with one commit on main, and a stand-in `gh` on the PATH. */
-function scratch(): Scratch {
+/** A clone of a bare "origin" with one commit on its default branch, and a stand-in `gh` on the PATH. */
+function scratch(defaultBranch = 'main'): Scratch {
   const top = mkdtempSync(join(tmpdir(), 'mjm-deploy-'));
   const origin = join(top, 'origin.git');
   const dir = join(top, 'work');
@@ -44,9 +44,9 @@ function scratch(): Scratch {
     if (r.status !== 0) throw new Error(`git ${args.join(' ')}: ${r.stderr}`);
     return r.stdout.trim();
   };
-  run(top, 'init', '-q', '--bare', '-b', 'main', origin);
+  run(top, 'init', '-q', '--bare', '-b', defaultBranch, origin);
   run(top, 'clone', '-q', origin, dir);
-  run(dir, 'checkout', '-q', '-b', 'main');
+  run(dir, 'checkout', '-q', '-b', defaultBranch);
   // The stand-in answers what the real one prints after its --jq filter.
   writeFileSync(
     join(bin, 'gh'),
@@ -78,7 +78,7 @@ function scratch(): Scratch {
 }
 
 function decideFor(s: Scratch, env: Record<string, string>) {
-  return runStep(decide, { PATH: `${s.bin}:${process.env.PATH ?? ''}`, GH_FAKE: s.fake, GITHUB_REPOSITORY: 'owner/repo', GH_TOKEN: 'x', GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null', EVENT: 'workflow_run', BRANCH: 'main', REF_TYPE: 'branch', ...env }, { cwd: s.dir });
+  return runStep(decide, { PATH: `${s.bin}:${process.env.PATH ?? ''}`, GH_FAKE: s.fake, GITHUB_REPOSITORY: 'owner/repo', GH_TOKEN: 'x', GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null', EVENT: 'workflow_run', BRANCH: 'main', DEFAULT_BRANCH: 'main', REF_TYPE: 'branch', ...env }, { cwd: s.dir });
 }
 
 describe('deploy workflow: what gets deployed after CI', () => {
@@ -114,6 +114,28 @@ describe('deploy workflow: what gets deployed after CI', () => {
       s.runs([{ sha: deployed, deployed: true }]);
       expect(decideFor(s, { SHA: s.commit(path) }).outputs.server, path).toBe('true');
     }
+  });
+
+  it('deploys the head of the default branch when that branch is not called main', () => {
+    const s = scratch('trunk');
+    const deployed = s.commit('apps/signal/src/a.ts');
+    s.runs([{ sha: deployed, deployed: true }]);
+    const head = s.commit('apps/signal/src/b.ts');
+    const r = decideFor(s, { SHA: head, BRANCH: 'trunk', DEFAULT_BRANCH: 'trunk' });
+    expect(r).toMatchObject({ status: 0, outputs: { server: 'true' } });
+    // An older commit of that branch is still never deployed over its head.
+    const old = decideFor(s, { SHA: deployed, BRANCH: 'trunk', DEFAULT_BRANCH: 'trunk' });
+    expect(old.outputs.server).toBe('false');
+    expect(old.summary).toContain(`not the head of trunk (${head.slice(0, 7)})`);
+  });
+
+  it('deploys nothing after CI for a branch that is not the default branch, even at its head', () => {
+    const s = scratch('trunk');
+    s.git('checkout', '-q', '-b', 'main');
+    const head = s.commit('apps/signal/src/a.ts');
+    const r = decideFor(s, { SHA: head, BRANCH: 'main', DEFAULT_BRANCH: 'trunk' });
+    expect(r).toMatchObject({ status: 0, outputs: { server: 'false' } });
+    expect(r.summary).toContain("on main, which is not the repository's default branch (trunk)");
   });
 
   it('never deploys a commit that is not the head of main, such as a re-run of an old CI run', () => {

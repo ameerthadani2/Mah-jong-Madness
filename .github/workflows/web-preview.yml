@@ -2,9 +2,12 @@ name: Web preview (GitHub Pages)
 # Publishes the web build of the app to https://<owner>.github.io/<repo>/ so it can be played
 # in plain Safari on any iPhone — no app install, no developer tooling, no iOS update.
 # One-time setup (from the phone): repo Settings → Pages → Build and deployment → Source: "GitHub Actions".
+# A trigger filter cannot use an expression, so the push filter names no branch ('**' is every
+# branch, and keeps tag pushes out); the build job runs only for the repository's default branch,
+# whatever it is called, or for a manual run.
 on:
   push:
-    branches: [main]
+    branches: ['**']
     paths: [apps/mobile/**, packages/**, .github/workflows/web-preview.yml]
   workflow_dispatch:
 
@@ -19,6 +22,7 @@ concurrency:
 
 jobs:
   build:
+    if: github.event_name == 'workflow_dispatch' || github.ref_name == github.event.repository.default_branch
     runs-on: ubuntu-latest
     timeout-minutes: 20
     outputs:
