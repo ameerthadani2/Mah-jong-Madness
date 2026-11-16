@@ -86,6 +86,7 @@ describe('clubErrorMessage', () => {
       [{ code: 'rate_limited', message: 'Too many clubs joined from this connection; try again in an hour' }, 'clubs.errors.joinRateIp'],
       [{ code: 'rate_limited', message: 'This club is getting a lot of join requests; try again later' }, 'clubs.errors.joinRateClub'],
       [{ code: 'limit', message: 'This club has too many pending requests; try again later' }, 'clubs.errors.queueFull'],
+      [{ code: 'limit', message: 'This club has no room for new accounts right now; try again later' }, 'clubs.errors.newAccountsFull'],
     ];
     for (const [e, key] of cases) {
       const m = clubErrorMessage(e);

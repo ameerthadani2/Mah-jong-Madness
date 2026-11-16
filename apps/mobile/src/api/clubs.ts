@@ -142,6 +142,7 @@ export function clubErrorMessage(e: unknown): Message | null {
     [/^Too many clubs joined from this connection/i, 'clubs.errors.joinRateIp'],
     [/a lot of join requests/i, 'clubs.errors.joinRateClub'],
     [/too many pending requests/i, 'clubs.errors.queueFull'],
+    [/no room for new accounts/i, 'clubs.errors.newAccountsFull'],
   ];
   const hit = known.find(([re]) => re.test(message));
   return hit ? { key: hit[1] } : null;

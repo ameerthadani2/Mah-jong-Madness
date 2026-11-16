@@ -203,6 +203,7 @@
     "transferLimit": "That member already owns %{max} clubs, the most one account can own.",
     "joinRateIp": "Too many clubs joined from this connection. Try again in an hour.",
     "joinRateClub": "This club is getting a lot of join requests. Try again later.",
-    "queueFull": "This club has too many requests waiting. Try again later."
+    "queueFull": "This club has too many requests waiting. Try again later.",
+    "newAccountsFull": "This club has no room for new accounts right now. Try again later."
   }
 }

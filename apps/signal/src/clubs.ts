@@ -219,8 +219,20 @@ export const CLUB_LIMITS = {
    * (accounts are free to make, addresses less so).
    */
   joinsPerHourPerIp: 10,
-  /** New members and join requests one club takes per hour over the API, whoever sends them. */
+  /**
+   * New members and join requests one club takes per hour over the API. Accounts younger than
+   * `newAccountMs` share one such allowance and older accounts another, so a flood of fresh
+   * accounts cannot use up the hour for the club's established players.
+   */
   joinsPerHourPerClub: 60,
+  /** An account younger than this is "new" to the join limits above and below. */
+  newAccountMs: 7 * DAY_MS,
+  /**
+   * Member places, and places in the request queue, that new accounts cannot take: they may fill a
+   * club, or its queue, only up to `membersPerClub` less this many. The rest stays open to
+   * established accounts, so a flood of fresh ones cannot lock them out until the owner clears it.
+   */
+  placesKeptForEstablished: 50,
   /** Tables per club that have not finished. */
   openTablesPerClub: 5,
   /** Clubs one account may own (decision 5: a Four Winds Club subscriber may run up to 3). */
@@ -559,6 +571,8 @@ export class ClubRegistry {
   /** Joins and join requests over the API, per client address and per club (see `joinClub`). */
   private readonly joinsByIp: BucketTable<string>;
   private readonly joinsByClub: BucketTable<string>;
+  /** The same per-club allowance for accounts younger than `CLUB_LIMITS.newAccountMs`. */
+  private readonly newJoinsByClub: BucketTable<string>;
 
   constructor(opts: { store?: ClubStore; now?: () => number; randomHex?: HexSource; retryDelayMs?: number } = {}) {
     this.now = opts.now ?? Date.now;
@@ -568,6 +582,7 @@ export class ClubRegistry {
     const hourly = (n: number) => new BucketTable<string>(n, n / 3600, { now: this.now, idleMs: 3_600_000 });
     this.joinsByIp = hourly(CLUB_LIMITS.joinsPerHourPerIp);
     this.joinsByClub = hourly(CLUB_LIMITS.joinsPerHourPerClub);
+    this.newJoinsByClub = hourly(CLUB_LIMITS.joinsPerHourPerClub);
   }
 
   /** Clubs whose last write failed and have not been written since (tests and diagnostics). */
@@ -1064,34 +1079,43 @@ export class ClubRegistry {
    * Join a club, or ask to (a club that approves its members). `from` is the client address of a
    * request over the API: a new member or request is then charged to that address and to the
    * club (`joinsPerHourPerIp`, `joinsPerHourPerClub`), so throwaway accounts cannot fill a club or
-   * its request queue in one go. Asking again while already in, or already waiting, costs nothing.
+   * its request queue in one go. With `accountCreatedAt`, an account younger than
+   * `CLUB_LIMITS.newAccountMs` is charged to the club's allowance for new accounts and cannot take
+   * the last `placesKeptForEstablished` places of the club or of its queue. Asking again while
+   * already in, or already waiting, costs nothing.
    */
-  joinClub(code: string, user: Identity, from?: { ip: string }): { club: Club; status: 'joined' | 'pending' | 'already' } {
+  joinClub(code: string, user: Identity, from?: { ip: string; accountCreatedAt?: number }): { club: Club; status: 'joined' | 'pending' | 'already' } {
     const club = this.get(code);
     if (this.member(club, user.userId)) return { club, status: 'already' };
     if (this.isBanned(club.code, user.userId)) throw new ClubError('forbidden', 'You cannot join this club');
     this.expirePendingIn(club, this.now() - CLUB_LIMITS.pendingRequestMs);
     if (club.pending.some((p) => p.userId === user.userId)) return { club, status: 'pending' };
     this.requireClubRoom(user.userId);
+    const isNew = typeof from?.accountCreatedAt === 'number' && this.now() - from.accountCreatedAt < CLUB_LIMITS.newAccountMs;
+    const room = CLUB_LIMITS.membersPerClub - (isNew ? CLUB_LIMITS.placesKeptForEstablished : 0);
     if (club.settings.joinRequiresApproval) {
-      if (club.pending.length >= CLUB_LIMITS.membersPerClub) throw new ClubError('limit', 'This club has too many pending requests; try again later');
-      this.chargeJoin(club, from);
+      if (club.pending.length >= room) throw new ClubError('limit', 'This club has too many pending requests; try again later');
+      this.chargeJoin(club, from, isNew);
       club.pending.push({ userId: user.userId, name: user.name, ...(user.avatar === undefined ? {} : { avatar: user.avatar }), requestedAt: this.now() });
       this.persist(club);
       return { club, status: 'pending' };
     }
     this.requireMemberRoom(club);
-    this.chargeJoin(club, from);
+    if (club.members.length >= room) throw new ClubError('limit', 'This club has no room for new accounts right now; try again later');
+    this.chargeJoin(club, from, isNew);
     this.admit(club, user);
     this.persist(club);
     return { club, status: 'joined' };
   }
 
-  /** Spend one join from the address and from the club; 429 `rate_limited` when either has run out. */
-  private chargeJoin(club: Club, from?: { ip: string }): void {
+  /**
+   * Spend one join from the address and from the club (its allowance for new accounts when `isNew`);
+   * 429 `rate_limited` when either has run out.
+   */
+  private chargeJoin(club: Club, from: { ip: string } | undefined, isNew: boolean): void {
     if (!from) return;
     if (!this.joinsByIp.take(from.ip)) throw new ClubError('rate_limited', 'Too many clubs joined from this connection; try again in an hour');
-    if (!this.joinsByClub.take(club.code)) throw new ClubError('rate_limited', 'This club is getting a lot of join requests; try again later');
+    if (!(isNew ? this.newJoinsByClub : this.joinsByClub).take(club.code)) throw new ClubError('rate_limited', 'This club is getting a lot of join requests; try again later');
   }
 
   /** Make an account a member. Standings it left on file here come back with it (decision 5). */
@@ -1162,6 +1186,7 @@ export class ClubRegistry {
     if (rejected > 0) {
       club.pending = kept;
       this.joinsByClub.forget(club.code);
+      this.newJoinsByClub.forget(club.code);
       this.persist(club);
     }
     return { club, rejected };

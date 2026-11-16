@@ -105,8 +105,8 @@ With no environment at all the server runs: accounts, clubs and tables are kept 
 | Free text | display and seat names 24, club and table names 40, club descriptions 280, report details 1,000 characters; table chat is not free text (a quick-phrase id or an emote id, anything else is dropped) | Cleaned (`cleanField`: controls including NUL, bidi overrides and invisible characters removed) and cut, never split inside an emoji; a club name that cleans to nothing is `400` |
 | Database queries | 5 s each (and `statement_timeout` on a direct connection) | The request fails; `/health` answers 503 `db:"down"` after 2 s without an answer |
 | Clubs per user | 10 (owned, joined or pending) | `409 {error:"limit"}` |
-| Members per club | 200 (pending requests have the same cap) | `409 {error:"limit"}` |
-| Joining clubs over the API | 10 new memberships or requests an hour per address (all clubs), 60 an hour per club | `429 {error:"rate_limited"}`; a bulk reject gives the club its allowance back |
+| Members per club | 200 (pending requests have the same cap); accounts younger than 7 days can fill a club or its queue only to 150, the last 50 places are kept for older accounts | `409 {error:"limit"}` |
+| Joining clubs over the API | 10 new memberships or requests an hour per address (all clubs), 60 an hour per club, and a separate 60 an hour per club for accounts younger than 7 days (so a flood of fresh accounts cannot lock older ones out) | `429 {error:"rate_limited"}`; a bulk reject gives the club its allowance back |
 | Pending join requests | kept 30 days | Dropped at the hourly prune or when the next person asks to join; the account may ask again |
 | Open tables per club | 5 (finished tables do not count); 1 once the owner's Four Winds Club plan has lapsed for 7 days while the store is live | `409 {error:"limit"}` |
 | Clubs owned per user | 3: creating, being handed one, or inheriting one from a deleted owner. A merge, or a hand-over with nobody under the cap, can exceed it | `409 {error:"limit"}`; a club beyond the 3 a plan covers runs on the lapsed cap |
@@ -152,7 +152,7 @@ JSON in and out. Errors are `{ "error": "<code>", "message": "<English sentence>
 | `DELETE /api/clubs/:code` | bearer (owner) | `{ confirm }` (the club's name or code) | `204`; its live tables close |
 | `GET /api/clubs/:code` | bearer | | members: the club; anyone else: `{ code, name, description, memberCount, joinRequiresApproval }` |
 | `PATCH /api/clubs/:code` | bearer (owner/admin) | `{ name?, description?, rules?, settings? }` | the club; `400 name_not_allowed` for a name or a description the name check refuses |
-| `POST /api/clubs/:code/join` | bearer | | `{ club, status: "joined"\|"pending"\|"already" }` (`club` is the public view until membership); standings left on file come back; `429` past 10 an hour per address or 60 an hour per club |
+| `POST /api/clubs/:code/join` | bearer | | `{ club, status: "joined"\|"pending"\|"already" }` (`club` is the public view until membership); standings left on file come back; `429` past 10 an hour per address or 60 an hour per club (new accounts have their own 60); `409` when a new account would take one of the last 50 places |
 | `POST /api/clubs/:code/members/:userId/approve` | bearer (owner/admin) | | the club |
 | `POST /api/clubs/:code/members/:userId/reject` | bearer (owner/admin) | | the club |
 | `POST /api/clubs/:code/pending/reject-all` | bearer (owner/admin) | `{ userIds? }` | `{ club, rejected }`; every pending request, or only those named |
