@@ -22,7 +22,7 @@ export interface LegalDocument {
   sections: LegalSection[];
 }
 
-export const LEGAL_VERSION = 'DRAFT 2026-11-12';
+export const LEGAL_VERSION = 'DRAFT 2026-11-16';
 
 const TERMS_EN: LegalDocument = {
   title: 'Terms of Service',
@@ -152,9 +152,9 @@ const PRIVACY_EN: LegalDocument = {
     {
       heading: '3. What we collect when you go online',
       paragraphs: [
-        'Account: an account id, a display name and avatar you choose, your language, your birth year, and your two privacy choices (usage statistics and crash reports, each on or off). If you link Sign in with Apple or Google: the provider’s account identifier and, if the provider shares it, a verified email address.',
+        'Account: an account id, a display name and avatar you choose, your language, your birth year, your two privacy choices (usage statistics and crash reports, each on or off) and whether you are shown on leaderboards. If you link Sign in with Apple or Google: the provider’s account identifier and, if the provider shares it, a verified email address.',
         'Device: a random device id created by the app, the platform (iOS, Android or web), the app build and, if you allow notifications, a push notification token.',
-        'Play: the tables you join, the hands played (including the shuffle record used to verify fairness), match results, club memberships and club standings, the players you block, and the reports you make.',
+        'Play: the tables you join, the hands played (including the shuffle record used to verify fairness), match results, club memberships and club standings, your answers to the daily puzzle and Puzzle Rush with their times, scores and your puzzle rating (checked and ranked by our server while you are signed in), the players you block, and the reports you make.',
         'Purchases: the product, store transaction id, price and currency, received from the App Store or Google Play through our payment processor, RevenueCat, which receives your account id to link purchases to your account. We never see your card details.',
         'Diagnostics and usage: crash reports and app events, used to fix problems and improve the app. Both are off until you agree: the app asks once, after the age question, and you can switch either one on or off at any time in Settings, under Privacy. They exist only in builds that carry these services.',
       ],
@@ -165,7 +165,7 @@ const PRIVACY_EN: LegalDocument = {
     },
     {
       heading: '5. Who else sees it',
-      paragraphs: ['Other players at your table and in your clubs see your display name, avatar, results and standings. Our hosting, database, payment, notification delivery and (only if you agreed) diagnostics and usage providers process data for us under contract. A notification is delivered through Expo’s push service, which passes it to Apple or Google with your push notification token. We disclose data when the law requires it.'],
+      paragraphs: ['Other players at your table and in your clubs see your display name, avatar, results and standings. Your display name, avatar and puzzle results (the daily puzzle, Puzzle Rush best scores and your puzzle rating) can appear on public leaderboards, for everyone and in your clubs, unless you turn off ‘Show me on leaderboards’. You always see your own place. Our hosting, database, payment, notification delivery and (only if you agreed) diagnostics and usage providers process data for us under contract. A notification is delivered through Expo’s push service, which passes it to Apple or Google with your push notification token. We disclose data when the law requires it.'],
     },
     {
       heading: '6. How long we keep it',
@@ -202,9 +202,9 @@ const PRIVACY_ZH: LegalDocument = {
     {
       heading: '3. 上線時我們蒐集的資料',
       paragraphs: [
-        '帳號：帳號 ID、你選擇的顯示名稱和頭像、語言、出生年份，以及你的兩項隱私選擇（使用統計與當機報告，各自開啟或關閉）。若你連結 Apple 或 Google 登入：該服務的帳號識別碼，以及（若對方提供）經驗證的電子郵件。',
+        '帳號：帳號 ID、你選擇的顯示名稱和頭像、語言、出生年份，你的兩項隱私選擇（使用統計與當機報告，各自開啟或關閉），以及是否在排行榜上顯示你。若你連結 Apple 或 Google 登入：該服務的帳號識別碼，以及（若對方提供）經驗證的電子郵件。',
         '裝置：App 產生的隨機裝置 ID、平台（iOS、Android 或網頁）、App 版本，以及在你允許通知時的推播通知權杖。',
-        '遊玩：你加入的牌桌、打過的牌局（包括用來驗證公平性的洗牌紀錄）、比賽結果、俱樂部成員資格與排行、你封鎖的玩家，以及你提出的檢舉。',
+        '遊玩：你加入的牌桌、打過的牌局（包括用來驗證公平性的洗牌紀錄）、比賽結果、俱樂部成員資格與排行、你在每日謎題與謎題衝刺的作答及其用時、分數和你的謎題積分（登入時由我們的伺服器檢查並排名）、你封鎖的玩家，以及你提出的檢舉。',
         '購買：商品、商店交易編號、價格與幣別，由 App Store 或 Google Play 透過我們的金流服務商 RevenueCat 提供；RevenueCat 會收到你的帳號 ID，以便將購買連結到你的帳號。我們不會看到你的信用卡資料。',
         '診斷與使用情形：當機報告和 App 事件，用來修正問題與改善 App。兩項在你同意之前都是關閉的：App 會在詢問年齡之後問你一次，之後隨時可以到「設定」的「隱私權」分別開啟或關閉。只有內含這些服務的版本才會有這兩項。',
       ],
@@ -215,7 +215,7 @@ const PRIVACY_ZH: LegalDocument = {
     },
     {
       heading: '5. 還有誰會看到',
-      paragraphs: ['同桌和同俱樂部的玩家會看到你的顯示名稱、頭像、成績與排行。我們的主機、資料庫、金流、通知傳送，以及（僅在你同意時）診斷與使用統計服務商依合約為我們處理資料。通知是透過 Expo 的推播服務傳送，該服務會連同你的推播通知權杖轉交給 Apple 或 Google。法律要求時我們會揭露資料。'],
+      paragraphs: ['同桌和同俱樂部的玩家會看到你的顯示名稱、頭像、成績與排行。你的顯示名稱、頭像和謎題成績（每日謎題、謎題衝刺最佳分數和你的謎題積分）可能出現在公開排行榜上，所有人和你的俱樂部都看得到，除非你關閉「在排行榜上顯示我」。你永遠看得到自己的名次。我們的主機、資料庫、金流、通知傳送，以及（僅在你同意時）診斷與使用統計服務商依合約為我們處理資料。通知是透過 Expo 的推播服務傳送，該服務會連同你的推播通知權杖轉交給 Apple 或 Google。法律要求時我們會揭露資料。'],
     },
     {
       heading: '6. 保存期間',
