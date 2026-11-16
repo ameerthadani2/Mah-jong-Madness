@@ -5,7 +5,7 @@
  */
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { DEFAULT_RULES, randomHex } from '@mjm/engine';
+import { DEFAULT_RULES, randomHex, sanitizeRules } from '@mjm/engine';
 import type { Club } from '../src/clubs';
 import { createPool, type Pool } from '../src/db';
 import { migrate } from '../src/migrate';
@@ -61,6 +61,25 @@ function contract(name: string, repos: () => Repos) {
       const again = (await r.clubs.get(c.code))!;
       expect(again.bans ?? []).toEqual([]);
       expect(again.ownerLapsedAt ?? null).toBeNull();
+    });
+
+    it('keeps house rules that play 嚦咕嚦咕 (liguTai) through a save and a load; a club saved without it reads as off', async () => {
+      const r = repos();
+      const [owner, member, banned] = [await user(), await user(), await user()];
+      const c = clubOf(code(), owner, member, banned);
+      // As an owner's rules edit stores them: through the engine's sanitiser.
+      c.rules = sanitizeRules({ ...DEFAULT_RULES, liguTai: 8, junk: true });
+      c.tables[1].rules = sanitizeRules({ ...DEFAULT_RULES, liguTai: 12 });
+      await r.clubs.save(c);
+      const back = (await r.clubs.get(c.code))!;
+      expect(back.rules.liguTai).toBe(8);
+      expect(sanitizeRules(back.rules)).toEqual(c.rules);
+      expect(back.tables[1].rules.liguTai).toBe(12);
+      // Rules stored by a build that had no 嚦咕嚦咕 load with it off.
+      const { liguTai: _l, ...older } = DEFAULT_RULES;
+      void _l;
+      await r.clubs.save({ ...back, rules: older as typeof DEFAULT_RULES });
+      expect(sanitizeRules((await r.clubs.get(c.code))!.rules).liguTai).toBe(0);
     });
 
     it('moves a ban with a merged account and lets it beat a membership there; anonymises it on deletion', async () => {
