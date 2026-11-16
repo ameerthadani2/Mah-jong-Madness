@@ -25,6 +25,20 @@ export function resolveLocale(tags: readonly string[]): Locale {
   return 'en';
 }
 
+/** The BCP 47 tag for a page in this locale: what the web page's lang attribute says, so a screen reader picks the right voice. */
+export function htmlLang(locale: Locale): string {
+  return locale === 'zh-TW' ? 'zh-Hant-TW' : 'en';
+}
+
+/**
+ * On the web, set the page's lang attribute to the language the UI is shown in (the exported page
+ * declares English). Does nothing where there is no document, as on iOS and Android.
+ */
+export function applyDocumentLang(locale: Locale, root: unknown = globalThis): void {
+  const doc = (root as { document?: { documentElement?: { lang?: string } } }).document;
+  if (doc?.documentElement) doc.documentElement.lang = htmlLang(locale);
+}
+
 export function isLocale(v: unknown): v is Locale {
   return typeof v === 'string' && (SUPPORTED_LOCALES as readonly string[]).includes(v);
 }

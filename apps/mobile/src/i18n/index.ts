@@ -11,7 +11,7 @@ import { I18n, type TranslateOptions } from 'i18n-js';
 import { getLocales } from 'expo-localization';
 import { engineReasonTranslations } from '@mjm/engine';
 import { en, zhTW } from './locales';
-import { type Locale, type LocalePreference, resolveLocale } from './resolve';
+import { applyDocumentLang, type Locale, type LocalePreference, resolveLocale } from './resolve';
 
 export { type Locale, type LocalePreference, SUPPORTED_LOCALES, LOCALE_NAMES, resolveLocale, isLocale } from './resolve';
 
@@ -46,10 +46,12 @@ export function localePreference(): LocalePreference {
 export function setLocalePreference(p: LocalePreference): void {
   preference = p;
   i18n.locale = currentLocale();
+  applyDocumentLang(i18n.locale as Locale);
   for (const l of listeners) l();
 }
 
 i18n.locale = currentLocale();
+applyDocumentLang(i18n.locale as Locale);
 
 export function t(key: string, options?: TranslateOptions): string {
   return i18n.t(key, options);

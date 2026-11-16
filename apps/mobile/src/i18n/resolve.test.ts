@@ -1,5 +1,7 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { isLocale, resolveLocale } from './resolve';
+import { applyDocumentLang, htmlLang, isLocale, resolveLocale } from './resolve';
 
 describe('resolveLocale', () => {
   it('reads Traditional Chinese devices as zh-TW', () => {
@@ -20,5 +22,26 @@ describe('resolveLocale', () => {
     expect(isLocale('zh-TW')).toBe(true);
     expect(isLocale('zh-CN')).toBe(false);
     expect(isLocale(3)).toBe(false);
+  });
+});
+
+describe('the web page language', () => {
+  it('is the language the UI is shown in, so a screen reader uses the right voice', () => {
+    expect(htmlLang('en')).toBe('en');
+    expect(htmlLang('zh-TW')).toBe('zh-Hant-TW');
+    const page = { document: { documentElement: { lang: 'en' } } };
+    applyDocumentLang('zh-TW', page);
+    expect(page.document.documentElement.lang).toBe('zh-Hant-TW');
+    applyDocumentLang('en', page);
+    expect(page.document.documentElement.lang).toBe('en');
+  });
+
+  it('is left alone where there is no page (iOS and Android)', () => {
+    expect(() => applyDocumentLang('zh-TW', {})).not.toThrow();
+  });
+
+  it('is set by the module that switches the language, at start and on every change', () => {
+    const src = readFileSync(join(__dirname, 'index.ts'), 'utf8');
+    expect(src.match(/applyDocumentLang\(i18n\.locale as Locale\)/g)).toHaveLength(2);
   });
 });

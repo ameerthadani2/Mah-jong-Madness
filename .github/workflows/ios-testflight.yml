@@ -176,9 +176,11 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - uses: expo/expo-github-action@v8
+      # Pinned to the commit the v8 tag points at (the action publishes no full release tags), and the EAS CLI to a
+      # release: this job holds EXPO_TOKEN and the store keys, so a moved tag or a new CLI must not run here unseen.
+      - uses: expo/expo-github-action@c7b66a9c327a43a8fa7c0158e7f30d6040d2481e # v8
         with:
-          eas-version: latest
+          eas-version: 27.10.0
           token: ${{ secrets.EXPO_TOKEN }}
       - run: npm ci
       - name: Write App Store Connect API key
