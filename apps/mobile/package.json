@@ -10,6 +10,7 @@
     "web": "expo start --web",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
+    "coverage": "vitest run --coverage",
     "e2e": "rm -rf dist-e2e && CI=1 expo export --platform web --output-dir dist-e2e && node e2e/play-hand.cjs dist-e2e e2e-shots",
     "e2e:screens": "rm -rf dist-e2e && CI=1 expo export --platform web --output-dir dist-e2e && node e2e/screens.cjs dist-e2e e2e-shots",
     "i18n:check": "node scripts/check-locales.cjs"
@@ -56,6 +57,7 @@
   },
   "devDependencies": {
     "@types/react": "~19.3",
+    "@vitest/coverage-v8": "^4.1.12",
     "playwright": "^1.63.0",
     "typescript": "^5.6.3",
     "vitest": "^4.1.12"

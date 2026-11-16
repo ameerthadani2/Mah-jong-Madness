@@ -112,5 +112,6 @@ describe('rule-set fuzzing', () => {
     }
     expect(hands).toBe(target);
     expect(deadWalls.has(0) && deadWalls.has(32)).toBe(true);
-  }, 30_000);
+    // About 12 s on its own; room for the coverage run (`npm run coverage`), which runs the engine about four times slower.
+  }, 120_000);
 });
