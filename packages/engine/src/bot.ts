@@ -17,7 +17,7 @@
  * up (wall left, own hand value, dealer). Value: Pro keeps value-honour pairs,
  * pongs them, and chases a flush once it is in reach.
  */
-import { countsFromKinds, discardOptions, shanten, TOTAL_SETS, type Counts } from './hand';
+import { countsFromKinds, discardOptions, relevantKinds, shanten, TOTAL_SETS, type Counts } from './hand';
 import { type Action, type GameState, type PlayerState, drawsLeft, legalActions } from './game';
 import { createRng } from './rng';
 import { prevailingWindKind, seatWindKind } from './scoring';
@@ -170,8 +170,43 @@ export function readOpponents(s: GameState, seat: number): OpponentRead[] {
   });
 }
 
-/** Chance that `kind` is one of `r`'s winning tiles if that seat is ready. */
-export function waitChance(r: OpponentRead, kind: Kind, unseen: Counts): number {
+/** Relative weight of the shapes that wait on a suited kind: two-sided 1, edge and closed 0.5. */
+const SHAPE_TWO_SIDED = 1;
+const SHAPE_EDGE_CLOSED = 0.5;
+/** Share of waits on a pair (single or pong wait), which `WAIT_UNSEEN_SUITED` already reads. */
+const SHAPE_PAIR_SHARE = 0.3;
+
+/**
+ * How much more or less likely a suited `kind` is to be a wait than when every tile around it is
+ * unseen: the shapes that wait on it (two-sided, edge, closed) are counted by the unseen copies of
+ * the two tiles each needs, against three copies of each. A shape whose tiles are all in sight
+ * cannot be held (壁), so with no shape left only a pair wait remains. 1 for an honour.
+ */
+export function shapeFactor(kind: Kind, unseen: Counts): number {
+  if (isHonorKind(kind)) return 1;
+  const r = rankOfKind(kind);
+  const u = (rank: number) => Math.max(0, Math.min(4, unseen[kind - r + rank]));
+  let live = 0;
+  let full = 0;
+  const shape = (a: number, b: number, w: number) => {
+    live += w * u(a) * u(b);
+    full += w * 9;
+  };
+  // Below: x-2, x-1 waits x (two-sided unless it is 1-2, an edge wait on 3).
+  if (r >= 3) shape(r - 2, r - 1, r === 3 ? SHAPE_EDGE_CLOSED : SHAPE_TWO_SIDED);
+  // Above: x+1, x+2 waits x (8-9 is an edge wait on 7).
+  if (r <= 7) shape(r + 1, r + 2, r === 7 ? SHAPE_EDGE_CLOSED : SHAPE_TWO_SIDED);
+  // Closed: x-1, x+1.
+  if (r >= 2 && r <= 8) shape(r - 1, r + 1, SHAPE_EDGE_CLOSED);
+  const pair = SHAPE_PAIR_SHARE * full;
+  return (live + pair) / (full + pair);
+}
+
+/**
+ * Chance that `kind` is one of `r`'s winning tiles if that seat is ready. `shapes` also weighs the
+ * shapes around a suited kind by their unseen tiles (`shapeFactor`, Pro's `proShapeRead`).
+ */
+export function waitChance(r: OpponentRead, kind: Kind, unseen: Counts, shapes = false): number {
   const left = Math.max(0, Math.min(3, unseen[kind]));
   let w: number;
   if (isHonorKind(kind)) {
@@ -185,6 +220,7 @@ export function waitChance(r: OpponentRead, kind: Kind, unseen: Counts): number 
     if (below && above) w *= SUJI_BOTH_FACTOR;
     else if (below || above) w *= SUJI_FACTOR[rank];
     if (r.flushSuit >= 0) w *= suitOf(kind) === r.flushSuit ? 2.5 : 0.25;
+    if (shapes) w *= shapeFactor(kind, unseen);
   }
   if (r.ownDiscards[kind]) w *= OWN_DISCARD_FACTOR;
   if (r.passed[kind]) w *= PASSED_FACTOR;
@@ -192,16 +228,16 @@ export function waitChance(r: OpponentRead, kind: Kind, unseen: Counts): number 
 }
 
 /** Estimated chance that throwing `kind` deals in, summed over the other seats. */
-export function dealInRisk(kind: Kind, reads: readonly OpponentRead[], unseen: Counts): number {
+export function dealInRisk(kind: Kind, reads: readonly OpponentRead[], unseen: Counts, shapes = false): number {
   let total = 0;
-  for (const r of reads) if (r.tenpai > 0) total += r.tenpai * waitChance(r, kind, unseen);
+  for (const r of reads) if (r.tenpai > 0) total += r.tenpai * waitChance(r, kind, unseen, shapes);
   return total;
 }
 
 /** Expected points lost by throwing `kind`: each seat's deal-in chance times what its win would cost. */
-function dealInCost(s: GameState, kind: Kind, reads: readonly OpponentRead[], unseen: Counts): number {
+function dealInCost(s: GameState, kind: Kind, reads: readonly OpponentRead[], unseen: Counts, shapes = false): number {
   let total = 0;
-  for (const r of reads) if (r.tenpai > 0) total += r.tenpai * waitChance(r, kind, unseen) * (s.rules.basePoints + s.rules.taiPoints * r.valueTai);
+  for (const r of reads) if (r.tenpai > 0) total += r.tenpai * waitChance(r, kind, unseen, shapes) * (s.rules.basePoints + s.rules.taiPoints * r.valueTai);
   return total;
 }
 
@@ -282,7 +318,60 @@ export const BOT_WEIGHTS = {
    * only refuses claims once ready; the old value 2 made the paid Pro lose to the free Club.
    */
   proConcealedShanten: 0,
+  /**
+   * Pro, one from ready: 0 counts a discard's acceptance as the unseen copies of the tiles that make
+   * the hand ready; 1 weights each such tile by the live tiles of the best wait it would leave
+   * (`readyLookahead`), so of two shapes that get ready as often Pro keeps the one with the better wait.
+   */
+  proLookahead: 0,
+  /**
+   * Pro: 0 reads a suited tile's chance of being a wait from its own rank and copies; 1 also counts
+   * the shapes that could wait on it (two-sided, edge and closed) by the unseen copies of their tiles
+   * (`shapeFactor`): a shape whose tiles are all in sight cannot be held, so the wait is less likely.
+   */
+  proShapeRead: 0,
 };
+
+/**
+ * Live tiles of the best wait a one-from-ready hand reaches by drawing `draw`: `counts` is the hand
+ * after its discard (3n+1 tiles, one from ready), `draw` a kind that makes it ready. Every discard
+ * that keeps the drawn hand ready is tried; the wait is counted in `unseen` copies (less the one
+ * drawn), so a wait on tiles all in sight is worth 0. Returns 0 when `draw` does not make it ready.
+ */
+export function readyWaitAfterDraw(counts: Counts, setsNeeded: number, unseen: Counts, draw: Kind): number {
+  const c = counts.slice();
+  c[draw]++;
+  let best = 0;
+  for (let d = 0; d < NUM_PLAY_KINDS; d++) {
+    if (c[d] === 0) continue;
+    c[d]--;
+    if (shanten(c, setsNeeded) === 0) {
+      let live = 0;
+      for (const w of relevantKinds(c)) {
+        const left = unseen[w] - (w === draw ? 1 : 0);
+        if (c[w] >= 4 || left <= 0) continue;
+        c[w]++;
+        if (shanten(c, setsNeeded) === -1) live += left;
+        c[w]--;
+      }
+      if (live > best) best = live;
+    }
+    c[d]++;
+  }
+  return best;
+}
+
+/**
+ * Look-ahead acceptance of a one-from-ready hand (3n+1 tiles after its discard): the unseen copies
+ * of each tile that makes it ready, each weighted by the live tiles of the best wait it leaves
+ * (`readyWaitAfterDraw`). Divided by the mean wait over the hands compared, it is on the scale of
+ * plain acceptance.
+ */
+export function readyLookahead(counts: Counts, setsNeeded: number, unseen: Counts, accepts: readonly Kind[]): number {
+  let total = 0;
+  for (const a of accepts) total += unseen[a] * readyWaitAfterDraw(counts, setsNeeded, unseen, a);
+  return total;
+}
 
 /** Rank every discard for the player whose turn it is. Highest score first. */
 export function rankDiscards(s: GameState, seat: number, skill: BotSkill = 'club'): DiscardAdvice[] {
@@ -295,6 +384,7 @@ export function rankDiscards(s: GameState, seat: number, skill: BotSkill = 'club
   const reads = defend ? readOpponents(s, seat) : [];
   const threatened = reads.some((r) => r.tenpai > 0);
   const values = valueKinds(s, seat);
+  const shapes = skill === 'pro' && BOT_WEIGHTS.proShapeRead > 0;
   const bestShanten = Math.min(...options.map((o) => o.shanten));
   // Everyone but a Beginner leans away from danger a little; a Pro also folds against a seat that is
   // probably ready, at the exchange rate of the win chance one step of shanten gives up.
@@ -310,19 +400,39 @@ export function rankDiscards(s: GameState, seat: number, skill: BotSkill = 'club
   }
   const flush = skill === 'pro' ? flushShape(p) : null;
   const chaseFlush = flush !== null && flush.open && flush.offSuit > 0 && flush.offSuit <= BOT_WEIGHTS.proFlushReach && flush.inSuit >= 8;
+  // Pro one from ready: acceptance weighted by the wait each ready hand would have, rescaled by the
+  // mean wait so that it stays on the scale of plain acceptance.
+  const look = new Map<Kind, number>();
+  if (skill === 'pro' && BOT_WEIGHTS.proLookahead > 0 && bestShanten === 1) {
+    let acc = 0;
+    let weighted = 0;
+    for (const o of options) {
+      if (o.shanten !== 1) continue;
+      counts[o.kind]--;
+      const l = readyLookahead(counts, setsNeeded, unseen, o.accepts);
+      counts[o.kind]++;
+      look.set(o.kind, l);
+      acc += o.acceptance;
+      weighted += l;
+    }
+    const meanWait = weighted / Math.max(1, acc);
+    for (const [k, l] of look) look.set(k, meanWait > 0 ? l / meanWait : 0);
+  }
   const out: DiscardAdvice[] = [];
   for (const o of options) {
     const tile = p.hand.find((t) => kindOf(t) === o.kind)!;
     let score = -o.shanten * 1000 + o.acceptance * 10;
+    const l = look.get(o.kind);
+    if (l !== undefined) score += BOT_WEIGHTS.proLookahead * 10 * (l - o.acceptance);
     // Prefer throwing isolated honours/terminals when otherwise equal, but keep honours that score:
     // the more 台 a pong of it is worth, the longer it stays (東 as the East-round dealer is worth 2).
     if (isHonorKind(o.kind)) score += skill !== 'beginner' ? 3 - 3 * honourTai(s, seat, o.kind) : 3;
     else if (rankOfKind(o.kind) === 1 || rankOfKind(o.kind) === 9) score += 2;
     // Fewer unseen copies → tile is less useful to keep.
     score += (4 - unseen[o.kind]) * 1;
-    const risk = defend ? dealInRisk(o.kind, reads, unseen) : 0;
-    if (lean > 0) score -= lean * dealInCost(s, o.kind, leanOn, unseen);
-    if (perPoint > 0) score -= perPoint * dealInCost(s, o.kind, strong, unseen);
+    const risk = defend ? dealInRisk(o.kind, reads, unseen, shapes) : 0;
+    if (lean > 0) score -= lean * dealInCost(s, o.kind, leanOn, unseen, shapes);
+    if (perPoint > 0) score -= perPoint * dealInCost(s, o.kind, strong, unseen, shapes);
     if (skill === 'pro') {
       // 台 value: keep value-honour pairs and pongs, and chase a flush once it is in reach.
       for (const k of values) if (counts[k] - (k === o.kind ? 1 : 0) >= 2) score += BOT_WEIGHTS.proValuePair * honourTai(s, seat, k);
