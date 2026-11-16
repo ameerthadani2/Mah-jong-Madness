@@ -19,7 +19,7 @@
  */
 import { SessionService } from './auth';
 import { loadConfig, missingProductionEnv, missingProductionEnvMessage, pepperFromEnv, providersFromEnv } from './config';
-import { createHostLock, createPool, isPooledDatabase } from './db';
+import { createHostLock, createPool, hostLockTarget } from './db';
 import { migrate } from './migrate';
 import { createAnalytics, initSentry, reportError } from './observability';
 import { pushClientFromEnv, PushService } from './push';
@@ -56,6 +56,12 @@ async function main(): Promise<void> {
     console.error(missingProductionEnvMessage(missing));
     process.exit(1);
   }
+  // The host lock needs a direct connection; production does not start on a pooled one.
+  const lockTarget = env.DATABASE_URL?.trim() ? hostLockTarget(env) : null;
+  if (lockTarget?.refusal) {
+    console.error(lockTarget.refusal);
+    process.exit(1);
+  }
   // First, so that a failure from here on is reported.
   const sentry = await initSentry(env);
   if (flag(env.MIGRATE_ON_BOOT)) await runMigrations();
@@ -70,12 +76,9 @@ async function main(): Promise<void> {
     console.log(`[signal] AUTH_PEPPER_PREVIOUS: ${n} earlier pepper${n === 1 ? '' : 's'} still accepted; a session or guest account stored under one is stored again under AUTH_PEPPER when it next signs in`);
   }
   let hostLock;
-  if (repos.kind === 'pg') {
-    const direct = (env.DATABASE_URL_DIRECT ?? '').trim();
-    const lockUrl = direct || (env.DATABASE_URL ?? '').trim();
-    if (!direct) warn('[signal] DATABASE_URL_DIRECT is not set: taking the host lock over DATABASE_URL, which only works on a direct (unpooled) connection');
-    else if (isPooledDatabase(direct)) warn('[signal] DATABASE_URL_DIRECT looks like a pooled connection string: the host lock needs a direct one');
-    hostLock = createHostLock(lockUrl);
+  if (repos.kind === 'pg' && lockTarget) {
+    if (lockTarget.warning) warn(lockTarget.warning);
+    hostLock = createHostLock(lockTarget.url);
   }
   const providers = providersFromEnv(env);
   const push = new PushService({ devices: repos.repos.devices, client: await pushClientFromEnv(env) });

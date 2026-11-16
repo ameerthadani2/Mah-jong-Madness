@@ -83,7 +83,7 @@ create a club. Set it, with `REVENUECAT_SECRET_KEY` and `TESTER_USER_IDS`, when
 | Secret | What it unblocks | Absent |
 | --- | --- | --- |
 | `DATABASE_URL` | Accounts, clubs, wallets and tables survive restarts and deploys | boot refused in production |
-| `DATABASE_URL_DIRECT` | Migrations and the single-host lock over a direct connection | both use `DATABASE_URL`, with a warning; through the pooler the lock is not reliable |
+| `DATABASE_URL_DIRECT` | Migrations and the single-host lock over a direct connection | both use `DATABASE_URL`, with a warning. With `NODE_ENV=production` the server refuses to start when the lock would go through a pooled address (`DATABASE_URL_DIRECT` unset and `DATABASE_URL` pooled, or `DATABASE_URL_DIRECT` itself pooled: a host containing `-pooler`, or port 6432), because a pooler does not keep the lock's session |
 | `AUTH_PEPPER` | Sessions and guest secrets that survive restarts. Keep a copy in your password manager: losing it signs every player out and locks every guest account out for good, because the secret on the phone is a guest's only credential (see "Rotating the pepper") | boot refused in production |
 | `ADMIN_TOKEN` | Support grants (`POST /api/admin/grant`) and the moderation endpoints | those routes answer 503 |
 | `REVENUECAT_WEBHOOK_SECRET` | Real purchases: the store webhook, and `storeEnabled` in `/api/config`. Generate it, show it and save it (`S="$(openssl rand -hex 32)"; echo "$S"`), set it, and put the same value in RevenueCat → Integrations → Webhooks as `Bearer <value>`, URL `https://<name>.fly.dev/api/webhooks/revenuecat`. **Setting it makes the store live: from then on creating a club needs The Four Winds Club**, so set it only when the products can be bought (OWNER_TODO steps 6 and 7) | the app shows "Store unavailable", and anyone may create a club |
@@ -557,5 +557,6 @@ The image keeps nothing on disk, so any container host works the same way: build
 `TRUST_PROXY` to the number of proxies in front of it), expose port 8787, point the health check
 at `/health`, keep exactly one instance always running (WebSockets must not sleep, and a second
 instance would wait for the host lock and exit), give it 25 s to save tables on SIGTERM, and set
-`DATABASE_URL_DIRECT` to a direct (unpooled) connection for the host lock. Run
+`DATABASE_URL_DIRECT` to a direct (unpooled) connection for the host lock (production refuses to
+start when the lock would use a pooled one). Run
 `node dist/server.cjs migrate` before each release, and the smoke test after it.

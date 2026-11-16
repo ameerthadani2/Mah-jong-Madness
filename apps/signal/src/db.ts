@@ -65,6 +65,30 @@ export function isPooledDatabase(databaseUrl: string): boolean {
   }
 }
 
+/**
+ * Where the host lock connects, and what to say about it. The lock is a session advisory lock, so
+ * it needs a direct connection: `DATABASE_URL_DIRECT`, else `DATABASE_URL`. A pooled address would
+ * let a second server take the lock as soon as the pooler hands the session on, so with
+ * `NODE_ENV=production` it is a `refusal` (the server does not start); elsewhere it is a `warning`.
+ * Returns null when there is no database URL (memory storage, no lock).
+ */
+export function hostLockTarget(env: Record<string, string | undefined>): { url: string; warning?: string; refusal?: string } | null {
+  const direct = (env.DATABASE_URL_DIRECT ?? '').trim();
+  const url = direct || (env.DATABASE_URL ?? '').trim();
+  if (!url) return null;
+  const production = (env.NODE_ENV ?? '').trim().toLowerCase() === 'production';
+  if (isPooledDatabase(url)) {
+    const problem = direct
+      ? 'DATABASE_URL_DIRECT looks like a pooled connection string, but the host lock needs a direct (session) connection'
+      : 'DATABASE_URL looks like a pooled connection string and DATABASE_URL_DIRECT is not set, but the host lock needs a direct (session) connection';
+    return production
+      ? { url, refusal: `[signal] refusing to start: ${problem}. Set DATABASE_URL_DIRECT to the database's direct (unpooled) address.` }
+      : { url, warning: `[signal] ${problem}; set DATABASE_URL_DIRECT to the direct (unpooled) address` };
+  }
+  if (!direct) return { url, warning: '[signal] DATABASE_URL_DIRECT is not set: taking the host lock over DATABASE_URL, which only works on a direct (unpooled) connection' };
+  return { url };
+}
+
 /** The pg settings `createPool` uses (exported for tests). */
 export function poolConfig(databaseUrl: string, opts: PoolOptions = {}): pg.PoolConfig {
   const ssl = opts.ssl ?? !isLocalDatabase(databaseUrl);
