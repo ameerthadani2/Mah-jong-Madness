@@ -3,7 +3,7 @@ import { Pressable, StyleSheet, Text, TextInput, View, type StyleProp, type Text
 import { atLimit, HOLD_DELAY_MS, HOLD_REPEAT_MS, holdMultiplier, stepped, typedValue } from '../logic/stepper';
 import { colors, fonts, hasCJK, pillTones, radius, space, type PillTone } from '../theme';
 import { Icon, type IconName } from './Icons';
-import { slopFor } from './table/layout';
+import { MIN_TOUCH, slopFor } from './table/layout';
 import { t } from '../i18n';
 import { useDisplayScale } from '../display/DisplayScale';
 import { scaleTextStyle } from '../display/scale';
@@ -201,6 +201,10 @@ export function IconButton({
 }) {
   const k = KIND[kind];
   const shelf = size >= 44 ? 5 : 4;
+  // A button drawn under 44 pt still takes a 44-pt press: padding grows the pressable and an equal negative margin
+  // keeps its place in the layout. (The web ignores hitSlop, so the padding is what makes it 44 there; on a phone
+  // hitSlop adds the rest.)
+  const pad = Math.max(0, Math.ceil((MIN_TOUCH - size) / 2));
   return (
     <Pressable
       testID={testID}
@@ -208,11 +212,11 @@ export function IconButton({
       onPressIn={onPressIn}
       onPressOut={onPressOut}
       disabled={disabled}
-      hitSlop={slopFor(size, 6)}
+      hitSlop={Math.max(0, slopFor(size, 6) - pad)}
       accessibilityRole="button"
       accessibilityLabel={label ?? iconLabel(icon)}
       accessibilityState={{ disabled: !!disabled, selected: selected ?? undefined }} aria-selected={selected ?? undefined}
-      style={{ opacity: disabled ? 0.5 : 1 }}
+      style={{ opacity: disabled ? 0.5 : 1, padding: pad, margin: -pad }}
     >
       {({ pressed }) => (
         <View>
