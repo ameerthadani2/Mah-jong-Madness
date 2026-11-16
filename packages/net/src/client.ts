@@ -16,6 +16,8 @@
  */
 import {
   advanceMatch,
+  BOT_SKILLS,
+  chooseAction,
   dealFromSnapshot,
   hashState,
   isLegal,
@@ -29,6 +31,7 @@ import {
   WALL_RNG_VERSION,
   applyAction,
   type Action,
+  type BotSkill,
   type GameState,
   type HandResult,
   type LoggedAction,
@@ -70,6 +73,7 @@ export const AUDIT_CAVEATS = {
   appRestart: 'This app was restarted around this deal, so it cannot vouch for all of it',
   tableMoved: 'The table played for this seat while its connection was down',
   restartClock: 'The server restarted during this match and then played for this seat before this device could check its clock again',
+  skillUnknown: 'The table did not say how strong its bots are, so the moves it made for bots and for seats out of time were not checked',
 } as const;
 
 export type AuditCaveat = keyof typeof AUDIT_CAVEATS;
@@ -95,6 +99,7 @@ export const AUDIT_FAILURES = {
   matchStartChanged: /^The match started with (?<fields>[A-Za-z, ]+) different from a new match$/,
   handStartChanged: /^Hand started with (?<fields>[A-Za-z, ]+) different from where the previous hand left them$/,
   botsChanged: 'Host changed which seats are bots during the match',
+  skillChanged: 'Host changed how strong its bots are during the match',
   movedMatch: 'Host moved this seat into a different match mid-match',
   movedSeat: 'Host moved this seat to another seat mid-match',
   rulesChanged: 'Host changed the rules mid-match',
@@ -149,6 +154,10 @@ export const AUDIT_FAILURES = {
   playedWhileDown: /^The table played for this seat while its connection was down, before its clock could have run out \(turn (?<turn>[^)]*)\)$/,
   bankTaken: /^The table took time from this seat's time bank while its connection was down \(turn (?<turn>[^)]*)\)$/,
   moveIgnored: /^The table ignored a move this seat sent in good time and played its own instead \(turn (?<turn>[^)]*)\)$/,
+  tableMoveDiffers: /^The table played for this seat a move other than the one its published rule gives \(turn (?<turn>[^)]*)\)$/,
+  // The moves the table made for the other seats.
+  botMoveDiffers: /^The bot in seat (?<seat>-?\d+) played a move other than the one its published rule gives \(turn (?<turn>[^)]*)\)$/,
+  seatMoveDiffers: /^The table played for seat (?<seat>-?\d+) a move that neither of its published rules gives \(turn (?<turn>[^)]*)\)$/,
   // The account of how many times the deal was tried, and why.
   attemptsMissing: 'Audit does not say how many ceremonies were run',
   restartsMissing: 'Audit does not list the ceremony restarts',
@@ -470,6 +479,8 @@ export interface SerializedClient {
   chainChecked: number | null;
   frozenBots: number[] | null;
   pinnedRules: RuleSet | null;
+  /** Absent in snapshots written before it was kept. */
+  pinnedSkill?: BotSkill | 'unknown' | null;
   epoch: number;
   ceremonyEpoch: number;
   quietSince: number;
@@ -563,6 +574,13 @@ export class TableClient {
   private frozenBots: number[] | null = null;
   /** The rules as they stood at the match's first commit request. */
   private pinnedRules: RuleSet | null = null;
+  /** The table's bot strength as its last welcome gave it; null when that welcome did not say (an older host). */
+  private tableSkill: BotSkill | null = null;
+  /**
+   * The bot strength as it stood at the match's first commit request (`unknown`: the host did not
+   * say), or null before then. The table's moves for seats are recomputed with it (`tableRule`).
+   */
+  private pinnedSkill: BotSkill | 'unknown' | null = null;
   /** Link epoch: bumped on every link loss, rebind and restore. */
   private epoch = 0;
   /**
@@ -708,6 +726,7 @@ export class TableClient {
     this.chainChecked = d.chainChecked;
     this.frozenBots = d.frozenBots;
     this.pinnedRules = d.pinnedRules ? sanitizeRules(d.pinnedRules) : null;
+    this.pinnedSkill = isBotSkill(d.pinnedSkill) || d.pinnedSkill === 'unknown' ? d.pinnedSkill : this.pinnedRules ? 'unknown' : null;
     this.epoch = isInt(d.epoch) ? d.epoch : 0;
     this.ceremonyEpoch = isInt(d.ceremonyEpoch) ? d.ceremonyEpoch : -1;
     this.quietSince = isInt(d.quietSince) ? d.quietSince : -1;
@@ -765,6 +784,7 @@ export class TableClient {
       chainChecked: this.chainChecked,
       frozenBots: this.frozenBots,
       pinnedRules: this.pinnedRules,
+      pinnedSkill: this.pinnedSkill,
       epoch: this.epoch,
       ceremonyEpoch: this.ceremonyEpoch,
       quietSince: this.quietSince,
@@ -1065,6 +1085,7 @@ export class TableClient {
     this.chainChecked = null;
     this.frozenBots = null;
     this.pinnedRules = null;
+    this.pinnedSkill = null;
     this.quietSince = this.epoch;
     this.openHand = null;
     this.handEpoch = -1;
@@ -1176,6 +1197,9 @@ export class TableClient {
           this.atStart = !this.noHistory;
         }
         this.checkBots(seats);
+        // A host that stops saying (an older build after a restart) keeps the strength it had.
+        this.tableSkill = isBotSkill(m.botSkill) ? m.botSkill : null;
+        if (this.tableSkill && isBotSkill(this.pinnedSkill) && this.tableSkill !== this.pinnedSkill && !this.state.matchOver) this.flag(this.activeHand(), 'Host changed how strong its bots are during the match');
         this.update({ connected: true, disconnected: false, kicked: false, seat: m.seat, roomCode: m.roomCode, rules: this.pinnedRules ?? rules, seats, matchId: m.matchId, token: m.token, lastError: null });
         return;
       }
@@ -1199,6 +1223,7 @@ export class TableClient {
         // The bot seats and the rules are fixed from the match's first deal on.
         if (this.frozenBots === null) this.frozenBots = this.state.seats.filter((s) => s.isBot).map((s) => s.seat).sort((a, b) => a - b);
         if (this.pinnedRules === null && this.state.rules) this.pinnedRules = this.state.rules;
+        if (this.pinnedSkill === null) this.pinnedSkill = this.tableSkill ?? 'unknown';
         let rec = this.recordFor(h);
         const last = rec?.attempts[rec.attempts.length - 1];
         const n = isInt(m.attempt) && m.attempt >= 1 ? m.attempt : (last?.n ?? 0) + 1;
@@ -1608,7 +1633,7 @@ export class TableClient {
     }
     const failures: string[] = [...(this.tamper.get(h) ?? [])];
     const caveats: string[] = [AUDIT_CAVEATS.away];
-    const notes = { tableMoved: false };
+    const notes: { tableMoved: boolean; skillUnknown?: boolean } = { tableMoved: false };
     // A hand this device saw nothing of is judged from the last frame it held before it went away.
     const unseen: PlayRecord | undefined = this.lastStamp ? { hand: h, seen: [], sent: [], ledgerFrom: null, before: { ...this.lastStamp } } : undefined;
     const me = this.state.seat;
@@ -1643,6 +1668,7 @@ export class TableClient {
     failures.push(...this.checkAccounting(audit));
     if (isInt(audit.ceremonyAttempts) && audit.ceremonyAttempts > 1) caveats.push(AUDIT_CAVEATS.restarted);
     if (notes.tableMoved) caveats.push(AUDIT_CAVEATS.tableMoved);
+    if (notes.skillUnknown) caveats.push(AUDIT_CAVEATS.skillUnknown);
     const status: AuditStatus = failures.length > 0 ? 'failed' : 'partial';
     this.handsEnded.add(h);
     if (this.openHand === h) this.openHand = null;
@@ -1706,7 +1732,7 @@ export class TableClient {
     const caveats: string[] = [];
     let replayed: GameState | null = null;
     const anchors: ClockAnchor[] = [];
-    const notes: { tableMoved: boolean; restartClock?: boolean } = { tableMoved: false };
+    const notes: { tableMoved: boolean; restartClock?: boolean; skillUnknown?: boolean } = { tableMoved: false };
     const rules = this.pinnedRules ?? this.state.rules;
     if (!rules || !this.state.matchId) return { check: { status: 'unverified', failures: ['No match context'], caveats }, replayed, anchors };
     if (!isAudit(audit) || !isView(finalView)) return { check: { status: 'failed', failures: ['The audit is malformed'], caveats }, replayed, anchors };
@@ -1791,6 +1817,7 @@ export class TableClient {
     if (this.rewinds.some((x) => x.hand === h && x.undone)) caveats.push(AUDIT_CAVEATS.serverRestart);
     if (notes.tableMoved) caveats.push(AUDIT_CAVEATS.tableMoved);
     if (notes.restartClock) caveats.push(AUDIT_CAVEATS.restartClock);
+    if (notes.skillUnknown) caveats.push(AUDIT_CAVEATS.skillUnknown);
     // An app restart around the deal: this device cannot say it watched all of it, whatever its record now shows.
     // (A seat that joined mid-hand has already said it took no part in the deal.)
     if (this.lapseHand === h && this.lapseDeal && !joined && !caveats.includes(AUDIT_CAVEATS.appRestart)) caveats.push(AUDIT_CAVEATS.appRestart);
@@ -1808,7 +1835,7 @@ export class TableClient {
    * until the clock ran out. `notes.tableMoved` is set when the table rightly played for the seat
    * while its link was down; `unseen` stands in for the record of a hand this device saw nothing of.
    */
-  private replayChecked(start: MatchSnapshot, seed: string, rules: RuleSet, log: LoggedAction[], h: number, end: SeenState | null, failures: string[], anchors: ClockAnchor[] = [], notes?: { tableMoved: boolean; restartClock?: boolean }, unseen?: PlayRecord): GameState {
+  private replayChecked(start: MatchSnapshot, seed: string, rules: RuleSet, log: LoggedAction[], h: number, end: SeenState | null, failures: string[], anchors: ClockAnchor[] = [], notes?: { tableMoved: boolean; restartClock?: boolean; skillUnknown?: boolean }, unseen?: PlayRecord): GameState {
     const me = this.state.seat;
     const play = end ? (this.plays.find((p) => p.hand === h) ?? unseen ?? null) : null;
     const shown = new Map<number, string>();
@@ -1833,6 +1860,46 @@ export class TableClient {
     };
     /** The first frame this client got after turn `n` was played (the hand's result if none). */
     const frameAfter = (n: number): SeenState | null => play?.seen.find((f) => f.tc > n) ?? end;
+    // The table's own moves follow a published rule (`tableRule`): every one is recomputed on the
+    // state before it. A bot's move must be its bot's; a move the table made for this seat must be
+    // the one for a seat out of time (or, in a stretch this device left on purpose, a bot's); one it
+    // made for another player may be either. A host that did not say how strong its bots are
+    // cannot be checked, and the hand says so.
+    const skill = this.pinnedSkill ?? this.tableSkill ?? 'unknown';
+    const bots = new Set(this.frozenBots ?? []);
+    const matchId = this.state.matchId ?? '';
+    let unchecked = false;
+    /** Turns on which the table passed up this seat's win: reported as such (the rule always takes one). */
+    const passedUp = new Set<unknown>();
+    const leftOnPurpose = (n: unknown): boolean => {
+      if (!play || !isInt(n)) return true;
+      let a: SeenState | null = null;
+      for (const f of play.seen) if (f.tc <= n) a = f;
+      const b = frameAfter(n);
+      const since = a ? a.epoch : play.before?.epoch;
+      if (since === undefined || !b) return true;
+      return this.ownAbsences.some((e) => e >= since && e < b.epoch);
+    };
+    const checkRule = (s: GameState, entry: LoggedAction) => {
+      const seat = entry.seat;
+      if (!isInt(seat) || seat < 0 || seat > 3) return;
+      const isBot = bots.has(seat);
+      if (!isBot && entry.source !== 'auto') return;
+      if (skill === 'unknown') {
+        unchecked = true;
+        return;
+      }
+      const is = (rule: 'timeout' | 'bot') => {
+        const want = tableRule(s, seat, rule, skill, matchId);
+        return want !== null && sameActionSafe(want, entry.action, s, seat);
+      };
+      const n = String(entry.n);
+      if (isBot) {
+        if (!is('bot')) problems.add(`The bot in seat ${seat} played a move other than the one its published rule gives (turn ${n})`);
+      } else if (seat === me) {
+        if (!passedUp.has(entry.n) && !is('timeout') && !(leftOnPurpose(entry.n) && is('bot'))) problems.add(`The table played for this seat a move other than the one its published rule gives (turn ${n})`);
+      } else if (!is('timeout') && !is('bot')) problems.add(`The table played for seat ${seat} a move that neither of its published rules gives (turn ${n})`);
+    };
     let s = dealFromSnapshot(start, seed, rules);
     checkHash(s);
     checkRefusals(s);
@@ -1861,7 +1928,10 @@ export class TableClient {
           } catch {
             couldWin = false;
           }
-          if (couldWin && entry.action?.type !== 'hu') problems.add(`The table played for this seat and passed up its win (turn ${String(n)})`);
+          if (couldWin && entry.action?.type !== 'hu') {
+            problems.add(`The table played for this seat and passed up its win (turn ${String(n)})`);
+            passedUp.add(n);
+          }
           // Judged after the replay, when every fixed point between the two clocks is known; the mark keeps its place among the problems.
           if (isInt(n)) problems.add(`${JUDGE_LATER}${n}`);
           // A legal move this device sent for this turn long before, over a link that never dropped, was left
@@ -1872,6 +1942,7 @@ export class TableClient {
           }
         }
       }
+      if (isObject(entry)) checkRule(s, entry);
       s = applyAction(s, entry.seat, entry.action);
       checkHash(s);
       checkRefusals(s);
@@ -1896,6 +1967,7 @@ export class TableClient {
     }
     for (const tc of track?.bankTaken ?? []) problems.add(`The table took time from this seat's time bank while its connection was down (turn ${tc})`);
     failures.push(...problems);
+    if (unchecked && notes) notes.skillUnknown = true;
     return s;
   }
 
@@ -2202,6 +2274,34 @@ function legalFor(s: GameState, seat: number, action: Action): boolean {
     return isLegal(s, seat, action);
   } catch {
     return false;
+  }
+}
+
+function isBotSkill(x: unknown): x is BotSkill {
+  return typeof x === 'string' && Object.prototype.hasOwnProperty.call(BOT_SKILLS, x);
+}
+
+/**
+ * What the table plays for a seat, by the rule every host publishes (`TableHost.timeoutAction` and
+ * `runBots`). `timeout`: a human seat whose clock ran out, or that is away after its link dropped,
+ * takes a win when offered, passes any other claim on another seat's discard, and otherwise plays
+ * as a bot of at least Club strength with the seed `timeout:<seat>`. `bot`: a bot seat, or a seat
+ * whose player left on purpose, plays as a bot of the table's strength with the seed
+ * `<matchId>:bot<seat>`. Null when the rule gives nothing (no legal move).
+ */
+export function tableRule(s: GameState, seat: number, rule: 'timeout' | 'bot', skill: BotSkill, matchId: string): Action | null {
+  try {
+    if (rule === 'timeout') {
+      if (s.phase === 'claim') {
+        const offered = legalActions(s, seat);
+        if (offered.some((a) => a.type === 'hu')) return { type: 'hu' };
+        if (offered.some((a) => a.type === 'pass')) return { type: 'pass' };
+      }
+      return chooseAction(s, seat, { seed: `timeout:${seat}`, skill: skill === 'beginner' ? 'club' : skill }) ?? { type: 'pass' };
+    }
+    return chooseAction(s, seat, { seed: `${matchId}:bot${seat}`, skill });
+  } catch {
+    return null;
   }
 }
 

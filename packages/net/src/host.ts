@@ -728,7 +728,7 @@ export class TableHost {
     seat.away = undefined;
     // A new occupant never inherits a previous player's token (that would let the old player kick them).
     if (newOccupant || !seat.token) seat.token = randomHex(16);
-    this.sendTo(from, { t: 'welcome', seat: seat.seat, roomCode: this.roomCode, rules: this.rules, seats: this.seatInfo(), matchId: this.matchId, token: seat.token });
+    this.sendTo(from, { t: 'welcome', seat: seat.seat, roomCode: this.roomCode, rules: this.rules, seats: this.seatInfo(), matchId: this.matchId, token: seat.token, botSkill: this.botSkill });
     // A returning seat first gets the audits of the hands that ended without it, so its client can
     // check them and carry its record of the match forward to the hand now on the table.
     if (!newOccupant && have !== undefined) this.sendMissed(from, have);

@@ -35,7 +35,8 @@
     "serverRestart": "The server restarted during this hand, and some turns were played again.",
     "appRestart": "The app was restarted around this deal, so your phone cannot be sure it watched all of it. This is expected for the first hand after a restart; later hands can be Verified again.",
     "tableMoved": "The table played for you while your connection was down. It does that for a seat whose clock has run out or whose player has left the table; your phone did not watch those moves being made.",
-    "restartClock": "The server restarted during this match and then played for you before your phone could check its clock again, so your phone cannot be sure your time had run out."
+    "restartClock": "The server restarted during this match and then played for you before your phone could check its clock again, so your phone cannot be sure your time had run out.",
+    "skillUnknown": "The table did not say how strong its bots are, so your phone could not check the moves it made for the bots, or for a player whose time ran out. Tables on the current version say so."
   },
   "failure": {
     "dealtPlayedHand": "The table tried to deal a hand that had already been played.",
@@ -45,6 +46,7 @@
     "matchStartChanged": "The match did not start the way a new match must: the scores, the dealer or the round wind had been changed.",
     "handStartChanged": "This hand did not start where the last one ended: the scores, the dealer or the round wind were different.",
     "botsChanged": "The table changed which seats are bots during the match.",
+    "skillChanged": "The table changed how strong its bots are during the match.",
     "movedMatch": "The table moved you into a different match partway through.",
     "movedSeat": "The table moved you to a different seat partway through the match.",
     "rulesChanged": "The table changed the rules partway through the match.",
@@ -94,6 +96,9 @@
     "playedWhileDown": "The table played for you while your connection was down, before your clock could have run out (turn %{turn}).",
     "bankTaken": "The table took time from your time bank while your connection was down (turn %{turn}).",
     "moveIgnored": "The table ignored a move you sent in good time and played its own instead (turn %{turn}).",
+    "tableMoveDiffers": "The table played for you, but not the move its published rule gives for a player whose time has run out (turn %{turn}).",
+    "botMoveDiffers": "The bot in seat %{seat} played a move other than the one its published rule gives (turn %{turn}).",
+    "seatMoveDiffers": "The table played for seat %{seat}, but not a move either of its published rules gives (turn %{turn}).",
     "attemptsMissing": "The record does not say how many attempts the deal took.",
     "restartsMissing": "The record does not list the restarts of the deal.",
     "restartCount": "The record's count of attempts at the deal (%{attempts}) does not fit the restarts it lists (%{restarts}).",

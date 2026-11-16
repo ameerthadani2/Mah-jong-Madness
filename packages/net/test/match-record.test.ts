@@ -304,7 +304,7 @@ describe('hands follow one another without a jump', () => {
     // The lobby seat was given up and taken again (a reconnect in the lobby gets whichever seat is free).
     h.sendTo('p0', { t: 'welcome', seat: 2, roomCode: h.roomCode, rules: h.rules as never, seats: h.seatInfo(), matchId: h.matchId, token: 'a'.repeat(32) });
     expect(c.state.seat).toBe(2);
-    h.sendTo('p0', { t: 'welcome', seat: 0, roomCode: h.roomCode, rules: h.rules as never, seats: h.seatInfo(), matchId: h.matchId, token: h.seats[0].token! });
+    h.sendTo('p0', { t: 'welcome', seat: 0, roomCode: h.roomCode, rules: h.rules as never, seats: h.seatInfo(), matchId: h.matchId, token: h.seats[0].token!, botSkill: 'club' });
     host.start();
     playOut(host, c, clock);
     expect([c.state.auditStatus, c.state.auditFailures]).toEqual(['ok', []]);

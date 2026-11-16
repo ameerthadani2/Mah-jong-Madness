@@ -1,4 +1,4 @@
-import type { Action, HandResult, LoggedAction, RuleSet, TableView } from '@mjm/engine';
+import type { Action, BotSkill, HandResult, LoggedAction, RuleSet, TableView } from '@mjm/engine';
 import type { Commitment, Reveal } from './fairness';
 
 export interface SeatInfo {
@@ -71,7 +71,12 @@ export type ClientMessage =
 
 /** Host → client */
 export type HostMessage =
-  | { t: 'welcome'; seat: number; roomCode: string; rules: RuleSet; seats: SeatInfo[]; matchId: string; token: string }
+  /**
+   * `botSkill`: how strong the table's bots are. The table's moves for a seat (a bot's, or a
+   * player's whose clock ran out) follow a published rule that depends on it, so each phone can
+   * recompute them. Hosts built before it was sent leave it out.
+   */
+  | { t: 'welcome'; seat: number; roomCode: string; rules: RuleSet; seats: SeatInfo[]; matchId: string; token: string; botSkill?: BotSkill }
   | { t: 'lobby'; seats: SeatInfo[] }
   /** `attempt`: which ceremony attempt at this hand (1 for the first). */
   | { t: 'commit_request'; handNumber: number; attempt?: number }
