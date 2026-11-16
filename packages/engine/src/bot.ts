@@ -455,7 +455,8 @@ export function rankDiscards(s: GameState, seat: number, skill: BotSkill = 'club
         score += (BOT_WEIGHTS.proFlush * (reach + 1 - flush!.offSuit)) / reach;
       }
     }
-    if (push) score = speedOnly + Math.max(-PUSH_TIEBREAK, Math.min(PUSH_TIEBREAK, score - speedOnly));
+    // A smooth cap (tanh) keeps the order of the capped terms, so between tiles of equal acceptance the safer still ranks first.
+    if (push) score = speedOnly + PUSH_TIEBREAK * Math.tanh((score - speedOnly) / PUSH_TIEBREAK);
     out.push({ tile, kind: o.kind, shanten: o.shanten, acceptance: o.acceptance, accepts: o.accepts, danger: risk, score });
   }
   return out.sort((a, b) => b.score - a.score || a.kind - b.kind);
