@@ -126,6 +126,11 @@ export const DEFAULT_RULES: RuleSet = {
   liguTai: 0,
 };
 
+/** True when the table plays 嚦咕嚦咕 (seven pairs and a triplet): `liguTai` above 0. */
+export function playsLigu(r: Pick<RuleSet, 'liguTai'>): boolean {
+  return r.liguTai > 0;
+}
+
 /** Defaults with `overrides` applied, sanitised so the result is always a legal rule set. */
 export function withRules(overrides: Partial<RuleSet> = {}): RuleSet {
   return sanitizeRules(overrides, DEFAULT_RULES);

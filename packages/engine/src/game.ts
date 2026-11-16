@@ -6,10 +6,10 @@
  * produces an identical state on every peer. That property is what the P2P
  * layer relies on for lock-step sync and post-hand auditing.
  */
-import { countsFromKinds, isComplete, TOTAL_SETS, waits } from './hand';
+import { countsFromKinds, isWinningHand, TOTAL_SETS, waits } from './hand';
 import { type Meld } from './meld';
 import { createWallRng, hashString, shuffle, WALL_RNG_VERSION } from './rng';
-import { DEFAULT_RULES, type RuleSet } from './rules';
+import { DEFAULT_RULES, playsLigu, type RuleSet } from './rules';
 import { computePayments, DEALER_KEYS, scoreWin, type FlowerWin, type Payment, type ScoreResult, type WinContext } from './scoring';
 import { fullSet, isBonusTile, kindOf, sortTiles, type Kind, type TileId } from './tiles';
 import { canStartChow } from './hand';
@@ -380,13 +380,13 @@ export function canWinWith(s: GameState, seat: number, tile: TileId, concealedEx
   const p = s.players[seat];
   const hand = concealedExcludes === undefined ? p.hand.slice() : p.hand.filter((t) => t !== concealedExcludes);
   const counts = countsFromKinds([...hand.map(kindOf), kindOf(tile)]);
-  return isComplete(counts, TOTAL_SETS - p.melds.length);
+  return isWinningHand(counts, TOTAL_SETS - p.melds.length, playsLigu(s.rules));
 }
 
 export function isSelfDrawWin(s: GameState, seat: number): boolean {
   const p = s.players[seat];
   if (p.hand.length !== 3 * (TOTAL_SETS - p.melds.length) + 2) return false;
-  return isComplete(countsFromKinds(p.hand.map(kindOf)), TOTAL_SETS - p.melds.length);
+  return isWinningHand(countsFromKinds(p.hand.map(kindOf)), TOTAL_SETS - p.melds.length, playsLigu(s.rules));
 }
 
 function chiOptions(p: PlayerState, tile: TileId): Array<[TileId, TileId]> {

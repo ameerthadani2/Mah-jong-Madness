@@ -5,9 +5,9 @@
  * decomposition of the concealed tiles, and returns the highest-scoring one with
  * an itemised breakdown so the UI and the coach can explain the result.
  */
-import { decompose, countsFromKinds, waits, type Decomposition, TOTAL_SETS } from './hand';
+import { decompose, countsFromKinds, isLiguShape, waits, type Counts, type Decomposition, TOTAL_SETS } from './hand';
 import { meldKind, type Meld } from './meld';
-import { type RuleSet } from './rules';
+import { playsLigu, type RuleSet } from './rules';
 import {
   isDragonKind,
   isHonorKind,
@@ -77,12 +77,14 @@ export interface ScoreResult {
   /** Sum of every item with no cap applied (used to pick the best decomposition). */
   taiUncapped: number;
   items: TaiItem[];
-  /** Null for an incomplete hand and for flower wins, which have no hand shape. */
+  /** Null for an incomplete hand, for flower wins (no hand shape) and for 嚦咕嚦咕 (seven pairs and a triplet, not five sets). */
   decomposition: Decomposition | null;
   /** The best decomposition's sets expressed uniformly with the exposed melds. */
   concealedSetTypes: Array<'chow' | 'pong'>;
   /** Set when the hand was won by 八仙過海 or 七搶一. */
   flowerWin?: FlowerWin;
+  /** Set when the hand was scored as 嚦咕嚦咕 (seven pairs and a triplet). */
+  ligu?: true;
 }
 
 /** Item keys for 莊家 and 連莊 台, which are settled per transaction and sit outside the `maxTai` cap. */
@@ -109,7 +111,8 @@ export function scoreWin(ctx: WinContext): ScoreResult {
   const counts = countsFromKinds([...ctx.concealed, ctx.winningTile]);
   const setsNeeded = TOTAL_SETS - ctx.melds.length;
   const decomps = decompose(counts, setsNeeded);
-  if (decomps.length === 0) {
+  const ligu = playsLigu(ctx.rules) && isLiguShape(counts, setsNeeded);
+  if (decomps.length === 0 && !ligu) {
     return { tai: 0, taiUncapped: 0, items: [], decomposition: null, concealedSetTypes: [] };
   }
   let best: ScoreResult | null = null;
@@ -118,7 +121,94 @@ export function scoreWin(ctx: WinContext): ScoreResult {
     // Compare uncapped totals so the cap never hides the genuinely better reading.
     if (!best || r.taiUncapped > best.taiUncapped) best = r;
   }
+  // A hand that is both five sets and a pair and 嚦咕嚦咕 scores the better reading; a tie keeps five sets.
+  if (ligu) {
+    const r = scoreLigu(ctx, counts);
+    if (!best || r.taiUncapped > best.taiUncapped) best = r;
+  }
   return best!;
+}
+
+/**
+ * 嚦咕嚦咕 (seven pairs and a triplet, fully concealed). `liguTai` includes 門清, so no 門清 or 門清自摸
+ * is added; a self-draw adds the ordinary 自摸. It takes no wait 台 and no shape items (平胡, 碰碰胡,
+ * 暗刻 counts); the flushes, its triplet's value (a dragon, the seat or prevailing wind), flowers, the
+ * situational items and the dealer items add as usual. It is a pattern hand: 天胡 / 地胡 / 人胡 add to it
+ * and absorb the 自摸, the replacement-tile wins and 海底 / 河底, as they do for any hand.
+ */
+function scoreLigu(ctx: WinContext, counts: Counts): ScoreResult {
+  const items: TaiItem[] = [];
+  const limit = limitDealItem(ctx);
+  const limitDeal = limit !== null;
+  if (limit) items.push(limit);
+  items.push(T('ligu', '嚦咕嚦咕', 'Seven Pairs and a Triplet', ctx.rules.liguTai));
+  const flush = flushItem([...ctx.concealed, ctx.winningTile]);
+  if (flush) items.push(flush);
+  const triplet = counts.findIndex((n) => n === 3);
+  items.push(...valuePongItems(ctx, [triplet as Kind], 0, 0));
+  if (ctx.selfDrawn && !limitDeal) items.push(T('self_draw', '自摸', 'Self-Draw', 1));
+  items.push(...flowerItems(ctx));
+  items.push(...situationalItems(ctx, limitDeal));
+  items.push(...dealerItems(ctx));
+  return { ...totals(ctx.rules, items), items, decomposition: null, concealedSetTypes: [], ligu: true };
+}
+
+/** 字一色, 清一色 or 混一色 for a hand's tiles (melds included), or null. */
+function flushItem(allKinds: readonly Kind[]): TaiItem | null {
+  const suitsUsed = new Set(allKinds.filter(isSuited).map(suitOfKind));
+  const hasHonors = allKinds.some(isHonorKind);
+  if (suitsUsed.size === 0 && hasHonors) return T('all_honors', '字一色', 'All Honours', 16);
+  if (suitsUsed.size === 1 && !hasHonors) return T('full_flush', '清一色', 'Full Flush', 8);
+  if (suitsUsed.size === 1 && hasHonors) return T('half_flush', '混一色', 'Half Flush', 4);
+  return null;
+}
+
+/**
+ * 台 for dragon and value-wind pongs (kongs included). Individual dragons are subsumed by 大三元 and
+ * individual winds by 大四喜, so callers pass how many dragon and wind pongs the hand holds.
+ */
+function valuePongItems(ctx: WinContext, pongKinds: readonly Kind[], dragonPongs: number, windPongs: number): TaiItem[] {
+  const items: TaiItem[] = [];
+  const seatWind = seatWindKind(ctx.seat, ctx.dealerSeat);
+  const roundWind = prevailingWindKind(ctx.prevailingWind);
+  for (const kind of pongKinds) {
+    if (isDragonKind(kind)) {
+      // Individual dragon tai is subsumed by 大三元; 小三元 still adds its two dragon pongs in common rules.
+      if (dragonPongs !== 3) items.push(T(`dragon_${kind}`, `${['中', '發', '白'][kind - KIND_DRAGON]}`, `${['Red', 'Green', 'White'][kind - KIND_DRAGON]} Dragon Pong`, 1));
+    } else if (isWindKind(kind)) {
+      if (windPongs !== 4) {
+        if (kind === seatWind) items.push(T('seat_wind', '門風', 'Seat Wind Pong', 1));
+        if (kind === roundWind) items.push(T('round_wind', '圈風', 'Prevailing Wind Pong', 1));
+      }
+    }
+  }
+  return items;
+}
+
+/** 正花 / 正季, the four-of-a-set flower items and 無花 (when the table scores it). */
+function flowerItems(ctx: WinContext): TaiItem[] {
+  const items: TaiItem[] = [];
+  const seatIndex = (ctx.seat - ctx.dealerSeat + 4) % 4; // 0 = East
+  const flowerSet = ctx.flowers.filter((f) => f >= KIND_FLOWER && f < KIND_FLOWER + 4);
+  const seasonSet = ctx.flowers.filter((f) => f >= KIND_FLOWER + 4);
+  if (flowerSet.length === 4) items.push(T('four_flowers', '花槓（梅蘭竹菊）', 'Four Flowers', 2));
+  else if (flowerSet.some((f) => f - KIND_FLOWER === seatIndex)) items.push(T('seat_flower', '正花', 'Seat Flower', 1));
+  if (seasonSet.length === 4) items.push(T('four_seasons', '花槓（春夏秋冬）', 'Four Seasons', 2));
+  else if (seasonSet.some((f) => f - KIND_FLOWER - 4 === seatIndex)) items.push(T('seat_season', '正季', 'Seat Season', 1));
+  if (ctx.rules.noFlowerTai && ctx.flowers.length === 0) items.push(T('no_flowers', '無花', 'No Flowers', 1));
+  return items;
+}
+
+/** 槓上開花, 花上自摸, 搶槓 and 海底 / 河底; a limit deal absorbs all but 搶槓. */
+function situationalItems(ctx: WinContext, limitDeal: boolean): TaiItem[] {
+  const items: TaiItem[] = [];
+  if (!limitDeal) {
+    if (ctx.afterKong) items.push(T('after_kong', '槓上開花', 'Win on Kong Replacement', 1));
+    if (ctx.afterFlower) items.push(T('after_flower', '花上自摸', 'Win on Flower Replacement', 1));
+  }
+  if (ctx.robbingKong) items.push(T('rob_kong', '搶槓', 'Robbing the Kong', 1));
+  if (ctx.lastTile && !limitDeal) items.push(ctx.selfDrawn ? T('last_tile_draw', '海底撈月', 'Last Tile Draw', 1) : T('last_tile_discard', '河底撈魚', 'Last Discard', 1));
+  return items;
 }
 
 /** 八仙過海 / 七搶一: a fixed 8 台 plus the dealer items; nothing else applies. */
@@ -163,8 +253,6 @@ function limitDealItem(ctx: WinContext): TaiItem | null {
 function scoreDecomposition(ctx: WinContext, d: Decomposition, setsNeeded: number): ScoreResult {
   const items: TaiItem[] = [];
   const rules = ctx.rules;
-  const seatWind = seatWindKind(ctx.seat, ctx.dealerSeat);
-  const roundWind = prevailingWindKind(ctx.prevailingWind);
   const concealedCounts = countsFromKinds(ctx.concealed);
   const openMelds = ctx.melds.filter((m) => !m.concealed);
   const isConcealedHand = openMelds.length === 0;
@@ -195,9 +283,8 @@ function scoreDecomposition(ctx: WinContext, d: Decomposition, setsNeeded: numbe
   if (limit) items.push(limit);
 
   const allHonors = suitsUsed.size === 0 && hasHonors;
-  if (allHonors) items.push(T('all_honors', '字一色', 'All Honours', 16));
-  else if (suitsUsed.size === 1 && !hasHonors) items.push(T('full_flush', '清一色', 'Full Flush', 8));
-  else if (suitsUsed.size === 1 && hasHonors) items.push(T('half_flush', '混一色', 'Half Flush', 4));
+  const flush = flushItem(allKinds);
+  if (flush) items.push(flush);
 
   if (windPongs === 4) items.push(T('big_four_winds', '大四喜', 'Big Four Winds', 16));
   else if (windPongs === 3 && isWindKind(d.pair)) items.push(T('small_four_winds', '小四喜', 'Small Four Winds', 8));
@@ -213,17 +300,7 @@ function scoreDecomposition(ctx: WinContext, d: Decomposition, setsNeeded: numbe
   else if (concealedPongs === 3) items.push(T('three_concealed', '三暗刻', 'Three Concealed Pongs', 2));
 
   // ---- Value pongs ----
-  for (const s of pongLike) {
-    if (isDragonKind(s.kind)) {
-      // Individual dragon tai is subsumed by 大三元; 小三元 still adds its two dragon pongs in common rules.
-      if (dragonPongs !== 3) items.push(T(`dragon_${s.kind}`, `${['中', '發', '白'][s.kind - KIND_DRAGON]}`, `${['Red', 'Green', 'White'][s.kind - KIND_DRAGON]} Dragon Pong`, 1));
-    } else if (isWindKind(s.kind)) {
-      if (windPongs !== 4) {
-        if (s.kind === seatWind) items.push(T('seat_wind', '門風', 'Seat Wind Pong', 1));
-        if (s.kind === roundWind) items.push(T('round_wind', '圈風', 'Prevailing Wind Pong', 1));
-      }
-    }
-  }
+  items.push(...valuePongItems(ctx, pongLike.map((s) => s.kind), dragonPongs, windPongs));
 
   // ---- Win method (absorbed by a limit deal) ----
   if (!limitDeal) {
@@ -265,22 +342,10 @@ function scoreDecomposition(ctx: WinContext, d: Decomposition, setsNeeded: numbe
   }
 
   // ---- Flowers ----
-  const seatIndex = (ctx.seat - ctx.dealerSeat + 4) % 4; // 0 = East
-  const flowerSet = ctx.flowers.filter((f) => f >= KIND_FLOWER && f < KIND_FLOWER + 4);
-  const seasonSet = ctx.flowers.filter((f) => f >= KIND_FLOWER + 4);
-  if (flowerSet.length === 4) items.push(T('four_flowers', '花槓（梅蘭竹菊）', 'Four Flowers', 2));
-  else if (flowerSet.some((f) => f - KIND_FLOWER === seatIndex)) items.push(T('seat_flower', '正花', 'Seat Flower', 1));
-  if (seasonSet.length === 4) items.push(T('four_seasons', '花槓（春夏秋冬）', 'Four Seasons', 2));
-  else if (seasonSet.some((f) => f - KIND_FLOWER - 4 === seatIndex)) items.push(T('seat_season', '正季', 'Seat Season', 1));
-  if (rules.noFlowerTai && ctx.flowers.length === 0) items.push(T('no_flowers', '無花', 'No Flowers', 1));
+  items.push(...flowerItems(ctx));
 
   // ---- Situational ----
-  if (!limitDeal) {
-    if (ctx.afterKong) items.push(T('after_kong', '槓上開花', 'Win on Kong Replacement', 1));
-    if (ctx.afterFlower) items.push(T('after_flower', '花上自摸', 'Win on Flower Replacement', 1));
-  }
-  if (ctx.robbingKong) items.push(T('rob_kong', '搶槓', 'Robbing the Kong', 1));
-  if (ctx.lastTile && !limitDeal) items.push(ctx.selfDrawn ? T('last_tile_draw', '海底撈月', 'Last Tile Draw', 1) : T('last_tile_discard', '河底撈魚', 'Last Discard', 1));
+  items.push(...situationalItems(ctx, limitDeal));
 
   // ---- Dealer (outside the cap) ----
   items.push(...dealerItems(ctx));

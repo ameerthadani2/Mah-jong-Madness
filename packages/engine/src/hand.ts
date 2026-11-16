@@ -110,6 +110,35 @@ export function isComplete(counts: Counts, setsNeeded: number): boolean {
   return false;
 }
 
+/** Tiles in a 嚦咕嚦咕: seven pairs and a triplet, the same seventeen tiles as five sets and a pair. */
+export const LIGU_TILES = 17;
+
+/**
+ * 嚦咕嚦咕 (seven pairs and one triplet), a hand some tables play (`RuleSet.liguTai`). It must be
+ * fully concealed: any chi, pong or kong, a concealed kong included, leaves fewer than five sets
+ * to make (`setsNeeded < TOTAL_SETS`) and rules it out. Four identical tiles are never two pairs.
+ */
+export function isLiguShape(counts: Counts, setsNeeded: number): boolean {
+  if (setsNeeded !== TOTAL_SETS || totalCount(counts) !== LIGU_TILES) return false;
+  let pairs = 0;
+  let triplets = 0;
+  for (let k = 0; k < NUM_PLAY_KINDS; k++) {
+    const n = counts[k];
+    if (n === 2) pairs++;
+    else if (n === 3) triplets++;
+    else if (n !== 0) return false;
+  }
+  return pairs === 7 && triplets === 1;
+}
+
+/**
+ * The one test of whether concealed tiles (with the winning tile) win: five sets and a pair less
+ * the melds already made, or, when the table plays 嚦咕嚦咕 (`ligu`), seven pairs and a triplet.
+ */
+export function isWinningHand(counts: Counts, setsNeeded: number, ligu = false): boolean {
+  return isComplete(counts, setsNeeded) || (ligu && isLiguShape(counts, setsNeeded));
+}
+
 function completesSets(c: Counts, from: number): boolean {
   let k = from;
   while (k < NUM_PLAY_KINDS && c[k] === 0) k++;
@@ -141,15 +170,17 @@ function completesSets(c: Counts, from: number): boolean {
  * `counts` (for example the player's own exposed or concealed melds); a kind is
  * then skipped when `counts` and `blocked` together hold all four copies, so only
  * live waits are reported. Without it the result is the pure shape answer.
+ *
+ * `ligu` (the table plays 嚦咕嚦咕) adds the kinds that would complete seven pairs and a triplet.
  */
-export function waits(counts: Counts, setsNeeded: number, blocked?: Counts): Kind[] {
+export function waits(counts: Counts, setsNeeded: number, blocked?: Counts, ligu = false): Kind[] {
   if (totalCount(counts) !== setsNeeded * 3 + 1) return [];
   const out: Kind[] = [];
   const c = counts.slice();
   for (let k = 0; k < NUM_PLAY_KINDS; k++) {
     if (c[k] + (blocked?.[k] ?? 0) >= 4) continue;
     c[k]++;
-    if (isComplete(c, setsNeeded)) out.push(k);
+    if (isWinningHand(c, setsNeeded, ligu)) out.push(k);
     c[k]--;
   }
   return out;
