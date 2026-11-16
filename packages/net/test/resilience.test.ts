@@ -77,15 +77,22 @@ describe('time bank', () => {
 describe('crash recovery', () => {
   it('a client reclaims its seat with the rejoin token after a bot stood in', () => {
     const hub = new LoopbackHub();
-    const host = new TableHost(hub.create('host'), { roomCode: 'RJ', rules: withRules({ handsPerMatch: 1 }) });
+    const clock = { now: 1_000_000 };
+    const host = new TableHost(hub.create('host'), { roomCode: 'RJ', rules: withRules({ handsPerMatch: 1 }), now: () => clock.now });
     const t0 = hub.create('p0');
     const c0 = new TableClient(transportLink(t0, 'host'), 'Alice');
     c0.join();
     host.start();
     const token = c0.state.token!;
     expect(token).toMatch(/^[0-9a-f]{32}$/);
-    // Crash: transport disappears mid-hand. Bots finish the hand, then the table pauses for Alice.
+    // Crash: transport disappears mid-hand. The seat keeps its clock; when that has run out the
+    // table plays it, the bots finish the hand, and the table pauses for Alice.
     t0.close();
+    expect(host.phase).toBe('playing');
+    // One tick moves the seat into its time bank, the next finds that spent too.
+    clock.now += 120_000;
+    host.tick();
+    host.tick();
     expect(host.phase).toBe('hand_over');
     expect(host.nextDeadline()).toBeNull();
     host.tick();

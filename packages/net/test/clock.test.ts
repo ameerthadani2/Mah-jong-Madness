@@ -471,3 +471,210 @@ describe('the table may not turn the seat’s own moves away', () => {
     expect([t.c.state.auditStatus, t.c.state.auditFailures]).toEqual(['ok', []]);
   });
 });
+
+/**
+ * A seat whose link drops is not a bot. It keeps its turn clock and time bank exactly like a
+ * connected seat (it is held); only when that clock runs out does the table move for it, and from
+ * then on at bot pace until its player returns (it is away). A player who left on purpose is
+ * played at once.
+ */
+describe('a seat whose link drops keeps its clock', () => {
+  interface SeatInternals {
+    seats: Array<{ connected: boolean; away?: boolean; left?: boolean }>;
+    clocks: Map<number, unknown>;
+  }
+  const seatsOf = (host: TableHost) => host as unknown as SeatInternals;
+  let links = 0;
+
+  /** A table whose bot moves wait in `timers` until the test runs them, so "at once" and "at bot pace" can be told apart. */
+  function paced(code: string, humans = 1) {
+    const clock = { now: 1_000_000 };
+    const hub = new LoopbackHub();
+    const timers: Array<() => void> = [];
+    const opts = { now: () => clock.now, botDelayMs: 600, schedule: (fn: () => void) => void timers.push(fn) };
+    const host = new TableHost(hub.create('host'), { roomCode: code, rules: RULES, matchId: `m-${code}`, ...opts });
+    const clients = Array.from({ length: humans }, (_, i) => new TableClient(transportLink(hub.create(`p${i}`), 'host'), `P${i}`, undefined, {}, { now: () => clock.now }));
+    for (const c of clients) c.join();
+    host.start();
+    const applied: Array<{ action: Action; source: string; offered: Action[]; claim: boolean; asABot: Action | null }> = [];
+    const spy = (on: TableHost) => {
+      const h = internals(on);
+      const orig = h.apply.bind(on);
+      h.apply = (seat, action, source) => {
+        if (seat === 0) applied.push({ action, source, offered: legalActions(on.game!, 0), claim: on.game!.phase === 'claim', asABot: chooseAction(on.game!, 0, { seed: `${on.matchId}:bot0`, skill: 'club' }) });
+        orig(seat, action, source);
+      };
+    };
+    spy(host);
+    /** Run the table's next pending bot move; false when none is pending. */
+    const step = () => {
+      const f = timers.shift();
+      if (f) f();
+      return !!f;
+    };
+    const owes = (on: TableHost, seat: number) => on.phase === 'playing' && legalActions(on.game!, seat).length > 0;
+    /** The humans play their own moves and the bots theirs until seat 0 is to discard for the `turns`-th time. */
+    const toTurn = (turns: number) => {
+      let seen = 0;
+      for (let guard = 0; guard < 4000 && host.phase === 'playing'; guard++) {
+        const mover = clients.find((c, i) => owes(host, i) && c.localState() && legalActions(c.localState()!, i).length > 0);
+        if (mover === clients[0] && host.game!.phase === 'discard' && ++seen === turns) return true;
+        if (mover) mover.act(chooseAction(mover.localState()!, clients.indexOf(mover), { seed: 'p' })!);
+        else if (!step()) break;
+      }
+      return false;
+    };
+    /** Let the table's clock run in half-second ticks, as the server does. */
+    const run = (on: TableHost, ms: number) => {
+      for (let left = ms; left > 0; left -= 500) {
+        clock.now += Math.min(500, left);
+        on.tick();
+      }
+    };
+    const drop = (i: number) => (clients[i] as unknown as { link: Link }).link.close();
+    const rejoin = (i: number, on: LoopbackHub = hub) => {
+      clients[i].rebind(transportLink(on.create(`p${i}r${links++}`), 'host'));
+      clients[i].join();
+    };
+    return { clock, hub, host, clients, timers, applied, step, toTurn, run, drop, rejoin, owes, opts, spy };
+  }
+
+  it.each([1_000, 10_000])('dropped for %i ms on its own turn, the seat still has the move when it returns, and the hand verifies', (ms) =>
+    scenario(() => {
+      const t = table(`HD${ms}`);
+      let turn = -1;
+      play(t, (n) => {
+        if (turn >= 0 || n < 2 || t.host.game!.phase !== 'discard') return false;
+        turn = t.host.game!.turnCounter;
+        t.net.link.close();
+        wait(t, ms);
+        // Nobody moved for the seat: the turn is where it was and still the seat's own.
+        expect(t.host.game!.turnCounter).toBe(turn);
+        expect(legalActions(t.host.game!, 0).length).toBeGreaterThan(0);
+        t.c.rebind(transportLink(t.hub.create(`p0r${links++}`), 'host'));
+        t.c.join();
+        expect(myTurn(t)).toBe(true);
+        expect(t.c.state.deadline).not.toBeNull();
+        act(t);
+        expect(t.host.game!.actionLog.find((e) => e.n === turn)).toMatchObject({ seat: 0, source: 'player' });
+        return true;
+      });
+      need(turn >= 0);
+      expect([t.c.state.auditStatus, t.c.state.auditFailures, t.c.state.auditCaveats]).toEqual(['ok', [], []]);
+    }));
+
+  deal('a seat that stays away is timed out once, then played at bot pace until its player returns', () => {
+    const t = paced('AW1');
+    need(t.toTurn(2));
+    const turn = t.host.game!.turnCounter;
+    t.drop(0);
+    // Held: no move is waiting to be played for the seat, and its clock runs.
+    expect(t.timers.length).toBe(0);
+    expect(seatsOf(t.host).clocks.has(0)).toBe(true);
+    t.run(t.host, TURN + BANK - 2_000);
+    expect(t.host.game!.turnCounter).toBe(turn);
+    expect(seatsOf(t.host).seats[0].away).toBeUndefined();
+    t.run(t.host, 3_000);
+    const table0 = () => t.applied.filter((a) => a.source !== 'player');
+    expect(table0().map((a) => a.source)).toEqual(['timeout']);
+    expect(seatsOf(t.host).seats[0].away).toBe(true);
+    // Away: the table plays the seat's later moves with the bots', no clock in between.
+    let guard = 0;
+    while (t.host.phase === 'playing' && table0().length < 3 && guard++ < 400) need(t.step());
+    need(t.host.phase === 'playing' && table0().length === 3);
+    expect(table0().map((a) => a.source)).toEqual(['timeout', 'bot', 'bot']);
+    expect(seatsOf(t.host).clocks.has(0)).toBe(false);
+    // Back: the mark is cleared and the seat's next move waits for its player again.
+    t.rejoin(0);
+    expect(seatsOf(t.host).seats[0].away).toBeUndefined();
+    guard = 0;
+    while (t.host.phase === 'playing' && !t.owes(t.host, 0) && guard++ < 400) need(t.step());
+    need(t.host.phase === 'playing');
+    while (t.step());
+    expect(t.owes(t.host, 0)).toBe(true);
+    expect(seatsOf(t.host).clocks.has(0)).toBe(true);
+    expect(table0().length).toBe(3);
+  });
+
+  /** Seat 0 drops on its first turn and never returns: everything the table then played for it. */
+  function awayHand(code: string) {
+    const t = paced(code);
+    need(t.toTurn(1));
+    t.drop(0);
+    for (let guard = 0; guard < 4000 && t.host.phase === 'playing'; guard++) if (!t.step()) t.run(t.host, 60_000);
+    expect(t.host.phase).toBe('hand_over');
+    return t.applied.filter((a) => a.source !== 'player');
+  }
+  const takes = (a: Action | null) => a?.type === 'chi' || a?.type === 'pong' || a?.type === 'kong';
+
+  deal('while a seat is away the table passes every Chow, Pong or Kong offered on a discard', () => {
+    const played = awayHand('AW2');
+    expect(played.filter((a) => a.source === 'timeout').length).toBe(1);
+    const offers = played.filter((a) => a.claim && !a.offered.some((o) => o.type === 'hu'));
+    // At least one of them is an offer a bot in the seat would have taken.
+    need(offers.some((a) => a.source === 'bot' && takes(a.asABot)));
+    expect(offers.map((a) => a.action.type)).toEqual(offers.map(() => 'pass'));
+  });
+
+  it('while a seat is away the table takes a win offered on a discard', () =>
+    scenario(() => {
+      const played = awayHand('AW3');
+      const wins = played.filter((a) => a.claim && a.source === 'bot' && a.offered.some((o) => o.type === 'hu'));
+      need(wins.length > 0);
+      expect(wins.map((a) => a.action.type)).toEqual(wins.map(() => 'hu'));
+    }, 400));
+
+  deal('a seat that left on purpose is played at once', () => {
+    const t = paced('AW4');
+    need(t.toTurn(2));
+    t.clients[0].leave();
+    expect(seatsOf(t.host).seats[0].left).toBe(true);
+    expect(seatsOf(t.host).clocks.has(0)).toBe(false);
+    // Its move is already waiting at bot pace, with no time run off any clock.
+    expect(t.timers.length).toBe(1);
+    t.step();
+    expect(t.applied[t.applied.length - 1].source).toBe('bot');
+  });
+
+  deal('the away mark survives a server restart, and a seat that had only dropped is held after it, not played', () => {
+    for (const away of [true, false]) {
+      const t = paced(`AW5${away}`, 2);
+      need(t.toTurn(2));
+      t.drop(0);
+      if (away) t.run(t.host, TURN + BANK + 1_000);
+      need(t.host.phase === 'playing');
+      const saved = JSON.parse(JSON.stringify(t.host.serialize())) as ReturnType<TableHost['serialize']>;
+      expect((saved.seats[0] as { away?: boolean }).away).toBe(away ? true : undefined);
+      expect((saved.seats[1] as { away?: boolean }).away).toBeUndefined();
+      // The server restarts: every link is gone, and seat 1's player is the first one back.
+      t.timers.length = 0;
+      const hub2 = new LoopbackHub();
+      const host2 = new TableHost(hub2.create('host'), { roomCode: saved.roomCode, restore: saved, ...t.opts });
+      t.spy(host2);
+      expect(seatsOf(host2).seats[0].away).toBe(away ? true : undefined);
+      const before = t.applied.length;
+      t.rejoin(1, hub2);
+      for (let guard = 0; guard < 400 && host2.phase === 'playing' && !t.owes(host2, 0); guard++) {
+        const c = t.clients[1];
+        if (t.owes(host2, 1)) c.act(chooseAction(c.localState()!, 1, { seed: 'p' })!);
+        else need(t.step());
+      }
+      need(host2.phase === 'playing' && t.owes(host2, 0) && !t.owes(host2, 1));
+      if (away) {
+        // Still away: the table goes on playing the seat at bot pace.
+        expect(seatsOf(host2).clocks.has(0)).toBe(false);
+        expect(t.timers.length).toBe(1);
+        t.step();
+        expect(t.applied.slice(before).map((a) => a.source)).toContain('bot');
+      } else {
+        // Held: the seat gets a whole clock, and the table moves for it only when that has run out.
+        expect(seatsOf(host2).clocks.has(0)).toBe(true);
+        expect(t.timers.length).toBe(0);
+        expect(t.applied.length).toBe(before);
+        t.run(host2, TURN + BANK + 1_000);
+        expect(t.applied.slice(before).map((a) => a.source)[0]).toBe('timeout');
+        expect(seatsOf(host2).seats[0].away).toBe(true);
+      }
+    }
+  });
+});

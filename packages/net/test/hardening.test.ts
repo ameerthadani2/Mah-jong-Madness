@@ -45,12 +45,19 @@ describe('host hardening', () => {
 
   it('flags a host that announces a different result than the replay produces', () => {
     const hub = new LoopbackHub();
-    const host = new TableHost(hub.create('host'), { roomCode: 'A', rules: withRules({ handsPerMatch: 1 }) });
+    const clock = { now: 1_000_000 };
+    const host = new TableHost(hub.create('host'), { roomCode: 'A', rules: withRules({ handsPerMatch: 1 }), now: () => clock.now });
     const c = new TableClient(transportLink(hub.create('p0'), 'host'), 'Bob');
     c.join();
     host.start();
-    // Let bots and timeouts finish the hand by disconnecting the human: the table pauses at hand_over.
+    // Let bots and timeouts finish the hand by disconnecting the human: once its clock has run out
+    // the table plays the seat, and pauses at hand_over.
     (hub as unknown as { nodes: Map<string, { close: () => void }> }).nodes.get('p0')!.close();
+    expect(host.phase).toBe('playing');
+    // One tick moves the seat into its time bank, the next finds that spent too.
+    clock.now += 120_000;
+    host.tick();
+    host.tick();
     expect(host.phase).toBe('hand_over');
     const token = c.state.token!;
     const c2 = new TableClient(transportLink(hub.create('p0b'), 'host'), 'Bob', undefined, { token });

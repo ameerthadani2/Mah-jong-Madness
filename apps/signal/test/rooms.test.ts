@@ -301,11 +301,16 @@ describe('accounts on the relay', () => {
     reg.handle(a.id, { t: 'to', to: room.host!, data: { ch: 'game', msg: { t: 'chat', text: 'hi' } } });
     reg.handle(a.id, { t: 'to', to: room.host!, data: { ch: 'game', msg: { t: 'add_bot' } } });
     reg.hostedTable(room.room!)!.tick();
-    // Alice drops mid-hand: her seat is kept, and so is the room.
+    // Alice drops mid-hand: her seat is kept, and so is the room. Her seat keeps its clock; a
+    // minute later that has run out and the table plays the hand to its end, its last activity.
     reg.disconnect(a.id);
     expect(reg.hasRoom(room.room!)).toBe(true);
+    clock.now = 120_000;
+    reg.tick();
+    reg.tick();
+    expect(reg.hostedTable(room.room!)!.phase).toBe('hand_over');
     const until = reg.keepAliveUntil(room.room!)!;
-    expect(until).toBeGreaterThanOrEqual(60_000 + 15 * 60_000);
+    expect(until).toBeGreaterThanOrEqual(120_000 + 15 * 60_000);
     clock.now = until - 1;
     reg.tick();
     expect(reg.hasRoom(room.room!)).toBe(true);

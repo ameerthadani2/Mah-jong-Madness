@@ -314,4 +314,68 @@ describe('game server end to end', () => {
     expect(b.frames.map((f) => f.t)).toEqual(['hello']);
     await until('every peer to be gone', () => server.rooms.stats().peers === 0);
   });
+
+  it('a player whose socket closes at the start of its turn still has the turn when it is back 400 ms later', async () => {
+    const { server, base, wsUrl } = await start();
+    const alice = await guest(base, 'Alice');
+    const bob = await guest(base, 'Bob');
+    const a = signaling(wsUrl, alice.token);
+    const b = signaling(wsUrl, bob.token);
+    await a.client.connect();
+    await b.client.connect();
+    const room = await a.client.createHostedRoom({ handsPerMatch: 1 }, 'club');
+    await b.client.joinRoom(room.room);
+    const ca = await sit(a.client, room, 'Alice');
+    const cb = await sit(b.client, room, 'Bob');
+    const host = server.rooms.hostedTable(room.room)!;
+    const pa = autoplay(ca);
+
+    // Bob plays his own moves until his third discard, and stops there with the turn in hand.
+    let discards = 0;
+    let counted: string | null = null;
+    let held = false;
+    const off = cb.onChange(() =>
+      setImmediate(() => {
+        const s = cb.localState();
+        if (held || cb.state.disconnected || !s || legalActions(s, 1).length === 0 || cb.state.stateHash === counted) return;
+        counted = cb.state.stateHash;
+        if (s.phase === 'discard' && ++discards === 3) held = true;
+        else cb.act(chooseAction(s, 1, { seed: 'e2e-1' })!);
+      }),
+    );
+    ca.requestStart();
+    await until("Bob's third discard", () => held || host.phase === 'hand_over');
+    expect(held).toBe(true);
+    off();
+    const turn = host.game!.turnCounter;
+    expect(legalActions(host.game!, 1).length).toBeGreaterThan(0);
+
+    // The socket closes; 400 ms later a new one is up and the seat is rejoined.
+    const dropped = Date.now();
+    b.drop();
+    await until('the table to see Bob leave', () => !host.seatInfo()[1].connected);
+    await new Promise((r) => setTimeout(r, Math.max(0, 400 - (Date.now() - dropped))));
+    expect(host.game!.turnCounter).toBe(turn);
+    const b2 = signaling(wsUrl, bob.token);
+    await b2.client.connect();
+    await b2.client.joinRoom(room.room);
+    cb.rebind(transportLink(new RelayTransport(b2.client), room.host));
+    cb.join();
+    await until('Bob to be back at the table', () => host.seatInfo()[1].connected && !cb.state.disconnected && cb.state.deadline !== null);
+
+    // Nobody moved for the seat: the turn is where it was, it is Bob's, and the move he now makes is his own.
+    expect(host.game!.turnCounter).toBe(turn);
+    expect(legalActions(cb.localState()!, 1).length).toBeGreaterThan(0);
+    cb.act(chooseAction(cb.localState()!, 1, { seed: 'e2e-1' })!);
+    await until("Bob's move to be played", () => host.phase !== 'playing' || host.game!.turnCounter > turn);
+    expect(host.game!.actionLog.find((e) => e.n === turn)).toMatchObject({ seat: 1, source: 'player' });
+
+    const pb = autoplay(cb);
+    await until('the hand to end', () => ca.state.audits.length >= 1 && cb.state.audits.length >= 1);
+    pa.stop();
+    pb.stop();
+    expect(statuses(cb)).toEqual(['ok']);
+    expect([cb.state.auditFailures, cb.state.auditCaveats]).toEqual([[], []]);
+    expect(statuses(ca)).toEqual(['ok']);
+  });
 });

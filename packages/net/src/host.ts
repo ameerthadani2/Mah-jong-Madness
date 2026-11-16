@@ -3,7 +3,7 @@
  * play against bots runs the same code on the player's own device.
  *
  * Responsibilities: seating, commit–reveal seed ceremony, validating actions,
- * broadcasting per-seat views, auto-playing bots / disconnected / timed-out
+ * broadcasting per-seat views, auto-playing bots / departed / timed-out
  * seats, and publishing an audit after every hand.
  */
 import {
@@ -134,6 +134,12 @@ interface SeatState extends SeatInfo {
   ready: boolean;
   /** Rejoin token issued in `welcome`; lets a crashed client reclaim its seat. */
   token?: string;
+  /**
+   * This seat lost its link and its clock then ran out once: the table plays it at bot pace until
+   * the player returns. A seat that only dropped keeps its turn clock and time bank (it is held),
+   * so a second without a signal never costs a turn.
+   */
+  away?: boolean;
 }
 
 interface SeatClock {
@@ -411,7 +417,14 @@ export class TableHost {
       seat.name = this.botNames[seat.seat % this.botNames.length];
       seat.left = true;
       if (wasHere) this.onDisconnect(gone);
-      else seat.peerId = seat.peerId ?? `gone-evicted-${seat.seat}`;
+      else {
+        seat.peerId = seat.peerId ?? `gone-evicted-${seat.seat}`;
+        // The seat was held on its clock for a player who cannot come back now: the table plays it.
+        if (this.phase === 'playing') {
+          this.settleClock(seat.seat);
+          this.runBots();
+        }
+      }
     }
     if (seats.length) this.broadcastLobby();
     return seats.map((s) => s.seat);
@@ -492,6 +505,8 @@ export class TableHost {
       // Out of time: the bot moves for them.
       this.banks[seat] = 0;
       this.clocks.delete(seat);
+      // A seat with no link has now had its whole clock: the table plays it without waiting until it returns.
+      if (!this.seats[seat].connected) this.seats[seat].away = true;
       if (!this.game || legalActions(this.game, seat).length === 0) continue;
       this.apply(seat, this.timeoutAction(this.game, seat), 'timeout');
       return; // apply() re-arms clocks and may change phase
@@ -506,6 +521,7 @@ export class TableHost {
    * never punishes a lost connection with 1%-win play. An offer on another seat's discard is
    * different: the table takes it only when it is a win, and passes otherwise. A Chow, Pong or Kong
    * of a discard opens the player's hand for good, and that is theirs to decide, not the table's.
+   * The same holds for every move the table makes for a seat that is away: its player may come back.
    */
   private timeoutAction(game: GameState, seat: number): Action {
     if (game.phase === 'claim') {
@@ -709,6 +725,7 @@ export class TableHost {
     seat.userId = userId ?? seat.userId;
     seat.connected = true;
     seat.left = undefined;
+    seat.away = undefined;
     // A new occupant never inherits a previous player's token (that would let the old player kick them).
     if (newOccupant || !seat.token) seat.token = randomHex(16);
     this.sendTo(from, { t: 'welcome', seat: seat.seat, roomCode: this.roomCode, rules: this.rules, seats: this.seatInfo(), matchId: this.matchId, token: seat.token });
@@ -808,9 +825,12 @@ export class TableHost {
       }
       this.checkCeremony();
     } else if (this.phase === 'playing') {
-      // A bot plays for them until they come back.
-      this.settleClock(seat.seat);
-      this.runBots();
+      // A seat that left on purpose is played at once. One that only dropped keeps its clock and
+      // its turn: the table moves for it only when that clock runs out (see `tickClocks`).
+      if (seat.left) {
+        this.settleClock(seat.seat);
+        this.runBots();
+      }
     } else if (this.phase === 'hand_over') {
       if (!this.anyHumanConnected()) this.deadline = null;
       else if (this.seats.every((s) => s.isBot || !s.connected || s.ready)) this.afterHand();
@@ -1013,14 +1033,25 @@ export class TableHost {
     this.emit('state');
   }
 
-  /** Start a clock for every connected human who owes an action and has none; drop clocks for seats that no longer act. */
+  /**
+   * The table moves for this seat without waiting for a clock: a bot, a human who left on purpose
+   * or was removed, or one whose link is down and whose clock already ran out in this absence.
+   */
+  private tablePlays(s: SeatState): boolean {
+    return s.isBot || (!s.connected && (s.left === true || s.away === true));
+  }
+
+  /**
+   * Start a clock for every human who owes an action and has none, connected or held (its link
+   * dropped and its clock has not run out since); drop clocks for seats that no longer act.
+   */
   private armClocks(): void {
     if (!this.game || this.game.phase === 'ended') {
       this.clocks.clear();
       return;
     }
     for (const s of this.seats) {
-      const owes = !s.isBot && s.connected && legalActions(this.game, s.seat).length > 0;
+      const owes = !this.tablePlays(s) && legalActions(this.game, s.seat).length > 0;
       if (owes && !this.clocks.has(s.seat)) this.clocks.set(s.seat, { base: this.now() + this.rules.turnSeconds * 1000, inBank: false });
       else if (!owes && this.clocks.has(s.seat)) this.settleClock(s.seat);
     }
@@ -1041,20 +1072,21 @@ export class TableHost {
     this.runBots();
   }
 
-  /** Let bots (and stand-ins for disconnected humans) act until a human must move. */
+  /** Let bots, and the table for seats that left or are away, act until a seat on a clock must move. */
   private runBots(): void {
     if (this.phase !== 'playing' || !this.game || this.botTimerArmed) return;
-    const actor = this.seats.find((s) => (s.isBot || !s.connected) && legalActions(this.game!, s.seat).length > 0);
+    const actor = this.seats.find((s) => this.tablePlays(s) && legalActions(this.game!, s.seat).length > 0);
     if (!actor) return;
     const go = () => {
       this.botTimerArmed = false;
       if (this.phase !== 'playing' || !this.game) return;
       // The seat may have reconnected (or acted) while the timer was pending.
-      if (!(actor.isBot || !actor.connected) || legalActions(this.game, actor.seat).length === 0) {
+      if (!this.tablePlays(actor) || legalActions(this.game, actor.seat).length === 0) {
         this.runBots();
         return;
       }
-      const a = chooseAction(this.game, actor.seat, { seed: `${this.matchId}:bot${actor.seat}`, skill: this.botSkill });
+      // A player who is away may come back: the table never takes a discard for them.
+      const a = actor.away && !actor.isBot && !actor.left ? this.timeoutAction(this.game, actor.seat) : chooseAction(this.game, actor.seat, { seed: `${this.matchId}:bot${actor.seat}`, skill: this.botSkill });
       if (a) this.apply(actor.seat, a, 'bot');
       else this.runBots();
     };
