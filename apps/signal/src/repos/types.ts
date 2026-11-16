@@ -50,10 +50,14 @@ export interface UsersRepo {
   getAnalyticsConsent(id: string): Promise<boolean | null>;
   /** Stores the choice; false when there is no such user. */
   setAnalyticsConsent(id: string, consent: boolean | null): Promise<boolean>;
+  /** Whether the player appears on public leaderboards (`PATCH /api/me` leaderboardVisible); true by default and for an unknown id. */
+  getLeaderboardVisible(id: string): Promise<boolean>;
+  /** Stores the choice; false when there is no such user. */
+  setLeaderboardVisible(id: string, visible: boolean): Promise<boolean>;
   /**
    * Hard-deletes users soft-deleted (or merged away) before `before`, with everything that
-   * references them (identities, sessions, devices, wallet, entitlements, puzzle results, club
-   * rows). Ledger, purchases, store events and reports keep their user ids as records. A user who
+   * references them (identities, sessions, devices, wallet, entitlements, puzzle results, the
+   * puzzle rating, Rush runs, club rows). Ledger, purchases, store events and reports keep their user ids as records. A user who
    * still owns a club is kept. Returns how many rows went.
    */
   purgeDeleted(before: number): Promise<number>;
@@ -483,9 +487,122 @@ export interface PuzzleResultRecord {
 
 export interface PuzzleResultsRepo {
   record(result: Omit<PuzzleResultRecord, 'id'>): Promise<PuzzleResultRecord>;
+  /**
+   * Records a daily puzzle result (kind 'daily', key = the date key) unless the user already has
+   * one for that key: the first attempt is the ranked one. Null when one was already there.
+   */
+  recordDaily(result: Omit<PuzzleResultRecord, 'id' | 'kind'>): Promise<PuzzleResultRecord | null>;
   /** Oldest first. */
   listForUser(userId: string, limit?: number): Promise<PuzzleResultRecord[]>;
+  /**
+   * Moves the rows to another user (an account merge). A daily result for a date key the target
+   * already has stays behind (and goes with the merged-away user at the purge): one per key.
+   */
   moveToUser(fromUserId: string, toUserId: string): Promise<number>;
+}
+
+/** One account's puzzle rating, moved only by answers the server verified. */
+export interface PuzzleRatingRecord {
+  userId: string;
+  rating: number;
+  /** How many verified answers moved it. */
+  rated: number;
+  updatedAt: number;
+}
+
+export interface PuzzleRatingsRepo {
+  get(userId: string): Promise<PuzzleRatingRecord | null>;
+  /** `get`, locking the row until the transaction ends (pg: FOR UPDATE), so two submissions apply one after the other. */
+  getForUpdate(userId: string): Promise<PuzzleRatingRecord | null>;
+  /** Inserts or replaces the row. */
+  set(rating: PuzzleRatingRecord): Promise<void>;
+  /**
+   * An account merge: the surviving account keeps whichever rating is better supported (more
+   * rated answers; its own on a tie), and the merged-away user's row goes.
+   */
+  mergeInto(fromUserId: string, toUserId: string): Promise<void>;
+}
+
+/** A Puzzle Rush run the server issued. The result fields are null until it is finished. */
+export interface RushRunRecord {
+  id: string;
+  userId: string;
+  seed: string;
+  startedAt: number;
+  expiresAt: number;
+  finishedAt: number | null;
+  solved: number | null;
+  wrong: number | null;
+  seconds: number | null;
+  score: number | null;
+}
+
+export interface RushRunResult {
+  finishedAt: number;
+  solved: number;
+  wrong: number;
+  seconds: number;
+  score: number;
+}
+
+export interface RushRunsRepo {
+  create(run: Pick<RushRunRecord, 'id' | 'userId' | 'seed' | 'startedAt' | 'expiresAt'>): Promise<RushRunRecord>;
+  get(id: string): Promise<RushRunRecord | null>;
+  /** Writes the result of an unfinished run; null when the run is missing or already finished (a run is finished once). */
+  finish(id: string, result: RushRunResult): Promise<RushRunRecord | null>;
+  moveToUser(fromUserId: string, toUserId: string): Promise<number>;
+  /** Deletes runs never finished that expired before `before`. */
+  pruneUnfinished(before: number): Promise<number>;
+}
+
+/**
+ * One account's entry on a board, in the boards' common order: `score` high first, then
+ * `tiebreak` low first, then `at` early first (who got there first), then the user id.
+ */
+export interface BoardEntry {
+  userId: string;
+  displayName: string;
+  avatar: string | null;
+  /** Daily: 1 solved, 0 not. Rush: the best score. Rating: the rating. */
+  score: number;
+  /** Daily: seconds. Rush and rating: 0. */
+  tiebreak: number;
+  /** Rush: puzzles solved in the best run. Rating: rated answers. Daily: 0. */
+  count: number;
+  /** When the entry was reached (daily: answered; rush: the best run finished; rating: last moved). */
+  at: number;
+}
+
+export interface BoardRow extends BoardEntry {
+  /** 1-based; ties are already broken, so every row has its own rank. */
+  rank: number;
+}
+
+export interface BoardQuery {
+  /** The caller: their own entry and rank come back even when outside the list or hidden. */
+  viewerId: string;
+  /** Club scope: only these accounts (null: everyone). */
+  userIds: string[] | null;
+  limit: number;
+}
+
+export interface BoardPage {
+  rows: BoardRow[];
+  /** The viewer's entry; `hidden` when they are not shown to others (hidden or banned). Rank counts the visible entries ahead of them. */
+  me: (BoardRow & { hidden: boolean }) | null;
+}
+
+/**
+ * Leaderboards. Only live accounts that are visible and not banned are listed; deleted (and
+ * merged-away) accounts never are, not even as the viewer.
+ */
+export interface LeaderboardsRepo {
+  /** Results for one daily date key: solved first, then fewest seconds. */
+  daily(dateKey: string, q: BoardQuery): Promise<BoardPage>;
+  /** Each account's best Rush score among runs finished at or after `since`. */
+  rush(since: number, q: BoardQuery): Promise<BoardPage>;
+  /** Ratings of accounts with at least `minRated` rated answers. */
+  rating(minRated: number, q: BoardQuery): Promise<BoardPage>;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -503,6 +620,9 @@ export interface Repos {
   tableSnapshots: TableSnapshotsRepo;
   matchResults: MatchResultsRepo;
   puzzleResults: PuzzleResultsRepo;
+  puzzleRatings: PuzzleRatingsRepo;
+  rushRuns: RushRunsRepo;
+  leaderboards: LeaderboardsRepo;
   blocks: BlocksRepo;
   moderation: ModerationRepo;
   /**

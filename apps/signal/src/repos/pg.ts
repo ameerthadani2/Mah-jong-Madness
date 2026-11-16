@@ -29,8 +29,16 @@ import {
   type ModerationRepo,
   type PurchaseRecord,
   type PushTarget,
+  type BoardEntry,
+  type BoardPage,
+  type BoardQuery,
+  type LeaderboardsRepo,
+  type PuzzleRatingRecord,
+  type PuzzleRatingsRepo,
   type PuzzleResultRecord,
   type PuzzleResultsRepo,
+  type RushRunRecord,
+  type RushRunsRepo,
   type ReportReason,
   type ReportResolution,
   type ReportRecord,
@@ -157,6 +165,16 @@ function pgUsers(q: Queryable): UsersRepo {
     async setAnalyticsConsent(id, consent) {
       if (!isUuid(id)) return false;
       const res = await q.query('UPDATE users SET analytics_consent = $2 WHERE id = $1', [id, consent]);
+      return (res.rowCount ?? 0) > 0;
+    },
+    async getLeaderboardVisible(id) {
+      if (!isUuid(id)) return true;
+      const res = await q.query<{ leaderboard_visible: boolean }>('SELECT leaderboard_visible FROM users WHERE id = $1', [id]);
+      return res.rows[0]?.leaderboard_visible ?? true;
+    },
+    async setLeaderboardVisible(id, visible) {
+      if (!isUuid(id)) return false;
+      const res = await q.query('UPDATE users SET leaderboard_visible = $2 WHERE id = $1', [id, visible]);
       return (res.rowCount ?? 0) > 0;
     },
     async purgeDeleted(before) {
@@ -1367,6 +1385,15 @@ function pgPuzzleResults(q: Queryable): PuzzleResultsRepo {
       );
       return puzzleFromRow(res.rows[0]);
     },
+    async recordDaily(p) {
+      if (!isUuid(p.userId)) return null;
+      const res = await q.query<PuzzleRow>(
+        "INSERT INTO puzzle_results (user_id, kind, puzzle_key, correct, seconds, rating_after, created_at) VALUES ($1, 'daily', $2, $3, $4, $5, $6) ON CONFLICT (user_id, puzzle_key) WHERE kind = 'daily' DO NOTHING RETURNING " +
+          COLS,
+        [p.userId, p.puzzleKey, p.correct, p.seconds, p.ratingAfter, toDate(p.createdAt)],
+      );
+      return res.rows[0] ? puzzleFromRow(res.rows[0]) : null;
+    },
     async listForUser(userId, limit = 500) {
       if (!isUuid(userId)) return [];
       const res = await q.query<PuzzleRow>('SELECT ' + COLS + ' FROM puzzle_results WHERE user_id = $1 ORDER BY created_at, id LIMIT $2', [
@@ -1377,9 +1404,189 @@ function pgPuzzleResults(q: Queryable): PuzzleResultsRepo {
     },
     async moveToUser(fromUserId, toUserId) {
       if (!isUuid(fromUserId) || !isUuid(toUserId)) return 0;
-      const res = await q.query('UPDATE puzzle_results SET user_id = $2 WHERE user_id = $1', [fromUserId, toUserId]);
+      // One daily result per date key: the target's own stays, the guest's for that key stays behind.
+      const res = await q.query(
+        "UPDATE puzzle_results p SET user_id = $2 WHERE p.user_id = $1 AND NOT (p.kind = 'daily' AND EXISTS (SELECT 1 FROM puzzle_results t WHERE t.user_id = $2 AND t.kind = 'daily' AND t.puzzle_key = p.puzzle_key))",
+        [fromUserId, toUserId],
+      );
       return res.rowCount ?? 0;
     },
+  };
+}
+
+interface RatingRow {
+  user_id: string;
+  rating: number;
+  rated: number;
+  updated_at: Date;
+}
+
+const ratingFromRow = (r: RatingRow): PuzzleRatingRecord => ({ userId: r.user_id, rating: r.rating, rated: r.rated, updatedAt: r.updated_at.getTime() });
+
+function pgPuzzleRatings(q: Queryable): PuzzleRatingsRepo {
+  const COLS = 'user_id, rating, rated, updated_at';
+  return {
+    async get(userId) {
+      if (!isUuid(userId)) return null;
+      const res = await q.query<RatingRow>('SELECT ' + COLS + ' FROM puzzle_ratings WHERE user_id = $1', [userId]);
+      return res.rows[0] ? ratingFromRow(res.rows[0]) : null;
+    },
+    async getForUpdate(userId) {
+      if (!isUuid(userId)) return null;
+      // Lock the user row too, so the first submission (no rating row yet) is serialised as well.
+      await q.query('SELECT id FROM users WHERE id = $1 FOR UPDATE', [userId]);
+      const res = await q.query<RatingRow>('SELECT ' + COLS + ' FROM puzzle_ratings WHERE user_id = $1 FOR UPDATE', [userId]);
+      return res.rows[0] ? ratingFromRow(res.rows[0]) : null;
+    },
+    async set(r) {
+      await q.query(
+        'INSERT INTO puzzle_ratings (user_id, rating, rated, updated_at) VALUES ($1, $2, $3, $4) ON CONFLICT (user_id) DO UPDATE SET rating = excluded.rating, rated = excluded.rated, updated_at = excluded.updated_at',
+        [r.userId, r.rating, r.rated, toDate(r.updatedAt)],
+      );
+    },
+    async mergeInto(fromUserId, toUserId) {
+      if (!isUuid(fromUserId) || !isUuid(toUserId)) return;
+      await q.query(
+        `INSERT INTO puzzle_ratings (user_id, rating, rated, updated_at)
+         SELECT $2, f.rating, f.rated, f.updated_at FROM puzzle_ratings f WHERE f.user_id = $1
+         ON CONFLICT (user_id) DO UPDATE SET rating = excluded.rating, rated = excluded.rated, updated_at = excluded.updated_at
+         WHERE excluded.rated > puzzle_ratings.rated`,
+        [fromUserId, toUserId],
+      );
+      await q.query('DELETE FROM puzzle_ratings WHERE user_id = $1', [fromUserId]);
+    },
+  };
+}
+
+interface RushRunRow {
+  id: string;
+  user_id: string;
+  seed: string;
+  started_at: Date;
+  expires_at: Date;
+  finished_at: Date | null;
+  solved: number | null;
+  wrong: number | null;
+  seconds: number | null;
+  score: number | null;
+}
+
+const rushRunFromRow = (r: RushRunRow): RushRunRecord => ({
+  id: r.id,
+  userId: r.user_id,
+  seed: r.seed,
+  startedAt: r.started_at.getTime(),
+  expiresAt: r.expires_at.getTime(),
+  finishedAt: toMs(r.finished_at),
+  solved: r.solved,
+  wrong: r.wrong,
+  seconds: r.seconds,
+  score: r.score,
+});
+
+function pgRushRuns(q: Queryable): RushRunsRepo {
+  const COLS = 'id, user_id, seed, started_at, expires_at, finished_at, solved, wrong, seconds, score';
+  return {
+    async create(r) {
+      const res = await q.query<RushRunRow>('INSERT INTO puzzle_rush_runs (id, user_id, seed, started_at, expires_at) VALUES ($1, $2, $3, $4, $5) RETURNING ' + COLS, [
+        r.id,
+        r.userId,
+        r.seed,
+        toDate(r.startedAt),
+        toDate(r.expiresAt),
+      ]);
+      return rushRunFromRow(res.rows[0]);
+    },
+    async get(id) {
+      if (!isUuid(id)) return null;
+      const res = await q.query<RushRunRow>('SELECT ' + COLS + ' FROM puzzle_rush_runs WHERE id = $1', [id]);
+      return res.rows[0] ? rushRunFromRow(res.rows[0]) : null;
+    },
+    async finish(id, r) {
+      if (!isUuid(id)) return null;
+      const res = await q.query<RushRunRow>(
+        'UPDATE puzzle_rush_runs SET finished_at = $2, solved = $3, wrong = $4, seconds = $5, score = $6 WHERE id = $1 AND finished_at IS NULL RETURNING ' + COLS,
+        [id, toDate(r.finishedAt), r.solved, r.wrong, r.seconds, r.score],
+      );
+      return res.rows[0] ? rushRunFromRow(res.rows[0]) : null;
+    },
+    async moveToUser(fromUserId, toUserId) {
+      if (!isUuid(fromUserId) || !isUuid(toUserId)) return 0;
+      const res = await q.query('UPDATE puzzle_rush_runs SET user_id = $2 WHERE user_id = $1', [fromUserId, toUserId]);
+      return res.rowCount ?? 0;
+    },
+    async pruneUnfinished(before) {
+      const res = await q.query('DELETE FROM puzzle_rush_runs WHERE finished_at IS NULL AND expires_at < $1', [toDate(before)]);
+      return res.rowCount ?? 0;
+    },
+  };
+}
+
+interface BoardSqlRow {
+  user_id: string;
+  score: number;
+  tiebreak: number;
+  count: number;
+  at: Date;
+  display_name: string;
+  avatar: string | null;
+}
+
+/** Each board's entries as (user_id, score, tiebreak, count, at), with $1 its one parameter. */
+const DAILY_ENTRIES =
+  "SELECT user_id, CASE WHEN correct THEN 1 ELSE 0 END AS score, seconds AS tiebreak, 0 AS count, created_at AS at FROM puzzle_results WHERE kind = 'daily' AND puzzle_key = $1";
+const RUSH_ENTRIES =
+  'SELECT DISTINCT ON (user_id) user_id, score, 0 AS tiebreak, solved AS count, finished_at AS at FROM puzzle_rush_runs WHERE finished_at IS NOT NULL AND finished_at >= $1 AND score > 0 ORDER BY user_id, score DESC, finished_at, id';
+const RATING_ENTRIES = 'SELECT user_id, rating AS score, 0 AS tiebreak, rated AS count, updated_at AS at FROM puzzle_ratings WHERE rated >= $1';
+/** Listed: live, not banned, visible, and in scope ($2: the club's member ids, or null for everyone). */
+const BOARD_LISTED = ' JOIN users u ON u.id = e.user_id WHERE u.deleted_at IS NULL AND u.banned_at IS NULL AND u.leaderboard_visible AND ($2::uuid[] IS NULL OR e.user_id = ANY($2::uuid[]))';
+const BOARD_COLS = 'SELECT e.user_id, e.score, e.tiebreak, e.count, e.at, u.display_name, u.avatar FROM e';
+
+const boardEntry = (r: BoardSqlRow): BoardEntry => ({
+  userId: r.user_id,
+  displayName: r.display_name,
+  avatar: r.avatar,
+  score: Number(r.score),
+  tiebreak: Number(r.tiebreak),
+  count: Number(r.count),
+  at: r.at.getTime(),
+});
+
+function pgLeaderboards(q: Queryable): LeaderboardsRepo {
+  const page = async (entries: string, param: unknown, query: BoardQuery): Promise<BoardPage> => {
+    const scope = query.userIds ? query.userIds.filter(isUuid) : null;
+    const top = await q.query<BoardSqlRow>('WITH e AS (' + entries + ') ' + BOARD_COLS + BOARD_LISTED + ' ORDER BY e.score DESC, e.tiebreak, e.at, e.user_id LIMIT $3', [
+      param,
+      scope,
+      Math.max(1, Math.min(1000, Math.floor(query.limit))),
+    ]);
+    const rows = top.rows.map((r, i) => ({ ...boardEntry(r), rank: i + 1 }));
+    if (!isUuid(query.viewerId)) return { rows, me: null };
+    // The viewer: on the list, or (hidden, banned or further down) ranked behind the listed entries ahead of them.
+    const listed = rows.find((r) => r.userId === query.viewerId);
+    if (listed) return { rows, me: { ...listed, hidden: false } };
+    const own = await q.query<BoardSqlRow & { visible: boolean }>(
+      'WITH e AS (' +
+        entries +
+        ') SELECT e.user_id, e.score, e.tiebreak, e.count, e.at, u.display_name, u.avatar, (u.leaderboard_visible AND u.banned_at IS NULL) AS visible FROM e JOIN users u ON u.id = e.user_id WHERE u.deleted_at IS NULL AND e.user_id = $2 AND ($3::uuid[] IS NULL OR e.user_id = ANY($3::uuid[]))',
+      [param, query.viewerId, scope],
+    );
+    if (!own.rows[0]) return { rows, me: null };
+    const mine = boardEntry(own.rows[0]);
+    const ahead = await q.query<{ n: string }>(
+      'WITH e AS (' +
+        entries +
+        ') SELECT count(*) AS n FROM e' +
+        BOARD_LISTED +
+        ' AND e.user_id <> $3 AND (e.score > $4 OR (e.score = $4 AND (e.tiebreak < $5 OR (e.tiebreak = $5 AND (e.at < $6 OR (e.at = $6 AND e.user_id < $3))))))',
+      [param, scope, query.viewerId, mine.score, mine.tiebreak, toDate(mine.at)],
+    );
+    return { rows, me: { ...mine, rank: Number(ahead.rows[0].n) + 1, hidden: !own.rows[0].visible } };
+  };
+  return {
+    daily: (dateKey, query) => page(DAILY_ENTRIES, dateKey, query),
+    rush: (since, query) => page(RUSH_ENTRIES, toDate(since), query),
+    rating: (minRated, query) => page(RATING_ENTRIES, minRated, query),
   };
 }
 
@@ -1399,6 +1606,9 @@ function build(q: Queryable, tx: Tx, transaction: Repos['transaction']): Repos {
     tableSnapshots: pgTableSnapshots(q),
     matchResults: pgMatchResults(q),
     puzzleResults: pgPuzzleResults(q),
+    puzzleRatings: pgPuzzleRatings(q),
+    rushRuns: pgRushRuns(q),
+    leaderboards: pgLeaderboards(q),
     blocks: pgBlocks(q, tx),
     moderation: pgModeration(q),
     transaction,

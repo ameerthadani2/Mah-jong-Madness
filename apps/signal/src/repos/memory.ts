@@ -30,8 +30,16 @@ import {
   type ModerationStatus,
   type PurchaseRecord,
   type PushTarget,
+  type BoardEntry,
+  type BoardPage,
+  type BoardQuery,
+  type LeaderboardsRepo,
+  type PuzzleRatingRecord,
+  type PuzzleRatingsRepo,
   type PuzzleResultRecord,
   type PuzzleResultsRepo,
+  type RushRunRecord,
+  type RushRunsRepo,
   type ReportRecord,
   type ReportsRepo,
   type Repos,
@@ -72,6 +80,12 @@ interface MemoryState {
   matchSeq: number;
   puzzles: PuzzleResultRecord[];
   puzzleSeq: number;
+  /** puzzle_ratings, by user id. */
+  ratings: Map<string, PuzzleRatingRecord>;
+  /** puzzle_rush_runs, by run id. */
+  rushRuns: Map<string, RushRunRecord>;
+  /** Users who hid themselves from leaderboards (users.leaderboard_visible = false). */
+  boardHidden: Set<string>;
   /** Each user's analytics choice (users.analytics_consent in Postgres). */
   consent: Map<string, boolean>;
   /** user_blocks, in insertion order. */
@@ -102,6 +116,9 @@ const emptyState = (): MemoryState => ({
   matchSeq: 0,
   puzzles: [],
   puzzleSeq: 0,
+  ratings: new Map(),
+  rushRuns: new Map(),
+  boardHidden: new Set(),
   consent: new Map(),
   blocks: [],
   moderation: new Map(),
@@ -147,6 +164,15 @@ function memoryUsers(s: MemoryState): UsersRepo {
       else s.consent.set(id, consent);
       return true;
     },
+    async getLeaderboardVisible(id) {
+      return !s.boardHidden.has(id);
+    },
+    async setLeaderboardVisible(id, visible) {
+      if (!s.users.has(id)) return false;
+      if (visible) s.boardHidden.delete(id);
+      else s.boardHidden.add(id);
+      return true;
+    },
     async purgeDeleted(before) {
       return (await this.purgeDeletedIds(before)).length;
     },
@@ -163,6 +189,9 @@ function memoryUsers(s: MemoryState): UsersRepo {
         s.consent.delete(id);
         for (const [k, e] of [...s.entitlements]) if (e.userId === id) s.entitlements.delete(k);
         s.puzzles = s.puzzles.filter((p) => p.userId !== id);
+        s.ratings.delete(id);
+        s.boardHidden.delete(id);
+        for (const [k, run] of [...s.rushRuns]) if (run.userId === id) s.rushRuns.delete(k);
         s.blocks = s.blocks.filter((b) => b.blockerId !== id && b.blockedId !== id);
         s.moderation.delete(id);
         s.bannedDevices = s.bannedDevices.filter((b) => b.userId !== id);
@@ -675,6 +704,10 @@ function memoryPuzzleResults(s: MemoryState): PuzzleResultsRepo {
       s.puzzles.push(row);
       return copy(row);
     },
+    async recordDaily(r) {
+      if (s.puzzles.some((p) => p.userId === r.userId && p.kind === 'daily' && p.puzzleKey === r.puzzleKey)) return null;
+      return this.record({ ...r, kind: 'daily' });
+    },
     async listForUser(userId, limit = 500) {
       return s.puzzles
         .filter((r) => r.userId === userId)
@@ -684,12 +717,110 @@ function memoryPuzzleResults(s: MemoryState): PuzzleResultsRepo {
     },
     async moveToUser(fromUserId, toUserId) {
       let n = 0;
+      const dailyKeys = new Set(s.puzzles.filter((r) => r.userId === toUserId && r.kind === 'daily').map((r) => r.puzzleKey));
       for (const r of s.puzzles) {
         if (r.userId !== fromUserId) continue;
+        if (r.kind === 'daily' && dailyKeys.has(r.puzzleKey)) continue;
         r.userId = toUserId;
         n++;
       }
       return n;
+    },
+  };
+}
+
+function memoryPuzzleRatings(s: MemoryState): PuzzleRatingsRepo {
+  return {
+    async get(userId) {
+      const row = s.ratings.get(userId);
+      return row ? copy(row) : null;
+    },
+    async getForUpdate(userId) {
+      return this.get(userId);
+    },
+    async set(r) {
+      s.ratings.set(r.userId, copy(r));
+    },
+    async mergeInto(fromUserId, toUserId) {
+      const [from, into] = [s.ratings.get(fromUserId), s.ratings.get(toUserId)];
+      s.ratings.delete(fromUserId);
+      if (from && (!into || from.rated > into.rated)) s.ratings.set(toUserId, { ...from, userId: toUserId });
+    },
+  };
+}
+
+function memoryRushRuns(s: MemoryState): RushRunsRepo {
+  return {
+    async create(r) {
+      if (s.rushRuns.has(r.id)) throw new Error(`Run ${r.id} already exists`);
+      const row: RushRunRecord = { ...copy(r), finishedAt: null, solved: null, wrong: null, seconds: null, score: null };
+      s.rushRuns.set(row.id, row);
+      return copy(row);
+    },
+    async get(id) {
+      const row = s.rushRuns.get(id);
+      return row ? copy(row) : null;
+    },
+    async finish(id, result) {
+      const row = s.rushRuns.get(id);
+      if (!row || row.finishedAt !== null) return null;
+      Object.assign(row, copy(result));
+      return copy(row);
+    },
+    async moveToUser(fromUserId, toUserId) {
+      let n = 0;
+      for (const run of s.rushRuns.values()) if (run.userId === fromUserId) (run.userId = toUserId), n++;
+      return n;
+    },
+    async pruneUnfinished(before) {
+      let n = 0;
+      for (const [id, run] of [...s.rushRuns]) if (run.finishedAt === null && run.expiresAt < before) s.rushRuns.delete(id), n++;
+      return n;
+    },
+  };
+}
+
+/** The boards' order: score high first, tiebreak low, earlier, then user id. */
+export function boardOrder(a: Pick<BoardEntry, 'score' | 'tiebreak' | 'at' | 'userId'>, b: Pick<BoardEntry, 'score' | 'tiebreak' | 'at' | 'userId'>): number {
+  return b.score - a.score || a.tiebreak - b.tiebreak || a.at - b.at || (a.userId < b.userId ? -1 : a.userId > b.userId ? 1 : 0);
+}
+
+function memoryLeaderboards(s: MemoryState): LeaderboardsRepo {
+  /** Ranks raw entries (user id plus the order fields) for one query. */
+  const page = (raw: Array<Omit<BoardEntry, 'displayName' | 'avatar'>>, q: BoardQuery): BoardPage => {
+    const scope = q.userIds ? new Set(q.userIds) : null;
+    const entries: Array<BoardEntry & { visible: boolean }> = [];
+    for (const e of raw) {
+      const u = s.users.get(e.userId);
+      if (!u || u.deletedAt !== null) continue;
+      if (scope && !scope.has(e.userId)) continue;
+      const visible = !s.boardHidden.has(u.id) && (s.moderation.get(u.id)?.bannedAt ?? null) === null;
+      entries.push({ ...e, displayName: u.displayName, avatar: u.avatar, visible });
+    }
+    const listed = entries.filter((e) => e.visible).sort(boardOrder);
+    const strip = ({ visible: _v, ...e }: BoardEntry & { visible: boolean }) => e;
+    const rows = listed.slice(0, q.limit).map((e, i) => ({ ...strip(e), rank: i + 1 }));
+    const mine = entries.find((e) => e.userId === q.viewerId);
+    const me = mine ? { ...strip(mine), rank: 1 + listed.filter((e) => e.userId !== mine.userId && boardOrder(e, mine) < 0).length, hidden: !mine.visible } : null;
+    return copy({ rows, me });
+  };
+  return {
+    async daily(dateKey, q) {
+      const raw = s.puzzles.filter((p) => p.kind === 'daily' && p.puzzleKey === dateKey).map((p) => ({ userId: p.userId, score: p.correct ? 1 : 0, tiebreak: p.seconds, count: 0, at: p.createdAt }));
+      return page(raw, q);
+    },
+    async rush(since, q) {
+      const best = new Map<string, RushRunRecord>();
+      const better = (a: RushRunRecord, b: RushRunRecord) => a.score! > b.score! || (a.score === b.score && (a.finishedAt! < b.finishedAt! || (a.finishedAt === b.finishedAt && a.id < b.id)));
+      for (const run of s.rushRuns.values()) {
+        if (run.finishedAt === null || run.finishedAt < since || !run.score) continue;
+        const cur = best.get(run.userId);
+        if (!cur || better(run, cur)) best.set(run.userId, run);
+      }
+      return page([...best.values()].map((r) => ({ userId: r.userId, score: r.score!, tiebreak: 0, count: r.solved ?? 0, at: r.finishedAt! })), q);
+    },
+    async rating(minRated, q) {
+      return page([...s.ratings.values()].filter((r) => r.rated >= minRated).map((r) => ({ userId: r.userId, score: r.rating, tiebreak: 0, count: r.rated, at: r.updatedAt })), q);
     },
   };
 }
@@ -708,6 +839,9 @@ function build(s: MemoryState, transaction: Repos['transaction']): Repos {
     tableSnapshots: memoryTableSnapshots(s),
     matchResults: memoryMatchResults(s),
     puzzleResults: memoryPuzzleResults(s),
+    puzzleRatings: memoryPuzzleRatings(s),
+    rushRuns: memoryRushRuns(s),
+    leaderboards: memoryLeaderboards(s),
     blocks: memoryBlocks(s),
     moderation: memoryModeration(s),
     transaction,
