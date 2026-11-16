@@ -3,6 +3,7 @@ import { DEFAULT_RULES, type BotSkill, type RuleSet } from '@mjm/engine';
 import type { SerializedClient, SerializedHost } from '@mjm/net';
 import { clampDailyToToday, effectiveStreak as streakOn } from './logic/daily';
 import { localDateKey, previousDateKey } from './logic/dates';
+import { validActiveSession } from './logic/activeSession';
 import { migrateSettings } from './logic/settings';
 import { DEFAULT_PROFILE, migrateProfile, type Profile } from './logic/profile';
 import type { LocalePreference } from './i18n/resolve';
@@ -124,11 +125,13 @@ export const storage = {
     try {
       const raw = await AsyncStorage.getItem(KEYS.session);
       if (!raw) return null;
-      const s = JSON.parse(raw) as ActiveSession;
-      // Sessions older than 12 hours are stale.
-      if (Date.now() - s.savedAt > 12 * 3600_000) return null;
+      const s = validActiveSession(JSON.parse(raw));
+      // A damaged or stale record is deleted, so it is not read again on every launch.
+      if (!s) await AsyncStorage.removeItem(KEYS.session);
       return s;
     } catch {
+      // Text that is not JSON at all goes the same way.
+      await AsyncStorage.removeItem(KEYS.session).catch(() => undefined);
       return null;
     }
   },

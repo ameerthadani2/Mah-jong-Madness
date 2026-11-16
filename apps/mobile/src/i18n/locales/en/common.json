@@ -33,7 +33,9 @@
   "crash": {
     "title": "Something went wrong",
     "body": "This screen ran into a problem. Your progress and any table in progress are saved.",
-    "home": "Back to Home"
+    "home": "Back to Home",
+    "clear": "Clear saved table and go Home",
+    "clearHint": "If this keeps happening, the saved table may be damaged. Clearing it gives up that table; everything else is kept."
   },
   "rules": {
     "summary": "底%{base} / 台%{tai} · %{hands} rotations · %{speed} (%{turn}s + %{bank}s bank)"

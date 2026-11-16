@@ -87,7 +87,7 @@ function Router() {
  * longer serves sees only the update screen; a maintenance message sits above Home.
  */
 function Shell() {
-  const { screen, reset } = useApp();
+  const { screen, reset, setSession, setActiveSession } = useApp();
   const { gate } = useRemoteConfig();
   const blocked = gate.kind === 'update';
   // A screen that throws shows a card with a way Home instead of blanking the app; another screen clears it.
@@ -101,7 +101,16 @@ function Shell() {
         ) : (
           <>
             {gate.maintenance && screen.name === 'home' ? <MaintenanceBanner message={gate.maintenance} /> : null}
-            <ErrorBoundary resetKey={screenKey} onHome={() => reset({ name: 'home' })}>
+            <ErrorBoundary
+              resetKey={screenKey}
+              onHome={() => reset({ name: 'home' })}
+              onClearTable={() => {
+                // The open table goes too, or it would write the record straight back.
+                setSession(null);
+                setActiveSession(null);
+                reset({ name: 'home' });
+              }}
+            >
               <Router />
             </ErrorBoundary>
           </>
