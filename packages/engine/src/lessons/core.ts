@@ -12,7 +12,7 @@ export const CORE_LESSONS: Lesson[] = [
     track: 'basics',
     title: 'The tiles',
     titleZh: '認識牌',
-    minutes: 3,
+    minutes: 1,
     summary: 'Learn the 144 tiles: three suits, winds, dragons and the eight bonus tiles.',
     summaryZh: '認識全副 144 張牌：三種花色、風牌、三元牌，還有八張花牌。',
     steps: [
@@ -44,7 +44,7 @@ export const CORE_LESSONS: Lesson[] = [
     track: 'basics',
     title: 'How to win',
     titleZh: '怎麼胡牌',
-    minutes: 4,
+    minutes: 1,
     summary: 'Taiwanese Mahjong uses 16 tiles. A winning hand is five sets plus one pair.',
     summaryZh: '台灣麻將一手牌 16 張。胡牌的牌型是五組面子加一對眼。',
     steps: [
@@ -88,7 +88,7 @@ export const CORE_LESSONS: Lesson[] = [
     track: 'basics',
     title: 'Chi, Pong, Kong',
     titleZh: '吃碰槓',
-    minutes: 5,
+    minutes: 1,
     summary: 'Use other players’ discards to build sets, and understand the priority order.',
     summaryZh: '用別家打出的牌來湊面子，並弄懂吃、碰、槓、胡的優先順序。',
     steps: [
@@ -129,7 +129,7 @@ export const CORE_LESSONS: Lesson[] = [
     track: 'scoring',
     title: 'Counting 台',
     titleZh: '算台',
-    minutes: 6,
+    minutes: 1,
     summary: 'Every hand pays 底 + 台 × points. Learn the common 台 and how dealer bonuses work.',
     summaryZh: '每手牌的價值是底加上台數乘以每台點數。學會常見的台，以及莊家怎麼加台。',
     steps: [
@@ -170,7 +170,7 @@ export const CORE_LESSONS: Lesson[] = [
     track: 'efficiency',
     title: 'Tile efficiency',
     titleZh: '牌效率',
-    minutes: 6,
+    minutes: 2,
     summary: 'Discard the tiles with the fewest ways to improve. The coach shows this as shanten and acceptance.',
     summaryZh: '先打出最難進張的牌。教練會用向聽數和進張數來顯示。',
     steps: [
@@ -221,7 +221,7 @@ export const CORE_LESSONS: Lesson[] = [
     track: 'defence',
     title: 'Defence',
     titleZh: '防守',
-    minutes: 4,
+    minutes: 1,
     summary: 'Avoid 放槍 when an opponent is clearly ready.',
     summaryZh: '對手明顯聽牌時，避免放槍。',
     steps: [
@@ -250,7 +250,7 @@ export const CORE_LESSONS: Lesson[] = [
     track: 'basics',
     title: 'Flowers and 補花',
     titleZh: '花牌與補花',
-    minutes: 5,
+    minutes: 3,
     summary: 'Bonus tiles are laid out and replaced from the back of the wall, at the deal and during play. Learn the order and what they change.',
     summaryZh: '花牌要亮出來，再從牌尾補牌，開局和打牌中都一樣。學會補花的順序，以及花牌會改變什麼。',
     steps: [
@@ -316,7 +316,7 @@ export const CORE_LESSONS: Lesson[] = [
     track: 'basics',
     title: 'Winds, dealers and the match',
     titleZh: '風圈、莊家與一將',
-    minutes: 6,
+    minutes: 3,
     summary: 'Who deals, which winds score, and how a match of 16 dealer rotations runs from the 東 round to the 北 round.',
     summaryZh: '誰當莊、哪些風有台，以及一將十六圈莊怎麼從東風圈打到北風圈。',
     steps: [
@@ -387,7 +387,7 @@ export const CORE_LESSONS: Lesson[] = [
     track: 'basics',
     title: 'Your 台 at the start of a hand',
     titleZh: '開局先看自己的台',
-    minutes: 5,
+    minutes: 3,
     summary: 'Before your first discard, check your seat, the winds, your bonus tiles and your shape, so you know which tiles are worth more to you than they look.',
     summaryZh: '打第一張牌之前，先看座位、風、花牌和牌型，就知道哪些牌對你比看起來更值錢。',
     steps: [

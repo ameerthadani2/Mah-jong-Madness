@@ -11,7 +11,7 @@ export const VALUE_LESSONS: Lesson[] = [
     track: 'value',
     title: 'Playing for 門清自摸',
     titleZh: '門清自摸的打法',
-    minutes: 6,
+    minutes: 3,
     summary: 'A closed hand is worth up to 3 台. Learn what a call costs, what keeps you concealed, and when calling is still right.',
     summaryZh: '不吃不碰的門清牌最多值 3 台。學會吃碰的代價、什麼情況還算門清，以及什麼時候還是該吃碰。',
     steps: [
@@ -78,7 +78,7 @@ export const VALUE_LESSONS: Lesson[] = [
     track: 'value',
     title: '混一色 and 清一色',
     titleZh: '混一色與清一色',
-    minutes: 7,
+    minutes: 3,
     summary: 'One suit is worth 4 台 with honours and 8 台 without. Learn when to commit, what calling costs, and when to let it go.',
     summaryZh: '一種花色加字牌是 4 台，只有一種花色是 8 台。學會什麼時候做一色、吃碰的影響，以及什麼時候該放棄。',
     steps: [
@@ -145,7 +145,7 @@ export const VALUE_LESSONS: Lesson[] = [
     track: 'value',
     title: '碰碰胡 hands',
     titleZh: '碰碰胡',
-    minutes: 6,
+    minutes: 3,
     summary: 'Five pongs and a pair score 4 台, and concealed pongs add more. Learn which hands to steer there and how the wait works.',
     summaryZh: '五組刻子加一對眼是碰碰胡 4 台，暗刻還能再加台。學會哪些牌適合做碰碰胡，以及怎麼聽牌。',
     steps: [
@@ -212,7 +212,7 @@ export const VALUE_LESSONS: Lesson[] = [
     track: 'value',
     title: 'Value honours and 三元',
     titleZh: '字牌台與三元',
-    minutes: 7,
+    minutes: 3,
     summary: 'Seat wind, prevailing wind and dragon pongs are 1 台 each. Learn whose wind is whose, and how 小三元 and 大三元 count.',
     summaryZh: '門風、圈風和三元牌的刻子各 1 台。學會分辨哪個風是你的，以及小三元、大三元怎麼算。',
     steps: [
@@ -279,7 +279,7 @@ export const VALUE_LESSONS: Lesson[] = [
     track: 'value',
     title: 'Flowers and their 台',
     titleZh: '花牌的台',
-    minutes: 6,
+    minutes: 3,
     summary: 'Bonus tiles score 正花 and 花槓, and all eight win on their own. Learn which are yours and how 八仙過海 and 七搶一 pay.',
     summaryZh: '花牌可以算正花、花槓，集滿八張還能直接胡。學會哪幾張是你的，以及八仙過海和七搶一怎麼付。',
     steps: [
@@ -346,7 +346,7 @@ export const VALUE_LESSONS: Lesson[] = [
     track: 'value',
     title: '獨聽 and 平胡',
     titleZh: '獨聽與平胡',
-    minutes: 7,
+    minutes: 3,
     summary: 'At the final wait you often choose between a single wait worth 獨聽 and a two-sided one worth 平胡. Learn the rules and which to pick.',
     summaryZh: '最後聽牌時，常要在獨聽和兩面（平胡）之間選一個。學會規則，也學會怎麼選。',
     steps: [

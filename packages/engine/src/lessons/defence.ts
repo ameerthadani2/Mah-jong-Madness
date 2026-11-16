@@ -15,7 +15,7 @@ export const DEFENCE_LESSONS: Lesson[] = [
     track: 'defence',
     title: 'Reading exposed sets',
     titleZh: '看懂亮出的面子',
-    minutes: 6,
+    minutes: 4,
     summary: 'Every exposed set is one of the five a winning hand needs. Count them to see who is close to ready, then read what they say about the hand.',
     summaryZh: '每一組亮出來的面子，都是胡牌要的五組面子之一。先數一數，看出誰快聽牌了，再看這些面子透露他在做什麼牌。',
     steps: [
@@ -82,7 +82,7 @@ export const DEFENCE_LESSONS: Lesson[] = [
     track: 'defence',
     title: 'Reading the discard pool',
     titleZh: '從牌河看牌',
-    minutes: 6,
+    minutes: 4,
     summary: 'Taiwanese rules have no furiten, so no discard is ever guaranteed safe. Learn what the pool does tell you, and what it does not.',
     summaryZh: '台灣麻將沒有振聽，所以沒有哪一張牌保證安全。學會牌河能告訴你什麼、不能告訴你什麼。',
     steps: [
@@ -146,7 +146,7 @@ export const DEFENCE_LESSONS: Lesson[] = [
     track: 'defence',
     title: 'Honours and terminals',
     titleZh: '字牌與么九牌',
-    minutes: 6,
+    minutes: 3,
     summary: 'Count the ways a tile can complete a hand. Honours have the fewest, terminals come next and middle tiles have the most.',
     summaryZh: '算一算一張牌有幾種方式能讓別人胡。字牌最少，么九牌其次，中張最多。',
     steps: [
@@ -212,7 +212,7 @@ export const DEFENCE_LESSONS: Lesson[] = [
     track: 'defence',
     title: 'Fold or push',
     titleZh: '棄胡還是衝',
-    minutes: 8,
+    minutes: 4,
     summary: 'Decide each turn whether your hand is worth the risk. Learn how the coach rates danger from the table, and when it gives up speed for safety.',
     summaryZh: '每一巡都要判斷這手牌值不值得冒險。學會教練怎麼從桌面判斷危險，以及它什麼時候放棄速度、改打安全牌。',
     steps: [
@@ -283,7 +283,7 @@ export const DEFENCE_LESSONS: Lesson[] = [
     track: 'defence',
     title: 'The end of the wall',
     titleZh: '牌尾的打法',
-    minutes: 6,
+    minutes: 3,
     summary: 'Near the end of the wall every hand is close to ready and your chances to self-draw run out. Learn 海底, 河底 and what a 流局 means.',
     summaryZh: '到了牌尾，大家都快聽牌了，自己摸到的機會也越來越少。學會海底、河底，以及流局代表什麼。',
     steps: [

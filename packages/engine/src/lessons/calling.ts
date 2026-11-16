@@ -13,7 +13,7 @@ export const CALLING_LESSONS: Lesson[] = [
     track: 'calling',
     title: '吃 from your left',
     titleZh: '吃上家的牌',
-    minutes: 6,
+    minutes: 3,
     summary: 'Only your 上家’s discard can be taken for a chow. Learn which chow to take, and when 胡 comes first.',
     summaryZh: '只有上家打的牌可以吃成順子。學會該吃哪一組，以及什麼時候要先喊胡。',
     steps: [
@@ -79,7 +79,7 @@ export const CALLING_LESSONS: Lesson[] = [
     track: 'calling',
     title: '碰: speed or 門清?',
     titleZh: '碰：求快還是門清？',
-    minutes: 6,
+    minutes: 3,
     summary: 'A 碰 turns a pair into a set at once, but it costs 門清. Learn when it really speeds you up.',
     summaryZh: '碰可以馬上把對子變成刻子，但會失去門清。學會判斷什麼時候碰了真的比較快。',
     steps: [
@@ -139,7 +139,7 @@ export const CALLING_LESSONS: Lesson[] = [
     track: 'calling',
     title: '槓 timing',
     titleZh: '什麼時候開槓',
-    minutes: 6,
+    minutes: 3,
     summary: '暗槓, 明槓 and 加槓 each draw a replacement tile, but they cost different things. Learn when a kong helps and when it hurts.',
     summaryZh: '暗槓、明槓、加槓都會補一張牌，但代價不同。學會判斷開槓什麼時候有幫助、什麼時候反而有害。',
     steps: [
@@ -199,7 +199,7 @@ export const CALLING_LESSONS: Lesson[] = [
     track: 'calling',
     title: 'Who gets the tile',
     titleZh: '牌歸誰：優先權與搶槓',
-    minutes: 6,
+    minutes: 3,
     summary: 'Claim priority, two players winning on one tile, robbing a kong, and the 過水 house rule.',
     summaryZh: '吃碰胡的優先順序、兩家胡同一張、搶槓，以及過水這條自訂規則。',
     steps: [
@@ -264,7 +264,7 @@ export const CALLING_LESSONS: Lesson[] = [
     track: 'calling',
     title: 'Stay concealed when ready',
     titleZh: '聽牌後保持門清',
-    minutes: 5,
+    minutes: 3,
     summary: 'What the coach’s rule means: once a concealed hand is ready, it passes every 吃, 碰 and 明槓 and waits to 胡.',
     summaryZh: '教練的規則是什麼意思：門清聽牌之後，所有的吃、碰、明槓都不要，專心等胡。',
     steps: [

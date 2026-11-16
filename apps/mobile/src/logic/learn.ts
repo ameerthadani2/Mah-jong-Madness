@@ -3,6 +3,7 @@
  * the lesson to start next in each track, and what to offer when a lesson ends. Pure, so the grouping and the
  * "what next" rules are unit-tested; the screen only draws.
  */
+import { LESSONS, lessonMinutes, type Lesson, type LessonLanguage } from '@mjm/engine';
 
 export interface TrackLike<T extends string = string> {
   id: T;
@@ -101,4 +102,19 @@ export function nextLesson<L extends LessonLike, T extends TrackLike>(lessons: r
 /** A track's name for the locale: English shows the Chinese name beside it, zh-TW shows only the Chinese. */
 export function trackTitle(track: TrackLike, locale: string): { main: string; aside: string | null } {
   return locale === 'zh-TW' ? { main: track.nameZh, aside: null } : { main: track.name, aside: track.nameZh };
+}
+
+const timed = new Map<LessonLanguage, Lesson[]>();
+
+/**
+ * The lessons with `minutes` measured for a reader of `lang` (about 200 English words or 400 Chinese characters
+ * a minute, plus half a minute a quiz: the engine's lessons/minutes.ts), worked out once per language.
+ */
+export function timedLessons(lang: LessonLanguage): Lesson[] {
+  let list = timed.get(lang);
+  if (!list) {
+    list = LESSONS.map((l) => ({ ...l, minutes: lessonMinutes(l, lang) }));
+    timed.set(lang, list);
+  }
+  return list;
 }

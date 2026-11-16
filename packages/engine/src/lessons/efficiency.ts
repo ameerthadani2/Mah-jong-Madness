@@ -12,7 +12,7 @@ export const EFFICIENCY_LESSONS: Lesson[] = [
     track: 'efficiency',
     title: 'Counting 進張',
     titleZh: '算進張',
-    minutes: 6,
+    minutes: 3,
     summary: 'A 進張 is any tile that brings you closer to ready. Count kinds and copies the way the coach does.',
     summaryZh: '進張就是能讓你更接近聽牌的牌。學會像教練一樣，算有幾種牌、還剩幾張。',
     steps: [
@@ -78,7 +78,7 @@ export const EFFICIENCY_LESSONS: Lesson[] = [
     track: 'efficiency',
     title: 'Edge, closed and open shapes',
     titleZh: '邊張、嵌張與兩面',
-    minutes: 6,
+    minutes: 3,
     summary: 'Why a 兩面 beats a 嵌張 or 邊張, how weak shapes grow, and the shapes that only look wide.',
     summaryZh: '為什麼兩面比嵌張、邊張好，弱的搭子怎麼變好，還有哪些牌型只是看起來很寬。',
     steps: [
@@ -138,7 +138,7 @@ export const EFFICIENCY_LESSONS: Lesson[] = [
     track: 'efficiency',
     title: 'Pairs, 搭子 and your 眼',
     titleZh: '對子、搭子與眼',
-    minutes: 6,
+    minutes: 3,
     summary: 'A winning hand needs exactly one pair. Learn when an extra pair is worth keeping and when to break even your 眼.',
     summaryZh: '胡牌只需要一對眼。學會什麼時候該留多的對子，什麼時候連眼都要拆。',
     steps: [
@@ -198,7 +198,7 @@ export const EFFICIENCY_LESSONS: Lesson[] = [
     track: 'efficiency',
     title: 'Early discards: honours and terminals',
     titleZh: '開局先打什麼：字牌與么九',
-    minutes: 5,
+    minutes: 3,
     summary: 'In the first turns, throw the lone tiles least likely to join a set: honours first, then terminals.',
     summaryZh: '開局前幾巡，先打最難湊成面子的單張：先打字牌，再打么九牌。',
     steps: [
@@ -258,7 +258,7 @@ export const EFFICIENCY_LESSONS: Lesson[] = [
     track: 'efficiency',
     title: '向聽 on 17 tiles',
     titleZh: '十七張的向聽數',
-    minutes: 7,
+    minutes: 3,
     summary: 'Count 向聽 yourself, see why five slots is the limit, and make the 1-向聽 decision that takes the most tiles.',
     summaryZh: '學會自己算向聽數，弄懂為什麼只能算五組，並在一向聽時做出進張最多的選擇。',
     steps: [

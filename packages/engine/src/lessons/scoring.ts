@@ -13,7 +13,7 @@ export const SCORING_LESSONS: Lesson[] = [
     track: 'scoring',
     title: 'The full 台 table',
     titleZh: '台數總表',
-    minutes: 7,
+    minutes: 3,
     summary: 'Every 台 the game counts, in groups: how you won, shape and wait, suits, honours, flowers and the dealer.',
     summaryZh: '本遊戲計算的每一種台，分組整理：胡法、牌型與聽牌、花色、字牌、花牌和莊家。',
     steps: [
@@ -87,7 +87,7 @@ export const SCORING_LESSONS: Lesson[] = [
     track: 'scoring',
     title: '底 and 台 arithmetic',
     titleZh: '底台怎麼算',
-    minutes: 6,
+    minutes: 3,
     summary: 'Turn 台 into points: 底 + 台 × 台值, with worked examples at 底100/台20 and 底300/台100.',
     summaryZh: '把台數換成點數：底加台數乘以每台點數，用底 100 台 20 和底 300 台 100 實際算一遍。',
     steps: [
@@ -153,7 +153,7 @@ export const SCORING_LESSONS: Lesson[] = [
     track: 'scoring',
     title: 'Dealer, 連莊 and 封頂',
     titleZh: '莊家、連莊與封頂',
-    minutes: 7,
+    minutes: 3,
     summary: 'How the dealer’s 台 and the 連莊 streak enter each payment, and why a 台 cap (封頂) never removes them.',
     summaryZh: '莊家台和連莊台怎麼加進每一筆付款，以及為什麼封頂也不會扣掉它們。',
     steps: [
@@ -224,7 +224,7 @@ export const SCORING_LESSONS: Lesson[] = [
     track: 'scoring',
     title: '自摸 or 放槍: who pays',
     titleZh: '自摸與放槍：誰付錢',
-    minutes: 6,
+    minutes: 3,
     summary: 'A self-draw is paid by all three opponents, a discard win by the discarder alone. Learn the special cases too.',
     summaryZh: '自摸由三家付，胡別人打的牌只有放槍的人付。也學會幾種特殊情況。',
     steps: [
@@ -296,7 +296,7 @@ export const SCORING_LESSONS: Lesson[] = [
     track: 'scoring',
     title: '天胡, 地胡, 人胡 and what absorbs what',
     titleZh: '天地人胡與台數吸收',
-    minutes: 6,
+    minutes: 3,
     summary: 'The three limit deals, the 台 they replace, the 台 that still stack, and the other places where one item absorbs another.',
     summaryZh: '天胡、地胡、人胡會取代哪些台、哪些台照算，以及其他互相吸收的台。',
     steps: [
@@ -368,7 +368,7 @@ export const SCORING_LESSONS: Lesson[] = [
     track: 'scoring',
     title: 'Reading the result sheet',
     titleZh: '看懂結算表',
-    minutes: 5,
+    minutes: 3,
     summary: 'What each part of the end-of-hand sheet means, and how to check it against your own count.',
     summaryZh: '每局結束的結算表每一部分代表什麼，以及怎麼用自己算的台數核對。',
     steps: [

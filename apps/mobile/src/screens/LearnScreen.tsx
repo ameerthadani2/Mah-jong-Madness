@@ -5,7 +5,7 @@ import { useApp } from '../app-state';
 import { effectiveStreak } from '../storage';
 import { rollingAccuracy } from '../logic/accuracy';
 import { lessonAnswers, lessonComplete } from '../logic/lesson';
-import { groupByTrack, learnSummary, nextLesson, trackTitle, type TrackGroup } from '../logic/learn';
+import { groupByTrack, learnSummary, nextLesson, timedLessons, trackTitle, type TrackGroup } from '../logic/learn';
 import { useDisplayScale } from '../display/DisplayScale';
 import { colors, fonts, space } from '../theme';
 import { Tile, tileDims } from '../components/Tile';
@@ -52,9 +52,11 @@ export function LearnScreen() {
   const pad = width >= 1000 ? 28 : space.lg;
   const drillW = Math.floor((width - pad * 2 - space.md * (cols - 1)) / cols);
   const lessonW = Math.floor((width - pad * 2 - space.md * (lessonCols - 1)) / lessonCols);
-  const groups = groupByTrack(LESSONS, LESSON_TRACKS, done);
-  const summary = learnSummary(LESSONS, LESSON_TRACKS, done);
-  const first = summary.startId ? LESSONS.find((l) => l.id === summary.startId) : undefined;
+  // Minutes measured for the reader's language (engine lessons/minutes.ts).
+  const lessons = timedLessons(locale);
+  const groups = groupByTrack(lessons, LESSON_TRACKS, done);
+  const summary = learnSummary(lessons, LESSON_TRACKS, done);
+  const first = summary.startId ? lessons.find((l) => l.id === summary.startId) : undefined;
   const reviewAcc = rollingAccuracy(app.progress.reviewAccuracies);
   return (
     <ScrollView contentContainerStyle={[styles.wrap, { padding: pad }]}>
@@ -323,8 +325,9 @@ function LessonEnd({ lesson, done }: { lesson: Lesson; done: Record<string, bool
   const app = useApp();
   const { t, locale } = useT();
   const track = LESSON_TRACKS.find((x) => x.id === lesson.track) ?? LESSON_TRACKS[0];
-  const group = groupByTrack(LESSONS, [track], done)[0];
-  const next = nextLesson(LESSONS, LESSON_TRACKS, lesson.id, done);
+  const lessons = timedLessons(locale);
+  const group = groupByTrack(lessons, [track], done)[0];
+  const next = nextLesson(lessons, LESSON_TRACKS, lesson.id, done);
   const trackName = trackTitle(track, locale).main;
   const nextTrack = next.kind === 'newTrack' ? LESSON_TRACKS.find((x) => x.id === next.trackId) : undefined;
   const lead = next.kind === 'track' ? t('learn.end.nextInTrack', { track: trackName }) : next.kind === 'newTrack' && nextTrack ? t('learn.end.trackDone', { track: trackName, next: trackTitle(nextTrack, locale).main }) : t('learn.end.allDone');

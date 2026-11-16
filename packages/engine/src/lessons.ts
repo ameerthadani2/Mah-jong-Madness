@@ -3,6 +3,7 @@
  * Order matters: the app lists lessons in this order within each track.
  */
 export * from './lessons/types';
+export * from './lessons/minutes';
 import type { Lesson } from './lessons/types';
 import { CORE_LESSONS } from './lessons/core';
 import { EFFICIENCY_LESSONS } from './lessons/efficiency';

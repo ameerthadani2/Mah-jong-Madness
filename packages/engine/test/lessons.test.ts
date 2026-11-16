@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { countsFromKinds, discardOptions, kindFromCode, kindsFromString, LESSONS, NUM_PLAY_KINDS, waitChance, waits, type OpponentRead } from '../src/index';
+import { countsFromKinds, discardOptions, kindFromCode, kindsFromString, lessonMinutes, LESSONS, NUM_PLAY_KINDS, readingMinutes, waitChance, waits, type OpponentRead } from '../src/index';
 
 const quizzes = LESSONS.flatMap((l) => l.steps.filter((st) => st.quiz).map((st) => ({ lesson: l.id, title: st.title, quiz: st.quiz! })));
 
@@ -32,6 +32,23 @@ describe('lesson quizzes', () => {
       }
     });
   }
+});
+
+describe('lesson minutes are what reading the lesson takes', () => {
+  // About 200 English words or 400 Chinese characters a minute, plus half a minute a quiz (src/lessons/minutes.ts).
+  it('each declared figure is within 25% of the English measure (a lesson under a minute counts as one)', () => {
+    const off = LESSONS.map((l) => ({ id: l.id, declared: l.minutes, measured: Math.max(1, readingMinutes(l, 'en')) })).filter((m) => Math.abs(m.declared - m.measured) > 0.25 * m.measured);
+    expect(off.map((m) => `${m.id}: declared ${m.declared}, measured ${m.measured.toFixed(1)}`)).toEqual([]);
+  });
+
+  it('the whole course adds up to the same within 10%, in each language', () => {
+    const declared = LESSONS.reduce((n, l) => n + l.minutes, 0);
+    const en = LESSONS.reduce((n, l) => n + readingMinutes(l, 'en'), 0);
+    expect(Math.abs(declared - en) / en).toBeLessThan(0.1);
+    // Chinese reads faster: the app shows each language its own measure, never less than a minute.
+    for (const l of LESSONS) expect(lessonMinutes(l, 'zh-TW')).toBe(Math.max(1, Math.round(readingMinutes(l, 'zh-TW'))));
+    expect(LESSONS.reduce((n, l) => n + readingMinutes(l, 'zh-TW'), 0)).toBeLessThan(en);
+  });
 });
 
 describe('discard quizzes ask for a real choice', () => {

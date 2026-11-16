@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { LESSON_TRACKS, LESSONS, lessonsInTrack } from '@mjm/engine';
-import { groupByTrack, learnSummary, nextLesson, trackTitle } from './learn';
+import { LESSON_TRACKS, LESSONS, lessonMinutes, lessonsInTrack } from '@mjm/engine';
+import { groupByTrack, learnSummary, nextLesson, timedLessons, trackTitle } from './learn';
 
 const TRACKS = [
   { id: 'a', name: 'Alpha', nameZh: '甲' },
@@ -88,5 +88,22 @@ describe('trackTitle', () => {
   it('shows both names in English and only the Chinese in zh-TW', () => {
     expect(trackTitle(LESSON_TRACKS[0], 'en')).toEqual({ main: 'Basics', aside: '入門' });
     expect(trackTitle(LESSON_TRACKS[0], 'zh-TW')).toEqual({ main: '入門', aside: null });
+  });
+});
+
+describe('lesson minutes on the Learn screen', () => {
+  it('are measured for the reader’s language, so Chinese readers see their own (shorter) figures', () => {
+    const en = timedLessons('en');
+    const zh = timedLessons('zh-TW');
+    expect(en.map((l) => l.id)).toEqual(LESSONS.map((l) => l.id));
+    for (const l of en) expect(l.minutes).toBe(lessonMinutes(LESSONS.find((x) => x.id === l.id)!, 'en'));
+    for (const l of zh) expect(l.minutes).toBe(lessonMinutes(LESSONS.find((x) => x.id === l.id)!, 'zh-TW'));
+    const total = (ls: Array<{ minutes: number }>) => ls.reduce((n, l) => n + l.minutes, 0);
+    // The whole course is about a hundred minutes in English, not the 211 it once declared.
+    expect(total(en)).toBeGreaterThan(60);
+    expect(total(en)).toBeLessThan(140);
+    expect(total(zh)).toBeLessThanOrEqual(total(en));
+    // Worked out once per language.
+    expect(timedLessons('en')).toBe(en);
   });
 });
