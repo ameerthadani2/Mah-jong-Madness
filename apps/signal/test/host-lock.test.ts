@@ -10,7 +10,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { randomHex } from '@mjm/engine';
 import { SessionService } from '../src/auth';
 import { loadConfig } from '../src/config';
-import { createHostLock, createPool, type HostLock, type Pool } from '../src/db';
+import { createHostLock, createPool, databaseAddress, type HostLock, type Pool } from '../src/db';
 import { migrate } from '../src/migrate';
 import { createRepos, type RepoHandle } from '../src/repos';
 import { createSignalServer, HostLockLostError, type SignalServerOptions } from '../src/server';
@@ -211,6 +211,28 @@ describe('a host lock lost while the server is starting', () => {
     } finally {
       await new Promise<void>((resolve) => taken.close(() => resolve()));
     }
+  });
+});
+
+describe('a refused database at boot', () => {
+  it('says so at once, with the address and the error code but never the password, and at each retry', async () => {
+    // A port nothing listens on: bind one, note it, close it.
+    const port = await new Promise<number>((resolve) => {
+      const probe = createTcpServer().listen(0, '127.0.0.1', () => {
+        const p = (probe.address() as { port: number }).port;
+        probe.close(() => resolve(p));
+      });
+    });
+    const lines: Array<{ at: number; line: string }> = [];
+    const t0 = Date.now();
+    const lock = createHostLock(`postgres://app:s3cret-pw@127.0.0.1:${port}/mahjong`, { retryMs: 300, waitMs: 1_500, log: (line) => lines.push({ at: Date.now() - t0, line }) });
+    await expect(lock.acquire()).rejects.toThrow(/Could not reach the database for the host lock/);
+    expect(lines.length).toBeGreaterThanOrEqual(3);
+    expect(lines[0].at).toBeLessThan(1_000);
+    expect(lines[0].line).toMatch(new RegExp(`cannot reach the database at 127\\.0\\.0\\.1:${port}/mahjong for the host lock \\(ECONNREFUSED\\); retrying`));
+    expect(lines[1].line).toMatch(/still cannot reach the database .*\(ECONNREFUSED\), attempt 2/);
+    for (const { line } of lines) expect(line).not.toMatch(/s3cret|app:/);
+    expect(databaseAddress('postgres://u:p@db.example.net/x?sslmode=require')).toBe('db.example.net:5432/x');
   });
 });
 

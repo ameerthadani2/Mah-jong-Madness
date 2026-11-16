@@ -164,6 +164,23 @@ export interface HostLockOptions {
   log?: (line: string) => void;
 }
 
+/** `host:port/database` of a connection string, for log lines: never the user or the password. */
+export function databaseAddress(databaseUrl: string): string {
+  try {
+    const url = new URL(databaseUrl);
+    return `${url.hostname || 'localhost'}:${url.port || '5432'}${url.pathname.length > 1 ? url.pathname : ''}`;
+  } catch {
+    return '(unparsable DATABASE_URL)';
+  }
+}
+
+/** A connection error's code (`ECONNREFUSED`, a SQLSTATE such as `28P01`), else its first line. */
+function errorCode(e: unknown): string {
+  const code = (e as { code?: unknown } | null)?.code;
+  if (typeof code === 'string' && code) return code;
+  return String((e as Error | null)?.message ?? e).split('\n')[0].slice(0, 120);
+}
+
 /**
  * A session-level `pg_try_advisory_lock` on a dedicated connection. The URL must be a direct
  * connection: a transaction pooler hands each statement to any server connection, so a session
@@ -204,6 +221,7 @@ export function createHostLock(databaseUrl: string, opts: HostLockOptions = {}):
     async acquire() {
       const until = Date.now() + waitMs;
       let said = false;
+      let failures = 0;
       for (;;) {
         try {
           if (!client) {
@@ -229,6 +247,14 @@ export function createHostLock(databaseUrl: string, opts: HostLockOptions = {}):
           client = null;
           await drop(c);
           if (Date.now() >= until) throw new Error(`Could not reach the database for the host lock: ${(e as Error).message}`);
+          // Said at once and at each retry, so a refused or unreachable database is not a silent wait.
+          failures += 1;
+          const left = Math.max(0, Math.ceil((until - Date.now()) / 1000));
+          log(
+            failures === 1
+              ? `[signal] cannot reach the database at ${databaseAddress(databaseUrl)} for the host lock (${errorCode(e)}); retrying every ${Math.round(retryMs / 100) / 10} s for up to ${left} s`
+              : `[signal] still cannot reach the database at ${databaseAddress(databaseUrl)} (${errorCode(e)}), attempt ${failures}; giving up in ${left} s`,
+          );
         }
         if (Date.now() >= until) {
           const c = client;
