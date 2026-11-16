@@ -164,7 +164,7 @@
       "wall": "留牌",
       "claims": "吃碰與胡牌",
       "flowers": "花牌",
-      "special": "天胡・地胡・人胡",
+      "special": "天胡・地胡・人胡・嚦咕嚦咕",
       "speed": "速度"
     },
     "fields": {
@@ -184,6 +184,7 @@
       "heavenlyTai": "天胡台數",
       "earthlyTai": "地胡台數",
       "humanlyTai": "人胡台數",
+      "liguTai": "嚦咕嚦咕台數（七對加一刻，0 為不計）",
       "speed": "速度",
       "turnSeconds": "每手秒數",
       "timeBankSeconds": "備用時間（秒）"

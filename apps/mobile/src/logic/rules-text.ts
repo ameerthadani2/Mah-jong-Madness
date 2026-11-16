@@ -56,6 +56,9 @@ export function ruleExtraLabel(e: RuleExtra, t: Translate): string {
       return e.value > 0 ? ruleExtraText(e) : t('clubs.rulesText.limitOff', { name: '地胡' });
     case 'humanlyTai':
       return e.value > 0 ? ruleExtraText(e) : t('clubs.rulesText.limitOff', { name: '人胡' });
+    // 嚦咕嚦咕 is off by default, so it is listed only when a table plays it.
+    case 'liguTai':
+      return e.value > 0 ? ruleExtraText(e) : t('clubs.rulesText.limitOff', { name: '嚦咕嚦咕' });
     default:
       return ruleExtraText(e);
   }
@@ -125,7 +128,7 @@ export const RULE_GROUPS: readonly RuleGroup[] = [
   { id: 'wall', fields: [num('deadWallSize', 2)] },
   { id: 'claims', fields: [toggle('passRule'), toggle('multipleWinners'), toggle('allowChi')] },
   { id: 'flowers', fields: [toggle('noFlowerTai')] },
-  { id: 'special', fields: [num('heavenlyTai'), num('earthlyTai'), num('humanlyTai')] },
+  { id: 'special', fields: [num('heavenlyTai'), num('earthlyTai'), num('humanlyTai'), num('liguTai')] },
   { id: 'speed', fields: [{ key: 'speed', kind: 'speed' }, num('turnSeconds'), num('timeBankSeconds', 5)] },
 ];
 

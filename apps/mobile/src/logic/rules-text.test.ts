@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { BOT_SKILLS, DEFAULT_RULES, describeRules, RULE_LIMITS, RULE_PRESETS, rulesFromPreset, SPEED_PRESETS, type BotSkill, type GameSpeed } from '@mjm/engine';
-import { botDescription, botLabel, choosePreset, matchingPreset, presetDescription, presetName, RULE_GROUPS, rulesStakes, rulesSummary, sameRules, setRule, speedLabel } from './rules-text';
+import { botDescription, botLabel, choosePreset, matchingPreset, presetDescription, presetName, RULE_GROUPS, ruleExtraLabel, rulesStakes, rulesSummary, sameRules, setRule, speedLabel } from './rules-text';
 import { translator } from './translator.fixture';
 
 const en = translator('en');
@@ -84,7 +84,7 @@ describe('the rule editor model', () => {
     const keys = RULE_GROUPS.flatMap((g) => g.fields.map((f) => f.key));
     expect([...keys].sort()).toEqual((Object.keys(DEFAULT_RULES) as string[]).sort());
     expect(new Set(keys).size).toBe(keys.length);
-    expect(keys).toHaveLength(19);
+    expect(keys).toHaveLength(20);
     for (const g of RULE_GROUPS) {
       expect(en(`clubs.ruleEditor.groups.${g.id}`)).toBeTruthy();
       expect(zh(`clubs.ruleEditor.groups.${g.id}`)).toBeTruthy();
@@ -117,6 +117,37 @@ describe('the rule editor model', () => {
     // Another preset over those edits asks first; confirming applies it.
     expect(choosePreset(edited, baseline, 'small')).toEqual({ action: 'confirm' });
     expect(choosePreset(edited, baseline, 'small', true)).toEqual({ action: 'apply', rules: rulesFromPreset('small') });
+  });
+});
+
+describe('嚦咕嚦咕 in the rule editor and summaries', () => {
+  it('is a number field in the 天胡 group, labelled in both languages', () => {
+    const special = RULE_GROUPS.find((g) => g.id === 'special')!;
+    expect(special.fields.map((f) => f.key)).toEqual(['heavenlyTai', 'earthlyTai', 'humanlyTai', 'liguTai']);
+    expect(special.fields.find((f) => f.key === 'liguTai')).toEqual({ key: 'liguTai', kind: 'number', step: 1 });
+    expect(en('clubs.ruleEditor.fields.liguTai')).toContain('嚦咕嚦咕');
+    expect(zh('clubs.ruleEditor.fields.liguTai')).toContain('嚦咕嚦咕');
+    expect(setRule(DEFAULT_RULES, 'liguTai', 99).liguTai).toBe(RULE_LIMITS.liguTai[1]);
+  });
+
+  it('is off in the defaults and every preset, and absent from their summaries', () => {
+    expect(DEFAULT_RULES.liguTai).toBe(0);
+    for (const p of RULE_PRESETS) {
+      const r = rulesFromPreset(p.id);
+      expect(r.liguTai, p.id).toBe(0);
+      expect(rulesSummary(r, en, 'en')).not.toContain('嚦咕');
+      expect(rulesSummary(r, zh, 'zh-TW')).not.toContain('嚦咕');
+    }
+  });
+
+  it('reads as a number of 台 in both languages when a table plays it', () => {
+    const on = { ...DEFAULT_RULES, liguTai: 8 };
+    expect(rulesSummary(on, en, 'en')).toBe(describeRules(on));
+    expect(rulesSummary(on, en, 'en')).toContain('嚦咕嚦咕8台');
+    expect(rulesSummary(on, zh, 'zh-TW')).toContain('嚦咕嚦咕8台');
+    // Should a caller list it at 0, it reads as off, never 0台.
+    expect(ruleExtraLabel({ kind: 'liguTai', value: 0 }, en)).toBe('嚦咕嚦咕 off');
+    expect(ruleExtraLabel({ kind: 'liguTai', value: 0 }, zh)).toBe('不計嚦咕嚦咕');
   });
 });
 

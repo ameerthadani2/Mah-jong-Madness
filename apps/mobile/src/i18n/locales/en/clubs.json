@@ -164,7 +164,7 @@
       "wall": "Dead wall",
       "claims": "Claims and wins",
       "flowers": "Flowers",
-      "special": "天胡 · 地胡 · 人胡",
+      "special": "天胡 · 地胡 · 人胡 · 嚦咕嚦咕",
       "speed": "Speed"
     },
     "fields": {
@@ -184,6 +184,7 @@
       "heavenlyTai": "天胡 (dealer wins on the deal) 台",
       "earthlyTai": "地胡 (first draw) 台",
       "humanlyTai": "人胡 (dealer's first discard) 台",
+      "liguTai": "嚦咕嚦咕 (seven pairs and a triplet) 台, 0 = not played",
       "speed": "Speed",
       "turnSeconds": "Seconds per turn",
       "timeBankSeconds": "Time bank (seconds)"
