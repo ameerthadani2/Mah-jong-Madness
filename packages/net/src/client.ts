@@ -69,6 +69,7 @@ export const AUDIT_CAVEATS = {
   serverRestart: 'The server restarted during this hand and some turns were played again',
   appRestart: 'This app was restarted around this deal, so it cannot vouch for all of it',
   tableMoved: 'The table played for this seat while its connection was down',
+  restartClock: 'The server restarted during this match and then played for this seat before this device could check its clock again',
 } as const;
 
 export type AuditCaveat = keyof typeof AUDIT_CAVEATS;
@@ -1694,7 +1695,7 @@ export class TableClient {
     const caveats: string[] = [];
     let replayed: GameState | null = null;
     const anchors: ClockAnchor[] = [];
-    const notes = { tableMoved: false };
+    const notes: { tableMoved: boolean; restartClock?: boolean } = { tableMoved: false };
     const rules = this.pinnedRules ?? this.state.rules;
     if (!rules || !this.state.matchId) return { check: { status: 'unverified', failures: ['No match context'], caveats }, replayed, anchors };
     if (!isAudit(audit) || !isView(finalView)) return { check: { status: 'failed', failures: ['The audit is malformed'], caveats }, replayed, anchors };
@@ -1778,6 +1779,7 @@ export class TableClient {
     if (this.gapHand === h) caveats.push(AUDIT_CAVEATS.gap);
     if (this.rewinds.some((x) => x.hand === h && x.undone)) caveats.push(AUDIT_CAVEATS.serverRestart);
     if (notes.tableMoved) caveats.push(AUDIT_CAVEATS.tableMoved);
+    if (notes.restartClock) caveats.push(AUDIT_CAVEATS.restartClock);
     // An app restart around the deal: this device cannot say it watched all of it, whatever its record now shows.
     // (A seat that joined mid-hand has already said it took no part in the deal.)
     if (this.lapseHand === h && this.lapseDeal && !joined && !caveats.includes(AUDIT_CAVEATS.appRestart)) caveats.push(AUDIT_CAVEATS.appRestart);
@@ -1795,7 +1797,7 @@ export class TableClient {
    * until the clock ran out. `notes.tableMoved` is set when the table rightly played for the seat
    * while its link was down; `unseen` stands in for the record of a hand this device saw nothing of.
    */
-  private replayChecked(start: MatchSnapshot, seed: string, rules: RuleSet, log: LoggedAction[], h: number, end: SeenState | null, failures: string[], anchors: ClockAnchor[] = [], notes?: { tableMoved: boolean }, unseen?: PlayRecord): GameState {
+  private replayChecked(start: MatchSnapshot, seed: string, rules: RuleSet, log: LoggedAction[], h: number, end: SeenState | null, failures: string[], anchors: ClockAnchor[] = [], notes?: { tableMoved: boolean; restartClock?: boolean }, unseen?: PlayRecord): GameState {
     const me = this.state.seat;
     const play = end ? (this.plays.find((p) => p.hand === h) ?? unseen ?? null) : null;
     const shown = new Map<number, string>();
@@ -1879,6 +1881,7 @@ export class TableClient {
       if (verdict === 'early') problems.add(`The table played for this seat while it was connected and its clock had not run out (turn ${n})`);
       else if (verdict === 'downEarly') problems.add(`The table played for this seat while its connection was down, before its clock could have run out (turn ${n})`);
       else if (verdict === 'down' && notes) notes.tableMoved = true;
+      else if (verdict === 'unanchored' && notes) notes.restartClock = true;
     }
     for (const tc of track?.bankTaken ?? []) problems.add(`The table took time from this seat's time bank while its connection was down (turn ${tc})`);
     failures.push(...problems);
@@ -1915,7 +1918,8 @@ export class TableClient {
    * seat had is worked out from the rules and from what this client saw earlier in the hand
    * (`clockTrack`), never from the clock fields of the frame alone; how long it was given is read
    * from the host's time stamps, which are believed only as far as this device's own clock allows
-   * (`offsetFloor`).
+   * (`offsetFloor`). `unanchored`: nothing was wrong that this device can see, but after a restart
+   * of the host it has no fixed point yet to measure the stamps against.
    *
    * Across a change of link, the move was made while this device had none. A seat that drops keeps
    * its clock, so the first such move needs a whole clock to have run out: what was left of the
@@ -1926,7 +1930,7 @@ export class TableClient {
    * the first (`gaps` holds the stretches this replay has judged). Where this device left of its own accord, or has no measure of the stretch, the
    * move is noted and not judged.
    */
-  private judgeTableMove(play: PlayRecord, n: number, end: SeenState | null, rules: RuleSet, anchors: ClockAnchor[], track: ClockTrack, gaps: Set<number>): 'ok' | 'early' | 'downEarly' | 'down' {
+  private judgeTableMove(play: PlayRecord, n: number, end: SeenState | null, rules: RuleSet, anchors: ClockAnchor[], track: ClockTrack, gaps: Set<number>): 'ok' | 'early' | 'downEarly' | 'down' | 'unanchored' {
     let a: SeenState | null = null;
     let b: SeenState | null = null;
     for (const f of play.seen) {
@@ -1942,8 +1946,15 @@ export class TableClient {
       if (a.deadline === null || typeof b.now !== 'number') return 'early';
       const expiry = Math.max(track.bound.get(a) ?? Number.NEGATIVE_INFINITY, claimed);
       if (b.now < expiry - CLOCK_SLACK_MS) return 'early';
-      const floor = this.offsetFloor(b.era ?? 0, play, n, anchors);
-      return floor === null || b.at - b.now < floor ? 'early' : 'ok';
+      const era = b.era ?? 0;
+      const floor = this.offsetFloor(era, play, n, anchors);
+      if (floor === null || b.at - b.now < floor) return 'early';
+      // A host that says it restarted is given a new clock era, and until this seat has moved or
+      // revealed in it nothing ties its stamps to this device's clock but the 30 s for network
+      // delay. That is too loose to say the seat's time had run out: the hand cannot be green.
+      // (A fixed point made after this turn began does not help: the stamps may have leapt before it.)
+      const fixed = (this.clockBase.era === era && this.clockBase.anchor !== null) || anchors.some((k) => k.era === era && k.at <= a.at);
+      return era > 0 && !fixed ? 'unanchored' : 'ok';
     }
     const from: GapStart | null = a ? (typeof a.now === 'number' ? { at: a.at, now: a.now, epoch: a.epoch, era: a.era ?? 0 } : null) : (play.before ?? null);
     const startAt = a ? a.at : play.before?.at;

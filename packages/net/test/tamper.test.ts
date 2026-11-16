@@ -908,6 +908,30 @@ describe('a server that plays for a seat behind a dropped link (assessment probe
       t.finish();
       expect(t.verdict()).toEqual(['partial', [], [AUDIT_CAVEATS.tableMoved]]);
     }));
+
+  it('a restart the server only claims does not buy its clock a fresh allowance: a turn then cut short is amber, never green', () =>
+    scenario(() => {
+      const t = seat('FR1');
+      need(t.playUntil(nthDiscard(t, 3)));
+      // The seat's bank is honestly down to 10 s when the blip comes.
+      t.wait(TURN + 20_000);
+      t.s.botTimerArmed = true;
+      t.act();
+      t.drop();
+      t.clock.now += 800;
+      // On the seat's return the server says it restarted, at the very turn the phone last saw.
+      (t.host as unknown as { restoredAt: { handNumber: number; turnCounter: number } }).restoredAt = { handNumber: t.host.game!.handNumber, turnCounter: t.host.game!.turnCounter };
+      t.back();
+      t.s.botTimerArmed = false;
+      t.s.runBots();
+      need(t.host.phase === 'playing' && t.discarding());
+      // With the phone's knowledge of its clock gone, it stamps 24.6 s ahead and plays 200 ms into the turn.
+      t.clock.now += 200;
+      t.clock.ahead += TURN + 10_000 - 400;
+      t.s.apply(0, chooseAction(t.host.game!, 0)!, 'timeout');
+      t.finish();
+      expect(t.verdict()).toEqual(['partial', [], [AUDIT_CAVEATS.restartClock]]);
+    }));
 });
 
 function seedOf(h: HostInternals, reveals: Array<{ seat: number; secret: string }>): string {
