@@ -43,6 +43,11 @@ export interface RuleSet {
   earthlyTai: number;
   /** 台 for 人胡 (win on the dealer's first discard). Some tables use 8. */
   humanlyTai: number;
+  /**
+   * 台 for 嚦咕嚦咕 (seven pairs and a triplet, fully concealed), a hand some tables play. 0 (the
+   * default) switches it off: a winning hand must then be five sets and a pair.
+   */
+  liguTai: number;
 }
 
 /** Inclusive numeric ranges a rule set must stay within; anything outside falls back to the base value. */
@@ -60,6 +65,7 @@ export const RULE_LIMITS: Record<Exclude<keyof RuleSet, 'speed' | 'drawKeepsDeal
   heavenlyTai: [0, 64],
   earthlyTai: [0, 64],
   humanlyTai: [0, 64],
+  liguTai: [0, 64],
 };
 
 const BOOLEAN_RULES = ['drawKeepsDealer', 'allowChi', 'multipleWinners', 'passRule', 'noFlowerTai'] as const;
@@ -117,6 +123,7 @@ export const DEFAULT_RULES: RuleSet = {
   heavenlyTai: 24,
   earthlyTai: 16,
   humanlyTai: 16,
+  liguTai: 0,
 };
 
 /** Defaults with `overrides` applied, sanitised so the result is always a legal rule set. */
@@ -189,6 +196,7 @@ export type RuleExtra =
   | { kind: 'heavenlyTai'; value: number }
   | { kind: 'earthlyTai'; value: number }
   | { kind: 'humanlyTai'; value: number }
+  | { kind: 'liguTai'; value: number }
   | { kind: 'startingPoints'; value: number };
 
 export function ruleExtras(r: RuleSet): RuleExtra[] {
@@ -206,6 +214,7 @@ export function ruleExtras(r: RuleSet): RuleExtra[] {
   if (r.heavenlyTai !== d.heavenlyTai) out.push({ kind: 'heavenlyTai', value: r.heavenlyTai });
   if (r.earthlyTai !== d.earthlyTai) out.push({ kind: 'earthlyTai', value: r.earthlyTai });
   if (r.humanlyTai !== d.humanlyTai) out.push({ kind: 'humanlyTai', value: r.humanlyTai });
+  if (r.liguTai !== d.liguTai) out.push({ kind: 'liguTai', value: r.liguTai });
   if (r.startingPoints !== d.startingPoints) out.push({ kind: 'startingPoints', value: r.startingPoints });
   return out;
 }
@@ -238,6 +247,9 @@ export function ruleExtraText(e: RuleExtra): string {
       return e.value > 0 ? `地胡${e.value}台` : '地胡 off';
     case 'humanlyTai':
       return e.value > 0 ? `人胡${e.value}台` : '人胡 off';
+    // 0 is the default (the hand is not played), so it is listed only if a caller passes it.
+    case 'liguTai':
+      return e.value > 0 ? `嚦咕嚦咕${e.value}台` : '嚦咕嚦咕 off';
     case 'startingPoints':
       return `start ${e.value}`;
   }

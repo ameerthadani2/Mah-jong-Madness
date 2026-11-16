@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { clockMatchesSpeed, DEFAULT_RULES, describeRules, kindFromCode, kindsFromString, ruleExtras, scoreWin, withRules } from '../src/index';
+import { clockMatchesSpeed, DEFAULT_RULES, describeRules, kindFromCode, kindsFromString, ruleExtras, ruleExtraText, sanitizeRules, scoreWin, withRules } from '../src/index';
 
 describe('describeRules', () => {
   it('names the speed only when the clock is that speed\'s, and says Custom when it was changed by hand', () => {
@@ -60,8 +60,24 @@ describe('describeRules', () => {
       { heavenlyTai: 32 },
       { earthlyTai: 24 },
       { humanlyTai: 4 },
+      { liguTai: 8 },
       { startingPoints: 500 },
     ];
     for (const c of changes) expect(ruleExtras(withRules(c)), JSON.stringify(c)).toHaveLength(1);
+  });
+
+  it('lists 嚦咕嚦咕 with its 台 when a table plays it, and reads 0 (the default) as off', () => {
+    expect(DEFAULT_RULES.liguTai).toBe(0);
+    const on = withRules({ liguTai: 8 });
+    expect(ruleExtras(on)).toEqual([{ kind: 'liguTai', value: 8 }]);
+    expect(describeRules(on)).toBe('底100 / 台20 · 16 rotations · Normal (15s + 30s bank) · 嚦咕嚦咕8台');
+    expect(ruleExtras(withRules({ liguTai: 0 }))).toEqual([]);
+    expect(ruleExtraText({ kind: 'liguTai', value: 0 })).toBe('嚦咕嚦咕 off');
+    expect(describeRules(withRules({ liguTai: 0 }))).not.toMatch(/嚦咕/);
+    // Clamped like the other limit hands, and junk keeps the base value.
+    expect(sanitizeRules({ liguTai: 99 }).liguTai).toBe(64);
+    expect(sanitizeRules({ liguTai: -3 }).liguTai).toBe(0);
+    expect(sanitizeRules({ liguTai: '8' }).liguTai).toBe(0);
+    expect(sanitizeRules({ liguTai: 6.9 }).liguTai).toBe(6);
   });
 });
