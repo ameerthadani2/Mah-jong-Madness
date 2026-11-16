@@ -30,13 +30,19 @@ empty seats so a table always runs; offline you play the same engine against bot
 
 ```bash
 npm install            # Node ≥ 20
-npm test               # every workspace
+npm test               # every workspace's logic tests (vitest)
+npm run coverage       # the same tests with coverage, one summary line a workspace; fails below a floor
+npm run test:render    # the app's render tests: components and screens under jest (apps/mobile)
 npm run typecheck      # every workspace
 npm run sim -- 50      # 50 bot-vs-bot matches, prints win/draw stats
 npm run signal         # game server on :8787 (in memory, guest sign-in)
 npm run mobile         # Expo dev server; press i / a / w
 npm run smoke -w @mjm/signal -- http://127.0.0.1:8787   # play one hand against a running server
+cd apps/mobile && npm run e2e          # build the web app and play a hand in Chromium (Playwright)
+cd apps/mobile && npm run e2e:screens  # the main screens at each reference viewport, with screenshots
 ```
+
+How each kind of test fits together, and the coverage floors: `docs/ARCHITECTURE.md`, How the app is tested.
 
 Playing against bots needs nothing else. Online tables always run on the game server: builds read its
 address from the `SIGNAL_URL` repository variable, and development builds can override it under
