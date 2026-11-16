@@ -122,6 +122,31 @@ function contract(name: string, repos: () => Repos) {
       await expect(wallet.spend(u, 'theme.imperial')).rejects.toMatchObject({ code: 'insufficient' });
     });
 
+    it('a debt blocks every spend, even one the bonus diamonds would cover, until a top-up clears it', async () => {
+      const r = repos();
+      const u = await user();
+      const wallet = new WalletService(r, { now: () => T0, log: () => {}, testerUserIds: [] });
+      const pack = (type: string, storeProductId: string, transactionId: string, extra: Partial<StoreEvent> = {}) =>
+        wallet.applyStoreEvent(storeEvent(u, type, { storeProductId, transactionId, price: 4.99, currency: 'USD', ...extra }));
+      expect((await pack('NON_RENEWING_PURCHASE', 'diamonds.300', `tx-debt-${u}`)).outcome).toBe('credited');
+      await wallet.spend(u, 'theme.bamboo');
+      expect((await pack('CANCELLATION', 'diamonds.300', `tx-debt-${u}`, { cancelReason: 'CUSTOMER_SUPPORT' })).outcome).toBe('refunded');
+      // Bonus diamonds alone would pay for a 300-diamond look, but purchased diamonds are below zero.
+      await wallet.credit(u, 0, 'grant', null, 1_000);
+      expect(await r.wallet.get(u)).toMatchObject({ diamonds: -300, bonusDiamonds: 1_000 });
+      await expect(wallet.spend(u, 'theme.imperial')).rejects.toMatchObject({ code: 'insufficient' });
+      await expect(wallet.spend(u, 'frame.bamboo')).rejects.toMatchObject({ code: 'insufficient' });
+      // A top-up that leaves part of the debt still blocks; one that clears it lets the spend through, bonus first.
+      expect((await pack('NON_RENEWING_PURCHASE', 'diamonds.60', `tx-part-${u}`)).outcome).toBe('credited');
+      expect(await r.wallet.get(u)).toMatchObject({ diamonds: -240, bonusDiamonds: 1_000 });
+      await expect(wallet.spend(u, 'theme.imperial')).rejects.toMatchObject({ code: 'insufficient' });
+      expect((await r.wallet.getEntitlements(u)).map((e) => e.entitlement)).toEqual(['theme.bamboo']);
+      expect((await pack('NON_RENEWING_PURCHASE', 'diamonds.300', `tx-clear-${u}`)).outcome).toBe('credited');
+      expect(await r.wallet.get(u)).toMatchObject({ diamonds: 60, bonusDiamonds: 1_000 });
+      expect(await wallet.spend(u, 'theme.imperial')).toMatchObject({ spent: 300, wallet: { diamonds: 60, bonusDiamonds: 700 } });
+      expect((await r.wallet.getEntitlements(u)).map((e) => e.entitlement).sort()).toEqual(['theme.bamboo', 'theme.imperial']);
+    });
+
     it('finds a purchase by its store transaction id, whichever account holds it', async () => {
       const r = repos();
       const u = await user();
