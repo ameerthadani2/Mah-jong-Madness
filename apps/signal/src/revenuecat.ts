@@ -48,6 +48,7 @@ export function parseRevenueCatWebhook(body: unknown): StoreEvent | null {
     transactionId: str(ev.transaction_id),
     expiresAt: ms(ev.expiration_at_ms),
     purchasedAt: ms(ev.purchased_at_ms),
+    eventAt: ms(ev.event_timestamp_ms),
     price,
     currency: currency ? currency.toUpperCase() : null,
     store: (str(ev.store, 32) ?? 'unknown').toLowerCase(),

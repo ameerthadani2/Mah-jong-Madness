@@ -78,6 +78,8 @@ export interface StoreEvent {
   /** Subscription end as the store reports it (ms), when given. */
   expiresAt: number | null;
   purchasedAt: number | null;
+  /** When the store sent the event (ms), when given (`event_timestamp_ms`). */
+  eventAt?: number | null;
   price: number | null;
   currency: string | null;
   /** `app_store`, `play_store`, … */
@@ -104,7 +106,15 @@ export type StoreOutcome =
   | 'ignored_unknown_product'
   | 'ignored_sandbox'
   | 'ignored_stale'
-  | 'ignored_type';
+  | 'ignored_type'
+  | 'ignored_invalid';
+
+/**
+ * Longest a store event may grant ahead: a subscription end more than this after the event (its
+ * `event_timestamp_ms`, when given) or after now is refused as invalid. A yearly plan runs 365
+ * or 366 days, so this leaves a month for grace periods and late delivery.
+ */
+export const MAX_STORE_EXPIRY_MS = 400 * 86_400_000;
 
 export interface StoreResult {
   outcome: StoreOutcome;
@@ -455,6 +465,10 @@ export class WalletService {
       case 'RENEWAL':
       case 'UNCANCELLATION':
       case 'SUBSCRIPTION_EXTENDED': {
+        if (e.expiresAt !== null && Math.min(e.eventAt ?? at, at) + MAX_STORE_EXPIRY_MS < e.expiresAt) {
+          this.log(`[signal] store event ${e.eventId} (${e.type}) expires ${new Date(e.expiresAt).toISOString()}, more than 400 days ahead; recorded as invalid, nothing granted`);
+          return { outcome: 'ignored_invalid', userId };
+        }
         const until = e.expiresAt ?? (e.purchasedAt ?? at) + PERIOD_MS[product.period];
         // The period end is kept only under the store's own transaction id, which a refund names.
         if (e.type === 'INITIAL_PURCHASE' || e.type === 'RENEWAL') await this.recordPurchase(tx, e, userId, product.id, transactionId, at, e.transactionId ? until : null);

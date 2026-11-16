@@ -217,6 +217,30 @@ describe('webhook events', () => {
     expect([me.entitlements, me.wallet]).toEqual([[], { diamonds: 0, bonusDiamonds: 0 }]);
   });
 
+  it('an expiry more than 400 days ahead is recorded as invalid and grants nothing; an honest yearly plan still works', async () => {
+    const f = fixture();
+    const g = await f.guest();
+    const year = await f.post(rc('INITIAL_PURCHASE', g.userId, { product_id: 'coach.gold.year', expiration_at_ms: T0 + 366 * DAY }));
+    expect(year.json).toEqual({ ok: true, outcome: 'entitled', duplicate: false });
+    // A renewal delivered late (its event a month old) for the next year is still honest.
+    f.advance(30 * DAY);
+    const late = await f.post(rc('RENEWAL', g.userId, { product_id: 'coach.gold.year', event_timestamp_ms: T0, purchased_at_ms: T0, expiration_at_ms: T0 + 395 * DAY }));
+    expect(late.json.outcome).toBe('extended');
+
+    const h = await f.guest();
+    const forever = rc('INITIAL_PURCHASE', h.userId, { expiration_at_ms: Date.UTC(2099, 0, 1) });
+    expect((await f.post(forever)).json).toEqual({ ok: true, outcome: 'ignored_invalid', duplicate: false });
+    // 401 days after the event, though the event is dated far ahead too: refused against now as well.
+    const ahead = rc('SUBSCRIPTION_EXTENDED', h.userId, { event_timestamp_ms: f.now() + 300 * DAY, purchased_at_ms: f.now() + 300 * DAY, expiration_at_ms: f.now() + 401 * DAY });
+    expect((await f.post(ahead)).json.outcome).toBe('ignored_invalid');
+    const justOver = rc('RENEWAL', h.userId, { product_id: 'fourwinds.year', event_timestamp_ms: f.now(), purchased_at_ms: f.now(), expiration_at_ms: f.now() + 400 * DAY + 1 });
+    expect((await f.post(justOver)).json.outcome).toBe('ignored_invalid');
+    expect((await f.me(h.auth)).entitlements).toEqual([]);
+    expect(await f.repos.wallet.listPurchases(h.userId)).toEqual([]);
+    const stored = await f.repos.storeEvents.get(forever.event.id);
+    expect([stored?.outcome, stored?.userId]).toEqual(['ignored_invalid', h.userId]);
+  });
+
   it('replaying a whole recorded sequence changes nothing the second time', async () => {
     const f = fixture();
     const g = await f.guest();

@@ -378,7 +378,7 @@ Header `Authorization: Bearer <REVENUECAT_WEBHOOK_SECRET>` (set exactly that as 
 | `TRANSFER` | Store-granted plans bought on the event's `store` move from `transferred_from` to the first known `transferred_to` account (later expiry wins). A plan the old account bought on another store stays, as do support grants and diamonds; a plan with no purchase on record moves |
 | `TEST` | Recorded only |
 
-`outcome` is one of `credited`, `entitled`, `extended`, `expired`, `refunded`, `transferred`, `recorded`, `test`, `duplicate`, `ignored_unknown_user`, `ignored_unknown_product`, `ignored_sandbox`, `ignored_stale`, `ignored_type`.
+`outcome` is one of `credited`, `entitled`, `extended`, `expired`, `refunded`, `transferred`, `recorded`, `test`, `duplicate`, `ignored_unknown_user`, `ignored_unknown_product`, `ignored_sandbox`, `ignored_stale`, `ignored_type`, `ignored_invalid`. `ignored_invalid` is a purchase, renewal or extension whose `expiration_at_ms` is more than 400 days after the event's `event_timestamp_ms` or after the server's clock: it is recorded and grants nothing (a yearly plan runs 365 or 366 days).
 
 ## Reports (Phase 4)
 
