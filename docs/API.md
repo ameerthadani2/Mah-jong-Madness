@@ -313,7 +313,7 @@ The app side lives in `apps/mobile/src/monetisation/` (store and wallet), `apps/
 
 Entitlements are decided by the server from store notifications; the app never grants anything itself and only reads `GET /api/me`. The app configures RevenueCat with the server user id as the RevenueCat **app user id** (call `Purchases.logIn(userId)` after the guest bootstrap or a sign-in), and must re-read `/api/me` after a purchase or a Restore (the webhook usually lands within a few seconds; the app polls `/api/me` for 8 s).
 
-`GET /api/config.storeEnabled` is `true` only when the server has `REVENUECAT_WEBHOOK_SECRET`. When it is `false` the app shows "Store unavailable" and offers no purchase.
+`GET /api/config.storeEnabled` is `true` only when the server has `REVENUECAT_WEBHOOK_SECRET` (in production, and `REVENUECAT_SECRET_KEY` as well: reconciliation needs it, so with only one of the two the store stays off and the boot log names the missing one). When it is `false` the app shows "Store unavailable" and offers no purchase.
 
 `GET /api/me` also returns:
 
@@ -413,4 +413,4 @@ Copy is English, or Traditional Chinese when the device locale starts with `zh`.
 
 ## Environment (server, Phases 4 and 6)
 
-`REVENUECAT_WEBHOOK_SECRET` (absent → webhook 503, `storeEnabled: false`), `EXPO_ACCESS_TOKEN` (absent → no push, `pushEnabled: false`), `SENTRY_DSN` (+ optional `SENTRY_ENVIRONMENT`, `SENTRY_RELEASE`; absent → errors only logged), `POSTHOG_KEY` (+ optional `POSTHOG_HOST`; absent → no server events).
+`REVENUECAT_WEBHOOK_SECRET` (absent, or in production without `REVENUECAT_SECRET_KEY` → webhook 503, `storeEnabled: false`), `EXPO_ACCESS_TOKEN` (absent → no push, `pushEnabled: false`), `SENTRY_DSN` (+ optional `SENTRY_ENVIRONMENT`, `SENTRY_RELEASE`; absent → errors only logged), `POSTHOG_KEY` (+ optional `POSTHOG_HOST`; absent → no server events).

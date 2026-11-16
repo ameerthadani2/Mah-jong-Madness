@@ -59,7 +59,7 @@ With no environment at all the server runs: accounts, clubs and tables are kept 
 | `MAINTENANCE_MESSAGE` | none | Reported as `GET /api/config.maintenance`; the app shows it instead of online play |
 | `P2P_ROOMS` | off | Set to `1` to allow relay-only rooms in which a player's device is the host. For development only |
 | `REVENUECAT_WEBHOOK_SECRET` | none | The value RevenueCat sends as `Authorization: Bearer <secret>` on its webhook (set the header to `Bearer <secret>` in the RevenueCat dashboard). Absent: `POST /api/webhooks/revenuecat` answers 503 and `/api/config.storeEnabled` is false |
-| `REVENUECAT_SECRET_KEY` | none | RevenueCat secret API key for reconciliation (`GET /v1/subscribers/{id}`). Absent: `POST /api/wallet/sync` answers `synced:false` and the nightly job does nothing |
+| `REVENUECAT_SECRET_KEY` | none | RevenueCat secret API key for reconciliation (`GET /v1/subscribers/{id}`). Absent: `POST /api/wallet/sync` answers `synced:false` and the nightly job does nothing. With `NODE_ENV=production` the store is on only when both `REVENUECAT_WEBHOOK_SECRET` and `REVENUECAT_SECRET_KEY` are set; with one of them the server boots with the store off (webhook 503, `storeEnabled: false`) and a warning naming the other |
 | `TESTER_USER_IDS` | none | Comma-separated account ids whose sandbox (TestFlight / Play test) purchases are granted. Everyone else's sandbox events are recorded as `ignored_sandbox` |
 | `ADMIN_TOKEN` | none | Bearer token for `/api/admin/*` (support grants, the report queue, bans and mutes). Absent: those routes answer 503 |
 | `QUICK_MATCH_FILL_MS` | `20000` | How long a quick-match group of one to three humans waits before Club bots fill its empty seats (1 to 600,000 ms) |

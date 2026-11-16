@@ -78,7 +78,8 @@ you set it.
 moment creating a club needs The Four Winds Club, and until the products exist in the stores and
 in RevenueCat and a build carries the purchase keys, nobody can buy that plan, so nobody could
 create a club. Set it, with `REVENUECAT_SECRET_KEY` and `TESTER_USER_IDS`, when
-[`OWNER_TODO.md`](OWNER_TODO.md) steps 6 to 8 are done.
+[`OWNER_TODO.md`](OWNER_TODO.md) steps 6 to 8 are done. In production the store comes on only
+when both RevenueCat secrets are set (one alone boots with the store off and a warning).
 
 | Secret | What it unblocks | Absent |
 | --- | --- | --- |
@@ -87,7 +88,7 @@ create a club. Set it, with `REVENUECAT_SECRET_KEY` and `TESTER_USER_IDS`, when
 | `AUTH_PEPPER` | Sessions and guest secrets that survive restarts. Keep a copy in your password manager: losing it signs every player out and locks every guest account out for good, because the secret on the phone is a guest's only credential (see "Rotating the pepper"). Production also refuses one shorter than 32 characters, one character repeated, or a value copied from these docs (`…`, `$PEPPER`, a `<placeholder>`, the command that makes one), and the same for each `AUTH_PEPPER_PREVIOUS` entry: use `openssl rand -hex 32` as below | boot refused in production |
 | `ADMIN_TOKEN` | Support grants (`POST /api/admin/grant`) and the moderation endpoints | those routes answer 503 |
 | `REVENUECAT_WEBHOOK_SECRET` | Real purchases: the store webhook, and `storeEnabled` in `/api/config`. Generate it, show it and save it (`S="$(openssl rand -hex 32)"; echo "$S"`), set it, and put the same value in RevenueCat → Integrations → Webhooks as `Bearer <value>`, URL `https://<name>.fly.dev/api/webhooks/revenuecat`. **Setting it makes the store live: from then on creating a club needs The Four Winds Club**, so set it only when the products can be bought (OWNER_TODO steps 6 and 7) | the app shows "Store unavailable", and anyone may create a club |
-| `REVENUECAT_SECRET_KEY` | Reconciliation after Restore and nightly (RevenueCat → API keys → a secret v1 key) | a purchase whose webhook was lost stays missing until support grants it |
+| `REVENUECAT_SECRET_KEY` | Reconciliation after Restore and nightly (RevenueCat → API keys → a secret v1 key). In production it is also needed to turn the store on: with `REVENUECAT_WEBHOOK_SECRET` alone (or this alone) the server boots with the store off and a warning naming the missing one, so set the two together | the store stays off in production |
 | `TESTER_USER_IDS` | Sandbox purchases (TestFlight, Play testing) are granted to these accounts only. Ids come from Settings → Account → "Player id" on each tester's phone, so this one is usually set after the first builds | every sandbox purchase is recorded and ignored |
 | `CORS_ORIGINS` | The web preview (and any other web page) may call the API: the origins allowed, comma-separated, e.g. `https://<owner>.github.io` (scheme and host only, no path). The native apps need nothing | a browser blocks every API call from the web build ("Failed to fetch"), so it cannot sign in, open a table or join a club; the server's boot line says `CORS same origin only` |
 

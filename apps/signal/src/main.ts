@@ -18,7 +18,7 @@
  * freezes the tables, writes them and exits 1 so Fly restarts the machine.
  */
 import { SessionService } from './auth';
-import { loadConfig, missingProductionEnv, missingProductionEnvMessage, pepperFromEnv, providersFromEnv, weakPepperMessage, weakPepperProblems } from './config';
+import { loadConfig, missingProductionEnv, missingProductionEnvMessage, pepperFromEnv, providersFromEnv, storeConfigWarning, weakPepperMessage, weakPepperProblems } from './config';
 import { createHostLock, createPool, hostLockTarget } from './db';
 import { migrate } from './migrate';
 import { createAnalytics, initSentry, reportError } from './observability';
@@ -73,6 +73,8 @@ async function main(): Promise<void> {
   if (flag(env.MIGRATE_ON_BOOT)) await runMigrations();
   const warn = (line: string) => console.warn(line);
   const config = loadConfig(env);
+  const storeWarning = storeConfigWarning(env);
+  if (storeWarning) warn(storeWarning);
   if (config.dataDir) warn(`[signal] DATA_DIR (${config.dataDir}) is no longer used: clubs and tables are stored through the repositories`);
   const repos = createRepos({ databaseUrl: env.DATABASE_URL });
   if (repos.kind === 'memory') warn('[signal] DATABASE_URL is not set: accounts, clubs and tables are kept in memory and lost on restart');

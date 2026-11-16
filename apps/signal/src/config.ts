@@ -37,7 +37,8 @@ export interface SignalConfig {
   maintenance: string | null;
   /**
    * The Authorization secret RevenueCat sends with each webhook (`REVENUECAT_WEBHOOK_SECRET`).
-   * Null: the webhook answers 503 and `/api/config` reports `storeEnabled: false`.
+   * Null: the webhook answers 503 and `/api/config` reports `storeEnabled: false`. With
+   * `NODE_ENV=production` it is also null unless `REVENUECAT_SECRET_KEY` is set (see `storeConfigWarning`).
    */
   revenueCatWebhookSecret: string | null;
 }
@@ -123,8 +124,39 @@ export function loadConfig(env: Env = process.env): SignalConfig {
     p2pRooms: flag(env.P2P_ROOMS, false),
     minBuild: env.MIN_BUILD && /^\d+$/.test(env.MIN_BUILD.trim()) ? Number(env.MIN_BUILD.trim()) : 0,
     maintenance: env.MAINTENANCE_MESSAGE && env.MAINTENANCE_MESSAGE.trim() ? env.MAINTENANCE_MESSAGE.trim().slice(0, 500) : null,
-    revenueCatWebhookSecret: (env.REVENUECAT_WEBHOOK_SECRET ?? '').trim() || null,
+    revenueCatWebhookSecret: storeSwitchedOff(env) ? null : (env.REVENUECAT_WEBHOOK_SECRET ?? '').trim() || null,
   };
+}
+
+const isProduction = (env: Env) => (env.NODE_ENV ?? '').trim().toLowerCase() === 'production';
+
+/** The RevenueCat variable a production store is missing, when exactly one of the two is set. */
+function storeMissing(env: Env): 'REVENUECAT_WEBHOOK_SECRET' | 'REVENUECAT_SECRET_KEY' | null {
+  if (!isProduction(env)) return null;
+  const webhook = !!(env.REVENUECAT_WEBHOOK_SECRET ?? '').trim();
+  const key = !!(env.REVENUECAT_SECRET_KEY ?? '').trim();
+  if (webhook === key) return null;
+  return webhook ? 'REVENUECAT_SECRET_KEY' : 'REVENUECAT_WEBHOOK_SECRET';
+}
+
+/**
+ * True when production has the webhook secret without `REVENUECAT_SECRET_KEY`: the store stays
+ * off, because without the key a purchase whose webhook was lost could never be reconciled.
+ */
+function storeSwitchedOff(env: Env): boolean {
+  return storeMissing(env) === 'REVENUECAT_SECRET_KEY';
+}
+
+/**
+ * With `NODE_ENV=production` the store is on only when both `REVENUECAT_WEBHOOK_SECRET` and
+ * `REVENUECAT_SECRET_KEY` are set. The line `main.ts` prints when exactly one is, naming the
+ * other; null when there is nothing to say (both, neither, or outside production).
+ */
+export function storeConfigWarning(env: Env): string | null {
+  const missing = storeMissing(env);
+  if (!missing) return null;
+  const have = missing === 'REVENUECAT_SECRET_KEY' ? 'REVENUECAT_WEBHOOK_SECRET' : 'REVENUECAT_SECRET_KEY';
+  return `[signal] ${have} is set but ${missing} is not: the store stays off (purchases need the webhook, and reconciliation needs the secret key). Set ${missing} to turn it on`;
 }
 
 const list = (v: string | undefined) =>
@@ -193,7 +225,7 @@ const EXAMPLE_PEPPERS = [
  * `AUTH_PEPPER` is `missingProductionEnv`'s business.
  */
 export function weakPepperProblems(env: Env): string[] {
-  if ((env.NODE_ENV ?? '').trim().toLowerCase() !== 'production') return [];
+  if (!isProduction(env)) return [];
   const why = (value: string): string | null => {
     if (EXAMPLE_PEPPERS.includes(value) || /^<.*>$/.test(value)) return 'is an example value from the docs';
     if (value.length < MIN_PEPPER_LENGTH) return `is shorter than ${MIN_PEPPER_LENGTH} characters`;

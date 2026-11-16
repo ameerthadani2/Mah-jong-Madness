@@ -6,7 +6,7 @@
 import { spawn } from 'node:child_process';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { missingProductionEnv, missingProductionEnvMessage, weakPepperMessage, weakPepperProblems } from '../src/config';
+import { loadConfig, missingProductionEnv, missingProductionEnvMessage, storeConfigWarning, weakPepperMessage, weakPepperProblems } from '../src/config';
 import { hostLockTarget } from '../src/db';
 
 const ROOT = join(__dirname, '..');
@@ -115,5 +115,26 @@ describe('fail-closed boot', () => {
     expect(output).toContain('refusing to start: AUTH_PEPPER is shorter than 32 characters');
     expect(output).not.toContain('hunter2');
     expect(output).not.toContain('listening');
+  }, 30_000);
+
+  it('production turns the store on only with both RevenueCat secrets, and names the missing one', () => {
+    const both = { REVENUECAT_WEBHOOK_SECRET: 'whsec', REVENUECAT_SECRET_KEY: 'sk_live' };
+    const prod = (env: Record<string, string>) => ({ NODE_ENV: 'production', ...env });
+    expect(loadConfig(prod(both)).revenueCatWebhookSecret).toBe('whsec');
+    expect(storeConfigWarning(prod(both))).toBeNull();
+    expect(loadConfig(prod({ REVENUECAT_WEBHOOK_SECRET: 'whsec' })).revenueCatWebhookSecret).toBeNull();
+    expect(storeConfigWarning(prod({ REVENUECAT_WEBHOOK_SECRET: 'whsec' }))).toMatch(/REVENUECAT_SECRET_KEY is not: the store stays off/);
+    expect(loadConfig(prod({ REVENUECAT_SECRET_KEY: 'sk_live' })).revenueCatWebhookSecret).toBeNull();
+    expect(storeConfigWarning(prod({ REVENUECAT_SECRET_KEY: 'sk_live' }))).toMatch(/REVENUECAT_WEBHOOK_SECRET is not: the store stays off/);
+    expect(storeConfigWarning(prod({}))).toBeNull();
+    // Development keeps the webhook secret alone (the webhook tests and local runs use it).
+    expect(loadConfig({ REVENUECAT_WEBHOOK_SECRET: 'whsec' }).revenueCatWebhookSecret).toBe('whsec');
+    expect(storeConfigWarning({ REVENUECAT_WEBHOOK_SECRET: 'whsec' })).toBeNull();
+  });
+
+  it('boots in production with the store off and a warning when only the webhook secret is set', async () => {
+    const { output } = await boot({ NODE_ENV: 'production', ALLOW_EPHEMERAL: '1', PORT: '18981', REVENUECAT_WEBHOOK_SECRET: 'whsec-only' }, /listening on/);
+    expect(output).toMatch(/REVENUECAT_WEBHOOK_SECRET is set but REVENUECAT_SECRET_KEY is not: the store stays off/);
+    expect(output).toMatch(/listening on :18981 .*store off/);
   }, 30_000);
 });
