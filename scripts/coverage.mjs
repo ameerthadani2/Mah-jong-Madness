@@ -17,7 +17,8 @@ const WORKSPACES = [
 const rows = [];
 let failed = false;
 for (const [name, dir] of WORKSPACES) {
-  const run = spawnSync('npm', ['run', 'coverage', '-w', name], { cwd: root, stdio: 'inherit' });
+  // COVERAGE=1 tells timing tests that instrumentation slows the code down (test/helpers/timing.ts).
+  const run = spawnSync('npm', ['run', 'coverage', '-w', name], { cwd: root, stdio: 'inherit', env: { ...process.env, COVERAGE: '1' } });
   const ok = run.status === 0;
   if (!ok) failed = true;
   let total = null;

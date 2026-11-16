@@ -10,7 +10,7 @@
   },
   "scripts": {
     "test": "vitest run",
-    "coverage": "vitest run --coverage",
+    "coverage": "COVERAGE=1 vitest run --coverage",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "sim": "tsx scripts/simulate.ts"

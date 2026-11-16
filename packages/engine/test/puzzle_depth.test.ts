@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { timeBound } from './helpers/timing';
 import { DEFENCE_SAFETY_ORDER, defenceOrderRule, defencePuzzle, kindInfo, valuePuzzle, valueSpeedRule, type DefenceOption, type ValueOption } from '../src/index';
 
 // How often a one-line rule answers a puzzle: "keep the most winning tiles" for value puzzles, a
@@ -80,8 +81,8 @@ describe('hard value puzzles need more than "keep the most winning tiles"', () =
   });
 
   it('generate quickly enough for the server to regenerate a Rush run (loose bound for CI)', () => {
-    expect(hard.median).toBeLessThan(60);
-    expect(hard.max).toBeLessThan(1500);
+    expect(hard.median).toBeLessThan(timeBound(60));
+    expect(hard.max).toBeLessThan(timeBound(1500));
   });
 });
 
@@ -122,7 +123,7 @@ describe('hard defence puzzles need reading the discards, not a fixed safety ord
   });
 
   it('generate quickly enough for the server to regenerate a Rush run (loose bound for CI)', () => {
-    expect(hard.median).toBeLessThan(60);
-    expect(hard.max).toBeLessThan(1500);
+    expect(hard.median).toBeLessThan(timeBound(60));
+    expect(hard.max).toBeLessThan(timeBound(1500));
   });
 });

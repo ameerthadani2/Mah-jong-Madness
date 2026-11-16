@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { timeBound } from './helpers/timing';
 import {
   applyAction,
   chooseAction,
@@ -228,7 +229,7 @@ describe('defence puzzles', () => {
   const { puzzles, avgMs } = generateAll(defencePuzzle);
 
   it('generate in under 50 ms on average', () => {
-    expect(avgMs).toBeLessThan(50);
+    expect(avgMs).toBeLessThan(timeBound(50));
   });
 
   it('accept every near-safest discard that keeps shanten, and only those', () => {
@@ -373,7 +374,7 @@ describe('claim puzzles', () => {
   const { puzzles, avgMs } = generateAll(claimPuzzle);
 
   it('generate in under 50 ms on average', () => {
-    expect(avgMs).toBeLessThan(50);
+    expect(avgMs).toBeLessThan(timeBound(50));
   });
 
   it('offer exactly the legal claims, and the coach action is always one of the accepted answers', () => {
@@ -458,7 +459,7 @@ describe('value puzzles', () => {
   const { puzzles, avgMs } = generateAll(valuePuzzle);
 
   it('generate in under 10 ms on average', () => {
-    expect(avgMs).toBeLessThan(10);
+    expect(avgMs).toBeLessThan(timeBound(10));
   });
 
   it('judge every ready discard by its exact expected score, accepting all within the tolerance', () => {
