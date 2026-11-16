@@ -6,12 +6,16 @@ import { describe, expect, it } from 'vitest';
 import {
   applyAction,
   countsFromKinds,
+  hintFor,
   DEFAULT_RULES,
   isLiguShape,
   isWinningHand,
   kindFromCode,
+  kindOf,
   kindsFromString,
   scoreWin,
+  waits,
+  waitsFor,
   withRules,
   type GameState,
   type RuleSet,
@@ -20,6 +24,7 @@ import {
 import { dealt, discard, keysOf, nonDiscard, offers, respond, setup, tileTotal } from './helpers/state';
 
 const c = (s: string) => countsFromKinds(kindsFromString(s));
+const kinds = (s: string) => kindsFromString(s).sort((a, b) => a - b);
 const ON = withRules({ liguTai: 8 });
 
 /** Eight pairs: waits on any of its eight kinds to make the triplet. */
@@ -166,6 +171,62 @@ describe('嚦咕嚦咕: scoring', () => {
   });
 });
 
+describe('嚦咕嚦咕: waits', () => {
+  it('eight pairs wait on all eight kinds to become the triplet', () => {
+    expect(waits(c(EIGHT_PAIRS), 5, undefined, true).sort((a, b) => a - b)).toEqual(kinds('1m 2m 3p 5p 7s 9s 4s E'));
+    expect(waits(c(EIGHT_PAIRS), 5)).toEqual([]);
+  });
+
+  it('six pairs, a triplet and a single wait on the single', () => {
+    expect(waits(c(SINGLE), 5, undefined, true)).toEqual(kinds('E'));
+    expect(waits(c(SINGLE), 5)).toEqual([]);
+  });
+
+  it('adds 嚦咕嚦咕 waits to a normal hand\'s waits only with the rule on', () => {
+    // 11 22 33 44 55 66 77 88m waits on six kinds as five sets and a pair, and on all eight as eight pairs.
+    const hand = c('11m 22m 33m 44m 55m 66m 77m 88m');
+    expect(waits(hand, 5)).toEqual(kinds('1m 2m 4m 5m 7m 8m'));
+    expect(waits(hand, 5, undefined, true)).toEqual(kinds('1m 2m 3m 4m 5m 6m 7m 8m'));
+    // A normal ready hand gains nothing.
+    expect(waits(c('123m 456m 789p 234s EEE C'), 5, undefined, true)).toEqual(kinds('C'));
+  });
+});
+
+describe('嚦咕嚦咕: the coach', () => {
+  it('says ready and lists the waits for a hand ready only for 嚦咕嚦咕, and only with the rule on', () => {
+    for (const liguTai of [8, 0]) {
+      // Seat 1 holds eight pairs while the dealer is to discard.
+      const s = setup({ liguTai }, ['123m 456m 789m 123p 56p 9p S W', EIGHT_PAIRS, '', ''], 20);
+      const h = hintFor(s, 1);
+      if (liguTai) {
+        expect(h.shanten).toBe(0);
+        expect(h.waits.map((w) => w.kind).sort((a, b) => a - b)).toEqual(kinds('1m 2m 3p 5p 7s 9s 4s E'));
+        expect(h.statusKey).toBe('hint.status.readyWaits');
+      } else {
+        expect(h.shanten).toBeGreaterThan(0);
+        expect(h.waits).toEqual([]);
+        expect(h.statusKey).not.toBe('hint.status.readyWaits');
+      }
+    }
+  });
+
+  it('on its own turn, a discard that leaves 嚦咕嚦咕 ready reads as ready, with its waits', () => {
+    // Seat 0 holds eight pairs and a stray North: throwing the North leaves eight pairs.
+    for (const liguTai of [8, 0]) {
+      const s = setup({ liguTai }, [`${EIGHT_PAIRS} N`, '', '', ''], 20);
+      const h = hintFor(s, 0);
+      expect(kindOf(h.bestDiscard!.tile)).toBe(kindFromCode('N'));
+      if (liguTai) {
+        expect(h.statusKey).toBe('hint.status.readyAfterDiscard');
+        expect(h.waits).toHaveLength(8);
+      } else {
+        expect(h.statusKey).not.toBe('hint.status.readyAfterDiscard');
+        expect(h.waits).toEqual([]);
+      }
+    }
+  });
+});
+
 /** Fillers for the other seats that share no kind with the 嚦咕嚦咕 hands below. */
 const F1 = '678m 678p 123s 568s SWN B';
 const F2 = '678m 678p 123s 568s SWN B';
@@ -204,6 +265,7 @@ describe('嚦咕嚦咕 through the game', () => {
   it('wins on a discard, and the waits are listed with the rule on', () => {
     for (const rules of [{ liguTai: 8 }, {}]) {
       let s = setup(rules, ['123m 456m 789m 123p 56p 9p S E', '', SINGLE, ''], 20);
+      expect(waitsFor(s, 2)).toEqual(rules.liguTai ? kinds('E') : []);
       s = discard(s, 0, 'E');
       if (!rules.liguTai) {
         expect(offers(s)[2]?.hu ?? false).toBe(false);

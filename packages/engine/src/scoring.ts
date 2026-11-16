@@ -322,7 +322,7 @@ function scoreDecomposition(ctx: WinContext, d: Decomposition, setsNeeded: numbe
   // four copies; other players' discards are not considered. The begging hands are
   // always a single wait, so they absorb 獨聽.
   const ownMeldCounts = countsFromKinds(ctx.melds.flatMap((m) => m.tiles.map(kindOf)));
-  const liveWaits = waits(concealedCounts, setsNeeded, ownMeldCounts);
+  const liveWaits = waits(concealedCounts, setsNeeded, ownMeldCounts, playsLigu(rules));
   const singleWait = liveWaits.length === 1 && !begging && !limitDeal;
   if (singleWait) items.push(T('single_wait', '獨聽', 'Single Wait', 1));
 

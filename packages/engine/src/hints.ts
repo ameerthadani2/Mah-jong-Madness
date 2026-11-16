@@ -11,6 +11,7 @@
 import { coachAction, COACH_SKILL, currentShanten, rankDiscards, shantenAfterClaim, unseenCounts, valueKinds, type DiscardAdvice } from './bot';
 import { countsFromKinds, TOTAL_SETS, waits } from './hand';
 import { type Action, type GameState, legalActions, buildWinContext, sameAction, waitsFor } from './game';
+import { playsLigu } from './rules';
 import { scoreWin, type ScoreResult } from './scoring';
 import { kindInfo, kindOf, type Kind, type TileId } from './tiles';
 
@@ -228,18 +229,20 @@ export function hintFor(s: GameState, seat: number): Hint {
     const sh = currentShanten(s, seat);
     base.shanten = sh;
     base.discards = rankDiscards(s, seat, COACH_SKILL);
+    const ligu = playsLigu(s.rules);
     base.bestDiscard = base.discards[0];
     if (canHu) {
       setStatus(base, reason('hint.status.canWinSelfDraw', { how: selfDrawLabel(s), tai: base.winPreview!.tai }));
     } else if (base.bestDiscard) {
       const d = base.bestDiscard;
-      const afterWaits = d.shanten === 0 ? waitsAfterDiscard(s, seat, d.tile, unseen) : [];
+      // At a 嚦咕嚦咕 table the discard can leave the hand ready for seven pairs and a triplet too.
+      const afterWaits = d.shanten === 0 || ligu ? waitsAfterDiscard(s, seat, d.tile, unseen) : [];
       base.waits = afterWaits;
       const why = explainDiscard(d, afterWaits, base.discards);
       base.discardReason = englishOf(why);
       base.discardReasonKey = why.key;
       base.discardReasonParams = why.params;
-      setStatus(base, statusText(d.shanten));
+      setStatus(base, statusText(afterWaits.length > 0 ? 0 : d.shanten));
     }
     const kongs = actions.filter((a) => a.type === 'kong');
     const pick = kongs.length > 0 ? coachAction(s, seat) : null;
@@ -251,9 +254,9 @@ export function hintFor(s: GameState, seat: number): Hint {
   }
 
   if (s.phase === 'claim') {
-    const sh = currentShanten(s, seat);
-    base.shanten = sh;
     base.waits = waitsFor(s, seat).map((k) => ({ kind: k, remaining: unseen[k] }));
+    const sh = readyShanten(currentShanten(s, seat), base.waits);
+    base.shanten = sh;
     setStatus(base, sh === 0 ? reason('hint.status.readyCount', { kinds: base.waits.length }) : statusText(sh));
     const botPick = coachAction(s, seat);
     for (const a of actions) {
@@ -265,8 +268,8 @@ export function hintFor(s: GameState, seat: number): Hint {
     return base;
   }
 
-  base.shanten = currentShanten(s, seat);
   base.waits = waitsFor(s, seat).map((k) => ({ kind: k, remaining: unseen[k] }));
+  base.shanten = readyShanten(currentShanten(s, seat), base.waits);
   setStatus(
     base,
     base.shanten === 0
@@ -294,7 +297,15 @@ function statusText(sh: number): Reason {
 function waitsAfterDiscard(s: GameState, seat: number, tile: TileId, unseen: number[]): WaitInfo[] {
   const p = s.players[seat];
   const rest = p.hand.filter((t) => t !== tile).map(kindOf);
-  return waits(countsFromKinds(rest), TOTAL_SETS - p.melds.length).map((k) => ({ kind: k, remaining: unseen[k] }));
+  return waits(countsFromKinds(rest), TOTAL_SETS - p.melds.length, undefined, playsLigu(s.rules)).map((k) => ({ kind: k, remaining: unseen[k] }));
+}
+
+/**
+ * A hand with waits is ready. Shanten counts the distance to five sets and a pair only, so a hand
+ * ready for 嚦咕嚦咕 (at a table that plays it) reads 0 here though five sets are further off.
+ */
+function readyShanten(sh: number, handWaits: readonly WaitInfo[]): number {
+  return handWaits.length > 0 && sh > 0 ? 0 : sh;
 }
 
 function explainDiscard(d: DiscardAdvice, afterWaits: WaitInfo[], all: readonly DiscardAdvice[]): Reason {

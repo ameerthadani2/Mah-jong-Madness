@@ -877,12 +877,12 @@ export function replayHand(snap: MatchSnapshot, seed: string, rules: RuleSet, lo
   return s;
 }
 
-/** Convenience: current waits of a seat's concealed hand (16 tiles) as kinds. */
+/** Convenience: current waits of a seat's concealed hand (16 tiles) as kinds, 嚦咕嚦咕 included when the table plays it. */
 export function waitsFor(s: GameState, seat: number): Kind[] {
   const p = s.players[seat];
   const setsNeeded = TOTAL_SETS - p.melds.length;
   const hand = p.hand.map(kindOf);
-  if (hand.length === 3 * setsNeeded + 1) return waits(countsFromKinds(hand), setsNeeded);
+  if (hand.length === 3 * setsNeeded + 1) return waits(countsFromKinds(hand), setsNeeded, undefined, playsLigu(s.rules));
   return [];
 }
 
