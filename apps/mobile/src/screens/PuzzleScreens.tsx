@@ -40,8 +40,10 @@ export function DailyPuzzleScreen() {
   const [linked, setLinked] = useState<DailyLink | null>(null);
   const [sending, setSending] = useState(false);
   const [outcome, setOutcome] = useState<DailyOutcome | null>(null);
+  // Whether today's puzzle was already played when the screen opened (answering marks it played at once).
+  const [playedAtOpen] = useState(attemptedBefore);
   useEffect(() => {
-    if (attemptedBefore || link.current || !server) return;
+    if (playedAtOpen || link.current || !server) return;
     link.current = openDaily(server, today);
     void link.current.then(setLinked);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -55,7 +57,7 @@ export function DailyPuzzleScreen() {
       const next = nextDailyProgress(p, r.correct, today);
       return next === p ? p : rateAnswer({ ...next, drillsPlayed: p.drillsPlayed + 1, drillsCorrect: p.drillsCorrect + (r.correct ? 1 : 0) }, 'discard', difficulty, r.correct, Date.now());
     });
-    if (attemptedBefore) return;
+    if (playedAtOpen) return;
     // The verdict, time and rating shown are the server's once it answers.
     serverRating.clearChange();
     setSending(true);
@@ -95,7 +97,7 @@ export function DailyPuzzleScreen() {
           <PuzzleView puzzle={puzzle} onResult={onResult} onNext={app.back} nextLabel={t(done ? 'puzzles.daily.done' : 'puzzles.daily.next')} />
         )}
       </Card>
-      {!attemptedBefore && <ServerNote link={linked} outcome={outcome} sending={sending} testID="daily-server-note" />}
+      {!playedAtOpen && <ServerNote link={linked} outcome={outcome} sending={sending} testID="daily-server-note" />}
       {outcome?.ranked && outcome.mismatch && (
         <View testID="daily-server-verdict">
           <P>{t(outcome.correct ? 'puzzles.server.verdictRight' : 'puzzles.server.verdictWrong')}</P>
@@ -226,6 +228,8 @@ function PuzzleRushRun({ onAgain, onStart }: { onAgain: () => void; /** The firs
       setSending(true);
       void submitRush(server, link, [...answers.current], score).then((o) => {
         if (o.ranked && userId) serverRating.submitted(userId, o.rating, Date.now());
+        // The saved best follows the server's score for this run (its clock may make it a little lower than the estimate).
+        if (o.ranked) app.setProgress((p) => (p.rushBestScore > Math.max(prevBest, o.score) ? { ...p, rushBestScore: Math.max(prevBest, o.score) } : p));
         setOutcome(o);
         setSending(false);
       });
