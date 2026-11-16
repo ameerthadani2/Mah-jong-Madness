@@ -28,6 +28,18 @@ const offlineClient = new Proxy(
   { get: (known, key) => (key in known ? known[key as keyof typeof known] : () => Promise.reject(new Error(`fake auth client: ${String(key)} called`))) },
 ) as unknown as AuthClient;
 
+/**
+ * The sign-in client of a guest with a session on the server: it hands out a token for requests, which a test answers
+ * with its own stand-in for the server (globalThis.fetch).
+ */
+export function sessionClient(userId: string): AuthClient {
+  const snap: AuthSnapshot = { status: 'guest', userId, displayName: null, kind: 'guest', hasSession: true, banned: false };
+  const known = { snapshot: () => snap, subscribe: () => () => undefined, token: async () => 'test-token', onUnauthorised: async () => undefined };
+  return new Proxy(known, {
+    get: (k, key) => (key in k ? k[key as keyof typeof k] : () => Promise.reject(new Error(`fake auth client: ${String(key)} called`))),
+  }) as unknown as AuthClient;
+}
+
 /** A device with no server session: offline, no account, nothing linked. */
 export function fakeAuth(over: Partial<AuthContextValue> = {}): AuthContextValue {
   return {
