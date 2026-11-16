@@ -355,15 +355,15 @@ export const CORE_LESSONS: Lesson[] = [
       {
         title: 'Practice: the 南 round',
         titleZh: '練習：南風圈',
-        body: 'It is the 南 round and you sit 西, so 南 is the prevailing wind and 西 your seat wind. 北 scores nothing for you.',
-        bodyZh: '現在是南風圈，你坐西，所以南是圈風、西是你的門風。北對你沒有台。',
+        body: 'It is the 南 round and you sit 西, so 南 is the prevailing wind and 西 your seat wind. Your hand has no 西, so the 南 pair is your only honour worth keeping.',
+        bodyZh: '現在是南風圈，你坐西，所以南是圈風、西是你的門風。你手上沒有西，所以值得留的字牌只有南的對子。',
         quiz: {
           prompt: 'Best discard?',
           promptZh: '最好打哪一張？',
-          hand: '234m 567m 45p 789p SS 9s 1s N 5m',
-          answer: 'N',
-          explanation: 'The lone 北 is worth nothing to you and only another 北 helps it. Keep the pair of 南: a third one makes a 圈風 pong, 1 台. The 9s, 1s and 5m can still join partial sets.',
-          explanationZh: '孤張的北對你沒有台，也只有另一張北能幫它。南的對子要留著：再來一張就碰成圈風，1 台。9s、1s 和 5m 都還能組成搭子。',
+          hand: '234m 567m 45p 789p SS 9s 1s 4s 5m',
+          answer: '1s',
+          explanation: 'Throw 1s. The tiles that help it, 2s and 3s, already help the 4s, so it adds almost nothing; the 9s still brings in 7s and 8s of its own. Keep the pair of 南: a third one makes a 圈風 pong, 1 台.',
+          explanationZh: '打 1s。能幫它的 2s、3s 本來就能幫 4s，所以它幾乎沒有多帶來什麼；9s 還能自己帶進 7s、8s。南的對子要留著：再來一張就碰成圈風，1 台。',
         },
       },
       {

@@ -34,6 +34,21 @@ describe('lesson quizzes', () => {
   }
 });
 
+describe('discard quizzes ask for a real choice', () => {
+  // A lone honour (one 北 among number tiles) is the first tile anybody throws: a quiz it answers teaches
+  // nothing about shape. Keep such quizzes to at most a quarter of the discard quizzes.
+  const discards = quizzes.filter(({ quiz }) => kindsFromString(quiz.hand).length === 17);
+  const loneHonour = discards.filter(({ quiz }) => {
+    const answer = kindFromCode(quiz.answer);
+    return answer >= 27 && countsFromKinds(kindsFromString(quiz.hand))[answer] === 1;
+  });
+
+  it('no more than a quarter of discard quizzes are answered by a lone honour', () => {
+    expect(discards.length).toBeGreaterThanOrEqual(30);
+    expect(loneHonour.length, loneHonour.map((q) => `${q.lesson} / ${q.title}`).join('\n')).toBeLessThanOrEqual(Math.floor(discards.length / 4));
+  });
+});
+
 /** Han characters: a Traditional Chinese field must contain some, not only tile codes and numbers. */
 const HAN = /[一-鿿]/;
 

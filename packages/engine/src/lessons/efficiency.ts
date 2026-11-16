@@ -297,10 +297,10 @@ export const EFFICIENCY_LESSONS: Lesson[] = [
         quiz: {
           prompt: 'Best discard?',
           promptZh: '最好打哪一張？',
-          hand: '123m 456p 789p 234s 45s 67m N',
-          answer: 'N',
-          explanation: 'Throw N: four sets and two 兩面. 5m, 8m, 3s or 6s finishes a set, pairing 6m, 7m, 4s or 5s gives you a 眼, and with 234s next door 1s and 2s reshape the 條 too: 33 copies. Breaking a 搭子 instead keeps at most 17.',
-          explanationZh: '打北風：四組面子加兩個兩面。5m、8m、3s、6s 能補成面子，摸到 6m、7m、4s、5s 成對就有眼，旁邊還有 234s，1s、2s 也能把條子重新拆好：一共 33 張。拆搭子的話最多只剩 17 張。',
+          hand: '123m 456p 789p 234s 45s 679m',
+          answer: '9m',
+          explanation: 'Throw 9m: four sets and two 兩面. 5m, 8m, 3s or 6s finishes a set, pairing 6m, 7m, 4s or 5s gives you a 眼, and with 234s next door 1s and 2s reshape the 條 too: 33 copies. The 9m looks like extra shape, but it only adds 8m, which 67m already takes. Throw 6m instead and 79m is a 嵌張 on 8m alone: 29 copies. Breaking a 搭子 keeps at most 20.',
+          explanationZh: '打 9m：四組面子加兩個兩面。5m、8m、3s、6s 能補成面子，摸到 6m、7m、4s、5s 成對就有眼，旁邊還有 234s，1s、2s 也能把條子重新拆好：一共 33 張。9m 看起來多一種變化，其實只多等 8m，而 67m 本來就等這張。改打 6m 的話，79m 是只等 8m 的嵌張：29 張。拆搭子最多只剩 20 張。',
         },
       },
       {
