@@ -34,7 +34,7 @@ With no environment at all the server runs: accounts, clubs and tables are kept 
 | `src/persist.ts` | Table snapshots: debounced writes, restore at boot, pruning |
 | `src/auth/*` | Guest accounts, session tokens, provider token verification, link/merge/deletion |
 | `src/repos/*` | Storage: memory, or Postgres when `DATABASE_URL` is set |
-| `migrations/*.sql` | The Postgres schema, applied in order by `src/migrate.ts` (`0001` to `0010`; the latest, `0010_puzzle_boards.sql`, adds `users.leaderboard_visible`, `puzzle_ratings`, `puzzle_rush_runs`, one daily result per account and date key, and the indexes the leaderboards read) |
+| `migrations/*.sql` | The Postgres schema, applied in order by `src/migrate.ts` (`0001` to `0011`; `0010_puzzle_boards.sql` adds `users.leaderboard_visible`, `puzzle_ratings`, `puzzle_rush_runs`, one daily result per account and date key, and the indexes the leaderboards read; the latest, `0011_daily_attempts.sql`, adds `puzzle_daily_attempts`, the server's clock for the daily puzzle) |
 
 ## Configuration (environment variables)
 

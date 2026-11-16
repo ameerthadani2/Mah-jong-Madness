@@ -1,5 +1,5 @@
 /**
- * The puzzle repositories (migration 0010) against memory and (with DATABASE_URL_TEST) Postgres:
+ * The puzzle repositories (migrations 0010 and 0011) against memory and (with DATABASE_URL_TEST) Postgres:
  * one ranked daily result per date key, the rating row and how a merge keeps the better-supported
  * one, Rush runs finished once and pruned when they expire, the leaderboards' order, ties, scope
  * and visibility, and what the 30-day purge takes.
@@ -84,6 +84,34 @@ function contract(name: string, repos: () => Repos) {
       expect(await r.rushRuns.pruneUnfinished(T0 + 2000)).toBeGreaterThanOrEqual(1);
       expect(await r.rushRuns.get(open)).toBeNull();
       expect(await r.rushRuns.get(id)).not.toBeNull();
+    });
+
+    it('keeps one daily attempt per account and key, finishes it once, moves it on a merge and prunes old ones', async () => {
+      const r = repos();
+      const [a, b] = [await user(), await user()];
+      const id = randomUUID();
+      const started = await r.dailyAttempts.start({ id, userId: a, dateKey: '2026-11-16', startedAt: T0 });
+      expect(started).toEqual({ id, userId: a, dateKey: '2026-11-16', startedAt: T0, finishedAt: null });
+      // A second start returns the first attempt and its start time.
+      expect(await r.dailyAttempts.start({ id: randomUUID(), userId: a, dateKey: '2026-11-16', startedAt: T0 + 40_000 })).toEqual(started);
+      expect(await r.dailyAttempts.finish(id, T0 + 40_000)).toMatchObject({ id, finishedAt: T0 + 40_000 });
+      expect(await r.dailyAttempts.finish(id, T0 + 50_000)).toBeNull();
+      expect(await r.dailyAttempts.finish(randomUUID(), T0)).toBeNull();
+      expect(await r.dailyAttempts.get('not-a-uuid')).toBeNull();
+      expect(await r.dailyAttempts.start({ id: randomUUID(), userId: a, dateKey: '2026-11-16', startedAt: T0 + 60_000 })).toMatchObject({ id, finishedAt: T0 + 40_000 });
+      // b already has an attempt for the 16th: a's stays behind; the 17th moves.
+      const bOwn = await r.dailyAttempts.start({ id: randomUUID(), userId: b, dateKey: '2026-11-16', startedAt: T0 });
+      const later = await r.dailyAttempts.start({ id: randomUUID(), userId: a, dateKey: '2026-11-17', startedAt: T0 + DAY });
+      expect(await r.dailyAttempts.moveToUser(a, b)).toBe(1);
+      expect((await r.dailyAttempts.get(later.id))?.userId).toBe(b);
+      expect((await r.dailyAttempts.get(id))?.userId).toBe(a);
+      expect(await r.dailyAttempts.prune(T0 + 1)).toBeGreaterThanOrEqual(2);
+      expect(await r.dailyAttempts.get(bOwn.id)).toBeNull();
+      expect(await r.dailyAttempts.get(later.id)).not.toBeNull();
+      // The purge takes an account's attempts.
+      await r.users.update(b, { deletedAt: T0 });
+      expect(await r.users.purgeDeletedIds(T0 + 1)).toContain(b);
+      expect(await r.dailyAttempts.get(later.id)).toBeNull();
     });
 
     it('orders the daily board solved first, then fewest seconds, then who answered first, and ranks the viewer', async () => {

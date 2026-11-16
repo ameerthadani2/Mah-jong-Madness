@@ -39,6 +39,8 @@ import {
   type PuzzleResultsRepo,
   type RushRunRecord,
   type RushRunsRepo,
+  type DailyAttemptRecord,
+  type DailyAttemptsRepo,
   type ReportReason,
   type ReportResolution,
   type ReportRecord,
@@ -1522,6 +1524,59 @@ function pgRushRuns(q: Queryable): RushRunsRepo {
   };
 }
 
+interface DailyAttemptRow {
+  id: string;
+  user_id: string;
+  date_key: string;
+  started_at: Date;
+  finished_at: Date | null;
+}
+
+const dailyAttemptFromRow = (r: DailyAttemptRow): DailyAttemptRecord => ({
+  id: r.id,
+  userId: r.user_id,
+  dateKey: r.date_key,
+  startedAt: r.started_at.getTime(),
+  finishedAt: toMs(r.finished_at),
+});
+
+function pgDailyAttempts(q: Queryable): DailyAttemptsRepo {
+  const COLS = 'id, user_id, date_key, started_at, finished_at';
+  return {
+    async start(a) {
+      // One attempt per account and key: a second start returns the first (the no-op update makes RETURNING answer).
+      const res = await q.query<DailyAttemptRow>(
+        'INSERT INTO puzzle_daily_attempts (id, user_id, date_key, started_at) VALUES ($1, $2, $3, $4) ON CONFLICT (user_id, date_key) DO UPDATE SET date_key = excluded.date_key RETURNING ' +
+          COLS,
+        [a.id, a.userId, a.dateKey, toDate(a.startedAt)],
+      );
+      return dailyAttemptFromRow(res.rows[0]);
+    },
+    async get(id) {
+      if (!isUuid(id)) return null;
+      const res = await q.query<DailyAttemptRow>('SELECT ' + COLS + ' FROM puzzle_daily_attempts WHERE id = $1', [id]);
+      return res.rows[0] ? dailyAttemptFromRow(res.rows[0]) : null;
+    },
+    async finish(id, finishedAt) {
+      if (!isUuid(id)) return null;
+      const res = await q.query<DailyAttemptRow>('UPDATE puzzle_daily_attempts SET finished_at = $2 WHERE id = $1 AND finished_at IS NULL RETURNING ' + COLS, [id, toDate(finishedAt)]);
+      return res.rows[0] ? dailyAttemptFromRow(res.rows[0]) : null;
+    },
+    async moveToUser(fromUserId, toUserId) {
+      if (!isUuid(fromUserId) || !isUuid(toUserId)) return 0;
+      const res = await q.query(
+        'UPDATE puzzle_daily_attempts a SET user_id = $2 WHERE a.user_id = $1 AND NOT EXISTS (SELECT 1 FROM puzzle_daily_attempts t WHERE t.user_id = $2 AND t.date_key = a.date_key)',
+        [fromUserId, toUserId],
+      );
+      return res.rowCount ?? 0;
+    },
+    async prune(before) {
+      const res = await q.query('DELETE FROM puzzle_daily_attempts WHERE started_at < $1', [toDate(before)]);
+      return res.rowCount ?? 0;
+    },
+  };
+}
+
 interface BoardSqlRow {
   user_id: string;
   score: number;
@@ -1608,6 +1663,7 @@ function build(q: Queryable, tx: Tx, transaction: Repos['transaction']): Repos {
     puzzleResults: pgPuzzleResults(q),
     puzzleRatings: pgPuzzleRatings(q),
     rushRuns: pgRushRuns(q),
+    dailyAttempts: pgDailyAttempts(q),
     leaderboards: pgLeaderboards(q),
     blocks: pgBlocks(q, tx),
     moderation: pgModeration(q),

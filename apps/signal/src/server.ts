@@ -331,6 +331,8 @@ export async function createSignalServer(opts: SignalServerOptions): Promise<Sig
     persister.prune().catch((e: Error) => console.error('[signal] snapshot prune failed', e.message));
     // Puzzle Rush runs never finished, a day after they expired.
     repos.repos.rushRuns.pruneUnfinished(now() - DAY_MS).catch((e: Error) => console.error('[signal] rush run prune failed', e.message));
+    // Daily puzzle attempts whose date closed long ago (a key is open for at most three days).
+    repos.repos.dailyAttempts.prune(now() - 7 * DAY_MS).catch((e: Error) => console.error('[signal] daily attempt prune failed', e.message));
     // The hard delete promised at soft deletion (30 days), and sessions that have ended.
     // The clubs in memory still hold the purged accounts' rows: drop them before the next club write.
     purgeDeletedUsers(repos.repos, { now })

@@ -74,7 +74,14 @@ function fixture(repos: Repos, opts: { limits?: boolean } = {}) {
     return { userId: res.json.userId as string, name: displayName, auth: { authorization: `Bearer ${(res.json.session as { token: string }).token}` } };
   };
   type G = Awaited<ReturnType<typeof guest>>;
-  const daily = (g: G, date: string, answer: unknown, seconds = 20, extra: Json = {}) => call('POST', '/api/puzzles/daily', { date, answer, seconds, ...extra }, g.auth);
+  const startDaily = (g: G, date: unknown) => call('POST', '/api/puzzles/daily/start', { date }, g.auth);
+  /** Opens the daily puzzle, lets `seconds` pass on the server's clock and answers it (or answers the start's refusal). */
+  const daily = async (g: G, date: string, answer: unknown, seconds = 20, extra: Json = {}) => {
+    const started = await startDaily(g, date);
+    if (started.status !== 200) return started;
+    clock.now += seconds * 1000;
+    return call('POST', '/api/puzzles/daily', { attemptId: started.json.attemptId, answer, ...extra }, g.auth);
+  };
   const startRush = async (g: G) => {
     const res = await call('POST', '/api/puzzles/rush', {}, g.auth);
     expect(res.status).toBe(201);
@@ -88,7 +95,7 @@ function fixture(repos: Repos, opts: { limits?: boolean } = {}) {
     expect(res.status, res.body).toBe(200);
     return res.json as { rows: Row[]; me: Row | null; scope: string };
   };
-  return { clock, now, repos, sessions, clubs, call, guest, daily, startRush, rushAnswers, finish, board };
+  return { clock, now, repos, sessions, clubs, call, guest, startDaily, daily, startRush, rushAnswers, finish, board };
 }
 
 const TODAY = '2026-11-16';
@@ -107,21 +114,57 @@ function contract(name: string, repos: () => Repos) {
       const forged = await f.daily(b, TODAY, dailyWrong(TODAY), 3, { correct: true });
       const down = ratePuzzleAnswer(DEFAULT_PUZZLE_RATING, 'discard', difficulty, false);
       expect(forged.json).toMatchObject({ correct: false, rating: { rating: down.rating, change: down.delta, rated: 1 } });
-      // One ranked attempt per date key: a second is refused and moves nothing.
+      // One ranked attempt per date key: starting again, or finishing again, is refused and moves nothing.
       const again = await f.daily(a, TODAY, dailyRight(TODAY));
       expect([again.status, again.json.error]).toEqual([409, 'already_played']);
       expect((await f.call('GET', '/api/puzzles/rating', undefined, a.auth)).json).toMatchObject({ rating: up.rating, rated: 1 });
       // The day before and the day after are open (time zones); two days off is not, nor a date that is not one.
       expect((await f.daily(a, '2026-11-15', dailyRight('2026-11-15'))).json.correct).toBe(true);
       expect((await f.daily(a, '2026-11-17', dailyRight('2026-11-17'))).json.correct).toBe(true);
-      for (const off of ['2026-11-14', '2026-11-18']) expect((await f.daily(a, off, dailyRight(off))).json.error).toBe('date_out_of_range');
-      expect((await f.daily(a, '2026-11-31', 1)).json.error).toBe('invalid');
-      for (const bad of [{ id: 'pass' }, 'draw', 99, [1, 1], null]) expect((await f.daily(b, '2026-11-17', bad)).json.error).toBe('invalid_answer');
-      expect((await f.daily(b, '2026-11-17', 1, -1)).json.error).toBe('invalid');
-      // Seconds are capped; the rating has moved four times for Ana.
-      expect((await f.daily(b, '2026-11-15', dailyWrong('2026-11-15'), 99_999)).json.seconds).toBe(3600);
+      for (const off of ['2026-11-14', '2026-11-18']) expect((await f.startDaily(a, off)).json.error).toBe('date_out_of_range');
+      for (const bad of ['2026-11-31', undefined, 20261116]) expect((await f.startDaily(a, bad)).json.error).toBe('invalid');
+      const open = await f.startDaily(b, '2026-11-17');
+      expect(open.status).toBe(200);
+      for (const bad of [{ id: 'pass' }, 'draw', 99, [1, 1], null]) {
+        expect((await f.call('POST', '/api/puzzles/daily', { attemptId: open.json.attemptId, answer: bad }, b.auth)).json.error).toBe('invalid_answer');
+      }
+      // An attempt is the caller's own and must be named.
+      const notMine = await f.call('POST', '/api/puzzles/daily', { attemptId: open.json.attemptId, answer: 1 }, a.auth);
+      expect([notMine.status, notMine.json.error]).toEqual([404, 'not_found']);
+      for (const id of [undefined, '', 'nope', randomUUID()]) expect((await f.call('POST', '/api/puzzles/daily', { attemptId: id, answer: 1 }, b.auth)).status).toBeGreaterThanOrEqual(400);
+      expect((await f.call('POST', '/api/puzzles/daily', { date: TODAY, answer: 1, seconds: 1 }, b.auth)).json.error).toBe('invalid');
+      // The server's time is capped; the rating has moved three times for Ana.
+      const slow = await f.startDaily(b, '2026-11-15');
+      f.clock.now += 3_700_000;
+      expect((await f.call('POST', '/api/puzzles/daily', { attemptId: slow.json.attemptId, answer: dailyWrong('2026-11-15'), seconds: 2 }, b.auth)).json.seconds).toBe(3600);
       expect((await f.call('GET', '/api/puzzles/rating', undefined, a.auth)).json).toMatchObject({ rated: 3 });
-      expect((await f.call('POST', '/api/puzzles/daily', { date: TODAY, answer: 1, seconds: 1 })).status).toBe(401);
+      expect((await f.call('POST', '/api/puzzles/daily/start', { date: TODAY })).status).toBe(401);
+      expect((await f.call('POST', '/api/puzzles/daily', { attemptId: open.json.attemptId, answer: 1 })).status).toBe(401);
+    });
+
+    it('times the daily puzzle with the server clock: reopening keeps the start, a claimed time is ignored', async () => {
+      const f = fixture(repos());
+      const a = await f.guest('Ana');
+      const first = await f.startDaily(a, TODAY);
+      expect(first.status, first.body).toBe(200);
+      expect(first.json).toEqual({ attemptId: expect.any(String), date: TODAY, startedAt: new Date(T0).toISOString() });
+      // Closing and reopening the puzzle 25 seconds later returns the same attempt and start.
+      f.clock.now += 25_000;
+      expect((await f.startDaily(a, TODAY)).json).toEqual(first.json);
+      f.clock.now += 15_000;
+      const done = await f.call('POST', '/api/puzzles/daily', { attemptId: first.json.attemptId, answer: dailyRight(TODAY), seconds: 1 }, a.auth);
+      expect(done.json).toMatchObject({ date: TODAY, correct: true, seconds: 40 });
+      // The board ranks the server's 40, not the 1 the client claimed.
+      expect((await f.board(a, `daily?date=${TODAY}`)).me).toMatchObject({ value: 40, solved: true });
+      // A finished attempt cannot be finished again, nor started again.
+      const twice = await f.call('POST', '/api/puzzles/daily', { attemptId: first.json.attemptId, answer: dailyRight(TODAY) }, a.auth);
+      expect([twice.status, twice.json.error]).toEqual([409, 'already_played']);
+      expect([(await f.startDaily(a, TODAY)).status, (await f.startDaily(a, TODAY)).json.error]).toEqual([409, 'already_played']);
+      // Another account's attempt for the same date is its own, with its own clock.
+      const b = await f.guest('Bo');
+      const other = await f.startDaily(b, TODAY);
+      expect(other.json.attemptId).not.toBe(first.json.attemptId);
+      expect(other.json.startedAt).toBe(new Date(f.now()).toISOString());
     });
 
     it('times a Rush run with the server clock, judges it to the third strike, and finishes it once', async () => {
@@ -271,6 +314,9 @@ function contract(name: string, repos: () => Repos) {
       expect(await f.repos.puzzleRatings.get(guest.userId)).toBeNull();
       expect((await f.repos.rushRuns.get(run.runId))?.userId).toBe(account.userId);
       expect((await f.repos.puzzleResults.listForUser(account.userId)).filter((p) => p.kind === 'daily').map((p) => p.puzzleKey)).toEqual([TODAY]);
+      // The guest's finished daily attempt is the account's now: the account cannot start that date again.
+      const moved = await f.repos.dailyAttempts.start({ id: randomUUID(), userId: account.userId, dateKey: TODAY, startedAt: f.now() });
+      expect(moved.finishedAt).not.toBeNull();
       // The merged-away guest is on no board; the account is, under its own name.
       const viewer = await f.guest('Viewer');
       const rows = (await f.board(viewer, 'rush?period=all')).rows;
@@ -286,6 +332,7 @@ function contract(name: string, repos: () => Repos) {
       expect(purged.userIds).toEqual(expect.arrayContaining([account.userId, guest.userId]));
       expect(await f.repos.puzzleRatings.get(account.userId)).toBeNull();
       expect(await f.repos.rushRuns.get(run.runId)).toBeNull();
+      expect(await f.repos.dailyAttempts.get(moved.id)).toBeNull();
       expect(await f.repos.puzzleResults.listForUser(account.userId)).toEqual([]);
       expect(await f.repos.puzzleResults.listForUser(guest.userId)).toEqual([]);
     });
@@ -299,14 +346,14 @@ describe('puzzle limits', () => {
     const codes: number[] = [];
     for (let i = 0; i < 21; i++) codes.push((await f.call('POST', '/api/puzzles/rush', {}, a.auth)).status);
     expect(codes.slice(0, 20).every((c) => c === 201)).toBe(true);
-    const limited = await f.call('POST', '/api/puzzles/daily', { date: TODAY, answer: 1, seconds: 1 }, a.auth);
+    const limited = await f.call('POST', '/api/puzzles/daily/start', { date: TODAY }, a.auth);
     expect([limited.status, limited.json.error, limited.headers['retry-after']]).toEqual([429, 'rate_limited', '12']);
     const reads: number[] = [];
     for (let i = 0; i < 31; i++) reads.push((await f.call('GET', '/api/leaderboards/rating', undefined, a.auth)).status);
     expect(reads.filter((c) => c === 429)).toHaveLength(1);
     // A minute later the account may submit again.
     f.clock.now += 60_000;
-    expect((await f.call('POST', '/api/puzzles/daily', { date: TODAY, answer: 1, seconds: 1 }, a.auth)).status).toBe(200);
+    expect((await f.call('POST', '/api/puzzles/daily/start', { date: TODAY }, a.auth)).status).toBe(200);
     // One address starting runs for many fresh guests runs out after 60 an hour.
     const ip = '203.0.113.9';
     let refused = 0;

@@ -2,9 +2,10 @@
  * Server-verified puzzle results, the puzzle rating and the leaderboards (docs/API.md, "Puzzles
  * and leaderboards").
  *
- * The server never takes a client's word for a result. A daily answer names the local date key
- * the app played; the server regenerates that day's puzzle with the engine and judges the answer
- * against the accepted set. A Puzzle Rush run is issued here (seed and start time), and finishing
+ * The server never takes a client's word for a result. Opening the daily puzzle starts an attempt
+ * for the local date key the app plays (one per account and key, so reopening keeps the clock);
+ * the answer finishes it, the server regenerates that day's puzzle with the engine, judges the
+ * answer against the accepted set and takes the time from its own clock. A Puzzle Rush run is issued here (seed and start time), and finishing
  * it sends the answers in order: each puzzle is regenerated from the seed and judged, the run
  * stops at the third wrong answer as in the app, and the score comes from the server's clock.
  * Every verified answer moves the account's one puzzle rating with the engine's rules
@@ -46,7 +47,7 @@ export const RUSH_RUN_TTL_MS = 30 * 60_000;
 export const RATING_BOARD_MIN_RATED = 20;
 /** Rows a board lists at most. */
 export const BOARD_LIMIT = 100;
-/** Seconds a daily answer may report; longer is stored as this. */
+/** The longest time a daily answer is ranked with (the server's time from start to answer); longer is stored as this. */
 export const DAILY_MAX_SECONDS = 3600;
 
 /** A refusal with an HTTP status and an `error` code (docs/API.md). */
@@ -129,6 +130,18 @@ function boardJson(page: BoardPage, value: (row: BoardRow) => Record<string, unk
   return { rows: page.rows.map(row), me: page.me ? { ...row(page.me), hidden: page.me.hidden } : null };
 }
 
+/**
+ * The date a daily key stands for, if that puzzle is open at `at`: time zones run from UTC−12 to
+ * UTC+14, so a player's local date is never more than a day from the server's UTC date.
+ */
+function openDailyKey(key: unknown, at: number): Date {
+  const day = dateOfDailyKey(key);
+  if (!day) throw new PuzzleError(400, 'invalid', 'date must be a YYYY-MM-DD date key');
+  const today = dateOfDailyKey(utcDateKey(at))!;
+  if (Math.abs(day.getTime() - today.getTime()) > DAY_MS) throw new PuzzleError(400, 'date_out_of_range', 'That daily puzzle is not open: the date must be within a day of today');
+  return day;
+}
+
 export function puzzleRoutes<R>(r: PuzzleRouteFactory<R>, deps: PuzzleDeps): R[] {
   const { repos, clubs } = deps;
   const now = deps.now ?? Date.now;
@@ -159,25 +172,36 @@ export function puzzleRoutes<R>(r: PuzzleRouteFactory<R>, deps: PuzzleDeps): R[]
 
   return [
     // ------------------------------------------------------------------ the daily puzzle
+    r('POST', '/api/puzzles/daily/start', async (ctx) => {
+      const me = await submitter(ctx);
+      const date = ctx.body.date;
+      const at = now();
+      openDailyKey(date, at);
+      const attempt = await repos.dailyAttempts.start({ id: randomUUID(), userId: me.userId, dateKey: date as string, startedAt: at });
+      if (attempt.finishedAt !== null) throw new PuzzleError(409, 'already_played', 'You have already played this daily puzzle');
+      return { attemptId: attempt.id, date: attempt.dateKey, startedAt: iso(attempt.startedAt) };
+    }),
     r('POST', '/api/puzzles/daily', async (ctx) => {
       const me = await submitter(ctx);
-      const { date, answer, seconds } = ctx.body;
-      const day = dateOfDailyKey(date);
-      if (!day) throw new PuzzleError(400, 'invalid', 'date must be a YYYY-MM-DD date key');
+      // A `seconds` (or `correct`) in the body is ignored: the time is the server's, from the attempt's start.
+      const { attemptId, answer } = ctx.body;
+      if (typeof attemptId !== 'string' || attemptId === '') throw new PuzzleError(400, 'invalid', 'attemptId must name a started daily attempt');
+      const attempt = await repos.dailyAttempts.get(attemptId);
+      if (!attempt || attempt.userId !== me.userId) throw new PuzzleError(404, 'not_found', 'No such daily puzzle attempt');
+      if (attempt.finishedAt !== null) throw new PuzzleError(409, 'already_played', 'You have already played this daily puzzle');
       if (!isPuzzleAnswerInput(answer)) throw new PuzzleError(400, 'invalid_answer', 'answer must be a tile, a list of tiles or a claim option id');
-      if (typeof seconds !== 'number' || !Number.isFinite(seconds) || seconds < 0) throw new PuzzleError(400, 'invalid', 'seconds must be a number of seconds');
-      // Time zones run from UTC−12 to UTC+14: a player's local date is never more than a day from the server's UTC date.
       const at = now();
-      const today = dateOfDailyKey(utcDateKey(at))!;
-      if (Math.abs(day.getTime() - today.getTime()) > DAY_MS) throw new PuzzleError(400, 'date_out_of_range', 'That daily puzzle is not open: the date must be within a day of today');
-      const puzzle = dailyPuzzle(day);
-      const correct = judgePuzzleAnswer(puzzle, answer);
+      const day = openDailyKey(attempt.dateKey, at);
+      const correct = judgePuzzleAnswer(dailyPuzzle(day), answer);
       const difficulty = dailyPuzzleDifficulty(day);
-      const key = date as string;
+      const seconds = Math.min(DAILY_MAX_SECONDS, Math.round(Math.max(0, at - attempt.startedAt) / 1000));
+      const key = attempt.dateKey;
       const result = await repos.transaction(async (tx) => {
+        // An attempt is finished once; throwing below undoes this and the rating step together.
+        if (!(await tx.dailyAttempts.finish(attempt.id, at))) throw new PuzzleError(409, 'already_played', 'You have already played this daily puzzle');
         const { rating, after } = await applyRatings(tx, me.userId, [{ type: 'discard', difficulty, correct }], at);
-        const row = await tx.puzzleResults.recordDaily({ userId: me.userId, puzzleKey: key, correct, seconds: Math.min(DAILY_MAX_SECONDS, Math.round(seconds)), ratingAfter: after[0], createdAt: at });
-        // Only the first attempt per date key is ranked and rated; throwing undoes the rating step.
+        const row = await tx.puzzleResults.recordDaily({ userId: me.userId, puzzleKey: key, correct, seconds, ratingAfter: after[0], createdAt: at });
+        // Only the first attempt per date key is ranked and rated.
         if (!row) throw new PuzzleError(409, 'already_played', 'You have already played this daily puzzle');
         return { rating, row };
       });

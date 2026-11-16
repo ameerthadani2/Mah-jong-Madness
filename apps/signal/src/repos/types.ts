@@ -555,6 +555,31 @@ export interface RushRunsRepo {
   pruneUnfinished(before: number): Promise<number>;
 }
 
+/** A daily puzzle attempt the server is timing: started when the app opens the puzzle, finished by the answer. */
+export interface DailyAttemptRecord {
+  id: string;
+  userId: string;
+  /** The daily puzzle's date key (`YYYY-MM-DD`, the player's local date). */
+  dateKey: string;
+  startedAt: number;
+  finishedAt: number | null;
+}
+
+export interface DailyAttemptsRepo {
+  /**
+   * Starts the account's attempt for a date key, or returns the one it already has (finished or
+   * not): one attempt per account and key, so reopening the puzzle never restarts the clock.
+   */
+  start(attempt: Pick<DailyAttemptRecord, 'id' | 'userId' | 'dateKey' | 'startedAt'>): Promise<DailyAttemptRecord>;
+  get(id: string): Promise<DailyAttemptRecord | null>;
+  /** Marks an unfinished attempt finished; null when it is missing or already finished (an attempt is finished once). */
+  finish(id: string, finishedAt: number): Promise<DailyAttemptRecord | null>;
+  /** An account merge: attempts move unless the target already has one for that key (those stay and go at the purge). */
+  moveToUser(fromUserId: string, toUserId: string): Promise<number>;
+  /** Deletes attempts started before `before` (their date has long closed). */
+  prune(before: number): Promise<number>;
+}
+
 /**
  * One account's entry on a board, in the boards' common order: `score` high first, then
  * `tiebreak` low first, then `at` early first (who got there first), then the user id.
@@ -622,6 +647,7 @@ export interface Repos {
   puzzleResults: PuzzleResultsRepo;
   puzzleRatings: PuzzleRatingsRepo;
   rushRuns: RushRunsRepo;
+  dailyAttempts: DailyAttemptsRepo;
   leaderboards: LeaderboardsRepo;
   blocks: BlocksRepo;
   moderation: ModerationRepo;

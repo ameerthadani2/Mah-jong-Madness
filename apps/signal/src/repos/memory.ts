@@ -40,6 +40,8 @@ import {
   type PuzzleResultsRepo,
   type RushRunRecord,
   type RushRunsRepo,
+  type DailyAttemptRecord,
+  type DailyAttemptsRepo,
   type ReportRecord,
   type ReportsRepo,
   type Repos,
@@ -84,6 +86,8 @@ interface MemoryState {
   ratings: Map<string, PuzzleRatingRecord>;
   /** puzzle_rush_runs, by run id. */
   rushRuns: Map<string, RushRunRecord>;
+  /** puzzle_daily_attempts, by attempt id. */
+  dailyAttempts: Map<string, DailyAttemptRecord>;
   /** Users who hid themselves from leaderboards (users.leaderboard_visible = false). */
   boardHidden: Set<string>;
   /** Each user's analytics choice (users.analytics_consent in Postgres). */
@@ -118,6 +122,7 @@ const emptyState = (): MemoryState => ({
   puzzleSeq: 0,
   ratings: new Map(),
   rushRuns: new Map(),
+  dailyAttempts: new Map(),
   boardHidden: new Set(),
   consent: new Map(),
   blocks: [],
@@ -192,6 +197,7 @@ function memoryUsers(s: MemoryState): UsersRepo {
         s.ratings.delete(id);
         s.boardHidden.delete(id);
         for (const [k, run] of [...s.rushRuns]) if (run.userId === id) s.rushRuns.delete(k);
+        for (const [k, a] of [...s.dailyAttempts]) if (a.userId === id) s.dailyAttempts.delete(k);
         s.blocks = s.blocks.filter((b) => b.blockerId !== id && b.blockedId !== id);
         s.moderation.delete(id);
         s.bannedDevices = s.bannedDevices.filter((b) => b.userId !== id);
@@ -788,6 +794,48 @@ function memoryRushRuns(s: MemoryState): RushRunsRepo {
   };
 }
 
+function memoryDailyAttempts(s: MemoryState): DailyAttemptsRepo {
+  const find = (userId: string, dateKey: string) => [...s.dailyAttempts.values()].find((a) => a.userId === userId && a.dateKey === dateKey);
+  return {
+    async start(a) {
+      const existing = find(a.userId, a.dateKey);
+      if (existing) return copy(existing);
+      if (s.dailyAttempts.has(a.id)) throw new Error(`Attempt ${a.id} already exists`);
+      const row: DailyAttemptRecord = { ...copy(a), finishedAt: null };
+      s.dailyAttempts.set(row.id, row);
+      return copy(row);
+    },
+    async get(id) {
+      const row = s.dailyAttempts.get(id);
+      return row ? copy(row) : null;
+    },
+    async finish(id, finishedAt) {
+      const row = s.dailyAttempts.get(id);
+      if (!row || row.finishedAt !== null) return null;
+      row.finishedAt = finishedAt;
+      return copy(row);
+    },
+    async moveToUser(fromUserId, toUserId) {
+      let n = 0;
+      for (const a of s.dailyAttempts.values()) {
+        if (a.userId !== fromUserId || find(toUserId, a.dateKey)) continue;
+        a.userId = toUserId;
+        n++;
+      }
+      return n;
+    },
+    async prune(before) {
+      let n = 0;
+      for (const [id, a] of [...s.dailyAttempts]) {
+        if (a.startedAt >= before) continue;
+        s.dailyAttempts.delete(id);
+        n++;
+      }
+      return n;
+    },
+  };
+}
+
 /** The boards' order: score high first, tiebreak low, earlier, then user id. */
 export function boardOrder(a: Pick<BoardEntry, 'score' | 'tiebreak' | 'at' | 'userId'>, b: Pick<BoardEntry, 'score' | 'tiebreak' | 'at' | 'userId'>): number {
   return b.score - a.score || a.tiebreak - b.tiebreak || a.at - b.at || (a.userId < b.userId ? -1 : a.userId > b.userId ? 1 : 0);
@@ -849,6 +897,7 @@ function build(s: MemoryState, transaction: Repos['transaction']): Repos {
     puzzleResults: memoryPuzzleResults(s),
     puzzleRatings: memoryPuzzleRatings(s),
     rushRuns: memoryRushRuns(s),
+    dailyAttempts: memoryDailyAttempts(s),
     leaderboards: memoryLeaderboards(s),
     blocks: memoryBlocks(s),
     moderation: memoryModeration(s),
