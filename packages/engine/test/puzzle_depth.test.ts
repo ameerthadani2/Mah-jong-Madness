@@ -37,3 +37,50 @@ describe('one-line rules measured against the judge', () => {
     }
   });
 });
+
+/** Share of `n` seeded puzzles at `difficulty` where `rule` is wrong, with generation times. */
+function measure<T>(gen: (seed: string, d: 1 | 2 | 3) => T, rule: (p: T) => boolean | null, difficulty: 1 | 2 | 3, n: number, prefix: string) {
+  let wrong = 0;
+  const ms: number[] = [];
+  const puzzles: T[] = [];
+  for (let i = 0; i < n; i++) {
+    const t0 = performance.now();
+    const p = gen(`${prefix}-${i}`, difficulty);
+    ms.push(performance.now() - t0);
+    puzzles.push(p);
+    if (rule(p) === false) wrong++;
+  }
+  ms.sort((a, b) => a - b);
+  return { share: wrong / n, median: ms[Math.floor(n / 2)], max: ms[n - 1], puzzles };
+}
+
+describe('hard value puzzles need more than "keep the most winning tiles"', () => {
+  const hard = measure(valuePuzzle, valueSpeedRule, 3, 160, 'depth-v');
+
+  it('the rule is wrong in 40 to 60 percent of hard puzzles', () => {
+    expect(hard.share).toBeGreaterThanOrEqual(0.4);
+    expect(hard.share).toBeLessThanOrEqual(0.6);
+  });
+
+  it('easy and medium still teach the rule', () => {
+    for (const d of [1, 2] as const) expect(measure(valuePuzzle, valueSpeedRule, d, 80, 'depth-v').share).toBeLessThan(0.25);
+  });
+
+  it('when the rule is right at hard, speed beats a bigger hand', () => {
+    for (const p of hard.puzzles) {
+      if (valueSpeedRule(p) !== true) continue;
+      const a = p.options.find((o) => o.kind === p.answer)!;
+      const r = p.options.find((o) => o.kind === p.rival)!;
+      expect(r.acceptance! > a.acceptance! || r.bestTai! > a.bestTai!).toBe(true);
+    }
+  });
+
+  it('give the same puzzle for the same seed', () => {
+    for (let i = 0; i < 160; i += 16) expect(valuePuzzle(`depth-v-${i}`, 3)).toEqual(hard.puzzles[i]);
+  });
+
+  it('generate quickly enough for the server to regenerate a Rush run (loose bound for CI)', () => {
+    expect(hard.median).toBeLessThan(60);
+    expect(hard.max).toBeLessThan(1500);
+  });
+});

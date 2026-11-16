@@ -1172,6 +1172,8 @@ const HEADLINE_KEYS: ReadonlySet<string> = new Set([
 export const VALUE_SELF_DRAW_SHARE = 0.25;
 /** Discards whose expected score is at least this share of the best one's all count as right. */
 export const VALUE_TOLERANCE = 0.9;
+/** Share of hard value puzzles where the bigger hand wins, so keeping the most winning tiles is wrong. */
+export const VALUE_HARD_SIZE_SHARE = 0.5;
 
 /** One winning tile of a ready discard, with what a win on it scores. */
 export interface ValueWait {
@@ -1241,7 +1243,7 @@ type ValueTheme = 'flush' | 'pongs' | 'honour';
 const VALUE_THEME_MIX: Record<PuzzleDifficulty, [number, number]> = { 1: [0.65, 0.15], 2: [0.4, 0.3], 3: [0.15, 0.6] };
 
 /** A complete hand of five sets and a pair, shaped by `theme` (`suit` is the flush suit, else -1). */
-function themedHand(rng: Rng, pool: TilePool, theme: ValueTheme, valueHonours: readonly Kind[]): { sets: Kind[][]; pair: Kind; suit: number } | null {
+function themedHand(rng: Rng, pool: TilePool, theme: ValueTheme, valueHonours: readonly Kind[], sizeBias = false): { sets: Kind[][]; pair: Kind; suit: number } | null {
   const sets: Kind[][] = [];
   let pair = -1;
   let suit = -1;
@@ -1252,7 +1254,7 @@ function themedHand(rng: Rng, pool: TilePool, theme: ValueTheme, valueHonours: r
   };
   if (theme === 'flush') {
     suit = rng.int(3);
-    const mixed = rng.next() < 0.6;
+    const mixed = rng.next() < 0.6 && !sizeBias;
     for (let i = 0; i < 5; i++) {
       const set = mixed && rng.next() < 0.25 ? randomHonourPong(rng, pool) : randomSet(rng, pool, 0.35, [suit], false);
       if (!set) return null;
@@ -1260,7 +1262,7 @@ function themedHand(rng: Rng, pool: TilePool, theme: ValueTheme, valueHonours: r
     }
     if (!takePair(mixed && rng.next() < 0.35 ? KIND_WIND + rng.int(7) : suit * 9 + rng.int(9))) return null;
   } else if (theme === 'pongs') {
-    const nPongs = 3 + rng.int(3);
+    const nPongs = sizeBias ? 5 : 3 + rng.int(3);
     for (let i = 0; i < 5; i++) {
       const set = randomSet(rng, pool, i < nPongs ? 1 : 0);
       if (!set) return null;
@@ -1332,6 +1334,39 @@ const fmt1 = (x: number): string => (Math.round(x * 10) / 10).toString();
  * null when none of them is true (no more winning tiles and no more 台 a win on average: the
  * answer leads only through the self-draw weighting, which no short reason explains).
  */
+/**
+ * Kinds whose removal from the complete hand `concealed` leaves a wait with exactly `live` unseen
+ * winning tiles and also lets a single wait on a new tile compete with it: some second tile can go
+ * so that the rest is whole sets.
+ */
+function narrowOuts(concealed: readonly Kind[], melds: readonly PuzzleMeld[], live: number): Kind[] {
+  const counts = countsFromKinds(concealed);
+  const seen = countsFromKinds([...concealed, ...melds.flatMap((m) => m.kinds)]);
+  const setsNeeded = TOTAL_SETS - melds.length;
+  // A kind nobody holds stands in for the new tile's pair when testing the single wait.
+  const ghost = seen.findIndex((n) => n === 0);
+  const out: Kind[] = [];
+  for (let k = 0; k < NUM_PLAY_KINDS; k++) {
+    if (counts[k] === 0) continue;
+    counts[k]--;
+    const n = shapeWaits(counts, setsNeeded).reduce((sum, w) => sum + Math.max(0, 4 - seen[w] + (w === k ? 1 : 0)), 0);
+    let single = false;
+    if (n === live && ghost >= 0) {
+      counts[ghost] += 2;
+      for (let y = 0; y < NUM_PLAY_KINDS && !single; y++) {
+        if (counts[y] === 0 || y === ghost) continue;
+        counts[y]--;
+        single = isComplete(counts, setsNeeded);
+        counts[y]++;
+      }
+      counts[ghost] -= 2;
+    }
+    counts[k]++;
+    if (single) out.push(k);
+  }
+  return out;
+}
+
 function valueReason(answer: ValueOption, rival: ValueOption, keepsPattern: boolean): string | null {
   if (keepsPattern) return rival.acceptance! > answer.acceptance! ? 'puzzle.value.tradeSpeed' : 'puzzle.value.keepPattern';
   const faster = answer.acceptance! > rival.acceptance!;
@@ -1392,14 +1427,18 @@ function valueText(p: Pick<ValuePuzzle, 'answer' | 'answers' | 'rival' | 'option
  */
 export function valuePuzzle(seed: string, difficulty: PuzzleDifficulty = 2): ValuePuzzle {
   const rng = createRng(`value:${seed}:${difficulty}`);
+  // Hard puzzles: half are won by the bigger hand (the most winning tiles is wrong), half by
+  // speed against a bigger hand (the most winning tiles is right), drawn per seed.
+  const sizeWins = difficulty === 3 && rng.next() < VALUE_HARD_SIZE_SHARE;
   let fallback: ValuePuzzle | null = null;
   for (let attempt = 0; attempt < 600; attempt++) {
-    const p = valueAttempt(seed, difficulty, rng);
+    const p = valueAttempt(seed, difficulty, rng, sizeWins);
     if (!p) continue;
     const a = p.options.find((o) => o.kind === p.answer)!;
     const r = p.options.find((o) => o.kind === p.rival)!;
     const trade = r.acceptance! > a.acceptance! || r.bestTai! > a.bestTai!;
-    if (difficulty === 1 ? a.acceptance! >= r.acceptance! && p.patternKey !== '' : difficulty === 3 ? trade : true) return p;
+    const hard = (): boolean => (sizeWins ? valueSpeedRule(p) === false : trade && valueSpeedRule(p) === true);
+    if (difficulty === 1 ? a.acceptance! >= r.acceptance! && p.patternKey !== '' : difficulty === 3 ? hard() : true) return p;
     fallback = fallback ?? p;
     if (attempt >= 300) return fallback;
   }
@@ -1407,18 +1446,20 @@ export function valuePuzzle(seed: string, difficulty: PuzzleDifficulty = 2): Val
   throw new Error(`valuePuzzle: no puzzle for seed ${seed}`);
 }
 
-function valueAttempt(seed: string, difficulty: PuzzleDifficulty, rng: Rng): ValuePuzzle | null {
+function valueAttempt(seed: string, difficulty: PuzzleDifficulty, rng: Rng, sizeBias = false): ValuePuzzle | null {
   const pool = new TilePool();
   const dealerSeat = rng.int(4);
   const prevailingWind = rng.int(2);
   const seatWind = seatWindKind(0, dealerSeat);
   const valueHonours = [...new Set([seatWind, prevailingWindKind(prevailingWind), KIND_DRAGON, KIND_DRAGON + 1, KIND_DRAGON + 2])];
   // Theme mix by difficulty: flushes usually keep the faster wait too, pongs usually trade speed.
+  // A hard puzzle the bigger hand should win (`sizeBias`) is built from a pure flush or from five
+  // pongs (one or two exposed), the patterns big enough to beat a wait with more winning tiles.
   const roll = rng.next();
-  const [flushShare, pongShare] = VALUE_THEME_MIX[difficulty];
+  const [flushShare, pongShare] = sizeBias ? [0.25, 0.75] : VALUE_THEME_MIX[difficulty];
   const theme: ValueTheme = roll < flushShare ? 'flush' : roll < flushShare + pongShare ? 'pongs' : 'honour';
-  const nExposed = difficulty === 1 ? 0 : rng.int(3);
-  const built = themedHand(rng, pool, theme, valueHonours);
+  const nExposed = difficulty === 1 ? 0 : sizeBias && theme === 'pongs' ? 1 + rng.int(2) : rng.int(3);
+  const built = themedHand(rng, pool, theme, valueHonours, sizeBias);
   if (!built) return null;
   const melds: PuzzleMeld[] = built.sets.slice(0, nExposed).map((kinds) => {
     const pong = kinds[0] === kinds[1];
@@ -1431,7 +1472,14 @@ function valueAttempt(seed: string, difficulty: PuzzleDifficulty, rng: Rng): Val
   // At difficulty 3 it is always a suited pong and the new tile sits right next to it (a two-sided shape).
   const pongKinds = theme === 'pongs' ? [...new Set(concealed.filter((k) => concealed.filter((x) => x === k).length >= 3 && (difficulty < 3 || k < KIND_WIND)))] : [];
   const pairPick = theme === 'flush' && rng.next() < 0.4;
-  const outKind = pongKinds.length > 0 && (difficulty === 3 || rng.next() < 0.7) ? pongKinds[rng.int(pongKinds.length)] : pairPick ? built.pair : concealed[rng.int(concealed.length)];
+  let outKind = pongKinds.length > 0 && (difficulty === 3 || rng.next() < 0.7) ? pongKinds[rng.int(pongKinds.length)] : pairPick ? built.pair : concealed[rng.int(concealed.length)];
+  if (sizeBias && theme === 'flush') {
+    // The flush wait left after throwing the off-suit tile has exactly two live winning tiles, one
+    // fewer than the single wait on the off-suit tile it competes with.
+    const narrow = narrowOuts(concealed, melds, 2);
+    if (narrow.length === 0) return null;
+    outKind = narrow[rng.int(narrow.length)];
+  }
   const out = concealed.splice(concealed.indexOf(outKind), 1)[0];
   const hasHonour = [...concealed, ...melds.flatMap((m) => m.kinds)].some(isHonorKind);
   const sameSuitNear = (k: Kind) => concealed.some((c) => c < KIND_WIND && Math.floor(c / 9) === Math.floor(k / 9) && Math.abs(c - k) <= 2 && c !== k);
