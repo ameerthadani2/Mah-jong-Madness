@@ -754,6 +754,22 @@ function defenceAttempt(seed: string, difficulty: PuzzleDifficulty, rng: Rng): D
   };
 }
 
+/** A fixed safety order a player can learn instead of reading the table (strongest reason first). */
+export const DEFENCE_SAFETY_ORDER: readonly DefenceReason[] = ['deadHonour', 'theirDiscard', 'passed', 'lastHonour', 'honour', 'fewCopies', 'terminal', 'middle'];
+
+/**
+ * The fixed safety order against the judge: among the discards that keep the hand's shanten, those
+ * with the reason highest in `DEFENCE_SAFETY_ORDER`. True when every one of them is accepted, false
+ * when none is, null when they split.
+ */
+export function defenceOrderRule(p: Pick<DefencePuzzle, 'options' | 'bestShanten'>): boolean | null {
+  const kept = p.options.filter((o) => o.shanten === p.bestShanten);
+  const top = Math.min(...kept.map((o) => DEFENCE_SAFETY_ORDER.indexOf(o.reason)));
+  const picks = kept.filter((o) => DEFENCE_SAFETY_ORDER.indexOf(o.reason) === top);
+  const right = picks.filter((o) => o.accepted).length;
+  return right === picks.length ? true : right === 0 ? false : null;
+}
+
 export function checkDefenceAnswer(p: DefencePuzzle, kind: Kind): boolean {
   return p.answers.includes(kind);
 }
@@ -1499,6 +1515,18 @@ function valueAttempt(seed: string, difficulty: PuzzleDifficulty, rng: Rng): Val
     ...base,
     ...valueText(base, reasonKey),
   };
+}
+
+/**
+ * The one-line rule "keep the most winning tiles" against the judge: true when every ready discard
+ * with the most winning tiles is accepted, false when none is, null when they split.
+ */
+export function valueSpeedRule(p: Pick<ValuePuzzle, 'options'>): boolean | null {
+  const ready = p.options.filter((o) => o.ready);
+  const most = Math.max(...ready.map((o) => o.acceptance ?? 0));
+  const picks = ready.filter((o) => (o.acceptance ?? 0) === most);
+  const right = picks.filter((o) => o.accepted).length;
+  return right === picks.length ? true : right === 0 ? false : null;
 }
 
 export function checkValueAnswer(p: ValuePuzzle, kind: Kind): boolean {
