@@ -7,7 +7,7 @@ import { effectiveStreak, todayKey } from '../storage';
 import { nextDailyProgress } from '../logic/daily';
 import { localDayAsUtc } from '../logic/dates';
 import { dailyDifficulty, puzzleDifficultyOf, PUZZLE_TYPE_KEYS, type PuzzleResult } from '../logic/puzzle';
-import { rateAnswer, recordRush } from '../logic/rating';
+import { rateAnswerIn, recordRush } from '../logic/rating';
 import { rushDifficulty, rushOutcome, rushPuzzleAt } from '../logic/rush';
 import { canUse, consume } from '../monetisation/store';
 import { puzzleErrorText } from '../api/puzzles';
@@ -55,7 +55,7 @@ export function DailyPuzzleScreen() {
     // Only the day's first attempt counts, for the streak and for the rating alike.
     app.setProgress((p) => {
       const next = nextDailyProgress(p, r.correct, today);
-      return next === p ? p : rateAnswer({ ...next, drillsPlayed: p.drillsPlayed + 1, drillsCorrect: p.drillsCorrect + (r.correct ? 1 : 0) }, 'discard', difficulty, r.correct, Date.now());
+      return next === p ? p : rateAnswerIn('daily', { ...next, drillsPlayed: p.drillsPlayed + 1, drillsCorrect: p.drillsCorrect + (r.correct ? 1 : 0) }, 'discard', difficulty, r.correct, Date.now());
     });
     if (playedAtOpen) return;
     // The verdict, time and rating shown are the server's once it answers.
@@ -263,7 +263,8 @@ function PuzzleRushRun({ onAgain, onStart }: { onAgain: () => void; /** The firs
     else setStrikes((s) => s + 1);
     setAnsweredOnce(true);
     const difficulty = r.difficulty ?? (puzzle ? puzzleDifficultyOf(puzzle, rushDifficulty(index)) : rushDifficulty(index));
-    app.setProgress((p) => rateAnswer(p, r.type, difficulty, r.correct, Date.now()));
+    // Rush answers do not move the rating (the engine's rule, which the server follows too): this is a no-op kept for the rule's sake.
+    app.setProgress((p) => rateAnswerIn('rush', p, r.type, difficulty, r.correct, Date.now()));
   };
 
   return (
@@ -295,7 +296,7 @@ function PuzzleRushRun({ onAgain, onStart }: { onAgain: () => void; /** The firs
           ))}
         </View>
         <Pill icon="trophy" text={t('puzzles.rush.bestScore', { n: app.progress.rushBestScore })} tone="gold" />
-        <RatingPill rating={app.progress.puzzleRating} history={app.progress.ratingHistory} showChange={answeredOnce} />
+        <RatingPill rating={app.progress.puzzleRating} history={app.progress.ratingHistory} showChange={false} />
         {outcome?.ranked && <Pill icon="check" text={t('puzzles.server.ranked')} tone="ok" />}
       </Row>
       <Card>
@@ -307,6 +308,7 @@ function PuzzleRushRun({ onAgain, onStart }: { onAgain: () => void; /** The firs
             <Pill icon="check" text={t('puzzles.rush.solved', { n: outcome?.ranked ? outcome.solved : score })} tone="ok" />
             <H2>{t(`puzzles.rush.outcome.${rushOutcome(prevBest, points).kind}`)}</H2>
             <P dim>{t(strikes >= RUSH_STRIKES ? 'puzzles.rush.endStrikes' : 'puzzles.rush.endTime')}</P>
+            <P dim>{t('puzzles.rush.notRated')}</P>
             <Row style={{ flexWrap: 'wrap', rowGap: 8, justifyContent: 'center' }}>
               <Button title={t(outcome && !outcome.ranked && !outcome.down && isRunGone(outcome.error) ? 'puzzles.server.newRun' : 'puzzles.rush.playAgain')} onPress={onAgain} />
               <Button kind="secondary" icon="trophy" title={t('puzzles.boards.seeBoard')} onPress={() => app.go({ name: 'leaderboards', board: 'rush' })} testID="rush-leaderboard" />

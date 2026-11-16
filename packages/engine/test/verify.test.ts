@@ -10,6 +10,8 @@ import {
   dateOfDailyKey,
   DEFAULT_PUZZLE_RATING,
   isPuzzleAnswerInput,
+  movesPuzzleRating,
+  RATED_PUZZLE_MODES,
   judgePuzzleAnswer,
   judgeRushRun,
   MAX_PUZZLE_RATING,
@@ -126,6 +128,13 @@ describe('rating', () => {
       server = r.rating;
     }
     expect(server).toBe(1052);
+  });
+
+  it('is moved by the daily puzzle and drills, never by Puzzle Rush', () => {
+    expect(movesPuzzleRating('daily')).toBe(true);
+    expect(movesPuzzleRating('drill')).toBe(true);
+    expect(movesPuzzleRating('rush')).toBe(false);
+    expect([...RATED_PUZZLE_MODES].sort()).toEqual(['daily', 'drill']);
   });
 
   it('treats a missing or damaged rating as the default and never passes the ceiling', () => {

@@ -4,7 +4,7 @@
  * progress, keeps a short history for the trend and repairs old or damaged saves.
  * Pure TypeScript: no React Native, so it is unit-tested directly.
  */
-import { DEFAULT_PUZZLE_RATING, MAX_PUZZLE_RATING, MIN_PUZZLE_RATING, PUZZLE_TYPES, ratePuzzleAnswer, rushScore, type PuzzleDifficulty, type PuzzleType } from '@mjm/engine';
+import { DEFAULT_PUZZLE_RATING, MAX_PUZZLE_RATING, MIN_PUZZLE_RATING, movesPuzzleRating, PUZZLE_TYPES, ratePuzzleAnswer, rushScore, type PuzzleDifficulty, type PuzzleMode, type PuzzleType } from '@mjm/engine';
 
 /** A stored rating above `MAX_PUZZLE_RATING` (4000) is treated as damage (the hardest puzzle plays at 1550). */
 export { DEFAULT_PUZZLE_RATING, MAX_PUZZLE_RATING, MIN_PUZZLE_RATING } from '@mjm/engine';
@@ -43,6 +43,15 @@ export function rateAnswer<T extends RatingState>(state: T, type: PuzzleType, di
   const entry: RatingEntry = { rating, delta, type, difficulty, solved, at };
   const history = [...(Array.isArray(state.ratingHistory) ? state.ratingHistory : []), entry].slice(-RATING_HISTORY_MAX);
   return { ...state, puzzleRating: rating, ratingHistory: history };
+}
+
+/**
+ * Progress after answering a puzzle in `mode`: `rateAnswer` for the modes the engine rates (the
+ * daily puzzle and drills), and the same state, unchanged, for Puzzle Rush (`movesPuzzleRating`:
+ * the server applies the same rule, so the two ratings move together).
+ */
+export function rateAnswerIn<T extends RatingState>(mode: PuzzleMode, state: T, type: PuzzleType, difficulty: PuzzleDifficulty, solved: boolean, at: number): T {
+  return movesPuzzleRating(mode) ? rateAnswer(state, type, difficulty, solved, at) : state;
 }
 
 /** Net change over the last `n` answers (0 with no history): the chip's trend. */

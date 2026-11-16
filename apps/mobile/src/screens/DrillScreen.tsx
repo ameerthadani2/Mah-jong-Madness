@@ -2,7 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { ScrollView, StyleSheet } from 'react-native';
 import { discardPuzzle, waitsPuzzle } from '@mjm/engine';
 import { useApp } from '../app-state';
-import { rateAnswer } from '../logic/rating';
+import { rateAnswerIn } from '../logic/rating';
 import { space } from '../theme';
 import { PuzzleView } from '../components/PuzzleView';
 import { PuzzleFoot } from './PuzzleScreens';
@@ -37,7 +37,7 @@ export function DrillScreen({ kind }: { kind: 'discard' | 'waits' }) {
       <Card>
         <PuzzleView
           puzzle={puzzle}
-          onResult={(r) => app.setProgress((p) => rateAnswer({ ...p, drillsPlayed: p.drillsPlayed + 1, drillsCorrect: p.drillsCorrect + (r.correct ? 1 : 0) }, r.type, difficulty, r.correct, Date.now()))}
+          onResult={(r) => app.setProgress((p) => rateAnswerIn('drill', { ...p, drillsPlayed: p.drillsPlayed + 1, drillsCorrect: p.drillsCorrect + (r.correct ? 1 : 0) }, r.type, difficulty, r.correct, Date.now()))}
           onNext={() => setN(n + 1)}
           nextLabel={t('learn.nextHand')}
         />

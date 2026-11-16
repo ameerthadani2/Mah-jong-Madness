@@ -8,8 +8,9 @@
  * answer against the accepted set and takes the time from its own clock. A Puzzle Rush run is issued here (seed and start time), and finishing
  * it sends the answers in order: each puzzle is regenerated from the seed and judged, the run
  * stops at the third wrong answer as in the app, and the score comes from the server's clock.
- * Every verified answer moves the account's one puzzle rating with the engine's rules
- * (`ratePuzzleAnswer`, the same steps the app applies on the device).
+ * A verified daily answer moves the account's one puzzle rating with the engine's rules
+ * (`ratePuzzleAnswer`, the same steps the app applies on the device); Puzzle Rush does not move
+ * it (`movesPuzzleRating`, the engine's one rule for the app and the server).
  *
  * Boards list live, visible, unbanned accounts only, with the account's name as the club rules
  * clean it (a name the blocklist refuses shows as "Player XXXX").
@@ -23,6 +24,7 @@ import {
   isPuzzleAnswerInput,
   judgePuzzleAnswer,
   judgeRushAnswer,
+  movesPuzzleRating,
   randomHex,
   ratePuzzleAnswer,
   RUSH_SECONDS,
@@ -115,7 +117,10 @@ export function weekStart(ms: number): number {
   return day - weekday * DAY_MS;
 }
 
-/** Applies verified answers to the account's rating, in order, inside the caller's transaction. */
+/**
+ * Applies verified answers to the account's rating, in order, inside the caller's transaction.
+ * With no answers (a mode that is not rated) it only reads the rating: change 0.
+ */
 async function applyRatings(tx: Repos, userId: string, answers: Array<{ type: PuzzleType; difficulty: PuzzleDifficulty; correct: boolean }>, at: number) {
   const current = await tx.puzzleRatings.getForUpdate(userId);
   const before = current?.rating ?? DEFAULT_PUZZLE_RATING;
@@ -207,8 +212,8 @@ export function puzzleRoutes<R>(r: PuzzleRouteFactory<R>, deps: PuzzleDeps): R[]
       const result = await repos.transaction(async (tx) => {
         // An attempt is finished once; throwing below undoes this and the rating step together.
         if (!(await tx.dailyAttempts.finish(attempt.id, at))) throw new PuzzleError(409, 'already_played', 'You have already played this daily puzzle');
-        const { rating, after } = await applyRatings(tx, me.userId, [{ type: 'discard', difficulty, correct }], at);
-        const row = await tx.puzzleResults.recordDaily({ userId: me.userId, puzzleKey: key, correct, seconds, ratingAfter: after[0], createdAt: at });
+        const { rating, after } = await applyRatings(tx, me.userId, movesPuzzleRating('daily') ? [{ type: 'discard', difficulty, correct }] : [], at);
+        const row = await tx.puzzleResults.recordDaily({ userId: me.userId, puzzleKey: key, correct, seconds, ratingAfter: after[0] ?? null, createdAt: at });
         // Only the first attempt per date key is ranked and rated.
         if (!row) throw new PuzzleError(409, 'already_played', 'You have already played this daily puzzle');
         return { rating, row };
@@ -263,9 +268,10 @@ export function puzzleRoutes<R>(r: PuzzleRouteFactory<R>, deps: PuzzleDeps): R[]
       const outcome = await repos.transaction(async (tx) => {
         const finished = await tx.rushRuns.finish(run.id, { finishedAt: at, solved, wrong, seconds, score });
         if (!finished) throw new PuzzleError(409, 'run_finished', 'This run has already been finished');
-        const { rating, after } = await applyRatings(tx, me.userId, verdicts, at);
+        // Rush answers do not move the rating (the engine's `movesPuzzleRating('rush')`): `rating` reports it unchanged.
+        const { rating, after } = await applyRatings(tx, me.userId, movesPuzzleRating('rush') ? verdicts : [], at);
         for (const [i, v] of verdicts.entries()) {
-          await tx.puzzleResults.record({ userId: me.userId, kind: 'rush', puzzleKey: `${run.id}:${v.index}`, correct: v.correct, seconds: 0, ratingAfter: after[i], createdAt: at });
+          await tx.puzzleResults.record({ userId: me.userId, kind: 'rush', puzzleKey: `${run.id}:${v.index}`, correct: v.correct, seconds: 0, ratingAfter: after[i] ?? null, createdAt: at });
         }
         return rating;
       });

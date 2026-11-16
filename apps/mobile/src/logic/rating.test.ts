@@ -1,8 +1,20 @@
 import { describe, expect, it } from 'vitest';
 import { puzzleRatingFor, rushScore, updateRating, type PuzzleType } from '@mjm/engine';
-import { DEFAULT_PUZZLE_RATING, formatRatingChange, lastRatingChange, MIN_PUZZLE_RATING, migratePuzzleProgress, RATING_HISTORY_MAX, rateAnswer, ratingTrend, recordRush, type RatingState } from './rating';
+import { DEFAULT_PUZZLE_RATING, formatRatingChange, lastRatingChange, MIN_PUZZLE_RATING, migratePuzzleProgress, RATING_HISTORY_MAX, rateAnswer, rateAnswerIn, ratingTrend, recordRush, type RatingState } from './rating';
 
 const fresh = (): RatingState => ({ puzzleRating: DEFAULT_PUZZLE_RATING, ratingHistory: [] });
+
+describe('rateAnswerIn', () => {
+  it('moves the rating for the daily puzzle and drills, and leaves it alone in Puzzle Rush (as the server does)', () => {
+    for (const mode of ['daily', 'drill'] as const) expect(rateAnswerIn(mode, fresh(), 'value', 3, true, 5)).toEqual(rateAnswer(fresh(), 'value', 3, true, 5));
+    const before = fresh();
+    expect(rateAnswerIn('rush', before, 'value', 3, true, 5)).toBe(before);
+    // A 40-answer run moves nothing (it moved the rating by hundreds before).
+    let p = fresh();
+    for (let i = 0; i < 40; i++) p = rateAnswerIn('rush', p, 'value', 3, true, i);
+    expect(p).toEqual(fresh());
+  });
+});
 
 describe('rateAnswer', () => {
   it('moves the rating up on a solve and down on a miss', () => {

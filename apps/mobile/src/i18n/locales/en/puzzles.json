@@ -25,6 +25,7 @@
     },
     "endStrikes": "Three strikes. Puzzles get harder the further you go.",
     "endTime": "Time is up. Puzzles get harder the further you go.",
+    "notRated": "Puzzle Rush counts for the leaderboards, not your puzzle rating: the daily puzzle and drills move your rating.",
     "playAgain": "Play again",
     "backToLearn": "Back to Learn",
     "progress": "Puzzle %{n} · %{type}",

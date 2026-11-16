@@ -11,6 +11,7 @@ import {
   dateOfDailyKey,
   DEFAULT_PUZZLE_RATING,
   puzzleDifficulty,
+  movesPuzzleRating,
   randomHex,
   ratePuzzleAnswer,
   rushDifficultyAt,
@@ -186,13 +187,14 @@ function contract(name: string, repos: () => Repos) {
       expect(res.status, res.body).toBe(200);
       expect(res.json).toMatchObject({ runId: run.runId, solved: 3, wrong: 3, seconds: 60, score: rushScore(3, 60) });
       expect((res.json.answers as Array<{ correct: boolean }>).map((x) => x.correct)).toEqual([true, false, true, true, false, false]);
-      // The rating moves once per judged answer, in order, by the engine's rules.
-      let rating = DEFAULT_PUZZLE_RATING;
-      for (let i = 0; i < 6; i++) {
-        const p = rushRunPuzzle(run.seed, i);
-        rating = ratePuzzleAnswer(rating, p.type, 'difficulty' in p ? p.difficulty : rushDifficultyAt(i), 'rwrrww'[i] === 'r').rating;
-      }
-      expect(res.json.rating).toEqual({ rating, change: rating - DEFAULT_PUZZLE_RATING, rated: 6 });
+      // Rush does not move the rating (the engine's rule, as in the app): it is reported unchanged.
+      expect(movesPuzzleRating('rush')).toBe(false);
+      expect(res.json.rating).toEqual({ rating: DEFAULT_PUZZLE_RATING, change: 0, rated: 0 });
+      expect(await f.repos.puzzleRatings.get(a.userId)).toBeNull();
+      // The daily puzzle does, by the engine's step.
+      const day = await f.daily(a, TODAY, dailyRight(TODAY));
+      const stepped = ratePuzzleAnswer(DEFAULT_PUZZLE_RATING, 'discard', dailyPuzzleDifficulty(dateOfDailyKey(TODAY)!), true).rating;
+      expect(day.json.rating).toEqual({ rating: stepped, change: stepped - DEFAULT_PUZZLE_RATING, rated: 1 });
       expect((await f.finish(a, run.runId, answers)).json.error).toBe('run_finished');
       expect((await f.repos.puzzleResults.listForUser(a.userId)).filter((p) => p.kind === 'rush')).toHaveLength(6);
 
@@ -339,12 +341,17 @@ function contract(name: string, repos: () => Repos) {
     it('lists ratings of accounts with twenty verified answers, and a refused name shows as Player XXXX', async () => {
       const f = fixture(repos());
       const [steady, brief] = [await f.guest('Steady'), await f.guest('Brief')];
-      const run = await f.startRush(steady);
-      f.clock.now += 120_000;
-      expect((await f.finish(steady, run.runId, f.rushAnswers(run.seed, 'r'.repeat(17) + 'www'))).json.rating).toMatchObject({ rated: 20 });
+      // Twenty daily puzzles on twenty days (Rush does not move the rating).
+      const start = f.now();
+      for (let d = 0; d < 20; d++) {
+        f.clock.now = start + d * DAY;
+        const key = new Date(f.now()).toISOString().slice(0, 10);
+        expect((await f.daily(steady, key, d % 4 === 3 ? dailyWrong(key) : dailyRight(key))).json.rating).toMatchObject({ rated: d + 1 });
+      }
       const short = await f.startRush(brief);
       f.clock.now += 60_000;
-      await f.finish(brief, short.runId, f.rushAnswers(short.seed, 'rrrrww'));
+      await f.finish(brief, short.runId, f.rushAnswers(short.seed, 'r'.repeat(17) + 'www'));
+      for (const key of ['2026-12-04', '2026-12-05']) await f.daily(brief, key, dailyRight(key));
       const res = await f.board(brief, 'rating');
       const ids = res.rows.map((r) => r.userId);
       expect(ids).toContain(steady.userId);
@@ -367,16 +374,17 @@ function contract(name: string, repos: () => Repos) {
       const run = await f.startRush(guest);
       f.clock.now += 60_000;
       const finished = await f.finish(guest, run.runId, f.rushAnswers(run.seed, 'rrrrwww'));
-      expect(finished.json.rating).toMatchObject({ rated: 7 });
-      await f.daily(guest, TODAY, dailyRight(TODAY));
+      expect(finished.json.rating).toMatchObject({ rated: 0 });
+      // Yesterday's, today's and tomorrow's daily puzzles are all open (time zones), and each is rated.
+      for (const key of ['2026-11-15', TODAY, '2026-11-17']) await f.daily(guest, key, dailyRight(key));
       const guestRating = await f.repos.puzzleRatings.get(guest.userId);
-      expect(guestRating).toMatchObject({ rated: 8 });
+      expect(guestRating).toMatchObject({ rated: 3 });
       expect(await link(f.repos, guest.userId, identity, { sessions: f.sessions, now: f.now })).toMatchObject({ userId: account.userId, merged: true });
-      // The guest's 8 verified answers beat the account's 2: its rating is the account's now.
+      // The guest's 3 verified answers beat the account's 2: its rating is the account's now.
       expect(await f.repos.puzzleRatings.get(account.userId)).toEqual({ ...guestRating, userId: account.userId });
       expect(await f.repos.puzzleRatings.get(guest.userId)).toBeNull();
       expect((await f.repos.rushRuns.get(run.runId))?.userId).toBe(account.userId);
-      expect((await f.repos.puzzleResults.listForUser(account.userId)).filter((p) => p.kind === 'daily').map((p) => p.puzzleKey)).toEqual([TODAY]);
+      expect((await f.repos.puzzleResults.listForUser(account.userId)).filter((p) => p.kind === 'daily').map((p) => p.puzzleKey)).toEqual(['2026-11-15', TODAY, '2026-11-17']);
       // The guest's finished daily attempt is the account's now: the account cannot start that date again.
       const moved = await f.repos.dailyAttempts.start({ id: randomUUID(), userId: account.userId, dateKey: TODAY, startedAt: f.now() });
       expect(moved.finishedAt).not.toBeNull();

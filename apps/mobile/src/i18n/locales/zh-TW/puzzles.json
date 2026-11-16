@@ -25,6 +25,7 @@
     },
     "endStrikes": "三次失誤。越後面的題目越難。",
     "endTime": "時間到。越後面的題目越難。",
+    "notRated": "謎題衝刺只計入排行榜，不會改變你的謎題積分；每日謎題和練習題才會改變積分。",
     "playAgain": "再玩一次",
     "backToLearn": "回到學習",
     "progress": "第 %{n} 題 · %{type}",

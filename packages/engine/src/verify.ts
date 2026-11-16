@@ -75,6 +75,22 @@ export function puzzleDifficulty(p: AnyPuzzle, fallback: PuzzleDifficulty): Puzz
   return 'difficulty' in p ? p.difficulty : fallback;
 }
 
+/** Where a puzzle is answered: the daily puzzle, a drill, or a Puzzle Rush run. */
+export type PuzzleMode = 'daily' | 'drill' | 'rush';
+
+/**
+ * The modes whose answers move the puzzle rating: the daily puzzle and rated drills. Puzzle Rush
+ * does not (as on the big chess sites): a run answers dozens of puzzles in three minutes, so
+ * rating every answer let one run move a rating by hundreds of points and made the rating board a
+ * Rush-volume board. The app and the server both ask `movesPuzzleRating`, so they cannot drift.
+ */
+export const RATED_PUZZLE_MODES: readonly PuzzleMode[] = ['daily', 'drill'];
+
+/** Whether an answer given in `mode` moves the puzzle rating (see `RATED_PUZZLE_MODES`). */
+export function movesPuzzleRating(mode: PuzzleMode): boolean {
+  return RATED_PUZZLE_MODES.includes(mode);
+}
+
 /**
  * The player's rating after one answer, exactly as the app applies it: a missing or damaged
  * rating (not a number from 100 to 4000) counts as the default, the stored value is rounded,
