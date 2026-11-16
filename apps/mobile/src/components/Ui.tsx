@@ -211,7 +211,7 @@ export function IconButton({
       hitSlop={slopFor(size, 6)}
       accessibilityRole="button"
       accessibilityLabel={label ?? iconLabel(icon)}
-      accessibilityState={{ disabled: !!disabled, selected: selected ?? undefined }}
+      accessibilityState={{ disabled: !!disabled, selected: selected ?? undefined }} aria-selected={selected ?? undefined}
       style={{ opacity: disabled ? 0.5 : 1 }}
     >
       {({ pressed }) => (
@@ -319,7 +319,7 @@ export function Row({ children, style, gap = space.sm }: { children: React.React
 
 export function Toggle({ label, value, onChange }: { label: string; value: boolean; onChange: (v: boolean) => void }) {
   return (
-    <Pressable onPress={() => onChange(!value)} style={styles.toggleRow} hitSlop={4} accessibilityRole="switch" accessibilityLabel={label} accessibilityState={{ checked: value }}>
+    <Pressable onPress={() => onChange(!value)} style={styles.toggleRow} hitSlop={4} accessibilityRole="switch" accessibilityLabel={label} accessibilityState={{ checked: value }} aria-checked={value}>
       <Text style={[styles.p, fontFor(label, fonts.bodyBold, '700'), { flex: 1 }]}>{label}</Text>
       <View style={[styles.toggle, value && { backgroundColor: colors.cta }]}>
         <View style={[styles.toggleTop, value && { backgroundColor: colors.ctaLight }]} />
@@ -408,7 +408,7 @@ export const CHIP_HEIGHT = 34;
 
 export function Chip({ label, selected, onPress, locked, dark }: { label: string; selected?: boolean; onPress?: () => void; locked?: boolean; dark?: boolean }) {
   return (
-    <Pressable onPress={onPress} hitSlop={slopFor(CHIP_HEIGHT, 4)} accessibilityRole="button" accessibilityLabel={label} accessibilityState={{ selected: !!selected, disabled: !!locked }} style={({ pressed }) => [styles.chip, dark && styles.chipDark, selected && styles.chipOn, pressed && { transform: [{ translateY: 1 }] }]}>
+    <Pressable onPress={onPress} hitSlop={slopFor(CHIP_HEIGHT, 4)} accessibilityRole="button" accessibilityLabel={label} accessibilityState={{ selected: !!selected, disabled: !!locked }} aria-selected={!!selected} style={({ pressed }) => [styles.chip, dark && styles.chipDark, selected && styles.chipOn, pressed && { transform: [{ translateY: 1 }] }]}>
       {locked && <Icon name="lock" size={15} />}
       <Text numberOfLines={1} style={[styles.chipText, fontFor(label, fonts.uiBold), dark && !selected && { color: '#FFFFFF' }]}>
         {label}

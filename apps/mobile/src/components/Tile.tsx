@@ -535,7 +535,7 @@ export const Tile = React.memo(function Tile({ tile, kind, size = 'md', faceDown
       accessibilityRole="button"
       accessibilityLabel={spoken}
       accessibilityHint={accessibilityHint}
-      accessibilityState={{ selected: !!selected }}
+      accessibilityState={{ selected: !!selected }} aria-selected={!!selected}
       style={({ pressed }) => pressed && { opacity: 0.85 }}
     >
       {body}

@@ -259,6 +259,10 @@ async function run(browser, port, [w, h]) {
 
   if ((await tapSel(page, '[data-testid="open-settings"]', 1000)) || (await tapSel(page, 'text=Tester', 1000))) {
     await shot('settings');
+    // A switch must say whether it is on: react-native-web drops accessibilityState, so the aria attribute carries it.
+    const switches = await page.evaluate(() => [...document.querySelectorAll('[role="switch"]')].map((e) => e.getAttribute('aria-checked')));
+    if (switches.length === 0) notes.push('no switch found in Settings');
+    if (switches.some((v) => v !== 'true' && v !== 'false')) fails.push(`Settings: ${switches.filter((v) => v !== 'true' && v !== 'false').length} of ${switches.length} switches do not say whether they are on (aria-checked)`);
     await tapSel(page, '[data-testid="back"]', 800);
   } else notes.push('no settings button');
 

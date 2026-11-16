@@ -102,7 +102,7 @@ export function SettingsScreen() {
               style={[styles.pick, profile.avatar === a && styles.pickOn]}
               accessibilityRole="button"
               accessibilityLabel={avatarName(a)}
-              accessibilityState={{ selected: profile.avatar === a }}
+              accessibilityState={{ selected: profile.avatar === a }} aria-selected={profile.avatar === a}
             >
               <AvatarPlate id={a} size={42} />
             </Pressable>
@@ -135,7 +135,7 @@ export function SettingsScreen() {
                 style={[styles.theme, on && styles.themeOn]}
                 accessibilityRole="button"
                 accessibilityLabel={name}
-                accessibilityState={{ selected: on, disabled: locked }}
+                accessibilityState={{ selected: on, disabled: locked }} aria-selected={on}
               >
                 <ThemeScene theme={theme} width={96} height={80} />
                 <Row gap={4}>
@@ -165,7 +165,7 @@ export function SettingsScreen() {
                       style={[styles.slot, on && styles.themeOn]}
                       accessibilityRole="button"
                       accessibilityLabel={name}
-                      accessibilityState={{ selected: on }}
+                      accessibilityState={{ selected: on }} aria-selected={on}
                     >
                       <SlotPreview slot={slot} id={id} avatar={profile.avatar} />
                       <Text style={[styles.themeName, fontFor(name, fonts.uiBold)]} numberOfLines={1}>

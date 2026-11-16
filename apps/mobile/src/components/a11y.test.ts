@@ -87,4 +87,19 @@ describe('accessibility', () => {
     }
     expect(small).toEqual([]);
   });
+
+  it('states every checked and selected state as an aria attribute too, so the web build exposes it (react-native-web ignores accessibilityState there)', () => {
+    const missing: string[] = [];
+    for (const f of tsx(SRC)) {
+      readFileSync(f, 'utf8')
+        .split('\n')
+        .forEach((line, n) => {
+          const state = line.match(/accessibilityState=\{\{([^}]*)\}\}/);
+          if (!state) return;
+          if (/\bchecked\b/.test(state[1]) && !line.includes('aria-checked=')) missing.push(`${relative(SRC, f)}:${n + 1} aria-checked`);
+          if (/\bselected\b/.test(state[1]) && !line.includes('aria-selected=')) missing.push(`${relative(SRC, f)}:${n + 1} aria-selected`);
+        });
+    }
+    expect(missing).toEqual([]);
+  });
 });

@@ -207,7 +207,7 @@ export function ShopScreen({ focus }: { focus?: ShopFocus } = {}) {
         {tabs.map(([id, label, icon]) => {
           const on = tab === id;
           return (
-            <Pressable key={id} testID={`shop-tab-${id}`} accessibilityRole="tab" accessibilityState={{ selected: on }} onPress={() => setTab(id)} style={[styles.tab, on && styles.tabOn, narrowTabs && styles.tabNarrow]}>
+            <Pressable key={id} testID={`shop-tab-${id}`} accessibilityRole="tab" accessibilityState={{ selected: on }} aria-selected={on} onPress={() => setTab(id)} style={[styles.tab, on && styles.tabOn, narrowTabs && styles.tabNarrow]}>
               <Icon name={icon} size={narrowTabs ? 20 : 22} />
               <Text style={[styles.tabText, fontFor(label, fonts.display), on && { color: colors.ink }, narrowTabs && { fontSize: 13 }]}>{label}</Text>
             </Pressable>

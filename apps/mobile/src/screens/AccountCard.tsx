@@ -152,7 +152,7 @@ export function AccountCard() {
                 })}
               </P>
               <Button small kind="secondary" icon="exit" testID="manage-subscription" title={t('settings.account.manageSubscription')} onPress={() => void Linking.openURL(manageSubscriptionUrl(Platform.OS)).catch(() => undefined)} />
-              <Pressable testID="delete-billing-ack" accessibilityRole="checkbox" accessibilityState={{ checked: billingAck }} onPress={() => setBillingAck((v) => !v)} style={styles.ack}>
+              <Pressable testID="delete-billing-ack" accessibilityRole="checkbox" accessibilityState={{ checked: billingAck }} aria-checked={billingAck} onPress={() => setBillingAck((v) => !v)} style={styles.ack}>
                 <View style={[styles.box, billingAck && styles.boxOn]}>{billingAck && <Icon name="check" size={16} color={colors.ink} />}</View>
                 <Text style={styles.ackText}>{t('settings.account.deleteSubscriptionAck')}</Text>
               </Pressable>

@@ -341,7 +341,7 @@ export function HomeScreen() {
             </Row>
             <Row style={{ flexWrap: 'wrap', rowGap: 8 }} gap={wide ? 4 : 8}>
               {AVATARS.map((a) => (
-                <Pressable key={a} onPress={() => app.setProfile({ ...app.profile, avatar: a })} hitSlop={2} style={[styles.pick, app.profile.avatar === a && styles.pickOn]} accessibilityRole="button" accessibilityLabel={avatarName(a)} accessibilityState={{ selected: app.profile.avatar === a }}>
+                <Pressable key={a} onPress={() => app.setProfile({ ...app.profile, avatar: a })} hitSlop={2} style={[styles.pick, app.profile.avatar === a && styles.pickOn]} accessibilityRole="button" accessibilityLabel={avatarName(a)} accessibilityState={{ selected: app.profile.avatar === a }} aria-selected={app.profile.avatar === a}>
                   <AvatarPlate id={a} size={wide ? 36 : 34} />
                 </Pressable>
               ))}

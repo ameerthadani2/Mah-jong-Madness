@@ -50,7 +50,7 @@ function Choice({ label, a11y, selected, onPress, testID, grow, role = 'tab' }: 
       onPress={onPress}
       accessibilityRole={role}
       accessibilityLabel={a11y ?? label}
-      accessibilityState={{ selected }}
+      accessibilityState={{ selected }} aria-selected={selected}
       style={({ pressed }) => [styles.choice, grow && styles.grow, selected && styles.choiceOn, pressed && { transform: [{ translateY: 1 }] }]}
     >
       <P style={[styles.choiceText, { fontFamily: fonts.uiBold }]}>{label}</P>
