@@ -1,5 +1,3 @@
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { cappedTai, DEFAULT_RULES, type TaiItem } from '@mjm/engine';
 import { taiCapNote } from './taiCap';
@@ -36,11 +34,5 @@ describe('a win limited by the 台 cap', () => {
     expect(note).toEqual({ key: 'table.win.cappedDealer', params: { cap: 8, counted: 12, dealer: 3, tai: 11 } });
     expect(translator('en')(note!.key, note!.params)).toMatch(/cap a hand at 8\. The dealer's 3 台 are added on top: 11 台\./);
     expect(translator('zh-TW')(note!.key, note!.params)).toMatch(/一手最多算 8 台；莊家的 3 台另計，合計 11 台。/);
-  });
-
-  it('is shown on the result sheet beside the total', () => {
-    const sheet = readFileSync(join(__dirname, '..', 'components', 'table', 'ResultSheet.tsx'), 'utf8');
-    expect(sheet).toMatch(/const capNote = taiCapNote\(w\.score\);/);
-    expect(sheet).toMatch(/\{capNote && \(\s*<Text testID="tai-capped"/);
   });
 });

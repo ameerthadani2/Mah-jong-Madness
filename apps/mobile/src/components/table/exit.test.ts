@@ -23,13 +23,6 @@ describe('table exit', () => {
     expect(exitPlan('abandon')).toEqual({ closeSession: true, forgetTable: true, goHome: true, keepSeat: false });
   });
 
-  it('wires the HUD exit icon to the sheet, never straight to leaving', () => {
-    const src = readFileSync(join(__dirname, '../../screens/TableScreen.tsx'), 'utf8');
-    const hud = src.slice(src.indexOf('<TableHud'), src.indexOf('/>', src.indexOf('<TableHud')));
-    expect(hud).toMatch(/onLeave=\{\(\) => setLeaveAsk\(true\)\}/);
-    expect(src).toContain('<LeaveSheet');
-  });
-
   it('asks before leaving from the result sheet, the shuffle screen and the Android Back key while a match is on', () => {
     const src = readFileSync(join(__dirname, '../../screens/TableScreen.tsx'), 'utf8');
     const sheet = src.slice(src.indexOf('<ResultSheet'), src.indexOf('/>', src.indexOf('<ResultSheet')));

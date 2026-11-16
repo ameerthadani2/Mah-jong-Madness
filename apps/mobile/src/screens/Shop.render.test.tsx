@@ -23,7 +23,11 @@ async function renderShop() {
 describe('the Shop', () => {
   it('says first what money can and cannot buy', async () => {
     await renderShop();
-    expect(await screen.findByText('Looks, coaching and club ownership only. Nothing here changes the tiles you draw, and joining clubs is free.')).toBeOnTheScreen();
+    const promise = await screen.findByText('Looks, coaching and club ownership only. Nothing here changes the tiles you draw, and joining clubs is free.');
+    expect(promise).toBeOnTheScreen();
+    // Shown whole: a line limit would cut "joining clubs is free" off on a phone.
+    expect(promise.props.numberOfLines).toBeUndefined();
+    expect(screen.getByText('Diamonds and points have no monetary value and cannot be redeemed or transferred.')).toBeOnTheScreen();
   });
 
   it('lists the diamond packs with the store price on each buy button', async () => {

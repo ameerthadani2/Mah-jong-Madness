@@ -82,10 +82,6 @@ describe('English gloss on the Chinese table chrome', () => {
     expect(en.relSeat.right).toMatch(/Right/);
     expect(read('./ActionBar.tsx')).toMatch(/gloss=\{t\('table\.claimGloss\.pong'\)\}/);
   });
-
-  it('drops the English 台 names from the zh-TW result sheet', () => {
-    expect(read('./ResultSheet.tsx')).toMatch(/locale !== 'zh-TW' && <Text style=\{itemEn\}>/);
-  });
 });
 
 describe('a claim the table made when the prompt ran out of time', () => {

@@ -1,9 +1,10 @@
-import { describe, expect, it } from '@jest/globals';
+import { afterEach, describe, expect, it } from '@jest/globals';
 import React from 'react';
 import { render, screen } from '@testing-library/react-native';
 import type { HandResult, TableView, WinRecord } from '@mjm/engine';
 import type { ClientState } from '@mjm/net';
 import { ResultSheet } from './ResultSheet';
+import { setLocalePreference } from '../../i18n';
 
 const item = (key: string, nameZh: string, nameEn: string, tai: number) => ({ key, nameZh, nameEn, tai });
 const SEATS = ['Mei', 'Ah Hua', 'Old Wang', 'Lin'].map((name, seat) => ({ seat, name }));
@@ -55,6 +56,17 @@ describe('the result sheet after a win', () => {
     const items = [...BIG, item('dealer', '莊家', 'Dealer', 1), item('dealer_streak', '連莊', 'Dealer streak', 2)];
     await renderResult({ type: 'win', wins: [win({ tai: 11, taiUncapped: 15, items })], scoreDelta: [110, -40, -40, -30], dealerContinues: true });
     expect(screen.getByText(/The dealer's 3 台 are added on top: 11 台\./)).toBeOnTheScreen();
+  });
+});
+
+describe('the result sheet in Chinese', () => {
+  afterEach(() => setLocalePreference('auto'));
+
+  it('reads each 台 by its Chinese name alone', async () => {
+    setLocalePreference('zh-TW');
+    await renderResult({ type: 'win', wins: [win({ tai: 12, taiUncapped: 12, items: BIG })], scoreDelta: [120, -40, -40, -40], dealerContinues: false });
+    expect(screen.getByText('碰碰胡')).toHaveTextContent('碰碰胡', { exact: true });
+    expect(screen.queryByText(/All Pongs/)).toBeNull();
   });
 });
 
