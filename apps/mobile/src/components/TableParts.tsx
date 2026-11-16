@@ -16,6 +16,7 @@ import { useCountdown } from '../game/useTable';
 import { clockUrgent, timerFraction, type TurnClock } from './table/turnClock';
 import { reactionShouldPlay } from './table/feel';
 import { slopFor } from './table/layout';
+import { SEAT_TAG_CHROME, seatTagText } from '../logic/seatName';
 
 export function MeldView({ meld, size = 'sm' }: { meld: Meld; size?: TileSize | number }) {
   // Another seat's concealed kong arrives as placeholders until the hand ends: show all four face down.
@@ -167,8 +168,9 @@ export function SeatBadge({
         )}
       </Pressable>
       <View style={[styles.tag, vertical && { alignItems: 'center', marginTop: 4 }, { maxWidth: maxNameWidth }]}>
-        <Text numberOfLines={1} style={[styles.tagName, nameFont(name)]}>
-          {name}
+        {/* A name uses the tag's room and takes a second line rather than being cut (logic/seatName.ts). */}
+        <Text testID="seat-name" numberOfLines={2} style={[styles.tagName, nameFont(name), vertical && { textAlign: 'center' }]}>
+          {seatTagText(name, maxNameWidth - SEAT_TAG_CHROME)}
         </Text>
         <View style={styles.tagRow}>
           <Text style={styles.tagRel}>{relLabel}</Text>

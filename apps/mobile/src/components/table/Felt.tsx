@@ -87,7 +87,7 @@ export function Felt({
     return (
       <View style={styles.topSeat} onLayout={(e) => setTopH(Math.round(e.nativeEvent.layout.height))}>
         <Row gap={10} style={styles.topRow}>
-          <SeatBadge {...plateProps(seat)} size={plate} maxNameWidth={portrait ? 80 : 120} />
+          <SeatBadge {...plateProps(seat)} size={plate} maxNameWidth={portrait ? 110 : 120} />
           <HiddenHand count={p.handCount} tileW={tablet ? 15 : portrait ? 9 : 11} tileH={tablet ? 24 : portrait ? 15 : 17} />
           {/* Landscape has the width for melds on the same line; portrait gives them their own line so they never run over the side plates. */}
           {!portrait && <MeldsAndFlowers player={p} size={meldSize(tablet ? 'sm' : 'xs')} />}

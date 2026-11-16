@@ -38,3 +38,26 @@ export const BOT_NAME_SLOT = '\u0000';
 export function botNamer(sentence: string): (name: string) => string {
   return (name) => sentence.split(BOT_NAME_SLOT).join(name);
 }
+
+/** A seat's name tag text: its border and side padding take this much of the tag's width (TableParts' `tag` style). */
+export const SEAT_TAG_CHROME = 18;
+
+/** Rough width of `s` at `fontSize`: a CJK or full-width character is one em, anything else about 0.62 em. */
+export function estimateTextWidth(s: string, fontSize: number): number {
+  let w = 0;
+  for (const ch of s) w += /[⺀-鿿豈-﫿＀-｠￠-￦]/.test(ch) ? fontSize : fontSize * 0.62;
+  return w;
+}
+
+const LABEL_SUFFIX = /^(.*?\S)\s*([(（][^()（）]*[)）])$/;
+
+/**
+ * The text of a seat's name tag, which may take two lines. A name that fits `width` stays on one line. One that
+ * does not and ends in a label ("小美（電腦）", "Mei (Bot)") breaks before the label, so the name stays whole
+ * on the first line rather than splitting mid-word; any other long name wraps where the text allows.
+ */
+export function seatTagText(name: string, width: number, fontSize = 12): string {
+  if (estimateTextWidth(name, fontSize) <= width) return name;
+  const m = LABEL_SUFFIX.exec(name);
+  return m ? `${m[1]}\n${m[2]}` : name;
+}

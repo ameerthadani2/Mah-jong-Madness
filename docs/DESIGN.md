@@ -67,6 +67,8 @@ Run `npm run e2e:screens` in `apps/mobile` to capture every main screen at those
 * **Short landscape phones** (under 420 px tall): the compass sits to the left of the coach bubble and my pond, so my pond clears the hand rail; the "X discarded Y" line moves into the HUD; call-outs ride high over the across seat.
 * **Claim and discard buttons** dock over the bottom of the centre column in landscape (over my own pond, which no claim decision needs), never over a side opponent's pond. In portrait they get a strip of their own between the felt and the hand.
 * **Coach bubble** wraps (status two lines, advice up to four) instead of cutting words off.
+* **Seat names** use the room their seat has (the across seat's tag up to 110 px in portrait) and take a second line rather than being cut: a name that does not fit breaks before its label, so "阿花（電腦）" reads "阿花" over "（電腦）" (`seatTagText` in `src/logic/seatName.ts`). `npm run e2e:screens` opens a Traditional Chinese table at every size, and the portrait ones again at Extra-large text, and fails on a cut name.
+* **Shop descriptions** are shown whole on every card (a look's, a pack's and a plan's); the Looks tab is checked for cut text at every size.
 * **Result sheet**: two columns on short landscape with a 2×2 score grid and a scrolling right column; on phones under 480 px wide the buttons stack, Next hand full width and the other two sharing a row at equal widths.
 * **Portrait**: the across seat's melds get their own line so they never run over the side name plates.
 * **Lessons**: tiles shrink until the longest group fits the card.
@@ -102,7 +104,7 @@ All motion is React Native `Animated` (no extra library); on web it runs without
 ## Accessibility
 
 * Every pressable has a role and a label: shared controls take theirs from their title (or, for icon buttons, `table.a11y.icon.*`); tiles read their name and whether they are selected; claim buttons read the verb and the tiles.
-* Touch targets are at least 44 pt, using `hitSlop` where the drawn control is smaller (`slopFor` in `components/table/layout.ts`). Hand tiles get their extra area above and below, since neighbours sit 2 px apart.
+* Touch targets are at least 44 pt, using `hitSlop` where the drawn control is smaller (`slopFor` in `components/table/layout.ts`). The web ignores `hitSlop`, so a round icon button drawn under 44 pt (the table HUD's emotes, coach and exit icons are 40) is padded to 44 with an equal negative margin, which keeps it in place; `npm run e2e:screens` measures the HUD icons. Hand tiles get their extra area above and below, since neighbours sit 2 px apart.
 * No text below 11 px (a unit test scans the table, learning and shared components).
 * Suits carry a small ink mark in the top-right corner (萬 square, 筒 ring, 條 bar) so they never depend on colour alone. It is drawn on tiles 26 px and wider.
 
@@ -111,5 +113,5 @@ All motion is React Native `Animated` (no extra library); on web it runs without
 * Only verified in the web build; native SVG text, gradients and PingFang weights still need a device check.
 * Every tile is an SVG; profile on a low-end Android phone before launch.
 * The wall around the compass is decorative and does not track the dead wall.
-* Hand tiles in portrait are about 36 px wide (17 tiles across two rows on a 360 px phone); their touch area reaches 44 pt only vertically.
+* Hand tiles in portrait are about 36 px wide (17 tiles across two rows on a 360 px phone); their touch area reaches 44 pt only vertically, and only on a phone (hitSlop). On the web export the smallest hand tile measures 29x41 px at 667x375, 34x48 at 360x740 and 37x52 at 390x844 (logged by `npm run e2e:screens`).
 * Large and Extra large text scale body text only; headings and buttons keep their size.

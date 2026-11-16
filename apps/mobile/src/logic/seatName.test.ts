@@ -2,7 +2,7 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 import { describe, expect, it } from 'vitest';
 import { en, zhTW } from '../i18n/locales';
-import { BOT_NAME_SLOT, botBaseName, botNamer, seatDisplayName, withBotLabels } from './seatName';
+import { BOT_NAME_SLOT, botBaseName, botNamer, estimateTextWidth, seatDisplayName, seatTagText, SEAT_TAG_CHROME, withBotLabels } from './seatName';
 
 const fill = (template: string) => (name: string) => template.replace('%{name}', name);
 const enBot = fill(en.common.botName);
@@ -50,5 +50,25 @@ describe('bot seat names', () => {
       expect(src, screen).toContain("const botLabel = t('common.botName', { name: BOT_NAME_SLOT });");
       expect(src, screen).toContain('withBotLabels(tableState, botNamer(botLabel))');
     }
+  });
+});
+
+describe('a seat name tag', () => {
+  it('measures CJK and full-width characters at one em: 小美（電腦） is 72 px at 12 px', () => {
+    expect(estimateTextWidth('小美（電腦）', 12)).toBe(72);
+    expect(estimateTextWidth('Mei', 12)).toBeCloseTo(22.3, 1);
+  });
+
+  it('keeps a name that fits on one line', () => {
+    expect(seatTagText('小美（電腦）', 110 - SEAT_TAG_CHROME)).toBe('小美（電腦）');
+    expect(seatTagText('Tester', 62)).toBe('Tester');
+  });
+
+  it('breaks a name that does not fit before its label, never inside the name (the 360 px side seats: 68 px)', () => {
+    expect(seatTagText('阿花（電腦）', 68)).toBe('阿花\n（電腦）');
+    expect(seatTagText('老王（電腦）', 62)).toBe('老王\n（電腦）');
+    expect(seatTagText('Old Wang (Bot)', 60)).toBe('Old Wang\n(Bot)');
+    // No label to break at: the text wraps where it allows (the tag shows two lines).
+    expect(seatTagText('Wonderfully Long Name', 60)).toBe('Wonderfully Long Name');
   });
 });

@@ -19,7 +19,10 @@
  * Shop does not open, a Home card button clips its label in English or in Traditional Chinese (each viewport also
  * opens Home in zh-TW and writes <size>-home-zh.png), Home's cards run past the bottom edge at 844x390), or the
  * leaderboard screen (opened from Learn without a server, in English, zh-TW and Extra-large text: <size>-leaderboards.png,
- * -leaderboards-zh.png, -leaderboards-xl.png) does not show its offline state, clips text or has a choice under 44 px.
+ * -leaderboards-zh.png, -leaderboards-xl.png) does not show its offline state, clips text or has a choice under 44 px,
+ * a table HUD icon takes a press smaller than 44 x 44 px, the Shop's Looks tab cuts a description (<size>-shop-looks.png),
+ * or a seat name is cut at a table in Traditional Chinese (each viewport at Normal text, and the portrait ones again at
+ * Extra-large text: <size>-table-zh.png, <size>-table-zh-xl.png; the hand tiles' size is logged as a note).
  */
 const http = require('http');
 const fs = require('fs');
@@ -97,6 +100,58 @@ async function homeFit(page) {
 }
 
 /** Home in Traditional Chinese at one viewport: the same hard checks, on the longer of the two languages' labels. */
+/**
+ * The table's hard checks, on the page as it stands: every seat name shown whole (a long one may take two lines,
+ * never be cut), and each HUD icon (emotes, coach, exit) a press of at least 44 x 44 px. The web ignores hitSlop,
+ * so the box itself must be that big. Also returns the smallest hand tile, for the notes.
+ */
+async function tableFit(page) {
+  return page.evaluate(() => {
+    const bad = [];
+    const seen = (e) => { const b = e.getBoundingClientRect(); return b.width > 0 && b.height > 0; };
+    const plates = [...document.querySelectorAll('[data-testid="seat-name"]')].filter(seen);
+    if (plates.length < 4) bad.push(`${plates.length} seat names showing, not 4`);
+    for (const el of plates) if (el.scrollWidth > el.clientWidth + 1 || el.scrollHeight > el.clientHeight + 2) bad.push(`seat name "${el.textContent}" is cut (${el.scrollWidth}x${el.scrollHeight} in ${el.clientWidth}x${el.clientHeight})`);
+    const leave = document.querySelector('[data-testid="leave-table"]');
+    const icons = leave ? [...leave.parentElement.querySelectorAll('[role="button"]')] : [];
+    if (icons.length < 2) bad.push('the HUD icons are not showing');
+    for (const el of icons) {
+      const r = el.getBoundingClientRect();
+      if (r.width < 44 || r.height < 44) bad.push(`HUD icon "${el.getAttribute('aria-label')}" takes a ${Math.round(r.width)}x${Math.round(r.height)} px press`);
+    }
+    const hand = [...document.querySelectorAll('[data-testid="hand"] [data-testid^="tile-"], [data-testid="hand-discard"] [data-testid^="tile-"]')].map((e) => e.getBoundingClientRect());
+    const tile = hand.length ? `${Math.round(Math.min(...hand.map((b) => b.width)))}x${Math.round(Math.min(...hand.map((b) => b.height)))}` : 'none';
+    return { bad, tile };
+  });
+}
+
+/** A table in Traditional Chinese (bot names such as 小美（電腦）), at Normal or Extra-large text: <size>-table-zh[-xl].png. */
+async function runTableZh(browser, port, [w, h], xl) {
+  const tag = `${w}x${h}`;
+  const ctx = await browser.newContext({ viewport: { width: w, height: h }, locale: 'zh-TW' });
+  await ctx.addInitScript((big) => {
+    localStorage.setItem('mjm.profile', JSON.stringify({ userId: 'user-e2e-1234567', userSecret: '0123456789abcdef0123456789abcdef', name: 'Tester', avatar: 'panda' }));
+    if (big) localStorage.setItem('mjm.display', JSON.stringify({ tileScale: 1, textScale: 1.3 }));
+  }, xl);
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await page.goto(`http://localhost:${port}/`);
+  await page.waitForSelector('[data-testid="start-match"]', { timeout: 30000 });
+  await tapSel(page, '[data-testid="start-match"]', 300);
+  await page.waitForSelector('[data-testid^="tile-"]', { timeout: 15000 });
+  await page.waitForTimeout(1500);
+  const name = xl ? 'table-zh-xl' : 'table-zh';
+  await page.screenshot({ path: path.join(out, `${tag}-${name}.png`) });
+  const where = `Table (zh-TW${xl ? ', Extra-large text' : ''})`;
+  const fails = [];
+  if (!(await page.evaluate(() => [...document.querySelectorAll('[data-testid="seat-name"]')].some((e) => /電腦/.test(e.textContent))))) fails.push(`${where}: no bot seat is named in Chinese`);
+  const fit = await tableFit(page);
+  fails.push(...fit.bad.map((f) => `${where}: ${f}`));
+  await ctx.close();
+  return { size: `${tag} ${name}`, finished: true, shots: [name], notes: [`smallest hand tile ${fit.tile} px (the hand cannot give every tile 44 px of width)`], fails, errors };
+}
+
 async function runHomeZh(browser, port, [w, h]) {
   const tag = `${w}x${h}`;
   const ctx = await browser.newContext({ viewport: { width: w, height: h }, locale: 'zh-TW' });
@@ -165,7 +220,12 @@ async function run(browser, port, [w, h]) {
       if (discards >= 3 && !done.has('selected')) { done.add('selected'); await shot('table-selected'); }
       await tap(page, el);
       discards++;
-      if (discards === 6) { await page.waitForTimeout(900); await shot('table-mid'); done.add('mid'); }
+      if (discards === 6) {
+        await page.waitForTimeout(900);
+        await shot('table-mid');
+        done.add('mid');
+        fails.push(...(await tableFit(page)).bad.map((f) => `Table (en): ${f}`));
+      }
       if (discards === 4 && !done.has('exit-sheet')) {
         // The red exit icon asks first: one tap must not leave the table.
         done.add('exit-sheet');
@@ -252,8 +312,17 @@ async function run(browser, port, [w, h]) {
       await page.fill('[data-testid="age-year"]', '1990');
       await tapSel(page, '[data-testid="age-continue"]', 1000);
     }
-    if (await visible(page, '[data-testid="shop"]')) await shot('shop');
-    else fails.push('the Shop did not open from Home (the "shop" screenshot would show another screen)');
+    if (await visible(page, '[data-testid="shop"]')) {
+      await shot('shop');
+      // The Looks tab: every description shown whole, none cut mid-sentence.
+      if (await tapSel(page, '[data-testid="shop-tab-looks"]', 800)) {
+        await shot('shop-looks');
+        const cut = await page.evaluate(() => [...document.querySelectorAll('[data-testid^="product-"] div[dir="auto"]')]
+          .filter((e) => e.getBoundingClientRect().width > 0 && e.textContent.trim() && (e.scrollWidth > e.clientWidth + 1 || e.scrollHeight > e.clientHeight + 2))
+          .map((e) => e.textContent.slice(0, 40)));
+        for (const c of cut) fails.push(`Shop Looks: "${c}…" is cut`);
+      } else fails.push('the Shop has no Looks tab');
+    } else fails.push('the Shop did not open from Home (the "shop" screenshot would show another screen)');
     await tapSel(page, '[data-testid="back"]', 800);
   } else notes.push('no shop button');
 
@@ -397,6 +466,8 @@ async function runXL(browser, port, [w, h]) {
   const results = await Promise.all([
     ...SIZES.map((s) => run(browser, port, s).catch((e) => ({ size: `${s[0]}x${s[1]}`, finished: false, notes: [e.message], errors: [] }))),
     ...XL.map((s) => runXL(browser, port, s).catch((e) => ({ size: `${s[0]}x${s[1]} xl`, finished: false, notes: [e.message], errors: [] }))),
+    ...SIZES.map((s) => runTableZh(browser, port, s, false).catch((e) => ({ size: `${s[0]}x${s[1]} table-zh`, finished: false, notes: [e.message], errors: [] }))),
+    ...SIZES.filter(([w, h]) => w < h).map((s) => runTableZh(browser, port, s, true).catch((e) => ({ size: `${s[0]}x${s[1]} table-zh-xl`, finished: false, notes: [e.message], errors: [] }))),
     ...SIZES.map((s) => runHomeZh(browser, port, s).catch((e) => ({ size: `${s[0]}x${s[1]} zh-TW`, finished: false, notes: [e.message], errors: [] }))),
     ...SIZES.map((s) => runBoards(browser, port, s).catch((e) => ({ size: `${s[0]}x${s[1]} leaderboards`, finished: false, notes: [e.message], errors: [] }))),
   ]);
