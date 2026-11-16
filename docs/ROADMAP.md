@@ -28,8 +28,8 @@ The programme that takes the app from the audited 3.7/10 (`docs/ASSESSMENT.md`) 
 - Real iPhone and low-end Android runs, profiling, zh-TW review, store listings and screenshots in both languages, TestFlight external beta.
 
 ## Phase 8 — content and validation (content done; validation open)
-- Done: 36 lessons in six tracks, defence, claim and value puzzle themes beside best discard and read the wait, and a puzzle rating.
-- Open: a Rush leaderboard, the golden scoring table checked against a reference app, beta clubs and interviews.
+- Done: 36 lessons in six tracks, defence, claim and value puzzle themes beside best discard and read the wait, a puzzle rating, and leaderboards for the daily puzzle, Puzzle Rush and the rating, with results the server verifies.
+- Open: the golden scoring table checked against a reference app, beta clubs and interviews.
 
 ## Built outside the original phases
 - Quick match: instant seating with strangers, bots in the empty seats, adults only.
