@@ -17,7 +17,9 @@
  * the exit icon or on the result sheet's "Leave table" leaves the table, Start match replaces a saved table
  * without asking, one tap on the Resume card's "Abandon table" gives the saved table up, the English claim buttons carry no gloss, an Extra-large hand scrolls or runs off screen, the
  * Shop does not open, a Home card button clips its label in English or in Traditional Chinese (each viewport also
- * opens Home in zh-TW and writes <size>-home-zh.png), or Home's cards run past the bottom edge at 844x390).
+ * opens Home in zh-TW and writes <size>-home-zh.png), Home's cards run past the bottom edge at 844x390), or the
+ * leaderboard screen (opened from Learn without a server, in English, zh-TW and Extra-large text: <size>-leaderboards.png,
+ * -leaderboards-zh.png, -leaderboards-xl.png) does not show its offline state, clips text or has a choice under 44 px.
  */
 const http = require('http');
 const fs = require('fs');
@@ -265,6 +267,77 @@ async function run(browser, port, [w, h]) {
 }
 
 /**
+ * The leaderboard screen's hard checks, on the page as it stands: no text clipped (cut off inside its box) or off
+ * the screen's sides, and every board, period and scope choice at least 44 px tall.
+ */
+async function boardsFit(page) {
+  return page.evaluate(() => {
+    const bad = [];
+    const root = [...document.querySelectorAll('[data-testid="leaderboards"]')].find((e) => e.getBoundingClientRect().width > 0);
+    if (!root) return ['the leaderboard screen is not showing'];
+    for (const el of root.querySelectorAll('div[dir="auto"]')) {
+      const r = el.getBoundingClientRect();
+      if (r.width === 0 || !el.textContent.trim()) continue;
+      if (el.scrollWidth > el.clientWidth + 1 || el.scrollHeight > el.clientHeight + 2) bad.push(`"${el.textContent.slice(0, 30)}" is clipped (${el.scrollWidth}x${el.scrollHeight} in ${el.clientWidth}x${el.clientHeight})`);
+      if (r.right > innerWidth + 1 || r.left < -1) bad.push(`"${el.textContent.slice(0, 30)}" runs off the screen`);
+    }
+    for (const el of root.querySelectorAll('[data-testid^="board-tab-"], [data-testid^="board-period-"], [data-testid^="board-scope-"]')) {
+      const r = el.getBoundingClientRect();
+      if (r.width > 0 && r.height < 44) bad.push(`${el.dataset.testid} is ${Math.round(r.height)} px tall`);
+    }
+    if (document.documentElement.scrollWidth > innerWidth + 1) bad.push('the page scrolls sideways');
+    return bad;
+  });
+}
+
+/**
+ * The leaderboard screen from Learn, without a game server: it must say it cannot reach the server. In English
+ * (<size>-leaderboards.png), Traditional Chinese (<size>-leaderboards-zh.png) and English at Extra-large text
+ * (<size>-leaderboards-xl.png), each with the fit checks above, on the daily board and on the Rush board.
+ */
+async function runBoards(browser, port, [w, h]) {
+  const tag = `${w}x${h}`;
+  const fails = [];
+  const errors = [];
+  const shots = [];
+  for (const variant of ['en', 'zh', 'xl']) {
+    const ctx = await browser.newContext({ viewport: { width: w, height: h }, locale: variant === 'zh' ? 'zh-TW' : 'en-US' });
+    await ctx.addInitScript((xl) => {
+      localStorage.setItem('mjm.profile', JSON.stringify({ userId: 'user-e2e-1234567', userSecret: '0123456789abcdef0123456789abcdef', name: 'Tester', avatar: 'panda' }));
+      if (xl) localStorage.setItem('mjm.display', JSON.stringify({ tileScale: 1, textScale: 1.3 }));
+    }, variant === 'xl');
+    const page = await ctx.newPage();
+    page.on('pageerror', (e) => errors.push(`${variant}: ${e.message}`));
+    const where = `Leaderboards (${variant})`;
+    await page.goto(`http://localhost:${port}/`);
+    await page.waitForSelector('[data-testid="open-learn"]', { timeout: 30000 });
+    await tapSel(page, '[data-testid="open-learn"]', 1000);
+    if (!(await tapSel(page, '[data-testid="open-leaderboards"]', 1000))) {
+      fails.push(`${where}: Learn has no Leaderboards button`);
+      await ctx.close();
+      continue;
+    }
+    // A new player is asked their birth year before anything reaches the server: answer it as an adult.
+    if (await visible(page, '[data-testid="age-gate"]')) {
+      await page.fill('[data-testid="age-year"]', '1990');
+      await tapSel(page, '[data-testid="age-continue"]', 1000);
+    }
+    await page.waitForSelector('[data-testid="boards-offline"]', { timeout: 20000 }).catch(() => fails.push(`${where}: no "can't reach the game server" state without a server`));
+    await page.waitForTimeout(500);
+    const name = variant === 'en' ? 'leaderboards' : `leaderboards-${variant}`;
+    await page.screenshot({ path: path.join(out, `${tag}-${name}.png`) });
+    shots.push(name);
+    if (variant === 'zh' && !(await page.evaluate(() => /[\u4e00-\u9fff]/.test(document.querySelector('[data-testid="leaderboards"]')?.textContent || '')))) fails.push(`${where}: the page is not in Chinese`);
+    fails.push(...(await boardsFit(page)).map((f) => `${where}, daily: ${f}`));
+    await tapSel(page, '[data-testid="board-tab-rush"]', 600);
+    if (!(await visible(page, '[data-testid="board-period-week"]'))) fails.push(`${where}: the Rush board offers no period choice`);
+    fails.push(...(await boardsFit(page)).map((f) => `${where}, rush: ${f}`));
+    await ctx.close();
+  }
+  return { size: `${tag} leaderboards`, finished: true, shots, notes: [], fails, errors };
+}
+
+/**
  * Extra-large tiles in landscape: a table at Settings → Display → Tiles: Extra large, a few turns in, captured as
  * <size>-table-xl.png. Fails if the hand rail scrolls sideways (a hand tile off the rail) or a hand tile is off screen.
  */
@@ -321,6 +394,7 @@ async function runXL(browser, port, [w, h]) {
     ...SIZES.map((s) => run(browser, port, s).catch((e) => ({ size: `${s[0]}x${s[1]}`, finished: false, notes: [e.message], errors: [] }))),
     ...XL.map((s) => runXL(browser, port, s).catch((e) => ({ size: `${s[0]}x${s[1]} xl`, finished: false, notes: [e.message], errors: [] }))),
     ...SIZES.map((s) => runHomeZh(browser, port, s).catch((e) => ({ size: `${s[0]}x${s[1]} zh-TW`, finished: false, notes: [e.message], errors: [] }))),
+    ...SIZES.map((s) => runBoards(browser, port, s).catch((e) => ({ size: `${s[0]}x${s[1]} leaderboards`, finished: false, notes: [e.message], errors: [] }))),
   ]);
   for (const r of results) console.log(JSON.stringify(r));
   await browser.close();
