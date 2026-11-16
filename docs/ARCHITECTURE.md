@@ -46,11 +46,11 @@ tests, sim   ──┘         │
 | Client sends illegal actions | Host validates against `legalActions`; errors are returned, state is re-sent. |
 | Client acts for another seat | Peer id → seat binding; rejected. |
 | Host peeks at the wall | Online tables are hosted only by the game server, never by a player's phone, so no player holds the wall. The server itself could still peek; the audit cannot detect that, and a mental-mahjong shuffle remains on the roadmap. |
-| Player stalls | Turn timers. When a seat's time runs out (a dropped player's included) the table plays its own turn as a bot would, and answers an offer on another seat's discard with a pass unless the offer is a win: it never opens a player's hand for them. The seat is reclaimable with its rejoin token. |
+| Player stalls or drops | Turn timers. A seat whose link drops keeps its turn clock and time bank like a connected one, so a short drop never costs a turn. When a seat's time runs out the table plays its own turn as a bot would, and answers an offer on another seat's discard with a pass unless the offer is a win: it never opens a player's hand for them. A dropped seat that has timed out once is then played at bot pace, by the same rule, until its player returns; a player who left on purpose or was removed is played at once. The seat is reclaimable with its rejoin token, and each client checks on its own clock that the table moved for its seat only after its time had run out (`docs/FAIRNESS.md`). |
 
 ### Clocks, time banks and game speeds
 
-Each seat that owes an action gets its own clock (`TableHost.clocks`): a base turn timer (`rules.turnSeconds`) and, once that expires, a per-hand time bank (`rules.timeBankSeconds`) that drains while they think. When the bank is empty the bot plays for them with the table's bot skill. Speeds are presets over those two numbers: Relaxed 30+60, Normal 15+30, Fast 10+20, Turbo 7+10, Hyper 4+0. The client receives its own deadline, remaining bank and an `inTimeBank` flag with every state update.
+Each human seat that owes an action gets its own clock (`TableHost.clocks`), whether its link is up or has dropped: a base turn timer (`rules.turnSeconds`) and, once that expires, a per-hand time bank (`rules.timeBankSeconds`) that drains while they think. When the bank is empty the bot plays for them with the table's bot skill. Speeds are presets over those two numbers: Relaxed 30+60, Normal 15+30, Fast 10+20, Turbo 7+10, Hyper 4+0. The client receives its own deadline, remaining bank and an `inTimeBank` flag with every state update.
 
 ### Resume after a crash or disconnect
 
