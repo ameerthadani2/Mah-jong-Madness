@@ -85,3 +85,18 @@ describe('the result sheet after a draw', () => {
     expect(screen.getByRole('button', { name: 'Next hand' })).toBeOnTheScreen();
   });
 });
+
+describe('the online result sheet', () => {
+  it('counts down to the next hand the host deals, and says so in general without a deadline', async () => {
+    const result: HandResult = { type: 'draw', wins: [], scoreDelta: [0, 0, 0, 0], dealerContinues: true };
+    const view = { scores: [0, 0, 0, 0] } as unknown as TableView;
+    const base = { seats: SEATS, auditStatus: 'ok', auditFailures: [], auditCaveats: [], matchOver: false };
+    const state = { ...base, intermissionDeadline: Date.now() + 9_500 } as unknown as ClientState;
+    const { unmount } = await render(<ResultSheet result={result} view={view} state={state} mySeat={0} autoNext onNext={() => {}} onLeave={() => {}} onReview={() => {}} onFairness={() => {}} />);
+    expect(screen.getByTestId('result-auto-next')).toHaveTextContent('Next hand in 10 s');
+    expect(screen.getByTestId('next-hand-notice')).toHaveTextContent('The next hand starts in 10 seconds.');
+    await unmount();
+    await render(<ResultSheet result={result} view={view} state={{ ...base, intermissionDeadline: null } as unknown as ClientState} mySeat={0} autoNext onNext={() => {}} onLeave={() => {}} onReview={() => {}} onFairness={() => {}} />);
+    expect(screen.getByTestId('result-auto-next')).toHaveTextContent('Online, the next hand starts by itself in a few seconds.');
+  });
+});

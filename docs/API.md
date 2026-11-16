@@ -129,7 +129,7 @@ Host → client:
 | `{ "t": "reveal_request", "handNumber" }` | Send `reveal` |
 | `{ "t": "stand_in", "handNumber", "attempt"? }` | This seat did not commit in time, so the host used a stand-in secret for it; the app marks the hand as not verified by this seat's own share |
 | `{ "t": "state", "view", "hash", "deadline", "timeBank", "inTimeBank", "now"? }` | The table as this seat may see it, after every action. `deadline` and `now` are on the host's clock |
-| `{ "t": "hand_over", "result", "audit", "view", "now"? }` | A hand ended: its result and the audit the app verifies |
+| `{ "t": "hand_over", "result", "audit", "view", "now"?, "deadline"? }` | A hand ended: its result and the audit the app verifies. `deadline` (host clock, like `now`) is when the host deals the next hand by itself, or `null` while it waits with nobody human at the table; the app counts down to it on the result sheet. Older hosts leave it out and older apps ignore it |
 | `{ "t": "match_over", "scores", "view" }` | The match ended |
 | `{ "t": "hand_missed", "audit" }` | To a returning seat: the audit of a hand that ended while it was away, one frame per hand, in order |
 | `{ "t": "restored", "handNumber", "turnCounter" }` | To a returning seat: the table was restored from a saved snapshot after a server restart, at this hand and turn (-1: before the deal); anything shown beyond that point is void |

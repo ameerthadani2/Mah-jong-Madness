@@ -11,6 +11,7 @@ import { useT } from '../../i18n';
 import { Icon } from '../Icons';
 import { useAnnounce } from './announce';
 import { clockNoticeMessage, clockUrgent, nextClockNotice, type ClockNotice, type TurnClock } from './turnClock';
+import { nextHandAnnouncement, nextHandNote } from './nextHand';
 
 /**
  * My clock in the HUD: seconds left on my move, red when urgent. The chip is not a live region: a reader
@@ -56,6 +57,34 @@ export function ClockAnnouncer({ clock, myMove }: { clock: TurnClock; myMove: bo
 export function ClockTicker({ clock, myMove, onTick }: { clock: TurnClock; myMove: boolean; onTick: () => void }) {
   useClockTick(useCountdown(clock.deadline), myMove, onTick);
   return null;
+}
+
+/**
+ * Online, under the hand result: "Next hand in N s", counting down to the host's next deal (or the general
+ * sentence when the host did not say when). The visible line is not a live region; a screen reader is told
+ * once per hand, through the hidden polite region (Android, web) and `useAnnounce` (iOS).
+ */
+export function NextHandCountdown({ deadline, style }: { deadline: number | null; style: object }) {
+  const { t } = useT();
+  const left = useCountdown(deadline);
+  const [spoken, setSpoken] = useState<{ deadline: number | null; text: string }>({ deadline: null, text: '' });
+  useEffect(() => {
+    setSpoken((prev) => {
+      const text = nextHandAnnouncement(t, deadline, left, prev.deadline);
+      return text === null ? prev : { deadline, text };
+    });
+  }, [t, deadline, left]);
+  useAnnounce(spoken.text || null, spoken.deadline);
+  return (
+    <>
+      <Text testID="result-auto-next" style={style}>
+        {nextHandNote(t, left)}
+      </Text>
+      <View style={styles.hiddenLive} accessibilityLiveRegion="polite" testID="next-hand-notice" pointerEvents="none">
+        <Text style={styles.hiddenText}>{spoken.text}</Text>
+      </View>
+    </>
+  );
 }
 
 const styles = StyleSheet.create({

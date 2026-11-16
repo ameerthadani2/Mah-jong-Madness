@@ -85,7 +85,9 @@
     "review": "Review",
     "reviewMyHand": "Review my hand",
     "leaveTable": "Leave table",
-    "autoNext": "Online, the next hand starts by itself in a few seconds."
+    "autoNext": "Online, the next hand starts by itself in a few seconds.",
+    "nextHandIn": "Next hand in %{n} s",
+    "nextHandInSpoken": "The next hand starts in %{n} seconds."
   },
   "audit": {
     "okShort": "Verified · details",

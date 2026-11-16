@@ -747,8 +747,8 @@ export class TableHost {
       this.runBots();
     } else if (this.phase === 'hand_over' && this.game) {
       const last = this.audits[this.audits.length - 1];
-      if (last) this.sendTo(from, { t: 'hand_over', result: this.game.result!, audit: last, view: viewFor(this.game, seat.seat), now: this.now() });
       if (this.deadline === null) this.deadline = this.now() + this.intermissionMs;
+      if (last) this.sendTo(from, { t: 'hand_over', result: this.game.result!, audit: last, view: viewFor(this.game, seat.seat), now: this.now(), deadline: this.deadline });
     }
     else if (this.phase === 'match_over' && this.game) {
       const finalView = { ...this.game, scores: this.snapshot.scores };
@@ -1118,7 +1118,9 @@ export class TableHost {
     for (const s of this.seats) s.ready = false;
     this.deadline = this.now() + this.intermissionMs;
     const now = this.now();
-    this.broadcast((s) => ({ t: 'hand_over', result: game.result!, audit, view: viewFor(game, s.seat), now }));
+    // The players' result sheets count down to the next deal (none while nobody human is here: see below).
+    const next = this.anyHumanConnected() ? this.deadline : null;
+    this.broadcast((s) => ({ t: 'hand_over', result: game.result!, audit, view: viewFor(game, s.seat), now, deadline: next }));
     this.notify();
     this.emit('hand_over');
     // Nobody human is here to press "next": pause so a returning player finds the table where they left it.

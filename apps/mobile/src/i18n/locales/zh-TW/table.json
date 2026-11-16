@@ -85,7 +85,9 @@
     "review": "複盤",
     "reviewMyHand": "複盤這一局",
     "leaveTable": "離開牌桌",
-    "autoNext": "線上牌桌過幾秒就會自動開下一局。"
+    "autoNext": "線上牌桌過幾秒就會自動開下一局。",
+    "nextHandIn": "%{n} 秒後開下一局",
+    "nextHandInSpoken": "下一局將在 %{n} 秒後開始。"
   },
   "audit": {
     "okShort": "已驗證 · 詳情",

@@ -206,6 +206,11 @@ export interface ClientState {
   view: TableView | null;
   stateHash: string | null;
   deadline: number | null;
+  /**
+   * Between hands: when the host deals the next hand on its own, on the host's clock like `deadline`
+   * (null when the host did not say, or waits because nobody human is at the table).
+   */
+  intermissionDeadline: number | null;
   ceremony: 'idle' | 'committed' | 'revealed';
   lastResult: HandResult | null;
   lastAudit: Audit | null;
@@ -270,6 +275,11 @@ function isAudit(a: unknown): a is Audit {
 }
 
 /** Five commitments, one per seat 0–4, each a SHA-256 hex digest. */
+/** The next deal's deadline a `hand_over` frame carries, if it is a finite time (hosts before it was added leave it out). */
+function nextDeal(m: { deadline?: unknown }): number | null {
+  return typeof m.deadline === 'number' && Number.isFinite(m.deadline) ? m.deadline : null;
+}
+
 function isCommitSet(c: unknown): c is Commitment[] {
   if (!Array.isArray(c) || c.length !== SHARE_SEATS) return false;
   const seats = new Set<number>();
@@ -498,6 +508,7 @@ export class TableClient {
     view: null,
     stateHash: null,
     deadline: null,
+    intermissionDeadline: null,
     ceremony: 'idle',
     lastResult: null,
     lastAudit: null,
@@ -1332,7 +1343,7 @@ export class TableClient {
         if (rec) rec.dealt = true;
         this.noteState(v, m);
         this.viewEpoch = this.epoch;
-        this.update({ view: v, stateHash: m.hash, deadline: m.deadline, timeBank: m.timeBank, inTimeBank: m.inTimeBank, lastResult: null, lastError: null, ceremony: 'idle' });
+        this.update({ view: v, stateHash: m.hash, deadline: m.deadline, timeBank: m.timeBank, inTimeBank: m.inTimeBank, lastResult: null, lastError: null, ceremony: 'idle', intermissionDeadline: null });
         return;
       }
       case 'hand_over': {
@@ -1351,7 +1362,7 @@ export class TableClient {
           else if (prior && stableStringify(prior.audit) !== stableStringify(m.audit)) problem = 'Host sent a different audit for a hand it had already ended';
           else if (held && (stableStringify(m.result) !== stableStringify(this.state.lastResult) || stableStringify(m.view.scores) !== stableStringify(this.state.view!.scores))) problem = 'Host re-sent a different result for a hand it had already ended';
           if (problem === null) {
-            if (held) this.update({ deadline: null });
+            if (held) this.update({ deadline: null, intermissionDeadline: nextDeal(m) });
             return;
           }
           // One failed entry per offending hand: a failure already on show for it is folded into this one.
@@ -1383,7 +1394,7 @@ export class TableClient {
         this.tamper.delete(h);
         if (this.gapHand === h) this.gapHand = null;
         const audits = [...this.state.audits, { audit: m.audit, status, failures, caveats }].slice(-MAX_AUDITS);
-        this.update({ view: m.view, lastResult: m.result, lastAudit: m.audit, auditStatus: status, auditFailures: failures, auditCaveats: caveats, deadline: null, audits });
+        this.update({ view: m.view, lastResult: m.result, lastAudit: m.audit, auditStatus: status, auditFailures: failures, auditCaveats: caveats, deadline: null, intermissionDeadline: nextDeal(m), audits });
         return;
       }
       case 'hand_missed':
@@ -1415,7 +1426,7 @@ export class TableClient {
           // The last hand's verified view stays on show; the host's is used only when this device holds none.
           const own = this.state.view;
           const view = own && this.state.lastResult !== null && own.handNumber === m.view.handNumber ? own : m.view;
-          this.update({ view, matchOver: true, finalScores: m.scores.slice(), matchEndVerified, deadline: null });
+          this.update({ view, matchOver: true, finalScores: m.scores.slice(), matchEndVerified, deadline: null, intermissionDeadline: null });
         }
         return;
       case 'chat':
@@ -1526,7 +1537,7 @@ export class TableClient {
       if (this.standInHand === h) this.standInHand = null;
       if (this.handStart?.handNumber === h) this.handStart = null;
       if (this.chainChecked === h) this.chainChecked = null;
-      if (this.state.view?.handNumber === h && this.state.lastResult === null) this.update({ view: null, stateHash: null, deadline: null, ceremony: 'idle', standIn: false });
+      if (this.state.view?.handNumber === h && this.state.lastResult === null) this.update({ view: null, stateHash: null, deadline: null, intermissionDeadline: null, ceremony: 'idle', standIn: false });
     }
     // The host that restarted may keep time afresh: what was learned about its clock stops here.
     this.era++;

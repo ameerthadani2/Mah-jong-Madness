@@ -82,7 +82,11 @@ export type HostMessage =
   | { t: 'disconnected' }
   /** `now`: the host's clock when it sent the frame (the same clock as `deadline`). */
   | { t: 'state'; view: TableView; hash: string; deadline: number | null; timeBank: number; inTimeBank: boolean; now?: number }
-  | { t: 'hand_over'; result: HandResult; audit: Audit; view: TableView; now?: number }
+  /**
+   * `deadline`: when the host deals the next hand on its own, on the same clock as `now` (null while it
+   * waits, with nobody human at the table). Optional: older hosts leave it out and older clients ignore it.
+   */
+  | { t: 'hand_over'; result: HandResult; audit: Audit; view: TableView; now?: number; deadline?: number | null }
   | { t: 'match_over'; scores: number[]; view: TableView }
   /** To a returning seat: the audit of a hand that ended while it was away (one frame per hand, in order). */
   | { t: 'hand_missed'; audit: Audit }

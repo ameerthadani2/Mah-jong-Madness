@@ -15,6 +15,7 @@ import { scaleTextStyle } from '../../display/scale';
 import { Button, P, Pill, Row, StrokeText } from '../Ui';
 import { matchOverLayout, resultLayout } from './layout';
 import { useRollUp } from './Motion';
+import { NextHandCountdown } from './ClockParts';
 import { taiCapNote } from '../../logic/taiCap';
 
 const signed = (n: number) => `${n >= 0 ? '+' : ''}${n}`;
@@ -200,11 +201,8 @@ export function ResultSheet({ result, view, state, mySeat, autoNext, onNext, onL
     />
   );
   // Online the table does not wait for this sheet: say so, or a player reading on finds a hand already under way.
-  const autoNextNote = autoNext ? (
-    <Text testID="result-auto-next" style={styles.autoNext}>
-      {t('table.result.autoNext')}
-    </Text>
-  ) : null;
+  // The host says when it deals the next hand: count down to it (./ClockParts.tsx, so only the line re-renders).
+  const autoNextNote = autoNext ? <NextHandCountdown deadline={state.intermissionDeadline ?? null} style={styles.autoNext} /> : null;
   if (twoCol) {
     return (
       <View style={[styles.overlay, { padding: height < 420 ? 8 : space.md }]}>
