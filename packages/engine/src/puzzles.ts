@@ -591,6 +591,7 @@ function defenceText(p: Pick<DefencePuzzle, 'answer' | 'answers' | 'threatSeat' 
     numbersEn = ` If ${who} is ready, ${t} wins for them in ${smallPct(a.exact) ? `about ${smallPct(a.exact)}` : 'under 0.1%'} of the hands they could hold.`;
     numbersZh = `如果${whoZh}已經聽牌，${tz}${smallPct(a.exact) ? `大約只在${smallPct(a.exact)}` : '只在不到0.1%'}的牌型裡會放槍。`;
   }
+  const { orderEn, orderZh } = orderText(p, t, tz, who, whoZh);
   const alsoEn = others.length > 0 ? ` ${others.map(tileEn).join(' and ')} ${others.length > 1 ? 'are' : 'is'} about as safe, so ${others.length > 1 ? 'they count' : 'it counts'} too.` : '';
   const alsoZh = others.length > 0 ? `${others.map(tileZh).join('、')}差不多一樣安全，也算對。` : '';
   const keepEn = ' Throwing it also keeps your hand as close to ready as any other discard.';
@@ -599,10 +600,46 @@ function defenceText(p: Pick<DefencePuzzle, 'answer' | 'answers' | 'threatSeat' 
   const tradeZh = !p.answers.includes(p.efficient) ? `打${tileZh(p.efficient)}進張比較多，但對方看起來快聽牌了，先求安全。` : '';
   return {
     reasonKey: `puzzle.defence.${p.reason}`,
-    explanation: `${threatEn} ${en}${numbersEn}${alsoEn}${keepEn}${tradeEn}`,
-    explanationZh: `${threatZh}${zh}${numbersZh}${alsoZh}${keepZh}${tradeZh}`,
+    explanation: `${threatEn} ${en}${numbersEn}${orderEn}${alsoEn}${keepEn}${tradeEn}`,
+    explanationZh: `${threatZh}${zh}${numbersZh}${orderZh}${alsoZh}${keepZh}${tradeZh}`,
   };
 }
+
+const ORDER_LABEL: Partial<Record<DefenceReason, [string, string]>> = {
+  lastHonour: ['only one copy is unseen', '只剩一張沒出現'],
+  honour: ['an honour never joins a chow', '字牌不能吃'],
+  fewCopies: ['most copies are visible', '大多已經看得到'],
+  terminal: ['a terminal fits fewer chows', '么九牌能組的順子少'],
+};
+
+/**
+ * When the fixed safety order picks a wrong tile (`defenceOrderRule` false): which tile it picks,
+ * what the count says about it, and the threat's discards across a gap of three (筋) from the
+ * answer, the reading that makes the answer safer. Empty when the order is right.
+ */
+function orderText(p: Pick<DefencePuzzle, 'answer' | 'threatSeat' | 'opponents' | 'options'>, t: string, tz: string, who: string, whoZh: string): { orderEn: string; orderZh: string } {
+  const bestShanten = Math.min(...p.options.map((o) => o.shanten));
+  if (defenceOrderRule({ options: p.options, bestShanten }) !== false) return { orderEn: '', orderZh: '' };
+  const kept = p.options.filter((o) => o.shanten === bestShanten);
+  const top = Math.min(...kept.map((o) => DEFENCE_SAFETY_ORDER.indexOf(o.reason)));
+  const pick = kept.find((o) => DEFENCE_SAFETY_ORDER.indexOf(o.reason) === top)!;
+  const [label, labelZh] = ORDER_LABEL[pick.reason] ?? ['', ''];
+  const P = tileEn(pick.kind);
+  const Pz = tileZh(pick.kind);
+  const chance = smallPct(pick.exact);
+  let orderEn = ` ${capitalise(P)} looks safer by the usual order (${label}), but counting the tiles you can see it wins for them in ${chance ? `about ${chance}` : 'under 0.1%'} of the hands they could hold, more than ${t}.`;
+  let orderZh = `照一般的順序，${Pz}看起來比較安全（${labelZh}），但是算一算看得到的牌，${Pz}${chance ? `大約在${chance}` : '在不到0.1%'}的牌型裡會放槍，比${tz}危險。`;
+  const threw = p.opponents.find((o) => o.seat === p.threatSeat)!.discards;
+  const suji = p.answer < KIND_WIND ? [...new Set(threw)].filter((k) => k < KIND_WIND && Math.floor(k / 9) === Math.floor(p.answer / 9) && Math.abs(k - p.answer) === 3) : [];
+  if (suji.length > 0) {
+    orderEn += ` ${capitalise(who)} threw ${suji.map(tileEn).join(' and ')}, so a two-sided wait on ${t} would also win on a tile they gave up: players rarely wait that way.`;
+    orderZh += `${whoZh}打過${suji.map(tileZh).join('、')}，聽${tz}的兩面聽也會胡他打過的牌，很少有人這樣聽（筋牌）。`;
+  }
+  return { orderEn, orderZh };
+}
+
+/** Share of hard defence puzzles where the fixed safety order (`DEFENCE_SAFETY_ORDER`) is wrong. */
+export const DEFENCE_HARD_READ_SHARE = 0.5;
 
 /** What each difficulty plants: 1 tiles the threat threw, 2 a tile let pass or none, 3 visible copies of a held kind. */
 const DEFENCE_PLANT: Record<PuzzleDifficulty, 'theirDiscard' | 'passed' | 'copies'> = { 1: 'theirDiscard', 2: 'passed', 3: 'copies' };
@@ -615,18 +652,28 @@ const DEFENCE_PLANT: Record<PuzzleDifficulty, 'theirDiscard' | 'passed' | 'copie
  * is within 1.5 points of it, every discard that is not accepted is strictly more dangerous by that
  * count than every accepted one, and at least one shape-keeping discard is clearly worse (2 points).
  * Difficulty decides what the table plants (tiles the threat threw, a tile let pass, visible
- * copies), not which rule the answer follows.
+ * copies), not which rule the answer follows. At difficulty 3 about half the seats are dealt so
+ * that the fixed safety order (`DEFENCE_SAFETY_ORDER`) is wrong: a live honour in the hand, and the
+ * threat's discards across a gap of three (筋) from a suited tile that the count rates safer.
  */
 export function defencePuzzle(seed: string, difficulty: PuzzleDifficulty = 2): DefencePuzzle {
   const rng = createRng(`defence:${seed}:${difficulty}`);
+  // Hard puzzles: half need reading the discards (the fixed safety order is wrong), half follow
+  // it, drawn per seed.
+  const readTable = difficulty === 3 && rng.next() < DEFENCE_HARD_READ_SHARE;
+  let fallback: DefencePuzzle | null = null;
   for (let attempt = 0; attempt < 600; attempt++) {
-    const p = defenceAttempt(seed, difficulty, rng);
-    if (p) return p;
+    const p = defenceAttempt(seed, difficulty, rng, readTable);
+    if (!p) continue;
+    if (difficulty < 3 || defenceOrderRule(p) === !readTable) return p;
+    fallback = fallback ?? p;
+    if (attempt >= 300) return fallback;
   }
+  if (fallback) return fallback;
   throw new Error(`defencePuzzle: no puzzle for seed ${seed}`);
 }
 
-function defenceAttempt(seed: string, difficulty: PuzzleDifficulty, rng: Rng): DefencePuzzle | null {
+function defenceAttempt(seed: string, difficulty: PuzzleDifficulty, rng: Rng, readTable = false): DefencePuzzle | null {
   const pool = new TilePool();
   const threatSeat = 1 + rng.int(3);
   const melds: PuzzleMeld[] = [];
@@ -664,6 +711,23 @@ function defenceAttempt(seed: string, difficulty: PuzzleDifficulty, rng: Rng): D
   const plant = DEFENCE_PLANT[difficulty];
 
   const threatDiscards: Kind[] = [];
+  if (readTable) {
+    // The fixed order would throw a live honour; a suited tile whose partner across the gap of
+    // three (筋) the threat has thrown may be safer, which only reading the discards shows.
+    // The honour must be live (two or more unseen copies), and no shape-keeping kind is dead,
+    // thrown by the threat or let pass: those reasons come before an honour in the fixed order.
+    const ownMelds = countsFromKinds(melds.flatMap((m) => m.kinds));
+    if (!keepList.some((k) => isHonorKind(k))) return null;
+    if (keepList.some((k) => isHonorKind(k) && counts[k] + ownMelds[k] >= 3)) return null;
+    const suited = keepList.filter((k) => k < KIND_WIND);
+    if (suited.length === 0) return null;
+    for (let i = 0, n = 1 + rng.int(2); i < n; i++) {
+      const k = suited[rng.int(suited.length)];
+      const r = rankOfKind(k);
+      const partners = [r > 3 ? k - 3 : -1, r < 7 ? k + 3 : -1].filter((x) => x >= 0 && !keepList.includes(x));
+      for (const x of partners) if (pool.take(x)) threatDiscards.push(x);
+    }
+  }
   if (plant === 'theirDiscard') {
     for (let i = 0, n = 1 + rng.int(2); i < n; i++) {
       const g = keepList[rng.int(keepList.length)];
@@ -679,7 +743,8 @@ function defenceAttempt(seed: string, difficulty: PuzzleDifficulty, rng: Rng): D
   const otherSeats = [1, 2, 3].filter((x) => x !== threatSeat);
   const otherDiscards: Kind[][] = [[], []];
   if (plant === 'copies') {
-    const k = keepList[rng.int(keepList.length)];
+    const from = readTable ? keepList.filter((x) => x < KIND_WIND) : keepList;
+    const k = from[rng.int(from.length)];
     const want = Math.max(0, 4 - counts[k] - rng.int(2));
     for (let i = 0; i < want; i++) {
       if (!pool.take(k)) return null;
@@ -687,10 +752,14 @@ function defenceAttempt(seed: string, difficulty: PuzzleDifficulty, rng: Rng): D
     }
   }
   for (let i = 0; i < 2; i++) {
-    const d = pool.draw(rng, Math.max(1, 5 + rng.int(6) - otherDiscards[i].length), (k) => plant === 'passed' || !keepList.includes(k) || rng.next() < 0.3);
+    const d = pool.draw(rng, Math.max(1, 5 + rng.int(6) - otherDiscards[i].length), (k) => plant === 'passed' || !keepList.includes(k) || (!readTable && rng.next() < 0.3));
     if (!d) return null;
     otherDiscards[i].splice(0, 0, ...d);
     shuffle(otherDiscards[i], rng);
+    // Reading the table: a planted copy is an older discard, not the latest (which would mark it passed).
+    const last = otherDiscards[i].length - 1;
+    const swap = otherDiscards[i].findIndex((k) => !keepList.includes(k));
+    if (readTable && keepList.includes(otherDiscards[i][last]) && swap >= 0) [otherDiscards[i][last], otherDiscards[i][swap]] = [otherDiscards[i][swap], otherDiscards[i][last]];
   }
   if (plant === 'passed') {
     // The latest discard of a seat that plays after the threat: a kind you could throw.
@@ -702,7 +771,7 @@ function defenceAttempt(seed: string, difficulty: PuzzleDifficulty, rng: Rng): D
       otherDiscards[i].push(k);
     }
   }
-  const ownDiscards = pool.draw(rng, 5 + rng.int(6));
+  const ownDiscards = pool.draw(rng, 5 + rng.int(6), readTable ? (k) => !keepList.includes(k) : undefined);
   if (!ownDiscards) return null;
   const hidden: Kind[][] = [];
   for (let i = 0; i < 2; i++) {
@@ -1434,8 +1503,9 @@ function valueText(p: Pick<ValuePuzzle, 'answer' | 'answers' | 'rival' | 'option
  * live winning tile (unseen copies from your view), the engine's 台 for a win on a discard and a
  * self-drawn win, mixed `VALUE_SELF_DRAW_SHARE`, at 底 + 台 × 台值. Every discard within
  * `VALUE_TOLERANCE` of the best is accepted, and at least one ready discard is clearly worse.
- * Difficulty 1: the best discard is also at least as fast as the rival; 3: the rival leaves
- * strictly more winning tiles, or the best discard wins on speed against a bigger hand.
+ * Difficulty 1: the best discard is also at least as fast as the rival; 3: in about half the
+ * seeds (`VALUE_HARD_SIZE_SHARE`) the bigger hand wins, so keeping the most winning tiles is wrong
+ * (`valueSpeedRule`), and in the rest the best discard wins on speed against a bigger hand.
  */
 export function valuePuzzle(seed: string, difficulty: PuzzleDifficulty = 2): ValuePuzzle {
   const rng = createRng(`value:${seed}:${difficulty}`);

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DEFENCE_SAFETY_ORDER, defenceOrderRule, defencePuzzle, valuePuzzle, valueSpeedRule, type DefenceOption, type ValueOption } from '../src/index';
+import { DEFENCE_SAFETY_ORDER, defenceOrderRule, defencePuzzle, kindInfo, valuePuzzle, valueSpeedRule, type DefenceOption, type ValueOption } from '../src/index';
 
 // How often a one-line rule answers a puzzle: "keep the most winning tiles" for value puzzles, a
 // fixed safety order for defence puzzles. Easy and medium puzzles teach those rules; hard ones
@@ -77,6 +77,48 @@ describe('hard value puzzles need more than "keep the most winning tiles"', () =
 
   it('give the same puzzle for the same seed', () => {
     for (let i = 0; i < 160; i += 16) expect(valuePuzzle(`depth-v-${i}`, 3)).toEqual(hard.puzzles[i]);
+  });
+
+  it('generate quickly enough for the server to regenerate a Rush run (loose bound for CI)', () => {
+    expect(hard.median).toBeLessThan(60);
+    expect(hard.max).toBeLessThan(1500);
+  });
+});
+
+describe('hard defence puzzles need reading the discards, not a fixed safety order', () => {
+  const hard = measure(defencePuzzle, defenceOrderRule, 3, 160, 'depth-d');
+
+  it('the fixed order is wrong in 40 to 60 percent of hard puzzles', () => {
+    expect(hard.share).toBeGreaterThanOrEqual(0.4);
+    expect(hard.share).toBeLessThanOrEqual(0.6);
+  });
+
+  it('easy and medium still follow the order', () => {
+    for (const d of [1, 2] as const) expect(measure(defencePuzzle, defenceOrderRule, d, 80, 'depth-d').share).toBeLessThan(0.15);
+  });
+
+  it("say which tile the order picks and that the count rates it more dangerous, in both languages", () => {
+    let wrong = 0;
+    for (const p of hard.puzzles) {
+      const kept = p.options.filter((o) => o.shanten === p.bestShanten);
+      const top = Math.min(...kept.map((o) => DEFENCE_SAFETY_ORDER.indexOf(o.reason)));
+      const pick = kept.find((o) => DEFENCE_SAFETY_ORDER.indexOf(o.reason) === top)!;
+      if (defenceOrderRule(p) !== false) {
+        expect(p.explanation).not.toMatch(/by the usual order/);
+        continue;
+      }
+      wrong++;
+      const answer = p.options.find((o) => o.kind === p.answer)!;
+      expect(pick.exact).toBeGreaterThan(answer.exact);
+      expect(p.explanation).toContain(`${kindInfo(pick.kind).nameEn} looks safer by the usual order`);
+      expect(p.explanationZh).toContain(`照一般的順序，${kindInfo(pick.kind).nameZh}看起來比較安全`);
+      expect(p.explanation).not.toMatch(/(^|[^0-9.])0\.0%/);
+    }
+    expect(wrong).toBeGreaterThan(0);
+  });
+
+  it('give the same puzzle for the same seed', () => {
+    for (let i = 0; i < 160; i += 16) expect(defencePuzzle(`depth-d-${i}`, 3)).toEqual(hard.puzzles[i]);
   });
 
   it('generate quickly enough for the server to regenerate a Rush run (loose bound for CI)', () => {
