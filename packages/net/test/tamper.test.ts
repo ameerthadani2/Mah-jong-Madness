@@ -6,7 +6,8 @@
  */
 import { describe, expect, it, vi } from 'vitest';
 import { chooseAction, countsFromKinds, dealFromSnapshot, kindOf, legalActions, NUM_PLAY_KINDS, shanten, withRules, type GameState, type MatchSnapshot } from '@mjm/engine';
-import { AUDIT_CAVEATS, commitFor, deriveSeed, LoopbackHub, makeSecret, sha256Hex, TableClient, TableHost, transportLink, type Audit, type HostMessage, type Reveal } from '../src/index';
+import { AUDIT_CAVEATS, commitFor, deriveSeed, failureKey, LoopbackHub, makeSecret, sha256Hex, TableClient, TableHost, transportLink, type Audit, type HostMessage, type Link, type Reveal } from '../src/index';
+import { Missed, scenario } from './support';
 
 const RULES = withRules({ handsPerMatch: 1 });
 
@@ -681,6 +682,232 @@ describe('a failed ceremony is recoverable', () => {
     host.tick();
     expect(host.phase).toBe('playing');
   });
+});
+
+/**
+ * A seat that drops keeps its clock, and its client holds the table to that on its own clock: the
+ * table may move for the seat behind a dropped link only when the time the device was without one
+ * is long enough for the seat's clock to have run out. The cases are the third assessment's
+ * attacks on a modified server, and the honest tables that must not be mistaken for them.
+ */
+describe('a server that plays for a seat behind a dropped link (assessment probes)', () => {
+  const TURN = 15_000;
+  const BANK = 30_000;
+  const CLOCKED = withRules({ handsPerMatch: 1, turnSeconds: 15, timeBankSeconds: 30 });
+  const DOWN_EARLY = (turn: number) => `The table played for this seat while its connection was down, before its clock could have run out (turn ${turn})`;
+  const UP_EARLY = (turn: number) => `The table played for this seat while it was connected and its clock had not run out (turn ${turn})`;
+  const BANK_TAKEN = (turn: number) => `The table took time from this seat's time bank while its connection was down (turn ${turn})`;
+  type StateMsg = Extract<HostMessage, { t: 'state' }>;
+  interface Server {
+    game: GameState | null;
+    botTimerArmed: boolean;
+    apply: (seat: number, action: NonNullable<ReturnType<typeof chooseAction>>, source: 'player' | 'bot' | 'timeout') => void;
+    stateMsg: (seat: number) => HostMessage;
+    runBots: () => void;
+    afterHand: () => void;
+  }
+  let links = 0;
+
+  /** One human at seat 0. `skew`: how far the device's clock is from the server's. `paced`: bot moves wait for `step()`. */
+  function seat(code: string, opts: { rules?: typeof CLOCKED; skew?: number; paced?: boolean } = {}) {
+    const clock = { now: 1_000_000, ahead: 0 };
+    const hub = new LoopbackHub();
+    const timers: Array<() => void> = [];
+    const pace = opts.paced ? { botDelayMs: 600, schedule: (fn: () => void) => void timers.push(fn) } : {};
+    const host = new TableHost(hub.create('host'), { roomCode: code, rules: opts.rules ?? CLOCKED, now: () => clock.now + clock.ahead, matchId: `m-${code}`, intermissionSeconds: 5, ...pace });
+    const c = new TableClient(transportLink(hub.create('p0'), 'host'), 'Victim', undefined, {}, { now: () => clock.now + (opts.skew ?? 0) });
+    c.join();
+    host.start();
+    const t = {
+      clock,
+      host,
+      c,
+      s: host as unknown as Server,
+      owes: () => host.phase === 'playing' && !!c.localState() && legalActions(c.localState()!, 0).length > 0,
+      discarding: () => t.owes() && legalActions(c.localState()!, 0).every((a) => a.type === 'discard'),
+      act: () => c.act(chooseAction(c.localState()!, 0, { seed: 'p' })!),
+      /** Run the next bot move that is waiting; false when none is. */
+      step: () => {
+        const f = timers.shift();
+        if (f) f();
+        return !!f;
+      },
+      /** Let time pass on both clocks, the server ticking every half second. */
+      wait: (ms: number) => {
+        for (let left = ms; left > 0; left -= 500) {
+          clock.now += Math.min(500, left);
+          host.tick();
+        }
+      },
+      drop: () => (c as unknown as { link: Link }).link.close(),
+      back: () => {
+        c.rebind(transportLink(hub.create(`p0r${links++}`), 'host'));
+        c.join();
+      },
+      /** The seat plays its own moves until `stop` says so (true: stopped there); false when the hand ended first. */
+      playUntil: (stop: () => boolean) => {
+        for (let guard = 0; guard < 6000 && host.phase === 'playing'; guard++) {
+          if (stop()) return true;
+          if (t.owes()) t.act();
+          else if (!t.step()) t.wait(60_000);
+        }
+        return false;
+      },
+      finish: () => {
+        t.playUntil(() => false);
+        expect(host.phase).not.toBe('playing');
+      },
+      verdict: () => [c.state.auditStatus, c.state.auditFailures, c.state.auditCaveats],
+    };
+    return t;
+  }
+  /** Stops `playUntil` on the seat's `n`-th discard of the hand. */
+  const nthDiscard = (t: ReturnType<typeof seat>, n: number) => {
+    let seen = 0;
+    let counted = -1;
+    return () => {
+      if (!t.discarding() || t.host.game!.turnCounter === counted) return false;
+      counted = t.host.game!.turnCounter;
+      return ++seen === n;
+    };
+  };
+  const need = (cond: boolean) => {
+    if (!cond) throw new Missed();
+  };
+
+  it.each([0, 5 * 3_600_000, -7 * 3_600_000])('a one-second drop with the seat played inside it fails the hand (device clock off by %i ms)', (skew) =>
+    scenario(() => {
+      const t = seat('DP1', { skew });
+      need(t.playUntil(nthDiscard(t, 3)));
+      const turn = t.host.game!.turnCounter;
+      // The server closes the socket, plays the seat 150 ms later, and lets the player back in before a second is up.
+      t.drop();
+      t.clock.now += 150;
+      t.s.apply(0, chooseAction(t.host.game!, 0)!, 'timeout');
+      t.clock.now += 850;
+      t.back();
+      t.finish();
+      expect(t.c.state.auditStatus).toBe('failed');
+      expect(t.c.state.auditFailures).toContain(DOWN_EARLY(turn));
+      expect(failureKey(DOWN_EARLY(turn))).toBe('playedWhileDown');
+      expect(t.c.state.auditCaveats).toEqual([]);
+    }));
+
+  it.each(['zero', 'honest'] as const)('after a blip between turns the server cannot run the clock out early with the link up (time bank stated: %s)', (stated) =>
+    scenario(() => {
+      const t = seat(`BZ${stated}`);
+      let forge = false;
+      const orig = t.s.stateMsg.bind(t.host);
+      t.s.stateMsg = (n) => {
+        const m = orig(n) as StateMsg;
+        return forge && n === 0 ? { ...m, timeBank: 0 } : m;
+      };
+      need(t.playUntil(nthDiscard(t, 3)));
+      // The seat takes its time over this move: into its bank, by 5 s or by 20 s.
+      const over = stated === 'zero' ? 5_000 : 20_000;
+      t.wait(TURN + over);
+      t.s.botTimerArmed = true;
+      t.act();
+      // The blip comes while the seat owes nothing. On its return the server states the bank: 0, or what is left of it.
+      t.drop();
+      t.clock.now += 800;
+      forge = stated === 'zero';
+      t.back();
+      const returned = t.host.game!.turnCounter;
+      t.s.botTimerArmed = false;
+      t.s.runBots();
+      // The seat's next discard, with no move of its own on the new link before it.
+      need(t.host.phase === 'playing' && t.discarding());
+      const turn = t.host.game!.turnCounter;
+      // 200 ms into the turn the server stamps its frames far enough ahead for the clock to look spent, and plays.
+      t.clock.now += 200;
+      t.clock.ahead += TURN + (stated === 'zero' ? 0 : BANK - over) - 400;
+      t.s.apply(0, chooseAction(t.host.game!, 0)!, 'timeout');
+      t.finish();
+      expect(t.c.state.auditStatus).toBe('failed');
+      expect(t.c.state.auditFailures).toEqual(stated === 'zero' ? [UP_EARLY(turn), BANK_TAKEN(returned)] : [UP_EARLY(turn)]);
+      expect(failureKey(BANK_TAKEN(returned))).toBe('bankTaken');
+    }));
+
+  it('the rest of a match played inside a two-second drop fails every hand of it', () => {
+    const t = seat('RM1', { rules: withRules({ handsPerMatch: 2, turnSeconds: 15, timeBankSeconds: 30 }) });
+    t.finish();
+    expect(t.host.phase).toBe('hand_over');
+    expect(t.verdict()).toEqual(['ok', [], []]);
+    t.drop();
+    // The server deals and plays every remaining hand on its own clock, the seat's turns with them.
+    for (let guard = 0; guard < 20_000 && t.host.phase !== 'match_over'; guard++) {
+      if (t.host.phase === 'hand_over') t.s.afterHand();
+      else {
+        t.clock.ahead += 60_000;
+        t.host.tick();
+      }
+    }
+    expect(t.host.phase).toBe('match_over');
+    t.clock.now += 2_000;
+    t.back();
+    const missed = t.c.state.audits.filter((a) => a.audit.handNumber > 0 && a.caveats.includes(AUDIT_CAVEATS.away));
+    expect(missed.length).toBeGreaterThan(0);
+    for (const a of missed) {
+      expect(a.status).toBe('failed');
+      expect(a.failures.map(failureKey)).toContain('playedWhileDown');
+    }
+    expect(t.c.state.auditStatus).toBe('failed');
+  });
+
+  it.each([0, -7 * 3_600_000])('honest: a seat away for longer than its clock is timed out, and the hand is amber with the reason (device clock off by %i ms)', (skew) =>
+    scenario(() => {
+      const t = seat('LD1', { skew, paced: true });
+      need(t.playUntil(nthDiscard(t, 2)));
+      t.drop();
+      t.wait(TURN + BANK + 1_000);
+      // The table plays a few more of the seat's turns before its player is back.
+      for (let i = 0; i < 12; i++) t.step();
+      need(t.host.phase === 'playing');
+      t.back();
+      t.finish();
+      expect(t.verdict()).toEqual(['partial', [], [AUDIT_CAVEATS.tableMoved]]);
+    }));
+
+  it('honest: back 700 ms after its clock ran out, the seat is not mistaken for one played early', () =>
+    scenario(() => {
+      const t = seat('LD2', { paced: true });
+      need(t.playUntil(nthDiscard(t, 2)));
+      t.wait(10_000);
+      t.drop();
+      t.wait(TURN + BANK - 10_000 + 500);
+      need(t.host.game!.actionLog.some((e) => e.seat === 0 && e.source === 'auto'));
+      t.clock.now += 700;
+      t.back();
+      t.finish();
+      expect(t.verdict()).toEqual(['partial', [], [AUDIT_CAVEATS.tableMoved]]);
+    }));
+
+  it('honest: a hand that ends while the seat is away is amber when its result reaches the returning seat', () =>
+    scenario(() => {
+      const t = seat('LD3', { rules: withRules({ handsPerMatch: 2, turnSeconds: 15, timeBankSeconds: 30 }) });
+      need(t.playUntil(nthDiscard(t, 2)));
+      t.drop();
+      t.wait(TURN + BANK + 1_000);
+      expect(t.host.phase).toBe('hand_over');
+      t.clock.now += 90_000;
+      t.back();
+      const first = t.c.state.audits[0];
+      expect([first.status, first.failures, first.caveats]).toEqual(['partial', [], [AUDIT_CAVEATS.tableMoved]]);
+    }));
+
+  it('honest: a player who leaves on purpose is played at once, and coming straight back does not fail the hand', () =>
+    scenario(() => {
+      const t = seat('LV1', { paced: true });
+      need(t.playUntil(nthDiscard(t, 2)));
+      t.c.leave();
+      for (let i = 0; i < 6; i++) t.step();
+      need(t.host.phase === 'playing' && t.host.game!.actionLog.some((e) => e.seat === 0 && e.source === 'auto'));
+      t.clock.now += 1_000;
+      t.back();
+      t.finish();
+      expect(t.verdict()).toEqual(['partial', [], [AUDIT_CAVEATS.tableMoved]]);
+    }));
 });
 
 function seedOf(h: HostInternals, reveals: Array<{ seat: number; secret: string }>): string {
