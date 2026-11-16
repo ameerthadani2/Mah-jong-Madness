@@ -456,19 +456,17 @@ const binomial = (n: number, k: number): number => {
   return r;
 };
 
-/**
- * For a seat with four exposed sets (four concealed tiles: one set and a pair to make), the exact
- * chance that each kind is one of its winning tiles, given it is ready: every four-tile hand the
- * `unseen` pool allows, weighted by the number of ways the pool deals it (each copy equally
- * likely), keeping the ready hands none of whose winning tiles is `excluded`. Every ready hand
- * plus a winning tile is a pair and a set, so the hands are found from those five-tile shapes.
- */
-export function exactWaitChances(unseen: Counts, excluded: readonly boolean[]): number[] {
+/** Every four-tile hand of a seat with four exposed sets that is ready, with its winning kinds (built once). */
+let readyFours: { tiles: [Kind, number][]; waits: Kind[] }[] | null = null;
+
+function fourTileWaits(): { tiles: [Kind, number][]; waits: Kind[] }[] {
+  if (readyFours) return readyFours;
   const sets: Kind[][] = [];
   for (let k = 0; k < NUM_PLAY_KINDS; k++) {
     sets.push([k, k, k]);
     if (k < KIND_WIND && rankOfKind(k) <= 7) sets.push([k, k + 1, k + 2]);
   }
+  // In the order each hand is first found, so sums run in the same order on every device.
   const waitsOf = new Map<string, { counts: number[]; waits: Set<Kind> }>();
   for (let pair = 0; pair < NUM_PLAY_KINDS; pair++) {
     for (const set of sets) {
@@ -479,22 +477,36 @@ export function exactWaitChances(unseen: Counts, excluded: readonly boolean[]): 
       for (let w = 0; w < NUM_PLAY_KINDS; w++) {
         if (five[w] === 0) continue;
         five[w]--;
-        if (five.every((c, k) => c <= unseen[k])) {
-          const key = five.join(',');
-          const e = waitsOf.get(key) ?? { counts: five.slice(), waits: new Set<Kind>() };
-          e.waits.add(w);
-          waitsOf.set(key, e);
-        }
+        const key = five.join(',');
+        const e = waitsOf.get(key) ?? { counts: five.slice(), waits: new Set<Kind>() };
+        e.waits.add(w);
+        waitsOf.set(key, e);
         five[w]++;
       }
     }
   }
+  readyFours = [...waitsOf.values()].map(({ counts, waits }) => ({
+    tiles: counts.flatMap((n, k) => (n > 0 ? [[k, n] as [Kind, number]] : [])),
+    waits: [...waits],
+  }));
+  return readyFours;
+}
+
+/**
+ * For a seat with four exposed sets (four concealed tiles: one set and a pair to make), the exact
+ * chance that each kind is one of its winning tiles, given it is ready: every four-tile hand the
+ * `unseen` pool allows, weighted by the number of ways the pool deals it (each copy equally
+ * likely), keeping the ready hands none of whose winning tiles is `excluded`. Every ready hand
+ * plus a winning tile is a pair and a set, so the hands are found from those five-tile shapes.
+ */
+export function exactWaitChances(unseen: Counts, excluded: readonly boolean[]): number[] {
   const win = new Array<number>(NUM_PLAY_KINDS).fill(0);
   let total = 0;
-  for (const { counts, waits } of waitsOf.values()) {
-    if ([...waits].some((w) => excluded[w])) continue;
+  for (const { tiles, waits } of fourTileWaits()) {
+    if (tiles.some(([k, n]) => n > unseen[k])) continue;
+    if (waits.some((w) => excluded[w])) continue;
     let weight = 1;
-    for (let k = 0; k < NUM_PLAY_KINDS; k++) if (counts[k] > 0) weight *= binomial(unseen[k], counts[k]);
+    for (const [k, n] of tiles) weight *= binomial(unseen[k], n);
     total += weight;
     for (const w of waits) win[w] += weight;
   }
