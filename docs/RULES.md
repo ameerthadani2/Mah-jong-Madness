@@ -53,8 +53,20 @@
 | 1 | `dealer` | 莊家 | Dealer involved in the payment |
 | 2×n | `dealer_streak` | 連n拉n | Dealer streak |
 | 1 | `no_flowers` | 無花 | Optional, off by default |
+| `liguTai` | `ligu` | 嚦咕嚦咕 | Optional, off by default: seven pairs and a triplet, fully concealed (see below) |
 
-Not implemented (by design, uncommon in 16-tile): 七對子, 十三么, 一條龍, 三色同順 — see the roadmap for optional variants. 嚦咕嚦咕 (the seven-pairs-and-a-triplet hand some tables play) is not supported either: a hand must be five sets and a pair.
+Not implemented (by design, uncommon in 16-tile): 七對子, 十三么, 一條龍, 三色同順 — see the roadmap for optional variants. 嚦咕嚦咕 (the seven-pairs-and-a-triplet hand some tables play) is an optional table rule, off by default; with it off, a hand must be five sets and a pair.
+
+## 嚦咕嚦咕 (optional)
+
+A table that sets `liguTai` above 0 plays 嚦咕嚦咕 as well as five sets and a pair.
+
+- **The hand.** Seven pairs and one triplet: seventeen tiles with the winning tile, fully concealed. Any 吃, 碰 or kong, a 暗槓 included, makes it impossible. Four identical tiles never count as two pairs. Flowers are bonus tiles as always and take no part.
+- **Winning.** The engine accepts it everywhere it accepts a normal hand, through one check (`isWinningHand` in `hand.ts`): self-draw, a discard (一炮多響 and 過水 as usual), robbing a kong, and 天胡 / 地胡 / 人胡 under their usual conditions. Robbing a kong cannot happen in practice: the hand always waits on a kind it already holds, and an added kong holds all four copies.
+- **Scoring.** `liguTai` 台 for the hand (`ligu`), which includes 門清: no separate 門清 or 門清自摸, and a self-drawn 嚦咕嚦咕 adds the ordinary 自摸 1 台. It adds to 混一色 or 清一色; to the triplet's 台 when the triplet is a dragon (中 / 發 / 白) or a value wind (門風, 圈風); to 莊家 and 連莊; to flowers (and 無花 when the table scores it); to 海底撈月 / 河底撈魚, 花上自摸 and 搶槓. It takes no wait 台 (邊張, 中洞, 單吊, 獨聽) and none of the shape items (平胡, 碰碰胡, the 暗刻 counts). It is a pattern hand, so 天胡 / 地胡 / 人胡 add to it and absorb what they absorb for any hand (the 自摸, 花上自摸 and 海底 / 河底). `maxTai` caps it like any hand, with the dealer 台 outside the cap.
+- **Both readings.** A hand that is also five sets and a pair (for example 11 22 33 444 55 77 88 99 in one suit) is scored both ways and keeps the better total before the cap; on a tie it keeps the five-set reading.
+- **Waits.** With the rule on, the tiles that would complete 嚦咕嚦咕 count as waits wherever the engine lists a hand's winning tiles: eight pairs wait on all eight kinds, six pairs with a triplet and a single wait on the single. The coach and the table then say "ready" for such a hand, and the extra waits count when deciding 獨聽 for a five-set win. With the rule off nothing about waits changes.
+- **Bots.** With the rule on the bots take the win whenever it is legal, as they take every legal win, but they are not taught to chase the hand: their discards still aim at five sets and a pair, so 嚦咕嚦咕 wins by bots are rare.
 
 ## Rule options
 
@@ -81,3 +93,4 @@ Every table plays one `RuleSet` (`packages/engine/src/rules.ts`). The defaults b
 | `heavenlyTai` | 24 | 0 to 64 | 台 for 天胡; 0 switches it off (the win is then scored on its own items) |
 | `earthlyTai` | 16 | 0 to 64 | 台 for 地胡; 0 switches it off |
 | `humanlyTai` | 16 | 0 to 64 | 台 for 人胡; 0 switches it off |
+| `liguTai` | 0 | 0 to 64 | 台 for 嚦咕嚦咕 (seven pairs and a triplet); 0, the default, means the hand is not played. Every preset keeps it off |
