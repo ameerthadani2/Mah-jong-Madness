@@ -8,14 +8,14 @@
  *
  * Writes <dir>/<width>x<height>-<screen>.png for home, table-mid, table-selected, table-claim (when a claim
  * came up), callout and win-hold (when they came up), result, review, replace-table (Home asking before a new
- * match replaces a saved table), learn, lesson, age-gate (the birth-year
+ * match replaces a saved table), abandon-table (Home asking before the Resume card gives a saved table up), learn, lesson, age-gate (the birth-year
  * question a new player answers before the Shop), shop and settings, plus exit-sheet (the red exit icon's
  * confirmation) and, for each landscape viewport, table-xl (Extra-large tiles).
  * Each viewport plays one hand against bots in its own browser context, all in parallel. Set
  * SCREENS_SIZES=390x844,667x375 to capture a subset.
  * Exits non-zero if a viewport cannot reach the result sheet, the page throws, or a hard check fails (one tap on
  * the exit icon or on the result sheet's "Leave table" leaves the table, Start match replaces a saved table
- * without asking, the English claim buttons carry no gloss, an Extra-large hand scrolls or runs off screen, the
+ * without asking, one tap on the Resume card's "Abandon table" gives the saved table up, the English claim buttons carry no gloss, an Extra-large hand scrolls or runs off screen, the
  * Shop does not open, a Home card button clips its label in English or in Traditional Chinese (each viewport also
  * opens Home in zh-TW and writes <size>-home-zh.png), or Home's cards run past the bottom edge at 844x390).
  */
@@ -216,6 +216,15 @@ async function run(browser, port, [w, h]) {
     else await shot('replace-table');
     await tapSel(page, '[data-testid="confirm-no"]', 700);
     if (!(await visible(page, '[data-testid="resume-card"]'))) fails.push('"Keep my table" did not keep the saved table');
+    // "Abandon table" on the Resume card ends the saved table for good: one tap must only ask, and "Keep my table" keeps it.
+    const savedTable = () => page.evaluate(() => (localStorage.getItem('mjm.activeSession') || '').length);
+    if (!(await tapSel(page, '[data-testid="abandon-table"]', 900))) fails.push('the Resume card has no "Abandon table" button');
+    if (!(await visible(page, '[data-testid="resume-card"]')) || !(await savedTable())) fails.push('one tap on "Abandon table" gave up the saved table without asking');
+    if (!(await visible(page, '[data-testid="abandon-saved-table"]'))) fails.push('"Abandon table" on Home did not ask before giving up the saved table');
+    else await shot('abandon-table');
+    await tapSel(page, '[data-testid="confirm-no"]', 700);
+    if (await visible(page, '[data-testid="abandon-saved-table"]')) fails.push('"Keep my table" did not close the abandon question');
+    if (!(await visible(page, '[data-testid="resume-card"]')) || !(await savedTable())) fails.push('cancelling "Abandon table" did not keep the saved table');
     // Back to the table through Resume, then give it up for the rest of the walk.
     await tapSel(page, '[data-testid="resume-table"]', 1500);
     if (!(await visible(page, 'text=Next hand'))) fails.push('Resume did not bring the result sheet back');

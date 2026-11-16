@@ -81,6 +81,13 @@ export function HomeScreen() {
     if (replacesTable(app.activeSession, app.session)) setAskReplace(true);
     else startBots();
   };
+  // Giving up the saved table from the Resume card ends it for good: ask first, and say what happens to it.
+  const [askAbandon, setAskAbandon] = useState(false);
+  const abandonTable = () => {
+    setAskAbandon(false);
+    if (liveTable) app.setSession(null);
+    app.setActiveSession(null);
+  };
   const startBots = () => {
     setAskReplace(false);
     const session = createLocalSession(acceptedName(app.profile) || (needsName ? name.trim() : '') || t('common.player'), app.profile.avatar, app.settings.rules, { botSkill: allowedBotSkill(app.settings.botSkill, app.wallet) });
@@ -358,15 +365,8 @@ export function HomeScreen() {
             {resumeError && <P style={{ color: colors.dangerText, fontSize: 12 }}>{resumeError}</P>}
           </View>
           <Button testID="resume-table" title={resuming ? t('home.resume.reconnecting') : t('home.resume.resume')} onPress={() => void resume()} disabled={resuming} />
-          <Button
-            small
-            kind="ghost"
-            title={t('home.resume.discard')}
-            onPress={() => {
-              if (liveTable) app.setSession(null);
-              app.setActiveSession(null);
-            }}
-          />
+          {/* Giving the table up cannot be undone, so the button only opens the question below. */}
+          <Button small kind="ghost" testID="abandon-table" title={t('home.resume.abandon')} onPress={() => setAskAbandon(true)} />
         </Card>
       )}
 
@@ -390,6 +390,16 @@ export function HomeScreen() {
         </View>
       )}
       <ConfirmSheet testID="replace-table" visible={askReplace} title={t('home.replace.title')} body={t('home.replace.body')} yes={t('home.replace.yes')} no={t('home.replace.no')} onYes={startBots} onNo={() => setAskReplace(false)} />
+      <ConfirmSheet
+        testID="abandon-saved-table"
+        visible={askAbandon && !!app.activeSession}
+        title={t('home.abandon.title')}
+        body={app.activeSession?.kind === 'online' ? t('home.abandon.bodyOnline') : t('home.abandon.bodyLocal')}
+        yes={t('home.abandon.yes')}
+        no={t('home.abandon.no')}
+        onYes={abandonTable}
+        onNo={() => setAskAbandon(false)}
+      />
     </ScrollView>
   );
 }

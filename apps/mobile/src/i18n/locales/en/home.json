@@ -46,7 +46,14 @@
     "club": " · club %{code}",
     "resume": "Resume",
     "reconnecting": "Reconnecting…",
-    "discard": "Discard"
+    "abandon": "Abandon table"
+  },
+  "abandon": {
+    "title": "Abandon this table?",
+    "bodyLocal": "This deletes your saved match against the bots. You will not be able to resume it.",
+    "bodyOnline": "You give up your seat at this online table for good. A bot takes it and plays the match out, and you will not be able to come back.",
+    "yes": "Abandon table",
+    "no": "Keep my table"
   },
   "replace": {
     "title": "Start a new match?",
