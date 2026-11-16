@@ -773,6 +773,9 @@ function memoryRushRuns(s: MemoryState): RushRunsRepo {
       Object.assign(row, copy(result));
       return copy(row);
     },
+    async countStartedSince(userId, since) {
+      return [...s.rushRuns.values()].filter((run) => run.userId === userId && run.startedAt >= since).length;
+    },
     async moveToUser(fromUserId, toUserId) {
       let n = 0;
       for (const run of s.rushRuns.values()) {

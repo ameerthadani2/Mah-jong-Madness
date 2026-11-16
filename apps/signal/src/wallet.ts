@@ -250,6 +250,11 @@ export class WalletService {
     return tierOfEntitlements((await this.repos.wallet.getEntitlements(userId)).filter((e) => isLive(e, at)).map((e) => e.entitlement));
   }
 
+  /** True while the user has Coach Gold or The Four Winds Club (unlimited ranked Puzzle Rush; the server's Rush meter calls this). */
+  async hasCoachGold(userId: string): Promise<boolean> {
+    return TIER_RANK[await this.tierOf(userId)] >= TIER_RANK.gold;
+  }
+
   /** True while the user has The Four Winds Club (the club-ownership gate calls this). */
   async hasFourWinds(userId: string): Promise<boolean> {
     return TIER_RANK[await this.tierOf(userId)] >= TIER_RANK.fourwinds;

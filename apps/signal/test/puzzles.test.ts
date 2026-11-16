@@ -96,7 +96,10 @@ function fixture(repos: Repos, opts: { limits?: boolean } = {}) {
     expect(res.status, res.body).toBe(200);
     return res.json as { rows: Row[]; me: Row | null; scope: string };
   };
-  return { clock, now, repos, sessions, clubs, call, guest, startDaily, daily, startRush, rushAnswers, finish, board };
+  /** Gives the account a live plan (`coach.gold.month`, `fourwinds.year`, ...) until `until` (default: a month on). */
+  const plan = (g: G, entitlement = 'coach.gold.month', until = clock.now + 30 * DAY) =>
+    repos.wallet.setEntitlement({ userId: g.userId, entitlement, expiresAt: until, source: 'store', updatedAt: clock.now });
+  return { clock, now, repos, sessions, clubs, call, guest, plan, startDaily, daily, startRush, rushAnswers, finish, board };
 }
 
 const TODAY = '2026-11-16';
@@ -171,6 +174,8 @@ function contract(name: string, repos: () => Repos) {
     it('times a Rush run with the server clock, judges it to the third strike, and finishes it once', async () => {
       const f = fixture(repos());
       const [a, b] = [await f.guest('Ana'), await f.guest('Bo')];
+      // Several runs in a day: Ana has Coach Gold (the free meter is tested below).
+      await f.plan(a);
       const run = await f.startRush(a);
       expect(run.seed).toMatch(/^rush-[0-9a-f]{16}$/);
       f.clock.now += 60_000;
@@ -206,6 +211,33 @@ function contract(name: string, repos: () => Repos) {
       expect((await f.finish(a, quick.runId, 'rr' as unknown as unknown[])).json.error).toBe('invalid');
       expect((await f.finish(a, 'nope', [])).json.error).toBe('run_not_found');
       expect((await f.finish(a, quick.runId, f.rushAnswers(quick.seed, 'rr'))).json).toMatchObject({ solved: 2, seconds: 2 });
+    });
+
+    it('meters ranked Rush on the server: one run a UTC day without Coach Gold, unlimited with a plan', async () => {
+      const f = fixture(repos());
+      const [free, gold, winds, lapsed] = [await f.guest('Free'), await f.guest('Gold'), await f.guest('Winds'), await f.guest('Lapsed')];
+      const start = (g: { auth: Record<string, string> }) => f.call('POST', '/api/puzzles/rush', {}, g.auth);
+      // A free account: the first run of the day is issued; it is abandoned (never finished) and still counts.
+      expect((await start(free)).status).toBe(201);
+      f.clock.now += 60_000;
+      const refused = await start(free);
+      expect([refused.status, refused.json.error]).toEqual([403, 'rush_daily_limit']);
+      // The day boundary is midnight UTC: a second before it is still refused, at midnight a run is issued again.
+      const midnight = Date.UTC(2026, 10, 17);
+      f.clock.now = midnight - 1000;
+      expect((await start(free)).json.error).toBe('rush_daily_limit');
+      f.clock.now = midnight;
+      expect((await start(free)).status).toBe(201);
+      expect((await start(free)).json.error).toBe('rush_daily_limit');
+      // Coach Gold and The Four Winds Club start as many as they like (the per-address limit still applies).
+      await f.plan(gold, 'coach.gold.month');
+      await f.plan(winds, 'fourwinds.year');
+      for (const g of [gold, winds]) for (let i = 0; i < 4; i++) expect((await start(g)).status).toBe(201);
+      // A plan that has lapsed is a free account again.
+      await f.plan(lapsed, 'coach.gold.month', f.now() - 1);
+      expect((await start(lapsed)).status).toBe(201);
+      expect((await start(lapsed)).json.error).toBe('rush_daily_limit');
+      expect((await f.repos.rushRuns.countStartedSince(free.userId, 0))).toBe(2);
     });
 
     it('verifies a hard daily puzzle and the hard value and defence puzzles of a Rush run by regenerating them', async () => {
@@ -373,7 +405,9 @@ function contract(name: string, repos: () => Repos) {
 describe('puzzle limits', () => {
   it('meters submissions and board reads per account, and Rush starts per address', async () => {
     const f = fixture(createMemoryRepos(), { limits: true });
+    // Accounts with Coach Gold, so the free Rush meter (one run a day) does not stop them first.
     const a = await f.guest('Ana');
+    await f.plan(a);
     const codes: number[] = [];
     for (let i = 0; i < 21; i++) codes.push((await f.call('POST', '/api/puzzles/rush', {}, a.auth)).status);
     expect(codes.slice(0, 20).every((c) => c === 201)).toBe(true);
@@ -390,6 +424,7 @@ describe('puzzle limits', () => {
     let refused = 0;
     for (let i = 0; i < 4; i++) {
       const g = await f.guest(`G${i}`);
+      await f.plan(g);
       for (let j = 0; j < 20; j++) if ((await f.call('POST', '/api/puzzles/rush', {}, g.auth, ip)).status === 429) refused++;
     }
     expect(refused).toBe(20);

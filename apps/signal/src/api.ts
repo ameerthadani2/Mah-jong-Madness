@@ -506,7 +506,7 @@ export function buildRoutes(deps: ApiDeps, opts: Pick<ApiOptions, 'reportIpLimit
     ...adminModerationRoutes(r, moderation),
 
     // ------------------------------------------------------------------ puzzles and leaderboards
-    ...puzzleRoutes(r, { repos, clubs, now, reply: (status, body) => new Reply(status, body), ...deps.puzzles }),
+    ...puzzleRoutes(r, { repos, clubs, now, reply: (status, body) => new Reply(status, body), unlimitedRush: (userId) => wallet.hasCoachGold(userId), ...deps.puzzles }),
 
     // ------------------------------------------------------------------ reports and push
     r('POST', '/api/reports', async (ctx) => {

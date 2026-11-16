@@ -47,6 +47,8 @@ export const RUSH_RUN_TTL_MS = 30 * 60_000;
 export const RATING_BOARD_MIN_RATED = 20;
 /** Rows a board lists at most. */
 export const BOARD_LIMIT = 100;
+/** Ranked Puzzle Rush runs a day (UTC) for an account without Coach Gold or The Four Winds Club; a run counts when it is issued. */
+export const FREE_RUSH_RUNS_PER_DAY = 1;
 /** The longest time a daily answer is ranked with (the server's time from start to answer); longer is stored as this. */
 export const DAILY_MAX_SECONDS = 3600;
 
@@ -87,6 +89,12 @@ export interface PuzzleDeps {
   readLimiter?: BucketTable<string>;
   /** Per-address bucket for Rush starts (default `LIMITS.rushStartsPerHourPerIp` an hour). */
   rushIpLimiter?: BucketTable<string>;
+  /**
+   * Whether the account has unlimited ranked Rush (Coach Gold or The Four Winds Club; the API
+   * passes the wallet's check). Without it an account starts `FREE_RUSH_RUNS_PER_DAY` runs a UTC day.
+   * Default: nobody has it.
+   */
+  unlimitedRush?: (userId: string) => Promise<boolean>;
 }
 
 const iso = (ms: number) => new Date(ms).toISOString();
@@ -213,7 +221,18 @@ export function puzzleRoutes<R>(r: PuzzleRouteFactory<R>, deps: PuzzleDeps): R[]
       const me = await submitter(ctx);
       if (!rushByIp.take(ctx.ip)) throw new PuzzleError(429, 'rate_limited', 'Too many Puzzle Rush runs from this address; try again later');
       const at = now();
-      const run = await repos.rushRuns.create({ id: randomUUID(), userId: me.userId, seed: `rush-${randomHex(8)}`, startedAt: at, expiresAt: at + RUSH_RUN_TTL_MS });
+      const unlimited = deps.unlimitedRush ? await deps.unlimitedRush(me.userId) : false;
+      const run = await repos.transaction(async (tx) => {
+        if (!unlimited) {
+          // The account's row is locked first, so two starts at once cannot both take the last free run.
+          await tx.puzzleRatings.getForUpdate(me.userId);
+          // A run counts when it is issued, finished or not: abandoning a run does not give it back.
+          if ((await tx.rushRuns.countStartedSince(me.userId, dayStart(at))) >= FREE_RUSH_RUNS_PER_DAY) {
+            throw new PuzzleError(403, 'rush_daily_limit', 'Free accounts get one ranked Puzzle Rush a day; Coach Gold makes it unlimited');
+          }
+        }
+        return tx.rushRuns.create({ id: randomUUID(), userId: me.userId, seed: `rush-${randomHex(8)}`, startedAt: at, expiresAt: at + RUSH_RUN_TTL_MS });
+      });
       return deps.reply(201, { runId: run.id, seed: run.seed, startedAt: iso(run.startedAt), expiresAt: iso(run.expiresAt), seconds: RUSH_SECONDS, strikes: RUSH_STRIKES });
     }),
     r('POST', '/api/puzzles/rush/:runId/finish', async (ctx) => {

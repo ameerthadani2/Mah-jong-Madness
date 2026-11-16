@@ -1512,6 +1512,11 @@ function pgRushRuns(q: Queryable): RushRunsRepo {
       );
       return res.rows[0] ? rushRunFromRow(res.rows[0]) : null;
     },
+    async countStartedSince(userId, since) {
+      if (!isUuid(userId)) return 0;
+      const res = await q.query<{ n: string }>('SELECT count(*) AS n FROM puzzle_rush_runs WHERE user_id = $1 AND started_at >= $2', [userId, toDate(since)]);
+      return Number(res.rows[0].n);
+    },
     async moveToUser(fromUserId, toUserId) {
       if (!isUuid(fromUserId) || !isUuid(toUserId)) return 0;
       const res = await q.query('UPDATE puzzle_rush_runs SET user_id = $2 WHERE user_id = $1', [fromUserId, toUserId]);

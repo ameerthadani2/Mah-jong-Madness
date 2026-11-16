@@ -161,6 +161,8 @@ const PUZZLE_ERRORS: Readonly<Record<string, string>> = {
   date_out_of_range: 'puzzles.server.errors.dateOutOfRange',
   already_played: 'puzzles.server.errors.alreadyPlayed',
   rush_too_fast: 'puzzles.server.errors.rushTooFast',
+  // The server's free Rush meter: the Shop's own Coach Gold message, as the Rush screen's lock shows it.
+  rush_daily_limit: 'shop.rushUsed',
   run_not_found: 'puzzles.server.errors.runNotFound',
   run_finished: 'puzzles.server.errors.runFinished',
   run_expired: 'puzzles.server.errors.runExpired',
@@ -180,6 +182,8 @@ export function puzzleErrorMessage(e: unknown): Message {
 
 export function puzzleErrorText(e: unknown, t: Translate): string {
   const m = puzzleErrorMessage(e);
+  // The plan is named as the Shop names it, in either language.
+  if (m.key === 'shop.rushUsed') return t(m.key, { plan: t('shop.tiers.gold') });
   return t(m.key, m.params);
 }
 

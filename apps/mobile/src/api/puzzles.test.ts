@@ -97,6 +97,20 @@ describe('puzzle errors as copy', () => {
     expect(say('rate_limited', zh)).toContain('稍等');
   });
 
+  it('reads the server’s free Rush meter as the Coach Gold message the Rush lock shows, in both languages', () => {
+    const limit = new ApiError('x', 'rush_daily_limit', 403);
+    expect(puzzleErrorMessage(limit).key).toBe('shop.rushUsed');
+    expect(isPuzzleServerDown(limit)).toBe(false);
+    // The Shop's strings, with %{name} filled in as i18n-js does.
+    const shopT = (name: string) => {
+      const shop = JSON.parse(readFileSync(join(here, '..', 'i18n', 'locales', name, 'shop.json'), 'utf8')) as { rushUsed: string; tiers: { gold: string } };
+      return (key: string, params?: Record<string, unknown>) =>
+        (key === 'shop.rushUsed' ? shop.rushUsed : key === 'shop.tiers.gold' ? shop.tiers.gold : key).replace(/%\{(\w+)\}/g, (_, k: string) => String(params?.[k] ?? `%{${k}}`));
+    };
+    expect(puzzleErrorText(limit, shopT('en'))).toBe('Free accounts get one Puzzle Rush a day. Coach Gold makes it unlimited.');
+    expect(puzzleErrorText(limit, shopT('zh-TW'))).toBe('免費帳號每天可以玩一次謎題衝刺。訂閱「黃金教練」就不限次數。');
+  });
+
   it('says unreachable for the client’s own failures and leaves other codes to the generic mapping', () => {
     expect(puzzleErrorMessage(new ApiError('x', 'puzzle_timeout')).key).toBe('puzzles.server.errors.unreachable');
     expect(puzzleErrorMessage(new ApiError('x', 'puzzle_unreachable')).key).toBe('puzzles.server.errors.unreachable');

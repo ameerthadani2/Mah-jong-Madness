@@ -550,6 +550,8 @@ export interface RushRunsRepo {
   get(id: string): Promise<RushRunRecord | null>;
   /** Writes the result of an unfinished run; null when the run is missing or already finished (a run is finished once). */
   finish(id: string, result: RushRunResult): Promise<RushRunRecord | null>;
+  /** How many runs the account was issued at or after `since`, finished or not (the free Rush meter counts these). */
+  countStartedSince(userId: string, since: number): Promise<number>;
   moveToUser(fromUserId: string, toUserId: string): Promise<number>;
   /** Deletes runs never finished that expired before `before`. */
   pruneUnfinished(before: number): Promise<number>;
