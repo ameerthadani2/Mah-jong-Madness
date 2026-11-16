@@ -30,6 +30,16 @@ describe('the Shop', () => {
     expect(screen.getByText('Diamonds and points have no monetary value and cannot be redeemed or transferred.')).toBeOnTheScreen();
   });
 
+  it('shows each look’s description whole, never cut mid-sentence', async () => {
+    await renderShop();
+    fireEvent.press(await screen.findByTestId('shop-tab-looks'));
+    const line = await screen.findByText(/Deep jade felt, walnut rail with gold stud/);
+    // The whole sentence is there and no line limit cuts it on a narrow card.
+    expect(line.props.children).toMatch(/Deep jade felt, walnut rail with gold stud[^.]*\./);
+    expect(line.props.numberOfLines).toBeUndefined();
+    for (const el of screen.getAllByText(/ · /)) expect(el.props.numberOfLines).toBeUndefined();
+  });
+
   it('lists the diamond packs with the store price on each buy button', async () => {
     await renderShop();
     expect(await screen.findByText('A small top-up.')).toBeOnTheScreen();

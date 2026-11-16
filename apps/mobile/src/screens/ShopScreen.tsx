@@ -405,8 +405,8 @@ function ProductCard({
             {text.title}
           </Text>
         )}
-        {/* A plan's line carries its billing terms, so it is never cut; other cards keep two lines. */}
-        <Text style={[styles.sub, fontFor(sub, fonts.body, '700'), amount !== undefined && { textAlign: 'center' }]} numberOfLines={p.kind === 'subscription' ? undefined : 2}>
+        {/* Never cut: a plan's line carries its billing terms, and a look's tells you what you are buying. */}
+        <Text style={[styles.sub, fontFor(sub, fonts.body, '700'), amount !== undefined && { textAlign: 'center' }]}>
           {sub}
         </Text>
         {note && <Text style={[styles.sub, { color: colors.okText }]}>{note}</Text>}
