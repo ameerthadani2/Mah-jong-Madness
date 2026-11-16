@@ -10,6 +10,7 @@ import {
   dailyPuzzleForKey,
   dateOfDailyKey,
   DEFAULT_PUZZLE_RATING,
+  puzzleDifficulty,
   randomHex,
   ratePuzzleAnswer,
   rushDifficultyAt,
@@ -205,6 +206,36 @@ function contract(name: string, repos: () => Repos) {
       expect((await f.finish(a, quick.runId, 'rr' as unknown as unknown[])).json.error).toBe('invalid');
       expect((await f.finish(a, 'nope', [])).json.error).toBe('run_not_found');
       expect((await f.finish(a, quick.runId, f.rushAnswers(quick.seed, 'rr'))).json).toMatchObject({ solved: 2, seconds: 2 });
+    });
+
+    it('verifies a hard daily puzzle and the hard value and defence puzzles of a Rush run by regenerating them', async () => {
+      const f = fixture(repos());
+      const [a, b] = [await f.guest('Ana'), await f.guest('Bo')];
+      // Sunday 15 November is a hard daily puzzle.
+      const SUNDAY = '2026-11-15';
+      expect(dailyPuzzleDifficulty(dateOfDailyKey(SUNDAY)!)).toBe(3);
+      expect((await f.daily(a, SUNDAY, dailyRight(SUNDAY))).json.correct).toBe(true);
+      expect((await f.daily(b, SUNDAY, dailyWrong(SUNDAY))).json.correct).toBe(false);
+      // A run that reaches the hard puzzles (from the 16th): the tempting wrong answer of a hard value
+      // puzzle (the rival) and of a hard defence puzzle (a shape-keeping tile outside the answers) is refused.
+      const run = await f.startRush(a);
+      f.clock.now += 170_000;
+      const pattern = 'rrrrrrrrrrrrrrr' + 'rwrrwrrrrrw';
+      const answers = [...pattern].map((c, i) => {
+        const p = rushRunPuzzle(run.seed, i);
+        if (c === 'r') return right(p);
+        if (p.type === 'value') return p.rival;
+        if (p.type === 'defence') return p.options.find((o) => o.shanten === p.bestShanten && !o.accepted)!.kind;
+        return wrong(p);
+      });
+      const hard = [...pattern].map((_, i) => rushRunPuzzle(run.seed, i)).slice(15);
+      expect(hard.every((p, i) => puzzleDifficulty(p, rushDifficultyAt(15 + i)) === 3)).toBe(true);
+      expect(hard.filter((p) => p.type === 'value' || p.type === 'defence').length).toBeGreaterThanOrEqual(4);
+      expect([rushRunPuzzle(run.seed, 16).type, rushRunPuzzle(run.seed, 19).type]).toEqual(['defence', 'value']);
+      const res = await f.finish(a, run.runId, answers);
+      expect(res.status, res.body).toBe(200);
+      expect((res.json.answers as Array<{ correct: boolean }>).map((x) => (x.correct ? 'r' : 'w')).join('')).toBe(pattern);
+      expect(res.json).toMatchObject({ solved: pattern.length - 3, wrong: 3 });
     });
 
     it('ranks the daily board solved first, then fewest seconds, with the caller’s own row', async () => {
