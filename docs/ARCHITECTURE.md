@@ -50,7 +50,7 @@ tests, sim   ──┘         │
 
 ### Clocks, time banks and game speeds
 
-Each human seat that owes an action gets its own clock (`TableHost.clocks`), whether its link is up or has dropped: a base turn timer (`rules.turnSeconds`) and, once that expires, a per-hand time bank (`rules.timeBankSeconds`) that drains while they think. When the bank is empty the bot plays for them with the table's bot skill. Speeds are presets over those two numbers: Relaxed 30+60, Normal 15+30, Fast 10+20, Turbo 7+10, Hyper 4+0. The client receives its own deadline, remaining bank and an `inTimeBank` flag with every state update.
+Each human seat that owes an action gets its own clock (`TableHost.clocks`), whether its link is up or has dropped: a base turn timer (`rules.turnSeconds`) and, once that expires, a per-hand time bank (`rules.timeBankSeconds`) that drains while they think. When the bank is empty the table plays for them by a fixed rule (a win is taken, any other claim is passed, a turn is played by the bot policy at Club strength or above from the seed `timeout:<seat>`), and each client recomputes those moves, and every bot's, at the audit (docs/FAIRNESS.md). Speeds are presets over those two numbers: Relaxed 30+60, Normal 15+30, Fast 10+20, Turbo 7+10, Hyper 4+0. The client receives its own deadline, remaining bank and an `inTimeBank` flag with every state update.
 
 ### Resume after a crash or disconnect
 
