@@ -166,6 +166,62 @@ export function missingProductionEnvMessage(missing: string[]): string {
   );
 }
 
+/** Shortest `AUTH_PEPPER` (and `AUTH_PEPPER_PREVIOUS` entry) production accepts. */
+export const MIN_PEPPER_LENGTH = 32;
+
+/**
+ * Values the docs show in place of a pepper (placeholders, and the commands that make one): a
+ * pepper equal to one of these was pasted from the docs, not generated.
+ */
+const EXAMPLE_PEPPERS = [
+  '…',
+  '...',
+  '$PEPPER',
+  '"$PEPPER"',
+  '<previous>',
+  '<the one before>',
+  '$(openssl rand -hex 32)',
+  'openssl rand -hex 32',
+  `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`,
+];
+
+/**
+ * What is wrong with the peppers a production server was given: with `NODE_ENV=production`,
+ * `AUTH_PEPPER` and each `AUTH_PEPPER_PREVIOUS` entry must be at least `MIN_PEPPER_LENGTH`
+ * characters, not one character repeated, and not one of the values the docs show. Returns one
+ * line per problem, naming the variable but never the value; empty means boot. An unset
+ * `AUTH_PEPPER` is `missingProductionEnv`'s business.
+ */
+export function weakPepperProblems(env: Env): string[] {
+  if ((env.NODE_ENV ?? '').trim().toLowerCase() !== 'production') return [];
+  const why = (value: string): string | null => {
+    if (EXAMPLE_PEPPERS.includes(value) || /^<.*>$/.test(value)) return 'is an example value from the docs';
+    if (value.length < MIN_PEPPER_LENGTH) return `is shorter than ${MIN_PEPPER_LENGTH} characters`;
+    if (new Set(value).size === 1) return 'is one character repeated';
+    return null;
+  };
+  const problems: string[] = [];
+  const pepper = (env.AUTH_PEPPER ?? '').trim();
+  const own = pepper ? why(pepper) : null;
+  if (own) problems.push(`AUTH_PEPPER ${own}`);
+  (env.AUTH_PEPPER_PREVIOUS ?? '')
+    .split(',')
+    .map((p) => p.trim())
+    .forEach((p, i) => {
+      const bad = p ? why(p) : null;
+      if (bad) problems.push(`AUTH_PEPPER_PREVIOUS entry ${i + 1} ${bad}`);
+    });
+  return problems;
+}
+
+/** The message `main.ts` prints before refusing to start (see `weakPepperProblems`). */
+export function weakPepperMessage(problems: string[]): string {
+  return (
+    `[signal] refusing to start: ${problems.join('; ')}. A pepper must be at least ${MIN_PEPPER_LENGTH} random characters, ` +
+    'e.g. the output of `openssl rand -hex 32` (docs/DEPLOY.md, "Rotating the pepper").'
+  );
+}
+
 /**
  * The session pepper: AUTH_PEPPER, or a random one for this process only (with a warning).
  * AUTH_PEPPER_PREVIOUS holds the pepper used before a rotation, or several separated by commas

@@ -18,7 +18,7 @@
  * freezes the tables, writes them and exits 1 so Fly restarts the machine.
  */
 import { SessionService } from './auth';
-import { loadConfig, missingProductionEnv, missingProductionEnvMessage, pepperFromEnv, providersFromEnv } from './config';
+import { loadConfig, missingProductionEnv, missingProductionEnvMessage, pepperFromEnv, providersFromEnv, weakPepperMessage, weakPepperProblems } from './config';
 import { createHostLock, createPool, hostLockTarget } from './db';
 import { migrate } from './migrate';
 import { createAnalytics, initSentry, reportError } from './observability';
@@ -54,6 +54,12 @@ async function main(): Promise<void> {
   const missing = missingProductionEnv(env);
   if (missing.length) {
     console.error(missingProductionEnvMessage(missing));
+    process.exit(1);
+  }
+  // A short pepper, or one pasted from the docs, makes the stored hashes guessable.
+  const weakPepper = weakPepperProblems(env);
+  if (weakPepper.length) {
+    console.error(weakPepperMessage(weakPepper));
     process.exit(1);
   }
   // The host lock needs a direct connection; production does not start on a pooled one.

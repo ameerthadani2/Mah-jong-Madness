@@ -6,7 +6,7 @@
 import { spawn } from 'node:child_process';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { missingProductionEnv, missingProductionEnvMessage } from '../src/config';
+import { missingProductionEnv, missingProductionEnvMessage, weakPepperMessage, weakPepperProblems } from '../src/config';
 import { hostLockTarget } from '../src/db';
 
 const ROOT = join(__dirname, '..');
@@ -84,5 +84,36 @@ describe('fail-closed boot', () => {
     expect(output).toMatch(/refusing to start: DATABASE_URL_DIRECT looks like a pooled/);
     expect(output).not.toContain('listening');
     expect(Date.now() - t0).toBeLessThan(10_000);
+  }, 30_000);
+
+  it('production refuses a short or example pepper, in AUTH_PEPPER and in each AUTH_PEPPER_PREVIOUS entry', () => {
+    const good = 'k7Qw2Lp9Xv4Rt8Zm1Nb6Hc3Fd5Gs0JyUe';
+    const older = '0f1e2d3c4b5a69788796a5b4c3d2e1f0';
+    const prod = (env: Record<string, string>) => weakPepperProblems({ NODE_ENV: 'production', ...env });
+    expect(prod({ AUTH_PEPPER: good })).toEqual([]);
+    expect(prod({ AUTH_PEPPER: good, AUTH_PEPPER_PREVIOUS: `${older}, ${good.slice(1)}x` })).toEqual([]);
+    expect(prod({ AUTH_PEPPER: 'short-pepper' })).toEqual(['AUTH_PEPPER is shorter than 32 characters']);
+    expect(prod({ AUTH_PEPPER: good.slice(0, 31) })).toEqual(['AUTH_PEPPER is shorter than 32 characters']);
+    expect(prod({ AUTH_PEPPER: 'p'.repeat(40) })).toEqual(['AUTH_PEPPER is one character repeated']);
+    expect(prod({ AUTH_PEPPER: `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` })).toEqual(['AUTH_PEPPER is an example value from the docs']);
+    expect(prod({ AUTH_PEPPER: '<the one before>' })).toEqual(['AUTH_PEPPER is an example value from the docs']);
+    expect(prod({ AUTH_PEPPER: good, AUTH_PEPPER_PREVIOUS: `${older},<previous>,abc` })).toEqual([
+      'AUTH_PEPPER_PREVIOUS entry 2 is an example value from the docs',
+      'AUTH_PEPPER_PREVIOUS entry 3 is shorter than 32 characters',
+    ]);
+    // Unset is missingProductionEnv's business; outside production nothing is checked.
+    expect(prod({})).toEqual([]);
+    expect(weakPepperProblems({ AUTH_PEPPER: 'p' })).toEqual([]);
+    const message = weakPepperMessage(prod({ AUTH_PEPPER: 'hunter2' }));
+    expect(message).toMatch(/refusing to start: AUTH_PEPPER is shorter than 32 characters/);
+    expect(message).not.toContain('hunter2');
+  });
+
+  it('exits 1 in production with a weak pepper, without printing it', async () => {
+    const { code, output } = await boot({ NODE_ENV: 'production', PORT: '18980', DATABASE_URL: 'postgres://app@127.0.0.1:18911/db', AUTH_PEPPER: 'hunter2-but-longer' });
+    expect(code).toBe(1);
+    expect(output).toContain('refusing to start: AUTH_PEPPER is shorter than 32 characters');
+    expect(output).not.toContain('hunter2');
+    expect(output).not.toContain('listening');
   }, 30_000);
 });
