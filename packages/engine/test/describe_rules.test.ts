@@ -1,7 +1,16 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_RULES, describeRules, kindFromCode, kindsFromString, ruleExtras, scoreWin, withRules } from '../src/index';
+import { clockMatchesSpeed, DEFAULT_RULES, describeRules, kindFromCode, kindsFromString, ruleExtras, scoreWin, withRules } from '../src/index';
 
 describe('describeRules', () => {
+  it('names the speed only when the clock is that speed\'s, and says Custom when it was changed by hand', () => {
+    expect(describeRules(withRules({ speed: 'fast', turnSeconds: 10, timeBankSeconds: 20 }))).toContain('Fast (10s + 20s bank)');
+    // The assessment's case: a "Fast" table with a 99-second turn.
+    expect(describeRules(withRules({ speed: 'fast', turnSeconds: 99 }))).toContain('· Custom (99s + 30s bank)');
+    expect(describeRules(withRules({ timeBankSeconds: 0 }))).toContain('· Custom (15s + 0s bank)');
+    expect(clockMatchesSpeed(DEFAULT_RULES)).toBe(true);
+    expect(clockMatchesSpeed({ speed: 'turbo', turnSeconds: 7, timeBankSeconds: 11 })).toBe(false);
+  });
+
   it('shows only stakes, length and speed for the default rules', () => {
     expect(describeRules(DEFAULT_RULES)).toBe('底100 / 台20 · 16 rotations · Normal (15s + 30s bank)');
     expect(ruleExtras(DEFAULT_RULES)).toEqual([]);

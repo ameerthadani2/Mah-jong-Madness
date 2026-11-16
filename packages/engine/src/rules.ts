@@ -124,6 +124,18 @@ export function withRules(overrides: Partial<RuleSet> = {}): RuleSet {
   return sanitizeRules(overrides, DEFAULT_RULES);
 }
 
+/** What a table's speed is called when its clock was set by hand and is not a named speed's. */
+export const CUSTOM_SPEED = { label: 'Custom', labelZh: '自訂' } as const;
+
+/**
+ * True when the clock is exactly the named speed's. A club or player can change the turn clock or the
+ * bank after picking a speed; the name then no longer describes the table, so summaries say Custom.
+ */
+export function clockMatchesSpeed(r: Pick<RuleSet, 'speed' | 'turnSeconds' | 'timeBankSeconds'>): boolean {
+  const p = SPEED_PRESETS[r.speed];
+  return !!p && p.turnSeconds === r.turnSeconds && p.timeBankSeconds === r.timeBankSeconds;
+}
+
 /** Apply a named speed, setting the clock values it implies. */
 export function withSpeed(rules: RuleSet, speed: GameSpeed): RuleSet {
   const p = SPEED_PRESETS[speed];
@@ -236,7 +248,7 @@ export function ruleExtraText(e: RuleExtra): string {
  * by every rule that differs from the defaults (see `ruleExtras`).
  */
 export function describeRules(r: RuleSet): string {
-  const speed = SPEED_PRESETS[r.speed]?.label ?? r.speed;
+  const speed = clockMatchesSpeed(r) ? SPEED_PRESETS[r.speed].label : CUSTOM_SPEED.label;
   const extras = ruleExtras(r).map(ruleExtraText).join(' · ');
   return `底${r.basePoints} / 台${r.taiPoints} · ${r.handsPerMatch} rotations · ${speed} (${r.turnSeconds}s + ${r.timeBankSeconds}s bank)${extras ? ' · ' + extras : ''}`;
 }

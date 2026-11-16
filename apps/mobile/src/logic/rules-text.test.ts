@@ -41,6 +41,15 @@ describe('rulesSummary', () => {
     expect(s).toContain(SPEED_PRESETS[DEFAULT_RULES.speed].labelZh);
     expect(s).not.toMatch(/rotations|bank/);
   });
+
+  it('says Custom, not the speed\'s name, when the clock was changed by hand', () => {
+    const fast = setRule(DEFAULT_RULES, 'speed', 'fast');
+    expect(rulesSummary(fast, en, 'en')).toContain(`${SPEED_PRESETS.fast.label} (${SPEED_PRESETS.fast.turnSeconds}s`);
+    const changed = setRule(fast, 'turnSeconds', 99);
+    expect(rulesSummary(changed, en, 'en')).toContain('Custom (99s');
+    expect(rulesSummary(changed, en, 'en')).not.toContain(SPEED_PRESETS.fast.label);
+    expect(rulesSummary(changed, zh, 'zh-TW')).toContain('自訂（每手 99 秒');
+  });
 });
 
 describe('rule and bot labels', () => {

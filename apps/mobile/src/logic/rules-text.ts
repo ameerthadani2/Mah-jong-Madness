@@ -12,6 +12,8 @@ import {
   rulesFromPreset,
   sanitizeRules,
   SPEED_PRESETS,
+  CUSTOM_SPEED,
+  clockMatchesSpeed,
   withSpeed,
   type BotSkill,
   type GameSpeed,
@@ -25,6 +27,11 @@ import { localized, type Translate } from './translate';
 export function speedLabel(speed: GameSpeed, locale: Locale): string {
   const p = SPEED_PRESETS[speed];
   return p ? localized(locale, p.label, p.labelZh) : speed;
+}
+
+/** The speed as a summary names it: the named speed, or Custom when the clock was changed by hand. */
+export function clockLabel(r: Pick<RuleSet, 'speed' | 'turnSeconds' | 'timeBankSeconds'>, locale: Locale): string {
+  return clockMatchesSpeed(r) ? speedLabel(r.speed, locale) : localized(locale, CUSTOM_SPEED.label, CUSTOM_SPEED.labelZh);
 }
 
 /**
@@ -63,7 +70,7 @@ export function rulesSummary(r: RuleSet, t: Translate, locale: Locale): string {
   const extras = ruleExtras(r)
     .map((e) => ruleExtraLabel(e, t))
     .join(' · ');
-  const main = t('common.rules.summary', { base: r.basePoints, tai: r.taiPoints, hands: r.handsPerMatch, speed: speedLabel(r.speed, locale), turn: r.turnSeconds, bank: r.timeBankSeconds });
+  const main = t('common.rules.summary', { base: r.basePoints, tai: r.taiPoints, hands: r.handsPerMatch, speed: clockLabel(r, locale), turn: r.turnSeconds, bank: r.timeBankSeconds });
   return extras ? `${main} · ${extras}` : main;
 }
 
