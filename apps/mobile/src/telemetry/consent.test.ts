@@ -127,15 +127,10 @@ describe('consent state machine', () => {
 describe('the one-time privacy question on screen', () => {
   const read = (rel: string) => readFileSync(join(__dirname, '..', rel), 'utf8');
 
-  it('is shown by Home after the age gate, only when it should be asked', () => {
-    const home = read('screens/HomeScreen.tsx');
-    const ageGate = home.indexOf("if (gateState === 'ask') return <AgeGate />;");
-    const question = home.indexOf("if (gate.status === 'allowed' && shouldAskConsent(consentState.record, telemetryAvailable)) return <ConsentQuestion />;");
-    expect(ageGate).toBeGreaterThan(0);
-    expect(question).toBeGreaterThan(ageGate);
-  });
-
-  it('has a neutral question and two equal buttons, and records the answer either way', () => {
+  // Rendered in src/screens/Home.render.test.tsx: Home shows the question after the age gate and only until it is
+  // answered, either answer is recorded, and the server is told when there is a session. What stays here is how the
+  // two buttons look (the same kind and width) and the wording in both languages.
+  it('has a neutral question and two equal buttons', () => {
     const q = read('components/ConsentQuestion.tsx');
     const buttons = [...q.matchAll(/<Button testID="consent-(no|yes)" kind="(\w+)" title=\{t\('privacy\.ask\.(no|yes)'\)\} onPress=\{\(\) => answer\((false|true)\)\} style=\{styles\.button\} \/>/g)];
     expect(buttons.map((b) => [b[1], b[2], b[4]])).toEqual([
@@ -143,9 +138,6 @@ describe('the one-time privacy question on screen', () => {
       ['yes', 'secondary', 'true'],
     ]);
     expect(q).toMatch(/button: \{ flex: 1 \}/);
-    expect(q).toMatch(/consent\.dispatch\(\{ type: 'answer', agree, about: telemetryAvailable \}\)/);
-    // The server is told the same answer, as the Settings switch tells it.
-    expect(q).toMatch(/sendAnalyticsConsent\(/);
     for (const locale of [en, zhTW]) {
       expect(locale.privacy.ask.yes.length).toBeGreaterThan(0);
       expect(locale.privacy.ask.no.length).toBeGreaterThan(0);
