@@ -410,9 +410,13 @@ export function Stepper({ label, value, onChange, step = 1, min = 0, max = 9999,
 /** A chip is drawn at least this tall whatever the font's metrics, so its hitSlop reaches the 44 pt target in every language. */
 export const CHIP_HEIGHT = 34;
 
+/**
+ * A choice chip. A `locked` chip still works (its press opens the Shop, where it is unlocked), so it is announced as
+ * an enabled button whose label says it is locked and opens the Shop, never as disabled.
+ */
 export function Chip({ label, selected, onPress, locked, dark }: { label: string; selected?: boolean; onPress?: () => void; locked?: boolean; dark?: boolean }) {
   return (
-    <Pressable onPress={onPress} hitSlop={slopFor(CHIP_HEIGHT, 4)} accessibilityRole="button" accessibilityLabel={label} accessibilityState={{ selected: !!selected, disabled: !!locked }} aria-selected={!!selected} style={({ pressed }) => [styles.chip, dark && styles.chipDark, selected && styles.chipOn, pressed && { transform: [{ translateY: 1 }] }]}>
+    <Pressable onPress={onPress} hitSlop={slopFor(CHIP_HEIGHT, 4)} accessibilityRole="button" accessibilityLabel={locked ? t('common.lockedChip', { label }) : label} accessibilityState={{ selected: !!selected }} aria-selected={!!selected} style={({ pressed }) => [styles.chip, dark && styles.chipDark, selected && styles.chipOn, pressed && { transform: [{ translateY: 1 }] }]}>
       {locked && <Icon name="lock" size={15} />}
       <Text numberOfLines={1} style={[styles.chipText, fontFor(label, fonts.uiBold), dark && !selected && { color: '#FFFFFF' }]}>
         {label}

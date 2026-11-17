@@ -95,8 +95,9 @@ describe('Settings bots and looks', () => {
     await fireEvent.press(screen.getByRole('button', { name: 'Beginner' }));
     expect(last().botSkill).toBe('beginner');
     expect(screen.getByText('Makes efficiency mistakes and never folds. Good for learning the flow.')).toBeOnTheScreen();
-    const pro = screen.getByRole('button', { name: 'Pro' });
-    expect(pro).toBeDisabled();
+    // A locked chip works (it opens the Shop), so it is announced as locked, not as disabled.
+    const pro = screen.getByRole('button', { name: 'Pro, locked: opens the Shop' });
+    expect(pro).toBeEnabled();
     await fireEvent.press(pro, { nativeEvent: {} });
     expect(go).toHaveBeenCalledWith({ name: 'shop' });
     expect(last().botSkill).toBe('beginner');

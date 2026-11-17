@@ -9,6 +9,7 @@
   "retry": "再試一次",
   "loading": "載入中…",
   "done": "完成",
+  "lockedChip": "%{label}，已鎖定：開啟商店",
   "open": "開啟",
   "player": "玩家",
   "bot": "電腦",

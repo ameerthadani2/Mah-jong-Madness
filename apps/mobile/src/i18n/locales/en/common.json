@@ -9,6 +9,7 @@
   "retry": "Try again",
   "loading": "Loading…",
   "done": "Done",
+  "lockedChip": "%{label}, locked: opens the Shop",
   "open": "Open",
   "player": "Player",
   "bot": "Bot",

@@ -98,7 +98,11 @@ describe("Home's buttons", () => {
 
   it('the Pro bots chip, locked without Coach Gold, opens the Shop; another level is chosen in place', async () => {
     const calls = await renderHome();
-    await fireEvent.press(screen.getByRole('button', { name: /Pro/ }));
+    // Announced as a working button that says it is locked and opens the Shop, not as disabled.
+    const pro = screen.getByRole('button', { name: /^Pro.*, locked: opens the Shop$/ });
+    expect(pro).toBeEnabled();
+    expect(pro.props.accessibilityState?.disabled).toBeFalsy();
+    await fireEvent.press(pro);
     expect(calls.go).toHaveBeenCalledWith({ name: 'shop' });
     expect(calls.setSettings).not.toHaveBeenCalled();
     await fireEvent.press(screen.getByRole('button', { name: /^Beginner/ }));
