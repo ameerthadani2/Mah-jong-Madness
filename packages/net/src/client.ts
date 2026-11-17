@@ -515,20 +515,41 @@ export interface TableClientOptions {
   monotonic?: () => number;
 }
 
+/** A wall clock that ran this much further than the monotonic one between two readings means the device slept. */
+const SLEEP_GAP_MS = 1_000;
+
 /**
- * The client's clock for its records: wall time when the client was made (or restored), moved on
- * by the monotonic clock from then. Every interval measured within one run of the app (how long a
- * link was down, how long a move took) is therefore monotonic, and a step of the device's wall
- * clock meanwhile (a manual change, a network time correction, a time zone trip) moves none of
- * them. Only across an app restart, where no monotonic clock survives, do the records meet wall
- * time: the restored client starts from the wall clock again.
+ * The client's clock for its records. It starts at the wall time when the client is made (or
+ * restored) and moves on by the monotonic clock, so a step of the device's wall clock (a manual
+ * change, a network time correction, a time zone trip) moves no interval measured within one run of
+ * the app: how long a link was down, how long a move took. A phone's monotonic clock can stand still
+ * while the device sleeps (Android's does), and the wall clock counts that time: when the wall
+ * clock has run more than a second further than the monotonic one since the last reading, the clock
+ * moves on by the wall clock instead, so a phone that slept through a drop does not mistake an
+ * honest timeout for an early one. The cost is that a wall clock stepped forward during a drop
+ * lengthens that drop as the phone measures it; a server cannot cause that, and it can only turn a
+ * failure into the amber "played while the connection was down", never into green. Only across an
+ * app restart, where no monotonic clock survives, do the records meet wall time anew.
  */
 export function clientClock(opts: TableClientOptions = {}): () => number {
   const wall = opts.now ?? (() => Date.now());
-  const steady = opts.monotonic ?? opts.now ?? (typeof performance !== 'undefined' && typeof performance.now === 'function' ? () => performance.now() : () => Date.now());
-  const wall0 = wall();
-  const steady0 = steady();
-  return () => wall0 + (steady() - steady0);
+  // A test that injects one clock drives everything with it, exactly.
+  if (opts.now && !opts.monotonic) return wall;
+  const steady = opts.monotonic ?? (typeof performance !== 'undefined' && typeof performance.now === 'function' ? () => performance.now() : null);
+  if (!steady) return wall;
+  let t = wall();
+  let lastWall = t;
+  let lastSteady = steady();
+  return () => {
+    const w = wall();
+    const m = steady();
+    const dw = w - lastWall;
+    const dm = m - lastSteady;
+    lastWall = w;
+    lastSteady = m;
+    t += dw > dm + SLEEP_GAP_MS ? dw : Math.max(0, dm);
+    return t;
+  };
 }
 
 export class TableClient {
