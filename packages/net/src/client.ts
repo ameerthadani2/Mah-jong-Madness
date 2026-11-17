@@ -504,8 +504,30 @@ export interface SerializedClient {
 }
 
 export interface TableClientOptions {
-  /** This device's clock (ms). Defaults to Date.now. */
+  /** This device's wall clock (ms). Defaults to Date.now. */
   now?: () => number;
+  /**
+   * A clock that only moves forward at a steady rate (ms, any origin). Defaults to
+   * `performance.now`, or to `now` when only `now` is given (so a test that injects one clock
+   * drives both).
+   */
+  monotonic?: () => number;
+}
+
+/**
+ * The client's clock for its records: wall time when the client was made (or restored), moved on
+ * by the monotonic clock from then. Every interval measured within one run of the app (how long a
+ * link was down, how long a move took) is therefore monotonic, and a step of the device's wall
+ * clock meanwhile (a manual change, a network time correction, a time zone trip) moves none of
+ * them. Only across an app restart, where no monotonic clock survives, do the records meet wall
+ * time: the restored client starts from the wall clock again.
+ */
+export function clientClock(opts: TableClientOptions = {}): () => number {
+  const wall = opts.now ?? (() => Date.now());
+  const steady = opts.monotonic ?? opts.now ?? (typeof performance !== 'undefined' && typeof performance.now === 'function' ? () => performance.now() : () => Date.now());
+  const wall0 = wall();
+  const steady0 = steady();
+  return () => wall0 + (steady() - steady0);
 }
 
 export class TableClient {
@@ -664,7 +686,7 @@ export class TableClient {
     opts: TableClientOptions = {},
   ) {
     this.link = link;
-    this.now = opts.now ?? (() => Date.now());
+    this.now = clientClock(opts);
     this.bind(link);
     if (identity.token) {
       this.state = { ...this.state, token: identity.token };
