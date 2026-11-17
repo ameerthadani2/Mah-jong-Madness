@@ -1,0 +1,255 @@
+/**
+ * A host that holds back the frame showing a seat its turn, on a link it keeps open, and then
+ * times the seat out has cut the turn short without the link ever dropping. One WebSocket is one
+ * ordered stream and an honest host's stamps never go back, so its frames arrive in the order of
+ * their stamps; and while a hand is played it sends each seat a stamped `clock` frame with the
+ * turn whenever it has sent nothing else for a few seconds. A frame that arrives after one stamped
+ * later, or a `clock` frame for a turn whose state never came, shows a frame was held, and a move
+ * the table then makes for the seat fails the hand. Honest links that are slow, uneven or bursty,
+ * and a phone that sleeps through a turn, stay green.
+ */
+import { describe, expect, it } from 'vitest';
+import { chooseAction, legalActions, withRules, type Action, type GameState } from '@mjm/engine';
+import { CLOCK_FRAME_MS, LoopbackHub, TableClient, TableHost, failureKey, transportLink, type HostMessage, type Link } from '../src/index';
+import { Missed, scenario, seededDeals } from './support';
+
+seededDeals();
+
+const deal = (name: string, fn: () => void) => it(name, () => scenario(fn));
+const need = (cond: boolean) => {
+  if (!cond) throw new Missed();
+};
+
+interface HostInternals {
+  game: GameState | null;
+  apply: (seat: number, action: Action, source: 'player' | 'bot' | 'timeout') => void;
+}
+
+const TURN = 15_000;
+const BANK = 30_000;
+const RULES = withRules({ handsPerMatch: 1, turnSeconds: 15, timeBankSeconds: 30 });
+
+/**
+ * The link from the host to the seat. Every frame waits `delay(m)` ms of the shared clock and none
+ * overtakes another (an ordered stream), unless the server holds it: `hold(m)` true keeps the frame
+ * back until `release()`, and the frames behind it pass it (only a server can do that).
+ */
+function link(hub: LoopbackHub, id: string, clock: { now: number }) {
+  const base = transportLink(hub.create(id), 'host');
+  let cb: ((m: HostMessage) => void) | null = null;
+  const queue: Array<{ at: number; m: HostMessage }> = [];
+  const held: HostMessage[] = [];
+  const ctl = {
+    delay: (_m: HostMessage) => 0,
+    hold: (_m: HostMessage) => false,
+    link: {
+      ...base,
+      onMessage: (f) => {
+        cb = f;
+        return base.onMessage((m) => {
+          if (ctl.hold(m)) return void held.push(m);
+          const at = Math.max(clock.now + ctl.delay(m), queue.length ? queue[queue.length - 1].at : Number.NEGATIVE_INFINITY);
+          queue.push({ at, m });
+          ctl.pump();
+        });
+      },
+    } as Link,
+    pump() {
+      while (queue.length && queue[0].at <= clock.now) cb?.(queue.shift()!.m);
+    },
+    /** The server lets the frames it held go, now. */
+    release() {
+      for (const m of held.splice(0)) cb?.(m);
+    },
+  };
+  return ctl;
+}
+
+function table(code: string, skew = 0) {
+  const clock = { now: 2_000_000 };
+  const hub = new LoopbackHub();
+  const host = new TableHost(hub.create('host'), { roomCode: code, rules: RULES, now: () => clock.now, matchId: `m-${code}` });
+  const net = link(hub, 'p0', clock);
+  const c = new TableClient(net.link, 'Victim', undefined, {}, { now: () => clock.now + skew });
+  c.join();
+  host.start();
+  const t = {
+    clock,
+    host,
+    h: host as unknown as HostInternals,
+    c,
+    net,
+    /** Let the clock run in half-second ticks, as the server does; the phone pings every `pingMs` (0: never). */
+    wait(ms: number, pingMs = 0) {
+      for (let left = ms; left > 0; left -= 500) {
+        clock.now += Math.min(500, left);
+        if (pingMs > 0 && clock.now % pingMs === 0) c.ping();
+        host.tick();
+        net.pump();
+      }
+    },
+  };
+  return t;
+}
+type T = ReturnType<typeof table>;
+
+/** This seat has a discard to make in the state its phone holds. */
+const myDiscard = (t: T) => {
+  const s = t.c.localState();
+  return !!s && t.host.phase === 'playing' && legalActions(s, 0).length > 0 && legalActions(s, 0).every((a) => a.type === 'discard');
+};
+/** It is this seat's discard at the table, whatever the phone was shown. */
+const hostDiscard = (t: T) => t.host.phase === 'playing' && legalActions(t.host.game!, 0).length > 0 && legalActions(t.host.game!, 0).every((a) => a.type === 'discard');
+
+/** The seat makes the move its phone shows, if the phone is up to date with the table. */
+function moveIfShown(t: T): boolean {
+  const s = t.c.localState();
+  if (!s || legalActions(s, 0).length === 0 || t.c.state.view?.turnCounter !== t.host.game!.turnCounter) return false;
+  t.c.act(chooseAction(s, 0, { seed: 'p' })!);
+  return true;
+}
+
+/** Play on until `stop()` (true) or the hand ends (false): the seat moves on what its phone shows, else the clock runs. */
+function advance(t: T, stop: () => boolean): boolean {
+  for (let g = 0; g < 4000 && t.host.phase === 'playing'; g++) {
+    if (stop()) return true;
+    if (!moveIfShown(t)) t.wait(500);
+  }
+  return false;
+}
+
+/** Play on (the seat moves at once when its phone shows a move) until the table owes this seat its `n`-th discard. */
+function toDiscard(t: T, n: number): boolean {
+  let seen = 0;
+  for (let g = 0; g < 4000 && t.host.phase === 'playing'; g++) {
+    if (hostDiscard(t) && myDiscard(t) && ++seen === n) return true;
+    if (!moveIfShown(t)) t.wait(500);
+  }
+  return false;
+}
+
+/** Play the hand out, the seat moving at once. */
+function finish(t: T) {
+  for (let g = 0; g < 8000 && t.host.phase === 'playing'; g++) if (!moveIfShown(t)) t.wait(500);
+  // What is still in the network arrives.
+  t.clock.now += 10_000;
+  t.net.pump();
+  expect(t.host.phase).toBe('hand_over');
+}
+
+/** Wait, the seat away from its phone, until the table has timed it out of the turn it is on. */
+function timedOut(t: T, pingMs = 0) {
+  const tc = t.host.game!.turnCounter;
+  for (let g = 0; g < 400 && t.host.phase === 'playing' && t.host.game!.turnCounter === tc; g++) t.wait(500, pingMs);
+  t.net.release();
+}
+
+const keys = (t: T) => t.c.state.auditFailures.map(failureKey);
+const green = (t: T) => expect([t.c.state.auditStatus, t.c.state.auditFailures, t.c.state.auditCaveats]).toEqual(['ok', [], []]);
+
+describe('a frame held back on a link that stays open', () => {
+  deal('the state showing the turn is held while the clock frames go on: the timeout fails the hand', () => {
+    const t = table('HF1');
+    need(toDiscard(t, 2));
+    t.c.act(chooseAction(t.c.localState()!, 0, { seed: 'p' })!);
+    // The server keeps back the frame that shows the seat its next discard; the clock frames go on.
+    t.net.hold = (m) => m.t === 'state' && hostDiscard(t);
+    need(advance(t, () => hostDiscard(t)));
+    const turn = t.host.game!.turnCounter;
+    t.wait(TURN + BANK - 5_000);
+    // It lets the frame go 5 s before the turn runs out, and then times the seat out.
+    t.net.hold = () => false;
+    t.net.release();
+    timedOut(t);
+    finish(t);
+    expect(t.c.state.auditStatus).toBe('failed');
+    expect(keys(t)).toContain('heldFrame');
+    expect(t.c.state.auditFailures).toContain(`The host held back its frames on a link that stayed open, then played for this seat (turn ${turn})`);
+  });
+
+  deal('clockcut: every table frame is held but the answers to the phone’s pings: the timeout fails the hand', () => {
+    const t = table('HF2', -3 * 3_600_000);
+    need(toDiscard(t, 1));
+    t.c.act(chooseAction(t.c.localState()!, 0, { seed: 'p' })!);
+    need(advance(t, () => hostDiscard(t)));
+    const turn = t.host.game!.turnCounter;
+    // From here the server holds every frame but the pongs, keeping the link alive; 40 of the 45 s pass.
+    t.net.hold = (m) => m.t !== 'pong';
+    t.wait(TURN + BANK - 5_000, 5_000);
+    t.net.hold = () => false;
+    t.net.release();
+    timedOut(t);
+    finish(t);
+    expect(t.c.state.auditStatus).toBe('failed');
+    expect(keys(t)).toContain('heldFrame');
+    expect(t.c.state.auditFailures.some((f) => f.endsWith(`(turn ${turn})`))).toBe(true);
+  });
+
+  deal('a clock frame that is held while later frames pass is proof as well', () => {
+    const t = table('HF3');
+    need(toDiscard(t, 1));
+    // On the seat's turn the server keeps back one clock frame and lets the next one through before it.
+    let once = false;
+    t.net.hold = (m) => !once && m.t === 'clock' && (once = true);
+    t.wait(CLOCK_FRAME_MS * 2 + 500);
+    need(once);
+    t.net.hold = () => false;
+    t.net.release();
+    timedOut(t);
+    finish(t);
+    expect(keys(t)).toContain('heldFrame');
+  });
+});
+
+describe('honest links are not flagged', () => {
+  for (const [name, delay] of [
+    ['every frame 6 s late', () => 6_000],
+    ['frames 0 to 9 s late at random, never overtaking', (() => {
+      let x = 7;
+      return () => {
+        x = (x * 1103515245 + 12345) % 2147483648;
+        return (x % 19) * 500;
+      };
+    })()],
+  ] as const) {
+    deal(`${name}, the seat timed out twice and moving itself otherwise`, () => {
+      const t = table(`HL${name.length}`, 4 * 3_600_000);
+      t.net.delay = delay;
+      need(toDiscard(t, 2));
+      timedOut(t, 5_000);
+      need(toDiscard(t, 2));
+      timedOut(t, 5_000);
+      finish(t);
+      green(t);
+    });
+  }
+
+  deal('the network stalls for 20 s mid-turn and then delivers everything at once: not proof of a held frame', () => {
+    const t = table('HL3');
+    need(toDiscard(t, 2));
+    // Every frame, pongs included, waits in the network (an ordered stream stalls as a whole).
+    t.net.hold = () => true;
+    t.wait(20_000, 5_000);
+    t.net.hold = () => false;
+    t.net.release();
+    timedOut(t);
+    finish(t);
+    green(t);
+  });
+
+  it('the host sends a clock frame only after a quiet spell, with the turn the seat was shown', () =>
+    scenario(() => {
+      const t = table('HL4');
+      const got: HostMessage[] = [];
+      const orig = t.net.delay;
+      t.net.delay = (m) => (got.push(m), orig(m));
+      need(toDiscard(t, 1));
+      got.length = 0;
+      t.wait(CLOCK_FRAME_MS * 3);
+      const clocks = got.filter((m): m is Extract<HostMessage, { t: 'clock' }> => m.t === 'clock');
+      expect(clocks.length).toBeGreaterThanOrEqual(2);
+      expect(clocks.length).toBeLessThanOrEqual(3);
+      for (const m of clocks) expect(m).toMatchObject({ hand: t.host.game!.handNumber, tc: t.c.state.view!.turnCounter });
+      expect(clocks.every((m, i) => i === 0 || m.now - clocks[i - 1].now >= CLOCK_FRAME_MS)).toBe(true);
+    }));
+});

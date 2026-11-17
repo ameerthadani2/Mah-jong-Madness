@@ -122,13 +122,13 @@ Host → client:
 
 | Frame | Purpose |
 | --- | --- |
-| `{ "t": "welcome", "seat", "roomCode", "rules", "seats", "matchId", "token", "botSkill"? }` | The seat is yours. `token` is the rejoin token (a new one each time the seat is taken back). `botSkill` (`beginner`, `club` or `pro`) is the table's bot strength: the client pins it from the match's first deal and recomputes every move the table makes for a seat with it (docs/FAIRNESS.md). A table that leaves it out fails every hand in which it moved for a bot or a seat out of time |
+| `{ "t": "welcome", "seat", "roomCode", "rules", "seats", "matchId", "token", "botSkill"?, "clockMs"? }` | The seat is yours. `token` is the rejoin token (a new one each time the seat is taken back). `botSkill` (`beginner`, `club` or `pro`) is the table's bot strength: the client pins it from the match's first deal and recomputes every move the table makes for a seat with it (docs/FAIRNESS.md). A table that leaves it out fails every hand in which it moved for a bot or a seat out of time. `clockMs` (3000) says how long, while a hand is played, the host lets a seat go without a frame before it sends a `clock` frame; older hosts leave it out |
 | `{ "t": "lobby", "seats" }` | Who sits where; sent whenever a seat changes. A seat is `{ seat, name, peerId, isBot, connected, avatar?, userId?, timeBank?, left? }` |
 | `{ "t": "commit_request", "handNumber", "attempt"? }` | Start of the seed ceremony for a hand: send `commit`. `attempt` is above 1 when the ceremony was run again |
 | `{ "t": "commits", "handNumber", "commits" }` | Every seat's commitment and the host's own (seat 4), before anything is revealed |
 | `{ "t": "reveal_request", "handNumber" }` | Send `reveal` |
 | `{ "t": "stand_in", "handNumber", "attempt"? }` | This seat did not commit in time, so the host used a stand-in secret for it; the app marks the hand as not verified by this seat's own share |
-| `{ "t": "state", "view", "hash", "deadline", "timeBank", "inTimeBank", "now"? }` | The table as this seat may see it, after every action. `deadline` and `now` are on the host's clock |
+| `{ "t": "state", "view", "hash", "deadline", "timeBank", "inTimeBank", "now"? }` | The table as this seat may see it, after every action. `deadline` and `now` are on the host's clock. The `now` stamps on `state`, `hand_over`, `pong` and `clock` never go back, even when the server's clock is set back, so on one connection they arrive in order: the app fails a hand in which the table played for its seat after a frame arrived behind one stamped more than a second later, or after a `clock` frame showed a turn whose `state` had not arrived (docs/FAIRNESS.md) |
 | `{ "t": "hand_over", "result", "audit", "view", "now"?, "deadline"? }` | A hand ended: its result and the audit the app verifies. `deadline` (host clock, like `now`) is when the host deals the next hand by itself, or `null` while it waits with nobody human at the table; the app counts down to it on the result sheet. Older hosts leave it out and older apps ignore it |
 | `{ "t": "match_over", "scores", "view" }` | The match ended |
 | `{ "t": "hand_missed", "audit" }` | To a returning seat: the audit of a hand that ended while it was away, one frame per hand, in order |
@@ -136,6 +136,7 @@ Host → client:
 | `{ "t": "disconnected" }` | This connection no longer holds the seat (the account took it back from another device) |
 | `{ "t": "chat", … }`, `{ "t": "emote", … }` | A seat's phrase or emote (next section) |
 | `{ "t": "pong", "at", "now" }` | Answer to `ping` |
+| `{ "t": "clock", "now", "hand", "tc" }` | While a hand is played, to a seat that was sent nothing for `clockMs`: the hand and turn the table is at (a turn whose `state` the seat was already sent) and the host's clock. Optional: older hosts never send it and older apps ignore it |
 | `{ "t": "error", "code", "message", "turnCounter"? }` | A refusal; the codes are below |
 
 Table error codes, and what the app does:

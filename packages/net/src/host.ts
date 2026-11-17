@@ -40,6 +40,8 @@ export type HostPhase = 'lobby' | 'commit' | 'reveal' | 'playing' | 'hand_over' 
  * attempts and 6 is never reached honestly.
  */
 export const MAX_CEREMONY_ATTEMPTS = 6;
+/** While a hand is played, the longest a connected seat goes without a frame from the table (see `sendClockFrames`). */
+export const CLOCK_FRAME_MS = 3_000;
 
 /** After a failed ceremony, how long the table waits before trying the hand again (ms). */
 const CEREMONY_RETRY_MS = 5_000;
@@ -192,6 +194,12 @@ export class TableHost {
   private readonly intermissionMs: number;
   private readonly botNames: string[];
   private readonly localLinks = new Map<string, (msg: HostMessage) => void>();
+  /** When each peer was last sent a frame, on `now` (see `sendClockFrames`). */
+  private readonly lastSent = new Map<string, number>();
+  /** The last state each peer was sent: its hand and turn. */
+  private readonly shown = new Map<string, { hand: number; tc: number }>();
+  /** The latest stamp put on a frame (see `stamp`). */
+  private lastStamp = Number.NEGATIVE_INFINITY;
   private readonly unsubs: Unsubscribe[] = [];
   private botTimerArmed = false;
   private readonly listeners = new Set<() => void>();
@@ -459,6 +467,7 @@ export class TableHost {
   tick(): void {
     if (this.phase === 'playing' && this.game) {
       this.tickClocks();
+      if (this.phase === 'playing') this.sendClockFrames();
       return;
     }
     if (this.deadline === null || this.now() < this.deadline) return;
@@ -491,6 +500,35 @@ export class TableHost {
   }
 
   /** Expire base clocks into time banks, and auto-play seats whose bank is gone. */
+  /**
+   * This host's clock for the stamps on its frames (`now`). It never goes back, even when the
+   * machine's clock is set back: a client fails a hand whose frames arrive out of the order of their
+   * stamps (an ordered stream cannot reorder them; only a host that held one back can).
+   */
+  private stamp(): number {
+    this.lastStamp = Math.max(this.lastStamp, this.now());
+    return this.lastStamp;
+  }
+
+  /**
+   * While a hand is played, a seat that has heard nothing from the table for `CLOCK_FRAME_MS` gets a
+   * `clock` frame: the turn the hand is at, stamped. A client that hears nothing for much longer
+   * knows the link is silent, and one shown a turn it was never sent the state of knows a frame was
+   * held back. Sent only to a seat that was sent that turn's state (an honest table always was).
+   */
+  private sendClockFrames(): void {
+    const game = this.game;
+    if (!game) return;
+    const now = this.now();
+    for (const s of this.seats) {
+      if (!s.peerId || s.isBot || !s.connected || s.peerId.startsWith('gone-')) continue;
+      const shown = this.shown.get(s.peerId);
+      if (!shown || shown.hand !== game.handNumber || shown.tc !== game.turnCounter) continue;
+      if (now - (this.lastSent.get(s.peerId) ?? Number.NEGATIVE_INFINITY) < CLOCK_FRAME_MS) continue;
+      this.sendTo(s.peerId, { t: 'clock', now: this.stamp(), hand: game.handNumber, tc: game.turnCounter });
+    }
+  }
+
   private tickClocks(): void {
     const now = this.now();
     let changed = false;
@@ -555,6 +593,8 @@ export class TableHost {
   // ----------------------------------------------------------------- routing
 
   private sendTo(peerId: string, msg: HostMessage): void {
+    this.lastSent.set(peerId, this.now());
+    if (msg.t === 'state') this.shown.set(peerId, { hand: msg.view.handNumber, tc: msg.view.turnCounter });
     const local = this.localLinks.get(peerId);
     if (local) local(msg);
     else this.transport.send(peerId, msg);
@@ -594,7 +634,7 @@ export class TableHost {
       case 'leave':
         return this.onLeave(from);
       case 'ping':
-        return this.sendTo(from, { t: 'pong', at: msg.at, now: this.now() });
+        return this.sendTo(from, { t: 'pong', at: msg.at, now: this.stamp() });
       default:
         break;
     }
@@ -728,7 +768,7 @@ export class TableHost {
     seat.away = undefined;
     // A new occupant never inherits a previous player's token (that would let the old player kick them).
     if (newOccupant || !seat.token) seat.token = randomHex(16);
-    this.sendTo(from, { t: 'welcome', seat: seat.seat, roomCode: this.roomCode, rules: this.rules, seats: this.seatInfo(), matchId: this.matchId, token: seat.token, botSkill: this.botSkill });
+    this.sendTo(from, { t: 'welcome', seat: seat.seat, roomCode: this.roomCode, rules: this.rules, seats: this.seatInfo(), matchId: this.matchId, token: seat.token, botSkill: this.botSkill, clockMs: CLOCK_FRAME_MS });
     // A returning seat first gets the audits of the hands that ended without it, so its client can
     // check them and carry its record of the match forward to the hand now on the table.
     if (!newOccupant && have !== undefined) this.sendMissed(from, have);
@@ -748,7 +788,7 @@ export class TableHost {
     } else if (this.phase === 'hand_over' && this.game) {
       const last = this.audits[this.audits.length - 1];
       if (this.deadline === null) this.deadline = this.now() + this.intermissionMs;
-      if (last) this.sendTo(from, { t: 'hand_over', result: this.game.result!, audit: last, view: viewFor(this.game, seat.seat), now: this.now(), deadline: this.deadline });
+      if (last) this.sendTo(from, { t: 'hand_over', result: this.game.result!, audit: last, view: viewFor(this.game, seat.seat), now: this.stamp(), deadline: this.deadline });
     }
     else if (this.phase === 'match_over' && this.game) {
       const finalView = { ...this.game, scores: this.snapshot.scores };
@@ -1023,7 +1063,7 @@ export class TableHost {
       deadline: this.deadlineFor(seat),
       timeBank: Math.round(this.banks[seat] / 1000),
       inTimeBank: clock?.inBank ?? false,
-      now: this.now(),
+      now: this.stamp(),
     };
   }
 
@@ -1117,7 +1157,7 @@ export class TableHost {
     this.phase = 'hand_over';
     for (const s of this.seats) s.ready = false;
     this.deadline = this.now() + this.intermissionMs;
-    const now = this.now();
+    const now = this.stamp();
     // The players' result sheets count down to the next deal (none while nobody human is here: see below).
     const next = this.anyHumanConnected() ? this.deadline : null;
     this.broadcast((s) => ({ t: 'hand_over', result: game.result!, audit, view: viewFor(game, s.seat), now, deadline: next }));

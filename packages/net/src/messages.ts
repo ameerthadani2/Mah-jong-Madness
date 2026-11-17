@@ -77,7 +77,11 @@ export type HostMessage =
    * recompute them. A table that leaves it out fails every hand in which it moved for a bot or a
    * seat out of time: no host was ever deployed without it.
    */
-  | { t: 'welcome'; seat: number; roomCode: string; rules: RuleSet; seats: SeatInfo[]; matchId: string; token: string; botSkill?: BotSkill }
+  /**
+   * `clockMs`: while a hand is played, the longest this table lets a seat go without a frame (it
+   * sends a `clock` frame when nothing else was sent). Optional: older hosts leave it out.
+   */
+  | { t: 'welcome'; seat: number; roomCode: string; rules: RuleSet; seats: SeatInfo[]; matchId: string; token: string; botSkill?: BotSkill; clockMs?: number }
   | { t: 'lobby'; seats: SeatInfo[] }
   /** `attempt`: which ceremony attempt at this hand (1 for the first). */
   | { t: 'commit_request'; handNumber: number; attempt?: number }
@@ -108,6 +112,11 @@ export type HostMessage =
   | { t: 'chat'; seat: number; name: string; text: string }
   /** A seat's emote, by id. */
   | { t: 'emote'; seat: number; emote: string }
-  | { t: 'pong'; at: number; now: number };
+  | { t: 'pong'; at: number; now: number }
+  /**
+   * While a hand is played, sent to a seat that has heard nothing else for `clockMs`: the hand and
+   * the turn the table is at (whose state this seat was already sent), stamped with the host's clock.
+   */
+  | { t: 'clock'; now: number; hand: number; tc: number };
 
 export type Message = ClientMessage | HostMessage;

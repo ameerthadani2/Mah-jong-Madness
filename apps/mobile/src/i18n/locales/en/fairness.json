@@ -97,6 +97,7 @@
     "moveInvented": "The record shows a move you never made (turn %{turn}).",
     "passedUpWin": "The table played for you and passed up your win (turn %{turn}).",
     "playedEarly": "The table played for you while you were connected and still had time on your clock (turn %{turn}).",
+    "heldFrame": "The server held back what it sent you on a connection that stayed open, then played for you (turn %{turn}).",
     "playedWhileDown": "The table played for you while your connection was down, before your clock could have run out (turn %{turn}).",
     "bankTaken": "The table took time from your time bank while your connection was down (turn %{turn}).",
     "moveIgnored": "The table ignored a move you sent in good time and played its own instead (turn %{turn}).",

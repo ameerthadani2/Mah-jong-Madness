@@ -179,6 +179,7 @@ export const AUDIT_FAILURES = {
   moveInvented: /^The log shows a move this seat never made \(turn (?<turn>[^)]*)\)$/,
   passedUpWin: /^The table played for this seat and passed up its win \(turn (?<turn>[^)]*)\)$/,
   playedEarly: /^The table played for this seat while it was connected and its clock had not run out \(turn (?<turn>[^)]*)\)$/,
+  heldFrame: /^The host held back its frames on a link that stayed open, then played for this seat \(turn (?<turn>[^)]*)\)$/,
   playedWhileDown: /^The table played for this seat while its connection was down, before its clock could have run out \(turn (?<turn>[^)]*)\)$/,
   bankTaken: /^The table took time from this seat's time bank while its connection was down \(turn (?<turn>[^)]*)\)$/,
   moveIgnored: /^The table ignored a move this seat sent in good time and played its own instead \(turn (?<turn>[^)]*)\)$/,
@@ -464,6 +465,11 @@ interface PlayRecord {
    * hand's first frame followed on the same link.
    */
   before?: GapStart | null;
+  /**
+   * The first turn whose state the host held back on a link that stayed open: a frame arrived after
+   * one it had stamped later, or a `clock` frame showed a turn whose state had not arrived.
+   */
+  held?: number;
 }
 
 /** Match fields a hand must start from, as the previous hand left them. */
@@ -474,6 +480,8 @@ export const MAX_AUDITS = 50;
 /** Frames and sent moves remembered per hand (a hand is far shorter). */
 const MAX_SEEN = 600;
 const MAX_SENT = 300;
+/** How much earlier than a frame before it on the same link a frame may be stamped (see `noteOrder`). */
+const ORDER_SLACK_MS = 1_000;
 /** Slack for the host's rounding of time banks to whole seconds. */
 const CLOCK_SLACK_MS = 1_000;
 /** How far the host's clock may seem to gain on this device's after a fixed point between them (clock steps and drift). */
@@ -675,6 +683,10 @@ export class TableClient {
   private clockBase: { era: number; anchor: number | null; minOffset: number | null } = { era: 0, anchor: null, minOffset: null };
   /** The last time-stamped frame received: a state, or a hand's end. */
   private lastStamp: GapStart | null = null;
+  /** The latest stamp on a frame of the link in use (its epoch and the host's clock era). */
+  private linkStamp: { epoch: number; era: number; now: number } | null = null;
+  /** The last state frame of the link in use: its hand and turn. */
+  private linkShown: { epoch: number; hand: number; tc: number } | null = null;
   /**
    * Link epochs that ended by this device's own doing, or with its record in doubt: it left the
    * table, its seat was opened on another device, or the app restarted. What the table played for
@@ -1457,7 +1469,9 @@ export class TableClient {
         }
         const rec = this.recordFor(h);
         if (rec) rec.dealt = true;
+        this.noteOrder(m.now, h, v.turnCounter);
         this.noteState(v, m);
+        if (isInt(v.turnCounter)) this.linkShown = { epoch: this.epoch, hand: h, tc: v.turnCounter };
         this.viewEpoch = this.epoch;
         this.update({ view: v, stateHash: m.hash, deadline: m.deadline, timeBank: m.timeBank, inTimeBank: m.inTimeBank, lastResult: null, lastError: null, ceremony: 'idle', intermissionDeadline: null });
         return;
@@ -1468,6 +1482,7 @@ export class TableClient {
           return;
         }
         const h = m.audit.handNumber;
+        this.noteOrder(m.now, null, null);
         if (this.handsEnded.has(h)) {
           // A returning seat is sent the result again. Whatever this frame carries, the result, view
           // and audit this client verified stay; a frame that differs from them is kept as a failure.
@@ -1558,11 +1573,40 @@ export class TableClient {
         this.update({ lastError: typeof m.message === 'string' ? m.message : 'The table reported an error.', lastErrorCode: typeof m.code === 'string' ? m.code : null });
         return;
       case 'pong':
+        this.noteOrder(m.now, null, null);
         if (typeof m.at === 'number') this.update({ rttMs: this.now() - m.at });
         return;
+      case 'clock': {
+        if (!isInt(m.hand) || !isInt(m.tc)) return;
+        this.noteOrder(m.now, m.hand, m.tc);
+        // A turn this link was never shown the state of: the host sent that state and held it back.
+        const shown = this.linkShown;
+        if (shown && shown.epoch === this.epoch && shown.hand === m.hand && m.tc > shown.tc) this.noteHeld(m.hand, shown.tc + 1);
+        return;
+      }
       default:
         return;
     }
+  }
+
+  /**
+   * One WebSocket is one ordered stream, and an honest host's stamps never go back (`TableHost.stamp`),
+   * so its frames arrive in the order of their stamps. A frame of hand `hand` at turn `tc` that
+   * arrives after one stamped later than it (beyond `ORDER_SLACK_MS`) was held back by the host.
+   */
+  private noteOrder(now: unknown, hand: number | null, tc: number | null): void {
+    if (typeof now !== 'number' || !Number.isFinite(now)) return;
+    const last = this.linkStamp;
+    const same = last !== null && last.epoch === this.epoch && last.era === this.era;
+    if (same && now < last.now - ORDER_SLACK_MS && hand !== null && tc !== null && isInt(tc)) this.noteHeld(hand, tc);
+    if (!same || now > last.now) this.linkStamp = { epoch: this.epoch, era: this.era, now };
+  }
+
+  /** The host held back the state of turn `tc` of hand `hand` (or of an earlier turn already noted). */
+  private noteHeld(hand: number, tc: number): void {
+    if (this.handsEnded.has(hand)) return;
+    const play = this.playFor(hand);
+    play.held = Math.min(play.held ?? Number.POSITIVE_INFINITY, tc);
   }
 
   /** Record a state frame of the hand being played: its hash, timing and whether we owed a move. */
@@ -2079,6 +2123,11 @@ export class TableClient {
         continue;
       }
       const n = Number(p.slice(JUDGE_LATER.length));
+      // A move made for this seat after the host held back a frame on a link that stayed open.
+      if (play.held !== undefined && n >= play.held) {
+        problems.add(`The host held back its frames on a link that stayed open, then played for this seat (turn ${n})`);
+        continue;
+      }
       const verdict = this.judgeTableMove(play, n, end, rules, anchors, track, gaps);
       if (verdict === 'early') problems.add(`The table played for this seat while it was connected and its clock had not run out (turn ${n})`);
       else if (verdict === 'downEarly') problems.add(`The table played for this seat while its connection was down, before its clock could have run out (turn ${n})`);
