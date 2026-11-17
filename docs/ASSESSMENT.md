@@ -40,6 +40,12 @@ Serious defects that survived the skeptics, each re-checked by me:
    - **Why the watch misses it.** Each such frame moves the link's clock on, so the phone counts it as hearing from the table (`noteOrder` in `packages/net/src/client.ts`) and the silent-link watch never fires. On release the held frame keeps its true stamp. That stamp is within the 1 s order slack of the crawled ones, so the frame is not seen as held, and the table then times the seat out on schedule. Nothing compares how far the stamps moved with the time the phone saw pass.
    - **My check.** I re-ran the assessor's probes: a 40 s and a 44 s hold each stayed green 2 of 2, and the same hold with honest stamps failed `heldFrame` 2 of 2.
    - **Docs.** The sentence in `docs/FAIRNESS.md` that the server cannot lengthen the 13 s limit is false until this is fixed.
+   - **Correction, later the same evening: the defect is real and wider than reported.** The assessor's probe mostly measured something else. In most of its runs the bots moved inside the victim's own move, before the probe armed its hold. So the phone had already been shown its turn, and the frame actually held was the one that moves the turn into the time bank. A probe that arms the hold before the victim's move (written by unit 17's first designer, re-run by me) shows the defect on this code:
+     - a turn held 25, 40 or 44 s with crawled stamps stays green;
+     - so does a server that simply delays every stamped frame by 10, 20 or 30 s from the start of the match (stamps honest, order kept), which costs the player that much of every turn;
+     - so does a delay ramped up to 40 s after the deal.
+
+     The root cause: the phone takes a frame's stamp as the start of the seat's clock however late the frame arrives, and a delay present from the first frame of the match never looks late.
 2. **With Large or Extra-large tiles in small landscape, the coach bubble vanishes on most of the player's own turns while the coach button still shows it as on** (UX, major; both skeptics confirmed it; it also happens at Normal tiles on some turns).
    - **Why it happens.** When the ponds take the centre column, `coachBudget` returns no line (`apps/mobile/src/components/table/layout.ts`) and `CoachPanel` renders nothing (`CoachPanel.tsx`), while the HUD's cap button stays selected (`TableHud.tsx`).
    - **Why no gate caught it.** A unit test asserts the hiding as intended, and the screens check looks only at bubbles that are shown.
