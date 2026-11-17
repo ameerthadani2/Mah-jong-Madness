@@ -8,11 +8,14 @@
  *
  * For each win the engine's items, its shown 台 and its payments (who pays, how many 台, how many points) must
  * equal the oracle's. The settlement is the engine's own: `scoreWin`, then `computePayments` on the hand's 台
- * without the dealer items, as `finishWin` in src/game.ts does.
+ * without the dealer items, as `finishWin` in src/game.ts does. A further 2,000 ordinary wins are played
+ * through the game itself (a self-draw, or a win on seat 0's discard), so that glue and the score changes it
+ * books are checked too.
  */
 import { describe, expect, it } from 'vitest';
-import { computePayments, DEALER_KEYS, kindsToString, scoreWin, withRules, type Meld, type RuleSet, type ScoreResult, type WinContext } from '../src/index';
+import { applyAction, computePayments, DEALER_KEYS, kindsToString, scoreWin, withRules, type GameState, type Meld, type RuleSet, type ScoreResult, type WinContext } from '../src/index';
 import { oraclePayments, oracleScore, type OMeld, type OWin } from './helpers/oracle';
+import { respond, setup, type SeatSpec } from './helpers/state';
 import { timeBound } from './helpers/timing';
 
 /** mulberry32: a small seeded generator, so every run builds the same wins. */
@@ -320,6 +323,44 @@ function run(seed: number, n: number, situations: readonly Situation[]): Tally {
   return t;
 }
 
+const code = (k: number) => kindsToString([k]);
+const meldSpec = (m: OMeld) => ({
+  type: m.type,
+  tiles: kindsToString(m.type === 'chow' ? [m.kind, m.kind + 1, m.kind + 2] : new Array<number>(m.type === 'kong' ? 4 : 3).fill(m.kind)),
+  concealed: m.concealed,
+});
+
+/**
+ * Play an ordinary win through the game itself: seat 0 self-draws it, or discards the winning tile to the
+ * winner. The table's own bookkeeping (no limit deal, no replacement tile, not the last tile) matches 'none'.
+ */
+function playThrough(c: Case): GameState {
+  const o = c.oracle;
+  const winner: SeatSpec = { hand: o.selfDrawn ? `${kindsToString(o.concealed)} ${code(o.win)}` : kindsToString(o.concealed), melds: o.melds.map(meldSpec), flowers: kindsToString(o.flowers) };
+  const seats: Array<string | SeatSpec> = ['', '', '', ''];
+  if (o.selfDrawn) seats[0] = winner;
+  else {
+    // Seat 0 holds the winning tile and sixteen tiles nobody else needs, and discards the winning tile.
+    const used = new Array<number>(34).fill(0);
+    for (const k of [...o.concealed, o.win, ...o.melds.flatMap((m) => (m.type === 'chow' ? [m.kind, m.kind + 1, m.kind + 2] : new Array<number>(m.type === 'kong' ? 4 : 3).fill(m.kind)))]) used[k]++;
+    const filler: number[] = [];
+    for (let k = 0; filler.length < 16; k = (k + 7) % 34) {
+      if (used[k] >= 4) continue;
+      used[k]++;
+      filler.push(k);
+    }
+    seats[0] = `${kindsToString(filler)} ${code(o.win)}`;
+    seats[o.seat] = winner;
+  }
+  let s = setup(c.engine.rules, seats, 20);
+  s.dealerSeat = o.dealer;
+  s.dealerStreak = o.streak;
+  s.prevailingWind = o.prevailing;
+  if (o.selfDrawn) return applyAction(s, 0, { type: 'hu' });
+  s = applyAction(s, 0, { type: 'discard', tile: s.players[0].hand[16] });
+  return respond(s, { [o.seat]: { type: 'hu' } });
+}
+
 describe('scoring oracle (independent re-implementation of docs/RULES.md)', () => {
   it(
     'agrees with the engine on 40,000 ordinary wins that reach every item of the 台 table',
@@ -357,6 +398,44 @@ describe('scoring oracle (independent re-implementation of docs/RULES.md)', () =
       // The cap is hit with a dealer streak on top, so 連莊 台 outside the cap are exercised.
       expect(t.cappedDealerStreak).toBeGreaterThan(300);
       expect(ms).toBeLessThan(timeBound(15_000));
+    },
+    timeBound(30_000),
+  );
+
+  it(
+    'agrees with 2,000 wins played through the game, payments and score changes included',
+    () => {
+      const r = rng(4242);
+      let played = 0;
+      const failures: string[] = [];
+      while (played < 2_000) {
+        const c = generate(r, 'none');
+        if (!c) continue;
+        const o = c.oracle;
+        // The self-drawn winner is seat 0; a discard win is on seat 0's discard.
+        if (o.selfDrawn) o.seat = c.engine.seat = 0;
+        else if (o.seat === 0) continue;
+        else o.fromSeat = c.engine.fromSeat = 0;
+        const s = playThrough(c);
+        const want = oracleScore(o);
+        const win = s.result?.type === 'win' ? s.result.wins : [];
+        const payments = oraclePayments(o, want.handTai);
+        const delta = [0, 0, 0, 0];
+        for (const p of payments) {
+          delta[p.from] -= p.points;
+          delta[p.to] += p.points;
+        }
+        const got = win.length === 1 ? engineLine(win[0].score) : 'no win';
+        const ok =
+          win.length === 1 &&
+          want.readings.some((rd) => line([...rd.items, ...want.dealerItems]) === got) &&
+          JSON.stringify(win[0].payments) === JSON.stringify(payments) &&
+          s.result?.type === 'win' &&
+          s.result.scoreDelta.every((d, i) => d === delta[i]);
+        if (!ok && failures.length < 5) failures.push(`${kindsToString(o.concealed)} + ${o.win} melds ${JSON.stringify(o.melds)} seat ${o.seat} dealer ${o.dealer}: engine ${got} ${JSON.stringify(win[0]?.payments)}`);
+        played++;
+      }
+      expect(failures).toEqual([]);
     },
     timeBound(30_000),
   );
