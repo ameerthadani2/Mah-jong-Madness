@@ -15,11 +15,12 @@ module.exports = {
   setupFiles: ['<rootDir>/jest.setup.js'],
   // `npm run coverage:render` (and the root `npm run coverage`) measures the .tsx screens and components the render
   // tests reach; the .ts modules are vitest's ground. Floors sit about two points under the figures measured when they
-  // were set (docs/ARCHITECTURE.md). Measured 2026-11-17 (lines / branches / functions): 38.68 / 29.77 / 27.60.
+  // were set (docs/ARCHITECTURE.md). Measured 2026-11-17, after the render tests of the table, Settings, Clubs, Learn,
+  // the puzzles, the review, the lobby and Online (lines / branches / functions): 64.18 / 54.52 / 54.16.
   collectCoverageFrom: ['src/**/*.tsx', '!src/**/*.render.test.tsx'],
   coverageDirectory: '<rootDir>/coverage-render',
   coverageReporters: ['text-summary', 'json-summary'],
-  coverageThreshold: { global: { lines: 36, branches: 27, functions: 25 } },
+  coverageThreshold: { global: { lines: 62, branches: 52, functions: 52 } },
   moduleNameMapper: {
     '^react$': reactDir,
     '^react/(.*)$': `${reactDir}/$1`,
