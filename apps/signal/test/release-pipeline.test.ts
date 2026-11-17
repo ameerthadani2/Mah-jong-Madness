@@ -369,6 +369,35 @@ describe('workflows that act for the default branch', () => {
     expect(workflowStepScript('deploy-signal.yml', 'id: changed')).not.toMatch(/refs\/heads\/main\b/);
   });
 
+  it('show a deploy that did not happen as skipped: the check job gates the deploy job, says why and marks the commit skipped', () => {
+    const text = read('deploy-signal.yml');
+    // The deploy job starts only on the check job's ready output (a job-level if), so it is skipped otherwise.
+    expect(/^ {2}deploy:\n(?: {4}#.*\n)* {4}needs: check\n {4}if: (.*)$/m.exec(text)?.[1]).toBe("needs.check.outputs.ready == 'true'");
+    const gate = workflowStepScript('deploy-signal.yml', 'id: gate');
+    // No token: not ready, the summary lists the set-up, a warning (not a notice) names the skip, and the reason is an output.
+    const missing = runStep(gate, { HAS_TOKEN: 'false', CHANGED: 'true', WHY: '' });
+    expect(missing).toMatchObject({ status: 0, outputs: { ready: 'false' } });
+    expect(missing.summary).toMatch(/Signal server not deployed: the FLY_API_TOKEN secret is missing/);
+    expect(missing.summary).toMatch(/fly tokens create deploy/);
+    expect(missing.stdout).toMatch(/::warning title=Deploy skipped::FLY_API_TOKEN secret missing/);
+    expect(missing.outputs.why).toMatch(/FLY_API_TOKEN repository secret is missing/);
+    // Nothing changed: not ready, and the reason the changed step gave is passed on.
+    expect(runStep(gate, { HAS_TOKEN: 'true', CHANGED: 'false', WHY: 'abc1234 is the commit the last successful deploy shipped; nothing to deploy.' })).toMatchObject({
+      status: 0,
+      outputs: { ready: 'false', why: 'abc1234 is the commit the last successful deploy shipped; nothing to deploy.' },
+      summary: '',
+    });
+    expect(runStep(gate, { HAS_TOKEN: 'true', CHANGED: 'true', WHY: '' })).toMatchObject({ status: 0, outputs: { ready: 'true' }, summary: '' });
+    // The commit gets a check that concludes skipped with that reason, only when nothing is deployed.
+    expect(text).toMatch(/- name: Mark the commit's deploy as skipped\n(?: {8}#.*\n)* {8}if: steps\.gate\.outputs\.ready != 'true'\n/);
+    const mark = workflowStepScript('deploy-signal.yml', "name: Mark the commit's deploy as skipped");
+    expect(mark).toContain('conclusion=skipped');
+    expect(mark).toContain('output[summary]=$WHY');
+    expect(/^ {2}check:\n[\s\S]*?^ {4}permissions:\n((?: {6}.*\n)+)/m.exec(text)?.[1]).toMatch(/checks: write/);
+    // The changed step's own reasons for skipping reach the gate.
+    expect(workflowStepScript('deploy-signal.yml', 'id: changed')).toContain('echo "why=$1" >> "$GITHUB_OUTPUT"');
+  });
+
   it('never cancel a CI run of the default branch, which the deploy starts from', () => {
     expect(read('ci.yml')).toContain("cancel-in-progress: ${{ github.ref != format('refs/heads/{0}', github.event.repository.default_branch) }}");
   });

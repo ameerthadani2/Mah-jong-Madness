@@ -30,8 +30,9 @@ commit it on the branch you will deploy. Then create a deploy token and store it
 fly tokens create deploy -a <name>     # copy the whole output, including "FlyV1 "
 ```
 
-Secret name: **`FLY_API_TOKEN`**. Until it exists the deploy workflow skips itself (green, with
-these steps in its summary).
+Secret name: **`FLY_API_TOKEN`**. Until it exists the deploy workflow skips the deploy: its
+`deploy` job shows as skipped, the commit gets a "Signal server deploy" check that concludes
+skipped, a warning names the missing secret, and the run's summary lists these steps.
 
 ### 2. Create the Neon project: a pooled and a direct URL
 
@@ -242,7 +243,13 @@ pull request, never deploys.
      the list of runs cannot be read, or when the deployed commit is not an ancestor of the head
      (it was deployed by hand from another branch).
    - If `FLY_API_TOKEN` is not set, the run stops here and the job summary lists the setup
-     steps. Nothing fails.
+     steps, with a "Deploy skipped" warning. Nothing fails.
+   - Whenever it decides not to deploy (any of the reasons above), its `ready` output keeps the
+     `deploy` job from starting (a job-level `if`), so that job shows as **skipped**, not as
+     passed, and the check job adds a "Signal server deploy" check to the commit that concludes
+     **skipped** with the reason as its text (`checks: write`). The run itself still shows as
+     succeeded, because GitHub colours a run by the jobs that ran: to see whether a run shipped
+     anything, look at its `deploy` job or the commit's "Signal server deploy" check.
 
    What the check cannot know: a rollback or a `fly deploy` done by hand is not a workflow run,
    so afterwards "the deployed commit" is still the last one the workflow shipped. After a manual
