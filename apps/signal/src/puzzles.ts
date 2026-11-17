@@ -253,6 +253,8 @@ export interface PuzzleDeps {
    * Default: nobody has it.
    */
   unlimitedRush?: (userId: string) => Promise<boolean>;
+  /** Makes a date's daily puzzle (default the engine's `dailyPuzzle`); each date's puzzle is made once and kept (`dailyPuzzleCache`). */
+  dailyPuzzle?: (day: Date) => DiscardPuzzle;
 }
 
 const iso = (ms: number) => new Date(ms).toISOString();
@@ -303,6 +305,37 @@ function boardJson(page: BoardPage, value: (row: BoardRow) => Record<string, unk
  * The date a daily key stands for, if that puzzle is open at `at`: time zones run from UTC−12 to
  * UTC+14, so a player's local date is never more than a day from the server's UTC date.
  */
+/** Dates whose daily puzzle a server keeps: `openDailyKey` opens three at a time (yesterday, today and tomorrow in UTC). */
+export const DAILY_CACHE_SIZE = 4;
+
+/**
+ * The daily puzzle of a date, made once and kept for the `size` dates used last. Making one can
+ * take about 160 ms on a slow date (the generator redraws hands the isolated-tile rule would
+ * answer), and every start and every answer needs that date's puzzle, so a morning rush would
+ * otherwise queue behind it. The puzzle is the same object each time: nothing that judges it,
+ * serves its question or reveals it changes it.
+ */
+export function dailyPuzzleCache(make: (day: Date) => DiscardPuzzle = dailyPuzzle, size = DAILY_CACHE_SIZE): (day: Date) => DiscardPuzzle {
+  const kept = new Map<number, DiscardPuzzle>();
+  return (day) => {
+    const key = day.getTime();
+    const hit = kept.get(key);
+    if (hit) {
+      // Most recently used last, so the date dropped is the one used longest ago.
+      kept.delete(key);
+      kept.set(key, hit);
+      return hit;
+    }
+    const made = make(day);
+    kept.set(key, made);
+    for (const old of kept.keys()) {
+      if (kept.size <= size) break;
+      kept.delete(old);
+    }
+    return made;
+  };
+}
+
 function openDailyKey(key: unknown, at: number): Date {
   const day = dateOfDailyKey(key);
   if (!day) throw new PuzzleError(400, 'invalid', 'date must be a YYYY-MM-DD date key');
@@ -318,6 +351,7 @@ export function puzzleRoutes<R>(r: PuzzleRouteFactory<R>, deps: PuzzleDeps): R[]
   const answersBucket = deps.answerLimiter ?? new BucketTable<string>(LIMITS.rushAnswersPerMinute, LIMITS.rushAnswersPerMinute / 60, { now });
   const reads = deps.readLimiter ?? new BucketTable<string>(LIMITS.leaderboardReadsPerMinute, LIMITS.leaderboardReadsPerMinute / 60, { now });
   const rushByIp = deps.rushIpLimiter ?? new BucketTable<string>(LIMITS.rushStartsPerHourPerIp, LIMITS.rushStartsPerHourPerIp / 3600, { now });
+  const daily = dailyPuzzleCache(deps.dailyPuzzle ?? dailyPuzzle);
 
   const submitter = async (ctx: PuzzleCtx) => {
     const me = await ctx.caller();
@@ -404,7 +438,7 @@ export function puzzleRoutes<R>(r: PuzzleRouteFactory<R>, deps: PuzzleDeps): R[]
       const attempt = await repos.dailyAttempts.start({ id: randomUUID(), userId: me.userId, dateKey: date as string, startedAt: at });
       if (attempt.finishedAt !== null) throw new PuzzleError(409, 'already_played', 'You have already played this daily puzzle');
       // The puzzle is served as its question; the whole puzzle comes back with the verdict.
-      return { attemptId: attempt.id, date: attempt.dateKey, startedAt: iso(attempt.startedAt), question: puzzleQuestion(dailyPuzzle(day), dailyPuzzleDifficulty(day)) };
+      return { attemptId: attempt.id, date: attempt.dateKey, startedAt: iso(attempt.startedAt), question: puzzleQuestion(daily(day), dailyPuzzleDifficulty(day)) };
     }),
     r('POST', '/api/puzzles/daily', async (ctx) => {
       const me = await submitter(ctx);
@@ -417,7 +451,7 @@ export function puzzleRoutes<R>(r: PuzzleRouteFactory<R>, deps: PuzzleDeps): R[]
       if (!isPuzzleAnswerInput(answer)) throw new PuzzleError(400, 'invalid_answer', 'answer must be a tile, a list of tiles or a claim option id');
       const at = now();
       const day = openDailyKey(attempt.dateKey, at);
-      const puzzle: DiscardPuzzle = dailyPuzzle(day);
+      const puzzle: DiscardPuzzle = daily(day);
       const correct = judgePuzzleAnswer(puzzle, answer);
       const difficulty = dailyPuzzleDifficulty(day);
       const elapsedMs = Math.max(0, at - attempt.startedAt);

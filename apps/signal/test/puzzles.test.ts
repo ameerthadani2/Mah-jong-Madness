@@ -26,7 +26,9 @@ import {
   RUSH_SECONDS,
   RUSH_STRIKES,
   type AnyPuzzle,
+  type DiscardPuzzle,
   type PuzzleAnswerInput,
+  dailyPuzzle,
 } from '@mjm/engine';
 import { createApiHandler } from '../src/api';
 import { createGuest, deleteAccount, link, purgeDeletedUsers, SessionService } from '../src/auth';
@@ -34,7 +36,7 @@ import { ClubRegistry, type Club } from '../src/clubs';
 import { createPool, type Pool } from '../src/db';
 import { BucketTable } from '../src/limits';
 import { migrate } from '../src/migrate';
-import { RUSH_ACCURATE_PACE_MS, RUSH_ACCURATE_SHARE, RUSH_HOLD_SOLVED, RUSH_RUN_TTL_MS, RUSH_SLOWDOWN_EARLY, RUSH_SLOWDOWN_MIN_HARD, RUSH_SLOWDOWN_MIN_RATIO, RUSH_SLOWDOWN_PACE_MS, RUSH_SNAP_MAX, RUSH_SNAP_MS, RUSH_STEADY_CV, RUSH_TIMING_FLAG_WEIGHT, RUSH_TIMING_MIN_ANSWERS, rushTiming } from '../src/puzzles';
+import { DAILY_CACHE_SIZE, dailyPuzzleCache, RUSH_ACCURATE_PACE_MS, RUSH_ACCURATE_SHARE, RUSH_HOLD_SOLVED, RUSH_RUN_TTL_MS, RUSH_SLOWDOWN_EARLY, RUSH_SLOWDOWN_MIN_HARD, RUSH_SLOWDOWN_MIN_RATIO, RUSH_SLOWDOWN_PACE_MS, RUSH_SNAP_MAX, RUSH_SNAP_MS, RUSH_STEADY_CV, RUSH_TIMING_FLAG_WEIGHT, RUSH_TIMING_MIN_ANSWERS, rushTiming } from '../src/puzzles';
 import { createMemoryRepos, createPgRepos, type Repos } from '../src/repos';
 import { RoomRegistry } from '../src/rooms';
 import { PEPPER, request } from './helpers';
@@ -60,7 +62,7 @@ function wrong(p: AnyPuzzle): PuzzleAnswerInput {
 const dailyRight = (key: string) => dailyPuzzleForKey(key)!.answers[0];
 const dailyWrong = (key: string) => wrong(dailyPuzzleForKey(key)!);
 
-function fixture(repos: Repos, opts: { limits?: boolean } = {}) {
+function fixture(repos: Repos, opts: { limits?: boolean; dailyPuzzle?: (day: Date) => DiscardPuzzle } = {}) {
   const clock = { now: T0 };
   const now = () => clock.now;
   const sessions = new SessionService(repos, { pepper: PEPPER, now });
@@ -74,7 +76,7 @@ function fixture(repos: Repos, opts: { limits?: boolean } = {}) {
     sessions,
     now,
     adminToken: ADMIN,
-    puzzles: { ...(opts.limits ? {} : { submitLimiter: roomy, answerLimiter: roomy, readLimiter: roomy, rushIpLimiter: roomy }) },
+    puzzles: { ...(opts.limits ? {} : { submitLimiter: roomy, answerLimiter: roomy, readLimiter: roomy, rushIpLimiter: roomy }), ...(opts.dailyPuzzle ? { dailyPuzzle: opts.dailyPuzzle } : {}) },
   });
   let n = 0;
   const call = (method: string, url: string, body?: unknown, headers: Record<string, string> = {}, ip?: string) =>
@@ -861,6 +863,54 @@ describe('puzzle limits', () => {
     expect(codes[60]).toBe(429);
     // The 60 answers did not use the account's 20 submissions a minute.
     expect((await f.call('POST', '/api/puzzles/daily/start', { date: TODAY }, a.auth)).status).toBe(200);
+  });
+});
+
+describe('the daily puzzle is made once per date', () => {
+  it('keeps the puzzle of the dates used last and makes a dropped date again', () => {
+    const made: number[] = [];
+    const daily = dailyPuzzleCache((day) => {
+      made.push(day.getTime());
+      return dailyPuzzle(day);
+    });
+    const day = (n: number) => new Date(Date.UTC(2026, 10, 16 + n));
+    const first = daily(day(0));
+    expect(first).toEqual(dailyPuzzleForKey(TODAY));
+    expect(daily(day(0))).toBe(first);
+    expect(made).toHaveLength(1);
+    // Dates 1 to 4 fill the cache past its size: date 0, used longest ago, is dropped.
+    for (let n = 1; n <= DAILY_CACHE_SIZE; n++) daily(day(n));
+    expect(made).toHaveLength(1 + DAILY_CACHE_SIZE);
+    daily(day(DAILY_CACHE_SIZE));
+    expect(made).toHaveLength(1 + DAILY_CACHE_SIZE);
+    expect(daily(day(0))).toEqual(first);
+    expect(made).toHaveLength(2 + DAILY_CACHE_SIZE);
+    // Kept now: dates 2, 3, 4 and 0. Using date 2 again moves it to the back, so a new date
+    // drops date 3 (used longest ago), not date 2.
+    daily(day(2));
+    daily(day(-1));
+    const before = made.length;
+    daily(day(2));
+    expect(made).toHaveLength(before);
+    daily(day(3));
+    expect(made).toHaveLength(before + 1);
+  });
+
+  it('makes a date\'s puzzle once for every start and answer on the server', async () => {
+    const made: string[] = [];
+    const f = fixture(createMemoryRepos(), {
+      dailyPuzzle: (day) => {
+        made.push(day.toISOString().slice(0, 10));
+        return dailyPuzzle(day);
+      },
+    });
+    const players = [await f.guest('Ana'), await f.guest('Bo'), await f.guest('Cy')];
+    for (const [i, g] of players.entries()) {
+      const res = await f.daily(g, TODAY, i === 1 ? dailyWrong(TODAY) : dailyRight(TODAY), 20);
+      expect(res.status, res.body).toBe(200);
+      expect(res.json).toMatchObject({ correct: i !== 1, revealed: dailyPuzzleForKey(TODAY) });
+    }
+    expect(made).toEqual([TODAY]);
   });
 });
 
