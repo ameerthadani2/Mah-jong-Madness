@@ -6,13 +6,14 @@ import { colors, fonts, space } from '../theme';
 import { Card, fontFor, H2, P, Pill, Row, ScreenHeader, SectionLabel } from '../components/Ui';
 import { Icon } from '../components/Icons';
 import { useT } from '../i18n';
-import { caveatText, endUnverified, failureText } from '../logic/fairnessText';
+import { caveatText, claimsPassedText, endUnverified, failureText } from '../logic/fairnessText';
 
 export function FairnessScreen() {
   const app = useApp();
   const { t } = useT();
   const state = useSession(app.session);
   const audits = state?.audits ?? [];
+  const passed = claimsPassedText(t, state);
   // Against bots the phone is the only party: it deals and it checks itself. Say so, and do not call the fifth secret a server's.
   const local = app.session?.mode === 'local';
   return (
@@ -48,6 +49,12 @@ export function FairnessScreen() {
       {endUnverified(state) && (
         <Text testID="fairness-end-unverified" style={{ color: colors.goldDim, fontSize: 12, fontFamily: fonts.bodyBold }}>
           {t('fairness.endUnverified')}
+        </Text>
+      )}
+      {/* The claims the table passed for this seat while its link was down, over the match: the pattern a cut link leaves. */}
+      {passed && (
+        <Text testID="fairness-claims-passed" style={{ color: colors.goldDim, fontSize: 12, fontFamily: fonts.bodyBold }}>
+          {passed}
         </Text>
       )}
       {audits

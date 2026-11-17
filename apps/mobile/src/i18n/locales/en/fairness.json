@@ -35,6 +35,9 @@
     "serverRestart": "The server restarted during this hand, and some turns were played again.",
     "appRestart": "The app was restarted around this deal, so your phone cannot be sure it watched all of it. This is expected for the first hand after a restart; later hands can be Verified again.",
     "tableMoved": "The table played for you while your connection was down. It does that for a seat whose clock has run out or whose player has left the table; your phone did not watch those moves being made.",
+    "passedPong": "While your connection was down, the table passed up a Pong you could have made. It does that for a seat that is away; if it keeps happening just when you could claim, see the count on the Fair play screen.",
+    "passedChow": "While your connection was down, the table passed up a Chow you could have made. It does that for a seat that is away; if it keeps happening just when you could claim, see the count on the Fair play screen.",
+    "passedKong": "While your connection was down, the table passed up a Kong you could have made. It does that for a seat that is away; if it keeps happening just when you could claim, see the count on the Fair play screen.",
     "restartClock": "The server restarted during this match and then played for you before your phone could check its clock again, so your phone cannot be sure your time had run out.",
     "skillUnknown": "This match was restored from a save made by an older version of the app, which did not keep how strong the table said its bots are, so your phone could not check the moves the table made for the bots, or for a player whose time ran out. The next match is checked in full."
   },
@@ -122,5 +125,9 @@
   "seat": "seat %{n}",
   "commit": "%{who} commit %{hash}… secret %{secret}…",
   "log": "%{n} actions · final hash %{hash}",
-  "note": "%{text}"
+  "note": "%{text}",
+  "claimsPassedAway": {
+    "one": "In this match the table has passed up %{count} claim (Pong, Chow or Kong) for you while your connection was down. A dropped connection costs one now and then; a connection that drops every time you could claim is a pattern worth reporting.",
+    "other": "In this match the table has passed up %{count} claims (Pong, Chow or Kong) for you while your connection was down. A dropped connection costs one now and then; a connection that drops every time you could claim is a pattern worth reporting."
+  }
 }

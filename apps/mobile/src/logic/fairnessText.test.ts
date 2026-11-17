@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { AUDIT_CAVEATS, AUDIT_FAILURES, type AuditFailure } from '@mjm/net';
 import { en, zhTW } from '../i18n/locales';
-import { caveatText, endUnverified, failureText } from './fairnessText';
+import { caveatText, claimsPassedText, endUnverified, failureText } from './fairnessText';
 import { translator } from './translator.fixture';
 
 /**
@@ -110,6 +110,29 @@ describe('audit failure texts in the app', () => {
   it('shows a caveat by its key', () => {
     expect(caveatText(translator('zh-TW'), AUDIT_CAVEATS.appRestart)).toBe(zhTW.fairness.caveat.appRestart);
     expect(caveatText(translator('en'), AUDIT_CAVEATS.standIn)).toBe(en.fairness.caveat.standIn);
+  });
+});
+
+describe('claims the table passed for this seat while its link was down', () => {
+  it('name the claim in each language', () => {
+    for (const [locale, word] of [['en', ['Pong', 'Chow', 'Kong']], ['zh-TW', ['碰', '吃', '槓']]] as const) {
+      const t = translator(locale);
+      expect(caveatText(t, AUDIT_CAVEATS.passedPong), locale).toContain(word[0]);
+      expect(caveatText(t, AUDIT_CAVEATS.passedChow), locale).toContain(word[1]);
+      expect(caveatText(t, AUDIT_CAVEATS.passedKong), locale).toContain(word[2]);
+    }
+  });
+
+  it('are counted over the match, and say nothing when there were none', () => {
+    const one = [{ hand: 0, turn: 12, claim: 'pong' as const }];
+    const three = [...one, { hand: 0, turn: 30, claim: 'kong' as const }, { hand: 1, turn: 8, claim: 'chow' as const }];
+    expect(claimsPassedText(translator('en'), { claimsPassedAway: [] })).toBeNull();
+    expect(claimsPassedText(translator('en'), null)).toBeNull();
+    // A record saved before the count was kept has none.
+    expect(claimsPassedText(translator('en'), {} as { claimsPassedAway: [] })).toBeNull();
+    expect(claimsPassedText(translator('en'), { claimsPassedAway: one })).toContain('1 claim ');
+    expect(claimsPassedText(translator('en'), { claimsPassedAway: three })).toContain('3 claims');
+    expect(claimsPassedText(translator('zh-TW'), { claimsPassedAway: three })).toContain('3 次');
   });
 });
 

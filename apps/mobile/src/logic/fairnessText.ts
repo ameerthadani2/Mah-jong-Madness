@@ -19,6 +19,16 @@ export function failureText(t: Translate, text: string): string {
 }
 
 /**
+ * The match's count of claims (Pong, Chow, Kong) the table passed for this seat while its link was
+ * down, in the player's language, or null when there were none. An honest drop costs one now and
+ * then; a server that cuts the link whenever the player could claim shows up here as a pattern.
+ */
+export function claimsPassedText(t: Translate, state: Pick<ClientState, 'claimsPassedAway'> | null | undefined): string | null {
+  const count = state?.claimsPassedAway?.length ?? 0;
+  return count > 0 ? t('fairness.claimsPassedAway', { count }) : null;
+}
+
+/**
  * True when the final scores on show are the table's word alone: the match is over, and the hands
  * this phone verified do not lead to that end (it was away for some, or joined late), or the last
  * hand's own check says it could not vouch for the scores that hand started from. Every place

@@ -143,7 +143,11 @@ describe('an honest host and a player who misses hands', () => {
       expect(summary(t.a)).toBe('0:ok 1:partial 2:partial 3:ok');
       expect(failuresOf(t.a)).toEqual([]);
       // The seat's clock ran out while it was gone, and the hand says that the table then played for it.
-      expect(t.a.state.audits[1].caveats).toEqual([AUDIT_CAVEATS.away, AUDIT_CAVEATS.tableMoved]);
+      // Any Pong, Chow or Kong the table passed for it meanwhile is named too, and counted for the match.
+      const passed = t.a.state.claimsPassedAway.filter((p) => p.hand === t.a.state.audits[1].audit.handNumber);
+      const named = { pong: AUDIT_CAVEATS.passedPong, chow: AUDIT_CAVEATS.passedChow, kong: AUDIT_CAVEATS.passedKong };
+      const kinds = (['pong', 'chow', 'kong'] as const).filter((k) => passed.some((p) => p.claim === k)).map((k) => named[k]);
+      expect(t.a.state.audits[1].caveats).toEqual([AUDIT_CAVEATS.away, AUDIT_CAVEATS.tableMoved, ...kinds]);
       expect(t.a.state.audits[2].caveats).toContain(AUDIT_CAVEATS.standIn);
       expect(t.b.state.audits.every((x) => x.status === 'ok')).toBe(true);
     });

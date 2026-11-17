@@ -72,11 +72,38 @@ export const AUDIT_CAVEATS = {
   serverRestart: 'The server restarted during this hand and some turns were played again',
   appRestart: 'This app was restarted around this deal, so it cannot vouch for all of it',
   tableMoved: 'The table played for this seat while its connection was down',
+  // The claim the timeout rule passed for this seat while its link was down. An honest table does
+  // this to a player who dropped; a server that cuts the link whenever the player could claim does
+  // it every time, and the count over the match (`claimsPassedAway`) shows the pattern.
+  passedPong: 'The table passed up a Pong this seat could make while its connection was down',
+  passedChow: 'The table passed up a Chow this seat could make while its connection was down',
+  passedKong: 'The table passed up a Kong this seat could make while its connection was down',
   restartClock: 'The server restarted during this match and then played for this seat before this device could check its clock again',
   skillUnknown: 'This device restored the match from a save that did not keep how strong the table said its bots are, so the moves the table made for bots and for seats out of time were not checked',
 } as const;
 
 export type AuditCaveat = keyof typeof AUDIT_CAVEATS;
+
+/** A claim on another seat's discard that the table can pass for a seat whose link is down. */
+export type PassedClaim = 'pong' | 'chow' | 'kong';
+
+/** One claim the table passed for this seat while its link was down: the hand and turn, and which claim. */
+export interface PassedClaimRecord {
+  hand: number;
+  turn: number;
+  claim: PassedClaim;
+}
+
+const PASSED_CAVEAT: Record<PassedClaim, string> = { pong: AUDIT_CAVEATS.passedPong, chow: AUDIT_CAVEATS.passedChow, kong: AUDIT_CAVEATS.passedKong };
+
+function isPassedClaimRecord(x: unknown): x is PassedClaimRecord {
+  return isObject(x) && isInt(x.hand) && isInt(x.turn) && (x.claim === 'pong' || x.claim === 'chow' || x.claim === 'kong');
+}
+
+/** The match's passed claims with hand `h`'s replaced by `found` (a hand checked again counts once). */
+function withPassed(all: PassedClaimRecord[], h: number, found: Array<{ turn: number; claim: PassedClaim }>): PassedClaimRecord[] {
+  return [...all.filter((x) => x.hand !== h), ...found.map((f) => ({ hand: h, turn: f.turn, claim: f.claim }))].sort((a, b) => a.hand - b.hand || a.turn - b.turn);
+}
 
 /** The key of a caveat text produced by this client, or null for any other text. */
 export function caveatKey(text: string): AuditCaveat | null {
@@ -243,6 +270,12 @@ export interface ClientState {
   inTimeBank: boolean;
   /** Audited hands of this match (the last MAX_AUDITS), newest last. */
   audits: Array<{ audit: Audit; status: AuditStatus; failures: string[]; caveats: string[] }>;
+  /**
+   * Every Pong, Chow or Kong the table passed for this seat while its link was down, over this match
+   * (cleared when a new match starts). One or two are what a dropped connection costs; many, at the
+   * moments this seat could claim, are the pattern of a server that cuts the link to take them away.
+   */
+  claimsPassedAway: PassedClaimRecord[];
   chat: ChatLine[];
   emotes: Array<{ seat: number; emote: string; at: number }>;
   lastError: string | null;
@@ -578,6 +611,7 @@ export class TableClient {
     timeBank: 0,
     inTimeBank: false,
     audits: [],
+    claimsPassedAway: [],
     chat: [],
     emotes: [],
     lastError: null,
@@ -752,6 +786,7 @@ export class TableClient {
       ...st,
       rules: st.rules ? sanitizeRules(st.rules) : null,
       audits: Array.isArray(st.audits) ? st.audits.slice(-MAX_AUDITS) : [],
+      claimsPassedAway: Array.isArray(st.claimsPassedAway) ? st.claimsPassedAway.filter(isPassedClaimRecord) : [],
       token: this.identity.token ?? st.token ?? null,
       connected: false,
       disconnected: true,
@@ -1158,7 +1193,7 @@ export class TableClient {
     this.lastStamp = null;
     this.ownAbsences = [];
     this.gapVerdicts = [];
-    this.state = { ...this.state, matchOver: false, finalScores: null, matchEndVerified: false, view: null, lastResult: null };
+    this.state = { ...this.state, matchOver: false, finalScores: null, matchEndVerified: false, view: null, lastResult: null, claimsPassedAway: [] };
   }
 
   /** This client holds a record of the match being played: there is something a reset would wipe. */
@@ -1464,7 +1499,7 @@ export class TableClient {
         if (this.openHand === h) this.openHand = null;
         this.atStart = false;
         const end: SeenState = { tc: Number.POSITIVE_INFINITY, epoch: this.epoch, era: this.era, at: this.now(), now: typeof m.now === 'number' ? m.now : undefined, owes: false, deadline: null, timeBank: 0, inBank: false, hash: '' };
-        const { check, replayed, anchors } = this.runAudit(m.audit, m.view, m.result, end);
+        const { check, replayed, anchors, passed } = this.runAudit(m.audit, m.view, m.result, end);
         this.foldClock(this.plays.find((p) => p.hand === h) ?? null, end, anchors);
         if (typeof end.now === 'number') this.lastStamp = { at: end.at, now: end.now, epoch: this.epoch, era: this.era };
         const { status, failures, caveats } = check;
@@ -1475,7 +1510,7 @@ export class TableClient {
         this.tamper.delete(h);
         if (this.gapHand === h) this.gapHand = null;
         const audits = [...this.state.audits, { audit: m.audit, status, failures, caveats }].slice(-MAX_AUDITS);
-        this.update({ view: m.view, lastResult: m.result, lastAudit: m.audit, auditStatus: status, auditFailures: failures, auditCaveats: caveats, deadline: null, intermissionDeadline: nextDeal(m), audits });
+        this.update({ view: m.view, lastResult: m.result, lastAudit: m.audit, auditStatus: status, auditFailures: failures, auditCaveats: caveats, deadline: null, intermissionDeadline: nextDeal(m), audits, claimsPassedAway: withPassed(this.state.claimsPassedAway, h, passed) });
         return;
       }
       case 'hand_missed':
@@ -1689,7 +1724,7 @@ export class TableClient {
     }
     const failures: string[] = [...(this.tamper.get(h) ?? [])];
     const caveats: string[] = [AUDIT_CAVEATS.away];
-    const notes: { tableMoved: boolean; skillUnknown?: boolean } = { tableMoved: false };
+    const notes: ReplayNotes = { tableMoved: false };
     // A hand this device saw nothing of is judged from the last frame it held before it went away.
     const unseen: PlayRecord | undefined = this.lastStamp ? { hand: h, seen: [], sent: [], ledgerFrom: null, before: { ...this.lastStamp } } : undefined;
     const me = this.state.seat;
@@ -1725,6 +1760,7 @@ export class TableClient {
     failures.push(...this.checkAccounting(audit));
     if (isInt(audit.ceremonyAttempts) && audit.ceremonyAttempts > 1) caveats.push(AUDIT_CAVEATS.restarted);
     if (notes.tableMoved) caveats.push(AUDIT_CAVEATS.tableMoved);
+    caveats.push(...passedCaveats(notes));
     if (notes.skillUnknown) caveats.push(AUDIT_CAVEATS.skillUnknown);
     const status: AuditStatus = failures.length > 0 ? 'failed' : 'partial';
     this.handsEnded.add(h);
@@ -1735,7 +1771,7 @@ export class TableClient {
     this.tamper.delete(h);
     // A record that fails is the host's doing now, not then: the hand on the table carries it too.
     if (status === 'failed') this.flag(this.activeHand(), `The record of hand ${h + 1}, played while this device was away, failed its checks`);
-    this.update({ audits: [...this.state.audits, { audit, status, failures, caveats }].slice(-MAX_AUDITS) });
+    this.update({ audits: [...this.state.audits, { audit, status, failures, caveats }].slice(-MAX_AUDITS), claimsPassedAway: withPassed(this.state.claimsPassedAway, h, notes.passedClaims ?? []) });
   }
 
   /** Exactly one commitment and one secret per seat 0–4: an extra share would let the host move the seed. */
@@ -1784,15 +1820,15 @@ export class TableClient {
   }
 
   /** verifyAudit, plus the replayed final state when the replay ran (to chain the next hand onto). */
-  private runAudit(audit: Audit, finalView: TableView, announced: HandResult | undefined, end: SeenState | null): { check: AuditCheck; replayed: GameState | null; anchors: ClockAnchor[] } {
+  private runAudit(audit: Audit, finalView: TableView, announced: HandResult | undefined, end: SeenState | null): { check: AuditCheck; replayed: GameState | null; anchors: ClockAnchor[]; passed: Array<{ turn: number; claim: PassedClaim }> } {
     const failures: string[] = [];
     const caveats: string[] = [];
     let replayed: GameState | null = null;
     const anchors: ClockAnchor[] = [];
-    const notes: { tableMoved: boolean; restartClock?: boolean; skillUnknown?: boolean } = { tableMoved: false };
+    const notes: ReplayNotes = { tableMoved: false };
     const rules = this.pinnedRules ?? this.state.rules;
-    if (!rules || !this.state.matchId) return { check: { status: 'unverified', failures: ['No match context'], caveats }, replayed, anchors };
-    if (!isAudit(audit) || !isView(finalView)) return { check: { status: 'failed', failures: ['The audit is malformed'], caveats }, replayed, anchors };
+    if (!rules || !this.state.matchId) return { check: { status: 'unverified', failures: ['No match context'], caveats }, replayed, anchors, passed: [] };
+    if (!isAudit(audit) || !isView(finalView)) return { check: { status: 'failed', failures: ['The audit is malformed'], caveats }, replayed, anchors, passed: [] };
     const h = audit.handNumber;
     const me = this.state.seat;
 
@@ -1873,6 +1909,7 @@ export class TableClient {
     if (this.gapHand === h) caveats.push(AUDIT_CAVEATS.gap);
     if (this.rewinds.some((x) => x.hand === h && x.undone)) caveats.push(AUDIT_CAVEATS.serverRestart);
     if (notes.tableMoved) caveats.push(AUDIT_CAVEATS.tableMoved);
+    caveats.push(...passedCaveats(notes));
     if (notes.restartClock) caveats.push(AUDIT_CAVEATS.restartClock);
     if (notes.skillUnknown) caveats.push(AUDIT_CAVEATS.skillUnknown);
     // An app restart around the deal: this device cannot say it watched all of it, whatever its record now shows.
@@ -1880,7 +1917,7 @@ export class TableClient {
     if (this.lapseHand === h && this.lapseDeal && !joined && !caveats.includes(AUDIT_CAVEATS.appRestart)) caveats.push(AUDIT_CAVEATS.appRestart);
 
     const status: AuditStatus = failures.length > 0 ? 'failed' : caveats.length > 0 ? 'partial' : 'ok';
-    return { check: { status, failures, caveats }, replayed, anchors };
+    return { check: { status, failures, caveats }, replayed, anchors, passed: notes.passedClaims ?? [] };
   }
 
   /**
@@ -1892,7 +1929,7 @@ export class TableClient {
    * until the clock ran out. `notes.tableMoved` is set when the table rightly played for the seat
    * while its link was down; `unseen` stands in for the record of a hand this device saw nothing of.
    */
-  private replayChecked(start: MatchSnapshot, seed: string, rules: RuleSet, log: LoggedAction[], h: number, end: SeenState | null, failures: string[], anchors: ClockAnchor[] = [], notes?: { tableMoved: boolean; restartClock?: boolean; skillUnknown?: boolean }, unseen?: PlayRecord): GameState {
+  private replayChecked(start: MatchSnapshot, seed: string, rules: RuleSet, log: LoggedAction[], h: number, end: SeenState | null, failures: string[], anchors: ClockAnchor[] = [], notes?: ReplayNotes, unseen?: PlayRecord): GameState {
     const me = this.state.seat;
     const play = end ? (this.plays.find((p) => p.hand === h) ?? unseen ?? null) : null;
     /** The hand is one this device saw nothing of (`hand_missed`). */
@@ -1931,6 +1968,8 @@ export class TableClient {
     let unchecked = false;
     /** Turns on which the table passed up this seat's win: reported as such (the rule always takes one). */
     const passedUp = new Set<unknown>();
+    /** Turns on which the table passed a Pong, Chow or Kong this seat could make: named if its link was down. */
+    const claimAt = new Map<number, PassedClaim>();
     const leftOnPurpose = (n: unknown): boolean => {
       if (!play || !isInt(n)) return true;
       let a: SeenState | null = null;
@@ -2002,6 +2041,16 @@ export class TableClient {
           if (couldWin && entry.action?.type !== 'hu') {
             problems.add(`The table played for this seat and passed up its win (turn ${String(n)})`);
             passedUp.add(n);
+          } else if (isInt(n) && s.phase === 'claim' && isObject(entry.action) && entry.action.type === 'pass') {
+            // The timeout rule passes every claim but a win. Which one this seat could have made, if any, is named.
+            let offered: string[] = [];
+            try {
+              offered = legalActions(s, me).map((a) => a.type);
+            } catch {
+              offered = [];
+            }
+            const claim: PassedClaim | null = offered.includes('kong') ? 'kong' : offered.includes('pong') ? 'pong' : offered.includes('chi') ? 'chow' : null;
+            if (claim) claimAt.set(n, claim);
           }
           // Judged after the replay, when every fixed point between the two clocks is known; the mark keeps its place among the problems.
           if (isInt(n)) problems.add(`${JUDGE_LATER}${n}`);
@@ -2033,7 +2082,11 @@ export class TableClient {
       const verdict = this.judgeTableMove(play, n, end, rules, anchors, track, gaps);
       if (verdict === 'early') problems.add(`The table played for this seat while it was connected and its clock had not run out (turn ${n})`);
       else if (verdict === 'downEarly') problems.add(`The table played for this seat while its connection was down, before its clock could have run out (turn ${n})`);
-      else if (verdict === 'down' && notes) notes.tableMoved = true;
+      else if (verdict === 'down' && notes) {
+        notes.tableMoved = true;
+        const claim = claimAt.get(n);
+        if (claim) (notes.passedClaims ??= []).push({ turn: n, claim });
+      }
       else if (verdict === 'unanchored' && notes) notes.restartClock = true;
     }
     for (const tc of track?.bankTaken ?? []) problems.add(`The table took time from this seat's time bank while its connection was down (turn ${tc})`);
@@ -2346,6 +2399,21 @@ function legalFor(s: GameState, seat: number, action: Action): boolean {
   } catch {
     return false;
   }
+}
+
+/** What a replay noticed that makes a hand amber rather than green. */
+interface ReplayNotes {
+  tableMoved: boolean;
+  restartClock?: boolean;
+  skillUnknown?: boolean;
+  /** Claims the table passed for this seat while its link was down, in turn order. */
+  passedClaims?: Array<{ turn: number; claim: PassedClaim }>;
+}
+
+/** One caveat for each kind of claim the table passed for this seat while its link was down. */
+function passedCaveats(notes: ReplayNotes): string[] {
+  const kinds = new Set((notes.passedClaims ?? []).map((p) => p.claim));
+  return (['pong', 'chow', 'kong'] as const).filter((k) => kinds.has(k)).map((k) => PASSED_CAVEAT[k]);
 }
 
 function isBotSkill(x: unknown): x is BotSkill {
