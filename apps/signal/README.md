@@ -153,12 +153,12 @@ JSON in and out. Errors are `{ "error": "<code>", "message": "<English sentence>
 | `DELETE /api/clubs/:code` | bearer (owner) | `{ confirm }` (the club's name or code) | `204`; its live tables close |
 | `GET /api/clubs/:code` | bearer | | members: the club; anyone else: `{ code, name, description, memberCount, joinRequiresApproval }` |
 | `PATCH /api/clubs/:code` | bearer (owner/admin) | `{ name?, description?, rules?, settings? }` | the club; `400 name_not_allowed` for a name or a description the name check refuses |
-| `POST /api/clubs/:code/join` | bearer | | `{ club, status: "joined"\|"pending"\|"already" }` (`club` is the public view until membership); standings left on file come back; `429` past 10 an hour per address or 60 an hour per club (new accounts have their own 60); `409` when a new account would take one of the last 50 places |
+| `POST /api/clubs/:code/join` | bearer | | `{ club, status: "joined"\|"pending"\|"already" }` (`club` is the public view until membership); standings left on file come back; `429` past 10 an hour per address or 60 an hour per club (new accounts have their own 60), or, whatever the account's age, past 4 a day to this club from one address (an IPv6 /64 is one) or 2 a day from one device; `409` when a new account would take one of the last 50 places |
 | `POST /api/clubs/:code/members/:userId/approve` | bearer (owner/admin) | | the club |
 | `POST /api/clubs/:code/members/:userId/reject` | bearer (owner/admin) | | the club |
 | `POST /api/clubs/:code/pending/reject-all` | bearer (owner/admin) | `{ userIds? }` | `{ club, rejected }`; every pending request, or only those named |
 | `POST /api/clubs/:code/bans` / `DELETE /api/clubs/:code/bans/:userId` | bearer (owner/admin) | `{ userId }` | the club; a banned account cannot rejoin, reapply or join the club's tables, and leaves its live tables |
-| `POST /api/clubs/:code/tables/:table/close` | bearer (owner/admin) | | the club; the table ends at once, nothing counts |
+| `POST /api/clubs/:code/tables/:table/close` | bearer (owner/admin) | | the club; the table ends at once, nothing counts toward the standings; a match closed mid-play is added to the club's `closedMatches` (who closed it, the hand reached, each seat's points then) |
 | `POST /api/clubs/:code/tables/:table/evict` | bearer (owner/admin) | `{ userId }` | `{ seats }`; a bot plays the seat, the player is told and cannot come back to that table |
 | `POST /api/clubs/:code/members/:userId/role` | bearer (owner) | `{ role }` | the club; `409 limit` when `owner` would give a member a fourth club |
 | `DELETE /api/clubs/:code/members/:userId` | bearer (self, owner or admin) | | the club (public view after leaving); a removed member also leaves the club's live tables; the member's standings stay on file and a match they started still counts |
