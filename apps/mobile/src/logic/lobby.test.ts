@@ -53,7 +53,7 @@ describe('a lobby without a seat', () => {
     expect(src).toContain('fallback(tableError(e, t));');
     expect(src).toMatch(/\{ name: 'online', notice \}/);
     expect(src).toMatch(/\{ name: 'club', code: plan\.club, notice \}/);
-    expect(readFileSync(join(__dirname, '../screens/OnlineScreen.tsx'), 'utf8')).toContain('app.screen.notice ?? null');
+    // Online showing the reason it was handed is rendered in src/screens/Online.render.test.tsx.
   });
 });
 
