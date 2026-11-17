@@ -1,5 +1,3 @@
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { en, zhTW } from '../i18n/locales';
 import { DEFAULT_RULES } from '@mjm/engine';
@@ -68,10 +66,8 @@ describe('what the app says about the bot tiers', () => {
     expect(zhTW.common.bots.club).toBe(zhTW.settings.botAbout.club);
   });
 
-  it('is shown from the app\'s own strings in both languages, under a heading that does not rank the tiers', () => {
-    const screen = readFileSync(join(__dirname, '..', 'screens', 'SettingsScreen.tsx'), 'utf8');
-    expect(screen).toMatch(/t\(`settings\.botAbout\.\$\{settings\.botSkill\}`\)/);
-    expect(screen).not.toMatch(/botDescription\(/);
+  // Settings shows the chosen tier's own description: src/screens/Settings.render.test.tsx ("a free bot tier is chosen and described").
+  it('sits under a heading that does not rank the tiers', () => {
     expect(en.settings.botStrength).not.toMatch(/strength/i);
     expect(zhTW.settings.botStrength).not.toMatch(/強/);
   });

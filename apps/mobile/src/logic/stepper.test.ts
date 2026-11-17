@@ -46,7 +46,7 @@ describe('a number in the rule editor', () => {
 describe('house rules in Settings', () => {
   it('are edited with the same editor, names and limits as a club\'s rules', () => {
     const settings = read('screens/SettingsScreen.tsx');
-    expect(settings).toMatch(/<RuleEditor value=\{rules\} onChange=\{\(next\) => setSettings\(\{ \.\.\.settings, rules: next \}\)\} \/>/);
+    // That the club's editor (its field names) edits Settings' rules is rendered in src/screens/Settings.render.test.tsx.
     // No second set of steppers with limits of its own.
     expect(settings).not.toMatch(/<Stepper /);
     expect(read('components/RuleEditor.tsx')).toMatch(/const \[min, max\] = RULE_LIMITS\[f\.key\];/);

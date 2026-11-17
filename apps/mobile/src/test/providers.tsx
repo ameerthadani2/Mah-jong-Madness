@@ -107,11 +107,20 @@ export function FakeProviders({ app = {}, auth = {}, children }: { app?: Partial
         app.setWallet?.(w);
       },
       profile,
-      setProfile,
+      setProfile: (p) => {
+        setProfile(p);
+        app.setProfile?.(p);
+      },
       settings,
-      setSettings,
+      setSettings: (s) => {
+        setSettings(s);
+        app.setSettings?.(s);
+      },
       progress,
-      setProgress,
+      setProgress: (p) => {
+        setProgress(p);
+        app.setProgress?.(p);
+      },
     }),
     // The overrides are fixed for a test's render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
