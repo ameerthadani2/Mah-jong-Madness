@@ -490,6 +490,7 @@ export interface SerializedClient {
   atStart: boolean;
   gapHand: number | null;
   chainGap?: boolean;
+  missedMoves?: boolean;
   rewinds: Array<{ hand: number; tc: number; undone: boolean }>;
   lapseHand: number | null;
   lapseDeal: boolean;
@@ -655,6 +656,11 @@ export class TableClient {
    * its scores are not shown as verified.
    */
   private chainGap = false;
+  /**
+   * A hand this device missed carries moves credited to its seat. The device watched none of
+   * them, so the end of the match may be checked, but it is not shown as verified.
+   */
+  private missedMoves = false;
   /** The entry `failNow` last put on the list of audits (so the next failure about the same hand adds to it). */
   private liveFailure: ClientState['audits'][number] | null = null;
   /**
@@ -758,7 +764,8 @@ export class TableClient {
     this.atStart = d.atStart === true;
     this.gapHand = isInt(d.gapHand) ? d.gapHand : null;
     this.chainGap = d.chainGap === true || this.gapHand !== null;
-    this.state = { ...this.state, matchEndVerified: this.matchEnded && !this.chainGap && this.state.matchOver };
+    this.missedMoves = d.missedMoves === true;
+    this.state = { ...this.state, matchEndVerified: this.matchEnded && !this.chainGap && !this.missedMoves && this.state.matchOver };
     this.rewinds = Array.isArray(d.rewinds) ? d.rewinds.filter((x) => isObject(x) && isInt(x.hand) && isInt(x.tc)) : [];
     this.lapseHand = isInt(d.lapseHand) ? d.lapseHand : null;
     this.lapseDeal = d.lapseDeal === true;
@@ -816,6 +823,7 @@ export class TableClient {
       atStart: this.atStart,
       gapHand: this.gapHand,
       chainGap: this.chainGap,
+      missedMoves: this.missedMoves,
       rewinds: this.rewinds,
       lapseHand: this.lapseHand,
       lapseDeal: this.lapseDeal,
@@ -1115,6 +1123,7 @@ export class TableClient {
     this.atStart = false;
     this.gapHand = null;
     this.chainGap = false;
+    this.missedMoves = false;
     this.rewinds = [];
     this.lapse = false;
     this.lapseHand = null;
@@ -1467,7 +1476,7 @@ export class TableClient {
           }
           if (verdict === 'verified') this.matchEnded = true;
           // The end itself is checked (and frees the record for a new match), but scores that rest on a hand whose start could not be checked are not shown as verified.
-          const matchEndVerified = this.matchEnded && !this.chainGap;
+          const matchEndVerified = this.matchEnded && !this.chainGap && !this.missedMoves;
           // No hand is left to carry what was flagged since the last audit: put it on show now.
           for (const p of this.tamper.get(this.activeHand()) ?? []) this.failNow(p);
           // The last hand's verified view stays on show; the host's is used only when this device holds none.
@@ -1681,6 +1690,7 @@ export class TableClient {
     }
     let replayed: GameState | null = null;
     const end: SeenState = { tc: Number.POSITIVE_INFINITY, epoch: this.epoch, era: this.era, at: this.now(), owes: false, deadline: null, timeBank: 0, inBank: false, hash: '' };
+    if (me !== null && Array.isArray(audit.log) && audit.log.some((e) => isObject(e) && e.seat === me)) this.missedMoves = true;
     try {
       replayed = this.replayChecked(base, audit.seed, rules, audit.log, h, end, failures, [], notes, unseen);
       if (hashState(replayed) !== audit.finalHash) failures.push('Replaying the action log does not reproduce the final state');
@@ -1860,6 +1870,8 @@ export class TableClient {
   private replayChecked(start: MatchSnapshot, seed: string, rules: RuleSet, log: LoggedAction[], h: number, end: SeenState | null, failures: string[], anchors: ClockAnchor[] = [], notes?: { tableMoved: boolean; restartClock?: boolean; skillUnknown?: boolean }, unseen?: PlayRecord): GameState {
     const me = this.state.seat;
     const play = end ? (this.plays.find((p) => p.hand === h) ?? unseen ?? null) : null;
+    /** The hand is one this device saw nothing of (`hand_missed`). */
+    const missed = unseen !== undefined && play === unseen;
     const shown = new Map<number, string>();
     for (const s of play?.seen ?? []) if (!shown.has(s.tc)) shown.set(s.tc, s.hash);
     const checkHash = (s: GameState) => {
@@ -1902,11 +1914,18 @@ export class TableClient {
       if (since === undefined || !b) return true;
       return this.ownAbsences.some((e) => e >= since && e < b.epoch);
     };
+    /**
+     * A move the table made: one it says it made, or, in a hand this device missed altogether, any
+     * move credited to this seat. The device sent nothing in such a hand, so a move written down
+     * as the player's own is the table's (unless the player was away on purpose, or on another
+     * device, and may have played it there), and is judged as one: its rule, and the time away.
+     */
+    const byTable = (entry: LoggedAction): boolean => entry.source === 'auto' || (missed && entry.seat === me && !leftOnPurpose(entry.n));
     const checkRule = (s: GameState, entry: LoggedAction) => {
       const seat = entry.seat;
       if (!isInt(seat) || seat < 0 || seat > 3) return;
       const isBot = bots.has(seat);
-      if (!isBot && entry.source !== 'auto') return;
+      if (!isBot && !byTable(entry)) return;
       if (skill === 'unknown') {
         unchecked = true;
         return;
@@ -1928,7 +1947,7 @@ export class TableClient {
     for (const entry of log) {
       if (play && me !== null && isObject(entry) && entry.seat === me) {
         const n = entry.n;
-        const source = entry.source === 'auto' ? 'auto' : 'player';
+        const source = byTable(entry) ? 'auto' : 'player';
         if (source === 'player') {
           if (play.ledgerFrom !== null && isInt(n) && n >= play.ledgerFrom) {
             // Any move this client sent and the log has not used yet may be the one: a move that reaches
