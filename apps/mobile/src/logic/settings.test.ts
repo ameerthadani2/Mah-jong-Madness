@@ -57,9 +57,12 @@ describe('what the app says about the bot tiers', () => {
       const pro = locale.settings.botAbout.pro;
       expect(pro).not.toMatch(/fast and efficient|keeps scoring tiles|strong|best|beats|出牌快|加台|最強|更強/i);
     }
-    expect(en.settings.botAbout.pro).toMatch(/how dangerous each discard is and may fold/);
+    // What Pro measurably does (docs/ARCHITECTURE.md): it folds far more when far from ready, and its overall edge is small.
+    expect(en.settings.botAbout.pro).toMatch(/Folds far more often than Club when its hand is far from ready/);
+    expect(en.settings.botAbout.pro).toMatch(/only a little more than Club/);
     expect(en.settings.botAbout.pro).toMatch(/the policy the coach's advice comes from/);
-    expect(zhTW.settings.botAbout.pro).toMatch(/放槍風險/);
+    expect(zhTW.settings.botAbout.pro).toMatch(/棄胡防守/);
+    expect(zhTW.settings.botAbout.pro).toMatch(/只比牌友略高/);
     expect(zhTW.settings.botAbout.pro).toMatch(/教練/);
     // The Chinese description the engine's helper falls back on says the same.
     expect(zhTW.common.bots.pro).toBe(zhTW.settings.botAbout.pro);
