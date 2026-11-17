@@ -657,8 +657,10 @@ export class TableClient {
       // Not a frame at all (not an object with a type): dropped before anything reads it, and it does
       // not count as hearing from the table.
       if (!isFrame(m)) return;
-      this.heardAt = this.now();
-      this.probedAt = null;
+      // The first frame on a link starts the silent-link watch; from then on only a frame whose
+      // stamp moves the link's clock on counts (see `noteOrder`): chat, emotes or stale stamps a
+      // server sends while it holds the table's frames back do not keep the link alive.
+      if (this.heardAt === null) this.heardAt = this.now();
       try {
         this.onMessage(m);
       } catch (e) {
@@ -745,7 +747,8 @@ export class TableClient {
    * an honest host never leaves this seat without a frame for longer than the protocol's clock-frame
    * period (`CLOCK_FRAME_MS`, 3 s), whatever its `welcome` says: a host that sends no clock frames, or
    * announces a longer period, is held to it all the same, and its silence counts as a drop. After
-   * `2 × CLOCK_FRAME_MS + 2 s` without any frame this client asks for a `pong`; a host that
+   * `2 × CLOCK_FRAME_MS + 2 s` without a frame whose stamp moves the link's clock on (a chat line
+   * or a stale stamp does not count) this client asks for a `pong`; a host that
    * answers at once, while it holds back what it sent before, is caught by the order of the stamps
    * (`noteOrder`). When `SILENT_ANSWER_MS` more pass without a frame, the answer is 'silent': the
    * link brings nothing although it may still look open, and the session drops it so that the
@@ -1389,7 +1392,11 @@ export class TableClient {
     const last = this.linkStamp;
     const same = last !== null && last.epoch === this.epoch && last.era === this.era;
     if (same && now < last.now - ORDER_SLACK_MS && hand !== null && tc !== null && isInt(tc)) this.noteHeld(hand, tc);
-    if (!same || now > last.now) this.linkStamp = { epoch: this.epoch, era: this.era, now };
+    if (!same || now > last.now) {
+      this.linkStamp = { epoch: this.epoch, era: this.era, now };
+      this.heardAt = this.now();
+      this.probedAt = null;
+    }
   }
 
   /** The host held back the state of turn `tc` of hand `hand` (or of an earlier turn already noted). */

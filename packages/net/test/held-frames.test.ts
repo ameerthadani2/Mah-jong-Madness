@@ -62,6 +62,10 @@ function link(hub: LoopbackHub, id: string, clock: { now: number }) {
     pump() {
       while (queue.length && queue[0].at <= clock.now) cb?.(queue.shift()!.m);
     },
+    /** The server sends a frame of its own making, past what it holds. */
+    inject(m: HostMessage) {
+      cb?.(m);
+    },
     /** The server lets the frames it held go, now. */
     release() {
       for (const m of held.splice(0)) cb?.(m);
@@ -345,6 +349,18 @@ describe('the bound on a silent link is the client’s, not the server’s', () 
     expect(t.droppedAt! - from).toBeLessThanOrEqual(SILENT_BOUND);
     expect(t.host.game!.turnCounter).toBe(turn);
     expect(myDiscard(t)).toBe(true);
+  });
+
+  deal('a table that holds every stamped frame but keeps the link busy with chat loses it within 13 s all the same', () => {
+    const t = table('HC5', 0, noClock);
+    const { turn, from } = holdTheTurn(t);
+    for (let g = 0; g < 2 * (TURN + BANK) / 1_000 && t.droppedAt === null; g++) {
+      if (g % 4 === 0) t.net.inject({ t: 'chat', seat: 1, name: 'Bot', text: 'gg' });
+      t.wait(500, 5_000);
+    }
+    expect(t.droppedAt).not.toBeNull();
+    expect(t.droppedAt! - from).toBeLessThanOrEqual(SILENT_BOUND);
+    expect(t.host.game!.turnCounter).toBe(turn);
   });
 
   deal('honest but for the welcome (no clock-frame period announced): every frame 6 s late and the seat timed out, never dropped, green', () => {
