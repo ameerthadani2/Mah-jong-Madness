@@ -1246,6 +1246,9 @@ const HEADLINE_KEYS: ReadonlySet<string> = new Set([
   'big_four_winds',
 ]);
 
+/** Hard puzzles also name the concealed-pong patterns, which a hand of pongs can be worth keeping for. */
+const HARD_HEADLINE_KEYS: ReadonlySet<string> = new Set([...HEADLINE_KEYS, 'three_concealed', 'four_concealed', 'five_concealed']);
+
 /**
  * Share of wins that are self-drawn when judging a wait: measured at 24% on Club-bot tables
  * (`npm run sim`), rounded to a quarter. A self-drawn win is paid by all three other seats.
@@ -1255,6 +1258,12 @@ export const VALUE_SELF_DRAW_SHARE = 0.25;
 export const VALUE_TOLERANCE = 0.9;
 /** Share of hard value puzzles where the bigger hand wins, so keeping the most winning tiles is wrong. */
 export const VALUE_HARD_SIZE_SHARE = 0.5;
+/**
+ * Share of hard value puzzles, on each side of `VALUE_HARD_SIZE_SHARE`, where the two-line rule
+ * (`valuePatternRule`) is wrong: the bigger hand wins without a pattern of 4 台 (or with one that
+ * keeps under half the winning tiles), or a pattern of 4 台 that keeps half the tiles is not worth them.
+ */
+export const VALUE_HARD_TRAP_SHARE = 0.8;
 
 /** One winning tile of a ready discard, with what a win on it scores. */
 export interface ValueWait {
@@ -1319,7 +1328,7 @@ export interface ValuePuzzle extends PuzzleExplanation {
   patternTai: number;
 }
 
-type ValueTheme = 'flush' | 'pongs' | 'honour';
+type ValueTheme = 'flush' | 'pongs' | 'honour' | 'honours';
 /** [flush share, all-pongs share] of value puzzles per difficulty; the rest are value-honour hands. */
 const VALUE_THEME_MIX: Record<PuzzleDifficulty, [number, number]> = { 1: [0.65, 0.15], 2: [0.4, 0.3], 3: [0.15, 0.6] };
 
@@ -1350,6 +1359,21 @@ function themedHand(rng: Rng, pool: TilePool, theme: ValueTheme, valueHonours: r
       sets.push(set);
     }
     if (!takePair(rng.next() < 0.3 ? KIND_WIND + rng.int(7) : rng.int(27))) return null;
+  } else if (theme === 'honours') {
+    // Two dragon pongs and the third dragon as the pair (小三元), or three wind pongs and the
+    // fourth wind as the pair (小四喜); the rest any sets, pongs more often than not.
+    const winds = rng.next() < 0.25;
+    const family = shuffle(winds ? [KIND_WIND, KIND_WIND + 1, KIND_WIND + 2, KIND_WIND + 3] : [KIND_DRAGON, KIND_DRAGON + 1, KIND_DRAGON + 2], rng);
+    for (const k of family.slice(0, family.length - 1)) {
+      if (!pool.take(k, 3)) return null;
+      sets.push([k, k, k]);
+    }
+    while (sets.length < 5) {
+      const set = randomSet(rng, pool, 0.6, [0, 1, 2], false);
+      if (!set) return null;
+      sets.push(set);
+    }
+    if (!takePair(family[family.length - 1])) return null;
   } else {
     if (!takePair(valueHonours[rng.int(valueHonours.length)])) return null;
     for (let i = 0; i < 5; i++) {
@@ -1372,6 +1396,7 @@ export function scoreWaits(
   melds: Meld[],
   dealerSeat: number,
   prevailingWind: number,
+  headline: ReadonlySet<string> = HEADLINE_KEYS,
 ): Pick<ValueOption, 'winning' | 'expectedTai' | 'bestTai' | 'expectedScore' | 'items'> {
   const rules = DEFAULT_RULES;
   const winning: ValueWait[] = [];
@@ -1395,7 +1420,7 @@ export function scoreWaits(
     const top = Math.max(byDiscard.tai, bySelf.tai);
     if (top > bestTai) {
       bestTai = top;
-      items = (bySelf.tai >= byDiscard.tai ? bySelf : byDiscard).items.filter((i) => HEADLINE_KEYS.has(i.key));
+      items = (bySelf.tai >= byDiscard.tai ? bySelf : byDiscard).items.filter((i) => headline.has(i.key));
     }
   }
   return { winning, expectedTai: tiles > 0 ? taiSum / tiles : 0, bestTai, expectedScore: score, items };
@@ -1456,7 +1481,11 @@ function valueReason(answer: ValueOption, rival: ValueOption, keepsPattern: bool
   return answer.expectedTai! > rival.expectedTai! ? 'puzzle.value.moreTai' : null;
 }
 
-function valueText(p: Pick<ValuePuzzle, 'answer' | 'answers' | 'rival' | 'options' | 'patternEn' | 'patternZh' | 'patternTai'>, reasonKey: string): PuzzleExplanation {
+function valueText(
+  p: Pick<ValuePuzzle, 'answer' | 'answers' | 'rival' | 'options' | 'patternEn' | 'patternZh' | 'patternTai'>,
+  reasonKey: string,
+  chase?: TaiItem,
+): PuzzleExplanation {
   const a = p.options.find((o) => o.kind === p.answer)!;
   const r = p.options.find((o) => o.kind === p.rival)!;
   const A = tileEn(p.answer);
@@ -1487,6 +1516,10 @@ function valueText(p: Pick<ValuePuzzle, 'answer' | 'answers' | 'rival' | 'option
       zh += `這是值得的以速度換台數。`;
     }
   }
+  if (chase) {
+    en += ` ${R} goes for ${chase.nameEn} (${patternNameZh(chase)}, ${chase.tai} 台), but with ${r.acceptance} winning tiles against ${a.acceptance} that is not worth it.`;
+    zh += `打${Rz}是做${patternNameZh(chase)}（${chase.tai}台），但是只聽${r.acceptance}張、比${a.acceptance}張少，不值得。`;
+  }
   const others = p.answers.filter((k) => k !== p.answer);
   if (others.length > 0) {
     en += ` ${others.map(tileEn).join(' and ')} ${others.length > 1 ? 'are' : 'is'} within 10% of the best, so ${others.length > 1 ? 'they count' : 'it counts'} too.`;
@@ -1505,21 +1538,27 @@ function valueText(p: Pick<ValuePuzzle, 'answer' | 'answers' | 'rival' | 'option
  * `VALUE_TOLERANCE` of the best is accepted, and at least one ready discard is clearly worse.
  * Difficulty 1: the best discard is also at least as fast as the rival; 3: in about half the
  * seeds (`VALUE_HARD_SIZE_SHARE`) the bigger hand wins, so keeping the most winning tiles is wrong
- * (`valueSpeedRule`), and in the rest the best discard wins on speed against a bigger hand.
+ * (`valueSpeedRule`), and in the rest the best discard wins on speed against a bigger hand. Most of
+ * the speed wins (`VALUE_HARD_TRAP_SHARE`) are against a pattern of 4 台 or more that keeps at
+ * least half the winning tiles, so "chase such a pattern, else keep the most tiles"
+ * (`valuePatternRule`) is wrong there, while the bigger hands that win do so with it.
  */
 export function valuePuzzle(seed: string, difficulty: PuzzleDifficulty = 2): ValuePuzzle {
   const rng = createRng(`value:${seed}:${difficulty}`);
   // Hard puzzles: half are won by the bigger hand (the most winning tiles is wrong), half by
-  // speed against a bigger hand (the most winning tiles is right), drawn per seed.
+  // speed against a bigger hand (the most winning tiles is right), drawn per seed; most of the
+  // speed wins beat a big pattern that keeps half the tiles (`trap`), the rest a smaller one.
   const sizeWins = difficulty === 3 && rng.next() < VALUE_HARD_SIZE_SHARE;
+  const trap = difficulty === 3 && !sizeWins && rng.next() < VALUE_HARD_TRAP_SHARE;
   let fallback: ValuePuzzle | null = null;
   for (let attempt = 0; attempt < 600; attempt++) {
-    const p = valueAttempt(seed, difficulty, rng, sizeWins);
+    const p = valueAttempt(seed, difficulty, rng, sizeWins, trap);
     if (!p) continue;
     const a = p.options.find((o) => o.kind === p.answer)!;
     const r = p.options.find((o) => o.kind === p.rival)!;
     const trade = r.acceptance! > a.acceptance! || r.bestTai! > a.bestTai!;
-    const hard = (): boolean => (sizeWins ? valueSpeedRule(p) === false : trade && valueSpeedRule(p) === true);
+    const hard = (): boolean =>
+      (sizeWins ? valueSpeedRule(p) === false : trade && valueSpeedRule(p) === true) && valuePatternRule(p) === !trap;
     if (difficulty === 1 ? a.acceptance! >= r.acceptance! && p.patternKey !== '' : difficulty === 3 ? hard() : true) return p;
     fallback = fallback ?? p;
     if (attempt >= 300) return fallback;
@@ -1528,20 +1567,23 @@ export function valuePuzzle(seed: string, difficulty: PuzzleDifficulty = 2): Val
   throw new Error(`valuePuzzle: no puzzle for seed ${seed}`);
 }
 
-function valueAttempt(seed: string, difficulty: PuzzleDifficulty, rng: Rng, sizeBias = false): ValuePuzzle | null {
+function valueAttempt(seed: string, difficulty: PuzzleDifficulty, rng: Rng, sizeBias = false, trap = false): ValuePuzzle | null {
   const pool = new TilePool();
   const dealerSeat = rng.int(4);
   const prevailingWind = rng.int(2);
   const seatWind = seatWindKind(0, dealerSeat);
   const valueHonours = [...new Set([seatWind, prevailingWindKind(prevailingWind), KIND_DRAGON, KIND_DRAGON + 1, KIND_DRAGON + 2])];
   // Theme mix by difficulty: flushes usually keep the faster wait too, pongs usually trade speed.
-  // A hard puzzle the bigger hand should win (`sizeBias`) is built from a pure flush or from five
-  // pongs (one or two exposed), the patterns big enough to beat a wait with more winning tiles.
   const roll = rng.next();
-  const [flushShare, pongShare] = sizeBias ? [0.25, 0.75] : VALUE_THEME_MIX[difficulty];
-  const theme: ValueTheme = roll < flushShare ? 'flush' : roll < flushShare + pongShare ? 'pongs' : 'honour';
-  const nExposed = difficulty === 1 ? 0 : sizeBias && theme === 'pongs' ? 1 + rng.int(2) : rng.int(3);
-  const built = themedHand(rng, pool, theme, valueHonours, sizeBias);
+  // A hard puzzle with a big pattern against speed (`sizeBias`: the pattern wins; `trap`: it keeps
+  // half the winning tiles and still loses) is built from a flush, pongs (concealed pongs count)
+  // or two dragon pongs with the third dragon as the pair (小三元). `pure`: a flush without
+  // honours, and five pongs.
+  const [flushShare, pongShare] = sizeBias ? [0.45, 0.55] : trap ? [0.3, 0.35] : VALUE_THEME_MIX[difficulty];
+  const theme: ValueTheme = roll < flushShare ? 'flush' : roll < flushShare + pongShare ? 'pongs' : sizeBias || trap ? 'honours' : 'honour';
+  const pure = sizeBias || (trap && (theme !== 'flush' || roll < flushShare / 3));
+  const nExposed = difficulty === 1 ? 0 : rng.int(3);
+  const built = themedHand(rng, pool, theme, valueHonours, pure);
   if (!built) return null;
   const melds: PuzzleMeld[] = built.sets.slice(0, nExposed).map((kinds) => {
     const pong = kinds[0] === kinds[1];
@@ -1552,9 +1594,10 @@ function valueAttempt(seed: string, difficulty: PuzzleDifficulty, rng: Rng, size
   // breaks the flush; an all-pongs hand gets a tile next to one of its pongs, offering a chow.
   // An all-pongs hand usually loses a tile from a pong, which leaves a pair-and-pair (對碰) wait.
   // At difficulty 3 it is always a suited pong and the new tile sits right next to it (a two-sided shape).
-  const pongKinds = theme === 'pongs' ? [...new Set(concealed.filter((k) => concealed.filter((x) => x === k).length >= 3 && (difficulty < 3 || k < KIND_WIND)))] : [];
+  const pongKinds = theme === 'pongs' || theme === 'honours' ? [...new Set(concealed.filter((k) => concealed.filter((x) => x === k).length >= 3 && (difficulty < 3 || k < KIND_WIND)))] : [];
   const pairPick = theme === 'flush' && rng.next() < 0.4;
   let outKind = pongKinds.length > 0 && (difficulty === 3 || rng.next() < 0.7) ? pongKinds[rng.int(pongKinds.length)] : pairPick ? built.pair : concealed[rng.int(concealed.length)];
+  if (theme === 'honours' && (pongKinds.length === 0 || rng.next() < 0.4)) outKind = built.pair;
   if (sizeBias && theme === 'flush') {
     // The flush wait left after throwing the off-suit tile has exactly two live winning tiles, one
     // fewer than the single wait on the off-suit tile it competes with.
@@ -1569,7 +1612,7 @@ function valueAttempt(seed: string, difficulty: PuzzleDifficulty, rng: Rng, size
     if (k === out) return false;
     if (theme === 'flush') return k < KIND_WIND ? Math.floor(k / 9) !== built.suit : !hasHonour;
     // Next to the broken pong, so throwing from it leaves a chow-shaped wait that kills 碰碰胡.
-    if (theme === 'pongs') return outKind < KIND_WIND ? k < KIND_WIND && Math.floor(k / 9) === Math.floor(outKind / 9) && Math.abs(k - outKind) <= (difficulty === 3 ? 1 : 2) : k < KIND_WIND && sameSuitNear(k);
+    if (theme === 'pongs' || (theme === 'honours' && outKind !== built.pair)) return outKind < KIND_WIND ? k < KIND_WIND && Math.floor(k / 9) === Math.floor(outKind / 9) && Math.abs(k - outKind) <= (difficulty === 3 ? 1 : 2) : k < KIND_WIND && sameSuitNear(k);
     return true;
   };
   const add = pool.sample(rng, 1, tempting);
@@ -1600,7 +1643,7 @@ function valueAttempt(seed: string, difficulty: PuzzleDifficulty, rng: Rng, size
     const live = shape.map((w) => ({ kind: w, live: 4 - counts[w] - ownMeldCounts[w] })).filter((w) => w.live > 0);
     const rest = concealed.slice();
     rest.splice(rest.indexOf(k), 1);
-    const v = scoreWaits(rest, live, meldObjs, dealerSeat, prevailingWind);
+    const v = scoreWaits(rest, live, meldObjs, dealerSeat, prevailingWind, difficulty === 3 ? HARD_HEADLINE_KEYS : HEADLINE_KEYS);
     const acceptance = live.reduce((n, w) => n + w.live, 0);
     options.push({ kind: k, ready: true, waits: live.map((w) => w.kind), acceptance, ...v });
   }
@@ -1618,8 +1661,7 @@ function valueAttempt(seed: string, difficulty: PuzzleDifficulty, rng: Rng, size
   const rivalKeys = new Set(rival.items!.map((i) => i.key));
   const lost = answer.items!.filter((i) => !rivalKeys.has(i.key)).sort((x, y) => y.tai - x.tai);
   const pattern = lost[0];
-  // A value-honour item is a pong (中 → 中的刻子); flushes and 碰碰胡 read as they are.
-  const patternZh = !pattern ? '' : pattern.key.startsWith('dragon_') || pattern.key === 'seat_wind' || pattern.key === 'round_wind' ? `${pattern.nameZh}的刻子` : pattern.nameZh;
+  const patternZh = pattern ? patternNameZh(pattern) : '';
   const reasonKey = valueReason(answer, rival, !!pattern);
   if (!reasonKey) return null;
   const base = {
@@ -1643,8 +1685,23 @@ function valueAttempt(seed: string, difficulty: PuzzleDifficulty, rng: Rng, size
     bestShanten: 0,
     patternKey: pattern?.key ?? '',
     ...base,
-    ...valueText(base, reasonKey),
+    ...valueText(base, reasonKey, difficulty === 3 ? chasedPattern(answer, rival) : undefined),
   };
+}
+
+/** A value-honour item is a pong (中 → 中的刻子); flushes and 碰碰胡 read as they are. */
+function patternNameZh(item: TaiItem): string {
+  return item.key.startsWith('dragon_') || item.key === 'seat_wind' || item.key === 'round_wind' ? `${item.nameZh}的刻子` : item.nameZh;
+}
+
+/**
+ * The biggest pattern of `VALUE_BIG_PATTERN_TAI` or more that the rival's best win holds and the
+ * answer's does not, when the rival also has fewer winning tiles: the pattern that is not worth chasing.
+ */
+function chasedPattern(answer: ValueOption, rival: ValueOption): TaiItem | undefined {
+  if (rival.acceptance! >= answer.acceptance!) return undefined;
+  const mine = new Set(answer.items!.map((i) => i.key));
+  return rival.items!.filter((i) => i.tai >= VALUE_BIG_PATTERN_TAI && !mine.has(i.key)).sort((x, y) => y.tai - x.tai)[0];
 }
 
 /**
@@ -1655,6 +1712,25 @@ export function valueSpeedRule(p: Pick<ValuePuzzle, 'options'>): boolean | null 
   const ready = p.options.filter((o) => o.ready);
   const most = Math.max(...ready.map((o) => o.acceptance ?? 0));
   const picks = ready.filter((o) => (o.acceptance ?? 0) === most);
+  const right = picks.filter((o) => o.accepted).length;
+  return right === picks.length ? true : right === 0 ? false : null;
+}
+
+/** A pattern of at least this many 台 is what the two-line rule (`valuePatternRule`) chases. */
+export const VALUE_BIG_PATTERN_TAI = 4;
+
+/**
+ * The two-line rule "take a discard whose best win holds a pattern of 4 台 or more if it keeps at
+ * least half the most winning tiles (the biggest such win), else keep the most winning tiles"
+ * against the judge: true when every discard it picks is accepted, false when none is, null when
+ * they split.
+ */
+export function valuePatternRule(p: Pick<ValuePuzzle, 'options'>): boolean | null {
+  const ready = p.options.filter((o) => o.ready);
+  const most = Math.max(...ready.map((o) => o.acceptance ?? 0));
+  const big = ready.filter((o) => (o.items ?? []).some((i) => i.tai >= VALUE_BIG_PATTERN_TAI) && 2 * (o.acceptance ?? 0) >= most);
+  const top = Math.max(...big.map((o) => o.bestTai ?? -1));
+  const picks = big.length > 0 ? big.filter((o) => o.bestTai === top) : ready.filter((o) => (o.acceptance ?? 0) === most);
   const right = picks.filter((o) => o.accepted).length;
   return right === picks.length ? true : right === 0 ? false : null;
 }

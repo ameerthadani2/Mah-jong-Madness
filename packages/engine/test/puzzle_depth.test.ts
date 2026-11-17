@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { timeBound } from './helpers/timing';
-import { DEFENCE_SAFETY_ORDER, defenceOrderRule, defencePuzzle, kindInfo, sha256Hex, valuePuzzle, valueSpeedRule, type DefenceOption, type ValueOption } from '../src/index';
+import { DEFENCE_SAFETY_ORDER, defenceOrderRule, defencePuzzle, kindInfo, sha256Hex, VALUE_BIG_PATTERN_TAI, valuePatternRule, valuePuzzle, valueSpeedRule, type DefenceOption, type TaiItem, type ValueOption, type ValuePuzzle } from '../src/index';
 
 // How often a one-line rule answers a puzzle: "keep the most winning tiles" for value puzzles, a
 // fixed safety order for defence puzzles. Easy and medium puzzles teach those rules; hard ones
@@ -14,6 +14,21 @@ describe('one-line rules measured against the judge', () => {
     expect(valueSpeedRule({ options: [ready(1, 8, true), ready(2, 4, false), { kind: 3, ready: false }] })).toBe(true);
     expect(valueSpeedRule({ options: [ready(1, 8, false), ready(2, 4, true)] })).toBe(false);
     expect(valueSpeedRule({ options: [ready(1, 8, false), ready(2, 8, true), ready(3, 2, false)] })).toBeNull();
+  });
+
+  it('chase a pattern of 4 台 that keeps half the most winning tiles, else keep the most winning tiles', () => {
+    const big: TaiItem[] = [{ key: 'all_pongs', nameZh: '碰碰胡', nameEn: 'All Pongs', tai: 4 }];
+    const small: TaiItem[] = [{ key: 'dragon_31', nameZh: '中', nameEn: 'Red Dragon Pong', tai: 1 }];
+    const opt = (kind: number, acceptance: number, accepted: boolean, items: TaiItem[], bestTai: number): ValueOption => ({ ...ready(kind, acceptance, accepted), items, bestTai });
+    // The pattern keeps half the tiles: the rule chases it.
+    expect(valuePatternRule({ options: [opt(1, 8, false, [], 2), opt(2, 4, true, big, 7)] })).toBe(true);
+    expect(valuePatternRule({ options: [opt(1, 8, true, [], 2), opt(2, 4, false, big, 7)] })).toBe(false);
+    // Under half, or under 4 台: the rule keeps the most winning tiles.
+    expect(valuePatternRule({ options: [opt(1, 9, true, [], 2), opt(2, 4, false, big, 7)] })).toBe(true);
+    expect(valuePatternRule({ options: [opt(1, 8, false, [], 2), opt(2, 6, true, small, 4)] })).toBe(false);
+    // Two patterns that keep half: the one with the biggest win; a tie that splits the judge is null.
+    expect(valuePatternRule({ options: [opt(1, 8, false, [], 2), opt(2, 5, true, big, 7), opt(3, 4, false, big, 12)] })).toBe(false);
+    expect(valuePatternRule({ options: [opt(1, 8, false, [], 2), opt(2, 5, true, big, 7), opt(3, 4, false, big, 7)] })).toBeNull();
   });
 
   it('the fixed safety order: looks only at shape-keeping discards with the strongest reason', () => {
@@ -83,6 +98,58 @@ describe('hard value puzzles need more than "keep the most winning tiles"', () =
   it('generate quickly enough for the server to regenerate a Rush run (loose bound for CI)', () => {
     expect(hard.median).toBeLessThan(timeBound(60));
     expect(hard.max).toBeLessThan(timeBound(1500));
+  });
+});
+
+/** The headline items of 4 台 or more in an option's best win. */
+const bigItems = (o: ValueOption): TaiItem[] => (o.items ?? []).filter((i) => i.tai >= VALUE_BIG_PATTERN_TAI);
+const topKey = (o: ValueOption): string => bigItems(o).sort((x, y) => y.tai - x.tai)[0]?.key ?? '';
+const opt = (p: ValuePuzzle, k: number) => p.options.find((o) => o.kind === k)!;
+
+describe('hard value puzzles need judgement, not a two-line rule', () => {
+  const hard = Array.from({ length: 200 }, (_, i) => valuePuzzle(`depth-two-${i}`, 3));
+  const share = (f: (p: ValuePuzzle) => boolean) => hard.filter(f).length / hard.length;
+
+  it('"chase a pattern of 4 台 that keeps half the winning tiles" is wrong in at least 30 percent', () => {
+    expect(share((p) => valuePatternRule(p) === false)).toBeGreaterThanOrEqual(0.3);
+  });
+
+  it('the one-line rules stay near half: most winning tiles, and the biggest win', () => {
+    expect(share((p) => valueSpeedRule(p) === false)).toBeGreaterThanOrEqual(0.4);
+    expect(share((p) => valueSpeedRule(p) === false)).toBeLessThanOrEqual(0.6);
+    const biggest = (p: ValuePuzzle) => {
+      const ready = p.options.filter((o) => o.ready);
+      const top = Math.max(...ready.map((o) => o.bestTai ?? -1));
+      return p.answers.includes(ready.find((o) => o.bestTai === top)!.kind);
+    };
+    expect(share(biggest)).toBeGreaterThanOrEqual(0.35);
+    expect(share(biggest)).toBeLessThanOrEqual(0.65);
+  });
+
+  it('the bigger hand wins with several patterns, none in most of them', () => {
+    const counts = new Map<string, number>();
+    const wins = hard.filter((p) => valueSpeedRule(p) === false);
+    for (const p of wins) counts.set(topKey(opt(p, p.answer)), (counts.get(topKey(opt(p, p.answer))) ?? 0) + 1);
+    expect(counts.size).toBeGreaterThanOrEqual(3);
+    for (const n of counts.values()) expect(n).toBeLessThanOrEqual(0.5 * wins.length);
+  });
+
+  it('a pattern that keeps half the tiles and is not worth chasing is named, in both languages', () => {
+    const traps = hard.filter((p) => valueSpeedRule(p) === true && valuePatternRule(p) === false);
+    const chased = new Set<string>();
+    for (const p of traps) {
+      const r = opt(p, p.rival);
+      const a = opt(p, p.answer);
+      expect(r.accepted).toBe(false);
+      expect(2 * r.acceptance!).toBeGreaterThanOrEqual(a.acceptance!);
+      const item = bigItems(r).filter((i) => !(a.items ?? []).some((x) => x.key === i.key)).sort((x, y) => y.tai - x.tai)[0];
+      if (!item) continue;
+      chased.add(item.key);
+      expect(p.explanation).toContain(`${kindInfo(p.rival).nameEn} goes for ${item.nameEn}`);
+      expect(p.explanationZh).toContain(`打${kindInfo(p.rival).nameZh}是做`);
+    }
+    expect(traps.length).toBeGreaterThanOrEqual(0.25 * hard.length);
+    expect(chased.size).toBeGreaterThanOrEqual(3);
   });
 });
 
