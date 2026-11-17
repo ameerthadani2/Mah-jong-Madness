@@ -1,50 +1,26 @@
 /**
- * Checks over the source of the screens away from the table: results and errors are spoken, reading text is
- * not cut short, and buttons that repeat on a screen name what they act on.
+ * The sentences the screens away from the table speak and show: Puzzle Rush's score, strikes and clock, the names
+ * of repeated buttons, and tiles listed in a puzzle explanation. The screens using them are rendered (*.render.test.tsx).
  */
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { kindFromCode, kindsFromString } from '@mjm/engine';
 import { tileListText } from '../logic/puzzle';
 import { translator } from '../logic/translator.fixture';
 
-const SRC = join(__dirname, '..');
-const read = (rel: string) => readFileSync(join(SRC, rel), 'utf8');
-
 describe('results and errors away from the table are spoken by a screen reader', () => {
   // A live line being a polite region, an assertive alert for errors and an announcement on iOS is rendered in
   // src/components/SharedA11y.render.test.tsx.
-  it('every puzzle theme puts its verdict and explanation in the answer region', () => {
-    expect(read('components/puzzles/PuzzleParts.tsx')).toMatch(/export function Answer[\s\S]*?<Live message=\{spoken\} testID="puzzle-answer"/);
-    // Best discard and waits live in PuzzleView; defence, claim and value in their own files.
-    expect(read('components/PuzzleView.tsx').match(/<Answer spoken=/g)).toHaveLength(2);
-    for (const f of ['Defence', 'Claim', 'Value']) expect(read(`components/puzzles/${f}PuzzleView.tsx`), f).toMatch(/<Answer spoken=\{\[t\(answered \? /);
-    // Nothing shows a verdict outside that region.
-    for (const f of ['components/PuzzleView.tsx', 'components/puzzles/DefencePuzzleView.tsx', 'components/puzzles/ClaimPuzzleView.tsx', 'components/puzzles/ValuePuzzleView.tsx']) {
-      const code = read(f);
-      expect(code.match(/<Verdict /g)?.length, f).toBe(code.match(/<Answer spoken=/g)?.length);
-    }
-  });
-
-  it('Puzzle Rush names its score and its strikes', () => {
-    const rush = read('screens/PuzzleScreens.tsx');
-    expect(rush).toMatch(/accessibilityLabel=\{t\('learn\.rush\.solved', \{ count: score \}\)\}/);
-    expect(rush).toMatch(/accessibilityLabel=\{t\('learn\.rush\.strikes', \{ n: strikes, max: RUSH_STRIKES \}\)\} accessibilityLiveRegion="polite"/);
-    expect(rush).toMatch(/accessibilityLabel=\{t\('learn\.rush\.timeLeft', \{ minutes: Math\.floor\(left \/ 60\), seconds: left % 60 \}\)\}/);
+  // Every puzzle theme's verdict and explanation shown in the answer region and nowhere else, spoken on iOS with the
+  // tiles named in the reader's language: src/components/puzzles/PuzzleViews.render.test.tsx.
+  it('Puzzle Rush has the sentences for its score, strikes and clock in both languages', () => {
+    // The screen naming them (and the strikes as they change) is rendered in src/screens/Puzzles.render.test.tsx.
     expect(translator('en')('learn.rush.timeLeft', { minutes: 2, seconds: 45 })).toBe('Time left: 2 min 45 s');
     expect(translator('en')('learn.rush.strikes', { n: 1, max: 3 })).toBe('Strikes: 1 of 3');
     expect(translator('en')('learn.rush.solved', { count: 3 })).toBe('3 solved');
     expect(translator('zh-TW')('learn.rush.solved', { count: 3 })).toBe('已解 3 題');
   });
-
-  it('the Shop, the Clubs screens and the age gate speak what they report', () => {
-    // The Account card's error (assertive) and notice (polite) are rendered in src/screens/Account.render.test.tsx.
-    expect(read('screens/ShopScreen.tsx')).toMatch(/<Live message=\{msg\.text\}/);
-    expect(read('screens/ClubsScreen.tsx')).toMatch(/<Live message=\{error\} assertive/);
-    expect(read('screens/ClubsScreen.tsx')).toMatch(/<Live message=\{messages\.notice\}/);
-    expect(read('components/AgeGate.tsx')).toMatch(/<Live message=\{t\('legal\.age\.invalid'\)\} assertive/);
-  });
+  // The Shop's purchase line, a club screen's error and notice, and the age gate's error are rendered as live lines in
+  // src/screens/Shop.render.test.tsx, src/screens/Clubs.render.test.tsx and src/components/AgeGate.render.test.tsx.
 });
 
 describe('reading text on Learn', () => {
@@ -70,6 +46,6 @@ describe('tiles listed in a puzzle explanation', () => {
 
   it('never fall back to the m / p / s codes', () => {
     expect(tileListText(kinds, 'en')).not.toMatch(/\d[mps]\b/);
-    expect(read('components/PuzzleView.tsx')).not.toMatch(/kindsToString/);
+    // A puzzle's spoken answer never using them is rendered in src/components/puzzles/PuzzleViews.render.test.tsx.
   });
 });

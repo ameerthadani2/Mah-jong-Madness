@@ -1,5 +1,6 @@
-import { describe, expect, it, jest } from '@jest/globals';
+import { afterEach, describe, expect, it, jest } from '@jest/globals';
 import React from 'react';
+import { AccessibilityInfo, Platform } from 'react-native';
 import { act, fireEvent, render, screen, within } from '@testing-library/react-native';
 import { claimPuzzle, claimQuestion, defencePuzzle, defenceQuestion, discardAnalysis, discardPuzzle, puzzleQuestion, valuePuzzle, valueQuestion, waitsPuzzle, type AnyPuzzle, type Kind, type PuzzleAnswerInput } from '@mjm/engine';
 import { PuzzleView, type PuzzleResult } from '../PuzzleView';
@@ -120,6 +121,50 @@ describe('the value puzzle view', () => {
     await fireEvent.press(tile(rival));
     expect(onResult.mock.calls[0][0]).toMatchObject({ correct: false, answer: rival });
     expect(screen.getByText('Another discard is worth more.')).toBeOnTheScreen();
+  });
+});
+
+describe('every puzzle theme speaks its verdict and explanation', () => {
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+  const DISCARD = discardPuzzle('render-discard', 2);
+  const WAITS = waitsPuzzle('render-waits', 2);
+  const wrongTile = (p: { hand: Kind[]; answers: Kind[] }) => p.hand.find((k) => !p.answers.includes(k))!;
+  const themes: Array<[string, AnyPuzzle, () => Promise<void>, string]> = [
+    ['discard', DISCARD, () => fireEvent.press(tile(wrongTile(DISCARD))), 'There is a better one.'],
+    [
+      'waits',
+      WAITS,
+      async () => {
+        // One of its winning tiles, when it has more than one, is not all of them.
+        await fireEvent.press(screen.getAllByRole('button', { name: tileName(WAITS.answers[0], 'en') }).at(-1)!);
+        await fireEvent.press(screen.getByRole('button', { name: 'Check' }));
+      },
+      WAITS.answers.length > 1 ? 'Not all of them.' : 'Exactly right!',
+    ],
+    ['defence', DEFENCE, () => fireEvent.press(tile(wrongTile(DEFENCE))), 'There is a safer tile.'],
+    ['claim', CLAIM, () => fireEvent.press(screen.getByTestId(`claim-${claimButtons(CLAIM, 'en').find((b) => !CLAIM.answers.includes(b.id))!.id}`)), 'The coach would do something else.'],
+    ['value', VALUE, () => fireEvent.press(tile(VALUE.rival)), 'Another discard is worth more.'],
+  ];
+
+  it.each(themes)('%s: the verdict shows inside the answer region, nowhere else, and is announced on iOS', async (_name, puzzle, answer, verdict) => {
+    jest.replaceProperty(Platform, 'OS', 'ios');
+    const said = jest.spyOn(AccessibilityInfo, 'announceForAccessibility').mockImplementation(() => undefined);
+    await show(puzzle);
+    expect(screen.queryByTestId('puzzle-answer')).toBeNull();
+    await answer();
+    const region = screen.getByTestId('puzzle-answer');
+    expect(region.props.accessibilityLiveRegion).toBe('polite');
+    expect(within(region).getByText(verdict)).toBeOnTheScreen();
+    expect(screen.getAllByText(verdict)).toHaveLength(1);
+    // The spoken line starts with the verdict and goes on to say more (the right answer, the explanation).
+    const spoken = said.mock.calls.map(([m]) => m).find((m) => m.startsWith(verdict));
+    expect(spoken).toBeDefined();
+    expect(spoken!.length).toBeGreaterThan(verdict.length + 1);
+    // Tiles are named in the reader's language, never by the m / p / s codes.
+    expect(spoken).not.toMatch(/\d[mps]\b/);
+    for (const el of within(region).queryAllByText(/\d[mps]\b/)) expect(el).toBeNull();
   });
 });
 

@@ -71,6 +71,10 @@ describe('the age gate', () => {
   it('asks again for a year that cannot be a birth year', async () => {
     await answer(String(THIS_YEAR + 1));
     expect(await screen.findByText('Enter your birth year as four digits, for example 1990.')).toBeOnTheScreen();
+    // Said at once by a screen reader: the line is an assertive alert.
+    const line = screen.getByTestId('age-invalid');
+    expect(line.props.accessibilityLiveRegion).toBe('assertive');
+    expect(line.props.accessibilityRole).toBe('alert');
     expect(await AsyncStorage.getItem('mjm.age')).toBeNull();
   });
 });

@@ -48,6 +48,19 @@ async function answerOnce() {
 }
 
 describe('Puzzle Rush', () => {
+  it('names its score and its strikes for a screen reader, and the strikes as they change', async () => {
+    await renderRush();
+    const first = rushPuzzleAt(`rush-${hex(BYTE)}`, 0) as DiscardPuzzle;
+    expect(screen.getByTestId('rush-score')).toHaveProp('accessibilityLabel', '0 solved');
+    expect(screen.getByTestId('rush-strikes')).toHaveProp('accessibilityLabel', 'Strikes: 0 of 3');
+    expect(screen.getByTestId('rush-strikes')).toHaveProp('accessibilityLiveRegion', 'polite');
+    // A wrong tile is a strike, named as one.
+    const wrong = first.hand.find((k) => !first.answers.includes(k))!;
+    await fireEvent.press(screen.getAllByRole('button', { name: tileName(wrong, 'en') })[0]);
+    expect(screen.getByTestId('rush-strikes')).toHaveProp('accessibilityLabel', 'Strikes: 1 of 3');
+    expect(screen.getByTestId('rush-score')).toHaveProp('accessibilityLabel', '0 solved');
+  });
+
   it('opening it and backing out at once costs nothing', async () => {
     expect(canUse(EMPTY_WALLET, 'rush').ok).toBe(true);
     const calls = await renderRush();

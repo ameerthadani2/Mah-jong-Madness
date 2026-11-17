@@ -1,8 +1,9 @@
 import '../test/mockStore';
-import { beforeEach, describe, expect, it } from '@jest/globals';
+import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import React from 'react';
+import { AccessibilityInfo, Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { fireEvent, render, screen } from '@testing-library/react-native';
+import { fireEvent, render, screen, within } from '@testing-library/react-native';
 import { ShopScreen } from './ShopScreen';
 import { FakeProviders } from '../test/providers';
 
@@ -10,6 +11,10 @@ beforeEach(async () => {
   // An adult who answered the age gate (the Shop asks before it shows anything for sale).
   await AsyncStorage.clear();
   await AsyncStorage.setItem('mjm.age', JSON.stringify({ birthYear: 1990, at: 0, synced: true }));
+});
+
+afterEach(() => {
+  jest.restoreAllMocks();
 });
 
 async function renderShop() {
@@ -47,6 +52,19 @@ describe('the Shop', () => {
     expect(await screen.findByRole('button', { name: '$0.99' })).toBeEnabled();
     expect(screen.getByRole('button', { name: '$4.99' })).toBeEnabled();
     expect(screen.getByRole('button', { name: '$99.99' })).toBeEnabled();
+  });
+
+  it('says what a purchase did in a line a screen reader speaks', async () => {
+    jest.replaceProperty(Platform, 'OS', 'ios');
+    const said = jest.spyOn(AccessibilityInfo, 'announceForAccessibility').mockImplementation(() => undefined);
+    await renderShop();
+    await fireEvent.press(await screen.findByRole('button', { name: '$0.99' }));
+    const line = await screen.findByTestId('shop-message');
+    expect(line.props.accessibilityLiveRegion).toMatch(/^(polite|assertive)$/);
+    const text = String(within(line).getByText(/\S/).props.children);
+    expect(text).not.toBe('');
+    // iOS ignores live regions: the same words are announced.
+    expect(said).toHaveBeenCalledWith(text);
   });
 
   it('shows each plan with its price per month or year', async () => {

@@ -122,6 +122,22 @@ describe('the Clubs list', () => {
     await fireEvent.press(screen.getByRole('button', { name: 'Join' }));
     expect(join).toHaveBeenCalledWith(expect.anything(), 'AB12');
     expect(await screen.findByText('Request sent — an admin must approve you.')).toBeOnTheScreen();
+    // A notice, spoken politely.
+    expect(screen.getByTestId('club-notice').props.accessibilityLiveRegion).toBe('polite');
+    expect(screen.getByTestId('club-notice')).toHaveTextContent('Request sent — an admin must approve you.');
+  });
+
+  it('says a refused join at once, as an alert', async () => {
+    jest.spyOn(clubsApi, 'mine').mockResolvedValue([]);
+    jest.spyOn(clubsApi, 'join').mockRejectedValue(Object.assign(new Error('fourwinds_required'), { code: 'fourwinds_required' }));
+    await renderList();
+    await screen.findByText('You are not in any club yet.');
+    await fireEvent.changeText(screen.getByPlaceholderText('CLUB CODE'), 'ab12');
+    await fireEvent.press(screen.getByRole('button', { name: 'Join' }));
+    const line = await screen.findByTestId('club-error');
+    expect(line).toHaveTextContent('Running a club comes with The Four Winds Club');
+    expect(line.props.accessibilityLiveRegion).toBe('assertive');
+    expect(line.props.accessibilityRole).toBe('alert');
   });
 
   it('lets anyone create a club while the store is not live', async () => {
