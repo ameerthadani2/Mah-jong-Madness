@@ -24,9 +24,8 @@ describe('table exit', () => {
   });
 
   it('asks before leaving from the result sheet, the shuffle screen and the Android Back key while a match is on', () => {
+    // The result sheet's Leave opening the exit sheet is rendered in src/screens/TablePlay.render.test.tsx ("the end of a hand").
     const src = readFileSync(join(__dirname, '../../screens/TableScreen.tsx'), 'utf8');
-    const sheet = src.slice(src.indexOf('<ResultSheet'), src.indexOf('/>', src.indexOf('<ResultSheet')));
-    expect(sheet).toMatch(/onLeave=\{\(\) => setLeaveAsk\(true\)\}/);
     expect(src).toMatch(/title=\{t\('table\.leave'\)\} onPress=\{\(\) => setLeaveAsk\(true\)\}/);
     expect(src).toContain('useHardwareBack(() => (state?.matchOver ? leave() : setLeaveAsk(true)));');
     // Only the match-over card leaves directly.
@@ -44,9 +43,7 @@ describe('table exit', () => {
     // Abandoning still gives the seat up, and "Keep playing" changes nothing.
     expect(exitPlan('abandon', { quickMatch: true }).keepSeat).toBe(false);
     expect(exitPlan('stay', { quickMatch: true }).keepSeat).toBe(false);
-    const src = readFileSync(join(__dirname, '../../screens/TableScreen.tsx'), 'utf8');
-    expect(src).toContain('const plan = exitPlan(choice, { quickMatch: session?.quickMatch });');
-    expect(src).toContain('app.setSession(null, { keepSeat: plan.keepSeat });');
+    // That the table screen follows this plan is rendered in src/screens/TableLeave.render.test.tsx ("at a quick-match table ...").
   });
 
   it('the exit sheet at a quick-match table says how long the table waits with nobody at it', () => {

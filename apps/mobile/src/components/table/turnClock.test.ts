@@ -82,7 +82,7 @@ describe('what a screen reader hears about the clock', () => {
     const announcer = parts.slice(parts.indexOf('export function ClockAnnouncer'), parts.indexOf('export function ClockTicker'));
     expect(announcer).toContain('accessibilityLiveRegion="polite"');
     expect(announcer).toContain('useAnnounce(');
-    expect(read('../../screens/TableScreen.tsx')).toContain('<ClockAnnouncer clock={clock} myMove={myMove} />');
+    // The table speaks the five-second notice through it: src/screens/TablePlay.render.test.tsx ("shows my clock ...").
     // No other piece that follows the clock is a live region either.
     expect(read('../TableParts.tsx').match(/accessibilityLiveRegion/g) ?? []).toHaveLength(0);
   });

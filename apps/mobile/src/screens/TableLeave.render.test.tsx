@@ -19,8 +19,10 @@ afterEach(() => {
   jest.useRealTimers();
 });
 
-async function renderTable() {
+async function renderTable(quickMatch = false) {
   session = createLocalSession('Mei', 'panda', DEFAULT_RULES);
+  // A quick-match table is an online one; the flag alone is what the exit sheet and the exit plan read.
+  if (quickMatch) session = { ...session, mode: 'online', quickMatch: true };
   session.host!.start();
   const setSession = jest.fn();
   const setActiveSession = jest.fn();
@@ -78,5 +80,15 @@ describe("the table's exit icon", () => {
     await renderTable();
     await fireEvent.press(await screen.findByRole('button', { name: 'Leave table' }));
     expect(screen.getByText('The table waits for you. You can come back from Home with Resume. Abandoning ends this match.')).toBeOnTheScreen();
+  });
+
+  it('at a quick-match table, says how long the table waits, and "Back to Home" keeps the seat', async () => {
+    const calls = await renderTable(true);
+    await fireEvent.press(await screen.findByRole('button', { name: 'Leave table' }));
+    expect(screen.getByText(/A quick-match table with no player left at it closes after two minutes\./)).toBeOnTheScreen();
+    await fireEvent.press(screen.getByRole('button', { name: 'Back to Home' }));
+    expect(calls.setSession).toHaveBeenCalledWith(null, { keepSeat: true });
+    expect(calls.setActiveSession).not.toHaveBeenCalled();
+    expect(calls.reset).toHaveBeenCalledWith({ name: 'home' });
   });
 });

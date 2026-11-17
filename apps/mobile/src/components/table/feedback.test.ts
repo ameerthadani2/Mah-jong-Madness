@@ -41,7 +41,7 @@ describe('turn timeout', () => {
   it('says so in both languages and shows the notice at the table', () => {
     expect(en.autoDiscard).toMatch(/%\{tile\}/);
     expect(zh.autoDiscard).toMatch(/%\{tile\}/);
-    expect(read('../../screens/TableScreen.tsx')).toMatch(/testID="auto-discard-notice"/);
+    // Shown at the table when the clock runs out: src/screens/TablePlay.render.test.tsx ("shows my clock ...").
   });
 });
 
@@ -103,7 +103,7 @@ describe('a claim the table made when the prompt ran out of time', () => {
     const { en, zhTW } = await import('../../i18n/locales');
     const src = readFileSync(join(__dirname, '../../screens/TableScreen.tsx'), 'utf8');
     expect(src).toContain('if (autoClaimed(meldCount.current, next, sentClaim.current)) {');
-    expect(src).toContain("if (a.type === 'chi' || a.type === 'pong' || a.type === 'kong') sentClaim.current = true;");
+    // A claim the player made is not mistaken for one the table made: src/screens/TablePlay.render.test.tsx ("a claim taken ...").
     expect(src).toContain("t('table.autoClaim', {");
     expect(en.table.autoClaim).toContain('%{call}');
     expect(zhTW.table.autoClaim).toContain('%{call}');
