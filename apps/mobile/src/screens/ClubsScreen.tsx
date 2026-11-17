@@ -20,6 +20,7 @@ import { AvatarPlate } from '../components/Avatars';
 import { Icon } from '../components/Icons';
 import { AgeBlocked, AgeGate } from '../components/AgeGate';
 import { NoValueNotice } from '../components/LegalLinks';
+import { ClubClosedMatches } from '../components/ClubClosedMatches';
 import { ReportPlayerSheet } from '../components/ReportPlayerSheet';
 import { RuleEditor } from '../components/RuleEditor';
 import { SignInPrompt } from '../components/SignInPrompt';
@@ -727,6 +728,7 @@ export function ClubScreen({ code, notice: linkNotice }: { code: string; /** Why
             ) : (
               <Button small testID="season-start" kind="secondary" title={t('clubs.season.start')} onPress={() => setConfirmSeason(true)} style={{ alignSelf: 'flex-start' }} />
             ))}
+          <ClubClosedMatches matches={club.closedMatches} />
         </Card>
       )}
       <ReportPlayerSheet visible={reporting !== null} target={reporting} onClose={() => setReporting(null)} />

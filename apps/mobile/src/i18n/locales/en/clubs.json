@@ -205,5 +205,11 @@
     "joinRateClub": "This club is getting a lot of join requests. Try again later.",
     "queueFull": "This club has too many requests waiting. Try again later.",
     "newAccountsFull": "This club has no room for new accounts right now. Try again later."
+  },
+  "closed": {
+    "title": "Closed before the end",
+    "note": "An owner or admin closed these matches before they finished. They do not count toward the standings.",
+    "line": "%{table}: closed by %{name} in hand %{hand}, %{date}",
+    "bot": "%{name} (bot)"
   }
 }

@@ -7,7 +7,7 @@
  * Ids that are uuid columns are checked before they reach SQL, so a malformed id from a client
  * reads as "not found" rather than a database error.
  */
-import { anonymiseUserIn, moveMembershipsIn, type Club, type ClubBan, type ClubMember, type ClubSettings, type ClubTable, type FormerMember, type Identity, type OwnerLapse, type SeasonRecord } from '../clubs';
+import { anonymiseUserIn, moveMembershipsIn, type Club, type ClubBan, type ClubMember, type ClubSettings, type ClosedMatch, type ClubTable, type FormerMember, type Identity, type OwnerLapse, type SeasonRecord } from '../clubs';
 import type { Pool, Queryable } from '../db';
 import {
   DELETED_PLAYER_NAME,
@@ -904,6 +904,7 @@ interface ClubRow {
   season_history: SeasonRecord[] | null;
   owner_lapsed_at: Date | null;
   owner_lapses: OwnerLapse[] | null;
+  closed_matches: ClosedMatch[] | null;
 }
 interface BanRow {
   club_code: string;
@@ -959,8 +960,10 @@ function assembleClubs(clubs: ClubRow[], members: MemberRow[], tables: TableRow[
   for (const c of clubs) {
     // Newer fields are set only when there is something in them, so a club reads back as it was written.
     const lapses = Array.isArray(c.owner_lapses) && c.owner_lapses.length ? { ownerLapses: c.owner_lapses } : {};
+    const closed = Array.isArray(c.closed_matches) && c.closed_matches.length ? { closedMatches: c.closed_matches } : {};
     byCode.set(c.code, {
       ...lapses,
+      ...closed,
       code: c.code,
       name: c.name,
       description: c.description,
@@ -1034,7 +1037,7 @@ function assembleClubs(clubs: ClubRow[], members: MemberRow[], tables: TableRow[
 }
 
 function pgClubs(q: Queryable, tx: Tx): ClubsRepo {
-  const CLUB_COLS = 'code, owner_id, name, description, rules, settings, created_at, season, season_started_at, season_history, owner_lapsed_at, owner_lapses';
+  const CLUB_COLS = 'code, owner_id, name, description, rules, settings, created_at, season, season_started_at, season_history, owner_lapsed_at, owner_lapses, closed_matches';
   const MEMBER_COLS = 'club_code, user_id, role, status, display_name, avatar, joined_at, season_points, lifetime_points, matches_played, matches_won, hands_won, requested_at';
   const TABLE_COLS = 'code, club_code, label, rules, created_by, status, state, created_at, variant';
   const BAN_COLS = 'club_code, user_id, display_name, banned_by, banned_at';
@@ -1103,14 +1106,14 @@ function pgClubs(q: Queryable, tx: Tx): ClubsRepo {
       .filter((f) => isUuid(f.userId))
       .map((f) => ({ user_id: f.userId, left_at: f.leftAt, season: f.season, season_points: f.seasonPoints, points: f.points, matches_played: f.matchesPlayed, matches_won: f.matchesWon, hands_won: f.handsWon }));
     await c.query(
-      `INSERT INTO clubs (code, owner_id, name, description, rules, settings, created_at, updated_at, season, season_started_at, season_history, owner_lapsed_at, owner_lapses)
-       VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7, now(), $8, $9, $10::jsonb, $11, $12::jsonb)
+      `INSERT INTO clubs (code, owner_id, name, description, rules, settings, created_at, updated_at, season, season_started_at, season_history, owner_lapsed_at, owner_lapses, closed_matches)
+       VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7, now(), $8, $9, $10::jsonb, $11, $12::jsonb, $13::jsonb)
        ON CONFLICT (code) DO UPDATE SET
          owner_id = CASE WHEN EXISTS (SELECT 1 FROM users u WHERE u.id = excluded.owner_id) THEN excluded.owner_id ELSE clubs.owner_id END,
          name = excluded.name, description = excluded.description,
          rules = excluded.rules, settings = excluded.settings, updated_at = now(), season = excluded.season,
          season_started_at = excluded.season_started_at, season_history = excluded.season_history, owner_lapsed_at = excluded.owner_lapsed_at,
-         owner_lapses = excluded.owner_lapses`,
+         owner_lapses = excluded.owner_lapses, closed_matches = excluded.closed_matches`,
       [
         club.code,
         club.ownerId,
@@ -1124,6 +1127,7 @@ function pgClubs(q: Queryable, tx: Tx): ClubsRepo {
         json(club.seasons ?? []),
         typeof club.ownerLapsedAt === 'number' ? toDate(club.ownerLapsedAt) : null,
         json(club.ownerLapses ?? []),
+        json(club.closedMatches ?? []),
       ],
     );
     await c.query('DELETE FROM club_members WHERE club_code = $1 AND NOT (user_id = ANY($2::uuid[]))', [club.code, rows.map((r) => r.user_id)]);
@@ -1174,7 +1178,7 @@ function pgClubs(q: Queryable, tx: Tx): ClubsRepo {
       [club.code, json(former)],
     );
   };
-  /** Clubs with a row for this account (member, request, owner, ban, standings on file, or a lapse on file as an owner). */
+  /** Clubs with a row for this account (member, request, owner, ban, standings on file, a lapse on file as an owner, a finished season or a closed match). */
   const clubsNaming = async (c: Queryable, userId: string): Promise<string[]> => {
     const res = await c.query<{ code: string }>(
       `SELECT club_code AS code FROM club_members WHERE user_id = $1
@@ -1183,6 +1187,8 @@ function pgClubs(q: Queryable, tx: Tx): ClubsRepo {
        UNION SELECT club_code FROM club_former_members WHERE user_id = $1
        UNION SELECT code FROM clubs WHERE owner_lapses @> jsonb_build_array(jsonb_build_object('userId', $1::text))
        UNION SELECT code FROM clubs WHERE season_history @> jsonb_build_array(jsonb_build_object('standings', jsonb_build_array(jsonb_build_object('userId', $1::text))))
+       UNION SELECT code FROM clubs WHERE closed_matches @> jsonb_build_array(jsonb_build_object('closedBy', jsonb_build_object('userId', $1::text)))
+          OR closed_matches @> jsonb_build_array(jsonb_build_object('seats', jsonb_build_array(jsonb_build_object('userId', $1::text))))
        ORDER BY code`,
       [userId],
     );

@@ -151,6 +151,25 @@ export interface Club {
   ownerLapses?: OwnerLapse[];
   /** Standings on file for accounts that left the club (decision 5). Never sent to clients. */
   former?: FormerMember[];
+  /**
+   * Matches an owner or admin closed before they finished, oldest first (at most
+   * `CLUB_LIMITS.closedMatchesKept`). Shown to members; they never count toward the standings.
+   * Absent in clubs that have closed none.
+   */
+  closedMatches?: ClosedMatch[];
+}
+
+/** A match closed mid-play: where it stood when it was closed, and who closed it. */
+export interface ClosedMatch {
+  /** The table's room code and label. */
+  table: string;
+  label: string;
+  closedAt: number;
+  closedBy: { userId: string; name: string };
+  /** The hand the match had reached (0 = the first). */
+  handNumber: number;
+  /** Each seat's points at closure, with who sat there. */
+  seats: Array<{ seat: number; name: string; userId?: string; isBot: boolean; points: number }>;
 }
 
 /** One account's lapse as an owner of a club. */
@@ -268,6 +287,8 @@ export const CLUB_LIMITS = {
   finishedTableMs: DAY_MS,
   /** Finished seasons kept in a club's history. */
   seasonsKept: 24,
+  /** Matches closed mid-play kept in a club's history. */
+  closedMatchesKept: 20,
 } as const;
 
 /** Keep only the known settings, and only when they are real booleans; anything else keeps `base`'s value. */
@@ -317,6 +338,11 @@ function normalise(c: Club): Club {
   c.ownerLapsedAt = typeof c.ownerLapsedAt === 'number' ? c.ownerLapsedAt : null;
   c.ownerLapses = Array.isArray(c.ownerLapses) ? c.ownerLapses.filter((l) => l && typeof l.userId === 'string' && typeof l.lapsedAt === 'number') : [];
   c.former = Array.isArray(c.former) ? c.former.filter((f) => f && typeof f.userId === 'string') : [];
+  if (c.closedMatches !== undefined) {
+    const closed = Array.isArray(c.closedMatches) ? c.closedMatches.filter((m) => m && typeof m.table === 'string' && m.closedBy && Array.isArray(m.seats)) : [];
+    if (closed.length) c.closedMatches = closed;
+    else delete c.closedMatches;
+  }
   for (const t of c.tables) t.variant = t.variant === true;
   for (const m of c.members) if (typeof m.seasonPoints !== 'number') m.seasonPoints = m.points;
   return c;
@@ -370,10 +396,19 @@ function restoreStandings(club: Club, m: ClubMember): void {
 /**
  * Account merge: the rows `fromUserId` has in the club's finished seasons pass to `to`, under its
  * name. Where both accounts have a row in a season they are one person's, so the points are added
- * and the standings put back in order. True when a row changed.
+ * and the standings put back in order. Its seats in closed matches, and the closures it made, pass
+ * to `to` as well. True when a row changed.
  */
 function moveSeasonRows(club: Club, fromUserId: string, to: Identity): boolean {
   let moved = false;
+  for (const closed of club.closedMatches ?? []) {
+    for (const who of [closed.closedBy, ...closed.seats]) {
+      if (who.userId !== fromUserId) continue;
+      who.userId = to.userId;
+      who.name = to.name;
+      moved = true;
+    }
+  }
   for (const season of club.seasons ?? []) {
     const from = season.standings.find((r) => r.userId === fromUserId);
     if (!from) continue;
@@ -392,10 +427,18 @@ function moveSeasonRows(club: Club, fromUserId: string, to: Identity): boolean {
 
 /**
  * Account deletion (and the purge that follows it): the account's rows in the club's finished
- * seasons keep their points and lose the name. True when a row changed.
+ * seasons keep their points and lose the name, and so do its seats in closed matches and the
+ * closures it made. True when a row changed.
  */
 export function anonymiseSeasonRows(club: Club, userId: string): boolean {
   let renamed = false;
+  for (const closed of club.closedMatches ?? []) {
+    for (const who of [closed.closedBy, ...closed.seats]) {
+      if (who.userId !== userId || who.name === DELETED_PLAYER_NAME) continue;
+      who.name = DELETED_PLAYER_NAME;
+      renamed = true;
+    }
+  }
   for (const season of club.seasons ?? []) {
     for (const row of season.standings) {
       if (row.userId !== userId || row.name === DELETED_PLAYER_NAME) continue;
@@ -1278,13 +1321,29 @@ export class ClubRegistry {
 
   /**
    * Owner or admin: close one of the club's tables. The listing goes at once and the match counts
-   * for nothing; the caller ends the room (`RoomRegistry.closeTable`).
+   * for nothing; the caller ends the room (`RoomRegistry.closeTable`). A match closed while it was
+   * being played leaves a record in the club (`closedMatches`): the hand it had reached, each seat's
+   * points at that moment and who closed it, so a closure is never silent.
    */
   closeTable(code: string, actorId: string, tableCode: string): Club {
     const club = this.get(code);
     this.requireRole(club, actorId, ['owner', 'admin']);
     const wanted = tableCode.toUpperCase();
-    if (!club.tables.some((t) => t.code === wanted)) throw new ClubError('not_found', 'Table not found');
+    const table = club.tables.find((t) => t.code === wanted);
+    if (!table) throw new ClubError('not_found', 'Table not found');
+    if (table.status === 'playing') {
+      const by = this.member(club, actorId);
+      const record: ClosedMatch = {
+        table: table.code,
+        label: table.label,
+        closedAt: this.now(),
+        closedBy: { userId: actorId, name: by?.name ?? '' },
+        handNumber: table.handNumber,
+        seats: table.players.map((p) => ({ seat: p.seat, name: p.name, ...(p.userId ? { userId: p.userId } : {}), isBot: p.isBot, points: table.scores[p.seat] ?? 0 })),
+      };
+      club.closedMatches = [...(club.closedMatches ?? []), record].slice(-CLUB_LIMITS.closedMatchesKept);
+    }
+    // removeTable writes the club, the record with it.
     this.removeTable(club.code, wanted);
     return club;
   }

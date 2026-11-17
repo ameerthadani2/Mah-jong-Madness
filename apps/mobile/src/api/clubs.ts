@@ -81,6 +81,20 @@ export interface Club {
   bans?: ClubBan[];
   /** When the server saw the owner's Four Winds Club plan lapse (null or absent while it is active). */
   ownerLapsedAt?: number | null;
+  /** Matches an owner or admin closed before they finished, oldest first (absent when there are none). */
+  closedMatches?: ClosedMatch[];
+}
+
+/** A match closed mid-play, as the server keeps it: it never counts toward the standings. */
+export interface ClosedMatch {
+  table: string;
+  label: string;
+  closedAt: number;
+  closedBy: { userId: string; name: string };
+  /** The hand the match had reached (0 = the first). */
+  handNumber: number;
+  /** Each seat's points when the table was closed. */
+  seats: Array<{ seat: number; name: string; userId?: string; isBot: boolean; points: number }>;
 }
 
 /**

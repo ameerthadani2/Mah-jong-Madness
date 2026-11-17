@@ -161,6 +161,47 @@ function contract(name: string, repos: () => Repos) {
       if (r.kind === 'pg') expect((await r.clubs.get(c.code))!.former ?? []).toEqual([]);
     });
 
+    it('keeps the record of matches closed mid-play through a save and a load; a merge and a deletion follow the account', async () => {
+      const r = repos();
+      const [owner, member, other, target] = [await user(), await user(), await user(), await user()];
+      const c: Club = { ...clubOf(code(), owner, member, other), bans: [] };
+      c.closedMatches = [
+        {
+          table: 'ROOM01',
+          label: 'Friday',
+          closedAt: T0 + 70_000,
+          closedBy: { userId: member, name: 'Mem' },
+          handNumber: 2,
+          seats: [
+            { seat: 0, name: 'Boss', userId: owner, isBot: false, points: -140 },
+            { seat: 1, name: 'Mem', userId: member, isBot: false, points: 140 },
+            { seat: 2, name: 'Bot', isBot: true, points: 0 },
+            { seat: 3, name: 'Bot', isBot: true, points: 0 },
+          ],
+        },
+      ];
+      await r.clubs.save(c);
+      expect((await r.clubs.get(c.code))!.closedMatches).toEqual(c.closedMatches);
+      // A club with none reads back without the field.
+      const plain = { ...clubOf(code(), owner, member, other), bans: [] };
+      await r.clubs.save(plain);
+      expect((await r.clubs.get(plain.code))!.closedMatches ?? []).toEqual([]);
+
+      // The member (an admin when they closed the table) left the club and is merged into another
+      // account, which is not in the club: their seat and their closure in the record follow.
+      await r.clubs.save({ ...c, members: c.members.filter((m) => m.userId !== member) });
+      expect(await r.clubs.moveMemberships(member, { userId: target, name: 'Target' })).toContain(c.code);
+      const moved = (await r.clubs.get(c.code))!.closedMatches![0];
+      expect(moved.seats[1]).toEqual({ seat: 1, name: 'Target', userId: target, isBot: false, points: 140 });
+      expect(moved.closedBy).toEqual({ userId: target, name: 'Target' });
+      // Deleting that account takes its name from the record, as a seat and as the one who closed it.
+      expect(await r.clubs.anonymiseUser(target)).toContain(c.code);
+      const after = (await r.clubs.get(c.code))!.closedMatches![0];
+      expect(after.closedBy).toEqual({ userId: target, name: DELETED_PLAYER_NAME });
+      expect(after.seats[1]).toEqual({ seat: 1, name: DELETED_PLAYER_NAME, userId: target, isBot: false, points: 140 });
+      expect(after.seats[0].name).toBe('Boss');
+    });
+
     it('keeps the date of a join request through saves, and gives a request stored without one no date', async () => {
       const r = repos();
       const [owner, member, banned, asker, old] = [await user(), await user(), await user(), await user(), await user()];

@@ -118,6 +118,7 @@ With no environment at all the server runs: accounts, clubs and tables are kept 
 | Puzzle Rush runs | finished once, within 30 minutes of the start; at most one answer per second of the run and 180 in all | `409 run_finished`, `410 run_expired`, `400 rush_too_fast`; runs never finished are deleted a day after they expire |
 | Push notifications | 1 a minute per user for each kind | Skipped (not queued) |
 | Archived club seasons | the latest 24 | The oldest is dropped |
+| Records of club matches closed mid-play | the latest 20 per club | The oldest is dropped |
 
 ## Boot and shutdown
 
