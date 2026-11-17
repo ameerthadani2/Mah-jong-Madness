@@ -569,7 +569,10 @@ export function buildRoutes(deps: ApiDeps, opts: Pick<ApiOptions, 'reportIpLimit
       const me = await member(ctx);
       // A new member or join request is charged to this address and to the club (429 when either runs
       // out); an account younger than a week has its own share of the club's allowance and places.
-      const { club, status } = clubs.joinClub(ctx.params.code, me, { ip: ctx.ip, accountCreatedAt: (await ctx.caller()).user.createdAt });
+      // Whatever its age, one address and one install add only a few accounts a day to one club.
+      const caller = await ctx.caller();
+      const device = caller.deviceId ? await repos.devices.get(caller.deviceId) : null;
+      const { club, status } = clubs.joinClub(ctx.params.code, me, { ip: ctx.ip, accountCreatedAt: caller.user.createdAt, device: device ? (device.installId ?? device.id) : null });
       return { club: view(club, me.userId), status };
     }),
     r('PATCH', '/api/clubs/:code', async (ctx) => {

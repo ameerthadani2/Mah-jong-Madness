@@ -225,6 +225,14 @@ export const CLUB_LIMITS = {
    * accounts cannot use up the hour for the club's established players.
    */
   joinsPerHourPerClub: 60,
+  /**
+   * New members and join requests one address (an IPv4 address or an IPv6 /64) may add to one club
+   * per day, and one device (the install the app reports, shared by every account made on it). These
+   * hold whatever the accounts' age, so accounts made long in advance cannot fill a club from one
+   * connection or one phone; a household or a table of four still joins together.
+   */
+  joinsPerDayPerClubAddress: 4,
+  joinsPerDayPerClubDevice: 2,
   /** An account younger than this is "new" to the join limits above and below. */
   newAccountMs: 7 * DAY_MS,
   /**
@@ -573,6 +581,9 @@ export class ClubRegistry {
   private readonly joinsByClub: BucketTable<string>;
   /** The same per-club allowance for accounts younger than `CLUB_LIMITS.newAccountMs`. */
   private readonly newJoinsByClub: BucketTable<string>;
+  /** Per club and address, and per club and device, by the day (`joinsPerDayPerClubAddress`, `joinsPerDayPerClubDevice`). */
+  private readonly joinsByClubAddress: BucketTable<string>;
+  private readonly joinsByClubDevice: BucketTable<string>;
 
   constructor(opts: { store?: ClubStore; now?: () => number; randomHex?: HexSource; retryDelayMs?: number } = {}) {
     this.now = opts.now ?? Date.now;
@@ -583,6 +594,9 @@ export class ClubRegistry {
     this.joinsByIp = hourly(CLUB_LIMITS.joinsPerHourPerIp);
     this.joinsByClub = hourly(CLUB_LIMITS.joinsPerHourPerClub);
     this.newJoinsByClub = hourly(CLUB_LIMITS.joinsPerHourPerClub);
+    const daily = (n: number) => new BucketTable<string>(n, n / 86_400, { now: this.now, idleMs: DAY_MS });
+    this.joinsByClubAddress = daily(CLUB_LIMITS.joinsPerDayPerClubAddress);
+    this.joinsByClubDevice = daily(CLUB_LIMITS.joinsPerDayPerClubDevice);
   }
 
   /** Clubs whose last write failed and have not been written since (tests and diagnostics). */
@@ -1081,10 +1095,12 @@ export class ClubRegistry {
    * club (`joinsPerHourPerIp`, `joinsPerHourPerClub`), so throwaway accounts cannot fill a club or
    * its request queue in one go. With `accountCreatedAt`, an account younger than
    * `CLUB_LIMITS.newAccountMs` is charged to the club's allowance for new accounts and cannot take
-   * the last `placesKeptForEstablished` places of the club or of its queue. Asking again while
-   * already in, or already waiting, costs nothing.
+   * the last `placesKeptForEstablished` places of the club or of its queue. Whatever the account's
+   * age, one address and one device (`device`, the install the app reported) add only
+   * `joinsPerDayPerClubAddress` and `joinsPerDayPerClubDevice` accounts a day to one club. Asking
+   * again while already in, or already waiting, costs nothing.
    */
-  joinClub(code: string, user: Identity, from?: { ip: string; accountCreatedAt?: number }): { club: Club; status: 'joined' | 'pending' | 'already' } {
+  joinClub(code: string, user: Identity, from?: { ip: string; accountCreatedAt?: number; device?: string | null }): { club: Club; status: 'joined' | 'pending' | 'already' } {
     const club = this.get(code);
     if (this.member(club, user.userId)) return { club, status: 'already' };
     if (this.isBanned(club.code, user.userId)) throw new ClubError('forbidden', 'You cannot join this club');
@@ -1112,10 +1128,17 @@ export class ClubRegistry {
    * Spend one join from the address and from the club (its allowance for new accounts when `isNew`);
    * 429 `rate_limited` when either has run out.
    */
-  private chargeJoin(club: Club, from: { ip: string } | undefined, isNew: boolean): void {
+  private chargeJoin(club: Club, from: { ip: string; device?: string | null } | undefined, isNew: boolean): void {
     if (!from) return;
+    // The per-club address and device allowances are checked before anything is spent, so a refusal costs nothing.
+    const byAddress = `${club.code} ${from.ip}`;
+    const byDevice = from.device ? `${club.code} ${from.device}` : null;
+    if (!this.joinsByClubAddress.has(byAddress)) throw new ClubError('rate_limited', 'Too many accounts have joined this club from this connection today; try again tomorrow');
+    if (byDevice && !this.joinsByClubDevice.has(byDevice)) throw new ClubError('rate_limited', 'Too many accounts have joined this club from this device today; try again tomorrow');
     if (!this.joinsByIp.take(from.ip)) throw new ClubError('rate_limited', 'Too many clubs joined from this connection; try again in an hour');
     if (!(isNew ? this.newJoinsByClub : this.joinsByClub).take(club.code)) throw new ClubError('rate_limited', 'This club is getting a lot of join requests; try again later');
+    this.joinsByClubAddress.take(byAddress);
+    if (byDevice) this.joinsByClubDevice.take(byDevice);
   }
 
   /** Make an account a member. Standings it left on file here come back with it (decision 5). */

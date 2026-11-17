@@ -79,3 +79,52 @@ describe('a flood of new accounts does not lock established players out of a clu
     expect((await f.join(club.code, regulars[1])).json.status).toBe('joined');
   });
 });
+
+describe('pre-aged accounts are counted per address and per device for each club', () => {
+  /** A guest whose app reports install `install` (several accounts on one phone share it). */
+  async function guestOn(f: ReturnType<typeof fixture>, name: string, install: string): Promise<Guest> {
+    const res = await f.call('POST', '/api/auth/guest', { device: { id: install, platform: 'ios', appBuild: '1', locale: 'en' }, displayName: name });
+    expect(res.status).toBe(201);
+    const token = (res.json.session as { token: string }).token;
+    return { userId: res.json.userId as string, guestSecret: res.json.guestSecret as string, token, auth: { authorization: `Bearer ${token}` } };
+  }
+  const joinFrom = (f: ReturnType<typeof fixture>, code: string, who: Guest, ip: string) => f.call('POST', `/api/clubs/${code}/join`, {}, who.auth, ip);
+
+  it('one address (an IPv6 /64 counts as one) adds only a few accounts a day to a club, however old they are', async () => {
+    const f = fixture();
+    const owner = await f.guest('Owner');
+    const aged: Guest[] = [];
+    for (let i = 0; i < CLUB_LIMITS.joinsPerDayPerClubAddress + 2; i++) aged.push(await f.guest(`Aged ${i}`));
+    const friend = await f.guest('Friend');
+    f.advance(CLUB_LIMITS.newAccountMs + DAY);
+    const open = await f.club(owner, 'Open', false);
+    const asks = await f.club(owner, 'Asks', true);
+
+    // Every address differs, but all sit in one /64.
+    for (let i = 0; i < CLUB_LIMITS.joinsPerDayPerClubAddress; i++) expect((await joinFrom(f, open.code, aged[i], `2001:db8:7:9::${i + 1}`)).json.status).toBe('joined');
+    const refused = await joinFrom(f, open.code, aged[CLUB_LIMITS.joinsPerDayPerClubAddress], '2001:db8:7:9:abcd::1');
+    expect(refused.status).toBe(429);
+    expect(refused.json.message).toMatch(/from this connection/);
+    // Another club, and another address for this one, are not affected.
+    expect((await joinFrom(f, asks.code, aged[CLUB_LIMITS.joinsPerDayPerClubAddress], '2001:db8:7:9::99')).json.status).toBe('pending');
+    expect((await joinFrom(f, open.code, friend, '2001:db8:7:10::1')).json.status).toBe('joined');
+    // A day later the address has its allowance back.
+    f.advance(DAY);
+    expect((await joinFrom(f, open.code, aged[CLUB_LIMITS.joinsPerDayPerClubAddress + 1], '2001:db8:7:9::5')).json.status).toBe('joined');
+  });
+
+  it('one phone adds only a couple of accounts a day to a club, whatever address it uses', async () => {
+    const f = fixture();
+    const owner = await f.guest('Owner');
+    const install = '7d6c2a8e-1f3b-4c5d-9e8f-0a1b2c3d4e5f';
+    const sameInstall: Guest[] = [];
+    for (let i = 0; i < CLUB_LIMITS.joinsPerDayPerClubDevice + 1; i++) sameInstall.push(await guestOn(f, `Phone ${i}`, install));
+    f.advance(CLUB_LIMITS.newAccountMs + DAY);
+    const club = await f.club(owner, 'Asks', true);
+    for (let i = 0; i < CLUB_LIMITS.joinsPerDayPerClubDevice; i++) expect((await joinFrom(f, club.code, sameInstall[i], `10.9.0.${i + 1}`)).json.status).toBe('pending');
+    const refused = await joinFrom(f, club.code, sameInstall[CLUB_LIMITS.joinsPerDayPerClubDevice], '10.9.1.1');
+    expect(refused.status).toBe(429);
+    expect(refused.json.message).toMatch(/from this device/);
+    expect(f.clubs.club(club.code).pending).toHaveLength(CLUB_LIMITS.joinsPerDayPerClubDevice);
+  });
+});
