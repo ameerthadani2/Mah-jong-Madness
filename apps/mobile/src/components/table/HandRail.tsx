@@ -18,6 +18,7 @@ export function HandRail({
   handTile,
   plateW,
   meldTile = 28,
+  wide = false,
   scroll = false,
   selected,
   canDiscard,
@@ -32,6 +33,8 @@ export function HandRail({
   plateW: number;
   /** My melds' tile width (grows with Settings → Display → Tiles). */
   meldTile?: number;
+  /** Landscape at Large and Extra-large: my plate and melds in a row above the hand, which spans the whole width (tableFit's `wide`). */
+  wide?: boolean;
   /** Landscape at a large tile size: the hand is wider than the rail and scrolls sideways. */
   scroll?: boolean;
   selected: TileId | null;
@@ -44,7 +47,9 @@ export function HandRail({
 }) {
   const { t, locale } = useT();
   const { portrait, tablet } = L;
-  const myPlate = <SeatBadge {...plate} size={tablet ? 54 : portrait ? 36 : 40} vertical={!portrait} maxNameWidth={portrait ? 120 : plateW - 4} />;
+  // Portrait, and landscape at a large tile size: my plate and melds have a row of their own above the hand.
+  const above = portrait || wide;
+  const myPlate = <SeatBadge {...plate} size={tablet ? 54 : above ? 36 : 40} vertical={!above} maxNameWidth={above ? 120 : plateW - 4} />;
   const hand = me.hand ?? [];
   const scroller = useRef<React.ComponentRef<typeof ScrollView>>(null);
   const tiles = (
@@ -66,15 +71,15 @@ export function HandRail({
     </View>
   );
   return (
-    <View style={[styles.footer, portrait && { paddingTop: 4 }]}>
-      {portrait && (
+    <View style={[styles.footer, above && { paddingTop: 4 }]}>
+      {above && (
         <Row gap={10} style={{ paddingHorizontal: 4, marginBottom: 2 }}>
           {myPlate}
           <MeldsAndFlowers player={me} size={meldTile} style={{ flex: 1 }} />
         </Row>
       )}
       <View style={styles.handRow}>
-        {!portrait && (
+        {!above && (
           <View style={{ width: plateW }}>
             {/* Grows upward so my avatar overlaps the rail instead of stealing height from the felt. */}
             <View style={[styles.myPlateCol, { width: plateW }]}>
@@ -102,7 +107,7 @@ export function HandRail({
             tiles
           )}
         </View>
-        {!portrait && me.melds.length > 0 && (
+        {!above && me.melds.length > 0 && (
           <View style={styles.myMelds}>
             {me.melds.map((m, i) => (
               <MeldView key={i} meld={m} size={meldTile} />

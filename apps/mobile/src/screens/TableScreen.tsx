@@ -319,7 +319,8 @@ export function TableScreen() {
 
   // ---- Layout -------------------------------------------------------
   const L = tableLayout(width, height);
-  // Settings → Display → Tiles grows the hand and my melds; portrait wraps into more rows, landscape scrolls the rail.
+  // Settings → Display → Tiles grows the hand and my melds; portrait wraps into more rows, landscape moves my plate
+  // and melds above the hand so it spans the whole width (tableFit.ts).
   const hand = fitHand(width, height, L, (me.hand ?? []).length, me.melds.reduce((n, m) => n + m.tiles.length, 0), me.melds.length, tileScale);
 
   const seatAt = (r: number) => (mySeat + r) % 4;
@@ -435,6 +436,7 @@ export function TableScreen() {
           handTile={hand.tile}
           plateW={hand.plateW}
           meldTile={hand.meldTile}
+          wide={hand.wide && !L.portrait}
           scroll={hand.scroll}
           selected={selected}
           canDiscard={canDiscard}

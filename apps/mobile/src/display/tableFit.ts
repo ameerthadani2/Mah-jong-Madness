@@ -5,8 +5,11 @@
  *
  * - Portrait: the hand already wraps into two rows of nine; larger tiles wrap into a third row (never more:
  *   past three rows the tiles shrink instead).
- * - Landscape: the hand stays one row and grows only as far as the rail's width allows, so it never scrolls
- *   sideways (`scroll` stays false at every scale; the rail keeps its scroll fallback should a row ever overflow).
+ * - Landscape: the hand stays one row and never scrolls sideways (`scroll` stays false at every scale; the rail
+ *   keeps its scroll fallback should a row ever overflow). At Normal my plate and my melds share the rail with
+ *   it, and a full hand already spans what they leave. At Large and Extra-large they move up to a row of their
+ *   own above the hand (`wide`, as in portrait), taking that row's height from the felt, so the hand gets the
+ *   whole width of the screen and its tiles grow.
  * - Ponds grow too, but a side seat always keeps three tiles per row, and short landscape phones (under 420 px
  *   tall) stop at Large so the side ponds never run off the felt.
  * - A side seat in landscape has one short column for its melds, flowers and discards. `fitSideColumn` shrinks
@@ -29,6 +32,11 @@ export const MAX_HAND_ROWS = 3;
 export interface HandFit extends HandLayout {
   /** Width of one tile in my melds. */
   meldTile: number;
+  /**
+   * Landscape at Large and Extra-large: my plate and my melds sit in a row above the hand instead of beside it,
+   * so the hand row spans the whole width (`plateW` is then 0). Always true in portrait, where that is the layout.
+   */
+  wide: boolean;
   /** Landscape only: the hand row is wider than the rail and scrolls sideways. */
   scroll: boolean;
   /** Tiles per row and rows, for a full hand. */
@@ -78,7 +86,7 @@ export function fitHand(width: number, height: number, L: Pick<TableLayout, 'por
     while (tile > base.tile && wrapRows(slots, tile, room) > MAX_HAND_ROWS) tile--;
     const perRow = Math.max(1, Math.floor((room + HAND_GAP) / (tile + HAND_GAP)));
     // My melds sit on their own line above the hand in portrait and wrap, so they simply scale.
-    return { ...base, tile, meldTile: Math.round(smW * scale), scroll: false, perRow, rows: wrapRows(slots, tile, room) };
+    return { ...base, tile, meldTile: Math.round(smW * scale), wide: true, scroll: false, perRow, rows: wrapRows(slots, tile, room) };
   }
 
   // Landscape: the hand row and my melds share the rail. Both are measured as they are drawn (each meld has a
@@ -89,7 +97,7 @@ export function fitHand(width: number, height: number, L: Pick<TableLayout, 'por
   const settle = (tile: number, meldTile: number): HandFit => {
     while (used(tile, meldTile) > rail && meldTile > MIN_MY_MELD) meldTile--;
     while (used(tile, meldTile) > rail && tile > MIN_RAIL_TILE) tile--;
-    return { ...base, tile, meldTile, scroll: used(tile, meldTile) > rail, perRow: slots, rows: 1 };
+    return { ...base, tile, meldTile, wide: false, scroll: used(tile, meldTile) > rail, perRow: slots, rows: 1 };
   };
   if (scale === 1) return settle(base.tile, smW);
   // My melds grow only while they take under 40 % of the width, and only while the hand still fits beside
@@ -104,7 +112,32 @@ export function fitHand(width: number, height: number, L: Pick<TableLayout, 'por
   // player cannot see); it never goes below the Normal size unless that itself does not fit beside the melds.
   const widthCap = fitRowTile(slots, room(meldTile));
   const tile = Math.max(base.tile, Math.min(90, heightCap, widthCap, Math.round(base.tile * scale)));
-  return settle(tile, meldTile);
+  const beside = settle(tile, meldTile);
+  // My plate and melds above the hand instead: the row gets the footer's whole width. Taken only when that
+  // makes the tiles larger (it costs the felt the height of the plate's row).
+  const wideRoom = landscapeWideRoom(width);
+  const wideTile = Math.min(90, heightCap, fitRowTile(slots, wideRoom), Math.round(base.tile * scale));
+  if (wideTile <= beside.tile) return beside;
+  return { ...base, plateW: 0, tile: wideTile, meldTile: wideMeldTile(width, meldTiles, meldCount, scale), wide: true, scroll: false, perRow: slots, rows: 1 };
+}
+
+/** Landscape with my plate above the hand (`HandFit.wide`): the hand row has the footer's width (12 px padding a side). */
+export function landscapeWideRoom(width: number): number {
+  return width - 24;
+}
+
+/** Width my plate takes at the start of the row above a wide landscape hand (the plate and its name tag, and the gap after it). */
+export const WIDE_PLATE_ROW_W = 180;
+/** My melds in the row above a wide landscape hand stay at most this wide, so that row stays about the plate's height. */
+export const WIDE_MELD_MAX = 32;
+
+/** My meld tile in the row above a wide landscape hand: grown with the scale up to WIDE_MELD_MAX, and kept to one line beside the plate. */
+export function wideMeldTile(width: number, meldTiles: number, meldCount: number, scale: number): number {
+  const smW = tileDims('sm').w;
+  const room = landscapeWideRoom(width) - WIDE_PLATE_ROW_W;
+  let meld = Math.min(WIDE_MELD_MAX, Math.max(smW, Math.round(smW * scale)));
+  while (meld > MIN_MY_MELD && myMeldsWidth(meldTiles, meldCount, meld) > room) meld--;
+  return meld;
 }
 
 /** The smallest my melds and my hand tiles are drawn on the landscape rail when both must give way. */

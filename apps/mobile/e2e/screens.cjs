@@ -412,7 +412,8 @@ async function runBoards(browser, port, [w, h]) {
 
 /**
  * Extra-large tiles in landscape: a table at Settings → Display → Tiles: Extra large, a few turns in, captured as
- * <size>-table-xl.png. Fails if the hand rail scrolls sideways (a hand tile off the rail) or a hand tile is off screen.
+ * <size>-table-xl.png. Fails if the hand rail scrolls sideways (a hand tile off the rail), a hand tile is off screen, or
+ * the hand is no larger than a row sharing the rail with my plate (Extra-large moves the plate above the hand).
  */
 async function runXL(browser, port, [w, h]) {
   const tag = `${w}x${h}`;
@@ -453,8 +454,13 @@ async function runXL(browser, port, [w, h]) {
     els.filter((e) => { const r = e.getBoundingClientRect(); return r.right > innerWidth + 1 || r.left < -1 || r.bottom > innerHeight + 1; }).length,
   );
   if (off) fails.push(`${off} extra-large hand tiles off screen`);
+  // Extra-large moves my plate and melds above the hand, so the row spans the screen: a hand tile at least as wide
+  // as 17 tiles across the footer allow (tableFit.ts fitRowTile), or the height cap where that is smaller.
+  const tileW = await page.$$eval('[data-testid="hand"] [data-testid^="tile-"], [data-testid="hand-discard"] [data-testid^="tile-"]', (els) => Math.round(Math.min(...els.map((e) => e.getBoundingClientRect().width))));
+  const want = Math.min(Math.floor((h * 0.2) / 1.4), Math.floor((w - 24 - 8 - 10 + 2) / 17) - 2);
+  if (!(tileW >= want)) fails.push(`extra-large hand tiles are ${tileW} px wide, under the ${want} px a full-width row gives`);
   await ctx.close();
-  return { size: `${tag} xl`, finished: true, discards, shots: ['table-xl'], notes: [], fails, errors };
+  return { size: `${tag} xl`, finished: true, discards, shots: ['table-xl'], notes: [`hand tile ${tileW} px wide`], fails, errors };
 }
 
 (async () => {

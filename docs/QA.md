@@ -23,7 +23,7 @@ Before you start: the server is deployed and its last deploy run passed the smok
 - [ ] The table stays smooth while bots play on the Android phone.
 
 ## 4. Large tiles and text
-- [ ] Settings → Display → Tile size **Extra large**: in portrait the hand wraps into rows and every tile can be tapped; in landscape the hand scrolls sideways; melds, ponds and the result sheet stay readable and nothing overlaps on the small phone.
+- [ ] Settings → Display → Tile size **Extra large**: in portrait the hand wraps into rows and every tile can be tapped; in landscape the hand stays one row across the whole width, with my name and melds above it, and is larger than at Normal; melds, ponds and the result sheet stay readable and nothing overlaps on the small phone.
 - [ ] Text size Large: lessons and puzzles reflow without clipping.
 - [ ] With the phone's own font size at its largest, Home, the table and Settings stay usable.
 

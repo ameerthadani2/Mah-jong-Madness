@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { handLayout, tableLayout } from '../components/table/layout';
 import { TILE_SCALES } from './scale';
 import { en, zhTW } from '../i18n/locales';
-import { fitHand, fitPools, MAX_HAND_ROWS, portraitRowRoom, rowWidth, wrapRows, fitSideColumn, fitSideSeat, meldWidth, MIN_MY_MELD, MIN_RAIL_TILE, MIN_SIDE_MELD, MIN_SIDE_POND, myMeldsWidth, SIDE_GAP, sidePondPerRow, sideSeatHeight } from './tableFit';
+import { fitHand, fitPools, landscapeWideRoom, MAX_HAND_ROWS, WIDE_MELD_MAX, WIDE_PLATE_ROW_W, portraitRowRoom, rowWidth, wrapRows, fitSideColumn, fitSideSeat, meldWidth, MIN_MY_MELD, MIN_RAIL_TILE, MIN_SIDE_MELD, MIN_SIDE_POND, myMeldsWidth, SIDE_GAP, sidePondPerRow, sideSeatHeight } from './tableFit';
 
 const VIEWPORTS: Array<[number, number]> = [
   [390, 844],
@@ -70,16 +70,39 @@ describe('fitHand', () => {
     `);
   });
 
-  it('grows the hand with the tile scale, never shrinking it', () => {
+  it('grows the hand with the tile scale at every reference viewport, landscape included', () => {
     for (const [w, h] of VIEWPORTS) {
       const L = tableLayout(w, h);
       const sizes = TILE_SCALES.map((s) => fitHand(w, h, L, 17, 0, 0, s).tile);
-      // A landscape phone's full hand already spans the rail at Normal: larger settings keep it there (they grow
-      // the ponds and melds instead) rather than push tiles off the side.
-      if (!L.portrait) expect(sizes[1], `${w}x${h}`).toBeGreaterThanOrEqual(sizes[0]);
-      else expect(sizes[1], `${w}x${h}`).toBeGreaterThan(sizes[0]);
+      // A landscape phone's full hand already spans the rail beside my plate at Normal: Large and Extra-large
+      // move the plate above the hand, so the row gets the whole width and its tiles grow.
+      expect(sizes[1], `${w}x${h}`).toBeGreaterThan(sizes[0]);
       expect(sizes[2]).toBeGreaterThanOrEqual(sizes[1]);
     }
+  });
+
+  it('gives landscape Large and Extra-large a visibly larger hand, with my plate and melds above it', () => {
+    // Hand tile widths at Normal, Large and Extra-large (a full hand, no melds).
+    const at = (w: number, h: number) => TILE_SCALES.map((s) => fitHand(w, h, tableLayout(w, h), 17, 0, 0, s).tile);
+    expect(at(844, 390)).toEqual([40, 45, 45]);
+    expect(at(667, 375)).toEqual([29, 34, 34]);
+    expect(at(1024, 768)).toEqual([48, 55, 55]);
+    for (const [w, h] of [[844, 390], [667, 375], [1024, 768]] as const) {
+      const L = tableLayout(w, h);
+      expect(fitHand(w, h, L, 17, 0, 0, 1).wide, `${w}x${h}`).toBe(false);
+      for (const s of TILE_SCALES.filter((x) => x > 1)) {
+        const fit = fitHand(w, h, L, 17, 0, 0, s);
+        expect(fit.wide).toBe(true);
+        expect(fit.plateW).toBe(0);
+        // One row, the whole width, never scrolled, and still no more than a fifth of the height.
+        expect(fit.rows).toBe(1);
+        expect(fit.scroll).toBe(false);
+        expect(rowWidth(17, fit.tile)).toBeLessThanOrEqual(landscapeWideRoom(w));
+        expect(fit.tile * 1.4).toBeLessThanOrEqual(h * 0.2);
+      }
+    }
+    // Melds leave the rail too, so a hand with melds grows further, up to that height.
+    expect(fitHand(844, 390, tableLayout(844, 390), 11, 6, 2, 1.5).tile).toBe(Math.floor((390 * 0.2) / 1.4));
   });
 
   it('fits 17 tiles at 390 px in portrait at every scale, wrapping to at most three rows', () => {
@@ -117,17 +140,23 @@ describe('fitHand', () => {
     expect(fit.scroll).toBe(false);
   });
 
-  it('grows landscape melds only while they leave room for the hand', () => {
-    const L = tableLayout(844, 390);
-    // Two melds have room to grow; four already fill 40 % of the rail and stay at the normal size.
-    const two = fitHand(844, 390, L, 11, 6, 2, 1.5);
-    expect(two.meldTile).toBeGreaterThan(28);
-    expect(6 * (two.meldTile + 1) + 2 * 8).toBeLessThanOrEqual(844 * 0.4);
-    // …and the hand still fits beside them without scrolling.
-    expect(rowWidth(11, two.tile) + 6 * (two.meldTile + 1) + 2 * 8 + 10).toBeLessThanOrEqual(844 - 24 - two.plateW);
-    const four = fitHand(844, 390, L, 5, 12, 4, 1.5);
-    expect(four.meldTile).toBe(28);
-    expect(four.tile).toBeGreaterThanOrEqual(handLayout(844, L, 5, 12, 4).tile);
+  it('grows landscape melds above the hand only to about the plate\'s height, on one line beside the plate', () => {
+    for (const [w, h] of [[844, 390], [667, 375], [1024, 768]] as const) {
+      const L = tableLayout(w, h);
+      for (const [n, mt, mc] of [[14, 3, 1], [11, 6, 2], [8, 9, 3], [5, 12, 4], [5, 16, 4]] as const) {
+        const fit = fitHand(w, h, L, n, mt, mc, 1.5);
+        // A hand of five already reaches the height limit beside the melds: there the plate stays beside it.
+        if (!fit.wide) {
+          expect(fit.tile, `${w}x${h} ${mc}`).toBe(Math.min(90, Math.floor((h * 0.2) / 1.4)));
+          continue;
+        }
+        // Never smaller than at Normal (four kongs on a 667 px phone keep to one line at 24 px, against 22 at Normal).
+        expect(fit.meldTile, `${w}x${h} ${mc}`).toBeGreaterThanOrEqual(fitHand(w, h, L, n, mt, mc, 1).meldTile);
+        expect(fit.meldTile).toBeLessThanOrEqual(WIDE_MELD_MAX);
+        expect(myMeldsWidth(mt, mc, fit.meldTile), `${w}x${h} ${mc}`).toBeLessThanOrEqual(landscapeWideRoom(w) - WIDE_PLATE_ROW_W);
+        expect(fit.tile).toBeGreaterThanOrEqual(handLayout(w, L, n, mt, mc).tile);
+      }
+    }
   });
 });
 
@@ -147,8 +176,10 @@ describe('my melds beside an enlarged hand in landscape', () => {
           // My turn: the hand holds its drawn tile.
           const handCount = 17 - 3 * melds.length;
           const fit = fitHand(w, h, L, handCount, meldTiles, melds.length, scale);
-          const used = rowWidth(handCount, fit.tile) + 10 + myMeldsWidth(meldTiles, melds.length, fit.meldTile);
+          // Beside the hand, the hand and the melds share the rail; above it (wide), each has its own row.
+          const used = fit.wide ? rowWidth(handCount, fit.tile) : rowWidth(handCount, fit.tile) + 10 + myMeldsWidth(meldTiles, melds.length, fit.meldTile);
           expect(used, `${w}x${h} at ${scale} with melds ${melds.join('')}`).toBeLessThanOrEqual(w - 24 - fit.plateW);
+          if (fit.wide) expect(myMeldsWidth(meldTiles, melds.length, fit.meldTile)).toBeLessThanOrEqual(landscapeWideRoom(w) - WIDE_PLATE_ROW_W);
           expect(fit.scroll).toBe(false);
         }
       }
@@ -270,13 +301,17 @@ describe('a side seat in landscape', () => {
 });
 
 describe('what Settings says about the tile size', () => {
-  it('matches what the landscape hand does: one row that never scrolls, and little room to grow on a small phone', () => {
+  it('matches what the landscape hand does: one row that never scrolls, my plate and melds moved above it', () => {
     const L = tableLayout(667, 375);
     const normal = fitHand(667, 375, L, 17, 0, 0, 1);
     const xl = fitHand(667, 375, L, 17, 0, 0, 1.5);
-    // The limit the help text explains: a full hand on a 667 px wide phone has two or three pixels to grow.
+    // What the help text explains: held sideways the hand stays one row, grows, and the plate goes above it.
     expect(xl.scroll).toBe(false);
-    expect(xl.tile - normal.tile).toBeLessThanOrEqual(3);
+    expect(xl.rows).toBe(1);
+    expect(xl.wide).toBe(true);
+    expect(xl.tile).toBeGreaterThan(normal.tile);
+    expect(en.settings.display.tilesHelp).toMatch(/above the hand/);
+    expect(zhTW.settings.display.tilesHelp).toMatch(/手牌上方/);
     // Upright, the same setting does grow the hand.
     const P = tableLayout(375, 667);
     expect(fitHand(375, 667, P, 17, 0, 0, 1.5).tile).toBeGreaterThan(fitHand(375, 667, P, 17, 0, 0, 1).tile + 8);
