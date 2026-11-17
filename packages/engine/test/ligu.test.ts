@@ -123,7 +123,7 @@ describe('嚦咕嚦咕: scoring', () => {
     expect(keysOf(north)).toEqual(['ligu']);
   });
 
-  it('adds 莊家 and the dealer streak, flowers, 海底撈月 / 河底撈魚 and 搶槓', () => {
+  it('adds 莊家 and the dealer streak, flowers and 海底撈月 / 河底撈魚', () => {
     const dealer = scoreWin(ctx({ seat: 0, dealerStreak: 2, fromSeat: 1 }));
     expect(keysOf(dealer)).toEqual(['dealer', 'dealer_streak', 'ligu']);
     expect(dealer.tai).toBe(8 + 1 + 4);
@@ -131,8 +131,33 @@ describe('嚦咕嚦咕: scoring', () => {
     expect(keysOf(flowers)).toEqual(['ligu', 'seat_flower', 'seat_season']);
     expect(keysOf(scoreWin(ctx({ lastTile: true })))).toEqual(['last_tile_discard', 'ligu']);
     expect(keysOf(scoreWin(ctx({ lastTile: true, selfDrawn: true, fromSeat: undefined })))).toEqual(['last_tile_draw', 'ligu', 'self_draw']);
-    expect(keysOf(scoreWin(ctx({ robbingKong: true })))).toEqual(['ligu', 'rob_kong']);
     expect(keysOf(scoreWin(ctx({ rules: withRules({ liguTai: 8, noFlowerTai: true }) })))).toEqual(['ligu', 'no_flowers']);
+  });
+
+  it('is never won by robbing a kong: a ready 嚦咕嚦咕 holds a copy of every tile it waits on, so a 加槓 of one would need a fifth', () => {
+    // Every 嚦咕嚦咕 there is (eight kinds: seven pairs and a triplet), on a fixed pseudo-random sweep
+    // of kinds; each kind of it in turn is the winning tile, and the hand before it is a ready one.
+    let seed = 20261117;
+    const next = () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648;
+    let checked = 0;
+    for (let n = 0; n < 2000; n++) {
+      const pool = Array.from({ length: 34 }, (_, k) => k);
+      const eight: number[] = [];
+      while (eight.length < 8) eight.push(pool.splice(Math.floor(next() * pool.length), 1)[0]);
+      const won = new Array<number>(34).fill(0);
+      eight.forEach((k, i) => (won[k] = i === 0 ? 3 : 2));
+      expect(isLiguShape(won, 5)).toBe(true);
+      for (const w of eight) {
+        const ready = won.slice();
+        ready[w] -= 1;
+        expect(waits(ready, 5, undefined, true)).toContain(w);
+        // A 加槓 of w: three in another player's 碰, the fourth added to it, and these in this hand.
+        expect(ready[w]).toBeGreaterThanOrEqual(1);
+        expect(3 + 1 + ready[w]).toBeGreaterThan(4);
+        checked++;
+      }
+    }
+    expect(checked).toBe(16_000);
   });
 
   it('天胡 / 地胡 / 人胡 add to it and absorb the 自摸 and 海底, as they do for any hand', () => {
