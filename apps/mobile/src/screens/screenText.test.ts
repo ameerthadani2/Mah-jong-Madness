@@ -64,7 +64,7 @@ describe('reading text on Learn', () => {
     expect(learn).toMatch(/accessibilityLabel=\{t\('learn\.cardButton', \{ action: t\(done \? 'learn\.review' : 'learn\.start'\), title: lessonTitle\(l, locale\) \}\)\}/);
     expect(learn).toMatch(/accessibilityLabel=\{t\('learn\.cardButton', \{ action: cta, title \}\)\}/);
     expect(translator('en')('learn.cardButton', { action: 'Train', title: 'Find the waits' })).toBe('Train: Find the waits');
-    expect(read('screens/ClubsScreen.tsx')).toMatch(/accessibilityLabel=\{t\('clubs\.openNamed', \{ name: c\.name \}\)\}/);
+    // Each club's Open button is named after the club: src/screens/Clubs.render.test.tsx ("Open Friday Club").
   });
 });
 

@@ -1,5 +1,3 @@
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { Authoriser, FetchLike } from './http';
 import { DEFAULT_RULES } from '@mjm/engine';
@@ -159,9 +157,7 @@ describe('the member view and the public view of a club', () => {
     expect(hasPendingRequest([full], 'me')).toBe(false);
     expect(hasPendingRequest([full, publicView], 'me')).toBe(true);
     expect(hasPendingRequest([], 'me')).toBe(false);
-    const screen = readFileSync(join(__dirname, '..', 'screens', 'ClubsScreen.tsx'), 'utf8');
-    expect(screen).toMatch(/const waiting = hasPendingRequest\(clubs \?\? \[\], user\.userId\);/);
-    expect(screen).toMatch(/setInterval\(\(\) => void refresh\(\), PENDING_POLL_MS\)/);
+    // The Clubs list polls on this while a request waits: src/screens/Clubs.render.test.tsx ("looks at My clubs again ...").
     expect(PENDING_POLL_MS).toBeGreaterThanOrEqual(10_000);
   });
 
@@ -171,22 +167,8 @@ describe('the member view and the public view of a club', () => {
     expect(clubMemberCount({})).toBe(0);
   });
 
-  it('the club screen shows a non-member the join card and never reads rules or settings before that check', () => {
-    const code = readFileSync(join(__dirname, '..', 'screens', 'ClubsScreen.tsx'), 'utf8');
-    const screen = code.slice(code.indexOf('export function ClubScreen'));
-    const guard = screen.indexOf('if (!isMemberView(club, user.userId))');
-    expect(guard).toBeGreaterThan(0);
-    // Everything above the guard works on the public view: no member-only field is read there.
-    expect(screen.slice(0, guard)).not.toMatch(/club\.(rules|settings|members|tables)\b/);
-    const guest = screen.slice(guard, screen.indexOf('const members = club.members'));
-    expect(guest).toMatch(/testID="club-join"/);
-    expect(guest).toMatch(/clubsApi\.join\(ctx, club\.code\)/);
-    expect(guest).not.toMatch(/club\.(rules|settings)\b/);
-    expect(guest).not.toMatch(/clubs\.tabs\./);
-    // A member whose view turns public on a refresh is told why the screen changed.
-    expect(screen).toMatch(/if \(wasMember\.current && !member\) setLostMembership\(true\)/);
-    expect(guest).toMatch(/clubs\.guest\.removed/);
-  });
+  // A non-member is shown the join card and no tabs, and a member removed since is told why the screen changed:
+  // rendered in src/screens/Clubs.render.test.tsx ("a club seen by a player who is not a member", "reading a club again").
 });
 
 describe('opening a club table too soon after another', () => {
