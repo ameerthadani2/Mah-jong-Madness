@@ -38,6 +38,10 @@ import {
   type PuzzleRatingsRepo,
   type TableRatingRecord,
   type TableRatingsRepo,
+  type QuickMatchPairRecord,
+  type QuickMatchPairsRepo,
+  type JoinAllowanceRecord,
+  type JoinAllowancesRepo,
   type PuzzleResultRecord,
   type PuzzleResultsRepo,
   type RushRunRecord,
@@ -1510,6 +1514,75 @@ function pgTableRatings(q: Queryable): TableRatingsRepo {
   };
 }
 
+interface PairRow {
+  a: string;
+  b: string;
+  tables: number;
+  shared_address: number;
+  last_at: Date;
+}
+
+function pgQuickMatchPairs(q: Queryable): QuickMatchPairsRepo {
+  return {
+    async record(pairs, at, max) {
+      const rows = pairs.filter((p) => p.a < p.b && isUuid(p.a) && isUuid(p.b));
+      if (rows.length === 0) return;
+      await q.query(
+        `INSERT INTO quick_match_pairs (a, b, tables, shared_address, last_at)
+         SELECT x.a, x.b, 1, x.shared, $4 FROM unnest($1::uuid[], $2::uuid[], $3::int[]) AS x(a, b, shared)
+         WHERE EXISTS (SELECT 1 FROM users WHERE id = x.a) AND EXISTS (SELECT 1 FROM users WHERE id = x.b)
+         ON CONFLICT (a, b) DO UPDATE SET tables = quick_match_pairs.tables + 1, shared_address = quick_match_pairs.shared_address + excluded.shared_address, last_at = excluded.last_at`,
+        [rows.map((p) => p.a), rows.map((p) => p.b), rows.map((p) => (p.shared ? 1 : 0)), toDate(at)],
+      );
+      await q.query('DELETE FROM quick_match_pairs WHERE (a, b) IN (SELECT a, b FROM quick_match_pairs ORDER BY last_at DESC, a, b OFFSET $1)', [max]);
+    },
+    async frequent(min, limit) {
+      const res = await q.query<PairRow>('SELECT a, b, tables, shared_address, last_at FROM quick_match_pairs WHERE tables >= $1 ORDER BY tables DESC, a::text, b::text LIMIT $2', [min, limit]);
+      return res.rows.map((r): QuickMatchPairRecord => ({ a: r.a, b: r.b, tables: r.tables, sharedAddress: r.shared_address, lastAt: r.last_at.getTime() }));
+    },
+  };
+}
+
+interface AllowanceRow {
+  kind: 'address' | 'device';
+  club_code: string;
+  key: string;
+  tokens: number;
+  updated_at: Date;
+}
+
+const allowanceFromRow = (r: AllowanceRow): JoinAllowanceRecord => ({ kind: r.kind, clubCode: r.club_code, key: r.key, tokens: Number(r.tokens), updatedAt: r.updated_at.getTime() });
+
+function pgJoinAllowances(q: Queryable): JoinAllowancesRepo {
+  const COLS = 'kind, club_code, key, tokens, updated_at';
+  return {
+    async salt() {
+      const res = await q.query<{ salt: string }>('SELECT salt FROM counter_salt WHERE id = 1');
+      if (!res.rows[0]) throw new Error('counter_salt has no row');
+      return res.rows[0].salt;
+    },
+    async list(since) {
+      const res = await q.query<AllowanceRow>('SELECT ' + COLS + ' FROM club_join_allowances WHERE updated_at >= $1', [toDate(since)]);
+      return res.rows.map(allowanceFromRow);
+    },
+    async forClub(clubCode, since) {
+      const res = await q.query<AllowanceRow>('SELECT ' + COLS + ' FROM club_join_allowances WHERE club_code = $1 AND updated_at >= $2 ORDER BY kind, tokens, key', [clubCode, toDate(since)]);
+      return res.rows.map(allowanceFromRow);
+    },
+    async save(r) {
+      await q.query(
+        `INSERT INTO club_join_allowances (kind, club_code, key, tokens, updated_at) VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (kind, club_code, key) DO UPDATE SET tokens = excluded.tokens, updated_at = excluded.updated_at`,
+        [r.kind, r.clubCode, r.key, Math.max(0, r.tokens), toDate(r.updatedAt)],
+      );
+    },
+    async prune(before) {
+      const res = await q.query('DELETE FROM club_join_allowances WHERE updated_at < $1', [toDate(before)]);
+      return res.rowCount ?? 0;
+    },
+  };
+}
+
 function pgPuzzleRatings(q: Queryable): PuzzleRatingsRepo {
   const COLS = 'user_id, rating, rated, updated_at';
   return {
@@ -1855,6 +1928,8 @@ function build(q: Queryable, tx: Tx, transaction: Repos['transaction']): Repos {
     puzzleResults: pgPuzzleResults(q),
     puzzleRatings: pgPuzzleRatings(q),
     tableRatings: pgTableRatings(q),
+    quickMatchPairs: pgQuickMatchPairs(q),
+    joinAllowances: pgJoinAllowances(q),
     rushRuns: pgRushRuns(q),
     dailyAttempts: pgDailyAttempts(q),
     puzzleFlags: pgPuzzleFlags(q),

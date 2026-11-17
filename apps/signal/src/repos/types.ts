@@ -559,6 +559,51 @@ export interface TableRatingsRepo {
   mergeInto(fromUserId: string, toUserId: string): Promise<void>;
 }
 
+/** How often a pair of accounts (a < b) sat together at quick-match tables. */
+export interface QuickMatchPairRecord {
+  a: string;
+  b: string;
+  tables: number;
+  /** Of those tables, how many the two accounts joined from one IPv4 address. */
+  sharedAddress: number;
+  lastAt: number;
+}
+
+/** The quick-match pair counts (src/matchmaking.ts), kept across restarts on Postgres. */
+export interface QuickMatchPairsRepo {
+  /**
+   * One more table for each pair (`a < b`; `shared` when they joined from one IPv4 address), seen
+   * at `at`. Past `max` pairs, the ones seen together least recently go.
+   */
+  record(pairs: Array<{ a: string; b: string; shared: boolean }>, at: number, max: number): Promise<void>;
+  /** Pairs that sat together at `min` or more tables, most often first (then by `a`, `b`), at most `limit`. */
+  frequent(min: number, limit: number): Promise<QuickMatchPairRecord[]>;
+}
+
+/** A club's daily join allowance for one address or device: its token bucket as it stood at `updatedAt`. */
+export interface JoinAllowanceRecord {
+  kind: 'address' | 'device';
+  clubCode: string;
+  /** A salted hash of the address key or install id (`JoinAllowancesRepo.salt`), never the value itself. */
+  key: string;
+  tokens: number;
+  updatedAt: number;
+}
+
+/** The club join allowances per address and device (src/clubs.ts), kept across restarts on Postgres. */
+export interface JoinAllowancesRepo {
+  /** The salt the keys are hashed with: one per database (memory: one per process). */
+  salt(): Promise<string>;
+  /** Every bucket updated at or after `since`. */
+  list(since: number): Promise<JoinAllowanceRecord[]>;
+  /** One club's buckets updated at or after `since` (the admin view). */
+  forClub(clubCode: string, since: number): Promise<JoinAllowanceRecord[]>;
+  /** Inserts or replaces the bucket. */
+  save(r: JoinAllowanceRecord): Promise<void>;
+  /** Drops buckets last updated before `before` (they have refilled). Returns how many went. */
+  prune(before: number): Promise<number>;
+}
+
 /** A Puzzle Rush run the server issued. The result fields are null until it is finished. */
 export interface RushRunRecord {
   id: string;
@@ -763,6 +808,8 @@ export interface Repos {
   puzzleResults: PuzzleResultsRepo;
   puzzleRatings: PuzzleRatingsRepo;
   tableRatings: TableRatingsRepo;
+  quickMatchPairs: QuickMatchPairsRepo;
+  joinAllowances: JoinAllowancesRepo;
   rushRuns: RushRunsRepo;
   dailyAttempts: DailyAttemptsRepo;
   puzzleFlags: PuzzleFlagsRepo;

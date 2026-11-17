@@ -156,7 +156,8 @@ export async function createSignalServer(opts: SignalServerOptions): Promise<Sig
   /** Set when `close()` begins: new requests and upgrades are refused, `/health` answers 503. */
   let draining = false;
 
-  const clubs = new ClubRegistry({ store: repos.repos.clubs, now });
+  // The join allowances per address and device are kept in the repositories too (the database on Postgres), so a restart keeps them.
+  const clubs = new ClubRegistry({ store: repos.repos.clubs, allowances: repos.repos.joinAllowances, now });
   try {
     await clubs.load();
   } catch (e) {
@@ -187,6 +188,8 @@ export async function createSignalServer(opts: SignalServerOptions): Promise<Sig
     // One quick-match table per account at a time, each charged to its players like a table they created.
     seatedAt: (userId): string | undefined => rooms.quickTableOf(userId),
     charge: (peerIds): string[] => rooms.chargeQuickMatch(peerIds),
+    // The pair counts the admin view lists: in the database on Postgres, so a restart keeps them.
+    pairStore: repos.repos.quickMatchPairs,
     log,
   });
   const rooms: RoomRegistry = new RoomRegistry({

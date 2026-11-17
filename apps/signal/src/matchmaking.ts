@@ -18,8 +18,9 @@
  * shared address: accounts behind one IPv4 address are grouped apart while other humans are
  * waiting, and a group whose wait is up takes in a waiting account from its own IPv4 address (with
  * no block or shared device or /64) rather than seat bots in that place. The matchmaker also
- * counts, in memory per process, how often each pair of accounts sat together and at how many of
- * those tables they shared an IPv4 address (`frequentPairs`, shown to moderators). A group
+ * counts how often each pair of accounts sat together and at how many of those tables they shared
+ * an IPv4 address (`pairStore`: the repositories, so the database on Postgres and the counts survive
+ * a restart; shown to moderators). A group
  * of four within the rating spread is seated at once; any group is seated, with Club bots in the
  * empty seats, once its first player has waited `fillMs` (QUICK_MATCH_FILL_MS, default 20 s), so a
  * solo player always gets a game. Each player of a seated group gets `{t:'matched', room, humans, bots}` and
@@ -138,6 +139,12 @@ export interface MatchmakerOptions {
    * their place, and the others are seated without them.
    */
   charge?(peerIds: string[]): string[];
+  /**
+   * Where the pair counts are kept (the repositories' `quickMatchPairs`: the database on Postgres,
+   * so they survive a restart and the admin view reads them there). Without it they are kept in
+   * this process (`frequentPairs`).
+   */
+  pairStore?: { record(pairs: Array<{ a: string; b: string; shared: boolean }>, at: number, max: number): Promise<void> };
   log?: (line: string) => void;
 }
 
@@ -217,6 +224,8 @@ export class Matchmaker implements QueueGate {
   /** Quick-match tables shared, by pair of accounts ("a b", a < b), least recently seen first. */
   private readonly pairs = new Map<string, QuickMatchPair>();
   private seq = 0;
+  /** The chain of pair-count writes to `pairStore`. */
+  private pairWrites: Promise<void> = Promise.resolve();
   private readonly now: () => number;
   readonly fillMs: number;
   private readonly statusEveryMs: number;
@@ -303,8 +312,9 @@ export class Matchmaker implements QueueGate {
   }
 
   /**
-   * Pairs of accounts that sat together at `min` or more quick-match tables, most often first.
-   * Kept in memory by this process only (lost on a restart, and not shared between servers).
+   * Pairs of accounts that sat together at `min` or more quick-match tables, most often first,
+   * when this matchmaker keeps them itself (no `pairStore`: in this process only, lost on a
+   * restart). With a `pairStore` they are read from there instead.
    */
   frequentPairs(min = 3): QuickMatchPair[] {
     return [...this.pairs.values()]
@@ -313,8 +323,26 @@ export class Matchmaker implements QueueGate {
       .map((p) => ({ ...p }));
   }
 
+  /** Resolves once every pair count written so far has reached the pair store (tests, shutdown). */
+  pairsSaved(): Promise<void> {
+    return this.pairWrites;
+  }
+
   private countPairs(seated: Entry[]): void {
     const at = this.now();
+    const store = this.opts.pairStore;
+    if (store) {
+      const pairs: Array<{ a: string; b: string; shared: boolean }> = [];
+      for (let i = 0; i < seated.length; i++) {
+        for (let j = i + 1; j < seated.length; j++) {
+          const [x, y] = seated[i].peer.userId < seated[j].peer.userId ? [seated[i], seated[j]] : [seated[j], seated[i]];
+          if (x.peer.userId !== y.peer.userId) pairs.push({ a: x.peer.userId, b: y.peer.userId, shared: x.address !== null && x.address === y.address });
+        }
+      }
+      // One write after another, so the counts add up in order; a failed write is logged, not retried.
+      this.pairWrites = this.pairWrites.then(() => store.record(pairs, at, MAX_TRACKED_PAIRS)).catch((e: Error) => this.opts.log?.(`[signal] quick match pair counts not saved: ${e.message}`));
+      return;
+    }
     for (let i = 0; i < seated.length; i++) {
       for (let j = i + 1; j < seated.length; j++) {
         const [x, y] = seated[i].peer.userId < seated[j].peer.userId ? [seated[i], seated[j]] : [seated[j], seated[i]];

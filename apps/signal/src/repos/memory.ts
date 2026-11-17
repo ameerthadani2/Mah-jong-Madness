@@ -8,6 +8,7 @@
  * repositories always read the state through `s.<field>`, never through a captured reference,
  * so a restore (which replaces the fields) is visible to every one of them.
  */
+import { randomBytes } from 'node:crypto';
 import { anonymiseUserIn, moveMembershipsIn, type Club } from '../clubs';
 import {
   DELETED_PLAYER_NAME,
@@ -42,6 +43,10 @@ import {
   type PuzzleRatingsRepo,
   type TableRatingRecord,
   type TableRatingsRepo,
+  type QuickMatchPairRecord,
+  type QuickMatchPairsRepo,
+  type JoinAllowanceRecord,
+  type JoinAllowancesRepo,
   type PuzzleResultRecord,
   type PuzzleResultsRepo,
   type RushRunRecord,
@@ -92,6 +97,11 @@ interface MemoryState {
   ratings: Map<string, PuzzleRatingRecord>;
   /** table_ratings, by user id. */
   tableRatings: Map<string, TableRatingRecord>;
+  /** quick_match_pairs, by "a b", least recently seen first. */
+  quickMatchPairs: Map<string, QuickMatchPairRecord>;
+  /** club_join_allowances, by "kind club key", and the salt (counter_salt). */
+  joinAllowances: Map<string, JoinAllowanceRecord>;
+  counterSalt: string;
   /** Automation flags by user id (puzzle_flags). */
   puzzleFlags: Map<string, PuzzleFlagRecord>;
   /** puzzle_rush_runs, by run id. */
@@ -134,6 +144,9 @@ const emptyState = (): MemoryState => ({
   puzzleSeq: 0,
   ratings: new Map(),
   tableRatings: new Map(),
+  quickMatchPairs: new Map(),
+  joinAllowances: new Map(),
+  counterSalt: randomBytes(16).toString('hex'),
   puzzleFlags: new Map(),
   rushRuns: new Map(),
   rushAnswers: new Map(),
@@ -211,6 +224,7 @@ function memoryUsers(s: MemoryState): UsersRepo {
         s.puzzles = s.puzzles.filter((p) => p.userId !== id);
         s.ratings.delete(id);
         s.tableRatings.delete(id);
+        for (const [k, pr] of [...s.quickMatchPairs]) if (pr.a === id || pr.b === id) s.quickMatchPairs.delete(k);
         s.puzzleFlags.delete(id);
         s.boardHidden.delete(id);
         for (const [k, run] of [...s.rushRuns]) {
@@ -807,6 +821,55 @@ function memoryTableRatings(s: MemoryState): TableRatingsRepo {
   };
 }
 
+function memoryQuickMatchPairs(s: MemoryState): QuickMatchPairsRepo {
+  return {
+    async record(pairs, at, max) {
+      for (const { a, b, shared } of pairs) {
+        if (a >= b) continue;
+        const key = `${a} ${b}`;
+        const p = s.quickMatchPairs.get(key) ?? { a, b, tables: 0, sharedAddress: 0, lastAt: at };
+        s.quickMatchPairs.delete(key);
+        s.quickMatchPairs.set(key, { a, b, tables: p.tables + 1, sharedAddress: p.sharedAddress + (shared ? 1 : 0), lastAt: at });
+        while (s.quickMatchPairs.size > max) s.quickMatchPairs.delete(s.quickMatchPairs.keys().next().value as string);
+      }
+    },
+    async frequent(min, limit) {
+      return [...s.quickMatchPairs.values()]
+        .filter((p) => p.tables >= min)
+        .sort((x, y) => y.tables - x.tables || (x.a < y.a ? -1 : x.a > y.a ? 1 : x.b < y.b ? -1 : x.b > y.b ? 1 : 0))
+        .slice(0, limit)
+        .map(copy);
+    },
+  };
+}
+
+function memoryJoinAllowances(s: MemoryState): JoinAllowancesRepo {
+  const id = (r: { kind: string; clubCode: string; key: string }) => `${r.kind} ${r.clubCode} ${r.key}`;
+  return {
+    async salt() {
+      return s.counterSalt;
+    },
+    async list(since) {
+      return [...s.joinAllowances.values()].filter((r) => r.updatedAt >= since).map(copy);
+    },
+    async forClub(clubCode, since) {
+      return [...s.joinAllowances.values()].filter((r) => r.clubCode === clubCode && r.updatedAt >= since).map(copy);
+    },
+    async save(r) {
+      s.joinAllowances.set(id(r), copy(r));
+    },
+    async prune(before) {
+      let n = 0;
+      for (const [k, r] of [...s.joinAllowances]) {
+        if (r.updatedAt >= before) continue;
+        s.joinAllowances.delete(k);
+        n++;
+      }
+      return n;
+    },
+  };
+}
+
 function memoryRushRuns(s: MemoryState): RushRunsRepo {
   return {
     async create(r) {
@@ -1023,6 +1086,8 @@ function build(s: MemoryState, transaction: Repos['transaction']): Repos {
     puzzleResults: memoryPuzzleResults(s),
     puzzleRatings: memoryPuzzleRatings(s),
     tableRatings: memoryTableRatings(s),
+    quickMatchPairs: memoryQuickMatchPairs(s),
+    joinAllowances: memoryJoinAllowances(s),
     rushRuns: memoryRushRuns(s),
     dailyAttempts: memoryDailyAttempts(s),
     puzzleFlags: memoryPuzzleFlags(s),
