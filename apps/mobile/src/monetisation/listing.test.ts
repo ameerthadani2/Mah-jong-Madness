@@ -6,6 +6,7 @@
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { describe, expect, it } from 'vitest';
+import { BOT_SKILLS } from '@mjm/engine';
 import { SUBSCRIPTIONS } from './catalog';
 
 const dir = join(__dirname, '..', '..', '..', '..', 'docs', 'store', 'listing');
@@ -78,16 +79,19 @@ describe('store listings', () => {
     expect(en).not.toMatch(/weighs the value|danger of each discard|strongest|expert/i);
     expect(section(read('zh-TW'), '說明')).toMatch(/手牌離聽牌還遠時更常棄胡防守的高手/);
     expect(section(read('zh-TW'), '說明')).not.toMatch(/危險程度/);
-    // The bot descriptions in Settings and the lobby, in both languages, give the measured figures.
+    // The bot descriptions in Settings and the lobby, in both languages, give what held across four measurements
+    // (two or more tiles from ready: roughly 2 to 2.5% deal-in against Club's 3.5 to 4.5%), never one sample's figure.
     const locales = join(__dirname, '..', 'i18n', 'locales');
-    for (const lang of ['en', 'zh-TW']) {
+    const ranges = { en: ['2 to 2.5%', '3.5 to 4.5%', 'four measurements'], 'zh-TW': ['2% 到 2.5%', '3.5% 到 4.5%', '四次測量'] };
+    for (const lang of ['en', 'zh-TW'] as const) {
       const common = JSON.parse(readFileSync(join(locales, lang, 'common.json'), 'utf8')) as { bots: { pro: string } };
       const settings = JSON.parse(readFileSync(join(locales, lang, 'settings.json'), 'utf8')) as { botAbout: { pro: string } };
       for (const text of [common.bots.pro, settings.botAbout.pro]) {
-        expect(text, lang).toContain('2.4%');
-        expect(text, lang).toContain('4.5%');
+        for (const r of ranges[lang]) expect(text, lang).toContain(r);
+        expect(text, lang).not.toMatch(/2\.4%|放槍率 2\.4/);
       }
     }
+    expect(BOT_SKILLS.pro.description).toContain("roughly 2 to 2.5% of the time against Club's 3.5 to 4.5%");
   });
 
   it('the title is Mahjong Mania: Taiwan 16 and the Chinese name is 麻將狂熱', () => {
