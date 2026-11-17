@@ -274,6 +274,19 @@ export function bestShanten(counts: Counts, setsNeeded: number, ligu = false): n
   return ligu && setsNeeded === TOTAL_SETS ? Math.min(std, liguShanten(counts)) : std;
 }
 
+/**
+ * Which target a hand with no melds plays for at a 嚦咕嚦咕 table, when 嚦咕嚦咕 must be `margin`
+ * steps nearer than five sets and a pair to be worth following (0: whichever is nearer). `shanten`
+ * is the distance on the path followed; `rank` is the distance used to compare hands, the 嚦咕嚦咕
+ * distance counting `margin` more (min(standard, 嚦咕嚦咕 + margin)).
+ */
+export function liguPath(counts: Counts, setsNeeded: number, margin: number): { shanten: number; rank: number; ligu: boolean } {
+  const std = shanten(counts, setsNeeded);
+  if (setsNeeded !== TOTAL_SETS) return { shanten: std, rank: std, ligu: false };
+  const lig = liguShanten(counts);
+  return lig + margin < std ? { shanten: lig, rank: lig + margin, ligu: true } : { shanten: std, rank: std, ligu: false };
+}
+
 const GROUPS: Array<[number, number, boolean]> = [
   [0, 9, false],
   [9, 18, false],
@@ -356,9 +369,10 @@ function overlapTable(c: number[], honor: boolean): Int8Array {
  * For each possible discard from a 3n+2 hand, the resulting shanten and the
  * kinds that would then improve the hand ("acceptance"). Used by bots and hints.
  *
- * With `ligu` (the table plays 嚦咕嚦咕 and the hand has no melds) the shanten is `bestShanten`,
- * the nearer of five sets and a pair and seven pairs and a triplet, and the accepted kinds are those
- * that bring that nearer target closer (both paths' when they are level).
+ * With `liguMargin` (the table plays 嚦咕嚦咕; the hand has no melds) each discard follows the path
+ * `liguPath` picks: 嚦咕嚦咕 when it is more than `liguMargin` steps nearer than five sets and a pair.
+ * `shanten` is the distance on that path, `rank` the distance hands are compared by, and the accepted
+ * kinds are those that lower `rank` (both paths' when they are level).
  */
 export interface DiscardOption {
   kind: Kind;
@@ -367,20 +381,22 @@ export interface DiscardOption {
   accepts: Kind[];
   /** Sum of remaining copies of accepted kinds given `unseen` counts */
   acceptance: number;
-  /** Present when 嚦咕嚦咕 is strictly nearer than five sets and a pair after this discard. */
+  /** Present when the hand follows 嚦咕嚦咕 after this discard (see `liguPath`). */
   ligu?: true;
+  /** With `liguMargin`: the distance hands are compared by (`liguPath`). */
+  rank?: number;
 }
 
-export function discardOptions(counts: Counts, setsNeeded: number, unseen: Counts, ligu = false): DiscardOption[] {
+export function discardOptions(counts: Counts, setsNeeded: number, unseen: Counts, liguMargin?: number): DiscardOption[] {
   const out: DiscardOption[] = [];
   const c = counts.slice();
-  const withLigu = ligu && setsNeeded === TOTAL_SETS;
+  const withLigu = liguMargin !== undefined && setsNeeded === TOTAL_SETS;
+  const margin = liguMargin ?? 0;
   for (let k = 0; k < NUM_PLAY_KINDS; k++) {
     if (c[k] === 0) continue;
     c[k]--;
-    const std = shanten(c, setsNeeded);
-    const lig = withLigu ? liguShanten(c) : Infinity;
-    const s = Math.min(std, lig);
+    const path = withLigu ? liguPath(c, setsNeeded, margin) : null;
+    const s = path ? path.rank : shanten(c, setsNeeded);
     const accepts: Kind[] = [];
     let acceptance = 0;
     // Any kind not yet held can start a pair, so 嚦咕嚦咕 looks at every kind.
@@ -388,15 +404,16 @@ export function discardOptions(counts: Counts, setsNeeded: number, unseen: Count
     for (const a of relevant) {
       if (c[a] >= 4 || unseen[a] <= 0) continue;
       c[a]++;
-      const s2 = withLigu ? bestShanten(c, setsNeeded, true) : shanten(c, setsNeeded);
+      const s2 = withLigu ? liguPath(c, setsNeeded, margin).rank : shanten(c, setsNeeded);
       c[a]--;
       if (s2 < s) {
         accepts.push(a);
         acceptance += unseen[a];
       }
     }
-    const option: DiscardOption = { kind: k, shanten: s, accepts, acceptance };
-    if (lig < std) option.ligu = true;
+    const option: DiscardOption = { kind: k, shanten: path ? path.shanten : s, accepts, acceptance };
+    if (path) option.rank = path.rank;
+    if (path?.ligu) option.ligu = true;
     out.push(option);
     c[k]++;
   }

@@ -23,7 +23,7 @@
  *       Club bots that know the hand around it) with the test seat knowing 嚦咕嚦咕 and then blind to it
  *       (`BOT_WEIGHTS.ligu` 0 for that seat only). Prints the paired difference in points a hand with its
  *       standard error, 嚦咕嚦咕 wins per 1,000 hands with and without the blind seat, and illegal moves.
- *       Default seed prefix `ligu`, default `liguTai` 4.
+ *       Default seed prefix `ligu`, default `liguTai` 4; `--tiers club,pro` plays only those tiers.
  *
  *   tsx scripts/simulate.ts --gate
  *       The CI strength gate, on GATE_HANDS fixed seeds (prefix `gate`) with the per-hand reference
@@ -235,12 +235,12 @@ function runMatches(matches: number): void {
  * Bots that know 嚦咕嚦咕 against the same bots blind to it, at a table that plays the hand (see the
  * usage note at the top). Wins by 嚦咕嚦咕 are counted over every seat of the table.
  */
-function runLigu(n: number, prefix: string, liguTai: number): void {
+function runLigu(n: number, prefix: string, liguTai: number, tiers: readonly BotSkill[]): void {
   const rules = withRules({ liguTai });
   const started = Date.now();
   const liguWins = (s: GameState): number => s.result!.wins.filter((w) => w.score.ligu).length;
   console.log(`ligu: ${n} paired hands per tier, seed prefix ${prefix}, liguTai ${liguTai}`);
-  for (const skill of SKILLS) {
+  for (const skill of tiers) {
     const diffs: number[] = [];
     let aware = 0;
     let blind = 0;
@@ -403,7 +403,8 @@ else if (flag('--record-reference')) recordReference();
 else if (flag('--ligu')) {
   const prefix = option('--seed') ?? 'ligu';
   const tai = countArg(option('--tai'), 4);
-  runLigu(countArg(args[0], 1000), prefix, tai);
+  const tiers = (option('--tiers') ?? SKILLS.join(',')).split(',').map(skillArg);
+  runLigu(countArg(args[0], 1000), prefix, tai, tiers);
 }
 else if (flag('--ladder')) {
   const matches = flag('--matches');

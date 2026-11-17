@@ -17,12 +17,13 @@
  * up (wall left, own hand value, dealer). Value: Pro keeps value-honour pairs,
  * pongs them, and chases a flush once it is in reach.
  *
- * 嚦咕嚦咕 (`RuleSet.liguTai`): at a table that plays it, every tier measures a hand with no melds by
- * the nearer of five sets and a pair and seven pairs and a triplet (`bestShanten`), keeps the tiles
- * of that path, and while 嚦咕嚦咕 is the nearer one calls a chow, pong or kong only when it leaves the
- * hand strictly closer to ready. Beginner keeps its noise and its habit of grabbing harmless claims.
+ * 嚦咕嚦咕 (`RuleSet.liguTai`): at a table that plays it, every tier measures a hand with no melds on
+ * both paths (`liguPath`) and follows seven pairs and a triplet when it is more than
+ * `BOT_WEIGHTS.liguMargin` steps nearer than five sets and a pair, keeping the tiles of that path;
+ * while it follows it, it calls a chow, pong or kong only when that leaves the hand strictly closer to
+ * ready. Beginner keeps its noise and its habit of grabbing harmless claims.
  */
-import { bestShanten, countsFromKinds, discardOptions, liguShanten, relevantKinds, shanten, TOTAL_SETS, type Counts } from './hand';
+import { countsFromKinds, discardOptions, liguPath, relevantKinds, shanten, TOTAL_SETS, type Counts } from './hand';
 import { type Action, type GameState, type PlayerState, drawsLeft, legalActions } from './game';
 import { createRng } from './rng';
 import { playsLigu } from './rules';
@@ -349,6 +350,14 @@ export const BOT_WEIGHTS = {
    * (`npm run sim -- --ligu`). It changes nothing at a table that does not play the hand.
    */
   ligu: 1,
+  /**
+   * 嚦咕嚦咕 is followed only when it is more than this many steps nearer than five sets and a pair
+   * (`liguPath`): five sets and a pair can also be built from other players' discards, so at equal
+   * distance it is the faster hand. At 0 (follow whichever is nearer) Club lost 2.71 points a hand to
+   * the same Club blind to 嚦咕嚦咕 over 4,000 paired hands (behind at 95%); 1 was chosen on seed
+   * prefix `u11tune` and reported on `u11report` (docs/ARCHITECTURE.md).
+   */
+  liguMargin: 1,
 };
 
 /** Whether `seat` weighs 嚦咕嚦咕: the table plays it, the bots are not blind to it and the hand has no melds. */
@@ -358,9 +367,7 @@ export function liguFor(s: GameState, seat: number): boolean {
 
 /** True when `seat` weighs 嚦咕嚦咕 and it is strictly nearer than five sets and a pair for the hand as it stands. */
 export function followsLigu(s: GameState, seat: number): boolean {
-  if (!liguFor(s, seat)) return false;
-  const counts = countsFromKinds(s.players[seat].hand.map(kindOf));
-  return liguShanten(counts) < shanten(counts, TOTAL_SETS);
+  return liguFor(s, seat) && liguPath(countsFromKinds(s.players[seat].hand.map(kindOf)), TOTAL_SETS, BOT_WEIGHTS.liguMargin).ligu;
 }
 
 /**
@@ -416,7 +423,7 @@ export function rankDiscards(s: GameState, seat: number, skill: BotSkill = 'club
   const setsNeeded = TOTAL_SETS - p.melds.length;
   const counts = countsFromKinds(p.hand.map(kindOf));
   const unseen = unseenCounts(s, seat);
-  const options = discardOptions(counts, setsNeeded, unseen, liguFor(s, seat));
+  const options = discardOptions(counts, setsNeeded, unseen, liguFor(s, seat) ? BOT_WEIGHTS.liguMargin : undefined);
   const defend = skill !== 'beginner';
   const reads = defend ? readOpponents(s, seat) : [];
   const threatened = reads.some((r) => r.tenpai > 0);
@@ -460,7 +467,7 @@ export function rankDiscards(s: GameState, seat: number, skill: BotSkill = 'club
   const out: DiscardAdvice[] = [];
   for (const o of options) {
     const tile = p.hand.find((t) => kindOf(t) === o.kind)!;
-    let score = -o.shanten * 1000 + o.acceptance * 10;
+    let score = -(o.rank ?? o.shanten) * 1000 + o.acceptance * 10;
     const l = look.get(o.kind);
     if (l !== undefined) score += BOT_WEIGHTS.proLookahead * 10 * (l - o.acceptance);
     const speedOnly = score;
@@ -506,10 +513,11 @@ function winPoints(s: GameState, seat: number): number {
   return 1.5 * (rules.basePoints + rules.taiPoints * (tai + dealerExtra * payers));
 }
 
-/** Shanten of `seat`'s hand as it stands; at a 嚦咕嚦咕 table, the nearer of the two targets (`liguFor`). */
+/** Shanten of `seat`'s hand as it stands; at a 嚦咕嚦咕 table, on the path it follows (`liguPath`). */
 export function currentShanten(s: GameState, seat: number): number {
   const p = s.players[seat];
-  return bestShanten(countsFromKinds(p.hand.map(kindOf)), TOTAL_SETS - p.melds.length, liguFor(s, seat));
+  const counts = countsFromKinds(p.hand.map(kindOf));
+  return liguFor(s, seat) ? liguPath(counts, TOTAL_SETS - p.melds.length, BOT_WEIGHTS.liguMargin).shanten : shanten(counts, TOTAL_SETS - p.melds.length);
 }
 
 /** Shanten of the hand after taking a claim and then making its best discard. */

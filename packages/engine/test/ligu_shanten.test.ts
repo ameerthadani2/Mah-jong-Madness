@@ -4,7 +4,7 @@
  * distance, and against the engine's own waits and winning test.
  */
 import { describe, expect, it } from 'vitest';
-import { bestShanten, countsFromKinds, createRng, isLiguShape, kindsFromString, liguShanten, NUM_PLAY_KINDS, shanten, waits, type Counts } from '../src/index';
+import { bestShanten, countsFromKinds, createRng, isLiguShape, kindsFromString, liguPath, liguShanten, NUM_PLAY_KINDS, shanten, waits, type Counts } from '../src/index';
 
 /** Largest number of tiles a target of seven pairs and one triplet (different kinds) shares with the hand. */
 function bruteOverlap(counts: Counts): number {
@@ -145,5 +145,19 @@ describe('嚦咕嚦咕 distance to ready', () => {
     const melded = countsFromKinds(kindsFromString('11m 22m 33p 55p 77s 99s 4s'));
     expect(bestShanten(melded, 4, true)).toBe(shanten(melded, 4));
     expect(() => liguShanten(melded)).toThrow(/expected 16 or 17/);
+  });
+
+  it('liguPath follows 嚦咕嚦咕 only when it is more than the margin nearer, and compares hands on that footing', () => {
+    const c = (x: string) => countsFromKinds(kindsFromString(x));
+    // Eight scattered pairs: ready for 嚦咕嚦咕, far from five sets and a pair.
+    const eight = c('11m 55m 99m 22p 88p 33s 77s EE');
+    const std = shanten(eight, 5);
+    expect(std).toBeGreaterThanOrEqual(2);
+    expect(liguPath(eight, 5, 0)).toEqual({ shanten: 0, rank: 0, ligu: true });
+    expect(liguPath(eight, 5, 1)).toEqual({ shanten: 0, rank: 1, ligu: true });
+    expect(liguPath(eight, 5, std)).toEqual({ shanten: std, rank: std, ligu: false });
+    // A melded hand never plays 嚦咕嚦咕.
+    const melded = c('11m 22m 33p 55p 77s 99s 4s');
+    expect(liguPath(melded, 4, 0)).toEqual({ shanten: shanten(melded, 4), rank: shanten(melded, 4), ligu: false });
   });
 });

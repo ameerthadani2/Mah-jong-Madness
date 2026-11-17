@@ -40,8 +40,14 @@ afterEach(() => {
   BOT_WEIGHTS.ligu = 1;
 });
 
-/** Six pairs and five singles (17 tiles): two from ready for 嚦咕嚦咕, further for five sets and a pair. */
-const PAIRS_HAND = '11m 22m 4m 66m 1p 33p 7p 11s 2s 3s SS';
+/**
+ * Seven pairs and three singles (17 tiles): one from ready for 嚦咕嚦咕, four for five sets and a pair,
+ * so the bots follow 嚦咕嚦咕 (it must be more than `BOT_WEIGHTS.liguMargin`, 1, steps nearer). From the
+ * aware-versus-blind search (seed prefix `ldiff`).
+ */
+const PAIRS_HAND = '11m 2m 44m 22p 44p 88p 6s 8s SS BB';
+/** The same less its 2m (16 tiles), waiting for a claim. */
+const CLAIM_HAND = '11m 44m 22p 44p 88p 6s 8s SS BB';
 
 /** Seat 1 holds `hand` (16 tiles) and seat 0 has just thrown `thrown`: seat 1 may claim it. */
 function offered(hand: string, thrown: string, rules = ON): GameState {
@@ -53,20 +59,25 @@ describe('bots at a 嚦咕嚦咕 table', () => {
   it('measure a concealed hand by the nearer of the two targets, and only while the table plays it', () => {
     const on = setup(ON, [PAIRS_HAND, '', '', ''], 40);
     const off = setup({}, [PAIRS_HAND, '', '', ''], 40);
-    expect(currentShanten(on, 0)).toBe(2);
-    expect(currentShanten(off, 0)).toBeGreaterThan(2);
+    expect(currentShanten(on, 0)).toBe(1);
+    expect(currentShanten(off, 0)).toBe(4);
     expect(followsLigu(on, 0)).toBe(true);
     expect(followsLigu(off, 0)).toBe(false);
     expect(blind(() => currentShanten(on, 0))).toBe(currentShanten(off, 0));
+    // Only one step nearer (two against three) is not enough: five sets and a pair can use the discards.
+    const close = setup(ON, ['11m 22m 4m 66m 1p 33p 7p 11s 2s 3s SS', '', '', ''], 40);
+    expect(followsLigu(close, 0)).toBe(false);
+    expect(currentShanten(close, 0)).toBe(3);
+    expect(hintFor(close, 0).statusKey).toBe('hint.status.manyAway');
   });
 
   it('at every tier keep the pairs and throw a single, where the same bots blind to it break a pair', () => {
-    // From the aware-versus-blind search: blind, every tier throws a 1s from the pair.
+    // Blind, every tier throws a 4m from its pair.
     const s = setup(ON, [PAIRS_HAND, '', '', ''], 40);
     for (const skill of SKILLS) {
       const top = rankDiscards(s, 0, skill)[0];
       expect(top.ligu, skill).toBe(true);
-      expect(top.shanten, skill).toBe(2);
+      expect(top.shanten, skill).toBe(1);
       expect(count(s, 0, top.kind), skill).toBe(1);
       expect(top.accepts.length, skill).toBeGreaterThan(0);
       const blindTop = blind(() => rankDiscards(s, 0, skill)[0]);
@@ -83,22 +94,21 @@ describe('bots at a 嚦咕嚦咕 table', () => {
   it('count the tiles that pair a single as useful while 嚦咕嚦咕 is the nearer path', () => {
     const s = setup(ON, [PAIRS_HAND, '', '', ''], 40);
     const top = rankDiscards(s, 0, 'pro')[0];
-    // After the throw the hand is six pairs and four singles: a tile that pairs a single or makes a pair
-    // the triplet brings it closer, so every kind still held is useful.
+    // After the throw the hand is seven pairs and two singles: a tile that pairs a single or makes a
+    // pair the triplet makes it ready, so every kind still held is useful.
     const after = s.players[0].hand.map(kindOf);
     after.splice(after.indexOf(top.kind), 1);
     expect([...top.accepts].sort((a, b) => a - b)).toEqual([...new Set(after)].sort((a, b) => a - b));
   });
 
   it('do not pong or chow out of a 嚦咕嚦咕 that is nearer than five sets and a pair; blind, they call', () => {
-    // Six pairs and four singles: two from ready for 嚦咕嚦咕, three for five sets and a pair. From the
-    // aware-versus-blind search: blind, Club and Pro pong the 1m and chow 4m-5m-6m.
-    const hand = '11m 22m 4m 66m 33p 7p 11s 2s 3s SS';
+    // One from ready for 嚦咕嚦咕, four for five sets and a pair: blind, Club and Pro call these.
     for (const [thrown, claim] of [
-      ['1m', 'pong'],
-      ['5m', 'chi'],
+      ['2p', 'pong'],
+      ['4m', 'pong'],
+      ['7s', 'chi'],
     ] as const) {
-      const s = offered(hand, thrown);
+      const s = offered(CLAIM_HAND, thrown);
       expect(followsLigu(s, 1)).toBe(true);
       for (const skill of ['club', 'pro'] as const) {
         expect(chooseAction(s, 1, { skill, seed: 'c' }), `${skill} ${thrown}`).toEqual({ type: 'pass' });
@@ -107,7 +117,7 @@ describe('bots at a 嚦咕嚦咕 table', () => {
     }
   });
 
-  it('still call as before when 嚦咕嚦咕 is not the nearer path', () => {
+  it('still call as before when 嚦咕嚦咕 is not nearer by more than the margin', () => {
     // Two chows and scattered pairs: level on both paths, so the pong that gets closer is taken as it always was.
     const s = offered('11m 22m 33m 55p 77p 99s 4s 6s E W', '5p');
     expect(followsLigu(s, 1)).toBe(false);
@@ -129,11 +139,11 @@ describe('the coach at a 嚦咕嚦咕 table', () => {
   it('suggests the discard that keeps the pairs and counts the tiles from ready for 嚦咕嚦咕, in both languages', () => {
     const s = setup(ON, [PAIRS_HAND, '', '', ''], 40);
     const h = hintFor(s, 0);
-    expect(h.shanten).toBe(2);
+    expect(h.shanten).toBe(1);
     expect(count(s, 0, h.bestDiscard!.kind)).toBe(1);
-    expect(h.statusKey).toBe('hint.status.twoAwayLigu');
+    expect(h.statusKey).toBe('hint.status.oneAwayLigu');
     expect(h.discardReasonKey).toBe('hint.discard.efficiencyLigu');
-    expect(h.status).toBe('Two tiles from ready for 嚦咕嚦咕 (seven pairs and a triplet).');
+    expect(h.status).toBe('One tile from ready for 嚦咕嚦咕 (seven pairs and a triplet).');
     expect(formatEngineReason(h.statusKey, h.statusParams, 'zh-TW')).toContain('嚦咕嚦咕');
     expect(h.discardReason).toContain('嚦咕嚦咕');
     expect(formatEngineReason(h.discardReasonKey!, h.discardReasonParams!, 'zh-TW')).toContain('嚦咕嚦咕');
@@ -142,16 +152,16 @@ describe('the coach at a 嚦咕嚦咕 table', () => {
 
   it('says nothing of 嚦咕嚦咕 at a table that does not play it', () => {
     const h = hintFor(setup({}, [PAIRS_HAND, '', '', ''], 40), 0);
-    expect(h.shanten).toBeGreaterThan(2);
+    expect(h.shanten).toBe(4);
     expect(h.statusKey).not.toMatch(/Ligu$/);
     expect(h.discardReasonKey).toBe('hint.discard.efficiency');
   });
 
   it('counts the 嚦咕嚦咕 distance while a claim is offered and does not recommend breaking it', () => {
-    const s = offered('11m 22m 4m 66m 33p 7p 11s 2s 3s SS', '1m');
+    const s = offered(CLAIM_HAND, '2p');
     const h = hintFor(s, 1);
-    expect(h.shanten).toBe(2);
-    expect(h.statusKey).toBe('hint.status.twoAwayLigu');
+    expect(h.shanten).toBe(1);
+    expect(h.statusKey).toBe('hint.status.oneAwayLigu');
     expect(h.claims.length).toBeGreaterThan(0);
     for (const c of h.claims) expect(c.recommended).toBe(false);
   });
