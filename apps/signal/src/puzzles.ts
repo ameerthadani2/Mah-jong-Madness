@@ -72,7 +72,7 @@ export const RUSH_RANK_FLOOR_MS = 1500;
  * of its floor, or a perfect run of 10 or more at under 3 s an answer.
  */
 export const FLAG_WINDOW = 10;
-export const FLAG_MIN_INHUMAN = 3;
+export const FLAG_MIN_INHUMAN = 2;
 export const DAILY_INHUMAN_SECONDS = 5;
 export const RUSH_INHUMAN_PACE_SECONDS = 2;
 export const RUSH_PERFECT_PACE_SECONDS = 3;

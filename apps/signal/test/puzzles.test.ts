@@ -247,7 +247,7 @@ function contract(name: string, repos: () => Repos) {
     it('records but does not rank a daily answer under 3 seconds or a Rush run averaging under 1.5 seconds an answer', async () => {
       const f = fixture(repos());
       const key = '2026-11-17';
-      const [bot, human, gold] = [await f.guest('Bot'), await f.guest('Human'), await f.guest('Gold')];
+      const [bot, human, gold, edge] = [await f.guest('Bot'), await f.guest('Human'), await f.guest('Gold'), await f.guest('Edge')];
       // The daily puzzle: 2.999 s is under the floor, 3 s is not.
       const started = await f.startDaily(bot, key);
       f.clock.now += 2999;
@@ -257,7 +257,7 @@ function contract(name: string, repos: () => Repos) {
       expect((await f.daily(bot, key, dailyRight(key))).json.error).toBe('already_played');
       const ok = await f.daily(human, key, dailyRight(key), 3);
       expect(ok.json).toMatchObject({ correct: true, ranked: true, seconds: 3, rating: { rated: 1 } });
-      const mine = (rows: Row[]) => rows.filter((r) => [bot, human, gold].some((g) => g.userId === r.userId)).map((r) => r.displayName);
+      const mine = (rows: Row[]) => rows.filter((r) => [bot, human, gold, edge].some((g) => g.userId === r.userId)).map((r) => r.displayName);
       const daily = await f.board(bot, `daily?date=${key}`);
       expect(mine(daily.rows)).toEqual(['Human']);
       expect(daily.me).toBeNull();
@@ -270,11 +270,12 @@ function contract(name: string, repos: () => Repos) {
       expect(unranked.json).toMatchObject({ solved: 20, seconds: 29, ranked: false });
       expect((await f.repos.rushRuns.get(quick.runId))?.ranked).toBe(false);
       expect((await f.board(gold, 'rush?period=day')).me).toBeNull();
-      const paced = await f.startRush(human);
+      // (Another account: two results this close to the floors would flag one account, see below.)
+      const paced = await f.startRush(edge);
       f.clock.now += 30_000;
-      expect((await f.finish(human, paced.runId, f.rushAnswers(paced.seed, 'r'.repeat(20)))).json).toMatchObject({ solved: 20, seconds: 30, ranked: true });
+      expect((await f.finish(edge, paced.runId, f.rushAnswers(paced.seed, 'r'.repeat(20)))).json).toMatchObject({ solved: 20, seconds: 30, ranked: true });
       const rush = await f.board(gold, 'rush?period=day');
-      expect(mine(rush.rows)).toEqual(['Human']);
+      expect(mine(rush.rows)).toEqual(['Edge']);
       // A run's third strike ends it: the judged answers set the pace, not the ones sent after it.
       const strikes = await f.startRush(gold);
       f.clock.now += 9_000;
@@ -301,13 +302,13 @@ function contract(name: string, repos: () => Repos) {
       await f.daily(bot, TODAY, dailyRight(TODAY), 12);
       await f.daily(human, TODAY, dailyRight(TODAY), 25);
       // The bot paces itself just above the Rush floor (20 answers in 31 s, 1.55 s each): ranked, but at the floor.
-      for (let i = 0; i < 2; i++) expect(await run(bot, 'r'.repeat(20), 31_000)).toMatchObject({ ranked: true });
+      expect(await run(bot, 'r'.repeat(20), 31_000)).toMatchObject({ ranked: true });
       expect(await flagOf(bot)).toBeNull();
       expect(mine((await f.board(human, 'rush?period=all')).rows)).toContain('Paced bot');
       // An honest pace (about 6 s an answer, a mistake or two) never counts, however often.
       for (let i = 0; i < 5; i++) await run(human, 'rrrrwrrrrrrw', 72_000);
       expect(await flagOf(human)).toBeNull();
-      // The third result at the floor flags the bot: it is on no board, and sees its own row marked.
+      // The second result at the floor flags the bot: it is on no board, and sees its own row marked.
       await run(bot, 'r'.repeat(20), 31_000);
       expect(await flagOf(bot)).toBe('flagged');
       for (const path of ['rush?period=all', `daily?date=${TODAY}`]) {
@@ -322,8 +323,8 @@ function contract(name: string, repos: () => Repos) {
       expect(queue.status, queue.body).toBe(200);
       const entry = (queue.json.flags as Array<Record<string, unknown>>).find((x) => x.userId === bot.userId)!;
       expect(entry).toMatchObject({ status: 'flagged', account: { id: bot.userId, displayName: 'Paced bot' } });
-      expect(entry.reason).toMatch(/^3 of the last 4 puzzle results/);
-      expect((entry.recent as unknown[]).length).toBe(4);
+      expect(entry.reason).toMatch(/^2 of the last 3 puzzle results/);
+      expect((entry.recent as unknown[]).length).toBe(3);
       expect((await f.call('GET', '/api/admin/puzzle-flags?status=nope', undefined, admin)).json.error).toBe('invalid');
       expect((await f.call('POST', `/api/admin/puzzle-flags/${human.userId}`, { action: 'clear' }, admin)).status).toBe(404);
       expect((await f.call('POST', `/api/admin/puzzle-flags/${bot.userId}`, { action: 'ban' }, admin)).json.error).toBe('invalid');
@@ -333,7 +334,7 @@ function contract(name: string, repos: () => Repos) {
       expect(cleared.json).toMatchObject({ ok: true, flag: { status: 'cleared' } });
       expect(mine((await f.board(human, 'rush?period=all')).rows)).toContain('Paced bot');
       f.clock.now += 1000;
-      for (let i = 0; i < 2; i++) await run(bot, 'r'.repeat(20), 31_000);
+      await run(bot, 'r'.repeat(20), 31_000);
       expect(await flagOf(bot)).toBe('cleared');
       // A perfect run at an inhuman pace (25 of 25 in 70 s, 2.8 s each) counts too.
       expect(await run(bot, 'r'.repeat(25), 70_000)).toMatchObject({ ranked: true, wrong: 0 });
