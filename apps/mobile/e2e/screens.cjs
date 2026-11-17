@@ -565,7 +565,19 @@ async function previewFit(page) {
     };
     const dlg = [...document.querySelectorAll('[data-testid="look-preview"]')].find(shown);
     if (!dlg) return ['the preview is not showing'];
-    if (dlg.getAttribute('role') !== 'dialog' || dlg.getAttribute('aria-modal') !== 'true' || !dlg.getAttribute('aria-label')) bad.push(`the preview is not a named modal dialog (role ${dlg.getAttribute('role')}, aria-modal ${dlg.getAttribute('aria-modal')}, label "${dlg.getAttribute('aria-label')}")`);
+    // One modal dialog, named for the look, holds the sheet: no unnamed outer dialog around a named inner one.
+    const dialogs = [...document.querySelectorAll('[role="dialog"]')].filter(shown);
+    const named = dlg.closest('[role="dialog"]');
+    if (dialogs.length !== 1) bad.push(`${dialogs.length} dialogs on screen, not one (${dialogs.map((d) => `"${d.getAttribute('aria-label') || 'unnamed'}"`).join(', ')})`);
+    if (!named || named.getAttribute('aria-modal') !== 'true' || !named.getAttribute('aria-label')) bad.push(`the preview is not in a named modal dialog (aria-modal ${named?.getAttribute('aria-modal')}, label "${named?.getAttribute('aria-label')}")`);
+    // The scrim closes on a tap but is no second "Close preview" button: screen readers and the keyboard reach the sheet's own.
+    const close = document.querySelector('[data-testid="preview-close"]');
+    const closeName = close?.getAttribute('aria-label');
+    const reachable = (e) => !e.closest('[aria-hidden="true"]');
+    const closers = [...document.querySelectorAll('[role="button"], button')].filter((e) => shown(e) && reachable(e) && closeName && e.getAttribute('aria-label') === closeName);
+    if (closers.length !== 1) bad.push(`${closers.length} "${closeName}" buttons reach a screen reader, not one`);
+    const scrim = document.querySelector('[data-testid="preview-scrim"]');
+    if (scrim && (reachable(scrim) || scrim.tabIndex >= 0)) bad.push('the scrim behind the sheet reaches a screen reader or the keyboard');
     const box = dlg.getBoundingClientRect();
     if (box.left < -1 || box.top < -1 || box.right > innerWidth + 1 || box.bottom > innerHeight + 1) bad.push(`the sheet runs off the screen (${Math.round(box.left)},${Math.round(box.top)} to ${Math.round(box.right)},${Math.round(box.bottom)} in ${innerWidth}x${innerHeight})`);
     for (const el of dlg.querySelectorAll('div[dir="auto"]')) {

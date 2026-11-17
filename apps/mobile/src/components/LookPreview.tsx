@@ -10,7 +10,7 @@
  * Close button, the scrim or the Back key; the Shop gives focus back to the card that opened it (display/focus.ts).
  */
 import React, { useEffect, useRef, useState } from 'react';
-import { Animated, Modal, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import { Animated, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { kindFromCode } from '@mjm/engine';
 import { productById, productText, type Product } from '../monetisation/catalog';
 import { EMOTE_PACKS, tileBackById, type CelebrationId, type TileBackDesign } from '../monetisation/cosmetics';
@@ -369,11 +369,18 @@ export function LookPreview({
   );
 
   const dialogLabel = t('shop.preview.dialog', { title: text.title });
+  // One named modal dialog for screen readers. On the web the Modal itself is a dialog (react-native-web gives its
+  // outer element role="dialog" and aria-modal), so it takes the name and the sheet is not a second dialog; on a
+  // phone the sheet is the dialog. The scrim closes the preview on a tap but is hidden from screen readers and
+  // the keyboard: the sheet's own close button is the one they reach.
+  const web = Platform.OS === 'web';
+  const sheetA11y = web ? {} : { role: 'dialog' as const, 'aria-modal': true, 'aria-label': dialogLabel, accessibilityViewIsModal: true };
+  const modalA11y = (web ? { 'aria-label': dialogLabel } : {}) as object;
   return (
-    <Modal visible transparent animationType="fade" onRequestClose={onClose} supportedOrientations={['portrait', 'landscape']}>
-      <Pressable style={styles.scrim} onPress={onClose} accessibilityRole="button" accessibilityLabel={t('shop.preview.close')} importantForAccessibility="no" accessibilityElementsHidden />
+    <Modal visible transparent animationType="fade" onRequestClose={onClose} supportedOrientations={['portrait', 'landscape']} {...modalA11y}>
+      <Pressable style={styles.scrim} onPress={onClose} aria-hidden focusable={false} tabIndex={-1} importantForAccessibility="no-hide-descendants" accessibilityElementsHidden testID="preview-scrim" />
       <View style={[styles.wrap, { padding: margin }]} pointerEvents="box-none">
-        <View role="dialog" aria-modal aria-label={dialogLabel} accessibilityViewIsModal testID="look-preview" style={[styles.shell, { width: sheetW, maxHeight: height - margin * 2 }]}>
+        <View {...sheetA11y} testID="look-preview" style={[styles.shell, { width: sheetW, maxHeight: height - margin * 2 }]}>
           {/* A Card's look, drawn here so the sheet can shrink to the window and scroll its middle. */}
           <View style={styles.sheet}>
             <View style={styles.head}>

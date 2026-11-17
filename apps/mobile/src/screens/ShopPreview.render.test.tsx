@@ -82,6 +82,9 @@ describe('the Shop try-on preview', () => {
     expect(within(dialog).getAllByTestId(/^tile-/).length).toBeGreaterThanOrEqual(12);
     expect(within(dialog).getByRole('button', { name: 'Buy for 400 diamonds' })).toBeEnabled();
     expect(within(dialog).getByRole('button', { name: 'Close preview' })).toBeOnTheScreen();
+    // The scrim behind the sheet closes it on a tap but is no second button for a screen reader.
+    expect(screen.getAllByRole('button', { name: 'Close preview' })).toHaveLength(1);
+    expect(screen.getByTestId('preview-scrim', { includeHiddenElements: true }).props['aria-hidden']).toBe(true);
   });
 
   it('buys from the preview through the same purchase as the card, then offers to put the look on', async () => {
