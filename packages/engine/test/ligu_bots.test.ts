@@ -11,6 +11,8 @@ import {
   chooseAction,
   currentShanten,
   followsLigu,
+  formatEngineReason,
+  hintFor,
   kindOf,
   kindsFromString,
   rankDiscards,
@@ -122,4 +124,46 @@ describe('bots at a 嚦咕嚦咕 table', () => {
     expect(file.decisions).toHaveLength(PIN_STATES);
     expect(pinnedDecisions()).toEqual(file.decisions);
   }, 120_000);
+});
+
+describe('the coach at a 嚦咕嚦咕 table', () => {
+  it('suggests the discard that keeps the pairs and counts the tiles from ready for 嚦咕嚦咕, in both languages', () => {
+    const s = setup(ON, [PAIRS_HAND, '', '', ''], 40);
+    const h = hintFor(s, 0);
+    expect(h.shanten).toBe(2);
+    expect(count(s, 0, h.bestDiscard!.kind)).toBe(1);
+    expect(h.statusKey).toBe('hint.status.twoAwayLigu');
+    expect(h.discardReasonKey).toBe('hint.discard.efficiencyLigu');
+    expect(h.status).toBe('Two tiles from ready for 嚦咕嚦咕 (seven pairs and a triplet).');
+    expect(formatEngineReason(h.statusKey, h.statusParams, 'zh-TW')).toContain('嚦咕嚦咕');
+    expect(h.discardReason).toContain('嚦咕嚦咕');
+    expect(formatEngineReason(h.discardReasonKey!, h.discardReasonParams!, 'zh-TW')).toContain('嚦咕嚦咕');
+    expect(h.discardReasonParams!.kinds).toBe(h.bestDiscard!.accepts.length);
+  });
+
+  it('says nothing of 嚦咕嚦咕 at a table that does not play it', () => {
+    const h = hintFor(setup({}, [PAIRS_HAND, '', '', ''], 40), 0);
+    expect(h.shanten).toBeGreaterThan(2);
+    expect(h.statusKey).not.toMatch(/Ligu$/);
+    expect(h.discardReasonKey).toBe('hint.discard.efficiency');
+  });
+
+  it('counts the 嚦咕嚦咕 distance while a claim is offered and does not recommend breaking it', () => {
+    const s = offered('11m 22m 4m 66m 33p 7p 11s 2s 3s SS', '1m');
+    const h = hintFor(s, 1);
+    expect(h.shanten).toBe(2);
+    expect(h.statusKey).toBe('hint.status.twoAwayLigu');
+    expect(h.claims.length).toBeGreaterThan(0);
+    for (const c of h.claims) expect(c.recommended).toBe(false);
+  });
+
+  it('names 嚦咕嚦咕 in the "tiles from ready" line further out too', () => {
+    // Four pairs and nine scattered singles: four from ready for 嚦咕嚦咕, further for five sets and a pair.
+    const s = setup(ON, ['11m 55m 99p 22s 4m 8m 1p 5p 4s 8s E S W', '', '', ''], 40);
+    const h = hintFor(s, 0);
+    expect(h.statusKey).toBe('hint.status.manyAwayLigu');
+    expect(h.statusParams).toEqual({ shanten: 4 });
+    expect(h.status).toBe('4 tiles from ready for 嚦咕嚦咕 (seven pairs and a triplet) — keep your pairs.');
+    expect(formatEngineReason(h.statusKey, h.statusParams, 'zh-TW')).toBe('差 4 張聽嚦咕嚦咕（七對子加一刻）：留住對子。');
+  });
 });

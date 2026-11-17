@@ -8,7 +8,7 @@
  * it, so the app can show the advice in the player's language. Each English
  * text field is exactly the English template filled with those params.
  */
-import { coachAction, COACH_SKILL, currentShanten, rankDiscards, shantenAfterClaim, unseenCounts, valueKinds, type DiscardAdvice } from './bot';
+import { coachAction, COACH_SKILL, currentShanten, followsLigu, rankDiscards, shantenAfterClaim, unseenCounts, valueKinds, type DiscardAdvice } from './bot';
 import { countsFromKinds, TOTAL_SETS, waits } from './hand';
 import { type Action, type GameState, legalActions, buildWinContext, sameAction, waitsFor } from './game';
 import { playsLigu } from './rules';
@@ -66,6 +66,13 @@ export const HINT_REASON_KEYS = {
   'hint.status.oneAway': { en: 'One tile from ready.', 'zh-TW': '差一張聽牌：再進一張好牌就聽牌。' },
   'hint.status.twoAway': { en: 'Two tiles from ready.', 'zh-TW': '差兩張聽牌：還要再進兩張好牌才聽牌。' },
   'hint.status.manyAway': { en: '%{shanten} tiles from ready — build sets, keep pairs.', 'zh-TW': '差 %{shanten} 張聽牌：先湊面子，留住對子。' },
+  // At a table that plays 嚦咕嚦咕, while seven pairs and a triplet is nearer than five sets and a pair.
+  'hint.status.oneAwayLigu': { en: 'One tile from ready for 嚦咕嚦咕 (seven pairs and a triplet).', 'zh-TW': '差一張聽嚦咕嚦咕（七對子加一刻）。' },
+  'hint.status.twoAwayLigu': { en: 'Two tiles from ready for 嚦咕嚦咕 (seven pairs and a triplet).', 'zh-TW': '差兩張聽嚦咕嚦咕（七對子加一刻）。' },
+  'hint.status.manyAwayLigu': {
+    en: '%{shanten} tiles from ready for 嚦咕嚦咕 (seven pairs and a triplet) — keep your pairs.',
+    'zh-TW': '差 %{shanten} 張聽嚦咕嚦咕（七對子加一刻）：留住對子。',
+  },
   'hint.status.readyCount': { en: 'Ready — waiting on %{kinds} kind(s).', 'zh-TW': '聽牌：聽 %{kinds} 種牌。' },
   'hint.status.readyWaits': { en: 'Ready (聽牌) — waiting on %{waits}', 'zh-TW': '聽牌：聽 %{waits}' },
 
@@ -81,6 +88,10 @@ export const HINT_REASON_KEYS = {
     'zh-TW': '打 %{tileZh}。之後有 %{kinds} 種牌（%{accepts}）能改善手牌，還有 %{copies} 張沒出現。',
   },
 
+  'hint.discard.efficiencyLigu': {
+    en: 'Discard %{tileName}: 嚦咕嚦咕 (seven pairs and a triplet) is your nearest hand. %{kinds} kinds (%{accepts}) then bring it closer — %{copies} copies still unseen.',
+    'zh-TW': '打 %{tileZh}：嚦咕嚦咕（七對子加一刻）是你最接近的牌型。之後有 %{kinds} 種牌（%{accepts}）能讓它更接近聽牌，還有 %{copies} 張沒出現。',
+  },
   'hint.label.kongSelf': { en: 'Kong %{tileName}', 'zh-TW': '槓 %{tileZh}' },
   'hint.label.hu': { en: 'Win (胡) on %{tileName}', 'zh-TW': '胡 %{tileZh}' },
   'hint.label.pong': { en: 'Pong (碰) %{tileName}', 'zh-TW': '碰 %{tileZh}' },
@@ -242,7 +253,7 @@ export function hintFor(s: GameState, seat: number): Hint {
       base.discardReason = englishOf(why);
       base.discardReasonKey = why.key;
       base.discardReasonParams = why.params;
-      setStatus(base, statusText(afterWaits.length > 0 ? 0 : d.shanten));
+      setStatus(base, statusText(afterWaits.length > 0 ? 0 : d.shanten, d.ligu === true));
     }
     const kongs = actions.filter((a) => a.type === 'kong');
     const pick = kongs.length > 0 ? coachAction(s, seat) : null;
@@ -257,7 +268,7 @@ export function hintFor(s: GameState, seat: number): Hint {
     base.waits = waitsFor(s, seat).map((k) => ({ kind: k, remaining: unseen[k] }));
     const sh = readyShanten(currentShanten(s, seat), base.waits);
     base.shanten = sh;
-    setStatus(base, sh === 0 ? reason('hint.status.readyCount', { kinds: base.waits.length }) : statusText(sh));
+    setStatus(base, sh === 0 ? reason('hint.status.readyCount', { kinds: base.waits.length }) : statusText(sh, followsLigu(s, seat)));
     const botPick = coachAction(s, seat);
     for (const a of actions) {
       if (a.type === 'pass') continue;
@@ -274,7 +285,7 @@ export function hintFor(s: GameState, seat: number): Hint {
     base,
     base.shanten === 0
       ? reason('hint.status.readyWaits', { waits: base.waits.map((w) => kindInfo(w.kind).nameZh).join(' '), tiles: codes(base.waits.map((w) => w.kind)) })
-      : statusText(base.shanten),
+      : statusText(base.shanten, followsLigu(s, seat)),
   );
   return base;
 }
@@ -287,11 +298,13 @@ function selfDrawLabel(s: GameState): string {
   return s.drawSource === 'kong' ? '槓上開花' : s.drawSource === 'flower' ? '花上自摸' : '自摸';
 }
 
-function statusText(sh: number): Reason {
+/** "N tiles from ready"; `ligu` names 嚦咕嚦咕 as the hand it counts towards (the nearer path at a table that plays it). */
+function statusText(sh: number, ligu = false): Reason {
   if (sh <= 0) return reason('hint.status.readyAfterDiscard');
-  if (sh === 1) return reason('hint.status.oneAway');
-  if (sh === 2) return reason('hint.status.twoAway');
-  return reason('hint.status.manyAway', { shanten: sh });
+  const tail = ligu ? 'Ligu' : '';
+  if (sh === 1) return reason(`hint.status.oneAway${tail}`);
+  if (sh === 2) return reason(`hint.status.twoAway${tail}`);
+  return reason(`hint.status.manyAway${tail}`, { shanten: sh });
 }
 
 function waitsAfterDiscard(s: GameState, seat: number, tile: TileId, unseen: number[]): WaitInfo[] {
@@ -301,8 +314,8 @@ function waitsAfterDiscard(s: GameState, seat: number, tile: TileId, unseen: num
 }
 
 /**
- * A hand with waits is ready. Shanten counts the distance to five sets and a pair only, so a hand
- * ready for 嚦咕嚦咕 (at a table that plays it) reads 0 here though five sets are further off.
+ * A hand with waits is ready. `currentShanten` already counts 嚦咕嚦咕 for a hand with no melds at a
+ * table that plays it; this keeps any hand with waits at 0 whatever the distance says.
  */
 function readyShanten(sh: number, handWaits: readonly WaitInfo[]): number {
   return handWaits.length > 0 && sh > 0 ? 0 : sh;
@@ -319,7 +332,7 @@ function explainDiscard(d: DiscardAdvice, afterWaits: WaitInfo[], all: readonly 
   }
   if (d.accepts.length === 0) return reason('hint.discard.isolated', tile);
   const acc = d.accepts.slice(0, 6).map((k) => kindInfo(k).nameZh).join(' ');
-  return reason('hint.discard.efficiency', {
+  return reason(d.ligu ? 'hint.discard.efficiencyLigu' : 'hint.discard.efficiency', {
     ...tile,
     kinds: d.accepts.length,
     accepts: `${acc}${d.accepts.length > 6 ? '…' : ''}`,
