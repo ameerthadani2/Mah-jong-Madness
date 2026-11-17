@@ -68,6 +68,15 @@ Before you start: the server is deployed and its last deploy run passed the smok
 - [ ] The Android back button at the table never abandons the seat: afterwards the Resume card is on Home and Resume returns to the same hand.
 
 ## 11. Store (sandbox, with a tester account)
+
+Run the store check beside the phone: it walks the steps below one at a time (it says what to do, you do it on the phone and press Enter), then watches the server for up to two minutes for the change that step should make and prints PASS or FAIL with what it saw, and a summary at the end. `--user` is the game account signed in on the phone (Settings → Account → "Player id"; it must be on `TESTER_USER_IDS`); `--other-user` is a second account that is **not** on the list, for the last step (without it that step is skipped). The admin token is read from the environment and never printed.
+
+```sh
+ADMIN_TOKEN=<the server's ADMIN_TOKEN> npm run store-check -w @mjm/signal -- --url https://<server> --user <account id> --other-user <account id>
+```
+
+Its steps, in order: `pack` (smallest diamond pack), `subscribe` (Coach Gold monthly), `upgrade` (The Four Winds Club), `restore` (Restore purchases on the second phone: nothing may be credited twice or lost, watched for 20 seconds), `refund-plan` (refund the Coach Gold charge), `refund-pack` (refund the pack), `non-tester` (a pack bought as the other account is recorded as `ignored_sandbox` and grants nothing). `--only pack,subscribe` runs some of them; `--timeout`, `--poll` and `--settle` take seconds. A FAIL names what the server held at the end (`GET /api/admin/users/:id/wallet`, docs/API.md), which is the first thing to look at. What only the phone shows (prices, terms, what unlocks) is still yours to tick below.
+
 - [ ] The Shop lists prices from your store region; subscription terms are shown before buying.
 - [ ] Buy the smallest diamond pack: diamonds arrive within a minute; buy a cosmetic with them and equip it in Settings.
 - [ ] Subscribe to Coach Gold monthly: Pro bots and unlimited Puzzle Rush unlock. Upgrade to The Four Winds Club: unlimited hand reviews and creating a club (**New club**) unlock.
