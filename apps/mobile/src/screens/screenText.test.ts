@@ -54,17 +54,12 @@ describe('results and errors away from the table are spoken by a screen reader',
 });
 
 describe('reading text on Learn', () => {
-  const learn = read('screens/LearnScreen.tsx');
-
-  it('shows every lesson and practice blurb whole: the card grows instead of cutting the sentence', () => {
-    expect(learn).not.toMatch(/numberOfLines/);
-  });
-
-  it('names what each Start, Review and practice button opens', () => {
-    expect(learn).toMatch(/accessibilityLabel=\{t\('learn\.cardButton', \{ action: t\(done \? 'learn\.review' : 'learn\.start'\), title: lessonTitle\(l, locale\) \}\)\}/);
-    expect(learn).toMatch(/accessibilityLabel=\{t\('learn\.cardButton', \{ action: cta, title \}\)\}/);
+  // Every blurb shown whole, and each Start, Review and practice button named after what it opens, are rendered in
+  // src/screens/Learn.render.test.tsx (and each club's Open button, named after the club, in Clubs.render.test.tsx).
+  // What stays here is the sentence both languages build those names from.
+  it('names a button by its action and its title', () => {
     expect(translator('en')('learn.cardButton', { action: 'Train', title: 'Find the waits' })).toBe('Train: Find the waits');
-    // Each club's Open button is named after the club: src/screens/Clubs.render.test.tsx ("Open Friday Club").
+    expect(translator('zh-TW')('learn.cardButton', { action: '練習', title: '找聽牌' })).toMatch(/練習.*找聽牌/);
   });
 });
 
