@@ -23,7 +23,7 @@ describe('arriving at the Shop for a plan', () => {
 
   it('"See plans" after a used Puzzle Rush or hand review names the plan that lifts the limit', () => {
     // Puzzle Rush's "See Coach plans" opening the Shop on Coach Gold is rendered in src/screens/Puzzles.render.test.tsx.
-    expect(read('screens/ReviewScreen.tsx')).toMatch(/app\.go\(\{ name: 'shop', focus: 'fourwinds' \}\)/);
+    // The used hand review's "See plans" opening the Shop on The Four Winds Club is rendered in src/screens/Review.render.test.tsx.
     for (const f of ['screens/PuzzleScreens.tsx', 'screens/ReviewScreen.tsx']) expect(read(f), f).not.toMatch(/app\.go\(\{ name: 'shop' \}\)/);
   });
 
