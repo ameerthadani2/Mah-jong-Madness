@@ -24,7 +24,7 @@ import { ClubRegistry, clubGate } from './clubs';
 import { LIMITS, type SignalConfig } from './config';
 import { BucketTable } from './limits';
 import { blockedEitherWay, fillMsFromEnv, Matchmaker, quickMatchCheck } from './matchmaking';
-import { applyQuickMatchRating } from './tableRating';
+import { applyQuickMatchRating, DEFAULT_TABLE_RATING } from './tableRating';
 import { LatencyWindow } from './metrics';
 import { MuteList } from './moderation';
 import { NO_ANALYTICS, reportError, withConsent, type Analytics } from './observability';
@@ -180,6 +180,8 @@ export async function createSignalServer(opts: SignalServerOptions): Promise<Sig
       const device = session?.deviceId ? await repos.repos.devices.get(session.deviceId) : null;
       return device ? (device.installId ?? device.id) : null;
     },
+    // Tables prefer close quick-match ratings (an account with none is matched at 1500).
+    rating: async (userId) => (await repos.repos.tableRatings.get(userId))?.rating ?? DEFAULT_TABLE_RATING,
     // Declared below; the queue only opens tables once the server is up.
     openTable: (userIds): string => rooms.createQuickMatchRoom(userIds, { startAfterMs: opts.quickStartMs }),
     // One quick-match table per account at a time, each charged to its players like a table they created.
