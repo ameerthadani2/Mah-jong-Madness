@@ -2,7 +2,7 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 import { describe, expect, it } from 'vitest';
 import { en, zhTW } from '../i18n/locales';
-import { BOT_NAME_SLOT, botBaseName, botNamer, estimateTextWidth, relTagLabel, seatDisplayName, seatTagText, SEAT_TAG_CHROME, withBotLabels } from './seatName';
+import { BOT_NAME_SLOT, botBaseName, botNamer, estimateTextWidth, relLineExtra, relTagLabel, seatDisplayName, seatTagText, SEAT_TAG_CHROME, SIDE_NAME_MIN_SIZE, sideNameSize, withBotLabels } from './seatName';
 
 const fill = (template: string) => (name: string) => template.replace('%{name}', name);
 const enBot = fill(en.common.botName);
@@ -83,5 +83,38 @@ describe('relTagLabel', () => {
     expect(relTagLabel('下家', '下家', 84 - SEAT_TAG_CHROME)).toBe('下家');
     // A larger OS text size can push the whole label out.
     expect(relTagLabel('Across 對家', 'Across', 120 - SEAT_TAG_CHROME, 11 * 1.5)).toBe('Across');
+  });
+});
+
+describe("a side seat's name on one line", () => {
+  // A landscape side seat at 667 x 375: a 128 px column, a 32 px plate and 12 px between them.
+  const side = 128 - 32 - 12 - SEAT_TAG_CHROME;
+
+  it('keeps a name that fits at its usual size', () => {
+    expect(sideNameSize('Tester', side)).toBe(12);
+  });
+
+  it("shrinks a bot's name with its label just enough to stay on one line, in both languages and at a larger text size", () => {
+    for (const [name, base] of [
+      ['阿花 (Bot)', 12],
+      ['小美（電腦）', 12],
+      ['小美（電腦）', 12 * 1.3],
+    ] as const) {
+      const size = sideNameSize(name, side, base)!;
+      expect(size, name).toBeLessThan(base);
+      expect(size, name).toBeGreaterThanOrEqual(SIDE_NAME_MIN_SIZE);
+      expect(estimateTextWidth(name, size), name).toBeLessThanOrEqual(side);
+    }
+  });
+
+  it('gives up on a long typed name, which keeps two lines rather than being cut', () => {
+    expect(sideNameSize('Christopher Wellington', side)).toBeNull();
+  });
+
+  it('leaves room on the relation line for the score and the offline word', () => {
+    expect(relLineExtra(0, null)).toBeLessThan(relLineExtra(-1250, null));
+    expect(relLineExtra(0, 'Offline')).toBeGreaterThan(relLineExtra(0, null));
+    // With a four-digit score the full label no longer fits beside it, so the short one is shown.
+    expect(relTagLabel('Right 下家', 'Right', side - relLineExtra(-1250, null))).toBe('Right');
   });
 });

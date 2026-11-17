@@ -73,3 +73,26 @@ const BOLD_WIDTH = 1.1;
 export function relTagLabel(full: string, short: string, width: number, fontSize = 11): string {
   return estimateTextWidth(full, fontSize) * BOLD_WIDTH <= width ? full : short;
 }
+
+/** Smallest a side seat's name is drawn (px, after the text size) to keep it on one line. */
+export const SIDE_NAME_MIN_SIZE = 9;
+
+/**
+ * A side seat's name tag must take at most two lines (the name, then the relation and score), so its name is drawn
+ * on one line: at `fontSize` when it fits `width`, else at the size that fits (with a small margin, since the width
+ * is an estimate), down to SIDE_NAME_MIN_SIZE. Returns that size, or null when even the smallest size does
+ * not fit (a long typed name); such a name keeps two lines rather than being cut.
+ */
+export function sideNameSize(name: string, width: number, fontSize = 12): number | null {
+  const w = estimateTextWidth(name, fontSize);
+  if (w <= width) return fontSize;
+  const size = Math.floor(((fontSize * width * 0.94) / w) * 10) / 10;
+  return size >= Math.min(fontSize, SIDE_NAME_MIN_SIZE) ? size : null;
+}
+
+/** Width the score (and an "offline" word) take on the relation line, so the label chosen beside them still fits it. */
+export function relLineExtra(score: number, offline: string | null, fontSize = 11): number {
+  const gap = 5;
+  const scoreW = estimateTextWidth(`${score >= 0 ? '+' : ''}${score}`, fontSize + 1) * BOLD_WIDTH + gap;
+  return scoreW + (offline ? estimateTextWidth(offline, fontSize) * BOLD_WIDTH + gap : 0);
+}

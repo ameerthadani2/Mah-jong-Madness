@@ -113,7 +113,7 @@ export function Felt({
     const p = view.players[seat];
     const slim = Math.max(5, Math.min(11, Math.floor((sideWidth - 6) / Math.max(1, p.handCount)) + 1));
     const handH = tablet ? 22 : 15;
-    const badge = <SeatBadge {...plateProps(seat)} size={plate} vertical={portrait} maxNameWidth={portrait ? sideWidth : sideWidth - plate - 12} />;
+    const badge = <SeatBadge {...plateProps(seat)} size={plate} vertical={portrait} side={!portrait} maxNameWidth={portrait ? sideWidth : sideWidth - plate - 12} />;
     const hidden = <HiddenHand count={p.handCount} tileW={slim} tileH={handH} />;
     const meldStyle = [{ maxWidth: sideWidth }, r === 1 ? { justifyContent: 'flex-end' as const } : undefined];
     const align = r === 1 ? 'flex-end' : 'flex-start';

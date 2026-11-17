@@ -18,7 +18,7 @@ import { reactionShouldPlay } from './table/feel';
 import { slopFor } from './table/layout';
 import { compassSentence, wallSentence, type Relation } from './table/hudSpeech';
 import { CompassNotice } from './table/CompassNotice';
-import { relTagLabel, SEAT_TAG_CHROME, seatTagText } from '../logic/seatName';
+import { relLineExtra, relTagLabel, SEAT_TAG_CHROME, seatTagText, sideNameSize } from '../logic/seatName';
 import { useDisplayScale } from '../display/DisplayScale';
 
 export function MeldView({ meld, size = 'sm' }: { meld: Meld; size?: TileSize | number }) {
@@ -116,6 +116,7 @@ export function SeatBadge({
   onLongPress,
   onLongPressHint,
   frame,
+  side,
 }: {
   seat: number;
   info?: SeatInfo;
@@ -138,6 +139,11 @@ export function SeatBadge({
   onLongPressHint?: string;
   /** An owned avatar frame to draw round the portrait (the player's own seat). */
   frame?: string | null;
+  /**
+   * A landscape side seat, whose tag sits in a narrow column beside its plate: the tag keeps to two lines, the name
+   * on one (drawn smaller when it must, `sideNameSize`) and the relation label and score on the other.
+   */
+  side?: boolean;
 }) {
   const wind = WINDS[(seat - dealerSeat + 4) % 4];
   const rel = (seat - viewerSeat + 4) % 4;
@@ -145,9 +151,15 @@ export function SeatBadge({
   const relKey = rel === 0 ? 'me' : rel === 1 ? 'right' : rel === 2 ? 'across' : 'left';
   // One line, never broken inside 下家: the short form when the whole label does not fit the tag (the OS text size grows it).
   const { osScale } = useDisplayScale();
-  const relLabel = relTagLabel(t(`table.relSeat.${relKey}`), t(`table.relSeatShort.${relKey}`), maxNameWidth - SEAT_TAG_CHROME, 11 * osScale);
   const name = info?.name || t('table.seat', { n: seat + 1 });
   const offline = !!info && !info.connected && !info.isBot;
+  const tagWidth = maxNameWidth - SEAT_TAG_CHROME;
+  // A side seat's relation label shares its line with the score (and "offline"), so it is chosen to fit beside them.
+  const relWidth = side ? tagWidth - relLineExtra(score, offline ? t('table.offline') : null, 11 * osScale) : tagWidth;
+  const relLabel = relTagLabel(t(`table.relSeat.${relKey}`), t(`table.relSeatShort.${relKey}`), relWidth, 11 * osScale);
+  // The size is in the style's units, which the OS text size then scales: measure at the scaled size, draw unscaled.
+  const sideSize = side ? sideNameSize(name, tagWidth, 12 * osScale) : null;
+  const nameSize = sideSize === null ? null : sideSize / osScale;
   // Win and deal-in reactions switch the portrait to its win/lose clip for a few seconds (if it has clips).
   const [mood, setMood] = useState<AvatarMood | null>(null);
   // The effect runs once per event (its key), not each time the table re-renders with a new object for the same one:
@@ -179,12 +191,12 @@ export function SeatBadge({
           </View>
         )}
       </Pressable>
-      <View style={[styles.tag, vertical && { alignItems: 'center', marginTop: 4 }, { maxWidth: maxNameWidth }]}>
-        {/* A name uses the tag's room and takes a second line rather than being cut (logic/seatName.ts). */}
-        <Text testID="seat-name" numberOfLines={2} style={[styles.tagName, nameFont(name), vertical && { textAlign: 'center' }]}>
-          {seatTagText(name, maxNameWidth - SEAT_TAG_CHROME)}
+      <View testID={side ? 'seat-tag-side' : 'seat-tag'} style={[styles.tag, vertical && { alignItems: 'center', marginTop: 4 }, { maxWidth: maxNameWidth }]}>
+        {/* A name uses the tag's room and takes a second line rather than being cut (logic/seatName.ts); a side seat's stays on one line. */}
+        <Text testID="seat-name" numberOfLines={nameSize === null ? 2 : 1} style={[styles.tagName, nameFont(name), vertical && { textAlign: 'center' }, nameSize !== null && { fontSize: nameSize }]}>
+          {nameSize === null ? seatTagText(name, tagWidth) : name}
         </Text>
-        <View style={styles.tagRow}>
+        <View testID="seat-row" style={[styles.tagRow, side && { flexWrap: 'nowrap' }]}>
           <Text testID="seat-rel" numberOfLines={1} style={styles.tagRel}>
             {relLabel}
           </Text>

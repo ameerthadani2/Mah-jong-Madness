@@ -22,7 +22,7 @@
  * -leaderboards-zh.png, -leaderboards-xl.png) does not show its offline state, clips text or has a choice under 44 px,
  * a table HUD icon takes a press smaller than 44 x 44 px, the Shop's Looks tab cuts a description (<size>-shop-looks.png),
  * or a seat name is cut at a table in Traditional Chinese (each viewport at Normal text, and the portrait ones again at
- * Extra-large text: <size>-table-zh.png, <size>-table-zh-xl.png; the hand tiles' size is logged as a note).
+ * Extra-large text: <size>-table-zh.png, <size>-table-zh-xl.png at every viewport; the hand tiles' size is logged as a note).
  */
 const http = require('http');
 const fs = require('fs');
@@ -102,7 +102,7 @@ async function homeFit(page) {
 /** Home in Traditional Chinese at one viewport: the same hard checks, on the longer of the two languages' labels. */
 /**
  * The table's hard checks, on the page as it stands: every seat name shown whole (a long one may take two lines,
- * never be cut), and each HUD icon (emotes, coach, exit) a press of at least 44 x 44 px. The web ignores hitSlop,
+ * never be cut), a landscape side seat's tag on two lines at most (name; relation and score), and each HUD icon (emotes, coach, exit) a press of at least 44 x 44 px. The web ignores hitSlop,
  * so the box itself must be that big. Also returns the smallest hand tile, for the notes.
  */
 async function tableFit(page) {
@@ -117,6 +117,14 @@ async function tableFit(page) {
       const r = el.getBoundingClientRect();
       if (r.height > parseFloat(getComputedStyle(el).fontSize) * 1.7) bad.push(`seat label "${el.textContent}" takes two lines (${Math.round(r.height)} px high)`);
       if (el.scrollWidth > el.clientWidth + 1) bad.push(`seat label "${el.textContent}" is cut (${el.scrollWidth} in ${el.clientWidth})`);
+    }
+    // A landscape side seat's tag keeps to two lines: its name on one, its relation label and score on the other.
+    const oneLine = (el) => el.getBoundingClientRect().height <= Math.max(...[el, ...el.querySelectorAll('*')].map((x) => parseFloat(getComputedStyle(x).fontSize) || 0)) * 1.7;
+    for (const tag of [...document.querySelectorAll('[data-testid="seat-tag-side"]')].filter(seen)) {
+      const name = tag.querySelector('[data-testid="seat-name"]');
+      const row = tag.querySelector('[data-testid="seat-row"]');
+      if (name && !oneLine(name)) bad.push(`side seat name "${name.textContent}" takes more than one line (${Math.round(name.getBoundingClientRect().height)} px high), so its tag takes three`);
+      if (row && !oneLine(row)) bad.push(`side seat "${name?.textContent}": its relation and score take more than one line (${Math.round(row.getBoundingClientRect().height)} px high)`);
     }
     const leave = document.querySelector('[data-testid="leave-table"]');
     const icons = leave ? [...leave.parentElement.querySelectorAll('[role="button"]')] : [];
@@ -463,6 +471,8 @@ async function runXL(browser, port, [w, h]) {
   await page.waitForTimeout(500);
   await page.screenshot({ path: path.join(out, `${tag}-table-xl.png`) });
   if (await page.$('[data-testid="hand-scroll"]')) fails.push('extra-large hand scrolls sideways');
+  // Every seat tag still fits at Extra-large tiles (side seats on two lines at most).
+  fails.push(...(await tableFit(page)).bad.filter((f) => /seat/.test(f)));
   const off = await page.$$eval('[data-testid="hand"] [data-testid^="tile-"], [data-testid="hand-discard"] [data-testid^="tile-"]', (els) =>
     els.filter((e) => { const r = e.getBoundingClientRect(); return r.right > innerWidth + 1 || r.left < -1 || r.bottom > innerHeight + 1; }).length,
   );
@@ -486,7 +496,7 @@ async function runXL(browser, port, [w, h]) {
     ...SIZES.map((s) => run(browser, port, s).catch((e) => ({ size: `${s[0]}x${s[1]}`, finished: false, notes: [e.message], errors: [] }))),
     ...XL.map((s) => runXL(browser, port, s).catch((e) => ({ size: `${s[0]}x${s[1]} xl`, finished: false, notes: [e.message], errors: [] }))),
     ...SIZES.map((s) => runTableZh(browser, port, s, false).catch((e) => ({ size: `${s[0]}x${s[1]} table-zh`, finished: false, notes: [e.message], errors: [] }))),
-    ...SIZES.filter(([w, h]) => w < h).map((s) => runTableZh(browser, port, s, true).catch((e) => ({ size: `${s[0]}x${s[1]} table-zh-xl`, finished: false, notes: [e.message], errors: [] }))),
+    ...SIZES.map((s) => runTableZh(browser, port, s, true).catch((e) => ({ size: `${s[0]}x${s[1]} table-zh-xl`, finished: false, notes: [e.message], errors: [] }))),
     ...SIZES.map((s) => runHomeZh(browser, port, s).catch((e) => ({ size: `${s[0]}x${s[1]} zh-TW`, finished: false, notes: [e.message], errors: [] }))),
     ...SIZES.map((s) => runBoards(browser, port, s).catch((e) => ({ size: `${s[0]}x${s[1]} leaderboards`, finished: false, notes: [e.message], errors: [] }))),
   ]);
