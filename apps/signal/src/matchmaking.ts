@@ -6,7 +6,11 @@
  * is too young; the year is write-once, see `PATCH /api/me`) and loads who it must never sit with (players it
  * blocked and players who blocked it), then answers `{t:'queue_status', position, waitedMs,
  * humans, fillMs}` at once and every `statusEveryMs` (2 s) while it waits. Players are grouped in
- * arrival order, four to a table, never two at one table where either blocked the other. A group
+ * arrival order, four to a table, never two at one table where either blocked the other, and never
+ * two accounts from one address (an IPv4 address or an IPv6 /64, as `addressKey` keys it) or one
+ * device (the install the session was made on) at one table: each of them is seated with others,
+ * or with bots once its wait is up. The matchmaker also counts, in memory per process, how often
+ * each pair of accounts sat together (`frequentPairs`, shown to moderators). A group
  * of four is seated at once; a group of one to three is seated with Club bots in the empty seats
  * once its first player has waited `fillMs` (QUICK_MATCH_FILL_MS, default 20 s), so a solo player
  * always gets a game. Each player of a seated group gets `{t:'matched', room, humans, bots}` and
@@ -25,6 +29,8 @@
  * Refusals are `{t:'queue_error', code, message}` with code `banned`, `age_missing`, `age_under`,
  * `rate_limited`, `sign_in`, `unavailable`, `replaced` or `seated` (which also carries `room`).
  */
+
+import { addressKey } from './limits';
 
 /** Default for `MatchmakerOptions.fillMs` (QUICK_MATCH_FILL_MS). */
 export const DEFAULT_QUICK_MATCH_FILL_MS = 20_000;
@@ -63,8 +69,23 @@ export const QUEUE_MESSAGES: Record<QueueRefusal, string> = {
 export interface QueuePeer {
   peerId: string;
   userId: string;
+  /** The client address (keyed as every per-address limit keys it: see `addressKey`), when known. */
+  address?: string;
+  /** The session the socket proved, so the queue can look up the device it was made on. */
+  sessionId?: string;
   send(msg: unknown): void;
 }
+
+/** How often a pair of accounts sat together at quick-match tables (`Matchmaker.frequentPairs`). */
+export interface QuickMatchPair {
+  a: string;
+  b: string;
+  tables: number;
+  lastAt: number;
+}
+
+/** Most account pairs the matchmaker remembers; past it, the pair seen together least recently is forgotten. */
+export const MAX_TRACKED_PAIRS = 20_000;
 
 /** What the room registry calls (see `RoomRegistryOptions.queue`). */
 export interface QueueGate {
@@ -82,6 +103,11 @@ export interface MatchmakerOptions {
   check(userId: string): Promise<AccountRefusal | null>;
   /** The accounts this one must never share a table with (it blocked them, or they blocked it). */
   avoid(userId: string): Promise<Iterable<string>>;
+  /**
+   * The device the socket's session was made on (the install the app reports, or the device
+   * record), or null when unknown. Two accounts on one device never share a table. A throw reads as unknown.
+   */
+  device?(peer: QueuePeer): Promise<string | null>;
   /** Open the table for a group, in seat order; returns its room code. A throw answers `unavailable`. */
   openTable(userIds: string[]): string;
   /**
@@ -104,6 +130,9 @@ interface Entry {
   /** Arrival order among entries that joined in the same millisecond. */
   seq: number;
   avoid: Set<string>;
+  /** The address key and device: no two entries that share either sit at one table. */
+  address: string | null;
+  device: string | null;
   lastStatusAt: number;
 }
 
@@ -143,6 +172,8 @@ export class Matchmaker implements QueueGate {
   private readonly entries = new Map<string, Entry>();
   /** Requests still being checked, by peer; a leave meanwhile cancels the request. */
   private readonly pending = new Map<string, number>();
+  /** Quick-match tables shared, by pair of accounts ("a b", a < b), least recently seen first. */
+  private readonly pairs = new Map<string, QuickMatchPair>();
   private seq = 0;
   private readonly now: () => number;
   readonly fillMs: number;
@@ -178,6 +209,7 @@ export class Matchmaker implements QueueGate {
     const ticket = ++this.seq;
     this.pending.set(peer.peerId, ticket);
     let avoid: Set<string>;
+    let device: string | null;
     try {
       const refusal = await this.opts.check(peer.userId);
       if (this.pending.get(peer.peerId) !== ticket) return;
@@ -191,7 +223,7 @@ export class Matchmaker implements QueueGate {
         this.pending.delete(peer.peerId);
         return refuse(peer, 'seated', { room });
       }
-      avoid = new Set(await this.opts.avoid(peer.userId));
+      [avoid, device] = await Promise.all([new Set(await this.opts.avoid(peer.userId)), this.deviceOf(peer)]);
     } catch (e) {
       if (this.pending.get(peer.peerId) !== ticket) return;
       this.pending.delete(peer.peerId);
@@ -210,7 +242,8 @@ export class Matchmaker implements QueueGate {
       joinedAt = e.joinedAt;
       seq = e.seq;
     }
-    const entry: Entry = { peer, joinedAt, seq, avoid, lastStatusAt: this.now() };
+    const address = peer.address !== undefined ? addressKey(peer.address) : null;
+    const entry: Entry = { peer, joinedAt, seq, avoid, address, device, lastStatusAt: this.now() };
     this.entries.set(peer.peerId, entry);
     this.match();
     if (this.entries.has(peer.peerId)) this.sendStatus(entry, this.groups());
@@ -224,6 +257,41 @@ export class Matchmaker implements QueueGate {
     this.entries.delete(peerId);
     e.peer.send({ t: 'queue_left' });
     this.match();
+  }
+
+  /**
+   * Pairs of accounts that sat together at `min` or more quick-match tables, most often first.
+   * Kept in memory by this process only (lost on a restart, and not shared between servers).
+   */
+  frequentPairs(min = 3): QuickMatchPair[] {
+    return [...this.pairs.values()]
+      .filter((p) => p.tables >= min)
+      .sort((x, y) => y.tables - x.tables || (x.a < y.a ? -1 : x.a > y.a ? 1 : x.b < y.b ? -1 : x.b > y.b ? 1 : 0))
+      .map((p) => ({ ...p }));
+  }
+
+  private countPairs(userIds: string[]): void {
+    const at = this.now();
+    for (let i = 0; i < userIds.length; i++) {
+      for (let j = i + 1; j < userIds.length; j++) {
+        const [a, b] = userIds[i] < userIds[j] ? [userIds[i], userIds[j]] : [userIds[j], userIds[i]];
+        if (a === b) continue;
+        const key = `${a} ${b}`;
+        const p = this.pairs.get(key) ?? { a, b, tables: 0, lastAt: at };
+        this.pairs.delete(key);
+        this.pairs.set(key, { ...p, tables: p.tables + 1, lastAt: at });
+        if (this.pairs.size > MAX_TRACKED_PAIRS) this.pairs.delete(this.pairs.keys().next().value as string);
+      }
+    }
+  }
+
+  private async deviceOf(peer: QueuePeer): Promise<string | null> {
+    if (!this.opts.device) return null;
+    try {
+      return (await this.opts.device(peer)) || null;
+    } catch {
+      return null;
+    }
   }
 
   /** Take an account out of the queue (it was banned). */
@@ -290,6 +358,7 @@ export class Matchmaker implements QueueGate {
         for (const x of seated) refuse(x.peer, 'unavailable');
         continue;
       }
+      this.countPairs(seated.map((e) => e.peer.userId));
       for (const e of seated) e.peer.send({ t: 'matched', room, humans: seated.length, bots: TABLE_SIZE - seated.length });
     }
   }
@@ -303,8 +372,11 @@ export class Matchmaker implements QueueGate {
   }
 }
 
+/** Two entries that may not share a table: a block either way, or one address or one device. */
 function clash(a: Entry, b: Entry): boolean {
-  return a.avoid.has(b.peer.userId) || b.avoid.has(a.peer.userId);
+  if (a.avoid.has(b.peer.userId) || b.avoid.has(a.peer.userId)) return true;
+  if (a.address !== null && a.address === b.address) return true;
+  return a.device !== null && a.device === b.device;
 }
 
 function refuse(peer: QueuePeer, code: QueueRefusal, extra: { room?: string } = {}): void {

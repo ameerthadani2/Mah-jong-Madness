@@ -800,7 +800,14 @@ export class RoomRegistry {
         // The same per-account and per-address allowance as joining a table.
         if (!this.allow(peer, this.joinsByUser, this.joinsByIp)) return (refuse('rate_limited'), peer.id);
         const socket = peer.socket;
-        void this.opts.queue.enqueue({ peerId: peer.id, userId: peer.userId, send: (m) => socket.send(JSON.stringify(m)) });
+        // The address and session let the queue keep two accounts of one address or device apart.
+        void this.opts.queue.enqueue({
+          peerId: peer.id,
+          userId: peer.userId,
+          ...(peer.ip !== undefined ? { address: peer.ip } : {}),
+          ...(peer.sessionId !== undefined ? { sessionId: peer.sessionId } : {}),
+          send: (m) => socket.send(JSON.stringify(m)),
+        });
         return peer.id;
       }
       case 'leave_queue':

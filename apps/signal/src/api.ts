@@ -35,6 +35,7 @@ import { DAY_MS } from './limits';
 import { LIMITS, type SignalConfig } from './config';
 import { BucketTable, cleanField, clientIp } from './limits';
 import type { LatencyWindow } from './metrics';
+import type { QuickMatchPair } from './matchmaking';
 import { NO_ANALYTICS, reportError, withConsent, type Analytics } from './observability';
 import { storeRoutes } from './admin';
 import { adminModerationRoutes, blockRoutes, ModerationError, MuteList, NAME_NOT_ALLOWED, nameAllowed } from './moderation';
@@ -79,7 +80,7 @@ export interface ApiDeps {
   /** The tables' mute list (default: a new one, which only the admin routes then update). */
   mutes?: MuteList;
   /** Quick match, told when a player's blocks change and when an account is banned. */
-  matchmaker?: { blocksChanged(userId: string): void; removeUser(userId: string): void };
+  matchmaker?: { blocksChanged(userId: string): void; removeUser(userId: string): void; frequentPairs?(min?: number): QuickMatchPair[] };
   /** Puzzle and leaderboard route options (limiters, the Rush yield); tests replace them. */
   puzzles?: Partial<Pick<PuzzleDeps, 'yieldTurn' | 'submitLimiter' | 'readLimiter' | 'rushIpLimiter'>>;
   /** The moderators' token (default: ADMIN_TOKEN from the environment; blank turns the moderation routes off). */
@@ -243,6 +244,7 @@ export function buildRoutes(deps: ApiDeps, opts: Pick<ApiOptions, 'reportIpLimit
     closeSockets: (userId: string) => void rooms.endSessions({ userId }, { code: BANNED_CLOSE_CODE, reason: 'Banned' }),
     onBlocksChanged: (userId: string) => deps.matchmaker?.blocksChanged(userId),
     onBanned: (userId: string) => deps.matchmaker?.removeUser(userId),
+    quickMatchPairs: (min: number) => deps.matchmaker?.frequentPairs?.(min) ?? [],
     ...(deps.adminToken !== undefined ? { adminToken: deps.adminToken } : {}),
   };
   const peppers: Peppers = { current: sessions.pepper, previous: sessions.previousPeppers };

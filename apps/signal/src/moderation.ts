@@ -27,6 +27,7 @@ import type { IncomingMessage } from 'node:http';
 import { cleanText } from '@mjm/net';
 import { adminAuthorised } from './admin';
 import { DELETED_PLAYER_NAME, PUZZLE_FLAG_STATUSES, REPORT_RESOLUTIONS, type PuzzleFlagRecord, type PuzzleFlagStatus, type ReportRecord, type ReportResolution, type Repos, type UserRecord } from './repos/types';
+import type { QuickMatchPair } from './matchmaking';
 
 // ---------------------------------------------------------------------------------------------
 // Names
@@ -475,6 +476,8 @@ export interface ModerationDeps {
   /** Tells quick match a player's blocks changed, or that the account was banned. */
   onBlocksChanged?: (userId: string) => void;
   onBanned?: (userId: string) => void;
+  /** Pairs of accounts that sat together at `min` or more quick-match tables (this process's count). */
+  quickMatchPairs?: (min: number) => QuickMatchPair[];
   /** Default: ADMIN_TOKEN from the environment; absent or blank answers 503 on every admin route. */
   adminToken?: string | null;
   env?: Record<string, string | undefined>;
@@ -665,6 +668,19 @@ export function adminModerationRoutes<R>(r: ModerationRouteFactory<R>, deps: Mod
       const flag = await repos.puzzleFlags.review(user.id, action === 'clear' ? 'cleared' : 'confirmed', now());
       if (!flag) throw new ModerationError(404, 'not_found', 'This account has no puzzle flag');
       return { ok: true, flag: flagJson(flag) };
+    }),
+    // Accounts that keep landing at one quick-match table: a sign of one person on several accounts, or of a pair working together.
+    r('GET', '/api/admin/quick-match/pairs', async (ctx) => {
+      admin(ctx);
+      const query = new URL(ctx.req.url ?? '/', 'http://localhost').searchParams;
+      const min = Math.max(1, Math.min(1000, Number.parseInt(query.get('min') ?? '3', 10) || 3));
+      const pairs = (deps.quickMatchPairs?.(min) ?? []).slice(0, 200);
+      const accounts = new Map<string, unknown>();
+      for (const id of new Set(pairs.flatMap((p) => [p.a, p.b]))) {
+        const u = await repos.users.get(id);
+        accounts.set(id, u ? await accountJson(u) : { id, deleted: true, displayName: DELETED_PLAYER_NAME });
+      }
+      return { min, scope: 'process', pairs: pairs.map((p) => ({ a: accounts.get(p.a), b: accounts.get(p.b), tables: p.tables, lastAt: iso(p.lastAt) })) };
     }),
     r('POST', '/api/admin/users/:id/ban', async (ctx) => {
       admin(ctx);

@@ -19,7 +19,7 @@ import { createSignalServer, type SignalServer } from '../src/server';
 type Msg = { t: string; [k: string]: unknown };
 
 /** A queue with a fake clock; tables are recorded instead of opened. */
-function queue(opts: { fillMs?: number; refuse?: Record<string, 'banned' | 'age_missing' | 'age_under'>; blocks?: Array<[string, string]> } = {}) {
+function queue(opts: { fillMs?: number; refuse?: Record<string, 'banned' | 'age_missing' | 'age_under'>; blocks?: Array<[string, string]>; devices?: Record<string, string> } = {}) {
   const clock = { now: 1_000_000 };
   const tables: string[][] = [];
   const mm = new Matchmaker({
@@ -27,6 +27,7 @@ function queue(opts: { fillMs?: number; refuse?: Record<string, 'banned' | 'age_
     fillMs: opts.fillMs,
     check: async (id) => opts.refuse?.[id] ?? null,
     avoid: async (id) => (opts.blocks ?? []).flatMap(([a, b]) => (a === id ? [b] : b === id ? [a] : [])),
+    device: async (peer) => (peer.sessionId ? (opts.devices?.[peer.sessionId] ?? null) : null),
     openTable: (ids) => {
       tables.push(ids);
       return `ROOM${tables.length}`;
@@ -34,9 +35,9 @@ function queue(opts: { fillMs?: number; refuse?: Record<string, 'banned' | 'age_
   });
   const peers = new Map<string, { peer: QueuePeer; out: Msg[] }>();
   let n = 0;
-  const join = async (userId: string) => {
+  const join = async (userId: string, from: { address?: string; sessionId?: string } = {}) => {
     const out: Msg[] = [];
-    const peer: QueuePeer = { peerId: `p-${++n}`, userId, send: (m) => out.push(m as Msg) };
+    const peer: QueuePeer = { peerId: `p-${++n}`, userId, ...from, send: (m) => out.push(m as Msg) };
     peers.set(peer.peerId, { peer, out });
     await mm.enqueue(peer);
     return { peerId: peer.peerId, out, last: () => out[out.length - 1] };
@@ -164,6 +165,63 @@ describe('the quick-match queue', () => {
     expect(fillMsFromEnv({ QUICK_MATCH_FILL_MS: '5000' })).toBe(5000);
     expect(fillMsFromEnv({ QUICK_MATCH_FILL_MS: 'soon' })).toBe(20_000);
     expect(fillMsFromEnv({ QUICK_MATCH_FILL_MS: '-1' })).toBe(20_000);
+  });
+});
+
+describe('one address or one device at a quick-match table', () => {
+  it('never seats two accounts from one address together; each still gets a game', async () => {
+    const q = queue();
+    const a = await q.join('a', { address: '203.0.113.7' });
+    const b = await q.join('b', { address: '203.0.113.7' });
+    expect(b.last()).toMatchObject({ t: 'queue_status', position: 2, humans: 1 });
+    q.advance(20_000);
+    expect(q.tables).toEqual([['a'], ['b']]);
+    expect(matched(a.out)).toMatchObject({ humans: 1, bots: 3 });
+    expect(matched(b.out)).toMatchObject({ humans: 1, bots: 3 });
+  });
+
+  it('keys an IPv6 address by its /64, as every per-address limit does', async () => {
+    const q = queue();
+    for (const [id, address] of [['a', '2001:db8:1:2::5'], ['b', '2001:db8:1:2:ffff::9'], ['c', '198.51.100.1'], ['d', '198.51.100.2'], ['e', '198.51.100.3']] as const) await q.join(id, { address });
+    expect(q.tables).toEqual([['a', 'c', 'd', 'e']]);
+    expect(q.mm.waiting()).toEqual(['b']);
+  });
+
+  it('never seats two accounts from one device together, whatever their addresses', async () => {
+    const q = queue({ devices: { s1: 'install-1', s2: 'install-1', s3: 'install-2' } });
+    await q.join('a', { sessionId: 's1', address: '198.51.100.1' });
+    await q.join('b', { sessionId: 's2', address: '198.51.100.2' });
+    await q.join('c', { sessionId: 's3', address: '198.51.100.3' });
+    q.advance(20_000);
+    expect(q.tables).toEqual([['a', 'c'], ['b']]);
+  });
+
+  it('others from other addresses still fill a table at once', async () => {
+    const q = queue();
+    for (const [id, address] of [['a', '192.0.2.1'], ['b', '192.0.2.1'], ['c', '192.0.2.2'], ['d', '192.0.2.3'], ['e', '192.0.2.4'], ['f', '192.0.2.5'], ['g', '192.0.2.6']] as const) await q.join(id, { address });
+    expect(q.tables).toEqual([['a', 'c', 'd', 'e']]);
+    q.advance(20_000);
+    expect(q.tables).toEqual([['a', 'c', 'd', 'e'], ['b', 'f', 'g']]);
+  });
+
+  it('counts how often each pair of accounts sits together and lists the frequent pairs', async () => {
+    const q = queue();
+    for (let i = 0; i < 3; i++) {
+      for (const id of ['a', 'b', 'c', 'd']) await q.join(id);
+      for (const id of ['a', 'b']) await q.join(id);
+      q.advance(20_000);
+    }
+    expect(q.tables.length).toBe(6);
+    const pairs = q.mm.frequentPairs(4);
+    expect(pairs).toEqual([{ a: 'a', b: 'b', tables: 6, lastAt: expect.any(Number) }]);
+    expect(q.mm.frequentPairs(3).map((p) => [p.a, p.b, p.tables])).toEqual([
+      ['a', 'b', 6],
+      ['a', 'c', 3],
+      ['a', 'd', 3],
+      ['b', 'c', 3],
+      ['b', 'd', 3],
+      ['c', 'd', 3],
+    ]);
   });
 });
 
@@ -362,29 +420,39 @@ afterEach(async () => {
   await Promise.all(servers.splice(0).map((s) => s.close()));
 });
 
+/** Guests and socket clients against a real server; each client comes from its own address unless told otherwise. */
+function quickHarness(server: SignalServer) {
+  const port = server.address().port;
+  const base = `http://127.0.0.1:${port}`;
+  let n = 0;
+  const guest = async (name: string, birthYear: number | null = 1990, deviceId: string = randomUUID()) => {
+    const res = await fetch(`${base}/api/auth/guest`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-forwarded-for': `10.9.0.${++n}` }, body: JSON.stringify({ device: { id: deviceId, platform: 'ios' }, displayName: name }) });
+    const json = (await res.json()) as { userId: string; session: { token: string } };
+    if (!json.session) throw new Error(`guest refused: ${res.status} ${JSON.stringify(json)}`);
+    if (birthYear !== null) await fetch(`${base}/api/me`, { method: 'PATCH', headers: { 'content-type': 'application/json', authorization: `Bearer ${json.session.token}` }, body: JSON.stringify({ birthYear }) });
+    return json;
+  };
+  const client = (token: string, address = `198.51.100.${++n}`) =>
+    new SignalingClient(`ws://127.0.0.1:${port}`, {
+      auth: token,
+      webSocket: (u) => {
+        const ws = new WebSocket(u, { headers: { 'x-forwarded-for': address } });
+        sockets.push(ws);
+        return ws as unknown as WebSocketLike;
+      },
+    });
+  return { base, guest, client };
+}
+
 describe('quick match over real sockets', () => {
   it('three players queue, are matched with one bot, join by code and the table starts by itself; a stranger is kept out', async () => {
     const repos = createRepos();
     const sessions = new SessionService(repos.repos, { pepper: 'quick-pepper-0123456789abcdef' });
-    const server = await createSignalServer({ port: 0, host: '127.0.0.1', repos, sessions, providers: {}, config: loadConfig({}), botDelayMs: 0, persistDebounceMs: 20, log: () => undefined, quickMatchFillMs: 400 });
+    // Behind one trusted proxy, so each player can come from an address of its own (two accounts
+    // from one address are never matched together).
+    const server = await createSignalServer({ port: 0, host: '127.0.0.1', repos, sessions, providers: {}, config: loadConfig({ TRUST_PROXY: '1' }), botDelayMs: 0, persistDebounceMs: 20, log: () => undefined, quickMatchFillMs: 400 });
     servers.push(server);
-    const port = server.address().port;
-    const base = `http://127.0.0.1:${port}`;
-    const guest = async (name: string, birthYear: number | null = 1990) => {
-      const res = await fetch(`${base}/api/auth/guest`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ device: { id: randomUUID(), platform: 'ios' }, displayName: name }) });
-      const json = (await res.json()) as { userId: string; session: { token: string } };
-      if (birthYear !== null) await fetch(`${base}/api/me`, { method: 'PATCH', headers: { 'content-type': 'application/json', authorization: `Bearer ${json.session.token}` }, body: JSON.stringify({ birthYear }) });
-      return json;
-    };
-    const client = (token: string) =>
-      new SignalingClient(`ws://127.0.0.1:${port}`, {
-        auth: token,
-        webSocket: (u) => {
-          const ws = new WebSocket(u);
-          sockets.push(ws);
-          return ws as unknown as WebSocketLike;
-        },
-      });
+    const { guest, client } = quickHarness(server);
 
     // No birth year on the server: refused with age_missing.
     const young = await guest('Young', null);
@@ -423,6 +491,55 @@ describe('quick match over real sockets', () => {
     expect(host.seatInfo().filter((s) => s.isBot).length).toBe(1);
     expect(host.seatInfo().filter((s) => !s.isBot).map((s) => s.userId).sort()).toEqual(players.map((p) => p.userId).sort());
     expect(server.rooms.clubOf(room)).toBeUndefined();
+  });
+
+  it('seats two accounts from one address, or from one device, at separate tables, and moderators see who keeps sitting together', async () => {
+    const repos = createRepos();
+    const sessions = new SessionService(repos.repos, { pepper: 'quick-pepper-0123456789abcdef' });
+    const adminToken = 'moderator-token-0123456789';
+    const server = await createSignalServer({ port: 0, host: '127.0.0.1', repos, sessions, providers: {}, config: loadConfig({ TRUST_PROXY: '1' }), botDelayMs: 0, persistDebounceMs: 20, log: () => undefined, quickMatchFillMs: 300, adminToken });
+    servers.push(server);
+    const { base, guest, client } = quickHarness(server);
+    const match = async (pairs: Array<[{ session: { token: string } }, string]>) => {
+      const cs = pairs.map(([g, address]) => client(g.session.token, address));
+      await Promise.all(cs.map((c) => c.connect()));
+      const rooms = await Promise.all(cs.map((c) => c.findMatch().match));
+      for (const c of cs) c.close();
+      return rooms;
+    };
+
+    // One address (an IPv6 /64), two accounts: two tables, each with bots.
+    const [a, b] = await Promise.all([guest('Ann'), guest('Ben')]);
+    const [ra, rb] = await match([
+      [a, '2001:db8:7:7::1'],
+      [b, '2001:db8:7:7::2'],
+    ]);
+    expect(ra).not.toBe(rb);
+    for (const room of [ra, rb]) expect(server.rooms.hostedTable(room)).toBeDefined();
+
+    // One device (one install), two accounts, two addresses: two tables.
+    const install = randomUUID();
+    const [c, d] = [await guest('Cai', 1990, install), await guest('Dee', 1990, install)];
+    const [rc, rd] = await match([
+      [c, '203.0.113.10'],
+      [d, '203.0.113.11'],
+    ]);
+    expect(rc).not.toBe(rd);
+
+    // Two accounts on separate addresses and devices are matched together, and counted.
+    const [e, f] = await Promise.all([guest('Eve'), guest('Fay')]);
+    const [re, rf] = await match([
+      [e, '192.0.2.20'],
+      [f, '192.0.2.21'],
+    ]);
+    expect(re).toBe(rf);
+    const res = await fetch(`${base}/api/admin/quick-match/pairs?min=1`, { headers: { authorization: `Bearer ${adminToken}` } });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { min: number; scope: string; pairs: Array<{ a: { id: string }; b: { id: string }; tables: number }> };
+    expect(body.min).toBe(1);
+    expect(body.scope).toBe('process');
+    expect(body.pairs.map((p) => [p.a.id, p.b.id, p.tables])).toEqual([[...[e.userId, f.userId].sort(), 1]]);
+    expect((await fetch(`${base}/api/admin/quick-match/pairs`)).status).toBe(401);
   });
 });
 

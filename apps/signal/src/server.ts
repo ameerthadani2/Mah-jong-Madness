@@ -173,6 +173,12 @@ export async function createSignalServer(opts: SignalServerOptions): Promise<Sig
     fillMs: opts.quickMatchFillMs ?? config.quickMatchFillMs ?? fillMsFromEnv(process.env),
     check: (userId) => quickMatchCheck(repos.repos, userId, now()),
     avoid: (userId) => blockedEitherWay(repos.repos, userId),
+    // The install the session was made on (as club joins count it): one device, one seat per table.
+    device: async (peer) => {
+      const session = peer.sessionId ? await repos.repos.sessions.get(peer.sessionId) : null;
+      const device = session?.deviceId ? await repos.repos.devices.get(session.deviceId) : null;
+      return device ? (device.installId ?? device.id) : null;
+    },
     // Declared below; the queue only opens tables once the server is up.
     openTable: (userIds): string => rooms.createQuickMatchRoom(userIds, { startAfterMs: opts.quickStartMs }),
     // One quick-match table per account at a time, each charged to its players like a table they created.
