@@ -298,5 +298,33 @@
   },
   "bundleSaves": "You own %{owned} of %{total}: pay only for the rest",
   "equip": "Equip",
-  "equipped": "In use"
+  "equipped": "In use",
+  "preview": {
+    "open": "Try on %{title}",
+    "tryOn": "Try on",
+    "dialog": "Preview: %{title}",
+    "close": "Close preview",
+    "buy": "%{n}",
+    "buyLabel": "Buy for %{n} diamonds",
+    "inSet": "In this set",
+    "tapEmote": "Tap an emote to play it",
+    "play": "Play %{name}",
+    "replay": "Play again",
+    "stillNote": "Motion is reduced, so it is described instead of played: %{description}",
+    "stage": {
+      "table": "%{title} on a table with a hand, two ponds of discards and the other seats' tiles",
+      "tileback": "%{title} on a row of tiles and the wall, as at the table",
+      "frame": "Your avatar in the %{title}",
+      "emotes": "Your avatar at the table, where the emotes show",
+      "bundle": "%{title}: its table with its tile backs, a hand and two ponds of discards"
+    },
+    "celebration": {
+      "win": {
+        "fireworks": "Three fireworks burst over the table in gold, red and sky blue, then fade.",
+        "lanterns": "Four sky lanterns rise from the table and drift up out of view.",
+        "dragon": "A green dragon with a red head dances across the table from left to right.",
+        "petals": "Pink plum petals drift down over the table."
+      }
+    }
+  }
 }

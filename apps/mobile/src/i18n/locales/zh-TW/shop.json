@@ -298,5 +298,33 @@
   },
   "bundleSaves": "你已擁有 %{total} 件中的 %{owned} 件，只需付其餘的",
   "equip": "使用",
-  "equipped": "使用中"
+  "equipped": "使用中",
+  "preview": {
+    "open": "試用 %{title}",
+    "tryOn": "試用",
+    "dialog": "預覽：%{title}",
+    "close": "關閉預覽",
+    "buy": "%{n}",
+    "buyLabel": "以 %{n} 鑽石購買",
+    "inSet": "套組內容",
+    "tapEmote": "點一下表情就會播放",
+    "play": "播放「%{name}」",
+    "replay": "再播一次",
+    "stillNote": "已減少動態效果，因此以文字說明，不播放動畫：%{description}",
+    "stage": {
+      "table": "%{title}：牌桌上有一手牌、兩堆打出的牌和其他座位的牌",
+      "tileback": "%{title}：牌桌上的一排牌和牌牆",
+      "frame": "你的頭像套上%{title}",
+      "emotes": "你在牌桌上的頭像，表情會在這裡出現",
+      "bundle": "%{title}：套組的桌布和牌背，一手牌和兩堆打出的牌"
+    },
+    "celebration": {
+      "win": {
+        "fireworks": "金、紅、天藍三朵煙火在牌桌上綻放，然後淡去。",
+        "lanterns": "四盞天燈從牌桌升起，緩緩飄出畫面。",
+        "dragon": "一條紅頭綠身的龍從左到右舞過牌桌。",
+        "petals": "粉紅梅花瓣緩緩飄落在牌桌上。"
+      }
+    }
+  }
 }

@@ -414,9 +414,9 @@ export const CHIP_HEIGHT = 34;
  * A choice chip. A `locked` chip still works (its press opens the Shop, where it is unlocked), so it is announced as
  * an enabled button whose label says it is locked and opens the Shop, never as disabled.
  */
-export function Chip({ label, selected, onPress, locked, dark }: { label: string; selected?: boolean; onPress?: () => void; locked?: boolean; dark?: boolean }) {
+export function Chip({ label, selected, onPress, locked, dark, testID }: { label: string; selected?: boolean; onPress?: () => void; locked?: boolean; dark?: boolean; testID?: string }) {
   return (
-    <Pressable onPress={onPress} hitSlop={slopFor(CHIP_HEIGHT, 4)} accessibilityRole="button" accessibilityLabel={locked ? t('common.lockedChip', { label }) : label} accessibilityState={{ selected: !!selected }} aria-selected={!!selected} style={({ pressed }) => [styles.chip, dark && styles.chipDark, selected && styles.chipOn, pressed && { transform: [{ translateY: 1 }] }]}>
+    <Pressable testID={testID} onPress={onPress} hitSlop={slopFor(CHIP_HEIGHT, 4)} accessibilityRole="button" accessibilityLabel={locked ? t('common.lockedChip', { label }) : label} accessibilityState={{ selected: !!selected }} aria-selected={!!selected} style={({ pressed }) => [styles.chip, dark && styles.chipDark, selected && styles.chipOn, pressed && { transform: [{ translateY: 1 }] }]}>
       {locked && <Icon name="lock" size={15} />}
       <Text numberOfLines={1} style={[styles.chipText, fontFor(label, fonts.uiBold), dark && !selected && { color: '#FFFFFF' }]}>
         {label}

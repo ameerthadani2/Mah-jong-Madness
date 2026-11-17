@@ -32,6 +32,8 @@ import { WinCelebration } from '../components/Celebrations';
 import { TileBackPreview } from '../components/Tile';
 import { AgeBlocked, AgeGate } from '../components/AgeGate';
 import { LegalLinks, NoValueNotice } from '../components/LegalLinks';
+import { LookPreview, type LookOffer } from '../components/LookPreview';
+import { returnFocus } from '../display/focus';
 
 type Tab = ShopTab;
 
@@ -62,6 +64,9 @@ export function ShopScreen({ focus }: { focus?: ShopFocus } = {}) {
   const [busy, setBusy] = useState<string | null>(null);
   const [msg, setMsg] = useState<{ text: string; tone: 'gold' | 'ok' | 'danger' } | null>(null);
   const [offline, setOffline] = useState(false);
+  // The look tried on in the preview, and each card's picture by product id (focus goes back to it on close).
+  const [preview, setPreview] = useState<Product | null>(null);
+  const openers = useRef(new Map<string, React.ComponentRef<typeof View>>());
   const wallet = shop.wallet;
   const { refresh } = shop;
   const accountId = useAuth().user?.id;
@@ -140,6 +145,32 @@ export function ShopScreen({ focus }: { focus?: ShopFocus } = {}) {
     } finally {
       setBusy(null);
     }
+  };
+
+  /** What a look's card offers (price, Buy, Equip); the preview gets the same, so it buys through the same path. */
+  const lookOffer = (p: Product): LookOffer => {
+    const owned = ownsProduct(wallet, p.id);
+    const have = p.contains ? p.contains.filter((id) => ownsProduct(wallet, id)).length : 0;
+    return {
+      owned,
+      inUse: p.category === 'table' ? app.settings.tableTheme === p.unlocks : !!slotOf(p.id) && Object.values(equipped).includes(p.id),
+      price: p.contains ? bundlePrice(p, (id) => ownsProduct(wallet, id)) : (p.diamondPrice ?? 0),
+      busy: busy === p.id,
+      note: have > 0 && !owned ? t('shop.bundleSaves', { owned: have, total: p.contains!.length }) : undefined,
+      onBuy: p.diamondPrice ? () => void spend(p) : undefined,
+      onEquip: owned && !p.contains ? () => wear(p, wallet) : undefined,
+    };
+  };
+
+  const openPreview = (p: Product) => {
+    setMsg(null);
+    setPreview(p);
+  };
+  const closePreview = () => {
+    const opener = preview ? openers.current.get(preview.id) : undefined;
+    setPreview(null);
+    // After the dialog has gone, so the screen reader is not still inside it.
+    setTimeout(() => returnFocus(opener), 0);
   };
 
   /** The store's own price string, or why there is none. */
@@ -235,33 +266,36 @@ export function ShopScreen({ focus }: { focus?: ShopFocus } = {}) {
         <>
           <Row style={{ flexWrap: 'wrap', rowGap: 6 }} gap={6}>
             {COSMETIC_CATEGORIES.map((c) => (
-              <Chip key={c} label={t(`shop.shelves.${c}`)} selected={shelf === c} onPress={() => setShelf(c)} />
+              <Chip key={c} testID={`shelf-${c}`} label={t(`shop.shelves.${c}`)} selected={shelf === c} onPress={() => setShelf(c)} />
             ))}
           </Row>
           {grid(
             (shelf === 'bundle' ? BUNDLES : COSMETICS.filter((p) => p.category === shelf)).map((p) => {
-              const owned = ownsProduct(wallet, p.id);
-              const inUse = p.category === 'table' ? app.settings.tableTheme === p.unlocks : !!slotOf(p.id) && Object.values(equipped).includes(p.id);
-              const price = p.contains ? bundlePrice(p, (id) => ownsProduct(wallet, id)) : (p.diamondPrice ?? 0);
-              const have = p.contains ? p.contains.filter((id) => ownsProduct(wallet, id)).length : 0;
+              const offer = lookOffer(p);
               return (
                 <ProductCard
                   key={p.id}
                   w={cardW}
                   p={p}
-                  owned={owned}
-                  busy={busy === p.id}
-                  onBuyDiamonds={p.diamondPrice ? () => void spend(p) : undefined}
-                  diamondLabel={price}
-                  note={have > 0 && !owned ? t('shop.bundleSaves', { owned: have, total: p.contains!.length }) : undefined}
-                  onEquip={owned && !p.contains ? () => wear(p, wallet) : undefined}
-                  inUse={inUse}
+                  owned={offer.owned}
+                  busy={offer.busy}
+                  onBuyDiamonds={offer.onBuy}
+                  diamondLabel={offer.price}
+                  note={offer.note}
+                  onEquip={offer.onEquip}
+                  inUse={offer.inUse}
+                  onPreview={() => openPreview(p)}
+                  previewRef={(el) => {
+                    if (el) openers.current.set(p.id, el);
+                    else openers.current.delete(p.id);
+                  }}
                   art={<CosmeticPreview p={p} avatar={app.profile.avatar} w={cardW - 16} />}
                   bg={['#D5F7E3', '#8FE0B0']}
                 />
               );
             }),
           )}
+          <LookPreview product={preview} offer={preview ? lookOffer(preview) : null} avatar={app.profile.avatar} owns={(id) => ownsProduct(wallet, id)} message={msg} onClose={closePreview} />
         </>
       )}
 
@@ -351,6 +385,8 @@ function ProductCard({
   note,
   onEquip,
   inUse,
+  onPreview,
+  previewRef,
   art,
   bg,
   w,
@@ -371,6 +407,10 @@ function ProductCard({
   /** For an owned cosmetic: put it on. */
   onEquip?: () => void;
   inUse?: boolean;
+  /** For a look: tapping its picture opens the try-on preview. */
+  onPreview?: () => void;
+  /** The picture's button, which gets focus back when the preview closes. */
+  previewRef?: (el: React.ComponentRef<typeof View> | null) => void;
   art: React.ReactNode;
   bg: readonly [string, string];
   w: number;
@@ -382,11 +422,23 @@ function ProductCard({
   const sub = amount !== undefined ? text.description : t('shop.productSub', { zh: p.titleZh, description: text.description });
   return (
     <Card style={{ width: w, padding: 8, gap: 6 }} testID={`product-${p.id}`}>
-      <View style={[styles.window, short && { height: 68 }]}>
-        <LinearGradient colors={bg} style={StyleSheet.absoluteFill} />
-        <View style={styles.shine} />
-        <View style={{ position: 'absolute', left: 4, right: 4, top: 4, bottom: 4 }}>{art}</View>
-      </View>
+      {onPreview ? (
+        <Pressable ref={previewRef} testID={`preview-${p.id}`} accessibilityRole="button" accessibilityLabel={t('shop.preview.open', { title: text.title })} onPress={onPreview} style={({ pressed }) => [styles.window, short && { height: 68 }, pressed && { opacity: 0.85 }]}>
+          <LinearGradient colors={bg} style={StyleSheet.absoluteFill} />
+          <View style={styles.shine} />
+          <View style={{ position: 'absolute', left: 4, right: 4, top: 4, bottom: 4 }}>{art}</View>
+          <View style={styles.tryOn} pointerEvents="none">
+            <Icon name="magnifier" size={14} />
+            <Text style={[styles.tryOnText, fontFor(t('shop.preview.tryOn'), fonts.uiBold)]}>{t('shop.preview.tryOn')}</Text>
+          </View>
+        </Pressable>
+      ) : (
+        <View style={[styles.window, short && { height: 68 }]}>
+          <LinearGradient colors={bg} style={StyleSheet.absoluteFill} />
+          <View style={styles.shine} />
+          <View style={{ position: 'absolute', left: 4, right: 4, top: 4, bottom: 4 }}>{art}</View>
+        </View>
+      )}
       {text.badge && (
         <View style={styles.ribbon}>
           <Text style={[styles.ribbonText, fontFor(text.badge, fonts.display)]}>{text.badge}</Text>
@@ -440,6 +492,8 @@ const styles = StyleSheet.create({
   tabText: { fontFamily: fonts.display, color: '#FFFFFF', fontSize: 16 },
   grid: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'stretch' },
   window: { height: 96, borderWidth: 3, borderColor: colors.ink, borderRadius: 14, overflow: 'hidden' },
+  tryOn: { position: 'absolute', right: 4, bottom: 4, flexDirection: 'row', alignItems: 'center', gap: 3, backgroundColor: 'rgba(255,255,255,0.92)', borderWidth: 2, borderColor: colors.ink, borderRadius: 10, paddingHorizontal: 6, paddingVertical: 1 },
+  tryOnText: { fontFamily: fonts.uiBold, color: colors.ink, fontSize: 11, lineHeight: 14 },
   shine: { position: 'absolute', top: -30, left: -16, width: 90, height: 90, borderRadius: 45, backgroundColor: 'rgba(255,255,255,0.35)' },
   ribbon: { position: 'absolute', top: 2, right: 2, backgroundColor: colors.danger, borderWidth: 2, borderColor: colors.ink, borderRadius: 10, paddingHorizontal: 8, paddingVertical: 2, transform: [{ rotate: '6deg' }] },
   // Ink on the red ribbon (5.9:1); white was 3:1.
