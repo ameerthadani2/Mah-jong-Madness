@@ -3,6 +3,7 @@
  * an older build. Home's Resume card and the resume code read its fields without asking, so a record is only
  * handed to them after every field they read has been checked here; anything else is treated as no saved table.
  */
+import { sanitizeRules } from '@mjm/engine';
 import type { ActiveSession } from '../storage';
 
 /** A saved table older than this is stale: the match it points at is long over. */
@@ -61,6 +62,18 @@ function isSavedHost(v: unknown): boolean {
 }
 
 /**
+ * The rules are read as numbers all through the table (the wall count is the wall less the dead wall), so an
+ * emptied or hand-edited rules object would open a table showing NaN. The table's rules are sanitised as the
+ * engine sanitises any rules from outside (missing or broken values take the default), and the hand in play
+ * falls back to the table's rules for any value it lost.
+ */
+function withSaneRules(raw: Record<string, unknown>, host: Record<string, unknown>): Record<string, unknown> {
+  const rules = sanitizeRules(host.rules);
+  const game = isObject(host.game) ? { ...host.game, rules: sanitizeRules(host.game.rules, rules) } : host.game;
+  return { ...raw, host: { ...host, rules, game } };
+}
+
+/**
  * The record as the app may use it, or null when it is damaged or stale. An online record's saved
  * verification history is optional and the table client checks it itself, so a damaged one is dropped
  * and the seat is still resumable.
@@ -69,7 +82,7 @@ export function validActiveSession(raw: unknown, now: number = Date.now()): Acti
   if (!isObject(raw)) return null;
   if (typeof raw.savedAt !== 'number' || !Number.isFinite(raw.savedAt) || now - raw.savedAt > SAVED_TABLE_MAX_AGE_MS) return null;
   if (!isFilled(raw.token) || !isText(raw.name) || !isText(raw.avatar)) return null;
-  if (raw.kind === 'local') return isSavedHost(raw.host) ? (raw as unknown as ActiveSession) : null;
+  if (raw.kind === 'local') return isSavedHost(raw.host) ? (withSaneRules(raw, raw.host as Record<string, unknown>) as unknown as ActiveSession) : null;
   if (raw.kind !== 'online') return null;
   if (!isFilled(raw.signalUrl) || !isFilled(raw.roomCode)) return null;
   if (raw.clubCode !== undefined && !isText(raw.clubCode)) return null;

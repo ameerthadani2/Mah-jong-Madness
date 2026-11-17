@@ -77,3 +77,31 @@ describe('the saved-table record read from storage', () => {
     expect(validActiveSession({ ...online(), savedAt: NOW - SAVED_TABLE_MAX_AGE_MS + 1000 }, NOW)).not.toBeNull();
   });
 });
+
+describe('a saved table whose rules were emptied or damaged', () => {
+  it('opens with the rules sanitised, so the wall count is a number and not NaN', async () => {
+    const good = await savedLocal();
+    const host = good.host as Record<string, unknown>;
+    const damaged = { ...good, host: { ...host, rules: {}, game: { ...(host.game as object), rules: { deadWallSize: 'lots' } } } };
+    const record = validActiveSession(damaged, NOW);
+    expect(record).not.toBeNull();
+    const saved = record as unknown as { host: { rules: Record<string, unknown>; game: { rules: Record<string, unknown> } }; token: string };
+    expect(saved.host.rules).toEqual(DEFAULT_RULES);
+    expect(saved.host.game.rules).toEqual(DEFAULT_RULES);
+    const session = createLocalSession('Tester', 'auntie', DEFAULT_RULES, { botSkill: 'beginner', restore: { host: saved.host as never, token: saved.token } });
+    for (let i = 0; i < 100 && !session.client.state.view; i++) await new Promise((r) => setTimeout(r, 20));
+    const view = session.client.state.view!;
+    session.close();
+    expect(Number.isFinite(view.drawsLeft)).toBe(true);
+    expect(view.drawsLeft).toBeGreaterThan(0);
+  });
+
+  it('keeps the table own rules when they are whole, and fills only the damaged ones from the table', async () => {
+    const good = await savedLocal();
+    const host = good.host as Record<string, unknown>;
+    const tableRules = { ...DEFAULT_RULES, basePoints: 300, handsPerMatch: 8 };
+    const record = validActiveSession({ ...good, host: { ...host, rules: tableRules, game: { ...(host.game as object), rules: { ...tableRules, taiPoints: null } } } }, NOW) as unknown as { host: { rules: unknown; game: { rules: unknown } } };
+    expect(record.host.rules).toEqual(tableRules);
+    expect(record.host.game.rules).toEqual(tableRules);
+  });
+});
