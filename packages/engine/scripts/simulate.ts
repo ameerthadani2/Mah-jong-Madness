@@ -18,6 +18,13 @@
  *                  instead of first hands of fresh matches; the paired difference is per match, also
  *                  shown per hand.
  *
+ *   tsx scripts/simulate.ts --ligu <n> [--seed <prefix>] [--tai <liguTai>]
+ *       嚦咕嚦咕 at a table that plays it: for each tier, <n> paired hands (test seat `hand % 4`, three
+ *       Club bots that know the hand around it) with the test seat knowing 嚦咕嚦咕 and then blind to it
+ *       (`BOT_WEIGHTS.ligu` 0 for that seat only). Prints the paired difference in points a hand with its
+ *       standard error, 嚦咕嚦咕 wins per 1,000 hands with and without the blind seat, and illegal moves.
+ *       Default seed prefix `ligu`, default `liguTai` 4.
+ *
  *   tsx scripts/simulate.ts --gate
  *       The CI strength gate, on GATE_HANDS fixed seeds (prefix `gate`) with the per-hand reference
  *       stored in test/fixtures/bot-gate.json. Each seed is played three times with three Club bots
@@ -42,7 +49,7 @@
  */
 import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { applyAction, BOT_WEIGHTS, chooseAction, hashState, isLegal, newGame, nextHand, tilesRemaining, type Action, type BotSkill, type GameState } from '../src/index';
+import { applyAction, BOT_WEIGHTS, chooseAction, hashState, isLegal, newGame, nextHand, tilesRemaining, withRules, type Action, type BotSkill, type GameState } from '../src/index';
 import { againstReference, GATE_HANDS, GATE_MAX_DROP, gateFailures, PRO_TERMS_OFF, summarise, termsVerdict, type GateReference, type SeatStats } from '../test/helpers/gate';
 import { recordHand, type ReferenceFile } from '../test/helpers/reference';
 
@@ -58,9 +65,14 @@ interface Timing {
   illegal: number;
 }
 const timing = new Map<BotSkill, Timing>();
+/** `--ligu` only: the seat that plays blind to 嚦咕嚦咕 (`BOT_WEIGHTS.ligu` 0 for its decisions), or -1. */
+let liguBlindSeat = -1;
 function timed(s: GameState, seat: number, skill: BotSkill): Action | null {
   const t0 = process.hrtime.bigint();
+  const knows = BOT_WEIGHTS.ligu;
+  if (seat === liguBlindSeat) BOT_WEIGHTS.ligu = 0;
   const a = chooseAction(s, seat, { seed: `bot${seat}`, skill });
+  BOT_WEIGHTS.ligu = knows;
   const dt = process.hrtime.bigint() - t0;
   const t = timing.get(skill) ?? { decisions: 0, ns: 0n, illegal: 0 };
   if (a) {
@@ -219,6 +231,45 @@ function runMatches(matches: number): void {
   console.log(`${(ms / hands).toFixed(1)} ms per hand; illegal moves ${club?.illegal ?? 0}`);
 }
 
+/**
+ * Bots that know 嚦咕嚦咕 against the same bots blind to it, at a table that plays the hand (see the
+ * usage note at the top). Wins by 嚦咕嚦咕 are counted over every seat of the table.
+ */
+function runLigu(n: number, prefix: string, liguTai: number): void {
+  const rules = withRules({ liguTai });
+  const started = Date.now();
+  const liguWins = (s: GameState): number => s.result!.wins.filter((w) => w.score.ligu).length;
+  console.log(`ligu: ${n} paired hands per tier, seed prefix ${prefix}, liguTai ${liguTai}`);
+  for (const skill of SKILLS) {
+    const diffs: number[] = [];
+    let aware = 0;
+    let blind = 0;
+    let awareSeat = 0;
+    let blindSeat = 0;
+    for (let h = 0; h < n; h++) {
+      const testSeat = h % 4;
+      const skills = [0, 1, 2, 3].map((x): BotSkill => (x === testSeat ? skill : 'club'));
+      const a = playHand(newGame(`${prefix}-${h}`, rules), skills);
+      liguBlindSeat = testSeat;
+      const b = playHand(newGame(`${prefix}-${h}`, rules), skills);
+      liguBlindSeat = -1;
+      diffs.push(a.result!.scoreDelta[testSeat] - b.result!.scoreDelta[testSeat]);
+      aware += liguWins(a);
+      blind += liguWins(b);
+      awareSeat += a.result!.wins.filter((w) => w.score.ligu && w.seat === testSeat).length;
+      blindSeat += b.result!.wins.filter((w) => w.score.ligu && w.seat === testSeat).length;
+    }
+    const d = summarise(diffs);
+    const per1000 = (x: number): string => ((x * 1000) / n).toFixed(1);
+    console.log(
+      `${skill.padEnd(8)} knows minus blind: ${d.mean.toFixed(2)} pts/hand, se ${d.se.toFixed(2)}, 95% interval [${d.low.toFixed(2)}, ${d.high.toFixed(2)}]: ${d.low > 0 ? 'ahead at 95%' : d.high < 0 ? 'behind at 95%' : 'no clear difference at 95%'}; hands that differ ${diffs.filter((x) => x !== 0).length}`,
+    );
+    console.log(`         嚦咕嚦咕 wins per 1,000 hands: every seat knows ${per1000(aware)} (test seat ${per1000(awareSeat)}), test seat blind ${per1000(blind)} (test seat ${per1000(blindSeat)})`);
+  }
+  const illegal = [...timing.values()].reduce((x, t) => x + t.illegal, 0);
+  console.log(`illegal moves ${illegal}; ${((Date.now() - started) / 1000).toFixed(0)} s`);
+}
+
 const SKILLS: readonly BotSkill[] = ['beginner', 'club', 'pro'];
 function skillArg(v: string | undefined): BotSkill {
   if (!SKILLS.includes(v as BotSkill)) throw new Error(`Unknown skill "${String(v)}" (beginner | club | pro)`);
@@ -349,6 +400,11 @@ const weights = option('--weights');
 if (weights) Object.assign(BOT_WEIGHTS, JSON.parse(weights) as Partial<typeof BOT_WEIGHTS>);
 if (flag('--gate')) runGate(flag('--record'));
 else if (flag('--record-reference')) recordReference();
+else if (flag('--ligu')) {
+  const prefix = option('--seed') ?? 'ligu';
+  const tai = countArg(option('--tai'), 4);
+  runLigu(countArg(args[0], 1000), prefix, tai);
+}
 else if (flag('--ladder')) {
   const matches = flag('--matches');
   const prefix = option('--seed') ?? 'ladder';
