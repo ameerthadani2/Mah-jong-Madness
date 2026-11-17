@@ -18,7 +18,8 @@ import { reactionShouldPlay } from './table/feel';
 import { slopFor } from './table/layout';
 import { compassSentence, wallSentence, type Relation } from './table/hudSpeech';
 import { CompassNotice } from './table/CompassNotice';
-import { SEAT_TAG_CHROME, seatTagText } from '../logic/seatName';
+import { relTagLabel, SEAT_TAG_CHROME, seatTagText } from '../logic/seatName';
+import { useDisplayScale } from '../display/DisplayScale';
 
 export function MeldView({ meld, size = 'sm' }: { meld: Meld; size?: TileSize | number }) {
   // Another seat's concealed kong arrives as placeholders until the hand ends: show all four face down.
@@ -141,7 +142,10 @@ export function SeatBadge({
   const wind = WINDS[(seat - dealerSeat + 4) % 4];
   const rel = (seat - viewerSeat + 4) % 4;
   const { t } = useT();
-  const relLabel = t(rel === 0 ? 'table.relSeat.me' : rel === 1 ? 'table.relSeat.right' : rel === 2 ? 'table.relSeat.across' : 'table.relSeat.left');
+  const relKey = rel === 0 ? 'me' : rel === 1 ? 'right' : rel === 2 ? 'across' : 'left';
+  // One line, never broken inside 下家: the short form when the whole label does not fit the tag (the OS text size grows it).
+  const { osScale } = useDisplayScale();
+  const relLabel = relTagLabel(t(`table.relSeat.${relKey}`), t(`table.relSeatShort.${relKey}`), maxNameWidth - SEAT_TAG_CHROME, 11 * osScale);
   const name = info?.name || t('table.seat', { n: seat + 1 });
   const offline = !!info && !info.connected && !info.isBot;
   // Win and deal-in reactions switch the portrait to its win/lose clip for a few seconds (if it has clips).
@@ -175,7 +179,9 @@ export function SeatBadge({
           {seatTagText(name, maxNameWidth - SEAT_TAG_CHROME)}
         </Text>
         <View style={styles.tagRow}>
-          <Text style={styles.tagRel}>{relLabel}</Text>
+          <Text testID="seat-rel" numberOfLines={1} style={styles.tagRel}>
+            {relLabel}
+          </Text>
           <Text style={[styles.tagScore, score < 0 && { color: '#FF9C9F' }]}>
             {score >= 0 ? '+' : ''}
             {score}
@@ -333,8 +339,9 @@ const styles = StyleSheet.create({
   seatVertical: { flexDirection: 'column', gap: 0 },
   tag: { backgroundColor: 'rgba(16,20,47,0.78)', borderWidth: 2, borderColor: colors.ink, borderRadius: 10, paddingHorizontal: 7, paddingVertical: 2, minWidth: 0 },
   tagName: { color: '#FFFFFF', fontSize: 12 },
-  tagRow: { flexDirection: 'row', alignItems: 'center', gap: 5 },
-  tagRel: { color: '#B9C6E4', fontSize: 11, fontWeight: '900' },
+  // The score wraps under the relation label rather than squeezing it onto two lines.
+  tagRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 5 },
+  tagRel: { color: '#B9C6E4', fontSize: 11, fontWeight: '900', flexShrink: 0 },
   tagScore: { color: colors.gold, fontFamily: fonts.display, fontSize: 12 },
   offline: { color: colors.danger, fontSize: 11, fontWeight: '900' },
   bubble: { position: 'absolute', backgroundColor: '#FFFFFF', borderWidth: 2.5, borderColor: colors.ink, borderRadius: 999, padding: 3, zIndex: 5 },

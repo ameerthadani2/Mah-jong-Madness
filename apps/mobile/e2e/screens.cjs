@@ -112,6 +112,12 @@ async function tableFit(page) {
     const plates = [...document.querySelectorAll('[data-testid="seat-name"]')].filter(seen);
     if (plates.length < 4) bad.push(`${plates.length} seat names showing, not 4`);
     for (const el of plates) if (el.scrollWidth > el.clientWidth + 1 || el.scrollHeight > el.clientHeight + 2) bad.push(`seat name "${el.textContent}" is cut (${el.scrollWidth}x${el.scrollHeight} in ${el.clientWidth}x${el.clientHeight})`);
+    // The seat's relation label ("Right 下家") stays on one line, never broken inside 下家, and is never cut.
+    for (const el of [...document.querySelectorAll('[data-testid="seat-rel"]')].filter(seen)) {
+      const r = el.getBoundingClientRect();
+      if (r.height > parseFloat(getComputedStyle(el).fontSize) * 1.7) bad.push(`seat label "${el.textContent}" takes two lines (${Math.round(r.height)} px high)`);
+      if (el.scrollWidth > el.clientWidth + 1) bad.push(`seat label "${el.textContent}" is cut (${el.scrollWidth} in ${el.clientWidth})`);
+    }
     const leave = document.querySelector('[data-testid="leave-table"]');
     const icons = leave ? [...leave.parentElement.querySelectorAll('[role="button"]')] : [];
     if (icons.length < 2) bad.push('the HUD icons are not showing');

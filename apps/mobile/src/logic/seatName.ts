@@ -61,3 +61,15 @@ export function seatTagText(name: string, width: number, fontSize = 12): string 
   const m = LABEL_SUFFIX.exec(name);
   return m ? `${m[1]}\n${m[2]}` : name;
 }
+
+/** Heavy (900) type runs wider than estimateTextWidth's average: the relation label is measured with this margin. */
+const BOLD_WIDTH = 1.1;
+
+/**
+ * The seat's relation label on its name tag ("Right 下家"). It is drawn on one line and never broken inside a
+ * word: when the whole label does not fit the tag's `width` at `fontSize`, the shorter form is shown instead
+ * ("Right"; in Chinese the two are the same, 下家). The score after it wraps to the next line when it must.
+ */
+export function relTagLabel(full: string, short: string, width: number, fontSize = 11): string {
+  return estimateTextWidth(full, fontSize) * BOLD_WIDTH <= width ? full : short;
+}

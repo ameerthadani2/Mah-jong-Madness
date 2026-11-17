@@ -2,7 +2,7 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 import { describe, expect, it } from 'vitest';
 import { en, zhTW } from '../i18n/locales';
-import { BOT_NAME_SLOT, botBaseName, botNamer, estimateTextWidth, seatDisplayName, seatTagText, SEAT_TAG_CHROME, withBotLabels } from './seatName';
+import { BOT_NAME_SLOT, botBaseName, botNamer, estimateTextWidth, relTagLabel, seatDisplayName, seatTagText, SEAT_TAG_CHROME, withBotLabels } from './seatName';
 
 const fill = (template: string) => (name: string) => template.replace('%{name}', name);
 const enBot = fill(en.common.botName);
@@ -70,5 +70,18 @@ describe('a seat name tag', () => {
     expect(seatTagText('Old Wang (Bot)', 60)).toBe('Old Wang\n(Bot)');
     // No label to break at: the text wraps where it allows (the tag shows two lines).
     expect(seatTagText('Wonderfully Long Name', 60)).toBe('Wonderfully Long Name');
+  });
+});
+
+describe('relTagLabel', () => {
+  it('keeps the relation label whole on one line, falling back to the short form where it would not fit', () => {
+    // The right seat's tag on a 667 x 375 phone has 84 px (side column 128, its 32 px plate, 12 px of gaps).
+    expect(relTagLabel('Right 下家', 'Right', 84 - SEAT_TAG_CHROME)).toBe('Right');
+    // The across seat's 120 px tag fits the whole label.
+    expect(relTagLabel('Across 對家', 'Across', 120 - SEAT_TAG_CHROME)).toBe('Across 對家');
+    // Chinese is two characters either way.
+    expect(relTagLabel('下家', '下家', 84 - SEAT_TAG_CHROME)).toBe('下家');
+    // A larger OS text size can push the whole label out.
+    expect(relTagLabel('Across 對家', 'Across', 120 - SEAT_TAG_CHROME, 11 * 1.5)).toBe('Across');
   });
 });

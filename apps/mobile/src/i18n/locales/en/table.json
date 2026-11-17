@@ -58,6 +58,12 @@
     "across": "Across 對家",
     "left": "Left 上家"
   },
+  "relSeatShort": {
+    "me": "You",
+    "right": "Right",
+    "across": "Across",
+    "left": "Left"
+  },
   "offline": "Offline",
   "win": {
     "title": "%{name} wins (胡牌)",

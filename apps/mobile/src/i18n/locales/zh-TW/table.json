@@ -58,6 +58,12 @@
     "across": "對家",
     "left": "上家"
   },
+  "relSeatShort": {
+    "me": "你",
+    "right": "下家",
+    "across": "對家",
+    "left": "上家"
+  },
   "offline": "離線",
   "win": {
     "title": "%{name} 胡牌",
