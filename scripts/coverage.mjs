@@ -1,6 +1,7 @@
 // `npm run coverage`: runs every vitest workspace's tests with coverage (each workspace's vitest.config.ts holds its
-// floors in coverage.thresholds, and vitest fails that workspace when a figure falls below one), then prints one line
-// a workspace with its lines, branches and functions. Exits non-zero if any workspace failed its tests or a floor.
+// floors in coverage.thresholds, and vitest fails that workspace when a figure falls below one), then the app's render
+// tests with coverage of its .tsx screens and components (`coverage:render`, floors in apps/mobile/jest.config.js), and
+// prints one line each with its lines, branches and functions. Exits non-zero if any run failed its tests or a floor.
 import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -30,11 +31,25 @@ for (const [name, dir] of WORKSPACES) {
   rows.push({ name, ok, total });
 }
 
+// The app's .tsx screens, measured by the render tests (jest), on a line of their own.
+{
+  const run = spawnSync('npm', ['run', 'coverage:render', '-w', '@mjm/mobile'], { cwd: root, stdio: 'inherit', env: { ...process.env, COVERAGE: '1' } });
+  const ok = run.status === 0;
+  if (!ok) failed = true;
+  let total = null;
+  try {
+    total = JSON.parse(readFileSync(join(root, 'apps/mobile', 'coverage-render', 'coverage-summary.json'), 'utf8')).total;
+  } catch {
+    // No summary: the run failed before jest wrote one.
+  }
+  rows.push({ name: '@mjm/mobile .tsx', ok, total });
+}
+
 const pct = (m) => (m ? `${m.pct.toFixed(2)}%`.padStart(8) : '       -');
-console.log('\nCoverage by workspace (floors in each vitest.config.ts)');
-console.log(`${'workspace'.padEnd(14)} ${'lines'.padStart(8)} ${'branches'.padStart(8)} ${'functions'.padStart(9)}  result`);
+console.log('\nCoverage by workspace (floors in each vitest.config.ts; the app\'s .tsx line in apps/mobile/jest.config.js)');
+console.log(`${'workspace'.padEnd(17)} ${'lines'.padStart(8)} ${'branches'.padStart(8)} ${'functions'.padStart(9)}  result`);
 for (const { name, ok, total } of rows) {
   const r = ok ? 'ok' : 'FAILED (tests or a floor)';
-  console.log(`${name.padEnd(14)} ${pct(total?.lines)} ${pct(total?.branches)} ${pct(total?.functions).padStart(9)}  ${r}`);
+  console.log(`${name.padEnd(17)} ${pct(total?.lines)} ${pct(total?.branches)} ${pct(total?.functions).padStart(9)}  ${r}`);
 }
 process.exit(failed ? 1 : 0);
