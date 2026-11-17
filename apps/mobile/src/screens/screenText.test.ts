@@ -13,13 +13,8 @@ const SRC = join(__dirname, '..');
 const read = (rel: string) => readFileSync(join(SRC, rel), 'utf8');
 
 describe('results and errors away from the table are spoken by a screen reader', () => {
-  it('a live line is a live region on Android and the web, and an announcement on iOS', () => {
-    const live = read('components/Live.tsx');
-    expect(live).toMatch(/accessibilityLiveRegion=\{assertive \? 'assertive' : 'polite'\}/);
-    expect(live).toMatch(/useAnnounce\(message\)/);
-    expect(live).toMatch(/accessibilityRole: 'alert'/);
-  });
-
+  // A live line being a polite region, an assertive alert for errors and an announcement on iOS is rendered in
+  // src/components/SharedA11y.render.test.tsx.
   it('every puzzle theme puts its verdict and explanation in the answer region', () => {
     expect(read('components/puzzles/PuzzleParts.tsx')).toMatch(/export function Answer[\s\S]*?<Live message=\{spoken\} testID="puzzle-answer"/);
     // Best discard and waits live in PuzzleView; defence, claim and value in their own files.

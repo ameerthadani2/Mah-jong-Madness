@@ -69,11 +69,8 @@ describe('accessibility', () => {
     expect(small).toEqual([]);
   });
 
-  it('labels the shared buttons and icon buttons on those screens (Ui.tsx names them from the title, label or icon)', () => {
-    const ui = readFileSync(join(SRC, 'components', 'Ui.tsx'), 'utf8');
-    expect(ui).toMatch(/accessibilityLabel=\{accessibilityLabel \?\? title\}/);
-    expect(ui).toMatch(/accessibilityLabel=\{label \?\? iconLabel\(icon\)\}/);
-  });
+  // The shared buttons and icon buttons are named from their title, label or icon: rendered in
+  // src/components/SharedA11y.render.test.tsx.
 
   it('sets no text style below 11 px', () => {
     const small: string[] = [];

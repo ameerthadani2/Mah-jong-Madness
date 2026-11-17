@@ -15,13 +15,8 @@ describe('screen readers at the table', () => {
     expect(tileLabel(27, 'en')).toMatch(/east/i);
   });
 
-  it('labels display tiles (ponds, melds, the win reveal), not only the pressable hand tiles', () => {
-    const tile = read('../Tile.tsx');
-    // The non-pressable body gets an image role and the spoken name.
-    expect(tile).toMatch(/!onPress && !onLongPress && spoken \? \{ accessible: true, accessibilityRole: 'image'/);
-    // The pressable fallback is no longer the English name.
-    expect(tile).not.toMatch(/info\?\.nameEn/);
-  });
+  // Display tiles (ponds, melds, the win reveal) named as images and hand tiles named in the UI language are rendered
+  // in src/components/SharedA11y.render.test.tsx.
 
   it('announces call-outs and connection banners on iOS, where live regions are ignored', () => {
     expect(announcesOn('ios')).toBe(true);
@@ -29,7 +24,7 @@ describe('screen readers at the table', () => {
     expect(announcesOn('web')).toBe(false);
     expect(read('./CallBanner.tsx')).toMatch(/announce\(/);
     expect(read('../../screens/TableScreen.tsx')).toMatch(/useAnnounce\(linkBanner\)/);
-    expect(read('./announce.ts')).toMatch(/AccessibilityInfo\.announceForAccessibility/);
+    // That an announcement reaches iOS's screen reader is rendered in src/components/SharedA11y.render.test.tsx.
   });
 
   it('respects reduce motion in every animated table piece', () => {
