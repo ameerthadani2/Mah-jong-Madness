@@ -59,10 +59,10 @@ export const EFFICIENCY_LESSONS: Lesson[] = [
         quiz: {
           prompt: 'Which discard leaves the better wait?',
           promptZh: '打哪一張，留下的聽牌比較好？',
-          hand: '123m 456m 789p 234s EEE 3m C',
-          answer: 'C',
-          explanation: 'Throw C and keep 3m: 1233456m is 123m + 456m with a 3m 單騎, or 123m + 345m with a 6m 單騎. That is two left of 3m plus three of 6m, five tiles against the three left of C.',
-          explanationZh: '打掉中，留 3m：1233456m 可以拆成 123m + 456m 單騎 3m，也可以拆成 123m + 345m 單騎 6m。3m 剩兩張、6m 剩三張，一共五張，比中的三張多。',
+          hand: '123m 456m 789p 234s EEE 3m 9s',
+          answer: '9s',
+          explanation: 'Throw 9s and keep 3m: 1233456m is 123m + 456m with a 3m 單騎, or 123m + 345m with a 6m 單騎. That is two left of 3m plus three of 6m, five tiles against the three left of 9s if you kept it as a 單騎 instead.',
+          explanationZh: '打掉 9s，留 3m：1233456m 可以拆成 123m + 456m 單騎 3m，也可以拆成 123m + 345m 單騎 6m。3m 剩兩張、6m 剩三張，一共五張；如果改留 9s 單騎，只剩三張。',
         },
       },
       {
@@ -224,10 +224,10 @@ export const EFFICIENCY_LESSONS: Lesson[] = [
         quiz: {
           prompt: 'Best discard?',
           promptZh: '最好打哪一張？',
-          hand: '234m 567p 11s 46m 78p N 9s 2p 5s 8m',
-          answer: 'N',
-          explanation: 'N can only pair up. Every other loose tile can still pick up a neighbour. Throw N and 80 copies still improve the hand; the next best, 9s, leaves 76.',
-          explanationZh: '北風只能湊對子，其他散牌都還能搭旁邊的牌。打北風之後還有 80 張能改善手牌；第二好的 9s 只剩 76 張。',
+          hand: '234m 567p 11s 46m 789p 9s 2p 5s 8m',
+          answer: '9s',
+          explanation: 'The 9s is a terminal: it can only grow with a 7s, an 8s or a second 9s. The 2p and the 5s are loose too, but each has neighbours on both sides to build with. Throw 9s and 66 tiles still improve the hand; throw 2p or 5s instead and only 58 do.',
+          explanationZh: '9s 是老頭牌，只能靠 7s、8s 或再一張 9s 發展。2p 和 5s 雖然也是散牌，但兩邊都有牌可以搭。打 9s 之後還有 66 張能改善手牌；改打 2p 或 5s 就只剩 58 張。',
         },
       },
       {

@@ -194,10 +194,10 @@ export const CORE_LESSONS: Lesson[] = [
         quiz: {
           prompt: 'Best discard?',
           promptZh: '最好打哪一張？',
-          hand: '234m 567m 45p 789p 33s 678s N',
-          answer: 'N',
-          explanation: 'The North wind is an isolated honor with no partner. Everything else is part of a set, a pair or a two-sided wait.',
-          explanationZh: '北風是孤張字牌，沒有任何牌可以搭。其他牌都是面子、對子或兩面搭子。',
+          hand: '234m 567m 45p 789p NN 678s 1s',
+          answer: '1s',
+          explanation: 'The 1s has no partner: there is no 2s or 3s to build on, and 678s is too far away. The two North winds are your pair, so they stay. Throw 1s and you are ready on 3p or 6p; everything else is part of a set, the pair or the two-sided 45p.',
+          explanationZh: '1s 沒有任何牌可以搭：手上沒有 2s、3s，678s 又離得太遠。兩張北風是你的眼，要留著。打掉 1s 就聽 3p 或 6p；其他牌都是面子、對子或兩面搭子 45p。',
         },
       },
       {

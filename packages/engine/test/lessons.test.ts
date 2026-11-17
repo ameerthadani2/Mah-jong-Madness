@@ -64,6 +64,20 @@ describe('discard quizzes ask for a real choice', () => {
     expect(discards.length).toBeGreaterThanOrEqual(30);
     expect(loneHonour.length, loneHonour.map((q) => `${q.lesson} / ${q.title}`).join('\n')).toBeLessThanOrEqual(Math.floor(discards.length / 4));
   });
+
+  it('at most three discard quizzes are answered by throwing the only isolated honour in the hand', () => {
+    // The fifth assessment's count: a hand with exactly one honour that has no copy beside it, and that honour
+    // is the answer. Three remain on purpose, where throwing the honour is the lesson: a safe tile thrown
+    // while it is safe, a worthless 北 beside a value pair, and keeping the tiles a hand's 台 is built on.
+    const onlyIsolated = discards.filter(({ quiz }) => {
+      const kinds = kindsFromString(quiz.hand);
+      const counts = countsFromKinds(kinds);
+      const isolated = [...new Set(kinds)].filter((k) => k >= 27 && counts[k] === 1);
+      return isolated.length === 1 && isolated[0] === kindFromCode(quiz.answer);
+    });
+    expect(onlyIsolated.map((q) => q.lesson).sort()).toEqual(['def-safe-tiles', 'score-arithmetic', 'value-honours']);
+    expect(loneHonour.length).toBeLessThanOrEqual(3);
+  });
 });
 
 /** Han characters: a Traditional Chinese field must contain some, not only tile codes and numbers. */

@@ -52,10 +52,10 @@ export const CALLING_LESSONS: Lesson[] = [
         quiz: {
           prompt: 'Your 上家 throws 4p; you could 吃 it with 23p, 35p or 56p. Shown with the 4p added: what do you discard after the call?',
           promptZh: '上家打出 4p，你可以用 23p、35p 或 56p 吃。這裡已經把 4p 放進手牌：吃完要打哪一張？',
-          hand: '123m EEE 678s 99m 23456p N',
-          answer: 'N',
-          explanation: 'N either way. Take 234p and 56p waits on 4p or 7p; take 456p and 23p waits on 1p or 4p; take 345p and the leftover 2p and 6p are no 搭子 at all. Had you drawn the 4p yourself, 23456p would wait on 1p, 4p or 7p: a call fixes one chow and gives up the rest.',
-          explanationZh: '不管怎麼吃都打北風。吃成 234p，剩下 56p 聽 4p 或 7p；吃成 456p，剩下 23p 聽 1p 或 4p；吃成 345p，剩下的 2p 和 6p 根本不是搭子。如果 4p 是自己摸到的，23456p 可以聽 1p、4p、7p：吃牌會把順子定下來，其他機會就沒了。',
+          hand: '123m EEE 678s 99m 23456p 9p',
+          answer: '9p',
+          explanation: '9p either way: it has no 7p or 8p to build on. Take 234p and 56p waits on 4p or 7p; take 456p and 23p waits on 1p or 4p; take 345p and the leftover 2p and 6p are no 搭子 at all. Had you drawn the 4p yourself, 23456p would wait on 1p, 4p or 7p: a call fixes one chow and gives up the rest.',
+          explanationZh: '不管怎麼吃都打 9p，它旁邊沒有 7p、8p 可以搭。吃成 234p，剩下 56p 聽 4p 或 7p；吃成 456p，剩下 23p 聽 1p 或 4p；吃成 345p，剩下的 2p 和 6p 根本不是搭子。如果 4p 是自己摸到的，23456p 可以聽 1p、4p、7p：吃牌會把順子定下來，其他機會就沒了。',
         },
       },
       {
@@ -165,10 +165,10 @@ export const CALLING_LESSONS: Lesson[] = [
         quiz: {
           prompt: 'You draw the fourth 2m. Before you 暗槓 it, look at the hand: which tile do you discard?',
           promptZh: '你摸到第四張 2m。先別急著暗槓，看看這手牌：要打哪一張？',
-          hand: '2222m 34m 567p 789s 345s E 5p',
-          answer: 'E',
-          explanation: 'E. Read 2222m 34m as 222m + 234m, and 5567p waits on 5p or 8p: you are ready. A 暗槓 of 2m would leave 34m as a 搭子 and drop you back to one tile from ready, so keep the four 2m in two sets.',
-          explanationZh: '打東風。把 2222m 34m 拆成 222m + 234m，5567p 就聽 5p 或 8p：已經聽牌了。如果暗槓 2m，34m 就只剩搭子，退回差一張聽牌，所以四張 2m 要留在兩組面子裡。',
+          hand: '2222m 34m 567p 789s 345s 9m 5p',
+          answer: '9m',
+          explanation: '9m, the tile with no partner. Read 2222m 34m as 222m + 234m, and 5567p waits on 5p or 8p: you are ready. A 暗槓 of 2m would leave 34m as a 搭子 and drop you back to one tile from ready, so keep the four 2m in two sets.',
+          explanationZh: '打沒有搭子的 9m。把 2222m 34m 拆成 222m + 234m，5567p 就聽 5p 或 8p：已經聽牌了。如果暗槓 2m，34m 就只剩搭子，退回差一張聽牌，所以四張 2m 要留在兩組面子裡。',
         },
       },
       {
