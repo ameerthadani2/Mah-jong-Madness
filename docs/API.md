@@ -117,13 +117,13 @@ Client → host:
 | `{ "t": "reveal", "secret": "<hex>" }` | Answer to `reveal_request`: the secret behind the commitment |
 | `{ "t": "action", "seat", "action", "expectHash"?, "turnCounter"? }` | A move (discard, chi, pong, kong, win, pass …) for the sender's own seat. `expectHash` is the state hash the player acted on; `turnCounter` the turn of that view, echoed if the move is refused |
 | `{ "t": "chat", "text" }`, `{ "t": "emote", "emote" }` | A quick phrase or an emote, by id (next section) |
-| `{ "t": "ping", "at" }` | Clock probe; answered `{ "t": "pong", "at", "now" }` with the host's clock, which the countdowns use. While a hand is played, the app sends one after 8 s (twice `clockMs`, plus 2 s) without any table frame; when 5 s more pass without one, it drops the socket and reconnects |
+| `{ "t": "ping", "at" }` | Clock probe; answered `{ "t": "pong", "at", "now" }` with the host's clock, which the countdowns use. While a hand is played, the app sends one after 8 s (twice the 3 s clock-frame period, plus 2 s, whatever `clockMs` says) without any table frame; when 5 s more pass without one, it drops the socket and reconnects |
 
 Host → client:
 
 | Frame | Purpose |
 | --- | --- |
-| `{ "t": "welcome", "seat", "roomCode", "rules", "seats", "matchId", "token", "botSkill"?, "clockMs"? }` | The seat is yours. `token` is the rejoin token (a new one each time the seat is taken back). `botSkill` (`beginner`, `club` or `pro`) is the table's bot strength: the client pins it from the match's first deal and recomputes every move the table makes for a seat with it (docs/FAIRNESS.md). A table that leaves it out fails every hand in which it moved for a bot or a seat out of time. `clockMs` (3000) says how long, while a hand is played, the host lets a seat go without a frame before it sends a `clock` frame; older hosts leave it out |
+| `{ "t": "welcome", "seat", "roomCode", "rules", "seats", "matchId", "token", "botSkill"?, "clockMs"? }` | The seat is yours. `token` is the rejoin token (a new one each time the seat is taken back). `botSkill` (`beginner`, `club` or `pro`) is the table's bot strength: the client pins it from the match's first deal and recomputes every move the table makes for a seat with it (docs/FAIRNESS.md). A table that leaves it out fails every hand in which it moved for a bot or a seat out of time. `clockMs` (3000) says how long, while a hand is played, the host lets a seat go without a frame before it sends a `clock` frame. It is informative only: the client's bound is fixed at the protocol's 3000 (`CLOCK_FRAME_MS`), and a welcome that leaves it out or announces more is held to 3000 all the same (a host that announces less is held to what it announces) |
 | `{ "t": "lobby", "seats" }` | Who sits where; sent whenever a seat changes. A seat is `{ seat, name, peerId, isBot, connected, avatar?, userId?, timeBank?, left? }` |
 | `{ "t": "commit_request", "handNumber", "attempt"? }` | Start of the seed ceremony for a hand: send `commit`. `attempt` is above 1 when the ceremony was run again |
 | `{ "t": "commits", "handNumber", "commits" }` | Every seat's commitment and the host's own (seat 4), before anything is revealed |
@@ -137,7 +137,7 @@ Host → client:
 | `{ "t": "disconnected" }` | This connection no longer holds the seat (the account took it back from another device) |
 | `{ "t": "chat", … }`, `{ "t": "emote", … }` | A seat's phrase or emote (next section) |
 | `{ "t": "pong", "at", "now" }` | Answer to `ping` |
-| `{ "t": "clock", "now", "hand", "tc" }` | While a hand is played, to a seat that was sent nothing for `clockMs`: the hand and turn the table is at (a turn whose `state` the seat was already sent) and the host's clock. Optional: older hosts never send it and older apps ignore it |
+| `{ "t": "clock", "now", "hand", "tc" }` | While a hand is played, to a seat that was sent nothing for `clockMs`: the hand and turn the table is at (a turn whose `state` the seat was already sent) and the host's clock. A host that never sends it is not trusted for longer: the app watches the link at the 3 s period all the same, and a table that brings no frame for 13 s (no clock frame and no answer to the app's ping) is dropped and judged as a drop. Older apps ignore it |
 | `{ "t": "error", "code", "message", "turnCounter"? }` | A refusal; the codes are below |
 
 Table error codes, and what the app does:
