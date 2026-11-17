@@ -378,7 +378,7 @@ export function LookPreview({
   const modalA11y = (web ? { 'aria-label': dialogLabel } : {}) as object;
   return (
     <Modal visible transparent animationType="fade" onRequestClose={onClose} supportedOrientations={['portrait', 'landscape']} {...modalA11y}>
-      <Pressable style={styles.scrim} onPress={onClose} aria-hidden focusable={false} tabIndex={-1} importantForAccessibility="no-hide-descendants" accessibilityElementsHidden testID="preview-scrim" />
+      <Pressable style={styles.scrim} onPress={onClose} accessibilityRole="none" aria-hidden focusable={false} tabIndex={-1} importantForAccessibility="no-hide-descendants" accessibilityElementsHidden testID="preview-scrim" />
       <View style={[styles.wrap, { padding: margin }]} pointerEvents="box-none">
         <View {...sheetA11y} testID="look-preview" style={[styles.shell, { width: sheetW, maxHeight: height - margin * 2 }]}>
           {/* A Card's look, drawn here so the sheet can shrink to the window and scroll its middle. */}
