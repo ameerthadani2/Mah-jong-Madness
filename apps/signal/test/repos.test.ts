@@ -7,7 +7,7 @@
  *   DATABASE_URL_TEST=postgres://user:pass@localhost:5432/mjm_test npm test -w @mjm/signal
  */
 import { randomUUID } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { DEFAULT_RULES, randomHex } from '@mjm/engine';
@@ -660,8 +660,10 @@ describe('createRepos and the pg source', () => {
     await handle.close();
   });
 
-  it('pg.ts never interpolates values into SQL', () => {
-    const source = readFileSync(fileURLToPath(new URL('../src/repos/pg.ts', import.meta.url)), 'utf8');
-    expect(source).not.toContain('${');
+  it('the Postgres repositories (pg.ts and the pg*.ts modules beside it) never interpolate values into SQL', () => {
+    const dir = fileURLToPath(new URL('../src/repos/', import.meta.url));
+    const files = readdirSync(dir).filter((f) => /^pg\w*\.ts$/.test(f));
+    expect(files).toEqual(expect.arrayContaining(['pg.ts', 'pgUsers.ts', 'pgWallet.ts', 'pgClubs.ts', 'pgPuzzles.ts']));
+    for (const f of files) expect(readFileSync(dir + f, 'utf8'), f).not.toContain('${');
   });
 });
