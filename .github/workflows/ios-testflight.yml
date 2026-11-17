@@ -50,7 +50,7 @@ permissions:
 
 jobs:
   check:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
       ready: ${{ steps.gate.outputs.ready }}
@@ -111,7 +111,7 @@ jobs:
   build:
     needs: check
     if: needs.check.outputs.ready == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # The EAS queue can be slow on the free plan. If this limit ends the run, the cloud build
     # carries on: find it on expo.dev -> Builds, and submit it with eas submit or a new run.
     timeout-minutes: 120
@@ -145,7 +145,7 @@ jobs:
       EXPO_PUBLIC_SUPPORT_URL: ${{ vars.EXPO_PUBLIC_SUPPORT_URL }}
       APPLE_CLIENT_ID: ${{ vars.APPLE_CLIENT_ID }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Check Sign in with Apple (required beside Google sign-in on iOS)
         # The same check app.config.js makes on EAS: a build that offers Google sign-in on iOS needs
         # the server to offer Sign in with Apple for this bundle id (App Review guideline 4.8).
@@ -172,7 +172,7 @@ jobs:
             }
             console.log('Building against ' + process.env.SIGNAL_URL.trim());
           "
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm

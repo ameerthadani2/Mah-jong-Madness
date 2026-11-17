@@ -40,7 +40,7 @@ permissions:
 
 jobs:
   check:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
       ready: ${{ steps.gate.outputs.ready }}
@@ -75,7 +75,7 @@ jobs:
   build:
     needs: check
     if: needs.check.outputs.ready == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # The EAS queue can be slow on the free plan. If this limit ends the run, the cloud build
     # carries on: find it on expo.dev -> Builds, and submit it with eas submit or a new run.
     timeout-minutes: 120
@@ -108,7 +108,7 @@ jobs:
       EXPO_PUBLIC_SUPPORT_EMAIL: ${{ vars.EXPO_PUBLIC_SUPPORT_EMAIL }}
       EXPO_PUBLIC_SUPPORT_URL: ${{ vars.EXPO_PUBLIC_SUPPORT_URL }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Check SIGNAL_URL (a release build must reach the deployed server)
         # The same check app.config.js makes on EAS, run here so a bad address stops the run before
         # anything is built: wss://, a public host name, no IP address, no credentials.
@@ -121,7 +121,7 @@ jobs:
             }
             console.log('Building against ' + process.env.SIGNAL_URL.trim());
           "
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm

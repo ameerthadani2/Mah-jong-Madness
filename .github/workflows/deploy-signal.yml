@@ -49,7 +49,7 @@ jobs:
     # A CI run only counts when it passed, for a push (not a pull request from a fork) to the
     # repository's default branch, whatever that branch is called.
     if: github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == github.event.repository.default_branch)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: read
@@ -64,7 +64,7 @@ jobs:
         env:
           SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
         run: echo "sha=$SHA" >> "$GITHUB_OUTPUT"
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           ref: ${{ steps.commit.outputs.sha }}
           # Full history: the comparison below is with the deployed commit, however far back it is.
@@ -162,7 +162,7 @@ jobs:
   deploy:
     needs: check
     if: needs.check.outputs.ready == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Tests, a remote image build, the rollout, two minutes of health checks and a ten-minute smoke test.
     timeout-minutes: 40
     # The server's Postgres tests (repositories, migrations, timeouts, the host lock) run here too.
@@ -181,10 +181,10 @@ jobs:
     env:
       DATABASE_URL_TEST: postgres://postgres:postgres@localhost:5432/postgres
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           ref: ${{ needs.check.outputs.sha }}
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm

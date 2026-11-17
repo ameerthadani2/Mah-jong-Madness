@@ -20,7 +20,7 @@ jobs:
     # A pull request from a branch of this repository is already tested by its push; only a pull
     # request from a fork runs here, so the suite does not run twice for one commit.
     if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     # The signal server's Postgres repository and migration tests run against this database
     # (each run creates and drops its own schema); without DATABASE_URL_TEST they are skipped.
@@ -39,8 +39,8 @@ jobs:
     env:
       DATABASE_URL_TEST: postgres://postgres:postgres@localhost:5432/postgres
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
@@ -64,10 +64,10 @@ jobs:
     # NODE_ENV=production, which refuses to start without DATABASE_URL and AUTH_PEPPER unless
     # ALLOW_EPHEMERAL=1 says the in-memory server is wanted.
     if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Build the signal server image
         run: docker build -f apps/signal/Dockerfile -t mahjong-signal:ci .
       - name: Boot it and check /health
@@ -79,7 +79,7 @@ jobs:
           done
           docker logs signal
           exit 1
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
@@ -95,11 +95,11 @@ jobs:
 
   e2e:
     if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm

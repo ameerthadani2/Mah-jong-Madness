@@ -251,7 +251,7 @@ describe('SIGNAL_URL for a release build', () => {
         expect(r.stdout).toContain('::error title=SIGNAL_URL cannot be used for a release build::');
       }
       const text = readFileSync(join(ROOT, '.github/workflows', workflow), 'utf8');
-      expect(text.indexOf('name: Check SIGNAL_URL')).toBeGreaterThan(text.indexOf('- uses: actions/checkout@v4'));
+      expect(text.indexOf('name: Check SIGNAL_URL')).toBeGreaterThan(text.indexOf('- uses: actions/checkout@v5'));
       expect(text.indexOf('name: Check SIGNAL_URL')).toBeLessThan(text.indexOf('eas build'));
     }
   });
@@ -327,7 +327,7 @@ describe('Sign in with Apple beside Google sign-in on iOS', () => {
     expect(both.stdout).toContain('both configured for com.example.renamed');
     const text = readFileSync(join(ROOT, '.github/workflows/ios-testflight.yml'), 'utf8');
     expect(text).toMatch(/APPLE_CLIENT_ID: \$\{\{ vars\.APPLE_CLIENT_ID \}\}/);
-    expect(text.indexOf('name: Check Sign in with Apple')).toBeGreaterThan(text.indexOf('- uses: actions/checkout@v4'));
+    expect(text.indexOf('name: Check Sign in with Apple')).toBeGreaterThan(text.indexOf('- uses: actions/checkout@v5'));
     expect(text.indexOf('name: Check Sign in with Apple')).toBeLessThan(text.indexOf('eas build'));
     const eas = applyBuildEnv(JSON.parse(readFileSync(join(ROOT, 'apps/mobile/eas.json'), 'utf8')) as EasJson, { PROFILE: 'production', PLATFORM: 'ios', APPLE_CLIENT_ID: ` ${BUNDLE} ` });
     expect(eas.build.production.env).toMatchObject({ APPLE_CLIENT_ID: BUNDLE });
@@ -386,6 +386,22 @@ describe('workflows that act for the default branch', () => {
 
 describe('workflow hygiene', () => {
   const workflows = readdirSync(join(ROOT, '.github/workflows')).filter((f) => f.endsWith('.yml'));
+
+  it('runs every job on a pinned runner image with the Node 24 releases of checkout and setup-node', () => {
+    for (const file of workflows) {
+      const text = readFileSync(join(ROOT, '.github/workflows', file), 'utf8');
+      const runners = [...text.matchAll(/^ {4}runs-on: (.+)$/gm)].map((m) => m[1]);
+      expect(runners.length, file).toBeGreaterThan(0);
+      // ubuntu-latest moves under the workflows; the image is changed on purpose, here.
+      expect(new Set(runners), `${file}: runner images`).toEqual(new Set(['ubuntu-24.04']));
+      for (const action of ['actions/checkout', 'actions/setup-node']) {
+        const versions = [...text.matchAll(new RegExp(`uses: ${action}@(\\S+)`, 'g'))].map((m) => m[1]);
+        // The v4 releases run on Node 20, which GitHub now forces onto Node 24.
+        for (const v of versions) expect(v, `${file}: ${action}`).toBe('v5');
+      }
+      expect(text, `${file}: checks out the repository`).toMatch(/uses: actions\/checkout@v5/);
+    }
+  });
 
   it('gives every job a time limit and every workflow an explicit token scope', () => {
     expect(workflows.length).toBeGreaterThanOrEqual(6);
