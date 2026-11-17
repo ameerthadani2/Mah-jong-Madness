@@ -23,6 +23,7 @@ const need = (cond: boolean) => {
 interface HostInternals {
   game: GameState | null;
   apply: (seat: number, action: Action, source: 'player' | 'bot' | 'timeout') => void;
+  timeoutAction: (game: GameState, seat: number) => Action;
 }
 
 const TURN = 15_000;
@@ -42,11 +43,15 @@ function link(hub: LoopbackHub, id: string, clock: { now: number }) {
   const ctl = {
     delay: (_m: HostMessage) => 0,
     hold: (_m: HostMessage) => false,
+    /** What the server sends in place of the frame the host made (null: nothing). */
+    rewrite: (m: HostMessage): HostMessage | null => m,
     link: {
       ...base,
       onMessage: (f) => {
         cb = f;
-        return base.onMessage((m) => {
+        return base.onMessage((m0) => {
+          const m = ctl.rewrite(m0);
+          if (m === null) return;
           if (ctl.hold(m)) return void held.push(m);
           const at = Math.max(clock.now + ctl.delay(m), queue.length ? queue[queue.length - 1].at : Number.NEGATIVE_INFINITY);
           queue.push({ at, m });
@@ -65,11 +70,12 @@ function link(hub: LoopbackHub, id: string, clock: { now: number }) {
   return ctl;
 }
 
-function table(code: string, skew = 0) {
+function table(code: string, skew = 0, rewrite?: (m: HostMessage) => HostMessage | null) {
   const clock = { now: 2_000_000 };
   const hub = new LoopbackHub();
   const host = new TableHost(hub.create('host'), { roomCode: code, rules: RULES, now: () => clock.now, matchId: `m-${code}` });
   const net = link(hub, 'p0', clock);
+  if (rewrite) net.rewrite = rewrite;
   const c = new TableClient(net.link, 'Victim', undefined, {}, { now: () => clock.now + skew });
   c.join();
   host.start();
@@ -85,6 +91,13 @@ function table(code: string, skew = 0) {
     watching: false,
     /** When the watch last dropped a silent link (the shared clock). */
     droppedAt: null as number | null,
+    /** Whether the phone joins again at once after the watch dropped a link (else `reconnect()` does it). */
+    rejoin: true,
+    /** The phone gets a new link to the table and joins on it. */
+    reconnect() {
+      c.rebind(transportLink(hub.create(`p0r${links++}`), 'host'));
+      c.join();
+    },
     /** Let the clock run in half-second ticks, as the server does; the phone pings every `pingMs` (0: never). */
     wait(ms: number, pingMs = 0) {
       for (let left = ms; left > 0; left -= 500) {
@@ -95,8 +108,8 @@ function table(code: string, skew = 0) {
         if (t.watching && clock.now % 1_000 === 0 && c.checkLink() === 'silent') {
           t.droppedAt = clock.now;
           t.net.link.close();
-          c.rebind(transportLink(hub.create(`p0r${links++}`), 'host'));
-          c.join();
+          if (t.rejoin) t.reconnect();
+          else t.watching = false;
         }
       }
     },
@@ -262,6 +275,84 @@ describe('a link that brings nothing is dropped', () => {
     t.wait(6_000);
     t.net.hold = () => false;
     t.net.release();
+    finish(t);
+    expect(t.droppedAt).toBeNull();
+    green(t);
+  });
+});
+
+/** The longest a link that brings nothing stays up while the watch runs once a second: the client's bound, whatever the table announces. */
+const SILENT_BOUND = 2 * CLOCK_FRAME_MS + 2_000 + SILENT_ANSWER_MS + 1_000;
+/** A table that announces no clock-frame period and sends no clock frames. */
+const noClock = (m: HostMessage): HostMessage | null => {
+  if (m.t === 'clock') return null;
+  if (m.t !== 'welcome') return m;
+  const { clockMs: _clockMs, ...rest } = m;
+  return rest;
+};
+/** A table that announces a clock-frame period of 10 s. */
+const slowClock = (m: HostMessage): HostMessage | null => (m.t === 'welcome' ? { ...m, clockMs: 10_000 } : m);
+
+/** Play to the seat's second discard and hold everything from the moment it owes it; returns the turn and when the hold began. */
+function holdTheTurn(t: T): { turn: number; from: number } {
+  t.watching = true;
+  need(toDiscard(t, 2));
+  t.c.act(chooseAction(t.c.localState()!, 0, { seed: 'p' })!);
+  t.net.hold = (m) => m.t === 'state' && hostDiscard(t);
+  need(advance(t, () => hostDiscard(t)));
+  t.net.hold = () => true;
+  return { turn: t.host.game!.turnCounter, from: t.clock.now };
+}
+
+describe('the bound on a silent link is the client’s, not the server’s', () => {
+  deal('a table that announces no clock frames and holds every frame loses the link within 13 s, and the seat gets its turn back', () => {
+    const t = table('HC1', 0, noClock);
+    const { turn, from } = holdTheTurn(t);
+    t.wait(TURN + BANK - 5_000, 5_000);
+    expect(t.droppedAt).not.toBeNull();
+    expect(t.droppedAt! - from).toBeLessThanOrEqual(SILENT_BOUND);
+    expect(t.host.game!.turnCounter).toBe(turn);
+    expect(myDiscard(t)).toBe(true);
+    t.c.act(chooseAction(t.c.localState()!, 0, { seed: 'p' })!);
+    expect(t.host.game!.actionLog.find((e) => e.n === turn)).toMatchObject({ seat: 0, source: 'player' });
+    finish(t);
+    expect(t.c.state.auditStatus).not.toBe('failed');
+  });
+
+  deal('a table that announces no clock frames, holds every frame and times the seat out while the link it forced down is down: red', () => {
+    const t = table('HC2', 0, noClock);
+    t.rejoin = false;
+    const { turn, from } = holdTheTurn(t);
+    for (let g = 0; g < 2 * (TURN + BANK) / 1_000 && t.droppedAt === null; g++) t.wait(500, 5_000);
+    expect(t.droppedAt).not.toBeNull();
+    expect(t.droppedAt! - from).toBeLessThanOrEqual(SILENT_BOUND);
+    // The seat's clock has 30 s or more left; the table times it out anyway, and then the phone is back.
+    expect(t.host.game!.turnCounter).toBe(turn);
+    expect(TURN + BANK - (t.clock.now - from)).toBeGreaterThanOrEqual(30_000);
+    t.h.apply(0, t.h.timeoutAction(t.host.game!, 0), 'timeout');
+    t.reconnect();
+    finish(t);
+    expect(t.c.state.auditStatus).toBe('failed');
+    expect(keys(t)).toEqual(['playedWhileDown']);
+    expect(t.c.state.auditFailures).toEqual([`The table played for this seat while its connection was down, before its clock could have run out (turn ${turn})`]);
+  });
+
+  deal('a table that announces a 10 s clock-frame period is held to 3 s: the same bound', () => {
+    const t = table('HC3', 0, slowClock);
+    const { turn, from } = holdTheTurn(t);
+    t.wait(TURN + BANK - 5_000, 5_000);
+    expect(t.droppedAt).not.toBeNull();
+    expect(t.droppedAt! - from).toBeLessThanOrEqual(SILENT_BOUND);
+    expect(t.host.game!.turnCounter).toBe(turn);
+    expect(myDiscard(t)).toBe(true);
+  });
+
+  deal('honest but for the welcome (no clock-frame period announced): every frame 6 s late and the seat timed out, never dropped, green', () => {
+    const t = table('HC4', 0, (m) => (m.t === 'welcome' ? noClock(m) : m));
+    t.watching = true;
+    t.net.delay = () => 6_000;
+    need(toDiscard(t, 2));
+    timedOut(t);
     finish(t);
     expect(t.droppedAt).toBeNull();
     green(t);

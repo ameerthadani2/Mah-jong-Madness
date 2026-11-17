@@ -19,6 +19,14 @@ export interface SeatInfo {
 /** Why a seed ceremony was run again for the same hand. */
 export type RestartCause = 'no_reveal' | 'disconnect' | 'host_restarted';
 
+/**
+ * The protocol's clock-frame period: while a hand is played, the longest a connected seat goes
+ * without a frame from the table (the host sends a `clock` frame when it has sent nothing else for
+ * this long). It is fixed by the protocol, not by the server: the table client watches the link at
+ * this period whatever a `welcome` announces (see `TableClient.checkLink`).
+ */
+export const CLOCK_FRAME_MS = 3_000;
+
 export const RESTART_CAUSES: readonly RestartCause[] = ['no_reveal', 'disconnect', 'host_restarted'];
 
 /** One abandoned ceremony attempt: which attempt failed, the seats it names (0–3, humans only) and why. */
@@ -79,7 +87,8 @@ export type HostMessage =
    */
   /**
    * `clockMs`: while a hand is played, the longest this table lets a seat go without a frame (it
-   * sends a `clock` frame when nothing else was sent). Optional: older hosts leave it out.
+   * sends a `clock` frame when nothing else was sent). Informative only: the client's bound is
+   * `CLOCK_FRAME_MS` whatever this says, and a value left out or above it counts as `CLOCK_FRAME_MS`.
    */
   | { t: 'welcome'; seat: number; roomCode: string; rules: RuleSet; seats: SeatInfo[]; matchId: string; token: string; botSkill?: BotSkill; clockMs?: number }
   | { t: 'lobby'; seats: SeatInfo[] }

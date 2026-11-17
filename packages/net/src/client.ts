@@ -41,9 +41,9 @@ import {
 } from '@mjm/engine';
 import { commitFor, deriveSeed, makeSecret, verifyReveals, type Commitment } from './fairness';
 import type { Link } from './host';
-import { RESTART_CAUSES, type Audit, type ClientMessage, type HostMessage, type SeatInfo } from './messages';
+import { CLOCK_FRAME_MS, RESTART_CAUSES, type Audit, type ClientMessage, type HostMessage, type SeatInfo } from './messages';
 import type { Transport, Unsubscribe } from './transport';
-import { clientClock, foldClock, LINK_PAUSE_MS, MAX_CLOCK_FRAME_MS, ORDER_SLACK_MS, SILENT_ANSWER_MS, type TableClientOptions } from './clientclock';
+import { clientClock, foldClock, LINK_PAUSE_MS, ORDER_SLACK_MS, SILENT_ANSWER_MS, type TableClientOptions } from './clientclock';
 import { clockTrack, isBotSkill, judgeTableMove, legalFor, sameActionSafe, tableRule, type MoveJudge } from './clientmoves';
 import {
   CHAINED_FIELDS,
@@ -418,8 +418,12 @@ export class TableClient {
   private clockBase: { era: number; anchor: number | null; minOffset: number | null } = { era: 0, anchor: null, minOffset: null };
   /** The last time-stamped frame received: a state, or a hand's end. */
   private lastStamp: GapStart | null = null;
-  /** While a hand is played, the longest the host lets this seat go without a frame (its `welcome` says; null: it does not say). */
-  private clockMs: number | null = null;
+  /**
+   * While a hand is played, the longest the host may leave this seat without a frame: the protocol's
+   * `CLOCK_FRAME_MS`, or less when the `welcome` announces less. A welcome cannot lengthen it, and one
+   * that says nothing leaves it at `CLOCK_FRAME_MS`: the bound is this client's, not the server's.
+   */
+  private clockMs = CLOCK_FRAME_MS;
   /** When the link in use last brought a frame, and when this client then asked it for a `pong` (see `checkLink`). */
   private heardAt: number | null = null;
   private probedAt: number | null = null;
@@ -735,8 +739,10 @@ export class TableClient {
 
   /**
    * Call about once a second while the link is up (the online session does). While a hand is played,
-   * a host that says how often it sends frames (`clockMs`) never leaves this seat without one for
-   * long. After `2 × clockMs + 2 s` without any frame this client asks for a `pong`; a host that
+   * an honest host never leaves this seat without a frame for longer than the protocol's clock-frame
+   * period (`CLOCK_FRAME_MS`, 3 s), whatever its `welcome` says: a host that sends no clock frames, or
+   * announces a longer period, is held to it all the same, and its silence counts as a drop. After
+   * `2 × CLOCK_FRAME_MS + 2 s` without any frame this client asks for a `pong`; a host that
    * answers at once, while it holds back what it sent before, is caught by the order of the stamps
    * (`noteOrder`). When `SILENT_ANSWER_MS` more pass without a frame, the answer is 'silent': the
    * link brings nothing although it may still look open, and the session drops it so that the
@@ -753,7 +759,7 @@ export class TableClient {
     this.checkedAt = now;
     const st = this.state;
     const playing = st.connected && !st.disconnected && !st.kicked && !st.matchOver && st.seat !== null && st.view !== null && st.lastResult === null && st.ceremony === 'idle';
-    if (!playing || this.clockMs === null || this.heardAt === null) return 'ok';
+    if (!playing || this.heardAt === null) return 'ok';
     if (paused) {
       this.heardAt = now;
       this.probedAt = null;
@@ -1081,7 +1087,8 @@ export class TableClient {
         this.checkBots(seats);
         // A host that stops saying (an older build after a restart) keeps the strength it had.
         this.tableSkill = isBotSkill(m.botSkill) ? m.botSkill : null;
-        this.clockMs = isInt(m.clockMs) && m.clockMs > 0 && m.clockMs <= MAX_CLOCK_FRAME_MS ? m.clockMs : null;
+        // Informative only: a table that leaves it out, or announces more than the protocol's period, is held to that period.
+        this.clockMs = isInt(m.clockMs) && m.clockMs > 0 && m.clockMs < CLOCK_FRAME_MS ? m.clockMs : CLOCK_FRAME_MS;
         if (this.tableSkill && isBotSkill(this.pinnedSkill) && this.tableSkill !== this.pinnedSkill && !this.state.matchOver) this.flag(this.activeHand(), 'Host changed how strong its bots are during the match');
         this.update({ connected: true, disconnected: false, kicked: false, seat: m.seat, roomCode: m.roomCode, rules: this.pinnedRules ?? rules, seats, matchId: m.matchId, token: m.token, lastError: null });
         return;

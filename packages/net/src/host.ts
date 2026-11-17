@@ -25,7 +25,7 @@ import {
   type BotSkill,
 } from '@mjm/engine';
 import { commitFor, deriveSeed, isSecret, makeSecret, verifyReveals, type Commitment, type Reveal } from './fairness';
-import type { Audit, CeremonyRestart, ClientMessage, HostMessage, RestartCause, SeatInfo } from './messages';
+import { CLOCK_FRAME_MS, type Audit, type CeremonyRestart, type ClientMessage, type HostMessage, type RestartCause, type SeatInfo } from './messages';
 import type { Transport, Unsubscribe } from './transport';
 import { randomHex } from './sha256';
 import { cleanText } from './text';
@@ -40,8 +40,6 @@ export type HostPhase = 'lobby' | 'commit' | 'reveal' | 'playing' | 'hand_over' 
  * attempts and 6 is never reached honestly.
  */
 export const MAX_CEREMONY_ATTEMPTS = 6;
-/** While a hand is played, the longest a connected seat goes without a frame from the table (see `sendClockFrames`). */
-export const CLOCK_FRAME_MS = 3_000;
 
 /** After a failed ceremony, how long the table waits before trying the hand again (ms). */
 const CEREMONY_RETRY_MS = 5_000;

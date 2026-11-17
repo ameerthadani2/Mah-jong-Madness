@@ -6,8 +6,6 @@
  */
 import type { ClockAnchor, PlayRecord, SeenState } from './clientrecords';
 
-/** The most a `welcome` may say the host waits between frames (`clockMs`); anything above is ignored. */
-export const MAX_CLOCK_FRAME_MS = 10_000;
 /** How long `checkLink` waits for any frame after it asked for a `pong`, before it calls the link silent. */
 export const SILENT_ANSWER_MS = 5_000;
 /** A gap between two `checkLink` calls longer than this means the app was not running. */
