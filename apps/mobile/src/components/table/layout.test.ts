@@ -102,6 +102,9 @@ describe('own pond, coach and compass on short landscape (the claim buttons have
     expect(coachAdviceFirst({ statusLines: 2, adviceLines: 3, statusH: 2 * COACH_STATUS_LINE_H, hasAdvice: true })).toEqual({ statusLines: 2, adviceLines: 3 });
     // Two budgeted status lines wrapping to four: the advice gets the box (two status lines are two advice lines more).
     expect(coachAdviceFirst({ statusLines: 2, adviceLines: 1, statusH: 4 * COACH_STATUS_LINE_H, hasAdvice: true })).toEqual({ statusLines: 0, adviceLines: 3 });
+    // Lines enough on paper, but the bubble's cap leaves the box 32 px (measured at 667x375): the advice gets it.
+    expect(coachAdviceFirst({ statusLines: 2, adviceLines: 1, statusH: 2 * COACH_STATUS_LINE_H, boxH: 32, hasAdvice: true })).toEqual({ statusLines: 0, adviceLines: 3 });
+    expect(coachAdviceFirst({ statusLines: 2, adviceLines: 1, statusH: 2 * COACH_STATUS_LINE_H, boxH: 60, hasAdvice: true })).toEqual({ statusLines: 2, adviceLines: 1 });
     // Before the status is measured, or with no advice to show, nothing changes.
     expect(coachAdviceFirst({ statusLines: 1, adviceLines: 1, statusH: null, hasAdvice: true })).toEqual({ statusLines: 1, adviceLines: 1 });
     expect(coachAdviceFirst({ statusLines: 1, adviceLines: 1, statusH: 80, hasAdvice: false })).toEqual({ statusLines: 1, adviceLines: 1 });

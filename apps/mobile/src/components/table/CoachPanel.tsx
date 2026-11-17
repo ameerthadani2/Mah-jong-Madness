@@ -31,6 +31,8 @@ export function CoachPanel({
   // The status line's measured height (by its text): a status that wraps past the lines budgeted for it would push
   // the advice out of the bubble's scroll box, so it gives way to the advice (below).
   const [statusH, setStatusH] = useState<{ text: string; h: number } | null>(null);
+  // The scroll box's visible height as laid out (the bubble's own cap can make it smaller than its lines).
+  const [boxH, setBoxH] = useState<number | null>(null);
   const preview = hint.winPreview ? t('table.coach.winPreview', { items: hint.winPreview.items.map((i) => t('table.coach.taiItem', { name: i.nameZh, tai: i.tai })).join(' · '), tai: hint.winPreview.tai }) : null;
   if (compact) {
     // Status + the single most useful piece of advice; both wrap rather than truncate mid-word. With a budget
@@ -45,7 +47,7 @@ export function CoachPanel({
     // The advice (the tile to discard, the claim to make) always shows: when the status, as it wraps, leaves no
     // whole advice line in the box, the status gives its lines to the advice (layout.ts coachAdviceFirst).
     const status = engine(hint.statusKey, hint.statusParams);
-    const shown = coachAdviceFirst({ statusLines, adviceLines, statusH: statusH?.text === status ? statusH.h : null, hasAdvice: !!line });
+    const shown = coachAdviceFirst({ statusLines, adviceLines, statusH: statusH?.text === status ? statusH.h : null, boxH, hasAdvice: !!line });
     statusLines = shown.statusLines;
     adviceLines = shown.adviceLines;
     return (
@@ -55,9 +57,16 @@ export function CoachPanel({
         testID="coach"
       >
         {!textOnly && <CoachOwl size={30} />}
-        <ScrollView style={{ flex: 1, minWidth: 0, flexShrink: 1, maxHeight: statusLines * COACH_STATUS_LINE_H + adviceLines * COACH_ADVICE_LINE_H }} nestedScrollEnabled showsVerticalScrollIndicator testID="coach-text">
+        <ScrollView
+          style={{ flex: 1, minWidth: 0, flexShrink: 1, maxHeight: statusLines * COACH_STATUS_LINE_H + adviceLines * COACH_ADVICE_LINE_H }}
+          nestedScrollEnabled
+          showsVerticalScrollIndicator
+          onLayout={(e) => setBoxH(e.nativeEvent.layout.height)}
+          testID="coach-text"
+        >
           {statusLines > 0 && (
-            <Text style={styles.coachStatus} onLayout={(e) => setStatusH({ text: status, h: e.nativeEvent.layout.height })}>
+            // Keyed by its text: a new status is a new element, so it is measured even when its height is the old one's.
+            <Text key={status} style={styles.coachStatus} onLayout={(e) => setStatusH({ text: status, h: e.nativeEvent.layout.height })}>
               {status}
             </Text>
           )}

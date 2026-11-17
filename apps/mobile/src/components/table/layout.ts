@@ -135,14 +135,17 @@ export function coachBudget(columnH: number, dock: ActionDock, pondH = 0): Coach
 /**
  * The compact coach's lines once its status line has been measured (`statusH` px, null before): the advice comes
  * first. When the status, as it actually wraps (a long Chinese status, Extra-large text, the OS text size), leaves
- * less than one whole advice line in the scroll box (`statusLines` + `adviceLines` lines high), the status is
+ * less than one whole advice line in the scroll box (`statusLines` + `adviceLines` lines high, or `boxH` as laid out
+ * when the bubble's cap makes it shorter), the status is
  * dropped and its lines go to the advice, so the tile to discard or the claim to make is always in view; the
  * status comes back with the next status (or when the advice is gone). Without advice nothing changes.
  */
-export function coachAdviceFirst(o: { statusLines: number; adviceLines: number; statusH: number | null; hasAdvice: boolean }): { statusLines: number; adviceLines: number } {
+export function coachAdviceFirst(o: { statusLines: number; adviceLines: number; statusH: number | null; boxH?: number | null; hasAdvice: boolean }): { statusLines: number; adviceLines: number } {
   const { statusLines, adviceLines, statusH, hasAdvice } = o;
   if (!hasAdvice || statusLines === 0 || statusH === null) return { statusLines, adviceLines };
-  const box = statusLines * COACH_STATUS_LINE_H + adviceLines * COACH_ADVICE_LINE_H;
+  // The box is as tall as its lines, or less where the bubble's cap (`boxH`, measured) cuts it.
+  const lines = statusLines * COACH_STATUS_LINE_H + adviceLines * COACH_ADVICE_LINE_H;
+  const box = o.boxH ? Math.min(lines, o.boxH) : lines;
   if (statusH + COACH_ADVICE_LINE_H <= box + 1) return { statusLines, adviceLines };
   return { statusLines: 0, adviceLines: adviceLines + Math.floor((statusLines * COACH_STATUS_LINE_H) / COACH_ADVICE_LINE_H) };
 }
