@@ -5,7 +5,7 @@
  * The protocol is tiny and documented in apps/signal/README.md.
  */
 import type { BotSkill, RuleSet } from '@mjm/engine';
-import type { Transport, Unsubscribe } from './transport';
+import { isFrame, parseWire, type Transport, type Unsubscribe } from './transport';
 
 /** How long `connect()` and each room request wait for the server before giving up. */
 export const SIGNALING_TIMEOUT_MS = 10_000;
@@ -80,6 +80,31 @@ export type ServerMessage =
   | { t: 'queue_error'; code: string; message: string; room?: string }
   /** The answer to `leave_queue`. */
   | { t: 'queue_left' };
+
+const isStrings = (v: unknown): v is string[] => Array.isArray(v) && v.every((x) => typeof x === 'string');
+
+/**
+ * One frame from the server, or null when it must be dropped: a body that is not JSON (empty, the
+ * text `undefined`, truncated), a JSON value that is not an object with a string `t` (null, a
+ * number, an array), or a frame this client acts on whose fields are not what it reads. Frames of
+ * types this client does not know pass on to the listeners.
+ */
+export function serverFrame(data: unknown): ServerMessage | null {
+  const wire = parseWire(data);
+  if (!wire || !isFrame(wire.value)) return null;
+  const m = wire.value;
+  switch (m.t) {
+    case 'room':
+      return typeof m.room === 'string' && isStrings(m.peers) && typeof m.host === 'string' ? (m as ServerMessage) : null;
+    case 'peer':
+      return typeof m.peerId === 'string' && (m.event === 'join' || m.event === 'leave') ? (m as ServerMessage) : null;
+    case 'from':
+    case 'matched':
+      return typeof (m.t === 'from' ? m.from : m.room) === 'string' ? (m as ServerMessage) : null;
+    default:
+      return m as ServerMessage;
+  }
+}
 
 /** Where a quick-match search stands. */
 export interface QueueStatus {
@@ -316,12 +341,8 @@ export class SignalingClient {
         for (const p of pending) p.reject(new Error('Connection closed'));
       };
       ws.onmessage = (ev) => {
-        let m: ServerMessage;
-        try {
-          m = JSON.parse(String(ev.data)) as ServerMessage;
-        } catch {
-          return;
-        }
+        const m = serverFrame((ev as { data?: unknown } | null)?.data);
+        if (!m) return;
         if (this.ws === ws) this.heardFrom();
         if (m.t === 'pong') return;
         if (m.t === 'hello') {

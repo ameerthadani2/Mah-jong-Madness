@@ -5,6 +5,25 @@
  */
 export type Unsubscribe = () => void;
 
+/**
+ * The text of one frame as it came off the wire, parsed, or null when it is not JSON at all (an
+ * empty body, the text `undefined`, a truncated frame): the receiver drops such a frame without
+ * throwing. Any JSON value comes back as is; what reads it checks its shape.
+ */
+export function parseWire(text: unknown): { value: unknown } | null {
+  if (typeof text !== 'string') return null;
+  try {
+    return { value: JSON.parse(text) as unknown };
+  } catch {
+    return null;
+  }
+}
+
+/** Whether `v` can be a protocol frame: a plain object (not null, not an array) with a string `t`. */
+export function isFrame(v: unknown): v is { t: string } & Record<string, unknown> {
+  return typeof v === 'object' && v !== null && !Array.isArray(v) && typeof (v as { t?: unknown }).t === 'string';
+}
+
 export interface Transport {
   /** Stable id of this peer within the room. */
   readonly id: string;
@@ -33,7 +52,11 @@ export class LoopbackHub {
   deliver(from: string, to: string, msg: unknown): void {
     const target = this.nodes.get(to);
     if (!target) return;
-    const payload = JSON.parse(JSON.stringify(msg)) as unknown; // force serialisation like a real wire
+    // Serialise like a real wire: a value JSON has no text for goes out as the text a socket would send
+    // (`undefined`), and a body that does not parse is dropped by the receiver, as on a real link.
+    const wire = parseWire(JSON.stringify(msg) ?? String(msg));
+    if (!wire) return;
+    const payload = wire.value;
     if (this.latencyMs > 0) setTimeout(() => target.emitMessage(from, payload), this.latencyMs);
     else target.emitMessage(from, payload);
   }

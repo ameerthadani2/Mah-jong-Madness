@@ -770,6 +770,20 @@ describe('connectSignaling', () => {
     expect(FakeSocket.last!.sent[0]).toEqual({ t: 'hello' });
     signaling.close();
   });
+
+  it('drops a body that is not a frame without throwing, and keeps reading the room-closed reason', async () => {
+    const { signaling, roomClosed } = connectSignaling('wss://x/ws', undefined);
+    await signaling.connect();
+    const ws = FakeSocket.last!;
+    const heard: unknown[] = [];
+    signaling.onMessage((m) => heard.push(m));
+    for (const data of ['', 'undefined', 'null', '42', '[]', '"closed"', '{"t":"error","code":"closed"', '{"t":', 'x'.repeat(1_000_000), undefined, null, 7]) expect(() => ws.onmessage?.({ data })).not.toThrow();
+    expect(heard).toEqual([]);
+    expect(roomClosed()).toBeUndefined();
+    ws.onmessage?.({ data: JSON.stringify({ t: 'error', code: 'closed', message: 'Table closed' }) });
+    expect(roomClosed()).toBe('Table closed');
+    signaling.close();
+  });
 });
 
 describe('createLocalSession', () => {

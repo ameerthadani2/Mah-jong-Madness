@@ -89,6 +89,8 @@ Merge rules: (1) identity unlinked → linked to the current user, who becomes `
 
 Besides `hello`, `create`, `join`, `queue` and `leave_queue` (above and under Quick match):
 
+Every frame is one JSON object with a string `t`. The app drops, without an error and without touching its audit records, any body that is not JSON (an empty body, the text `undefined`, a truncated frame), any JSON value that is not such an object (`null`, a number, an array), a `room`, `peer`, `from` or `matched` frame whose fields are not of the types below, and a relayed table frame that is not an object with a string `t`. A dropped body does not count as a frame from the table for the 13 s watch below.
+
 | Frame | Direction | Purpose |
 | --- | --- | --- |
 | `{ "t": "to", "to": "<peer id>", "data": … }` | client → server | Relay `data` to a peer in the same room; at a hosted table the peer is the room's `host` |

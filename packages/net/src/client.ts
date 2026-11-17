@@ -42,7 +42,7 @@ import {
 import { commitFor, deriveSeed, makeSecret, verifyReveals, type Commitment } from './fairness';
 import type { Link } from './host';
 import { CLOCK_FRAME_MS, RESTART_CAUSES, type Audit, type ClientMessage, type HostMessage, type SeatInfo } from './messages';
-import type { Transport, Unsubscribe } from './transport';
+import { isFrame, type Transport, type Unsubscribe } from './transport';
 import { clientClock, foldClock, LINK_PAUSE_MS, ORDER_SLACK_MS, SILENT_ANSWER_MS, type TableClientOptions } from './clientclock';
 import { clockTrack, isBotSkill, judgeTableMove, legalFor, sameActionSafe, tableRule, type MoveJudge } from './clientmoves';
 import {
@@ -654,6 +654,9 @@ export class TableClient {
     this.heardAt = null;
     this.probedAt = null;
     this.unsubMessage = link.onMessage((m) => {
+      // Not a frame at all (not an object with a type): dropped before anything reads it, and it does
+      // not count as hearing from the table.
+      if (!isFrame(m)) return;
       this.heardAt = this.now();
       this.probedAt = null;
       try {
