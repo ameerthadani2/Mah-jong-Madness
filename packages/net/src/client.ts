@@ -73,7 +73,7 @@ export const AUDIT_CAVEATS = {
   appRestart: 'This app was restarted around this deal, so it cannot vouch for all of it',
   tableMoved: 'The table played for this seat while its connection was down',
   restartClock: 'The server restarted during this match and then played for this seat before this device could check its clock again',
-  skillUnknown: 'The table did not say how strong its bots are, so the moves it made for bots and for seats out of time were not checked',
+  skillUnknown: 'This device restored the match from a save that did not keep how strong the table said its bots are, so the moves the table made for bots and for seats out of time were not checked',
 } as const;
 
 export type AuditCaveat = keyof typeof AUDIT_CAVEATS;
@@ -100,6 +100,7 @@ export const AUDIT_FAILURES = {
   handStartChanged: /^Hand started with (?<fields>[A-Za-z, ]+) different from where the previous hand left them$/,
   botsChanged: 'Host changed which seats are bots during the match',
   skillChanged: 'Host changed how strong its bots are during the match',
+  skillUnpublished: 'The table did not say how strong its bots are, yet it made moves for bots or for seats out of time, so none of them could be checked',
   movedMatch: 'Host moved this seat into a different match mid-match',
   movedSeat: 'Host moved this seat to another seat mid-match',
   rulesChanged: 'Host changed the rules mid-match',
@@ -479,8 +480,8 @@ export interface SerializedClient {
   chainChecked: number | null;
   frozenBots: number[] | null;
   pinnedRules: RuleSet | null;
-  /** Absent in snapshots written before it was kept. */
-  pinnedSkill?: BotSkill | 'unknown' | null;
+  /** Absent in snapshots written before it was kept (restored as `unknown`). */
+  pinnedSkill?: BotSkill | 'unknown' | 'unpublished' | null;
   epoch: number;
   ceremonyEpoch: number;
   quietSince: number;
@@ -621,10 +622,13 @@ export class TableClient {
   /** The table's bot strength as its last welcome gave it; null when that welcome did not say (an older host). */
   private tableSkill: BotSkill | null = null;
   /**
-   * The bot strength as it stood at the match's first commit request (`unknown`: the host did not
-   * say), or null before then. The table's moves for seats are recomputed with it (`tableRule`).
+   * The bot strength as it stood at the match's first commit request, or null before then. The
+   * table's moves for seats are recomputed with it (`tableRule`). `unpublished`: the host did not
+   * say, and a hand in which the table moved for a bot or a seat out of time fails. `unknown`: this
+   * client was restored from a save written before the strength was kept, so it cannot know what
+   * the table said, and such hands stay amber.
    */
-  private pinnedSkill: BotSkill | 'unknown' | null = null;
+  private pinnedSkill: BotSkill | 'unknown' | 'unpublished' | null = null;
   /** Link epoch: bumped on every link loss, rebind and restore. */
   private epoch = 0;
   /**
@@ -775,7 +779,7 @@ export class TableClient {
     this.chainChecked = d.chainChecked;
     this.frozenBots = d.frozenBots;
     this.pinnedRules = d.pinnedRules ? sanitizeRules(d.pinnedRules) : null;
-    this.pinnedSkill = isBotSkill(d.pinnedSkill) || d.pinnedSkill === 'unknown' ? d.pinnedSkill : this.pinnedRules ? 'unknown' : null;
+    this.pinnedSkill = isBotSkill(d.pinnedSkill) || d.pinnedSkill === 'unknown' || d.pinnedSkill === 'unpublished' ? d.pinnedSkill : this.pinnedRules ? 'unknown' : null;
     this.epoch = isInt(d.epoch) ? d.epoch : 0;
     this.ceremonyEpoch = isInt(d.ceremonyEpoch) ? d.ceremonyEpoch : -1;
     this.quietSince = isInt(d.quietSince) ? d.quietSince : -1;
@@ -1275,7 +1279,7 @@ export class TableClient {
         // The bot seats and the rules are fixed from the match's first deal on.
         if (this.frozenBots === null) this.frozenBots = this.state.seats.filter((s) => s.isBot).map((s) => s.seat).sort((a, b) => a - b);
         if (this.pinnedRules === null && this.state.rules) this.pinnedRules = this.state.rules;
-        if (this.pinnedSkill === null) this.pinnedSkill = this.tableSkill ?? 'unknown';
+        if (this.pinnedSkill === null) this.pinnedSkill = this.tableSkill ?? 'unpublished';
         let rec = this.recordFor(h);
         const last = rec?.attempts[rec.attempts.length - 1];
         const n = isInt(m.attempt) && m.attempt >= 1 ? m.attempt : (last?.n ?? 0) + 1;
@@ -1919,8 +1923,9 @@ export class TableClient {
     // state before it. A bot's move must be its bot's; a move the table made for this seat must be
     // the one for a seat out of time (or, in a stretch this device left on purpose, a bot's); one it
     // made for another player may be either. A host that did not say how strong its bots are
-    // cannot be checked, and the hand says so.
-    const skill = this.pinnedSkill ?? this.tableSkill ?? 'unknown';
+    // cannot be checked, so a hand in which it made such a move fails; only a client restored from
+    // a save that predates the kept strength (`unknown`) lets it pass as amber.
+    const skill = this.pinnedSkill ?? this.tableSkill ?? 'unpublished';
     const bots = new Set(this.frozenBots ?? []);
     const matchId = this.state.matchId ?? '';
     let unchecked = false;
@@ -1949,6 +1954,10 @@ export class TableClient {
       if (!isBot && !byTable(entry)) return;
       if (skill === 'unknown') {
         unchecked = true;
+        return;
+      }
+      if (skill === 'unpublished') {
+        problems.add('The table did not say how strong its bots are, yet it made moves for bots or for seats out of time, so none of them could be checked');
         return;
       }
       const is = (rule: 'timeout' | 'bot') => {

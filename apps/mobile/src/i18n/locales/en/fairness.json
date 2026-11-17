@@ -36,7 +36,7 @@
     "appRestart": "The app was restarted around this deal, so your phone cannot be sure it watched all of it. This is expected for the first hand after a restart; later hands can be Verified again.",
     "tableMoved": "The table played for you while your connection was down. It does that for a seat whose clock has run out or whose player has left the table; your phone did not watch those moves being made.",
     "restartClock": "The server restarted during this match and then played for you before your phone could check its clock again, so your phone cannot be sure your time had run out.",
-    "skillUnknown": "The table did not say how strong its bots are, so your phone could not check the moves it made for the bots, or for a player whose time ran out. Tables on the current version say so."
+    "skillUnknown": "This match was restored from a save made by an older version of the app, which did not keep how strong the table said its bots are, so your phone could not check the moves the table made for the bots, or for a player whose time ran out. The next match is checked in full."
   },
   "failure": {
     "dealtPlayedHand": "The table tried to deal a hand that had already been played.",
@@ -47,6 +47,7 @@
     "handStartChanged": "This hand did not start where the last one ended: the scores, the dealer or the round wind were different.",
     "botsChanged": "The table changed which seats are bots during the match.",
     "skillChanged": "The table changed how strong its bots are during the match.",
+    "skillUnpublished": "The table did not say how strong its bots are, yet it made moves for the bots or for a player whose time ran out. Your phone needs that to check those moves, and every table on the current version says it.",
     "movedMatch": "The table moved you into a different match partway through.",
     "movedSeat": "The table moved you to a different seat partway through the match.",
     "rulesChanged": "The table changed the rules partway through the match.",

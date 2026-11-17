@@ -122,7 +122,7 @@ Host → client:
 
 | Frame | Purpose |
 | --- | --- |
-| `{ "t": "welcome", "seat", "roomCode", "rules", "seats", "matchId", "token", "botSkill"? }` | The seat is yours. `token` is the rejoin token (a new one each time the seat is taken back). `botSkill` (`beginner`, `club` or `pro`) is the table's bot strength: the client pins it from the match's first deal and recomputes every move the table makes for a seat with it (docs/FAIRNESS.md); hosts built before it was sent leave it out |
+| `{ "t": "welcome", "seat", "roomCode", "rules", "seats", "matchId", "token", "botSkill"? }` | The seat is yours. `token` is the rejoin token (a new one each time the seat is taken back). `botSkill` (`beginner`, `club` or `pro`) is the table's bot strength: the client pins it from the match's first deal and recomputes every move the table makes for a seat with it (docs/FAIRNESS.md). A table that leaves it out fails every hand in which it moved for a bot or a seat out of time |
 | `{ "t": "lobby", "seats" }` | Who sits where; sent whenever a seat changes. A seat is `{ seat, name, peerId, isBot, connected, avatar?, userId?, timeBank?, left? }` |
 | `{ "t": "commit_request", "handNumber", "attempt"? }` | Start of the seed ceremony for a hand: send `commit`. `attempt` is above 1 when the ceremony was run again |
 | `{ "t": "commits", "handNumber", "commits" }` | Every seat's commitment and the host's own (seat 4), before anything is revealed |

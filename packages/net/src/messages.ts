@@ -74,7 +74,8 @@ export type HostMessage =
   /**
    * `botSkill`: how strong the table's bots are. The table's moves for a seat (a bot's, or a
    * player's whose clock ran out) follow a published rule that depends on it, so each phone can
-   * recompute them. Hosts built before it was sent leave it out.
+   * recompute them. A table that leaves it out fails every hand in which it moved for a bot or a
+   * seat out of time: no host was ever deployed without it.
    */
   | { t: 'welcome'; seat: number; roomCode: string; rules: RuleSet; seats: SeatInfo[]; matchId: string; token: string; botSkill?: BotSkill }
   | { t: 'lobby'; seats: SeatInfo[] }

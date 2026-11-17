@@ -5,11 +5,12 @@
  * of at least Club strength with the seed `timeout:<seat>`; a bot seat, and a seat whose player left
  * on purpose, plays as a bot of the table's strength with the seed `<matchId>:bot<seat>`. Every
  * phone recomputes each such move from the replayed state before it and fails the hand on any
- * other. A host that does not say how strong its bots are makes those hands amber, never red.
+ * other. A host that does not say how strong its bots are fails those hands; only a phone restored
+ * from a save that predates the kept strength lets them pass as amber.
  */
 import { describe, expect, it } from 'vitest';
 import { chooseAction, kindOf, legalActions, withRules, type Action, type BotSkill, type GameState } from '@mjm/engine';
-import { AUDIT_CAVEATS, LoopbackHub, TableClient, TableHost, transportLink, type HostMessage, type Link } from '../src/index';
+import { AUDIT_CAVEATS, AUDIT_FAILURES, failureKey, LoopbackHub, TableClient, TableHost, transportLink, type HostMessage, type Link } from '../src/index';
 import { Missed, scenario, seededDeals } from './support';
 
 seededDeals(20261116);
@@ -113,6 +114,7 @@ function table(code: string, opts: Opts = {}) {
   return t;
 }
 
+const SKILL_UNPUBLISHED = AUDIT_FAILURES.skillUnpublished;
 const verdict = (c: TableClient) => [c.state.auditStatus, c.state.auditFailures];
 const tableMoveDiffers = (c: TableClient) => c.state.auditFailures.filter((f) => f.startsWith('The table played for this seat a move other than the one its published rule gives'));
 
@@ -257,12 +259,36 @@ describe('the moves the table makes for another player are checked', () => {
 });
 
 describe('the bot strength the table publishes', () => {
-  deal('a host that does not say how strong its bots are gives an amber hand with a caveat, never a red one', () => {
+  deal('a host that does not say how strong its bots are fails a hand in which it moved for a bot or a seat out of time', () => {
     const t = table('TS1', { oldHost: true });
     t.playOut();
     expect(t.tableMoves(0)).toBeGreaterThan(3);
-    expect(verdict(t.c)).toEqual(['partial', []]);
-    expect(t.c.state.auditCaveats).toEqual([AUDIT_CAVEATS.skillUnknown]);
+    expect(verdict(t.c)).toEqual(['failed', [SKILL_UNPUBLISHED]]);
+    expect(failureKey(SKILL_UNPUBLISHED)).toBe('skillUnpublished');
+    expect(t.c.state.auditCaveats).toEqual([]);
+  });
+
+  deal('a host that leaves the strength out is red even when it seats bots that read every hand', () => {
+    // The fifth assessment's probe: bots that never feed this seat a win, at a table that does not say how strong they are.
+    const t = table('TS1b', { oldHost: true, active: [true] });
+    const apply = t.h.apply.bind(t.host);
+    t.h.apply = (seat, action, source) => {
+      if (seat !== 0 && source === 'bot' && action.type === 'discard' && t.h.game) {
+        const alt = legalActions(t.h.game, seat).find((a) => a.type === 'discard');
+        if (alt) action = alt;
+      }
+      apply(seat, action, source);
+    };
+    t.playOut();
+    expect(t.c.state.auditStatus).toBe('failed');
+    expect(t.c.state.auditFailures).toContain(SKILL_UNPUBLISHED);
+  });
+
+  deal('an honest table that says how strong its bots are stays green with bots and a seat out of time', () => {
+    const t = table('TS1c', { skill: 'club' });
+    t.playOut();
+    expect(t.tableMoves(0)).toBeGreaterThan(3);
+    expect(verdict(t.c)).toEqual(['ok', []]);
   });
 
   deal('a host that changes how strong its bots are during the match fails the hand', () => {
@@ -284,5 +310,30 @@ describe('the bot strength the table publishes', () => {
     delete saved.pinnedSkill;
     const restored = TableClient.restore(saved, transportLink(t.hub.create('p0-old'), 'host'), 'P0', undefined, { token: saved.state.token }, { now: () => t.clock.now });
     expect((restored.serialize() as { pinnedSkill?: unknown }).pinnedSkill).toBe('unknown');
+  });
+
+  deal('a client restored from a save that predates the kept strength stays amber, never red', () => {
+    const t = table('TS4', { skill: 'club' });
+    for (let g = 0; g < 4000 && !(t.host.phase === 'playing' && t.tableMovesLive(0) >= 1); g++) t.step();
+    need(t.host.phase === 'playing');
+    const saved = JSON.parse(JSON.stringify(t.c.serialize()));
+    delete saved.pinnedSkill;
+    // The app was killed: its link just closes.
+    (t.c as unknown as { link: Link }).link.close();
+    const restored = TableClient.restore(saved, transportLink(t.hub.create('p0-old'), 'host'), 'P0', undefined, { token: saved.state.token }, { now: () => t.clock.now });
+    restored.join();
+    for (let g = 0; g < 40_000 && t.host.phase === 'playing'; g++) t.step();
+    for (let g = 0; g < 200 && restored.state.audits.length === 0; g++) t.step();
+    expect(restored.state.auditFailures).toEqual([]);
+    expect(restored.state.auditCaveats).toContain(AUDIT_CAVEATS.skillUnknown);
+  });
+
+  deal('a table that did not say keeps failing after an app restart', () => {
+    const t = table('TS5', { oldHost: true });
+    for (let g = 0; g < 4000 && !(t.host.phase === 'playing' && t.host.game!.turnCounter >= 2); g++) t.step();
+    const saved = JSON.parse(JSON.stringify(t.c.serialize()));
+    expect(saved.pinnedSkill).toBe('unpublished');
+    const restored = TableClient.restore(saved, transportLink(t.hub.create('p0-new'), 'host'), 'P0', undefined, { token: saved.state.token }, { now: () => t.clock.now });
+    expect((restored.serialize() as { pinnedSkill?: unknown }).pinnedSkill).toBe('unpublished');
   });
 });
