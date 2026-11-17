@@ -65,6 +65,13 @@ export function fakeAuth(over: Partial<AuthContextValue> = {}): AuthContextValue
   };
 }
 
+/** Presses the Android Back key on the FakeProviders rendered last (wrap it in act). */
+let pressBack: (() => void) | null = null;
+export function pressHardwareBack(): void {
+  if (!pressBack) throw new Error('pressHardwareBack: no FakeProviders rendered');
+  pressBack();
+}
+
 export function FakeProviders({ app = {}, auth = {}, children }: { app?: Partial<AppState>; auth?: Partial<AuthContextValue>; children: React.ReactNode }) {
   const [screen, setScreen] = useState<Screen>(app.screen ?? { name: 'home' });
   const [session, setSession] = useState<Session | null>(app.session ?? null);
@@ -73,15 +80,19 @@ export function FakeProviders({ app = {}, auth = {}, children }: { app?: Partial
   const [profile, setProfile] = useState(app.profile ?? DEFAULT_PROFILE);
   const [settings, setSettings] = useState(app.settings ?? DEFAULT_SETTINGS);
   const [progress, setProgress] = useState(app.progress ?? DEFAULT_PROGRESS);
+  // The Android Back key, as the real provider answers it on a screen that asks first (the table, the lobby): it bumps
+  // backAsked, which the screen's useHardwareBack hears. pressHardwareBack() presses it.
+  const [backAsked, setBackAsked] = useState(app.backAsked ?? 0);
+  pressBack = () => setBackAsked((n) => n + 1);
   const value = useMemo<AppState>(
     () => ({
-      backAsked: 0,
       signalUrl: 'http://127.0.0.1:1',
       loaded: true,
       hardwareBack: () => false,
       back: () => undefined,
       clubJoined: () => undefined,
       ...app,
+      backAsked,
       screen,
       go: (s) => {
         setScreen(s);
@@ -124,7 +135,7 @@ export function FakeProviders({ app = {}, auth = {}, children }: { app?: Partial
     }),
     // The overrides are fixed for a test's render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [screen, session, activeSession, wallet, profile, settings, progress],
+    [screen, session, activeSession, wallet, profile, settings, progress, backAsked],
   );
   const authValue = useMemo(() => fakeAuth(auth), [auth]);
   return (

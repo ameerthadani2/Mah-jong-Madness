@@ -23,19 +23,12 @@ describe('table exit', () => {
     expect(exitPlan('abandon')).toEqual({ closeSession: true, forgetTable: true, goHome: true, keepSeat: false });
   });
 
-  it('asks before leaving from the result sheet, the shuffle screen and the Android Back key while a match is on', () => {
-    // The result sheet's Leave opening the exit sheet is rendered in src/screens/TablePlay.render.test.tsx ("the end of a hand").
+  it('asks before leaving from the shuffle screen while a match is on', () => {
+    // Rendered elsewhere: the result sheet's Leave opening the exit sheet (src/screens/TablePlay.render.test.tsx, "the
+    // end of a hand"); Android's Back key asking mid-match and leaving at once after it, and the match-over card's
+    // direct Back to home in place of the last result sheet (src/screens/TableBack.render.test.tsx).
     const src = readFileSync(join(__dirname, '../../screens/TableScreen.tsx'), 'utf8');
     expect(src).toMatch(/title=\{t\('table\.leave'\)\} onPress=\{\(\) => setLeaveAsk\(true\)\}/);
-    expect(src).toContain('useHardwareBack(() => (state?.matchOver ? leave() : setLeaveAsk(true)));');
-    // Only the match-over card leaves directly.
-    expect(src.match(/onLeave=\{leave\}/g)).toHaveLength(1);
-    expect(src).toContain('<MatchOverSheet state={state} onLeave={leave} />');
-  });
-
-  it("takes the last hand's result sheet away once the match-over card is up", () => {
-    const src = readFileSync(join(__dirname, '../../screens/TableScreen.tsx'), 'utf8');
-    expect(src).toContain('{state.lastResult && showResult && !state.matchOver && <ResultSheet');
   });
 
   it('stepping away from a quick-match table keeps the seat: the table would close at once if its only player left on purpose', () => {

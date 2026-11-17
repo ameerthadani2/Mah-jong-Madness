@@ -402,11 +402,6 @@ describe('a table that arrives after the Quick match screen has gone', () => {
     expect(unseenTableClose(false)).toEqual({ keepSeat: false });
   });
 
-  it('is how the screen closes it', async () => {
-    const { readFileSync } = await import('fs');
-    const { join } = await import('path');
-    const src = readFileSync(join(__dirname, '../screens/QuickMatchScreen.tsx'), 'utf8');
-    expect(src).toContain('if (!alive.current) return outcome.session.close(unseenTableClose(returning.current));');
-    expect(src).toMatch(/onSeated: \(\) => \{\s+returning\.current = true;/);
-  });
+  // The screen closing a table that arrives after it has gone, with this choice, is rendered in
+  // src/screens/QuickMatch.render.test.tsx.
 });
