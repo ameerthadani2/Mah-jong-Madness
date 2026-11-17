@@ -40,10 +40,7 @@ async function renderRush(app: Partial<AppState> = {}) {
 }
 
 /** The tap targets of a discard puzzle's hand, by the names the screen gives its tiles. */
-// (The screen names tiles in the player's language, English here: src/components/locale.test.ts keeps a fixed locale
-// out of the UI's own tileName calls.)
-const PLAYER_LOCALE = 'en' as const;
-const handButtons = (p: DiscardPuzzle) => p.hand.map((k) => screen.getAllByRole('button', { name: tileName(k, PLAYER_LOCALE) })[0]);
+const handButtons = (p: DiscardPuzzle) => p.hand.map((k) => screen.getAllByRole('button', { name: tileName(k, 'en') })[0]);
 
 /** Answer the puzzle on screen with its first tile (right or wrong, the run has started). */
 async function answerOnce() {

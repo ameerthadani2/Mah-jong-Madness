@@ -12,7 +12,8 @@ function tsx(dir: string): string[] {
   return readdirSync(dir).flatMap((f) => {
     const p = join(dir, f);
     if (statSync(p).isDirectory()) return tsx(p);
-    return f.endsWith('.tsx') ? [p] : [];
+    // The UI's own files: a test names tiles in the locale it renders in, which is not a view choosing one.
+    return f.endsWith('.tsx') && !f.endsWith('.test.tsx') ? [p] : [];
   });
 }
 
