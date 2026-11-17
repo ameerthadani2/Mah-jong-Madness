@@ -1,11 +1,12 @@
 import '../test/mockStore';
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import React from 'react';
-import { AccessibilityInfo, Platform } from 'react-native';
+import { AccessibilityInfo, Platform, StyleSheet } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { fireEvent, render, screen, within } from '@testing-library/react-native';
 import { ShopScreen } from './ShopScreen';
 import { FakeProviders } from '../test/providers';
+import { colors, contrast } from '../theme';
 
 /** Platform.OS for one test (jest-expo runs as iOS); put back after each test. */
 const realOS = Platform.OS;
@@ -72,6 +73,19 @@ describe('the Shop', () => {
     expect(text).not.toBe('');
     // iOS ignores live regions: the same words are announced.
     expect(said).toHaveBeenCalledWith(text);
+  });
+
+  it('draws its ribbons and its diamonds note in ink on a colour that ink reads on, not white on a bright colour', async () => {
+    await renderShop();
+    const flat = (el: { props: { style?: unknown } }) => StyleSheet.flatten(el.props.style as never) as { color?: string; backgroundColor?: string };
+    const ribbon = await screen.findByText('+8%');
+    expect(flat(ribbon).color).toBe(colors.ink);
+    const behind = flat(ribbon.parent as never).backgroundColor!;
+    expect(behind).toBe(colors.danger);
+    expect(contrast(colors.ink, behind)).toBeGreaterThanOrEqual(4.5);
+    const note = screen.getByText(/^Diamonds buy table looks/);
+    expect(flat(note).color).toBe(colors.ink);
+    expect(contrast(flat(note).color!, colors.cream)).toBeGreaterThanOrEqual(4.5);
   });
 
   it('shows each plan with its price per month or year', async () => {
