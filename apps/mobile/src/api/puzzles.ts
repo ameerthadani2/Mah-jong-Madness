@@ -8,7 +8,7 @@
  * translated copy (`puzzles.server.errors.*`), and `isPuzzleServerDown` says when the app should
  * carry on locally, unranked, instead of showing an error.
  */
-import type { AnyPuzzle, PuzzleAnswerInput, PuzzleType } from '@mjm/engine';
+import type { AnyPuzzle, DiscardPuzzle, PuzzleAnswerInput, PuzzleQuestion, PuzzleType } from '@mjm/engine';
 import { authorisedJson, globalFetch, type Authoriser, type FetchLike } from './http';
 import { friendlyErrorMessage } from '../logic/errors';
 import type { Message, Translate } from '../logic/translate';
@@ -36,6 +36,8 @@ export interface DailyStart {
   date: string;
   /** ISO time the server started the clock (the same on every start for this date). */
   startedAt: string;
+  /** The day's puzzle as its question (docs/API.md, "Questions and reveals"): nothing that gives the answer away. */
+  question: PuzzleQuestion;
 }
 
 export interface DailyFinish {
@@ -46,13 +48,15 @@ export interface DailyFinish {
   /** False when the server timed it under the human-time floor (3 s): recorded, not ranked. Absent from older servers. */
   ranked?: boolean;
   rating: ServerRating;
+  /** The whole puzzle, revealed with the verdict, for the feedback. */
+  revealed: DiscardPuzzle;
 }
 
-/** A Rush puzzle as the server serves it: its place in the run and the content the view needs. */
+/** A Rush puzzle as the server serves it: its place in the run and its question (the answer comes only with the verdict). */
 export interface RushServed {
   index: number;
   type: PuzzleType;
-  puzzle: AnyPuzzle;
+  question: PuzzleQuestion;
 }
 
 export interface RushStart {
@@ -89,6 +93,8 @@ export interface RushAnswerReply {
   type?: PuzzleType;
   solved?: number;
   wrong?: number;
+  /** The whole puzzle just answered, revealed with the verdict (for the feedback). */
+  revealed?: AnyPuzzle;
   done: boolean;
   next: RushServed | null;
   /** The finished run, when `done`. */

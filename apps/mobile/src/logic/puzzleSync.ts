@@ -6,12 +6,14 @@
  * With a session and a server that answers, the daily puzzle's attempt is started when it opens
  * and finished by the answer, and a ranked Rush run is played from the server one puzzle at a time:
  * each answer is posted as it is made, and the server judges and stamps it and sends the next
- * puzzle; the verdict, time, score and rating shown are the server's. A Rush answer that cannot
+ * puzzle; the verdict, time, score and rating shown are the server's. A ranked puzzle arrives as
+ * its question (docs/API.md, "Questions and reveals") and the server reveals the whole puzzle with
+ * the verdict, so the device never holds a ranked answer before it is given. A Rush answer that cannot
  * reach the server ends the run there, unranked, and the screen says so. When the
  * server cannot be used, the puzzle plays on the device as it always has and says it is not ranked.
  * Streaks, the local rating and the free Rush allowance are kept on the device in both cases.
  */
-import type { PuzzleAnswerInput } from '@mjm/engine';
+import { judgePuzzleAnswer, type AnyPuzzle, type DiscardPuzzle, type PuzzleAnswerInput, type PuzzleQuestion } from '@mjm/engine';
 import { ApiError } from '../api/http';
 import { isPuzzleServerDown, type DailyFinish, type DailyStart, type RatingReply, type RushAnswerReply, type RushFinish, type RushServed, type RushStart, type ServerRating } from '../api/puzzles';
 
@@ -27,7 +29,7 @@ export interface PuzzleServer {
 
 /** Where a puzzle stands with the server: ranked (and how to finish it), or played on the device only. */
 export type DailyLink =
-  | { ranked: true; attemptId: string; startedAt: string }
+  | { ranked: true; attemptId: string; startedAt: string; question: PuzzleQuestion }
   /** `error`: why not (absent when there is no session); `down` when the server could not be used at all. */
   | { ranked: false; error?: unknown; down: boolean };
 
@@ -36,7 +38,9 @@ export async function openDaily(server: PuzzleServer | null, date: string): Prom
   if (!server) return { ranked: false, down: true };
   try {
     const s = await server.startDaily(date);
-    return { ranked: true, attemptId: s.attemptId, startedAt: s.startedAt };
+    // A start without its question cannot be played ranked: the puzzle is played here instead.
+    if (!s.question || typeof s.question !== 'object') return { ranked: false, error: badReply(), down: true };
+    return { ranked: true, attemptId: s.attemptId, startedAt: s.startedAt, question: s.question };
   } catch (error) {
     return { ranked: false, error, down: isPuzzleServerDown(error) };
   }
@@ -49,23 +53,34 @@ export type DailyOutcome =
       correct: boolean;
       seconds: number;
       rating: ServerRating;
-      /** True when the server's verdict differs from the device's (logged; the server's is shown). */
+      /** The whole puzzle, revealed with the verdict. */
+      revealed: DiscardPuzzle;
+      /** True when the server's verdict differs from the device's check of the revealed puzzle (logged; the server's is shown). */
       mismatch: boolean;
     }
   | { ranked: false; error?: unknown; down: boolean };
 
 /** A result the server recorded under a human-time floor (docs/API.md): shown as not ranked, with its own line. */
 const tooFastToRank = () => new ApiError('The game server recorded this result but did not rank it: it was faster than the human-time floor', 'too_fast_to_rank');
+/** A reply without the question or the revealed puzzle it must carry. */
+const badReply = () => new ApiError('The game server sent a reply the app could not read', 'puzzle_bad_reply');
+const isPuzzle = (v: unknown): v is AnyPuzzle => !!v && typeof v === 'object' && typeof (v as { type?: unknown }).type === 'string';
 
-/** Finishes a ranked daily attempt with the answer; an unranked link stays unranked. */
-export async function submitDaily(server: PuzzleServer | null, link: DailyLink, answer: PuzzleAnswerInput, localCorrect: boolean, log: (msg: string) => void = console.warn): Promise<DailyOutcome> {
+/**
+ * Finishes a ranked daily attempt with the answer; an unranked link stays unranked. The server's
+ * verdict comes with the revealed puzzle, which the device checks the answer against too: a
+ * difference is logged (the server's verdict is the one shown).
+ */
+export async function submitDaily(server: PuzzleServer | null, link: DailyLink, answer: PuzzleAnswerInput, log: (msg: string) => void = console.warn): Promise<DailyOutcome> {
   if (!server || !link.ranked) return link.ranked ? { ranked: false, down: true } : link;
   try {
     const r = await server.finishDaily(link.attemptId, answer);
     if (r.ranked === false) return { ranked: false, error: tooFastToRank(), down: false };
+    if (!isPuzzle(r.revealed) || r.revealed.type !== 'discard') return { ranked: false, error: badReply(), down: true };
+    const localCorrect = judgePuzzleAnswer(r.revealed, answer);
     const mismatch = r.correct !== localCorrect;
     if (mismatch) log(`[puzzles] the server judged the daily answer ${r.correct ? 'right' : 'wrong'}; the device judged it ${localCorrect ? 'right' : 'wrong'}`);
-    return { ranked: true, correct: r.correct, seconds: r.seconds, rating: r.rating, mismatch };
+    return { ranked: true, correct: r.correct, seconds: r.seconds, rating: r.rating, revealed: r.revealed, mismatch };
   } catch (error) {
     return { ranked: false, error, down: isPuzzleServerDown(error) };
   }
@@ -82,6 +97,7 @@ export async function openRush(server: PuzzleServer | null, localSeed: string): 
   if (!server) return { ranked: false, seed: localSeed, down: true };
   try {
     const r = await server.startRush();
+    if (!r.next || !r.next.question || typeof r.next.question !== 'object') return { ranked: false, seed: localSeed, error: badReply(), down: true };
     return { ranked: true, runId: r.runId, first: r.next };
   } catch (error) {
     return { ranked: false, seed: localSeed, error, down: isPuzzleServerDown(error) };
@@ -109,21 +125,27 @@ function rushOutcomeOf(r: RushFinish, localSolved: number, log: (msg: string) =>
   return { ranked: true, solved: r.solved, seconds: r.seconds, score: r.score, rating: r.rating, mismatch };
 }
 
-/** What one ranked answer led to: the next puzzle, the end of the run (the server's result), or a lost run. */
-export type RushStep = { kind: 'next'; next: RushServed; correct: boolean } | { kind: 'done'; outcome: RushOutcome };
+/**
+ * What one ranked answer led to: its verdict with the revealed puzzle and the next question, the end
+ * of the run (the server's result; the verdict and the revealed puzzle when the answer counted), or a
+ * lost run.
+ */
+export type RushStep = { kind: 'next'; next: RushServed; correct: boolean; revealed: AnyPuzzle } | { kind: 'done'; outcome: RushOutcome; correct?: boolean; revealed?: AnyPuzzle };
 
 /**
- * Posts one answer of a ranked run as it is made. The server's reply carries the next puzzle, or
- * the finished run when this was the third wrong answer or came after the three minutes. If the
- * answer cannot be sent, or the server refuses it, the run ends here and is not ranked.
+ * Posts one answer of a ranked run as it is made. The server's reply carries the verdict, the
+ * revealed puzzle and the next question, or the finished run when this was the third wrong answer
+ * or came after the three minutes. If the answer cannot be sent, or the server refuses it, the run
+ * ends here and is not ranked. `solvedBefore` is how many the device counted solved before this answer.
  */
-export async function sendRushAnswer(server: PuzzleServer | null, link: RushLink, index: number, answer: PuzzleAnswerInput, localSolved: number, log: (msg: string) => void = console.warn): Promise<RushStep> {
+export async function sendRushAnswer(server: PuzzleServer | null, link: RushLink, index: number, answer: PuzzleAnswerInput, solvedBefore: number, log: (msg: string) => void = console.warn): Promise<RushStep> {
   if (!server || !link.ranked) return { kind: 'done', outcome: { ranked: false, down: true, lost: true } };
   try {
     const r = await server.answerRush(link.runId, index, answer);
-    if (r.done && r.result) return { kind: 'done', outcome: rushOutcomeOf(r.result, localSolved, log) };
-    if (r.next) return { kind: 'next', next: r.next, correct: r.correct === true };
-    return { kind: 'done', outcome: { ranked: false, down: false, lost: true } };
+    const judged = r.counted && typeof r.correct === 'boolean' && isPuzzle(r.revealed) ? { correct: r.correct, revealed: r.revealed } : {};
+    if (r.done && r.result) return { kind: 'done', outcome: rushOutcomeOf(r.result, solvedBefore + (r.counted && r.correct ? 1 : 0), log), ...judged };
+    if (r.next && 'revealed' in judged && judged.revealed) return { kind: 'next', next: r.next, correct: judged.correct, revealed: judged.revealed };
+    return { kind: 'done', outcome: { ranked: false, error: badReply(), down: false, lost: true } };
   } catch (error) {
     return { kind: 'done', outcome: { ranked: false, error, down: isPuzzleServerDown(error), lost: true } };
   }

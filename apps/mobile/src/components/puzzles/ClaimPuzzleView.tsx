@@ -1,51 +1,52 @@
 import React, { useMemo, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
-import type { ClaimPuzzle } from '@mjm/engine';
+import type { ClaimQuestion } from '@mjm/engine';
 import { colors } from '../../theme';
 import { useT } from '../../i18n';
-import { checkPuzzleAnswer, explanationFor, claimButtons, claimOutcomeKey, SEAT_KEYS, seatRelation, tileName, type ClaimButton } from '../../logic/puzzle';
+import { explanationFor, claimButtons, claimOutcomeKey, SEAT_KEYS, seatRelation, tileName, type ClaimButton } from '../../logic/puzzle';
 import { Tile } from '../Tile';
 import { Button, P, Pill, Row } from '../Ui';
 import { Icon } from '../Icons';
-import { Answer, Explanation, KindMeld, KindRow, Label, NextButton, partStyles, useAnswer, Verdict, type ThemeViewProps } from './PuzzleParts';
+import { Answer, Checking, Explanation, KindMeld, KindRow, Label, NextButton, partStyles, useAnswer, Verdict, type ThemeViewProps } from './PuzzleParts';
 
 /**
  * Claim window: your hand and sets, the tile just thrown and who threw it (上家 / 對家 /
  * 下家), and one button per legal response: pass, each 吃 shape, 碰, 槓, 胡. Every accepted
  * response counts; once answered, each button says where it leaves the hand and whether it is fine.
  */
-export function ClaimPuzzleView({ puzzle, onResult, onNext, nextLabel, autoAdvance }: ThemeViewProps<ClaimPuzzle>) {
+export function ClaimPuzzleView({ question, judge, onResult, onNext, nextLabel, autoAdvance }: ThemeViewProps<ClaimQuestion>) {
   const { t, locale } = useT();
   const [picked, setPicked] = useState<string | null>(null);
-  const { answered, report } = useAnswer('claim', puzzle.difficulty, onResult, onNext, autoAdvance);
-  const buttons = useMemo(() => claimButtons(puzzle, locale), [puzzle, locale]);
-  const seat = t(SEAT_KEYS[seatRelation(puzzle.from)]);
+  // `revealed` (the whole puzzle) is null until the verdict: the answer, each claim's outcome and the explanation come from it.
+  const { answered, revealed, submit, sent, checking } = useAnswer(question, judge, onResult, onNext, autoAdvance);
+  const buttons = useMemo(() => claimButtons(question, locale), [question, locale]);
+  const seat = t(SEAT_KEYS[seatRelation(question.from)]);
   const choose = (b: ClaimButton) => {
-    if (answered !== null) return;
+    if (sent) return;
     setPicked(b.id);
-    report(checkPuzzleAnswer(puzzle, b.option), b.option);
+    submit(b.id);
   };
-  const best = buttons.find((b) => b.id === puzzle.answer.id)!;
+  const best = revealed ? buttons.find((b) => b.id === revealed.answer.id) : undefined;
   // After answering, the hand tiles the best claim uses light up.
-  const used: number[] = best.type === 'chi' ? (best.option.kinds ?? []) : best.type === 'pong' || best.type === 'kong' ? [puzzle.discard] : [];
+  const used: number[] = !best ? [] : best.type === 'chi' ? (best.option.kinds ?? []) : best.type === 'pong' || best.type === 'kong' ? [question.discard] : [];
   return (
     <View style={{ gap: 8 }}>
       <Row style={{ flexWrap: 'wrap', rowGap: 6 }}>
         <Pill text={seat} tone="info" icon="users" />
-        <Tile kind={puzzle.discard} size="md" highlight="wait" accessibilityLabel={tileName(puzzle.discard, locale)} />
+        <Tile kind={question.discard} size="md" highlight="wait" accessibilityLabel={tileName(question.discard, locale)} />
       </Row>
-      <P dim>{t('puzzles.claim.intro', { seat, tile: tileName(puzzle.discard, locale) })}</P>
-      {puzzle.melds.length > 0 && (
+      <P dim>{t('puzzles.claim.intro', { seat, tile: tileName(question.discard, locale) })}</P>
+      {question.melds.length > 0 && (
         <>
           <Label>{t('puzzles.claim.yourMelds')}</Label>
           <View style={styles.melds}>
-            {puzzle.melds.map((m, i) => (
+            {question.melds.map((m, i) => (
               <KindMeld key={i} meld={m} size="sm" />
             ))}
           </View>
         </>
       )}
-      {puzzle.opponents.map((o) => (
+      {question.opponents.map((o) => (
         <Row key={o.seat} gap={6} style={{ flexWrap: 'wrap', rowGap: 4 }}>
           <Pill size="sm" text={t(SEAT_KEYS[seatRelation(o.seat)])} />
           {o.melds.map((m, i) => (
@@ -54,39 +55,48 @@ export function ClaimPuzzleView({ puzzle, onResult, onNext, nextLabel, autoAdvan
           <KindRow kinds={o.discards} size="xs" />
         </Row>
       ))}
-      {puzzle.ownDiscards.length > 0 && (
+      {question.ownDiscards.length > 0 && (
         <>
           <Label>{t('puzzles.defence.yourDiscards')}</Label>
-          <KindRow kinds={puzzle.ownDiscards} />
+          <KindRow kinds={question.ownDiscards} />
         </>
       )}
       <Label>{t('puzzles.claim.yourHand')}</Label>
       <View style={partStyles.hand}>
-        {puzzle.hand.map((k, i) => (
-          <Tile key={i} kind={k} size="md" highlight={answered !== null && used.includes(k) ? 'good' : undefined} accessibilityLabel={tileName(k, locale)} />
+        {question.hand.map((k, i) => (
+          <Tile key={i} kind={k} size="md" highlight={used.includes(k) ? 'good' : undefined} accessibilityLabel={tileName(k, locale)} />
         ))}
       </View>
       <View style={{ gap: 6 }}>
         {buttons.map((b) => {
-          const fine = puzzle.answers.includes(b.id);
-          const mark = answered !== null ? (fine ? 'good' : picked === b.id ? 'bad' : null) : null;
-          const outcome = claimOutcomeKey(b.option);
+          const fine = revealed ? revealed.answers.includes(b.id) : false;
+          const mark = revealed ? (fine ? 'good' : picked === b.id ? 'bad' : null) : null;
+          const full = revealed?.options.find((o) => o.id === b.id);
+          const outcome = full ? claimOutcomeKey(full) : null;
           return (
             <Row key={b.id} gap={8} style={[styles.option, mark === 'good' && styles.good, mark === 'bad' && styles.bad]}>
-              <Button testID={`claim-${b.id}`} title={t(b.label.key, b.label.params)} kind={b.type === 'pass' ? 'ghost' : b.type === 'hu' ? 'gold' : 'secondary'} small onPress={() => choose(b)} disabled={answered !== null && mark === null} />
+              <Button
+                testID={`claim-${b.id}`}
+                title={t(b.label.key, b.label.params)}
+                kind={b.type === 'pass' ? 'ghost' : b.type === 'hu' ? 'gold' : 'secondary'}
+                small
+                onPress={() => choose(b)}
+                disabled={revealed !== null ? mark === null : sent}
+              />
               {b.kinds.length > 0 && <KindRow kinds={b.kinds} size="xs" />}
               {mark && <Icon name={mark === 'good' ? 'check' : 'cross'} size={20} color={mark === 'good' ? colors.cta : colors.danger} />}
-              {answered !== null && <Pill size="sm" text={t(fine ? 'puzzles.claim.fine' : 'puzzles.claim.worse')} tone={fine ? 'gold' : 'neutral'} />}
-              {answered !== null && <P style={{ fontSize: 13 }}>{t(outcome.key, outcome.params)}</P>}
+              {revealed && <Pill size="sm" text={t(fine ? 'puzzles.claim.fine' : 'puzzles.claim.worse')} tone={fine ? 'gold' : 'neutral'} />}
+              {outcome && <P style={{ fontSize: 13 }}>{t(outcome.key, outcome.params)}</P>}
             </Row>
           );
         })}
       </View>
-      {answered !== null && (
-        <Answer spoken={[t(answered ? 'puzzles.claim.right' : 'puzzles.claim.wrong'), ...(answered ? [] : [t('puzzles.claim.answer', { label: t(best.label.key, best.label.params) })]), explanationFor(puzzle, locale)].join(' ')}>
+      <Checking show={checking} />
+      {revealed && best && answered !== null && (
+        <Answer spoken={[t(answered ? 'puzzles.claim.right' : 'puzzles.claim.wrong'), ...(answered ? [] : [t('puzzles.claim.answer', { label: t(best.label.key, best.label.params) })]), explanationFor(revealed, locale)].join(' ')}>
           <Verdict good={answered} goodKey="puzzles.claim.right" badKey="puzzles.claim.wrong" />
           {!answered && <P>{t('puzzles.claim.answer', { label: t(best.label.key, best.label.params) })}</P>}
-          <Explanation puzzle={puzzle} />
+          <Explanation puzzle={revealed} />
           <NextButton onNext={onNext} autoAdvance={autoAdvance} label={nextLabel} />
         </Answer>
       )}

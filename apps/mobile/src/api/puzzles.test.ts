@@ -27,7 +27,7 @@ describe('puzzle routes the app calls', () => {
   });
 
   it('starts a Rush run, posts each answer on its own and finishes it with no answers', async () => {
-    const first = { index: 0, type: 'discard', puzzle: { type: 'discard', seed: 'r 1:0', hand: [] } };
+    const first = { index: 0, type: 'discard', question: { type: 'discard', seed: 'r 1:0', difficulty: 1, hand: [], currentShanten: 2 } };
     const start = recorder({ runId: 'r 1', startedAt: '', expiresAt: '', seconds: 180, strikes: 3, next: first });
     expect((await puzzlesApi.startRush(start.ctx)).next).toEqual(first);
     expect(start.calls[0]).toEqual({ method: 'POST', url: 'https://game.example/api/puzzles/rush', auth: 'Bearer mjs_tok', body: {} });

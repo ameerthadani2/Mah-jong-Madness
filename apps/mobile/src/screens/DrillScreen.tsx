@@ -37,6 +37,7 @@ export function DrillScreen({ kind }: { kind: 'discard' | 'waits' }) {
       <Card>
         <PuzzleView
           puzzle={puzzle}
+          difficulty={difficulty}
           onResult={(r) => app.setProgress((p) => rateAnswerIn('drill', { ...p, drillsPlayed: p.drillsPlayed + 1, drillsCorrect: p.drillsCorrect + (r.correct ? 1 : 0) }, r.type, difficulty, r.correct, Date.now()))}
           onNext={() => setN(n + 1)}
           nextLabel={t('learn.nextHand')}

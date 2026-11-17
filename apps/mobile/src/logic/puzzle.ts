@@ -11,13 +11,16 @@ import {
   type AnyPuzzle,
   type ClaimChoice,
   type ClaimOption,
-  type ClaimPuzzle,
+  type ClaimQuestionOption,
   type DefencePuzzle,
+  type DefenceQuestion,
   type Kind,
   type PuzzleAnswerInput,
   type PuzzleDifficulty,
   type PuzzleMeld,
+  type PuzzleQuestion,
   type PuzzleType,
+  puzzleQuestion,
   type TaiItem,
   type ValuePuzzle,
 } from '@mjm/engine';
@@ -38,6 +41,24 @@ export interface PuzzleResult {
   difficulty?: PuzzleDifficulty;
   /** The answer as the server takes it (`wireAnswer`), so a ranked puzzle can be sent to be verified. */
   answer: PuzzleAnswerInput;
+}
+
+/** A judged answer: the verdict and the whole puzzle, revealed for the feedback (docs/API.md, "Questions and reveals"). */
+export interface Judged {
+  correct: boolean;
+  puzzle: AnyPuzzle;
+}
+
+/**
+ * Judges an answer to a question: on the device for a puzzle made here (at once), or by the game
+ * server for a ranked one (a promise of its verdict and the revealed puzzle). Null: it could not be
+ * judged (the answer did not reach the server), and the screen says what happened.
+ */
+export type Judge = (answer: PuzzleAnswerInput) => Judged | null | Promise<Judged | null>;
+
+/** A puzzle made on the device, as a view takes it: its question, and a judge that reveals it at once. */
+export function localPuzzle(p: AnyPuzzle, fallbackDifficulty: PuzzleDifficulty = 2): { question: PuzzleQuestion; judge: Judge } {
+  return { question: puzzleQuestion(p, puzzleDifficulty(p, fallbackDifficulty)), judge: (answer) => ({ correct: judgePuzzleAnswer(p, answer), puzzle: p }) };
 }
 
 /**
@@ -165,13 +186,13 @@ export function reasonTitleKey(reasonKey: string): string | null {
 // Claim puzzles
 // ---------------------------------------------------------------------------
 
-export interface ClaimButton {
+export interface ClaimButton<O extends ClaimQuestionOption = ClaimQuestionOption> {
   id: string;
   type: ClaimChoice;
   label: TextKey;
   /** The tiles the claim makes (the discard included), for the picture on the button; empty for pass. */
   kinds: Kind[];
-  option: ClaimOption;
+  option: O;
 }
 
 const CLAIM_ORDER: Record<ClaimChoice, number> = { pass: 0, chi: 1, pong: 2, kong: 3, hu: 4 };
@@ -187,10 +208,10 @@ const CLAIM_LABEL_KEYS: Record<ClaimChoice, string> = {
  * One button per legal response, in table order: pass, each 吃 shape (lowest first), 碰,
  * 槓, 胡. Labels name the tiles in the app's language.
  */
-export function claimButtons(p: ClaimPuzzle, locale: string): ClaimButton[] {
+export function claimButtons<O extends ClaimQuestionOption>(p: { discard: Kind; options: readonly O[] }, locale: string): ClaimButton<O>[] {
   const d = p.discard;
   return p.options
-    .map((o): ClaimButton => {
+    .map((o): ClaimButton<O> => {
       const name = tileName(d, locale);
       switch (o.type) {
         case 'pass':
@@ -230,7 +251,7 @@ export interface DefenceSeat {
 }
 
 /** The other three seats, the threatening one first, then left, opposite and right. */
-export function defenceSeats(p: DefencePuzzle): DefenceSeat[] {
+export function defenceSeats(p: Pick<DefenceQuestion, 'opponents' | 'threatSeat'>): DefenceSeat[] {
   const order: Record<SeatRelation, number> = { left: 0, opposite: 1, right: 2 };
   return p.opponents
     .map((o) => ({ seat: o.seat, relation: seatRelation(o.seat), threat: o.seat === p.threatSeat, melds: o.melds, discards: o.discards }))
@@ -238,7 +259,7 @@ export function defenceSeats(p: DefencePuzzle): DefenceSeat[] {
 }
 
 /** The heading for the threatening seat: four exposed sets, or three and a long discard row. */
-export function threatKey(p: DefencePuzzle): TextKey {
+export function threatKey(p: Pick<DefenceQuestion, 'opponents' | 'threatSeat'>): TextKey {
   const n = p.opponents.find((o) => o.seat === p.threatSeat)?.melds.length ?? 0;
   return { key: n >= 4 ? 'puzzles.defence.threatFour' : 'puzzles.defence.threatThree', params: { n } };
 }

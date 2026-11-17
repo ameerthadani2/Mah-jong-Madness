@@ -1,12 +1,12 @@
 import React, { useMemo, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
-import { KIND_WIND, type ValuePuzzle } from '@mjm/engine';
+import { KIND_WIND, type ValueQuestion } from '@mjm/engine';
 import { colors, fonts } from '../../theme';
 import { useT } from '../../i18n';
-import { checkPuzzleAnswer, explanationFor, taiFigure, tileName, valueProjections, type ValueProjection } from '../../logic/puzzle';
+import { explanationFor, taiFigure, tileName, valueProjections, type ValueProjection } from '../../logic/puzzle';
 import { Tile } from '../Tile';
 import { P, Pill, Row } from '../Ui';
-import { Answer, Explanation, KindMeld, KindRow, Label, NextButton, partStyles, useAnswer, Verdict, type ThemeViewProps } from './PuzzleParts';
+import { Answer, Checking, Explanation, KindMeld, KindRow, Label, NextButton, partStyles, useAnswer, Verdict, type ThemeViewProps } from './PuzzleParts';
 
 /**
  * Value: several discards leave the hand ready; they differ in how many winning tiles stay live
@@ -14,48 +14,50 @@ import { Answer, Explanation, KindMeld, KindRow, Label, NextButton, partStyles, 
  * (average and best 台 of a win, its patterns, winning tiles, and its expected score as a share of
  * the best), so the player sees why the accepted ones are fine and the others worse.
  */
-export function ValuePuzzleView({ puzzle, onResult, onNext, nextLabel, autoAdvance }: ThemeViewProps<ValuePuzzle>) {
+export function ValuePuzzleView({ question, judge, onResult, onNext, nextLabel, autoAdvance }: ThemeViewProps<ValueQuestion>) {
   const { t, locale } = useT();
   const [picked, setPicked] = useState<number | null>(null);
-  const { answered, report } = useAnswer('value', puzzle.difficulty, onResult, onNext, autoAdvance);
-  const projections = useMemo(() => valueProjections(puzzle), [puzzle]);
+  // `revealed` (the whole puzzle) is null until the verdict: the projections and the explanation come from it.
+  const { answered, revealed, submit, checking } = useAnswer(question, judge, onResult, onNext, autoAdvance);
+  const projections = useMemo(() => (revealed ? valueProjections(revealed) : []), [revealed]);
   const pick = (i: number) => {
-    if (answered !== null) return;
+    if (picked !== null) return;
     setPicked(i);
-    report(checkPuzzleAnswer(puzzle, puzzle.hand[i]), puzzle.hand[i]);
+    submit(question.hand[i]);
   };
   return (
     <View style={{ gap: 8 }}>
       <P dim>{t('puzzles.value.intro')}</P>
       <Row style={{ flexWrap: 'wrap', rowGap: 6 }} gap={6}>
-        <Pill size="sm" text={t('puzzles.value.seatWind', { wind: tileName(puzzle.seatWind, locale) })} />
-        <Pill size="sm" text={t('puzzles.value.roundWind', { wind: tileName(KIND_WIND + puzzle.prevailingWind, locale) })} />
+        <Pill size="sm" text={t('puzzles.value.seatWind', { wind: tileName(question.seatWind, locale) })} />
+        <Pill size="sm" text={t('puzzles.value.roundWind', { wind: tileName(KIND_WIND + question.prevailingWind, locale) })} />
       </Row>
-      {puzzle.melds.length > 0 && (
+      {question.melds.length > 0 && (
         <>
           <Label>{t('puzzles.value.yourMelds')}</Label>
           <View style={styles.melds}>
-            {puzzle.melds.map((m, i) => (
+            {question.melds.map((m, i) => (
               <KindMeld key={i} meld={m} size="sm" />
             ))}
           </View>
         </>
       )}
       <View style={partStyles.hand}>
-        {puzzle.hand.map((k, i) => (
+        {question.hand.map((k, i) => (
           <Tile
             key={i}
             kind={k}
             size="md"
             onPress={() => pick(i)}
             selected={picked === i}
-            highlight={answered !== null ? (puzzle.answers.includes(k) ? 'good' : picked === i ? 'bad' : undefined) : undefined}
+            highlight={revealed ? (revealed.answers.includes(k) ? 'good' : picked === i ? 'bad' : undefined) : undefined}
             accessibilityLabel={tileName(k, locale)}
           />
         ))}
       </View>
-      {answered !== null && (
-        <Answer spoken={[t(answered ? 'puzzles.value.good' : 'puzzles.value.bad'), explanationFor(puzzle, locale)].join(' ')}>
+      <Checking show={checking} />
+      {revealed && answered !== null && (
+        <Answer spoken={[t(answered ? 'puzzles.value.good' : 'puzzles.value.bad'), explanationFor(revealed, locale)].join(' ')}>
           <Verdict good={answered} goodKey="puzzles.value.good" badKey="puzzles.value.bad" />
           <Label>{t('puzzles.value.projections')}</Label>
           <Row style={{ flexWrap: 'wrap', alignItems: 'stretch', rowGap: 6 }}>
@@ -63,7 +65,7 @@ export function ValuePuzzleView({ puzzle, onResult, onNext, nextLabel, autoAdvan
               <Projection key={p.kind} p={p} />
             ))}
           </Row>
-          <Explanation puzzle={puzzle} />
+          <Explanation puzzle={revealed} />
           <NextButton onNext={onNext} autoAdvance={autoAdvance} label={nextLabel} />
         </Answer>
       )}

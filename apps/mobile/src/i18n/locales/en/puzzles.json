@@ -10,7 +10,8 @@
     "rush": "Puzzle Rush",
     "done": "Done",
     "next": "Next",
-    "about": "Everyone gets the same puzzle on the same date, and a new one at local midnight. Weekends are harder. Any attempt keeps your streak going."
+    "about": "Everyone gets the same puzzle on the same date, and a new one at local midnight. Weekends are harder. Any attempt keeps your streak going.",
+    "loading": "Getting today’s puzzle from the game server…"
   },
   "rush": {
     "title": "Puzzle Rush",

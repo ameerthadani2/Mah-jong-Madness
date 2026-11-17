@@ -1,12 +1,12 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ScrollView, StyleSheet, View } from 'react-native';
-import { dailyPuzzle, dailySeed, RUSH_SECONDS, RUSH_STRIKES, rushScore, type AnyPuzzle } from '@mjm/engine';
+import { dailyPuzzle, dailySeed, judgePuzzleAnswer, RUSH_SECONDS, RUSH_STRIKES, rushScore, type PuzzleQuestion } from '@mjm/engine';
 import { randomHex } from '@mjm/net';
 import { useApp } from '../app-state';
 import { effectiveStreak, todayKey } from '../storage';
 import { nextDailyProgress } from '../logic/daily';
 import { localDayAsUtc } from '../logic/dates';
-import { dailyDifficulty, puzzleDifficultyOf, PUZZLE_TYPE_KEYS, type PuzzleResult } from '../logic/puzzle';
+import { dailyDifficulty, PUZZLE_TYPE_KEYS, type Judge, type PuzzleResult } from '../logic/puzzle';
 import { rateAnswerIn, recordRush } from '../logic/rating';
 import { nextFreeRushText, rushDifficulty, rushOutcome, rushPuzzleAt } from '../logic/rush';
 import { canUse, consume } from '../monetisation/store';
@@ -28,18 +28,19 @@ export function DailyPuzzleScreen() {
   // One puzzle per local calendar day, recorded under the same local date key.
   const [day] = useState(() => new Date());
   const today = todayKey(day);
-  const puzzle = useMemo(() => dailyPuzzle(localDayAsUtc(day)), [day]);
+  // Made on the device only when it is played here (no session, or the server cannot be used): a ranked daily is the server's question.
+  const local = useMemo(() => dailyPuzzle(localDayAsUtc(day)), [day]);
   const difficulty = dailyDifficulty(localDayAsUtc(day));
   const attemptedBefore = app.progress.dailySolved[today] !== undefined;
   const [done, setDone] = useState(attemptedBefore);
   const [wasCorrect, setWasCorrect] = useState<boolean | null>(null);
   const streak = effectiveStreak(app.progress);
-  // With a session, opening the puzzle starts the server's clock (the same attempt on every reopening), and the
-  // answer finishes it; without one, or when the server cannot be reached, it plays here, unranked.
+  // With a session, opening the puzzle starts the server's clock (the same attempt on every reopening) and the server
+  // serves it as its question; the answer finishes it and reveals the whole puzzle. Without one, or when the server
+  // cannot be reached, it plays here, unranked.
   const { server, userId } = usePuzzleServer();
   const link = useRef<Promise<DailyLink> | null>(null);
   const [linked, setLinked] = useState<DailyLink | null>(null);
-  const [sending, setSending] = useState(false);
   const [outcome, setOutcome] = useState<DailyOutcome | null>(null);
   // Whether today's puzzle was already played when the screen opened (answering marks it played at once).
   const [playedAtOpen] = useState(attemptedBefore);
@@ -50,6 +51,16 @@ export function DailyPuzzleScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [server]);
 
+  // The answer to the server's question goes to the server: its verdict and the revealed puzzle are what the view
+  // shows. If the server cannot judge it after all, it is judged here against the day's puzzle, unranked.
+  const judgeRanked: Judge = async (answer) => {
+    // The view says it is checking with the server meanwhile.
+    serverRating.clearChange();
+    const o = linked ? await submitDaily(server, linked, answer) : ({ ranked: false, down: true } as const);
+    if (o.ranked && userId) serverRating.submitted(userId, o.rating, Date.now());
+    setOutcome(o);
+    return o.ranked ? { correct: o.correct, puzzle: o.revealed } : { correct: judgePuzzleAnswer(local, answer), puzzle: local };
+  };
   const onResult = (r: PuzzleResult) => {
     setDone(true);
     setWasCorrect(r.correct);
@@ -58,20 +69,11 @@ export function DailyPuzzleScreen() {
       const next = nextDailyProgress(p, r.correct, today);
       return next === p ? p : rateAnswerIn('daily', { ...next, drillsPlayed: p.drillsPlayed + 1, drillsCorrect: p.drillsCorrect + (r.correct ? 1 : 0) }, 'discard', difficulty, r.correct, Date.now());
     });
-    if (playedAtOpen) return;
-    // The verdict, time and rating shown are the server's once it answers.
-    serverRating.clearChange();
-    setSending(true);
-    const pending = link.current ?? openDaily(server, today);
-    void pending
-      .then((l) => submitDaily(server, l, r.answer, r.correct))
-      .then((o) => {
-        if (o.ranked && userId) serverRating.submitted(userId, o.rating, Date.now());
-        if (o.ranked && o.mismatch) setWasCorrect(o.correct);
-        setOutcome(o);
-        setSending(false);
-      });
+    // Played here: not ranked, and the note says why (no session, the server down, or its refusal).
+    if (!playedAtOpen && !linked?.ranked) setOutcome(linked && !linked.ranked ? linked : { ranked: false, down: true });
   };
+  // With a session, the puzzle waits for the server's question (or its refusal) before it is shown.
+  const waiting = !playedAtOpen && !!server && linked === null && !done;
 
   return (
     <ScrollView contentContainerStyle={styles.wrap}>
@@ -97,11 +99,17 @@ export function DailyPuzzleScreen() {
               <Button kind="secondary" icon="trophy" title={t('puzzles.boards.seeBoard')} onPress={() => app.go({ name: 'leaderboards', board: 'daily' })} testID="daily-leaderboard" />
             </Row>
           </>
+        ) : waiting ? (
+          <View testID="daily-starting" accessibilityLiveRegion="polite">
+            <P dim>{t('puzzles.daily.loading')}</P>
+          </View>
+        ) : linked?.ranked ? (
+          <PuzzleView question={linked.question} judge={judgeRanked} onResult={onResult} onNext={app.back} nextLabel={t(done ? 'puzzles.daily.done' : 'puzzles.daily.next')} />
         ) : (
-          <PuzzleView puzzle={puzzle} onResult={onResult} onNext={app.back} nextLabel={t(done ? 'puzzles.daily.done' : 'puzzles.daily.next')} />
+          <PuzzleView puzzle={local} difficulty={difficulty} onResult={onResult} onNext={app.back} nextLabel={t(done ? 'puzzles.daily.done' : 'puzzles.daily.next')} />
         )}
       </Card>
-      {!playedAtOpen && <ServerNote link={linked} outcome={outcome} sending={sending} testID="daily-server-note" />}
+      {!playedAtOpen && <ServerNote link={linked} outcome={outcome} sending={false} testID="daily-server-note" />}
       {done && wasCorrect !== null && (
         <Row style={{ flexWrap: 'wrap' }}>
           <Button kind="secondary" icon="trophy" title={t('puzzles.boards.seeBoard')} onPress={() => app.go({ name: 'leaderboards', board: 'daily' })} testID="daily-leaderboard" />
@@ -211,14 +219,14 @@ function PuzzleRushRun({ onAgain, onStart }: { onAgain: () => void; /** The firs
   const { server, userId } = usePuzzleServer();
   const [localSeed] = useState(() => `rush-${randomHex(4)}`);
   const [link, setLink] = useState<RushLink | null>(null);
-  // A ranked run's puzzles as the server served them, by index.
-  const [served, setServed] = useState<Record<number, AnyPuzzle>>({});
+  // A ranked run's puzzles as the server served them (questions: the answers come with each verdict), by index.
+  const [served, setServed] = useState<Record<number, PuzzleQuestion>>({});
   useEffect(() => {
     let live = true;
     serverRating.clearChange();
     void openRush(server, localSeed).then((l) => {
       if (!live) return;
-      if (l.ranked) setServed({ [l.first.index]: l.first.puzzle });
+      if (l.ranked) setServed({ [l.first.index]: l.first.question });
       setLink(l);
     });
     return () => {
@@ -238,8 +246,10 @@ function PuzzleRushRun({ onAgain, onStart }: { onAgain: () => void; /** The firs
   const recorded = useRef(false);
   // The last ranked answer on its way to the server: the run is finished only after it has arrived.
   const inflight = useRef<Promise<RushStep> | null>(null);
-  // A ranked run shows the puzzle the server sent (null while the next one is on its way); a local run makes its own.
-  const puzzle = useMemo(() => (!link ? null : link.ranked ? (served[index] ?? null) : rushPuzzleAt(link.seed, index)), [link, served, index]);
+  // A ranked run shows the question the server sent (null while the next one is on its way); a local run makes its own puzzles.
+  const question = link?.ranked ? (served[index] ?? null) : null;
+  const local = useMemo(() => (link && !link.ranked ? rushPuzzleAt(link.seed, index) : null), [link, index]);
+  const shownType = question?.type ?? local?.type ?? null;
   const [answeredOnce, setAnsweredOnce] = useState(false);
   // Seconds played so far: the clock stops when the run ends, so this is the run's time once over.
   const elapsed = RUSH_SECONDS - left;
@@ -284,21 +294,37 @@ function PuzzleRushRun({ onAgain, onStart }: { onAgain: () => void; /** The firs
     app.back();
   };
 
+  // The run counts from the first answer given (and spends a free run then), whether or not its verdict has come back.
+  const begin = () => {
+    if (answeredOnce) return;
+    onStart();
+    setAnsweredOnce(true);
+  };
+  // A ranked answer is posted as it is made: the server judges and stamps it, reveals the puzzle and sends the next
+  // question (or ends the run). An answer that does not reach the server ends the run here.
+  const judgeRanked: Judge = (answer) => {
+    begin();
+    if (!link?.ranked) return null;
+    const step = sendRushAnswer(server, link, index, answer, score);
+    inflight.current = step;
+    return step.then((st) => {
+      if (st.kind === 'next') {
+        setServed((m) => ({ ...m, [st.next.index]: st.next.question }));
+        return { correct: st.correct, puzzle: st.revealed };
+      }
+      // The third strike comes back with its verdict: the view reports it and the strikes end the run. Anything else
+      // (an answer after the clock, a lost or refused answer) ends the run here.
+      if (st.revealed && st.correct !== undefined) return { correct: st.correct, puzzle: st.revealed };
+      setOver(true);
+      return null;
+    });
+  };
+
   const onResult = (r: PuzzleResult) => {
-    if (!answeredOnce) onStart();
-    if (link?.ranked) {
-      // Posted as it is made: the server judges and stamps it and sends the next puzzle (or ends the run).
-      const step = sendRushAnswer(server, link, index, r.answer, score + (r.correct ? 1 : 0));
-      inflight.current = step;
-      void step.then((st) => {
-        if (st.kind === 'next') setServed((m) => ({ ...m, [st.next.index]: st.next.puzzle }));
-        else if (st.outcome.ranked || st.outcome.lost) setOver(true);
-      });
-    }
+    begin();
     if (r.correct) setScore((s) => s + 1);
     else setStrikes((s) => s + 1);
-    setAnsweredOnce(true);
-    const difficulty = r.difficulty ?? (puzzle ? puzzleDifficultyOf(puzzle, rushDifficulty(index)) : rushDifficulty(index));
+    const difficulty = r.difficulty ?? rushDifficulty(index);
     // Rush answers do not move the rating (the engine's rule, which the server follows too): this is a no-op kept for the rule's sake.
     app.setProgress((p) => rateAnswerIn('rush', p, r.type, difficulty, r.correct, Date.now()));
   };
@@ -361,16 +387,20 @@ function PuzzleRushRun({ onAgain, onStart }: { onAgain: () => void; /** The firs
           <View testID="rush-starting">
             <P dim>{t('puzzles.server.starting')}</P>
           </View>
-        ) : !puzzle ? (
+        ) : !shownType ? (
           <View testID="rush-loading" accessibilityLiveRegion="polite">
             <P dim>{t('puzzles.rush.loadingNext')}</P>
           </View>
         ) : (
           <>
             <P dim style={{ fontSize: 12 }}>
-              {t('puzzles.rush.progress', { n: index + 1, type: t(PUZZLE_TYPE_KEYS[puzzle.type]) })}
+              {t('puzzles.rush.progress', { n: index + 1, type: t(PUZZLE_TYPE_KEYS[shownType]) })}
             </P>
-            <PuzzleView puzzle={puzzle} onResult={onResult} onNext={() => setIndex((i) => i + 1)} autoAdvance />
+            {question ? (
+              <PuzzleView question={question} judge={judgeRanked} onResult={onResult} onNext={() => setIndex((i) => i + 1)} autoAdvance />
+            ) : local ? (
+              <PuzzleView puzzle={local} difficulty={rushDifficulty(index)} onResult={onResult} onNext={() => setIndex((i) => i + 1)} autoAdvance />
+            ) : null}
           </>
         )}
       </Card>
