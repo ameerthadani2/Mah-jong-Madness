@@ -543,7 +543,7 @@ export interface BotOptions {
 export const BOT_SKILLS: Record<BotSkill, { label: string; labelZh: string; description: string; rating: number }> = {
   beginner: { label: 'Beginner', labelZh: '新手', description: 'Makes efficiency mistakes and never folds. Good for learning the flow.', rating: 800 },
   club: { label: 'Club player', labelZh: '牌友', description: 'Solid tile efficiency, claims when it helps, and leans away from a player who looks ready.', rating: 1400 },
-  pro: { label: 'Pro', labelZh: '高手', description: "Estimates how dangerous each discard is and may fold against a player who looks ready. It plays by the policy the coach's advice comes from.", rating: 1900 },
+  pro: { label: 'Pro', labelZh: '高手', description: "Folds far more often than Club when its hand is far from ready: two or more tiles from ready, it deals in 2.4% of the time against Club's 4.5%. Overall it scores only a little more than Club. It plays by the policy the coach's advice comes from.", rating: 1900 },
 };
 
 /** Decide an action for `seat`, or null if it is not their move. */

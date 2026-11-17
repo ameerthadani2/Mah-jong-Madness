@@ -62,6 +62,34 @@ describe('store listings', () => {
     for (const p of SUBSCRIPTIONS) expect(read('en'), p.id).toContain(`\`${p.storeId}\``);
   });
 
+  it('names the puzzle leaderboards in the description and in What’s new, within the release-notes limit', () => {
+    expect(section(read('en'), 'Description')).toMatch(/leaderboards/);
+    expect(section(read('zh-TW'), '說明')).toContain('排行榜');
+    const notes = { en: section(read('en'), 'What\'s new (first release)'), zh: section(read('zh-TW'), '新功能（首次發布）') };
+    expect(notes.en).toMatch(/leaderboards/);
+    expect(notes.zh).toContain('排行榜');
+    // Google Play's release notes are the shorter field (500 characters).
+    for (const n of Object.values(notes)) expect([...n].length).toBeLessThanOrEqual(500);
+  });
+
+  it('says of the Pro bots only what was measured: it folds far more when far from ready, and its edge over Club is small', () => {
+    const en = section(read('en'), 'Description');
+    expect(en).toMatch(/a pro that folds far more often when its hand is far from ready/);
+    expect(en).not.toMatch(/weighs the value|danger of each discard|strongest|expert/i);
+    expect(section(read('zh-TW'), '說明')).toMatch(/手牌離聽牌還遠時更常棄胡防守的高手/);
+    expect(section(read('zh-TW'), '說明')).not.toMatch(/危險程度/);
+    // The bot descriptions in Settings and the lobby, in both languages, give the measured figures.
+    const locales = join(__dirname, '..', 'i18n', 'locales');
+    for (const lang of ['en', 'zh-TW']) {
+      const common = JSON.parse(readFileSync(join(locales, lang, 'common.json'), 'utf8')) as { bots: { pro: string } };
+      const settings = JSON.parse(readFileSync(join(locales, lang, 'settings.json'), 'utf8')) as { botAbout: { pro: string } };
+      for (const text of [common.bots.pro, settings.botAbout.pro]) {
+        expect(text, lang).toContain('2.4%');
+        expect(text, lang).toContain('4.5%');
+      }
+    }
+  });
+
   it('the title is Mahjong Mania: Taiwan 16 and the Chinese name is 麻將狂熱', () => {
     expect(section(read('en'), 'Name')).toBe('Mahjong Mania: Taiwan 16');
     expect(section(read('zh-TW'), '名稱')).toContain('麻將狂熱');

@@ -28,7 +28,7 @@
   "botAbout": {
     "beginner": "Makes efficiency mistakes and never folds. Good for learning the flow.",
     "club": "Solid tile efficiency, claims when it helps, and leans away from a player who looks ready.",
-    "pro": "Estimates how dangerous each discard is and may fold against a player who looks ready. It plays by the policy the coach's advice comes from."
+    "pro": "Folds far more often than Club when its hand is far from ready: two or more tiles from ready, it deals in 2.4% of the time against Club's 4.5%. Overall it scores only a little more than Club. It plays by the policy the coach's advice comes from."
   },
   "houseRules": "House rules (台灣麻將)",
   "presets": {

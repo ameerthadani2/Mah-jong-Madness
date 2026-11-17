@@ -26,10 +26,10 @@ EVERY HAND CHECKED
 Before any tile is dealt, every seat and the server commit to a secret, and the wall is derived from all of them. Every hand is logged and checked on your phone: after the hand it re-derives the shuffle, replays the hand and checks the result. The result sheet shows Verified when this device saw the whole deal, or says plainly what it could not check.
 
 LEARN AND IMPROVE
-Lessons in six tracks (basics, efficiency, calling, 台 value, defence, scoring) written for 16-tile play, with quizzes checked by the engine. A daily puzzle, Puzzle Rush, discard and wait drills, and a coach that explains every suggestion. After a hand, the review grades each decision and shows the better move.
+Lessons in six tracks (basics, efficiency, calling, 台 value, defence, scoring) written for 16-tile play, with quizzes checked by the engine. A daily puzzle and Puzzle Rush with leaderboards (worldwide or within your club), discard and wait drills, and a coach that explains every suggestion. After a hand, the review grades each decision and shows the better move.
 
 PLAY OFFLINE
-Bots at three levels, from a beginner who grabs every pong, through a steady club player, to a pro that weighs the value of its hand and the danger of each discard. No connection needed.
+Bots at three levels, from a beginner who grabs every pong, through a steady club player, to a pro that folds far more often when its hand is far from ready. No connection needed.
 
 MAKE THE TABLE YOURS
 Table felts, tile backs, avatar frames, emote packs and win celebrations, bought with diamonds. They change only how the game looks.
@@ -47,7 +47,7 @@ Scores and diamonds have no monetary value and cannot be redeemed or transferred
 mahjong,taiwanese,16 tile,台灣麻將,麻將,club,friends,puzzle,lessons,coach
 
 ## What's new (first release)
-First release: clubs with house rules, checked shuffles, lessons and puzzles, bots at three strengths, and table looks to collect.
+First release: clubs with house rules, checked shuffles, lessons, puzzles with leaderboards, bots at three strengths, and table looks to collect.
 
 ## In-app purchases to list in App Store Connect and Play Console
 Coach Gold monthly and yearly (`coach.gold.month`, `coach.gold.year`); The Four Winds Club monthly and yearly (`fourwinds.month`, `fourwinds.year`); diamond packs `diamonds.60`, `diamonds.300`, `diamonds.600`, `diamonds.1300`, `diamonds.3450`, `diamonds.7500`. Display names and descriptions: `apps/mobile/src/i18n/locales/en/shop.json` (`products`).
