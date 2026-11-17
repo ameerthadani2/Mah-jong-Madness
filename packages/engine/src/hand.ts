@@ -235,6 +235,45 @@ export function shanten(counts: Counts, setsNeeded: number): number {
   return expected - best[setsNeeded * 2 + 1];
 }
 
+/**
+ * 嚦咕嚦咕 shanten of a concealed hand (16 or 17 tiles, no melds): how many tile exchanges it is
+ * from ready for seven pairs and a triplet, on the same scale as `shanten` (0 ready, -1 complete).
+ *
+ * The target is eight different kinds, seven held twice and one three times (four identical tiles
+ * are never two pairs), so the most tiles a hand can share with it is the eight largest of
+ * min(count, 2), plus one when some kind is held three or four times to be the triplet. As with
+ * `shanten`, the distance is (16 − that overlap).
+ */
+export function liguShanten(counts: Counts): number {
+  const n = totalCount(counts);
+  if (n !== LIGU_TILES - 1 && n !== LIGU_TILES) throw new Error(`liguShanten: expected ${LIGU_TILES - 1} or ${LIGU_TILES} tiles, got ${n}`);
+  // How many kinds are held at least twice, and exactly once; any held three or more times.
+  let twos = 0;
+  let ones = 0;
+  let triplet = 0;
+  for (let k = 0; k < NUM_PLAY_KINDS; k++) {
+    const c = counts[k];
+    if (c >= 2) twos++;
+    else if (c === 1) ones++;
+    if (c >= 3) triplet = 1;
+  }
+  const pairs = Math.min(LIGU_KINDS, twos);
+  const singles = Math.min(LIGU_KINDS - pairs, ones);
+  return LIGU_TILES - 1 - (2 * pairs + singles + triplet);
+}
+
+/** Kinds in a 嚦咕嚦咕: seven pairs and a triplet. */
+const LIGU_KINDS = 8;
+
+/**
+ * Shanten counting 嚦咕嚦咕 as well when `ligu` (the table plays it): the smaller of the two
+ * distances while the hand has no melds, the standard one otherwise.
+ */
+export function bestShanten(counts: Counts, setsNeeded: number, ligu = false): number {
+  const std = shanten(counts, setsNeeded);
+  return ligu && setsNeeded === TOTAL_SETS ? Math.min(std, liguShanten(counts)) : std;
+}
+
 const GROUPS: Array<[number, number, boolean]> = [
   [0, 9, false],
   [9, 18, false],
