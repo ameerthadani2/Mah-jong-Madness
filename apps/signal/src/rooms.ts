@@ -336,11 +336,15 @@ export class RoomRegistry {
   /**
    * Create a server-hosted room with no peers yet: a club table opened from the API, or a table
    * restored from its snapshot after a restart. A restored table keeps its code; if that code is
-   * malformed or already live, this throws rather than resume the table under another code.
+   * malformed or already live, this throws rather than resume the table under another code. A
+   * restored table is never refused for `maxHostedTables` or `maxTablesPerUser`: the caps govern
+   * opening new tables only.
    */
   createHostedRoom(opts: HostedRoomOptions = {}): string {
     if (!this.opts.allowHosted) throw new RoomLimitError(HOSTED_DISABLED);
-    if (this.hostedCount() >= this.maxHostedTables()) throw new RoomLimitError(SERVER_FULL);
+    // The cap governs opening new tables only: a live table restored at boot is never refused
+    // for it (the cap may have been lowered), so no match in progress ends with a restart.
+    if (!opts.restore && this.hostedCount() >= this.maxHostedTables()) throw new RoomLimitError(SERVER_FULL);
     if (!opts.restore && opts.createdBy && this.openTablesOf(opts.createdBy) >= this.maxTablesPerUser()) throw new RoomLimitError(TABLE_CAP);
     const wanted = opts.restore ? opts.restore.roomCode : opts.code;
     const usable = typeof wanted === 'string' && /^[A-Z0-9]{4,8}$/.test(wanted) && !this.rooms.has(wanted);

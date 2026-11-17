@@ -313,7 +313,11 @@ complete.
 **Capacity.** `MAX_HOSTED_TABLES=200` fits one `shared-cpu-1x` machine with 512 MB: 200 tables of
 four players are 800 WebSockets, under the `[http_service.concurrency]` `hard_limit` of 1000 with
 room for onlookers and reconnects. Raise both together (and the machine size) when the tables run
-out: the hard limit must stay above 4 x `MAX_HOSTED_TABLES` plus onlookers.
+out: the hard limit must stay above 4 x `MAX_HOSTED_TABLES` plus onlookers. The cap governs
+opening new tables only: at boot every live table is restored from its snapshot, however many there
+are, so lowering `MAX_HOSTED_TABLES` ends no match in progress; new tables are refused until the
+count is back under the cap (those restored tables still need their sockets, so lower the cap and
+the hard limit together once the restored tables have finished).
 
 ## Backups and recovery
 

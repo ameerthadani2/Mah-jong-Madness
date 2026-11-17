@@ -218,9 +218,10 @@ export class TablePersister {
   }
 
   /**
-   * Reopen every table that had not finished. A snapshot that cannot be restored (malformed, an
-   * unknown version, or the server is full) is logged and marked finished, so it is not retried
-   * at every boot. Returns the codes restored.
+   * Reopen every table that had not finished, however many there are (the hosted-table cap
+   * governs opening new tables only, so lowering it ends no live match). A snapshot that cannot be
+   * restored (malformed, an unknown version, or hosted tables turned off) is logged and marked
+   * finished, so it is not retried at every boot. Returns the codes restored.
    */
   async restore(): Promise<string[]> {
     const restored: string[] = [];
