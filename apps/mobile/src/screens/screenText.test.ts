@@ -43,12 +43,11 @@ describe('results and errors away from the table are spoken by a screen reader',
     expect(translator('zh-TW')('learn.rush.solved', { count: 3 })).toBe('已解 3 題');
   });
 
-  it('the Shop, the Clubs screens, the Account card and the age gate speak what they report', () => {
+  it('the Shop, the Clubs screens and the age gate speak what they report', () => {
+    // The Account card's error (assertive) and notice (polite) are rendered in src/screens/Account.render.test.tsx.
     expect(read('screens/ShopScreen.tsx')).toMatch(/<Live message=\{msg\.text\}/);
     expect(read('screens/ClubsScreen.tsx')).toMatch(/<Live message=\{error\} assertive/);
     expect(read('screens/ClubsScreen.tsx')).toMatch(/<Live message=\{messages\.notice\}/);
-    expect(read('screens/AccountCard.tsx')).toMatch(/<Live message=\{notice\}/);
-    expect(read('screens/AccountCard.tsx')).toMatch(/<Live message=\{friendlyError\(auth\.error, t\)\} assertive/);
     expect(read('components/AgeGate.tsx')).toMatch(/<Live message=\{t\('legal\.age\.invalid'\)\} assertive/);
   });
 });

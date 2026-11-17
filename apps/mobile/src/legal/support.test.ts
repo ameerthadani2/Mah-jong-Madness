@@ -53,7 +53,5 @@ describe('copy that sends a player to support', () => {
     expect(read('screens/SettingsScreen.tsx')).toMatch(/<SupportLink \/>/);
   });
 
-  it('says a ban once on the account card', () => {
-    expect(read('screens/AccountCard.tsx')).toMatch(/auth\.error && !auth\.banned/);
-  });
+  // The account card saying a ban once (no second banner for the refusal) is rendered in src/screens/Account.render.test.tsx.
 });
