@@ -293,7 +293,13 @@ const isolatedRule = (p: DiscardPuzzle): boolean => {
 
 describe('the daily and hard discard puzzles need comparing shapes', () => {
   // Before: the isolated-tile rule was right on 271 of the next 365 dailies, 227 of 300 medium and 184 of 300 hard puzzles.
-  const dailies = Array.from({ length: 120 }, (_, i) => dailyPuzzle(new Date(Date.UTC(2026, 11, 1 + i))));
+  const dailyMs: number[] = [];
+  const dailies = Array.from({ length: 120 }, (_, i) => {
+    const t0 = performance.now();
+    const p = dailyPuzzle(new Date(Date.UTC(2026, 11, 1 + i)));
+    dailyMs.push(performance.now() - t0);
+    return p;
+  });
   const hard = Array.from({ length: 150 }, (_, i) => discardPuzzle(`shapes-${i}`, 3));
   const medium = Array.from({ length: 150 }, (_, i) => discardPuzzle(`shapes-${i}`, 2));
 
@@ -301,6 +307,10 @@ describe('the daily and hard discard puzzles need comparing shapes', () => {
     const right = dailies.filter(isolatedRule).length;
     expect(right).toBeLessThan(0.4 * dailies.length);
     expect(right).toBeGreaterThan(0.1 * dailies.length);
+    // Redrawing costs a few attempts: still a few milliseconds a puzzle (the slowest of 365 dates took about 160 ms on an easy day).
+    const ms = [...dailyMs].sort((a, b) => a - b);
+    expect(ms[60]).toBeLessThan(timeBound(20));
+    expect(ms[119]).toBeLessThan(timeBound(500));
   });
 
   it('and on under half of the hard puzzles; medium moves partway', () => {
