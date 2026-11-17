@@ -7,7 +7,7 @@ import { spawn } from 'node:child_process';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { loadConfig, missingProductionEnv, missingProductionEnvMessage, storeConfigWarning, weakPepperMessage, weakPepperProblems } from '../src/config';
-import { hostLockTarget } from '../src/db';
+import { hostLockTarget, isPooledDatabase } from '../src/db';
 
 const ROOT = join(__dirname, '..');
 
@@ -69,6 +69,30 @@ describe('fail-closed boot', () => {
       expect(dev?.warning).toMatch(/pooled.*DATABASE_URL_DIRECT/);
     }
     expect(hostLockTarget({ NODE_ENV: 'production' })).toBeNull();
+  });
+
+  it('knows the poolers beyond Neon: port 6543, a .pooler. host and pgbouncer=true, with the same refusal', () => {
+    const direct = 'postgres://app@db.example.net:5432/db';
+    const pooled = [
+      'postgres://app@db.example.net:6543/db',
+      'postgresql://postgres.abc:pw@aws-0-eu-central-1.pooler.supabase.com:5432/postgres',
+      'postgres://app@db.example.net:5432/db?pgbouncer=true',
+      'postgres://app@db.example.net/db?sslmode=require&PgBouncer=TRUE',
+      'postgres://app@ep-cool-pooler.example.net/db',
+      'postgres://app@db.example.net:6432/db',
+    ];
+    for (const url of pooled) {
+      expect(isPooledDatabase(url), url).toBe(true);
+      expect(hostLockTarget({ NODE_ENV: 'production', DATABASE_URL: direct, DATABASE_URL_DIRECT: url })?.refusal, url).toBe(
+        '[signal] refusing to start: DATABASE_URL_DIRECT looks like a pooled connection string, but the host lock needs a direct (session) connection. Set DATABASE_URL_DIRECT to the database\'s direct (unpooled) address.',
+      );
+      expect(hostLockTarget({ NODE_ENV: 'production', DATABASE_URL: url })?.refusal, url).toMatch(/refusing to start: DATABASE_URL looks like a pooled.*Set DATABASE_URL_DIRECT/);
+    }
+    // Direct addresses, including ones that only mention a pooler in passing, still boot.
+    for (const url of [direct, 'postgres://app@db.example.net/db?pgbouncer=false', 'postgres://app@poolerhost.example.net/db', 'postgres://app@db.example.net:65432/db', 'postgres://pooler@db.example.net/pooler']) {
+      expect(isPooledDatabase(url), url).toBe(false);
+      expect(hostLockTarget({ NODE_ENV: 'production', DATABASE_URL: direct, DATABASE_URL_DIRECT: url }), url).toEqual({ url });
+    }
   });
 
   it('exits 1 at once in production when the host lock would use a pooled address', async () => {

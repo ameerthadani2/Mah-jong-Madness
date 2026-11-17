@@ -51,15 +51,27 @@ export function isLocalDatabase(databaseUrl: string): boolean {
   }
 }
 
+/** Ports PgBouncer and the hosted poolers listen on by default: PgBouncer's 6432, Supabase's Supavisor 6543. */
+const POOLER_PORTS = new Set(['6432', '6543']);
+
 /**
- * True when the URL goes through a transaction pooler (Neon's `-pooler` host, or PgBouncer's usual
- * port 6432), which neither keeps session state such as advisory locks nor accepts startup
- * parameters such as `statement_timeout`.
+ * True when the URL goes through a transaction pooler, which neither keeps session state such as
+ * advisory locks nor accepts startup parameters such as `statement_timeout`. A heuristic on the
+ * address, as there is nothing to ask before connecting: a `-pooler` host (Neon), a host with a
+ * `pooler` label (Supabase's `*.pooler.supabase.com`), a pooler port (6432, 6543), or the
+ * `pgbouncer=true` parameter (Prisma and others add it for PgBouncer). A pooler on some other
+ * address is not caught: set `DATABASE_URL_DIRECT` to the direct address in any case.
  */
 export function isPooledDatabase(databaseUrl: string): boolean {
   try {
     const url = new URL(databaseUrl);
-    return url.hostname.toLowerCase().includes('-pooler') || url.port === '6432';
+    const host = url.hostname.toLowerCase();
+    if (host.includes('-pooler') || host.split('.').includes('pooler')) return true;
+    if (POOLER_PORTS.has(url.port)) return true;
+    for (const [key, value] of url.searchParams) {
+      if (key.toLowerCase() === 'pgbouncer' && value.trim().toLowerCase() === 'true') return true;
+    }
+    return false;
   } catch {
     return false;
   }
