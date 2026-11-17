@@ -48,14 +48,14 @@ jobs:
       - name: Check that Pages is enabled
         id: pages
         continue-on-error: true
-        uses: actions/configure-pages@v5
+        uses: actions/configure-pages@v6
       - name: Explain the one-time setup
         if: steps.pages.outcome != 'success'
         run: |
           echo "## Web preview built, but GitHub Pages is not switched on yet" >> $GITHUB_STEP_SUMMARY
           echo "On your phone: this repo → **Settings → Pages → Build and deployment → Source: GitHub Actions**. Then re-run this workflow." >> $GITHUB_STEP_SUMMARY
           echo "::notice::Enable GitHub Pages (Settings → Pages → Source: GitHub Actions) and re-run to publish the web preview."
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v5
         if: steps.pages.outcome == 'success'
         with:
           path: apps/mobile/dist-pages
@@ -70,7 +70,7 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
       - name: Where to play, and whether the server accepts this site
         # A browser only lets this site call the game server when the server lists the site's
         # origin in CORS_ORIGINS; native apps need nothing. Ask the server, and say what to set.

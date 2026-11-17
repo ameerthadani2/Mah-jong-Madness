@@ -432,6 +432,32 @@ describe('workflow hygiene', () => {
     }
   });
 
+  it('uses only the Node 24 releases of every other action, artifact and Pages actions included', () => {
+    // The first release of each that runs on Node 24 (GitHub forces Node 20 actions onto Node 24):
+    // upload-artifact v5 still ran on Node 20; upload-pages-artifact v5 wraps upload-artifact v7.
+    const node24: Record<string, string> = {
+      'actions/upload-artifact': 'v6',
+      'actions/upload-pages-artifact': 'v5',
+      'actions/deploy-pages': 'v5',
+      'actions/configure-pages': 'v6',
+      'expo/expo-github-action': '5273c2136bd09c2a341fe3340d3e767ce5a13015',
+      'superfly/flyctl-actions/setup-flyctl': 'ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1',
+      'actions/checkout': 'v5',
+      'actions/setup-node': 'v5',
+    };
+    const seen = new Set<string>();
+    for (const file of workflows) {
+      const text = readFileSync(join(ROOT, '.github/workflows', file), 'utf8');
+      for (const [, action, version] of text.matchAll(/uses: ([\w./-]+)@(\S+)/g)) {
+        expect(Object.keys(node24), `${file}: ${action} has no known Node 24 release here`).toContain(action);
+        expect(version, `${file}: ${action}`).toBe(node24[action]);
+        seen.add(action);
+      }
+    }
+    expect(seen).toContain('actions/upload-artifact');
+    expect(seen).toContain('actions/upload-pages-artifact');
+  });
+
   it('gives every job a time limit and every workflow an explicit token scope', () => {
     expect(workflows.length).toBeGreaterThanOrEqual(6);
     for (const file of workflows) {
