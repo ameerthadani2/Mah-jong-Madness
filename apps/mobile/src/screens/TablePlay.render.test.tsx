@@ -5,6 +5,7 @@ import { DEFAULT_RULES, legalActions, viewToState, type Action } from '@mjm/engi
 import { TableScreen } from './TableScreen';
 import { createLocalSession, type Session } from '../game/session';
 import { FakeProviders } from '../test/providers';
+import { setLocalePreference } from '../i18n';
 
 /**
  * The table played through the rendered screen: an offline table with three bots, on fake timers (the bots move every
@@ -86,6 +87,23 @@ async function playUntil(want: (a: Action[]) => boolean, limit = 400) {
   throw new Error('the table never reached the wanted moment');
 }
 
+describe('the seats', () => {
+  afterEach(() => setLocalePreference('auto'));
+
+  it('name each bot as a bot, in the sentence the language gives', async () => {
+    setLocalePreference('zh-TW');
+    await renderTable();
+    const bots = client().state.seats.filter((s) => s.isBot);
+    expect(bots).toHaveLength(3);
+    // The host names a bot in English ("小美 (Bot)"); a Chinese table says 電腦 instead.
+    for (const b of bots) {
+      const base = b.name.replace(/ \(Bot\)$/, '');
+      expect(screen.getAllByText(`${base}（電腦）`).length).toBeGreaterThan(0);
+      expect(screen.queryAllByText(b.name)).toHaveLength(0);
+    }
+  });
+});
+
 describe('my own turn', () => {
   it('a first tap selects a tile and a second tap on it discards it', async () => {
     await renderTable();
@@ -122,6 +140,9 @@ describe('my own turn', () => {
     await renderTable();
     await playUntil(myDiscardTurn);
     expect(screen.getByTestId('hud-clock').props.accessibilityLabel).toMatch(/^Your clock: 1[45] seconds left$/);
+    // The ticking chip is never a live region (it would be read every second); the notices have a polite one of their own.
+    expect(screen.getByTestId('hud-clock').props.accessibilityLiveRegion).toBeUndefined();
+    expect(screen.getByTestId('clock-notice').props.accessibilityLiveRegion).toBe('polite');
     const before = myDiscards();
     await wait(10_000);
     expect(screen.getByTestId('clock-notice')).toHaveTextContent('5 seconds left');
@@ -148,6 +169,10 @@ describe('a claim prompt', () => {
     if (pong) expect(screen.getByRole('button', { name: /^Pong: / })).toBeOnTheScreen();
     const chis = offered.filter((x) => x.type === 'chi');
     expect(screen.queryAllByRole('button', { name: /^Chow: / })).toHaveLength(chis.length);
+    // In English each Chinese verb carries its gloss.
+    expect(within(screen.getByTestId('claim-pass')).getByText('Pass')).toBeOnTheScreen();
+    if (pong) expect(within(screen.getByRole('button', { name: /^Pong: / })).getByText('Pong')).toBeOnTheScreen();
+    for (const b of screen.queryAllByRole('button', { name: /^Chow: / })) expect(within(b).getByText('Chow')).toBeOnTheScreen();
     // No tile can be thrown while a claim is up.
     expect(screen.queryByTestId('hand-discard')).toBeNull();
     await fireEvent.press(screen.getByTestId('claim-pass'));

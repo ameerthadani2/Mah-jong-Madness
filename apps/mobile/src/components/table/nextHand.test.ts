@@ -1,5 +1,3 @@
-import { readFileSync } from 'fs';
-import { join } from 'path';
 import { describe, expect, it } from 'vitest';
 import { I18n } from 'i18n-js';
 import { en, zhTW } from '../../i18n/locales';
@@ -8,7 +6,6 @@ import { nextHandAnnouncement, nextHandNote } from './nextHand';
 
 const i18n = new I18n({ en, 'zh-TW': zhTW });
 const tr = (locale: string) => (key: string, params?: Record<string, unknown>) => i18n.t(key, { ...params, locale });
-const read = (p: string) => readFileSync(join(__dirname, p), 'utf8');
 
 describe('the countdown to the next hand online', () => {
   it('shows the seconds left in both languages, or the general sentence when the host did not say', () => {
@@ -34,13 +31,6 @@ describe('the countdown to the next hand online', () => {
     expect(nextHandAnnouncement(tr('zh-TW'), 99_000, 12, deadline)).toBe('下一局將在 12 秒後開始。');
     expect(nextHandAnnouncement(t, null, null, deadline)).toBeNull();
   });
-
-  it('the online result sheet uses the countdown, and its visible line is not a live region', () => {
-    expect(read('./ResultSheet.tsx')).toContain('<NextHandCountdown deadline={state.intermissionDeadline ?? null}');
-    const parts = read('./ClockParts.tsx');
-    const fn = parts.slice(parts.indexOf('export function NextHandCountdown'));
-    expect(fn).toMatch(/<Text testID="result-auto-next" style=\{style\}>/);
-    // Exactly one live region in it: the hidden one whose words change once per hand.
-    expect(fn.slice(0, fn.indexOf('const styles')).match(/accessibilityLiveRegion/g)).toHaveLength(1);
-  });
+  // The online result sheet showing this countdown in a line that is not a live region, with one hidden polite region
+  // said once per hand, is rendered in src/components/table/ResultSheet.render.test.tsx ("the online result sheet").
 });

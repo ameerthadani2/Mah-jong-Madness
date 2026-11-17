@@ -22,7 +22,7 @@ describe('screen readers at the table', () => {
     expect(announcesOn('ios')).toBe(true);
     expect(announcesOn('android')).toBe(false);
     expect(announcesOn('web')).toBe(false);
-    expect(read('./CallBanner.tsx')).toMatch(/announce\(/);
+    // A call-out banner announced on iOS and left to its live region on Android: src/components/table/CallBanner.render.test.tsx.
     expect(read('../../screens/TableScreen.tsx')).toMatch(/useAnnounce\(linkBanner\)/);
     // That an announcement reaches iOS's screen reader is rendered in src/components/SharedA11y.render.test.tsx.
   });

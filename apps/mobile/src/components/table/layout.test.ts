@@ -259,14 +259,6 @@ describe('matchOverLayout', () => {
     expect(16 + (L.title + 12) + ranks + 46 + 5 * 6).toBeLessThanOrEqual(L.maxHeight);
   });
 
-  it('is what the match-over card is drawn with, inside a scroll view', async () => {
-    const { readFileSync } = await import('fs');
-    const { join } = await import('path');
-    const sheet = readFileSync(join(__dirname, 'ResultSheet.tsx'), 'utf8');
-    const card = sheet.slice(sheet.indexOf('export function MatchOverSheet'));
-    expect(card).toContain('const L = matchOverLayout(height);');
-    expect(card).toContain('{ maxHeight: L.maxHeight }');
-    expect(card.indexOf('<ScrollView')).toBeGreaterThan(0);
-    expect(card.indexOf('<ScrollView')).toBeLessThan(card.indexOf("t('table.backHome')"));
-  });
+  // That the match-over card is drawn with it, its standings and the way home inside one scroll view, is rendered in
+  // src/components/table/ResultSheet.render.test.tsx.
 });

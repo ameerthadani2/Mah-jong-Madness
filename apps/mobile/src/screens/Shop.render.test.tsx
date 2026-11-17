@@ -7,6 +7,13 @@ import { fireEvent, render, screen, within } from '@testing-library/react-native
 import { ShopScreen } from './ShopScreen';
 import { FakeProviders } from '../test/providers';
 
+/** Platform.OS for one test (jest-expo runs as iOS); put back after each test. */
+const realOS = Platform.OS;
+function setOS(os: typeof Platform.OS) {
+  (Platform as { OS: typeof Platform.OS }).OS = os;
+}
+afterEach(() => setOS(realOS));
+
 beforeEach(async () => {
   // An adult who answered the age gate (the Shop asks before it shows anything for sale).
   await AsyncStorage.clear();
@@ -55,7 +62,7 @@ describe('the Shop', () => {
   });
 
   it('says what a purchase did in a line a screen reader speaks', async () => {
-    jest.replaceProperty(Platform, 'OS', 'ios');
+    setOS('ios');
     const said = jest.spyOn(AccessibilityInfo, 'announceForAccessibility').mockImplementation(() => undefined);
     await renderShop();
     await fireEvent.press(await screen.findByRole('button', { name: '$0.99' }));

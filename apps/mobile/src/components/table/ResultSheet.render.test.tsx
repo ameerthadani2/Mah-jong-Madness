@@ -95,6 +95,9 @@ describe('the online result sheet', () => {
     const { unmount } = await render(<ResultSheet result={result} view={view} state={state} mySeat={0} autoNext onNext={() => {}} onLeave={() => {}} onReview={() => {}} onFairness={() => {}} />);
     expect(screen.getByTestId('result-auto-next')).toHaveTextContent('Next hand in 10 s');
     expect(screen.getByTestId('next-hand-notice')).toHaveTextContent('The next hand starts in 10 seconds.');
+    // The visible line ticks every second, so it is not a live region; the hidden notice, said once a hand, is.
+    expect(screen.getByTestId('result-auto-next').props.accessibilityLiveRegion).toBeUndefined();
+    expect(screen.getByTestId('next-hand-notice').props.accessibilityLiveRegion).toBe('polite');
     await unmount();
     await render(<ResultSheet result={result} view={view} state={{ ...base, intermissionDeadline: null } as unknown as ClientState} mySeat={0} autoNext onNext={() => {}} onLeave={() => {}} onReview={() => {}} onFairness={() => {}} />);
     expect(screen.getByTestId('result-auto-next')).toHaveTextContent('Online, the next hand starts by itself in a few seconds.');
@@ -103,6 +106,22 @@ describe('the online result sheet', () => {
 
 describe('the match-over card after a quick match', () => {
   const over = { seats: SEATS, auditStatus: 'ok', auditFailures: [], auditCaveats: [], matchOver: true, finalScores: [300, -100, -100, -100] } as unknown as ClientState;
+
+  it('scrolls its standings and the way home inside a card no taller than the screen allows', async () => {
+    await render(<MatchOverSheet state={over} onLeave={() => {}} />);
+    const scrollOf = (el: { type: unknown; parent: unknown; props: Record<string, unknown> } | null) => {
+      for (let n = el; n; n = n.parent as typeof n) if (n.type === 'RCTScrollView') return n;
+      return null;
+    };
+    const standings = scrollOf(screen.getByText('Mei') as never);
+    expect(standings).not.toBeNull();
+    // The way home is in the same scroll view, so a short screen scrolls to it rather than cutting it off.
+    expect(scrollOf(screen.getByRole('button', { name: 'Back to home' }) as never)).toBe(standings);
+    // The card is capped at a height (matchOverLayout), so a short screen scrolls it rather than cutting it.
+    const card = screen.getByTestId('match-over');
+    const style = [card.props.style].flat(Infinity).reduce((a: Record<string, unknown>, s) => ({ ...a, ...(s as object) }), {});
+    expect(typeof style.maxHeight).toBe('number');
+  });
 
   it('says the rating is being updated, then shows the new rating and its change', async () => {
     const { rerender } = await render(<MatchOverSheet state={over} onLeave={() => {}} rating="pending" />);

@@ -74,16 +74,11 @@ describe('what a screen reader hears about the clock', () => {
     expect(nextClockNotice(null, 9, { deadline: 3_000_000, total: 15, bank: false })).toBeNull();
   });
 
-  it('never makes the ticking chip a live region: the notices have a region of their own', () => {
-    const parts = read('./ClockParts.tsx');
-    const chip = parts.slice(parts.indexOf('export function HudClock'), parts.indexOf('export function ClockAnnouncer'));
-    expect(chip).not.toContain('accessibilityLiveRegion');
-    expect(chip).toContain("accessibilityLabel={t(clock.bank ? 'table.a11y.clockBankNow' : 'table.a11y.clockNow', { s: left })}");
-    const announcer = parts.slice(parts.indexOf('export function ClockAnnouncer'), parts.indexOf('export function ClockTicker'));
-    expect(announcer).toContain('accessibilityLiveRegion="polite"');
-    expect(announcer).toContain('useAnnounce(');
-    // The table speaks the five-second notice through it: src/screens/TablePlay.render.test.tsx ("shows my clock ...").
-    // No other piece that follows the clock is a live region either.
+  it('never makes a piece that follows the clock a live region: the notices have a region of their own', () => {
+    // The ticking chip (named with the seconds left) not being a live region, and the notices' own polite region, are
+    // rendered in src/screens/TablePlay.render.test.tsx ("shows my clock ..."). What stays here: the seat plates'
+    // rings in TableParts.tsx follow the clock too, and none of them is a live region (a sweep over the file, since a
+    // render shows only the seats on the clock at that moment).
     expect(read('../TableParts.tsx').match(/accessibilityLiveRegion/g) ?? []).toHaveLength(0);
   });
 

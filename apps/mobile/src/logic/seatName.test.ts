@@ -44,8 +44,9 @@ describe('bot seat names', () => {
     expect(botNamer(enBot(BOT_NAME_SLOT))('阿明')).toBe('阿明 (Bot)');
   });
 
-  it('is applied where seats are shown: the table (with its sheets) and the lobby', () => {
-    for (const screen of ['TableScreen.tsx', 'LobbyScreen.tsx']) {
+  it('is applied where seats are shown: the lobby', () => {
+    // The table naming its bots in the player's language is rendered in src/screens/TablePlay.render.test.tsx ("the seats").
+    for (const screen of ['LobbyScreen.tsx']) {
       const src = readFileSync(join(__dirname, '../screens', screen), 'utf8');
       expect(src, screen).toContain("const botLabel = t('common.botName', { name: BOT_NAME_SLOT });");
       expect(src, screen).toContain('withBotLabels(tableState, botNamer(botLabel))');

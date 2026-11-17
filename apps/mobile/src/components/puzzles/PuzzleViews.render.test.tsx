@@ -8,6 +8,13 @@ import { claimButtons, tileName, type Judged } from '../../logic/puzzle';
 import { FakeProviders } from '../../test/providers';
 import { setLocalePreference } from '../../i18n';
 
+/** Platform.OS for one test (jest-expo runs as iOS); put back after each test. */
+const realOS = Platform.OS;
+function setOS(os: typeof Platform.OS) {
+  (Platform as { OS: typeof Platform.OS }).OS = os;
+}
+afterEach(() => setOS(realOS));
+
 /**
  * The claim, defence and value puzzle views as a player meets them: what each shows before the answer, what a right
  * and a wrong answer report, and what each says once answered. Puzzles come from fixed seeds through the engine.
@@ -149,7 +156,7 @@ describe('every puzzle theme speaks its verdict and explanation', () => {
   ];
 
   it.each(themes)('%s: the verdict shows inside the answer region, nowhere else, and is announced on iOS', async (_name, puzzle, answer, verdict) => {
-    jest.replaceProperty(Platform, 'OS', 'ios');
+    setOS('ios');
     const said = jest.spyOn(AccessibilityInfo, 'announceForAccessibility').mockImplementation(() => undefined);
     await show(puzzle);
     expect(screen.queryByTestId('puzzle-answer')).toBeNull();

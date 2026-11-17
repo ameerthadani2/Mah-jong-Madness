@@ -12,13 +12,20 @@ import { Button, IconButton } from './Ui';
 import { Tile } from './Tile';
 import { setLocalePreference } from '../i18n';
 
+/** Platform.OS for one test (jest-expo runs as iOS); put back after each test. */
+const realOS = Platform.OS;
+function setOS(os: typeof Platform.OS) {
+  (Platform as { OS: typeof Platform.OS }).OS = os;
+}
+afterEach(() => setOS(realOS));
+
 afterEach(() => {
   jest.restoreAllMocks();
   setLocalePreference('auto');
 });
 
 function onPlatform(os: 'ios' | 'android') {
-  jest.replaceProperty(Platform, 'OS', os);
+  setOS(os);
   return jest.spyOn(AccessibilityInfo, 'announceForAccessibility').mockImplementation(() => undefined);
 }
 

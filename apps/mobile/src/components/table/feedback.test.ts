@@ -1,12 +1,9 @@
-import { readFileSync } from 'fs';
-import { join } from 'path';
 import { describe, expect, it } from 'vitest';
 import en from '../../i18n/locales/en/table.json';
 import zh from '../../i18n/locales/zh-TW/table.json';
 import { autoClaimed, autoDiscarded, callHaptic, plateScore, resultHaptic } from './feedback';
 import { TAP_HINT_DISCARDS, TAP_HINT_KEY, TapHintStore, tapHintVisible, type KeyValueStore } from './tapHint';
 
-const read = (p: string) => readFileSync(join(__dirname, p), 'utf8');
 
 function memory(initial: Record<string, string> = {}): KeyValueStore & { data: Record<string, string> } {
   const data = { ...initial };
@@ -80,7 +77,7 @@ describe('English gloss on the Chinese table chrome', () => {
     for (const v of Object.values(zh.claimGloss)) expect(v).toBe('');
     expect(en.status.discarded).toMatch(/discarded/);
     expect(en.relSeat.right).toMatch(/Right/);
-    expect(read('./ActionBar.tsx')).toMatch(/gloss=\{t\('table\.claimGloss\.pong'\)\}/);
+    // The claim buttons showing these glosses are rendered in src/screens/TablePlay.render.test.tsx ("a claim prompt").
   });
 });
 
