@@ -63,9 +63,9 @@ export const HINT_REASON_KEYS = {
   'hint.status.canWinSelfDraw': { en: 'You can win now (%{how}) for %{tai} 台.', 'zh-TW': '現在就能胡（%{how}），共 %{tai} 台。' },
   'hint.status.canWinDiscard': { en: 'You can win on this discard for %{tai} 台.', 'zh-TW': '這張可以胡，共 %{tai} 台。' },
   'hint.status.readyAfterDiscard': { en: 'Ready (聽牌) after this discard.', 'zh-TW': '打完這張就聽牌。' },
-  'hint.status.oneAway': { en: 'One tile from ready (一向聽).', 'zh-TW': '一向聽：再進一張就聽牌。' },
-  'hint.status.twoAway': { en: 'Two tiles from ready (兩向聽).', 'zh-TW': '兩向聽：還差兩張才聽牌。' },
-  'hint.status.manyAway': { en: '%{shanten} tiles from ready — build sets, keep pairs.', 'zh-TW': '%{shanten} 向聽：先湊面子，留住對子。' },
+  'hint.status.oneAway': { en: 'One tile from ready.', 'zh-TW': '差一張聽牌：再進一張好牌就聽牌。' },
+  'hint.status.twoAway': { en: 'Two tiles from ready.', 'zh-TW': '差兩張聽牌：還要再進兩張好牌才聽牌。' },
+  'hint.status.manyAway': { en: '%{shanten} tiles from ready — build sets, keep pairs.', 'zh-TW': '差 %{shanten} 張聽牌：先湊面子，留住對子。' },
   'hint.status.readyCount': { en: 'Ready — waiting on %{kinds} kind(s).', 'zh-TW': '聽牌：聽 %{kinds} 種牌。' },
   'hint.status.readyWaits': { en: 'Ready (聽牌) — waiting on %{waits}', 'zh-TW': '聽牌：聽 %{waits}' },
 
@@ -107,7 +107,7 @@ export const HINT_REASON_KEYS = {
     '吃碰這張雖然能更接近聽牌，但這裡保持門清更有價值。',
   ),
   ...withConcealedVariant('hint.claim.alreadyReady', 'You are already ready; claiming would not help.', '你已經聽牌了，吃碰沒有幫助。'),
-  ...withConcealedVariant('hint.claim.noGain', 'This does not reduce your shanten count.', '吃碰這張不會降低你的向聽數。'),
+  ...withConcealedVariant('hint.claim.noGain', 'This does not bring you closer to ready.', '吃碰這張不會讓你離聽牌更近。'),
 } satisfies Record<string, ReasonTemplate>;
 
 export type HintReasonKey = keyof typeof HINT_REASON_KEYS;

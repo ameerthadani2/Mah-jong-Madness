@@ -74,16 +74,16 @@ export const REVIEW_REASON_KEYS = {
     'zh-TW': '當時有對手看起來已經聽牌。打 %{actualName} 雖然離聽牌更近，但打 %{bestName} 比較安全。',
   },
   'review.discard.lessSafe': {
-    en: '%{actualName} keeps the same shanten, but %{bestName} was safer against an opponent who looked ready.',
-    'zh-TW': '打 %{actualName} 向聽數一樣，但面對看起來已經聽牌的對手，打 %{bestName} 比較安全。',
+    en: '%{actualName} leaves you as many tiles from ready, but %{bestName} was safer against an opponent who looked ready.',
+    'zh-TW': '打 %{actualName} 離聽牌一樣近，但面對看起來已經聽牌的對手，打 %{bestName} 比較安全。',
   },
   'review.discard.lessAcceptance': {
-    en: '%{actualName} keeps the same shanten but accepts %{acceptanceActual} tiles; %{bestName} accepts %{acceptanceBest}.',
-    'zh-TW': '打 %{actualName} 向聽數一樣，但只有 %{acceptanceActual} 張進張；打 %{bestName} 有 %{acceptanceBest} 張。',
+    en: '%{actualName} leaves you as many tiles from ready but accepts %{acceptanceActual} tiles; %{bestName} accepts %{acceptanceBest}.',
+    'zh-TW': '打 %{actualName} 離聽牌一樣近，但只有 %{acceptanceActual} 張進張；打 %{bestName} 有 %{acceptanceBest} 張。',
   },
   'review.discard.worseShanten': {
     en: '%{actualName} leaves you %{shantenActual} from ready; %{bestName} would leave you %{shantenBest}.',
-    'zh-TW': '打 %{actualName} 之後是 %{shantenActual} 向聽；打 %{bestName} 則是 %{shantenBest} 向聽。',
+    'zh-TW': '打 %{actualName} 之後差 %{shantenActual} 張聽牌；打 %{bestName} 則差 %{shantenBest} 張。',
   },
 
   'review.call.missedWin': { en: 'You could have won on this discard.', 'zh-TW': '這張牌你可以胡。' },
@@ -96,7 +96,7 @@ export const REVIEW_REASON_KEYS = {
   },
   'review.call.worseShanten': {
     en: 'Calling was right, but a different call would have left you %{shantenBest} from ready instead of %{shantenActual}.',
-    'zh-TW': '吃碰是對的，但換一種吃碰法會是 %{shantenBest} 向聽，而不是 %{shantenActual} 向聽。',
+    'zh-TW': '吃碰是對的，但換一種吃碰法會差 %{shantenBest} 張聽牌，而不是差 %{shantenActual} 張。',
   },
   'review.call.shouldCall': { en: 'Calling would have brought you closer to ready.', 'zh-TW': '吃碰這張能讓你更接近聽牌。' },
   'review.call.closerConcealed': {
@@ -104,8 +104,8 @@ export const REVIEW_REASON_KEYS = {
     'zh-TW': '吃碰讓你更接近聽牌，但保持門清更有價值，卻被你放棄了。',
   },
   'review.call.closerExposed': { en: 'The call moved you closer to ready, but exposed your hand for little gain.', 'zh-TW': '吃碰讓你更接近聽牌，但亮牌的收穫不大。' },
-  'review.call.noGain': { en: 'This call did not improve your shanten.', 'zh-TW': '這次吃碰沒有降低向聽數。' },
-  'review.call.noGainConcealed': { en: 'This call did not improve your shanten and gave up 門清.', 'zh-TW': '這次吃碰沒有降低向聽數，還放棄了門清。' },
+  'review.call.noGain': { en: 'This call did not bring you closer to ready.', 'zh-TW': '這次吃碰沒有讓你離聽牌更近。' },
+  'review.call.noGainConcealed': { en: 'This call did not bring you closer to ready and gave up 門清.', 'zh-TW': '這次吃碰沒有讓你離聽牌更近，還放棄了門清。' },
 
   'review.turn.win': { en: 'You took the win.', 'zh-TW': '你胡牌了。' },
   'review.turn.kong': { en: 'Kong for a replacement draw.', 'zh-TW': '開槓補牌。' },

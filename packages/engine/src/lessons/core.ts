@@ -172,13 +172,13 @@ export const CORE_LESSONS: Lesson[] = [
     titleZh: '牌效率',
     minutes: 2,
     summary: 'Discard the tiles with the fewest ways to improve. The coach shows this as shanten and acceptance.',
-    summaryZh: '先打出最難進張的牌。教練會用向聽數和進張數來顯示。',
+    summaryZh: '先打出最難進張的牌。教練會顯示你離聽牌還差幾張，以及進張數。',
     steps: [
       {
         title: 'Shanten',
-        titleZh: '向聽數',
-        body: '向聽數 counts how many exchanges you are from ready. The coach shows it every turn; aim to lower it each discard.',
-        bodyZh: '向聽數表示你還要換幾張牌才能聽牌。教練每一輪都會顯示，每打一張都要盡量讓它變少。',
+        titleZh: '離聽牌還差幾張',
+        body: 'Tiles from ready counts how many exchanges you are from ready. The coach shows it every turn; aim to lower it each discard.',
+        bodyZh: '離聽牌還差幾張，就是你還要換幾張牌才能聽牌。教練每一輪都會顯示，每打一張都要盡量讓它變少。',
       },
       {
         title: 'Keep open shapes',

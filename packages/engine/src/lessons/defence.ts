@@ -239,8 +239,8 @@ export const DEFENCE_LESSONS: Lesson[] = [
       {
         title: 'When to fold, when to push',
         titleZh: '什麼時候棄胡，什麼時候衝',
-        body: 'The coach leans towards the safer of two similar discards whenever someone may be ready. It folds (棄胡) outright when it is two or more 向聽 from ready and an opponent is probably ready: it weighs what the dangerous tile costs on average (the chance of dealing in times what their hand would cost you) against the chance of winning it would give up, which depends on how far it is from ready, how much of the wall is left, its own hand value and who is dealer. Ready or one away, it keeps pushing; with no threat at all it plays for speed.',
-        bodyZh: '只要有人可能聽牌，教練在差不多好的牌之間會選比較安全的。差兩向聽以上、而且有對手很可能已經聽牌時，教練就棄胡：它比較打危險牌平均要付出的代價（放槍的機率乘上對方那手牌的價值）和放棄的胡牌機會，後者要看自己差幾向聽、牌牆還剩多少、自己的牌值多少、誰是莊家。已經聽牌或只差一向聽就繼續衝；完全沒有威脅時專心求快。',
+        body: 'The coach leans towards the safer of two similar discards whenever someone may be ready. It folds (棄胡) outright when it is two or more tiles from ready and an opponent is probably ready: it weighs what the dangerous tile costs on average (the chance of dealing in times what their hand would cost you) against the chance of winning it would give up, which depends on how far it is from ready, how much of the wall is left, its own hand value and who is dealer. Ready or one away, it keeps pushing; with no threat at all it plays for speed.',
+        bodyZh: '只要有人可能聽牌，教練在差不多好的牌之間會選比較安全的。差兩張以上才聽牌、而且有對手很可能已經聽牌時，教練就棄胡：它比較打危險牌平均要付出的代價（放槍的機率乘上對方那手牌的價值）和放棄的胡牌機會，後者要看自己離聽牌還差幾張、牌牆還剩多少、自己的牌值多少、誰是莊家。已經聽牌或只差一張聽牌就繼續衝；完全沒有威脅時專心求快。',
       },
       {
         title: 'Practice: ready against four sets',
@@ -263,8 +263,8 @@ export const DEFENCE_LESSONS: Lesson[] = [
         bodyZh: '棄胡不是亂打。照上一課安全牌的順序打；手上有安全牌的對子就拆掉它，可以安全打兩巡。也要留意回頭的機會：如果打安全牌時牌又湊近聽牌，危險也過去了，就可以再衝。新手電腦從來不棄胡，這也是它們常常放槍的原因之一。',
       },
       {
-        title: 'Practice: count your 向聽 first',
-        titleZh: '練習：先算向聽',
+        title: 'Practice: count your tiles from ready first',
+        titleZh: '練習：先算離聽牌還差幾張',
         body: 'Before you decide, know how far you are. Nobody has called yet, so every threat is 0 and this turn is about speed.',
         bodyZh: '做決定之前，先搞清楚自己還差多少。還沒有人吃碰，每一家的威脅都是 0，所以這一巡求快就好。',
         quiz: {
@@ -273,7 +273,7 @@ export const DEFENCE_LESSONS: Lesson[] = [
           hand: '123m 456p 789s 34m 88s 1p 9s 5p 9m',
           answer: '1p',
           explanation: 'Keep 1p and it only adds 1p or 2p as useful draws; keep 9m and it adds 7m, 8m or 9m, while 3p helps through your 456p and 5p either way. Even after the best discard you are two from ready, so if someone now shows four sets, this is a hand to fold.',
-          explanationZh: '留 1p 只多 1p、2p 兩種有用的牌；留 9m 則多 7m、8m、9m 三種，而 3p 不管留哪張，都能靠 456p 和 5p 進張。就算打對了，你還差兩向聽，所以這時有人亮出四組，這手牌就該棄胡。',
+          explanationZh: '留 1p 只多 1p、2p 兩種有用的牌；留 9m 則多 7m、8m、9m 三種，而 3p 不管留哪張，都能靠 456p 和 5p 進張。就算打對了，你還差兩張才聽牌，所以這時有人亮出四組，這手牌就該棄胡。',
         },
       },
     ],
@@ -303,7 +303,7 @@ export const DEFENCE_LESSONS: Lesson[] = [
         title: 'The last discard',
         titleZh: '最後一張打出的牌',
         body: 'If you draw the last tile and cannot win, your discard is the last thing that happens: it cannot help you any more, it can only deal in. Being ready is worth nothing now, so throw the safest tile you have, even if it breaks your hand. In the last few turns, count the draws you have left: a hand two from ready with only a couple of draws to come will rarely finish, so start folding earlier.',
-        bodyZh: '你摸到最後一張又不能胡，你打的那張就是這局的最後一個動作：它已經幫不了你，只可能放槍。這時聽牌也沒有用了，就打最安全的牌，拆牌也沒關係。最後幾巡要算一算自己還能摸幾張：還差兩向聽、只剩一兩次摸牌，幾乎胡不了，應該早一點開始棄胡。',
+        bodyZh: '你摸到最後一張又不能胡，你打的那張就是這局的最後一個動作：它已經幫不了你，只可能放槍。這時聽牌也沒有用了，就打最安全的牌，拆牌也沒關係。最後幾巡要算一算自己還能摸幾張：還差兩張才聽牌、只剩一兩次摸牌，幾乎胡不了，應該早一點開始棄胡。',
       },
       {
         title: 'The dealer at the end',

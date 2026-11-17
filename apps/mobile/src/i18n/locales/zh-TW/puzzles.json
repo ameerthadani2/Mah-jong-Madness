@@ -42,12 +42,12 @@
     "status": {
       "complete": "這副牌已經胡了。",
       "oneFromReady": "打對一張就聽牌。",
-      "leaves": "最佳打法打完後還差 %{n} 向聽。"
+      "leaves": "最佳打法打完後還差 %{n} 張聽牌。"
     },
     "good": "打得好！",
     "better": "還有更好的選擇。",
     "ready": "聽牌",
-    "fromReady": "%{n} 向聽",
+    "fromReady": "差 %{n} 張聽牌",
     "picked": "%{tile}：%{shape}，%{kinds} 種 / %{tiles} 張進張。",
     "best": "最佳是 %{tile}：%{shape}，%{kinds} 種 / %{tiles} 張進張（%{list}）。",
     "waitsIntro": "這副 16 張的手牌已經聽牌，把能胡的牌全部選出來。",

@@ -1,6 +1,6 @@
 /**
  * Lessons in the 'efficiency' track, going deeper than the core 'efficiency' introduction:
- * counting 進張, shape quality, pairs and the 眼, early discards, and 向聽 on 17 tiles.
+ * counting 進張, shape quality, pairs and the 眼, early discards, and counting tiles from ready on 17 tiles.
  * Every quiz answer is the engine's unique best discard (or one of its waits); see lessons.test.ts.
  * Chinese: first pass, needs native review.
  */
@@ -19,8 +19,8 @@ export const EFFICIENCY_LESSONS: Lesson[] = [
       {
         title: 'What counts as 進張',
         titleZh: '什麼是進張',
-        body: 'A 進張 is any tile that lowers your 向聽. After each discard the coach lists them: how many kinds would help, and how many copies of those kinds you cannot see yet. Two discards that leave the same 向聽 are not equal: the one that leaves more 進張 is better.',
-        bodyZh: '能讓向聽數變少的牌，就是進張。每打一張牌，教練都會列出來：有幾種牌能幫你，這幾種牌還有幾張是你看不到的。打完向聽數一樣的兩張牌並不一樣好：留下比較多進張的那一張比較好。',
+        body: 'A 進張 is any tile that brings you a tile closer to ready. After each discard the coach lists them: how many kinds would help, and how many copies of those kinds you cannot see yet. Two discards that leave you as many tiles from ready are not equal: the one that leaves more 進張 is better.',
+        bodyZh: '能讓你離聽牌更近一張的牌，就是進張。每打一張牌，教練都會列出來：有幾種牌能幫你，這幾種牌還有幾張是你看不到的。打完離聽牌一樣近的兩張牌並不一樣好：留下比較多進張的那一張比較好。',
         hand: '234m 45p 78s',
       },
       {
@@ -68,8 +68,8 @@ export const EFFICIENCY_LESSONS: Lesson[] = [
       {
         title: 'Reading the coach',
         titleZh: '看懂教練的提示',
-        body: 'The coach’s line “Discard X. N kinds then improve your hand, M copies still unseen” is exactly this count. When two discards leave the same 向聽, it picks the one with the larger count; when the counts tie, it throws the honour or terminal first.',
-        bodyZh: '教練的提示「打 X。之後有 N 種牌能改善手牌，還有 M 張沒出現」，算的就是進張。兩張牌打完向聽數一樣時，它選進張比較多的那一張；進張也一樣多時，先打字牌或么九牌。',
+        body: 'The coach’s line “Discard X. N kinds then improve your hand, M copies still unseen” is exactly this count. When two discards leave you as many tiles from ready, it picks the one with the larger count; when the counts tie, it throws the honour or terminal first.',
+        bodyZh: '教練的提示「打 X。之後有 N 種牌能改善手牌，還有 M 張沒出現」，算的就是進張。兩張牌打完離聽牌一樣近時，它選進張比較多的那一張；進張也一樣多時，先打字牌或么九牌。',
       },
     ],
   },
@@ -174,7 +174,7 @@ export const EFFICIENCY_LESSONS: Lesson[] = [
         title: 'No 眼 is no disaster',
         titleZh: '沒有眼也不用慌',
         body: 'Four sets and two 搭子 with no pair is also one step from ready, and a strong one: a tile that finishes either 搭子 makes you ready on a 單騎, and a tile that pairs any of the four 搭子 tiles gives you a 眼 and makes you ready too.',
-        bodyZh: '四組面子加兩個搭子、沒有眼，也是一向聽，而且很好進：進張把任一個搭子補成面子，就單騎聽牌；摸到跟四張搭子牌任一張成對，就有眼，也一樣聽牌。',
+        bodyZh: '四組面子加兩個搭子、沒有眼，也是差一張聽牌，而且很好進：進張把任一個搭子補成面子，就單騎聽牌；摸到跟四張搭子牌任一張成對，就有眼，也一樣聽牌。',
         hand: '123m 456p 789s EEE 45s 67m',
       },
       {
@@ -256,17 +256,17 @@ export const EFFICIENCY_LESSONS: Lesson[] = [
   {
     id: 'eff-shanten',
     track: 'efficiency',
-    title: '向聽 on 17 tiles',
-    titleZh: '十七張的向聽數',
+    title: 'Tiles from ready on 17 tiles',
+    titleZh: '十七張離聽牌還差幾張',
     minutes: 3,
-    summary: 'Count 向聽 yourself, see why five slots is the limit, and make the 1-向聽 decision that takes the most tiles.',
-    summaryZh: '學會自己算向聽數，弄懂為什麼只能算五組，並在一向聽時做出進張最多的選擇。',
+    summary: 'Count your tiles from ready yourself, see why five slots is the limit, and make the one-tile-from-ready decision that takes the most tiles.',
+    summaryZh: '學會自己算離聽牌還差幾張，弄懂為什麼只能算五組，並在差一張聽牌時做出進張最多的選擇。',
     steps: [
       {
         title: 'The formula',
         titleZh: '計算公式',
-        body: 'For a hand of five sets and a pair: 向聽 = 10 − 2 × sets − 搭子 − 1 if you have a 眼. Sets and 搭子 together count up to five, because that is all the hand has room for. 0 means ready (聽牌); −1 is a winning hand.',
-        bodyZh: '五組面子加一對眼的牌：向聽數 = 10 − 2 × 面子數 − 搭子數 − 有眼再減 1。面子和搭子加起來最多只算五個，因為一手牌只有五個位置。0 就是聽牌，−1 就是胡了。',
+        body: 'For a hand of five sets and a pair: tiles from ready = 10 − 2 × sets − 搭子 − 1 if you have a 眼. Sets and 搭子 together count up to five, because that is all the hand has room for. 0 means ready (聽牌); −1 is a winning hand.',
+        bodyZh: '五組面子加一對眼的牌：離聽牌還差幾張 = 10 − 2 × 面子數 − 搭子數 − 有眼再減 1。面子和搭子加起來最多只算五個，因為一手牌只有五個位置。0 就是聽牌，−1 就是胡了。',
       },
       {
         title: 'Counting 17 tiles',
@@ -278,20 +278,20 @@ export const EFFICIENCY_LESSONS: Lesson[] = [
       {
         title: 'Too many 搭子',
         titleZh: '搭子太多',
-        body: 'Once sets plus 搭子 reach five, another 搭子 does not lower your 向聽. Three sets, a 眼 and three 搭子 is still 1-向聽: one 搭子 is spare, so cut the weakest, and keep the 兩面.',
-        bodyZh: '面子加搭子已經有五個時，再多一個搭子也不會讓向聽數變少。三組面子、一對眼加三個搭子還是一向聽：多出一個搭子，就拆最弱的那個，留兩面。',
+        body: 'Once sets plus 搭子 reach five, another 搭子 does not bring you closer to ready. Three sets, a 眼 and three 搭子 is still one tile from ready: one 搭子 is spare, so cut the weakest, and keep the 兩面.',
+        bodyZh: '面子加搭子已經有五個時，再多一個搭子也不會讓你離聽牌更近。三組面子、一對眼加三個搭子還是差一張聽牌：多出一個搭子，就拆最弱的那個，留兩面。',
         hand: '123m 456p 789s 99p 45s 67m 12p',
       },
       {
-        title: 'Two kinds of 1-向聽',
-        titleZh: '兩種一向聽',
+        title: 'Two kinds of one tile from ready',
+        titleZh: '兩種差一張聽牌',
         body: 'Three sets, a 眼 and two 搭子: only tiles that finish a 搭子 help. Four sets and two 搭子 with no 眼: finishing a 搭子 makes you ready on a 單騎, and pairing any 搭子 tile makes you ready too. With two 兩面 that is 16 tiles against 28, so the second shape is often the one to aim for.',
         bodyZh: '三組面子、一對眼加兩個搭子：只有能補成面子的牌有用。四組面子加兩個搭子、沒有眼：補成面子就單騎聽牌，跟任一張搭子牌成對也能聽牌。如果兩個都是兩面，前者 16 張、後者 28 張，所以常常要往後面那種牌型走。',
         hand: '123m 456p 789s EEE 45s 67m',
       },
       {
-        title: 'The 1-向聽 decision',
-        titleZh: '一向聽的選擇',
+        title: 'The one-tile-from-ready decision',
+        titleZh: '差一張聽牌時的選擇',
         body: 'One step from ready, choose the discard that leaves the most tiles that make you ready.',
         bodyZh: '差一步就聽牌時，選打完之後最多牌能讓你聽牌的那一張。',
         quiz: {

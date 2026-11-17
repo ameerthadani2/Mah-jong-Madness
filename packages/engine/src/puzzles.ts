@@ -595,7 +595,7 @@ function defenceText(p: Pick<DefencePuzzle, 'answer' | 'answers' | 'threatSeat' 
   const alsoEn = others.length > 0 ? ` ${others.map(tileEn).join(' and ')} ${others.length > 1 ? 'are' : 'is'} about as safe, so ${others.length > 1 ? 'they count' : 'it counts'} too.` : '';
   const alsoZh = others.length > 0 ? `${others.map(tileZh).join('、')}差不多一樣安全，也算對。` : '';
   const keepEn = ' Throwing it also keeps your hand as close to ready as any other discard.';
-  const keepZh = '打這張也不會讓你的向聽數退步。';
+  const keepZh = '打這張也不會讓你離聽牌更遠。';
   const tradeEn = !p.answers.includes(p.efficient) ? ` ${tileEn(p.efficient)} would leave more useful tiles, but not while someone looks ready.` : '';
   const tradeZh = !p.answers.includes(p.efficient) ? `打${tileZh(p.efficient)}進張比較多，但對方看起來快聽牌了，先求安全。` : '';
   return {
@@ -960,13 +960,13 @@ function claimText(p: Pick<ClaimPuzzle, 'answer' | 'discard' | 'shantenBefore' |
     }
     return {
       reasonKey: 'puzzle.claim.passNoGain',
-      explanation: `No claim here leaves the hand better off: none of them gets you closer to ready (向聽) with as much to win. Exposing a set for nothing gives away information and flexibility, so pass.${o.en}`,
-      explanationZh: `這些吃碰都不能讓牌變得更好：向聽數沒有降低，能胡的牌和台數也沒有增加。白白亮出一組面子只會洩露牌型、少了變化，所以不要。${o.zh}`,
+      explanation: `No claim here leaves the hand better off: none of them gets you closer to ready with as much to win. Exposing a set for nothing gives away information and flexibility, so pass.${o.en}`,
+      explanationZh: `這些吃碰都不能讓牌變得更好：沒有離聽牌更近，能胡的牌和台數也沒有增加。白白亮出一組面子只會洩露牌型、少了變化，所以不要。${o.zh}`,
     };
   }
   const after = a.shantenAfter;
-  const stepsEn = after === 0 ? 'makes you ready (聽牌)' : `takes you from ${p.shantenBefore} to ${after} away from ready (向聽)`;
-  const stepsZh = after === 0 ? '吃碰後就聽牌' : `向聽數從${p.shantenBefore}降到${after}`;
+  const stepsEn = after === 0 ? 'makes you ready (聽牌)' : `takes you from ${p.shantenBefore} to ${after} tiles from ready`;
+  const stepsZh = after === 0 ? '吃碰後就聽牌' : `從差${p.shantenBefore}張聽牌變成差${after}張`;
   const waitEn = after === 0 && a.waits ? ` It leaves ${a.acceptance} live winning tiles.` : '';
   const waitZh = after === 0 && a.waits ? `聽${a.acceptance}張。` : '';
   const valueEn = valuePong ? ` The pong of ${tileEn(p.discard)} is also worth ${valuePong} 台.` : '';
@@ -995,7 +995,7 @@ function othersText(p: Pick<ClaimPuzzle, 'answer' | 'discard' | 'options'>): { e
     zh += '其他選擇離聽牌比較遠。';
   } else if (worse.length > 0) {
     en += ' The other choices are as close to ready but leave fewer or cheaper winning tiles.';
-    zh += '其他選擇向聽數一樣，但能胡的牌比較少或台數比較低。';
+    zh += '其他選擇離聽牌一樣近，但能胡的牌比較少或台數比較低。';
   }
   return { en, zh };
 }

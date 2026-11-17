@@ -55,10 +55,10 @@ describe('coach accuracy', () => {
           const after = shantenAfterClaim(s, o.seat, c.action);
           if (after < h.shanten) {
             improving++;
-            expect(c.reason).not.toMatch(/does not reduce/);
+            expect(c.reason).not.toMatch(/does not bring you closer/);
             expect(c.reasonKey).not.toMatch(/noGain/);
           } else {
-            expect(c.reason).toMatch(/does not reduce|already ready/);
+            expect(c.reason).toMatch(/does not bring you closer|already ready/);
             expect(c.reasonKey).toMatch(/^hint\.claim\.(noGain|alreadyReady)/);
           }
         }

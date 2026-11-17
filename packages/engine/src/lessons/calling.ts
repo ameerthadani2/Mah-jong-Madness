@@ -41,8 +41,8 @@ export const CALLING_LESSONS: Lesson[] = [
       {
         title: 'Is it worth it?',
         titleZh: '值不值得吃',
-        body: 'A 吃 costs what any call costs: 門清 is gone and the table sees part of your hand. The coach takes it when it lowers your 向聽, for example from 1-向聽 to ready, and passes when it does not.',
-        bodyZh: '吃跟其他吃碰一樣有代價：沒有門清，桌上也看得到你的部分手牌。教練只在吃了能降低向聽數時才吃，例如從一向聽變聽牌；不能降低就不吃。',
+        body: 'A 吃 costs what any call costs: 門清 is gone and the table sees part of your hand. The coach takes it when it brings you closer to ready, for example from one tile from ready to ready, and passes when it does not.',
+        bodyZh: '吃跟其他吃碰一樣有代價：沒有門清，桌上也看得到你的部分手牌。教練只在吃了能讓你離聽牌更近時才吃，例如從差一張聽牌變成聽牌；不能更近就不吃。',
       },
       {
         title: 'Which chow to take',
@@ -100,8 +100,8 @@ export const CALLING_LESSONS: Lesson[] = [
       {
         title: 'When it pays',
         titleZh: '什麼時候值得碰',
-        body: 'A pong of a value honour (中, 發, 白, your seat wind or the round wind) scores 1 台 whether it is exposed or not. Otherwise 碰 when it lowers your 向聽, and more freely once your hand is already open or you are building 碰碰胡 (4 台), which can be all exposed pongs.',
-        bodyZh: '有台的字牌（中、發、白、自己的門風或圈風）刻子，不管有沒有亮出來都有 1 台。其他牌要能降低向聽數才碰；如果已經不是門清，或是在做碰碰胡（4 台，全部碰出來也算），就可以碰得比較積極。',
+        body: 'A pong of a value honour (中, 發, 白, your seat wind or the round wind) scores 1 台 whether it is exposed or not. Otherwise 碰 when it brings you closer to ready, and more freely once your hand is already open or you are building 碰碰胡 (4 台), which can be all exposed pongs.',
+        bodyZh: '有台的字牌（中、發、白、自己的門風或圈風）刻子，不管有沒有亮出來都有 1 台。其他牌要能讓你離聽牌更近才碰；如果已經不是門清，或是在做碰碰胡（4 台，全部碰出來也算），就可以碰得比較積極。',
         hand: 'CC FF',
       },
       {
@@ -128,8 +128,8 @@ export const CALLING_LESSONS: Lesson[] = [
           promptZh: '假設你還是碰了 5p。這裡把 555p 放在手牌裡：最好打哪一張？',
           hand: '123m 456p 789s 555p 457s 67m',
           answer: '7s',
-          explanation: '7s, not 4s: 45s is a 兩面 and 57s only a 嵌張. That leaves four sets and two 兩面 with no 眼: still 1-向聽, the same 向聽 as before the call. More tiles now make you ready, since pairing a 搭子 tile works too, but the coach only calls when the 向聽 drops, so it would pass and keep 門清.',
-          explanationZh: '打 7s，不打 4s：45s 是兩面，57s 只是嵌張。剩下四組面子加兩個兩面、沒有眼：還是一向聽，跟碰之前一樣。雖然能聽牌的牌變多了（搭子牌成對也行），但教練只在向聽數會降低時才碰，所以它會不碰、保住門清。',
+          explanation: '7s, not 4s: 45s is a 兩面 and 57s only a 嵌張. That leaves four sets and two 兩面 with no 眼: still one tile from ready, as before the call. More tiles now make you ready, since pairing a 搭子 tile works too, but the coach only calls when it brings you closer to ready, so it would pass and keep 門清.',
+          explanationZh: '打 7s，不打 4s：45s 是兩面，57s 只是嵌張。剩下四組面子加兩個兩面、沒有眼：還是差一張聽牌，跟碰之前一樣。雖然能聽牌的牌變多了（搭子牌成對也行），但教練只在能離聽牌更近時才碰，所以它會不碰、保住門清。',
         },
       },
     ],
@@ -161,14 +161,14 @@ export const CALLING_LESSONS: Lesson[] = [
         title: 'Four tiles, two sets',
         titleZh: '四張分屬兩組',
         body: 'Four of a kind does not have to be a kong. If the four tiles are already working in two sets, a kong breaks one of them. The coach only kongs when the hand stays as close to ready.',
-        bodyZh: '有四張一樣的牌不一定要槓。如果這四張已經分在兩組面子裡，開槓就會拆掉其中一組。教練只有在開槓後向聽數不變差時才槓。',
+        bodyZh: '有四張一樣的牌不一定要槓。如果這四張已經分在兩組面子裡，開槓就會拆掉其中一組。教練只有在開槓後離聽牌沒有變遠時才槓。',
         quiz: {
           prompt: 'You draw the fourth 2m. Before you 暗槓 it, look at the hand: which tile do you discard?',
           promptZh: '你摸到第四張 2m。先別急著暗槓，看看這手牌：要打哪一張？',
           hand: '2222m 34m 567p 789s 345s E 5p',
           answer: 'E',
-          explanation: 'E. Read 2222m 34m as 222m + 234m, and 5567p waits on 5p or 8p: you are ready. A 暗槓 of 2m would leave 34m as a 搭子 and drop you back to 1-向聽, so keep the four 2m in two sets.',
-          explanationZh: '打東風。把 2222m 34m 拆成 222m + 234m，5567p 就聽 5p 或 8p：已經聽牌了。如果暗槓 2m，34m 就只剩搭子，退回一向聽，所以四張 2m 要留在兩組面子裡。',
+          explanation: 'E. Read 2222m 34m as 222m + 234m, and 5567p waits on 5p or 8p: you are ready. A 暗槓 of 2m would leave 34m as a 搭子 and drop you back to one tile from ready, so keep the four 2m in two sets.',
+          explanationZh: '打東風。把 2222m 34m 拆成 222m + 234m，5567p 就聽 5p 或 8p：已經聽牌了。如果暗槓 2m，34m 就只剩搭子，退回差一張聽牌，所以四張 2m 要留在兩組面子裡。',
         },
       },
       {
@@ -298,8 +298,8 @@ export const CALLING_LESSONS: Lesson[] = [
       {
         title: 'Before you are ready',
         titleZh: '還沒聽牌時',
-        body: 'Until you are ready, the coach takes a call whenever it lowers your 向聽, even from 1-向聽 to ready at the cost of 門清: here a 吃 of your 上家’s 3s, 6s, 5m or 8m would make you ready, so it calls. Club-level bots are more careful and already stay concealed at 1-向聽.',
-        bodyZh: '還沒聽牌時，只要能降低向聽數教練就會吃碰，就算是從一向聽變聽牌、要失去門清也一樣：這手牌吃上家的 3s、6s、5m 或 8m 就聽牌，所以它會吃。牌友等級的電腦比較保守，一向聽時就已經不吃不碰了。',
+        body: 'Until you are ready, the coach takes a call whenever it brings you closer to ready, even from one tile from ready to ready at the cost of 門清: here a 吃 of your 上家’s 3s, 6s, 5m or 8m would make you ready, so it calls. Club-level bots are more careful and already stay concealed at one tile from ready.',
+        bodyZh: '還沒聽牌時，只要能讓你離聽牌更近，教練就會吃碰，就算是從差一張聽牌變成聽牌、要失去門清也一樣：這手牌吃上家的 3s、6s、5m 或 8m 就聽牌，所以它會吃。牌友等級的電腦比較保守，差一張聽牌時就已經不吃不碰了。',
         hand: '123m 456p 789s 55p 45s 67m N',
       },
       {
