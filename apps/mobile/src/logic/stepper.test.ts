@@ -15,9 +15,7 @@ describe('a number in the rule editor', () => {
     expect(atLimit(points.min, -1, points)).toBe(true);
     expect(atLimit(points.max, 1, points)).toBe(true);
     expect(atLimit(500, -1, points)).toBe(false);
-    const ui = read('components/Ui.tsx');
-    expect(ui).toMatch(/disabled=\{atLimit\(value, -1, limits\)\}/);
-    expect(ui).toMatch(/disabled=\{atLimit\(value, 1, limits\)\}/);
+    // The stepper disabling − and + at those limits is rendered in src/components/Stepper.render.test.tsx.
   });
 
   it('reaches the largest value by holding the button in seconds, not thousands of presses', () => {

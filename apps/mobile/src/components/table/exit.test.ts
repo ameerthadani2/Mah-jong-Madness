@@ -1,5 +1,3 @@
-import { readFileSync } from 'fs';
-import { join } from 'path';
 import { describe, expect, it } from 'vitest';
 import { exitPlan, leaveSheetBody, onExitIcon } from './exit';
 import { en, zhTW } from '../../i18n/locales';
@@ -27,8 +25,7 @@ describe('table exit', () => {
     // Rendered elsewhere: the result sheet's Leave opening the exit sheet (src/screens/TablePlay.render.test.tsx, "the
     // end of a hand"); Android's Back key asking mid-match and leaving at once after it, and the match-over card's
     // direct Back to home in place of the last result sheet (src/screens/TableBack.render.test.tsx).
-    const src = readFileSync(join(__dirname, '../../screens/TableScreen.tsx'), 'utf8');
-    expect(src).toMatch(/title=\{t\('table\.leave'\)\} onPress=\{\(\) => setLeaveAsk\(true\)\}/);
+    // And the shuffle screen's Leave asking first too: src/screens/TablePlay.render.test.tsx ("the shuffle, before the first deal").
   });
 
   it('stepping away from a quick-match table keeps the seat: the table would close at once if its only player left on purpose', () => {

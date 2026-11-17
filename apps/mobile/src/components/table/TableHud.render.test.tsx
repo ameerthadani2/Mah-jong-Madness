@@ -53,4 +53,15 @@ describe('the table HUD icons', () => {
       expect(web.margin).toBe(-pad);
     }
   });
+
+  it('shows the table code at a private table in landscape, never at a quick-match table nobody can join by code', async () => {
+    const view = { prevailingWind: 0, handNumber: 0, dealerStreak: 0, drawsLeft: 80 } as unknown as TableView;
+    const hud = (quickMatch: boolean) => (
+      <TableHud view={view} roomCode="6TYR8N" quickMatch={quickMatch} portrait={false} clock={{ deadline: null, total: 15, bank: false }} myMove={false} timeBank={0} status={null} emotesOpen={false} onEmotes={() => {}} coachAllowed coachOpen={false} onCoach={() => {}} onLeave={() => {}} />
+    );
+    await render(hud(false));
+    expect(screen.getByText('6TYR8N')).toBeOnTheScreen();
+    await screen.rerender(hud(true));
+    expect(screen.queryByText('6TYR8N')).toBeNull();
+  });
 });

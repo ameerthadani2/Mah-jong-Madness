@@ -74,7 +74,8 @@ describe('the table code in the table header', () => {
   });
 
   it('is what the header asks, with the table kind passed down from the table screen', () => {
-    expect(readFileSync(join(__dirname, '../components/table/TableHud.tsx'), 'utf8')).toContain('{hudShowsCode({ roomCode, quickMatch }, portrait) && (');
+    // The header showing the code at a private table and hiding it at a quick-match one is rendered in
+    // src/components/table/TableHud.render.test.tsx; the table screen passing the table kind down stays checked here.
     expect(readFileSync(join(__dirname, '../screens/TableScreen.tsx'), 'utf8')).toContain('quickMatch={session.quickMatch === true}');
   });
 });

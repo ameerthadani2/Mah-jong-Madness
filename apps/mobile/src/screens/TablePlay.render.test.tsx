@@ -104,6 +104,24 @@ describe('the seats', () => {
   });
 });
 
+describe('the shuffle, before the first deal', () => {
+  it('asks before leaving, like the exit icon', async () => {
+    // Not started: the table shows the shuffle while the deal is agreed.
+    session = createLocalSession('Mei', 'panda', RULES);
+    const calls = { setSession: jest.fn(), reset: jest.fn(), setActiveSession: jest.fn() };
+    await render(
+      <FakeProviders app={{ session, ...calls, screen: { name: 'table' } }}>
+        <TableScreen />
+      </FakeProviders>,
+    );
+    expect(screen.queryByTestId('hand-discard')).toBeNull();
+    await fireEvent.press(screen.getByRole('button', { name: 'Leave' }));
+    expect(screen.getByText('Leave the table?')).toBeOnTheScreen();
+    expect(calls.setSession).not.toHaveBeenCalled();
+    expect(calls.reset).not.toHaveBeenCalled();
+  });
+});
+
 describe('my own turn', () => {
   it('a first tap selects a tile and a second tap on it discards it', async () => {
     await renderTable();
