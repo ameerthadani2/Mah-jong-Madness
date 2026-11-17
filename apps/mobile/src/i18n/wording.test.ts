@@ -14,4 +14,13 @@ describe('plain Taiwanese wording in the app', () => {
     expect([...strings(en, 'en'), ...strings(zhTW, 'zh-TW')].filter(([, s]) => s.includes('向聽'))).toEqual([]);
     expect(zhTW.puzzles.view.fromReady).toBe('差 %{n} 張聽牌');
   });
+
+  it('asks the Rush and daily discard question in Chinese without doubling the verb', () => {
+    // The sixth assessment read '你剛摸完牌。最佳打法打完後還差 4 張聽牌。要打哪一張？': 打法打完後 says "play" twice.
+    const fill = (s: string, params: Record<string, string | number>) => s.replace(/%\{(\w+)\}/g, (_, k: string) => String(params[k]));
+    const prompt = (status: string) => fill(zhTW.puzzles.view.discardIntro, { status });
+    expect(prompt(fill(zhTW.puzzles.view.status.leaves, { n: 4 }))).toBe('你剛摸完牌。就算打對了，也還差 4 張聽牌。要打哪一張？');
+    expect(prompt(zhTW.puzzles.view.status.oneFromReady)).toBe('你剛摸完牌。打對一張就聽牌。要打哪一張？');
+    expect(strings(zhTW, 'zh-TW').filter(([, s]) => /打法打|打完後/.test(s))).toEqual([]);
+  });
 });
