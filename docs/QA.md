@@ -28,7 +28,7 @@ Before you start: the server is deployed and its last deploy run passed the smok
 - [ ] With the phone's own font size at its largest, Home, the table and Settings stay usable.
 
 ## 5. Screen readers
-- [ ] iPhone with **VoiceOver**: every button on Home and the table has a spoken name; tiles are read by name in the current language (e.g. "三萬"); call-outs (碰, 槓, 胡) and banners are announced; you can discard a tile and claim a pong without sight.
+- [ ] iPhone with **VoiceOver**: every button on Home and the table has a spoken name; tiles are read by name in the current language (e.g. "三萬"); call-outs (碰, 槓, 胡) and banners are announced; you can discard a tile and claim a pong without sight. The compass is read as one item ("East round, you are South, the dealer is on your left. 17 tiles left in the wall"), and the wall chip as "17 tiles left in the wall"; the table speaks the wall only at 10, 5 and the last tile, and the compass only when the round or the dealer changes.
 - [ ] Android with **TalkBack**: the same.
 - [ ] With Reduce Motion on (iOS Accessibility → Motion; Android Remove animations), tiles and celebrations do not animate.
 

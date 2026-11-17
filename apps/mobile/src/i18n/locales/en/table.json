@@ -207,7 +207,24 @@
     "clockNow": "Your clock: %{s} seconds left",
     "clockBankNow": "Your time bank: %{s} seconds left",
     "clockLow": "%{s} seconds left",
-    "clockBank": "Your time bank has started: %{s} seconds"
+    "clockBank": "Your time bank has started: %{s} seconds",
+    "compass": "%{round} round, you are %{seat}, the dealer is %{dealer}",
+    "compassDealer": "%{round} round, you are %{seat} and the dealer",
+    "roundChip": "%{round} round, hand %{hand}",
+    "dealerStreak": ", the dealer has kept the deal %{n} times",
+    "sentenceBreak": ". ",
+    "drawsLeftOne": "The last tile in the wall",
+    "wind": {
+      "east": "East",
+      "south": "South",
+      "west": "West",
+      "north": "North"
+    },
+    "dealerAt": {
+      "right": "on your right",
+      "across": "across from you",
+      "left": "on your left"
+    }
   },
   "leaveSheet": {
     "title": "Leave the table?",

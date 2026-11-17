@@ -15,6 +15,7 @@ import { justReturned, RETURNED_NOTICE_MS } from '../logic/back';
 import { colors, fonts, nameFont } from '../theme';
 import { Tile } from '../components/Tile';
 import { Compass } from '../components/TableParts';
+import type { Relation } from '../components/table/hudSpeech';
 import type { SeatReaction, SeatReactionKind } from '../components/SeatMotion';
 import { Button, P } from '../components/Ui';
 import { Icon } from '../components/Icons';
@@ -362,7 +363,7 @@ export function TableScreen() {
     .slice(-3);
   const relWind = (r: number) => WINDS[(seatAt(r) - view.dealerSeat + 4) % 4];
   const activeRel = turnSeat === null ? null : (turnSeat - mySeat + 4) % 4;
-  const compass = <Compass prevailing={WINDS[view.prevailingWind]} drawsLeft={view.drawsLeft} seatWinds={[relWind(0), relWind(1), relWind(2), relWind(3)]} active={activeRel} size={L.compassSize} />;
+  const compass = <Compass prevailing={WINDS[view.prevailingWind]} drawsLeft={view.drawsLeft} seatWinds={[relWind(0), relWind(1), relWind(2), relWind(3)]} active={activeRel} size={L.compassSize} round={view.prevailingWind} myWind={(mySeat - view.dealerSeat + 4) % 4} dealerRel={((view.dealerSeat - mySeat + 4) % 4) as Relation} />;
   const statusLine = view.pending
     ? t('table.status.discarded', { name: seatInfo(view.pending.from)?.name ?? '', tile: tileLabel(kindOf(view.pending.tile), locale) }) + (view.pending.kind === 'addedKong' ? t('table.status.addedKong') : '')
     : view.phase === 'discard' && view.turn !== mySeat

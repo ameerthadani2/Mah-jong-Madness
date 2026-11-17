@@ -16,6 +16,8 @@ import { useCountdown } from '../game/useTable';
 import { clockUrgent, timerFraction, type TurnClock } from './table/turnClock';
 import { reactionShouldPlay } from './table/feel';
 import { slopFor } from './table/layout';
+import { compassSentence, wallSentence, type Relation } from './table/hudSpeech';
+import { CompassNotice } from './table/CompassNotice';
 import { SEAT_TAG_CHROME, seatTagText } from '../logic/seatName';
 
 export function MeldView({ meld, size = 'sm' }: { meld: Meld; size?: TileSize | number }) {
@@ -279,9 +281,13 @@ export function WallRing({ remaining, size, children }: { remaining: number; siz
 /**
  * Centre compass: prevailing wind and tiles left in the wall; each seat's wind
  * sits on its edge of the plate, and the seat whose turn it is glows gold.
+ * A screen reader reads the plate as one item ("East round, you are South, the dealer is on your left.
+ * 17 tiles left in the wall"), and the hidden live region beside it (./table/CompassNotice.tsx) speaks only
+ * when the round or the seats turn or the wall drops to 10, 5 or its last tile.
  */
-export function Compass({ prevailing, drawsLeft, seatWinds, active, size = 72 }: { prevailing: string; drawsLeft: number; seatWinds: [string, string, string, string]; active: number | null; size?: number }) {
+export function Compass({ prevailing, drawsLeft, seatWinds, active, size = 72, round, myWind, dealerRel }: { prevailing: string; drawsLeft: number; seatWinds: [string, string, string, string]; active: number | null; size?: number; round: number; myWind: number; dealerRel: Relation }) {
   // seatWinds / active are relative to the viewer: 0 = me (bottom), 1 = right, 2 = top, 3 = left.
+  const { t } = useT();
   const b = Math.round(size * 0.32);
   const mid = (size - b) / 2 - 3;
   const pos: ViewStyle[] = [
@@ -290,19 +296,30 @@ export function Compass({ prevailing, drawsLeft, seatWinds, active, size = 72 }:
     { top: -b / 2, left: mid },
     { left: -b / 2, top: mid },
   ];
+  const compassText = compassSentence(t, { round, myWind, dealerRel });
+  const wallText = wallSentence(t, drawsLeft);
   return (
-    <View style={[styles.compass, { width: size, height: size, borderRadius: size * 0.26 }]}>
-      <View style={[styles.compassInner, { borderRadius: size * 0.2 }]} />
-      <Text style={[styles.compassMain, { fontSize: size * 0.34, lineHeight: size * 0.42 }]}>{prevailing}</Text>
-      <View style={styles.compassCountWrap}>
-        <Text style={[styles.compassCount, { fontSize: Math.max(11, size * 0.17) }]}>{drawsLeft}</Text>
-      </View>
-      {seatWinds.map((w, i) => (
-        <View key={i} pointerEvents="none" style={[styles.compassWind, pos[i], { width: b, height: b, borderRadius: b / 2 }, active === i && styles.compassWindOn]}>
-          <Text style={[styles.compassWindText, { fontSize: b * 0.56 }, active === i && { color: colors.ink }]}>{w}</Text>
+    <>
+      <View
+        style={[styles.compass, { width: size, height: size, borderRadius: size * 0.26 }]}
+        accessible
+        accessibilityRole="image"
+        accessibilityLabel={compassText + t('table.a11y.sentenceBreak') + wallText}
+        testID="compass"
+      >
+        <View style={[styles.compassInner, { borderRadius: size * 0.2 }]} />
+        <Text style={[styles.compassMain, { fontSize: size * 0.34, lineHeight: size * 0.42 }]}>{prevailing}</Text>
+        <View style={styles.compassCountWrap}>
+          <Text style={[styles.compassCount, { fontSize: Math.max(11, size * 0.17) }]}>{drawsLeft}</Text>
         </View>
-      ))}
-    </View>
+        {seatWinds.map((w, i) => (
+          <View key={i} pointerEvents="none" style={[styles.compassWind, pos[i], { width: b, height: b, borderRadius: b / 2 }, active === i && styles.compassWindOn]}>
+            <Text style={[styles.compassWindText, { fontSize: b * 0.56 }, active === i && { color: colors.ink }]}>{w}</Text>
+          </View>
+        ))}
+      </View>
+      <CompassNotice facts={{ round, myWind, dealerRel, drawsLeft }} compassText={compassText} wallText={wallText} />
+    </>
   );
 }
 

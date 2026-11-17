@@ -207,7 +207,24 @@
     "clockNow": "你的出牌時間：剩 %{s} 秒",
     "clockBankNow": "你的備用時間：剩 %{s} 秒",
     "clockLow": "剩 %{s} 秒",
-    "clockBank": "開始用備用時間：%{s} 秒"
+    "clockBank": "開始用備用時間：%{s} 秒",
+    "compass": "%{round}風圈，你是%{seat}家，莊家是你的%{dealer}",
+    "compassDealer": "%{round}風圈，你是%{seat}家，也是莊家",
+    "roundChip": "%{round}風圈，第%{hand}局",
+    "dealerStreak": "，莊家連%{n}",
+    "sentenceBreak": "。",
+    "drawsLeftOne": "牌牆剩最後 1 張",
+    "wind": {
+      "east": "東",
+      "south": "南",
+      "west": "西",
+      "north": "北"
+    },
+    "dealerAt": {
+      "right": "下家",
+      "across": "對家",
+      "left": "上家"
+    }
   },
   "leaveSheet": {
     "title": "要離開牌桌嗎？",

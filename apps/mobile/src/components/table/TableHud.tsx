@@ -9,6 +9,7 @@ import { IconButton, Row } from '../Ui';
 import { HudClock } from './ClockParts';
 import type { TurnClock } from './turnClock';
 import { hudShowsCode } from '../../logic/lobby';
+import { roundSentence, wallSentence } from './hudSpeech';
 
 export function TableHud({
   view,
@@ -48,14 +49,14 @@ export function TableHud({
   return (
     <View style={styles.hud}>
       <Row gap={6} style={{ flexShrink: 1, flexWrap: 'wrap', rowGap: 4 }}>
-        <View style={styles.roundChip} accessible accessibilityLabel={`${WINDS[view.prevailingWind]} ${t('table.roundChip', { hand: view.handNumber + 1 })}`}>
+        <View style={styles.roundChip} accessible accessibilityRole="image" accessibilityLabel={roundSentence(t, view.prevailingWind, view.handNumber + 1, view.dealerStreak)}>
           <Text style={styles.roundWind}>{WINDS[view.prevailingWind]}</Text>
           <Text style={styles.roundText}>
             {t('table.roundChip', { hand: view.handNumber + 1 })}
             {view.dealerStreak ? t('table.dealerStreak', { n: view.dealerStreak }) : ''}
           </Text>
         </View>
-        <View style={styles.hudChip} accessible accessibilityLabel={t('table.a11y.drawsLeft', { n: view.drawsLeft })}>
+        <View style={styles.hudChip} accessible accessibilityRole="image" accessibilityLabel={wallSentence(t, view.drawsLeft)} testID="hud-wall">
           <Icon name="wall" size={18} />
           <Text style={styles.hudChipText}>{view.drawsLeft}</Text>
         </View>
