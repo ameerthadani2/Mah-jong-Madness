@@ -40,9 +40,17 @@ export function minimumAge(birthYear: number, currentYear: number): number {
   return currentYear - birthYear - 1;
 }
 
+/**
+ * Under the age limit by the gate's own rule (`minimumAge`, the youngest age the birth year
+ * allows): the consent question and the gate must never disagree about who is a minor.
+ */
+export function isMinor(birthYear: number, currentYear: number): boolean {
+  return minimumAge(birthYear, currentYear) < AGE_LIMIT;
+}
+
 export function ageStatus(record: AgeRecord | null, currentYear: number): AgeStatus {
   if (!record || !Number.isInteger(record.birthYear)) return 'unknown';
-  return minimumAge(record.birthYear, currentYear) >= AGE_LIMIT ? 'allowed' : 'blocked';
+  return isMinor(record.birthYear, currentYear) ? 'blocked' : 'allowed';
 }
 
 /** The first year a blocked player is let in (from 1 January of that year). */

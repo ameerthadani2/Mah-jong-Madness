@@ -9,7 +9,7 @@ import { markConsentGiven } from '../telemetry';
 import { useCallback, useEffect, useMemo, useSyncExternalStore } from 'react';
 import { useAuth } from '../auth/AuthProvider';
 import { storage } from '../storage';
-import { ageStatus, needsServerSync, type AgeRecord, type AgeStatus } from './age';
+import { ageStatus, isMinor, needsServerSync, type AgeRecord, type AgeStatus } from './age';
 import { ageSyncDone, sendBirthYear, syncBirthYear, type AgeSyncResult, type AgeSyncServer } from './ageSync';
 
 let state: { loaded: boolean; record: AgeRecord | null } = { loaded: false, record: null };
@@ -121,7 +121,7 @@ export function useAgeGate(): AgeGateState {
     confirm: (birthYear) => {
       const record: AgeRecord = { birthYear, at: Date.now(), synced: false };
       // Analytics may start only after this answer; under-18s keep it off by default.
-      markConsentGiven({ minor: new Date().getFullYear() - birthYear < 18 });
+      markConsentGiven({ minor: isMinor(birthYear, new Date().getFullYear()) });
       set({ loaded: true, record });
       void storage.saveAgeRecord(record).then(() => syncToServer(record));
     },
