@@ -175,6 +175,13 @@ async function runHomeZh(browser, port, [w, h]) {
   // The page must really be in Chinese, or the check would pass on English labels.
   if (!(await page.evaluate(() => /[\u4e00-\u9fff]/.test(document.querySelector('[data-testid="open-clubs"]')?.textContent || '')))) fails.push('Home (zh-TW): the page is not in Chinese');
   fails.push(...(await homeFit(page)).map((f) => `Home (zh-TW): ${f}`));
+  // The wordmark reads the Chinese app name (common.appName), whole and on screen.
+  const mark = await page.evaluate(() => {
+    const els = [...document.querySelectorAll('div[dir="auto"]')].filter((e) => e.children.length === 0 && e.textContent === '麻將狂熱' && e.getBoundingClientRect().width > 0);
+    return els.map((e) => { const r = e.getBoundingClientRect(); return { off: r.left < -1 || r.right > innerWidth + 1 || r.top < -1, cut: e.scrollWidth > e.clientWidth + 1 || r.height > parseFloat(getComputedStyle(e).lineHeight || '0') * 1.6 + 2 }; });
+  });
+  if (mark.length === 0) fails.push('Home (zh-TW): the wordmark does not read 麻將狂熱');
+  else if (mark.some((m) => m.off || m.cut)) fails.push('Home (zh-TW): the 麻將狂熱 wordmark is cut, wrapped or off screen');
   await ctx.close();
   return { size: `${tag} zh-TW`, finished: true, shots: ['home-zh'], notes: [], fails, errors };
 }

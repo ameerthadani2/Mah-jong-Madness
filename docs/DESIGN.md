@@ -45,7 +45,7 @@ Every filled shape has the same build: a lighter top tone, the fill, a darker ha
 ## Type
 
 * **Lilita One**: display text and numerals, white with an ink stroke (`StrokeText` layers offset copies behind the fill).
-* **Luckiest Guy**: the logo wordmark only.
+* **Luckiest Guy**: the logo wordmark only. On a Traditional Chinese device the wordmark reads the locale's app name (`common.appName`, 麻將狂熱) in the display face, with the English name small and gold beneath.
 * **Fredoka** 500–700: UI labels and buttons.
 * **Nunito** 600–800: body text.
 * **Chinese**: never given a font family, so iOS uses PingFang TC and Android uses Noto Sans CJK at a heavy weight. CJK fonts are not bundled (they would add megabytes).
