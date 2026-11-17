@@ -13,11 +13,12 @@
  * Every value that arrives from the API is typed `unknown` here and checked
  * before it is stored, so a malformed request becomes a `ClubError` (HTTP 4xx), not a crash.
  */
+import { createHash, randomBytes } from 'node:crypto';
 import { BOT_SKILLS, randomHex, sanitizeRules, type BotSkill, type RuleSet } from '@mjm/engine';
 import type { HostEvent } from '@mjm/net';
 import { uniqueCode, type HexSource } from './codes';
 import { BucketTable, cleanField } from './limits';
-import { DELETED_PLAYER_NAME } from './repos/types';
+import { DELETED_PLAYER_NAME, type JoinAllowancesRepo } from './repos/types';
 import type { ClubGate } from './rooms';
 
 export interface Identity {
@@ -651,8 +652,17 @@ export class ClubRegistry {
   /** Per club and address, and per club and device, by the day (`joinsPerDayPerClubAddress`, `joinsPerDayPerClubDevice`). */
   private readonly joinsByClubAddress: BucketTable<string>;
   private readonly joinsByClubDevice: BucketTable<string>;
+  /**
+   * Where those two are kept (the repositories: the database on Postgres, so a restart keeps
+   * them), keyed by a salted hash of the address or device; null keeps them in this process only.
+   */
+  private readonly allowances: JoinAllowancesRepo | null;
+  private allowanceSalt = randomBytes(16).toString('hex');
+  /** The chain of allowance writes (`allowancesSaved`). */
+  private allowanceWrites: Promise<void> = Promise.resolve();
 
-  constructor(opts: { store?: ClubStore; now?: () => number; randomHex?: HexSource; retryDelayMs?: number } = {}) {
+  constructor(opts: { store?: ClubStore; allowances?: JoinAllowancesRepo; now?: () => number; randomHex?: HexSource; retryDelayMs?: number } = {}) {
+    this.allowances = opts.allowances ?? null;
     this.now = opts.now ?? Date.now;
     this.hex = opts.randomHex ?? randomHex;
     this.store = opts.store ?? null;
@@ -836,8 +846,32 @@ export class ClubRegistry {
 
   /** Read every club from the store (once, at boot, before the registry is used). */
   async load(): Promise<void> {
+    if (this.allowances) {
+      // The join allowances per address and device as they stood before the restart (a day-old one has refilled).
+      this.allowanceSalt = await this.allowances.salt();
+      const since = this.now() - DAY_MS;
+      await this.allowances.prune(since);
+      for (const a of await this.allowances.list(since)) (a.kind === 'address' ? this.joinsByClubAddress : this.joinsByClubDevice).restore(`${a.clubCode} ${a.key}`, a.tokens, a.updatedAt);
+    }
     if (!this.store) return;
     for (const c of await this.store.loadAll()) this.clubs.set(c.code, this.read(c));
+  }
+
+  /** Resolves once every join allowance spent so far is in the store (the API answers a join after it). */
+  allowancesSaved(): Promise<void> {
+    return this.allowanceWrites;
+  }
+
+  /** The salted hash an address or device is kept under: the store never holds the address itself. */
+  private allowanceKey(kind: 'address' | 'device', value: string): string {
+    return createHash('sha256').update(`${this.allowanceSalt}:${kind}:${value}`).digest('hex').slice(0, 32);
+  }
+
+  private saveAllowance(kind: 'address' | 'device', clubCode: string, key: string): void {
+    const store = this.allowances;
+    const state = (kind === 'address' ? this.joinsByClubAddress : this.joinsByClubDevice).state(`${clubCode} ${key}`);
+    if (!store || !state) return;
+    this.allowanceWrites = this.allowanceWrites.then(() => store.save({ kind, clubCode, key, tokens: state.tokens, updatedAt: state.at })).catch((e: Error) => console.error('[signal] club join allowance not saved:', e.message));
   }
 
   /** A club as read from the store, cleaned up; a join request with no date starts its 30 days now. */
@@ -1198,14 +1232,20 @@ export class ClubRegistry {
   private chargeJoin(club: Club, from: { ip: string; device?: string | null } | undefined, isNew: boolean): void {
     if (!from) return;
     // The per-club address and device allowances are checked before anything is spent, so a refusal costs nothing.
-    const byAddress = `${club.code} ${from.ip}`;
-    const byDevice = from.device ? `${club.code} ${from.device}` : null;
+    const addressKey = this.allowanceKey('address', from.ip);
+    const deviceKey = from.device ? this.allowanceKey('device', from.device) : null;
+    const byAddress = `${club.code} ${addressKey}`;
+    const byDevice = deviceKey ? `${club.code} ${deviceKey}` : null;
     if (!this.joinsByClubAddress.has(byAddress)) throw new ClubError('rate_limited', 'Too many accounts have joined this club from this connection today; try again tomorrow');
     if (byDevice && !this.joinsByClubDevice.has(byDevice)) throw new ClubError('rate_limited', 'Too many accounts have joined this club from this device today; try again tomorrow');
     if (!this.joinsByIp.take(from.ip)) throw new ClubError('rate_limited', 'Too many clubs joined from this connection; try again in an hour');
     if (!(isNew ? this.newJoinsByClub : this.joinsByClub).take(club.code)) throw new ClubError('rate_limited', 'This club is getting a lot of join requests; try again later');
     this.joinsByClubAddress.take(byAddress);
-    if (byDevice) this.joinsByClubDevice.take(byDevice);
+    this.saveAllowance('address', club.code, addressKey);
+    if (byDevice && deviceKey) {
+      this.joinsByClubDevice.take(byDevice);
+      this.saveAllowance('device', club.code, deviceKey);
+    }
   }
 
   /** Make an account a member. Standings it left on file here come back with it (decision 5). */

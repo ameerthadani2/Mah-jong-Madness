@@ -61,6 +61,18 @@ export class TokenBucket {
     return this.tokens;
   }
 
+  /** The bucket as it stands now (refilled to now): its tokens and the time, to store it. */
+  state(): { tokens: number; at: number } {
+    this.refill();
+    return { tokens: this.tokens, at: this.last };
+  }
+
+  /** Put back a stored state: `tokens` as they stood at `at` (it refills from then). */
+  restore(tokens: number, at: number): void {
+    this.tokens = Math.min(this.capacity, Math.max(0, tokens));
+    this.last = Math.min(at, this.now());
+  }
+
   /** True once the bucket has completely refilled, so it behaves exactly like a new one. */
   isFull(): boolean {
     return this.available() >= this.capacity;
@@ -125,6 +137,18 @@ export class BucketTable<K> {
 
   forget(key: K): void {
     this.buckets.delete(key);
+  }
+
+  /** `key`'s bucket as it stands now, or null when it has none (it is full). */
+  state(key: K): { tokens: number; at: number } | null {
+    return this.buckets.get(key)?.bucket.state() ?? null;
+  }
+
+  /** Put back `key`'s bucket as it was stored (`tokens` at `at`), e.g. after a restart. */
+  restore(key: K, tokens: number, at: number): void {
+    const bucket = new TokenBucket(this.capacity, this.refillPerSec, this.now);
+    bucket.restore(tokens, at);
+    this.buckets.set(key, { bucket, lastUsed: Math.min(at, this.now()) });
   }
 
   get size(): number {

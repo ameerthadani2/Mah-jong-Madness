@@ -102,6 +102,8 @@
     "pending": "驗證中"
   },
   "matchOver": "比賽結束",
+  "ratingChange": "快速配對積分 %{rating}（%{change}）",
+  "ratingPending": "正在更新快速配對積分…",
   "backHome": "回首頁",
   "quickChat": {
     "nice": "讚喔!",

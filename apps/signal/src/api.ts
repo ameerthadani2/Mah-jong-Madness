@@ -35,7 +35,6 @@ import { DAY_MS } from './limits';
 import { LIMITS, type SignalConfig } from './config';
 import { BucketTable, cleanField, clientIp } from './limits';
 import type { LatencyWindow } from './metrics';
-import type { QuickMatchPair } from './matchmaking';
 import { NO_ANALYTICS, reportError, withConsent, type Analytics } from './observability';
 import { storeRoutes } from './admin';
 import { adminModerationRoutes, blockRoutes, ModerationError, MuteList, NAME_NOT_ALLOWED, nameAllowed } from './moderation';
@@ -45,6 +44,7 @@ import { REPORT_REASONS, type ReportReason, type Repos, type UserRecord } from '
 import { parseRevenueCatWebhook, webhookAuthorised } from './revenuecat';
 import type { SnapshotWrites } from './persist';
 import { BANNED_CLOSE_CODE, isBotSkill, RoomLimitError, type RoomRegistry } from './rooms';
+import { tableRatingView } from './tableRating';
 import { WalletError, WalletService } from './wallet';
 
 export interface ApiDeps {
@@ -80,7 +80,7 @@ export interface ApiDeps {
   /** The tables' mute list (default: a new one, which only the admin routes then update). */
   mutes?: MuteList;
   /** Quick match, told when a player's blocks change and when an account is banned. */
-  matchmaker?: { blocksChanged(userId: string): void; removeUser(userId: string): void; frequentPairs?(min?: number): QuickMatchPair[] };
+  matchmaker?: { blocksChanged(userId: string): void; removeUser(userId: string): void };
   /** Puzzle and leaderboard route options (limiters, the Rush yield); tests replace them. */
   puzzles?: Partial<Pick<PuzzleDeps, 'submitLimiter' | 'answerLimiter' | 'readLimiter' | 'rushIpLimiter'>>;
   /** The moderators' token (default: ADMIN_TOKEN from the environment; blank turns the moderation routes off). */
@@ -244,7 +244,6 @@ export function buildRoutes(deps: ApiDeps, opts: Pick<ApiOptions, 'reportIpLimit
     closeSockets: (userId: string) => void rooms.endSessions({ userId }, { code: BANNED_CLOSE_CODE, reason: 'Banned' }),
     onBlocksChanged: (userId: string) => deps.matchmaker?.blocksChanged(userId),
     onBanned: (userId: string) => deps.matchmaker?.removeUser(userId),
-    quickMatchPairs: (min: number) => deps.matchmaker?.frequentPairs?.(min) ?? [],
     ...(deps.adminToken !== undefined ? { adminToken: deps.adminToken } : {}),
   };
   const peppers: Peppers = { current: sessions.pepper, previous: sessions.previousPeppers };
@@ -438,8 +437,14 @@ export function buildRoutes(deps: ApiDeps, opts: Pick<ApiOptions, 'reportIpLimit
         storeEnabled,
         identities: identities.filter((i) => i.provider !== 'guest').map((i) => (i.email ? { provider: i.provider, email: i.email } : { provider: i.provider })),
         leaderboardVisible: await repos.users.getLeaderboardVisible(me.userId),
+        tableRating: tableRatingView(await repos.tableRatings.get(me.userId)),
         serverNow: iso(now()),
       };
+    }),
+    // The quick-match table rating alone (the app asks for it after a quick match to show the change).
+    r('GET', '/api/me/table-rating', async (ctx) => {
+      const me = await ctx.caller();
+      return { tableRating: tableRatingView(await repos.tableRatings.get(me.userId)) };
     }),
     r('PATCH', '/api/me', async (ctx) => {
       const me = await ctx.caller();
@@ -575,6 +580,8 @@ export function buildRoutes(deps: ApiDeps, opts: Pick<ApiOptions, 'reportIpLimit
       const caller = await ctx.caller();
       const device = caller.deviceId ? await repos.devices.get(caller.deviceId) : null;
       const { club, status } = clubs.joinClub(ctx.params.code, me, { ip: ctx.ip, accountCreatedAt: caller.user.createdAt, device: device ? (device.installId ?? device.id) : null });
+      // The allowance it spent is stored before the answer, so a restart right after still counts it.
+      await clubs.allowancesSaved();
       return { club: view(club, me.userId), status };
     }),
     r('PATCH', '/api/clubs/:code', async (ctx) => {

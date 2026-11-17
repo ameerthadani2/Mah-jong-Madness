@@ -80,6 +80,9 @@
       "startFreshConfirm": "仍要重新開始"
     },
     "id": "玩家編號：%{id}",
+    "tableRating": "快速配對積分：%{rating}",
+    "tableRatingProvisional": "暫定積分：已打 %{matches}／20 場計分比賽",
+    "tableRatingHint": "只有和真人的快速配對會改變積分，電腦玩家不計。",
     "apple": "使用 Apple 登入",
     "google": "使用 Google 登入",
     "linkedApple": "已連結 Apple",

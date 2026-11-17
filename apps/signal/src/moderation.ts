@@ -28,6 +28,7 @@ import { cleanText } from '@mjm/net';
 import { adminAuthorised } from './admin';
 import { DELETED_PLAYER_NAME, PUZZLE_FLAG_STATUSES, REPORT_RESOLUTIONS, type PuzzleFlagRecord, type PuzzleFlagStatus, type ReportRecord, type ReportResolution, type Repos, type UserRecord } from './repos/types';
 import type { QuickMatchPair } from './matchmaking';
+import { CLUB_LIMITS } from './clubs';
 
 // ---------------------------------------------------------------------------------------------
 // Names
@@ -476,8 +477,11 @@ export interface ModerationDeps {
   /** Tells quick match a player's blocks changed, or that the account was banned. */
   onBlocksChanged?: (userId: string) => void;
   onBanned?: (userId: string) => void;
-  /** Pairs of accounts that sat together at `min` or more quick-match tables (this process's count). */
-  quickMatchPairs?: (min: number) => QuickMatchPair[];
+  /**
+   * Pairs of accounts that sat together at `min` or more quick-match tables. Default: the
+   * repositories' count (the database on Postgres, this process in memory).
+   */
+  quickMatchPairs?: (min: number) => QuickMatchPair[] | Promise<QuickMatchPair[]>;
   /** Default: ADMIN_TOKEN from the environment; absent or blank answers 503 on every admin route. */
   adminToken?: string | null;
   env?: Record<string, string | undefined>;
@@ -674,13 +678,28 @@ export function adminModerationRoutes<R>(r: ModerationRouteFactory<R>, deps: Mod
       admin(ctx);
       const query = new URL(ctx.req.url ?? '/', 'http://localhost').searchParams;
       const min = Math.max(1, Math.min(1000, Number.parseInt(query.get('min') ?? '3', 10) || 3));
-      const pairs = (deps.quickMatchPairs?.(min) ?? []).slice(0, 200);
+      const pairs = (await (deps.quickMatchPairs ? deps.quickMatchPairs(min) : repos.quickMatchPairs.frequent(min, 200))).slice(0, 200);
       const accounts = new Map<string, unknown>();
       for (const id of new Set(pairs.flatMap((p) => [p.a, p.b]))) {
         const u = await repos.users.get(id);
         accounts.set(id, u ? await accountJson(u) : { id, deleted: true, displayName: DELETED_PLAYER_NAME });
       }
-      return { min, scope: 'process', pairs: pairs.map((p) => ({ a: accounts.get(p.a), b: accounts.get(p.b), tables: p.tables, sharedAddress: p.sharedAddress, lastAt: iso(p.lastAt) })) };
+      return { min, scope: repos.kind === 'pg' ? 'database' : 'process', pairs: pairs.map((p) => ({ a: accounts.get(p.a), b: accounts.get(p.b), tables: p.tables, sharedAddress: p.sharedAddress, lastAt: iso(p.lastAt) })) };
+    }),
+    // How many accounts joined a club today from each address and each device (hashed: the admin sees counts, not addresses).
+    r('GET', '/api/admin/clubs/:code/join-allowances', async (ctx) => {
+      admin(ctx);
+      const code = String(ctx.params.code ?? '').toUpperCase();
+      if (!/^[A-Z0-9]{1,16}$/.test(code)) throw new ModerationError(400, 'invalid', 'No such club code');
+      const at = now();
+      const rows = await repos.joinAllowances.forClub(code, at - DAY_MS);
+      const perDay = { address: CLUB_LIMITS.joinsPerDayPerClubAddress, device: CLUB_LIMITS.joinsPerDayPerClubDevice };
+      const joined = (kind: 'address' | 'device', tokens: number, since: number) => Math.max(0, Math.round(perDay[kind] - Math.min(perDay[kind], tokens + (perDay[kind] * Math.max(0, at - since)) / DAY_MS)));
+      const buckets = rows
+        .map((b) => ({ kind: b.kind, key: b.key.slice(0, 12), joinedToday: joined(b.kind, b.tokens, b.updatedAt), lastAt: iso(b.updatedAt) }))
+        .filter((b) => b.joinedToday > 0)
+        .sort((x, y) => y.joinedToday - x.joinedToday || (x.kind < y.kind ? -1 : x.kind > y.kind ? 1 : x.key < y.key ? -1 : 1));
+      return { club: code, scope: repos.kind === 'pg' ? 'database' : 'process', perDay, buckets };
     }),
     r('POST', '/api/admin/users/:id/ban', async (ctx) => {
       admin(ctx);

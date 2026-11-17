@@ -38,7 +38,19 @@ export interface Me {
   wallet: { diamonds: number; bonusDiamonds: number };
   entitlements: Array<{ entitlement: string; expiresAt: string | null }>;
   identities: Array<{ provider: string; email?: string }>;
+  /** The quick-match table rating (absent from older servers). */
+  tableRating?: TableRating;
   serverNow: string;
+}
+
+/** The quick-match table rating (`GET /api/me`, `GET /api/me/table-rating`; docs/API.md, "Table rating"). */
+export interface TableRating {
+  rating: number;
+  /** Rated quick-match matches played; the first 20 are provisional. */
+  matches: number;
+  provisional: boolean;
+  /** The last quick-match match that moved it: its table's room code and the change. */
+  last: { room: string; change: number; at: string } | null;
 }
 
 export interface MePatch {

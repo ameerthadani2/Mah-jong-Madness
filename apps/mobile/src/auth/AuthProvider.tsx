@@ -17,7 +17,8 @@ import { walletForUser } from '../monetisation/wallet';
 import { forgetPushRegistration } from '../push/hub';
 import { ApiError, AuthClient, type AuthSnapshot, type AuthStatus } from './client';
 import { appleAvailable, deviceInfo, platformStore, signInWithApple, signInWithGoogle, type ProviderCredential } from './platform';
-import type { Me, ServerConfig } from './types';
+import type { Me, ServerConfig, TableRating } from './types';
+import { parseTableRating } from '../logic/tableRating';
 
 export interface ProviderState {
   id: SignInProvider;
@@ -37,6 +38,8 @@ export interface AuthContextValue {
   providers: ProviderState[];
   /** How many sign-in methods (other than the guest secret) the account has. */
   linkedCount: number;
+  /** The quick-match table rating from the last account read (null offline or from an older server). */
+  tableRating?: TableRating | null;
   busy: boolean;
   /** Last failure (show with friendlyError); cleared by the next success. */
   error: unknown;
@@ -231,6 +234,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       user: snap.userId ? { id: snap.userId, displayName: snap.displayName, kind: snap.kind ?? 'guest' } : null,
       providers,
       linkedCount: linked.size,
+      tableRating: parseTableRating(me?.tableRating),
       busy,
       error,
       client,

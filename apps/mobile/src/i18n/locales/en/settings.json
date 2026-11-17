@@ -80,6 +80,9 @@
       "startFreshConfirm": "Start fresh anyway"
     },
     "id": "Player id: %{id}",
+    "tableRating": "Quick-match rating: %{rating}",
+    "tableRatingProvisional": "Provisional: %{matches} of 20 rated matches played",
+    "tableRatingHint": "Moved by quick matches with other people; bots never count.",
     "apple": "Sign in with Apple",
     "google": "Sign in with Google",
     "linkedApple": "Apple linked",

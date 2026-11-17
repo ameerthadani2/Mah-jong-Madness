@@ -58,7 +58,7 @@ export interface UsersRepo {
   /**
    * Hard-deletes users soft-deleted (or merged away) before `before`, with everything that
    * references them (identities, sessions, devices, wallet, entitlements, puzzle results, the
-   * puzzle rating, Rush runs, club rows). Ledger, purchases, store events and reports keep their user ids as records. A user who
+   * puzzle and table ratings, Rush runs, club rows). Ledger, purchases, store events and reports keep their user ids as records. A user who
    * still owns a club is kept. Returns how many rows went.
    */
   purgeDeleted(before: number): Promise<number>;
@@ -531,6 +531,79 @@ export interface PuzzleRatingsRepo {
   mergeInto(fromUserId: string, toUserId: string): Promise<void>;
 }
 
+/** One account's table rating, moved only by finished quick-match matches between humans (src/tableRating.ts). */
+export interface TableRatingRecord {
+  userId: string;
+  rating: number;
+  /** How many quick-match matches moved it; the first `PROVISIONAL_MATCHES` are provisional. */
+  matches: number;
+  /** The last match that moved it (its table's match id and room code) and by how much. */
+  lastMatchId: string | null;
+  lastRoom: string | null;
+  lastChange: number;
+  updatedAt: number;
+}
+
+export interface TableRatingsRepo {
+  get(userId: string): Promise<TableRatingRecord | null>;
+  /** The rows of these accounts that have one (any order). */
+  getMany(userIds: string[]): Promise<TableRatingRecord[]>;
+  /** `getMany`, locking the accounts until the transaction ends (pg: FOR UPDATE, in id order), so two matches apply one after the other. */
+  getManyForUpdate(userIds: string[]): Promise<TableRatingRecord[]>;
+  /** Inserts or replaces the row. */
+  set(rating: TableRatingRecord): Promise<void>;
+  /**
+   * An account merge: the surviving account keeps whichever rating is better supported (more
+   * matches; its own on a tie), and the merged-away user's row goes.
+   */
+  mergeInto(fromUserId: string, toUserId: string): Promise<void>;
+}
+
+/** How often a pair of accounts (a < b) sat together at quick-match tables. */
+export interface QuickMatchPairRecord {
+  a: string;
+  b: string;
+  tables: number;
+  /** Of those tables, how many the two accounts joined from one IPv4 address. */
+  sharedAddress: number;
+  lastAt: number;
+}
+
+/** The quick-match pair counts (src/matchmaking.ts), kept across restarts on Postgres. */
+export interface QuickMatchPairsRepo {
+  /**
+   * One more table for each pair (`a < b`; `shared` when they joined from one IPv4 address), seen
+   * at `at`. Past `max` pairs, the ones seen together least recently go.
+   */
+  record(pairs: Array<{ a: string; b: string; shared: boolean }>, at: number, max: number): Promise<void>;
+  /** Pairs that sat together at `min` or more tables, most often first (then by `a`, `b`), at most `limit`. */
+  frequent(min: number, limit: number): Promise<QuickMatchPairRecord[]>;
+}
+
+/** A club's daily join allowance for one address or device: its token bucket as it stood at `updatedAt`. */
+export interface JoinAllowanceRecord {
+  kind: 'address' | 'device';
+  clubCode: string;
+  /** A salted hash of the address key or install id (`JoinAllowancesRepo.salt`), never the value itself. */
+  key: string;
+  tokens: number;
+  updatedAt: number;
+}
+
+/** The club join allowances per address and device (src/clubs.ts), kept across restarts on Postgres. */
+export interface JoinAllowancesRepo {
+  /** The salt the keys are hashed with: one per database (memory: one per process). */
+  salt(): Promise<string>;
+  /** Every bucket updated at or after `since`. */
+  list(since: number): Promise<JoinAllowanceRecord[]>;
+  /** One club's buckets updated at or after `since` (the admin view). */
+  forClub(clubCode: string, since: number): Promise<JoinAllowanceRecord[]>;
+  /** Inserts or replaces the bucket. */
+  save(r: JoinAllowanceRecord): Promise<void>;
+  /** Drops buckets last updated before `before` (they have refilled). Returns how many went. */
+  prune(before: number): Promise<number>;
+}
+
 /** A Puzzle Rush run the server issued. The result fields are null until it is finished. */
 export interface RushRunRecord {
   id: string;
@@ -734,6 +807,9 @@ export interface Repos {
   matchResults: MatchResultsRepo;
   puzzleResults: PuzzleResultsRepo;
   puzzleRatings: PuzzleRatingsRepo;
+  tableRatings: TableRatingsRepo;
+  quickMatchPairs: QuickMatchPairsRepo;
+  joinAllowances: JoinAllowancesRepo;
   rushRuns: RushRunsRepo;
   dailyAttempts: DailyAttemptsRepo;
   puzzleFlags: PuzzleFlagsRepo;

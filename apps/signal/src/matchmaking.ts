@@ -5,19 +5,25 @@
  * a birth year on file that makes it 18 or older: `age_missing` without one, `age_under` when it
  * is too young; the year is write-once, see `PATCH /api/me`) and loads who it must never sit with (players it
  * blocked and players who blocked it), then answers `{t:'queue_status', position, waitedMs,
- * humans, fillMs}` at once and every `statusEveryMs` (2 s) while it waits. Players are grouped in
- * arrival order, four to a table, never two at one table where either blocked the other, and never
+ * humans, fillMs}` at once and every `statusEveryMs` (2 s) while it waits. Players are grouped
+ * four to a table by their quick-match rating (src/tableRating.ts): when more players are waiting
+ * than one table holds, the four closest ratings sit together first, and a full table is seated as
+ * soon as its spread of ratings is within what its longest-waiting player accepts (200 points at
+ * once, widening to 1,000 by the fill time, `ratingSpreadFor`). Nobody waits past the fill time for
+ * a closer table: a player whose wait is up is seated then with the waiting players closest to its
+ * rating, and bots in the empty seats. Never two at one table where either blocked the other, and never
  * two accounts from one IPv6 /64 (as `addressKey` keys it) or one device (the install the session
  * was made on) at one table: each of them is seated with others, or with bots once its wait is up.
  * One IPv4 address is only a preference, because a mobile carrier puts many strangers behind one
  * shared address: accounts behind one IPv4 address are grouped apart while other humans are
  * waiting, and a group whose wait is up takes in a waiting account from its own IPv4 address (with
  * no block or shared device or /64) rather than seat bots in that place. The matchmaker also
- * counts, in memory per process, how often each pair of accounts sat together and at how many of
- * those tables they shared an IPv4 address (`frequentPairs`, shown to moderators). A group
- * of four is seated at once; a group of one to three is seated with Club bots in the empty seats
- * once its first player has waited `fillMs` (QUICK_MATCH_FILL_MS, default 20 s), so a solo player
- * always gets a game. Each player of a seated group gets `{t:'matched', room, humans, bots}` and
+ * counts how often each pair of accounts sat together and at how many of those tables they shared
+ * an IPv4 address (`pairStore`: the repositories, so the database on Postgres and the counts survive
+ * a restart; shown to moderators). A group
+ * of four within the rating spread is seated at once; any group is seated, with Club bots in the
+ * empty seats, once its first player has waited `fillMs` (QUICK_MATCH_FILL_MS, default 20 s), so a
+ * solo player always gets a game. Each player of a seated group gets `{t:'matched', room, humans, bots}` and
  * joins the table by its code as usual (rooms.ts restricts it to them and starts it by itself).
  * `{t:'leave_queue'}` or closing the socket leaves; a second socket of the same account replaces
  * the first (`{t:'queue_error', code:'replaced'}` to the old one) and keeps its place.
@@ -115,6 +121,11 @@ export interface MatchmakerOptions {
    * record), or null when unknown. Two accounts on one device never share a table. A throw reads as unknown.
    */
   device?(peer: QueuePeer): Promise<string | null>;
+  /**
+   * The account's quick-match rating (src/tableRating.ts), read when it queues: tables prefer
+   * close ratings. Absent, or a throw: `UNRATED`.
+   */
+  rating?(userId: string): Promise<number>;
   /** Open the table for a group, in seat order; returns its room code. A throw answers `unavailable`. */
   openTable(userIds: string[]): string;
   /**
@@ -128,6 +139,12 @@ export interface MatchmakerOptions {
    * their place, and the others are seated without them.
    */
   charge?(peerIds: string[]): string[];
+  /**
+   * Where the pair counts are kept (the repositories' `quickMatchPairs`: the database on Postgres,
+   * so they survive a restart and the admin view reads them there). Without it they are kept in
+   * this process (`frequentPairs`).
+   */
+  pairStore?: { record(pairs: Array<{ a: string; b: string; shared: boolean }>, at: number, max: number): Promise<void> };
   log?: (line: string) => void;
 }
 
@@ -143,7 +160,29 @@ interface Entry {
    */
   address: string | null;
   device: string | null;
+  /** The account's quick-match rating when it queued (src/tableRating.ts). */
+  rating: number;
   lastStatusAt: number;
+}
+
+/** The rating an account without one (or whose rating could not be read) is matched at. */
+export const UNRATED = 1500;
+/** The widest spread of ratings a full table is seated with at once, and how far it widens by the fill time. */
+export const RATING_SPREAD_AT_ONCE = 200;
+export const RATING_SPREAD_WIDENS_BY = 800;
+
+/**
+ * The widest spread of ratings (highest minus lowest) a full table of four is seated with once its
+ * longest-waiting player has waited `waitedMs`: 200 points at once, widening evenly to 1,000 at
+ * the fill time, after which any spread will do (that player is seated then in any case).
+ */
+export function ratingSpreadFor(waitedMs: number, fillMs: number): number {
+  if (waitedMs >= fillMs) return Infinity;
+  return RATING_SPREAD_AT_ONCE + (RATING_SPREAD_WIDENS_BY * Math.max(0, waitedMs)) / fillMs;
+}
+
+function sortByArrival(g: Entry[]): Entry[] {
+  return [...g].sort((a, b) => a.joinedAt - b.joinedAt || a.seq - b.seq);
 }
 
 /** The age a birth year makes someone at the least this year (no birthday is asked, so the latest one is assumed). */
@@ -185,6 +224,8 @@ export class Matchmaker implements QueueGate {
   /** Quick-match tables shared, by pair of accounts ("a b", a < b), least recently seen first. */
   private readonly pairs = new Map<string, QuickMatchPair>();
   private seq = 0;
+  /** The chain of pair-count writes to `pairStore`. */
+  private pairWrites: Promise<void> = Promise.resolve();
   private readonly now: () => number;
   readonly fillMs: number;
   private readonly statusEveryMs: number;
@@ -220,6 +261,7 @@ export class Matchmaker implements QueueGate {
     this.pending.set(peer.peerId, ticket);
     let avoid: Set<string>;
     let device: string | null;
+    let rating: number;
     try {
       const refusal = await this.opts.check(peer.userId);
       if (this.pending.get(peer.peerId) !== ticket) return;
@@ -233,7 +275,7 @@ export class Matchmaker implements QueueGate {
         this.pending.delete(peer.peerId);
         return refuse(peer, 'seated', { room });
       }
-      [avoid, device] = await Promise.all([new Set(await this.opts.avoid(peer.userId)), this.deviceOf(peer)]);
+      [avoid, device, rating] = await Promise.all([new Set(await this.opts.avoid(peer.userId)), this.deviceOf(peer), this.ratingOf(peer.userId)]);
     } catch (e) {
       if (this.pending.get(peer.peerId) !== ticket) return;
       this.pending.delete(peer.peerId);
@@ -253,7 +295,7 @@ export class Matchmaker implements QueueGate {
       seq = e.seq;
     }
     const address = peer.address !== undefined ? addressKey(peer.address) : null;
-    const entry: Entry = { peer, joinedAt, seq, avoid, address, device, lastStatusAt: this.now() };
+    const entry: Entry = { peer, joinedAt, seq, avoid, address, device, rating, lastStatusAt: this.now() };
     this.entries.set(peer.peerId, entry);
     this.match();
     if (this.entries.has(peer.peerId)) this.sendStatus(entry, this.groups());
@@ -270,8 +312,9 @@ export class Matchmaker implements QueueGate {
   }
 
   /**
-   * Pairs of accounts that sat together at `min` or more quick-match tables, most often first.
-   * Kept in memory by this process only (lost on a restart, and not shared between servers).
+   * Pairs of accounts that sat together at `min` or more quick-match tables, most often first,
+   * when this matchmaker keeps them itself (no `pairStore`: in this process only, lost on a
+   * restart). With a `pairStore` they are read from there instead.
    */
   frequentPairs(min = 3): QuickMatchPair[] {
     return [...this.pairs.values()]
@@ -280,8 +323,26 @@ export class Matchmaker implements QueueGate {
       .map((p) => ({ ...p }));
   }
 
+  /** Resolves once every pair count written so far has reached the pair store (tests, shutdown). */
+  pairsSaved(): Promise<void> {
+    return this.pairWrites;
+  }
+
   private countPairs(seated: Entry[]): void {
     const at = this.now();
+    const store = this.opts.pairStore;
+    if (store) {
+      const pairs: Array<{ a: string; b: string; shared: boolean }> = [];
+      for (let i = 0; i < seated.length; i++) {
+        for (let j = i + 1; j < seated.length; j++) {
+          const [x, y] = seated[i].peer.userId < seated[j].peer.userId ? [seated[i], seated[j]] : [seated[j], seated[i]];
+          if (x.peer.userId !== y.peer.userId) pairs.push({ a: x.peer.userId, b: y.peer.userId, shared: x.address !== null && x.address === y.address });
+        }
+      }
+      // One write after another, so the counts add up in order; a failed write is logged, not retried.
+      this.pairWrites = this.pairWrites.then(() => store.record(pairs, at, MAX_TRACKED_PAIRS)).catch((e: Error) => this.opts.log?.(`[signal] quick match pair counts not saved: ${e.message}`));
+      return;
+    }
     for (let i = 0; i < seated.length; i++) {
       for (let j = i + 1; j < seated.length; j++) {
         const [x, y] = seated[i].peer.userId < seated[j].peer.userId ? [seated[i], seated[j]] : [seated[j], seated[i]];
@@ -295,6 +356,16 @@ export class Matchmaker implements QueueGate {
         this.pairs.set(key, { ...p, tables: p.tables + 1, sharedAddress: p.sharedAddress + shared, lastAt: at });
         if (this.pairs.size > MAX_TRACKED_PAIRS) this.pairs.delete(this.pairs.keys().next().value as string);
       }
+    }
+  }
+
+  private async ratingOf(userId: string): Promise<number> {
+    if (!this.opts.rating) return UNRATED;
+    try {
+      const r = await this.opts.rating(userId);
+      return Number.isFinite(r) ? r : UNRATED;
+    } catch {
+      return UNRATED;
     }
   }
 
@@ -342,58 +413,115 @@ export class Matchmaker implements QueueGate {
   }
 
   /**
-   * Groups in arrival order: each player joins the earliest group with room and nobody it may not
-   * sit with, nor anybody from its IPv4 address. Then each group whose wait is up and still has
-   * room, earliest first, takes in waiting players from later groups that are not full (earliest
-   * first) whom only a shared IPv4 address kept apart, so they sit together rather than with bots.
+   * Who would sit with whom now (for `queue_status`): in arrival order, each player not yet placed
+   * starts a group and takes in the waiting players closest to its rating (earliest first on a
+   * tie) that nothing keeps apart from the group, nor a shared IPv4 address; a group whose first
+   * player's wait is up also takes in players only a shared IPv4 address kept apart.
    */
   private groups(): Entry[][] {
+    const left = this.ordered();
     const groups: Entry[][] = [];
-    for (const e of this.ordered()) {
-      const g = groups.find((g) => g.length < TABLE_SIZE && g.every((o) => !clash(e, o) && !sameIPv4(e, o)));
-      if (g) g.push(e);
-      else groups.push([e]);
+    while (left.length > 0) {
+      const g = this.gather(left[0], left.slice(1), this.waitIsUp(left[0]));
+      for (const e of g) left.splice(left.indexOf(e), 1);
+      groups.push(g);
     }
-    const now = this.now();
-    for (let i = 0; i < groups.length; i++) {
-      const g = groups[i];
-      if (g.length === 0 || g.length === TABLE_SIZE || now - Math.min(...g.map((e) => e.joinedAt)) < this.fillMs) continue;
-      for (let j = i + 1; j < groups.length && g.length < TABLE_SIZE; j++) {
-        const h = groups[j];
-        if (h.length === TABLE_SIZE) continue;
-        for (const e of [...h]) {
-          if (g.length === TABLE_SIZE) break;
-          if (g.some((o) => clash(e, o))) continue;
-          g.push(e);
-          h.splice(h.indexOf(e), 1);
-        }
-      }
-    }
-    return groups.filter((g) => g.length > 0);
+    return groups;
   }
 
-  private match(): void {
-    const now = this.now();
-    for (const g of this.groups()) {
-      const full = g.length === TABLE_SIZE;
-      if (!full && now - Math.min(...g.map((e) => e.joinedAt)) < this.fillMs) continue;
-      // The table counts against its players' create allowance, like any table they open. A player
-      // with none left waits on (it is asked again at the next pass); the others are not held up.
-      const broke = new Set(this.opts.charge?.(g.map((e) => e.peer.peerId)) ?? []);
-      const seated = g.filter((e) => !broke.has(e.peer.peerId));
-      for (const e of seated) this.entries.delete(e.peer.peerId);
-      if (seated.length === 0) continue;
-      let room: string;
-      try {
-        room = this.opts.openTable(seated.map((e) => e.peer.userId));
-      } catch (e) {
-        this.opts.log?.(`[signal] quick match table not opened: ${(e as Error).message}`);
-        for (const x of seated) refuse(x.peer, 'unavailable');
-        continue;
+  /** Whether this player has waited the fill time: its group is seated now, with bots if need be. */
+  private waitIsUp(e: Entry): boolean {
+    return this.now() - e.joinedAt >= this.fillMs;
+  }
+
+  /**
+   * `first` and up to three of `others` (in arrival order), closest in rating to `first` first (the
+   * earlier on a tie), each kept only if nothing keeps it apart from those already taken (a block,
+   * a device, an IPv6 /64) nor a shared IPv4 address; then, when `shareIPv4`, the same again for
+   * those only a shared IPv4 address kept out.
+   */
+  private gather(first: Entry, others: Entry[], shareIPv4: boolean): Entry[] {
+    const byRating = others.map((e, i) => ({ e, i })).sort((x, y) => Math.abs(x.e.rating - first.rating) - Math.abs(y.e.rating - first.rating) || x.i - y.i).map((x) => x.e);
+    const g = [first];
+    for (const strict of shareIPv4 ? [true, false] : [true]) {
+      for (const e of byRating) {
+        if (g.length === TABLE_SIZE) return g;
+        if (g.includes(e) || g.some((o) => clash(e, o) || (strict && sameIPv4(e, o)))) continue;
+        g.push(e);
       }
-      this.countPairs(seated);
-      for (const e of seated) e.peer.send({ t: 'matched', room, humans: seated.length, bots: TABLE_SIZE - seated.length });
     }
+    return g;
+  }
+
+  /**
+   * The table of four to seat now, if any: of the full groups the waiting players can make (each
+   * player in turn taking in those closest to its rating, as `gather` does), the one with the
+   * smallest spread of ratings (the earliest first player on a tie), provided that spread is within
+   * what its longest-waiting player accepts (`ratingSpreadFor`). Null when no full group is close
+   * enough yet: they wait on, but never past the fill time.
+   */
+  private closestFullGroup(): Entry[] | null {
+    const all = this.ordered();
+    let best: { g: Entry[]; spread: number } | null = null;
+    for (const first of all) {
+      const g = this.gather(
+        first,
+        all.filter((e) => e !== first),
+        false,
+      );
+      if (g.length < TABLE_SIZE) continue;
+      const ratings = g.map((e) => e.rating);
+      const spread = Math.max(...ratings) - Math.min(...ratings);
+      const waited = this.now() - Math.min(...g.map((e) => e.joinedAt));
+      if (spread > ratingSpreadFor(waited, this.fillMs)) continue;
+      if (!best || spread < best.spread) best = { g, spread };
+    }
+    return best ? sortByArrival(best.g) : null;
+  }
+
+  /**
+   * Seat whoever can be seated. First the closest full tables, while any is within what its
+   * players accept (with more players waiting than one table holds, the closest ratings sit
+   * together first). Then each player whose wait is up, earliest first, is seated now with the
+   * waiting players closest to its rating that may sit with it, and Club bots in the empty seats:
+   * so nobody waits past the fill time, as before ratings counted.
+   */
+  private match(): void {
+    // A group whose players all lack allowance seats nobody; it is not tried again in this pass.
+    const tried = new Set<string>();
+    for (;;) {
+      const g = this.closestFullGroup();
+      if (!g) break;
+      const key = g.map((e) => e.peer.peerId).join(' ');
+      if (tried.has(key)) break;
+      tried.add(key);
+      this.seat(g);
+    }
+    for (const e of this.ordered()) {
+      if (!this.entries.has(e.peer.peerId) || !this.waitIsUp(e)) continue;
+      const others = this.ordered().filter((o) => o !== e);
+      this.seat(sortByArrival(this.gather(e, others, true)));
+    }
+  }
+
+  /** Charge and open a table for a group (in seat order); a player with no allowance left waits on. */
+  private seat(g: Entry[]): void {
+    // The table counts against its players' create allowance, like any table they open. A player
+    // with none left waits on (it is asked again at the next pass); the others are not held up.
+    const broke = new Set(this.opts.charge?.(g.map((e) => e.peer.peerId)) ?? []);
+    const seated = g.filter((e) => !broke.has(e.peer.peerId));
+    for (const e of seated) this.entries.delete(e.peer.peerId);
+    if (seated.length === 0) return;
+    let room: string;
+    try {
+      room = this.opts.openTable(seated.map((e) => e.peer.userId));
+    } catch (e) {
+      this.opts.log?.(`[signal] quick match table not opened: ${(e as Error).message}`);
+      for (const x of seated) refuse(x.peer, 'unavailable');
+      return;
+    }
+    this.countPairs(seated);
+    for (const e of seated) e.peer.send({ t: 'matched', room, humans: seated.length, bots: TABLE_SIZE - seated.length });
   }
 
   private sendStatus(e: Entry, groups: Entry[][]): void {

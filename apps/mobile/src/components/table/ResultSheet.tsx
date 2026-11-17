@@ -17,6 +17,7 @@ import { matchOverLayout, resultLayout } from './layout';
 import { useRollUp } from './Motion';
 import { NextHandCountdown } from './ClockParts';
 import { taiCapNote } from '../../logic/taiCap';
+import { signedChange } from '../../logic/tableRating';
 
 const signed = (n: number) => `${n >= 0 ? '+' : ''}${n}`;
 
@@ -261,7 +262,11 @@ export function ResultSheet({ result, view, state, mySeat, autoNext, onNext, onL
   );
 }
 
-export function MatchOverSheet({ state, onLeave }: { state: ClientState; onLeave: () => void }) {
+/**
+ * The match-over card. After a quick match `rating` is the player's quick-match rating: 'pending'
+ * while the server applies the match, then the new rating and its change (null or absent: no line).
+ */
+export function MatchOverSheet({ state, onLeave, rating }: { state: ClientState; onLeave: () => void; rating?: { rating: number; change: number } | 'pending' | null }) {
   const { t } = useT();
   const { height } = useWindowDimensions();
   const L = matchOverLayout(height);
@@ -291,6 +296,16 @@ export function MatchOverSheet({ state, onLeave }: { state: ClientState; onLeave
               </Row>
             );
           })}
+          {rating === 'pending' && (
+            <Text style={styles.ratingNote} testID="match-rating">
+              {t('table.ratingPending')}
+            </Text>
+          )}
+          {rating && rating !== 'pending' && (
+            <Text style={styles.ratingNote} testID="match-rating">
+              {t('table.ratingChange', { rating: rating.rating, change: signedChange(rating.change) })}
+            </Text>
+          )}
           <EndUnverifiedNote state={state} testID="match-end-unverified" />
           <Button large={!L.compact} title={t('table.backHome')} onPress={onLeave} testID="match-over-home" />
         </ScrollView>
@@ -329,4 +344,5 @@ const styles = StyleSheet.create({
   rankScore: { fontFamily: fonts.display, fontSize: 20 },
   autoNext: { color: colors.inkDim, fontSize: 12, fontFamily: fonts.bodyBold },
   endNote: { color: colors.goldDim, fontSize: 12, fontFamily: fonts.bodyBold },
+  ratingNote: { color: colors.ink, fontSize: 14, fontFamily: fonts.bodyBold, textAlign: 'center' },
 });

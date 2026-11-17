@@ -3,7 +3,7 @@ import React from 'react';
 import { render, screen } from '@testing-library/react-native';
 import type { HandResult, TableView, WinRecord } from '@mjm/engine';
 import type { ClientState } from '@mjm/net';
-import { ResultSheet } from './ResultSheet';
+import { MatchOverSheet, ResultSheet } from './ResultSheet';
 import { setLocalePreference } from '../../i18n';
 
 const item = (key: string, nameZh: string, nameEn: string, tai: number) => ({ key, nameZh, nameEn, tai });
@@ -98,5 +98,33 @@ describe('the online result sheet', () => {
     await unmount();
     await render(<ResultSheet result={result} view={view} state={{ ...base, intermissionDeadline: null } as unknown as ClientState} mySeat={0} autoNext onNext={() => {}} onLeave={() => {}} onReview={() => {}} onFairness={() => {}} />);
     expect(screen.getByTestId('result-auto-next')).toHaveTextContent('Online, the next hand starts by itself in a few seconds.');
+  });
+});
+
+describe('the match-over card after a quick match', () => {
+  const over = { seats: SEATS, auditStatus: 'ok', auditFailures: [], auditCaveats: [], matchOver: true, finalScores: [300, -100, -100, -100] } as unknown as ClientState;
+
+  it('says the rating is being updated, then shows the new rating and its change', async () => {
+    const { rerender } = await render(<MatchOverSheet state={over} onLeave={() => {}} rating="pending" />);
+    expect(screen.getByTestId('match-rating')).toHaveTextContent('Updating your quick-match rating…');
+    await rerender(<MatchOverSheet state={over} onLeave={() => {}} rating={{ rating: 1532, change: 12 }} />);
+    expect(screen.getByTestId('match-rating')).toHaveTextContent('Quick-match rating 1532 (+12)');
+    await rerender(<MatchOverSheet state={over} onLeave={() => {}} rating={{ rating: 1488, change: -12 }} />);
+    expect(screen.getByTestId('match-rating')).toHaveTextContent('Quick-match rating 1488 (-12)');
+  });
+
+  it('shows no rating line at any other table', async () => {
+    await render(<MatchOverSheet state={over} onLeave={() => {}} />);
+    expect(screen.queryByTestId('match-rating')).toBeNull();
+  });
+
+  it('shows the change in Chinese too', async () => {
+    setLocalePreference('zh-TW');
+    try {
+      await render(<MatchOverSheet state={over} onLeave={() => {}} rating={{ rating: 1532, change: 0 }} />);
+      expect(screen.getByTestId('match-rating')).toHaveTextContent('快速配對積分 1532（±0）');
+    } finally {
+      setLocalePreference('auto');
+    }
   });
 });

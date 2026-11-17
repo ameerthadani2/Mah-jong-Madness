@@ -102,6 +102,8 @@
     "pending": "Audit pending"
   },
   "matchOver": "Match over",
+  "ratingChange": "Quick-match rating %{rating} (%{change})",
+  "ratingPending": "Updating your quick-match rating…",
   "backHome": "Back to home",
   "quickChat": {
     "nice": "Nice!",
