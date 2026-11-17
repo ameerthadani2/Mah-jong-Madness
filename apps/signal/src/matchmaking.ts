@@ -7,10 +7,14 @@
  * blocked and players who blocked it), then answers `{t:'queue_status', position, waitedMs,
  * humans, fillMs}` at once and every `statusEveryMs` (2 s) while it waits. Players are grouped in
  * arrival order, four to a table, never two at one table where either blocked the other, and never
- * two accounts from one address (an IPv4 address or an IPv6 /64, as `addressKey` keys it) or one
- * device (the install the session was made on) at one table: each of them is seated with others,
- * or with bots once its wait is up. The matchmaker also counts, in memory per process, how often
- * each pair of accounts sat together (`frequentPairs`, shown to moderators). A group
+ * two accounts from one IPv6 /64 (as `addressKey` keys it) or one device (the install the session
+ * was made on) at one table: each of them is seated with others, or with bots once its wait is up.
+ * One IPv4 address is only a preference, because a mobile carrier puts many strangers behind one
+ * shared address: accounts behind one IPv4 address are grouped apart while other humans are
+ * waiting, and a group whose wait is up takes in a waiting account from its own IPv4 address (with
+ * no block or shared device or /64) rather than seat bots in that place. The matchmaker also
+ * counts, in memory per process, how often each pair of accounts sat together and at how many of
+ * those tables they shared an IPv4 address (`frequentPairs`, shown to moderators). A group
  * of four is seated at once; a group of one to three is seated with Club bots in the empty seats
  * once its first player has waited `fillMs` (QUICK_MATCH_FILL_MS, default 20 s), so a solo player
  * always gets a game. Each player of a seated group gets `{t:'matched', room, humans, bots}` and
@@ -30,6 +34,7 @@
  * `rate_limited`, `sign_in`, `unavailable`, `replaced` or `seated` (which also carries `room`).
  */
 
+import { isIP } from 'node:net';
 import { addressKey } from './limits';
 
 /** Default for `MatchmakerOptions.fillMs` (QUICK_MATCH_FILL_MS). */
@@ -81,6 +86,8 @@ export interface QuickMatchPair {
   a: string;
   b: string;
   tables: number;
+  /** Of those tables, how many the two accounts joined from one IPv4 address. */
+  sharedAddress: number;
   lastAt: number;
 }
 
@@ -130,7 +137,10 @@ interface Entry {
   /** Arrival order among entries that joined in the same millisecond. */
   seq: number;
   avoid: Set<string>;
-  /** The address key and device: no two entries that share either sit at one table. */
+  /**
+   * The address key and device: no two entries that share a device or an IPv6 /64 sit at one
+   * table; two that share an IPv4 address do only when the alternative is bots (`groups`).
+   */
   address: string | null;
   device: string | null;
   lastStatusAt: number;
@@ -270,16 +280,19 @@ export class Matchmaker implements QueueGate {
       .map((p) => ({ ...p }));
   }
 
-  private countPairs(userIds: string[]): void {
+  private countPairs(seated: Entry[]): void {
     const at = this.now();
-    for (let i = 0; i < userIds.length; i++) {
-      for (let j = i + 1; j < userIds.length; j++) {
-        const [a, b] = userIds[i] < userIds[j] ? [userIds[i], userIds[j]] : [userIds[j], userIds[i]];
+    for (let i = 0; i < seated.length; i++) {
+      for (let j = i + 1; j < seated.length; j++) {
+        const [x, y] = seated[i].peer.userId < seated[j].peer.userId ? [seated[i], seated[j]] : [seated[j], seated[i]];
+        const a = x.peer.userId;
+        const b = y.peer.userId;
         if (a === b) continue;
         const key = `${a} ${b}`;
-        const p = this.pairs.get(key) ?? { a, b, tables: 0, lastAt: at };
+        const shared = x.address !== null && x.address === y.address ? 1 : 0;
+        const p = this.pairs.get(key) ?? { a, b, tables: 0, sharedAddress: 0, lastAt: at };
         this.pairs.delete(key);
-        this.pairs.set(key, { ...p, tables: p.tables + 1, lastAt: at });
+        this.pairs.set(key, { ...p, tables: p.tables + 1, sharedAddress: p.sharedAddress + shared, lastAt: at });
         if (this.pairs.size > MAX_TRACKED_PAIRS) this.pairs.delete(this.pairs.keys().next().value as string);
       }
     }
@@ -328,15 +341,35 @@ export class Matchmaker implements QueueGate {
     return [...this.entries.values()].sort((a, b) => a.joinedAt - b.joinedAt || a.seq - b.seq);
   }
 
-  /** Groups in arrival order: each player joins the earliest group with room and nobody it may not sit with. */
+  /**
+   * Groups in arrival order: each player joins the earliest group with room and nobody it may not
+   * sit with, nor anybody from its IPv4 address. Then each group whose wait is up and still has
+   * room, earliest first, takes in waiting players from later groups that are not full (earliest
+   * first) whom only a shared IPv4 address kept apart, so they sit together rather than with bots.
+   */
   private groups(): Entry[][] {
     const groups: Entry[][] = [];
     for (const e of this.ordered()) {
-      const g = groups.find((g) => g.length < TABLE_SIZE && g.every((o) => !clash(e, o)));
+      const g = groups.find((g) => g.length < TABLE_SIZE && g.every((o) => !clash(e, o) && !sameIPv4(e, o)));
       if (g) g.push(e);
       else groups.push([e]);
     }
-    return groups;
+    const now = this.now();
+    for (let i = 0; i < groups.length; i++) {
+      const g = groups[i];
+      if (g.length === 0 || g.length === TABLE_SIZE || now - Math.min(...g.map((e) => e.joinedAt)) < this.fillMs) continue;
+      for (let j = i + 1; j < groups.length && g.length < TABLE_SIZE; j++) {
+        const h = groups[j];
+        if (h.length === TABLE_SIZE) continue;
+        for (const e of [...h]) {
+          if (g.length === TABLE_SIZE) break;
+          if (g.some((o) => clash(e, o))) continue;
+          g.push(e);
+          h.splice(h.indexOf(e), 1);
+        }
+      }
+    }
+    return groups.filter((g) => g.length > 0);
   }
 
   private match(): void {
@@ -358,7 +391,7 @@ export class Matchmaker implements QueueGate {
         for (const x of seated) refuse(x.peer, 'unavailable');
         continue;
       }
-      this.countPairs(seated.map((e) => e.peer.userId));
+      this.countPairs(seated);
       for (const e of seated) e.peer.send({ t: 'matched', room, humans: seated.length, bots: TABLE_SIZE - seated.length });
     }
   }
@@ -372,11 +405,19 @@ export class Matchmaker implements QueueGate {
   }
 }
 
-/** Two entries that may not share a table: a block either way, or one address or one device. */
+/**
+ * Two entries that may never share a table: a block either way, one device, or one address key
+ * that is not an IPv4 address (an IPv6 /64, or an address that could not be read).
+ */
 function clash(a: Entry, b: Entry): boolean {
   if (a.avoid.has(b.peer.userId) || b.avoid.has(a.peer.userId)) return true;
-  if (a.address !== null && a.address === b.address) return true;
+  if (a.address !== null && a.address === b.address && isIP(a.address) !== 4) return true;
   return a.device !== null && a.device === b.device;
+}
+
+/** Two entries from one IPv4 address: kept apart while others are waiting (`Matchmaker.groups`). */
+function sameIPv4(a: Entry, b: Entry): boolean {
+  return a.address !== null && a.address === b.address && isIP(a.address) === 4;
 }
 
 function refuse(peer: QueuePeer, code: QueueRefusal, extra: { room?: string } = {}): void {

@@ -680,7 +680,7 @@ export function adminModerationRoutes<R>(r: ModerationRouteFactory<R>, deps: Mod
         const u = await repos.users.get(id);
         accounts.set(id, u ? await accountJson(u) : { id, deleted: true, displayName: DELETED_PLAYER_NAME });
       }
-      return { min, scope: 'process', pairs: pairs.map((p) => ({ a: accounts.get(p.a), b: accounts.get(p.b), tables: p.tables, lastAt: iso(p.lastAt) })) };
+      return { min, scope: 'process', pairs: pairs.map((p) => ({ a: accounts.get(p.a), b: accounts.get(p.b), tables: p.tables, sharedAddress: p.sharedAddress, lastAt: iso(p.lastAt) })) };
     }),
     r('POST', '/api/admin/users/:id/ban', async (ctx) => {
       admin(ctx);

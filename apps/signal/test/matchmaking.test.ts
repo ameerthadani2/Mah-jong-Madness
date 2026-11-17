@@ -169,15 +169,45 @@ describe('the quick-match queue', () => {
 });
 
 describe('one address or one device at a quick-match table', () => {
-  it('never seats two accounts from one address together; each still gets a game', async () => {
+  it('keeps two accounts from one IPv4 address apart while they wait, then seats them together rather than with bots', async () => {
     const q = queue();
     const a = await q.join('a', { address: '203.0.113.7' });
     const b = await q.join('b', { address: '203.0.113.7' });
     expect(b.last()).toMatchObject({ t: 'queue_status', position: 2, humans: 1 });
+    q.advance(19_500);
+    expect(q.tables).toEqual([]);
+    q.advance(500);
+    expect(q.tables).toEqual([['a', 'b']]);
+    expect(matched(a.out)).toMatchObject({ humans: 2, bots: 2 });
+    expect(matched(b.out)).toMatchObject({ humans: 2, bots: 2 });
+    // Moderators still see the pair, and that they came from one address.
+    expect(q.mm.frequentPairs(1)).toEqual([{ a: 'a', b: 'b', tables: 1, sharedAddress: 1, lastAt: q.clock.now }]);
+  });
+
+  it('a group whose wait is up takes in the accounts its IPv4 address kept apart, but never one from a shared device', async () => {
+    const q = queue({ devices: { s1: 'install-1', s3: 'install-1' } });
+    await q.join('a', { address: '203.0.113.7', sessionId: 's1' });
+    await q.join('b', { address: '198.51.100.4' });
+    await q.join('c', { address: '203.0.113.7', sessionId: 's3' });
+    await q.join('d', { address: '203.0.113.7' });
     q.advance(20_000);
-    expect(q.tables).toEqual([['a'], ['b']]);
-    expect(matched(a.out)).toMatchObject({ humans: 1, bots: 3 });
-    expect(matched(b.out)).toMatchObject({ humans: 1, bots: 3 });
+    // c shares a device with a: a hard separation, so c is seated apart, with bots.
+    expect(q.tables).toEqual([['a', 'b', 'd'], ['c']]);
+    expect(q.mm.frequentPairs(1).map((p) => [p.a, p.b, p.tables, p.sharedAddress])).toEqual([
+      ['a', 'b', 1, 0],
+      ['a', 'd', 1, 1],
+      ['b', 'd', 1, 0],
+    ]);
+  });
+
+  it('seats strangers from other addresses first: a shared IPv4 address waits for the next table', async () => {
+    const q = queue();
+    for (const [id, address] of [['a', '203.0.113.7'], ['b', '203.0.113.7'], ['c', '198.51.100.1'], ['d', '198.51.100.2']] as const) await q.join(id, { address });
+    q.advance(10_000);
+    await q.join('e', { address: '198.51.100.3' });
+    // a, c, d and e fill a table at once; b, from a's address, is not at it.
+    expect(q.tables).toEqual([['a', 'c', 'd', 'e']]);
+    expect(q.mm.waiting()).toEqual(['b']);
   });
 
   it('keys an IPv6 address by its /64, as every per-address limit does', async () => {
@@ -185,6 +215,14 @@ describe('one address or one device at a quick-match table', () => {
     for (const [id, address] of [['a', '2001:db8:1:2::5'], ['b', '2001:db8:1:2:ffff::9'], ['c', '198.51.100.1'], ['d', '198.51.100.2'], ['e', '198.51.100.3']] as const) await q.join(id, { address });
     expect(q.tables).toEqual([['a', 'c', 'd', 'e']]);
     expect(q.mm.waiting()).toEqual(['b']);
+  });
+
+  it('never seats two accounts from one IPv6 /64 together, even when the alternative is bots', async () => {
+    const q = queue();
+    await q.join('a', { address: '2001:db8:1:2::5' });
+    await q.join('b', { address: '2001:db8:1:2:ffff::9' });
+    q.advance(20_000);
+    expect(q.tables).toEqual([['a'], ['b']]);
   });
 
   it('never seats two accounts from one device together, whatever their addresses', async () => {
@@ -213,7 +251,7 @@ describe('one address or one device at a quick-match table', () => {
     }
     expect(q.tables.length).toBe(6);
     const pairs = q.mm.frequentPairs(4);
-    expect(pairs).toEqual([{ a: 'a', b: 'b', tables: 6, lastAt: expect.any(Number) }]);
+    expect(pairs).toEqual([{ a: 'a', b: 'b', tables: 6, sharedAddress: 0, lastAt: expect.any(Number) }]);
     expect(q.mm.frequentPairs(3).map((p) => [p.a, p.b, p.tables])).toEqual([
       ['a', 'b', 6],
       ['a', 'c', 3],
