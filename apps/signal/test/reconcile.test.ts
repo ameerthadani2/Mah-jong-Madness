@@ -289,6 +289,7 @@ function routes(deps: Parameters<typeof storeRoutes>[1]) {
     if (!route) throw new Error(`no route ${method} ${path}`);
     const ctx: StoreRouteCtx = {
       body: opts.body ?? {},
+      params: {},
       req: { headers: opts.authorization ? { authorization: opts.authorization } : {} } as StoreRouteCtx['req'],
       caller: async () => {
         if (!opts.userId) throw new Error('no session');

@@ -269,6 +269,8 @@ export interface StoreEventsRepo {
   delete(eventId: string): Promise<boolean>;
   /** Users named by an event received at or after `since` (the nightly store reconciliation's list). */
   usersActiveSince(since: number): Promise<string[]>;
+  /** The latest `limit` events applied to this user, newest first (the support wallet report). */
+  listForUser(userId: string, limit: number): Promise<StoreEventRecord[]>;
 }
 
 // ---------------------------------------------------------------------------------------------

@@ -12,12 +12,17 @@
  *   support grants diamonds (a ledger entry with reason `support`) or an entitlement (source
  *   `support`, also noted on the ledger) to one account, with a required note. Without
  *   ADMIN_TOKEN the route answers 503.
+ * - `GET /api/admin/users/:id/wallet` (the same token): what the server holds for one account's
+ *   wallet, for checking a store run by hand (scripts/store-check.ts) or a support ticket: the
+ *   balances, every entitlement row with its plan, store, source and expiry, the last
+ *   `WALLET_REPORT_ROWS` ledger entries and the last `WALLET_REPORT_ROWS` store events applied to
+ *   the account (with what processing did: `credited`, `ignored_sandbox`, ...), newest first.
  *
  * Errors are WalletErrors, which api.ts already turns into `{ error, message }` with their status.
  */
 import type { IncomingMessage } from 'node:http';
 import { cleanText } from '@mjm/net';
-import { COSMETIC_ENTITLEMENTS, tierOfEntitlement } from './catalog';
+import { COSMETIC_ENTITLEMENTS, planOfEntitlement, tierOfEntitlement } from './catalog';
 import { BucketTable } from './limits';
 import { Reconciler, revenueCatClientFromEnv } from './reconcile';
 import type { Repos } from './repos/types';
@@ -29,6 +34,8 @@ type Env = Record<string, string | undefined>;
 /** What a store route reads from the API's request context (a subset of api.ts's Ctx). */
 export interface StoreRouteCtx {
   body: Record<string, unknown>;
+  /** The path's `:name` parts. */
+  params: Record<string, string>;
   req: IncomingMessage;
   caller(): Promise<{ userId: string }>;
 }
@@ -58,6 +65,53 @@ export const SYNC_PER_MINUTE = 4;
 export const MAX_GRANT_DAYS = 400;
 /** Largest single support grant of diamonds. */
 export const MAX_GRANT_DIAMONDS = 100_000;
+
+/** Ledger entries and store events the wallet report lists (the latest, newest first). */
+export const WALLET_REPORT_ROWS = 20;
+
+const iso = (ms: number | null) => (ms === null ? null : new Date(ms).toISOString());
+
+/** The support wallet report of one account (GET /api/admin/users/:id/wallet). */
+export async function walletReport(repos: Repos, userId: string, at: number) {
+  const [w, ents, ledger, purchases, events] = await Promise.all([
+    repos.wallet.get(userId),
+    repos.wallet.getEntitlements(userId),
+    repos.wallet.listLedger(userId),
+    repos.wallet.listPurchases(userId),
+    repos.storeEvents.listForUser(userId, WALLET_REPORT_ROWS),
+  ]);
+  // The store a plan was bought in: the latest purchase of that product (a support or diamond row has none).
+  const storeOf = (product: string): string | null => {
+    let latest: (typeof purchases)[number] | null = null;
+    for (const p of purchases) if (p.productId === product && (!latest || p.createdAt > latest.createdAt || (p.createdAt === latest.createdAt && p.id > latest.id))) latest = p;
+    return latest?.store ?? null;
+  };
+  return {
+    userId,
+    at: iso(at),
+    wallet: { diamonds: w.diamonds, bonusDiamonds: w.bonusDiamonds, updatedAt: iso(w.updatedAt) },
+    entitlements: ents
+      .map((e) => {
+        const product = planOfEntitlement(e.entitlement);
+        return {
+          entitlement: e.entitlement,
+          product,
+          plan: tierOfEntitlement(product),
+          store: e.source === 'store' ? storeOf(product) : null,
+          source: e.source,
+          expiresAt: iso(e.expiresAt),
+          live: e.expiresAt === null || e.expiresAt > at,
+          updatedAt: iso(e.updatedAt),
+        };
+      })
+      .sort((a, b) => (a.entitlement < b.entitlement ? -1 : a.entitlement > b.entitlement ? 1 : 0)),
+    ledger: ledger
+      .slice(-WALLET_REPORT_ROWS)
+      .reverse()
+      .map((l) => ({ id: l.id, delta: l.delta, bonus: l.bonus, reason: l.reason, ref: l.ref, at: iso(l.createdAt) })),
+    storeEvents: events.map((e) => ({ eventId: e.eventId, type: e.type, productId: e.productId, environment: e.environment, outcome: e.outcome, at: iso(e.receivedAt) })),
+  };
+}
 
 const wholeIn = (v: unknown, min: number, max: number): v is number => typeof v === 'number' && Number.isInteger(v) && v >= min && v <= max;
 
@@ -92,6 +146,14 @@ export function storeRoutes<R>(r: RouteFactory<R>, deps: StoreRouteDeps): R[] {
         }
       }
       return { synced, applied, failed, ...(await walletReply(me.userId)) };
+    }),
+
+    r('GET', '/api/admin/users/:id/wallet', async (ctx) => {
+      if (!adminToken) throw new WalletError('unavailable', 'Admin routes are not configured on this server');
+      if (!adminAuthorised(ctx.req.headers.authorization, adminToken)) throw new WalletError('unauthorised', 'Bad admin token');
+      const user = await repos.users.get(ctx.params.id ?? '');
+      if (!user) throw new WalletError('not_found', 'No such account');
+      return { ...(await walletReport(repos, user.id, now())), deleted: user.deletedAt !== null };
     }),
 
     r('POST', '/api/admin/grant', async (ctx) => {

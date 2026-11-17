@@ -356,6 +356,25 @@ Asks the server to fetch this account's purchases from RevenueCat and apply any 
 
 Support grant. Body `{ userId, diamonds?, bonus?, entitlement?, days?, note }`; writes a `support` ledger entry or an entitlement. A plan from support is kept apart from the same plan bought in the store (its own row, `support:<plan>`; `GET /api/me` shows one line per plan with the later expiry), so a store refund, expiry or `TRANSFER` never takes time that support granted. `401` wrong token, `404` unknown user, `503` when `ADMIN_TOKEN` is unset.
 
+### `GET /api/admin/users/:id/wallet` (`Authorization: Bearer <ADMIN_TOKEN>`)
+
+What the server holds for one account's wallet, for a support ticket or the owner's sandbox store run (`npm run store-check -w @mjm/signal`, docs/QA.md section 11). Read only.
+
+```json
+{
+  "userId": "…", "at": "2026-11-17T09:00:00.000Z", "deleted": false,
+  "wallet": { "diamonds": 60, "bonusDiamonds": 0, "updatedAt": "…" },
+  "entitlements": [
+    { "entitlement": "coach.gold.month", "product": "coach.gold.month", "plan": "gold", "store": "play_store",
+      "source": "store", "expiresAt": "…", "live": true, "updatedAt": "…" }
+  ],
+  "ledger": [ { "id": 7, "delta": 60, "bonus": 0, "reason": "purchase", "ref": "play_store:GPA.1234", "at": "…" } ],
+  "storeEvents": [ { "eventId": "…", "type": "NON_RENEWING_PURCHASE", "productId": "diamonds.60", "environment": "SANDBOX", "outcome": "credited", "at": "…" } ]
+}
+```
+
+`entitlements` lists every row, expired ones too (`live` false), by name: `product` is the plan or cosmetic it grants (a support row `support:<plan>` grants `<plan>`), `plan` its tier (`gold`, `fourwinds`, or null for a cosmetic), `source` `store`, `support` or `diamonds`, and `store` the store of the latest purchase of that product for a store row (null otherwise). `ledger` is the latest 20 entries and `storeEvents` the latest 20 store events applied to the account, newest first, each with what processing did (`outcome`, as for the webhook below: a non-tester's sandbox purchase shows `ignored_sandbox`). `401` wrong token, `404` unknown account, `503` when `ADMIN_TOKEN` is unset.
+
 ### `POST /api/wallet/spend` (bearer)
 
 Body `{ "productId": "theme.jade" }` → `200 { "spent": 400, "entitlement": "theme.jade", "wallet": { "diamonds", "bonusDiamonds" }, "cosmetics": [...] }`. Any cosmetic or set of the catalogue may be bought this way. The debit and the grant are one transaction; bonus diamonds are spent first. For a set, `entitlement` is the set's id, `spent` the scaled price, and `cosmetics` (everything the account now owns) includes the items it unlocked.

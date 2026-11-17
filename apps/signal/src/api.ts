@@ -501,7 +501,7 @@ export function buildRoutes(deps: ApiDeps, opts: Pick<ApiOptions, 'reportIpLimit
       const summary = await wallet.summary(me.userId);
       return { spent: res.spent, entitlement: res.entitlement, wallet: summary.wallet, cosmetics: summary.cosmetics };
     }),
-    ...storeRoutes(r, { repos, wallet, now }),
+    ...storeRoutes(r, { repos, wallet, now, ...(deps.adminToken !== undefined ? { adminToken: deps.adminToken } : {}) }),
 
     // ------------------------------------------------------------------ blocks and moderation
     ...blockRoutes(r, moderation),

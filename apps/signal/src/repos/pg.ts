@@ -486,6 +486,11 @@ function pgStoreEvents(q: Queryable): StoreEventsRepo {
       const res = await q.query<{ user_id: string }>('SELECT DISTINCT user_id FROM store_events WHERE user_id IS NOT NULL AND received_at >= $1 ORDER BY user_id', [toDate(since)]);
       return res.rows.map((r) => r.user_id);
     },
+    async listForUser(userId, limit) {
+      if (!isUuid(userId)) return [];
+      const res = await q.query<StoreEventRow>('SELECT ' + COLS + ' FROM store_events WHERE user_id = $1 ORDER BY received_at DESC, event_id DESC LIMIT $2', [userId, limit]);
+      return res.rows.map(storeEventFromRow);
+    },
   };
 }
 

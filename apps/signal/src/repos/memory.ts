@@ -377,6 +377,11 @@ function memoryStoreEvents(s: MemoryState): StoreEventsRepo {
       for (const e of s.storeEvents.values()) if (e.userId && e.receivedAt >= since) ids.add(e.userId);
       return [...ids].sort();
     },
+    async listForUser(userId, limit) {
+      const mine = [...s.storeEvents.values()].filter((e) => e.userId === userId);
+      mine.sort((a, b) => b.receivedAt - a.receivedAt || (a.eventId < b.eventId ? 1 : a.eventId > b.eventId ? -1 : 0));
+      return mine.slice(0, limit).map(copy);
+    },
   };
 }
 
