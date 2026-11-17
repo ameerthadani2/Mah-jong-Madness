@@ -47,24 +47,51 @@ export interface WaitsPuzzle {
 
 export type Puzzle = DiscardPuzzle | WaitsPuzzle;
 
-function randomHand(rng: Rng, maxShanten: number, minShanten = 0): Kind[] {
+function randomHand(rng: Rng, maxShanten: number, minShanten = 0, accept?: (hand: Kind[]) => boolean): Kind[] {
   for (let attempt = 0; attempt < 500; attempt++) {
     const pool: Kind[] = [];
     for (let k = 0; k < NUM_PLAY_KINDS; k++) for (let c = 0; c < 4; c++) pool.push(k);
     shuffle(pool, rng);
     const hand = pool.slice(0, 17).sort((a, b) => a - b);
+    if (accept && !accept(hand)) continue;
     const sh = shanten(countsFromKinds(hand), 5);
     if (sh <= maxShanten && sh >= minShanten) return hand;
   }
   return [];
 }
 
-export function discardPuzzle(seed: string, difficulty: 1 | 2 | 3 = 2): DiscardPuzzle {
+/**
+ * The share of shape-reading discard puzzles (the daily, medium and hard) that may still hold an
+ * isolated honour, so "throw the lone honour first" stays right now and then, as it is in play.
+ */
+export const LONE_HONOUR_PUZZLE_SHARE = 0.1;
+
+/** The honour kinds the hand holds exactly one of: throwing one is almost always an accepted answer. */
+export function loneHonours(hand: readonly Kind[]): Kind[] {
+  const counts = countsFromKinds(hand);
+  const lone: Kind[] = [];
+  for (let k = KIND_WIND; k < NUM_PLAY_KINDS; k++) if (counts[k] === 1) lone.push(k);
+  return lone;
+}
+
+export interface DiscardPuzzleOptions {
+  /**
+   * Draw a hand that needs reading its shape: no isolated honour, except in a share
+   * (LONE_HONOUR_PUZZLE_SHARE) of seeds. On by default at medium and hard; the daily puzzle turns it on
+   * at every difficulty. Easy drills keep the beginner's lesson of throwing the lone honour first.
+   */
+  readShape?: boolean;
+}
+
+export function discardPuzzle(seed: string, difficulty: 1 | 2 | 3 = 2, opts: DiscardPuzzleOptions = {}): DiscardPuzzle {
   const rng = createRng(`discard:${seed}`);
   // Harder puzzles are closer to ready, where the differences between discards are subtler.
   const [maxS, minS] = difficulty === 1 ? [4, 2] : difficulty === 2 ? [2, 1] : [1, 0];
+  // Easy puzzles draw no extra number, so they stay exactly as they were for every seed.
+  const readShape = (opts.readShape ?? difficulty >= 2) && rng.next() >= LONE_HONOUR_PUZZLE_SHARE;
+  const accept = readShape ? (hand: Kind[]) => loneHonours(hand).length === 0 : undefined;
   for (let attempt = 0; attempt < 50; attempt++) {
-    const hand = randomHand(rng, maxS, minS);
+    const hand = randomHand(rng, maxS, minS, accept);
     if (hand.length === 0) continue;
     const counts = countsFromKinds(hand);
     const unseen = counts.map((c) => 4 - c);
@@ -146,7 +173,7 @@ export function dailySeed(date: Date): string {
 export function dailyPuzzle(date: Date): DiscardPuzzle {
   const day = date.getUTCDay();
   const difficulty: 1 | 2 | 3 = day === 0 || day === 6 ? 3 : day % 2 === 0 ? 2 : 1;
-  return discardPuzzle(dailySeed(date), difficulty);
+  return discardPuzzle(dailySeed(date), difficulty, { readShape: true });
 }
 
 /** Every puzzle theme, in Puzzle Rush rotation order. */

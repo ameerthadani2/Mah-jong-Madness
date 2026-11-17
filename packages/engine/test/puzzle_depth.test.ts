@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { timeBound } from './helpers/timing';
-import { DEFENCE_SAFETY_ORDER, defenceOrderRule, defencePuzzle, kindInfo, sha256Hex, VALUE_BIG_PATTERN_TAI, valuePatternRule, valuePuzzle, valueSpeedRule, type DefenceOption, type TaiItem, type ValueOption, type ValuePuzzle } from '../src/index';
+import { checkDiscardAnswer, countsFromKinds, dailyPuzzle, DEFENCE_SAFETY_ORDER, defenceOrderRule, defencePuzzle, discardPuzzle, kindInfo, LONE_HONOUR_PUZZLE_SHARE, loneHonours, sha256Hex, VALUE_BIG_PATTERN_TAI, valuePatternRule, valuePuzzle, valueSpeedRule, type DefenceOption, type DiscardPuzzle, type TaiItem, type ValueOption, type ValuePuzzle } from '../src/index';
 
 // How often a one-line rule answers a puzzle: "keep the most winning tiles" for value puzzles, a
 // fixed safety order for defence puzzles. Easy and medium puzzles teach those rules; hard ones
@@ -207,5 +207,65 @@ describe('hard defence puzzles need reading the discards, not a fixed safety ord
   it('generate quickly enough for the server to regenerate a Rush run (loose bound for CI)', () => {
     expect(hard.median).toBeLessThan(timeBound(60));
     expect(hard.max).toBeLessThan(timeBound(1500));
+  });
+});
+
+/** "Throw an isolated honour if you have one": right when the hand holds one and throwing it is accepted. */
+const loneHonourRule = (p: DiscardPuzzle): boolean => {
+  const counts = countsFromKinds(p.hand);
+  const lone = counts.findIndex((c, k) => k >= 27 && c === 1);
+  return lone >= 0 && checkDiscardAnswer(p, lone);
+};
+
+describe('the daily and medium and hard discard puzzles need reading the shape', () => {
+  // Before: the rule was right on 303 of the next 365 dailies and every medium and hard puzzle that held a
+  // lone honour (256 and 171 of 300). Only a small share of seeds may still hold one.
+  const dailies = Array.from({ length: 120 }, (_, i) => dailyPuzzle(new Date(Date.UTC(2026, 10, 18 + i))));
+
+  it('"throw the lone honour" answers under a quarter of the daily puzzles', () => {
+    expect(dailies.filter(loneHonourRule).length).toBeLessThan(0.25 * dailies.length);
+    // Every weekday's difficulty is covered, Monday's easy one included.
+    expect(dailies.filter((p) => p.bestShanten >= 2).length).toBeGreaterThan(0);
+  });
+
+  for (const d of [2, 3] as const) {
+    it(`and under a quarter of the ${d === 2 ? 'medium' : 'hard'} discard puzzles, with a few still holding one`, () => {
+      const ms: number[] = [];
+      const all = Array.from({ length: 150 }, (_, i) => {
+        const t0 = performance.now();
+        const p = discardPuzzle(`depth-lone-${i}`, d);
+        ms.push(performance.now() - t0);
+        return p;
+      });
+      const right = all.filter(loneHonourRule).length;
+      expect(right).toBeLessThan(0.25 * all.length);
+      expect(right).toBeGreaterThan(0);
+      expect(right).toBeLessThan(0.2 * all.length);
+      // A puzzle is still a decision: never more than a third of the discards accepted.
+      for (const p of all) expect(p.answers.length).toBeLessThanOrEqual(Math.max(2, Math.floor(p.options.length / 3)));
+      ms.sort((a, b) => a - b);
+      expect(ms[75]).toBeLessThan(timeBound(20));
+      expect(ms[149]).toBeLessThan(timeBound(500));
+    });
+  }
+
+  it('name the lone honours a hand holds', () => {
+    expect(loneHonours([0, 1, 2, 27, 31, 31, 33])).toEqual([27, 33]);
+    expect(loneHonours([27, 27, 4])).toEqual([]);
+    expect(LONE_HONOUR_PUZZLE_SHARE).toBeLessThan(0.25);
+  });
+
+  it('give the same puzzle for the same seed', () => {
+    for (let i = 0; i < 120; i += 20) expect(dailyPuzzle(new Date(Date.UTC(2026, 10, 18 + i)))).toEqual(dailies[i]);
+    expect(discardPuzzle('depth-lone-same', 3)).toEqual(discardPuzzle('depth-lone-same', 3));
+  });
+
+  it('easy drills keep the beginner\'s lesson, byte-identical to the puzzles recorded before the change', () => {
+    const easy = Array.from({ length: 120 }, (_, i) => discardPuzzle(`pin-${i}`, 1));
+    expect(sha256Hex(JSON.stringify(easy))).toBe('b4c15eac9eee2354943d28ed718993a321fbe64220f92691629b56397ccce443');
+    expect(easy.filter(loneHonourRule).length).toBeGreaterThan(0.75 * easy.length);
+    // The daily reads the shape even on an easy day; the same seed as a drill does not.
+    const monday = new Date(Date.UTC(2026, 10, 23));
+    expect(dailyPuzzle(monday)).toEqual(discardPuzzle('daily-2026-11-23', 1, { readShape: true }));
   });
 });

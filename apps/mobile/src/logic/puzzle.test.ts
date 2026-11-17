@@ -130,7 +130,7 @@ describe('difficulty', () => {
   it('matches the difficulty dailyPuzzle uses on every weekday', () => {
     for (let day = 1; day <= 7; day++) {
       const date = new Date(Date.UTC(2026, 10, day));
-      expect(dailyPuzzle(date)).toEqual(discardPuzzle(dailySeed(date), dailyDifficulty(date)));
+      expect(dailyPuzzle(date)).toEqual(discardPuzzle(dailySeed(date), dailyDifficulty(date), { readShape: true }));
     }
     expect(dailyDifficulty(new Date(Date.UTC(2026, 10, 7)))).toBe(3); // Saturday
     expect(dailyDifficulty(new Date(Date.UTC(2026, 10, 2)))).toBe(1); // Monday
