@@ -16,10 +16,16 @@
  * seat that is probably ready, trading the cost against the win chance it gives
  * up (wall left, own hand value, dealer). Value: Pro keeps value-honour pairs,
  * pongs them, and chases a flush once it is in reach.
+ *
+ * 嚦咕嚦咕 (`RuleSet.liguTai`): at a table that plays it, every tier measures a hand with no melds by
+ * the nearer of five sets and a pair and seven pairs and a triplet (`bestShanten`), keeps the tiles
+ * of that path, and while 嚦咕嚦咕 is the nearer one calls a chow, pong or kong only when it leaves the
+ * hand strictly closer to ready. Beginner keeps its noise and its habit of grabbing harmless claims.
  */
-import { countsFromKinds, discardOptions, relevantKinds, shanten, TOTAL_SETS, type Counts } from './hand';
+import { bestShanten, countsFromKinds, discardOptions, liguShanten, relevantKinds, shanten, TOTAL_SETS, type Counts } from './hand';
 import { type Action, type GameState, type PlayerState, drawsLeft, legalActions } from './game';
 import { createRng } from './rng';
+import { playsLigu } from './rules';
 import { prevailingWindKind, seatWindKind } from './scoring';
 import { isHonorKind, KIND_DRAGON, KIND_WIND, kindOf, NUM_PLAY_KINDS, rankOfKind, type Kind, type TileId } from './tiles';
 
@@ -52,6 +58,8 @@ export interface DiscardAdvice {
   /** Estimated chance of dealing in (放槍) with this kind, summed over opponents: 0 is safe. */
   danger: number;
   score: number;
+  /** Present when 嚦咕嚦咕 is strictly nearer than five sets and a pair after this discard. */
+  ligu?: true;
 }
 
 /** Honours that score for `seat` this hand: seat wind, prevailing wind and the three dragons. */
@@ -335,7 +343,25 @@ export const BOT_WEIGHTS = {
    * break ties (`PUSH_TIEBREAK`) and never cost a tile of acceptance. -1: never (today's Pro).
    */
   proPushShanten: -1,
+  /**
+   * Every tier: 1 weighs 嚦咕嚦咕 (seven pairs and a triplet) beside five sets and a pair at a table that
+   * plays it (`liguFor`); 0 leaves the bots blind to it, as they were before, for the paired comparison
+   * (`npm run sim -- --ligu`). It changes nothing at a table that does not play the hand.
+   */
+  ligu: 1,
 };
+
+/** Whether `seat` weighs 嚦咕嚦咕: the table plays it, the bots are not blind to it and the hand has no melds. */
+export function liguFor(s: GameState, seat: number): boolean {
+  return playsLigu(s.rules) && BOT_WEIGHTS.ligu > 0 && s.players[seat].melds.length === 0;
+}
+
+/** True when `seat` weighs 嚦咕嚦咕 and it is strictly nearer than five sets and a pair for the hand as it stands. */
+export function followsLigu(s: GameState, seat: number): boolean {
+  if (!liguFor(s, seat)) return false;
+  const counts = countsFromKinds(s.players[seat].hand.map(kindOf));
+  return liguShanten(counts) < shanten(counts, TOTAL_SETS);
+}
 
 /**
  * When Pro pushes (`proPushShanten`), everything after shanten and acceptance (tie-breaks, lean, 台
@@ -390,7 +416,7 @@ export function rankDiscards(s: GameState, seat: number, skill: BotSkill = 'club
   const setsNeeded = TOTAL_SETS - p.melds.length;
   const counts = countsFromKinds(p.hand.map(kindOf));
   const unseen = unseenCounts(s, seat);
-  const options = discardOptions(counts, setsNeeded, unseen);
+  const options = discardOptions(counts, setsNeeded, unseen, liguFor(s, seat));
   const defend = skill !== 'beginner';
   const reads = defend ? readOpponents(s, seat) : [];
   const threatened = reads.some((r) => r.tenpai > 0);
@@ -457,7 +483,9 @@ export function rankDiscards(s: GameState, seat: number, skill: BotSkill = 'club
     }
     // A smooth cap (tanh) keeps the order of the capped terms, so between tiles of equal acceptance the safer still ranks first.
     if (push) score = speedOnly + PUSH_TIEBREAK * Math.tanh((score - speedOnly) / PUSH_TIEBREAK);
-    out.push({ tile, kind: o.kind, shanten: o.shanten, acceptance: o.acceptance, accepts: o.accepts, danger: risk, score });
+    const advice: DiscardAdvice = { tile, kind: o.kind, shanten: o.shanten, acceptance: o.acceptance, accepts: o.accepts, danger: risk, score };
+    if (o.ligu) advice.ligu = true;
+    out.push(advice);
   }
   return out.sort((a, b) => b.score - a.score || a.kind - b.kind);
 }
@@ -478,9 +506,10 @@ function winPoints(s: GameState, seat: number): number {
   return 1.5 * (rules.basePoints + rules.taiPoints * (tai + dealerExtra * payers));
 }
 
+/** Shanten of `seat`'s hand as it stands; at a 嚦咕嚦咕 table, the nearer of the two targets (`liguFor`). */
 export function currentShanten(s: GameState, seat: number): number {
   const p = s.players[seat];
-  return shanten(countsFromKinds(p.hand.map(kindOf)), TOTAL_SETS - p.melds.length);
+  return bestShanten(countsFromKinds(p.hand.map(kindOf)), TOTAL_SETS - p.melds.length, liguFor(s, seat));
 }
 
 /** Shanten of the hand after taking a claim and then making its best discard. */
@@ -556,6 +585,8 @@ export function chooseAction(s: GameState, seat: number, opts: BotOptions = {}):
 
   if (s.phase === 'discard') {
     const before = currentShanten(s, seat);
+    // A kong is a meld: it ends a 嚦咕嚦咕, so while that is the nearer path it must bring the hand closer.
+    const ligu = followsLigu(s, seat);
     // Concealed/added kong when it does not hurt the shape.
     for (const a of actions) {
       if (a.type !== 'kong') continue;
@@ -565,7 +596,7 @@ export function chooseAction(s: GameState, seat: number, opts: BotOptions = {}):
       const inHand = p.hand.filter((t) => kindOf(t) === k).length;
       const after = inHand === 4 ? shanten(countsFromKinds(rest), TOTAL_SETS - p.melds.length - 1) : shanten(countsFromKinds(removeOne(p.hand.map(kindOf), k)), TOTAL_SETS - p.melds.length);
       // `before` is measured on a 3n+2 hand; the post-kong shape is 3n+1 for one fewer set.
-      if (after <= before) return a;
+      if (ligu ? after < before : after <= before) return a;
     }
     const skill = opts.skill ?? 'club';
     const ranked = rankDiscards(s, seat, skill);
@@ -590,6 +621,8 @@ export function chooseAction(s: GameState, seat: number, opts: BotOptions = {}):
   const before = currentShanten(s, seat);
   const p = s.players[seat];
   const concealed = p.melds.every((m) => m.concealed);
+  // Any call ends a 嚦咕嚦咕: while it is the nearer path, call only to get strictly closer to ready.
+  const ligu = followsLigu(s, seat);
   // Stay concealed (門清) instead of calling when already this close: Club at one from ready, Pro only
   // once ready (`BOT_WEIGHTS.proConcealedShanten`). Pro at 2 lost to Club; the CI gates (the recorded
   // decision replay in bots.test.ts and `npm run sim -- --gate`) fail if it goes back.
@@ -604,6 +637,7 @@ export function chooseAction(s: GameState, seat: number, opts: BotOptions = {}):
   for (const a of actions) {
     if (a.type === 'pass' || a.type === 'hu') continue;
     const after = shantenAfterClaim(s, seat, a);
+    if (ligu && after >= before) continue;
     let gain = before - after;
     if (a.type === 'kong') gain += 0.5; // extra tai and a replacement draw
     // Pro: a value-honour pong (or kong) is 台 in hand, worth taking even when it only keeps the shape.

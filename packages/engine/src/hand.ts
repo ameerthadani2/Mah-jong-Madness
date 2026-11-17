@@ -355,6 +355,10 @@ function overlapTable(c: number[], honor: boolean): Int8Array {
 /**
  * For each possible discard from a 3n+2 hand, the resulting shanten and the
  * kinds that would then improve the hand ("acceptance"). Used by bots and hints.
+ *
+ * With `ligu` (the table plays 嚦咕嚦咕 and the hand has no melds) the shanten is `bestShanten`,
+ * the nearer of five sets and a pair and seven pairs and a triplet, and the accepted kinds are those
+ * that bring that nearer target closer (both paths' when they are level).
  */
 export interface DiscardOption {
   kind: Kind;
@@ -363,33 +367,43 @@ export interface DiscardOption {
   accepts: Kind[];
   /** Sum of remaining copies of accepted kinds given `unseen` counts */
   acceptance: number;
+  /** Present when 嚦咕嚦咕 is strictly nearer than five sets and a pair after this discard. */
+  ligu?: true;
 }
 
-export function discardOptions(counts: Counts, setsNeeded: number, unseen: Counts): DiscardOption[] {
+export function discardOptions(counts: Counts, setsNeeded: number, unseen: Counts, ligu = false): DiscardOption[] {
   const out: DiscardOption[] = [];
   const c = counts.slice();
+  const withLigu = ligu && setsNeeded === TOTAL_SETS;
   for (let k = 0; k < NUM_PLAY_KINDS; k++) {
     if (c[k] === 0) continue;
     c[k]--;
-    const s = shanten(c, setsNeeded);
+    const std = shanten(c, setsNeeded);
+    const lig = withLigu ? liguShanten(c) : Infinity;
+    const s = Math.min(std, lig);
     const accepts: Kind[] = [];
     let acceptance = 0;
-    const relevant = relevantKinds(c);
+    // Any kind not yet held can start a pair, so 嚦咕嚦咕 looks at every kind.
+    const relevant = withLigu ? ALL_KINDS : relevantKinds(c);
     for (const a of relevant) {
       if (c[a] >= 4 || unseen[a] <= 0) continue;
       c[a]++;
-      const s2 = shanten(c, setsNeeded);
+      const s2 = withLigu ? bestShanten(c, setsNeeded, true) : shanten(c, setsNeeded);
       c[a]--;
       if (s2 < s) {
         accepts.push(a);
         acceptance += unseen[a];
       }
     }
-    out.push({ kind: k, shanten: s, accepts, acceptance });
+    const option: DiscardOption = { kind: k, shanten: s, accepts, acceptance };
+    if (lig < std) option.ligu = true;
+    out.push(option);
     c[k]++;
   }
   return out;
 }
+
+const ALL_KINDS: readonly Kind[] = Array.from({ length: NUM_PLAY_KINDS }, (_, k) => k);
 
 /** Kinds that could possibly improve a hand: honors already held and suited kinds within 2 of a held tile. */
 export function relevantKinds(counts: Counts): Kind[] {
