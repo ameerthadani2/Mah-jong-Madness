@@ -19,10 +19,12 @@ module.exports = {
   // privacy question, the account card and the table's Back key had render tests too (lines / branches / functions):
   // 69.96 / 61.29 / 59.85 (64.18 / 54.52 / 54.16 before them). Raised once the ranked Puzzle Rush flow and the claim,
   // defence and value puzzle views had render tests: 72.15 / 65.23 / 63.16 (70.27 / 61.89 / 60.38 before the views).
+  // Raised again once the fair play screen, the avatar gallery and the update gate had render tests:
+  // 78.11 / 70.55 / 69.95 (77.39 / 69.55 / 68.89 before them).
   collectCoverageFrom: ['src/**/*.tsx', '!src/**/*.render.test.tsx'],
   coverageDirectory: '<rootDir>/coverage-render',
   coverageReporters: ['text-summary', 'json-summary'],
-  coverageThreshold: { global: { lines: 70, branches: 63, functions: 61 } },
+  coverageThreshold: { global: { lines: 76, branches: 68, functions: 68 } },
   moduleNameMapper: {
     '^react$': reactDir,
     '^react/(.*)$': `${reactDir}/$1`,
