@@ -536,7 +536,7 @@ function contract(name: string, repos: () => Repos) {
       expect((await f.board(script, `daily?date=${TODAY}`)).me).toMatchObject({ hidden: true, flagged: true });
     });
 
-    it("flags the sixth assessment's jittered script, holds a run over the ceiling for an admin, and ranks an honest player who slows down", async () => {
+    it("holds the sixth assessment's jittered script and a run over the ceiling for an admin, and ranks an honest player who slows down", async () => {
       const f = fixture(repos());
       const admin = { authorization: `Bearer ${ADMIN}` };
       const [script, strong, strong2, human] = [await f.guest('Jittered script'), await f.guest('Strong'), await f.guest('Strong too'), await f.guest('Honest')];
@@ -560,10 +560,21 @@ function contract(name: string, repos: () => Repos) {
         return (await f.call('POST', `/api/puzzles/rush/${run.runId}/finish`, {}, g.auth)).json;
       };
       // The assessor's script: 2.0 to 4.1 s an answer, two deliberate mistakes. It passed every earlier check with 56 solved.
+      // It is no slower on the hard puzzles and past the ceiling, so its run waits for an admin; neither sign flags the account
+      // on its own (a fast, steady person can show both), so the account is not flagged by this one run.
       const scripted = await play(script, () => 2000 + rand() * 2100, (i) => i === 3 || i === 9);
-      expect(scripted).toMatchObject({ wrong: 2, ranked: false, inhuman: true, held: false });
+      expect(scripted).toMatchObject({ wrong: 2, ranked: false, inhuman: false, held: true });
       expect(scripted.solved as number).toBeGreaterThan(50);
-      expect((await f.repos.puzzleFlags.get(script.userId))?.status).toBe('flagged');
+      expect(await f.repos.puzzleFlags.get(script.userId)).toBeNull();
+      // Under the ceiling, no slower on the hard puzzles: held as well, and that account not flagged either.
+      const even = await f.guest('Even script');
+      // A fixed pattern (3.5 to 6.5 s, the same on every stretch: coefficient of variation about 0.2) that the machine-steady
+      // rule does not take, and under 6 s on the hard puzzles as on the first fifteen: only the slowdown sign is left.
+      const pattern = [3500, 6500, 4500, 5500, 4000, 6000];
+      const evenScript = await play(even, (i) => (i < 30 ? pattern[i % pattern.length] : 999_999), (i) => i === 4);
+      expect(evenScript).toMatchObject({ ranked: false, inhuman: false, held: true });
+      expect(evenScript.solved as number).toBeLessThanOrEqual(RUSH_HOLD_SOLVED);
+      expect(await f.repos.puzzleFlags.get(even.userId)).toBeNull();
       // A run that slows down as a person does but solves more than the ceiling: recorded, held off the board.
       const fast = (i: number) => (i < 15 ? 2000 + rand() * 2500 : 3500 + rand() * 2500);
       const held = await play(strong, fast, (i) => i === 6 || i === 20);
@@ -583,8 +594,10 @@ function contract(name: string, repos: () => Repos) {
       const queue = await f.call('GET', '/api/admin/puzzle-flags', undefined, admin);
       expect(queue.status, queue.body).toBe(200);
       const runs = queue.json.heldRuns as Array<Record<string, unknown>>;
-      expect(runs.map((r) => r.userId)).toEqual([strong.userId, strong2.userId]);
-      expect(runs[0]).toMatchObject({ runId: held.runId, solved: held.solved, held: true, ranked: false, account: { id: strong.userId, displayName: 'Strong' } });
+      // The scripts' runs wait there too, oldest first, for the admin to reject.
+      expect(runs.map((r) => r.userId)).toEqual([script.userId, even.userId, strong.userId, strong2.userId]);
+      expect(runs[2]).toMatchObject({ runId: held.runId, solved: held.solved, held: true, ranked: false, account: { id: strong.userId, displayName: 'Strong' } });
+      for (const r of [scripted, evenScript]) expect((await f.call('POST', `/api/admin/puzzle-flags/rush-runs/${r.runId}`, { action: 'reject' }, admin)).json).toMatchObject({ ok: true, run: { held: false, ranked: false } });
       expect((await f.call('POST', `/api/admin/puzzle-flags/rush-runs/${held.runId}`, { action: 'confirm' }, human.auth)).status).toBe(401);
       expect((await f.call('POST', `/api/admin/puzzle-flags/rush-runs/${held.runId}`, { action: 'ban' }, admin)).json.error).toBe('invalid');
       expect((await f.call('POST', `/api/admin/puzzle-flags/rush-runs/${honest.runId}`, { action: 'confirm' }, admin)).status).toBe(404);
@@ -791,16 +804,17 @@ describe('plausible answer times', () => {
     expect(rushTiming(at(snaps(3), [1, 5, 9])).inhuman).toBeNull();
     expect(rushTiming(at(snaps(4), [1, 5, 9])).inhuman).toMatch(/4 answers under 800 ms/);
   });
-  it('marks a run no slower on its hard puzzles than on its first fifteen, from five hard answers on', () => {
+  it('sends a run no slower on its hard puzzles than on its first fifteen to an admin, from five hard answers on, without calling it inhuman', () => {
     const run = (early: number, late: number, hard: number) => at([...uneven(RUSH_SLOWDOWN_EARLY, early), ...uneven(hard, late)], [1, 9]);
-    expect(rushTiming(run(3000, 3000, 5)).inhuman).toMatch(/no slower on hard puzzles \(3\.00 s an answer against 3\.00 s on the first 15\)/);
-    expect(rushTiming(run(3000, 3000, 4)).inhuman).toBeNull();
+    expect(rushTiming(run(3000, 3000, 5))).toMatchObject({ inhuman: null, review: expect.stringMatching(/no slower on hard puzzles \(3\.00 s an answer against 3\.00 s on the first 15\)/) });
+    expect(rushTiming(run(3000, 3000, 4)).review).toBeNull();
     // 1.2 times as long is enough; just under is not.
-    expect(rushTiming(run(3000, 3600, 5)).inhuman).toBeNull();
-    expect(rushTiming(run(3000, 3590, 5)).inhuman).toMatch(/no slower/);
+    expect(rushTiming(run(3000, 3600, 5)).review).toBeNull();
+    expect(rushTiming(run(3000, 3590, 5)).review).toMatch(/no slower/);
     // Faster on the hard puzzles counts too, but not at a hard pace of 6 s or more, where a run solves no more than an honest one.
-    expect(rushTiming(run(8000, 5990, 5)).inhuman).toMatch(/no slower/);
-    expect(rushTiming(run(8000, 6000, 5)).inhuman).toBeNull();
+    expect(rushTiming(run(8000, 5990, 5)).review).toMatch(/no slower/);
+    expect(rushTiming(run(8000, 6000, 5)).review).toBeNull();
+    expect(rushTiming(run(8000, 5990, 5)).inhuman).toBeNull();
   });
   it('has the thresholds the API documents', () => {
     expect([RUSH_TIMING_MIN_ANSWERS, RUSH_ACCURATE_SHARE, RUSH_ACCURATE_PACE_MS, RUSH_STEADY_CV, RUSH_SNAP_MS, RUSH_SNAP_MAX, RUSH_TIMING_FLAG_WEIGHT]).toEqual([15, 0.95, 3000, 0.15, 800, 3, 2]);

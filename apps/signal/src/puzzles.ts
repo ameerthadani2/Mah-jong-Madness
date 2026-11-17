@@ -109,8 +109,11 @@ export const RUSH_SNAP_MAX = 3;
  * least `RUSH_SLOWDOWN_MIN_HARD` answers at the hardest difficulty (puzzle 16 on), their mean time
  * is compared with the mean of the run's first fifteen answers (easy and medium); a run whose hard
  * answers took less than `RUSH_SLOWDOWN_MIN_RATIO` times as long, at under `RUSH_SLOWDOWN_PACE_MS`
- * a hard answer, is inhuman. A script that paces itself evenly, however jittered, keeps that ratio
- * near 1; a player who takes their time on every puzzle alike is left alone, since at that pace a
+ * a hard answer, is held off the board until an admin confirms it, like a run past the solved
+ * ceiling. It does not count toward the account's automation flag: a fast player who is steady on
+ * every puzzle can show it too, and one run must not hide such a player's account. A script that
+ * paces itself evenly, however jittered, keeps that ratio near 1, so each of its runs waits for an
+ * admin; a player who takes their time on every puzzle alike is left alone, since at that pace a
  * run solves no more than an honest one does. Provisional, like the thresholds above:
  * set from the sixth assessment's jittered script (2 to 4.1 s an answer, two deliberate mistakes)
  * and a simulated honest player whose times grow with difficulty, not from measured play.
@@ -137,27 +140,30 @@ export const RUSH_HOLD_SOLVED = 35;
 /** An answer stamped this long after the run's three minutes is not counted (it was made after the clock ran out on the phone). */
 export const RUSH_ANSWER_GRACE_MS = 2000;
 
-/** What the per-answer stamps say about a run: the answer times (ms), and why it is inhuman (null when it is not). */
-export function rushTiming(answers: ReadonlyArray<Pick<RushAnswerRecord, 'servedAt' | 'answeredAt' | 'correct'>>): { ms: number[]; inhuman: string | null } {
+/**
+ * What the per-answer stamps say about a run: the answer times (ms), why it is inhuman (null when it is not), and why
+ * it should wait for an admin (`review`, the slowdown rule: a weaker sign, which a fast and steady person can show).
+ */
+export function rushTiming(answers: ReadonlyArray<Pick<RushAnswerRecord, 'servedAt' | 'answeredAt' | 'correct'>>): { ms: number[]; inhuman: string | null; review: string | null } {
   const ms = answers.map((a) => Math.max(0, a.answeredAt - a.servedAt));
   const n = ms.length;
-  if (n < RUSH_TIMING_MIN_ANSWERS) return { ms, inhuman: null };
+  if (n < RUSH_TIMING_MIN_ANSWERS) return { ms, inhuman: null, review: null };
   const mean = ms.reduce((a, b) => a + b, 0) / n;
   const right = answers.filter((a) => a.correct).length;
-  if (right / n >= RUSH_ACCURATE_SHARE && mean < RUSH_ACCURATE_PACE_MS) return { ms, inhuman: `${right} of ${n} right at ${(mean / 1000).toFixed(2)} s an answer` };
+  if (right / n >= RUSH_ACCURATE_SHARE && mean < RUSH_ACCURATE_PACE_MS) return { ms, inhuman: `${right} of ${n} right at ${(mean / 1000).toFixed(2)} s an answer`, review: null };
   const sd = Math.sqrt(ms.reduce((a, b) => a + (b - mean) ** 2, 0) / n);
   const cv = mean > 0 ? sd / mean : 0;
-  if (cv < RUSH_STEADY_CV) return { ms, inhuman: `answer times machine-steady (coefficient of variation ${cv.toFixed(3)})` };
+  if (cv < RUSH_STEADY_CV) return { ms, inhuman: `answer times machine-steady (coefficient of variation ${cv.toFixed(3)})`, review: null };
   const snaps = ms.filter((x) => x < RUSH_SNAP_MS).length;
-  if (snaps > RUSH_SNAP_MAX) return { ms, inhuman: `${snaps} answers under ${RUSH_SNAP_MS} ms` };
+  if (snaps > RUSH_SNAP_MAX) return { ms, inhuman: `${snaps} answers under ${RUSH_SNAP_MS} ms`, review: null };
   // The answers come in order from the run's first puzzle, so an answer's position is its index.
   const hard = ms.slice(RUSH_SLOWDOWN_EARLY);
   if (hard.length >= RUSH_SLOWDOWN_MIN_HARD) {
     const early = ms.slice(0, RUSH_SLOWDOWN_EARLY).reduce((a, b) => a + b, 0) / RUSH_SLOWDOWN_EARLY;
     const late = hard.reduce((a, b) => a + b, 0) / hard.length;
-    if (late < RUSH_SLOWDOWN_PACE_MS && late < early * RUSH_SLOWDOWN_MIN_RATIO) return { ms, inhuman: `no slower on hard puzzles (${(late / 1000).toFixed(2)} s an answer against ${(early / 1000).toFixed(2)} s on the first ${RUSH_SLOWDOWN_EARLY})` };
+    if (late < RUSH_SLOWDOWN_PACE_MS && late < early * RUSH_SLOWDOWN_MIN_RATIO) return { ms, inhuman: null, review: `no slower on hard puzzles (${(late / 1000).toFixed(2)} s an answer against ${(early / 1000).toFixed(2)} s on the first ${RUSH_SLOWDOWN_EARLY})` };
   }
-  return { ms, inhuman: null };
+  return { ms, inhuman: null, review: null };
 }
 
 /** A Rush puzzle as the server serves it before the answer: its question (`puzzleQuestion`), under an id that does not reveal the run's seed. */
@@ -362,8 +368,8 @@ export function puzzleRoutes<R>(r: PuzzleRouteFactory<R>, deps: PuzzleDeps): R[]
     // Under the floor (the answers average under 1.5 s each over the run's time) or inhuman answer times: recorded, not ranked.
     const underFloor = answers.length > 0 && elapsedMs / answers.length < RUSH_RANK_FLOOR_MS;
     const inhuman = timing.inhuman !== null;
-    // More solved than the ceiling: held off the board until an admin confirms the run.
-    const held = !underFloor && !inhuman && solved > RUSH_HOLD_SOLVED;
+    // More solved than the ceiling, or no slower on the hard puzzles: held off the board until an admin confirms the run.
+    const held = !underFloor && !inhuman && (solved > RUSH_HOLD_SOLVED || timing.review !== null);
     const ranked = !underFloor && !inhuman && !held;
     const finished = await tx.rushRuns.finish(run.id, { finishedAt: endAt, solved, wrong, seconds, score, ranked, inhuman, held });
     if (!finished) throw new PuzzleError(409, 'run_finished', 'This run has already been finished');
