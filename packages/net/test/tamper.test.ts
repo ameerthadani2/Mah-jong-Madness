@@ -702,6 +702,9 @@ describe('a server that plays for a seat behind a dropped link (assessment probe
     game: GameState | null;
     botTimerArmed: boolean;
     apply: (seat: number, action: NonNullable<ReturnType<typeof chooseAction>>, source: 'player' | 'bot' | 'timeout') => void;
+    /** The move the honest table plays for a seat whose time has run out (its published rule). The probes below forge
+     *  their timeout moves with it, so they test when the table moved for the seat, not what it played (table-moves.test.ts). */
+    timeoutAction: (game: GameState, seat: number) => NonNullable<ReturnType<typeof chooseAction>>;
     stateMsg: (seat: number) => HostMessage;
     runBots: () => void;
     afterHand: () => void;
@@ -783,7 +786,7 @@ describe('a server that plays for a seat behind a dropped link (assessment probe
       // The server closes the socket, plays the seat 150 ms later, and lets the player back in before a second is up.
       t.drop();
       t.clock.now += 150;
-      t.s.apply(0, chooseAction(t.host.game!, 0)!, 'timeout');
+      t.s.apply(0, t.s.timeoutAction(t.host.game!, 0), 'timeout');
       t.clock.now += 850;
       t.back();
       t.finish();
@@ -822,7 +825,7 @@ describe('a server that plays for a seat behind a dropped link (assessment probe
       // 200 ms into the turn the server stamps its frames far enough ahead for the clock to look spent, and plays.
       t.clock.now += 200;
       t.clock.ahead += TURN + (stated === 'zero' ? 0 : BANK - over) - 400;
-      t.s.apply(0, chooseAction(t.host.game!, 0)!, 'timeout');
+      t.s.apply(0, t.s.timeoutAction(t.host.game!, 0), 'timeout');
       t.finish();
       expect(t.c.state.auditStatus).toBe('failed');
       expect(t.c.state.auditFailures).toEqual(stated === 'zero' ? [UP_EARLY(turn), BANK_TAKEN(returned)] : [UP_EARLY(turn)]);
@@ -928,7 +931,7 @@ describe('a server that plays for a seat behind a dropped link (assessment probe
       // With the phone's knowledge of its clock gone, it stamps 24.6 s ahead and plays 200 ms into the turn.
       t.clock.now += 200;
       t.clock.ahead += TURN + 10_000 - 400;
-      t.s.apply(0, chooseAction(t.host.game!, 0)!, 'timeout');
+      t.s.apply(0, t.s.timeoutAction(t.host.game!, 0), 'timeout');
       t.finish();
       expect(t.verdict()).toEqual(['partial', [], [AUDIT_CAVEATS.restartClock]]);
     }));
