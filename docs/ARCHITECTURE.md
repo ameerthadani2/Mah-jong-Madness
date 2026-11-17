@@ -27,7 +27,7 @@ tests, sim   ──┘         │
 * `bot.ts` — shanten + acceptance ranking, simple danger model, claim policy. Also used for timeouts and disconnected seats.
 * `rules.ts` — the `RuleSet` every table plays, its defaults, ranges and speed presets, and `sanitizeRules` for rules that arrive from outside (docs/RULES.md, "Rule options").
 * `hints.ts` — coach text. `lessons.ts` and `lessons/` — the curriculum: 36 lessons in six tracks, with quizzes the engine checks.
-* `puzzles.ts` — seeded puzzles in five themes (best discard, read the wait, defence, calling, value). `rating.ts` — the puzzle rating. `review.ts` — replays a finished hand from its audit and grades each decision.
+* `puzzles.ts` — seeded puzzles in five themes (best discard, read the wait, defence, calling, value). `questions.ts` — a puzzle as its question: what a view needs before the answer and nothing that reveals or ranks it; `PUZZLE_FIELDS` classifies every field of every theme as shown or withheld (typed, so a new field must be classified). `rating.ts` — the puzzle rating. `review.ts` — replays a finished hand from its audit and grades each decision.
 
 ### Net (`packages/net`)
 

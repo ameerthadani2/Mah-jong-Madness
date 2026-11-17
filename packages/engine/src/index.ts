@@ -14,3 +14,4 @@ export * from './puzzles';
 export * from './rating';
 export * from './sha256';
 export * from './verify';
+export * from './questions';
