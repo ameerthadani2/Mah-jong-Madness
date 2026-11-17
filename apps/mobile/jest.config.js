@@ -13,6 +13,10 @@ module.exports = {
   rootDir: __dirname,
   testMatch: ['<rootDir>/src/**/*.render.test.tsx'],
   setupFiles: ['<rootDir>/jest.setup.js'],
+  // Under coverage (the root `npm run coverage`, which CI runs) the render tests run several times slower, and the
+  // first test of a file pays for loading its screen under instrumentation: each test gets more time then, as the
+  // vitest configs give theirs. A plain `npm run test:render` keeps jest's 5 s, so a slow test still shows locally.
+  testTimeout: process.env.COVERAGE ? 60_000 : 5_000,
   // `npm run coverage:render` (and the root `npm run coverage`) measures the .tsx screens and components the render
   // tests reach; the .ts modules are vitest's ground. Floors sit about two points under the figures measured when they
   // were set (docs/ARCHITECTURE.md). Measured 2026-11-17, once the daily puzzle, Quick match, Home's own buttons and the
