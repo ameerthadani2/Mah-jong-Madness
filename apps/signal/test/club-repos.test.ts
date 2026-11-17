@@ -130,10 +130,15 @@ function contract(name: string, repos: () => Repos) {
         { seat: 0, userId: owner },
         { seat: 2, userId: gone },
       ];
+      c.tables[0].membersToCount = 4;
+      c.settings = { ...c.settings, membersToCount: 2 };
       await r.clubs.save(c);
       const back = (await r.clubs.get(c.code))!;
       expect(back.former).toEqual(c.former);
       expect(back.tables.map((t) => t.startedWith)).toEqual([c.tables[0].startedWith, undefined]);
+      // The members a match needed when it started, and the club's setting, read back as saved.
+      expect(back.tables.map((t) => t.membersToCount)).toEqual([4, undefined]);
+      expect(back.settings.membersToCount).toBe(2);
       expect(await r.clubs.clubsForUser(gone)).toEqual([]);
       expect(await r.clubs.isMember(c.code, gone)).toBe(false);
 

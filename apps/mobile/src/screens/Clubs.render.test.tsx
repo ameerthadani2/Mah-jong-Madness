@@ -6,6 +6,7 @@ import { DEFAULT_RULES } from '@mjm/engine';
 import { ClubScreen, ClubsScreen } from './ClubsScreen';
 import { clubsApi, PENDING_POLL_MS, type Club, type ClubListing, type ClubMember } from '../api/clubs';
 import { FakeProviders, sessionClient } from '../test/providers';
+import { setLocalePreference } from '../i18n';
 import { RemoteConfigProvider } from '../telemetry/RemoteConfig';
 import type { AppState } from '../app-state';
 import type { AuthContextValue } from '../auth/AuthProvider';
@@ -216,6 +217,38 @@ describe('owner tools', () => {
     expect(remove).not.toHaveBeenCalled();
     await fireEvent.press(within(screen.getByTestId('club-confirm')).getByRole('button', { name: 'Confirm' }));
     expect(remove).toHaveBeenCalledWith(expect.anything(), 'AB12', 'u-alice');
+  });
+});
+
+describe('the club settings', () => {
+  it('let an admin choose how many members a match needs to count', async () => {
+    const update = jest.spyOn(clubsApi, 'update').mockResolvedValue(club('admin', { settings: { membersCanOpenTables: true, joinRequiresApproval: false, membersToCount: 4 } }) as never);
+    await renderClub(club('admin', { settings: { membersCanOpenTables: true, joinRequiresApproval: false, membersToCount: 3 } }));
+    await fireEvent.press(screen.getByRole('button', { name: 'Rules' }));
+    expect(screen.getByText('Members a match needs')).toBeOnTheScreen();
+    expect(screen.getByRole('button', { name: '3 members' })).toBeSelected();
+    expect(screen.getByRole('button', { name: '2 members' })).not.toBeSelected();
+    await fireEvent.press(screen.getByRole('button', { name: '4 members' }));
+    expect(update).toHaveBeenCalledWith(expect.anything(), 'AB12', { settings: { membersToCount: 4 } });
+    expect(await screen.findByRole('button', { name: '4 members', selected: true })).toBeOnTheScreen();
+  });
+
+  it('read in Chinese too', async () => {
+    setLocalePreference('zh-TW');
+    try {
+      await renderClub(club('owner', { settings: { membersCanOpenTables: true, joinRequiresApproval: false, membersToCount: 3 } }));
+      await fireEvent.press(screen.getByRole('button', { name: '規則' }));
+      expect(screen.getByText('計入排名所需成員數')).toBeOnTheScreen();
+      expect(screen.getByRole('button', { name: '3 位成員' })).toBeSelected();
+    } finally {
+      setLocalePreference('auto');
+    }
+  });
+
+  it('are not offered to a plain member', async () => {
+    await renderClub(club('member', { settings: { membersCanOpenTables: true, joinRequiresApproval: false, membersToCount: 3 } }));
+    await fireEvent.press(screen.getByRole('button', { name: 'Rules' }));
+    expect(screen.queryByRole('button', { name: '3 members' })).toBeNull();
   });
 });
 

@@ -75,6 +75,12 @@ export interface ClubTable {
    * in listings written before it existed.
    */
   startedWith?: Array<{ seat: number; userId: string }>;
+  /**
+   * The club's `membersToCount` setting when the match started (written with `startedWith`), so a
+   * change to the setting applies only to matches that start after it. Absent in listings written
+   * before it existed: such a match needs two members, the rule it started under.
+   */
+  membersToCount?: number;
 }
 
 /**
@@ -102,9 +108,20 @@ export interface ClubSettings {
    * by `sanitizeSettings`; optional only so settings written before it existed still type-check.
    */
   botSkill?: BotSkill;
+  /**
+   * How many different club members a match must start with to count toward the standings (2 to
+   * 4, default 3), so two accounts cannot trade points at a table filled with bots. Applied to
+   * matches that start after a change (`ClubTable.membersToCount`). Always set by
+   * `sanitizeSettings`; optional only so settings written before it existed still type-check.
+   */
+  membersToCount?: number;
 }
 
-export const DEFAULT_CLUB_SETTINGS: ClubSettings = { membersCanOpenTables: true, joinRequiresApproval: false, botSkill: 'club' };
+/** Fewest and most members a club may require for a match to count (`ClubSettings.membersToCount`). */
+export const MEMBERS_TO_COUNT_RANGE = { min: 2, max: 4 } as const;
+export const DEFAULT_MEMBERS_TO_COUNT = 3;
+
+export const DEFAULT_CLUB_SETTINGS: ClubSettings = { membersCanOpenTables: true, joinRequiresApproval: false, botSkill: 'club', membersToCount: DEFAULT_MEMBERS_TO_COUNT };
 
 /** An account banned from a club: it cannot rejoin, ask to join, or join the club's tables. */
 export interface ClubBan extends Identity {
@@ -291,20 +308,27 @@ export const CLUB_LIMITS = {
   closedMatchesKept: 20,
 } as const;
 
-/** Keep only the known settings, and only when they are real booleans; anything else keeps `base`'s value. */
+/**
+ * Keep only the known settings, and only when they are real booleans, a known bot skill or a whole
+ * number of members from 2 to 4; anything else keeps `base`'s value.
+ */
 export function sanitizeSettings(input: unknown, base: ClubSettings = DEFAULT_CLUB_SETTINGS): ClubSettings {
   const out: ClubSettings = {
     membersCanOpenTables: base.membersCanOpenTables,
     joinRequiresApproval: base.joinRequiresApproval,
     botSkill: isSkill(base.botSkill) ? base.botSkill : 'club',
+    membersToCount: isMembersToCount(base.membersToCount) ? base.membersToCount : DEFAULT_MEMBERS_TO_COUNT,
   };
   if (!input || typeof input !== 'object' || Array.isArray(input)) return out;
   const src = input as Record<string, unknown>;
   if (typeof src.membersCanOpenTables === 'boolean') out.membersCanOpenTables = src.membersCanOpenTables;
   if (typeof src.joinRequiresApproval === 'boolean') out.joinRequiresApproval = src.joinRequiresApproval;
   if (isSkill(src.botSkill)) out.botSkill = src.botSkill;
+  if (isMembersToCount(src.membersToCount)) out.membersToCount = src.membersToCount;
   return out;
 }
+
+const isMembersToCount = (v: unknown): v is number => Number.isInteger(v) && (v as number) >= MEMBERS_TO_COUNT_RANGE.min && (v as number) <= MEMBERS_TO_COUNT_RANGE.max;
 
 const isSkill = (v: unknown): v is BotSkill => typeof v === 'string' && Object.prototype.hasOwnProperty.call(BOT_SKILLS, v);
 
@@ -1527,6 +1551,7 @@ export class ClubRegistry {
       // Play begins: note which club members are seated. The match counts, and is charged, by them.
       if (playing && table && table.status === 'open' && !table.startedWith) {
         table.startedWith = event.seats.filter((s) => !s.isBot && s.userId && this.member(club, s.userId)).map((s) => ({ seat: s.seat, userId: s.userId! }));
+        table.membersToCount = club.settings.membersToCount ?? DEFAULT_MEMBERS_TO_COUNT;
       }
       this.updateTable(club.code, roomCode, { status: playing ? 'playing' : 'open', players, handNumber: event.handNumber, scores: event.scores });
     }
@@ -1641,7 +1666,9 @@ export function startingMembers(club: Club, table: ClubTable, seats: ReadonlyArr
 
 /**
  * Whether a finished match at a club table moves the standings: not at a variant table (other
- * rules than the house's), only when at least two different club members were seated when it
+ * rules than the house's), only when at least as many different club members as the club required
+ * when the match started (`ClubTable.membersToCount`; the club's current setting for a table whose
+ * start was never noted, two for a match noted before the setting existed) were seated when it
  * started (`startingMembers`), and never when one account held two seats (the table host refuses
  * that; this guard stays in case it ever slips). A member alone against bots, or a member with a
  * second account outside the club, scores nothing, so standings cannot be farmed against bots.
@@ -1653,7 +1680,8 @@ export function countsForStandings(club: Club, table: ClubTable, seats: Readonly
   const humans = seats.filter((s) => !s.isBot && s.userId).map((s) => s.userId!);
   if (new Set(humans).size !== humans.length) return false;
   const members = startingMembers(club, table, seats).map((s) => s.userId);
-  return members.length >= 2 && new Set(members).size === members.length;
+  const needed = table.membersToCount ?? (table.startedWith ? MEMBERS_TO_COUNT_RANGE.min : (club.settings.membersToCount ?? DEFAULT_MEMBERS_TO_COUNT));
+  return members.length >= needed && new Set(members).size === members.length;
 }
 
 /** The room registry's view of the clubs: who may open and join club tables over the socket. */

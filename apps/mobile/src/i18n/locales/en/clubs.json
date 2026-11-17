@@ -115,6 +115,9 @@
     "adminOnly": "Only the owner and admins can change rules.",
     "botSkill": "Club bots",
     "botSkillNote": "Every table in this club plays with these bots.",
+    "membersToCount": "Members a match needs",
+    "membersToCountNote": "A match counts toward the standings only when at least this many members start it; the other seats are bots. A change applies to matches that start after it.",
+    "membersToCountChip": "%{n} members",
     "houseNote": "Tables members open always use these house rules."
   },
   "signIn": {

@@ -54,6 +54,11 @@ export interface ClubSettings {
   joinRequiresApproval: boolean;
   /** Strength of the bots at every club table (servers before it existed send none: Club). */
   botSkill?: BotSkill;
+  /**
+   * How many members a match must start with to count toward the standings, 2 to 4 (servers
+   * before it existed send none and count two).
+   */
+  membersToCount?: number;
 }
 
 /**

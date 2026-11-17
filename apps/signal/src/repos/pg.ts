@@ -942,7 +942,7 @@ interface TableRow {
   rules: ClubTable['rules'];
   created_by: string;
   status: ClubTable['status'];
-  state: { players?: ClubTable['players']; handNumber?: number; scores?: number[]; startedWith?: ClubTable['startedWith'] };
+  state: { players?: ClubTable['players']; handNumber?: number; scores?: number[]; startedWith?: ClubTable['startedWith']; membersToCount?: number };
   created_at: Date;
   variant: boolean;
 }
@@ -1023,6 +1023,7 @@ function assembleClubs(clubs: ClubRow[], members: MemberRow[], tables: TableRow[
       scores: t.state.scores ?? [],
       variant: t.variant === true,
       ...(Array.isArray(t.state.startedWith) ? { startedWith: t.state.startedWith } : {}),
+      ...(typeof t.state.membersToCount === 'number' ? { membersToCount: t.state.membersToCount } : {}),
     });
   }
   for (const f of former) {
@@ -1103,7 +1104,7 @@ function pgClubs(q: Queryable, tx: Tx): ClubsRepo {
       rules: t.rules,
       created_by: t.createdBy,
       status: t.status,
-      state: { players: t.players, handNumber: t.handNumber, scores: t.scores, ...(t.startedWith ? { startedWith: t.startedWith } : {}) },
+      state: { players: t.players, handNumber: t.handNumber, scores: t.scores, ...(t.startedWith ? { startedWith: t.startedWith } : {}), ...(t.membersToCount !== undefined ? { membersToCount: t.membersToCount } : {}) },
       created_at: t.createdAt,
       variant: t.variant === true,
     }));

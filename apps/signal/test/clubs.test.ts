@@ -226,13 +226,13 @@ describe('ClubRegistry validation and limits', () => {
   });
 
   it('sanitises settings to strict booleans and drops unknown keys', () => {
-    expect(sanitizeSettings({ joinRequiresApproval: 'yes', membersCanOpenTables: 0, neutralHost: true, evil: 1 })).toEqual({ membersCanOpenTables: true, joinRequiresApproval: false, botSkill: 'club' });
-    expect(sanitizeSettings(['x'])).toEqual({ membersCanOpenTables: true, joinRequiresApproval: false, botSkill: 'club' });
+    expect(sanitizeSettings({ joinRequiresApproval: 'yes', membersCanOpenTables: 0, neutralHost: true, evil: 1 })).toEqual({ membersCanOpenTables: true, joinRequiresApproval: false, botSkill: 'club', membersToCount: 3 });
+    expect(sanitizeSettings(['x'])).toEqual({ membersCanOpenTables: true, joinRequiresApproval: false, botSkill: 'club', membersToCount: 3 });
     const reg = new ClubRegistry();
     const club = reg.createClub(alice, 'Settings', {}, { joinRequiresApproval: 'true', neutralHost: false });
-    expect(club.settings).toEqual({ membersCanOpenTables: true, joinRequiresApproval: false, botSkill: 'club' });
+    expect(club.settings).toEqual({ membersCanOpenTables: true, joinRequiresApproval: false, botSkill: 'club', membersToCount: 3 });
     reg.update(club.code, alice.userId, { settings: { joinRequiresApproval: true, membersCanOpenTables: 'no' } });
-    expect(reg.club(club.code).settings).toEqual({ membersCanOpenTables: true, joinRequiresApproval: true, botSkill: 'club' });
+    expect(reg.club(club.code).settings).toEqual({ membersCanOpenTables: true, joinRequiresApproval: true, botSkill: 'club', membersToCount: 3 });
   });
 
   it('sanitises rules at create, update and addTable', () => {
@@ -325,7 +325,7 @@ describe('ClubRegistry validation and limits', () => {
     const reg = new ClubRegistry({ store: { ...store, loadAll: async () => legacy } });
     await reg.load();
     const c = reg.all()[0];
-    expect(c.settings).toEqual({ membersCanOpenTables: false, joinRequiresApproval: false, botSkill: 'club' });
+    expect(c.settings).toEqual({ membersCanOpenTables: false, joinRequiresApproval: false, botSkill: 'club', membersToCount: 3 });
     expect(c.rules.basePoints).toBe(DEFAULT_RULES.basePoints);
   });
 });

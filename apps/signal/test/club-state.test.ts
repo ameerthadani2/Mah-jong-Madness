@@ -74,7 +74,8 @@ describe('club tables across a restart', () => {
 describe('club table status from room events', () => {
   it('keeps a finished table finished when a player disconnects afterwards, and counts the match once', () => {
     const clubs = new ClubRegistry();
-    const club = clubs.createClub(alice, 'C');
+    // A club where two members make a match count (the default is three).
+    const club = clubs.createClub(alice, 'C', {}, { membersToCount: 2 });
     clubs.joinClub(club.code, bob);
     clubs.addTable(club.code, alice.userId, { code: 'ROOM01' });
     clubs.applyRoomEvent('ROOM01', withBob(event('lobby', 0)));

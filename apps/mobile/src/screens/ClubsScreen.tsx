@@ -32,6 +32,8 @@ import type { ReportTarget } from '../legal/reports';
 import { canStartSeason, sortStandings, standingPoints, type StandingsView } from '../legal/standings';
 import { useOnlineGuard } from '../legal/useOnlineGuard';
 
+/** The choices for how many members a club match needs to count (the server accepts 2 to 4). */
+const MEMBERS_TO_COUNT = [2, 3, 4] as const;
 const roleName = (role: ClubMember['role'] | 'guest', t: Translate) => t(`common.roles.${role}`);
 
 /** Club calls authenticated with the signed-in session. */
@@ -814,6 +816,15 @@ export function ClubScreen({ code, notice: linkNotice }: { code: string; /** Why
               <Row style={{ flexWrap: 'wrap', rowGap: 6 }}>
                 {(Object.keys(BOT_SKILLS) as BotSkill[]).map((k) => (
                   <Chip key={k} label={botLabel(k, locale, true)} selected={(club.settings.botSkill ?? 'club') === k} onPress={() => void act(() => clubsApi.update(ctx, club.code, { settings: { botSkill: k } }))} />
+                ))}
+              </Row>
+              <SectionLabel>{t('clubs.rules.membersToCount')}</SectionLabel>
+              <P dim style={{ fontSize: 12 }}>
+                {t('clubs.rules.membersToCountNote')}
+              </P>
+              <Row style={{ flexWrap: 'wrap', rowGap: 6 }}>
+                {MEMBERS_TO_COUNT.map((n) => (
+                  <Chip key={n} label={t('clubs.rules.membersToCountChip', { n })} selected={(club.settings.membersToCount ?? 2) === n} onPress={() => void act(() => clubsApi.update(ctx, club.code, { settings: { membersToCount: n } }))} />
                 ))}
               </Row>
               <RuleEditor key={saves} value={draft ?? club.rules} baseline={club.rules} onChange={(r) => setDraft(sameRules(r, club.rules) ? null : r)} />

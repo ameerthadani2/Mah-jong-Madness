@@ -115,6 +115,9 @@
     "adminOnly": "只有會長和管理員可以修改規則。",
     "botSkill": "俱樂部電腦等級",
     "botSkillNote": "俱樂部的每一桌都使用這個等級的電腦。",
+    "membersToCount": "計入排名所需成員數",
+    "membersToCountNote": "一場比賽開始時至少要有這麼多位成員入座，才會計入排名；其餘座位由電腦補上。修改只適用於之後開始的比賽。",
+    "membersToCountChip": "%{n} 位成員",
     "houseNote": "會員開的桌一律使用這套房規。"
   },
   "signIn": {

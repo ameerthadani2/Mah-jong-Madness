@@ -106,7 +106,8 @@ describe('club standings count only real club games', () => {
   const B = { userId: 'user-bob-22', name: 'Bob' };
   const setup = () => {
     const clubs = new ClubRegistry();
-    const club = clubs.createClub(A, 'Ladder');
+    // Two members are enough for a match to count here (the default is three; see below).
+    const club = clubs.createClub(A, 'Ladder', {}, { membersToCount: 2 });
     clubs.joinClub(club.code, B);
     return { clubs, club };
   };

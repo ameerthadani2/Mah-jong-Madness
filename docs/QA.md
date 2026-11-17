@@ -52,7 +52,7 @@ Before you start: the server is deployed and its last deploy run passed the smok
 - [ ] The second phone joins by code (or a request the owner accepts or rejects). Member-opened tables always use the house rules; the owner can open a **variant** table, labelled "Variant · not ranked".
 - [ ] At a club table only the opener or an admin can add bots or start.
 - [ ] Owner tools: **Close table** (the match ends and counts for nothing); **Remove** a player from a table (a bot takes the seat and they cannot return to it); remove a member (they leave its live tables too); **Ban** and **Unban** (a banned player cannot join or rejoin); **Make owner** (you become an admin); leave; delete the club after typing its name.
-- [ ] Standings count only non-variant matches with at least two human members.
+- [ ] Standings count only non-variant matches with at least the club's number of human members (default 3; the owner or an admin can set 2 to 4 under Rules, for matches that start afterwards).
 - [ ] Share a club and a table link: on the other phone the link opens the app at that club or table (an `https://` link once `EXPO_PUBLIC_LINK_DOMAIN` is set).
 - [ ] Lapsed plan (a sandbox subscription you let expire): a week later the club still works for members and you keep the admin tools, but the club can have only one open table and you cannot create another club.
 

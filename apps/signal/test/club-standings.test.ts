@@ -18,7 +18,8 @@ const clock = { now: Date.UTC(2026, 10, 11) };
 async function league(opts: Parameters<typeof apiFixture>[0] = {}) {
   const f = apiFixture({ now: () => clock.now, ...opts });
   const [owner, alice, bob] = [await f.guest('Owner'), await f.guest('Alice'), await f.guest('Bob')];
-  const club = (await f.call('POST', '/api/clubs', { name: 'League' }, owner.auth)).json as unknown as Club;
+  // Matches here have two members and two bots, so the club counts a match with two members (the default is three).
+  const club = (await f.call('POST', '/api/clubs', { name: 'League', settings: { membersToCount: 2 } }, owner.auth)).json as unknown as Club;
   for (const g of [alice, bob]) expect((await f.call('POST', `/api/clubs/${club.code}/join`, {}, g.auth)).json.status).toBe('joined');
   return { ...f, owner, alice, bob, club };
 }
@@ -203,5 +204,63 @@ describe('standings on file and an account merge', () => {
     expect(f.clubs.club(f.club.code).former!.map((x) => [x.userId, x.points])).toEqual([[account.userId, -120]]);
     await join(f, f.club, account);
     expect((await standings(f, f.club, f.owner)).Account).toEqual([-120, -120, 1, 0]);
+  });
+});
+
+describe('how many members a match needs to count', () => {
+  /** A club with its owner and two members, on the default setting. */
+  async function trio() {
+    const f = apiFixture({ now: () => clock.now });
+    const [owner, alice, bob] = [await f.guest('Owner'), await f.guest('Alice'), await f.guest('Bob')];
+    const club = (await f.call('POST', '/api/clubs', { name: 'Trio' }, owner.auth)).json as unknown as Club;
+    for (const g of [alice, bob]) expect((await f.call('POST', `/api/clubs/${club.code}/join`, {}, g.auth)).json.status).toBe('joined');
+    return { ...f, owner, alice, bob, club };
+  }
+  /** Open a table and report its start with these members seated (bots in the other seats). */
+  let opened = 0;
+  async function start(f: Awaited<ReturnType<typeof trio>>, who: Guest[]) {
+    // Openers take turns: each account may hold only a few live rooms.
+    const room = await openTable(f, f.club, [f.owner, f.alice, f.bob][opened++ % 3]);
+    const seats = [0, 1, 2, 3].map((n) => seatOf(n, who[n]));
+    f.clubs.applyRoomEvent(room, event('state', room, seats));
+    return () => f.clubs.applyRoomEvent(room, event('match_over', room, seats, [90, -30, -30, -30], 4, [2, 1, 1, 0]));
+  }
+  const played = async (f: Awaited<ReturnType<typeof trio>>) => Object.fromEntries(Object.entries(await standings(f, f.club, f.owner)).map(([name, row]) => [name, row[2]]));
+
+  it('is three by default: two members and two bots move nothing, three members count', async () => {
+    const f = await trio();
+    const seen = (await f.call('GET', `/api/clubs/${f.club.code}`, undefined, f.alice.auth)).json as unknown as Club;
+    expect(seen.settings.membersToCount).toBe(3);
+    (await start(f, [f.owner, f.alice]))();
+    expect(await played(f)).toEqual({ Owner: 0, Alice: 0, Bob: 0 });
+    (await start(f, [f.owner, f.alice, f.bob]))();
+    expect(await played(f)).toEqual({ Owner: 1, Alice: 1, Bob: 1 });
+  });
+
+  it('is set by the owner and admins only, from 2 to 4, and applies to matches that start after the change', async () => {
+    const f = await trio();
+    const patch = (by: Guest, membersToCount: unknown) => f.call('PATCH', `/api/clubs/${f.club.code}`, { settings: { membersToCount } }, by.auth);
+    expect((await patch(f.alice, 2)).status).toBe(403);
+    expect((await f.call('POST', `/api/clubs/${f.club.code}/members/${f.alice.userId}/role`, { role: 'admin' }, f.owner.auth)).status).toBe(200);
+    // Anything but a whole number from 2 to 4 keeps the setting as it was.
+    for (const bad of [1, 5, 2.5, '2', null]) expect(((await patch(f.alice, bad)).json as unknown as Club).settings.membersToCount).toBe(3);
+    // A match started under the default (three) still needs three after the admin lowers it to two.
+    const before = await start(f, [f.owner, f.alice]);
+    expect(((await patch(f.alice, 2)).json as unknown as Club).settings.membersToCount).toBe(2);
+    before();
+    expect(await played(f)).toEqual({ Owner: 0, Alice: 0, Bob: 0 });
+    (await start(f, [f.owner, f.alice]))();
+    expect(await played(f)).toEqual({ Owner: 1, Alice: 1, Bob: 0 });
+    // Raised to four by the owner: a match already under way keeps two; a new one with three no longer counts.
+    const running = await start(f, [f.alice, f.bob]);
+    expect(((await patch(f.owner, 4)).json as unknown as Club).settings.membersToCount).toBe(4);
+    running();
+    (await start(f, [f.owner, f.alice, f.bob]))();
+    expect(await played(f)).toEqual({ Owner: 1, Alice: 2, Bob: 1 });
+    // The setting and the number each match started under are saved with the club.
+    await f.clubs.flush();
+    const stored = (await f.repos.clubs.get(f.club.code))!;
+    expect(stored.settings.membersToCount).toBe(4);
+    expect(stored.tables.map((t) => t.membersToCount)).toEqual([3, 2, 2, 4]);
   });
 });
