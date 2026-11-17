@@ -88,6 +88,8 @@ describe('a saved table whose rules were emptied or damaged', () => {
     const saved = record as unknown as { host: { rules: Record<string, unknown>; game: { rules: Record<string, unknown> } }; token: string };
     expect(saved.host.rules).toEqual(DEFAULT_RULES);
     expect(saved.host.game.rules).toEqual(DEFAULT_RULES);
+    // Both copies were damaged, so the defaults are used, and the record says so for the resumed table.
+    expect((record as { rulesReset?: boolean }).rulesReset).toBe(true);
     const session = createLocalSession('Tester', 'auntie', DEFAULT_RULES, { botSkill: 'beginner', restore: { host: saved.host as never, token: saved.token } });
     for (let i = 0; i < 100 && !session.client.state.view; i++) await new Promise((r) => setTimeout(r, 20));
     const view = session.client.state.view!;
@@ -103,5 +105,33 @@ describe('a saved table whose rules were emptied or damaged', () => {
     const record = validActiveSession({ ...good, host: { ...host, rules: tableRules, game: { ...(host.game as object), rules: { ...tableRules, taiPoints: null } } } }, NOW) as unknown as { host: { rules: unknown; game: { rules: unknown } } };
     expect(record.host.rules).toEqual(tableRules);
     expect(record.host.game.rules).toEqual(tableRules);
+  });
+
+  it('uses the intact copy when only the table own copy is damaged, without a word', async () => {
+    const good = await savedLocal();
+    const host = good.host as Record<string, unknown>;
+    const handRules = { ...DEFAULT_RULES, basePoints: 300, taiPoints: 50 };
+    for (const tableCopy of [{}, { basePoints: 100 }, { ...handRules, deadWallSize: 'lots' }]) {
+      const record = validActiveSession({ ...good, host: { ...host, rules: tableCopy, game: { ...(host.game as object), rules: handRules } } }, NOW) as unknown as { rulesReset?: boolean; host: { rules: unknown; game: { rules: unknown } } };
+      expect(record.host.rules, JSON.stringify(tableCopy)).toEqual(handRules);
+      expect(record.host.game.rules).toEqual(handRules);
+      expect(record.rulesReset).toBeUndefined();
+    }
+  });
+
+  it("uses the table's copy when the hand's copy is damaged, and the defaults with a word when the only copy is", async () => {
+    const good = await savedLocal();
+    const host = good.host as Record<string, unknown>;
+    const tableRules = { ...DEFAULT_RULES, basePoints: 300 };
+    const record = validActiveSession({ ...good, host: { ...host, rules: tableRules, game: { ...(host.game as object), rules: { basePoints: 999 } } } }, NOW) as unknown as { rulesReset?: boolean; host: { game: { rules: unknown } } };
+    expect(record.host.game.rules).toEqual(tableRules);
+    expect(record.rulesReset).toBeUndefined();
+    // Between hands there is no hand in play: a damaged table copy is the only one.
+    const between = validActiveSession({ ...good, host: { ...host, phase: 'lobby', game: null, rules: { basePoints: 'x' } } }, NOW) as unknown as { rulesReset?: boolean; host: { rules: unknown } };
+    expect(between.host.rules).toEqual(DEFAULT_RULES);
+    expect(between.rulesReset).toBe(true);
+    // A rule a newer build added and an older one did not save is not damage.
+    const { liguTai: _added, ...older } = DEFAULT_RULES as unknown as Record<string, unknown>;
+    expect(validActiveSession({ ...good, host: { ...host, rules: older, game: { ...(host.game as object), rules: older } } }, NOW)).not.toHaveProperty('rulesReset');
   });
 });

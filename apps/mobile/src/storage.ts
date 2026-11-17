@@ -70,7 +70,16 @@ export type ActiveSession =
       client?: SerializedClient;
       savedAt: number;
     }
-  | { kind: 'local'; host: SerializedHost; token: string; name: string; avatar: string; savedAt: number };
+  | {
+      kind: 'local';
+      host: SerializedHost;
+      token: string;
+      name: string;
+      avatar: string;
+      savedAt: number;
+      /** Set when it is read back: both saved copies of the table's rules were damaged, so the defaults are used. */
+      rulesReset?: boolean;
+    };
 
 const KEYS = { profile: 'mjm.profile', settings: 'mjm.settings', progress: 'mjm.progress', session: 'mjm.activeSession', age: 'mjm.age' } as const;
 

@@ -108,7 +108,7 @@ export function HomeScreen() {
     setResumeError(null);
     try {
       if (rec.kind === 'local') {
-        const session = createLocalSession(rec.name || t('common.player'), rec.avatar, rec.host.rules, { restore: { host: rec.host, token: rec.token } });
+        const session = createLocalSession(rec.name || t('common.player'), rec.avatar, rec.host.rules, { restore: { host: rec.host, token: rec.token, rulesReset: rec.rulesReset } });
         app.setSession(session);
         app.go({ name: 'table' });
       } else if (entry !== 'ok') {

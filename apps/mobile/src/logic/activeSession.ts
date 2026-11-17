@@ -3,7 +3,7 @@
  * an older build. Home's Resume card and the resume code read its fields without asking, so a record is only
  * handed to them after every field they read has been checked here; anything else is treated as no saved table.
  */
-import { sanitizeRules } from '@mjm/engine';
+import { DEFAULT_RULES, sanitizeRules } from '@mjm/engine';
 import type { ActiveSession } from '../storage';
 
 /** A saved table older than this is stale: the match it points at is long over. */
@@ -61,16 +61,39 @@ function isSavedHost(v: unknown): boolean {
   return true;
 }
 
+/** Rules a saved copy may lack and still be whole: an older build saved it before a few were added. */
+const MISSING_RULES_ALLOWED = 3;
+
+/**
+ * A saved copy of the rules that can be used as it is: every value it holds is one the engine's sanitiser keeps,
+ * and it lacks no more than MISSING_RULES_ALLOWED rules (those take the default, as for a table saved by an
+ * older build). An emptied or hand-edited copy is damaged.
+ */
+export function rulesIntact(v: unknown): boolean {
+  if (!isObject(v)) return false;
+  const clean = sanitizeRules(v) as unknown as Record<string, unknown>;
+  const keys = Object.keys(DEFAULT_RULES);
+  const missing = keys.filter((k) => v[k] === undefined).length;
+  return missing <= MISSING_RULES_ALLOWED && keys.every((k) => v[k] === undefined || v[k] === clean[k]);
+}
+
 /**
  * The rules are read as numbers all through the table (the wall count is the wall less the dead wall), so an
- * emptied or hand-edited rules object would open a table showing NaN. The table's rules are sanitised as the
- * engine sanitises any rules from outside (missing or broken values take the default), and the hand in play
- * falls back to the table's rules for any value it lost.
+ * emptied or hand-edited rules object would open a table showing NaN. The table keeps two copies (its own and the
+ * hand in play's): when one is damaged and the other intact, both take the intact one. When both are damaged (or
+ * the only one, between hands), they are sanitised as the engine sanitises any rules from outside (broken values
+ * take the default), and the record says so (`rulesReset`), so the resumed table can tell the player.
  */
 function withSaneRules(raw: Record<string, unknown>, host: Record<string, unknown>): Record<string, unknown> {
-  const rules = sanitizeRules(host.rules);
-  const game = isObject(host.game) ? { ...host.game, rules: sanitizeRules(host.game.rules, rules) } : host.game;
-  return { ...raw, host: { ...host, rules, game } };
+  const game = isObject(host.game) ? host.game : null;
+  const tableOk = rulesIntact(host.rules);
+  const gameOk = game !== null && rulesIntact(game.rules);
+  const rules = tableOk ? sanitizeRules(host.rules) : gameOk ? sanitizeRules(game.rules) : sanitizeRules(host.rules);
+  const gameRules = gameOk ? sanitizeRules(game.rules) : rules;
+  const out: Record<string, unknown> = { ...raw, host: { ...host, rules, game: game ? { ...game, rules: gameRules } : host.game } };
+  if (!tableOk && !gameOk) out.rulesReset = true;
+  else delete out.rulesReset;
+  return out;
 }
 
 /**

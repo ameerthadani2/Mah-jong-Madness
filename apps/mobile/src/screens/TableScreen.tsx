@@ -73,6 +73,8 @@ function buzz(h: Haptic | null): void {
   void p.catch(() => undefined);
 }
 
+/** How long a resumed table says that its damaged saved rules were replaced by the defaults. */
+const RULES_RESET_NOTICE_MS = 8000;
 /** How long the "discarded for you" notice stays up after a turn timeout. */
 const AUTO_DISCARD_NOTICE_MS = 3500;
 
@@ -233,6 +235,15 @@ export function TableScreen() {
       ? t('table.autoDiscard', { tile: tileLabel(kindOf(autoNotice.tile as TileId), locale) })
       : t('table.autoClaim', { call: [t(`table.claimGloss.${autoNotice.call}`), t(`table.callout.${autoNotice.call}`)].filter(Boolean).join(' ') });
   useAnnounce(autoNoticeText, autoNotice?.key);
+  // A resumed table whose saved rules were damaged plays on the defaults: it says so once, for a while.
+  const [rulesReset, setRulesReset] = useState(!!session?.rulesReset);
+  useEffect(() => {
+    if (!rulesReset) return;
+    const id = setTimeout(() => setRulesReset(false), RULES_RESET_NOTICE_MS);
+    return () => clearTimeout(id);
+  }, [rulesReset]);
+  const rulesResetText = rulesReset ? t('table.rulesReset') : null;
+  useAnnounce(rulesResetText, rulesReset ? 1 : 0);
   const tapHint = useTapHint();
 
   // Brought back from Review or Fair play because the next hand was dealt (src/logic/back.ts): say so, briefly.
@@ -502,6 +513,12 @@ export function TableScreen() {
           <View style={styles.autoNotice} accessibilityLiveRegion="polite" testID="next-hand-notice" pointerEvents="none">
             <Icon name="play" size={22} />
             <Text style={[styles.toastText, nameFont(returnedText, fonts.bodyBold)]}>{returnedText}</Text>
+          </View>
+        )}
+        {rulesResetText && !autoNoticeText && (
+          <View style={styles.autoNotice} accessibilityLiveRegion="polite" testID="rules-reset-notice" pointerEvents="none">
+            <Icon name="warning" size={22} />
+            <Text style={[styles.toastText, nameFont(rulesResetText, fonts.bodyBold)]}>{rulesResetText}</Text>
           </View>
         )}
         {autoNoticeText && (

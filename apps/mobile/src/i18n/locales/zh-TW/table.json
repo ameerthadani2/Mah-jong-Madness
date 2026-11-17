@@ -250,6 +250,7 @@
     "win": "",
     "selfDrawWin": ""
   },
+  "rulesReset": "這桌儲存的規則已損壞，所以改用預設規則繼續。",
   "autoDiscard": "時間到了：已替你打出%{tile}。",
   "autoClaim": "時間到了：已替你喊「%{call}」。",
   "nextHandStarted": "下一局開始了。"

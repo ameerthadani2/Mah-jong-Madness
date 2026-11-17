@@ -53,6 +53,8 @@ export interface Session {
   clubCode?: string;
   /** A quick-match table: the server seats the matched players and starts it by itself. */
   readonly quickMatch?: boolean;
+  /** A resumed offline table whose saved rules were damaged: it plays on the default rules, and says so. */
+  readonly rulesReset?: boolean;
   /** Link to the table: always 'connected' locally. */
   readonly status: ConnectionStatus;
   /** While reconnecting, the attempt being waited for or made (1-based). */
@@ -85,8 +87,8 @@ export interface CloseOptions {
 
 export interface LocalOptions {
   botSkill?: BotSkill;
-  /** Resume a saved table. */
-  restore?: { host: SerializedHost; token: string };
+  /** Resume a saved table (`rulesReset`: its saved rules were damaged and the defaults are used). */
+  restore?: { host: SerializedHost; token: string; rulesReset?: boolean };
 }
 
 export function createLocalSession(name: string, avatar: string, rules: RuleSet, opts: LocalOptions = {}): Session {
@@ -107,6 +109,7 @@ export function createLocalSession(name: string, avatar: string, rules: RuleSet,
     roomCode: 'LOCAL',
     mode: 'local',
     transportKind: 'loopback',
+    ...(opts.restore?.rulesReset ? { rulesReset: true } : {}),
     status: 'connected',
     attempt: 0,
     lostReason: null,
