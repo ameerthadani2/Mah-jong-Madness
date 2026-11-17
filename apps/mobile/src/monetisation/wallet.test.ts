@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { allowedBotSkill, canAfford, canCreateClubs, canUse, coachRenewal, coachTier, consume, diamondsOwed, EMPTY_WALLET, hasTier, migrateWallet, mirrorMe, ownsCosmetic, showsPurchase, totalDiamonds, trustedNow, walletForUser, type MeWallet } from './wallet';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { allowedBotSkill, canAfford, canCreateClubs, canUse, coachRenewal, coachTier, consume, diamondsOwed, EMPTY_WALLET, hasTier, migrateWallet, mirrorMe, nextFreeRushAt, ownsCosmetic, showsPurchase, totalDiamonds, trustedNow, walletForUser, type MeWallet } from './wallet';
 
 const DAY = 86400_000;
 const SERVER_NOW = '2026-11-05T12:00:00.000Z';
@@ -115,6 +115,48 @@ describe('server clock', () => {
     expect(canUse(used, 'rush', new Date(tomorrow)).ok).toBe(true);
     // ...whereas winding the device back to yesterday never refills today's use.
     expect(canUse(used, 'rush', new Date(trustedNow(used, S - DAY))).ok).toBe(false);
+  });
+
+  describe('the Rush meter counts the UTC day, as the server does (here in Taipei, UTC+8)', () => {
+    const tz = process.env.TZ;
+    beforeAll(() => {
+      process.env.TZ = 'Asia/Taipei';
+    });
+    afterAll(() => {
+      process.env.TZ = tz;
+    });
+    // Taipei local times on 17 and 18 November 2026.
+    const taipei = (day: number, h: number, m: number) => new Date(Date.UTC(2026, 10, day, h - 8, m));
+
+    it('a run used at 23:30 is still used at 00:30 the next local day, and comes back at 08:00 (midnight UTC)', () => {
+      expect(taipei(17, 23, 30).getHours()).toBe(23);
+      const used = consume(EMPTY_WALLET, 'rush', taipei(17, 23, 30));
+      expect(canUse(used, 'rush', taipei(17, 23, 45)).ok).toBe(false);
+      // Past local midnight, the server's UTC day has not turned: the app must not offer a run the server refuses.
+      expect(canUse(used, 'rush', taipei(18, 0, 30)).ok).toBe(false);
+      expect(canUse(used, 'rush', taipei(18, 7, 59)).ok).toBe(false);
+      expect(canUse(used, 'rush', taipei(18, 8, 0)).ok).toBe(true);
+      expect(nextFreeRushAt(taipei(17, 23, 30))).toEqual(taipei(18, 8, 0));
+      expect(nextFreeRushAt(taipei(18, 0, 30))).toEqual(taipei(18, 8, 0));
+    });
+
+    it('a run used at 00:30 local is used until 08:00 that morning; a run used at 08:30 lasts until 08:00 the next day', () => {
+      const early = consume(EMPTY_WALLET, 'rush', taipei(18, 0, 30));
+      expect(canUse(early, 'rush', taipei(18, 7, 0)).ok).toBe(false);
+      expect(canUse(early, 'rush', taipei(18, 8, 30)).ok).toBe(true);
+      const morning = consume(EMPTY_WALLET, 'rush', taipei(18, 8, 30));
+      expect(canUse(morning, 'rush', taipei(18, 23, 59)).ok).toBe(false);
+      expect(canUse(morning, 'rush', taipei(19, 0, 30)).ok).toBe(false);
+      expect(canUse(morning, 'rush', taipei(19, 8, 0)).ok).toBe(true);
+    });
+
+    it('reviews still count the local day', () => {
+      const used = consume(EMPTY_WALLET, 'reviews', taipei(17, 23, 30));
+      expect(canUse(used, 'reviews', taipei(17, 23, 45)).ok).toBe(false);
+      expect(canUse(used, 'reviews', taipei(18, 0, 30)).ok).toBe(true);
+      // A saved wallet keeps the Rush day apart from the review day.
+      expect(migrateWallet({ ...used, meters: { ...used.meters, rush: 1 } }).meters).toEqual({ day: '2026-11-17', reviews: 1, rush: 1, rushDay: '2026-11-17' });
+    });
   });
 
   it('subscriptions lift the meters: Gold for Puzzle Rush, The Four Winds Club for reviews', () => {

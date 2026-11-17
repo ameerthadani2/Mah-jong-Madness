@@ -1,7 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it } from 'vitest';
 import { PUZZLE_TYPES, rushPuzzle } from '@mjm/engine';
 import { en, zhTW } from '../i18n/locales';
-import { rushDifficulty, rushOutcome, rushPuzzleAt, RUSH_TYPES } from './rush';
+import { rushDifficulty, rushOutcome, rushPuzzleAt, RUSH_TYPES, nextFreeRushText } from './rush';
 
 describe('rushOutcome', () => {
   it('reports a new personal best against the best from before the run', () => {
@@ -54,5 +54,23 @@ describe('rush rotation', () => {
       const p = rushPuzzleAt('ramp', i);
       if ('difficulty' in p) expect(p.difficulty).toBe(rushDifficulty(i));
     }
+  });
+});
+
+describe('when the next free run comes', () => {
+  const tz = process.env.TZ;
+  afterAll(() => {
+    process.env.TZ = tz;
+  });
+  it('is midnight UTC, said in the player’s local time: 08:00 in Taipei, today or tomorrow', () => {
+    process.env.TZ = 'Asia/Taipei';
+    // 23:30 on 17 November in Taipei is 15:30 UTC: the next free run is tomorrow at 08:00 there.
+    expect(nextFreeRushText(new Date(Date.UTC(2026, 10, 17, 15, 30)))).toEqual({ key: 'puzzles.rush.nextFreeTomorrow', params: { time: '08:00' } });
+    // 00:30 on 18 November in Taipei is still 17 November UTC: the next free run is this morning at 08:00.
+    expect(nextFreeRushText(new Date(Date.UTC(2026, 10, 17, 16, 30)))).toEqual({ key: 'puzzles.rush.nextFreeToday', params: { time: '08:00' } });
+  });
+  it('is 16:00 the same day in Los Angeles', () => {
+    process.env.TZ = 'America/Los_Angeles';
+    expect(nextFreeRushText(new Date(Date.UTC(2026, 10, 17, 18, 0)))).toEqual({ key: 'puzzles.rush.nextFreeToday', params: { time: '16:00' } });
   });
 });

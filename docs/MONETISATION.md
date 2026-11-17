@@ -38,7 +38,7 @@ Decided for launch (plan Phase 4, updated by the owner on 9 Nov): we ship the su
 
 | chess.com mechanic | Mahjong Mania at launch |
 | --- | --- |
-| Metered free taster | **Yes.** 1 full hand review a day, 1 Puzzle Rush a day; daily puzzle, drills, every lesson, Beginner and Club bots free. Meters reset at local midnight by the server's clock once the app has seen it. |
+| Metered free taster | **Yes.** 1 full hand review a day, 1 Puzzle Rush a day; daily puzzle, drills, every lesson, Beginner and Club bots free. The review meter resets at local midnight and the Rush meter at midnight UTC (when the server's own Rush meter refills; the Rush screen says when that is in local time, 08:00 in Taiwan), both by the server's clock once the app has seen it. |
 | Coaching tiers | **Two** (below): Coach Gold, and The Four Winds Club on top of it. A further tier waits until move-by-move explanations exist. |
 | Family / club bundle | **Not at launch** (the old "Table Pass" granted one seat, not six). |
 | Free clubs and club matches | **Yes, to join and play.** Running a club is The Four Winds Club. |

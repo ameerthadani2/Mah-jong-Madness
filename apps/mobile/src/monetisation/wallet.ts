@@ -11,8 +11,11 @@
  *
  * Pure TypeScript (no React Native), so it is unit-tested directly.
  */
-import type { BotSkill } from '@mjm/engine';
+import { utcDateKey, type BotSkill } from '@mjm/engine';
 import { COSMETICS, FREE_METERS, productById, tierOfEntitlement, type CoachTier } from './catalog';
+
+/** One day in milliseconds. */
+const DAY_MS = 86_400_000;
 
 export interface WalletEntitlement {
   entitlement: string;
@@ -39,7 +42,12 @@ export interface Wallet {
   /** Device time of the last successful sync; null when the server has never been seen. */
   syncedAt: number | null;
   /** Free-tier usage today (counted on this device). */
-  meters: { day: string; reviews: number; rush: number };
+  /**
+   * Free-tier meters on this device. `day` is the local day the review count is for; `rushDay` is
+   * the UTC day (`YYYY-MM-DD`) the Rush count is for, the day the server's free Rush meter counts
+   * (absent in a wallet saved before it was kept apart).
+   */
+  meters: { day: string; reviews: number; rush: number; rushDay?: string };
   /** Development builds' mock store only: grants made locally that the next sync replaces. */
   mock?: boolean;
 }
@@ -145,7 +153,7 @@ export function migrateWallet(raw: unknown): Wallet {
   if (!raw || typeof raw !== 'object') return EMPTY_WALLET;
   const r = raw as Partial<Wallet> & Record<string, unknown>;
   const m = r.meters as Partial<Wallet['meters']> | undefined;
-  const meters = m && typeof m.day === 'string' ? { day: m.day, reviews: count(m.reviews), rush: count(m.rush) } : EMPTY_WALLET.meters;
+  const meters = m && typeof m.day === 'string' ? { day: m.day, reviews: count(m.reviews), rush: count(m.rush), ...(typeof m.rushDay === 'string' ? { rushDay: m.rushDay } : {}) } : EMPTY_WALLET.meters;
   if (r.v !== 2) return { ...EMPTY_WALLET, meters };
   const entitlements = Array.isArray(r.entitlements)
     ? r.entitlements.filter((e): e is WalletEntitlement => !!e && typeof e.entitlement === 'string' && (e.expiresAt === null || (typeof e.expiresAt === 'number' && Number.isFinite(e.expiresAt))))
@@ -251,12 +259,24 @@ function localDayKey(d: Date): string {
   return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
 }
 
+/**
+ * Today's meters: reviews count by the player's local day; Puzzle Rush counts by the UTC day,
+ * as the server's free Rush meter does (apps/signal/src/puzzles.ts, `dayStart`), so the app never
+ * offers a free run the server will refuse (in Taiwan the UTC day starts at 08:00).
+ */
 function metersFor(wallet: Wallet, now: Date): Wallet['meters'] {
   const day = localDayKey(now);
-  return wallet.meters.day === day ? wallet.meters : { day, reviews: 0, rush: 0 };
+  const rushDay = utcDateKey(now.getTime());
+  const m = wallet.meters;
+  return { day, reviews: m.day === day ? m.reviews : 0, rush: m.rushDay === rushDay ? m.rush : 0, rushDay };
 }
 
-/** Free-tier meters (full product, limited count, reset at local midnight by the trusted clock). */
+/** When the next free Puzzle Rush comes: the next midnight UTC after `now` (show it in the player's local time). */
+export function nextFreeRushAt(now: Date): Date {
+  return new Date(Math.floor(now.getTime() / DAY_MS) * DAY_MS + DAY_MS);
+}
+
+/** Free-tier meters (full product, limited count; reviews reset at local midnight, Rush at midnight UTC, by the trusted clock). */
 export function canUse(wallet: Wallet, meter: 'reviews' | 'rush', now: Date = new Date(trustedNow(wallet))): { ok: boolean; left: number; limit: number | null } {
   if (meter === 'reviews' && hasTier(wallet, 'fourwinds', now.getTime())) return { ok: true, left: Infinity, limit: null };
   if (meter === 'rush' && hasTier(wallet, 'gold', now.getTime())) return { ok: true, left: Infinity, limit: null };

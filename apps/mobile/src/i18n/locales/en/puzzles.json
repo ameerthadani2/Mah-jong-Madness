@@ -36,7 +36,9 @@
     "leaveYes": "End run",
     "leaveNo": "Keep going",
     "loadingNext": "Getting the next puzzle from the game server…",
-    "lost": "The connection to the game server was lost, so the run ended here. It is not ranked."
+    "lost": "The connection to the game server was lost, so the run ended here. It is not ranked.",
+    "nextFreeToday": "Your next free run comes today at %{time}, your time.",
+    "nextFreeTomorrow": "Your next free run comes tomorrow at %{time}, your time."
   },
   "view": {
     "next": "Next",

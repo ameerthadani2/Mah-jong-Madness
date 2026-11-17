@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import React from 'react';
-import { act, fireEvent, render, screen } from '@testing-library/react-native';
+import { act, fireEvent, render, screen, within } from '@testing-library/react-native';
 import { PuzzleRushScreen } from './PuzzleScreens';
 import { DrillScreen } from './DrillScreen';
 import { discardPuzzle, type DiscardPuzzle } from '@mjm/engine';
@@ -105,6 +105,20 @@ describe('Puzzle Rush', () => {
     expect(calls.go).toHaveBeenLastCalledWith({ name: 'shop', focus: 'gold' });
     await fireEvent.press(screen.getByRole('button', { name: 'Daily puzzle instead' }));
     expect(calls.go).toHaveBeenLastCalledWith({ name: 'daily' });
+  });
+
+  it('once the free run is used, says when the next one comes: midnight UTC, in the player’s local time', async () => {
+    // (The wording in Taipei and Los Angeles is checked in logic/rush.test.ts, where the time zone can be set; jest keeps
+    // the machine's, so the expected line is worked out here from the next midnight UTC in local time.)
+    const now = Date.UTC(2026, 10, 17, 15, 30);
+    jest.setSystemTime(now);
+    const used = consume(EMPTY_WALLET, 'rush', new Date(now));
+    await renderRush({ wallet: used });
+    const at = new Date(Date.UTC(2026, 10, 18));
+    const local = new Date(now);
+    const day = at.getDate() === local.getDate() ? 'today' : 'tomorrow';
+    const time = `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`;
+    expect(within(screen.getByTestId('rush-next-free')).getByText(`Your next free run comes ${day} at ${time}, your time.`)).toBeOnTheScreen();
   });
 
   it('keeps the player’s record and a tip under the puzzle', async () => {

@@ -8,8 +8,9 @@ import { nextDailyProgress } from '../logic/daily';
 import { localDayAsUtc } from '../logic/dates';
 import { dailyDifficulty, puzzleDifficultyOf, PUZZLE_TYPE_KEYS, type PuzzleResult } from '../logic/puzzle';
 import { rateAnswerIn, recordRush } from '../logic/rating';
-import { rushDifficulty, rushOutcome, rushPuzzleAt } from '../logic/rush';
+import { nextFreeRushText, rushDifficulty, rushOutcome, rushPuzzleAt } from '../logic/rush';
 import { canUse, consume } from '../monetisation/store';
+import { trustedNow } from '../monetisation/wallet';
 import { puzzleErrorText } from '../api/puzzles';
 import { openDaily, openRush, sendRushAnswer, serverRating, submitDaily, submitRush, type DailyLink, type DailyOutcome, type RushLink, type RushOutcome, type RushStep } from '../logic/puzzleSync';
 import { usePuzzleServer, useShownRating } from '../components/puzzles/usePuzzleServer';
@@ -131,10 +132,27 @@ function ServerNote({ link, outcome, sending, testID }: { link: { ranked: boolea
   const failed = outcome && !outcome.ranked ? outcome : link && !link.ranked ? link : null;
   if (!failed) return null;
   const text = failed.down || failed.error === undefined ? t('puzzles.server.unranked') : puzzleErrorText(failed.error, t);
+  // The server's free Rush meter refused the run: say when the next free one comes.
+  const usedUp = (failed.error as { code?: unknown } | undefined)?.code === 'rush_daily_limit';
   return (
     <View testID={testID}>
       <P dim style={styles.note}>
         {text}
+      </P>
+      {usedUp && <NextFreeRush />}
+    </View>
+  );
+}
+
+/** When the next free Puzzle Rush comes (midnight UTC, when the server's meter refills), in the player's local time. */
+function NextFreeRush() {
+  const app = useApp();
+  const { t } = useT();
+  const next = nextFreeRushText(new Date(trustedNow(app.wallet)));
+  return (
+    <View testID="rush-next-free">
+      <P dim style={styles.note}>
+        {t(next.key, next.params)}
       </P>
     </View>
   );
@@ -164,6 +182,7 @@ export function PuzzleRushScreen() {
           </Row>
           {/* The plan is named as the Shop names it, in either language. */}
           <P dim>{t('shop.rushUsed', { plan: t('shop.tiers.gold') })}</P>
+          <NextFreeRush />
           <Row>
             <Button title={t('puzzles.rush.seePlans')} onPress={() => app.go({ name: 'shop', focus: 'gold' })} />
             <Button kind="ghost" title={t('puzzles.rush.dailyInstead')} onPress={() => app.go({ name: 'daily' })} />
