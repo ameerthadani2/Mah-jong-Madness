@@ -291,10 +291,12 @@ function liguReading(w: OWin, c: readonly number[]): Array<[string, number]> {
 
 const sum = (items: ReadonlyArray<[string, number]>) => items.reduce((a, [, t]) => a + t, 0);
 
+/** 莊家 and 連N拉N when the dealer wins; a rule value of 0 means the item is not played, so it is not listed. */
 function dealerItems(w: OWin): Array<[string, number]> {
   if (w.seat !== w.dealer) return [];
-  const out: Array<[string, number]> = [['dealer', w.rules.dealerTai]];
-  if (w.streak > 0) out.push(['dealer_streak', w.rules.dealerStreakTai * w.streak]);
+  const out: Array<[string, number]> = [];
+  if (w.rules.dealerTai > 0) out.push(['dealer', w.rules.dealerTai]);
+  if (w.streak > 0 && w.rules.dealerStreakTai > 0) out.push(['dealer_streak', w.rules.dealerStreakTai * w.streak]);
   return out;
 }
 

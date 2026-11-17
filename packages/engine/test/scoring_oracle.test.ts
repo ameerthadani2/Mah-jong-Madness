@@ -259,12 +259,11 @@ function generate(r: Rng, situation: Situation): Case | null {
 
 const line = (items: ReadonlyArray<[string, number]>) =>
   items
-    .filter(([, t]) => t !== 0)
     .map(([k, t]) => `${k}:${t}`)
     .sort()
     .join(' ');
 
-/** The engine's items as `key:tai`, 0-台 lines left out (a rule value of 0 may leave a 0-台 莊家 line). */
+/** The engine's items as `key:tai`, sorted. */
 const engineLine = (s: ScoreResult) => line(s.items.map((i): [string, number] => [i.key, i.tai]));
 
 interface Tally {
@@ -296,7 +295,7 @@ function check(c: Case, t: Tally): void {
   if (JSON.stringify(payments) !== JSON.stringify(want)) problems.push(`payments engine ${JSON.stringify(payments)} oracle ${JSON.stringify(want)}`);
   t.cases++;
   t.situations.set(c.situation, (t.situations.get(c.situation) ?? 0) + 1);
-  for (const i of score.items) if (i.tai !== 0) t.items.set(i.key, (t.items.get(i.key) ?? 0) + 1);
+  for (const i of score.items) t.items.set(i.key, (t.items.get(i.key) ?? 0) + 1);
   if (o.rules.maxTai > 0 && expected.handTai > o.rules.maxTai) {
     t.capped++;
     if (expected.dealerItems.some(([k, v]) => k === 'dealer_streak' && v > 0)) t.cappedDealerStreak++;

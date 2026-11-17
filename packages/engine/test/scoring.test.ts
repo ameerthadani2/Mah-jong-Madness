@@ -222,6 +222,14 @@ describe('台 scoring: audit cases', () => {
     const live = scoreWin(ctx({ concealed: '123p 456p 789s 78m 55s', win: '6m', melds: [pongMeld('9m')] }));
     expect(keys(live)).not.toContain('single_wait');
   });
+  it('a dealer or streak 台 of 0 lists no 0-台 莊家 or 連莊 line', () => {
+    const hand = { seat: 0, dealerStreak: 2, concealed: '123m 456m 789m 234m 567m 9m', win: '9m' };
+    expect(keys(scoreWin(ctx({ ...hand, rules: withRules({ dealerTai: 0 }) })))).toEqual(['all_chows', 'concealed', 'dealer_streak', 'full_flush']);
+    expect(keys(scoreWin(ctx({ ...hand, rules: withRules({ dealerStreakTai: 0 }) })))).toEqual(['all_chows', 'concealed', 'dealer', 'full_flush']);
+    const off = scoreWin(ctx({ ...hand, rules: withRules({ dealerTai: 0, dealerStreakTai: 0 }) }));
+    expect(off.items.every((i) => i.tai > 0)).toBe(true);
+    expect(off.tai).toBe(8 + 1 + 2);
+  });
   it('maxTai caps the non-dealer 台 only; the dealer items are added after the cap', () => {
     const rules = withRules({ maxTai: 8 });
     // 78m + 99m waits on 6m/9m: 清一色 8 + 門清 1 + 平胡 2 = 11, capped to 8, then 莊家 1 + 連3拉3 6.

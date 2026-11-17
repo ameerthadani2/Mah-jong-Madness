@@ -221,10 +221,12 @@ function scoreFlowerWin(ctx: WinContext, kind: FlowerWin): ScoreResult {
   return { ...totals(ctx.rules, items), items, decomposition: null, concealedSetTypes: [], flowerWin: kind };
 }
 
+/** 莊家 and 連N拉N for a dealer win; a rule value of 0 turns the item off, so no 0-台 line is listed. */
 function dealerItems(ctx: WinContext): TaiItem[] {
   if (ctx.seat !== ctx.dealerSeat) return [];
-  const items = [T('dealer', '莊家', 'Dealer', ctx.rules.dealerTai)];
-  if (ctx.dealerStreak > 0) {
+  const items: TaiItem[] = [];
+  if (ctx.rules.dealerTai > 0) items.push(T('dealer', '莊家', 'Dealer', ctx.rules.dealerTai));
+  if (ctx.dealerStreak > 0 && ctx.rules.dealerStreakTai > 0) {
     items.push(T('dealer_streak', `連${ctx.dealerStreak}拉${ctx.dealerStreak}`, `Dealer Streak ×${ctx.dealerStreak}`, ctx.rules.dealerStreakTai * ctx.dealerStreak));
   }
   return items;
