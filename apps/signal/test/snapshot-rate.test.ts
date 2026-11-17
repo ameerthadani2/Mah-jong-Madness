@@ -22,6 +22,7 @@ function fakeRegistry() {
     clubOf: () => undefined,
     createdByOf: () => undefined,
     quickPlayersOf: () => undefined,
+    quickLinkedOf: () => undefined,
     evictedOf: () => undefined,
   } as unknown as RoomRegistry;
   return {
