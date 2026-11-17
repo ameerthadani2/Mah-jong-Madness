@@ -33,15 +33,8 @@ describe('a lobby without a seat', () => {
     expect(lobbySeated({ seat: 3 })).toBe(true);
   });
 
-  it('shows the reason and Back only, before any share code, Add bot or Start is drawn', () => {
-    const src = readFileSync(join(__dirname, '../screens/LobbyScreen.tsx'), 'utf8');
-    const guard = src.indexOf('if (!lobbySeated(state))');
-    expect(guard).toBeGreaterThan(0);
-    for (const control of ['lobbyControls(session)', "t('lobby.share')", "t('lobby.addBot')", 'onPress={start}']) expect(src.indexOf(control), control).toBeGreaterThan(guard);
-    const block = src.slice(guard, src.indexOf('lobbyControls(session)'));
-    expect(block).toContain('testID="lobby-no-seat"');
-    expect(block).toContain('onPress={leave}');
-  });
+  // A refused seat shows the reason and Back only, with no share code, Add bot or Start: rendered in
+  // src/screens/Lobby.render.test.tsx ("shows only the reason and Back when the table refused the seat").
 
   it('is never opened by a join the table refused: Online, Home and a followed link wait for the seat first', () => {
     for (const file of ['../screens/OnlineScreen.tsx', '../screens/HomeScreen.tsx', '../push/PushBridge.tsx']) {
