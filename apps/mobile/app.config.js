@@ -82,6 +82,19 @@ const PRIVACY_MANIFEST = {
   ],
 };
 
+/**
+ * The name under the icon on a phone set to Traditional Chinese: common.appName in the zh-TW strings (麻將狂熱), so
+ * the home screen and the app agree. Expo writes `locales` into zh-Hant.lproj/InfoPlist.strings (iOS:
+ * CFBundleDisplayName) and values-b+zh+Hant/strings.xml (Android: app_name); zh-TW is listed too, for an older
+ * Android that matches a resource by region rather than by script. Only for the default name: an APP_NAME build
+ * names itself in every language.
+ */
+const ZH_HANT_APP_NAME = require('./src/i18n/locales/zh-TW/common.json').appName;
+function homeScreenNames(zh) {
+  const names = { ios: { CFBundleDisplayName: zh }, android: { app_name: zh } };
+  return { 'zh-Hant': names, 'zh-TW': names };
+}
+
 /** A Play package name: two or more dot-separated segments, each a letter then letters, digits or '_'. */
 const ANDROID_PACKAGE = /^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+$/;
 /** What iOS accepts as CFBundleShortVersionString (and Play shows as versionName): up to three numbers. */
@@ -155,6 +168,7 @@ module.exports = ({ config }) => {
     ...config,
     ...(version !== undefined ? { version } : {}),
     name: env('APP_NAME', IDENTITY_DEFAULTS.name),
+    ...(env('APP_NAME', IDENTITY_DEFAULTS.name) === IDENTITY_DEFAULTS.name ? { locales: { ...(config.locales || {}), ...homeScreenNames(ZH_HANT_APP_NAME) } } : {}),
     slug: env('APP_SLUG', IDENTITY_DEFAULTS.slug),
     scheme: env('APP_SCHEME', IDENTITY_DEFAULTS.scheme),
     ios: { ...(config.ios || {}), bundleIdentifier: bundleId, usesAppleSignIn: true, privacyManifests: PRIVACY_MANIFEST },

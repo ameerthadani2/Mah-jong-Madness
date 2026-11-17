@@ -8,9 +8,11 @@ const build = require('../../app.config.js') as (a: { config: Record<string, unk
   ios: { privacyManifests: { NSPrivacyTracking: boolean; NSPrivacyAccessedAPITypes: Array<{ NSPrivacyAccessedAPIType: string; NSPrivacyAccessedAPITypeReasons: string[] }>; NSPrivacyCollectedDataTypes: Array<{ NSPrivacyCollectedDataType: string; NSPrivacyCollectedDataTypeTracking: boolean; NSPrivacyCollectedDataTypeLinked: boolean; NSPrivacyCollectedDataTypePurposes: string[] }> } };
   android: { googleServicesFile?: string };
   extra: { storeUrls: { ios?: string; android: string } };
+  name: string;
+  locales?: Record<string, { ios?: Record<string, string>; android?: Record<string, string> }>;
 };
 
-const KEYS = ['SENTRY_AUTH_TOKEN', 'SENTRY_ORG', 'SENTRY_PROJECT', 'APP_STORE_ID', 'GOOGLE_SERVICES_JSON', 'APP_BUNDLE_ID', 'EXPO_PUBLIC_LINK_DOMAIN'];
+const KEYS = ['APP_NAME', 'SENTRY_AUTH_TOKEN', 'SENTRY_ORG', 'SENTRY_PROJECT', 'APP_STORE_ID', 'GOOGLE_SERVICES_JSON', 'APP_BUNDLE_ID', 'EXPO_PUBLIC_LINK_DOMAIN'];
 const config = () => build({ config: structuredClone(appJson.expo) });
 const pluginNames = (c: ReturnType<typeof build>) => c.plugins.map((p) => (Array.isArray(p) ? p[0] : p));
 
@@ -83,5 +85,30 @@ describe('app.config.js (telemetry and push)', () => {
       { scheme: 'https', host: 'play.example.com', pathPrefix: '/t/' },
       { scheme: 'https', host: 'play.example.com', pathPrefix: '/c/' },
     ]);
+  });
+});
+
+describe('app.config.js (the name under the icon)', () => {
+  it('names the app 麻將狂熱 on a phone set to Traditional Chinese, on iOS and Android, from the app\'s own zh-TW strings', async () => {
+    const c = config();
+    expect(c.name).toBe('Mahjong Mania');
+    const zh = (require('../i18n/locales/zh-TW/common.json') as { appName: string }).appName;
+    expect(zh).toBe('麻將狂熱');
+    for (const lang of ['zh-Hant', 'zh-TW']) {
+      expect(c.locales?.[lang]).toEqual({ ios: { CFBundleDisplayName: zh }, android: { app_name: zh } });
+    }
+    // What Expo's prebuild writes from it (@expo/config-plugins): InfoPlist.strings for iOS, values-b+zh+Hant for Android.
+    const { getResolvedLocalesAsync } = require('@expo/config-plugins/build/utils/locales') as { getResolvedLocalesAsync: (root: string, input: unknown, platform: 'ios' | 'android') => Promise<{ localesMap: Record<string, Record<string, string>> }> };
+    expect((await getResolvedLocalesAsync('.', c.locales, 'ios')).localesMap['zh-Hant']).toEqual({ CFBundleDisplayName: '麻將狂熱' });
+    expect((await getResolvedLocalesAsync('.', c.locales, 'android')).localesMap['zh-Hant']).toEqual({ app_name: '麻將狂熱' });
+    const { getResourceQualifier } = require('@expo/config-plugins/build/android/Locales') as { getResourceQualifier?: (l: string) => string };
+    if (getResourceQualifier) expect(getResourceQualifier('zh-Hant')).toBe('b+zh+Hant');
+  });
+
+  it('leaves a build named with APP_NAME unlocalised', () => {
+    process.env.APP_NAME = 'Mahjong Mania Staging';
+    const c = config();
+    expect(c.name).toBe('Mahjong Mania Staging');
+    expect(c.locales).toBeUndefined();
   });
 });
