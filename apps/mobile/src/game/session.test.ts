@@ -325,6 +325,32 @@ describe('online reconnect', () => {
     expect(second.closed).toBe(true);
   });
 
+  it('a link that brings nothing while a hand is played is dropped and won back; a quiet but answering one is kept', async () => {
+    vi.useFakeTimers();
+    const s = await createOnlineSession({ ...base, action: 'join', code: 'ABC123', token: TOKEN });
+    const first = FakeSocket.last!;
+    let verdict: 'ok' | 'silent' = 'ok';
+    const check = vi.spyOn(s.client, 'checkLink').mockImplementation(() => verdict);
+    // The session asks the table client every second, and keeps a link it calls fine.
+    await vi.advanceTimersByTimeAsync(3_000);
+    expect(check).toHaveBeenCalledTimes(3);
+    expect([s.status, first.closed]).toEqual(['connected', false]);
+    // A link that has brought nothing for too long is closed as a dead heartbeat would close it, and joined again.
+    verdict = 'silent';
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(first.closed).toBe(true);
+    expect(s.status).toBe('reconnecting');
+    verdict = 'ok';
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(FakeSocket.all).toHaveLength(2);
+    expect(s.status).toBe('connected');
+    // While reconnecting, and once closed, it is not asked.
+    s.close();
+    const calls = check.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(check.mock.calls.length).toBe(calls);
+  });
+
   it('a link that drops is reconnected; only a seat opened on another device ends the session', async () => {
     const { s, first } = await open();
     first.push({ t: 'from', from: 'server-1', data: { ch: 'game', msg: { t: 'welcome', seat: 0, roomCode: 'ABC123', rules: DEFAULT_RULES, seats: [], matchId: 'm1', token: TOKEN } } });

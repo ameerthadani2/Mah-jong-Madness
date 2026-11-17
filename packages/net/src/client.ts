@@ -480,6 +480,12 @@ export const MAX_AUDITS = 50;
 /** Frames and sent moves remembered per hand (a hand is far shorter). */
 const MAX_SEEN = 600;
 const MAX_SENT = 300;
+/** The most a `welcome` may say the host waits between frames (`clockMs`); anything above is ignored. */
+const MAX_CLOCK_FRAME_MS = 10_000;
+/** How long `checkLink` waits for any frame after it asked for a `pong`, before it calls the link silent. */
+export const SILENT_ANSWER_MS = 5_000;
+/** A gap between two `checkLink` calls longer than this means the app was not running. */
+const LINK_PAUSE_MS = 5_000;
 /** How much earlier than a frame before it on the same link a frame may be stamped (see `noteOrder`). */
 const ORDER_SLACK_MS = 1_000;
 /** Slack for the host's rounding of time banks to whole seconds. */
@@ -683,6 +689,13 @@ export class TableClient {
   private clockBase: { era: number; anchor: number | null; minOffset: number | null } = { era: 0, anchor: null, minOffset: null };
   /** The last time-stamped frame received: a state, or a hand's end. */
   private lastStamp: GapStart | null = null;
+  /** While a hand is played, the longest the host lets this seat go without a frame (its `welcome` says; null: it does not say). */
+  private clockMs: number | null = null;
+  /** When the link in use last brought a frame, and when this client then asked it for a `pong` (see `checkLink`). */
+  private heardAt: number | null = null;
+  private probedAt: number | null = null;
+  /** When `checkLink` last ran. */
+  private checkedAt: number | null = null;
   /** The latest stamp on a frame of the link in use (its epoch and the host's clock era). */
   private linkStamp: { epoch: number; era: number; now: number } | null = null;
   /** The last state frame of the link in use: its hand and turn. */
@@ -905,7 +918,11 @@ export class TableClient {
 
   private bind(link: Link): void {
     this.link = link;
+    this.heardAt = null;
+    this.probedAt = null;
     this.unsubMessage = link.onMessage((m) => {
+      this.heardAt = this.now();
+      this.probedAt = null;
       try {
         this.onMessage(m);
       } catch (e) {
@@ -985,6 +1002,39 @@ export class TableClient {
 
   ping(): void {
     this.send({ t: 'ping', at: this.now() });
+  }
+
+  /**
+   * Call about once a second while the link is up (the online session does). While a hand is played,
+   * a host that says how often it sends frames (`clockMs`) never leaves this seat without one for
+   * long. After `2 × clockMs + 2 s` without any frame this client asks for a `pong`; a host that
+   * answers at once, while it holds back what it sent before, is caught by the order of the stamps
+   * (`noteOrder`). When `SILENT_ANSWER_MS` more pass without a frame, the answer is 'silent': the
+   * link brings nothing although it may still look open, and the session drops it so that the
+   * time without a link is judged as a drop (the table may move for the seat in it only when its
+   * clock could have run out). A host can thus hold everything back, unseen, for at most that long.
+   * A gap between calls longer than `LINK_PAUSE_MS` means this app was not running (the phone
+   * slept, or the app was in the background): the wait starts again, and the link is not blamed;
+   * so does the first call.
+   */
+  checkLink(): 'ok' | 'silent' {
+    const now = this.now();
+    // The first call, or the first after a pause: the wait starts now.
+    const paused = this.checkedAt === null || now - this.checkedAt > LINK_PAUSE_MS;
+    this.checkedAt = now;
+    const st = this.state;
+    const playing = st.connected && !st.disconnected && !st.kicked && !st.matchOver && st.seat !== null && st.view !== null && st.lastResult === null && st.ceremony === 'idle';
+    if (!playing || this.clockMs === null || this.heardAt === null) return 'ok';
+    if (paused) {
+      this.heardAt = now;
+      this.probedAt = null;
+      return 'ok';
+    }
+    if (this.probedAt === null && now - this.heardAt >= 2 * this.clockMs + 2_000) {
+      this.probedAt = now;
+      this.ping();
+    }
+    return this.probedAt !== null && now - this.probedAt >= SILENT_ANSWER_MS ? 'silent' : 'ok';
   }
 
   leave(): void {
@@ -1302,6 +1352,7 @@ export class TableClient {
         this.checkBots(seats);
         // A host that stops saying (an older build after a restart) keeps the strength it had.
         this.tableSkill = isBotSkill(m.botSkill) ? m.botSkill : null;
+        this.clockMs = isInt(m.clockMs) && m.clockMs > 0 && m.clockMs <= MAX_CLOCK_FRAME_MS ? m.clockMs : null;
         if (this.tableSkill && isBotSkill(this.pinnedSkill) && this.tableSkill !== this.pinnedSkill && !this.state.matchOver) this.flag(this.activeHand(), 'Host changed how strong its bots are during the match');
         this.update({ connected: true, disconnected: false, kicked: false, seat: m.seat, roomCode: m.roomCode, rules: this.pinnedRules ?? rules, seats, matchId: m.matchId, token: m.token, lastError: null });
         return;

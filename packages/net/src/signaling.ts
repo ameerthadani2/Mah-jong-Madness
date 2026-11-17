@@ -260,6 +260,15 @@ export class SignalingClient {
     onclose?.({ code: HEARTBEAT_CLOSE_CODE });
   }
 
+  /**
+   * Treat the link as dead now, as a missed heartbeat does: close it and report it closed with
+   * `HEARTBEAT_CLOSE_CODE`, so that whoever reconnects on a lost link does. For a link that may still
+   * look open but brings nothing (`TableClient.checkLink`).
+   */
+  drop(): void {
+    if (this.ws) this.linkDead(this.ws);
+  }
+
   /** Use a new session token from the next `connect()` (after a refresh or a sign-in). */
   setAuth(token: string | undefined): void {
     this.auth = token;

@@ -94,7 +94,7 @@ Besides `hello`, `create`, `join`, `queue` and `leave_queue` (above and under Qu
 | `{ "t": "from", "from": "<peer id>", "data": … }` | server → client | Relayed data |
 | `{ "t": "peer", "peerId", "event": "join" \| "leave" }` | server → client | A peer entered or left the room |
 | `{ "t": "leave" }` | client → server | Leave the room (the seat stays reclaimable; the table's own `leave` frame, below, gives it up) |
-| `{ "t": "ping" }` → `{ "t": "pong" }` | both | Heartbeat. The app sends one every 15 s and reconnects after 10 s without an answer |
+| `{ "t": "ping" }` → `{ "t": "pong" }` | both | Heartbeat. The app sends one every 15 s and reconnects after 10 s without an answer. While a hand is played it also drops and reconnects a socket that has brought no table frame for 13 s (see `clock` below), even if this heartbeat is answered |
 | `{ "t": "error", "code": "table_cap", "message" }` | server → client | The account already has `MAX_TABLES_PER_USER` (default 3) unfinished tables open; `create` is refused |
 | `{ "t": "error", "code": "closed", "message" }` | server → client | The room has closed (a relay-only room whose host left, a club table closed by the club, an eviction); the socket is no longer in a room |
 
@@ -116,7 +116,7 @@ Client → host:
 | `{ "t": "reveal", "secret": "<hex>" }` | Answer to `reveal_request`: the secret behind the commitment |
 | `{ "t": "action", "seat", "action", "expectHash"?, "turnCounter"? }` | A move (discard, chi, pong, kong, win, pass …) for the sender's own seat. `expectHash` is the state hash the player acted on; `turnCounter` the turn of that view, echoed if the move is refused |
 | `{ "t": "chat", "text" }`, `{ "t": "emote", "emote" }` | A quick phrase or an emote, by id (next section) |
-| `{ "t": "ping", "at" }` | Clock probe; answered `{ "t": "pong", "at", "now" }` with the host's clock, which the countdowns use |
+| `{ "t": "ping", "at" }` | Clock probe; answered `{ "t": "pong", "at", "now" }` with the host's clock, which the countdowns use. While a hand is played, the app sends one after 8 s (twice `clockMs`, plus 2 s) without any table frame; when 5 s more pass without one, it drops the socket and reconnects |
 
 Host → client:
 

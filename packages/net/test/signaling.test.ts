@@ -279,6 +279,21 @@ describe('SignalingClient heartbeat', () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
+  it('drop() closes a link that still looks open as a missed heartbeat does, and fires the close handlers once', async () => {
+    const { c, ws } = await connected();
+    const closes = vi.fn();
+    c.onClose(closes);
+    c.drop();
+    expect(ws.closed).toBe(true);
+    expect(closes).toHaveBeenCalledTimes(1);
+    expect(c.lastCloseCode).toBe(HEARTBEAT_CLOSE_CODE);
+    expect(vi.getTimerCount()).toBe(0);
+    // Nothing is left to drop.
+    c.drop();
+    ws.drop(1006);
+    expect(closes).toHaveBeenCalledTimes(1);
+  });
+
   it('counts any frame from the server as an answer, and stops after close()', async () => {
     const { c, ws } = await connected();
     await vi.advanceTimersByTimeAsync(HEARTBEAT_MS);

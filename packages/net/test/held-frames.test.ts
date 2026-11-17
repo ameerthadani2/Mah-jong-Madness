@@ -10,7 +10,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { chooseAction, legalActions, withRules, type Action, type GameState } from '@mjm/engine';
-import { CLOCK_FRAME_MS, LoopbackHub, TableClient, TableHost, failureKey, transportLink, type HostMessage, type Link } from '../src/index';
+import { CLOCK_FRAME_MS, LoopbackHub, SILENT_ANSWER_MS, TableClient, TableHost, failureKey, transportLink, type HostMessage, type Link } from '../src/index';
 import { Missed, scenario, seededDeals } from './support';
 
 seededDeals();
@@ -73,12 +73,18 @@ function table(code: string, skew = 0) {
   const c = new TableClient(net.link, 'Victim', undefined, {}, { now: () => clock.now + skew });
   c.join();
   host.start();
+  let links = 0;
   const t = {
     clock,
+    hub,
     host,
     h: host as unknown as HostInternals,
     c,
     net,
+    /** The online session's watch: when it is on, `checkLink` runs every second and a silent link is dropped and joined again. */
+    watching: false,
+    /** When the watch last dropped a silent link (the shared clock). */
+    droppedAt: null as number | null,
     /** Let the clock run in half-second ticks, as the server does; the phone pings every `pingMs` (0: never). */
     wait(ms: number, pingMs = 0) {
       for (let left = ms; left > 0; left -= 500) {
@@ -86,6 +92,12 @@ function table(code: string, skew = 0) {
         if (pingMs > 0 && clock.now % pingMs === 0) c.ping();
         host.tick();
         net.pump();
+        if (t.watching && clock.now % 1_000 === 0 && c.checkLink() === 'silent') {
+          t.droppedAt = clock.now;
+          t.net.link.close();
+          c.rebind(transportLink(hub.create(`p0r${links++}`), 'host'));
+          c.join();
+        }
       }
     },
   };
@@ -198,6 +210,61 @@ describe('a frame held back on a link that stays open', () => {
     timedOut(t);
     finish(t);
     expect(keys(t)).toContain('heldFrame');
+  });
+});
+
+describe('a link that brings nothing is dropped', () => {
+  deal('a server that holds every frame, the pongs too, loses the link within 13 s and the seat gets its turn back', () => {
+    const t = table('HS1', 2 * 3_600_000);
+    t.watching = true;
+    need(toDiscard(t, 1));
+    t.c.act(chooseAction(t.c.localState()!, 0, { seed: 'p' })!);
+    t.net.hold = (m) => m.t === 'state' && hostDiscard(t);
+    need(advance(t, () => hostDiscard(t)));
+    // From the moment the seat owes its discard, nothing reaches it, the answers to its pings included.
+    const turn = t.host.game!.turnCounter;
+    const from = t.clock.now;
+    t.net.hold = () => true;
+    t.wait(TURN + BANK - 5_000);
+    expect(t.droppedAt).not.toBeNull();
+    expect(t.droppedAt! - from).toBeLessThanOrEqual(2 * CLOCK_FRAME_MS + 2_000 + SILENT_ANSWER_MS + 1_000);
+    // The new link shows the turn, and the seat's own move is taken.
+    expect(t.host.game!.turnCounter).toBe(turn);
+    expect(myDiscard(t)).toBe(true);
+    t.c.act(chooseAction(t.c.localState()!, 0, { seed: 'p' })!);
+    expect(t.host.game!.actionLog.find((e) => e.n === turn)).toMatchObject({ seat: 0, source: 'player' });
+    finish(t);
+    expect(t.c.state.auditStatus).not.toBe('failed');
+  });
+
+  deal('honest: every frame 6 s late, the seat timed out: the link is never dropped and the hand is green', () => {
+    const t = table('HS2');
+    t.watching = true;
+    t.net.delay = () => 6_000;
+    need(toDiscard(t, 2));
+    timedOut(t);
+    finish(t);
+    expect(t.droppedAt).toBeNull();
+    green(t);
+  });
+
+  deal('honest: the phone sleeps through a whole turn (no app code runs) and wakes to the frames: no drop, green', () => {
+    const t = table('HS3');
+    t.watching = true;
+    need(toDiscard(t, 2));
+    t.wait(2_000);
+    // Asleep: nothing arrives and the watch does not run, while the table times the seat out.
+    t.watching = false;
+    t.net.hold = () => true;
+    t.wait(TURN + BANK + 5_000);
+    // It wakes; the network takes 6 s to bring what was waiting.
+    t.watching = true;
+    t.wait(6_000);
+    t.net.hold = () => false;
+    t.net.release();
+    finish(t);
+    expect(t.droppedAt).toBeNull();
+    green(t);
   });
 });
 

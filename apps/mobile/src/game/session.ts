@@ -310,6 +310,8 @@ class OnlineSession implements Session {
   private conn: ReconnectState = CONNECTED;
   private closed = false;
   private timer: ReturnType<typeof setTimeout> | null = null;
+  /** Asks the table client every second whether the link has gone silent (see `watchLink`). */
+  private readonly watch: ReturnType<typeof setInterval>;
   private inFlight = false;
   private readonly unsubClient: Unsubscribe;
   private readonly stateListeners = new Set<(s: ClientState) => void>();
@@ -332,7 +334,19 @@ class OnlineSession implements Session {
       for (const l of this.stateListeners) l(s);
     });
     this.attach(connection);
+    this.watch = setInterval(() => this.watchLink(), LINK_CHECK_MS);
   }
+
+  /**
+   * A link that may still look open but has brought nothing from the table for too long while a
+   * hand is played (`TableClient.checkLink`) is dropped as a missed heartbeat drops it, and won back
+   * the same way. The time without it is then judged as a drop, on this phone's own clock.
+   */
+  private watchLink(): void {
+    if (this.closed || this.conn.status !== 'connected') return;
+    if (this.client.checkLink() === 'silent') this.connection.signaling.drop();
+  }
+
   get status(): ConnectionStatus {
     return this.conn.status;
   }
@@ -456,6 +470,7 @@ class OnlineSession implements Session {
     this.closed = true;
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
+    clearInterval(this.watch);
     this.unsubClient();
     // Stepping away: the socket goes without a `leave`, so the table sees a dropped player, not one who gave the seat up.
     if (opts.keepSeat) this.connection.signaling.close();
@@ -465,6 +480,9 @@ class OnlineSession implements Session {
 }
 
 /** The table host's answers to a join it will not seat (packages/net/src/host.ts). */
+/** How often an online session asks its table client whether the link has gone silent. */
+const LINK_CHECK_MS = 1_000;
+
 const JOIN_REFUSALS: ReadonlySet<string> = new Set(['full', 'already_seated']);
 
 /**
