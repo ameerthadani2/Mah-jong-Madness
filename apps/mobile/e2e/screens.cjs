@@ -104,7 +104,8 @@ async function homeFit(page) {
 /** Home in Traditional Chinese at one viewport: the same hard checks, on the longer of the two languages' labels. */
 /**
  * The table's hard checks, on the page as it stands: every seat name shown whole (a long one may take two lines,
- * never be cut), a landscape side seat's tag on two lines at most (name; relation and score), and each HUD icon (emotes, coach, exit) a press of at least 44 x 44 px. The web ignores hitSlop,
+ * never be cut), a landscape side seat's tag on two lines at most (name; relation and score), the coach's advice line in view
+ * whenever the coach's bubble shows, and each HUD icon (emotes, coach, exit) a press of at least 44 x 44 px. The web ignores hitSlop,
  * so the box itself must be that big. Also returns the smallest hand tile, for the notes.
  */
 async function tableFit(page) {
@@ -137,8 +138,31 @@ async function tableFit(page) {
     }
     const hand = [...document.querySelectorAll('[data-testid="hand"] [data-testid^="tile-"], [data-testid="hand-discard"] [data-testid^="tile-"]')].map((e) => e.getBoundingClientRect());
     const tile = hand.length ? `${Math.round(Math.min(...hand.map((b) => b.width)))}x${Math.round(Math.min(...hand.map((b) => b.height)))}` : 'none';
+    // The coach's advice (the tile to discard, or the claim to make) is on screen whenever the bubble is: its first
+    // line inside the coach's scroll box, at every viewport and text size (a status line that wraps never pushes it out).
+    for (const box of [...document.querySelectorAll('[data-testid="coach-text"]')].filter(seen)) {
+      const adv = box.querySelector('[data-testid="coach-advice"]') || [...box.querySelectorAll('[dir="auto"]')].at(-1);
+      if (!adv || !adv.textContent.trim()) continue;
+      const a = adv.getBoundingClientRect();
+      const b = box.getBoundingClientRect();
+      const cs = getComputedStyle(adv);
+      const line = Math.min(a.height, parseFloat(cs.lineHeight) || parseFloat(cs.fontSize) * 1.3);
+      const bottom = Math.min(b.bottom, innerHeight);
+      if (a.top < b.top - 1 || a.top + line > bottom + 1) bad.push(`the coach's advice "${adv.textContent.slice(0, 30)}" is out of view: its first line at ${Math.round(a.top)}-${Math.round(a.top + line)} px, the coach's box ${Math.round(b.top)}-${Math.round(bottom)} px`);
+    }
     return { bad, tile };
   });
+}
+
+/**
+ * The coach's advice out of view (tableFit's check), once the bubble has settled: a new status line is measured
+ * one frame after it shows, so a finding is kept only if it is still there 600 ms later.
+ */
+async function coachOut(page) {
+  const out = (await tableFit(page)).bad.filter((x) => /coach's advice/.test(x));
+  if (!out.length) return [];
+  await page.waitForTimeout(600);
+  return (await tableFit(page)).bad.filter((x) => /coach's advice/.test(x));
 }
 
 /** A table in Traditional Chinese (bot names such as 小美（電腦）), at Normal or Extra-large text: <size>-table-zh[-xl].png. */
@@ -164,8 +188,31 @@ async function runTableZh(browser, port, [w, h], xl) {
   if (!(await page.evaluate(() => [...document.querySelectorAll('[data-testid="seat-name"]')].some((e) => /電腦/.test(e.textContent))))) fails.push(`${where}: no bot seat is named in Chinese`);
   const fit = await tableFit(page);
   fails.push(...fit.bad.map((f) => `${where}: ${f}`));
+  // Play on for several of my discards (my pond grows a row, the coach's room shrinks): at each, before and after
+  // the tile is picked, the coach's advice must stay in view (tableFit).
+  const coach = new Set();
+  for (let i = 0, mine = 0; i < 120 && mine < 8; i++) {
+    let el;
+    if ((el = await visible(page, '[data-testid="claim-pass"]'))) { await tap(page, el); await page.waitForTimeout(300); continue; }
+    if (await visible(page, 'text=/胡/')) break;
+    const boxes = await page.$$eval('[data-testid^="tile-"]:not([data-testid="tile-back"])', (els) => els.map((e) => { const r = e.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; }));
+    if (!boxes.length) break;
+    const maxW = Math.max(...boxes.map((b) => b.w));
+    const hand = boxes.filter((b) => b.w >= maxW * 0.9).sort((a, b) => b.y - a.y || b.x - a.x);
+    if (await visible(page, '[data-testid="coach"]')) for (const f of await coachOut(page)) coach.add(f);
+    if (hand[0]) await page.mouse.click(hand[0].x + hand[0].w / 2, hand[0].y + hand[0].h / 2);
+    await page.waitForTimeout(250);
+    if ((el = await visible(page, 'text="打"'))) {
+      for (const f of await coachOut(page)) coach.add(f);
+      await tap(page, el);
+      mine++;
+      if (mine === 6) await page.screenshot({ path: path.join(out, `${tag}-${name}-later.png`) });
+    }
+    await page.waitForTimeout(300);
+  }
+  fails.push(...[...coach].map((f) => `${where}, later in the hand: ${f}`));
   await ctx.close();
-  return { size: `${tag} ${name}`, finished: true, shots: [name], notes: [`smallest hand tile ${fit.tile} px (the hand cannot give every tile 44 px of width)`], fails, errors };
+  return { size: `${tag} ${name}`, finished: true, shots: [name, `${name}-later`], notes: [`smallest hand tile ${fit.tile} px (the hand cannot give every tile 44 px of width)`], fails, errors };
 }
 
 async function runHomeZh(browser, port, [w, h]) {

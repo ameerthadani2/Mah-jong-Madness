@@ -132,6 +132,21 @@ export function coachBudget(columnH: number, dock: ActionDock, pondH = 0): Coach
   return { statusLines, lines, maxHeight: avail, textOnly: false };
 }
 
+/**
+ * The compact coach's lines once its status line has been measured (`statusH` px, null before): the advice comes
+ * first. When the status, as it actually wraps (a long Chinese status, Extra-large text, the OS text size), leaves
+ * less than one whole advice line in the scroll box (`statusLines` + `adviceLines` lines high), the status is
+ * dropped and its lines go to the advice, so the tile to discard or the claim to make is always in view; the
+ * status comes back with the next status (or when the advice is gone). Without advice nothing changes.
+ */
+export function coachAdviceFirst(o: { statusLines: number; adviceLines: number; statusH: number | null; hasAdvice: boolean }): { statusLines: number; adviceLines: number } {
+  const { statusLines, adviceLines, statusH, hasAdvice } = o;
+  if (!hasAdvice || statusLines === 0 || statusH === null) return { statusLines, adviceLines };
+  const box = statusLines * COACH_STATUS_LINE_H + adviceLines * COACH_ADVICE_LINE_H;
+  if (statusH + COACH_ADVICE_LINE_H <= box + 1) return { statusLines, adviceLines };
+  return { statusLines: 0, adviceLines: adviceLines + Math.floor((statusLines * COACH_STATUS_LINE_H) / COACH_ADVICE_LINE_H) };
+}
+
 /** Height the landscape action dock takes: claim/discard buttons (larger on tablets), the tap-hint pill, or nothing. */
 export function dockHeight(dock: ActionDock, big: boolean): number {
   return dock === 'buttons' ? (big ? ACTION_DOCK_H + 10 : ACTION_DOCK_H) : dock === 'hint' ? TAP_HINT_DOCK_H : 0;

@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { calloutMs, RESULT_HOLD_MS, rollUp, rollUpMs, slideFrom } from './feel';
 import { readFileSync } from 'fs';
 import { join } from 'path';
-import { ACTION_DOCK_H, coachBubbleHeight, coachBudget, coachTextLines, COACH_MAX_ADVICE_LINES, COACH_STATUS_LINE_H, compactCompassSize, dockHeight, fitTile, fitWallSize, handLayout, landscapeWallSize, matchOverLayout, MIN_TOUCH, resultLayout, slopFor, tableLayout, TAP_HINT_DOCK_H } from './layout';
+import { ACTION_DOCK_H, coachBubbleHeight, coachAdviceFirst,
+  coachBudget, coachTextLines, COACH_MAX_ADVICE_LINES, COACH_STATUS_LINE_H, compactCompassSize, dockHeight, fitTile, fitWallSize, handLayout, landscapeWallSize, matchOverLayout, MIN_TOUCH, resultLayout, slopFor, tableLayout, TAP_HINT_DOCK_H } from './layout';
 
 describe('tableLayout', () => {
   it('docks the claim buttons over the centre column in landscape, never over a side pond', () => {
@@ -90,6 +91,20 @@ describe('own pond, coach and compass on short landscape (the claim buttons have
     expect(none.lines).toBeGreaterThanOrEqual(2);
     expect(coachBudget(400, 'none').lines).toBe(COACH_MAX_ADVICE_LINES);
     expect(coachBudget(0, 'buttons')).toMatchObject({ maxHeight: null, lines: COACH_MAX_ADVICE_LINES });
+  });
+
+  it('gives the status line\'s room to the advice when the status wraps past it, so the advice is always in view', () => {
+    // Extra-large text in small landscape (assessed at 667x375, zh-TW): one status line and one advice line budgeted
+    // (a 32 px box), and the status wraps to two lines: the advice was pushed out of the box.
+    expect(coachAdviceFirst({ statusLines: 1, adviceLines: 1, statusH: 2 * COACH_STATUS_LINE_H, hasAdvice: true })).toEqual({ statusLines: 0, adviceLines: 2 });
+    // A status that fits its line keeps it; so does a long status in a box with room for it and an advice line.
+    expect(coachAdviceFirst({ statusLines: 1, adviceLines: 1, statusH: COACH_STATUS_LINE_H, hasAdvice: true })).toEqual({ statusLines: 1, adviceLines: 1 });
+    expect(coachAdviceFirst({ statusLines: 2, adviceLines: 3, statusH: 2 * COACH_STATUS_LINE_H, hasAdvice: true })).toEqual({ statusLines: 2, adviceLines: 3 });
+    // Two budgeted status lines wrapping to four: the advice gets the box (two status lines are two advice lines more).
+    expect(coachAdviceFirst({ statusLines: 2, adviceLines: 1, statusH: 4 * COACH_STATUS_LINE_H, hasAdvice: true })).toEqual({ statusLines: 0, adviceLines: 3 });
+    // Before the status is measured, or with no advice to show, nothing changes.
+    expect(coachAdviceFirst({ statusLines: 1, adviceLines: 1, statusH: null, hasAdvice: true })).toEqual({ statusLines: 1, adviceLines: 1 });
+    expect(coachAdviceFirst({ statusLines: 1, adviceLines: 1, statusH: 80, hasAdvice: false })).toEqual({ statusLines: 1, adviceLines: 1 });
   });
 
   it('never cuts the coach text with an ellipsis: it scrolls inside the bubble', () => {

@@ -1,5 +1,5 @@
 /** The coach bubble: status, the most useful advice, waits and claim reasons (offline bot tables only). */
-import React from 'react';
+import React, { useState } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import type { Hint } from '@mjm/engine';
 import { colors, fonts } from '../../theme';
@@ -8,7 +8,7 @@ import { CoachOwl } from '../Avatars';
 import { Icon } from '../Icons';
 import { Tile } from '../Tile';
 import { Row } from '../Ui';
-import { COACH_ADVICE_LINE_H, COACH_STATUS_LINE_H, type CoachBudget } from './layout';
+import { COACH_ADVICE_LINE_H, COACH_STATUS_LINE_H, coachAdviceFirst, type CoachBudget } from './layout';
 
 export function CoachPanel({
   hint,
@@ -28,6 +28,9 @@ export function CoachPanel({
   const { t } = useT();
   // Coach sentences are engine reason keys rendered in the current locale (see src/i18n/index.ts).
   const engine = (key: string, params?: Record<string, string | number>) => t(`engine.${key}`, params);
+  // The status line's measured height (by its text): a status that wraps past the lines budgeted for it would push
+  // the advice out of the bubble's scroll box, so it gives way to the advice (below).
+  const [statusH, setStatusH] = useState<{ text: string; h: number } | null>(null);
   const preview = hint.winPreview ? t('table.coach.winPreview', { items: hint.winPreview.items.map((i) => t('table.coach.taiItem', { name: i.nameZh, tai: i.tai })).join(' · '), tai: hint.winPreview.tai }) : null;
   if (compact) {
     // Status + the single most useful piece of advice; both wrap rather than truncate mid-word. With a budget
@@ -35,10 +38,16 @@ export function CoachPanel({
     // the bubble: it is never cut off with an ellipsis.
     const rec = hint.claims.find((c) => c.recommended);
     const line = preview ?? (hint.discardReasonKey ? engine(hint.discardReasonKey, hint.discardReasonParams) : rec ? engine(rec.reasonKey, rec.reasonParams) : '');
-    const statusLines = budget ? (budget.statusLines === 0 && line ? 0 : Math.max(1, budget.statusLines)) : 2;
-    const adviceLines = budget ? budget.lines : lines;
+    let statusLines = budget ? (budget.statusLines === 0 && line ? 0 : Math.max(1, budget.statusLines)) : 2;
+    let adviceLines = budget ? budget.lines : lines;
     const textOnly = !!budget?.textOnly;
     if (budget && budget.lines === 0) return null;
+    // The advice (the tile to discard, the claim to make) always shows: when the status, as it wraps, leaves no
+    // whole advice line in the box, the status gives its lines to the advice (layout.ts coachAdviceFirst).
+    const status = engine(hint.statusKey, hint.statusParams);
+    const shown = coachAdviceFirst({ statusLines, adviceLines, statusH: statusH?.text === status ? statusH.h : null, hasAdvice: !!line });
+    statusLines = shown.statusLines;
+    adviceLines = shown.adviceLines;
     return (
       <View
         style={[styles.coach, styles.coachCompact, textOnly && styles.coachSlim, budget?.maxHeight !== null && budget?.maxHeight !== undefined && { maxHeight: budget.maxHeight }]}
@@ -47,8 +56,16 @@ export function CoachPanel({
       >
         {!textOnly && <CoachOwl size={30} />}
         <ScrollView style={{ flex: 1, minWidth: 0, flexShrink: 1, maxHeight: statusLines * COACH_STATUS_LINE_H + adviceLines * COACH_ADVICE_LINE_H }} nestedScrollEnabled showsVerticalScrollIndicator testID="coach-text">
-          {statusLines > 0 && <Text style={styles.coachStatus}>{engine(hint.statusKey, hint.statusParams)}</Text>}
-          {!!line && <Text style={styles.coachLine}>{line}</Text>}
+          {statusLines > 0 && (
+            <Text style={styles.coachStatus} onLayout={(e) => setStatusH({ text: status, h: e.nativeEvent.layout.height })}>
+              {status}
+            </Text>
+          )}
+          {!!line && (
+            <Text style={styles.coachLine} testID="coach-advice">
+              {line}
+            </Text>
+          )}
         </ScrollView>
         {hint.waits.length > 0 && !textOnly && (
           <Row gap={2} style={{ flexShrink: 0 }}>
