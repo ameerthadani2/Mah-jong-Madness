@@ -31,6 +31,9 @@
  *       around a rotating test seat: Pro in the seat, Club in the seat, and Pro without its deal-in
  *       and 台 terms in the seat. The same seeds give the same scores on every run, so the gate
  *       compares hand by hand and fails (exit 1) when
+ *         - any hand scores differently from the reference in either series: the bots play
+ *           differently, which is only allowed on purpose (measure on held-out seeds first, then
+ *           record again with --record; GATE_CHANGE_ADVICE in test/helpers/gate.ts);
  *         - Pro minus Club, or Pro minus Pro-without-the-terms, is more than GATE_MAX_DROP (1 point
  *           a hand) below its reference;
  *         - Pro is behind Club at 95%;
@@ -345,7 +348,7 @@ function runGate(record: boolean): void {
   if (record) {
     const round = (x: number): number => Number(x.toFixed(3));
     const ref: GateReference = {
-      note: 'Per-hand paired scores of the bot strength gate (rules: test/helpers/gate.ts). Regenerate after an intentional change to Pro or Club: npm run sim -- --gate --record',
+      note: 'Per-hand paired scores of the bot strength gate (rules: test/helpers/gate.ts). Any hand that differs fails the gate. Regenerate only after an intentional change to Pro or Club, measured first on held-out seeds: npm run sim -- --gate --record',
       prefix: 'gate',
       hands: GATE_HANDS,
       proVsClub: { mean: round(c.mean), se: round(c.se), perHand: proVsClub },

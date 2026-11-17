@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { applyAction, BOT_WEIGHTS, chooseAction, hintFor, isLegal, kindOf, kindsFromString, newGame, rankDiscards, readOpponents, unseenCounts, viewFor, viewToState, waitsFor, type BotSkill, type GameState } from '../src/index';
 import { coachAction, currentShanten } from '../src/bot';
-import { GATE_HANDS, GATE_MAX_DROP, gateFailures, standing, summarise, termsVerdict, type GateReference } from './helpers/gate';
+import { differingHands, GATE_CHANGE_ADVICE, GATE_HANDS, GATE_MAX_DROP, gateFailures, standing, summarise, termsVerdict, type GateReference } from './helpers/gate';
 import { replayReference, type ReferenceFile } from './helpers/reference';
 import { discard, offers, setup, tileTotal } from './helpers/state';
 
@@ -309,11 +309,35 @@ describe('bot strength gate (the per-hand reference of `npm run sim -- --gate`)'
   /** The series with `points` taken off each of its first `hands` hands. */
   const lowered = (xs: readonly number[], hands: number, points: number): number[] => xs.map((x, i) => (i < hands ? x - points : x));
 
-  it('passes a run that scores what the reference scores, and one a little below it', () => {
+  /** The failures other than the one for hands that play differently. */
+  const strength = (f: string[]) => f.filter((x) => !x.includes('play differently from the stored reference'));
+
+  it('passes a run that plays every hand as the reference does', () => {
     expect(gateFailures(same, ref)).toEqual([]);
-    // 20 hands 80 points lower: 0.8 points a hand over 2,000 hands, inside the allowance.
-    expect(gateFailures({ ...same, proVsClub: lowered(same.proVsClub, 20, 80) }, ref)).toEqual([]);
-    expect(gateFailures({ ...same, termsVsBare: lowered(same.termsVsBare, 20, 80) }, ref)).toEqual([]);
+    expect(differingHands(same, ref)).toEqual([]);
+    // 20 hands 80 points lower: 0.8 points a hand over 2,000 hands, inside the strength allowance,
+    // so the only failure is that those 20 hands differ.
+    for (const run of [{ ...same, proVsClub: lowered(same.proVsClub, 20, 80) }, { ...same, termsVsBare: lowered(same.termsVsBare, 20, 80) }]) {
+      const failures = gateFailures(run, ref);
+      expect(strength(failures)).toEqual([]);
+      expect(failures).toHaveLength(1);
+      expect(failures[0]).toMatch(/^20 of 2000 hands play differently from the stored reference \(first: gate-0, gate-1, gate-2, gate-3, gate-4\)/);
+    }
+  });
+
+  it('fails a run in which any hand plays differently, even with the means unchanged, and says how to change the bots on purpose', () => {
+    // The fifth assessment's mutant (Pro's and Club's defence off) changed 968 of 2,000 hands and
+    // moved both means by under a point. Two hands that trade 50 points leave the mean exactly where it was.
+    const traded = same.proVsClub.map((x, i) => (i === 7 ? x + 50 : i === 1500 ? x - 50 : x));
+    expect(summarise(traded).mean).toBeCloseTo(summarise(same.proVsClub).mean, 9);
+    expect(differingHands({ ...same, proVsClub: traded }, ref)).toEqual([7, 1500]);
+    const failures = gateFailures({ ...same, proVsClub: traded }, ref);
+    expect(failures).toEqual([`2 of 2000 hands play differently from the stored reference (first: gate-7, gate-1500), so the bots no longer play as recorded. ${GATE_CHANGE_ADVICE}`]);
+    // The advice names both steps: held-out seeds first, then a new reference.
+    expect(GATE_CHANGE_ADVICE).toMatch(/held-out seeds/);
+    expect(GATE_CHANGE_ADVICE).toMatch(/npm run sim -- --gate --record/);
+    // A hand counts once even when both series differ on it.
+    expect(differingHands({ proVsClub: traded, termsVsBare: same.termsVsBare.map((x, i) => (i === 7 ? x + 1 : x)) }, ref)).toEqual([7, 1500]);
   });
 
   it('fails on a drop of more than a point a hand, which a floor of two standard errors lets through', () => {
@@ -326,11 +350,11 @@ describe('bot strength gate (the per-hand reference of `npm run sim -- --gate`)'
     // and one seven points a hand lower.
     expect(mean).toBeGreaterThan(ref.proVsClub.mean - 2 * ref.proVsClub.se);
     expect(ref.proVsClub.mean - 7).toBeGreaterThan(ref.proVsClub.mean - 2 * ref.proVsClub.se);
-    const failures = gateFailures(run, ref);
+    const failures = strength(gateFailures(run, ref));
     expect(failures).toHaveLength(1);
     expect(failures[0]).toMatch(/Pro against Club is 1\.20 pts\/hand below the stored reference/);
     // The same floor guards the second series.
-    const second = gateFailures({ ...same, termsVsBare: lowered(same.termsVsBare, 30, 80) }, ref);
+    const second = strength(gateFailures({ ...same, termsVsBare: lowered(same.termsVsBare, 30, 80) }, ref));
     expect(second).toHaveLength(1);
     expect(second[0]).toMatch(/without its deal-in and 台 terms is 1\.20 pts\/hand below/);
   });

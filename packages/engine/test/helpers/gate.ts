@@ -14,9 +14,18 @@
  *    `PRO_TERMS_OFF` applied (Pro without its deal-in and 台 terms), three Club bots in the other
  *    seats both times. This is the check that shows a model which adds nothing.
  *
- * Regenerate after an intentional change to Pro or Club: `npm run sim -- --gate --record`.
+ * The gate also fails when any hand plays differently from its reference: the seeds are fixed,
+ * so a hand that differs means the bots now play differently, and a change that leaves the means
+ * inside the allowance can still take something away (the fifth assessment switched Pro's and
+ * Club's defence off: 968 of 2,000 hands changed and both means stayed within a point). A change
+ * to how the bots play is made on purpose, in two steps (`GATE_CHANGE_ADVICE`): measure it on
+ * held-out seeds first, then record the reference again with `npm run sim -- --gate --record`.
  */
 import type { BOT_WEIGHTS } from '../../src/index';
+
+/** How to change how the bots play on purpose, printed with a failure for hands that differ. */
+export const GATE_CHANGE_ADVICE =
+  'To change how the bots play on purpose, measure the change first on held-out seeds that the gate does not use (for example npm run sim -- --ladder pro 3000 --seed <a fresh prefix>, and --ladder club for Club, comparing the paired difference before and after), then record the gate reference again with npm run sim -- --gate --record and commit it with the measurement';
 
 /** Hands the gate plays (seed prefix `gate`, test seat `hand % 4`). */
 export const GATE_HANDS = 2000;
@@ -96,8 +105,18 @@ export interface GateRun {
   termsVsBare: readonly number[];
 }
 
+/** The hands (0-based) on which either series differs from its reference, in order. */
+export function differingHands(run: GateRun, ref: Pick<GateReference, 'proVsClub' | 'termsVsBare'>): number[] {
+  againstReference(run.proVsClub, ref.proVsClub.perHand);
+  againstReference(run.termsVsBare, ref.termsVsBare.perHand);
+  const out: number[] = [];
+  for (let i = 0; i < run.proVsClub.length; i++) if (run.proVsClub[i] !== ref.proVsClub.perHand[i] || run.termsVsBare[i] !== ref.termsVsBare.perHand[i]) out.push(i);
+  return out;
+}
+
 /**
  * Why a run fails the gate (empty when it passes):
+ *  - any hand plays differently from its reference (the bots changed without a new reference);
  *  - a series' mean is more than `GATE_MAX_DROP` points a hand below its reference;
  *  - Pro is behind Club at 95% (a recorded reference cannot bless a Pro that loses to Club);
  *  - the terms cost points at 95%, or change no hand at all (they are switched off or inert).
@@ -106,6 +125,11 @@ export interface GateRun {
  */
 export function gateFailures(run: GateRun, ref: Pick<GateReference, 'proVsClub' | 'termsVsBare'>): string[] {
   const out: string[] = [];
+  const changed = differingHands(run, ref);
+  if (changed.length > 0) {
+    const first = changed.slice(0, 5).map((i) => `gate-${i}`).join(', ');
+    out.push(`${changed.length} of ${run.proVsClub.length} hands play differently from the stored reference (first: ${first}), so the bots no longer play as recorded. ${GATE_CHANGE_ADVICE}`);
+  }
   const club = againstReference(run.proVsClub, ref.proVsClub.perHand);
   if (club.change < -GATE_MAX_DROP) out.push(`Pro against Club is ${(-club.change).toFixed(2)} pts/hand below the stored reference (allowed: ${GATE_MAX_DROP.toFixed(2)})`);
   if (standing(run.proVsClub) === 'behind') out.push('Pro is behind Club at 95%');
