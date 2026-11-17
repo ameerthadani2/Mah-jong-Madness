@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { timeBound } from './helpers/timing';
-import { DEFENCE_SAFETY_ORDER, defenceOrderRule, defencePuzzle, kindInfo, valuePuzzle, valueSpeedRule, type DefenceOption, type ValueOption } from '../src/index';
+import { DEFENCE_SAFETY_ORDER, defenceOrderRule, defencePuzzle, kindInfo, sha256Hex, valuePuzzle, valueSpeedRule, type DefenceOption, type ValueOption } from '../src/index';
 
 // How often a one-line rule answers a puzzle: "keep the most winning tiles" for value puzzles, a
 // fixed safety order for defence puzzles. Easy and medium puzzles teach those rules; hard ones
@@ -84,6 +84,21 @@ describe('hard value puzzles need more than "keep the most winning tiles"', () =
     expect(hard.median).toBeLessThan(timeBound(60));
     expect(hard.max).toBeLessThan(timeBound(1500));
   });
+});
+
+describe('easy and medium value puzzles stay as they are', () => {
+  // Recorded on 17 November 2026, before the hard puzzles were varied: changing how hard puzzles
+  // are built must not move an easy or medium one (the daily and Rush seeds keep their puzzles).
+  const pinned = {
+    1: '0c200f6592816b4aade34272daa8feb2ec63caaf8f4b207753d818dce53187ac',
+    2: '7fdbd000354100d3fdfb694283d326c197e86ee980e00e47ef378b27625e91dd',
+  } as const;
+  for (const d of [1, 2] as const) {
+    it(`difficulty ${d}: 120 seeded puzzles are byte-identical to the recorded ones`, () => {
+      const all = Array.from({ length: 120 }, (_, i) => valuePuzzle(`pin-${i}`, d));
+      expect(sha256Hex(JSON.stringify(all))).toBe(pinned[d]);
+    });
+  }
 });
 
 describe('hard defence puzzles need reading the discards, not a fixed safety order', () => {
