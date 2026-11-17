@@ -483,15 +483,20 @@ export interface PuzzleResultRecord {
   seconds: number;
   ratingAfter: number | null;
   createdAt: number;
+  /** False for a result recorded but kept off the boards (a daily answer under the human-time floor). */
+  ranked: boolean;
 }
 
+/** A result to record: `ranked` defaults to true. */
+export type NewPuzzleResult = Omit<PuzzleResultRecord, 'id' | 'ranked'> & { ranked?: boolean };
+
 export interface PuzzleResultsRepo {
-  record(result: Omit<PuzzleResultRecord, 'id'>): Promise<PuzzleResultRecord>;
+  record(result: NewPuzzleResult): Promise<PuzzleResultRecord>;
   /**
    * Records a daily puzzle result (kind 'daily', key = the date key) unless the user already has
    * one for that key: the first attempt is the ranked one. Null when one was already there.
    */
-  recordDaily(result: Omit<PuzzleResultRecord, 'id' | 'kind'>): Promise<PuzzleResultRecord | null>;
+  recordDaily(result: Omit<NewPuzzleResult, 'kind'>): Promise<PuzzleResultRecord | null>;
   /** Oldest first. */
   listForUser(userId: string, limit?: number): Promise<PuzzleResultRecord[]>;
   /**
@@ -535,6 +540,8 @@ export interface RushRunRecord {
   wrong: number | null;
   seconds: number | null;
   score: number | null;
+  /** False once finished under the human-time floor (recorded, never on the Rush board); true otherwise. */
+  ranked: boolean;
 }
 
 export interface RushRunResult {
@@ -543,6 +550,8 @@ export interface RushRunResult {
   wrong: number;
   seconds: number;
   score: number;
+  /** Default true; false keeps the run off the Rush board. */
+  ranked?: boolean;
 }
 
 export interface RushRunsRepo {

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { dailyPuzzleForKey, rushRunPuzzle, type PuzzleAnswerInput } from '@mjm/engine';
 import { ApiError } from '../api/http';
-import type { DailyFinish, RushFinish } from '../api/puzzles';
+import { puzzleErrorMessage, type DailyFinish, type RushFinish } from '../api/puzzles';
 import { createServerRatingStore, openDaily, openRush, shouldReadRating, shownRating, submitDaily, submitRush, SERVER_RATING_FRESH_MS, type PuzzleServer } from './puzzleSync';
 import { checkPuzzleAnswer, wireAnswer } from './puzzle';
 import { rushPuzzleAt } from './rush';
@@ -68,6 +68,22 @@ describe('the daily puzzle through the server', () => {
     expect(checkPuzzleAnswer(p, p.answers[0])).toBe(true);
     expect(wireAnswer({ id: 'chi:1-2' } as never)).toBe('chi:1-2');
     expect(wireAnswer([3, 4])).toEqual([3, 4]);
+  });
+});
+
+describe('results under the server’s human-time floors', () => {
+  it('reads a daily answer or a Rush run the server recorded but did not rank as not ranked, with its own line', async () => {
+    const { server } = fake({
+      finishDaily: async () => ({ date: 'd', correct: true, seconds: 2, ranked: false, rating: { rating: 1000, change: 0, rated: 0 } }) as DailyFinish,
+      finishRush: async (id) => ({ runId: id, solved: 20, wrong: 0, seconds: 29, score: 3000, ranked: false, answers: [], rating: { rating: 1000, change: 0, rated: 0 } }) as RushFinish,
+    });
+    const daily = await submitDaily(server, await openDaily(server, 'd'), 7, true);
+    const rush = await submitRush(server, await openRush(server, 'x'), [1, 2], 2);
+    for (const out of [daily, rush]) {
+      expect(out).toMatchObject({ ranked: false, down: false, error: { code: 'too_fast_to_rank' } });
+      if (out.ranked) throw new Error('ranked');
+      expect(puzzleErrorMessage(out.error).key).toBe('puzzles.server.errors.tooFastToRank');
+    }
   });
 });
 

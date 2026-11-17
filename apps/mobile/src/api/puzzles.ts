@@ -43,6 +43,8 @@ export interface DailyFinish {
   correct: boolean;
   /** The server's time from the start to the answer. */
   seconds: number;
+  /** False when the server timed it under the human-time floor (3 s): recorded, not ranked. Absent from older servers. */
+  ranked?: boolean;
   rating: ServerRating;
 }
 
@@ -62,6 +64,8 @@ export interface RushFinish {
   /** The server's time from the run's start to the finish, at most the run's length. */
   seconds: number;
   score: number;
+  /** False when the answers averaged under the human-time floor (1.5 s): recorded, not ranked. Absent from older servers. */
+  ranked?: boolean;
   answers: Array<{ index: number; type: PuzzleType; correct: boolean }>;
   rating: ServerRating;
 }
@@ -161,6 +165,8 @@ const PUZZLE_ERRORS: Readonly<Record<string, string>> = {
   date_out_of_range: 'puzzles.server.errors.dateOutOfRange',
   already_played: 'puzzles.server.errors.alreadyPlayed',
   rush_too_fast: 'puzzles.server.errors.rushTooFast',
+  // This client's own: the server recorded a result under a human-time floor without ranking it.
+  too_fast_to_rank: 'puzzles.server.errors.tooFastToRank',
   // The server's free Rush meter: the Shop's own Coach Gold message, as the Rush screen's lock shows it.
   rush_daily_limit: 'shop.rushUsed',
   run_not_found: 'puzzles.server.errors.runNotFound',

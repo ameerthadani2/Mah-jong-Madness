@@ -114,7 +114,7 @@ function contract(name: string, repos: () => Repos) {
       expect(ok.status, ok.body).toBe(200);
       const difficulty = dailyPuzzleDifficulty(dateOfDailyKey(TODAY)!);
       const up = ratePuzzleAnswer(DEFAULT_PUZZLE_RATING, 'discard', difficulty, true);
-      expect(ok.json).toEqual({ date: TODAY, correct: true, seconds: 31, rating: { rating: up.rating, change: up.delta, rated: 1 } });
+      expect(ok.json).toEqual({ date: TODAY, correct: true, seconds: 31, ranked: true, rating: { rating: up.rating, change: up.delta, rated: 1 } });
       // A wrong answer that claims to be right is wrong.
       const forged = await f.daily(b, TODAY, dailyWrong(TODAY), 3, { correct: true });
       const down = ratePuzzleAnswer(DEFAULT_PUZZLE_RATING, 'discard', difficulty, false);
@@ -242,6 +242,43 @@ function contract(name: string, repos: () => Repos) {
       expect((await f.repos.rushRuns.countStartedSince(free.userId, 0))).toBe(2);
     });
 
+    it('records but does not rank a daily answer under 3 seconds or a Rush run averaging under 1.5 seconds an answer', async () => {
+      const f = fixture(repos());
+      const key = '2026-11-17';
+      const [bot, human, gold] = [await f.guest('Bot'), await f.guest('Human'), await f.guest('Gold')];
+      // The daily puzzle: 2.999 s is under the floor, 3 s is not.
+      const started = await f.startDaily(bot, key);
+      f.clock.now += 2999;
+      const fast = await f.call('POST', '/api/puzzles/daily', { attemptId: started.json.attemptId, answer: dailyRight(key) }, bot.auth);
+      expect(fast.json).toMatchObject({ correct: true, ranked: false, rating: { rating: DEFAULT_PUZZLE_RATING, change: 0, rated: 0 } });
+      expect((await f.repos.puzzleResults.listForUser(bot.userId)).map((r) => [r.kind, r.correct, r.ranked])).toEqual([['daily', true, false]]);
+      expect((await f.daily(bot, key, dailyRight(key))).json.error).toBe('already_played');
+      const ok = await f.daily(human, key, dailyRight(key), 3);
+      expect(ok.json).toMatchObject({ correct: true, ranked: true, seconds: 3, rating: { rated: 1 } });
+      const mine = (rows: Row[]) => rows.filter((r) => [bot, human, gold].some((g) => g.userId === r.userId)).map((r) => r.displayName);
+      const daily = await f.board(bot, `daily?date=${key}`);
+      expect(mine(daily.rows)).toEqual(['Human']);
+      expect(daily.me).toBeNull();
+
+      // Puzzle Rush: twenty answers in 29 s averages 1.45 s (not ranked); in 30 s, 1.5 s (ranked).
+      await f.plan(gold);
+      const quick = await f.startRush(gold);
+      f.clock.now += 29_000;
+      const unranked = await f.finish(gold, quick.runId, f.rushAnswers(quick.seed, 'r'.repeat(20)));
+      expect(unranked.json).toMatchObject({ solved: 20, seconds: 29, ranked: false });
+      expect((await f.repos.rushRuns.get(quick.runId))?.ranked).toBe(false);
+      expect((await f.board(gold, 'rush?period=day')).me).toBeNull();
+      const paced = await f.startRush(human);
+      f.clock.now += 30_000;
+      expect((await f.finish(human, paced.runId, f.rushAnswers(paced.seed, 'r'.repeat(20)))).json).toMatchObject({ solved: 20, seconds: 30, ranked: true });
+      const rush = await f.board(gold, 'rush?period=day');
+      expect(mine(rush.rows)).toEqual(['Human']);
+      // A run's third strike ends it: the judged answers set the pace, not the ones sent after it.
+      const strikes = await f.startRush(gold);
+      f.clock.now += 9_000;
+      expect((await f.finish(gold, strikes.runId, f.rushAnswers(strikes.seed, 'rwww' + 'r'.repeat(5)))).json).toMatchObject({ solved: 1, wrong: 3, ranked: true });
+    });
+
     it('verifies a hard daily puzzle and the hard value and defence puzzles of a Rush run by regenerating them', async () => {
       const f = fixture(repos());
       const [a, b] = [await f.guest('Ana'), await f.guest('Bo')];
@@ -277,7 +314,7 @@ function contract(name: string, repos: () => Repos) {
       const key = '2026-11-17';
       const [fast, slow, tieA, tieB, miss] = [await f.guest('Fast'), await f.guest('Slow'), await f.guest('Tie first'), await f.guest('Tie second'), await f.guest('Miss')];
       await f.daily(slow, key, dailyRight(key), 50);
-      await f.daily(miss, key, dailyWrong(key), 2);
+      await f.daily(miss, key, dailyWrong(key), 4);
       await f.daily(fast, key, dailyRight(key), 9);
       await f.daily(tieA, key, dailyRight(key), 20);
       f.clock.now += 1000;
@@ -289,7 +326,7 @@ function contract(name: string, repos: () => Repos) {
         ['Tie first', 20, true],
         ['Tie second', 20, true],
         ['Slow', 50, true],
-        ['Miss', 2, false],
+        ['Miss', 4, false],
       ]);
       expect(res.me).toMatchObject({ userId: miss.userId, displayName: 'Miss', hidden: false });
       expect(res.scope).toBe('global');

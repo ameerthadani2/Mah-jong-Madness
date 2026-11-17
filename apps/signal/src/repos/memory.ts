@@ -706,7 +706,7 @@ function memoryMatchResults(s: MemoryState): MatchResultsRepo {
 function memoryPuzzleResults(s: MemoryState): PuzzleResultsRepo {
   return {
     async record(r) {
-      const row: PuzzleResultRecord = { ...copy(r), id: ++s.puzzleSeq };
+      const row: PuzzleResultRecord = { ...copy(r), ranked: r.ranked ?? true, id: ++s.puzzleSeq };
       s.puzzles.push(row);
       return copy(row);
     },
@@ -759,7 +759,7 @@ function memoryRushRuns(s: MemoryState): RushRunsRepo {
   return {
     async create(r) {
       if (s.rushRuns.has(r.id)) throw new Error(`Run ${r.id} already exists`);
-      const row: RushRunRecord = { ...copy(r), finishedAt: null, solved: null, wrong: null, seconds: null, score: null };
+      const row: RushRunRecord = { ...copy(r), finishedAt: null, solved: null, wrong: null, seconds: null, score: null, ranked: true };
       s.rushRuns.set(row.id, row);
       return copy(row);
     },
@@ -770,7 +770,7 @@ function memoryRushRuns(s: MemoryState): RushRunsRepo {
     async finish(id, result) {
       const row = s.rushRuns.get(id);
       if (!row || row.finishedAt !== null) return null;
-      Object.assign(row, copy(result));
+      Object.assign(row, copy(result), { ranked: result.ranked ?? true });
       return copy(row);
     },
     async countStartedSince(userId, since) {
@@ -865,14 +865,14 @@ function memoryLeaderboards(s: MemoryState): LeaderboardsRepo {
   };
   return {
     async daily(dateKey, q) {
-      const raw = s.puzzles.filter((p) => p.kind === 'daily' && p.puzzleKey === dateKey).map((p) => ({ userId: p.userId, score: p.correct ? 1 : 0, tiebreak: p.seconds, count: 0, at: p.createdAt }));
+      const raw = s.puzzles.filter((p) => p.kind === 'daily' && p.puzzleKey === dateKey && p.ranked).map((p) => ({ userId: p.userId, score: p.correct ? 1 : 0, tiebreak: p.seconds, count: 0, at: p.createdAt }));
       return page(raw, q);
     },
     async rush(since, q) {
       const best = new Map<string, RushRunRecord>();
       const better = (a: RushRunRecord, b: RushRunRecord) => a.score! > b.score! || (a.score === b.score && (a.finishedAt! < b.finishedAt! || (a.finishedAt === b.finishedAt && a.id < b.id)));
       for (const run of s.rushRuns.values()) {
-        if (run.finishedAt === null || run.finishedAt < since || !run.score) continue;
+        if (run.finishedAt === null || run.finishedAt < since || !run.score || !run.ranked) continue;
         const cur = best.get(run.userId);
         if (!cur || better(run, cur)) best.set(run.userId, run);
       }

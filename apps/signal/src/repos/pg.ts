@@ -1364,6 +1364,7 @@ interface PuzzleRow {
   seconds: number;
   rating_after: number | null;
   created_at: Date;
+  ranked: boolean;
 }
 
 const puzzleFromRow = (r: PuzzleRow): PuzzleResultRecord => ({
@@ -1375,24 +1376,25 @@ const puzzleFromRow = (r: PuzzleRow): PuzzleResultRecord => ({
   seconds: r.seconds,
   ratingAfter: r.rating_after,
   createdAt: r.created_at.getTime(),
+  ranked: r.ranked,
 });
 
 function pgPuzzleResults(q: Queryable): PuzzleResultsRepo {
-  const COLS = 'id, user_id, kind, puzzle_key, correct, seconds, rating_after, created_at';
+  const COLS = 'id, user_id, kind, puzzle_key, correct, seconds, rating_after, created_at, ranked';
   return {
     async record(p) {
       const res = await q.query<PuzzleRow>(
-        'INSERT INTO puzzle_results (user_id, kind, puzzle_key, correct, seconds, rating_after, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING ' + COLS,
-        [p.userId, p.kind, p.puzzleKey, p.correct, p.seconds, p.ratingAfter, toDate(p.createdAt)],
+        'INSERT INTO puzzle_results (user_id, kind, puzzle_key, correct, seconds, rating_after, created_at, ranked) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING ' + COLS,
+        [p.userId, p.kind, p.puzzleKey, p.correct, p.seconds, p.ratingAfter, toDate(p.createdAt), p.ranked ?? true],
       );
       return puzzleFromRow(res.rows[0]);
     },
     async recordDaily(p) {
       if (!isUuid(p.userId)) return null;
       const res = await q.query<PuzzleRow>(
-        "INSERT INTO puzzle_results (user_id, kind, puzzle_key, correct, seconds, rating_after, created_at) VALUES ($1, 'daily', $2, $3, $4, $5, $6) ON CONFLICT (user_id, puzzle_key) WHERE kind = 'daily' DO NOTHING RETURNING " +
+        "INSERT INTO puzzle_results (user_id, kind, puzzle_key, correct, seconds, rating_after, created_at, ranked) VALUES ($1, 'daily', $2, $3, $4, $5, $6, $7) ON CONFLICT (user_id, puzzle_key) WHERE kind = 'daily' DO NOTHING RETURNING " +
           COLS,
-        [p.userId, p.puzzleKey, p.correct, p.seconds, p.ratingAfter, toDate(p.createdAt)],
+        [p.userId, p.puzzleKey, p.correct, p.seconds, p.ratingAfter, toDate(p.createdAt), p.ranked ?? true],
       );
       return res.rows[0] ? puzzleFromRow(res.rows[0]) : null;
     },
@@ -1471,6 +1473,7 @@ interface RushRunRow {
   wrong: number | null;
   seconds: number | null;
   score: number | null;
+  ranked: boolean;
 }
 
 const rushRunFromRow = (r: RushRunRow): RushRunRecord => ({
@@ -1484,10 +1487,11 @@ const rushRunFromRow = (r: RushRunRow): RushRunRecord => ({
   wrong: r.wrong,
   seconds: r.seconds,
   score: r.score,
+  ranked: r.ranked,
 });
 
 function pgRushRuns(q: Queryable): RushRunsRepo {
-  const COLS = 'id, user_id, seed, started_at, expires_at, finished_at, solved, wrong, seconds, score';
+  const COLS = 'id, user_id, seed, started_at, expires_at, finished_at, solved, wrong, seconds, score, ranked';
   return {
     async create(r) {
       const res = await q.query<RushRunRow>('INSERT INTO puzzle_rush_runs (id, user_id, seed, started_at, expires_at) VALUES ($1, $2, $3, $4, $5) RETURNING ' + COLS, [
@@ -1507,8 +1511,8 @@ function pgRushRuns(q: Queryable): RushRunsRepo {
     async finish(id, r) {
       if (!isUuid(id)) return null;
       const res = await q.query<RushRunRow>(
-        'UPDATE puzzle_rush_runs SET finished_at = $2, solved = $3, wrong = $4, seconds = $5, score = $6 WHERE id = $1 AND finished_at IS NULL RETURNING ' + COLS,
-        [id, toDate(r.finishedAt), r.solved, r.wrong, r.seconds, r.score],
+        'UPDATE puzzle_rush_runs SET finished_at = $2, solved = $3, wrong = $4, seconds = $5, score = $6, ranked = $7 WHERE id = $1 AND finished_at IS NULL RETURNING ' + COLS,
+        [id, toDate(r.finishedAt), r.solved, r.wrong, r.seconds, r.score, r.ranked ?? true],
       );
       return res.rows[0] ? rushRunFromRow(res.rows[0]) : null;
     },
@@ -1594,9 +1598,9 @@ interface BoardSqlRow {
 
 /** Each board's entries as (user_id, score, tiebreak, count, at), with $1 its one parameter. */
 const DAILY_ENTRIES =
-  "SELECT user_id, CASE WHEN correct THEN 1 ELSE 0 END AS score, seconds AS tiebreak, 0 AS count, created_at AS at FROM puzzle_results WHERE kind = 'daily' AND puzzle_key = $1";
+  "SELECT user_id, CASE WHEN correct THEN 1 ELSE 0 END AS score, seconds AS tiebreak, 0 AS count, created_at AS at FROM puzzle_results WHERE kind = 'daily' AND ranked AND puzzle_key = $1";
 const RUSH_ENTRIES =
-  'SELECT DISTINCT ON (user_id) user_id, score, 0 AS tiebreak, solved AS count, finished_at AS at FROM puzzle_rush_runs WHERE finished_at IS NOT NULL AND finished_at >= $1 AND score > 0 ORDER BY user_id, score DESC, finished_at, id';
+  'SELECT DISTINCT ON (user_id) user_id, score, 0 AS tiebreak, solved AS count, finished_at AS at FROM puzzle_rush_runs WHERE finished_at IS NOT NULL AND ranked AND finished_at >= $1 AND score > 0 ORDER BY user_id, score DESC, finished_at, id';
 const RATING_ENTRIES = 'SELECT user_id, rating AS score, 0 AS tiebreak, rated AS count, updated_at AS at FROM puzzle_ratings WHERE rated >= $1';
 /** Listed: live, not banned, visible, and in scope ($2: the club's member ids, or null for everyone). */
 const BOARD_LISTED = ' JOIN users u ON u.id = e.user_id WHERE u.deleted_at IS NULL AND u.banned_at IS NULL AND u.leaderboard_visible AND ($2::uuid[] IS NULL OR e.user_id = ANY($2::uuid[]))';

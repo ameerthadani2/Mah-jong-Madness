@@ -10,6 +10,7 @@
  * Streaks, the local rating and the free Rush allowance are kept on the device in both cases.
  */
 import type { PuzzleAnswerInput } from '@mjm/engine';
+import { ApiError } from '../api/http';
 import { isPuzzleServerDown, type DailyFinish, type DailyStart, type RatingReply, type RushFinish, type RushStart, type ServerRating } from '../api/puzzles';
 
 /** The server calls this module makes (the `puzzlesApi` functions with their context bound). */
@@ -50,11 +51,15 @@ export type DailyOutcome =
     }
   | { ranked: false; error?: unknown; down: boolean };
 
+/** A result the server recorded under a human-time floor (docs/API.md): shown as not ranked, with its own line. */
+const tooFastToRank = () => new ApiError('The game server recorded this result but did not rank it: it was faster than the human-time floor', 'too_fast_to_rank');
+
 /** Finishes a ranked daily attempt with the answer; an unranked link stays unranked. */
 export async function submitDaily(server: PuzzleServer | null, link: DailyLink, answer: PuzzleAnswerInput, localCorrect: boolean, log: (msg: string) => void = console.warn): Promise<DailyOutcome> {
   if (!server || !link.ranked) return link.ranked ? { ranked: false, down: true } : link;
   try {
     const r = await server.finishDaily(link.attemptId, answer);
+    if (r.ranked === false) return { ranked: false, error: tooFastToRank(), down: false };
     const mismatch = r.correct !== localCorrect;
     if (mismatch) log(`[puzzles] the server judged the daily answer ${r.correct ? 'right' : 'wrong'}; the device judged it ${localCorrect ? 'right' : 'wrong'}`);
     return { ranked: true, correct: r.correct, seconds: r.seconds, rating: r.rating, mismatch };
@@ -94,6 +99,7 @@ export async function submitRush(server: PuzzleServer | null, link: RushLink, an
   if (!server || !link.ranked) return link.ranked ? { ranked: false, down: true } : { ranked: false, error: link.error, down: link.down };
   try {
     const r = await server.finishRush(link.runId, answers);
+    if (r.ranked === false) return { ranked: false, error: tooFastToRank(), down: false };
     const mismatch = r.solved !== localSolved;
     if (mismatch) log(`[puzzles] the server counted ${r.solved} solved in the Rush run; the device counted ${localSolved}`);
     return { ranked: true, solved: r.solved, seconds: r.seconds, score: r.score, rating: r.rating, mismatch };

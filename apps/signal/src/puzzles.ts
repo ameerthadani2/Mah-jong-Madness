@@ -51,6 +51,15 @@ export const RATING_BOARD_MIN_RATED = 20;
 export const BOARD_LIMIT = 100;
 /** Ranked Puzzle Rush runs a day (UTC) for an account without Coach Gold or The Four Winds Club; a run counts when it is issued. */
 export const FREE_RUSH_RUNS_PER_DAY = 1;
+/**
+ * Human-time floors (docs/API.md, "Human-time floors"). A daily answer the server timed under
+ * `DAILY_RANK_FLOOR_MS` is recorded as solved (or not) but not ranked or rated: nobody reads a
+ * sixteen-tile hand and answers in that time, only a script that computed the answer from the
+ * date. A Rush run whose judged answers average under `RUSH_RANK_FLOOR_MS` each is recorded but
+ * not ranked.
+ */
+export const DAILY_RANK_FLOOR_MS = 3000;
+export const RUSH_RANK_FLOOR_MS = 1500;
 /** The longest time a daily answer is ranked with (the server's time from start to answer); longer is stored as this. */
 export const DAILY_MAX_SECONDS = 3600;
 
@@ -207,18 +216,21 @@ export function puzzleRoutes<R>(r: PuzzleRouteFactory<R>, deps: PuzzleDeps): R[]
       const day = openDailyKey(attempt.dateKey, at);
       const correct = judgePuzzleAnswer(dailyPuzzle(day), answer);
       const difficulty = dailyPuzzleDifficulty(day);
-      const seconds = Math.min(DAILY_MAX_SECONDS, Math.round(Math.max(0, at - attempt.startedAt) / 1000));
+      const elapsedMs = Math.max(0, at - attempt.startedAt);
+      const seconds = Math.min(DAILY_MAX_SECONDS, Math.round(elapsedMs / 1000));
+      // Under the floor: recorded, but off the daily board and the rating.
+      const ranked = elapsedMs >= DAILY_RANK_FLOOR_MS;
       const key = attempt.dateKey;
       const result = await repos.transaction(async (tx) => {
         // An attempt is finished once; throwing below undoes this and the rating step together.
         if (!(await tx.dailyAttempts.finish(attempt.id, at))) throw new PuzzleError(409, 'already_played', 'You have already played this daily puzzle');
-        const { rating, after } = await applyRatings(tx, me.userId, movesPuzzleRating('daily') ? [{ type: 'discard', difficulty, correct }] : [], at);
-        const row = await tx.puzzleResults.recordDaily({ userId: me.userId, puzzleKey: key, correct, seconds, ratingAfter: after[0] ?? null, createdAt: at });
+        const { rating, after } = await applyRatings(tx, me.userId, ranked && movesPuzzleRating('daily') ? [{ type: 'discard', difficulty, correct }] : [], at);
+        const row = await tx.puzzleResults.recordDaily({ userId: me.userId, puzzleKey: key, correct, seconds, ratingAfter: after[0] ?? null, createdAt: at, ranked });
         // Only the first attempt per date key is ranked and rated.
         if (!row) throw new PuzzleError(409, 'already_played', 'You have already played this daily puzzle');
         return { rating, row };
       });
-      return { date: key, correct, seconds: result.row.seconds, rating: ratingJson(result.rating) };
+      return { date: key, correct, seconds: result.row.seconds, ranked, rating: ratingJson(result.rating) };
     }),
 
     // ------------------------------------------------------------------ Puzzle Rush
@@ -265,8 +277,10 @@ export function puzzleRoutes<R>(r: PuzzleRouteFactory<R>, deps: PuzzleDeps): R[]
       }
       const solved = verdicts.length - wrong;
       const score = rushScore(solved, seconds);
+      // Under the floor (the judged answers average under 1.5 s each, on the server's clock up to the run's length): recorded, not ranked.
+      const ranked = verdicts.length === 0 || Math.min(elapsedMs, RUSH_SECONDS * 1000) / verdicts.length >= RUSH_RANK_FLOOR_MS;
       const outcome = await repos.transaction(async (tx) => {
-        const finished = await tx.rushRuns.finish(run.id, { finishedAt: at, solved, wrong, seconds, score });
+        const finished = await tx.rushRuns.finish(run.id, { finishedAt: at, solved, wrong, seconds, score, ranked });
         if (!finished) throw new PuzzleError(409, 'run_finished', 'This run has already been finished');
         // Rush answers do not move the rating (the engine's `movesPuzzleRating('rush')`): `rating` reports it unchanged.
         const { rating, after } = await applyRatings(tx, me.userId, movesPuzzleRating('rush') ? verdicts : [], at);
@@ -281,6 +295,7 @@ export function puzzleRoutes<R>(r: PuzzleRouteFactory<R>, deps: PuzzleDeps): R[]
         wrong,
         seconds,
         score,
+        ranked,
         answers: verdicts.map((v) => ({ index: v.index, type: v.type, correct: v.correct })),
         rating: ratingJson(outcome),
       };
