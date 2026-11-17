@@ -1,4 +1,95 @@
-# Mahjong Mania — objective assessment, sixth pass (date: 2026-11-17, afternoon)
+# Mahjong Mania — objective assessment, seventh pass (date: 2026-11-17, evening)
+
+This re-scores the product on the same ten dimensions, weights and rubric as the assessments of 2026-11-04 (3.7/10), 2026-11-06 (5.4/10), 2026-11-13 (6.2/10), 2026-11-16 (6.5/10) and the fifth and sixth passes earlier today (6.6/10 and 6.7/10). Code assessed: commit `c6e11f1`, 572 commits, about 99,600 lines of TypeScript, 2,670 passing tests (engine 373, net 288, server 928 on Postgres, app 856, render 225), every gate green locally and on GitHub CI (run 108).
+
+**Method.** Stronger than the third to sixth passes:
+- **Assessors.** The same four group assessors as passes 3 to 6, so their scores compare like for like with those passes.
+- **Challengers.** Beside each assessor, a blind challenger scored the same dimensions on its own ports, databases and scratch folders, aiming at the claims most likely to move a score. Neither saw the other's report. Both read the same evidence and the earlier passes, the sixth pass's scores included, so they were not blind to those.
+- **Skeptics.** Each new serious defect either side reported went to two skeptics, each told to refute it: one tried to reproduce it, the other read the code.
+- **Judges and regression checks, none needed.** A dimension where the two scores differed by half a point or more would have gone to a judge; the largest gap was 0.2 (UX). A sixth-pass serious defect called fixed would have gone to a regression skeptic, but none was judged more than partly fixed.
+- **Final scores.** Each dimension's final score is the mean of the two.
+- **Size.** 20 agents, about 2.5 million tokens, 73 minutes.
+- **My own checks.** I re-ran the probes of every serious defect that survived and of the one the skeptics split on, and read the code of each. I also re-ran the dependency audit (see "What this pass found").
+
+## Scorecard (seventh pass)
+
+| Dimension (weight) | 4 Nov | 6 Nov | 13 Nov | 16 Nov | 17 Nov am | 17 Nov pm | **17 Nov eve**: assessor / challenger → final | Why, in one line | Top gap |
+|---|---|---|---|---|---|---|---|---|---|
+| Rules fidelity and engine (12%) | 5.8 | 6.9 | 7.5 | 7.7 | 7.7 | 7.7 | 7.8 / 7.8 → **7.8** | The scoring oracle imports nothing from the engine and failed every mutant tried (the team's 6, the challenger's 3). On fresh seeds an independent scorer agreed on 40,000 of 40,000 hands for each side, 1,500 self-play hands passed and 30,000 嚦咕嚦咕 hands matched; three hands scored by hand matched both the engine and the oracle. All of it follows the team's own reading of RULES.md: nothing is checked against a shipped Taiwanese product, and 七對子, 十三么 and the kong-timing choice are not options. | Recorded hands from a shipped Taiwanese product (owner); the variants as options |
+| Fairness, anti-rigging (10%) | 3.0 | 4.7 | 6.2 | 6.6 | 7.0 | 7.1 | 7.0 / 6.9 → **7.0** | The sixth pass's attack is closed: a welcome without `clockMs` now fails a 40 s hold 8 of 8, a silent link is dropped and `clockMs=10000` is ignored. Every earlier attack still fails, and 6,000 hostile frames threw nothing. But a server that keeps the link alive with clock frames and pongs whose stamps crawl forward 1 ms at a time can hold a turn frame for 44 s of a 45 s turn with the hand green (6 of 6; I reproduced it). FAIRNESS.md's "the server cannot lengthen these 13 seconds" is therefore false. | Tie the server's stamps to the time the phone sees pass: a frame stamped far behind it must not count as hearing from the table |
+| Online multiplayer, clubs (14%) | 3.5 | 5.3 | 6.3 | 6.7 | 6.9 | 7.0 | 7.1 / 7.1 → **7.1** | Over real sockets on Postgres, a restart restored a live table in 37 to 42 ms with both players back in 49 to 57 ms and both audits ok. A restart with the cap lowered restored every live table. A pair behind one IPv4 address is kept apart after three shared tables, across a restart, and linked seats no longer move each other's rating. A linked second account can still feed the first against a stranger (+8 to +20 a match), the hourly join buckets live in memory, and nothing is deployed. | Deploy and play on phones (owner); leave a table with a linked pair unrated against its strangers |
+| Visual design, UX, feel (14%) | 5.0 | 6.0 | 6.6 | 6.9 | 7.0 | 7.1 | 7.2 / 7.0 → **7.1** | The coach's advice now stays in view at Extra-large text, the Shop preview is one labelled modal with a focus trap, and wrong puzzle answers are explained in both languages. With Large or Extra-large tiles at 667x375, though, the coach bubble vanishes on most of the player's own turns while its button still shows it as on (both skeptics confirmed it, and so does the code). 11 of 16 sound cues are placeholders, the Taiwanese voice has no files, and nothing has run on a phone. | Commissioned audio and a device run (owner); a coach that never vanishes |
+| Learning, single-player (8%) | 3.5 | 5.3 | 5.9 | 6.1 | 6.3 | 6.4 | 6.5 / 6.5 → **6.5** | The isolated-tile rule now answers 114 of 365 dailies (the lone honour answered 303). 965 explanations each name a true decision, and 0 of 900 value and 0 of 900 defence puzzles disagree with exact recounts. A slightly broader rule, "throw the tile with the fewest neighbours", still answers 227 of 365 dailies and 169 of 300 hard puzzles (random guessing gets about 65 and 42). A Rush script that slows on hard puzzles and stops at the 35 ceiling ranks unflagged with about twice an honest score. | Puzzles no simple rule answers well beyond chance; Rush checks calibrated on real players (owner) |
+| Monetisation, compliance, legal (10%) | 2.5 | 5.2 | 6.3 | 6.4 | 6.5 | 6.6 | 6.7 / 6.6 → **6.7** | The store-check script passed 7 of 7 for both sides. On memory and Postgres, concurrent deliveries credit once, concurrent spends never overspend, a purchase racing its refund nets to zero, and the webhook refuses every bad secret. No purchase has gone through a real store, and the legal texts carry [Company name] placeholders. | Store products and a sandbox run with `npm run store-check`; counsel (owner) |
+| Production, backend, platform (12%) | 2.3 | 5.0 | 6.0 | 6.1 | 6.2 | 6.3 | 6.4 / 6.4 → **6.4** | All three server defects of the sixth pass are fixed on the production bundle. SIGTERM on a hung database exits 1, every live snapshot is restored whatever the cap (198 of 200; 200 of 200), and CI boots the image on Postgres and plays a hand; 200 tables held p95 0.42 to 0.46 ms. Nothing is deployed: android-play has never run, and the only runs of ios-testflight (1 Nov) failed. | First deploy and builds (owner) |
+| Engineering quality (8%) | 5.0 | 6.3 | 6.9 | 7.0 | 7.2 | 7.3 | 7.4 / 7.4 → **7.4** | All 13 source mutations the two sides made were caught. The frame fuzzer escaped 0 of 6,000 frames (1 before), the API fuzzer gave 0 server errors on memory and Postgres, and `pg.ts` is split into modules of at most 436 lines. `puzzles.ts` grew to 1,951 lines and `client.ts` to 2,029, 25 of 92 app test files still read `.tsx` source, and npm audit now reports 20 high advisories where the docs say none. | Split `puzzles.ts` and `client.ts`; replace the last source-text tests; patch the advisory |
+| Bot strength (6%) | 3.5 | 4.5 | 4.7 | 4.8 | 4.8 | 4.8 | 4.8 / 4.8 → **4.8** | 0 illegal moves in about 695,000 decisions. Far from ready, Pro deals in 2.0 to 2.1% against Club's 3.9 to 4.4%, as its description says. On fresh seeds Pro is not shown stronger than Club (+4.28 a hand, se 6.01, over 1,000 hands; +0.45, se 3.13, over 4,000). Once it is itself ready it deals in as often as Club, and its strength code has not changed since the fifth pass. | A Pro that beats Club at 95% on held-out seeds |
+| Market position (6%) | 2.3 | 3.4 | 4.2 | 4.3 | 4.4 | 4.4 | 4.5 / 4.4 → **4.5** | Close to listing-ready on the product side: one name throughout, both listings fit every field, and a first discard takes 5 taps in Chinese. 麻將狂熱 is now set under the icon for zh-Hant phones (checked by Expo's own resolver, but never built). Nothing has shipped: 47 of 47 owner items are open, there is no recorded voice, and a Simplified-Chinese phone gets English. | Trademark, licence, deployment, builds (owner) |
+
+**Overall weighted score: 6.7 / 10.**
+- **Final (mean per dimension): 6.72**, unweighted mean 6.5.
+- **Assessors alone: 6.75**, comparable with the earlier passes (was 6.67, 6.60, 6.45, 6.2, 5.4 and 3.7).
+- **Challengers alone: 6.69.**
+- **Agreement.** The challengers came within 0.1 of the assessors overall and within 0.2 on every dimension. They had read the sixth pass's scores, though, so their agreement is not an unanchored second reading. Like for like with the first two passes, the score is probably between 6.5 and 6.7.
+
+## What this pass found (seventh pass)
+
+Serious defects that survived the skeptics, each re-checked by me:
+1. **A server that forges crawling stamps can hold a turn frame for 44 s of a 45 s turn and leave the hand green** (fairness, major; both skeptics confirmed it).
+   - **The attack.** While it holds the victim's turn state, the server sends pongs and clock frames whose stamps move on 1 ms at a time, with the clock frames' turn number rewritten to the last turn the phone was shown.
+   - **Why the watch misses it.** Each such frame moves the link's clock on, so the phone counts it as hearing from the table (`noteOrder` in `packages/net/src/client.ts`) and the silent-link watch never fires. On release the held frame keeps its true stamp. That stamp is within the 1 s order slack of the crawled ones, so the frame is not seen as held, and the table then times the seat out on schedule. Nothing compares how far the stamps moved with the time the phone saw pass.
+   - **My check.** I re-ran the assessor's probes: a 40 s and a 44 s hold each stayed green 2 of 2, and the same hold with honest stamps failed `heldFrame` 2 of 2.
+   - **Docs.** The sentence in `docs/FAIRNESS.md` that the server cannot lengthen the 13 s limit is false until this is fixed.
+2. **With Large or Extra-large tiles in small landscape, the coach bubble vanishes on most of the player's own turns while the coach button still shows it as on** (UX, major; both skeptics confirmed it; it also happens at Normal tiles on some turns).
+   - **Why it happens.** When the ponds take the centre column, `coachBudget` returns no line (`apps/mobile/src/components/table/layout.ts`) and `CoachPanel` renders nothing (`CoachPanel.tsx`), while the HUD's cap button stays selected (`TableHud.tsx`).
+   - **Why no gate caught it.** A unit test asserts the hiding as intended, and the screens check looks only at bubbles that are shown.
+
+Rated major by its finder, minor by all four skeptics:
+
+3. **"Throw the tile with the fewest neighbours" answers 227 of 365 dailies and 169 of 300 hard discard puzzles**; random guessing gets about 65 and 42.
+   - **Cause.** The generator redraws only hands that the narrower isolated-tile rule answers. I re-ran the count and got the same figures.
+   - **Why minor.** The rule is a rough tile-efficiency count, which is the skill the puzzles teach, and every answer is still judged exactly. The claim that these puzzles need comparing shapes is overstated, though.
+
+Refuted: the challenger's two other fairness attacks.
+- **Re-stamping the held frames on release**, with pongs answered or stale clock frames. Once the hold really starts before the turn, this is caught as an early table move. The challenger's probe started its hold after the turn state had already arrived. I re-ran the skeptic's corrected probe, and every case failed with `playedEarly`.
+- **Hiding every claim chance for a hand** was the same probe mistake: the victim had been shown each chance.
+
+Major but not new (the sixth pass's, partly fixed): a Rush script that slows on hard puzzles and stops at the 35 ceiling ranks unflagged with about twice an honest score (35 against 17). The challenger's variant ranked in 200 of 200 runs. The thresholds were set without real players, and the limit is stated in `docs/API.md`.
+
+New minor findings, each reported by one side (the next unit reproduces each before fixing it):
+- **Dependency advisories.** `npm audit --omit=dev` now reports 20 high advisories and 9 moderate (I ran it). The high ones are one new picomatch ReDoS advisory (GHSA-fc5q-39xc-vjpf), reached through Metro, Jest's workers, the Expo CLI and React Native's codegen, all of it build tooling. `docs/ARCHITECTURE.md` still says 12 moderate and none high.
+- **Rating feeding.** A linked second account can still feed the first against a stranger at a shared table. The pair does not move each other, but each moves against the stranger (+8 to +20 a match, at most three such tables a day per pair).
+- **Scoring oracle.** It checks how win situations score, not how the game detects them: the flags are handed in. Self-play produced only one 搶槓 and two 槓上開花 in 1,500 hands.
+- **Flower as the last tile.** A flower drawn as the last live tile ends the hand with no replacement, and RULES.md does not say so.
+- **Pro's description.** It says Pro scores a little more than Club overall. Neither fresh run supports that at 95%, though the team's own 35,000 hands do.
+- **Puzzle explanations.** Each is built from one accepted answer, so it can contradict a different accepted answer the player chose. About half of the break-a-pair and isolated-tile puzzles accept such a second answer.
+- **English puzzle texts** say "1 Characters" and leave 搭子 untranslated.
+- **Shop preview on the web.** Focus lands on the hidden scrim on every third Tab, and the buttons behind the dialog stay exposed to screen readers that ignore `aria-modal`.
+- **Coach at Extra-large tiles.** At 667x375 the advice box is 15 px tall for 45 px of advice, so the advice is cut mid-list with no sign that it scrolls.
+- **Restore.** It accepts a snapshot whose game or rules are garbage as a live table.
+- **Store edge cases.** A purchase price of 10^10 or more makes the webhook throw on Postgres (`numeric(14,4)`). A subscription refund or renewal that names the old account after a `TRANSFER` reaches that account, not the one the plan moved to.
+- **CI.** The docker job writes the container log on failure but never uploads it. One Web preview run failed on a transient `npm ci` with no retry.
+- **Server tests.** Three server test files read files outside `apps/signal`, so the server suite cannot run on its own workspace.
+- **Web title.** The page title stays "Mahjong Mania" in zh-TW.
+- **Quick match.** A requeue after leaving a quick-match table waits about 9 s; the challenger's probe was refused as still seated.
+
+Checked and not a defect: a same-address pair, once kept apart, stays apart for good. That is what `docs/API.md` says it does; the challenger read it as lasting only for the day.
+
+Bots: Pro was +4.28 a hand over Club on the assessor's 1,000 fresh paired hands (se 6.01) and +0.45 on the challenger's 4,000 (se 3.13). The team's 35,000 hands gave +3.3 (se 1.0). Pro is not shown stronger on fresh seeds.
+
+Owner-blocked, as before:
+- deployment;
+- native builds (android-play has never run, and the ios-testflight runs of 1 Nov failed);
+- store products and a sandbox purchase;
+- counsel, trademark and licence;
+- commissioned audio and the Taiwanese voice;
+- recorded hands from a shipped Taiwanese app;
+- a native zh-TW review;
+- devices and players.
+
+---
+
+# Sixth pass (2026-11-17, afternoon), kept for its detail
 
 This re-scores the product on the same ten dimensions, weights and rubric as the assessments of 2026-11-04 (3.7/10), 2026-11-06 (5.4/10), 2026-11-13 (6.2/10), 2026-11-16 (6.5/10) and the fifth pass this morning (6.6/10). Code assessed: commit `aa1c215`, 535 commits, about 96,600 lines of TypeScript, 2,585 passing tests (engine 350, net 276, server 902 on Postgres, app 857, render 200), every gate green locally and on GitHub CI.
 
