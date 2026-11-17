@@ -49,6 +49,68 @@ function contract(name: string, repos: () => Repos) {
       expect((await r.quickMatchPairs.frequent(1, 1000)).some((p) => p.a === a || p.b === a)).toBe(false);
     });
 
+    it('keeps a pair apart for good once it shared an IPv4 address at three tables in one UTC day, and never forgets it for room', async () => {
+      const r = repos();
+      const [a, b] = sorted(await user(), await user());
+      const [c, d] = sorted(await user(), await user());
+      const day2 = Date.UTC(2026, 10, 18, 0, 0, 0);
+      // a and b: two shared tables one day and one the next, with an unshared one between: not yet.
+      await r.quickMatchPairs.record([{ a, b, shared: true }], day2 - 2000, 20_000);
+      await r.quickMatchPairs.record([{ a, b, shared: true }], day2 - 1000, 20_000);
+      await r.quickMatchPairs.record([{ a, b, shared: false }], day2 + 500, 20_000);
+      await r.quickMatchPairs.record([{ a, b, shared: true }], day2 + 1000, 20_000);
+      expect(await r.quickMatchPairs.keptApart(a)).toEqual([]);
+      // Two more that day make three: kept apart from then on, from either side.
+      await r.quickMatchPairs.record([{ a, b, shared: true }, { a: c, b: d, shared: true }], day2 + 2000, 20_000);
+      expect(await r.quickMatchPairs.keptApart(a)).toEqual([]);
+      await r.quickMatchPairs.record([{ a, b, shared: true }], day2 + 3000, 20_000);
+      expect(await r.quickMatchPairs.keptApart(a)).toEqual([b]);
+      expect(await r.quickMatchPairs.keptApart(b)).toEqual([a]);
+      expect(await r.quickMatchPairs.keptApart(c)).toEqual([]);
+      // Past the most pairs kept (counting those not kept apart), the kept-apart pair stays although c and d were seen more recently.
+      const [e, f] = sorted(await user(), await user());
+      await r.quickMatchPairs.record([{ a: e, b: f, shared: false }], day2 + 9000, 1);
+      expect(await r.quickMatchPairs.keptApart(a)).toEqual([b]);
+      expect((await r.quickMatchPairs.frequent(1, 1000)).filter((p) => [a, c, e].includes(p.a)).map((p) => p.a).sort()).toEqual([a, e].sort());
+    });
+
+    it('a matchmaker on the store keeps apart a pair that shared an address at three tables in a day, after a restart too', async () => {
+      const r = repos();
+      const [x, y, z] = [await user(), await user(), await user()];
+      let clock = T0 + 10_000;
+      const tables: string[][] = [];
+      const make = () =>
+        new Matchmaker({
+          fillMs: 1000,
+          check: async () => null,
+          avoid: async () => [],
+          openTable: (ids) => {
+            tables.push(ids);
+            return 'ROOM';
+          },
+          pairStore: r.quickMatchPairs,
+          now: () => clock,
+        });
+      const peer = (userId: string, address: string): QueuePeer => ({ peerId: randomUUID(), userId, address, send: () => undefined });
+      let mm = make();
+      for (let i = 0; i < 3; i++) {
+        await mm.enqueue(peer(x, '198.51.100.30'));
+        await mm.enqueue(peer(y, '198.51.100.30'));
+        clock += 1000;
+        mm.tick();
+      }
+      await mm.pairsSaved();
+      expect(tables).toEqual([[x, y], [x, y], [x, y]]);
+      // The process restarts; the pair now sits apart even when the alternative is bots.
+      mm = make();
+      await mm.enqueue(peer(x, '198.51.100.30'));
+      await mm.enqueue(peer(y, '203.0.113.31'));
+      await mm.enqueue(peer(z, '203.0.113.32'));
+      clock += 1000;
+      mm.tick();
+      expect(tables.slice(3)).toEqual([[x, z], [y]]);
+    });
+
     it('keeps the join allowance buckets by club, with one salt, and prunes the ones a day old', async () => {
       const r = repos();
       const salt = await r.joinAllowances.salt();

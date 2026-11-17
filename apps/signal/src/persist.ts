@@ -177,11 +177,14 @@ export class TablePersister {
       .then(async () => {
         t.queued = false;
         t.lastWriteAt = this.now();
-        const snapshot: SerializedHost & { createdBy?: string; quickPlayers?: string[]; evicted?: string[] } = t.host.serialize();
+        const snapshot: SerializedHost & { createdBy?: string; quickPlayers?: string[]; quickLinked?: Array<[string, string]>; evicted?: string[] } = t.host.serialize();
         if (t.createdBy) snapshot.createdBy = t.createdBy;
         // A quick-match table admits only its matched accounts, after a restart too.
         const quick = this.rooms.quickPlayersOf(code);
         if (quick) snapshot.quickPlayers = quick;
+        // So are the pairs that never move each other's table rating.
+        const linked = this.rooms.quickLinkedOf(code);
+        if (linked?.length) snapshot.quickLinked = linked;
         // An account the club took off this table stays out of it after a restart.
         const evicted = this.rooms.evictedOf(code);
         if (evicted) snapshot.evicted = evicted;
@@ -223,15 +226,16 @@ export class TablePersister {
     const restored: string[] = [];
     for (const s of await this.repo.listActive()) {
       try {
-        const snapshot = s.snapshot as SerializedHost & { createdBy?: unknown; quickPlayers?: unknown; evicted?: unknown };
+        const snapshot = s.snapshot as SerializedHost & { createdBy?: unknown; quickPlayers?: unknown; quickLinked?: unknown; evicted?: unknown };
         const createdBy = snapshot && typeof snapshot.createdBy === 'string' && snapshot.createdBy ? snapshot.createdBy : undefined;
         const quickPlayers = snapshot && Array.isArray(snapshot.quickPlayers) ? snapshot.quickPlayers.filter((x): x is string => typeof x === 'string') : undefined;
+        const linked = snapshot && Array.isArray(snapshot.quickLinked) ? snapshot.quickLinked.filter((x): x is [string, string] => Array.isArray(x) && x.length === 2 && typeof x[0] === 'string' && typeof x[1] === 'string') : [];
         const evicted = snapshot && Array.isArray(snapshot.evicted) ? snapshot.evicted.filter((x): x is string => typeof x === 'string') : undefined;
         const code = this.rooms.createHostedRoom({
           restore: snapshot,
           clubCode: s.clubCode ?? undefined,
           createdBy,
-          ...(quickPlayers ? { quickMatch: { players: quickPlayers } } : {}),
+          ...(quickPlayers ? { quickMatch: { players: quickPlayers, linked } } : {}),
           ...(evicted?.length ? { evicted } : {}),
         });
         this.track(code);

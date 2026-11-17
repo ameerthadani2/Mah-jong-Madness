@@ -12,6 +12,7 @@ import { randomBytes } from 'node:crypto';
 import { anonymiseUserIn, moveMembershipsIn, type Club } from '../clubs';
 import {
   DELETED_PLAYER_NAME,
+  KEEP_APART_SHARED_PER_DAY,
   withoutName,
   type BlockRecord,
   type BlocksRepo,
@@ -71,6 +72,7 @@ import {
 } from './types';
 
 const copy = <T>(v: T): T => structuredClone(v);
+const DAY_MS = 86_400_000;
 
 /** Everything the memory repositories hold. Cloneable as one value (`structuredClone`). */
 interface MemoryState {
@@ -99,6 +101,8 @@ interface MemoryState {
   tableRatings: Map<string, TableRatingRecord>;
   /** quick_match_pairs, by "a b", least recently seen first. */
   quickMatchPairs: Map<string, QuickMatchPairRecord>;
+  /** quick_match_pairs' shared_day, shared_today and kept_apart columns, by "a b". */
+  quickMatchShared: Map<string, { day: number; today: number; apart: boolean }>;
   /** club_join_allowances, by "kind club key", and the salt (counter_salt). */
   joinAllowances: Map<string, JoinAllowanceRecord>;
   counterSalt: string;
@@ -145,6 +149,7 @@ const emptyState = (): MemoryState => ({
   ratings: new Map(),
   tableRatings: new Map(),
   quickMatchPairs: new Map(),
+  quickMatchShared: new Map(),
   joinAllowances: new Map(),
   counterSalt: randomBytes(16).toString('hex'),
   puzzleFlags: new Map(),
@@ -225,6 +230,7 @@ function memoryUsers(s: MemoryState): UsersRepo {
         s.ratings.delete(id);
         s.tableRatings.delete(id);
         for (const [k, pr] of [...s.quickMatchPairs]) if (pr.a === id || pr.b === id) s.quickMatchPairs.delete(k);
+        for (const k of [...s.quickMatchShared.keys()]) if (k.split(' ').includes(id)) s.quickMatchShared.delete(k);
         s.puzzleFlags.delete(id);
         s.boardHidden.delete(id);
         for (const [k, run] of [...s.rushRuns]) {
@@ -830,8 +836,30 @@ function memoryQuickMatchPairs(s: MemoryState): QuickMatchPairsRepo {
         const p = s.quickMatchPairs.get(key) ?? { a, b, tables: 0, sharedAddress: 0, lastAt: at };
         s.quickMatchPairs.delete(key);
         s.quickMatchPairs.set(key, { a, b, tables: p.tables + 1, sharedAddress: p.sharedAddress + (shared ? 1 : 0), lastAt: at });
-        while (s.quickMatchPairs.size > max) s.quickMatchPairs.delete(s.quickMatchPairs.keys().next().value as string);
+        if (shared) {
+          const day = Math.floor(at / DAY_MS);
+          const d = s.quickMatchShared.get(key);
+          const today = d && d.day === day ? d.today + 1 : 1;
+          s.quickMatchShared.set(key, { day, today, apart: (d?.apart ?? false) || today >= KEEP_APART_SHARED_PER_DAY });
+        }
+        // Past `max` pairs not kept apart, the least recently seen go first; a kept-apart pair is never forgotten.
+        let over = [...s.quickMatchPairs.keys()].filter((k) => !s.quickMatchShared.get(k)?.apart).length - max;
+        for (const k of [...s.quickMatchPairs.keys()]) {
+          if (over <= 0) break;
+          if (s.quickMatchShared.get(k)?.apart) continue;
+          s.quickMatchPairs.delete(k);
+          s.quickMatchShared.delete(k);
+          over--;
+        }
       }
+    },
+    async keptApart(userId) {
+      const out: string[] = [];
+      for (const [k, d] of s.quickMatchShared) {
+        const [a, b] = k.split(' ');
+        if (d.apart && (a === userId || b === userId)) out.push(a === userId ? b : a);
+      }
+      return out.sort();
     },
     async frequent(min, limit) {
       return [...s.quickMatchPairs.values()]

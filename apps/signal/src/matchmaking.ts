@@ -20,7 +20,11 @@
  * no block or shared device or /64) rather than seat bots in that place. The matchmaker also
  * counts how often each pair of accounts sat together and at how many of those tables they shared
  * an IPv4 address (`pairStore`: the repositories, so the database on Postgres and the counts survive
- * a restart; shown to moderators). A group
+ * a restart; shown to moderators). A pair that shared an IPv4 address at three tables in one UTC day
+ * (`KEEP_APART_SHARED_PER_DAY`) is kept apart from then on, as a block keeps two accounts apart: a
+ * second account behind one home address cannot keep sitting with the first. The table is opened
+ * with the pairs of its players that queued from one address key or one device (`linkedPairs`),
+ * which never move each other's table rating (src/tableRating.ts). A group
  * of four within the rating spread is seated at once; any group is seated, with Club bots in the
  * empty seats, once its first player has waited `fillMs` (QUICK_MATCH_FILL_MS, default 20 s), so a
  * solo player always gets a game. Each player of a seated group gets `{t:'matched', room, humans, bots}` and
@@ -42,11 +46,13 @@
 
 import { isIP } from 'node:net';
 import { addressKey } from './limits';
+import { KEEP_APART_SHARED_PER_DAY } from './repos/types';
 
 /** Default for `MatchmakerOptions.fillMs` (QUICK_MATCH_FILL_MS). */
 export const DEFAULT_QUICK_MATCH_FILL_MS = 20_000;
 /** Longest QUICK_MATCH_FILL_MS accepted (10 minutes). */
 const MAX_FILL_MS = 600_000;
+const DAY_MS = 86_400_000;
 
 /** QUICK_MATCH_FILL_MS: a whole number of milliseconds from 1 to 600,000, else the default. */
 export function fillMsFromEnv(env: Record<string, string | undefined>): number {
@@ -127,7 +133,7 @@ export interface MatchmakerOptions {
    */
   rating?(userId: string): Promise<number>;
   /** Open the table for a group, in seat order; returns its room code. A throw answers `unavailable`. */
-  openTable(userIds: string[]): string;
+  openTable(userIds: string[], linked: Array<[string, string]>): string;
   /**
    * The unfinished quick-match table this account is still at (it holds a seat there, or the
    * table is waiting for it to sit down), if any: such an account is not queued again.
@@ -144,7 +150,7 @@ export interface MatchmakerOptions {
    * so they survive a restart and the admin view reads them there). Without it they are kept in
    * this process (`frequentPairs`).
    */
-  pairStore?: { record(pairs: Array<{ a: string; b: string; shared: boolean }>, at: number, max: number): Promise<void> };
+  pairStore?: { record(pairs: Array<{ a: string; b: string; shared: boolean }>, at: number, max: number): Promise<void>; keptApart(userId: string): Promise<string[]> };
   log?: (line: string) => void;
 }
 
@@ -154,6 +160,8 @@ interface Entry {
   /** Arrival order among entries that joined in the same millisecond. */
   seq: number;
   avoid: Set<string>;
+  /** Accounts kept apart from this one for sharing an IPv4 address too often (`KEEP_APART_SHARED_PER_DAY`). */
+  apart: Set<string>;
   /**
    * The address key and device: no two entries that share a device or an IPv6 /64 sit at one
    * table; two that share an IPv4 address do only when the alternative is bots (`groups`).
@@ -224,6 +232,8 @@ export class Matchmaker implements QueueGate {
   /** Quick-match tables shared, by pair of accounts ("a b", a < b), least recently seen first. */
   private readonly pairs = new Map<string, QuickMatchPair>();
   private seq = 0;
+  /** Without a `pairStore`: the IPv4 tables each pair shared in one UTC day, and whether that kept it apart. */
+  private readonly sharedDays = new Map<string, { day: number; today: number; apart: boolean }>();
   /** The chain of pair-count writes to `pairStore`. */
   private pairWrites: Promise<void> = Promise.resolve();
   private readonly now: () => number;
@@ -260,6 +270,7 @@ export class Matchmaker implements QueueGate {
     const ticket = ++this.seq;
     this.pending.set(peer.peerId, ticket);
     let avoid: Set<string>;
+    let apart: Set<string>;
     let device: string | null;
     let rating: number;
     try {
@@ -275,7 +286,7 @@ export class Matchmaker implements QueueGate {
         this.pending.delete(peer.peerId);
         return refuse(peer, 'seated', { room });
       }
-      [avoid, device, rating] = await Promise.all([new Set(await this.opts.avoid(peer.userId)), this.deviceOf(peer), this.ratingOf(peer.userId)]);
+      [avoid, apart, device, rating] = await Promise.all([new Set(await this.opts.avoid(peer.userId)), this.keptApartFrom(peer.userId), this.deviceOf(peer), this.ratingOf(peer.userId)]);
     } catch (e) {
       if (this.pending.get(peer.peerId) !== ticket) return;
       this.pending.delete(peer.peerId);
@@ -295,7 +306,7 @@ export class Matchmaker implements QueueGate {
       seq = e.seq;
     }
     const address = peer.address !== undefined ? addressKey(peer.address) : null;
-    const entry: Entry = { peer, joinedAt, seq, avoid, address, device, rating, lastStatusAt: this.now() };
+    const entry: Entry = { peer, joinedAt, seq, avoid, apart, address, device, rating, lastStatusAt: this.now() };
     this.entries.set(peer.peerId, entry);
     this.match();
     if (this.entries.has(peer.peerId)) this.sendStatus(entry, this.groups());
@@ -354,8 +365,40 @@ export class Matchmaker implements QueueGate {
         const p = this.pairs.get(key) ?? { a, b, tables: 0, sharedAddress: 0, lastAt: at };
         this.pairs.delete(key);
         this.pairs.set(key, { ...p, tables: p.tables + 1, sharedAddress: p.sharedAddress + shared, lastAt: at });
-        if (this.pairs.size > MAX_TRACKED_PAIRS) this.pairs.delete(this.pairs.keys().next().value as string);
+        if (shared) {
+          const day = Math.floor(at / DAY_MS);
+          const d = this.sharedDays.get(key);
+          const today = d && d.day === day ? d.today + 1 : 1;
+          this.sharedDays.set(key, { day, today, apart: (d?.apart ?? false) || today >= KEEP_APART_SHARED_PER_DAY });
+        }
+        if (this.pairs.size > MAX_TRACKED_PAIRS) {
+          const old = [...this.pairs.keys()].find((k) => !this.sharedDays.get(k)?.apart);
+          if (old !== undefined) {
+            this.pairs.delete(old);
+            this.sharedDays.delete(old);
+          }
+        }
       }
+    }
+  }
+
+  /** Who this account is kept apart from (after every pair count written so far); unknown reads as nobody. */
+  private async keptApartFrom(userId: string): Promise<Set<string>> {
+    const store = this.opts.pairStore;
+    if (!store) {
+      const out = new Set<string>();
+      for (const [key, d] of this.sharedDays) {
+        const [a, b] = key.split(' ');
+        if (d.apart && (a === userId || b === userId)) out.add(a === userId ? b : a);
+      }
+      return out;
+    }
+    try {
+      await this.pairWrites;
+      return new Set(await store.keptApart(userId));
+    } catch (e) {
+      this.opts.log?.(`[signal] quick match kept-apart pairs not read: ${(e as Error).message}`);
+      return new Set();
     }
   }
 
@@ -514,7 +557,10 @@ export class Matchmaker implements QueueGate {
     if (seated.length === 0) return;
     let room: string;
     try {
-      room = this.opts.openTable(seated.map((e) => e.peer.userId));
+      room = this.opts.openTable(
+        seated.map((e) => e.peer.userId),
+        linkedPairs(seated),
+      );
     } catch (e) {
       this.opts.log?.(`[signal] quick match table not opened: ${(e as Error).message}`);
       for (const x of seated) refuse(x.peer, 'unavailable');
@@ -539,8 +585,25 @@ export class Matchmaker implements QueueGate {
  */
 function clash(a: Entry, b: Entry): boolean {
   if (a.avoid.has(b.peer.userId) || b.avoid.has(a.peer.userId)) return true;
+  if (a.apart.has(b.peer.userId) || b.apart.has(a.peer.userId)) return true;
   if (a.address !== null && a.address === b.address && isIP(a.address) !== 4) return true;
   return a.device !== null && a.device === b.device;
+}
+
+/**
+ * The pairs of a seated group (by account) that queued from one address key (an IPv4 address or an
+ * IPv6 /64) or one device: they never move each other's table rating (src/tableRating.ts).
+ */
+export function linkedPairs(seated: Array<{ peer: { userId: string }; address: string | null; device: string | null }>): Array<[string, string]> {
+  const out: Array<[string, string]> = [];
+  for (let i = 0; i < seated.length; i++) {
+    for (let j = i + 1; j < seated.length; j++) {
+      const [x, y] = [seated[i], seated[j]];
+      if (x.peer.userId === y.peer.userId) continue;
+      if ((x.address !== null && x.address === y.address) || (x.device !== null && x.device === y.device)) out.push([x.peer.userId, y.peer.userId]);
+    }
+  }
+  return out;
 }
 
 /** Two entries from one IPv4 address: kept apart while others are waiting (`Matchmaker.groups`). */

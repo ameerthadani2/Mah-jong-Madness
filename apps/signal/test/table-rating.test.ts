@@ -14,7 +14,7 @@ import { createPool, type Pool } from '../src/db';
 import { migrate } from '../src/migrate';
 import { createMemoryRepos, createPgRepos, createRepos, type Repos } from '../src/repos';
 import { createSignalServer, type SignalServer } from '../src/server';
-import { applyQuickMatchRating, DEFAULT_TABLE_RATING, expectedScore, kFor, PROVISIONAL_K, PROVISIONAL_MATCHES, ratingChanges, TABLE_RATING_K, tableRatingView } from '../src/tableRating';
+import { applyQuickMatchRating, DEFAULT_TABLE_RATING, expectedScore, kFor, PROVISIONAL_K, PROVISIONAL_MATCHES, pairKey, ratingChanges, TABLE_RATING_K, tableRatingView } from '../src/tableRating';
 
 const PG_URL = process.env.DATABASE_URL_TEST?.trim();
 const T0 = Date.UTC(2026, 10, 17, 8, 0, 0);
@@ -79,6 +79,20 @@ describe('the rating update', () => {
     ).toBe(5);
   });
 
+  it('scores a seat only against the seats not linked to it, averaged over those', () => {
+    const seats = [
+      { userId: 'a', rating: 1500, matches: 0, score: 100 },
+      { userId: 'b', rating: 1500, matches: 0, score: -100 },
+      { userId: 'c', rating: 1500, matches: 0, score: 200 },
+    ];
+    // Unlinked: a beats b and loses to c (0), b loses to both (-40 * 1 / 2), c beats both.
+    expect(ratingChanges(seats)).toEqual([0, -20, 20]);
+    // a and b linked: a's win over b does not count, so a is scored against c alone (-20); c against both.
+    expect(ratingChanges(seats, new Set([pairKey('b', 'a')]))).toEqual([-20, -20, 20]);
+    // Two seats, linked: nobody moves.
+    expect(ratingChanges(seats.slice(0, 2), new Set([pairKey('a', 'b')]))).toEqual([0, 0]);
+  });
+
   it('answers 1500, provisional, for an account that has played no rated match', () => {
     expect(tableRatingView(null)).toEqual({ rating: DEFAULT_TABLE_RATING, matches: 0, provisional: true, last: null });
     expect(tableRatingView({ userId: 'a', rating: 1530, matches: 20, lastMatchId: 'm', lastRoom: 'QK7', lastChange: 6, updatedAt: T0 })).toEqual({
@@ -112,6 +126,25 @@ function contract(name: string, repos: () => Repos) {
       expect((await applyQuickMatchRating(r, match, T0 + 1000)).size).toBe(0);
       expect((await r.tableRatings.get(a))?.matches).toBe(1);
       expect((await r.tableRatings.getMany([a, b, bot])).map((x) => x.userId).sort()).toEqual([a, b].sort());
+    });
+
+    it('never lets a pair that queued from one address or device move each other, while both still count for the rest', async () => {
+      const r = repos();
+      const [main, alt] = [await user('Main'), await user('Alt')];
+      // A second account behind the same home address loses on purpose: the first gains nothing.
+      const farm = { matchId: 'farm-' + randomHex(6), room: 'QF1', seats: [seat(main), seat(alt), seat(undefined, true), seat(undefined, true)], scores: [900, -900, 0, 0], players: [main, alt], linked: [[alt, main] as [string, string]] };
+      expect((await applyQuickMatchRating(r, farm, T0)).size).toBe(0);
+      expect(await r.tableRatings.getMany([main, alt])).toEqual([]);
+      // With a stranger at the table, each linked seat is scored against the stranger only.
+      const stranger = await user('Stranger');
+      const mixed = { matchId: 'mixed-' + randomHex(6), room: 'QF2', seats: [seat(main), seat(alt), seat(stranger), seat(undefined, true)], scores: [900, -900, 0, 0], players: [main, alt, stranger], linked: [[main, alt] as [string, string]] };
+      const changes = await applyQuickMatchRating(r, mixed, T0 + 1000);
+      expect([...changes]).toEqual([
+        [main, PROVISIONAL_K / 2],
+        [alt, -PROVISIONAL_K / 2],
+        [stranger, 0],
+      ]);
+      expect(await r.tableRatings.get(main)).toMatchObject({ rating: 1520, matches: 1 });
     });
 
     it('moves nobody when fewer than two humans played, or for an account the table was not opened for', async () => {

@@ -27,6 +27,24 @@ describe('a quick-match table after a restart', () => {
     second.shutdown();
   });
 
+  it('keeps the pairs that queued from one address or device, which never rate each other', async () => {
+    const repo = createMemoryRepos().tableSnapshots;
+    const first = new RoomRegistry({ allowHosted: true, botDelayMs: 0 });
+    const writer = new TablePersister(first, repo, { log: () => undefined });
+    writer.start();
+    const code = first.createQuickMatchRoom(['user-a', 'user-b', 'user-c'], { linked: [['user-a', 'user-c']] });
+    expect(first.quickLinkedOf(code)).toEqual([['user-a', 'user-c']]);
+    await writer.flush();
+    writer.stop();
+    first.shutdown();
+
+    const second = new RoomRegistry({ allowHosted: true, botDelayMs: 0 });
+    const reader = new TablePersister(second, repo, { log: () => undefined });
+    expect(await reader.restore()).toEqual([code]);
+    expect(second.quickLinkedOf(code)).toEqual([['user-a', 'user-c']]);
+    second.shutdown();
+  });
+
   it('leaves an ordinary table open to anyone with the code', async () => {
     const repo = createMemoryRepos().tableSnapshots;
     const first = new RoomRegistry({ allowHosted: true, botDelayMs: 0 });

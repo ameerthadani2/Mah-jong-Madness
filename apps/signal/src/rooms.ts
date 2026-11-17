@@ -66,7 +66,8 @@ interface Room {
    * `emptySince` is when its last peer left (or when it was opened or restored), null while anyone
    * is connected: once started it closes `QUICK_ABANDONED_MS` after that.
    */
-  quick?: { players: Set<string>; startBy: number; started: boolean; emptySince: number | null };
+  /** `linked`: the pairs of players that queued from one address or one device (they never move each other's table rating). */
+  quick?: { players: Set<string>; linked: Array<[string, string]>; startBy: number; started: boolean; emptySince: number | null };
 }
 
 /**
@@ -273,7 +274,7 @@ export interface HostedRoomOptions {
    * add bots, and it starts by itself once every one of them has sat down, or `startAfterMs`
    * after it opened with bots in the seats still empty (closed instead if nobody came).
    */
-  quickMatch?: { players: string[]; startAfterMs?: number };
+  quickMatch?: { players: string[]; linked?: Array<[string, string]>; startAfterMs?: number };
   /** Accounts taken off this table before a restart (from its snapshot): they still may not come back. */
   evicted?: string[];
 }
@@ -349,7 +350,7 @@ export class RoomRegistry {
     if (opts.clubCode) room.clubCode = opts.clubCode.toUpperCase();
     if (opts.createdBy) room.createdBy = opts.createdBy;
     if (opts.evicted?.length) room.evicted = new Set(opts.evicted);
-    if (opts.quickMatch) room.quick = { players: new Set(opts.quickMatch.players), startBy: this.now() + (opts.quickMatch.startAfterMs ?? QUICK_START_MS), started: false, emptySince: this.now() };
+    if (opts.quickMatch) room.quick = { players: new Set(opts.quickMatch.players), linked: (opts.quickMatch.linked ?? []).map(([a, b]): [string, string] => [a, b]), startBy: this.now() + (opts.quickMatch.startAfterMs ?? QUICK_START_MS), started: false, emptySince: this.now() };
     this.attachTable(room, opts.rules, opts.botSkill, opts.restore);
     this.rooms.set(code, room);
     return code;
@@ -363,8 +364,8 @@ export class RoomRegistry {
    * and a started one closes `QUICK_ABANDONED_MS` after its last player disconnected (at once
    * when they all left on purpose).
    */
-  createQuickMatchRoom(players: string[], opts: { startAfterMs?: number } = {}): string {
-    return this.createHostedRoom({ botSkill: 'club', quickMatch: { players, startAfterMs: opts.startAfterMs } });
+  createQuickMatchRoom(players: string[], opts: { startAfterMs?: number; linked?: Array<[string, string]> } = {}): string {
+    return this.createHostedRoom({ botSkill: 'club', quickMatch: { players, linked: opts.linked, startAfterMs: opts.startAfterMs } });
   }
 
   /**
@@ -419,6 +420,12 @@ export class RoomRegistry {
   quickPlayersOf(code: string): string[] | undefined {
     const quick = this.rooms.get(code.toUpperCase())?.quick;
     return quick ? [...quick.players] : undefined;
+  }
+
+  /** The pairs of a quick-match table's players that queued from one address or device (undefined for any other room); for the rating and the snapshot. */
+  quickLinkedOf(code: string): Array<[string, string]> | undefined {
+    const quick = this.rooms.get(code.toUpperCase())?.quick;
+    return quick ? quick.linked.map(([a, b]): [string, string] => [a, b]) : undefined;
   }
 
   /** The accounts taken off a table, which may not come back to it (undefined when there are none); for its snapshot. */

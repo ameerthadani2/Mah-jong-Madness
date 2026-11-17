@@ -184,7 +184,7 @@ export async function createSignalServer(opts: SignalServerOptions): Promise<Sig
     // Tables prefer close quick-match ratings (an account with none is matched at 1500).
     rating: async (userId) => (await repos.repos.tableRatings.get(userId))?.rating ?? DEFAULT_TABLE_RATING,
     // Declared below; the queue only opens tables once the server is up.
-    openTable: (userIds): string => rooms.createQuickMatchRoom(userIds, { startAfterMs: opts.quickStartMs }),
+    openTable: (userIds, linked): string => rooms.createQuickMatchRoom(userIds, { startAfterMs: opts.quickStartMs, linked }),
     // One quick-match table per account at a time, each charged to its players like a table they created.
     seatedAt: (userId): string | undefined => rooms.quickTableOf(userId),
     charge: (peerIds): string[] => rooms.chargeQuickMatch(peerIds),
@@ -244,10 +244,11 @@ export async function createSignalServer(opts: SignalServerOptions): Promise<Sig
         finishedAt: now(),
       })
       .catch((e: Error) => console.error(`[signal] match result for ${room} not saved:`, e.message));
-    // A finished quick-match match moves the table rating of its humans (bots never count).
+    // A finished quick-match match moves the table rating of its humans (bots never count, nor
+    // does a pair that queued from one address or device count for each other).
     const quickPlayers = rooms.quickPlayersOf(room);
     if (quickPlayers) {
-      void applyQuickMatchRating(repos.repos, { matchId: event.matchId, room, seats: event.seats, scores: event.scores, players: quickPlayers }, now()).catch((e: Error) =>
+      void applyQuickMatchRating(repos.repos, { matchId: event.matchId, room, seats: event.seats, scores: event.scores, players: quickPlayers, linked: rooms.quickLinkedOf(room) }, now()).catch((e: Error) =>
         console.error(`[signal] table ratings for ${room} not saved:`, e.message),
       );
     }

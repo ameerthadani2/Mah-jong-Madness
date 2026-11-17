@@ -569,6 +569,9 @@ export interface QuickMatchPairRecord {
   lastAt: number;
 }
 
+/** Tables at which one pair of accounts shared an IPv4 address in one UTC day that keep the pair apart from then on. */
+export const KEEP_APART_SHARED_PER_DAY = 3;
+
 /** The quick-match pair counts (src/matchmaking.ts), kept across restarts on Postgres. */
 export interface QuickMatchPairsRepo {
   /**
@@ -576,6 +579,12 @@ export interface QuickMatchPairsRepo {
    * at `at`. Past `max` pairs, the ones seen together least recently go.
    */
   record(pairs: Array<{ a: string; b: string; shared: boolean }>, at: number, max: number): Promise<void>;
+  /**
+   * The accounts kept apart from this one at quick match for good: pairs that shared an IPv4
+   * address at `KEEP_APART_SHARED_PER_DAY` (3) tables in one UTC day (`record` counts them). A
+   * kept-apart pair is never forgotten: `max` counts only the pairs that are not kept apart.
+   */
+  keptApart(userId: string): Promise<string[]>;
   /** Pairs that sat together at `min` or more tables, most often first (then by `a`, `b`), at most `limit`. */
   frequent(min: number, limit: number): Promise<QuickMatchPairRecord[]>;
 }

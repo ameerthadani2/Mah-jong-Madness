@@ -11,6 +11,7 @@ import { anonymiseUserIn, moveMembershipsIn, type Club, type ClubBan, type ClubM
 import type { Pool, Queryable } from '../db';
 import type { PuzzleType } from '@mjm/engine';
 import {
+  KEEP_APART_SHARED_PER_DAY,
   DELETED_PLAYER_NAME,
   withoutName,
   type BlockRecord,
@@ -1527,14 +1528,24 @@ function pgQuickMatchPairs(q: Queryable): QuickMatchPairsRepo {
     async record(pairs, at, max) {
       const rows = pairs.filter((p) => p.a < p.b && isUuid(p.a) && isUuid(p.b));
       if (rows.length === 0) return;
+      // A table they shared an IPv4 address at counts towards that UTC day; the third in one day keeps them apart for good.
       await q.query(
-        `INSERT INTO quick_match_pairs (a, b, tables, shared_address, last_at)
-         SELECT x.a, x.b, 1, x.shared, $4 FROM unnest($1::uuid[], $2::uuid[], $3::int[]) AS x(a, b, shared)
+        `INSERT INTO quick_match_pairs (a, b, tables, shared_address, last_at, shared_day, shared_today, kept_apart)
+         SELECT x.a, x.b, 1, x.shared, $4, CASE WHEN x.shared = 1 THEN ($4::timestamptz AT TIME ZONE 'UTC')::date END, x.shared, x.shared >= $5
+         FROM unnest($1::uuid[], $2::uuid[], $3::int[]) AS x(a, b, shared)
          WHERE EXISTS (SELECT 1 FROM users WHERE id = x.a) AND EXISTS (SELECT 1 FROM users WHERE id = x.b)
-         ON CONFLICT (a, b) DO UPDATE SET tables = quick_match_pairs.tables + 1, shared_address = quick_match_pairs.shared_address + excluded.shared_address, last_at = excluded.last_at`,
-        [rows.map((p) => p.a), rows.map((p) => p.b), rows.map((p) => (p.shared ? 1 : 0)), toDate(at)],
+         ON CONFLICT (a, b) DO UPDATE SET tables = quick_match_pairs.tables + 1, shared_address = quick_match_pairs.shared_address + excluded.shared_address, last_at = excluded.last_at,
+           shared_day = CASE WHEN excluded.shared_address = 1 THEN excluded.shared_day ELSE quick_match_pairs.shared_day END,
+           shared_today = CASE WHEN excluded.shared_address = 0 THEN quick_match_pairs.shared_today WHEN quick_match_pairs.shared_day = excluded.shared_day THEN quick_match_pairs.shared_today + 1 ELSE 1 END,
+           kept_apart = quick_match_pairs.kept_apart OR (excluded.shared_address = 1 AND (CASE WHEN quick_match_pairs.shared_day = excluded.shared_day THEN quick_match_pairs.shared_today + 1 ELSE 1 END) >= $5)`,
+        [rows.map((p) => p.a), rows.map((p) => p.b), rows.map((p) => (p.shared ? 1 : 0)), toDate(at), KEEP_APART_SHARED_PER_DAY],
       );
-      await q.query('DELETE FROM quick_match_pairs WHERE (a, b) IN (SELECT a, b FROM quick_match_pairs ORDER BY last_at DESC, a, b OFFSET $1)', [max]);
+      await q.query('DELETE FROM quick_match_pairs WHERE (a, b) IN (SELECT a, b FROM quick_match_pairs WHERE NOT kept_apart ORDER BY last_at DESC, a, b OFFSET $1)', [max]);
+    },
+    async keptApart(userId) {
+      if (!isUuid(userId)) return [];
+      const res = await q.query<{ other: string }>('SELECT CASE WHEN a = $1 THEN b ELSE a END AS other FROM quick_match_pairs WHERE kept_apart AND (a = $1 OR b = $1) ORDER BY (CASE WHEN a = $1 THEN b ELSE a END)::text', [userId]);
+      return res.rows.map((r) => r.other);
     },
     async frequent(min, limit) {
       const res = await q.query<PairRow>('SELECT a, b, tables, shared_address, last_at FROM quick_match_pairs WHERE tables >= $1 ORDER BY tables DESC, a::text, b::text LIMIT $2', [min, limit]);

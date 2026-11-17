@@ -22,14 +22,16 @@ type Msg = { t: string; [k: string]: unknown };
 function queue(opts: { fillMs?: number; refuse?: Record<string, 'banned' | 'age_missing' | 'age_under'>; blocks?: Array<[string, string]>; devices?: Record<string, string> } = {}) {
   const clock = { now: 1_000_000 };
   const tables: string[][] = [];
+  const linked: Array<Array<[string, string]>> = [];
   const mm = new Matchmaker({
     now: () => clock.now,
     fillMs: opts.fillMs,
     check: async (id) => opts.refuse?.[id] ?? null,
     avoid: async (id) => (opts.blocks ?? []).flatMap(([a, b]) => (a === id ? [b] : b === id ? [a] : [])),
     device: async (peer) => (peer.sessionId ? (opts.devices?.[peer.sessionId] ?? null) : null),
-    openTable: (ids) => {
+    openTable: (ids, pairs) => {
       tables.push(ids);
+      linked.push(pairs);
       return `ROOM${tables.length}`;
     },
   });
@@ -49,7 +51,7 @@ function queue(opts: { fillMs?: number; refuse?: Record<string, 'banned' | 'age_
       mm.tick();
     }
   };
-  return { mm, clock, tables, join, advance };
+  return { mm, clock, tables, linked, join, advance };
 }
 
 const matched = (out: Msg[]) => out.find((m) => m.t === 'matched');
@@ -198,6 +200,47 @@ describe('one address or one device at a quick-match table', () => {
       ['a', 'd', 1, 1],
       ['b', 'd', 1, 0],
     ]);
+  });
+
+  it('opens the table with the pairs that queued from one address or one device, which never rate each other', async () => {
+    const q = queue({ devices: { s1: 'install-9', s4: 'install-9' } });
+    await q.join('a', { address: '203.0.113.7', sessionId: 's1' });
+    await q.join('b', { address: '198.51.100.4' });
+    await q.join('d', { address: '203.0.113.7' });
+    q.advance(20_000);
+    expect(q.tables).toEqual([['a', 'b', 'd']]);
+    expect(q.linked).toEqual([[['a', 'd']]]);
+  });
+
+  it('keeps a pair apart for good once it shared an IPv4 address at three tables in one day', async () => {
+    const q = queue();
+    for (let i = 0; i < 3; i++) {
+      await q.join('a', { address: '203.0.113.7' });
+      await q.join('b', { address: '203.0.113.7' });
+      q.advance(20_000);
+    }
+    expect(q.tables).toEqual([['a', 'b'], ['a', 'b'], ['a', 'b']]);
+    // From then on they are seated apart, with bots, from any address.
+    await q.join('a', { address: '203.0.113.7' });
+    await q.join('b', { address: '198.51.100.9' });
+    q.advance(20_000);
+    expect(q.tables.slice(3)).toEqual([['a'], ['b']]);
+  });
+
+  it('counts the shared tables per UTC day: two one day and one the next do not keep a pair apart', async () => {
+    const q = queue();
+    q.clock.now = Date.UTC(2026, 10, 17, 23, 59, 0);
+    for (let i = 0; i < 3; i++) {
+      await q.join('a', { address: '203.0.113.7' });
+      await q.join('b', { address: '203.0.113.7' });
+      q.advance(20_000);
+    }
+    expect(q.tables).toEqual([['a', 'b'], ['a', 'b'], ['a', 'b']]);
+    await q.join('a', { address: '203.0.113.7' });
+    await q.join('b', { address: '203.0.113.7' });
+    q.advance(20_000);
+    expect(q.tables.length).toBe(4);
+    expect(q.tables[3]).toEqual(['a', 'b']);
   });
 
   it('seats strangers from other addresses first: a shared IPv4 address waits for the next table', async () => {
