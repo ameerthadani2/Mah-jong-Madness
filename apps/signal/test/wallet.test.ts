@@ -163,6 +163,36 @@ describe('store events', () => {
     expect((await wallet.spend(u, 'theme.bamboo')).wallet).toMatchObject({ diamonds: 200, bonusDiamonds: 200 });
   });
 
+  it('refuses a spend while purchased diamonds are below zero, even when bonus diamonds would cover the price', async () => {
+    const { repos, wallet, user } = await setup();
+    const u = await user();
+    const buy = storeEvent(u, 'NON_RENEWING_PURCHASE', { storeProductId: 'diamonds.1300' });
+    await wallet.applyStoreEvent(buy);
+    await wallet.spend(u, 'theme.jade');
+    await wallet.applyStoreEvent(storeEvent(u, 'CANCELLATION', { storeProductId: 'diamonds.1300', transactionId: buy.transactionId, cancelReason: 'CUSTOMER_SUPPORT' }));
+    // -400 purchased and 5,000 bonus: the total covers any look, but the debt comes first.
+    await wallet.credit(u, 0, 'grant', null, 5000);
+    expect(await balance(repos, u)).toEqual([-400, 5000]);
+    await expect(wallet.spend(u, 'theme.bamboo')).rejects.toMatchObject({ code: 'insufficient' });
+    expect(await balance(repos, u)).toEqual([-400, 5000]);
+    expect((await wallet.summary(u)).cosmetics).not.toContain('theme.bamboo');
+  });
+
+  it('records no price (nor currency) for a purchase event whose price is negative, and credits the pack as usual', async () => {
+    const { repos, wallet, user } = await setup();
+    const u = await user();
+    await wallet.applyStoreEvent(storeEvent(u, 'NON_RENEWING_PURCHASE', { storeProductId: 'diamonds.600', price: -4.99 }));
+    await wallet.applyStoreEvent(storeEvent(u, 'NON_RENEWING_PURCHASE', { storeProductId: 'diamonds.600', price: 0 }));
+    await wallet.applyStoreEvent(storeEvent(u, 'NON_RENEWING_PURCHASE', { storeProductId: 'diamonds.600', price: Number.NaN }));
+    const purchases = await repos.wallet.listPurchases(u);
+    expect(purchases.map((p) => [p.price, p.currency])).toEqual([
+      [null, null],
+      [0, 'USD'],
+      [null, null],
+    ]);
+    expect((await balance(repos, u))[0]).toBeGreaterThan(0);
+  });
+
   it('grants, extends, refunds and expires a subscription, ignoring stale events', async () => {
     const { repos, wallet, user, advance, now } = await setup();
     const u = await user();

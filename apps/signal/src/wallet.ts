@@ -523,13 +523,15 @@ export class WalletService {
   /** `periodEndsAt`: for a subscription's first purchase or renewal, the end of the period it paid for. */
   private recordPurchase(tx: Repos, e: StoreEvent, userId: string, productId: string, transactionId: string, at: number, periodEndsAt: number | null = null) {
     const currency = e.currency && /^[A-Z]{3}$/.test(e.currency) ? e.currency : null;
+    // A purchase has no negative (or non-numeric) price: such a figure is not recorded as given.
+    const price = typeof e.price === 'number' && Number.isFinite(e.price) && e.price >= 0 ? e.price : null;
     return tx.wallet.recordPurchase({
       userId,
       store: e.store,
       transactionId,
       productId,
-      price: e.price,
-      currency: e.price === null ? null : currency,
+      price,
+      currency: price === null ? null : currency,
       eventId: `${e.vendor}:${e.eventId}`,
       raw: e.raw,
       createdAt: at,
