@@ -26,7 +26,7 @@
 import type { IncomingMessage } from 'node:http';
 import { cleanText } from '@mjm/net';
 import { adminAuthorised } from './admin';
-import { DELETED_PLAYER_NAME, PUZZLE_FLAG_STATUSES, REPORT_RESOLUTIONS, type PuzzleFlagRecord, type PuzzleFlagStatus, type ReportRecord, type ReportResolution, type Repos, type UserRecord } from './repos/types';
+import { DELETED_PLAYER_NAME, PUZZLE_FLAG_STATUSES, REPORT_RESOLUTIONS, type PuzzleFlagRecord, type PuzzleFlagStatus, type ReportRecord, type ReportResolution, type Repos, type RushRunRecord, type UserRecord } from './repos/types';
 import type { QuickMatchPair } from './matchmaking';
 import { CLUB_LIMITS } from './clubs';
 
@@ -537,6 +537,7 @@ export function blockRoutes<R>(r: ModerationRouteFactory<R>, deps: ModerationDep
 /** Report statuses the queue can be listed by. */
 const REPORT_STATUSES: ReadonlyArray<ReportRecord['status']> = ['open', 'actioned', 'dismissed'];
 
+const heldRunJson = (run: RushRunRecord) => ({ runId: run.id, userId: run.userId, finishedAt: iso(run.finishedAt), solved: run.solved, wrong: run.wrong, seconds: run.seconds, score: run.score, held: run.held, ranked: run.ranked });
 const flagJson = (f: PuzzleFlagRecord) => ({ userId: f.userId, status: f.status, reason: f.reason, flaggedAt: iso(f.flaggedAt), reviewedAt: iso(f.reviewedAt) });
 
 export function adminModerationRoutes<R>(r: ModerationRouteFactory<R>, deps: ModerationDeps): R[] {
@@ -662,7 +663,21 @@ export function adminModerationRoutes<R>(r: ModerationRouteFactory<R>, deps: Mod
           recent: recent.map((x) => ({ kind: x.kind, at: iso(x.at), seconds: x.seconds, answers: x.answers, solved: x.solved, wrong: x.wrong })),
         });
       }
-      return { flags: out };
+      // Ranked Rush runs over the ceiling of puzzles solved (puzzles.ts RUSH_HOLD_SOLVED), held off the board until confirmed.
+      const held = [];
+      for (const run of await repos.rushRuns.listHeld(limit)) {
+        const u = await repos.users.get(run.userId);
+        held.push({ ...heldRunJson(run), account: u ? await accountJson(u) : { id: run.userId, deleted: true, displayName: DELETED_PLAYER_NAME } });
+      }
+      return { flags: out, heldRuns: held };
+    }),
+    r('POST', '/api/admin/puzzle-flags/rush-runs/:id', async (ctx) => {
+      admin(ctx);
+      const action = ctx.body.action;
+      if (action !== 'confirm' && action !== 'reject') throw new ModerationError(400, 'invalid', 'action must be confirm or reject');
+      const run = await repos.rushRuns.reviewHeld(String(ctx.params.id ?? ''), action === 'confirm');
+      if (!run) throw new ModerationError(404, 'not_found', 'No held Puzzle Rush run with that id');
+      return { ok: true, run: heldRunJson(run) };
     }),
     r('POST', '/api/admin/puzzle-flags/:id', async (ctx) => {
       admin(ctx);

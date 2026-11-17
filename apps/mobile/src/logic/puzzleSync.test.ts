@@ -105,6 +105,16 @@ describe('results under the server’s human-time floors', () => {
       expect(puzzleErrorMessage(out.error).key).toBe('puzzles.server.errors.tooFastToRank');
     }
   });
+
+  it('says a Rush run the server held over its ceiling waits for a person, not that it was too fast', async () => {
+    const { server } = fake({
+      finishRush: async (id) => ({ runId: id, solved: 40, wrong: 1, seconds: 180, score: 4000, ranked: false, held: true, answers: [], rating: { rating: 1000, change: 0, rated: 0 } }) as RushFinish,
+    });
+    const out = await submitRush(server, await openRush(server, 'x'), 40);
+    expect(out).toMatchObject({ ranked: false, down: false, error: { code: 'rush_held' } });
+    if (out.ranked) throw new Error('ranked');
+    expect(puzzleErrorMessage(out.error).key).toBe('puzzles.server.errors.rushHeld');
+  });
 });
 
 describe('Puzzle Rush through the server', () => {

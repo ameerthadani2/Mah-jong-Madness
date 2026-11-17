@@ -1633,6 +1633,7 @@ interface RushRunRow {
   served_index: number;
   served_at: Date;
   inhuman: boolean;
+  held: boolean;
 }
 
 const rushRunFromRow = (r: RushRunRow): RushRunRecord => ({
@@ -1650,10 +1651,11 @@ const rushRunFromRow = (r: RushRunRow): RushRunRecord => ({
   servedIndex: r.served_index,
   servedAt: r.served_at.getTime(),
   inhuman: r.inhuman,
+  held: r.held,
 });
 
 function pgRushRuns(q: Queryable): RushRunsRepo {
-  const COLS = 'id, user_id, seed, started_at, expires_at, finished_at, solved, wrong, seconds, score, ranked, served_index, served_at, inhuman';
+  const COLS = 'id, user_id, seed, started_at, expires_at, finished_at, solved, wrong, seconds, score, ranked, served_index, served_at, inhuman, held';
   return {
     async create(r) {
       const res = await q.query<RushRunRow>('INSERT INTO puzzle_rush_runs (id, user_id, seed, started_at, expires_at, served_at) VALUES ($1, $2, $3, $4, $5, $4) RETURNING ' + COLS, [
@@ -1699,9 +1701,18 @@ function pgRushRuns(q: Queryable): RushRunsRepo {
     async finish(id, r) {
       if (!isUuid(id)) return null;
       const res = await q.query<RushRunRow>(
-        'UPDATE puzzle_rush_runs SET finished_at = $2, solved = $3, wrong = $4, seconds = $5, score = $6, ranked = $7, inhuman = $8 WHERE id = $1 AND finished_at IS NULL RETURNING ' + COLS,
-        [id, toDate(r.finishedAt), r.solved, r.wrong, r.seconds, r.score, r.ranked ?? true, r.inhuman ?? false],
+        'UPDATE puzzle_rush_runs SET finished_at = $2, solved = $3, wrong = $4, seconds = $5, score = $6, ranked = $7, inhuman = $8, held = $9 WHERE id = $1 AND finished_at IS NULL RETURNING ' + COLS,
+        [id, toDate(r.finishedAt), r.solved, r.wrong, r.seconds, r.score, r.ranked ?? true, r.inhuman ?? false, r.held ?? false],
       );
+      return res.rows[0] ? rushRunFromRow(res.rows[0]) : null;
+    },
+    async listHeld(limit) {
+      const res = await q.query<RushRunRow>('SELECT ' + COLS + ' FROM puzzle_rush_runs WHERE held AND finished_at IS NOT NULL ORDER BY finished_at, id LIMIT $1', [Math.max(1, Math.min(1000, Math.floor(limit)))]);
+      return res.rows.map(rushRunFromRow);
+    },
+    async reviewHeld(id, confirmed) {
+      if (!isUuid(id)) return null;
+      const res = await q.query<RushRunRow>('UPDATE puzzle_rush_runs SET held = false, ranked = $2 WHERE id = $1 AND held RETURNING ' + COLS, [id, confirmed]);
       return res.rows[0] ? rushRunFromRow(res.rows[0]) : null;
     },
     async countStartedSince(userId, since) {

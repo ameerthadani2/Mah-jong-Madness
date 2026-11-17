@@ -105,11 +105,35 @@ export const RUSH_STEADY_CV = 0.15;
 export const RUSH_SNAP_MS = 800;
 export const RUSH_SNAP_MAX = 3;
 /**
+ * People slow down as Rush gets harder (docs/API.md, "Plausible answer times"). Once a run has at
+ * least `RUSH_SLOWDOWN_MIN_HARD` answers at the hardest difficulty (puzzle 16 on), their mean time
+ * is compared with the mean of the run's first fifteen answers (easy and medium); a run whose hard
+ * answers took less than `RUSH_SLOWDOWN_MIN_RATIO` times as long, at under `RUSH_SLOWDOWN_PACE_MS`
+ * a hard answer, is inhuman. A script that paces itself evenly, however jittered, keeps that ratio
+ * near 1; a player who takes their time on every puzzle alike is left alone, since at that pace a
+ * run solves no more than an honest one does. Provisional, like the thresholds above:
+ * set from the sixth assessment's jittered script (2 to 4.1 s an answer, two deliberate mistakes)
+ * and a simulated honest player whose times grow with difficulty, not from measured play.
+ */
+export const RUSH_SLOWDOWN_MIN_HARD = 5;
+export const RUSH_SLOWDOWN_MIN_RATIO = 1.2;
+export const RUSH_SLOWDOWN_PACE_MS = 6000;
+/** The answers of a run that count as its earlier, easier ones for the slowdown check (Rush is easy for 5 puzzles, medium for 10). */
+export const RUSH_SLOWDOWN_EARLY = 15;
+/**
  * A Rush run judged inhuman by its answer times counts as this many results toward the flag: the
  * stamps of fifteen answers or more are stronger evidence than one total time, so one such run is
  * enough to flag the account (an admin clears a flag that was wrong).
  */
 export const RUSH_TIMING_FLAG_WEIGHT = 2;
+/**
+ * A ceiling on puzzles solved in one ranked Rush run (docs/API.md, "Plausible answer times"): a run
+ * that would rank with more than `RUSH_HOLD_SOLVED` solved is recorded but held off the Rush board
+ * until an admin confirms it in the puzzle flag view (GET /api/admin/puzzle-flags). Provisional:
+ * the sixth assessment's simulated honest players solve 17 to 26 in three minutes and its jittered
+ * script 56; set from those, not from measured play.
+ */
+export const RUSH_HOLD_SOLVED = 35;
 /** An answer stamped this long after the run's three minutes is not counted (it was made after the clock ran out on the phone). */
 export const RUSH_ANSWER_GRACE_MS = 2000;
 
@@ -126,6 +150,13 @@ export function rushTiming(answers: ReadonlyArray<Pick<RushAnswerRecord, 'served
   if (cv < RUSH_STEADY_CV) return { ms, inhuman: `answer times machine-steady (coefficient of variation ${cv.toFixed(3)})` };
   const snaps = ms.filter((x) => x < RUSH_SNAP_MS).length;
   if (snaps > RUSH_SNAP_MAX) return { ms, inhuman: `${snaps} answers under ${RUSH_SNAP_MS} ms` };
+  // The answers come in order from the run's first puzzle, so an answer's position is its index.
+  const hard = ms.slice(RUSH_SLOWDOWN_EARLY);
+  if (hard.length >= RUSH_SLOWDOWN_MIN_HARD) {
+    const early = ms.slice(0, RUSH_SLOWDOWN_EARLY).reduce((a, b) => a + b, 0) / RUSH_SLOWDOWN_EARLY;
+    const late = hard.reduce((a, b) => a + b, 0) / hard.length;
+    if (late < RUSH_SLOWDOWN_PACE_MS && late < early * RUSH_SLOWDOWN_MIN_RATIO) return { ms, inhuman: `no slower on hard puzzles (${(late / 1000).toFixed(2)} s an answer against ${(early / 1000).toFixed(2)} s on the first ${RUSH_SLOWDOWN_EARLY})` };
+  }
   return { ms, inhuman: null };
 }
 
@@ -331,8 +362,10 @@ export function puzzleRoutes<R>(r: PuzzleRouteFactory<R>, deps: PuzzleDeps): R[]
     // Under the floor (the answers average under 1.5 s each over the run's time) or inhuman answer times: recorded, not ranked.
     const underFloor = answers.length > 0 && elapsedMs / answers.length < RUSH_RANK_FLOOR_MS;
     const inhuman = timing.inhuman !== null;
-    const ranked = !underFloor && !inhuman;
-    const finished = await tx.rushRuns.finish(run.id, { finishedAt: endAt, solved, wrong, seconds, score, ranked, inhuman });
+    // More solved than the ceiling: held off the board until an admin confirms the run.
+    const held = !underFloor && !inhuman && solved > RUSH_HOLD_SOLVED;
+    const ranked = !underFloor && !inhuman && !held;
+    const finished = await tx.rushRuns.finish(run.id, { finishedAt: endAt, solved, wrong, seconds, score, ranked, inhuman, held });
     if (!finished) throw new PuzzleError(409, 'run_finished', 'This run has already been finished');
     // Rush answers do not move the rating (the engine's `movesPuzzleRating('rush')`): `rating` reports it unchanged.
     const rated = movesPuzzleRating('rush') ? answers.map((x) => ({ type: x.type, difficulty: puzzleDifficulty(rushRunPuzzle(run.seed, x.index), rushDifficultyAt(x.index)), correct: x.correct })) : [];
@@ -349,6 +382,7 @@ export function puzzleRoutes<R>(r: PuzzleRouteFactory<R>, deps: PuzzleDeps): R[]
       score,
       ranked,
       inhuman,
+      held,
       answers: answers.map((x, i) => ({ index: x.index, type: x.type, correct: x.correct, ms: timing.ms[i] })),
       rating: ratingJson(rating),
     };

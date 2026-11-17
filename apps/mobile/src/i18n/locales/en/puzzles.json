@@ -178,6 +178,7 @@
       "alreadyPlayed": "You have already played today's puzzle. Come back tomorrow for a new one.",
       "rushTooFast": "That run was answered faster than its clock allows, so it was not ranked.",
       "tooFastToRank": "The game server timed this faster than anyone can read a hand, so it was recorded but not ranked.",
+      "rushHeld": "An outstanding run! It is recorded, and a person checks runs this strong before they go on the leaderboard.",
       "runNotFound": "The game server does not know this run. Start a new one.",
       "runFinished": "This run has already been recorded.",
       "runExpired": "This run has expired. Start a new run to play for the leaderboards.",

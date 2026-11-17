@@ -624,6 +624,8 @@ export interface RushRunRecord {
   servedAt: number;
   /** True once finished with answer times no person makes (docs/API.md, "Plausible answer times"): counts toward the automation flag. */
   inhuman: boolean;
+  /** True while a run that solved more than the ceiling waits for an admin (off the Rush board until confirmed). */
+  held: boolean;
 }
 
 /** One answer of a Rush run, as the server judged and stamped it. */
@@ -646,6 +648,8 @@ export interface RushRunResult {
   ranked?: boolean;
   /** Default false; true when the answer times were judged inhuman. */
   inhuman?: boolean;
+  /** Default false; true holds the run off the Rush board until an admin confirms it (`ranked` is then false). */
+  held?: boolean;
 }
 
 export interface RushRunsRepo {
@@ -663,6 +667,10 @@ export interface RushRunsRepo {
   answers(id: string): Promise<RushAnswerRecord[]>;
   /** Writes the result of an unfinished run; null when the run is missing or already finished (a run is finished once). */
   finish(id: string, result: RushRunResult): Promise<RushRunRecord | null>;
+  /** Finished runs held for an admin, oldest first. */
+  listHeld(limit: number): Promise<RushRunRecord[]>;
+  /** An admin's decision on a held run: confirmed puts it on the Rush board, rejected keeps it off. Null when the run is not held. */
+  reviewHeld(id: string, confirmed: boolean): Promise<RushRunRecord | null>;
   /** How many runs the account was issued at or after `since`, finished or not (the free Rush meter counts these). */
   countStartedSince(userId: string, since: number): Promise<number>;
   moveToUser(fromUserId: string, toUserId: string): Promise<number>;

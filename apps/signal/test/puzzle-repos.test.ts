@@ -86,6 +86,26 @@ function contract(name: string, repos: () => Repos) {
       expect(await r.rushRuns.get(id)).not.toBeNull();
     });
 
+    it('keeps a held Rush run off the board until an admin decides it, and lists held runs oldest first', async () => {
+      const r = repos();
+      const a = await user();
+      const [x, y, z] = [randomUUID(), randomUUID(), randomUUID()];
+      for (const [i, id] of [x, y, z].entries()) await r.rushRuns.create({ id, userId: a, seed: `rush-held-${i}`, startedAt: T0 + i, expiresAt: T0 + 1_800_000 });
+      expect(await r.rushRuns.get(x)).toMatchObject({ held: false });
+      expect(await r.rushRuns.finish(y, { finishedAt: T0 + 9000, solved: 40, wrong: 1, seconds: 180, score: 4000, ranked: false, held: true })).toMatchObject({ held: true, ranked: false });
+      expect(await r.rushRuns.finish(x, { finishedAt: T0 + 10_000, solved: 41, wrong: 0, seconds: 180, score: 4100, ranked: false, held: true })).toMatchObject({ held: true });
+      expect(await r.rushRuns.finish(z, { finishedAt: T0 + 8000, solved: 20, wrong: 1, seconds: 180, score: 2000 })).toMatchObject({ held: false, ranked: true });
+      expect((await r.rushRuns.listHeld(10)).map((run) => run.id)).toEqual([y, x]);
+      expect((await r.rushRuns.listHeld(1)).map((run) => run.id)).toEqual([y]);
+      expect(await r.rushRuns.reviewHeld(z, true)).toBeNull();
+      expect(await r.rushRuns.reviewHeld('not-a-uuid', true)).toBeNull();
+      expect(await r.rushRuns.reviewHeld(y, true)).toMatchObject({ id: y, held: false, ranked: true });
+      expect(await r.rushRuns.reviewHeld(x, false)).toMatchObject({ id: x, held: false, ranked: false });
+      expect(await r.rushRuns.reviewHeld(y, false)).toBeNull();
+      expect(await r.rushRuns.listHeld(10)).toEqual([]);
+      expect(await r.rushRuns.get(y)).toMatchObject({ held: false, ranked: true });
+    });
+
     it('stores each Rush answer once, only for the puzzle being served, serves the next at its time and keeps an inhuman verdict', async () => {
       const r = repos();
       const a = await user();

@@ -61,6 +61,7 @@ export type DailyOutcome =
   | { ranked: false; error?: unknown; down: boolean };
 
 /** A result the server recorded under a human-time floor (docs/API.md): shown as not ranked, with its own line. */
+const rushHeld = () => new ApiError('The game server recorded this run and holds it off the leaderboard until a person has checked it', 'rush_held');
 const tooFastToRank = () => new ApiError('The game server recorded this result but did not rank it: it was faster than the human-time floor', 'too_fast_to_rank');
 /** A reply without the question or the revealed puzzle it must carry. */
 const badReply = () => new ApiError('The game server sent a reply the app could not read', 'puzzle_bad_reply');
@@ -119,7 +120,7 @@ export type RushOutcome =
 
 /** The server's finished run as the screen shows it. */
 function rushOutcomeOf(r: RushFinish, localSolved: number, log: (msg: string) => void): RushOutcome {
-  if (r.ranked === false) return { ranked: false, error: tooFastToRank(), down: false };
+  if (r.ranked === false) return { ranked: false, error: r.held ? rushHeld() : tooFastToRank(), down: false };
   const mismatch = r.solved !== localSolved;
   if (mismatch) log(`[puzzles] the server counted ${r.solved} solved in the Rush run; the device counted ${localSolved}`);
   return { ranked: true, solved: r.solved, seconds: r.seconds, score: r.score, rating: r.rating, mismatch };

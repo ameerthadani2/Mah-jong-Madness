@@ -80,6 +80,8 @@ export interface RushFinish {
   ranked?: boolean;
   /** True when the answer times were judged inhuman (docs/API.md, "Plausible answer times"). */
   inhuman?: boolean;
+  /** True when the run solved more than the server's ceiling: recorded, and off the board until an admin confirms it. */
+  held?: boolean;
   answers: Array<{ index: number; type: PuzzleType; correct: boolean; ms?: number }>;
   rating: ServerRating;
 }
@@ -203,6 +205,8 @@ const PUZZLE_ERRORS: Readonly<Record<string, string>> = {
   rush_too_fast: 'puzzles.server.errors.rushTooFast',
   // This client's own: the server recorded a result under a human-time floor without ranking it.
   too_fast_to_rank: 'puzzles.server.errors.tooFastToRank',
+  // This client's own: the server held a run over its ceiling of puzzles solved for an admin to confirm.
+  rush_held: 'puzzles.server.errors.rushHeld',
   // The server's free Rush meter: the Shop's own Coach Gold message, as the Rush screen's lock shows it.
   rush_daily_limit: 'shop.rushUsed',
   run_not_found: 'puzzles.server.errors.runNotFound',

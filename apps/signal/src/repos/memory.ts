@@ -874,7 +874,7 @@ function memoryRushRuns(s: MemoryState): RushRunsRepo {
   return {
     async create(r) {
       if (s.rushRuns.has(r.id)) throw new Error(`Run ${r.id} already exists`);
-      const row: RushRunRecord = { ...copy(r), finishedAt: null, solved: null, wrong: null, seconds: null, score: null, ranked: true, servedIndex: 0, servedAt: r.startedAt, inhuman: false };
+      const row: RushRunRecord = { ...copy(r), finishedAt: null, solved: null, wrong: null, seconds: null, score: null, ranked: true, servedIndex: 0, servedAt: r.startedAt, inhuman: false, held: false };
       s.rushRuns.set(row.id, row);
       return copy(row);
     },
@@ -902,7 +902,20 @@ function memoryRushRuns(s: MemoryState): RushRunsRepo {
     async finish(id, result) {
       const row = s.rushRuns.get(id);
       if (!row || row.finishedAt !== null) return null;
-      Object.assign(row, copy(result), { ranked: result.ranked ?? true, inhuman: result.inhuman ?? false });
+      Object.assign(row, copy(result), { ranked: result.ranked ?? true, inhuman: result.inhuman ?? false, held: result.held ?? false });
+      return copy(row);
+    },
+    async listHeld(limit) {
+      return [...s.rushRuns.values()]
+        .filter((run) => run.held && run.finishedAt !== null)
+        .sort((a, b) => a.finishedAt! - b.finishedAt! || a.id.localeCompare(b.id))
+        .slice(0, Math.max(1, Math.min(1000, Math.floor(limit))))
+        .map(copy);
+    },
+    async reviewHeld(id, confirmed) {
+      const row = s.rushRuns.get(id);
+      if (!row || !row.held) return null;
+      Object.assign(row, { held: false, ranked: confirmed });
       return copy(row);
     },
     async countStartedSince(userId, since) {
