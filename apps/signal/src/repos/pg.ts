@@ -9,6 +9,7 @@
  */
 import { anonymiseUserIn, moveMembershipsIn, type Club, type ClubBan, type ClubMember, type ClubSettings, type ClosedMatch, type ClubTable, type FormerMember, type Identity, type OwnerLapse, type SeasonRecord } from '../clubs';
 import type { Pool, Queryable } from '../db';
+import type { PuzzleType } from '@mjm/engine';
 import {
   DELETED_PLAYER_NAME,
   withoutName,
@@ -62,6 +63,7 @@ import {
   type PuzzleFlagsRepo,
   type PuzzleFlagStatus,
   type RecentPuzzleResult,
+  type RushAnswerRecord,
 } from './types';
 
 type Tx = <T>(fn: (q: Queryable) => Promise<T>) => Promise<T>;
@@ -1489,6 +1491,9 @@ interface RushRunRow {
   seconds: number | null;
   score: number | null;
   ranked: boolean;
+  served_index: number;
+  served_at: Date;
+  inhuman: boolean;
 }
 
 const rushRunFromRow = (r: RushRunRow): RushRunRecord => ({
@@ -1503,13 +1508,16 @@ const rushRunFromRow = (r: RushRunRow): RushRunRecord => ({
   seconds: r.seconds,
   score: r.score,
   ranked: r.ranked,
+  servedIndex: r.served_index,
+  servedAt: r.served_at.getTime(),
+  inhuman: r.inhuman,
 });
 
 function pgRushRuns(q: Queryable): RushRunsRepo {
-  const COLS = 'id, user_id, seed, started_at, expires_at, finished_at, solved, wrong, seconds, score, ranked';
+  const COLS = 'id, user_id, seed, started_at, expires_at, finished_at, solved, wrong, seconds, score, ranked, served_index, served_at, inhuman';
   return {
     async create(r) {
-      const res = await q.query<RushRunRow>('INSERT INTO puzzle_rush_runs (id, user_id, seed, started_at, expires_at) VALUES ($1, $2, $3, $4, $5) RETURNING ' + COLS, [
+      const res = await q.query<RushRunRow>('INSERT INTO puzzle_rush_runs (id, user_id, seed, started_at, expires_at, served_at) VALUES ($1, $2, $3, $4, $5, $4) RETURNING ' + COLS, [
         r.id,
         r.userId,
         r.seed,
@@ -1523,11 +1531,37 @@ function pgRushRuns(q: Queryable): RushRunsRepo {
       const res = await q.query<RushRunRow>('SELECT ' + COLS + ' FROM puzzle_rush_runs WHERE id = $1', [id]);
       return res.rows[0] ? rushRunFromRow(res.rows[0]) : null;
     },
+    async getForUpdate(id) {
+      if (!isUuid(id)) return null;
+      const res = await q.query<RushRunRow>('SELECT ' + COLS + ' FROM puzzle_rush_runs WHERE id = $1 FOR UPDATE', [id]);
+      return res.rows[0] ? rushRunFromRow(res.rows[0]) : null;
+    },
+    async answer(id, a) {
+      if (!isUuid(id)) return false;
+      // One statement: the answer is stored only while the run waits on that very puzzle, and the next is served at the answer's time.
+      const res = await q.query(
+        `WITH served AS (
+           UPDATE puzzle_rush_runs SET served_index = served_index + 1, served_at = $6
+            WHERE id = $1 AND finished_at IS NULL AND served_index = $2 RETURNING id)
+         INSERT INTO puzzle_rush_answers (run_id, idx, type, correct, served_at, answered_at)
+         SELECT id, $2, $3, $4, $5, $6 FROM served ON CONFLICT DO NOTHING`,
+        [id, a.index, a.type, a.correct, toDate(a.servedAt), toDate(a.answeredAt)],
+      );
+      return (res.rowCount ?? 0) === 1;
+    },
+    async answers(id) {
+      if (!isUuid(id)) return [];
+      const res = await q.query<{ idx: number; type: PuzzleType; correct: boolean; served_at: Date; answered_at: Date }>(
+        'SELECT idx, type, correct, served_at, answered_at FROM puzzle_rush_answers WHERE run_id = $1 ORDER BY idx',
+        [id],
+      );
+      return res.rows.map((r): RushAnswerRecord => ({ index: r.idx, type: r.type, correct: r.correct, servedAt: r.served_at.getTime(), answeredAt: r.answered_at.getTime() }));
+    },
     async finish(id, r) {
       if (!isUuid(id)) return null;
       const res = await q.query<RushRunRow>(
-        'UPDATE puzzle_rush_runs SET finished_at = $2, solved = $3, wrong = $4, seconds = $5, score = $6, ranked = $7 WHERE id = $1 AND finished_at IS NULL RETURNING ' + COLS,
-        [id, toDate(r.finishedAt), r.solved, r.wrong, r.seconds, r.score, r.ranked ?? true],
+        'UPDATE puzzle_rush_runs SET finished_at = $2, solved = $3, wrong = $4, seconds = $5, score = $6, ranked = $7, inhuman = $8 WHERE id = $1 AND finished_at IS NULL RETURNING ' + COLS,
+        [id, toDate(r.finishedAt), r.solved, r.wrong, r.seconds, r.score, r.ranked ?? true, r.inhuman ?? false],
       );
       return res.rows[0] ? rushRunFromRow(res.rows[0]) : null;
     },
@@ -1638,16 +1672,16 @@ function pgPuzzleFlags(q: Queryable): PuzzleFlagsRepo {
     },
     async recentResults(userId, after, limit) {
       if (!isUuid(userId)) return [];
-      const res = await q.query<{ kind: 'daily' | 'rush'; at: Date; seconds: number; solved: number; wrong: number }>(
-        `(SELECT 'daily' AS kind, created_at AS at, seconds, CASE WHEN correct THEN 1 ELSE 0 END AS solved, CASE WHEN correct THEN 0 ELSE 1 END AS wrong
+      const res = await q.query<{ kind: 'daily' | 'rush'; at: Date; seconds: number; solved: number; wrong: number; inhuman: boolean }>(
+        `(SELECT 'daily' AS kind, created_at AS at, seconds, CASE WHEN correct THEN 1 ELSE 0 END AS solved, CASE WHEN correct THEN 0 ELSE 1 END AS wrong, false AS inhuman
             FROM puzzle_results WHERE user_id = $1 AND kind = 'daily' AND created_at > $2 ORDER BY created_at DESC LIMIT $3)
          UNION ALL
-         (SELECT 'rush' AS kind, finished_at AS at, seconds, solved, wrong
+         (SELECT 'rush' AS kind, finished_at AS at, seconds, solved, wrong, inhuman
             FROM puzzle_rush_runs WHERE user_id = $1 AND finished_at IS NOT NULL AND finished_at > $2 ORDER BY finished_at DESC LIMIT $3)
          ORDER BY at DESC LIMIT $3`,
         [userId, toDate(after), Math.max(1, Math.min(100, Math.floor(limit)))],
       );
-      return res.rows.map((r): RecentPuzzleResult => ({ kind: r.kind, at: r.at.getTime(), seconds: Number(r.seconds), answers: Number(r.solved) + Number(r.wrong), solved: Number(r.solved), wrong: Number(r.wrong) }));
+      return res.rows.map((r): RecentPuzzleResult => ({ kind: r.kind, at: r.at.getTime(), seconds: Number(r.seconds), answers: Number(r.solved) + Number(r.wrong), solved: Number(r.solved), wrong: Number(r.wrong), ...(r.kind === 'rush' ? { inhuman: r.inhuman } : {}) }));
     },
     async moveToUser(fromUserId, toUserId) {
       if (!isUuid(fromUserId) || !isUuid(toUserId)) return;

@@ -17,6 +17,10 @@ import {
   rushDifficultyAt,
   rushRunPuzzle,
   rushScore,
+  isPuzzleAnswerInput,
+  judgeRushAnswer,
+  RUSH_SECONDS,
+  RUSH_STRIKES,
   type AnyPuzzle,
   type PuzzleAnswerInput,
 } from '@mjm/engine';
@@ -26,7 +30,7 @@ import { ClubRegistry, type Club } from '../src/clubs';
 import { createPool, type Pool } from '../src/db';
 import { BucketTable } from '../src/limits';
 import { migrate } from '../src/migrate';
-import { RUSH_RUN_TTL_MS } from '../src/puzzles';
+import { RUSH_ACCURATE_PACE_MS, RUSH_ACCURATE_SHARE, RUSH_RUN_TTL_MS, RUSH_SNAP_MAX, RUSH_SNAP_MS, RUSH_STEADY_CV, RUSH_TIMING_FLAG_WEIGHT, RUSH_TIMING_MIN_ANSWERS, rushTiming } from '../src/puzzles';
 import { createMemoryRepos, createPgRepos, type Repos } from '../src/repos';
 import { RoomRegistry } from '../src/rooms';
 import { PEPPER, request } from './helpers';
@@ -66,7 +70,7 @@ function fixture(repos: Repos, opts: { limits?: boolean } = {}) {
     sessions,
     now,
     adminToken: ADMIN,
-    puzzles: { yieldTurn: async () => {}, ...(opts.limits ? {} : { submitLimiter: roomy, readLimiter: roomy, rushIpLimiter: roomy }) },
+    puzzles: { ...(opts.limits ? {} : { submitLimiter: roomy, answerLimiter: roomy, readLimiter: roomy, rushIpLimiter: roomy }) },
   });
   let n = 0;
   const call = (method: string, url: string, body?: unknown, headers: Record<string, string> = {}, ip?: string) =>
@@ -88,11 +92,48 @@ function fixture(repos: Repos, opts: { limits?: boolean } = {}) {
   const startRush = async (g: G) => {
     const res = await call('POST', '/api/puzzles/rush', {}, g.auth);
     expect(res.status).toBe(201);
-    return res.json as { runId: string; seed: string };
+    // The seed stays on the server (the test reads it from the store to work out answers).
+    expect(res.json.seed).toBeUndefined();
+    const seed = (await repos.rushRuns.get(res.json.runId as string))!.seed;
+    return { ...(res.json as { runId: string; next: { index: number; puzzle: AnyPuzzle } }), seed };
   };
   /** A run's answers: `pattern` of r (right) and w (wrong). */
   const rushAnswers = (seed: string, pattern: string) => [...pattern].map((c, i) => (c === 'r' ? right(rushRunPuzzle(seed, i)) : wrong(rushRunPuzzle(seed, i))));
-  const finish = (g: G, runId: string, answers: unknown[], extra: Json = {}) => call('POST', `/api/puzzles/rush/${runId}/finish`, { answers, ...extra }, g.auth);
+  const answer = (g: G, runId: string, index: number, a: unknown) => call('POST', `/api/puzzles/rush/${runId}/answer`, { index, answer: a }, g.auth);
+  /**
+   * Plays `answers` one at a time as if they had been made over the server-clock time the test let
+   * pass since the run started (up to the run's three minutes), with a human's uneven gaps (JITTER),
+   * then finishes the run at the test's time. Answers after the third wrong one are not sent (the
+   * run ends there). Anything that is not a list of answers goes to the finish route as it is.
+   */
+  const JITTER = [0.6, 1.4, 1.0, 0.8, 1.2];
+  const finish = async (g: G, runId: string, answers: unknown, extra: Json = {}) => {
+    const run = await repos.rushRuns.get(runId);
+    const plain = () => call('POST', `/api/puzzles/rush/${runId}/finish`, { ...extra, ...(Array.isArray(answers) ? {} : { answers }) }, g.auth);
+    if (!run || run.userId !== g.userId || run.finishedAt !== null || !Array.isArray(answers) || answers.length === 0) return plain();
+    let sent = answers.length;
+    for (let i = 0, w = 0; i < answers.length; i++) {
+      if (!isPuzzleAnswerInput(answers[i]) || (!judgeRushAnswer(run.seed, i, answers[i] as PuzzleAnswerInput).correct && ++w >= RUSH_STRIKES)) {
+        sent = i + 1;
+        break;
+      }
+    }
+    const end = clock.now;
+    const span = Math.min(end, run.startedAt + RUSH_SECONDS * 1000) - run.startedAt;
+    const weights = Array.from({ length: sent }, (_, i) => JITTER[i % JITTER.length]);
+    const total = weights.reduce((a, b) => a + b, 0);
+    let last: Awaited<ReturnType<typeof call>> | null = null;
+    for (let i = 0, cum = 0; i < sent; i++) {
+      cum += weights[i];
+      clock.now = run.startedAt + Math.round((span * cum) / total);
+      last = await answer(g, runId, i, answers[i]);
+      if (last.status !== 200) break;
+    }
+    clock.now = end;
+    if (last && last.status !== 200) return last;
+    if (last?.json.done) return { ...last, json: last.json.result as Json };
+    return plain();
+  };
   const board = async (g: G, path: string) => {
     const res = await call('GET', `/api/leaderboards/${path}`, undefined, g.auth);
     expect(res.status, res.body).toBe(200);
@@ -101,7 +142,7 @@ function fixture(repos: Repos, opts: { limits?: boolean } = {}) {
   /** Gives the account a live plan (`coach.gold.month`, `fourwinds.year`, ...) until `until` (default: a month on). */
   const plan = (g: G, entitlement = 'coach.gold.month', until = clock.now + 30 * DAY) =>
     repos.wallet.setEntitlement({ userId: g.userId, entitlement, expiresAt: until, source: 'store', updatedAt: clock.now });
-  return { clock, now, repos, sessions, clubs, call, guest, plan, startDaily, daily, startRush, rushAnswers, finish, board };
+  return { clock, now, repos, sessions, clubs, call, guest, plan, startDaily, daily, startRush, rushAnswers, answer, finish, board };
 }
 
 const TODAY = '2026-11-16';
@@ -210,9 +251,9 @@ function contract(name: string, repos: () => Repos) {
       expect((await f.finish(a, stale.runId, [])).json.error).toBe('run_expired');
       const quick = await f.startRush(a);
       f.clock.now += 2_000;
-      expect((await f.finish(a, quick.runId, f.rushAnswers(quick.seed, 'rrr'))).json.error).toBe('rush_too_fast');
       expect((await f.finish(a, quick.runId, ['x'])).json.error).toBe('invalid_answer');
-      expect((await f.finish(a, quick.runId, 'rr' as unknown as unknown[])).json.error).toBe('invalid');
+      // Answers travel one at a time: a list posted to finish is refused, not scored.
+      expect((await f.finish(a, quick.runId, 'rr' as unknown as unknown[])).json.error).toBe('answers_one_at_a_time');
       expect((await f.finish(a, 'nope', [])).json.error).toBe('run_not_found');
       expect((await f.finish(a, quick.runId, f.rushAnswers(quick.seed, 'rr'))).json).toMatchObject({ solved: 2, seconds: 2 });
     });
@@ -262,18 +303,19 @@ function contract(name: string, repos: () => Repos) {
       expect(mine(daily.rows)).toEqual(['Human']);
       expect(daily.me).toBeNull();
 
-      // Puzzle Rush: twenty answers in 29 s averages 1.45 s (not ranked); in 30 s, 1.5 s (ranked).
+      // Puzzle Rush: ten answers in 14 s averages 1.4 s (not ranked); in 15 s, 1.5 s (ranked). (Fewer than
+      // fifteen answers, so the answer-time checks below do not apply: this is the floor alone.)
       await f.plan(gold);
       const quick = await f.startRush(gold);
-      f.clock.now += 29_000;
-      const unranked = await f.finish(gold, quick.runId, f.rushAnswers(quick.seed, 'r'.repeat(20)));
-      expect(unranked.json).toMatchObject({ solved: 20, seconds: 29, ranked: false });
+      f.clock.now += 14_000;
+      const unranked = await f.finish(gold, quick.runId, f.rushAnswers(quick.seed, 'r'.repeat(10)));
+      expect(unranked.json).toMatchObject({ solved: 10, seconds: 14, ranked: false, inhuman: false });
       expect((await f.repos.rushRuns.get(quick.runId))?.ranked).toBe(false);
       expect((await f.board(gold, 'rush?period=day')).me).toBeNull();
       // (Another account: two results this close to the floors would flag one account, see below.)
       const paced = await f.startRush(edge);
-      f.clock.now += 30_000;
-      expect((await f.finish(edge, paced.runId, f.rushAnswers(paced.seed, 'r'.repeat(20)))).json).toMatchObject({ solved: 20, seconds: 30, ranked: true });
+      f.clock.now += 15_000;
+      expect((await f.finish(edge, paced.runId, f.rushAnswers(paced.seed, 'r'.repeat(10)))).json).toMatchObject({ solved: 10, seconds: 15, ranked: true });
       const rush = await f.board(gold, 'rush?period=day');
       expect(mine(rush.rows)).toEqual(['Edge']);
       // A run's third strike ends it: the judged answers set the pace, not the ones sent after it.
@@ -301,15 +343,16 @@ function contract(name: string, repos: () => Repos) {
       // Both answer the daily puzzle at a human pace and are on the daily board.
       await f.daily(bot, TODAY, dailyRight(TODAY), 12);
       await f.daily(human, TODAY, dailyRight(TODAY), 25);
-      // The bot paces itself just above the Rush floor (20 answers in 31 s, 1.55 s each): ranked, but at the floor.
-      expect(await run(bot, 'r'.repeat(20), 31_000)).toMatchObject({ ranked: true });
+      // The bot paces itself just above the Rush floor (14 answers in 21.7 s, 1.55 s each): ranked, but at the floor.
+      // (Under fifteen answers, so this is the total-time rule alone; the answer-time checks have their own test.)
+      expect(await run(bot, 'r'.repeat(14), 21_700)).toMatchObject({ ranked: true });
       expect(await flagOf(bot)).toBeNull();
       expect(mine((await f.board(human, 'rush?period=all')).rows)).toContain('Paced bot');
       // An honest pace (about 6 s an answer, a mistake or two) never counts, however often.
       for (let i = 0; i < 5; i++) await run(human, 'rrrrwrrrrrrw', 72_000);
       expect(await flagOf(human)).toBeNull();
       // The second result at the floor flags the bot: it is on no board, and sees its own row marked.
-      await run(bot, 'r'.repeat(20), 31_000);
+      await run(bot, 'r'.repeat(14), 21_700);
       expect(await flagOf(bot)).toBe('flagged');
       for (const path of ['rush?period=all', `daily?date=${TODAY}`]) {
         expect(mine((await f.board(human, path)).rows)).toEqual(['Human']);
@@ -334,16 +377,112 @@ function contract(name: string, repos: () => Repos) {
       expect(cleared.json).toMatchObject({ ok: true, flag: { status: 'cleared' } });
       expect(mine((await f.board(human, 'rush?period=all')).rows)).toContain('Paced bot');
       f.clock.now += 1000;
-      await run(bot, 'r'.repeat(20), 31_000);
+      await run(bot, 'r'.repeat(14), 21_700);
       expect(await flagOf(bot)).toBe('cleared');
-      // A perfect run at an inhuman pace (25 of 25 in 70 s, 2.8 s each) counts too.
-      expect(await run(bot, 'r'.repeat(25), 70_000)).toMatchObject({ ranked: true, wrong: 0 });
+      // A perfect run at an inhuman pace (12 of 12 in 33.6 s, 2.8 s each) counts too.
+      expect(await run(bot, 'r'.repeat(12), 33_600)).toMatchObject({ ranked: true, wrong: 0 });
       expect(await flagOf(bot)).toBe('flagged');
       // Confirmed: off the boards for good; the check never undoes it.
       expect((await f.call('POST', `/api/admin/puzzle-flags/${bot.userId}`, { action: 'confirm' }, admin)).json).toMatchObject({ flag: { status: 'confirmed' } });
       expect((await f.repos.puzzleFlags.flag(bot.userId, 'again', f.now())).status).toBe('confirmed');
       expect(mine((await f.board(human, 'rush?period=all')).rows)).toEqual(['Human']);
       expect((await f.call('GET', '/api/admin/puzzle-flags?status=confirmed', undefined, admin)).json.flags).toEqual(expect.arrayContaining([expect.objectContaining({ userId: bot.userId })]));
+    });
+
+    it('serves a ranked Rush run one puzzle at a time and judges and stamps each answer as it arrives', async () => {
+      const f = fixture(repos());
+      const [a, b] = [await f.guest('Ana'), await f.guest('Bo')];
+      await f.plan(a);
+      const run = await f.startRush(a);
+      // The first puzzle comes with the run: the engine's puzzle, under an id that does not give the seed away.
+      expect(run.next.index).toBe(0);
+      expect(run.next.puzzle).toEqual({ ...rushRunPuzzle(run.seed, 0), seed: `${run.runId}:0` });
+      expect(JSON.stringify({ ...run, seed: undefined })).not.toContain(run.seed.slice(5));
+      const p = (i: number) => rushRunPuzzle(run.seed, i);
+      // Only the puzzle being served can be answered: not the next one, not someone else's run.
+      f.clock.now += 5_000;
+      expect((await f.answer(a, run.runId, 1, right(p(1)))).json.error).toBe('not_served');
+      expect((await f.answer(b, run.runId, 0, right(p(0)))).json.error).toBe('run_not_found');
+      expect((await f.answer(a, run.runId, -1, right(p(0)))).json.error).toBe('invalid');
+      expect((await f.answer(a, run.runId, 0, 'x')).json.error).toBe('invalid_answer');
+      const first = await f.answer(a, run.runId, 0, right(p(0)));
+      expect(first.status, first.body).toBe(200);
+      expect(first.json).toMatchObject({ index: 0, counted: true, correct: true, type: p(0).type, solved: 1, wrong: 0, done: false });
+      expect(first.json.next).toEqual({ index: 1, type: p(1).type, puzzle: { ...p(1), seed: `${run.runId}:1` } });
+      // A second answer to the same puzzle is refused, and the first verdict stands.
+      expect((await f.answer(a, run.runId, 0, wrong(p(0)))).json.error).toBe('already_answered');
+      // Each answer is stamped by the server: the next puzzle was served at the first answer's time.
+      expect(await f.repos.rushRuns.get(run.runId)).toMatchObject({ servedIndex: 1, servedAt: f.now() });
+      f.clock.now += 7_000;
+      expect((await f.answer(a, run.runId, 1, wrong(p(1)))).json).toMatchObject({ correct: false, solved: 1, wrong: 1 });
+      f.clock.now += 4_000;
+      expect((await f.answer(a, run.runId, 2, wrong(p(2)))).json).toMatchObject({ wrong: 2, done: false });
+      f.clock.now += 9_000;
+      // The third wrong answer ends the run at its stamp (25 s), with the times the server measured.
+      const end = await f.answer(a, run.runId, 3, wrong(p(3)));
+      expect(end.json).toMatchObject({ done: true, next: null, result: { solved: 1, wrong: 3, seconds: 25, score: rushScore(1, 25), ranked: true, inhuman: false } });
+      expect(((end.json.result as Json).answers as Array<{ ms: number }>).map((x) => x.ms)).toEqual([5_000, 7_000, 4_000, 9_000]);
+      // A finished run takes no more answers and is not finished again.
+      expect((await f.answer(a, run.runId, 4, right(p(4)))).json.error).toBe('run_finished');
+      expect((await f.call('POST', `/api/puzzles/rush/${run.runId}/finish`, {}, a.auth)).json.error).toBe('run_finished');
+      expect((await f.repos.puzzleResults.listForUser(a.userId)).filter((x) => x.kind === 'rush').map((x) => x.seconds)).toEqual([5, 7, 4, 9]);
+
+      // The clock: an answer made after the three minutes (and the grace for the network) does not count; the run ends at three minutes.
+      const late = await f.startRush(a);
+      f.clock.now += 10_000;
+      await f.answer(a, late.runId, 0, right(rushRunPuzzle(late.seed, 0)));
+      f.clock.now += 175_000;
+      const over = await f.answer(a, late.runId, 1, right(rushRunPuzzle(late.seed, 1)));
+      expect(over.json).toMatchObject({ counted: false, done: true, result: { solved: 1, wrong: 0, seconds: 180 } });
+      // Finishing early ends the run at the finish, with the answers so far.
+      const early = await f.startRush(a);
+      f.clock.now += 8_000;
+      await f.answer(a, early.runId, 0, right(rushRunPuzzle(early.seed, 0)));
+      f.clock.now += 2_000;
+      expect((await f.call('POST', `/api/puzzles/rush/${early.runId}/finish`, {}, a.auth)).json).toMatchObject({ solved: 1, wrong: 0, seconds: 10, ranked: true });
+    });
+
+    it("keeps a run whose answer times no person makes off the board and flags it: the fifth assessment's paced script, while an honest pace ranks", async () => {
+      const f = fixture(repos());
+      const [script, human] = [await f.guest('Paced script'), await f.guest('Honest')];
+      const mine = (rows: Row[]) => rows.filter((r) => [script, human].some((g) => g.userId === r.userId)).map((r) => r.displayName);
+      /** Plays a run one answer at a time: gaps[i] ms before answer i, wrong where `wrongAt` says; finishes at three minutes unless the strikes end it. */
+      const play = async (g: typeof script, gaps: number[], wrongAt: (i: number) => boolean) => {
+        const run = await f.startRush(g);
+        const t0 = f.now();
+        let last: Json = {};
+        for (const [i, gap] of gaps.entries()) {
+          f.clock.now += gap;
+          const p = rushRunPuzzle(run.seed, i);
+          const res = await f.answer(g, run.runId, i, wrongAt(i) ? wrong(p) : right(p));
+          expect(res.status, res.body).toBe(200);
+          last = res.json;
+          if (last.done) return last.result as Json;
+        }
+        f.clock.now = t0 + RUSH_SECONDS * 1000;
+        return (await f.call('POST', `/api/puzzles/rush/${run.runId}/finish`, {}, g.auth)).json;
+      };
+      // The script, as the fifth assessment ran it: the daily after 6 s, then 89 Rush answers every 2.02 s with one deliberate mistake.
+      expect((await f.daily(script, TODAY, dailyRight(TODAY), 6)).json).toMatchObject({ ranked: true });
+      const scripted = await play(script, Array.from({ length: 89 }, () => 2020), (i) => i === 17);
+      expect(scripted).toMatchObject({ solved: 88, wrong: 1, ranked: false, inhuman: true });
+      expect((await f.repos.puzzleFlags.get(script.userId))?.status).toBe('flagged');
+      expect((await f.repos.puzzleFlags.get(script.userId))?.reason).toMatch(/1 judged by answer times/);
+      // An honest pace with natural variation (4 to 12 s an answer from a fixed seed, a few mistakes) ranks, day after day.
+      let seed = 0x5eed;
+      const rand = () => ((seed = (seed * 1103515245 + 12345) % 2 ** 31) / 2 ** 31);
+      for (let day = 0; day < 3; day++) {
+        f.clock.now = Date.UTC(2026, 10, 16 + day, 12);
+        const gaps = Array.from({ length: 21 }, () => 4000 + Math.round(rand() * 8000));
+        const honest = await play(human, gaps.filter((_, i) => gaps.slice(0, i + 1).reduce((x, y) => x + y, 0) <= 178_000), (i) => i % 7 === 5);
+        expect(honest).toMatchObject({ ranked: true, inhuman: false });
+        expect((honest.wrong as number) >= 1 && (honest.solved as number) >= 15).toBe(true);
+      }
+      expect(await f.repos.puzzleFlags.get(human.userId)).toBeNull();
+      // The script is on no board (flagged, and its run unranked); the honest player is.
+      for (const path of ['rush?period=all', `daily?date=${TODAY}`]) expect(mine((await f.board(human, path)).rows)).not.toContain('Paced script');
+      expect(mine((await f.board(human, 'rush?period=all')).rows)).toEqual(['Honest']);
+      expect((await f.board(script, `daily?date=${TODAY}`)).me).toMatchObject({ hidden: true, flagged: true });
     });
 
     it('verifies a hard daily puzzle and the hard value and defence puzzles of a Rush run by regenerating them', async () => {
@@ -514,6 +653,37 @@ function contract(name: string, repos: () => Repos) {
   });
 }
 
+describe('plausible answer times', () => {
+  const at = (ms: number[], wrongAt: number[] = []) => {
+    let t = 0;
+    return ms.map((x, i) => ({ servedAt: t, answeredAt: (t += x), correct: !wrongAt.includes(i) }));
+  };
+  const uneven = (n: number, mean: number) => Array.from({ length: n }, (_, i) => Math.round(mean * [0.6, 1.4, 1.0, 0.8, 1.2][i % 5]));
+  it('needs fifteen answers before it judges', () => {
+    expect(rushTiming(at(Array(14).fill(500))).inhuman).toBeNull();
+    expect(rushTiming(at(Array(15).fill(500))).inhuman).not.toBeNull();
+  });
+  it('marks 95% right at under 3 s an answer, and not 94% or 3 s', () => {
+    expect(rushTiming(at(uneven(20, 2999), [0])).inhuman).toMatch(/19 of 20 right/);
+    expect(rushTiming(at(uneven(20, 3000), [0])).inhuman).toBeNull();
+    expect(rushTiming(at(uneven(17, 2000), [0])).inhuman).toBeNull();
+  });
+  it('marks machine-steady answer times (coefficient of variation under 0.15)', () => {
+    const steady = Array.from({ length: 20 }, (_, i) => 6000 + (i % 2 ? 800 : -800));
+    expect(rushTiming(at(steady, [1, 5, 9])).inhuman).toMatch(/machine-steady/);
+    const loose = Array.from({ length: 20 }, (_, i) => 6000 + (i % 2 ? 1000 : -1000));
+    expect(rushTiming(at(loose, [1, 5, 9])).inhuman).toBeNull();
+  });
+  it('marks more than three answers under 0.8 s', () => {
+    const snaps = (n: number) => uneven(20, 7000).map((x, i) => (i < n ? 799 : x));
+    expect(rushTiming(at(snaps(3), [1, 5, 9])).inhuman).toBeNull();
+    expect(rushTiming(at(snaps(4), [1, 5, 9])).inhuman).toMatch(/4 answers under 800 ms/);
+  });
+  it('has the thresholds the API documents', () => {
+    expect([RUSH_TIMING_MIN_ANSWERS, RUSH_ACCURATE_SHARE, RUSH_ACCURATE_PACE_MS, RUSH_STEADY_CV, RUSH_SNAP_MS, RUSH_SNAP_MAX, RUSH_TIMING_FLAG_WEIGHT]).toEqual([15, 0.95, 3000, 0.15, 800, 3, 2]);
+  });
+});
+
 describe('puzzle limits', () => {
   it('meters submissions and board reads per account, and Rush starts per address', async () => {
     const f = fixture(createMemoryRepos(), { limits: true });
@@ -540,6 +710,19 @@ describe('puzzle limits', () => {
       for (let j = 0; j < 20; j++) if ((await f.call('POST', '/api/puzzles/rush', {}, g.auth, ip)).status === 429) refused++;
     }
     expect(refused).toBe(20);
+  });
+
+  it('meters Rush answers in their own bucket, so a quick player is not stopped by the submission limit', async () => {
+    const f = fixture(createMemoryRepos(), { limits: true });
+    const a = await f.guest('Quick');
+    await f.plan(a);
+    const run = await f.startRush(a);
+    const codes: number[] = [];
+    for (let i = 0; i < 61; i++) codes.push((await f.answer(a, run.runId, i, right(rushRunPuzzle(run.seed, i)))).status);
+    expect(codes.slice(0, 60).every((c) => c === 200)).toBe(true);
+    expect(codes[60]).toBe(429);
+    // The 60 answers did not use the account's 20 submissions a minute.
+    expect((await f.call('POST', '/api/puzzles/daily/start', { date: TODAY }, a.auth)).status).toBe(200);
   });
 });
 

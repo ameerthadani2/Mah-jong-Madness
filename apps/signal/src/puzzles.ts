@@ -5,12 +5,13 @@
  * The server never takes a client's word for a result. Opening the daily puzzle starts an attempt
  * for the local date key the app plays (one per account and key, so reopening keeps the clock);
  * the answer finishes it, the server regenerates that day's puzzle with the engine, judges the
- * answer against the accepted set and takes the time from its own clock. A Puzzle Rush run is issued here (seed and start time), and finishing
- * it sends the answers in order: each puzzle is regenerated from the seed and judged, the run
- * stops at the third wrong answer as in the app, and the score comes from the server's clock.
- * A verified daily answer moves the account's one puzzle rating with the engine's rules
- * (`ratePuzzleAnswer`, the same steps the app applies on the device); Puzzle Rush does not move
- * it (`movesPuzzleRating`, the engine's one rule for the app and the server).
+ * answer against the accepted set and takes the time from its own clock. A ranked Puzzle Rush run
+ * is played one puzzle at a time: the server keeps the run's seed, serves a puzzle only once the
+ * previous answer has arrived, and judges and stamps each answer as it comes; the run stops at the
+ * third wrong answer as in the app, and its time, score and plausibility come from those stamps
+ * (`rushTiming`). A verified daily answer moves the account's one puzzle rating with the engine's
+ * rules (`ratePuzzleAnswer`, the same steps the app applies on the device); Puzzle Rush does not
+ * move it (`movesPuzzleRating`, the engine's one rule for the app and the server).
  *
  * Boards list live, visible, unbanned accounts only, with the account's name as the club rules
  * clean it (a name the blocklist refuses shows as "Player XXXX").
@@ -29,19 +30,22 @@ import {
   ratePuzzleAnswer,
   RUSH_SECONDS,
   RUSH_STRIKES,
+  puzzleDifficulty,
+  rushDifficultyAt,
+  rushRunPuzzle,
   rushScore,
   utcDateKey,
   dailyPuzzle,
   type PuzzleAnswerInput,
   type PuzzleDifficulty,
   type PuzzleType,
-  type RushVerdict,
+  type AnyPuzzle,
 } from '@mjm/engine';
 import type { ClubRegistry } from './clubs';
 import { LIMITS } from './config';
 import { BucketTable, cleanField, DAY_MS } from './limits';
 import { nameAllowed } from './moderation';
-import type { BoardPage, BoardRow, RecentPuzzleResult, Repos, UserRecord } from './repos/types';
+import type { BoardPage, BoardRow, RecentPuzzleResult, Repos, RushAnswerRecord, RushRunRecord, UserRecord } from './repos/types';
 
 /** How long an issued Rush run may be finished: a run lasts three minutes, so this is generous. */
 export const RUSH_RUN_TTL_MS = 30 * 60_000;
@@ -78,9 +82,59 @@ export const RUSH_INHUMAN_PACE_SECONDS = 2;
 export const RUSH_PERFECT_PACE_SECONDS = 3;
 export const RUSH_PERFECT_MIN_SOLVED = 10;
 
-/** Whether one result is at a floor or perfect at a pace no person reaches. */
+/**
+ * Plausible answer times (docs/API.md, "Plausible answer times"). With each Rush answer stamped by
+ * the server, a run of at least `RUSH_TIMING_MIN_ANSWERS` answers is inhuman when it is right on
+ * `RUSH_ACCURATE_SHARE` or more of them at under `RUSH_ACCURATE_PACE_MS` an answer, when its answer
+ * times are machine-steady (coefficient of variation under `RUSH_STEADY_CV`), or when more than
+ * `RUSH_SNAP_MAX` answers came under `RUSH_SNAP_MS`. An inhuman run is recorded, kept off the Rush
+ * board and counted toward the automation flag (`inhumanResult`).
+ *
+ * Provisional until there are real players: set from the fifth assessment's paced script (89
+ * answers every 2.02 s with one deliberate mistake) and a simulated honest player (4 to 12 s an
+ * answer, a few mistakes), not from measured play.
+ */
+export const RUSH_TIMING_MIN_ANSWERS = 15;
+export const RUSH_ACCURATE_SHARE = 0.95;
+export const RUSH_ACCURATE_PACE_MS = 3000;
+export const RUSH_STEADY_CV = 0.15;
+export const RUSH_SNAP_MS = 800;
+export const RUSH_SNAP_MAX = 3;
+/**
+ * A Rush run judged inhuman by its answer times counts as this many results toward the flag: the
+ * stamps of fifteen answers or more are stronger evidence than one total time, so one such run is
+ * enough to flag the account (an admin clears a flag that was wrong).
+ */
+export const RUSH_TIMING_FLAG_WEIGHT = 2;
+/** An answer stamped this long after the run's three minutes is not counted (it was made after the clock ran out on the phone). */
+export const RUSH_ANSWER_GRACE_MS = 2000;
+
+/** What the per-answer stamps say about a run: the answer times (ms), and why it is inhuman (null when it is not). */
+export function rushTiming(answers: ReadonlyArray<Pick<RushAnswerRecord, 'servedAt' | 'answeredAt' | 'correct'>>): { ms: number[]; inhuman: string | null } {
+  const ms = answers.map((a) => Math.max(0, a.answeredAt - a.servedAt));
+  const n = ms.length;
+  if (n < RUSH_TIMING_MIN_ANSWERS) return { ms, inhuman: null };
+  const mean = ms.reduce((a, b) => a + b, 0) / n;
+  const right = answers.filter((a) => a.correct).length;
+  if (right / n >= RUSH_ACCURATE_SHARE && mean < RUSH_ACCURATE_PACE_MS) return { ms, inhuman: `${right} of ${n} right at ${(mean / 1000).toFixed(2)} s an answer` };
+  const sd = Math.sqrt(ms.reduce((a, b) => a + (b - mean) ** 2, 0) / n);
+  const cv = mean > 0 ? sd / mean : 0;
+  if (cv < RUSH_STEADY_CV) return { ms, inhuman: `answer times machine-steady (coefficient of variation ${cv.toFixed(3)})` };
+  const snaps = ms.filter((x) => x < RUSH_SNAP_MS).length;
+  if (snaps > RUSH_SNAP_MAX) return { ms, inhuman: `${snaps} answers under ${RUSH_SNAP_MS} ms` };
+  return { ms, inhuman: null };
+}
+
+/** A Rush puzzle as the server serves it: the content the view needs, under an id that does not reveal the run's seed. */
+export function servedRushPuzzle(run: Pick<RushRunRecord, 'id' | 'seed'>, index: number): { index: number; type: PuzzleType; puzzle: AnyPuzzle } {
+  const p = rushRunPuzzle(run.seed, index);
+  return { index, type: p.type, puzzle: { ...p, seed: `${run.id}:${index}` } };
+}
+
+/** Whether one result is at a floor, perfect at a pace no person reaches, or a Rush run whose answer times were judged inhuman. */
 export function inhumanResult(r: RecentPuzzleResult): boolean {
   if (r.kind === 'daily') return r.seconds < DAILY_INHUMAN_SECONDS;
+  if (r.inhuman) return true;
   if (r.answers < 5) return false;
   const pace = r.seconds / r.answers;
   return pace < RUSH_INHUMAN_PACE_SECONDS || (r.wrong === 0 && r.solved >= RUSH_PERFECT_MIN_SOLVED && pace < RUSH_PERFECT_PACE_SECONDS);
@@ -95,9 +149,14 @@ export async function checkAutomation(tx: Repos, userId: string, at: number): Pr
   if (flag && flag.status !== 'cleared') return true;
   const recent = await tx.puzzleFlags.recentResults(userId, flag?.reviewedAt ?? -1, FLAG_WINDOW);
   const inhuman = recent.filter(inhumanResult);
-  if (inhuman.length < FLAG_MIN_INHUMAN) return false;
+  const timed = inhuman.filter((r) => r.kind === 'rush' && r.inhuman).length;
+  if (inhuman.length + timed * (RUSH_TIMING_FLAG_WEIGHT - 1) < FLAG_MIN_INHUMAN) return false;
   const daily = inhuman.filter((r) => r.kind === 'daily').length;
-  await tx.puzzleFlags.flag(userId, `${inhuman.length} of the last ${recent.length} puzzle results at a human-time floor or perfect at an inhuman pace (${daily} daily, ${inhuman.length - daily} Rush)`, at);
+  await tx.puzzleFlags.flag(
+    userId,
+    `${inhuman.length} of the last ${recent.length} puzzle results at a human-time floor, perfect at an inhuman pace or with inhuman answer times (${daily} daily, ${inhuman.length - daily} Rush, ${timed} judged by answer times)`,
+    at,
+  );
   return true;
 }
 
@@ -133,10 +192,10 @@ export interface PuzzleDeps {
   now?: () => number;
   /** A non-200 answer (the API's Reply). */
   reply: (status: number, body?: unknown) => unknown;
-  /** Yields between regenerated Rush puzzles so a long run does not hold up the tables (default: setImmediate). */
-  yieldTurn?: () => Promise<void>;
   /** Per-account bucket for submissions (default `LIMITS.puzzleSubmitsPerMinute` a minute). */
   submitLimiter?: BucketTable<string>;
+  /** Per-account bucket for Rush answers (default `LIMITS.rushAnswersPerMinute` a minute). */
+  answerLimiter?: BucketTable<string>;
   /** Per-account bucket for board and rating reads (default `LIMITS.leaderboardReadsPerMinute` a minute). */
   readLimiter?: BucketTable<string>;
   /** Per-address bucket for Rush starts (default `LIMITS.rushStartsPerHourPerIp` an hour). */
@@ -208,8 +267,8 @@ function openDailyKey(key: unknown, at: number): Date {
 export function puzzleRoutes<R>(r: PuzzleRouteFactory<R>, deps: PuzzleDeps): R[] {
   const { repos, clubs } = deps;
   const now = deps.now ?? Date.now;
-  const yieldTurn = deps.yieldTurn ?? (() => new Promise<void>((resolve) => setImmediate(resolve)));
   const submits = deps.submitLimiter ?? new BucketTable<string>(LIMITS.puzzleSubmitsPerMinute, LIMITS.puzzleSubmitsPerMinute / 60, { now });
+  const answersBucket = deps.answerLimiter ?? new BucketTable<string>(LIMITS.rushAnswersPerMinute, LIMITS.rushAnswersPerMinute / 60, { now });
   const reads = deps.readLimiter ?? new BucketTable<string>(LIMITS.leaderboardReadsPerMinute, LIMITS.leaderboardReadsPerMinute / 60, { now });
   const rushByIp = deps.rushIpLimiter ?? new BucketTable<string>(LIMITS.rushStartsPerHourPerIp, LIMITS.rushStartsPerHourPerIp / 3600, { now });
 
@@ -231,6 +290,58 @@ export function puzzleRoutes<R>(r: PuzzleRouteFactory<R>, deps: PuzzleDeps): R[]
     const club = clubs.club(code);
     if (!clubs.isMember(club.code, userId)) throw new PuzzleError(403, 'forbidden', 'Join the club first');
     return { userIds: club.members.map((m) => m.userId), club: club.code };
+  };
+
+  /** The caller's run, still open at `at`. */
+  const openRun = async (runId: string | undefined, userId: string, at: number): Promise<RushRunRecord> => {
+    const run = await repos.rushRuns.get(runId ?? '');
+    if (!run || run.userId !== userId) throw new PuzzleError(404, 'run_not_found', 'No such Puzzle Rush run');
+    if (run.finishedAt !== null) throw new PuzzleError(409, 'run_finished', 'This run has already been finished');
+    if (at > run.expiresAt) throw new PuzzleError(410, 'run_expired', 'This run has expired; start a new one');
+    return run;
+  };
+  /** An answer is to the puzzle the run is waiting on: not one already answered, not one not yet served. */
+  const checkServed = (run: RushRunRecord, index: number) => {
+    if (index < run.servedIndex) throw new PuzzleError(409, 'already_answered', 'That puzzle has already been answered');
+    if (index > run.servedIndex) throw new PuzzleError(409, 'not_served', 'That puzzle has not been served yet: answer the one before it first');
+  };
+  /**
+   * Finishes a run from its stamped answers, inside the caller's transaction: the run's time is from
+   * its start to `endAt` (the third wrong answer, the finish, or the end of the three minutes), at
+   * most the run's length; the score comes from that time; the floor and the answer times decide
+   * whether it is ranked.
+   */
+  const finishRun = async (tx: Repos, run: RushRunRecord, answers: RushAnswerRecord[], endAt: number) => {
+    const wrong = answers.filter((x) => !x.correct).length;
+    const solved = answers.length - wrong;
+    const elapsedMs = Math.min(Math.max(0, endAt - run.startedAt), RUSH_SECONDS * 1000);
+    const seconds = Math.round(elapsedMs / 1000);
+    const score = rushScore(solved, seconds);
+    const timing = rushTiming(answers);
+    // Under the floor (the answers average under 1.5 s each over the run's time) or inhuman answer times: recorded, not ranked.
+    const underFloor = answers.length > 0 && elapsedMs / answers.length < RUSH_RANK_FLOOR_MS;
+    const inhuman = timing.inhuman !== null;
+    const ranked = !underFloor && !inhuman;
+    const finished = await tx.rushRuns.finish(run.id, { finishedAt: endAt, solved, wrong, seconds, score, ranked, inhuman });
+    if (!finished) throw new PuzzleError(409, 'run_finished', 'This run has already been finished');
+    // Rush answers do not move the rating (the engine's `movesPuzzleRating('rush')`): `rating` reports it unchanged.
+    const rated = movesPuzzleRating('rush') ? answers.map((x) => ({ type: x.type, difficulty: puzzleDifficulty(rushRunPuzzle(run.seed, x.index), rushDifficultyAt(x.index)), correct: x.correct })) : [];
+    const { rating, after } = await applyRatings(tx, run.userId, rated, endAt);
+    for (const [i, x] of answers.entries()) {
+      await tx.puzzleResults.record({ userId: run.userId, kind: 'rush', puzzleKey: `${run.id}:${x.index}`, correct: x.correct, seconds: Math.round(timing.ms[i] / 1000), ratingAfter: after[i] ?? null, createdAt: endAt });
+    }
+    await checkAutomation(tx, run.userId, endAt);
+    return {
+      runId: run.id,
+      solved,
+      wrong,
+      seconds,
+      score,
+      ranked,
+      inhuman,
+      answers: answers.map((x, i) => ({ index: x.index, type: x.type, correct: x.correct, ms: timing.ms[i] })),
+      rating: ratingJson(rating),
+    };
   };
 
   return [
@@ -279,8 +390,12 @@ export function puzzleRoutes<R>(r: PuzzleRouteFactory<R>, deps: PuzzleDeps): R[]
     r('POST', '/api/puzzles/rush', async (ctx) => {
       const me = await submitter(ctx);
       if (!rushByIp.take(ctx.ip)) throw new PuzzleError(429, 'rate_limited', 'Too many Puzzle Rush runs from this address; try again later');
-      const at = now();
       const unlimited = deps.unlimitedRush ? await deps.unlimitedRush(me.userId) : false;
+      const id = randomUUID();
+      const seed = `rush-${randomHex(8)}`;
+      // The first puzzle is made before the clock starts, so its making is not counted against the player.
+      const first = servedRushPuzzle({ id, seed }, 0);
+      const at = now();
       const run = await repos.transaction(async (tx) => {
         if (!unlimited) {
           // The account's row is locked first, so two starts at once cannot both take the last free run.
@@ -290,58 +405,54 @@ export function puzzleRoutes<R>(r: PuzzleRouteFactory<R>, deps: PuzzleDeps): R[]
             throw new PuzzleError(403, 'rush_daily_limit', 'Free accounts get one ranked Puzzle Rush a day; Coach Gold makes it unlimited');
           }
         }
-        return tx.rushRuns.create({ id: randomUUID(), userId: me.userId, seed: `rush-${randomHex(8)}`, startedAt: at, expiresAt: at + RUSH_RUN_TTL_MS });
+        return tx.rushRuns.create({ id, userId: me.userId, seed, startedAt: at, expiresAt: at + RUSH_RUN_TTL_MS });
       });
-      return deps.reply(201, { runId: run.id, seed: run.seed, startedAt: iso(run.startedAt), expiresAt: iso(run.expiresAt), seconds: RUSH_SECONDS, strikes: RUSH_STRIKES });
+      // The seed stays on the server: each puzzle is sent when the previous answer has arrived.
+      return deps.reply(201, { runId: run.id, startedAt: iso(run.startedAt), expiresAt: iso(run.expiresAt), seconds: RUSH_SECONDS, strikes: RUSH_STRIKES, next: first });
+    }),
+    r('POST', '/api/puzzles/rush/:runId/answer', async (ctx) => {
+      const me = await ctx.caller();
+      if (!answersBucket.take(me.userId)) throw new PuzzleError(429, 'rate_limited', 'Too many Puzzle Rush answers; please slow down');
+      const { index, answer } = ctx.body;
+      if (typeof index !== 'number' || !Number.isInteger(index) || index < 0) throw new PuzzleError(400, 'invalid', 'index must be the number of the puzzle being answered');
+      if (!isPuzzleAnswerInput(answer)) throw new PuzzleError(400, 'invalid_answer', 'answer must be a tile, a list of tiles or a claim option id');
+      const run = await openRun(ctx.params.runId, me.userId, now());
+      checkServed(run, index);
+      // Judged, and the next puzzle made, before the stamp: the server's own work is not counted against the player.
+      const verdict = judgeRushAnswer(run.seed, index, answer as PuzzleAnswerInput);
+      const next = servedRushPuzzle(run, index + 1);
+      const at = now();
+      return repos.transaction(async (tx) => {
+        const live = await tx.rushRuns.getForUpdate(run.id);
+        if (!live || live.finishedAt !== null) throw new PuzzleError(409, 'run_finished', 'This run has already been finished');
+        checkServed(live, index);
+        if (at > live.startedAt + RUSH_SECONDS * 1000 + RUSH_ANSWER_GRACE_MS) {
+          // Past the run's three minutes: the answer does not count, and the run ends as it stood when the time ran out.
+          const result = await finishRun(tx, live, await tx.rushRuns.answers(live.id), live.startedAt + RUSH_SECONDS * 1000);
+          return { index, counted: false, done: true, next: null, result };
+        }
+        if (!(await tx.rushRuns.answer(live.id, { index, type: verdict.type, correct: verdict.correct, servedAt: live.servedAt, answeredAt: at }))) {
+          throw new PuzzleError(409, 'already_answered', 'That puzzle has already been answered');
+        }
+        const answers = await tx.rushRuns.answers(live.id);
+        const wrong = answers.filter((x) => !x.correct).length;
+        const solved = answers.length - wrong;
+        const base = { index, counted: true, correct: verdict.correct, type: verdict.type, solved, wrong };
+        // The third wrong answer ends the run at its stamp.
+        if (wrong >= RUSH_STRIKES) return { ...base, done: true, next: null, result: await finishRun(tx, live, answers, at) };
+        return { ...base, done: false, next };
+      });
     }),
     r('POST', '/api/puzzles/rush/:runId/finish', async (ctx) => {
       const me = await submitter(ctx);
-      const run = await repos.rushRuns.get(ctx.params.runId);
-      if (!run || run.userId !== me.userId) throw new PuzzleError(404, 'run_not_found', 'No such Puzzle Rush run');
-      if (run.finishedAt !== null) throw new PuzzleError(409, 'run_finished', 'This run has already been finished');
+      if (ctx.body.answers !== undefined) throw new PuzzleError(400, 'answers_one_at_a_time', 'Rush answers are posted one at a time as they are made (POST /api/puzzles/rush/:runId/answer); finish takes none');
+      const run = await openRun(ctx.params.runId, me.userId, now());
       const at = now();
-      if (at > run.expiresAt) throw new PuzzleError(410, 'run_expired', 'This run has expired; start a new one');
-      const answers = ctx.body.answers;
-      if (!Array.isArray(answers)) throw new PuzzleError(400, 'invalid', 'answers must be a list');
-      if (!answers.every(isPuzzleAnswerInput)) throw new PuzzleError(400, 'invalid_answer', 'Each answer must be a tile, a list of tiles or a claim option id');
-      // The server's clock, never the client's: the run's time is from issue to finish, at most the run's length.
-      const elapsedMs = Math.max(0, at - run.startedAt);
-      const seconds = Math.min(RUSH_SECONDS, Math.round(elapsedMs / 1000));
-      // Nobody answers more than one puzzle a second (and no run can hold more than its length in seconds).
-      if (answers.length > Math.min(RUSH_SECONDS, Math.max(1, Math.ceil(elapsedMs / 1000)))) throw new PuzzleError(400, 'rush_too_fast', 'More answers than the run had time for');
-      const verdicts: RushVerdict[] = [];
-      let wrong = 0;
-      for (let i = 0; i < answers.length && wrong < RUSH_STRIKES; i++) {
-        if (i > 0) await yieldTurn();
-        const v = judgeRushAnswer(run.seed, i, answers[i] as PuzzleAnswerInput);
-        verdicts.push(v);
-        if (!v.correct) wrong++;
-      }
-      const solved = verdicts.length - wrong;
-      const score = rushScore(solved, seconds);
-      // Under the floor (the judged answers average under 1.5 s each, on the server's clock up to the run's length): recorded, not ranked.
-      const ranked = verdicts.length === 0 || Math.min(elapsedMs, RUSH_SECONDS * 1000) / verdicts.length >= RUSH_RANK_FLOOR_MS;
-      const outcome = await repos.transaction(async (tx) => {
-        const finished = await tx.rushRuns.finish(run.id, { finishedAt: at, solved, wrong, seconds, score, ranked });
-        if (!finished) throw new PuzzleError(409, 'run_finished', 'This run has already been finished');
-        // Rush answers do not move the rating (the engine's `movesPuzzleRating('rush')`): `rating` reports it unchanged.
-        const { rating, after } = await applyRatings(tx, me.userId, movesPuzzleRating('rush') ? verdicts : [], at);
-        for (const [i, v] of verdicts.entries()) {
-          await tx.puzzleResults.record({ userId: me.userId, kind: 'rush', puzzleKey: `${run.id}:${v.index}`, correct: v.correct, seconds: 0, ratingAfter: after[i] ?? null, createdAt: at });
-        }
-        await checkAutomation(tx, me.userId, at);
-        return rating;
+      return repos.transaction(async (tx) => {
+        const live = await tx.rushRuns.getForUpdate(run.id);
+        if (!live || live.finishedAt !== null) throw new PuzzleError(409, 'run_finished', 'This run has already been finished');
+        return finishRun(tx, live, await tx.rushRuns.answers(live.id), at);
       });
-      return {
-        runId: run.id,
-        solved,
-        wrong,
-        seconds,
-        score,
-        ranked,
-        answers: verdicts.map((v) => ({ index: v.index, type: v.type, correct: v.correct })),
-        rating: ratingJson(outcome),
-      };
     }),
 
     // ------------------------------------------------------------------ rating and boards

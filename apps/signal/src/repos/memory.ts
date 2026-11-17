@@ -23,6 +23,7 @@ import {
   type PuzzleFlagRecord,
   type PuzzleFlagsRepo,
   type RecentPuzzleResult,
+  type RushAnswerRecord,
   type IdentitiesRepo,
   type IdentityProvider,
   type IdentityRecord,
@@ -91,6 +92,8 @@ interface MemoryState {
   puzzleFlags: Map<string, PuzzleFlagRecord>;
   /** puzzle_rush_runs, by run id. */
   rushRuns: Map<string, RushRunRecord>;
+  /** puzzle_rush_answers, by run id (in order). */
+  rushAnswers: Map<string, RushAnswerRecord[]>;
   /** puzzle_daily_attempts, by attempt id. */
   dailyAttempts: Map<string, DailyAttemptRecord>;
   /** Users who hid themselves from leaderboards (users.leaderboard_visible = false). */
@@ -128,6 +131,7 @@ const emptyState = (): MemoryState => ({
   ratings: new Map(),
   puzzleFlags: new Map(),
   rushRuns: new Map(),
+  rushAnswers: new Map(),
   dailyAttempts: new Map(),
   boardHidden: new Set(),
   consent: new Map(),
@@ -203,7 +207,11 @@ function memoryUsers(s: MemoryState): UsersRepo {
         s.ratings.delete(id);
         s.puzzleFlags.delete(id);
         s.boardHidden.delete(id);
-        for (const [k, run] of [...s.rushRuns]) if (run.userId === id) s.rushRuns.delete(k);
+        for (const [k, run] of [...s.rushRuns]) {
+          if (run.userId !== id) continue;
+          s.rushRuns.delete(k);
+          s.rushAnswers.delete(k);
+        }
         for (const [k, a] of [...s.dailyAttempts]) if (a.userId === id) s.dailyAttempts.delete(k);
         s.blocks = s.blocks.filter((b) => b.blockerId !== id && b.blockedId !== id);
         s.moderation.delete(id);
@@ -771,7 +779,7 @@ function memoryRushRuns(s: MemoryState): RushRunsRepo {
   return {
     async create(r) {
       if (s.rushRuns.has(r.id)) throw new Error(`Run ${r.id} already exists`);
-      const row: RushRunRecord = { ...copy(r), finishedAt: null, solved: null, wrong: null, seconds: null, score: null, ranked: true };
+      const row: RushRunRecord = { ...copy(r), finishedAt: null, solved: null, wrong: null, seconds: null, score: null, ranked: true, servedIndex: 0, servedAt: r.startedAt, inhuman: false };
       s.rushRuns.set(row.id, row);
       return copy(row);
     },
@@ -779,10 +787,27 @@ function memoryRushRuns(s: MemoryState): RushRunsRepo {
       const row = s.rushRuns.get(id);
       return row ? copy(row) : null;
     },
+    async getForUpdate(id) {
+      const row = s.rushRuns.get(id);
+      return row ? copy(row) : null;
+    },
+    async answer(id, a) {
+      const row = s.rushRuns.get(id);
+      if (!row || row.finishedAt !== null || row.servedIndex !== a.index) return false;
+      const list = s.rushAnswers.get(id) ?? [];
+      if (list.some((x) => x.index === a.index)) return false;
+      s.rushAnswers.set(id, [...list, copy(a)]);
+      row.servedIndex = a.index + 1;
+      row.servedAt = a.answeredAt;
+      return true;
+    },
+    async answers(id) {
+      return copy(s.rushAnswers.get(id) ?? []).sort((x, y) => x.index - y.index);
+    },
     async finish(id, result) {
       const row = s.rushRuns.get(id);
       if (!row || row.finishedAt !== null) return null;
-      Object.assign(row, copy(result), { ranked: result.ranked ?? true });
+      Object.assign(row, copy(result), { ranked: result.ranked ?? true, inhuman: result.inhuman ?? false });
       return copy(row);
     },
     async countStartedSince(userId, since) {
@@ -802,6 +827,7 @@ function memoryRushRuns(s: MemoryState): RushRunsRepo {
       for (const [id, run] of [...s.rushRuns]) {
         if (run.finishedAt !== null || run.expiresAt >= before) continue;
         s.rushRuns.delete(id);
+        s.rushAnswers.delete(id);
         n++;
       }
       return n;
@@ -884,7 +910,7 @@ function memoryPuzzleFlags(s: MemoryState): PuzzleFlagsRepo {
       }
       for (const r of s.rushRuns.values()) {
         if (r.userId !== userId || r.finishedAt === null || r.finishedAt <= after) continue;
-        out.push({ kind: 'rush', at: r.finishedAt, seconds: r.seconds ?? 0, answers: (r.solved ?? 0) + (r.wrong ?? 0), solved: r.solved ?? 0, wrong: r.wrong ?? 0 });
+        out.push({ kind: 'rush', at: r.finishedAt, seconds: r.seconds ?? 0, answers: (r.solved ?? 0) + (r.wrong ?? 0), solved: r.solved ?? 0, wrong: r.wrong ?? 0, inhuman: r.inhuman });
       }
       return out.sort((a, b) => b.at - a.at).slice(0, limit);
     },

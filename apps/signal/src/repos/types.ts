@@ -7,6 +7,7 @@
  * (never an exception); records returned are copies, so mutating one changes nothing stored.
  */
 import type { Club, Identity } from '../clubs';
+import type { PuzzleType } from '@mjm/engine';
 
 // ---------------------------------------------------------------------------------------------
 // Users and sign-in
@@ -542,8 +543,24 @@ export interface RushRunRecord {
   wrong: number | null;
   seconds: number | null;
   score: number | null;
-  /** False once finished under the human-time floor (recorded, never on the Rush board); true otherwise. */
+  /** False once finished under the human-time floor or judged inhuman (recorded, never on the Rush board); true otherwise. */
   ranked: boolean;
+  /** The index of the puzzle the server has served and is waiting on (0 when issued). */
+  servedIndex: number;
+  /** When that puzzle was served (the run's start for the first). */
+  servedAt: number;
+  /** True once finished with answer times no person makes (docs/API.md, "Plausible answer times"): counts toward the automation flag. */
+  inhuman: boolean;
+}
+
+/** One answer of a Rush run, as the server judged and stamped it. */
+export interface RushAnswerRecord {
+  index: number;
+  type: PuzzleType;
+  correct: boolean;
+  /** When the server served the puzzle, and when the answer arrived (epoch ms, the server's clock). */
+  servedAt: number;
+  answeredAt: number;
 }
 
 export interface RushRunResult {
@@ -554,11 +571,23 @@ export interface RushRunResult {
   score: number;
   /** Default true; false keeps the run off the Rush board. */
   ranked?: boolean;
+  /** Default false; true when the answer times were judged inhuman. */
+  inhuman?: boolean;
 }
 
 export interface RushRunsRepo {
   create(run: Pick<RushRunRecord, 'id' | 'userId' | 'seed' | 'startedAt' | 'expiresAt'>): Promise<RushRunRecord>;
   get(id: string): Promise<RushRunRecord | null>;
+  /** `get`, locking the row until the transaction ends (pg: FOR UPDATE), so two answers to one run apply one after the other. */
+  getForUpdate(id: string): Promise<RushRunRecord | null>;
+  /**
+   * Records the answer to the puzzle the run is waiting on and serves the next one at the
+   * answer's time (`servedIndex` + 1). False when the run is missing or finished, or the answer
+   * is not to the puzzle being served (each puzzle is answered once).
+   */
+  answer(id: string, answer: RushAnswerRecord): Promise<boolean>;
+  /** The run's answers, in order. */
+  answers(id: string): Promise<RushAnswerRecord[]>;
   /** Writes the result of an unfinished run; null when the run is missing or already finished (a run is finished once). */
   finish(id: string, result: RushRunResult): Promise<RushRunRecord | null>;
   /** How many runs the account was issued at or after `since`, finished or not (the free Rush meter counts these). */
@@ -618,6 +647,8 @@ export interface RecentPuzzleResult {
   answers: number;
   solved: number;
   wrong: number;
+  /** A Rush run judged inhuman by its answer times (docs/API.md, "Plausible answer times"). */
+  inhuman?: boolean;
 }
 
 export interface PuzzleFlagsRepo {

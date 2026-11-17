@@ -82,7 +82,7 @@ export interface ApiDeps {
   /** Quick match, told when a player's blocks change and when an account is banned. */
   matchmaker?: { blocksChanged(userId: string): void; removeUser(userId: string): void; frequentPairs?(min?: number): QuickMatchPair[] };
   /** Puzzle and leaderboard route options (limiters, the Rush yield); tests replace them. */
-  puzzles?: Partial<Pick<PuzzleDeps, 'yieldTurn' | 'submitLimiter' | 'readLimiter' | 'rushIpLimiter'>>;
+  puzzles?: Partial<Pick<PuzzleDeps, 'submitLimiter' | 'answerLimiter' | 'readLimiter' | 'rushIpLimiter'>>;
   /** The moderators' token (default: ADMIN_TOKEN from the environment; blank turns the moderation routes off). */
   adminToken?: string | null;
 }

@@ -86,6 +86,28 @@ function contract(name: string, repos: () => Repos) {
       expect(await r.rushRuns.get(id)).not.toBeNull();
     });
 
+    it('stores each Rush answer once, only for the puzzle being served, serves the next at its time and keeps an inhuman verdict', async () => {
+      const r = repos();
+      const a = await user();
+      const id = randomUUID();
+      expect(await r.rushRuns.create({ id, userId: a, seed: 'rush-3', startedAt: T0, expiresAt: T0 + 1_800_000 })).toMatchObject({ servedIndex: 0, servedAt: T0, inhuman: false });
+      const ans = (index: number, at: number, correct = true) => ({ index, type: 'discard' as const, correct, servedAt: at - 5000, answeredAt: at });
+      // Not yet served, then once, then not again.
+      expect(await r.rushRuns.answer(id, ans(1, T0 + 5000))).toBe(false);
+      expect(await r.rushRuns.answer(id, ans(0, T0 + 5000))).toBe(true);
+      expect(await r.rushRuns.answer(id, ans(0, T0 + 6000))).toBe(false);
+      expect(await r.rushRuns.getForUpdate(id)).toMatchObject({ servedIndex: 1, servedAt: T0 + 5000 });
+      expect(await r.rushRuns.answer(id, ans(1, T0 + 9000, false))).toBe(true);
+      expect(await r.rushRuns.answers(id)).toEqual([ans(0, T0 + 5000), ans(1, T0 + 9000, false)]);
+      expect(await r.rushRuns.finish(id, { finishedAt: T0 + 9000, solved: 1, wrong: 1, seconds: 9, score: 100, ranked: false, inhuman: true })).toMatchObject({ ranked: false, inhuman: true });
+      // A finished run takes no answer.
+      expect(await r.rushRuns.answer(id, ans(2, T0 + 10_000))).toBe(false);
+      expect(await r.puzzleFlags.recentResults(a, -1, 10)).toEqual([{ kind: 'rush', at: T0 + 9000, seconds: 9, answers: 2, solved: 1, wrong: 1, inhuman: true }]);
+      expect(await r.rushRuns.answer(randomUUID(), ans(0, T0))).toBe(false);
+      expect(await r.rushRuns.answers(randomUUID())).toEqual([]);
+      expect(await r.rushRuns.getForUpdate('not-a-uuid')).toBeNull();
+    });
+
     it('keeps one daily attempt per account and key, finishes it once, moves it on a merge and prunes old ones', async () => {
       const r = repos();
       const [a, b] = [await user(), await user()];
@@ -127,7 +149,7 @@ function contract(name: string, repos: () => Repos) {
       expect(await r.rushRuns.finish(unranked, { finishedAt: T0 + 3000, solved: 20, wrong: 0, seconds: 20, score: 3000, ranked: false })).toMatchObject({ ranked: false });
       await r.puzzleResults.recordDaily({ userId: b, puzzleKey: key, correct: true, seconds: 1, ratingAfter: null, createdAt: T0, ranked: false });
       expect(await r.puzzleFlags.recentResults(a, -1, 10)).toEqual([
-        { kind: 'rush', at: T0 + 2000, seconds: 31, answers: 21, solved: 20, wrong: 1 },
+        { kind: 'rush', at: T0 + 2000, seconds: 31, answers: 21, solved: 20, wrong: 1, inhuman: false },
         { kind: 'daily', at: T0 + 1000, seconds: 4, answers: 1, solved: 1, wrong: 0 },
       ]);
       expect(await r.puzzleFlags.recentResults(a, T0 + 1000, 10)).toHaveLength(1);

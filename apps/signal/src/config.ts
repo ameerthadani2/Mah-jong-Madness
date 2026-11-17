@@ -79,6 +79,8 @@ export const LIMITS = {
   reportsPerDayPerIp: 30,
   /** Puzzle submissions (daily answers, Rush starts and finishes) one account may make a minute. */
   puzzleSubmitsPerMinute: 20,
+  /** Puzzle Rush answers one account may post a minute (one at a time, as they are made: a quick player makes about 30). */
+  rushAnswersPerMinute: 60,
   /** Leaderboard and own-rating reads one account may make a minute. */
   leaderboardReadsPerMinute: 30,
   /** Puzzle Rush runs one IP address may start in an hour, whatever the accounts (guests are free to make; finishing a run is the server's dearest puzzle work). */
