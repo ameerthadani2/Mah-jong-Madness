@@ -14,8 +14,8 @@
 
 `points = 底 + 台 × 台值` (default 底100 / 台20).
 * 自摸: each of the three others pays.
-* 放槍: only the discarder pays.
-* Dealer 台 (1) and streak 台 (2 per 連莊) apply to any payment the dealer is part of.
+* 放槍: only the discarder pays; a 搶槓 win is paid by the robbed seat alone.
+* Dealer 台 (1) and streak 台 (2 per 連莊) apply to any payment the dealer is part of. A table that sets either to 0 sees no 0-台 莊家 or 連莊 line on the result.
 * `maxTai` (封頂) caps the hand's own 台; dealer and streak 台 are added after the cap, so a capped hand still pays the dealer bonus.
 
 ## 台 table
@@ -34,14 +34,14 @@
 | 4 | `small_three_dragons` | 小三元 | 2 dragon pongs + dragon pair (dragon pongs still score) |
 | 8 | `big_three_dragons` | 大三元 | 3 dragon pongs (individual dragon 台 not added) |
 | 8 | `small_four_winds` | 小四喜 | 3 wind pongs + wind pair |
-| 16 | `big_four_winds` | 大四喜 | 4 wind pongs |
-| 2/5/8 | `three/four/five_concealed` | 三/四/五暗刻 | Concealed pongs (a pong completed by the winning discard is not concealed) |
+| 16 | `big_four_winds` | 大四喜 | 4 wind pongs (individual 門風 / 圈風 台 not added) |
+| 2/5/8 | `three/four/five_concealed` | 三/四/五暗刻 | Concealed pongs, a 暗槓 included (a pong completed by the winning discard is not concealed) |
 | 1 | `dragon_*` | 中 / 發 / 白 | Each dragon pong |
 | 1 | `seat_wind` | 門風 | Pong of your seat wind |
 | 1 | `round_wind` | 圈風 | Pong of the prevailing wind |
 | 1 | `seat_flower` / `seat_season` | 正花 | Bonus tile matching your seat (東1 南2 西3 北4) |
-| 2 | `four_flowers` / `four_seasons` | 花槓 | All four of a bonus set |
-| 8 | `eight_flowers` | 八仙過海 | Instant win the moment you bank all eight bonus tiles (at the deal or mid-hand); paid as 自摸 |
+| 2 | `four_flowers` / `four_seasons` | 花槓 | All four of a bonus set (it already holds the seat's own one: no separate 正花) |
+| 8 | `eight_flowers` | 八仙過海 | Instant win the moment you bank all eight bonus tiles (at the deal or mid-hand); paid as 自摸. It and 七搶一 score 8 台 and the dealer items only (no hand, flower or situation items); `maxTai` caps the 8 |
 | 8 | `seven_rob` | 七搶一 | Holding seven bonus tiles, you take the eighth when another seat banks it; only that seat pays |
 | 2 | `full_begging` | 全求人 | Five exposed sets (a concealed kong does not count), won on a discard for the pair; absorbs 獨聽 |
 | 1 | `half_begging` | 半求人 | Five exposed sets, self-drawn pair; absorbs 獨聽, stacks with 自摸 |
@@ -54,6 +54,16 @@
 | 2×n | `dealer_streak` | 連n拉n | Dealer streak |
 | 1 | `no_flowers` | 無花 | Optional, off by default |
 | `liguTai` | `ligu` | 嚦咕嚦咕 | Optional, off by default: seven pairs and a triplet, fully concealed (see below) |
+
+## How the scorer is checked
+
+`packages/engine/test/scoring_oracle.test.ts` checks the scorer and the settlement against an independent oracle, `packages/engine/test/helpers/oracle.ts`, written from this document and not from `scoring.ts`: it shares only the tile numbering, and finds sets, waits and items in its own way. From fixed seeds it generates
+
+* 40,000 ordinary wins (self-drawn or on a discard) built to reach every item of the 台 table above at least 200 times, 嚦咕嚦咕 and 無花 included;
+* 16,000 win situations, 1,600 each of 槓上開花, 花上自摸, 搶槓, 海底撈月, 河底撈魚, 天胡, 地胡, 人胡, 八仙過海 and 七搶一, mixed with ordinary items (a replacement-tile win can also be the last tile, and a limit deal can follow a flower replacement);
+* random rule values on every win: 底 and 台值, 封頂 (half the wins), 莊家 and 連莊 台 (0 to 8), the limit-deal values (0 included), 無花 and 嚦咕嚦咕; any seat may be dealer, with a streak of 0 to 6.
+
+For each win the engine's items, its shown 台 and its payments (who pays, how many 台, how many points) must equal the oracle's; about 12,000 of the wins go over the cap, several hundred of them with 連莊 台 on top. A further 2,000 ordinary wins are played through the game (`finishWin`), and the payments and score changes it records must match too. Where this document left a reading open (大四喜 and the wind pongs, 花槓 and 正花, a 暗槓 as an 暗刻, what a flower win scores, who pays for 搶槓) the table now states it.
 
 Not implemented (by design, uncommon in 16-tile): 七對子, 十三么, 一條龍, 三色同順 — see the roadmap for optional variants. 嚦咕嚦咕 (the seven-pairs-and-a-triplet hand some tables play) is an optional table rule, off by default; with it off, a hand must be five sets and a pair.
 

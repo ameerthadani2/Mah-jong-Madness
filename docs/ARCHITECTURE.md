@@ -116,4 +116,4 @@ Four layers, each run by CI (`.github/workflows/ci.yml`):
 
 * Never read `Date.now()` or `Math.random()` inside the engine. Randomness enters only through the seed.
 * `applyAction` must not mutate its input (we clone via JSON; states are small).
-* Any new rule must be covered by `scoring.test.ts` or `game.test.ts` and must keep `replay` byte-identical.
+* Any new rule must be covered by `scoring.test.ts` or `game.test.ts` and must keep `replay` byte-identical. A rule that changes a 台 item or a payment must also be taught to the scoring oracle (`packages/engine/test/helpers/oracle.ts`, see docs/RULES.md, How the scorer is checked), which is written from docs/RULES.md and checks the scorer on 58,000 generated wins.
