@@ -92,6 +92,8 @@ export interface BoardRow {
   rated?: number;
   /** On `me` only: the caller hid themselves (ranked, but shown to nobody else). */
   hidden?: boolean;
+  /** On `me` only: the server's automation check keeps the caller off the boards until a moderator has looked (docs/API.md). */
+  flagged?: boolean;
 }
 
 export interface Board {

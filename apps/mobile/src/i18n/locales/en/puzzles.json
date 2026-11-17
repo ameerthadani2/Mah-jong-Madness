@@ -248,6 +248,8 @@
     "hiddenTitle": "You are hidden from leaderboards",
     "hiddenBody": "Other players do not see you on any board. Only you see your own place.",
     "hiddenCta": "Change in Settings",
+    "flaggedTitle": "Your results are being checked",
+    "flaggedBody": "Some of your recent results were faster than people answer, so other players do not see you on the boards until a moderator has looked. You still see your own place, and your results are kept.",
     "loading": "Loading the leaderboard…",
     "offlineTitle": "Can't reach the game server",
     "offlineBody": "Leaderboards need a connection. Check your connection and try again.",

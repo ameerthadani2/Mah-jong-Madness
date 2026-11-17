@@ -58,6 +58,10 @@ import {
   type UsersRepo,
   type WalletRecord,
   type WalletRepo,
+  type PuzzleFlagRecord,
+  type PuzzleFlagsRepo,
+  type PuzzleFlagStatus,
+  type RecentPuzzleResult,
 } from './types';
 
 type Tx = <T>(fn: (q: Queryable) => Promise<T>) => Promise<T>;
@@ -1586,6 +1590,68 @@ function pgDailyAttempts(q: Queryable): DailyAttemptsRepo {
   };
 }
 
+interface PuzzleFlagRow {
+  user_id: string;
+  status: PuzzleFlagStatus;
+  reason: string;
+  flagged_at: Date;
+  reviewed_at: Date | null;
+}
+
+const flagFromRow = (r: PuzzleFlagRow): PuzzleFlagRecord => ({ userId: r.user_id, status: r.status, reason: r.reason, flaggedAt: r.flagged_at.getTime(), reviewedAt: toMs(r.reviewed_at) });
+
+function pgPuzzleFlags(q: Queryable): PuzzleFlagsRepo {
+  const COLS = 'user_id, status, reason, flagged_at, reviewed_at';
+  return {
+    async get(userId) {
+      if (!isUuid(userId)) return null;
+      const res = await q.query<PuzzleFlagRow>('SELECT ' + COLS + ' FROM puzzle_flags WHERE user_id = $1', [userId]);
+      return res.rows[0] ? flagFromRow(res.rows[0]) : null;
+    },
+    async flag(userId, reason, at) {
+      // A confirmed flag stays confirmed (the update's WHERE leaves it, and the select returns it).
+      await q.query(
+        "INSERT INTO puzzle_flags (user_id, status, reason, flagged_at) VALUES ($1, 'flagged', $2, $3) ON CONFLICT (user_id) DO UPDATE SET status = 'flagged', reason = excluded.reason, flagged_at = excluded.flagged_at, reviewed_at = NULL WHERE puzzle_flags.status <> 'confirmed'",
+        [userId, reason.slice(0, 500), toDate(at)],
+      );
+      return (await this.get(userId))!;
+    },
+    async review(userId, status, at) {
+      if (!isUuid(userId)) return null;
+      const res = await q.query<PuzzleFlagRow>('UPDATE puzzle_flags SET status = $2, reviewed_at = $3 WHERE user_id = $1 RETURNING ' + COLS, [userId, status, toDate(at)]);
+      return res.rows[0] ? flagFromRow(res.rows[0]) : null;
+    },
+    async list(status, limit) {
+      const res = await q.query<PuzzleFlagRow>('SELECT ' + COLS + ' FROM puzzle_flags WHERE status = $1 ORDER BY flagged_at, user_id LIMIT $2', [status, Math.max(1, Math.min(1000, Math.floor(limit)))]);
+      return res.rows.map(flagFromRow);
+    },
+    async recentResults(userId, after, limit) {
+      if (!isUuid(userId)) return [];
+      const res = await q.query<{ kind: 'daily' | 'rush'; at: Date; seconds: number; solved: number; wrong: number }>(
+        `(SELECT 'daily' AS kind, created_at AS at, seconds, CASE WHEN correct THEN 1 ELSE 0 END AS solved, CASE WHEN correct THEN 0 ELSE 1 END AS wrong
+            FROM puzzle_results WHERE user_id = $1 AND kind = 'daily' AND created_at > $2 ORDER BY created_at DESC LIMIT $3)
+         UNION ALL
+         (SELECT 'rush' AS kind, finished_at AS at, seconds, solved, wrong
+            FROM puzzle_rush_runs WHERE user_id = $1 AND finished_at IS NOT NULL AND finished_at > $2 ORDER BY finished_at DESC LIMIT $3)
+         ORDER BY at DESC LIMIT $3`,
+        [userId, toDate(after), Math.max(1, Math.min(100, Math.floor(limit)))],
+      );
+      return res.rows.map((r): RecentPuzzleResult => ({ kind: r.kind, at: r.at.getTime(), seconds: Number(r.seconds), answers: Number(r.solved) + Number(r.wrong), solved: Number(r.solved), wrong: Number(r.wrong) }));
+    },
+    async moveToUser(fromUserId, toUserId) {
+      if (!isUuid(fromUserId) || !isUuid(toUserId)) return;
+      await q.query(
+        `INSERT INTO puzzle_flags (user_id, status, reason, flagged_at, reviewed_at)
+         SELECT $2, f.status, f.reason, f.flagged_at, f.reviewed_at FROM puzzle_flags f WHERE f.user_id = $1 AND f.status <> 'cleared'
+         ON CONFLICT (user_id) DO UPDATE SET status = excluded.status, reason = excluded.reason, flagged_at = excluded.flagged_at, reviewed_at = excluded.reviewed_at
+         WHERE puzzle_flags.status = 'cleared'`,
+        [fromUserId, toUserId],
+      );
+      await q.query('DELETE FROM puzzle_flags WHERE user_id = $1', [fromUserId]);
+    },
+  };
+}
+
 interface BoardSqlRow {
   user_id: string;
   score: number;
@@ -1602,8 +1668,10 @@ const DAILY_ENTRIES =
 const RUSH_ENTRIES =
   'SELECT DISTINCT ON (user_id) user_id, score, 0 AS tiebreak, solved AS count, finished_at AS at FROM puzzle_rush_runs WHERE finished_at IS NOT NULL AND ranked AND finished_at >= $1 AND score > 0 ORDER BY user_id, score DESC, finished_at, id';
 const RATING_ENTRIES = 'SELECT user_id, rating AS score, 0 AS tiebreak, rated AS count, updated_at AS at FROM puzzle_ratings WHERE rated >= $1';
-/** Listed: live, not banned, visible, and in scope ($2: the club's member ids, or null for everyone). */
-const BOARD_LISTED = ' JOIN users u ON u.id = e.user_id WHERE u.deleted_at IS NULL AND u.banned_at IS NULL AND u.leaderboard_visible AND ($2::uuid[] IS NULL OR e.user_id = ANY($2::uuid[]))';
+/** An automation flag keeps the account off the boards (flagged or confirmed; a cleared flag does not). */
+const FLAGGED = "EXISTS (SELECT 1 FROM puzzle_flags f WHERE f.user_id = e.user_id AND f.status <> 'cleared')";
+/** Listed: live, not banned, visible, not flagged, and in scope ($2: the club's member ids, or null for everyone). */
+const BOARD_LISTED = ' JOIN users u ON u.id = e.user_id WHERE u.deleted_at IS NULL AND u.banned_at IS NULL AND u.leaderboard_visible AND NOT ' + FLAGGED + ' AND ($2::uuid[] IS NULL OR e.user_id = ANY($2::uuid[]))';
 const BOARD_COLS = 'SELECT e.user_id, e.score, e.tiebreak, e.count, e.at, u.display_name, u.avatar FROM e';
 
 const boardEntry = (r: BoardSqlRow): BoardEntry => ({
@@ -1628,11 +1696,15 @@ function pgLeaderboards(q: Queryable): LeaderboardsRepo {
     if (!isUuid(query.viewerId)) return { rows, me: null };
     // The viewer: on the list, or (hidden, banned or further down) ranked behind the listed entries ahead of them.
     const listed = rows.find((r) => r.userId === query.viewerId);
-    if (listed) return { rows, me: { ...listed, hidden: false } };
-    const own = await q.query<BoardSqlRow & { visible: boolean }>(
+    if (listed) return { rows, me: { ...listed, hidden: false, flagged: false } };
+    const own = await q.query<BoardSqlRow & { visible: boolean; flagged: boolean }>(
       'WITH e AS (' +
         entries +
-        ') SELECT e.user_id, e.score, e.tiebreak, e.count, e.at, u.display_name, u.avatar, (u.leaderboard_visible AND u.banned_at IS NULL) AS visible FROM e JOIN users u ON u.id = e.user_id WHERE u.deleted_at IS NULL AND e.user_id = $2 AND ($3::uuid[] IS NULL OR e.user_id = ANY($3::uuid[]))',
+        ') SELECT e.user_id, e.score, e.tiebreak, e.count, e.at, u.display_name, u.avatar, (u.leaderboard_visible AND u.banned_at IS NULL AND NOT ' +
+        FLAGGED +
+        ') AS visible, ' +
+        FLAGGED +
+        ' AS flagged FROM e JOIN users u ON u.id = e.user_id WHERE u.deleted_at IS NULL AND e.user_id = $2 AND ($3::uuid[] IS NULL OR e.user_id = ANY($3::uuid[]))',
       [param, query.viewerId, scope],
     );
     if (!own.rows[0]) return { rows, me: null };
@@ -1645,7 +1717,7 @@ function pgLeaderboards(q: Queryable): LeaderboardsRepo {
         ' AND e.user_id <> $3 AND (e.score > $4 OR (e.score = $4 AND (e.tiebreak < $5 OR (e.tiebreak = $5 AND (e.at < $6 OR (e.at = $6 AND e.user_id < $3))))))',
       [param, scope, query.viewerId, mine.score, mine.tiebreak, toDate(mine.at)],
     );
-    return { rows, me: { ...mine, rank: Number(ahead.rows[0].n) + 1, hidden: !own.rows[0].visible } };
+    return { rows, me: { ...mine, rank: Number(ahead.rows[0].n) + 1, hidden: !own.rows[0].visible, flagged: own.rows[0].flagged } };
   };
   return {
     daily: (dateKey, query) => page(DAILY_ENTRIES, dateKey, query),
@@ -1673,6 +1745,7 @@ function build(q: Queryable, tx: Tx, transaction: Repos['transaction']): Repos {
     puzzleRatings: pgPuzzleRatings(q),
     rushRuns: pgRushRuns(q),
     dailyAttempts: pgDailyAttempts(q),
+    puzzleFlags: pgPuzzleFlags(q),
     leaderboards: pgLeaderboards(q),
     blocks: pgBlocks(q, tx),
     moderation: pgModeration(q),

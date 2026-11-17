@@ -65,6 +65,7 @@ function fixture(repos: Repos, opts: { limits?: boolean } = {}) {
     repos,
     sessions,
     now,
+    adminToken: ADMIN,
     puzzles: { yieldTurn: async () => {}, ...(opts.limits ? {} : { submitLimiter: roomy, readLimiter: roomy, rushIpLimiter: roomy }) },
   });
   let n = 0;
@@ -104,6 +105,7 @@ function fixture(repos: Repos, opts: { limits?: boolean } = {}) {
 }
 
 const TODAY = '2026-11-16';
+const ADMIN = 'admin-token-for-puzzle-tests';
 
 function contract(name: string, repos: () => Repos) {
   describe(name, () => {
@@ -277,6 +279,70 @@ function contract(name: string, repos: () => Repos) {
       const strikes = await f.startRush(gold);
       f.clock.now += 9_000;
       expect((await f.finish(gold, strikes.runId, f.rushAnswers(strikes.seed, 'rwww' + 'r'.repeat(5)))).json).toMatchObject({ solved: 1, wrong: 3, ranked: true });
+    });
+
+    it('flags an account whose recent results are at a floor or perfect at an inhuman pace, hides it from every board, and lets an admin clear or confirm it', async () => {
+      const f = fixture(repos());
+      const [bot, human] = [await f.guest('Paced bot'), await f.guest('Human')];
+      await f.plan(bot);
+      await f.plan(human);
+      const admin = { authorization: `Bearer ${ADMIN}` };
+      const mine = (rows: Row[]) => rows.filter((r) => [bot, human].some((g) => g.userId === r.userId)).map((r) => r.displayName);
+      /** A run of `pattern` answered over `ms` of the server's clock. */
+      const run = async (g: typeof bot, pattern: string, ms: number) => {
+        const r = await f.startRush(g);
+        f.clock.now += ms;
+        const res = await f.finish(g, r.runId, f.rushAnswers(r.seed, pattern));
+        expect(res.status, res.body).toBe(200);
+        return res.json;
+      };
+      const flagOf = async (g: typeof bot) => (await f.repos.puzzleFlags.get(g.userId))?.status ?? null;
+      // Both answer the daily puzzle at a human pace and are on the daily board.
+      await f.daily(bot, TODAY, dailyRight(TODAY), 12);
+      await f.daily(human, TODAY, dailyRight(TODAY), 25);
+      // The bot paces itself just above the Rush floor (20 answers in 31 s, 1.55 s each): ranked, but at the floor.
+      for (let i = 0; i < 2; i++) expect(await run(bot, 'r'.repeat(20), 31_000)).toMatchObject({ ranked: true });
+      expect(await flagOf(bot)).toBeNull();
+      expect(mine((await f.board(human, 'rush?period=all')).rows)).toContain('Paced bot');
+      // An honest pace (about 6 s an answer, a mistake or two) never counts, however often.
+      for (let i = 0; i < 5; i++) await run(human, 'rrrrwrrrrrrw', 72_000);
+      expect(await flagOf(human)).toBeNull();
+      // The third result at the floor flags the bot: it is on no board, and sees its own row marked.
+      await run(bot, 'r'.repeat(20), 31_000);
+      expect(await flagOf(bot)).toBe('flagged');
+      for (const path of ['rush?period=all', `daily?date=${TODAY}`]) {
+        expect(mine((await f.board(human, path)).rows)).toEqual(['Human']);
+        expect((await f.board(bot, path)).me).toMatchObject({ displayName: 'Paced bot', hidden: true, flagged: true });
+      }
+      expect((await f.board(human, 'rush?period=all')).me).toMatchObject({ hidden: false, flagged: false });
+
+      // The admin queue lists it with what the check saw; the routes need the admin token.
+      expect((await f.call('GET', '/api/admin/puzzle-flags', undefined, human.auth)).status).toBe(401);
+      const queue = await f.call('GET', '/api/admin/puzzle-flags', undefined, admin);
+      expect(queue.status, queue.body).toBe(200);
+      const entry = (queue.json.flags as Array<Record<string, unknown>>).find((x) => x.userId === bot.userId)!;
+      expect(entry).toMatchObject({ status: 'flagged', account: { id: bot.userId, displayName: 'Paced bot' } });
+      expect(entry.reason).toMatch(/^3 of the last 4 puzzle results/);
+      expect((entry.recent as unknown[]).length).toBe(4);
+      expect((await f.call('GET', '/api/admin/puzzle-flags?status=nope', undefined, admin)).json.error).toBe('invalid');
+      expect((await f.call('POST', `/api/admin/puzzle-flags/${human.userId}`, { action: 'clear' }, admin)).status).toBe(404);
+      expect((await f.call('POST', `/api/admin/puzzle-flags/${bot.userId}`, { action: 'ban' }, admin)).json.error).toBe('invalid');
+
+      // Cleared: back on the boards, and only results after the clear count towards a new flag.
+      const cleared = await f.call('POST', `/api/admin/puzzle-flags/${bot.userId}`, { action: 'clear' }, admin);
+      expect(cleared.json).toMatchObject({ ok: true, flag: { status: 'cleared' } });
+      expect(mine((await f.board(human, 'rush?period=all')).rows)).toContain('Paced bot');
+      f.clock.now += 1000;
+      for (let i = 0; i < 2; i++) await run(bot, 'r'.repeat(20), 31_000);
+      expect(await flagOf(bot)).toBe('cleared');
+      // A perfect run at an inhuman pace (25 of 25 in 70 s, 2.8 s each) counts too.
+      expect(await run(bot, 'r'.repeat(25), 70_000)).toMatchObject({ ranked: true, wrong: 0 });
+      expect(await flagOf(bot)).toBe('flagged');
+      // Confirmed: off the boards for good; the check never undoes it.
+      expect((await f.call('POST', `/api/admin/puzzle-flags/${bot.userId}`, { action: 'confirm' }, admin)).json).toMatchObject({ flag: { status: 'confirmed' } });
+      expect((await f.repos.puzzleFlags.flag(bot.userId, 'again', f.now())).status).toBe('confirmed');
+      expect(mine((await f.board(human, 'rush?period=all')).rows)).toEqual(['Human']);
+      expect((await f.call('GET', '/api/admin/puzzle-flags?status=confirmed', undefined, admin)).json.flags).toEqual(expect.arrayContaining([expect.objectContaining({ userId: bot.userId })]));
     });
 
     it('verifies a hard daily puzzle and the hard value and defence puzzles of a Rush run by regenerating them', async () => {

@@ -96,6 +96,8 @@ export interface BoardView {
   pinned: RowView | null;
   /** The player hid themselves from leaderboards ("Show me on leaderboards" is off). */
   hidden: boolean;
+  /** The server's automation check keeps the player off the boards (their own row is still shown, marked). */
+  flagged: boolean;
   /** Nobody on the board (the player's own row included). */
   empty: boolean;
 }
@@ -156,7 +158,9 @@ export function boardView(board: Pick<Board, 'board' | 'rows' | 'me'>, myUserId:
   const listed = mineId !== null && rows.some((r) => r.key === mineId);
   const pinned = me && !listed ? rowView(board.board, me, true, t) : null;
   // Hidden either way: the board says so with the player's own row, and the setting says so on a board they have no entry on yet.
-  return { rows, pinned, hidden: me?.hidden === true || visible === false, empty: rows.length === 0 && !pinned };
+  // Flagged by the server's automation check: its own note, not the "Show me on leaderboards" one.
+  const flagged = me?.flagged === true;
+  return { rows, pinned, hidden: !flagged && (me?.hidden === true || visible === false), flagged, empty: rows.length === 0 && !pinned };
 }
 
 /** The empty board's line, per board (the rating board says how many answers it takes to appear). */

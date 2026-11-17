@@ -41,7 +41,7 @@ import type { ClubRegistry } from './clubs';
 import { LIMITS } from './config';
 import { BucketTable, cleanField, DAY_MS } from './limits';
 import { nameAllowed } from './moderation';
-import type { BoardPage, BoardRow, Repos, UserRecord } from './repos/types';
+import type { BoardPage, BoardRow, RecentPuzzleResult, Repos, UserRecord } from './repos/types';
 
 /** How long an issued Rush run may be finished: a run lasts three minutes, so this is generous. */
 export const RUSH_RUN_TTL_MS = 30 * 60_000;
@@ -60,6 +60,47 @@ export const FREE_RUSH_RUNS_PER_DAY = 1;
  */
 export const DAILY_RANK_FLOOR_MS = 3000;
 export const RUSH_RANK_FLOOR_MS = 1500;
+/**
+ * Automation flags (docs/API.md, "Automation flags"). After every daily answer and Rush run the
+ * server reads the account's last `FLAG_WINDOW` results (ranked or not; only those after an admin
+ * last cleared a flag) and flags the account when at least `FLAG_MIN_INHUMAN` of them are at a
+ * floor or perfect at a pace no person reaches (`inhumanResult`). A flagged account is on no board.
+ *
+ * The thresholds come from the fourth assessment's script (daily in 0 s, Rush 40 of 40 at 1 s an
+ * answer) and an honest-paced probe (daily in 6 s or more, Rush at about 6 s an answer with
+ * mistakes): a daily answer within 2 s of its floor, a Rush run of 5 answers or more within 0.5 s
+ * of its floor, or a perfect run of 10 or more at under 3 s an answer.
+ */
+export const FLAG_WINDOW = 10;
+export const FLAG_MIN_INHUMAN = 3;
+export const DAILY_INHUMAN_SECONDS = 5;
+export const RUSH_INHUMAN_PACE_SECONDS = 2;
+export const RUSH_PERFECT_PACE_SECONDS = 3;
+export const RUSH_PERFECT_MIN_SOLVED = 10;
+
+/** Whether one result is at a floor or perfect at a pace no person reaches. */
+export function inhumanResult(r: RecentPuzzleResult): boolean {
+  if (r.kind === 'daily') return r.seconds < DAILY_INHUMAN_SECONDS;
+  if (r.answers < 5) return false;
+  const pace = r.seconds / r.answers;
+  return pace < RUSH_INHUMAN_PACE_SECONDS || (r.wrong === 0 && r.solved >= RUSH_PERFECT_MIN_SOLVED && pace < RUSH_PERFECT_PACE_SECONDS);
+}
+
+/**
+ * Flags the account when its recent results look automated, inside the caller's transaction. A
+ * flagged or confirmed account is left as it is; after an admin's clear only later results count.
+ */
+export async function checkAutomation(tx: Repos, userId: string, at: number): Promise<boolean> {
+  const flag = await tx.puzzleFlags.get(userId);
+  if (flag && flag.status !== 'cleared') return true;
+  const recent = await tx.puzzleFlags.recentResults(userId, flag?.reviewedAt ?? -1, FLAG_WINDOW);
+  const inhuman = recent.filter(inhumanResult);
+  if (inhuman.length < FLAG_MIN_INHUMAN) return false;
+  const daily = inhuman.filter((r) => r.kind === 'daily').length;
+  await tx.puzzleFlags.flag(userId, `${inhuman.length} of the last ${recent.length} puzzle results at a human-time floor or perfect at an inhuman pace (${daily} daily, ${inhuman.length - daily} Rush)`, at);
+  return true;
+}
+
 /** The longest time a daily answer is ranked with (the server's time from start to answer); longer is stored as this. */
 export const DAILY_MAX_SECONDS = 3600;
 
@@ -149,7 +190,7 @@ const ratingJson = (r: { rating: number; change: number; rated: number }) => ({ 
 /** A board answer: rows and the caller's own row, with names as boards show them. */
 function boardJson(page: BoardPage, value: (row: BoardRow) => Record<string, unknown>) {
   const row = (r: BoardRow) => ({ rank: r.rank, userId: r.userId, displayName: boardName(r.userId, r.displayName), avatar: cleanField(r.avatar ?? '', 16) || null, ...value(r) });
-  return { rows: page.rows.map(row), me: page.me ? { ...row(page.me), hidden: page.me.hidden } : null };
+  return { rows: page.rows.map(row), me: page.me ? { ...row(page.me), hidden: page.me.hidden, flagged: page.me.flagged } : null };
 }
 
 /**
@@ -228,6 +269,7 @@ export function puzzleRoutes<R>(r: PuzzleRouteFactory<R>, deps: PuzzleDeps): R[]
         const row = await tx.puzzleResults.recordDaily({ userId: me.userId, puzzleKey: key, correct, seconds, ratingAfter: after[0] ?? null, createdAt: at, ranked });
         // Only the first attempt per date key is ranked and rated.
         if (!row) throw new PuzzleError(409, 'already_played', 'You have already played this daily puzzle');
+        await checkAutomation(tx, me.userId, at);
         return { rating, row };
       });
       return { date: key, correct, seconds: result.row.seconds, ranked, rating: ratingJson(result.rating) };
@@ -287,6 +329,7 @@ export function puzzleRoutes<R>(r: PuzzleRouteFactory<R>, deps: PuzzleDeps): R[]
         for (const [i, v] of verdicts.entries()) {
           await tx.puzzleResults.record({ userId: me.userId, kind: 'rush', puzzleKey: `${run.id}:${v.index}`, correct: v.correct, seconds: 0, ratingAfter: after[i] ?? null, createdAt: at });
         }
+        await checkAutomation(tx, me.userId, at);
         return rating;
       });
       return {

@@ -121,6 +121,14 @@ describe("the player's own row", () => {
     expect(v.empty).toBe(false);
   });
 
+  it('marks the player’s own row flagged, with its own note instead of the hidden one, when the server’s automation check keeps them off', () => {
+    const v = boardView({ board: 'rush', rows: [row(1, 'a', 3000)], me: { ...row(1, 'me', 3500), hidden: true, flagged: true } }, 'me', en);
+    expect(v.flagged).toBe(true);
+    expect(v.hidden).toBe(false);
+    expect(v.pinned).toMatchObject({ key: 'me' });
+    expect(boardView({ board: 'rush', rows: [row(1, 'me', 3000)], me: { ...row(1, 'me', 3000), hidden: false, flagged: false } }, 'me', en).flagged).toBe(false);
+  });
+
   it('says the player is hidden when the setting is off, even on a board they have no row on', () => {
     const v = boardView({ board: 'rating', rows: [row(1, 'a', 1300)], me: null }, 'me', en, false);
     expect([v.hidden, v.pinned, v.empty]).toEqual([true, null, false]);
@@ -129,7 +137,7 @@ describe("the player's own row", () => {
 
   it('leaves an empty board empty, with a line per board', () => {
     const v = boardView({ board: 'daily', rows: [], me: null }, 'me', en);
-    expect(v).toEqual({ rows: [], pinned: null, hidden: false, empty: true });
+    expect(v).toEqual({ rows: [], pinned: null, hidden: false, flagged: false, empty: true });
     expect(emptyText({ board: 'daily', scope: 'global' }, en)).toBe("Nobody is on today's board yet. Be the first!");
     expect(emptyText({ board: 'rush', scope: 'club' }, en)).toBe('Nobody in this club has a Puzzle Rush score in this period yet.');
     expect(emptyText({ board: 'rating', scope: 'global', minRated: 20 }, zh)).toBe('完成 20 次計分作答後，就會出現在這裡。');

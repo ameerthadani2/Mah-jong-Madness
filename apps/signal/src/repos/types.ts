@@ -591,6 +591,47 @@ export interface DailyAttemptsRepo {
   prune(before: number): Promise<number>;
 }
 
+/** Where an account's automation flag stands: flagged by the check, cleared or confirmed by an admin. */
+export type PuzzleFlagStatus = 'flagged' | 'cleared' | 'confirmed';
+export const PUZZLE_FLAG_STATUSES: readonly PuzzleFlagStatus[] = ['flagged', 'cleared', 'confirmed'];
+
+export interface PuzzleFlagRecord {
+  userId: string;
+  status: PuzzleFlagStatus;
+  /** What the check saw, in words. */
+  reason: string;
+  flaggedAt: number;
+  /** When an admin cleared or confirmed it (null while flagged). */
+  reviewedAt: number | null;
+}
+
+/** One of an account's recent results as the automation check reads it (a daily answer or a finished Rush run). */
+export interface RecentPuzzleResult {
+  kind: 'daily' | 'rush';
+  /** When it was recorded (daily: answered; Rush: finished). */
+  at: number;
+  /** The server's time (daily: rounded seconds to the answer; Rush: the run's seconds, at most 180). */
+  seconds: number;
+  /** Judged answers (daily: 1). */
+  answers: number;
+  solved: number;
+  wrong: number;
+}
+
+export interface PuzzleFlagsRepo {
+  get(userId: string): Promise<PuzzleFlagRecord | null>;
+  /** Flags the account (a new flag, or again after a clear); a confirmed flag stays confirmed. */
+  flag(userId: string, reason: string, at: number): Promise<PuzzleFlagRecord>;
+  /** An admin's decision on a flagged account; null when the account has no flag. */
+  review(userId: string, status: 'cleared' | 'confirmed', at: number): Promise<PuzzleFlagRecord | null>;
+  /** Flags in one status, oldest first. */
+  list(status: PuzzleFlagStatus, limit: number): Promise<PuzzleFlagRecord[]>;
+  /** The account's daily results and finished Rush runs recorded after `after`, newest first. */
+  recentResults(userId: string, after: number, limit: number): Promise<RecentPuzzleResult[]>;
+  /** An account merge: a flag the target does not already carry (or has had cleared) moves to it. */
+  moveToUser(fromUserId: string, toUserId: string): Promise<void>;
+}
+
 /**
  * One account's entry on a board, in the boards' common order: `score` high first, then
  * `tiebreak` low first, then `at` early first (who got there first), then the user id.
@@ -624,12 +665,15 @@ export interface BoardQuery {
 
 export interface BoardPage {
   rows: BoardRow[];
-  /** The viewer's entry; `hidden` when they are not shown to others (hidden or banned). Rank counts the visible entries ahead of them. */
-  me: (BoardRow & { hidden: boolean }) | null;
+  /**
+   * The viewer's entry; `hidden` when they are not shown to others (hidden, banned or flagged), and
+   * `flagged` when an automation flag keeps them off (flagged or confirmed). Rank counts the visible entries ahead of them.
+   */
+  me: (BoardRow & { hidden: boolean; flagged: boolean }) | null;
 }
 
 /**
- * Leaderboards. Only live accounts that are visible and not banned are listed; deleted (and
+ * Leaderboards. Only live accounts that are visible, not banned and not flagged as automated are listed; deleted (and
  * merged-away) accounts never are, not even as the viewer.
  */
 export interface LeaderboardsRepo {
@@ -659,6 +703,7 @@ export interface Repos {
   puzzleRatings: PuzzleRatingsRepo;
   rushRuns: RushRunsRepo;
   dailyAttempts: DailyAttemptsRepo;
+  puzzleFlags: PuzzleFlagsRepo;
   leaderboards: LeaderboardsRepo;
   blocks: BlocksRepo;
   moderation: ModerationRepo;

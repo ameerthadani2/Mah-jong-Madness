@@ -20,6 +20,9 @@ import {
   type DeviceRecord,
   type DevicesRepo,
   type EntitlementRecord,
+  type PuzzleFlagRecord,
+  type PuzzleFlagsRepo,
+  type RecentPuzzleResult,
   type IdentitiesRepo,
   type IdentityProvider,
   type IdentityRecord,
@@ -84,6 +87,8 @@ interface MemoryState {
   puzzleSeq: number;
   /** puzzle_ratings, by user id. */
   ratings: Map<string, PuzzleRatingRecord>;
+  /** Automation flags by user id (puzzle_flags). */
+  puzzleFlags: Map<string, PuzzleFlagRecord>;
   /** puzzle_rush_runs, by run id. */
   rushRuns: Map<string, RushRunRecord>;
   /** puzzle_daily_attempts, by attempt id. */
@@ -121,6 +126,7 @@ const emptyState = (): MemoryState => ({
   puzzles: [],
   puzzleSeq: 0,
   ratings: new Map(),
+  puzzleFlags: new Map(),
   rushRuns: new Map(),
   dailyAttempts: new Map(),
   boardHidden: new Set(),
@@ -195,6 +201,7 @@ function memoryUsers(s: MemoryState): UsersRepo {
         for (const [k, e] of [...s.entitlements]) if (e.userId === id) s.entitlements.delete(k);
         s.puzzles = s.puzzles.filter((p) => p.userId !== id);
         s.ratings.delete(id);
+        s.puzzleFlags.delete(id);
         s.boardHidden.delete(id);
         for (const [k, run] of [...s.rushRuns]) if (run.userId === id) s.rushRuns.delete(k);
         for (const [k, a] of [...s.dailyAttempts]) if (a.userId === id) s.dailyAttempts.delete(k);
@@ -839,6 +846,58 @@ function memoryDailyAttempts(s: MemoryState): DailyAttemptsRepo {
   };
 }
 
+function memoryPuzzleFlags(s: MemoryState): PuzzleFlagsRepo {
+  return {
+    async get(userId) {
+      const f = s.puzzleFlags.get(userId);
+      return f ? copy(f) : null;
+    },
+    async flag(userId, reason, at) {
+      const f = s.puzzleFlags.get(userId);
+      if (f?.status === 'confirmed') return copy(f);
+      const row: PuzzleFlagRecord = { userId, status: 'flagged', reason, flaggedAt: at, reviewedAt: null };
+      s.puzzleFlags.set(userId, row);
+      return copy(row);
+    },
+    async review(userId, status, at) {
+      const f = s.puzzleFlags.get(userId);
+      if (!f) return null;
+      Object.assign(f, { status, reviewedAt: at });
+      return copy(f);
+    },
+    async list(status, limit) {
+      return [...s.puzzleFlags.values()]
+        .filter((f) => f.status === status)
+        .sort((a, b) => a.flaggedAt - b.flaggedAt || (a.userId < b.userId ? -1 : 1))
+        .slice(0, limit)
+        .map(copy);
+    },
+    async recentResults(userId, after, limit) {
+      const out: RecentPuzzleResult[] = [];
+      for (const p of s.puzzles) {
+        if (p.userId === userId && p.kind === 'daily' && p.createdAt > after) out.push({ kind: 'daily', at: p.createdAt, seconds: p.seconds, answers: 1, solved: p.correct ? 1 : 0, wrong: p.correct ? 0 : 1 });
+      }
+      for (const r of s.rushRuns.values()) {
+        if (r.userId !== userId || r.finishedAt === null || r.finishedAt <= after) continue;
+        out.push({ kind: 'rush', at: r.finishedAt, seconds: r.seconds ?? 0, answers: (r.solved ?? 0) + (r.wrong ?? 0), solved: r.solved ?? 0, wrong: r.wrong ?? 0 });
+      }
+      return out.sort((a, b) => b.at - a.at).slice(0, limit);
+    },
+    async moveToUser(fromUserId, toUserId) {
+      const from = s.puzzleFlags.get(fromUserId);
+      s.puzzleFlags.delete(fromUserId);
+      const into = s.puzzleFlags.get(toUserId);
+      if (from && from.status !== 'cleared' && (!into || into.status === 'cleared')) s.puzzleFlags.set(toUserId, { ...from, userId: toUserId });
+    },
+  };
+}
+
+/** Whether an automation flag keeps the account off the boards (flagged or confirmed; a cleared flag does not). */
+const flaggedIn = (s: MemoryState, userId: string) => {
+  const f = s.puzzleFlags.get(userId);
+  return f !== undefined && f.status !== 'cleared';
+};
+
 /** The boards' order: score high first, tiebreak low, earlier, then user id. */
 export function boardOrder(a: Pick<BoardEntry, 'score' | 'tiebreak' | 'at' | 'userId'>, b: Pick<BoardEntry, 'score' | 'tiebreak' | 'at' | 'userId'>): number {
   return b.score - a.score || a.tiebreak - b.tiebreak || a.at - b.at || (a.userId < b.userId ? -1 : a.userId > b.userId ? 1 : 0);
@@ -848,19 +907,20 @@ function memoryLeaderboards(s: MemoryState): LeaderboardsRepo {
   /** Ranks raw entries (user id plus the order fields) for one query. */
   const page = (raw: Array<Omit<BoardEntry, 'displayName' | 'avatar'>>, q: BoardQuery): BoardPage => {
     const scope = q.userIds ? new Set(q.userIds) : null;
-    const entries: Array<BoardEntry & { visible: boolean }> = [];
+    const entries: Array<BoardEntry & { visible: boolean; flagged: boolean }> = [];
     for (const e of raw) {
       const u = s.users.get(e.userId);
       if (!u || u.deletedAt !== null) continue;
       if (scope && !scope.has(e.userId)) continue;
-      const visible = !s.boardHidden.has(u.id) && (s.moderation.get(u.id)?.bannedAt ?? null) === null;
-      entries.push({ ...e, displayName: u.displayName, avatar: u.avatar, visible });
+      const flagged = flaggedIn(s, u.id);
+      const visible = !s.boardHidden.has(u.id) && (s.moderation.get(u.id)?.bannedAt ?? null) === null && !flagged;
+      entries.push({ ...e, displayName: u.displayName, avatar: u.avatar, visible, flagged });
     }
     const listed = entries.filter((e) => e.visible).sort(boardOrder);
-    const strip = ({ visible: _v, ...e }: BoardEntry & { visible: boolean }) => e;
+    const strip = ({ visible: _v, flagged: _f, ...e }: BoardEntry & { visible: boolean; flagged: boolean }) => e;
     const rows = listed.slice(0, q.limit).map((e, i) => ({ ...strip(e), rank: i + 1 }));
     const mine = entries.find((e) => e.userId === q.viewerId);
-    const me = mine ? { ...strip(mine), rank: 1 + listed.filter((e) => e.userId !== mine.userId && boardOrder(e, mine) < 0).length, hidden: !mine.visible } : null;
+    const me = mine ? { ...strip(mine), rank: 1 + listed.filter((e) => e.userId !== mine.userId && boardOrder(e, mine) < 0).length, hidden: !mine.visible, flagged: mine.flagged } : null;
     return copy({ rows, me });
   };
   return {
@@ -901,6 +961,7 @@ function build(s: MemoryState, transaction: Repos['transaction']): Repos {
     puzzleRatings: memoryPuzzleRatings(s),
     rushRuns: memoryRushRuns(s),
     dailyAttempts: memoryDailyAttempts(s),
+    puzzleFlags: memoryPuzzleFlags(s),
     leaderboards: memoryLeaderboards(s),
     blocks: memoryBlocks(s),
     moderation: memoryModeration(s),

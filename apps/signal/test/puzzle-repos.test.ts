@@ -114,6 +114,45 @@ function contract(name: string, repos: () => Repos) {
       expect(await r.dailyAttempts.get(later.id)).toBeNull();
     });
 
+    it('keeps automation flags (a confirmed one stays), reads recent results newest first, moves a flag on a merge, and keeps flagged and unranked entries off the boards', async () => {
+      const r = repos();
+      const [a, b, c] = [await user('Flag A'), await user('Flag B'), await user('Flag C')];
+      const key = 'f-' + randomHex(4);
+      await daily(a, key, true, 4, T0 + 1000);
+      const run = randomUUID();
+      await r.rushRuns.create({ id: run, userId: a, seed: 's', startedAt: T0, expiresAt: T0 + 1_800_000 });
+      await r.rushRuns.finish(run, { finishedAt: T0 + 2000, solved: 20, wrong: 1, seconds: 31, score: 3000, ranked: true });
+      const unranked = randomUUID();
+      await r.rushRuns.create({ id: unranked, userId: b, seed: 's', startedAt: T0, expiresAt: T0 + 1_800_000 });
+      expect(await r.rushRuns.finish(unranked, { finishedAt: T0 + 3000, solved: 20, wrong: 0, seconds: 20, score: 3000, ranked: false })).toMatchObject({ ranked: false });
+      await r.puzzleResults.recordDaily({ userId: b, puzzleKey: key, correct: true, seconds: 1, ratingAfter: null, createdAt: T0, ranked: false });
+      expect(await r.puzzleFlags.recentResults(a, -1, 10)).toEqual([
+        { kind: 'rush', at: T0 + 2000, seconds: 31, answers: 21, solved: 20, wrong: 1 },
+        { kind: 'daily', at: T0 + 1000, seconds: 4, answers: 1, solved: 1, wrong: 0 },
+      ]);
+      expect(await r.puzzleFlags.recentResults(a, T0 + 1000, 10)).toHaveLength(1);
+      const ids = async (page: Promise<{ rows: Array<{ userId: string }> }>) => (await page).rows.map((x) => x.userId).filter((id) => [a, b, c].includes(id));
+      expect(await ids(r.leaderboards.daily(key, q(c)))).toEqual([a]);
+      expect(await ids(r.leaderboards.rush(T0, q(c)))).toEqual([a]);
+      // Flagged: off every board, and the viewer's own row says so.
+      expect(await r.puzzleFlags.get(a)).toBeNull();
+      expect(await r.puzzleFlags.flag(a, 'test', T0)).toEqual({ userId: a, status: 'flagged', reason: 'test', flaggedAt: T0, reviewedAt: null });
+      expect(await ids(r.leaderboards.daily(key, q(c)))).toEqual([]);
+      expect((await r.leaderboards.rush(T0, q(a))).me).toMatchObject({ userId: a, hidden: true, flagged: true });
+      expect(await r.puzzleFlags.review(c, 'cleared', T0)).toBeNull();
+      expect(await r.puzzleFlags.review(a, 'cleared', T0 + 5)).toMatchObject({ status: 'cleared', reviewedAt: T0 + 5 });
+      expect(await ids(r.leaderboards.rush(T0, q(c)))).toEqual([a]);
+      expect((await r.leaderboards.rush(T0, q(a))).me).toMatchObject({ hidden: false, flagged: false });
+      await r.puzzleFlags.flag(a, 'again', T0 + 6);
+      await r.puzzleFlags.review(a, 'confirmed', T0 + 7);
+      expect(await r.puzzleFlags.flag(a, 'once more', T0 + 8)).toMatchObject({ status: 'confirmed', reason: 'again' });
+      expect((await r.puzzleFlags.list('confirmed', 500)).map((f) => f.userId)).toContain(a);
+      // A merge moves the flag to an account that has none.
+      await r.puzzleFlags.moveToUser(a, c);
+      expect(await r.puzzleFlags.get(a)).toBeNull();
+      expect(await r.puzzleFlags.get(c)).toMatchObject({ userId: c, status: 'confirmed' });
+    });
+
     it('orders the daily board solved first, then fewest seconds, then who answered first, and ranks the viewer', async () => {
       const r = repos();
       const key = 'd-' + randomHex(4);

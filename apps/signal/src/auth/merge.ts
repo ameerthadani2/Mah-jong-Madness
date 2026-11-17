@@ -113,6 +113,7 @@ export async function link(repos: Repos, userId: string, identity: VerifiedIdent
       await tx.puzzleRatings.mergeInto(user.id, target.id);
       await tx.rushRuns.moveToUser(user.id, target.id);
       await tx.dailyAttempts.moveToUser(user.id, target.id);
+      await tx.puzzleFlags.moveToUser(user.id, target.id);
       await tx.devices.moveToUser(user.id, target.id);
       await tx.reports.moveToUser(user.id, target.id);
       await tx.matchResults.moveToUser(user.id, target.id);

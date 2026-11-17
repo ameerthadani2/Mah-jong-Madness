@@ -259,6 +259,15 @@ function BoardList({ board, userId, visible }: { board: Board; userId: string | 
   const view = boardView(board, userId, t, visible);
   return (
     <View style={{ gap: space.sm }} testID={`board-${board.board}`}>
+      {view.flagged && (
+        <View style={styles.hidden} testID="boards-flagged">
+          <Row>
+            <Icon name="lock" size={22} />
+            <P style={styles.hiddenTitle}>{t('puzzles.boards.flaggedTitle')}</P>
+          </Row>
+          <P dim style={styles.detail}>{t('puzzles.boards.flaggedBody')}</P>
+        </View>
+      )}
       {view.hidden && (
         <View style={styles.hidden} testID="boards-hidden">
           <Row>

@@ -26,7 +26,7 @@
 import type { IncomingMessage } from 'node:http';
 import { cleanText } from '@mjm/net';
 import { adminAuthorised } from './admin';
-import { DELETED_PLAYER_NAME, REPORT_RESOLUTIONS, type ReportRecord, type ReportResolution, type Repos, type UserRecord } from './repos/types';
+import { DELETED_PLAYER_NAME, PUZZLE_FLAG_STATUSES, REPORT_RESOLUTIONS, type PuzzleFlagRecord, type PuzzleFlagStatus, type ReportRecord, type ReportResolution, type Repos, type UserRecord } from './repos/types';
 
 // ---------------------------------------------------------------------------------------------
 // Names
@@ -530,6 +530,8 @@ export function blockRoutes<R>(r: ModerationRouteFactory<R>, deps: ModerationDep
 /** Report statuses the queue can be listed by. */
 const REPORT_STATUSES: ReadonlyArray<ReportRecord['status']> = ['open', 'actioned', 'dismissed'];
 
+const flagJson = (f: PuzzleFlagRecord) => ({ userId: f.userId, status: f.status, reason: f.reason, flaggedAt: iso(f.flaggedAt), reviewedAt: iso(f.reviewedAt) });
+
 export function adminModerationRoutes<R>(r: ModerationRouteFactory<R>, deps: ModerationDeps): R[] {
   const { repos } = deps;
   const now = deps.now ?? Date.now;
@@ -632,6 +634,37 @@ export function adminModerationRoutes<R>(r: ModerationRouteFactory<R>, deps: Mod
       if (reported && resolution === 'ban') afterBan(reported);
       if (reported && resolution === 'mute') deps.mutes?.set(reported.id, mutedUntil);
       return { ok: true, id: claimed.id, status: claimed.status, action: claimed.resolution, ...(mutedUntil !== null ? { mutedUntil: iso(mutedUntil) } : {}) };
+    }),
+    // ---------------------------------------------------------------- puzzle automation flags
+    // Accounts the puzzle routes flagged as automated (apps/signal/src/puzzles.ts `checkAutomation`):
+    // off every board until an admin clears the flag; a confirmed flag keeps them off for good.
+    r('GET', '/api/admin/puzzle-flags', async (ctx) => {
+      admin(ctx);
+      const query = new URL(ctx.req.url ?? '/', 'http://localhost').searchParams;
+      const status = (query.get('status') ?? 'flagged') as PuzzleFlagStatus;
+      if (!PUZZLE_FLAG_STATUSES.includes(status)) throw new ModerationError(400, 'invalid', `status must be one of ${PUZZLE_FLAG_STATUSES.join(', ')}`);
+      const limit = Math.max(1, Math.min(500, Number.parseInt(query.get('limit') ?? '100', 10) || 100));
+      const flags = await repos.puzzleFlags.list(status, limit);
+      const out = [];
+      for (const f of flags) {
+        const u = await repos.users.get(f.userId);
+        const recent = await repos.puzzleFlags.recentResults(f.userId, -1, 10);
+        out.push({
+          ...flagJson(f),
+          account: u ? await accountJson(u) : { id: f.userId, deleted: true, displayName: DELETED_PLAYER_NAME },
+          recent: recent.map((x) => ({ kind: x.kind, at: iso(x.at), seconds: x.seconds, answers: x.answers, solved: x.solved, wrong: x.wrong })),
+        });
+      }
+      return { flags: out };
+    }),
+    r('POST', '/api/admin/puzzle-flags/:id', async (ctx) => {
+      admin(ctx);
+      const user = await target(ctx.params.id);
+      const action = ctx.body.action;
+      if (action !== 'clear' && action !== 'confirm') throw new ModerationError(400, 'invalid', 'action must be clear or confirm');
+      const flag = await repos.puzzleFlags.review(user.id, action === 'clear' ? 'cleared' : 'confirmed', now());
+      if (!flag) throw new ModerationError(404, 'not_found', 'This account has no puzzle flag');
+      return { ok: true, flag: flagJson(flag) };
     }),
     r('POST', '/api/admin/users/:id/ban', async (ctx) => {
       admin(ctx);
