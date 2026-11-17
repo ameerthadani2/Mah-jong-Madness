@@ -1,4 +1,4 @@
-import React, { useContext, useEffect, useState } from 'react';
+import React, { useContext, useEffect, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
 import Svg, { Circle, Defs, G, LinearGradient, Path, RadialGradient, Rect, Stop } from 'react-native-svg';
 import { PLACEHOLDER_TILE, WINDS, type Meld, type PlayerView, type TileId } from '@mjm/engine';
@@ -150,7 +150,13 @@ export function SeatBadge({
   const offline = !!info && !info.connected && !info.isBot;
   // Win and deal-in reactions switch the portrait to its win/lose clip for a few seconds (if it has clips).
   const [mood, setMood] = useState<AvatarMood | null>(null);
+  // The effect runs once per event (its key), not each time the table re-renders with a new object for the same one:
+  // a re-run would clear the timer that brings the usual face back. It reads the event itself from this ref.
+  const latestReaction = useRef(reaction);
+  latestReaction.current = reaction;
+  const reactionKey = reaction?.key;
   useEffect(() => {
+    const reaction = latestReaction.current;
     // Only a fresh reaction: a plate remounted by a rotation or resize keeps its usual face.
     if (!reaction || !reactionShouldPlay(reaction, false, Date.now())) return;
     const m: AvatarMood | null = reaction.kind === 'win' || reaction.kind === 'selfdraw' ? 'win' : reaction.kind === 'dealin' ? 'lose' : null;
@@ -158,7 +164,7 @@ export function SeatBadge({
     setMood(m);
     const id = setTimeout(() => setMood(null), 3200);
     return () => clearTimeout(id);
-  }, [reaction?.key]);
+  }, [reactionKey]);
   void player;
   void compact;
   return (
