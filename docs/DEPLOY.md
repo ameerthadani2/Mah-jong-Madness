@@ -280,7 +280,9 @@ rollout cannot hold the next deploy back for hours.
 **Tables survive a deploy.** On SIGTERM (Fly sends it, then waits `kill_timeout = 30s`) the
 server stops accepting requests and socket upgrades (`/health` answers 503 `draining`), writes
 every hosted table to `table_snapshots`, closes the sockets without finishing any table and gives
-up the host lock; it never takes longer than 20 s, even with a hung database. The new machine
+up the host lock; it never takes longer than 20 s, even with a hung database. It exits 0 only when
+every table reached the database; a snapshot that was not saved (a hung database, or the 20 s ran
+out) is logged and the process exits 1, so the platform shows a failed stop. The new machine
 restores every unfinished table at boot under its own code; the apps reconnect with backoff and
 reclaim their seats with their rejoin tokens, and bots play for anyone not back yet. A restored
 table waits 15 minutes for its players. (With in-memory storage there is nothing to restore from,

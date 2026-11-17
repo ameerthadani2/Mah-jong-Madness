@@ -25,6 +25,7 @@ import { createAnalytics, initSentry, reportError } from './observability';
 import { pushClientFromEnv, PushService } from './push';
 import { createRepos } from './repos';
 import { createSignalServer } from './server';
+import { shutdown } from './shutdown';
 
 const flag = (v: string | undefined) => ['1', 'true', 'yes', 'on'].includes((v ?? '').trim().toLowerCase());
 
@@ -119,18 +120,11 @@ async function main(): Promise<void> {
     if (stopping) return;
     stopping = true;
     console.log(`[signal] ${signal}: saving tables and shutting down`);
-    server
-      .close()
-      .then(() => analytics.shutdown().catch(() => {}))
-      .then(() => sentry?.flush(2000))
-      .then(() => repos.close())
-      .then(
-        () => process.exit(0),
-        (e: Error) => {
-          console.error('[signal] shutdown error', e.message);
-          process.exit(1);
-        },
-      );
+    // Exits 1 when the final snapshot was not saved, so the platform sees the failure.
+    void shutdown({
+      server,
+      after: [() => analytics.shutdown().catch(() => {}), () => sentry?.flush(2000), () => repos.close()],
+    }).then((code) => process.exit(code));
   };
   process.on('SIGTERM', () => stop('SIGTERM'));
   process.on('SIGINT', () => stop('SIGINT'));

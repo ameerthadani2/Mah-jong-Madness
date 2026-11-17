@@ -240,7 +240,8 @@ describe.skipIf(!PG_URL)('a hung Postgres', () => {
       expect(await res.json()).toMatchObject({ ok: false, db: 'down' });
       expect(Date.now() - t0).toBeLessThan(3_000);
       const t1 = Date.now();
-      await server.close();
+      // The final write could not reach the database: the report says so (main.ts then exits 1).
+      expect(await server.closeAndReport()).toEqual({ written: false });
       expect(Date.now() - t1).toBeLessThan(3_000);
     } finally {
       console.error = original;

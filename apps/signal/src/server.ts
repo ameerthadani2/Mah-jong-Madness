@@ -115,6 +115,18 @@ export interface SignalServer {
    * Tables stay restorable. Never takes longer than `closeDeadlineMs`, even with a hung database.
    */
   close(): Promise<void>;
+  /**
+   * `close()`, reporting whether the final write reached the store: `written` is false when a
+   * table or club snapshot failed or the deadline came first, so moves may be lost and the process
+   * should exit non-zero (src/main.ts).
+   */
+  closeAndReport(): Promise<CloseResult>;
+}
+
+/** What `SignalServer.close()` reports. */
+export interface CloseResult {
+  /** Every table and club was written by the final write (true when the server writes nothing on close, as after a lost lock). */
+  written: boolean;
 }
 
 const HOUR_MS = 3_600_000;
@@ -365,11 +377,11 @@ export async function createSignalServer(opts: SignalServerOptions): Promise<Sig
   ticker.unref();
   pruner.unref();
 
-  let closing: Promise<void> | null = null;
+  let closing: Promise<CloseResult> | null = null;
   /** False once the host lock was lost during boot: the tables are no longer this process's to write. */
   let writeOnClose = true;
   const deadlineMs = opts.closeDeadlineMs ?? CLOSE_DEADLINE_MS;
-  const close = () =>
+  const closeAndReport = (): Promise<CloseResult> =>
     (closing ??= (async () => {
       // First stop taking new work: no new connections, upgrades or requests (they get 503).
       draining = true;
@@ -384,18 +396,26 @@ export async function createSignalServer(opts: SignalServerOptions): Promise<Sig
       // Then write the tables as they are and stop every table without reporting it finished,
       // so club listings stay open and the next process restores them.
       rooms.freeze();
+      const failuresBefore = persister.failures;
+      let written = true;
       const writes = (async () => {
         if (!writeOnClose) return;
         await persister.flush();
         await clubs.flush();
-      })().catch((e: Error) => console.error('[signal] final write failed', e.message));
+      })().catch((e: Error) => {
+        written = false;
+        console.error('[signal] final write failed', e.message);
+      });
       let timer: ReturnType<typeof setTimeout> | undefined;
       const deadline = new Promise<'late'>((resolve) => {
         timer = setTimeout(() => resolve('late'), deadlineMs);
       });
       if ((await Promise.race([writes.then(() => 'done' as const), deadline])) === 'late') {
+        written = false;
         console.error(`[signal] shutdown deadline (${deadlineMs} ms) reached before every table was written; closing anyway`);
       }
+      // A table snapshot that failed during the final write is logged by the persister, not thrown.
+      if (writeOnClose && persister.failures > failuresBefore) written = false;
       clearTimeout(timer);
       persister.stop();
       offRoomEvents();
@@ -406,7 +426,9 @@ export async function createSignalServer(opts: SignalServerOptions): Promise<Sig
       await httpClosed;
       // Last: the next process may restore the tables only once they are written.
       await releaseLock();
+      return { written };
     })());
+  const close = (): Promise<void> => closeAndReport().then(() => undefined);
   // A server that lost the lock while it was coming up never listens: it stops everything it
   // started, writes nothing and fails the boot.
   const stopUnwritten = (): Promise<void> => {
@@ -450,5 +472,6 @@ export async function createSignalServer(opts: SignalServerOptions): Promise<Sig
     api,
     address: () => ({ port: (http.address() as AddressInfo).port }),
     close,
+    closeAndReport,
   };
 }
