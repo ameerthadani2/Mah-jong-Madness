@@ -1,6 +1,7 @@
 /**
- * Source checks for the puzzle screens (they render React Native, which these tests do not load); the
- * behaviour itself is driven in the web build by the puzzle probe and e2e.
+ * Source checks for the puzzle screens that the render tests do not reach. The drill's difficulty switch, Puzzle
+ * Rush's free run, its leave question and its record, and the record-and-tip foot under Rush and the drills are
+ * rendered in Puzzles.render.test.tsx; the daily puzzle (which reads the day's puzzle from the server) is checked here.
  */
 import { readFileSync } from 'fs';
 import { join } from 'path';
@@ -10,33 +11,16 @@ import zh from '../i18n/locales/zh-TW/puzzles.json';
 
 const read = (f: string) => readFileSync(join(__dirname, f), 'utf8');
 
-describe('drill difficulty switch', () => {
-  it('mounts a fresh, unanswered puzzle: the seed names the difficulty', () => {
-    const src = read('DrillScreen.tsx');
-    expect(src).toMatch(/return `\$\{kind\}-\$\{runId\}-d\$\{difficulty\}-\$\{n\}`/);
-    expect(src).toMatch(/const seed = drillSeed\(kind, runId, difficulty, n\)/);
-  });
-});
-
 describe('leaving Puzzle Rush mid-run', () => {
-  const src = read('PuzzleScreens.tsx');
-  it('does not spend the free run when the screen merely opens', () => {
-    expect(src).not.toMatch(/useEffect\(\(\) => \{\s*if \(allowance\.ok && allowance\.limit !== null\) app\.setWallet\(consume/);
-    expect(src).toMatch(/if \(!answeredOnce\) onStart\(\)/);
-  });
-
-  it('asks first, then records the run it spent', () => {
-    expect(src).toMatch(/onBack=\{back\}/);
-    expect(src).toMatch(/answeredOnce && !over \? setAskLeave\(true\)/);
-    expect(src).toMatch(/const leaveRun = \(\) => \{\s*setAskLeave\(false\);\s*record\(\);/);
+  it('asks in both languages', () => {
     expect(en.rush.leaveTitle).toBeTruthy();
     expect(zh.rush.leaveTitle).toBeTruthy();
   });
 });
 
-describe('tall puzzle screens', () => {
-  it('fill the space under the puzzle with the player’s record and a tip', () => {
-    expect(read('PuzzleScreens.tsx').match(/<PuzzleFoot/g)?.length).toBeGreaterThanOrEqual(2);
-    expect(read('DrillScreen.tsx')).toMatch(/<PuzzleFoot \/>/);
+describe('the tall daily puzzle screen', () => {
+  it('fills the space under the puzzle with the player’s record and a tip', () => {
+    const src = read('PuzzleScreens.tsx');
+    expect(src.slice(src.indexOf('export function DailyPuzzleScreen'), src.indexOf('export function PuzzleRushScreen'))).toMatch(/<PuzzleFoot/);
   });
 });
