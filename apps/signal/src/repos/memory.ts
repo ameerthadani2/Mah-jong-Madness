@@ -40,6 +40,8 @@ import {
   type LeaderboardsRepo,
   type PuzzleRatingRecord,
   type PuzzleRatingsRepo,
+  type TableRatingRecord,
+  type TableRatingsRepo,
   type PuzzleResultRecord,
   type PuzzleResultsRepo,
   type RushRunRecord,
@@ -88,6 +90,8 @@ interface MemoryState {
   puzzleSeq: number;
   /** puzzle_ratings, by user id. */
   ratings: Map<string, PuzzleRatingRecord>;
+  /** table_ratings, by user id. */
+  tableRatings: Map<string, TableRatingRecord>;
   /** Automation flags by user id (puzzle_flags). */
   puzzleFlags: Map<string, PuzzleFlagRecord>;
   /** puzzle_rush_runs, by run id. */
@@ -129,6 +133,7 @@ const emptyState = (): MemoryState => ({
   puzzles: [],
   puzzleSeq: 0,
   ratings: new Map(),
+  tableRatings: new Map(),
   puzzleFlags: new Map(),
   rushRuns: new Map(),
   rushAnswers: new Map(),
@@ -205,6 +210,7 @@ function memoryUsers(s: MemoryState): UsersRepo {
         for (const [k, e] of [...s.entitlements]) if (e.userId === id) s.entitlements.delete(k);
         s.puzzles = s.puzzles.filter((p) => p.userId !== id);
         s.ratings.delete(id);
+        s.tableRatings.delete(id);
         s.puzzleFlags.delete(id);
         s.boardHidden.delete(id);
         for (const [k, run] of [...s.rushRuns]) {
@@ -775,6 +781,32 @@ function memoryPuzzleRatings(s: MemoryState): PuzzleRatingsRepo {
   };
 }
 
+function memoryTableRatings(s: MemoryState): TableRatingsRepo {
+  return {
+    async get(userId) {
+      const row = s.tableRatings.get(userId);
+      return row ? copy(row) : null;
+    },
+    async getMany(userIds) {
+      return [...new Set(userIds)].flatMap((id) => {
+        const row = s.tableRatings.get(id);
+        return row ? [copy(row)] : [];
+      });
+    },
+    async getManyForUpdate(userIds) {
+      return this.getMany(userIds);
+    },
+    async set(r) {
+      s.tableRatings.set(r.userId, copy(r));
+    },
+    async mergeInto(fromUserId, toUserId) {
+      const [from, into] = [s.tableRatings.get(fromUserId), s.tableRatings.get(toUserId)];
+      s.tableRatings.delete(fromUserId);
+      if (from && (!into || from.matches > into.matches)) s.tableRatings.set(toUserId, { ...from, userId: toUserId });
+    },
+  };
+}
+
 function memoryRushRuns(s: MemoryState): RushRunsRepo {
   return {
     async create(r) {
@@ -990,6 +1022,7 @@ function build(s: MemoryState, transaction: Repos['transaction']): Repos {
     matchResults: memoryMatchResults(s),
     puzzleResults: memoryPuzzleResults(s),
     puzzleRatings: memoryPuzzleRatings(s),
+    tableRatings: memoryTableRatings(s),
     rushRuns: memoryRushRuns(s),
     dailyAttempts: memoryDailyAttempts(s),
     puzzleFlags: memoryPuzzleFlags(s),

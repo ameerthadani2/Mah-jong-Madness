@@ -111,6 +111,7 @@ export async function link(repos: Repos, userId: string, identity: VerifiedIdent
       await tx.puzzleResults.moveToUser(user.id, target.id);
       // The account keeps the better-supported puzzle rating (more verified answers; its own on a tie).
       await tx.puzzleRatings.mergeInto(user.id, target.id);
+      await tx.tableRatings.mergeInto(user.id, target.id);
       await tx.rushRuns.moveToUser(user.id, target.id);
       await tx.dailyAttempts.moveToUser(user.id, target.id);
       await tx.puzzleFlags.moveToUser(user.id, target.id);

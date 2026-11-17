@@ -5,6 +5,7 @@ import { AccountCard } from './AccountCard';
 import { FakeProviders } from '../test/providers';
 import type { AuthContextValue } from '../auth/AuthProvider';
 import { EMPTY_WALLET, type Wallet } from '../monetisation/wallet';
+import { setLocalePreference } from '../i18n';
 
 /**
  * Settings → Account against a faked sign-in layer: a small stand-in for the auth provider that changes its state the
@@ -50,6 +51,34 @@ describe('the account card', () => {
     expect(refresh).toHaveBeenCalled();
     expect(screen.getByText(/Not connected to the game server yet/)).toBeOnTheScreen();
     for (const name of ['Sign in with Apple', 'Sign in with Google', 'Sign out', 'Delete account']) expect(screen.queryByRole('button', { name })).toBeNull();
+  });
+
+  it('shows the quick-match rating, provisional for the first 20 matches', async () => {
+    await renderCard({ ...ACCOUNT, tableRating: { rating: 1532, matches: 7, provisional: true, last: { room: 'QK7', change: 12, at: '2026-11-17T08:00:00Z' } } }).rendered;
+    expect(screen.getByText('Quick-match rating: 1532')).toBeOnTheScreen();
+    expect(screen.getByText('Provisional: 7 of 20 rated matches played')).toBeOnTheScreen();
+  });
+
+  it('shows a settled rating without the provisional line', async () => {
+    await renderCard({ ...ACCOUNT, tableRating: { rating: 1610, matches: 25, provisional: false, last: null } }).rendered;
+    expect(screen.getByText('Quick-match rating: 1610')).toBeOnTheScreen();
+    expect(screen.queryByText(/Provisional/)).toBeNull();
+  });
+
+  it('shows the rating in Chinese too', async () => {
+    setLocalePreference('zh-TW');
+    try {
+      await renderCard({ ...ACCOUNT, tableRating: { rating: 1532, matches: 7, provisional: true, last: null } }).rendered;
+      expect(screen.getByText('快速配對積分：1532')).toBeOnTheScreen();
+      expect(screen.getByText('暫定積分：已打 7／20 場計分比賽')).toBeOnTheScreen();
+    } finally {
+      setLocalePreference('auto');
+    }
+  });
+
+  it('shows no rating before the server has answered with one', async () => {
+    await renderCard(ACCOUNT).rendered;
+    expect(screen.queryByTestId('account-table-rating')).toBeNull();
   });
 
   it('a guest signs in with Google: Working… while it runs, then Signed in with Google linked', async () => {

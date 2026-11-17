@@ -3,6 +3,7 @@
  * signing out (guests are warned first) and account deletion behind a typed confirmation. A live
  * subscription is shown before deletion with a link to the store's subscription page, because
  * deleting the account does not stop the store billing it; the player must acknowledge that too.
+ * The quick-match table rating is shown once the server has answered (provisional for 20 matches).
  * Everything here works offline: with no server answer there are simply no provider buttons.
  */
 import React, { useEffect, useState } from 'react';
@@ -65,6 +66,13 @@ export function AccountCard() {
         </View>
       )}
       {auth.user && <P dim style={styles.tiny}>{t('settings.account.id', { id: auth.user.id })}</P>}
+      {auth.user && auth.tableRating && (
+        <View testID="account-table-rating" style={{ gap: 2 }}>
+          <P style={styles.small}>{t('settings.account.tableRating', { rating: auth.tableRating.rating })}</P>
+          {auth.tableRating.provisional && <P dim style={styles.tiny}>{t('settings.account.tableRatingProvisional', { matches: auth.tableRating.matches })}</P>}
+          <P dim style={styles.tiny}>{t('settings.account.tableRatingHint')}</P>
+        </View>
+      )}
 
       <Row style={{ flexWrap: 'wrap', rowGap: 8 }} gap={8}>
         {auth.providers.map((p) =>

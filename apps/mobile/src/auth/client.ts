@@ -7,7 +7,8 @@
  * app launches and plays offline without ever bootstrapping.
  */
 import { ApiError, authorisedJson, globalFetch, requestJson, type Authoriser, type FetchLike } from '../api/http';
-import type { ApiSession, ApiUser, DeviceInfo, Me, MePatch, Provider, SecureStore, ServerConfig, StoredAuth } from './types';
+import type { ApiSession, ApiUser, DeviceInfo, Me, MePatch, Provider, SecureStore, ServerConfig, StoredAuth, TableRating } from './types';
+import { parseTableRating } from '../logic/tableRating';
 
 export { ApiError } from '../api/http';
 
@@ -439,6 +440,12 @@ export class AuthClient implements Authoriser {
   }
 
   // ── Profile ──────────────────────────────────────────────────────────
+
+  /** The quick-match table rating alone (asked again after a quick match to show its change); null from an older server. */
+  async getTableRating(): Promise<TableRating | null> {
+    const r = await this.authorised<{ tableRating?: unknown }>('GET', '/api/me/table-rating');
+    return parseTableRating(r.tableRating);
+  }
 
   async getMe(): Promise<Me> {
     const me = await this.authorised<Me>('GET', '/api/me');

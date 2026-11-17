@@ -36,6 +36,8 @@ import {
   type LeaderboardsRepo,
   type PuzzleRatingRecord,
   type PuzzleRatingsRepo,
+  type TableRatingRecord,
+  type TableRatingsRepo,
   type PuzzleResultRecord,
   type PuzzleResultsRepo,
   type RushRunRecord,
@@ -1445,6 +1447,69 @@ interface RatingRow {
 
 const ratingFromRow = (r: RatingRow): PuzzleRatingRecord => ({ userId: r.user_id, rating: r.rating, rated: r.rated, updatedAt: r.updated_at.getTime() });
 
+interface TableRatingRow {
+  user_id: string;
+  rating: number;
+  matches: number;
+  last_match_id: string | null;
+  last_room: string | null;
+  last_change: number;
+  updated_at: Date;
+}
+
+const tableRatingFromRow = (r: TableRatingRow): TableRatingRecord => ({
+  userId: r.user_id,
+  rating: r.rating,
+  matches: r.matches,
+  lastMatchId: r.last_match_id,
+  lastRoom: r.last_room,
+  lastChange: r.last_change,
+  updatedAt: r.updated_at.getTime(),
+});
+
+function pgTableRatings(q: Queryable): TableRatingsRepo {
+  const COLS = 'user_id, rating, matches, last_match_id, last_room, last_change, updated_at';
+  return {
+    async get(userId) {
+      if (!isUuid(userId)) return null;
+      const res = await q.query<TableRatingRow>('SELECT ' + COLS + ' FROM table_ratings WHERE user_id = $1', [userId]);
+      return res.rows[0] ? tableRatingFromRow(res.rows[0]) : null;
+    },
+    async getMany(userIds) {
+      const ids = [...new Set(userIds.filter(isUuid))];
+      if (ids.length === 0) return [];
+      const res = await q.query<TableRatingRow>('SELECT ' + COLS + ' FROM table_ratings WHERE user_id = ANY($1::uuid[])', [ids]);
+      return res.rows.map(tableRatingFromRow);
+    },
+    async getManyForUpdate(userIds) {
+      const ids = [...new Set(userIds.filter(isUuid))].sort();
+      if (ids.length === 0) return [];
+      // The user rows too, in id order, so a first match (no rating rows yet) is serialised as well, without deadlocks.
+      await q.query('SELECT id FROM users WHERE id = ANY($1::uuid[]) ORDER BY id FOR UPDATE', [ids]);
+      const res = await q.query<TableRatingRow>('SELECT ' + COLS + ' FROM table_ratings WHERE user_id = ANY($1::uuid[]) ORDER BY user_id FOR UPDATE', [ids]);
+      return res.rows.map(tableRatingFromRow);
+    },
+    async set(r) {
+      await q.query(
+        `INSERT INTO table_ratings (user_id, rating, matches, last_match_id, last_room, last_change, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7)
+         ON CONFLICT (user_id) DO UPDATE SET rating = excluded.rating, matches = excluded.matches, last_match_id = excluded.last_match_id, last_room = excluded.last_room, last_change = excluded.last_change, updated_at = excluded.updated_at`,
+        [r.userId, r.rating, r.matches, r.lastMatchId, r.lastRoom, r.lastChange, toDate(r.updatedAt)],
+      );
+    },
+    async mergeInto(fromUserId, toUserId) {
+      if (!isUuid(fromUserId) || !isUuid(toUserId)) return;
+      await q.query(
+        `INSERT INTO table_ratings (user_id, rating, matches, last_match_id, last_room, last_change, updated_at)
+         SELECT $2, f.rating, f.matches, f.last_match_id, f.last_room, f.last_change, f.updated_at FROM table_ratings f WHERE f.user_id = $1
+         ON CONFLICT (user_id) DO UPDATE SET rating = excluded.rating, matches = excluded.matches, last_match_id = excluded.last_match_id, last_room = excluded.last_room, last_change = excluded.last_change, updated_at = excluded.updated_at
+         WHERE excluded.matches > table_ratings.matches`,
+        [fromUserId, toUserId],
+      );
+      await q.query('DELETE FROM table_ratings WHERE user_id = $1', [fromUserId]);
+    },
+  };
+}
+
 function pgPuzzleRatings(q: Queryable): PuzzleRatingsRepo {
   const COLS = 'user_id, rating, rated, updated_at';
   return {
@@ -1789,6 +1854,7 @@ function build(q: Queryable, tx: Tx, transaction: Repos['transaction']): Repos {
     matchResults: pgMatchResults(q),
     puzzleResults: pgPuzzleResults(q),
     puzzleRatings: pgPuzzleRatings(q),
+    tableRatings: pgTableRatings(q),
     rushRuns: pgRushRuns(q),
     dailyAttempts: pgDailyAttempts(q),
     puzzleFlags: pgPuzzleFlags(q),

@@ -45,6 +45,7 @@ import { REPORT_REASONS, type ReportReason, type Repos, type UserRecord } from '
 import { parseRevenueCatWebhook, webhookAuthorised } from './revenuecat';
 import type { SnapshotWrites } from './persist';
 import { BANNED_CLOSE_CODE, isBotSkill, RoomLimitError, type RoomRegistry } from './rooms';
+import { tableRatingView } from './tableRating';
 import { WalletError, WalletService } from './wallet';
 
 export interface ApiDeps {
@@ -438,8 +439,14 @@ export function buildRoutes(deps: ApiDeps, opts: Pick<ApiOptions, 'reportIpLimit
         storeEnabled,
         identities: identities.filter((i) => i.provider !== 'guest').map((i) => (i.email ? { provider: i.provider, email: i.email } : { provider: i.provider })),
         leaderboardVisible: await repos.users.getLeaderboardVisible(me.userId),
+        tableRating: tableRatingView(await repos.tableRatings.get(me.userId)),
         serverNow: iso(now()),
       };
+    }),
+    // The quick-match table rating alone (the app asks for it after a quick match to show the change).
+    r('GET', '/api/me/table-rating', async (ctx) => {
+      const me = await ctx.caller();
+      return { tableRating: tableRatingView(await repos.tableRatings.get(me.userId)) };
     }),
     r('PATCH', '/api/me', async (ctx) => {
       const me = await ctx.caller();

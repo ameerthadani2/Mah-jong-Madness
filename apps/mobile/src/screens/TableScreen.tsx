@@ -53,6 +53,7 @@ import { ReportPlayerSheet } from '../components/ReportPlayerSheet';
 import { hideBlocked, useBlockedIds } from '../api/blocks';
 import { httpBase } from '../api/http';
 import { useAuth } from '../auth/AuthProvider';
+import { pollRatingChange } from '../logic/tableRating';
 import type { ReportTarget } from '../legal/reports';
 import { SupportLink } from '../components/SupportLink';
 
@@ -106,6 +107,21 @@ export function TableScreen() {
   // Players this account blocked: their chat lines and emotes are not shown (src/api/blocks.ts).
   const auth = useAuth();
   const blocked = useBlockedIds(session?.mode === 'online' && auth.user ? { base: httpBase(app.signalUrl), auth: auth.client } : null, session?.mode === 'online' ? (auth.user?.id ?? null) : null);
+  // After a quick match: the quick-match rating and its change on the match-over card, once the server has applied the match.
+  const quickOver = session?.mode === 'online' && session.quickMatch === true && state?.matchOver === true && !!auth.user;
+  const [ratingChange, setRatingChange] = useState<{ rating: number; change: number } | 'pending' | null>(null);
+  const ratingRoom = session?.roomCode;
+  useEffect(() => {
+    if (!quickOver || !ratingRoom) return;
+    let cancelled = false;
+    setRatingChange('pending');
+    void pollRatingChange(() => auth.client.getTableRating(), ratingRoom, { cancelled: () => cancelled }).then((r) => {
+      if (!cancelled) setRatingChange(r);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [quickOver, ratingRoom, auth.client]);
   const [coachWanted, setCoachOpen] = useState(app.settings.coach);
   const coachOpen = coachAllowed && coachWanted;
   const [emotePicker, setEmotePicker] = useState(false);
@@ -529,7 +545,7 @@ export function TableScreen() {
         )}
         {/* Not under the match-over card: its buttons would stay reachable there, and "Leave table" asks first while a match is on. */}
         {state.lastResult && showResult && !state.matchOver && <ResultSheet result={state.lastResult} view={view} state={state} mySeat={mySeat} autoNext={session.mode === 'online'} onNext={() => session.client.ready()} onLeave={() => setLeaveAsk(true)} onReview={() => app.go({ name: 'review' })} onFairness={() => app.go({ name: 'fairness' })} />}
-        {state.matchOver && <MatchOverSheet state={state} onLeave={leave} />}
+        {state.matchOver && <MatchOverSheet state={state} onLeave={leave} rating={quickOver ? ratingChange : null} />}
         {notice === 'reconnecting' ? (
           // The session is rejoining on its own (1, 2, 4 … 60 s); the player may skip the wait.
           <View style={styles.banner} accessibilityLiveRegion="polite">

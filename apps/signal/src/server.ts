@@ -24,6 +24,7 @@ import { ClubRegistry, clubGate } from './clubs';
 import { LIMITS, type SignalConfig } from './config';
 import { BucketTable } from './limits';
 import { blockedEitherWay, fillMsFromEnv, Matchmaker, quickMatchCheck } from './matchmaking';
+import { applyQuickMatchRating } from './tableRating';
 import { LatencyWindow } from './metrics';
 import { MuteList } from './moderation';
 import { NO_ANALYTICS, reportError, withConsent, type Analytics } from './observability';
@@ -238,6 +239,13 @@ export async function createSignalServer(opts: SignalServerOptions): Promise<Sig
         finishedAt: now(),
       })
       .catch((e: Error) => console.error(`[signal] match result for ${room} not saved:`, e.message));
+    // A finished quick-match match moves the table rating of its humans (bots never count).
+    const quickPlayers = rooms.quickPlayersOf(room);
+    if (quickPlayers) {
+      void applyQuickMatchRating(repos.repos, { matchId: event.matchId, room, seats: event.seats, scores: event.scores, players: quickPlayers }, now()).catch((e: Error) =>
+        console.error(`[signal] table ratings for ${room} not saved:`, e.message),
+      );
+    }
   };
   const offRoomEvents = rooms.onRoomEvent(onRoomEvent);
 
