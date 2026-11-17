@@ -52,6 +52,8 @@ tests, sim   ──┘         │
 
 Each human seat that owes an action gets its own clock (`TableHost.clocks`), whether its link is up or has dropped: a base turn timer (`rules.turnSeconds`) and, once that expires, a per-hand time bank (`rules.timeBankSeconds`) that drains while they think. When the bank is empty the table plays for them by a fixed rule (a win is taken, any other claim is passed, a turn is played by the bot policy at Club strength or above from the seed `timeout:<seat>`), and each client recomputes those moves, and every bot's, at the audit (docs/FAIRNESS.md). Speeds are presets over those two numbers: Relaxed 30+60, Normal 15+30, Fast 10+20, Turbo 7+10, Hyper 4+0. The client receives its own deadline, remaining bank and an `inTimeBank` flag with every state update.
 
+While a hand is played the host never leaves a connected seat without a frame for more than 3 s: when it has sent nothing else it sends a `clock` frame with the turn (`CLOCK_FRAME_MS`), and its time stamps never go back. The online session asks its client every second whether the link has gone silent (`TableClient.checkLink`): after 8 s without a frame the client asks for a `pong`, and after 5 s more the session drops the socket and reconnects, as a missed heartbeat does. A frame that arrives out of the order of its stamps, or a `clock` frame for a turn whose state never came, shows the host held a frame back (docs/FAIRNESS.md).
+
 ### Resume after a crash or disconnect
 
 The app has two modes (`Session.mode`): `local` (offline bot tables, hosted on the phone) and `online` (every table with other people, hosted by the game server).
