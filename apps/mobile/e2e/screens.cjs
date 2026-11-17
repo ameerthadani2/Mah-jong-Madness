@@ -22,7 +22,9 @@
  * -leaderboards-zh.png, -leaderboards-xl.png) does not show its offline state, clips text or has a choice under 44 px,
  * a table HUD icon takes a press smaller than 44 x 44 px, the Shop's Looks tab cuts a description (<size>-shop-looks.png),
  * or a seat name is cut at a table in Traditional Chinese (each viewport at Normal text, and the portrait ones again at
- * Extra-large text: <size>-table-zh.png, <size>-table-zh-xl.png at every viewport; the hand tiles' size is logged as a note).
+ * Extra-large text: <size>-table-zh.png, <size>-table-zh-xl.png at every viewport; the hand tiles' size is logged as a note),
+ * or the Shop's try-on preview fails its checks (runPreview below: <size>-preview-<kind>.png and -zh.png, at every
+ * viewport and at 320x568).
  */
 const http = require('http');
 const fs = require('fs');
@@ -486,6 +488,128 @@ async function runXL(browser, port, [w, h]) {
   return { size: `${tag} xl`, finished: true, discards, shots: ['table-xl'], notes: [`hand tile ${tileW} px wide`], fails, errors };
 }
 
+/**
+ * The Shop's try-on preview, one look of each kind (a tile back the player owns, the rest not), at each viewport and
+ * at 320x568, in English and again in Traditional Chinese with reduce motion on (<size>-preview-<kind>.png,
+ * <size>-preview-<kind>-zh.png). Hard checks on each: a modal dialog named for the look, inside the screen; no text
+ * cut and nothing past the sheet's sides; no two controls overlapping; the title, Close and Buy or Equip rows on
+ * screen; Buy on a look not owned and Equip on the owned one; the emote played over the avatar; the celebration's
+ * Play again button, or with reduce motion its description instead; the page never scrolling sideways; and focus
+ * back on the card's picture once the preview closes.
+ */
+const PREVIEW_LOOKS = [
+  ['table', 'theme.jade'],
+  ['tileback', 'back.lotus'],
+  ['frame', 'frame.jade'],
+  ['emotes', 'emotes.teahouse'],
+  ['celebration', 'win.lanterns'],
+  ['bundle', 'bundle.dragon'],
+];
+const PREVIEW_OWNED = 'back.lotus';
+const ALL_PREVIEW_SIZES = [...ALL_SIZES, [320, 568]];
+const PREVIEW_SIZES = wanted.length ? ALL_PREVIEW_SIZES.filter(([w, h]) => wanted.includes(`${w}x${h}`)) : ALL_PREVIEW_SIZES;
+
+async function previewFit(page) {
+  return page.evaluate(() => {
+    const bad = [];
+    const shown = (e) => {
+      const r = e.getBoundingClientRect();
+      return r.width > 0 && r.height > 0;
+    };
+    const dlg = [...document.querySelectorAll('[data-testid="look-preview"]')].find(shown);
+    if (!dlg) return ['the preview is not showing'];
+    if (dlg.getAttribute('role') !== 'dialog' || dlg.getAttribute('aria-modal') !== 'true' || !dlg.getAttribute('aria-label')) bad.push(`the preview is not a named modal dialog (role ${dlg.getAttribute('role')}, aria-modal ${dlg.getAttribute('aria-modal')}, label "${dlg.getAttribute('aria-label')}")`);
+    const box = dlg.getBoundingClientRect();
+    if (box.left < -1 || box.top < -1 || box.right > innerWidth + 1 || box.bottom > innerHeight + 1) bad.push(`the sheet runs off the screen (${Math.round(box.left)},${Math.round(box.top)} to ${Math.round(box.right)},${Math.round(box.bottom)} in ${innerWidth}x${innerHeight})`);
+    for (const el of dlg.querySelectorAll('div[dir="auto"]')) {
+      if (!shown(el) || !el.textContent.trim()) continue;
+      const r = el.getBoundingClientRect();
+      if (el.scrollWidth > el.clientWidth + 1 || el.scrollHeight > el.clientHeight + 2) bad.push(`"${el.textContent.slice(0, 30)}" is cut (${el.scrollWidth}x${el.scrollHeight} in ${el.clientWidth}x${el.clientHeight})`);
+      if (r.left < box.left - 1 || r.right > box.right + 1) bad.push(`"${el.textContent.slice(0, 30)}" runs past the sheet's side`);
+    }
+    for (const sel of ['preview-stage', 'preview-avatar']) for (const el of dlg.querySelectorAll(`[data-testid="${sel}"], [data-testid^="preview-celebration-"]`)) {
+      const r = el.getBoundingClientRect();
+      if (shown(el) && (r.left < box.left - 1 || r.right > box.right + 1)) bad.push(`the picture is wider than the sheet (${Math.round(r.width)} px in ${Math.round(box.width)})`);
+    }
+    // Controls: none on top of another (a control inside another is one control).
+    const controls = [...dlg.querySelectorAll('[role="button"]')].filter(shown);
+    for (let i = 0; i < controls.length; i++)
+      for (let j = i + 1; j < controls.length; j++) {
+        const a = controls[i];
+        const b = controls[j];
+        if (a.contains(b) || b.contains(a)) continue;
+        const ra = a.getBoundingClientRect();
+        const rb = b.getBoundingClientRect();
+        const w = Math.min(ra.right, rb.right) - Math.max(ra.left, rb.left);
+        const h = Math.min(ra.bottom, rb.bottom) - Math.max(ra.top, rb.top);
+        if (w > 1 && h > 1) bad.push(`"${a.getAttribute('aria-label') || a.textContent}" overlaps "${b.getAttribute('aria-label') || b.textContent}"`);
+      }
+    // The title row and the buy row stay on screen, whole, whatever scrolls between them.
+    for (const id of ['look-preview-title', 'preview-close', 'preview-buy', 'preview-equip']) {
+      const el = [...dlg.querySelectorAll(`[data-testid="${id}"]`)].find(shown);
+      if (!el) continue;
+      const r = el.getBoundingClientRect();
+      if (r.top < box.top - 1 || r.bottom > box.bottom + 1 || r.left < box.left - 1 || r.right > box.right + 1 || r.bottom > innerHeight + 1) bad.push(`${id} is not whole on screen`);
+    }
+    if (document.documentElement.scrollWidth > innerWidth + 1) bad.push('the page scrolls sideways');
+    return bad;
+  });
+}
+
+async function runPreview(browser, port, [w, h], zh) {
+  const tag = `${w}x${h}`;
+  const fails = [];
+  const errors = [];
+  const shots = [];
+  const ctx = await browser.newContext({ viewport: { width: w, height: h }, locale: zh ? 'zh-TW' : 'en-US', reducedMotion: zh ? 'reduce' : 'no-preference' });
+  await ctx.addInitScript((owned) => {
+    localStorage.setItem('mjm.profile', JSON.stringify({ userId: 'user-e2e-1234567', userSecret: '0123456789abcdef0123456789abcdef', name: 'Tester', avatar: 'panda' }));
+    localStorage.setItem('mjm.age', JSON.stringify({ birthYear: 1990, at: 0, synced: true }));
+    localStorage.setItem('mjm.wallet', JSON.stringify({ v: 2, userId: null, diamonds: 0, bonusDiamonds: 0, entitlements: [], cosmetics: [owned], clock: { offsetMs: 0, floor: 0 }, syncedAt: null, meters: { day: '', reviews: 0, rush: 0 } }));
+  }, PREVIEW_OWNED);
+  const page = await ctx.newPage();
+  page.on('pageerror', (e) => errors.push(e.message));
+  await page.goto(`http://localhost:${port}/`);
+  await page.waitForSelector('[data-testid="start-match"]', { timeout: 30000 });
+  await page.waitForTimeout(500);
+  const where = `Shop preview (${zh ? 'zh-TW, reduce motion' : 'en'})`;
+  if (!(await tapSel(page, '[data-testid="open-shop"]', 1000)) || !(await tapSel(page, '[data-testid="shop-tab-looks"]', 600))) {
+    await ctx.close();
+    return { size: `${tag} preview${zh ? '-zh' : ''}`, finished: false, notes: ['the Shop Looks tab did not open'], fails, errors };
+  }
+  for (const [kind, id] of PREVIEW_LOOKS) {
+    const name = `preview-${kind}${zh ? '-zh' : ''}`;
+    await tapSel(page, `[data-testid="shelf-${kind === 'celebration' ? 'celebration' : kind}"]`, 400);
+    if (!(await tapSel(page, `[data-testid="preview-${id}"]`, 700))) {
+      fails.push(`${where}: ${id} has no preview to open`);
+      continue;
+    }
+    if (kind === 'emotes' && !zh) {
+      await tapSel(page, '[data-testid="preview-play-th.dumpling"]', 300);
+      if (!(await visible(page, '[data-testid="preview-emote-bubble"]'))) fails.push(`${where}: tapping an emote does not play it`);
+    }
+    if (kind === 'celebration') {
+      const replay = await visible(page, '[data-testid="preview-replay"]');
+      const still = await visible(page, '[data-testid="preview-celebration-still"]');
+      if (zh && (replay || !still)) fails.push(`${where}: with reduce motion the celebration is not described instead of played`);
+      if (!zh && (!replay || still)) fails.push(`${where}: the celebration has no Play again button`);
+      if (!zh) await page.waitForTimeout(600);
+    }
+    await page.screenshot({ path: path.join(out, `${tag}-${name}.png`) });
+    shots.push(name);
+    fails.push(...(await previewFit(page)).map((f) => `${where} ${id}: ${f}`));
+    const owned = id === PREVIEW_OWNED;
+    if (owned && !(await visible(page, '[data-testid="preview-equip"]'))) fails.push(`${where}: the owned ${id} offers no Equip`);
+    if (!owned && !(await visible(page, '[data-testid="preview-buy"]'))) fails.push(`${where}: ${id} offers no Buy`);
+    await tapSel(page, '[data-testid="preview-close"]', 500);
+    if (await visible(page, '[data-testid="look-preview"]')) fails.push(`${where}: ${id}'s preview does not close`);
+    const focused = await page.evaluate(() => document.activeElement?.getAttribute('data-testid'));
+    if (focused !== `preview-${id}`) fails.push(`${where}: focus went to ${focused || 'nothing'}, not back to ${id}'s card, when the preview closed`);
+  }
+  await ctx.close();
+  return { size: `${tag} preview${zh ? '-zh' : ''}`, finished: true, shots, notes: [], fails, errors };
+}
+
 (async () => {
   await new Promise((r) => server.listen(0, r));
   const port = server.address().port;
@@ -499,6 +623,7 @@ async function runXL(browser, port, [w, h]) {
     ...SIZES.map((s) => runTableZh(browser, port, s, true).catch((e) => ({ size: `${s[0]}x${s[1]} table-zh-xl`, finished: false, notes: [e.message], errors: [] }))),
     ...SIZES.map((s) => runHomeZh(browser, port, s).catch((e) => ({ size: `${s[0]}x${s[1]} zh-TW`, finished: false, notes: [e.message], errors: [] }))),
     ...SIZES.map((s) => runBoards(browser, port, s).catch((e) => ({ size: `${s[0]}x${s[1]} leaderboards`, finished: false, notes: [e.message], errors: [] }))),
+    ...PREVIEW_SIZES.flatMap((s) => [false, true].map((zh) => runPreview(browser, port, s, zh).catch((e) => ({ size: `${s[0]}x${s[1]} preview${zh ? '-zh' : ''}`, finished: false, notes: [e.message], errors: [] })))),
   ]);
   for (const r of results) console.log(JSON.stringify(r));
   await browser.close();
