@@ -49,7 +49,7 @@ export function ReviewScreen() {
     } catch {
       return null;
     }
-  }, [audit, snapshot, rules, seat]);
+  }, [allowance.ok, audit, snapshot, rules, seat]);
 
   useEffect(() => {
     if (!review || !audit) return;
