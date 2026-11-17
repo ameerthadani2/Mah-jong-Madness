@@ -488,3 +488,24 @@ describe('workflow hygiene', () => {
     expect(ok.summary).toContain('importing');
   });
 });
+
+describe("CI's image check", () => {
+  /** The `docker` job of ci.yml, up to the next job. */
+  const dockerJob = (): string => /^ {2}docker:\n([\s\S]*?)(?=^ {2}\S)/m.exec(readFileSync(join(ROOT, '.github/workflows/ci.yml'), 'utf8'))?.[1] ?? '';
+
+  it('boots the image on Postgres as production does and plays the smoke test expecting Postgres storage', () => {
+    const job = dockerJob();
+    expect(job).toMatch(/^ {4}services:\n {6}postgres:\n {8}image: postgres:16$/m);
+    expect(job).toContain('--health-cmd "pg_isready -U postgres"');
+    // The docker run command, with its continuation lines.
+    const run = /docker run -d --name signal(?:[^\n\\]|\\\n)*/.exec(job)?.[0] ?? '';
+    expect(run).toContain('-e DATABASE_URL=postgres://postgres:postgres@localhost:5432/postgres');
+    expect(run).toContain('-e MIGRATE_ON_BOOT=1');
+    expect(run).toMatch(/-e AUTH_PEPPER=/);
+    expect(run).toContain('--network host');
+    expect(run).not.toContain('ALLOW_EPHEMERAL');
+    expect(run).toContain('mahjong-signal:ci');
+    expect(job).toContain('npm run smoke -w @mjm/signal -- http://127.0.0.1:8787 --expect-storage pg');
+    expect(job).not.toContain('--expect-storage memory');
+  });
+});

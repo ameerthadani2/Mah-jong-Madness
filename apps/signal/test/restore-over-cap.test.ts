@@ -50,13 +50,20 @@ contract('restoring over the hosted-table cap (memory)', (() => {
 })());
 
 describe.skipIf(!PG_URL)('restoring over the hosted-table cap (postgres)', () => {
+  // A schema of its own, dropped afterwards, so no other suite restores these tables.
+  const schema = 'mjm_overcap_' + randomHex(6);
+  let admin: Pool;
   let pool: Pool;
   beforeAll(async () => {
-    pool = createPool(PG_URL!);
-    await migrate(pool);
+    admin = createPool(PG_URL!, { max: 1 });
+    await admin.query('CREATE SCHEMA ' + schema);
+    pool = createPool(PG_URL!, { options: '-c search_path=' + schema });
+    await migrate(pool, { log: () => undefined });
   });
   afterAll(async () => {
     await pool?.end();
+    await admin?.query('DROP SCHEMA IF EXISTS ' + schema + ' CASCADE');
+    await admin?.end();
   });
   contract('contract', () => createPgRepos(pool).tableSnapshots);
 });

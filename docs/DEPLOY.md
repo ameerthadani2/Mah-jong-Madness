@@ -561,8 +561,10 @@ DATABASE_URL_TEST=postgres://user:pass@localhost:5432/mjm_test npm test -w @mjm/
 
 CI (`.github/workflows/ci.yml`) runs them against a `postgres:16` service container
 (`DATABASE_URL_TEST=postgres://postgres:postgres@localhost:5432/postgres`, health-checked), and a
-`docker` job builds `apps/signal/Dockerfile` and checks that the image answers `/health` with no
-secrets (`ALLOW_EPHEMERAL=1`, since the image sets `NODE_ENV=production`).
+`docker` job builds `apps/signal/Dockerfile` and boots the image as production boots it: on its own
+`postgres:16` service with `DATABASE_URL`, `MIGRATE_ON_BOOT=1` and a pepper made for the run (no
+`ALLOW_EPHEMERAL`; the image sets `NODE_ENV=production`), then checks `/health` and plays the smoke
+test with `--expect-storage pg`, as the deploy workflow does against the live machine.
 
 ## Other hosts
 

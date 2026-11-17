@@ -59,21 +59,39 @@ jobs:
       - run: npm run sim -- --gate
 
   docker:
-    # The image fly.toml deploys: build it from the repository root and check that it boots and
-    # answers /health with no secrets (in-memory storage, guest-only sign-in). The image sets
-    # NODE_ENV=production, which refuses to start without DATABASE_URL and AUTH_PEPPER unless
-    # ALLOW_EPHEMERAL=1 says the in-memory server is wanted.
+    # The image fly.toml deploys: build it from the repository root, boot it as production boots it
+    # (NODE_ENV=production in the image, Postgres through DATABASE_URL, migrations at boot and an
+    # AUTH_PEPPER; no ALLOW_EPHEMERAL), check /health and play a hand against it with the smoke test
+    # expecting Postgres storage, as the deploy workflow does against the live machine.
     if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
     steps:
       - uses: actions/checkout@v5
       - name: Build the signal server image
         run: docker build -f apps/signal/Dockerfile -t mahjong-signal:ci .
-      - name: Boot it and check /health
+      - name: Boot it on Postgres and check /health
+        # The host network, so the container reaches the Postgres service on localhost:5432. The
+        # pepper is made for this run only; nothing it protects outlives the job.
         run: |
-          docker run -d --name signal -p 8787:8787 -e ALLOW_EPHEMERAL=1 mahjong-signal:ci
-          for i in $(seq 1 30); do
+          docker run -d --name signal --network host \
+            -e DATABASE_URL=postgres://postgres:postgres@localhost:5432/postgres \
+            -e MIGRATE_ON_BOOT=1 \
+            -e AUTH_PEPPER="ci-$(openssl rand -hex 24)" \
+            mahjong-signal:ci
+          for i in $(seq 1 60); do
             if curl -fsS http://127.0.0.1:8787/health; then echo; exit 0; fi
             sleep 1
           done
@@ -85,8 +103,7 @@ jobs:
           cache: npm
       - run: npm ci --workspace @mjm/signal --workspace @mjm/engine --workspace @mjm/net
       - name: Play a hand against the image (the same smoke test that runs after a deploy)
-        # The image runs on memory here on purpose (no database in this job), so say so.
-        run: npm run smoke -w @mjm/signal -- http://127.0.0.1:8787 --expect-storage memory
+        run: npm run smoke -w @mjm/signal -- http://127.0.0.1:8787 --expect-storage pg
       - name: Stop the container
         if: always()
         run: |
