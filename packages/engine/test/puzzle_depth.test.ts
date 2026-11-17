@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { timeBound } from './helpers/timing';
-import { checkDiscardAnswer, countsFromKinds, DAILY_ISOLATED_TILE_SHARE, dailyPuzzle, discardOptions, ISOLATED_TILE_PUZZLE_SHARE, isolatedTile, DEFENCE_SAFETY_ORDER, defenceOrderRule, defencePuzzle, discardPuzzle, kindInfo, LONE_HONOUR_PUZZLE_SHARE, loneHonours, sha256Hex, VALUE_BIG_PATTERN_TAI, valuePatternRule, valuePuzzle, valueSpeedRule, type DefenceOption, type DiscardPuzzle, type TaiItem, type ValueOption, type ValuePuzzle } from '../src/index';
+import { checkDiscardAnswer, countsFromKinds, DAILY_ISOLATED_TILE_SHARE, dailyPuzzle, discardAnalysis, discardDecision, DISCARD_DECISIONS, discardOptions, ISOLATED_TILE_PUZZLE_SHARE, isolatedTile, DEFENCE_SAFETY_ORDER, defenceOrderRule, defencePuzzle, discardPuzzle, kindInfo, LONE_HONOUR_PUZZLE_SHARE, loneHonours, sha256Hex, VALUE_BIG_PATTERN_TAI, valuePatternRule, valuePuzzle, valueSpeedRule, type DefenceOption, type DiscardPuzzle, type TaiItem, type ValueOption, type ValuePuzzle } from '../src/index';
 
 // How often a one-line rule answers a puzzle: "keep the most winning tiles" for value puzzles, a
 // fixed safety order for defence puzzles. Easy and medium puzzles teach those rules; hard ones
@@ -262,7 +262,9 @@ describe('the daily and medium and hard discard puzzles need reading the shape',
 
   it('easy drills keep the beginner\'s lesson, byte-identical to the puzzles recorded before the change', () => {
     const easy = Array.from({ length: 120 }, (_, i) => discardPuzzle(`pin-${i}`, 1));
-    expect(sha256Hex(JSON.stringify(easy))).toBe('b4c15eac9eee2354943d28ed718993a321fbe64220f92691629b56397ccce443');
+    // The same hands and answers as recorded; only the explanation fields (added later) are left out of the hash.
+    const recorded = easy.map(({ reasonKey: _k, explanation: _e, explanationZh: _z, ...rest }) => rest);
+    expect(sha256Hex(JSON.stringify(recorded))).toBe('b4c15eac9eee2354943d28ed718993a321fbe64220f92691629b56397ccce443');
     expect(easy.filter(loneHonourRule).length).toBeGreaterThan(0.75 * easy.length);
     // The daily reads the shape even on an easy day; the same seed as a drill does not.
     const monday = new Date(Date.UTC(2026, 10, 23));
@@ -332,5 +334,83 @@ describe('the daily and hard discard puzzles need comparing shapes', () => {
   it('give the same puzzle for the same seed', () => {
     expect(discardPuzzle('shapes-7', 3)).toEqual(hard[7]);
     expect(dailyPuzzle(new Date(Date.UTC(2026, 11, 5)))).toEqual(dailies[4]);
+  });
+});
+
+describe('the explanation names the decision the discard puzzle turns on', () => {
+  const latin = /[A-Za-z]/;
+  const named = (hand: number[], decision: string, answer: number) => {
+    const p = discardAnalysis(hand);
+    expect(p.reasonKey).toBe(`puzzle.discard.${decision}`);
+    expect(p.answers).toContain(answer);
+    expect(p.explanation).toContain(kindInfo(p.best).nameEn);
+    expect(p.explanationZh).toContain(kindInfo(p.best).nameZh);
+    expect(p.explanationZh).not.toMatch(latin);
+    return p;
+  };
+
+  it('the wider of two ready waits', () => {
+    const p = named([1, 2, 3, 5, 5, 5, 9, 11, 11, 12, 13, 13, 17, 17, 18, 19, 20], 'widerWait', 13);
+    expect(p.explanation).toMatch(/^Keep the wider wait\. Throwing 5 Dots leaves you ready on 2 Dots \(4 tiles\); throwing 1 Dots is ready too, but only on 4 Dots \(3 tiles\)\.$/);
+    expect(p.explanationZh).toBe('留下較寬的聽牌。打五筒聽二筒（4 張）；打一筒也聽牌，但只聽四筒（3 張）。');
+  });
+
+  it('an isolated tile', () => {
+    const p = named([1, 4, 6, 6, 8, 10, 10, 11, 12, 13, 15, 15, 18, 18, 18, 24, 26], 'isolated', 1);
+    expect(p.explanation).toMatch(/^Throw the isolated tile\. Nothing in your hand connects to 2 Characters/);
+    expect(p.explanationZh).toMatch(/^打孤張。/);
+  });
+
+  it('one pair too many', () => {
+    const p = named([2, 3, 5, 6, 9, 9, 10, 11, 13, 14, 14, 19, 21, 22, 25, 25, 25], 'breakPair', 9);
+    expect(p.explanation).toMatch(/^Break a pair\. You hold 2 pairs and need only one as your eyes/);
+    expect(p.explanationZh).toMatch(/^拆對子。你有 2 組對子，做眼只要一組/);
+  });
+
+  it('the only pair, kept as the eyes', () => {
+    const p = named([3, 4, 5, 7, 8, 9, 9, 9, 10, 13, 13, 14, 15, 21, 22, 23, 25], 'keepPair', 25);
+    expect(p.explanation).toBe('Keep the pair as your eyes. 5 Dots is your only pair; breaking it leaves only 14 tiles, while throwing 8 Bamboo keeps 17 tiles that improve the hand.');
+    expect(p.explanationZh).toBe('留對子做眼。五筒是你唯一的對子；拆它只剩 14 張，打八條則還有 17 張牌能進張。');
+    expect(p.answers).not.toContain(13);
+  });
+
+  it('a lone-looking tile that improves more shapes than it looks', () => {
+    const p = named([2, 6, 9, 10, 11, 13, 13, 14, 14, 15, 15, 18, 18, 19, 23, 25, 26], 'hiddenValue', 19);
+    // The isolated-tile rule throws 3 Characters, and the judge does not accept it.
+    expect(isolatedTile(p.hand)).toBe(2);
+    expect(p.answers).not.toContain(2);
+    expect(p.explanation).toBe('A lone tile can be worth keeping. 3 Characters looks isolated, but it improves more shapes than 2 Bamboo: throwing 2 Bamboo leaves 57 tiles that improve the hand, throwing 3 Characters leaves only 49 tiles.');
+    expect(p.explanationZh).toBe('孤張不一定最沒用。三萬看起來是孤張，但它能幫到的形狀比二條多：打二條還有 57 張能進張，打三萬只剩 49 張。');
+  });
+
+  it('the weaker 搭子', () => {
+    const p = named([0, 2, 3, 3, 4, 4, 5, 10, 14, 16, 21, 22, 25, 25, 25, 33, 33], 'weakerTaatsu', 0);
+    expect(p.explanation).toMatch(/^Break the weaker 搭子\. 1 Characters and 3 Characters wait only on 2 Characters \(a middle wait\)/);
+    expect(p.explanationZh).toMatch(/^拆比較弱的搭子。一萬和三萬是嵌張，只等二萬/);
+    // An edge 搭子 is named as one.
+    const edge = named([4, 4, 11, 11, 12, 12, 13, 14, 15, 16, 18, 19, 21, 22, 23, 24, 26], 'weakerTaatsu', 18);
+    expect(edge.explanation).toMatch(/^Break the weaker 搭子\. 1 Bamboo and 2 Bamboo wait only on 3 Bamboo \(an edge wait\)/);
+    expect(edge.explanationZh).toMatch(/^拆比較弱的搭子。一條和二條是邊張，只等三條/);
+  });
+
+  it('otherwise, comparing the shapes outright', () => {
+    const p = named([1, 2, 2, 3, 4, 10, 10, 10, 11, 15, 16, 17, 20, 21, 21, 25, 26], 'compare', 20);
+    expect(p.explanation).toBe('Compare the shapes. Throwing 3 Dots keeps 11 tiles that improve the hand; the closest other choice, 3 Characters, takes you a step further from ready.');
+    expect(p.explanationZh).toBe('比較形狀。打三筒還有 11 張能進張；次佳的三萬會離聽牌更遠一步。');
+  });
+
+  it('every generated puzzle names one of the decisions, as the analysis of its own hand does', () => {
+    const seen = new Set<string>();
+    for (let i = 0; i < 60; i++) {
+      for (const p of [discardPuzzle(`decide-${i}`, 3), discardPuzzle(`decide-${i}`, 1)]) {
+        expect(DISCARD_DECISIONS.map((d) => `puzzle.discard.${d}`)).toContain(p.reasonKey);
+        const { decision, ...text } = discardDecision(p);
+        expect(text).toEqual({ reasonKey: p.reasonKey, explanation: p.explanation, explanationZh: p.explanationZh });
+        expect(p.reasonKey).toBe(`puzzle.discard.${decision}`);
+        expect(p.explanationZh).not.toMatch(latin);
+        seen.add(decision);
+      }
+    }
+    expect(seen.size).toBeGreaterThanOrEqual(4);
   });
 });

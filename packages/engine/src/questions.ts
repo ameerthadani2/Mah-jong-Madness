@@ -92,7 +92,7 @@ export const PUZZLE_FIELDS: {
   claim: Record<keyof ClaimPuzzle, FieldClass>;
   value: Record<keyof ValuePuzzle, FieldClass>;
 } = {
-  discard: { type: 'shown', seed: 'shown', hand: 'shown', currentShanten: 'shown', answers: 'withheld', best: 'withheld', bestShanten: 'withheld', bestAcceptance: 'withheld', options: 'withheld' },
+  discard: { type: 'shown', seed: 'shown', hand: 'shown', currentShanten: 'shown', answers: 'withheld', best: 'withheld', bestShanten: 'withheld', bestAcceptance: 'withheld', options: 'withheld', reasonKey: 'withheld', explanation: 'withheld', explanationZh: 'withheld' },
   waits: { type: 'shown', seed: 'shown', hand: 'shown', candidates: 'shown', answers: 'withheld' },
   defence: {
     type: 'shown',

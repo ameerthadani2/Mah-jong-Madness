@@ -1,10 +1,11 @@
 import { describe, expect, it, jest } from '@jest/globals';
 import React from 'react';
 import { act, fireEvent, render, screen, within } from '@testing-library/react-native';
-import { claimPuzzle, claimQuestion, defencePuzzle, defenceQuestion, discardPuzzle, puzzleQuestion, valuePuzzle, valueQuestion, waitsPuzzle, type AnyPuzzle, type Kind, type PuzzleAnswerInput } from '@mjm/engine';
+import { claimPuzzle, claimQuestion, defencePuzzle, defenceQuestion, discardAnalysis, discardPuzzle, puzzleQuestion, valuePuzzle, valueQuestion, waitsPuzzle, type AnyPuzzle, type Kind, type PuzzleAnswerInput } from '@mjm/engine';
 import { PuzzleView, type PuzzleResult } from '../PuzzleView';
 import { claimButtons, tileName, type Judged } from '../../logic/puzzle';
 import { FakeProviders } from '../../test/providers';
+import { setLocalePreference } from '../../i18n';
 
 /**
  * The claim, defence and value puzzle views as a player meets them: what each shows before the answer, what a right
@@ -202,6 +203,36 @@ describe('a ranked puzzle served as its question', () => {
     await act(async () => d.verdict.resolve({ correct: true, puzzle: DISCARD }));
     expect(screen.getByTestId('puzzle-answer')).toBeOnTheScreen();
     expect(d.onResult.mock.calls[0][0]).toMatchObject({ correct: true, type: 'discard', difficulty: 2, answer: DISCARD.best });
+  });
+
+  it('discard: once answered, names the decision the puzzle turns on, in English and in Traditional Chinese', async () => {
+    // The only pair (5 Dots) is the tempting discard; the engine names keeping it as the eyes.
+    const KEEP = discardAnalysis([3, 4, 5, 7, 8, 9, 9, 9, 10, 13, 13, 14, 15, 21, 22, 23, 25], 'render-keep-pair');
+    const en = await showRanked(KEEP);
+    await fireEvent.press(tile(13));
+    await act(async () => en.verdict.resolve({ correct: false, puzzle: KEEP }));
+    expect(screen.getByTestId('puzzle-explanation')).toBeOnTheScreen();
+    expect(screen.getByText(KEEP.explanation)).toBeOnTheScreen();
+    expect(KEEP.explanation).toMatch(/^Keep the pair as your eyes\./);
+    try {
+      setLocalePreference('zh-TW');
+      const zh = await showRanked(KEEP);
+      await fireEvent.press(screen.getAllByRole('button', { name: tileName(13, 'zh-TW') })[0]);
+      await act(async () => zh.verdict.resolve({ correct: false, puzzle: KEEP }));
+      expect(screen.getByText(KEEP.explanationZh)).toBeOnTheScreen();
+      expect(KEEP.explanationZh).toMatch(/^留對子做眼。/);
+    } finally {
+      setLocalePreference('en');
+    }
+  });
+
+  it('discard: a puzzle revealed without an explanation (an older server) shows the rest of the feedback', async () => {
+    const { reasonKey: _k, explanation: _e, explanationZh: _z, ...OLD } = discardPuzzle('render-discard', 2);
+    const d = await showRanked(OLD as AnyPuzzle);
+    await fireEvent.press(tile(OLD.best));
+    await act(async () => d.verdict.resolve({ correct: true, puzzle: OLD as AnyPuzzle }));
+    expect(screen.getByTestId('puzzle-answer')).toBeOnTheScreen();
+    expect(screen.queryByTestId('puzzle-explanation')).toBeNull();
   });
 
   it('waits: the candidates come from the question, the winning tiles from the revealed puzzle', async () => {

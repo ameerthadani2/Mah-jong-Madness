@@ -34,6 +34,10 @@ export interface DiscardPuzzle {
   currentShanten: number;
   /** Per-kind analysis for explanations. */
   options: Array<{ kind: Kind; shanten: number; acceptance: number; accepts: Kind[] }>;
+  /** The decision the puzzle turns on (`puzzle.discard.*`, see DISCARD_DECISIONS), named after the answer. */
+  reasonKey: string;
+  explanation: string;
+  explanationZh: string;
 }
 
 export interface WaitsPuzzle {
@@ -156,7 +160,7 @@ export function discardPuzzle(seed: string, difficulty: 1 | 2 | 3 = 2, opts: Dis
       if (lone !== null && answers.includes(lone)) continue;
     }
     const best = options.find((o) => o.shanten === bestShanten && o.acceptance === bestAcceptance)!.kind;
-    return { type: 'discard', seed, hand, answers, best, bestShanten, bestAcceptance, currentShanten: shanten(counts, 5), options };
+    return withDecision({ type: 'discard', seed, hand, answers, best, bestShanten, bestAcceptance, currentShanten: shanten(counts, 5), options });
   }
   // Fallback: accept whatever we got.
   const hand = randomHand(rng, 8);
@@ -165,7 +169,129 @@ export function discardPuzzle(seed: string, difficulty: 1 | 2 | 3 = 2, opts: Dis
   const bestShanten = Math.min(...options.map((o) => o.shanten));
   const bestAcceptance = Math.max(...options.filter((o) => o.shanten === bestShanten).map((o) => o.acceptance));
   const best = options.find((o) => o.shanten === bestShanten && o.acceptance === bestAcceptance)!.kind;
-  return { type: 'discard', seed, hand, answers: [best], best, bestShanten, bestAcceptance, currentShanten: shanten(counts, 5), options };
+  return withDecision({ type: 'discard', seed, hand, answers: [best], best, bestShanten, bestAcceptance, currentShanten: shanten(counts, 5), options });
+}
+
+/**
+ * The analysis of any 17-tile hand as a discard puzzle (answers within 10% of the best acceptance at
+ * the best shanten, as the generator judges them), with the decision named. For lessons and tests.
+ */
+export function discardAnalysis(hand: readonly Kind[], seed = 'custom'): DiscardPuzzle {
+  const sorted = [...hand].sort((a, b) => a - b);
+  const counts = countsFromKinds(sorted);
+  const options = discardOptions(counts, 5, counts.map((c) => 4 - c));
+  const bestShanten = Math.min(...options.map((o) => o.shanten));
+  const bestAcceptance = Math.max(...options.filter((o) => o.shanten === bestShanten).map((o) => o.acceptance));
+  const answers = options.filter((o) => o.shanten === bestShanten && o.acceptance >= bestAcceptance * 0.9).map((o) => o.kind);
+  const best = options.find((o) => o.shanten === bestShanten && o.acceptance === bestAcceptance)!.kind;
+  return withDecision({ type: 'discard', seed, hand: sorted, answers, best, bestShanten, bestAcceptance, currentShanten: shanten(counts, 5), options });
+}
+
+/**
+ * The decisions a discard puzzle can turn on, as `puzzle.discard.<name>` reason keys: the wider of two
+ * ready waits; an isolated tile; a pair to break (one too many); the only pair to keep as the eyes; a
+ * lone-looking tile that is worth keeping; the weaker (edge or middle) 搭子 to break; otherwise
+ * comparing the shapes outright.
+ */
+export const DISCARD_DECISIONS = ['widerWait', 'isolated', 'breakPair', 'keepPair', 'hiddenValue', 'weakerTaatsu', 'compare'] as const;
+export type DiscardDecision = (typeof DISCARD_DECISIONS)[number];
+
+type DiscardOption = DiscardPuzzle['options'][number];
+
+/** The partner of a suited single in an edge (1-2, 8-9) or middle (1-3) 搭子 and the one tile it waits on, or null. */
+function weakPartial(counts: Counts, k: Kind): { partner: Kind; wait: Kind; edge: boolean } | null {
+  if (k >= KIND_WIND || counts[k] !== 1) return null;
+  const r = k % 9;
+  const has = (d: number) => r + d >= 0 && r + d <= 8 && counts[k + d] > 0;
+  if (has(-1) && has(1)) return null;
+  for (const d of [-1, 1]) {
+    if (!has(d) || has(-d) || has(2 * d) || has(-2 * d)) continue;
+    const lo = Math.min(r, r + d);
+    if (lo === 0) return { partner: k + d, wait: k - r + 2, edge: true };
+    if (lo === 7) return { partner: k + d, wait: k - r + 6, edge: true };
+  }
+  if (!has(-1) && !has(1)) for (const d of [-2, 2]) if (has(d) && !has(-d)) return { partner: k + d, wait: k + d / 2, edge: false };
+  return null;
+}
+
+function withDecision(p: Omit<DiscardPuzzle, 'reasonKey' | 'explanation' | 'explanationZh'>): DiscardPuzzle {
+  const { reasonKey, explanation, explanationZh } = discardDecision(p);
+  return { ...p, reasonKey, explanation, explanationZh };
+}
+
+/** Name the decision a discard puzzle turns on, from its own analysis, in English and Taiwanese Mandarin. */
+export function discardDecision(p: Pick<DiscardPuzzle, 'hand' | 'options' | 'answers' | 'best' | 'bestShanten'>): PuzzleExplanation & { decision: DiscardDecision } {
+  const counts = countsFromKinds(p.hand);
+  const opt = (k: Kind): DiscardOption => p.options.find((o) => o.kind === k)!;
+  const b = opt(p.best);
+  const rank = (o: DiscardOption) => o.shanten * 1000 - o.acceptance;
+  const rivals = p.options.filter((o) => !p.answers.includes(o.kind)).sort((x, y) => rank(x) - rank(y) || x.kind - y.kind);
+  const r = rivals[0];
+  const pairs = counts.filter((c) => c === 2).length;
+  const B = tileEn(b.kind);
+  const Bz = tileZh(b.kind);
+  const n = b.acceptance;
+  const listEn = (ks: readonly Kind[]) => ks.map(tileEn).join(', ');
+  const listZh = (ks: readonly Kind[]) => ks.map(tileZh).join('、');
+  const costEn = (o: DiscardOption) => (o.shanten > p.bestShanten ? 'takes you a step further from ready' : `leaves only ${o.acceptance} tiles`);
+  const costZh = (o: DiscardOption) => (o.shanten > p.bestShanten ? '會離聽牌更遠一步' : `只剩 ${o.acceptance} 張`);
+  const out = (decision: DiscardDecision, explanation: string, explanationZh: string) => ({ decision, reasonKey: `puzzle.discard.${decision}`, explanation, explanationZh });
+  if (r && p.bestShanten === 0 && r.shanten === 0 && b.accepts.length > 0) {
+    return out(
+      'widerWait',
+      `Keep the wider wait. Throwing ${B} leaves you ready on ${listEn(b.accepts)} (${n} tiles); throwing ${tileEn(r.kind)} is ready too, but only on ${listEn(r.accepts)} (${r.acceptance} tiles).`,
+      `留下較寬的聽牌。打${Bz}聽${listZh(b.accepts)}（${n} 張）；打${tileZh(r.kind)}也聽牌，但只聽${listZh(r.accepts)}（${r.acceptance} 張）。`,
+    );
+  }
+  if (counts[b.kind] === 1 && hasNoNeighbour(counts, b.kind)) {
+    return out(
+      'isolated',
+      `Throw the isolated tile. Nothing in your hand connects to ${B}, so it is the tile you need least; after it goes, ${n} tiles still improve the hand.`,
+      `打孤張。手上沒有牌能和${Bz}連起來，它最沒用；打掉後還有 ${n} 張牌能進張。`,
+    );
+  }
+  if (counts[b.kind] === 2) {
+    return pairs >= 2
+      ? out(
+          'breakPair',
+          `Break a pair. You hold ${pairs} pairs and need only one as your eyes; throwing one ${B} keeps the strongest shapes, and ${n} tiles still improve the hand.`,
+          `拆對子。你有 ${pairs} 組對子，做眼只要一組；拆一張${Bz}最划算，打掉後還有 ${n} 張牌能進張。`,
+        )
+      : out(
+          'breakPair',
+          `Break the pair. The pair of ${B} does less for this hand than the shapes around it: throwing one keeps ${n} tiles that improve the hand, and new eyes are easy to find.`,
+          `拆對子。${Bz}這對不如旁邊的搭子有用：打一張還有 ${n} 張牌能進張，眼之後再找就好。`,
+        );
+  }
+  if (r && counts[r.kind] === 2 && pairs === 1) {
+    return out(
+      'keepPair',
+      `Keep the pair as your eyes. ${tileEn(r.kind)} is your only pair; breaking it ${costEn(r)}, while throwing ${B} keeps ${n} tiles that improve the hand.`,
+      `留對子做眼。${tileZh(r.kind)}是你唯一的對子；拆它${costZh(r)}，打${Bz}則還有 ${n} 張牌能進張。`,
+    );
+  }
+  const lone = isolatedTile(p.hand);
+  if (lone !== null && !p.answers.includes(lone)) {
+    const l = opt(lone);
+    return out(
+      'hiddenValue',
+      `A lone tile can be worth keeping. ${tileEn(lone)} looks isolated, but it improves more shapes than ${B}: throwing ${B} leaves ${n} tiles that improve the hand, throwing ${tileEn(lone)} ${costEn(l)}.`,
+      `孤張不一定最沒用。${tileZh(lone)}看起來是孤張，但它能幫到的形狀比${Bz}多：打${Bz}還有 ${n} 張能進張，打${tileZh(lone)}${costZh(l)}。`,
+    );
+  }
+  const weak = weakPartial(counts, b.kind);
+  if (weak) {
+    return out(
+      'weakerTaatsu',
+      `Break the weaker 搭子. ${B} and ${tileEn(weak.partner)} wait only on ${tileEn(weak.wait)} (${weak.edge ? 'an edge' : 'a middle'} wait); keep the 搭子 that wait on more. Throwing ${B} keeps ${n} tiles that improve the hand.`,
+      `拆比較弱的搭子。${Bz}和${tileZh(weak.partner)}是${weak.edge ? '邊張' : '嵌張'}，只等${tileZh(weak.wait)}；留下等牌較多的搭子。打${Bz}還有 ${n} 張能進張。`,
+    );
+  }
+  return out(
+    'compare',
+    r ? `Compare the shapes. Throwing ${B} keeps ${n} tiles that improve the hand; the closest other choice, ${tileEn(r.kind)}, ${costEn(r)}.` : `Compare the shapes. Throwing ${B} keeps ${n} tiles that improve the hand.`,
+    r ? `比較形狀。打${Bz}還有 ${n} 張能進張；次佳的${tileZh(r.kind)}${costZh(r)}。` : `比較形狀。打${Bz}還有 ${n} 張能進張。`,
+  );
 }
 
 /** A random ready (聽牌) 16-tile hand built from 5 random sets + a pair minus one tile. */
