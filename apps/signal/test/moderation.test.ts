@@ -202,7 +202,12 @@ describe('bans', () => {
     expect(login.status).toBe(403);
     expect(login.json.error).toBe('banned');
     // Unbanned, the account signs in again (its old sessions stay ended).
+    const lifted = await f.call('DELETE', `/api/admin/users/${g.userId}/ban`, undefined, adminAuth);
+    expect(lifted.status).toBe(200);
+    expect(lifted.json).toMatchObject({ ok: true, account: { id: g.userId, bannedAt: null, banReason: null } });
+    // Lifting a ban the account no longer has changes nothing; an unknown account is 404 (docs/API.md).
     expect((await f.call('DELETE', `/api/admin/users/${g.userId}/ban`, undefined, adminAuth)).status).toBe(200);
+    expect((await f.call('DELETE', `/api/admin/users/${randomUUID()}/ban`, undefined, adminAuth)).status).toBe(404);
     expect((await f.call('GET', '/api/me', undefined, g.auth)).status).toBe(401);
     expect((await f.call('POST', '/api/auth/guest/login', { userId: g.userId, guestSecret: g.guestSecret })).status).toBe(200);
     expect((await f.call('POST', `/api/admin/users/${randomUUID()}/ban`, {}, adminAuth)).status).toBe(404);
