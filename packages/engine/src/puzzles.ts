@@ -81,6 +81,51 @@ export interface DiscardPuzzleOptions {
    * at every difficulty. Easy drills keep the beginner's lesson of throwing the lone honour first.
    */
   readShape?: boolean;
+  /**
+   * The share of shape-reading seeds whose hand may still be answered by the isolated-tile rule
+   * (`isolatedTile`); the rest are redrawn until the rule's tile is not an accepted answer, so the
+   * puzzle turns on comparing shapes. Defaults to ISOLATED_TILE_PUZZLE_SHARE for the difficulty.
+   */
+  isolatedTileShare?: number;
+}
+
+/**
+ * The share of shape-reading discard puzzles (seeds outside LONE_HONOUR_PUZZLE_SHARE) that may be
+ * answered by "throw an isolated tile, honours first, then terminals, then the outermost". Every
+ * other one is a hand where that tile is not an accepted answer: which 搭子 to break, keep or break
+ * the pair, the wider wait, a lone-looking tile worth keeping. Hard puzzles and the daily keep it
+ * well under half, medium about two thirds; easy puzzles (1) are not redrawn.
+ */
+export const ISOLATED_TILE_PUZZLE_SHARE: Record<1 | 2 | 3, number> = { 1: 1, 2: 0.6, 3: 0.3 };
+/** The daily puzzle's share at every difficulty (the hard one). */
+export const DAILY_ISOLATED_TILE_SHARE = ISOLATED_TILE_PUZZLE_SHARE[3];
+
+/** True when the suited tile has no other tile of its suit within two ranks (honours have none). */
+function hasNoNeighbour(counts: Counts, k: Kind): boolean {
+  if (k >= KIND_WIND) return true;
+  const r = k % 9;
+  for (let d = -2; d <= 2; d++) if (d !== 0 && r + d >= 0 && r + d <= 8 && counts[k + d] > 0) return false;
+  return true;
+}
+
+/**
+ * The tile the isolated-tile rule throws: a single tile with no neighbour within two in its suit,
+ * honours first, then terminals, then the outermost (lowest kind on a tie); null when there is none.
+ */
+export function isolatedTile(hand: readonly Kind[]): Kind | null {
+  const counts = countsFromKinds(hand);
+  let pick: Kind | null = null;
+  let pickScore = -1;
+  for (let k = 0; k < NUM_PLAY_KINDS; k++) {
+    if (counts[k] !== 1 || !hasNoNeighbour(counts, k)) continue;
+    // Honours rank above every suited tile; within each group the same arithmetic as for ranks (as the measuring probe sorts).
+    const score = (k >= KIND_WIND ? 10 : 0) + Math.abs(4 - (k % 9));
+    if (score > pickScore) {
+      pick = k;
+      pickScore = score;
+    }
+  }
+  return pick;
 }
 
 export function discardPuzzle(seed: string, difficulty: 1 | 2 | 3 = 2, opts: DiscardPuzzleOptions = {}): DiscardPuzzle {
@@ -88,9 +133,13 @@ export function discardPuzzle(seed: string, difficulty: 1 | 2 | 3 = 2, opts: Dis
   // Harder puzzles are closer to ready, where the differences between discards are subtler.
   const [maxS, minS] = difficulty === 1 ? [4, 2] : difficulty === 2 ? [2, 1] : [1, 0];
   // Easy puzzles draw no extra number, so they stay exactly as they were for every seed.
-  const readShape = (opts.readShape ?? difficulty >= 2) && rng.next() >= LONE_HONOUR_PUZZLE_SHARE;
+  const readShapeOn = opts.readShape ?? difficulty >= 2;
+  const readShape = readShapeOn && rng.next() >= LONE_HONOUR_PUZZLE_SHARE;
   const accept = readShape ? (hand: Kind[]) => loneHonours(hand).length === 0 : undefined;
-  for (let attempt = 0; attempt < 50; attempt++) {
+  // A second draw (never at easy, so easy puzzles keep their seeds) decides whether the hand must beat the isolated-tile rule.
+  const tileShare = opts.isolatedTileShare ?? ISOLATED_TILE_PUZZLE_SHARE[difficulty];
+  const compareShapes = readShapeOn && tileShare < 1 && rng.next() >= tileShare && readShape;
+  for (let attempt = 0; attempt < (compareShapes ? 200 : 50); attempt++) {
     const hand = randomHand(rng, maxS, minS, accept);
     if (hand.length === 0) continue;
     const counts = countsFromKinds(hand);
@@ -101,6 +150,11 @@ export function discardPuzzle(seed: string, difficulty: 1 | 2 | 3 = 2, opts: Dis
     const answers = options.filter((o) => o.shanten === bestShanten && o.acceptance >= bestAcceptance * 0.9).map((o) => o.kind);
     // Skip hands where almost anything is right: a puzzle needs a real decision.
     if (answers.length > Math.max(2, Math.floor(options.length / 3))) continue;
+    // Comparing shapes: redraw while the isolated-tile rule's tile is an accepted answer.
+    if (compareShapes) {
+      const lone = isolatedTile(hand);
+      if (lone !== null && answers.includes(lone)) continue;
+    }
     const best = options.find((o) => o.shanten === bestShanten && o.acceptance === bestAcceptance)!.kind;
     return { type: 'discard', seed, hand, answers, best, bestShanten, bestAcceptance, currentShanten: shanten(counts, 5), options };
   }
@@ -173,7 +227,7 @@ export function dailySeed(date: Date): string {
 export function dailyPuzzle(date: Date): DiscardPuzzle {
   const day = date.getUTCDay();
   const difficulty: 1 | 2 | 3 = day === 0 || day === 6 ? 3 : day % 2 === 0 ? 2 : 1;
-  return discardPuzzle(dailySeed(date), difficulty, { readShape: true });
+  return discardPuzzle(dailySeed(date), difficulty, { readShape: true, isolatedTileShare: DAILY_ISOLATED_TILE_SHARE });
 }
 
 /** Every puzzle theme, in Puzzle Rush rotation order. */

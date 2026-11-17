@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { timeBound } from './helpers/timing';
-import { checkDiscardAnswer, countsFromKinds, dailyPuzzle, DEFENCE_SAFETY_ORDER, defenceOrderRule, defencePuzzle, discardPuzzle, kindInfo, LONE_HONOUR_PUZZLE_SHARE, loneHonours, sha256Hex, VALUE_BIG_PATTERN_TAI, valuePatternRule, valuePuzzle, valueSpeedRule, type DefenceOption, type DiscardPuzzle, type TaiItem, type ValueOption, type ValuePuzzle } from '../src/index';
+import { checkDiscardAnswer, countsFromKinds, DAILY_ISOLATED_TILE_SHARE, dailyPuzzle, discardOptions, ISOLATED_TILE_PUZZLE_SHARE, isolatedTile, DEFENCE_SAFETY_ORDER, defenceOrderRule, defencePuzzle, discardPuzzle, kindInfo, LONE_HONOUR_PUZZLE_SHARE, loneHonours, sha256Hex, VALUE_BIG_PATTERN_TAI, valuePatternRule, valuePuzzle, valueSpeedRule, type DefenceOption, type DiscardPuzzle, type TaiItem, type ValueOption, type ValuePuzzle } from '../src/index';
 
 // How often a one-line rule answers a puzzle: "keep the most winning tiles" for value puzzles, a
 // fixed safety order for defence puzzles. Easy and medium puzzles teach those rules; hard ones
@@ -266,6 +266,71 @@ describe('the daily and medium and hard discard puzzles need reading the shape',
     expect(easy.filter(loneHonourRule).length).toBeGreaterThan(0.75 * easy.length);
     // The daily reads the shape even on an easy day; the same seed as a drill does not.
     const monday = new Date(Date.UTC(2026, 10, 23));
-    expect(dailyPuzzle(monday)).toEqual(discardPuzzle('daily-2026-11-23', 1, { readShape: true }));
+    expect(dailyPuzzle(monday)).toEqual(discardPuzzle('daily-2026-11-23', 1, { readShape: true, isolatedTileShare: DAILY_ISOLATED_TILE_SHARE }));
+  });
+});
+
+// "Throw an isolated tile (a single with no neighbour within two in its suit), honours first, then
+// terminals, then the outermost": written here apart from the engine's `isolatedTile`.
+const isolatedRulePick = (hand: readonly number[]): number => {
+  const c = countsFromKinds(hand);
+  const xs: number[] = [];
+  for (let k = 0; k < 34; k++) {
+    if (c[k] !== 1) continue;
+    const r = k % 9;
+    if (k < 27 && [-2, -1, 1, 2].some((d) => r + d >= 0 && r + d <= 8 && c[k + d] > 0)) continue;
+    xs.push(k);
+  }
+  xs.sort((a, b) => (b >= 27 ? 1 : 0) - (a >= 27 ? 1 : 0) || Math.abs(4 - (b % 9)) - Math.abs(4 - (a % 9)) || a - b);
+  return xs[0] ?? -1;
+};
+const isolatedRule = (p: DiscardPuzzle): boolean => {
+  const k = isolatedRulePick(p.hand);
+  return k >= 0 && checkDiscardAnswer(p, k);
+};
+
+describe('the daily and hard discard puzzles need comparing shapes', () => {
+  // Before: the isolated-tile rule was right on 271 of the next 365 dailies, 227 of 300 medium and 184 of 300 hard puzzles.
+  const dailies = Array.from({ length: 120 }, (_, i) => dailyPuzzle(new Date(Date.UTC(2026, 11, 1 + i))));
+  const hard = Array.from({ length: 150 }, (_, i) => discardPuzzle(`shapes-${i}`, 3));
+  const medium = Array.from({ length: 150 }, (_, i) => discardPuzzle(`shapes-${i}`, 2));
+
+  it('the isolated-tile rule is right on under half of the daily puzzles, and still on some', () => {
+    const right = dailies.filter(isolatedRule).length;
+    expect(right).toBeLessThan(0.4 * dailies.length);
+    expect(right).toBeGreaterThan(0.1 * dailies.length);
+  });
+
+  it('and on under half of the hard puzzles; medium moves partway', () => {
+    const hardRight = hard.filter(isolatedRule).length;
+    expect(hardRight).toBeLessThan(0.4 * hard.length);
+    expect(hardRight).toBeGreaterThan(0.1 * hard.length);
+    const mediumRight = medium.filter(isolatedRule).length;
+    expect(mediumRight).toBeGreaterThan(hardRight);
+    expect(mediumRight).toBeLessThan(0.65 * medium.length);
+  });
+
+  it('the engine names the same tile as the rule written here', () => {
+    for (const p of [...dailies, ...hard]) expect(isolatedTile(p.hand) ?? -1).toBe(isolatedRulePick(p.hand));
+    expect(isolatedTile([0, 1, 2, 8, 13, 27, 27])).toBe(8);
+    expect(isolatedTile([0, 1, 2, 8, 13, 31])).toBe(31);
+    expect(isolatedTile([0, 1, 2, 3])).toBeNull();
+    expect(ISOLATED_TILE_PUZZLE_SHARE[1]).toBe(1);
+    expect(DAILY_ISOLATED_TILE_SHARE).toBeLessThan(0.5);
+  });
+
+  it('keeps every answer exact: each discard within 10 percent of the best acceptance, at the best shanten', () => {
+    for (const p of [...dailies.slice(0, 40), ...hard.slice(0, 40)]) {
+      const counts = countsFromKinds(p.hand);
+      const opts = discardOptions(counts, 5, counts.map((c) => 4 - c));
+      const sh = Math.min(...opts.map((o) => o.shanten));
+      const top = Math.max(...opts.filter((o) => o.shanten === sh).map((o) => o.acceptance));
+      expect([...p.answers].sort((a, b) => a - b)).toEqual(opts.filter((o) => o.shanten === sh && o.acceptance >= top * 0.9).map((o) => o.kind).sort((a, b) => a - b));
+    }
+  });
+
+  it('give the same puzzle for the same seed', () => {
+    expect(discardPuzzle('shapes-7', 3)).toEqual(hard[7]);
+    expect(dailyPuzzle(new Date(Date.UTC(2026, 11, 5)))).toEqual(dailies[4]);
   });
 });
