@@ -1,11 +1,16 @@
 import { describe, expect, it } from 'vitest';
-import { dailyPuzzleForKey, rushRunPuzzle, type PuzzleAnswerInput } from '@mjm/engine';
+import { dailyPuzzleForKey, rushRunPuzzle } from '@mjm/engine';
 import { ApiError } from '../api/http';
-import { puzzleErrorMessage, type DailyFinish, type RushFinish } from '../api/puzzles';
-import { createServerRatingStore, openDaily, openRush, shouldReadRating, shownRating, submitDaily, submitRush, SERVER_RATING_FRESH_MS, type PuzzleServer } from './puzzleSync';
+import { puzzleErrorMessage, type DailyFinish, type RushFinish, type RushServed } from '../api/puzzles';
+import { createServerRatingStore, openDaily, openRush, sendRushAnswer, shouldReadRating, shownRating, submitDaily, submitRush, SERVER_RATING_FRESH_MS, type PuzzleServer } from './puzzleSync';
 import { checkPuzzleAnswer, wireAnswer } from './puzzle';
 import { rushPuzzleAt } from './rush';
 
+/** The `index`-th puzzle of a run the fake server serves (the engine's, as the real server makes it). */
+const served = (index: number): RushServed => {
+  const puzzle = rushRunPuzzle('rush-0011223344556677', index);
+  return { index, type: puzzle.type, puzzle: { ...puzzle, seed: `run-1:${index}` } };
+};
 const down = () => Promise.reject(new ApiError('Could not reach the game server', 'puzzle_unreachable'));
 
 /** A fake server that records calls; each route answers what the test sets. */
@@ -14,8 +19,9 @@ function fake(over: Partial<PuzzleServer> = {}) {
   const server: PuzzleServer = {
     startDaily: async (date) => (calls.push(['startDaily', date]), { attemptId: 'att-1', date, startedAt: '2026-11-16T10:00:00.000Z' }),
     finishDaily: async (id, answer) => (calls.push(['finishDaily', id, answer]), { date: '2026-11-16', correct: true, seconds: 40, rating: { rating: 1012, change: 12, rated: 1 } }),
-    startRush: async () => (calls.push(['startRush']), { runId: 'run-1', seed: 'rush-0011223344556677', startedAt: '', expiresAt: '', seconds: 180, strikes: 3 }),
-    finishRush: async (id, answers) => (calls.push(['finishRush', id, answers]), { runId: id, solved: 2, wrong: 1, seconds: 31, score: 190, answers: [], rating: { rating: 1020, change: 20, rated: 3 } }),
+    startRush: async () => (calls.push(['startRush']), { runId: 'run-1', startedAt: '', expiresAt: '', seconds: 180, strikes: 3, next: served(0) }),
+    answerRush: async (id, index, answer) => (calls.push(['answerRush', id, index, answer]), { index, counted: true, correct: true, solved: index + 1, wrong: 0, done: false, next: served(index + 1) }),
+    finishRush: async (id) => (calls.push(['finishRush', id]), { runId: id, solved: 2, wrong: 1, seconds: 31, score: 190, answers: [], rating: { rating: 1020, change: 20, rated: 3 } }),
     getPuzzleRating: async () => (calls.push(['getPuzzleRating']), { rating: 1100, rated: 9, updatedAt: null }),
     ...over,
   };
@@ -78,7 +84,7 @@ describe('results under the server’s human-time floors', () => {
       finishRush: async (id) => ({ runId: id, solved: 20, wrong: 0, seconds: 29, score: 3000, ranked: false, answers: [], rating: { rating: 1000, change: 0, rated: 0 } }) as RushFinish,
     });
     const daily = await submitDaily(server, await openDaily(server, 'd'), 7, true);
-    const rush = await submitRush(server, await openRush(server, 'x'), [1, 2], 2);
+    const rush = await submitRush(server, await openRush(server, 'x'), 2);
     for (const out of [daily, rush]) {
       expect(out).toMatchObject({ ranked: false, down: false, error: { code: 'too_fast_to_rank' } });
       if (out.ranked) throw new Error('ranked');
@@ -88,22 +94,42 @@ describe('results under the server’s human-time floors', () => {
 });
 
 describe('Puzzle Rush through the server', () => {
-  it('uses the server’s seed for every puzzle, then finishes once with every answer in order', async () => {
+  it('plays the server’s puzzles one at a time: each answer is posted as it is made and brings the next puzzle', async () => {
     const { server, calls } = fake();
     const link = await openRush(server, 'rush-local');
-    expect(link).toEqual({ ranked: true, runId: 'run-1', seed: 'rush-0011223344556677' });
-    // The app's puzzle sequence is the engine's, the one the server regenerates.
-    expect(rushPuzzleAt(link.seed, 4)).toEqual(rushRunPuzzle(link.seed, 4));
-    const answers: PuzzleAnswerInput[] = [1, [2, 3], 'pass'];
-    const out = await submitRush(server, link, answers, 2);
+    expect(link).toEqual({ ranked: true, runId: 'run-1', first: served(0) });
+    // The seed stays on the server: the link has the first puzzle, not the seed.
+    expect(JSON.stringify(link)).not.toContain('rush-0011223344556677');
+    const step = await sendRushAnswer(server, link, 0, 5, 1);
+    expect(step).toEqual({ kind: 'next', next: served(1), correct: true });
+    const out = await submitRush(server, link, 2);
     expect(out).toEqual({ ranked: true, solved: 2, seconds: 31, score: 190, rating: { rating: 1020, change: 20, rated: 3 }, mismatch: false });
-    expect(calls).toEqual([['startRush'], ['finishRush', 'run-1', answers]]);
+    expect(calls).toEqual([['startRush'], ['answerRush', 'run-1', 0, 5], ['finishRush', 'run-1']]);
+  });
+
+  it('ends the run with the server’s result when the third strike (or the clock) finishes it', async () => {
+    const result = { runId: 'run-1', solved: 4, wrong: 3, seconds: 41, score: 520, ranked: true, answers: [], rating: { rating: 1000, change: 0, rated: 0 } } as RushFinish;
+    const { server } = fake({ answerRush: async (_id, index) => ({ index, counted: true, correct: false, solved: 4, wrong: 3, done: true, next: null, result }) });
+    expect(await sendRushAnswer(server, await openRush(server, 'x'), 6, 1, 4)).toEqual({ kind: 'done', outcome: { ranked: true, solved: 4, seconds: 41, score: 520, rating: result.rating, mismatch: false } });
+    // An inhuman or too-fast run comes back recorded but not ranked.
+    const unranked = fake({ answerRush: async (_id, index) => ({ index, counted: true, done: true, next: null, result: { ...result, ranked: false, inhuman: true } }) });
+    expect(await sendRushAnswer(unranked.server, await openRush(unranked.server, 'x'), 6, 1, 4)).toMatchObject({ kind: 'done', outcome: { ranked: false, error: { code: 'too_fast_to_rank' } } });
+  });
+
+  it('ends the run, unranked and marked lost, when an answer cannot reach the server or is refused', async () => {
+    const lost = fake({ answerRush: down });
+    expect(await sendRushAnswer(lost.server, await openRush(lost.server, 'x'), 0, 1, 1)).toMatchObject({ kind: 'done', outcome: { ranked: false, down: true, lost: true, error: { code: 'puzzle_unreachable' } } });
+    const refused = fake({ answerRush: () => Promise.reject(new ApiError('gone', 'run_expired', 410)) });
+    expect(await sendRushAnswer(refused.server, await openRush(refused.server, 'x'), 0, 1, 1)).toMatchObject({ kind: 'done', outcome: { ranked: false, down: false, lost: true, error: { code: 'run_expired' } } });
+    // A local run never reaches the server.
+    expect(await sendRushAnswer(lost.server, { ranked: false, seed: 'x', down: true }, 0, 1, 1)).toMatchObject({ kind: 'done', outcome: { ranked: false, lost: true } });
+    expect(puzzleErrorMessage(new ApiError('x', 'not_served', 409)).key).toBe('puzzles.server.errors.runOutOfStep');
   });
 
   it('shows the server’s score even when its clock makes it lower than the device’s estimate', async () => {
     const logged: string[] = [];
     const { server } = fake({ finishRush: async (id) => ({ runId: id, solved: 3, wrong: 0, seconds: 62, score: 280, answers: [], rating: { rating: 1030, change: 30, rated: 3 } }) as RushFinish });
-    const out = await submitRush(server, await openRush(server, 'x'), [1, 2, 3], 4, (m) => logged.push(m));
+    const out = await submitRush(server, await openRush(server, 'x'), 4, (m) => logged.push(m));
     expect(out).toMatchObject({ ranked: true, score: 280, seconds: 62, solved: 3, mismatch: true });
     expect(logged).toHaveLength(1);
   });
@@ -112,14 +138,16 @@ describe('Puzzle Rush through the server', () => {
     const { server, calls } = fake({ startRush: down });
     const link = await openRush(server, 'rush-local');
     expect(link).toMatchObject({ ranked: false, seed: 'rush-local', down: true });
-    expect(await submitRush(server, link, [1], 1)).toMatchObject({ ranked: false, down: true });
+    expect(await submitRush(server, link, 1)).toMatchObject({ ranked: false, down: true });
     expect(calls).toEqual([]);
     expect(await openRush(null, 'rush-local')).toEqual({ ranked: false, seed: 'rush-local', down: true });
+    // The local run's puzzles are the engine's.
+    expect(rushPuzzleAt('rush-local', 4)).toEqual(rushRunPuzzle('rush-local', 4));
   });
 
   it('passes on an expired run as a refusal the screen can offer a new run for', async () => {
     const { server } = fake({ finishRush: () => Promise.reject(new ApiError('expired', 'run_expired', 410)) });
-    expect(await submitRush(server, await openRush(server, 'x'), [1], 1)).toMatchObject({ ranked: false, down: false, error: { code: 'run_expired' } });
+    expect(await submitRush(server, await openRush(server, 'x'), 1)).toMatchObject({ ranked: false, down: false, error: { code: 'run_expired' } });
   });
 });
 

@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ScrollView, StyleSheet, View } from 'react-native';
-import { dailyPuzzle, dailySeed, RUSH_SECONDS, RUSH_STRIKES, rushScore, type PuzzleAnswerInput } from '@mjm/engine';
+import { dailyPuzzle, dailySeed, RUSH_SECONDS, RUSH_STRIKES, rushScore, type AnyPuzzle } from '@mjm/engine';
 import { randomHex } from '@mjm/net';
 import { useApp } from '../app-state';
 import { effectiveStreak, todayKey } from '../storage';
@@ -11,7 +11,7 @@ import { rateAnswerIn, recordRush } from '../logic/rating';
 import { rushDifficulty, rushOutcome, rushPuzzleAt } from '../logic/rush';
 import { canUse, consume } from '../monetisation/store';
 import { puzzleErrorText } from '../api/puzzles';
-import { openDaily, openRush, serverRating, submitDaily, submitRush, type DailyLink, type DailyOutcome, type RushLink, type RushOutcome } from '../logic/puzzleSync';
+import { openDaily, openRush, sendRushAnswer, serverRating, submitDaily, submitRush, type DailyLink, type DailyOutcome, type RushLink, type RushOutcome, type RushStep } from '../logic/puzzleSync';
 import { usePuzzleServer, useShownRating } from '../components/puzzles/usePuzzleServer';
 import { colors, fonts, space } from '../theme';
 import { PuzzleView } from '../components/PuzzleView';
@@ -188,20 +188,25 @@ export function PuzzleRushScreen() {
 function PuzzleRushRun({ onAgain, onStart }: { onAgain: () => void; /** The first answer: the run counts from here (and spends a free run). */ onStart: () => void }) {
   const app = useApp();
   const { t } = useT();
-  // Online the server issues the run (its seed) before the first puzzle; offline the run is seeded here, unranked.
+  // Online the server issues the run and serves its puzzles one at a time; offline the run is seeded here, unranked.
   const { server, userId } = usePuzzleServer();
   const [localSeed] = useState(() => `rush-${randomHex(4)}`);
   const [link, setLink] = useState<RushLink | null>(null);
+  // A ranked run's puzzles as the server served them, by index.
+  const [served, setServed] = useState<Record<number, AnyPuzzle>>({});
   useEffect(() => {
     let live = true;
     serverRating.clearChange();
-    void openRush(server, localSeed).then((l) => live && setLink(l));
+    void openRush(server, localSeed).then((l) => {
+      if (!live) return;
+      if (l.ranked) setServed({ [l.first.index]: l.first.puzzle });
+      setLink(l);
+    });
     return () => {
       live = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  const answers = useRef<PuzzleAnswerInput[]>([]);
   const [outcome, setOutcome] = useState<RushOutcome | null>(null);
   const [sending, setSending] = useState(false);
   // The saved best is raised as soon as the run ends, so judge the run against the best from before it.
@@ -212,7 +217,10 @@ function PuzzleRushRun({ onAgain, onStart }: { onAgain: () => void; /** The firs
   const [left, setLeft] = useState(RUSH_SECONDS);
   const [over, setOver] = useState(false);
   const recorded = useRef(false);
-  const puzzle = useMemo(() => (link ? rushPuzzleAt(link.seed, index) : null), [link, index]);
+  // The last ranked answer on its way to the server: the run is finished only after it has arrived.
+  const inflight = useRef<Promise<RushStep> | null>(null);
+  // A ranked run shows the puzzle the server sent (null while the next one is on its way); a local run makes its own.
+  const puzzle = useMemo(() => (!link ? null : link.ranked ? (served[index] ?? null) : rushPuzzleAt(link.seed, index)), [link, served, index]);
   const [answeredOnce, setAnsweredOnce] = useState(false);
   // Seconds played so far: the clock stops when the run ends, so this is the run's time once over.
   const elapsed = RUSH_SECONDS - left;
@@ -227,20 +235,21 @@ function PuzzleRushRun({ onAgain, onStart }: { onAgain: () => void; /** The firs
   useEffect(() => {
     if ((left === 0 || strikes >= RUSH_STRIKES) && !over) setOver(true);
   }, [left, strikes, over]);
+  const settle = (o: RushOutcome) => {
+    if (o.ranked && userId) serverRating.submitted(userId, o.rating, Date.now());
+    // The saved best follows the server's score for this run (its clock may make it a little lower than the estimate).
+    if (o.ranked) app.setProgress((p) => (p.rushBestScore > Math.max(prevBest, o.score) ? { ...p, rushBestScore: Math.max(prevBest, o.score) } : p));
+    setOutcome(o);
+    setSending(false);
+  };
   const record = () => {
     if (recorded.current) return;
     recorded.current = true;
     app.setProgress((p) => recordRush(p, score, elapsed).progress);
-    // A run the server issued is finished once, with every answer in order (also when the player leaves mid-run).
-    if (link?.ranked && answers.current.length > 0) {
+    // A ranked run is finished once: by the server itself when the last answer ended it, else here (also when the player leaves mid-run).
+    if (link?.ranked && answeredOnce) {
       setSending(true);
-      void submitRush(server, link, [...answers.current], score).then((o) => {
-        if (o.ranked && userId) serverRating.submitted(userId, o.rating, Date.now());
-        // The saved best follows the server's score for this run (its clock may make it a little lower than the estimate).
-        if (o.ranked) app.setProgress((p) => (p.rushBestScore > Math.max(prevBest, o.score) ? { ...p, rushBestScore: Math.max(prevBest, o.score) } : p));
-        setOutcome(o);
-        setSending(false);
-      });
+      void (inflight.current ?? Promise.resolve(null)).then((step) => (step && step.kind === 'done' ? settle(step.outcome) : submitRush(server, link, score).then(settle)));
     }
   };
   useEffect(() => {
@@ -258,7 +267,15 @@ function PuzzleRushRun({ onAgain, onStart }: { onAgain: () => void; /** The firs
 
   const onResult = (r: PuzzleResult) => {
     if (!answeredOnce) onStart();
-    answers.current.push(r.answer);
+    if (link?.ranked) {
+      // Posted as it is made: the server judges and stamps it and sends the next puzzle (or ends the run).
+      const step = sendRushAnswer(server, link, index, r.answer, score + (r.correct ? 1 : 0));
+      inflight.current = step;
+      void step.then((st) => {
+        if (st.kind === 'next') setServed((m) => ({ ...m, [st.next.index]: st.next.puzzle }));
+        else if (st.outcome.ranked || st.outcome.lost) setOver(true);
+      });
+    }
     if (r.correct) setScore((s) => s + 1);
     else setStrikes((s) => s + 1);
     setAnsweredOnce(true);
@@ -307,7 +324,13 @@ function PuzzleRushRun({ onAgain, onStart }: { onAgain: () => void; /** The firs
             </StrokeText>
             <Pill icon="check" text={t('puzzles.rush.solved', { n: outcome?.ranked ? outcome.solved : score })} tone="ok" />
             <H2>{t(`puzzles.rush.outcome.${rushOutcome(prevBest, points).kind}`)}</H2>
-            <P dim>{t(strikes >= RUSH_STRIKES ? 'puzzles.rush.endStrikes' : 'puzzles.rush.endTime')}</P>
+            {outcome && !outcome.ranked && outcome.lost ? (
+              <View testID="rush-lost">
+                <P dim>{t('puzzles.rush.lost')}</P>
+              </View>
+            ) : (
+              <P dim>{t(strikes >= RUSH_STRIKES ? 'puzzles.rush.endStrikes' : 'puzzles.rush.endTime')}</P>
+            )}
             <P dim>{t('puzzles.rush.notRated')}</P>
             <Row style={{ flexWrap: 'wrap', rowGap: 8, justifyContent: 'center' }}>
               <Button title={t(outcome && !outcome.ranked && !outcome.down && isRunGone(outcome.error) ? 'puzzles.server.newRun' : 'puzzles.rush.playAgain')} onPress={onAgain} />
@@ -315,9 +338,13 @@ function PuzzleRushRun({ onAgain, onStart }: { onAgain: () => void; /** The firs
               <Button kind="ghost" title={t('puzzles.rush.backToLearn')} onPress={app.back} />
             </Row>
           </View>
-        ) : !link || !puzzle ? (
+        ) : !link ? (
           <View testID="rush-starting">
             <P dim>{t('puzzles.server.starting')}</P>
+          </View>
+        ) : !puzzle ? (
+          <View testID="rush-loading" accessibilityLiveRegion="polite">
+            <P dim>{t('puzzles.rush.loadingNext')}</P>
           </View>
         ) : (
           <>

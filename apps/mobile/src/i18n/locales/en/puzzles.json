@@ -34,7 +34,9 @@
     "leaveTitle": "End this run?",
     "leaveBody": "Leaving ends the run now with %{n} solved. It is recorded, and it counts as today's run.",
     "leaveYes": "End run",
-    "leaveNo": "Keep going"
+    "leaveNo": "Keep going",
+    "loadingNext": "Getting the next puzzle from the game server…",
+    "lost": "The connection to the game server was lost, so the run ended here. It is not ranked."
   },
   "view": {
     "next": "Next",
@@ -180,7 +182,8 @@
       "notFound": "The game server could not find that. Try again.",
       "rateLimited": "Too many puzzle requests in a short time. Wait a few seconds and try again.",
       "unreachable": "Cannot reach the game server, so this result is not ranked.",
-      "badReply": "The game server sent an unreadable reply, so this result is not ranked."
+      "badReply": "The game server sent an unreadable reply, so this result is not ranked.",
+      "runOutOfStep": "The game server and this run fell out of step, so the run ended here. Start a new run to play for the leaderboards."
     }
   },
   "boards": {

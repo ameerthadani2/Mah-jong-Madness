@@ -22,7 +22,8 @@ export function usePuzzleServer(): { server: PuzzleServer | null; userId: string
       startDaily: (date) => puzzlesApi.startDaily(ctx, date),
       finishDaily: (id, answer) => puzzlesApi.finishDaily(ctx, id, answer),
       startRush: () => puzzlesApi.startRush(ctx),
-      finishRush: (id, answers) => puzzlesApi.finishRush(ctx, id, answers),
+      answerRush: (id, index, answer) => puzzlesApi.answerRush(ctx, id, index, answer),
+      finishRush: (id) => puzzlesApi.finishRush(ctx, id),
       getPuzzleRating: () => puzzlesApi.getPuzzleRating(ctx),
     };
   }, [hasSession, app.signalUrl, auth.client]);

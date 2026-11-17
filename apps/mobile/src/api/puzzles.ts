@@ -1,14 +1,14 @@
 /**
  * Client for the server's puzzle routes (docs/API.md, "Puzzles and leaderboards"): the daily
  * puzzle timed by the server (start, then finish with the answer), Puzzle Rush runs the server
- * issues and scores, the server's puzzle rating, the leaderboards and the "Show me on
+ * serves one puzzle at a time, judging and stamping each answer as it is made, the server's puzzle rating, the leaderboards and the "Show me on
  * leaderboards" choice. Pure TypeScript: `fetch` is injected, so tests drive it with a fake.
  *
  * Failures are `ApiError`s (src/api/http.ts); `puzzleErrorMessage` turns each code into
  * translated copy (`puzzles.server.errors.*`), and `isPuzzleServerDown` says when the app should
  * carry on locally, unranked, instead of showing an error.
  */
-import type { PuzzleAnswerInput, PuzzleType } from '@mjm/engine';
+import type { AnyPuzzle, PuzzleAnswerInput, PuzzleType } from '@mjm/engine';
 import { authorisedJson, globalFetch, type Authoriser, type FetchLike } from './http';
 import { friendlyErrorMessage } from '../logic/errors';
 import type { Message, Translate } from '../logic/translate';
@@ -48,26 +48,51 @@ export interface DailyFinish {
   rating: ServerRating;
 }
 
+/** A Rush puzzle as the server serves it: its place in the run and the content the view needs. */
+export interface RushServed {
+  index: number;
+  type: PuzzleType;
+  puzzle: AnyPuzzle;
+}
+
 export interface RushStart {
   runId: string;
-  seed: string;
   startedAt: string;
   expiresAt: string;
   seconds: number;
   strikes: number;
+  /** The first puzzle (the server keeps the run's seed and serves each puzzle once the previous answer has arrived). */
+  next: RushServed;
 }
 
 export interface RushFinish {
   runId: string;
   solved: number;
   wrong: number;
-  /** The server's time from the run's start to the finish, at most the run's length. */
+  /** The server's time from the run's start to its end (the third strike, the finish or the three minutes), at most the run's length. */
   seconds: number;
   score: number;
-  /** False when the answers averaged under the human-time floor (1.5 s): recorded, not ranked. Absent from older servers. */
+  /** False under the human-time floor (1.5 s an answer) or with inhuman answer times: recorded, not ranked. */
   ranked?: boolean;
-  answers: Array<{ index: number; type: PuzzleType; correct: boolean }>;
+  /** True when the answer times were judged inhuman (docs/API.md, "Plausible answer times"). */
+  inhuman?: boolean;
+  answers: Array<{ index: number; type: PuzzleType; correct: boolean; ms?: number }>;
   rating: ServerRating;
+}
+
+/** The server's reply to one Rush answer: its verdict, and the next puzzle or the finished run. */
+export interface RushAnswerReply {
+  index: number;
+  /** False when the answer came after the run's three minutes: it does not count and the run is over. */
+  counted: boolean;
+  correct?: boolean;
+  type?: PuzzleType;
+  solved?: number;
+  wrong?: number;
+  done: boolean;
+  next: RushServed | null;
+  /** The finished run, when `done`. */
+  result?: RushFinish;
 }
 
 export interface RatingReply {
@@ -135,10 +160,12 @@ export const puzzlesApi = {
   startDaily: (ctx: PuzzleContext, date: string) => call<DailyStart>(ctx, 'POST', '/api/puzzles/daily/start', { date }),
   /** Answers the daily puzzle: the server judges it and times it from the start. */
   finishDaily: (ctx: PuzzleContext, attemptId: string, answer: PuzzleAnswerInput) => call<DailyFinish>(ctx, 'POST', '/api/puzzles/daily', { attemptId, answer }),
-  /** Starts a Puzzle Rush run: the server issues the seed and keeps the start time. */
+  /** Starts a ranked Puzzle Rush run: the server keeps the seed and the start time, and sends the first puzzle. */
   startRush: (ctx: PuzzleContext) => call<RushStart>(ctx, 'POST', '/api/puzzles/rush', {}),
-  /** Finishes a run once, with every answer in order from the first puzzle. */
-  finishRush: (ctx: PuzzleContext, runId: string, answers: readonly PuzzleAnswerInput[]) => call<RushFinish>(ctx, 'POST', `/api/puzzles/rush/${encodeURIComponent(runId)}/finish`, { answers }),
+  /** Answers the puzzle the run is waiting on, as it is made: the server judges and stamps it and sends the next. */
+  answerRush: (ctx: PuzzleContext, runId: string, index: number, answer: PuzzleAnswerInput) => call<RushAnswerReply>(ctx, 'POST', `/api/puzzles/rush/${encodeURIComponent(runId)}/answer`, { index, answer }),
+  /** Ends a run (the clock ran out or the player left): the server scores it from the answers it stamped. */
+  finishRush: (ctx: PuzzleContext, runId: string) => call<RushFinish>(ctx, 'POST', `/api/puzzles/rush/${encodeURIComponent(runId)}/finish`, {}),
   getPuzzleRating: (ctx: PuzzleContext) => call<RatingReply>(ctx, 'GET', '/api/puzzles/rating'),
   getLeaderboard: (ctx: PuzzleContext, kind: BoardKind, opts: BoardOptions = {}) => call<Board>(ctx, 'GET', boardPath(kind, opts)),
   /** Whether the player appears on public leaderboards (on unless they turned it off). */
@@ -150,6 +177,7 @@ export const {
   startDaily,
   finishDaily,
   startRush,
+  answerRush,
   finishRush,
   getPuzzleRating,
   getLeaderboard,
@@ -174,6 +202,9 @@ const PUZZLE_ERRORS: Readonly<Record<string, string>> = {
   run_not_found: 'puzzles.server.errors.runNotFound',
   run_finished: 'puzzles.server.errors.runFinished',
   run_expired: 'puzzles.server.errors.runExpired',
+  not_served: 'puzzles.server.errors.runOutOfStep',
+  already_answered: 'puzzles.server.errors.runOutOfStep',
+  answers_one_at_a_time: 'puzzles.server.errors.runOutOfStep',
   forbidden: 'puzzles.server.errors.forbidden',
   not_found: 'puzzles.server.errors.notFound',
   rate_limited: 'puzzles.server.errors.rateLimited',
