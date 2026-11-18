@@ -20,16 +20,28 @@ export interface QuickMatchView {
   fillSeconds: number;
   /** Seconds until bots join, while waiting; 0 once due. */
   botsInSeconds: number;
+  /**
+   * Seconds until the server may seat this player, when it opened a table moments ago (one new table
+   * per account every 10 s, `cooldownMs`); 0 when nothing holds it back.
+   */
+  cooldownSeconds: number;
 }
 
+/**
+ * The line under the search. `waitedMs` is the wait now: the status's `waitedMs` plus the time since
+ * it arrived, which also counts down the status's `cooldownMs`.
+ */
 export function quickMatchView(status: QueueStatus | null, waitedMs?: number): QuickMatchView {
   const fillMs = status?.fillMs && status.fillMs > 0 ? status.fillMs : DEFAULT_FILL_MS;
   const waited = Math.max(0, waitedMs ?? status?.waitedMs ?? 0);
+  const sinceStatus = Math.max(0, waited - (status?.waitedMs ?? 0));
+  const cooldownMs = typeof status?.cooldownMs === 'number' && Number.isFinite(status.cooldownMs) ? status.cooldownMs : 0;
   return {
     humans: Math.min(4, Math.max(1, status?.humans ?? 1)),
     waitedSeconds: Math.floor(waited / 1000),
     fillSeconds: Math.round(fillMs / 1000),
     botsInSeconds: Math.max(0, Math.ceil((fillMs - waited) / 1000)),
+    cooldownSeconds: Math.max(0, Math.ceil((cooldownMs - sinceStatus) / 1000)),
   };
 }
 

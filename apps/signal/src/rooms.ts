@@ -66,8 +66,12 @@ interface Room {
    * `emptySince` is when its last peer left (or when it was opened or restored), null while anyone
    * is connected: once started it closes `QUICK_ABANDONED_MS` after that.
    */
-  /** `linked`: the pairs of players that queued from one address or one device (a table opened with one is not rated). */
-  quick?: { players: Set<string>; linked: Array<[string, string]>; startBy: number; started: boolean; emptySince: number | null };
+  /**
+   * `linked`: the pairs of players that queued from one address or one device (a table opened with
+   * one is not rated). `declined`: players who left the table on purpose before it started; it does
+   * not wait for them, and they may queue again (`quickTableOf`).
+   */
+  quick?: { players: Set<string>; linked: Array<[string, string]>; startBy: number; started: boolean; emptySince: number | null; declined: Set<string> };
 }
 
 /**
@@ -360,7 +364,7 @@ export class RoomRegistry {
     if (opts.clubCode) room.clubCode = opts.clubCode.toUpperCase();
     if (opts.createdBy) room.createdBy = opts.createdBy;
     if (opts.evicted?.length) room.evicted = new Set(opts.evicted);
-    if (opts.quickMatch) room.quick = { players: new Set(opts.quickMatch.players), linked: (opts.quickMatch.linked ?? []).map(([a, b]): [string, string] => [a, b]), startBy: this.now() + (opts.quickMatch.startAfterMs ?? QUICK_START_MS), started: false, emptySince: this.now() };
+    if (opts.quickMatch) room.quick = { players: new Set(opts.quickMatch.players), linked: (opts.quickMatch.linked ?? []).map(([a, b]): [string, string] => [a, b]), startBy: this.now() + (opts.quickMatch.startAfterMs ?? QUICK_START_MS), started: false, emptySince: this.now(), declined: new Set() };
     this.attachTable(room, opts.rules, opts.botSkill, opts.restore);
     this.rooms.set(code, room);
     return code;
@@ -382,13 +386,15 @@ export class RoomRegistry {
    * The unfinished quick-match table this account is still at, if any: one it holds a seat at
    * (connected or not), or one that has not started and is waiting for it to sit down. A seat the
    * player left on purpose (the table's `leave`, which the app sends when the player abandons the
-   * match; a bot plays it from then on) does not count: that player may queue for another table, which
-   * is charged like any other (`chargeQuickMatch`). A dropped connection is not a leave.
+   * match; a bot plays it from then on) does not count, and nor does a table it left on purpose
+   * before it started (`declined`): that player may queue for another table, which is charged like
+   * any other (`chargeQuickMatch`). A dropped connection is not a leave.
    */
   quickTableOf(userId: string): string | undefined {
     for (const r of this.rooms.values()) {
       if (!r.quick || !r.table || !r.quick.players.has(userId) || r.table.host.phase === 'match_over') continue;
-      if (!r.quick.started || r.table.host.seatInfo().some((s) => !s.isBot && s.userId === userId && !s.left)) return r.code;
+      if (!r.quick.started && !r.quick.declined.has(userId)) return r.code;
+      if (r.table.host.seatInfo().some((s) => !s.isBot && s.userId === userId && !s.left)) return r.code;
     }
     return undefined;
   }
@@ -409,6 +415,17 @@ export class RoomRegistry {
     }
     for (const [ip, ids] of byIp) if (!this.createsByIp.take(ip)) refused.push(...ids);
     return refused;
+  }
+
+  /**
+   * How long until a quick-match table can be charged to this socket (`chargeQuickMatch`): until
+   * its account's create allowance and its address's both hold one again. 0 when they do now.
+   */
+  quickCooldownMs(peerId: string): number {
+    const peer = this.peers.get(peerId);
+    if (!peer) return 0;
+    const byUser = this.createsByUser.msUntil(peer.userId ? `u:${peer.userId}` : `p:${peer.id}`);
+    return Math.max(byUser, peer.ip !== undefined ? this.createsByIp.msUntil(peer.ip) : 0);
   }
 
   /**
@@ -450,8 +467,9 @@ export class RoomRegistry {
   }
 
   /**
-   * Start a quick-match table once every matched player holds a connected seat, or at its
-   * deadline with whoever came (bots take the other seats); with nobody there by then it closes.
+   * Start a quick-match table once every matched player holds a connected seat (those who left it
+   * on purpose before it started are not waited for), or at its deadline with whoever came (bots
+   * take the other seats); with nobody there by then, or once every player has left it, it closes.
    */
   private autoStart(room: Room): void {
     const quick = room.quick;
@@ -462,7 +480,7 @@ export class RoomRegistry {
       return;
     }
     const seated = new Set(host.seatInfo().filter((s) => !s.isBot && s.connected && s.userId).map((s) => s.userId!));
-    const everyone = [...quick.players].every((id) => seated.has(id));
+    const everyone = [...quick.players].every((id) => seated.has(id) || quick.declined.has(id));
     if (!everyone && this.now() < quick.startBy) return;
     quick.started = true;
     if (seated.size === 0) {
@@ -796,6 +814,14 @@ export class RoomRegistry {
           const data = bindUser(msg.data, peer.userId, peer.name);
           if (t === 'join' && peer.userId) this.opts.emotePacks?.warm?.(peer.userId);
           room.table.transport.receive(peer.id, data);
+          // A quick-match table not started yet: a player who leaves it on purpose has turned it
+          // down (it is not waited for and may queue again); one who sits down again is back.
+          if (room.quick && !room.quick.started && peer.userId && (t === 'leave' || t === 'join')) {
+            if (t === 'leave') room.quick.declined.add(peer.userId);
+            else room.quick.declined.delete(peer.userId);
+            const quickRoom = room;
+            queueMicrotask(() => this.autoStart(quickRoom));
+          }
           if (timed) this.opts.actionLatency!.record(this.perfNow() - t0);
           return peer.id;
         }

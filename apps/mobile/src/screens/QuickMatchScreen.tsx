@@ -213,6 +213,12 @@ export function QuickMatchScreen() {
                 <P dim>{waited}</P>
               </View>
             ) : null}
+            {phase === 'searching' && view.cooldownSeconds > 0 ? (
+              // The server holds a player who opened a table moments ago (one new table every 10 s): say so, and for how long.
+              <View testID="quickmatch-cooldown">
+                <P dim>{t('quickmatch.cooldown', { seconds: view.cooldownSeconds })}</P>
+              </View>
+            ) : null}
           </View>
         ) : null}
         <Pill icon="bot" tone="gold" wrap text={t('quickmatch.botsNote', { seconds: view.fillSeconds })} />

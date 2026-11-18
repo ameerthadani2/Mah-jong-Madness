@@ -81,6 +81,20 @@ describe('quick match', () => {
     expect(screen.getByText('Bots fill empty seats after 20 seconds')).toBeOnTheScreen();
   });
 
+  it('says how long the server holds a player who started a table moments ago, counting down, and nothing when none', async () => {
+    await renderQuickMatch();
+    await step(() => (search().opts.onStatus as (s: QueueStatus) => void)(status(1, 0)));
+    expect(screen.queryByTestId('quickmatch-cooldown')).toBeNull();
+    await step(() => (search().opts.onStatus as (s: QueueStatus) => void)({ ...status(1, 1000), cooldownMs: 8_400 }));
+    expect(screen.getByText('You started a table a moment ago. Each player can start one every 10 seconds, so we can seat you in 9 s.')).toBeOnTheScreen();
+    await step(() => void jest.advanceTimersByTime(3000));
+    expect(screen.getByText('You started a table a moment ago. Each player can start one every 10 seconds, so we can seat you in 6 s.')).toBeOnTheScreen();
+    // Not part of what a screen reader is told as news.
+    expect(live()).toBe('1 player found (you)');
+    await step(() => void jest.advanceTimersByTime(6000));
+    expect(screen.queryByTestId('quickmatch-cooldown')).toBeNull();
+  });
+
   it('once matched, says so, holds Cancel, and takes the player to the table with Home behind it', async () => {
     const calls = await renderQuickMatch();
     await step(() => (search().opts.onMatched as () => void)());

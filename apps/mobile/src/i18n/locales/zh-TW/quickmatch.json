@@ -12,6 +12,7 @@
     "other": "已找到 %{count} 位玩家"
   },
   "waited": "已等待 %{seconds} 秒",
+  "cooldown": "你剛才開過一張牌桌。每位玩家每 10 秒只能開一桌，%{seconds} 秒後就能為你配桌。",
   "botsNote": "%{seconds} 秒後由電腦補滿空位",
   "botsSoon": "電腦將在 %{seconds} 秒後加入",
   "matched": "找到牌桌了！正在入座…",

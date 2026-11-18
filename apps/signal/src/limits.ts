@@ -61,6 +61,13 @@ export class TokenBucket {
     return this.tokens;
   }
 
+  /** Milliseconds until the bucket holds `n` tokens: 0 when it does now. Spends nothing. */
+  msUntil(n = 1): number {
+    this.refill();
+    if (this.tokens >= n) return 0;
+    return this.refillPerSec > 0 ? Math.ceil(((n - this.tokens) / this.refillPerSec) * 1000) : Infinity;
+  }
+
   /** The bucket as it stands now (refilled to now): its tokens and the time, to store it. */
   state(): { tokens: number; at: number } {
     this.refill();
@@ -119,6 +126,12 @@ export class BucketTable<K> {
   has(key: K, n = 1): boolean {
     const entry = this.buckets.get(key);
     return entry ? entry.bucket.available() >= n : this.capacity >= n;
+  }
+
+  /** Milliseconds until `key`'s bucket holds `n` tokens (0 when it does now). Nothing is taken and no bucket is created. */
+  msUntil(key: K, n = 1): number {
+    const entry = this.buckets.get(key);
+    return entry ? entry.bucket.msUntil(n) : this.capacity >= n ? 0 : Infinity;
   }
 
   /** Evict buckets that have been idle for at least `idleMs` and have refilled. Returns how many were removed. */

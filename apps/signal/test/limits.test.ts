@@ -49,6 +49,27 @@ describe('TokenBucket', () => {
   });
 });
 
+describe('the time until a bucket holds a token', () => {
+  it('is 0 while it holds one, and the refill time of what is missing once spent; nothing is taken', () => {
+    let now = 0;
+    const bucket = new TokenBucket(1, 1000 / 10_000, () => now);
+    expect(bucket.msUntil()).toBe(0);
+    expect(bucket.take()).toBe(true);
+    expect(bucket.msUntil()).toBe(10_000);
+    now = 4_000;
+    expect(bucket.msUntil()).toBe(6_000);
+    expect(bucket.msUntil()).toBe(6_000);
+    now = 10_000;
+    expect(bucket.msUntil()).toBe(0);
+    expect(new TokenBucket(1, 0, () => now).msUntil(2)).toBe(Infinity);
+    const table = new BucketTable<string>(6, 6 / 60, { now: () => now });
+    expect(table.msUntil('unknown')).toBe(0);
+    for (let i = 0; i < 6; i++) table.take('a');
+    expect(table.msUntil('a')).toBe(10_000);
+    expect(table.size).toBe(1);
+  });
+});
+
 describe('BucketTable', () => {
   it('keeps one bucket per key', () => {
     const t = new BucketTable<string>(2, 0, { now: () => 0 });

@@ -28,6 +28,7 @@ function registry(opts: { fillMs?: number; maxHostedTables?: number } = {}) {
     openTable: (ids): string => rooms.createQuickMatchRoom(ids),
     seatedAt: (userId): string | undefined => rooms.quickTableOf(userId),
     charge: (peerIds): string[] => rooms.chargeQuickMatch(peerIds),
+    cooldownMs: (peerId): number => rooms.quickCooldownMs(peerId),
   });
   const rooms: RoomRegistry = new RoomRegistry({ allowHosted: true, now: () => clock.now, botDelayMs: 0, queue: mm, maxHostedTables: opts.maxHostedTables });
   let n = 0;
@@ -161,6 +162,83 @@ describe('a player who left a quick-match table on purpose', () => {
     expect(next!.room).not.toBe(room);
     expect(await peer(b.userId).queue()).toMatchObject({ t: 'queue_error', code: 'seated', room });
     expect(rooms.stats().hostedTables).toBe(2);
+  });
+});
+
+describe('a player who leaves a quick-match table before it starts', () => {
+  it('may queue again at once (charged as usual), and the table starts without waiting for it', async () => {
+    const { rooms, peer, advance } = registry();
+    const a = peer();
+    const b = peer();
+    const [ma, mb] = await Promise.all([a.queue(), b.queue()]);
+    expect(ma.room).toBe(mb.room);
+    const room = ma.room as string;
+    a.enter(room);
+    a.sit();
+    await flush();
+    // Not started: b has not sat down. a turns the table down.
+    expect(rooms.hostedTable(room)!.phase).toBe('lobby');
+    a.walkAway();
+    await flush();
+    expect(rooms.quickTableOf(a.userId)).toBeUndefined();
+    expect(rooms.quickTableOf(b.userId)).toBe(room);
+    // a is queued again (not refused as seated); it waits only for its create allowance, and is told so.
+    const again = peer(a.userId);
+    rooms.handle(again.id, { t: 'queue' });
+    await flush();
+    expect(again.out.some((m) => m.t === 'queue_error')).toBe(false);
+    expect(again.out.find((m) => m.t === 'queue_status')?.cooldownMs).toBeGreaterThan(0);
+    // b sits down: the table starts at once with a bot in a's place, without waiting out its deadline.
+    b.enter(room);
+    b.sit();
+    await flush();
+    expect(rooms.hostedTable(room)!.phase).not.toBe('lobby');
+    advance(LIMITS.createCooldownMs);
+    expect(again.out.find((m) => m.t === 'matched')?.room).not.toBe(room);
+  });
+
+  it('closes at once when every player has left it before it started', async () => {
+    const { rooms, peer } = registry();
+    const a = peer();
+    const m = await a.queue();
+    const room = m.room as string;
+    a.enter(room);
+    a.walkAway();
+    await flush();
+    expect(rooms.hasRoom(room)).toBe(false);
+  });
+});
+
+describe('the wait for the create allowance', () => {
+  it('is said in every status while a player who left a table moments ago waits, and the player is seated when it ends', async () => {
+    const { rooms, peer, advance, clock } = registry();
+    const a = peer();
+    const first = await a.queue();
+    expect(first).toMatchObject({ t: 'matched' });
+    // Seated without a wait: its statuses carried no cooldown.
+    expect(a.out.filter((m) => m.t === 'queue_status').every((m) => m.cooldownMs === undefined)).toBe(true);
+    const openedAt = clock.now;
+    a.enter(first.room as string);
+    a.sit();
+    a.walkAway();
+    advance(1_000);
+    const again = peer(a.userId);
+    const queuedAt = clock.now;
+    rooms.handle(again.id, { t: 'queue' });
+    await flush();
+    const told = again.out.filter((m) => m.t === 'queue_status');
+    // Told at once how long until its account may open a table again (one per createCooldownMs).
+    expect(told[0].cooldownMs).toBe(openedAt + LIMITS.createCooldownMs - queuedAt);
+    advance(4_000);
+    // Each status says what is left of it when it was sent.
+    const later = again.out.filter((m) => m.t === 'queue_status').at(-1)!;
+    expect(later.cooldownMs).toBe(openedAt + LIMITS.createCooldownMs - (queuedAt + (later.waitedMs as number)));
+    expect(later.cooldownMs as number).toBeLessThan(told[0].cooldownMs as number);
+    expect(again.out.some((m) => m.t === 'matched')).toBe(false);
+    // Seated in the tick its allowance is back, not before.
+    while (!again.out.some((m) => m.t === 'matched') && clock.now < openedAt + 2 * LIMITS.createCooldownMs) advance(500);
+    expect(clock.now).toBeGreaterThanOrEqual(openedAt + LIMITS.createCooldownMs);
+    expect(clock.now).toBeLessThan(openedAt + LIMITS.createCooldownMs + 1_000);
   });
 });
 

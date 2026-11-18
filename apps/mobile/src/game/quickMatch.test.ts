@@ -299,9 +299,22 @@ describe('one quick match, from the tap to a seat or a message', () => {
 
 describe('quick match copy', () => {
   it('shows the humans found, the wait and the seconds until bots join', () => {
-    expect(quickMatchView(null)).toEqual({ humans: 1, waitedSeconds: 0, fillSeconds: 20, botsInSeconds: 20 });
-    expect(quickMatchView({ t: 'queue_status', position: 2, waitedMs: 12_400, humans: 3, fillMs: 20_000 })).toEqual({ humans: 3, waitedSeconds: 12, fillSeconds: 20, botsInSeconds: 8 });
+    expect(quickMatchView(null)).toEqual({ humans: 1, waitedSeconds: 0, fillSeconds: 20, botsInSeconds: 20, cooldownSeconds: 0 });
+    expect(quickMatchView({ t: 'queue_status', position: 2, waitedMs: 12_400, humans: 3, fillMs: 20_000 })).toEqual({ humans: 3, waitedSeconds: 12, fillSeconds: 20, botsInSeconds: 8, cooldownSeconds: 0 });
     expect(quickMatchView({ t: 'queue_status', position: 1, waitedMs: 0, humans: 1, fillMs: 20_000 }, 25_000).botsInSeconds).toBe(0);
+  });
+
+  it('counts down the wait the server holds a player who started a table moments ago (cooldownMs)', () => {
+    const held = { t: 'queue_status' as const, position: 1, waitedMs: 2_000, humans: 1, fillMs: 20_000, cooldownMs: 7_100 };
+    expect(quickMatchView(held).cooldownSeconds).toBe(8);
+    // Counted from when the status arrived: 2.5 s after it, 4.6 s are left.
+    expect(quickMatchView(held, 4_500).cooldownSeconds).toBe(5);
+    expect(quickMatchView(held, 9_100).cooldownSeconds).toBe(0);
+    expect(quickMatchView(held, 20_000).cooldownSeconds).toBe(0);
+    // An older server sends none, and nonsense counts as none.
+    expect(quickMatchView({ ...held, cooldownMs: undefined }).cooldownSeconds).toBe(0);
+    expect(quickMatchView({ ...held, cooldownMs: Number.NaN }).cooldownSeconds).toBe(0);
+    for (const locale of [en, zhTW]) expect(locale.cooldown).toContain('%{seconds}');
   });
 
   it('tells a screen reader about players found and the match, and never about the seconds ticking by', () => {

@@ -206,6 +206,8 @@ export async function createSignalServer(opts: SignalServerOptions): Promise<Sig
     // One quick-match table per account at a time, each charged to its players like a table they created.
     seatedAt: (userId): string | undefined => rooms.quickTableOf(userId),
     charge: (peerIds): string[] => rooms.chargeQuickMatch(peerIds),
+    // How long a player who opened a table moments ago waits for its allowance (said in queue_status).
+    cooldownMs: (peerId): number => rooms.quickCooldownMs(peerId),
     // The pair counts the admin view lists: in the database on Postgres, so a restart keeps them.
     pairStore: repos.repos.quickMatchPairs,
     log,

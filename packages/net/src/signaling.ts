@@ -116,6 +116,11 @@ export interface QueueStatus {
   humans: number;
   /** How long a group short of four waits before bots fill its empty seats (absent on older servers). */
   fillMs?: number;
+  /**
+   * Present while this player cannot be seated yet because its account (or address) opened a table
+   * moments ago: the milliseconds until its table allowance is back and the queue may seat it.
+   */
+  cooldownMs?: number;
 }
 
 /**
