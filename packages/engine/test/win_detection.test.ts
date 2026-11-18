@@ -169,6 +169,8 @@ describe('花上自摸: a win on a flower replacement', () => {
 
 describe('海底撈月 and 河底撈魚: the last live tile and its discard', () => {
   const S0 = '8s 147m 258p 369s EESSWW N';
+  /** Seat 3 here holds a pair of 5 Bamboo, so it may pong a 5 Bamboo that is not the last live tile. */
+  const D3_PAIR = 'ESWN CFB 369m 147p 255s';
 
   it('海底撈月: a self-draw on the last live tile', () => {
     let s = setup({}, [S0, WAITS_5S, D2, D3], 1, { front: ['5s'] });
@@ -180,11 +182,11 @@ describe('海底撈月 and 河底撈魚: the last live tile and its discard', ()
   });
 
   it('河底撈魚: a win on the discard of the last live tile, which nobody may call', () => {
-    let s = setup({}, [S0, D2, WAITS_5S, D3], 1, { front: ['5s'] });
+    let s = setup({}, [S0, D2, WAITS_5S, D3_PAIR], 1, { front: ['5s'] });
     s = discard(s, 0, '8s');
     expect(s.turn).toBe(1);
     s = discard(s, 1, '5s');
-    // 3 holds a 5 Bamboo too, but the last discard can only be won on.
+    // 3 holds a pair of 5 Bamboo and could pong it with live tiles left (next test), but the last discard can only be won on.
     expect(s.pending?.offers.map((o) => [o.seat, o.hu, o.pong])).toEqual([[2, true, false]]);
     s = respond(s, { 2: { type: 'hu' } });
     const w = recordedWin(s, { lastTile: true });
@@ -193,10 +195,15 @@ describe('海底撈月 and 河底撈魚: the last live tile and its discard', ()
     expect(keysOf(w.score)).not.toContain('last_tile_draw');
   });
 
-  it('a discard with live tiles left is neither', () => {
-    let s = setup({}, [S0, D2, WAITS_5S, D3], 3, { front: ['5s'] });
+  it('a discard with live tiles left is neither, and may be called', () => {
+    let s = setup({}, [S0, D2, WAITS_5S, D3_PAIR], 3, { front: ['5s'] });
     s = discard(s, 0, '8s');
-    s = respond(discard(s, 1, '5s'), { 2: { type: 'hu' } });
+    s = discard(s, 1, '5s');
+    expect(s.pending?.offers.map((o) => [o.seat, o.hu, o.pong])).toEqual([
+      [2, true, false],
+      [3, false, true],
+    ]);
+    s = respond(s, { 2: { type: 'hu' } });
     const keys = keysOf(recordedWin(s, {}).score);
     expect(keys).not.toContain('last_tile_discard');
   });
@@ -226,6 +233,21 @@ describe('天胡, 地胡 and 人胡 from a real deal, and the call that voids th
     });
     s = respond(discard(s, 0, '3s'), { 2: { type: 'hu' } });
     expect(keysOf(recordedWin(s, { renhu: true }).score)).toContain('renhu');
+  });
+
+  it("the dealer's 暗槓 voids 人胡: a win on the dealer's first discard after it, by a seat that has not drawn, is an ordinary win", () => {
+    const idle = ['SWN CFB 258m 369p 147s 9m', 'SWN CFB 369m 147p 258s 6p'];
+    let s = dealt({}, ['EEE CFB 147m 258p 369s S', idle[0], '123m 456m 789p 45s 678s 22p', idle[1]], {
+      front: ['E'],
+      back: ['3s'],
+    });
+    s = applyAction(s, 0, { type: 'kong', tile: find(s, 0, 'E') });
+    s = discard(s, 0, '3s');
+    expect(s.players[2].draws).toBe(0);
+    s = respond(s, { 2: { type: 'hu' } });
+    const w = recordedWin(s, {});
+    expect([w.seat, w.fromSeat]).toEqual([2, 0]);
+    expect(keysOf(w.score)).not.toContain('renhu');
   });
 
   it("the dealer's 暗槓 voids 天胡: the win on its replacement is 槓上開花", () => {
