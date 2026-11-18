@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { BackHandler, Platform } from 'react-native';
 import { DEFAULT_PROFILE, DEFAULT_PROGRESS, DEFAULT_SETTINGS, storage, type ActiveSession, type Profile, type Progress, type Settings } from './storage';
-import { saveScheduler } from './game/persist';
+import { clientSaves, saveScheduler } from './game/persist';
 import { setSavedClientSource, type CloseOptions, type Session } from './game/session';
 import { acceptedName } from './logic/profile';
 import type { ShopFocus } from './logic/shopFocus';
@@ -200,11 +200,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setActiveSessionState(record);
       void storage.saveActiveSession(record);
     };
-    // Saved a moment after a change, or at once while the client is agreeing a deal (src/game/persist.ts).
+    // Saved a moment after a change, or at once while the client is agreeing a deal or when the seat has just been opened on another device (src/game/persist.ts).
     const scheduler = saveScheduler(save);
     // The session forwards its client's state (one client per table, kept across reconnects).
     // A local table's record holds its host, not the client's record: nothing there is worth an early write.
-    const unsubClient = session.onChange((st) => scheduler.changed(session.mode === 'local' ? undefined : st.ceremony));
+    const unsubClient = session.onChange(session.mode === 'local' ? () => scheduler.changed() : clientSaves(scheduler, session.client.state));
     const unsubHost = session.host?.onChange(() => scheduler.changed());
     scheduler.changed();
     return () => {

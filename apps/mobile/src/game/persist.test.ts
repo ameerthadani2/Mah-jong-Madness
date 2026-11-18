@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { SAVE_DELAY_MS, midCeremony, saveScheduler } from './persist';
+import { SAVE_DELAY_MS, clientSaves, midCeremony, saveScheduler } from './persist';
 
 describe('saving the table record', () => {
   beforeEach(() => vi.useFakeTimers());
@@ -80,6 +80,49 @@ describe('saving the table record', () => {
     vi.advanceTimersByTime(5 * SAVE_DELAY_MS);
     expect(save).not.toHaveBeenCalled();
     s.cancel();
+  });
+
+  it('does not put a waiting save off for changes that keep coming: a table that re-sends its seat list every 300 ms still has each change saved within 400 ms', () => {
+    const saves: number[] = [];
+    const s = saveScheduler(() => saves.push(Date.now()));
+    const changes: number[] = [];
+    for (let t = 0; t < 12; t++) {
+      changes.push(Date.now());
+      s.changed('idle');
+      vi.advanceTimersByTime(300);
+    }
+    vi.advanceTimersByTime(5 * SAVE_DELAY_MS);
+    for (const c of changes) expect(saves.find((x) => x >= c)! - c).toBeLessThanOrEqual(SAVE_DELAY_MS);
+    // Still a write per burst of changes, not one per change.
+    expect(saves.length).toBe(6);
+  });
+
+  it('saves at once when asked to, in place of a waiting save', () => {
+    const save = vi.fn();
+    const s = saveScheduler(save);
+    s.changed('idle');
+    s.changed('idle', true);
+    expect(save).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(5 * SAVE_DELAY_MS);
+    expect(save).toHaveBeenCalledTimes(1);
+  });
+
+  it('saves the table client’s changes at once the moment the seat is opened on another device, and a moment later otherwise', () => {
+    const save = vi.fn();
+    const onChange = clientSaves(saveScheduler(save), { kicked: false });
+    onChange({ ceremony: 'idle', kicked: false });
+    expect(save).not.toHaveBeenCalled();
+    onChange({ ceremony: 'idle', kicked: true });
+    expect(save).toHaveBeenCalledTimes(1);
+    // Frames that still come after it are saved a moment later, as any change.
+    onChange({ ceremony: 'idle', kicked: true });
+    expect(save).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(SAVE_DELAY_MS);
+    expect(save).toHaveBeenCalledTimes(2);
+    // A client restored after the kick starts from where it is.
+    const again = vi.fn();
+    clientSaves(saveScheduler(again), { kicked: true })({ ceremony: 'idle', kicked: true });
+    expect(again).not.toHaveBeenCalled();
   });
 
   it('counts committed and revealed as the middle of a deal, and nothing else', () => {
