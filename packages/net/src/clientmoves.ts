@@ -206,8 +206,9 @@ function judgeFrom(j: MoveJudge, play: PlayRecord, n: number, rules: RuleSet, an
  *   arrival offset of its scope allows (`lateRef`): `held` when it is, since the watch drops a link
  *   long before an honest frame on it is that late;
  * - later than that over a link that was not live, later than the fixed points of its scope allow
- *   (`lateAnchor`, which a slow uplink can also cause), or first shown on a link that was not yet
- *   working with less than a whole clock (less `LATE_MS`) to go before the table moved: the stamp
+ *   (`lateAnchor`, which a slow uplink can also cause), or first shown on a new link (one that had
+ *   brought no earlier state) or on one not yet working, with less than a whole clock (less
+ *   `LATE_MS`) to go before the table moved: the stamp
  *   on `r0` is not believed to start the seat's clock, and the time before it is judged as time
  *   without a link, from the last frame before the run that was not late. That gives `downLate`
  *   (the table played for the seat, and it was shown its turn late) or `down`, or `downEarly` when a
@@ -241,10 +242,11 @@ export function judgeTableMove(j: MoveJudge, play: PlayRecord, n: number, end: S
       const late = lr > LATE_MS || lateAnchor(r0, anchors, scope) > LATE_MS;
       const prev = i0 > 0 ? play.seen[i0 - 1] : null;
       const whole = rules.turnSeconds * 1000 + ((prev ? track.bank.get(prev) : null) ?? rules.timeBankSeconds * 1000);
-      // Shown too late for its stamp to be believed, or first shown over a link that was not yet
-      // working with less than a whole clock (less LATE_MS) left: the time before it is judged as time
-      // without a link, from the last timely frame before it.
-      if (late || (r0.working === false && b.at - (r0.atLo ?? r0.at) < whole - LATE_MS)) {
+      // Shown too late for its stamp to be believed, or first shown over a new link, or one not yet
+      // working, with less than a whole clock (less LATE_MS) left: the time before it is judged as time
+      // without a link, from the last timely frame before it. The state itself says whether its link
+      // was new (`onLink`): what came over the link before it (a pong, a clock frame) cannot vouch for it.
+      if (late || ((r0.working === false || r0.onLink === false) && b.at - (r0.atLo ?? r0.at) < whole - LATE_MS)) {
         byLate = late;
         from = null;
         for (let k = i0 - 1; k >= 0; k--) {

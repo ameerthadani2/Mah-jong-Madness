@@ -173,7 +173,7 @@ export interface SeenState {
    * against `wref`. No honest frame on a live link is more than `LATE_MS` late against `wref`.
    */
   live?: boolean;
-  /** The link had already brought a stamp not more than `LATE_MS` late (a client's first link counts from the start). Absent, never false, in records saved by older builds. */
+  /** The link had already brought a state or a hand's end stamped not more than `LATE_MS` late (a client's first link counts from the start). Absent, never false, in records saved by older builds. */
   working?: boolean;
   /** The run of this device's clock it arrived in (a sleep correction starts a new one). */
   seg?: number;

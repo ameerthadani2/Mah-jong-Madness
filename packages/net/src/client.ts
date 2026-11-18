@@ -462,7 +462,7 @@ export class TableClient {
   private boundAt = Number.NEGATIVE_INFINITY;
   /** The earliest the frame being handled can have arrived: earlier than now only just after a pause, when it may have waited in the device. */
   private frameAtLo: number | null = null;
-  /** The link epoch that has brought a stamp that was not late against `lagRef` (-1: none yet). A client's first link counts from the start. */
+  /** The link epoch that has brought a state or a hand's end stamped not late against `lagRef` (-1: none yet). A client's first link counts from the start. */
   private workingEpoch = -1;
   private firstLink = true;
   /** The link in use has brought a stamped frame: the watch measures it from then (a link that brings nothing is the heartbeat's to drop). */
@@ -909,6 +909,11 @@ export class TableClient {
     return this.pause !== null && t - this.pause.to <= PAUSE_GRACE_MS;
   }
 
+  /** The link in use has brought a state: only then are its clock frames and pongs believed. */
+  private stateHere(): boolean {
+    return this.linkShown !== null && this.linkShown.epoch === this.epoch;
+  }
+
   /** A hand is being played at this seat over a link that is up. */
   private playing(): boolean {
     const st = this.state;
@@ -960,14 +965,16 @@ export class TableClient {
    * (`watchRefAt`), and the highest stamp the watch's deficit (`checkLink`).
    * Returns when the frame arrived, the earliest it can have arrived (`atLo`), the reference before
    * it (`ref`, null while the scope has none) and the watch's (`wref`), whether its link was working
-   * (it had brought a stamp not more than `LATE_MS` late against `ref`) and whether it was live:
+   * (it had brought a state or a hand's end stamped not more than `LATE_MS` late against `ref`: a
+   * clock frame or a pong vouches for no state, so it never makes a link working; `opens` says the
+   * frame is one that can) and whether it was live:
    * working, while a hand is played, with the watch checking it within the last `RAN_GAP_MS`, not just
    * after a pause and not in the watch's grace after one, and measured by the watch without a break
    * since before it was `2 × CLOCK_FRAME_MS + 2 s` late against `wref`. No honest frame on a live link
    * is more than `LATE_MS` late against `wref`: the watch drops a link before its stamps fall that far
    * behind.
    */
-  private noteStamp(now: unknown): { at: number; atLo: number; ref: number | null; wref: number | null; live: boolean; working: boolean; seg: number } | null {
+  private noteStamp(now: unknown, opens = false): { at: number; atLo: number; ref: number | null; wref: number | null; live: boolean; working: boolean; seg: number } | null {
     if (typeof now !== 'number' || !Number.isFinite(now)) return null;
     const at = this.now();
     const seg = this.seg();
@@ -993,7 +1000,7 @@ export class TableClient {
     if (!this.afterPause(at)) this.noteLag(at, lag);
     if (this.stampHigh === null || now > this.stampHigh) this.stampHigh = now;
     this.linkStamped = true;
-    if (excess <= LATE_MS) this.workingEpoch = this.epoch;
+    if (opens && excess <= LATE_MS) this.workingEpoch = this.epoch;
     return { at, atLo, ref, wref, live, working, seg };
   }
 
@@ -1483,7 +1490,7 @@ export class TableClient {
         }
         const rec = this.recordFor(h);
         if (rec) rec.dealt = true;
-        const stamped = this.noteStamp(m.now);
+        const stamped = this.noteStamp(m.now, true);
         this.noteOrder(m.now, h, v.turnCounter);
         // An honest host sends every turn's state to every seat it has a link to, so a link that
         // stayed up brings every turn: one skipped on it was held back. The first state of a hand
@@ -1507,7 +1514,7 @@ export class TableClient {
           return;
         }
         const h = m.audit.handNumber;
-        const stampedEnd = this.noteStamp(m.now);
+        const stampedEnd = this.noteStamp(m.now, true);
         this.noteOrder(m.now, null, null);
         if (this.handsEnded.has(h)) {
           // A returning seat is sent the result again. Whatever this frame carries, the result, view
@@ -1612,12 +1619,18 @@ export class TableClient {
         this.update({ lastError: typeof m.message === 'string' ? m.message : 'The table reported an error.', lastErrorCode: typeof m.code === 'string' ? m.code : null });
         return;
       case 'pong':
-        this.noteStamp(m.now);
-        this.noteOrder(m.now, null, null);
+        // On a link that has brought no state, a pong's stamp is not believed: an honest host sends the
+        // state first, and this client pings a link only once it has brought a stamp.
+        if (this.stateHere()) {
+          this.noteStamp(m.now);
+          this.noteOrder(m.now, null, null);
+        }
         if (typeof m.at === 'number') this.update({ rttMs: this.now() - m.at });
         return;
       case 'clock': {
         if (!isInt(m.hand) || !isInt(m.tc)) return;
+        // Nor a clock frame: an honest host sends one only to a seat it has sent the turn's state.
+        if (!this.stateHere()) return;
         this.noteStamp(m.now);
         this.noteOrder(m.now, m.hand, m.tc);
         // A turn this link was never shown the state of: the host sent that state and held it back.

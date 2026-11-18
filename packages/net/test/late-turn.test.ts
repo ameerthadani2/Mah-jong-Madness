@@ -579,37 +579,82 @@ describe('reconnect: a server that forces the phone onto new links', () => {
       expect(w.verdict().caveats).toContain('tableMoved');
     }));
 
+  /**
+   * The server closes the link as the seat comes to owe a move, holds everything on the new link (its
+   * welcome too) for 40 s, then lets it through freshly stamped; the seat is timed out. Just before
+   * what it held, the server may send on the new link, freshly stamped, a frame of its own (`first`):
+   * an unasked pong, a clock frame, or the last hand's result again (in the second hand of a match).
+   */
+  function dropTurn(code: string, first: 'none' | 'pong' | 'clock' | 'hand_over') {
+    let armed = false;
+    let turn = -1;
+    let since = 0;
+    let back = false;
+    let ended: HostMessage | null = null;
+    const w: Wire = wire({
+      code,
+      rules: withRules({ handsPerMatch: first === 'hand_over' ? 2 : 1, turnSeconds: 15, timeBankSeconds: 30 }),
+      reconnectMs: 500,
+      think: (_k, tc) => (tc === turn ? Infinity : 600),
+      map: (m) => {
+        if (m.t === 'hand_over') ended = m;
+        return m;
+      },
+      hold: (m, w) => {
+        if (!armed || back) return false;
+        if (turn < 0 && m.t === 'state' && w.owes() && w.host.game!.turnCounter === m.view.turnCounter) {
+          turn = m.view.turnCounter;
+          since = w.clock.now;
+          // The state that shows the seat its turn is never sent on the link it was meant for.
+          w.dropNow(500);
+          return true;
+        }
+        return turn >= 0 && w.line.id !== 'p0';
+      },
+      onTick: (w) => {
+        if (back || turn < 0 || w.line.id === 'p0' || w.clock.now - since < 40_000) return;
+        back = true;
+        const g = w.host.game!;
+        const now = w.clock.now;
+        if (first === 'pong') w.line.inject({ t: 'pong', at: 0, now });
+        if (first === 'clock') w.line.inject({ t: 'clock', now, hand: g.handNumber, tc: g.turnCounter });
+        if (first === 'hand_over' && ended) w.line.inject({ ...ended, now } as HostMessage);
+        w.line.release((m) => (stampOf(m) === undefined ? m : ({ ...m, now } as HostMessage)));
+      },
+    });
+    if (first === 'hand_over') {
+      w.finish();
+      for (let g = 0; g < 7_200 && !(w.host.phase === 'playing' && w.host.game?.handNumber === 1); g++) w.step();
+      need(w.c.state.audits.length === 1 && ended !== null);
+    }
+    need(w.toDiscard(2));
+    armed = true;
+    w.finish();
+    need(back && w.judged().includes(turn));
+    const play = (w.c as unknown as { plays: Array<{ seen: Array<{ tc: number; working?: boolean; onLink?: boolean }> }> }).plays.at(-1)!;
+    return { w, shown: play.seen.find((f) => f.tc === turn)! };
+  }
+
   it('the link closed as the seat comes to owe a move, the new one held 40 s (its welcome too) and then let through freshly stamped, the seat timed out: amber', () =>
     scenario((i) => {
-      let armed = false;
-      let turn = -1;
-      let since = 0;
-      let back = false;
-      const w: Wire = wire({
-        code: `RC${i}`,
-        reconnectMs: 500,
-        think: (_k, tc) => (tc === turn ? Infinity : 600),
-        hold: (m, w) => {
-          if (!armed || back) return false;
-          if (turn < 0 && m.t === 'state' && w.owes() && w.host.game!.turnCounter === m.view.turnCounter) {
-            turn = m.view.turnCounter;
-            since = w.clock.now;
-            // The state that shows the seat its turn is never sent on the link it was meant for.
-            w.dropNow(500);
-            return true;
-          }
-          return turn >= 0 && w.line.id !== 'p0';
-        },
-        onTick: (w) => {
-          if (back || turn < 0 || w.line.id === 'p0' || w.clock.now - since < 40_000) return;
-          back = true;
-          w.line.release((m) => (stampOf(m) === undefined ? m : ({ ...m, now: w.clock.now } as HostMessage)));
-        },
-      });
-      need(w.toDiscard(2));
-      armed = true;
-      w.finish();
-      need(back && w.judged().includes(turn));
+      const { w } = dropTurn(`RC${i}`, 'none');
+      expect(w.verdict().status).toBe('partial');
+      expect(w.verdict().caveats).toContain('tableMoved');
+    }));
+
+  it.each(['pong', 'clock'] as const)('the same, with an unasked %s sent freshly stamped on the new link before what was held: it vouches for no state, and the hand is amber', (first) =>
+    scenario((i) => {
+      const { w, shown } = dropTurn(`RP${first}${i}`, first);
+      expect(shown).toMatchObject({ working: false, onLink: false });
+      expect(w.verdict().status).toBe('partial');
+      expect(w.verdict().caveats).toContain('tableMoved');
+    }),
+  );
+
+  it('the same in a second hand, with the first hand’s result sent again freshly stamped on the new link: the turn’s state still came first on a new link, and the hand is amber', () =>
+    scenario((i) => {
+      const { w, shown } = dropTurn(`RH${i}`, 'hand_over');
+      expect(shown).toMatchObject({ onLink: false });
       expect(w.verdict().status).toBe('partial');
       expect(w.verdict().caveats).toContain('tableMoved');
     }));
