@@ -4,19 +4,21 @@
  * screen readers reach only the card's two buttons.
  */
 import React from 'react';
-import { Modal, StyleSheet, View } from 'react-native';
+import { Modal, Platform, StyleSheet, View } from 'react-native';
 import { space } from '../../theme';
 import { Scrim, useInertPage } from '../Scrim';
 import { Button, Card, H2, P } from '../Ui';
 
 export function ConfirmSheet({ visible, title, body, yes, no, onYes, onNo, testID }: { visible: boolean; title: string; body: string; yes: string; no: string; onYes: () => void; onNo: () => void; testID?: string }) {
   useInertPage(visible);
+  // As LookPreview: on the web the Modal itself is the dialog (react-native-web makes it one), so it takes the question as its name.
+  const modalA11y = (Platform.OS === 'web' ? { 'aria-label': title } : {}) as object;
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onNo} supportedOrientations={['portrait', 'landscape']}>
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onNo} supportedOrientations={['portrait', 'landscape']} {...modalA11y}>
       <Scrim onPress={onNo} />
       <View style={styles.wrap} pointerEvents="box-none">
         <Card style={styles.sheet} testID={testID}>
-          <H2>{title}</H2>
+          <H2 heading>{title}</H2>
           <P dim style={{ fontSize: 14, lineHeight: 19 }}>
             {body}
           </P>

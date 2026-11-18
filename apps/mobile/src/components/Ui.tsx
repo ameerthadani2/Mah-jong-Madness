@@ -272,8 +272,13 @@ export function H1({ children, style }: { children: React.ReactNode; style?: Sty
     </StrokeText>
   );
 }
-export function H2({ children, style }: { children: React.ReactNode; style?: StyleProp<TextStyle> }) {
-  return <Text style={[styles.h2, fontFor(children, fonts.uiBold), style]}>{children}</Text>;
+/** A section title; `heading` exposes it to screen readers as a heading (a sheet's question, say). */
+export function H2({ children, style, heading }: { children: React.ReactNode; style?: StyleProp<TextStyle>; heading?: boolean }) {
+  return (
+    <Text accessibilityRole={heading ? 'header' : undefined} style={[styles.h2, fontFor(children, fonts.uiBold), style]}>
+      {children}
+    </Text>
+  );
 }
 /** Body text. It follows Settings → Display → Text (never below the OS text size); callers' sizes scale too. */
 export function P({ children, dim, style, numberOfLines }: { children: React.ReactNode; dim?: boolean; style?: StyleProp<TextStyle>; numberOfLines?: number }) {

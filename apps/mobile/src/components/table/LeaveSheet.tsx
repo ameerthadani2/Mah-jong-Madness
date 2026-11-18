@@ -5,7 +5,7 @@
  * the page behind is inert on the web (../Scrim.tsx), so the keyboard and screen readers reach only the card's buttons.
  */
 import React from 'react';
-import { Modal, StyleSheet, View } from 'react-native';
+import { Modal, Platform, StyleSheet, View } from 'react-native';
 import { useT } from '../../i18n';
 import { space } from '../../theme';
 import { Scrim, useInertPage } from '../Scrim';
@@ -15,18 +15,20 @@ import { leaveSheetBody, type ExitChoice } from './exit';
 export function LeaveSheet({ visible, online, quickMatch, onChoose }: { visible: boolean; /** Online: a bot plays the seat while away; offline: the table waits. */ online: boolean; /** A quick-match table closes two minutes after its last player went. */ quickMatch?: boolean; onChoose: (choice: ExitChoice) => void }) {
   const { t } = useT();
   useInertPage(visible);
+  // As LookPreview: on the web the Modal itself is the dialog (react-native-web makes it one), so it takes the sheet's title as its name.
+  const modalA11y = (Platform.OS === 'web' ? { 'aria-label': t('table.leaveSheet.title') } : {}) as object;
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={() => onChoose('stay')} supportedOrientations={['portrait', 'landscape']}>
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={() => onChoose('stay')} supportedOrientations={['portrait', 'landscape']} {...modalA11y}>
       <Scrim onPress={() => onChoose('stay')} />
       <View style={styles.wrap} pointerEvents="box-none">
         <Card style={styles.sheet} testID="leave-sheet">
-          <H2>{t('table.leaveSheet.title')}</H2>
+          <H2 heading>{t('table.leaveSheet.title')}</H2>
           <P dim style={{ fontSize: 14, lineHeight: 19 }}>
             {t(leaveSheetBody({ online, quickMatch }))}
           </P>
           <View style={styles.buttons}>
             <Button testID="leave-stay" title={t('table.leaveSheet.stay')} onPress={() => onChoose('stay')} />
-            <Button testID="leave-away" kind="secondary" icon="back"title={t('table.leaveSheet.away')} onPress={() => onChoose('away')} />
+            <Button testID="leave-away" kind="secondary" icon="back" title={t('table.leaveSheet.away')} onPress={() => onChoose('away')} />
             <Button testID="leave-confirm" kind="danger" small title={t('table.leaveSheet.abandon')} onPress={() => onChoose('abandon')} />
           </View>
         </Card>

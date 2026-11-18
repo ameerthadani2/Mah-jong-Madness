@@ -6,7 +6,7 @@
  * full-screen sheet (src/legal/LegalScreen.tsx), so it works from any screen without a route.
  */
 import React, { useState } from 'react';
-import { Linking, Modal, Pressable, StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
+import { Linking, Modal, Platform, Pressable, StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useT } from '../i18n';
 import { legalTarget, readLegalEnv, type LegalDoc } from '../legal/links';
@@ -20,6 +20,7 @@ const LEGAL_ENV = readLegalEnv();
 
 /** Opens a legal document; render `sheet` somewhere in the tree. */
 export function useLegalSheet(): { open(doc: LegalDoc): void; sheet: React.ReactNode } {
+  const { t } = useT();
   const [doc, setDoc] = useState<LegalDoc | null>(null);
   const open = (d: LegalDoc) => {
     const target = legalTarget(d, LEGAL_ENV);
@@ -29,7 +30,7 @@ export function useLegalSheet(): { open(doc: LegalDoc): void; sheet: React.React
   // The screen behind the full-screen sheet is inert on the web while it is open (./Scrim.tsx).
   useInertPage(doc !== null);
   const sheet = (
-    <Modal visible={doc !== null} animationType="slide" onRequestClose={() => setDoc(null)}>
+    <Modal visible={doc !== null} animationType="slide" onRequestClose={() => setDoc(null)} {...((Platform.OS === 'web' && doc ? { 'aria-label': t(doc === 'terms' ? 'legal.terms' : 'legal.privacy') } : {}) as object)}>
       <View style={styles.sheet}>
         <SafeAreaView style={{ flex: 1 }} edges={['top', 'bottom', 'left', 'right']}>
           {doc && <LegalScreen doc={doc} onBack={() => setDoc(null)} />}
