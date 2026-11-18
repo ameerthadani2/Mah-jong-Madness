@@ -338,9 +338,10 @@ class OnlineSession implements Session {
   }
 
   /**
-   * A link that may still look open but has brought nothing from the table for too long while a
-   * hand is played (`TableClient.checkLink`) is dropped as a missed heartbeat drops it, and won back
-   * the same way. The time without it is then judged as a drop, on this phone's own clock.
+   * A link that may still look open, and may even keep bringing frames, but whose table stamps have
+   * fallen too far behind this phone's clock while a hand is played (`TableClient.checkLink`) is
+   * dropped as a missed heartbeat drops it, and won back the same way. The time without it is then
+   * judged as a drop, on this phone's own clock.
    */
   private watchLink(): void {
     if (this.closed || this.conn.status !== 'connected') return;

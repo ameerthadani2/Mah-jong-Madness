@@ -89,7 +89,7 @@ Merge rules: (1) identity unlinked → linked to the current user, who becomes `
 
 Besides `hello`, `create`, `join`, `queue` and `leave_queue` (above and under Quick match):
 
-Every frame is one JSON object with a string `t`. The app drops, without an error and without touching its audit records, any body that is not JSON (an empty body, the text `undefined`, a truncated frame), any JSON value that is not such an object (`null`, a number, an array), a `room`, `peer`, `from` or `matched` frame whose fields are not of the types below, and a relayed table frame that is not an object with a string `t`. A dropped body does not count as a frame from the table for the 13 s watch below.
+Every frame is one JSON object with a string `t`. The app drops, without an error and without touching its audit records, any body that is not JSON (an empty body, the text `undefined`, a truncated frame), any JSON value that is not such an object (`null`, a number, an array), a `room`, `peer`, `from` or `matched` frame whose fields are not of the types below, and a relayed table frame that is not an object with a string `t`. A dropped body is not a frame from the table, and does not feed the link watch below, which only the table's time stamps (`now`) do.
 
 | Frame | Direction | Purpose |
 | --- | --- | --- |
@@ -97,7 +97,7 @@ Every frame is one JSON object with a string `t`. The app drops, without an erro
 | `{ "t": "from", "from": "<peer id>", "data": … }` | server → client | Relayed data |
 | `{ "t": "peer", "peerId", "event": "join" \| "leave" }` | server → client | A peer entered or left the room |
 | `{ "t": "leave" }` | client → server | Leave the room (the seat stays reclaimable; the table's own `leave` frame, below, gives it up) |
-| `{ "t": "ping" }` → `{ "t": "pong" }` | both | Heartbeat. The app sends one every 15 s and reconnects after 10 s without an answer. While a hand is played it also drops and reconnects a socket that has brought no table frame for 13 s (see `clock` below), even if this heartbeat is answered |
+| `{ "t": "ping" }` → `{ "t": "pong" }` | both | Heartbeat. The app sends one every 15 s and reconnects after 10 s without an answer. While a hand is played it also drops and reconnects a socket whose table stamps have fallen 13 s behind the phone's clock (against the closest relation between the two clocks seen since the table's clock began; see `clock` below), even if this heartbeat is answered and frames keep arriving |
 | `{ "t": "error", "code": "table_cap", "message" }` | server → client | The account already has `MAX_TABLES_PER_USER` (default 3) unfinished tables open; `create` is refused |
 | `{ "t": "error", "code": "closed", "message" }` | server → client | The room has closed (a relay-only room whose host left, a club table closed by the club, an eviction); the socket is no longer in a room |
 
@@ -119,7 +119,7 @@ Client → host:
 | `{ "t": "reveal", "secret": "<hex>" }` | Answer to `reveal_request`: the secret behind the commitment |
 | `{ "t": "action", "seat", "action", "expectHash"?, "turnCounter"? }` | A move (discard, chi, pong, kong, win, pass …) for the sender's own seat. `expectHash` is the state hash the player acted on; `turnCounter` the turn of that view, echoed if the move is refused |
 | `{ "t": "chat", "text" }`, `{ "t": "emote", "emote" }` | A quick phrase or an emote, by id (next section) |
-| `{ "t": "ping", "at" }` | Clock probe; answered `{ "t": "pong", "at", "now" }` with the host's clock, which the countdowns use. While a hand is played, the app sends one after 8 s (twice the 3 s clock-frame period, plus 2 s, whatever `clockMs` says) without any table frame; when 5 s more pass without one, it drops the socket and reconnects |
+| `{ "t": "ping", "at" }` | Clock probe; answered `{ "t": "pong", "at", "now" }` with the host's clock, which the countdowns use. While a hand is played, the app sends one when the table's latest stamp has fallen 8 s behind its own clock (twice the 3 s clock-frame period, plus 2 s, whatever `clockMs` says), measured against the closest relation between the two clocks seen since the table's clock began. When 5 s more pass and the stamps are 13 s behind, it drops the socket and reconnects. A pong counts only through its stamp. A new socket is watched from its first stamped frame |
 
 Host → client:
 
@@ -131,7 +131,7 @@ Host → client:
 | `{ "t": "commits", "handNumber", "commits" }` | Every seat's commitment and the host's own (seat 4), before anything is revealed |
 | `{ "t": "reveal_request", "handNumber" }` | Send `reveal` |
 | `{ "t": "stand_in", "handNumber", "attempt"? }` | This seat did not commit in time, so the host used a stand-in secret for it; the app marks the hand as not verified by this seat's own share |
-| `{ "t": "state", "view", "hash", "deadline", "timeBank", "inTimeBank", "now"? }` | The table as this seat may see it, after every action. `deadline` and `now` are on the host's clock. The `now` stamps on `state`, `hand_over`, `pong` and `clock` never go back, even when the server's clock is set back, so on one connection they arrive in order: the app fails a hand in which the table played for its seat after a frame arrived behind one stamped more than a second later, or after a `clock` frame showed a turn whose `state` had not arrived (docs/FAIRNESS.md) |
+| `{ "t": "state", "view", "hash", "deadline", "timeBank", "inTimeBank", "now"? }` | The table as this seat may see it, after every action. Sent to every connected seat for every turn; a turn missing on one socket counts as held back. `deadline` and `now` are on the host's clock. The `now` stamps on `state`, `hand_over`, `pong` and `clock` never go back, even when the server's clock is set back, so on one connection they arrive in order: the app fails a hand in which the table played for its seat after a frame arrived behind one stamped more than a second later, or after a `clock` frame showed a turn whose `state` had not arrived (docs/FAIRNESS.md) |
 | `{ "t": "hand_over", "result", "audit", "view", "now"?, "deadline"? }` | A hand ended: its result and the audit the app verifies. `deadline` (host clock, like `now`) is when the host deals the next hand by itself, or `null` while it waits with nobody human at the table; the app counts down to it on the result sheet. Older hosts leave it out and older apps ignore it |
 | `{ "t": "match_over", "scores", "view" }` | The match ended |
 | `{ "t": "hand_missed", "audit" }` | To a returning seat: the audit of a hand that ended while it was away, one frame per hand, in order |
@@ -139,7 +139,7 @@ Host → client:
 | `{ "t": "disconnected" }` | This connection no longer holds the seat (the account took it back from another device) |
 | `{ "t": "chat", … }`, `{ "t": "emote", … }` | A seat's phrase or emote (next section) |
 | `{ "t": "pong", "at", "now" }` | Answer to `ping` |
-| `{ "t": "clock", "now", "hand", "tc" }` | While a hand is played, to a seat that was sent nothing for `clockMs`: the hand and turn the table is at (a turn whose `state` the seat was already sent) and the host's clock. A host that never sends it is not trusted for longer: the app watches the link at the 3 s period all the same, and a table that brings no frame for 13 s (no clock frame and no answer to the app's ping) is dropped and judged as a drop. Older apps ignore it |
+| `{ "t": "clock", "now", "hand", "tc" }` | While a hand is played, to a seat that was sent nothing for `clockMs`: the hand and turn the table is at (a turn whose `state` the seat was already sent) and the host's clock. A host that never sends it is not trusted for longer: the app watches the link at the 3 s period all the same. A table whose stamps fall 13 s behind the phone's clock (against the closest relation seen since the table's clock began), whatever frames it sends, is dropped and judged as a drop. Older apps ignore it |
 | `{ "t": "error", "code", "message", "turnCounter"? }` | A refusal; the codes are below |
 
 Table error codes, and what the app does:
