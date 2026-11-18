@@ -1,131 +1,218 @@
-/** The coach bubble: status, the most useful advice, waits and claim reasons (offline bot tables only). */
+/**
+ * The coach (offline bot tables only), in three forms that share one rule: while the coach is on, it is on screen,
+ * whole, and what does not fit is one tap away.
+ *
+ * - CoachBar: phones. A slim bar, pinned above my pond in portrait and above my hand in landscape (layout.ts
+ *   coachBarLines), never in a share of the felt that the ponds or the claim buttons can take. It shows the advice
+ *   (the win, the tile to discard or the claim to make; coachText.ts) on the lines it has, ending in an ellipsis
+ *   when it is longer, and the whole bar is a button, marked "More", that opens the sheet.
+ * - CoachPanel: tablets and tall landscape screens. Everything, under the right seat; past the height it is given it
+ *   scrolls, and a "More" button under it opens the sheet.
+ * - CoachSheet: everything the coach says (status, win, discard, waits with what is left of each, every claim with
+ *   its reason), in a modal sheet at the reader's text size.
+ */
 import React, { useState } from 'react';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions, type StyleProp, type TextStyle, type ViewStyle } from 'react-native';
 import type { Hint } from '@mjm/engine';
-import { colors, fonts } from '../../theme';
+import { colors, fonts, radius, space } from '../../theme';
 import { useT } from '../../i18n';
+import { useDisplayScale } from '../../display/DisplayScale';
+import { scaleTextStyle } from '../../display/scale';
 import { CoachOwl } from '../Avatars';
 import { Icon } from '../Icons';
+import { Scrim, useInertPage } from '../Scrim';
 import { Tile } from '../Tile';
-import { Row } from '../Ui';
-import { COACH_ADVICE_LINE_H, COACH_STATUS_LINE_H, coachAdviceFirst, type CoachBudget } from './layout';
+import { H2, IconButton, Row } from '../Ui';
+import { coachLines } from './coachText';
+import type { CoachBarLines } from './layout';
 
-export function CoachPanel({
-  hint,
-  waitKinds,
-  compact,
-  lines = 3,
-  budget,
-}: {
-  hint: Hint;
-  waitKinds: Set<number>;
-  compact?: boolean;
-  /** Lines for the advice in the compact bubble. */
-  lines?: number;
-  /** Short landscape: how much of the centre column the bubble may take (see layout.ts coachBudget). */
-  budget?: CoachBudget;
-}) {
+/** The bar: the owl, the advice on the lines it has (or the status, when there is no advice), and "More". */
+export function CoachBar({ hint, lines, onOpen, style }: { hint: Hint; lines: CoachBarLines; onOpen: () => void; style?: StyleProp<ViewStyle> }) {
   const { t } = useT();
-  // Coach sentences are engine reason keys rendered in the current locale (see src/i18n/index.ts).
-  const engine = (key: string, params?: Record<string, string | number>) => t(`engine.${key}`, params);
-  // The status line's measured height (by its text): a status that wraps past the lines budgeted for it would push
-  // the advice out of the bubble's scroll box, so it gives way to the advice (below).
-  const [statusH, setStatusH] = useState<{ text: string; h: number } | null>(null);
-  // The scroll box's visible height as laid out (the bubble's own cap can make it smaller than its lines).
-  const [boxH, setBoxH] = useState<number | null>(null);
-  const preview = hint.winPreview ? t('table.coach.winPreview', { items: hint.winPreview.items.map((i) => t('table.coach.taiItem', { name: i.nameZh, tai: i.tai })).join(' · '), tai: hint.winPreview.tai }) : null;
-  if (compact) {
-    // Status + the single most useful piece of advice; both wrap rather than truncate mid-word. With a budget
-    // (claim buttons up) the status gives way to the advice. Advice longer than the lines that fit scrolls inside
-    // the bubble: it is never cut off with an ellipsis.
-    const rec = hint.claims.find((c) => c.recommended);
-    const line = preview ?? (hint.discardReasonKey ? engine(hint.discardReasonKey, hint.discardReasonParams) : rec ? engine(rec.reasonKey, rec.reasonParams) : '');
-    let statusLines = budget ? (budget.statusLines === 0 && line ? 0 : Math.max(1, budget.statusLines)) : 2;
-    let adviceLines = budget ? budget.lines : lines;
-    const textOnly = !!budget?.textOnly;
-    if (budget && budget.lines === 0) return null;
-    // The advice (the tile to discard, the claim to make) always shows: when the status, as it wraps, leaves no
-    // whole advice line in the box, the status gives its lines to the advice (layout.ts coachAdviceFirst).
-    const status = engine(hint.statusKey, hint.statusParams);
-    const shown = coachAdviceFirst({ statusLines, adviceLines, statusH: statusH?.text === status ? statusH.h : null, boxH, hasAdvice: !!line });
-    statusLines = shown.statusLines;
-    adviceLines = shown.adviceLines;
-    return (
-      <View
-        style={[styles.coach, styles.coachCompact, textOnly && styles.coachSlim, budget?.maxHeight !== null && budget?.maxHeight !== undefined && { maxHeight: budget.maxHeight }]}
-        accessibilityRole="summary"
-        testID="coach"
-      >
-        {!textOnly && <CoachOwl size={30} />}
-        <ScrollView
-          style={{ flex: 1, minWidth: 0, flexShrink: 1, maxHeight: statusLines * COACH_STATUS_LINE_H + adviceLines * COACH_ADVICE_LINE_H }}
-          nestedScrollEnabled
-          showsVerticalScrollIndicator
-          onLayout={(e) => setBoxH(e.nativeEvent.layout.height)}
-          testID="coach-text"
-        >
-          {statusLines > 0 && (
-            // Keyed by its text: a new status is a new element, so it is measured even when its height is the old one's.
-            <Text key={status} style={styles.coachStatus} onLayout={(e) => setStatusH({ text: status, h: e.nativeEvent.layout.height })}>
-              {status}
-            </Text>
-          )}
-          {!!line && (
-            <Text style={styles.coachLine} testID="coach-advice">
-              {line}
-            </Text>
-          )}
-        </ScrollView>
-        {hint.waits.length > 0 && !textOnly && (
-          <Row gap={2} style={{ flexShrink: 0 }}>
-            {hint.waits.slice(0, 4).map((w) => (
-              <Tile key={w.kind} kind={w.kind} size="xs" highlight={waitKinds.has(w.kind) ? 'wait' : undefined} />
-            ))}
-          </Row>
+  const { status, advice } = coachLines(hint, t);
+  // Without advice, the status has the advice's lines too.
+  const statusLines = advice ? lines.status : Math.max(1, lines.status + lines.advice);
+  return (
+    <Pressable
+      testID="coach"
+      onPress={onOpen}
+      accessibilityRole="button"
+      // A screen reader hears every word, whatever the ellipsis leaves on screen.
+      accessibilityLabel={advice ? `${status} ${advice}` : status}
+      accessibilityHint={t('table.coach.moreHint')}
+      // A one-line bar is 27 px tall: 8 px more above and below make a 44 pt press, short of the claim buttons above
+      // and of the hand's tiles below (they stand 12 px down their row).
+      hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
+      style={({ pressed }) => [styles.bar, pressed && styles.barPressed, style]}
+    >
+      <CoachOwl size={18} />
+      <View style={styles.barText} testID="coach-text">
+        {statusLines > 0 && (
+          <Text numberOfLines={statusLines} style={styles.barStatus} testID="coach-status">
+            {status}
+          </Text>
+        )}
+        {advice !== null && (
+          <Text numberOfLines={lines.advice} style={styles.barAdvice} testID="coach-advice">
+            {advice}
+          </Text>
         )}
       </View>
-    );
-  }
+      <View style={styles.more} testID="coach-more">
+        <Text style={styles.moreText}>{t('table.coach.more')}</Text>
+      </View>
+    </Pressable>
+  );
+}
+
+/** Everything the coach says, at `factor` times the table's type (the sheet passes the reader's text size). */
+export function CoachDetails({ hint, factor = 1 }: { hint: Hint; factor?: number }) {
+  const { t } = useT();
+  const engine = (key: string, params?: Record<string, string | number>) => t(`engine.${key}`, params);
+  const size = (s: TextStyle) => (factor === 1 ? s : scaleTextStyle(s, factor));
+  const { status, advice } = coachLines(hint, t);
+  const preview = hint.winPreview ? advice : null;
+  const discard = hint.discardReasonKey ? engine(hint.discardReasonKey, hint.discardReasonParams) : null;
+  // The advice (coachText.ts) is the line the e2e checks look for: the win, else the discard, else the recommended claim.
+  const adviceIs = preview !== null ? 'preview' : discard !== null ? 'discard' : 'claim';
   return (
-    <View style={styles.coach} accessibilityRole="summary" testID="coach">
-      <Row gap={8}>
-        <CoachOwl size={36} />
-        <Text style={styles.coachTitle}>{t('table.coach.title')}</Text>
-      </Row>
-      <Text style={styles.coachStatus}>{engine(hint.statusKey, hint.statusParams)}</Text>
-      {preview && <Text style={styles.coachLine}>{preview}</Text>}
-      {hint.discardReasonKey && <Text style={styles.coachLine}>{engine(hint.discardReasonKey, hint.discardReasonParams)}</Text>}
+    <>
+      <Text style={size(TYPE.status)} testID="coach-sheet-status">
+        {status}
+      </Text>
+      {preview !== null && (
+        <Text style={size(TYPE.line)} testID="coach-advice">
+          {preview}
+        </Text>
+      )}
+      {discard !== null && (
+        <Text style={size(TYPE.line)} testID={adviceIs === 'discard' ? 'coach-advice' : undefined}>
+          {discard}
+        </Text>
+      )}
       {hint.waits.length > 0 && (
         <Row style={{ flexWrap: 'wrap' }} gap={4}>
-          <Text style={styles.coachLabel}>{t('table.coach.waits')}</Text>
+          <Text style={size(TYPE.label)}>{t('table.coach.waits')}</Text>
           {hint.waits.map((w) => (
             <View key={w.kind} style={{ alignItems: 'center' }}>
-              <Tile kind={w.kind} size="xs" highlight={waitKinds.has(w.kind) ? 'wait' : undefined} />
-              <Text style={styles.coachCount}>{t('table.coach.remaining', { n: w.remaining })}</Text>
+              <Tile kind={w.kind} size="xs" highlight="wait" />
+              <Text style={size(TYPE.count)}>{t('table.coach.remaining', { n: w.remaining })}</Text>
             </View>
           ))}
         </Row>
       )}
       {hint.claims.map((c, i) => (
         <Row key={i} gap={4} style={{ alignItems: 'flex-start' }}>
-          {c.recommended ? <Icon name="check" size={16} color={colors.cta} /> : <View style={styles.coachDot} />}
-          <Text style={[styles.coachLine, { flex: 1 }, c.recommended && { color: colors.okText }]}>
+          {c.recommended ? <Icon name="check" size={16} color={colors.cta} /> : <View style={styles.dot} />}
+          <Text style={[size(TYPE.line), { flex: 1 }, c.recommended && { color: colors.okText }]} testID={c.recommended && adviceIs === 'claim' ? 'coach-advice' : undefined}>
             {t('table.coach.claimLine', { label: engine(c.labelKey, c.labelParams), reason: engine(c.reasonKey, c.reasonParams) })}
           </Text>
         </Row>
       ))}
+    </>
+  );
+}
+
+/** "More": opens the coach's sheet. */
+function MoreButton({ onPress }: { onPress: () => void }) {
+  const { t } = useT();
+  return (
+    <Pressable testID="coach-more" onPress={onPress} accessibilityRole="button" accessibilityLabel={t('table.coach.moreHint')} hitSlop={12} style={({ pressed }) => [styles.more, styles.moreAlone, pressed && styles.barPressed]}>
+      <Text style={styles.moreText}>{t('table.coach.more')}</Text>
+    </Pressable>
+  );
+}
+
+/**
+ * The full coach, under the right seat on tablets and tall landscape screens. It keeps the height it needs up to
+ * `maxHeight`; past that its text scrolls and "More" (always shown then) opens the sheet, so nothing is cut unseen.
+ */
+export function CoachPanel({ hint, maxHeight, onOpen }: { hint: Hint; maxHeight?: number; onOpen: () => void }) {
+  const { t } = useT();
+  const [box, setBox] = useState(0);
+  const [content, setContent] = useState(0);
+  const overflow = box > 0 && content > box + 1;
+  return (
+    <View style={[styles.coach, maxHeight ? { maxHeight } : null]} accessibilityRole="summary" testID="coach">
+      <Row gap={8}>
+        <CoachOwl size={36} />
+        <Text style={styles.coachTitle}>{t('table.coach.title')}</Text>
+      </Row>
+      <ScrollView
+        style={styles.panelScroll}
+        contentContainerStyle={{ gap: 4 }}
+        onLayout={(e) => setBox(Math.round(e.nativeEvent.layout.height))}
+        onContentSizeChange={(_w, h) => setContent(Math.round(h))}
+        testID="coach-text"
+      >
+        <CoachDetails hint={hint} />
+      </ScrollView>
+      {overflow && <MoreButton onPress={onOpen} />}
     </View>
   );
 }
 
+/**
+ * The coach's sheet: everything it says, at the reader's text size, in a modal sheet over the table (the game goes on
+ * underneath and the sheet follows it). Closed by its Close button, the scrim or the Back key; the page behind is
+ * inert on the web while it is open (../Scrim.tsx).
+ */
+export function CoachSheet({ hint, visible, onClose }: { hint: Hint | null; visible: boolean; onClose: () => void }) {
+  const { t } = useT();
+  const { height } = useWindowDimensions();
+  const { fontFactor } = useDisplayScale();
+  const open = visible && hint !== null;
+  useInertPage(open);
+  const label = t('table.coach.sheetLabel');
+  // As LookPreview: on the web the Modal itself is the dialog and takes the name; on a phone the sheet is the dialog.
+  const web = Platform.OS === 'web';
+  const sheetA11y = web ? {} : { role: 'dialog' as const, 'aria-modal': true, 'aria-label': label, accessibilityViewIsModal: true };
+  const modalA11y = (web ? { 'aria-label': label } : {}) as object;
+  return (
+    <Modal visible={open} transparent animationType="fade" onRequestClose={onClose} supportedOrientations={['portrait', 'landscape']} {...modalA11y}>
+      <Scrim onPress={onClose} testID="coach-sheet-scrim" />
+      <View style={styles.sheetWrap} pointerEvents="box-none">
+        <View {...sheetA11y} testID="coach-sheet" style={[styles.sheetShell, { maxHeight: height - 2 * space.md }]}>
+          {/* A Card's look, drawn here so the sheet can shrink to the window and scroll its middle (as LookPreview). */}
+          <View style={styles.sheet}>
+            <Row gap={8}>
+              <CoachOwl size={36} />
+              <H2 style={{ flex: 1 }}>{t('table.coach.title')}</H2>
+              <IconButton icon="cross" kind="ghost" testID="coach-sheet-close" label={t('table.coach.close')} onPress={onClose} />
+            </Row>
+            <ScrollView style={styles.sheetScroll} contentContainerStyle={{ gap: 6 }}>
+              {hint && <CoachDetails hint={hint} factor={fontFactor} />}
+            </ScrollView>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+/** The coach's type at the table's size (the sheet scales it with the reader's text size). */
+const TYPE = {
+  status: { color: colors.ink, fontFamily: fonts.uiBold, fontSize: 13, lineHeight: 17 },
+  line: { color: colors.inkDim, fontSize: 12, lineHeight: 15, fontWeight: '700' },
+  label: { color: colors.ink, fontWeight: '900', fontSize: 13, lineHeight: 17 },
+  count: { color: colors.inkDim, fontSize: 11, lineHeight: 14, fontWeight: '800' },
+} satisfies Record<string, TextStyle>;
+
 const styles = StyleSheet.create({
-  coach: { backgroundColor: colors.cream, borderRadius: 16, padding: 8, gap: 4, borderWidth: 3, borderColor: colors.ink, flexShrink: 1, overflow: 'hidden' },
-  coachCompact: { flexDirection: 'row', alignItems: 'center', gap: 8, minWidth: 0, maxWidth: 520, flexShrink: 1, paddingVertical: 5 },
-  coachSlim: { paddingVertical: 3 },
+  bar: { flexDirection: 'row', alignItems: 'center', gap: 6, minWidth: 0, backgroundColor: colors.cream, borderRadius: 14, borderWidth: 2.5, borderColor: colors.ink, paddingHorizontal: 6, paddingVertical: 2 },
+  barPressed: { opacity: 0.85 },
+  barText: { flex: 1, minWidth: 0 },
+  barStatus: { color: colors.ink, fontFamily: fonts.uiBold, fontSize: 13, lineHeight: 17 },
+  barAdvice: { color: colors.ink, fontSize: 12, lineHeight: 15, fontWeight: '700' },
+  more: { flexShrink: 0, backgroundColor: colors.info, borderRadius: 999, borderWidth: 2, borderColor: colors.ink, paddingHorizontal: 8 },
+  moreAlone: { alignSelf: 'flex-end' },
+  moreText: { color: '#FFFFFF', fontFamily: fonts.uiBold, fontSize: 12, lineHeight: 15 },
+  coach: { flexShrink: 0, backgroundColor: colors.cream, borderRadius: 16, padding: 8, gap: 4, borderWidth: 3, borderColor: colors.ink },
   coachTitle: { color: colors.ink, fontFamily: fonts.display, fontSize: 18 },
-  coachStatus: { color: colors.ink, fontFamily: fonts.uiBold, fontSize: 13, lineHeight: 17 },
-  coachLine: { color: colors.inkDim, fontSize: 12, lineHeight: 15, fontWeight: '700' },
-  coachLabel: { color: colors.ink, fontWeight: '900', fontSize: 13 },
-  coachCount: { color: colors.inkDim, fontSize: 11, fontWeight: '800' },
-  coachDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: colors.inkDim, marginTop: 5, marginHorizontal: 5 },
+  panelScroll: { flexGrow: 0, flexShrink: 1 },
+  dot: { width: 6, height: 6, borderRadius: 3, backgroundColor: colors.inkDim, marginTop: 5, marginHorizontal: 5 },
+  sheetWrap: { flex: 1, justifyContent: 'flex-end', alignItems: 'center', padding: space.md },
+  sheetShell: { width: '100%', maxWidth: 520, flexShrink: 1, borderWidth: 3, borderColor: colors.ink, borderRadius: radius.lg, paddingBottom: 5, backgroundColor: colors.creamShelf },
+  sheet: { backgroundColor: colors.cream, borderRadius: radius.lg - 3, padding: 12, gap: space.sm, flexShrink: 1, overflow: 'hidden' },
+  sheetScroll: { flexGrow: 0, flexShrink: 1 },
 });

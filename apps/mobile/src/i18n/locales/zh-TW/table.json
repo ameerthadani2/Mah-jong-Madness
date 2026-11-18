@@ -34,7 +34,11 @@
     "taiItem": "%{name} %{tai}",
     "winPreview": "%{items} = %{tai} 台",
     "claimLine": "%{label}：%{reason}",
-    "remaining": "×%{n}"
+    "remaining": "×%{n}",
+    "more": "更多",
+    "moreHint": "顯示教練的完整建議",
+    "close": "關閉建議",
+    "sheetLabel": "教練的建議"
   },
   "connection": {
     "lostTitle": "連線中斷",

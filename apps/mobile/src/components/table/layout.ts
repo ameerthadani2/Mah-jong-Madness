@@ -10,8 +10,12 @@ export interface TableLayout {
   tablet: boolean;
   /** Short landscape phones (under 420 px tall): every vertical pixel counts. */
   compact: boolean;
-  /** Where the coach bubble goes: beside the compass, under the right seat, or under the cross (portrait). */
-  coach: 'center' | 'side' | 'below';
+  /**
+   * Where the coach goes (see coachBarLines): portrait pins it to the felt above my pond; a landscape phone gives it a
+   * bar above my hand; tablets and tall landscape screens show it in full under the right seat. Never in a share of
+   * the felt's middle, which the ponds and the claim buttons can take whole on a small phone.
+   */
+  coach: 'pinned' | 'rail' | 'side';
   /** The "X discarded Y" pill sits in the HUD on short screens instead of under the compass. */
   statusInHud: boolean;
   /**
@@ -57,7 +61,7 @@ export function tableLayout(width: number, height: number): TableLayout {
     portrait,
     tablet,
     compact,
-    coach: portrait ? 'below' : height < 520 ? 'center' : 'side',
+    coach: portrait ? 'pinned' : height < 520 ? 'rail' : 'side',
     statusInHud: !portrait && !tablet && compact,
     actions: portrait ? 'strip' : 'center',
     sideWidth,
@@ -85,69 +89,21 @@ export const TAP_HINT_DOCK_H = 34;
 /** What the action dock over the centre column shows: nothing, the tap hint pill, or claim/discard buttons. */
 export type ActionDock = 'none' | 'hint' | 'buttons';
 
-/** The compact coach bubble's type: the status line and the advice lines (see CoachPanel), plus its padding and border. */
-export const COACH_STATUS_LINE_H = 17;
-export const COACH_ADVICE_LINE_H = 15;
-export const COACH_BUBBLE_CHROME_H = 16;
-/** The text-only bubble's padding and border (it sits over the compass and my pond, so it is kept slim). */
-export const COACH_SLIM_CHROME_H = 12;
-/** Advice lines the compact bubble shows when nothing constrains it. */
-export const COACH_MAX_ADVICE_LINES = 4;
-
-export interface CoachBudget {
-  /** Lines for the status (0 hides it: a claim decision needs the reason more than the shanten count). */
-  statusLines: number;
-  /** Advice lines on screen at once (more scroll inside the bubble, never cut); 0 hides the bubble rather than a sliver. */
-  lines: number;
-  /** Cap on the bubble's height, so it ends above my pond; null while the column is unmeasured. */
-  maxHeight: number | null;
-  /** Text only (no owl, no waits), with slim padding, so the words get the whole width when space is short. */
-  textOnly: boolean;
+/** The lines the coach bar shows (CoachPanel.tsx CoachBar): a status line, and lines of advice. */
+export interface CoachBarLines {
+  status: number;
+  advice: number;
 }
 
 /**
- * How much of the compact middle row's right-hand column (`columnH` px, measured: between the across seat's
- * pond and the action dock, which now has a row of its own) the coach bubble may take above my pond (`pondH`,
- * measured; one row before it is). It never covers my pond or the compass beside it. While claim or discard
- * buttons are up the status gives way to the advice and the bubble goes text-only; under the tap-hint pill the
- * status keeps one line. Advice longer than the lines that fit scrolls inside the bubble instead of being cut.
- * Before the column has been measured (0) the bubble is unconstrained.
+ * The coach bar's lines where it is placed. Pinned in portrait: the status over two lines of advice. On a landscape
+ * phone's rail, the advice alone: one line in a row of its own above the hand at Normal tiles (where every pixel of
+ * the felt counts), two beside my plate where Large and Extra-large tiles give the plate a row of its own (`besidePlate`).
+ * Whatever does not fit ends in an ellipsis, and the bar opens the coach's sheet, which holds everything.
  */
-export function coachBudget(columnH: number, dock: ActionDock, pondH = 0): CoachBudget {
-  if (columnH <= 0) return { statusLines: 2, lines: COACH_MAX_ADVICE_LINES, maxHeight: null, textOnly: false };
-  const pond = Math.max(pondH, tileDims('xs').h + 2) + 4;
-  const avail = Math.max(0, columnH - pond);
-  if (dock === 'buttons') {
-    const lines = Math.max(0, Math.min(COACH_MAX_ADVICE_LINES, Math.floor((avail - COACH_SLIM_CHROME_H) / COACH_ADVICE_LINE_H)));
-    return { statusLines: 0, lines, maxHeight: avail, textOnly: true };
-  }
-  const statusLines = dock === 'hint' ? 1 : 2;
-  const forAdvice = avail - COACH_BUBBLE_CHROME_H - statusLines * COACH_STATUS_LINE_H;
-  const lines = Math.max(0, Math.min(COACH_MAX_ADVICE_LINES, Math.floor(forAdvice / COACH_ADVICE_LINE_H)));
-  if (lines === 0) {
-    // No room beside the owl: fall back to the slim text-only bubble before hiding it.
-    const slim = Math.max(0, Math.min(COACH_MAX_ADVICE_LINES, Math.floor((avail - COACH_SLIM_CHROME_H) / COACH_ADVICE_LINE_H)));
-    return { statusLines: 0, lines: slim, maxHeight: avail, textOnly: true };
-  }
-  return { statusLines, lines, maxHeight: avail, textOnly: false };
-}
-
-/**
- * The compact coach's lines once its status line has been measured (`statusH` px, null before): the advice comes
- * first. When the status, as it actually wraps (a long Chinese status, Extra-large text, the OS text size), leaves
- * less than one whole advice line in the scroll box (`statusLines` + `adviceLines` lines high, or `boxH` as laid out
- * when the bubble's cap makes it shorter), the status is
- * dropped and its lines go to the advice, so the tile to discard or the claim to make is always in view; the
- * status comes back with the next status (or when the advice is gone). Without advice nothing changes.
- */
-export function coachAdviceFirst(o: { statusLines: number; adviceLines: number; statusH: number | null; boxH?: number | null; hasAdvice: boolean }): { statusLines: number; adviceLines: number } {
-  const { statusLines, adviceLines, statusH, hasAdvice } = o;
-  if (!hasAdvice || statusLines === 0 || statusH === null) return { statusLines, adviceLines };
-  // The box is as tall as its lines, or less where the bubble's cap (`boxH`, measured) cuts it.
-  const lines = statusLines * COACH_STATUS_LINE_H + adviceLines * COACH_ADVICE_LINE_H;
-  const box = o.boxH ? Math.min(lines, o.boxH) : lines;
-  if (statusH + COACH_ADVICE_LINE_H <= box + 1) return { statusLines, adviceLines };
-  return { statusLines: 0, adviceLines: adviceLines + Math.floor((statusLines * COACH_STATUS_LINE_H) / COACH_ADVICE_LINE_H) };
+export function coachBarLines(place: 'pinned' | 'rail', besidePlate = false): CoachBarLines {
+  if (place === 'pinned') return { status: 1, advice: 2 };
+  return { status: 0, advice: besidePlate ? 2 : 1 };
 }
 
 /** Height the landscape action dock takes: claim/discard buttons (larger on tablets), the tap-hint pill, or nothing. */
@@ -174,21 +130,6 @@ export function fitWallSize(current: number, contentH: number, viewH: number, ma
   if (current <= 0) return viewH - contentH >= min ? min : 0;
   const next = Math.min(max, current - (contentH - viewH));
   return next >= min ? Math.round(next) : 0;
-}
-
-/**
- * Lines a coach sentence needs at `textWidth` px: bold 12 pt Latin averages just over half an em, a CJK
- * character a full em. An estimate for the layout tests, not a text measurer.
- */
-export function coachTextLines(text: string, textWidth: number, fontSize = 12): number {
-  let w = 0;
-  for (const ch of text) w += /[\u3000-\u9fff\uff00-\uffef]/.test(ch) ? fontSize : fontSize * 0.56;
-  return Math.max(1, Math.ceil(w / Math.max(1, textWidth)));
-}
-
-/** Height of the compact bubble drawn to `budget`. */
-export function coachBubbleHeight(b: Pick<CoachBudget, 'statusLines' | 'lines' | 'textOnly'>): number {
-  return (b.textOnly ? COACH_SLIM_CHROME_H : COACH_BUBBLE_CHROME_H) + b.statusLines * COACH_STATUS_LINE_H + b.lines * COACH_ADVICE_LINE_H;
 }
 
 export interface HandLayout {

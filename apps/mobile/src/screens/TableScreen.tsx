@@ -24,7 +24,8 @@ import { ActionBar } from '../components/table/ActionBar';
 import { CallBanner, WinReveal, type Callout } from '../components/table/CallBanner';
 import { Felt, type PlateProps } from '../components/table/Felt';
 import { HandRail } from '../components/table/HandRail';
-import { ACTION_STRIP_H, slopFor, tableLayout } from '../components/table/layout';
+import { CoachBar, CoachSheet } from '../components/table/CoachPanel';
+import { ACTION_STRIP_H, coachBarLines, slopFor, tableLayout } from '../components/table/layout';
 import { fitHand } from '../display/tableFit';
 import { useDisplayScale } from '../display/DisplayScale';
 import { RESULT_HOLD_MS } from '../components/table/feel';
@@ -124,6 +125,8 @@ export function TableScreen() {
   }, [quickOver, ratingRoom, auth.client]);
   const [coachWanted, setCoachOpen] = useState(app.settings.coach);
   const coachOpen = coachAllowed && coachWanted;
+  // The coach's sheet (everything it says), opened from its bar or panel.
+  const [coachSheet, setCoachSheet] = useState(false);
   const [emotePicker, setEmotePicker] = useState(false);
   // The red exit icon asks first (components/table/exit.ts): only "Abandon table" forgets the table.
   const [leaveAsk, setLeaveAsk] = useState(false);
@@ -148,7 +151,14 @@ export function TableScreen() {
   const mySeat = state?.seat ?? 0;
   const local: GameState | null = useMemo(() => (view ? viewToState(view) : null), [view]);
   const actions: Action[] = useMemo(() => (local ? legalActions(local, mySeat) : []), [local, mySeat]);
-  const hint: Hint | null = useMemo(() => (coachOpen && local && local.phase !== 'ended' ? safeHint(local, mySeat) : null), [coachOpen, local, mySeat]);
+  // While the coach is on it always has something to say, "Hand over" included, so it never leaves the screen while
+  // its button shows it on.
+  const hint: Hint | null = useMemo(() => (coachOpen && local ? safeHint(local, mySeat) : null), [coachOpen, local, mySeat]);
+  // The sheet closes with the coach, and when the hand ends (the result comes next).
+  const handOver = local?.phase === 'ended';
+  useEffect(() => {
+    if (!hint || handOver) setCoachSheet(false);
+  }, [hint, handOver]);
 
   // Progress bookkeeping once per finished hand (keyed in persisted progress so remounts never double count).
   useEffect(() => {
@@ -446,6 +456,7 @@ export function TableScreen() {
           status={L.statusInHud ? null : statusLine}
           hint={hint}
           coachOpen={coachOpen}
+          onCoachMore={() => setCoachSheet(true)}
           actions={L.actions === 'center' ? actionBar : null}
           dock={actions.some((a) => a.type !== 'discard') || (actions.length > 0 && selected !== null) ? 'buttons' : actions.length > 0 && tapHint.show ? 'hint' : 'none'}
           overlay={overlay}
@@ -470,7 +481,9 @@ export function TableScreen() {
           drawn={isDiscardPhase && view.lastDrawn != null ? view.lastDrawn : null}
           best={hint?.bestDiscard?.tile}
           onTile={onTile}
+          coach={L.coach === 'rail' && hint ? <CoachBar hint={hint} lines={coachBarLines('rail', hand.wide)} onOpen={() => setCoachSheet(true)} /> : undefined}
         />
+        <CoachSheet visible={coachSheet} hint={hint} onClose={() => setCoachSheet(false)} />
 
         {emotePicker && (
           <View style={styles.emotePanel}>

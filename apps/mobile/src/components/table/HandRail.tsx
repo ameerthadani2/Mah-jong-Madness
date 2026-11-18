@@ -1,4 +1,8 @@
-/** My seat under the table: plate, flowers, the hand on its wooden rack, and my melds. */
+/**
+ * My seat under the table: plate, flowers, the hand on its wooden rack, and my melds. On a landscape phone the coach's
+ * bar sits here too, just above the hand: beside my plate and melds where they have a row of their own (Large and
+ * Extra-large tiles), or in a slim row of its own beside my plate (Normal tiles).
+ */
 import React, { useRef } from 'react';
 import { ScrollView, StyleSheet, View } from 'react-native';
 import type { PlayerView, TileId } from '@mjm/engine';
@@ -25,6 +29,7 @@ export function HandRail({
   drawn,
   best,
   onTile,
+  coach,
 }: {
   me: PlayerView;
   layout: TableLayout;
@@ -44,6 +49,8 @@ export function HandRail({
   /** The coach's recommended discard. */
   best?: TileId;
   onTile: (tile: TileId) => void;
+  /** Landscape phones: the coach's bar (CoachPanel.tsx CoachBar), while the coach is on. */
+  coach?: React.ReactNode;
 }) {
   const { t, locale } = useT();
   const { portrait, tablet } = L;
@@ -73,10 +80,22 @@ export function HandRail({
   return (
     <View style={[styles.footer, above && { paddingTop: 4 }]}>
       {above && (
-        <Row gap={10} style={{ paddingHorizontal: 4, marginBottom: 2 }}>
+        // The coach's bar takes what my plate and melds leave of the row, or a line of its own when they leave too little.
+        <Row gap={10} style={[{ paddingHorizontal: 4, marginBottom: 2 }, !!coach && styles.plateRowWrap]}>
           {myPlate}
-          <MeldsAndFlowers player={me} size={meldTile} style={{ flex: 1 }} />
+          <MeldsAndFlowers player={me} size={meldTile} style={coach ? styles.meldsBesideCoach : { flex: 1 }} />
+          {!!coach && (
+            <View style={styles.coachBeside} testID="coach-slot">
+              {coach}
+            </View>
+          )}
         </Row>
+      )}
+      {!above && !!coach && (
+        // Normal tiles: my plate stands beside the hand, rising over the rail; the bar takes the row beside it.
+        <View style={[styles.coachRow, { paddingLeft: plateW }]} testID="coach-slot">
+          {coach}
+        </View>
       )}
       <View style={styles.handRow}>
         {!above && (
@@ -128,4 +147,10 @@ const styles = StyleSheet.create({
   rack: { position: 'absolute', left: -6, right: -6, bottom: 0, backgroundColor: colors.rail, borderWidth: 3, borderColor: colors.ink, borderRadius: 10, overflow: 'hidden' },
   rackTop: { position: 'absolute', top: 0, left: 0, right: 0, height: 5, backgroundColor: colors.railLight },
   handTiles: { flexDirection: 'row', alignItems: 'flex-end', gap: 2, paddingTop: 12, paddingBottom: 7, paddingHorizontal: 4 },
+  plateRowWrap: { flexWrap: 'wrap', rowGap: 4 },
+  meldsBesideCoach: { flexShrink: 1 },
+  coachBeside: { flexGrow: 1, flexBasis: 240, minWidth: 240, maxWidth: '100%' },
+  // Drawn over the bottom of the felt's wooden frame (the felt's frame keeps 18 px under its last row, the felt 6 more),
+  // so the bar costs the felt only about half its height.
+  coachRow: { marginTop: -16, marginBottom: 2, zIndex: 1 },
 });

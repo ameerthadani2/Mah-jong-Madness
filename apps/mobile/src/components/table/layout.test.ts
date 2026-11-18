@@ -2,8 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { calloutMs, RESULT_HOLD_MS, rollUp, rollUpMs, slideFrom } from './feel';
 import { readFileSync } from 'fs';
 import { join } from 'path';
-import { ACTION_DOCK_H, coachBubbleHeight, coachAdviceFirst,
-  coachBudget, coachTextLines, COACH_MAX_ADVICE_LINES, COACH_STATUS_LINE_H, compactCompassSize, dockHeight, fitTile, fitWallSize, handLayout, landscapeWallSize, matchOverLayout, MIN_TOUCH, resultLayout, slopFor, tableLayout, TAP_HINT_DOCK_H } from './layout';
+import { ACTION_DOCK_H, coachBarLines, compactCompassSize, dockHeight, fitTile, fitWallSize, handLayout, landscapeWallSize, matchOverLayout, MIN_TOUCH, resultLayout, slopFor, tableLayout, TAP_HINT_DOCK_H } from './layout';
 
 describe('tableLayout', () => {
   it('docks the claim buttons over the centre column in landscape, never over a side pond', () => {
@@ -19,10 +18,11 @@ describe('tableLayout', () => {
     expect(tableLayout(390, 844).statusInHud).toBe(false);
   });
 
-  it('places the coach beside the compass on short landscape, under the right seat on tall landscape, below in portrait', () => {
-    expect(tableLayout(844, 390).coach).toBe('center');
+  it('places the coach above the hand on landscape phones, under the right seat on tablets, pinned above my pond in portrait', () => {
+    // Never in a share of the felt's middle on a phone: the ponds and the claim buttons can take all of it there.
+    for (const [w, h] of [[844, 390], [667, 375], [640, 360], [568, 320], [932, 430]]) expect(tableLayout(w, h).coach, `${w}x${h}`).toBe('rail');
     expect(tableLayout(1024, 768).coach).toBe('side');
-    expect(tableLayout(390, 844).coach).toBe('below');
+    for (const [w, h] of [[390, 844], [360, 740], [320, 568]]) expect(tableLayout(w, h).coach, `${w}x${h}`).toBe('pinned');
   });
 
   it('fits my pond beside the compass on short landscape phones', () => {
@@ -49,74 +49,25 @@ describe('tableLayout', () => {
   });
 });
 
-describe('own pond, coach and compass on short landscape (the claim buttons have a row of their own)', () => {
-  // The claim sentences the engine can show (packages/engine/src/hints.ts): the usual one, and the longest.
-  const USUAL = 'This claim brings you closer to ready. You would lose 門清 (1 台, or 門清自摸 3 台).';
-  const LONGEST = 'This claim would bring you closer to ready, but your concealed hand is worth more here. You would lose 門清 (1 台, or 門清自摸 3 台).';
-  const pondRow = 28;
-
-  it('never budgets the coach over my pond: the bubble ends above it', () => {
-    for (const dock of ['none', 'hint', 'buttons'] as const) {
-      for (const [columnH, pondH] of [[135, pondRow], [97, pondRow * 2], [80, pondRow]]) {
-        const b = coachBudget(columnH, dock, pondH);
-        expect(b.maxHeight! + pondH, `${dock} ${columnH}/${pondH}`).toBeLessThanOrEqual(columnH);
-        if (b.lines > 0) expect(coachBubbleHeight(b), `${dock} ${columnH}/${pondH}`).toBeLessThanOrEqual(b.maxHeight! + COACH_STATUS_LINE_H);
+describe('the coach bar', () => {
+  it('always has a line for the advice, wherever it is placed and whatever the tiles', () => {
+    for (const place of ['pinned', 'rail'] as const)
+      for (const besidePlate of [false, true]) {
+        const lines = coachBarLines(place, besidePlate);
+        expect(lines.advice, `${place} ${besidePlate}`).toBeGreaterThanOrEqual(1);
       }
-    }
   });
 
-  it('gives the claim advice the room the status line leaves, text-only, while the buttons are up', () => {
-    const b = coachBudget(135, 'buttons', pondRow);
-    expect(b).toMatchObject({ statusLines: 0, textOnly: true });
-    expect(b.lines).toBeGreaterThanOrEqual(3);
-    // Text width of the right-hand column at 667×375 (beside the 62 px compass); the longest sentence scrolls
-    // inside the bubble when it needs more lines than fit, so it is never cut off.
-    const width = tableLayout(667, 375).centerW - 12 - 62 - 6 - 22;
-    expect(coachTextLines(USUAL, width)).toBeGreaterThan(0);
-    expect(coachTextLines(LONGEST, width)).toBeGreaterThan(0);
+  it('shows the status over two lines of advice in portrait, and the advice alone above a landscape hand', () => {
+    expect(coachBarLines('pinned')).toEqual({ status: 1, advice: 2 });
+    // Normal tiles: a slim row of its own beside my plate, so the felt keeps its height.
+    expect(coachBarLines('rail')).toEqual({ status: 0, advice: 1 });
+    // Large and Extra-large tiles: beside my plate in the row the plate has of its own, which has the height for two.
+    expect(coachBarLines('rail', true)).toEqual({ status: 0, advice: 2 });
   });
+});
 
-  it('hides the bubble rather than a clipped sliver when there is no line of room above my pond', () => {
-    // Two rows of my pond (40 px measured) plus the 4 px gap, then the room left for the bubble.
-    expect(coachBudget(40 + 4 + 20, 'buttons', 40).lines).toBe(0);
-    expect(coachBudget(40 + 4 + 27, 'buttons', 40).lines).toBe(1);
-  });
-
-  it('keeps one status line under the tap hint, two with nothing docked, and never more than four advice lines', () => {
-    const hint = coachBudget(135, 'hint', pondRow);
-    expect(hint).toMatchObject({ statusLines: 1, textOnly: false });
-    expect(hint.lines).toBeGreaterThanOrEqual(3);
-    const none = coachBudget(135, 'none', pondRow);
-    expect(none).toMatchObject({ statusLines: 2, textOnly: false });
-    expect(none.lines).toBeGreaterThanOrEqual(2);
-    expect(coachBudget(400, 'none').lines).toBe(COACH_MAX_ADVICE_LINES);
-    expect(coachBudget(0, 'buttons')).toMatchObject({ maxHeight: null, lines: COACH_MAX_ADVICE_LINES });
-  });
-
-  it('gives the status line\'s room to the advice when the status wraps past it, so the advice is always in view', () => {
-    // Extra-large text in small landscape (assessed at 667x375, zh-TW): one status line and one advice line budgeted
-    // (a 32 px box), and the status wraps to two lines: the advice was pushed out of the box.
-    expect(coachAdviceFirst({ statusLines: 1, adviceLines: 1, statusH: 2 * COACH_STATUS_LINE_H, hasAdvice: true })).toEqual({ statusLines: 0, adviceLines: 2 });
-    // A status that fits its line keeps it; so does a long status in a box with room for it and an advice line.
-    expect(coachAdviceFirst({ statusLines: 1, adviceLines: 1, statusH: COACH_STATUS_LINE_H, hasAdvice: true })).toEqual({ statusLines: 1, adviceLines: 1 });
-    expect(coachAdviceFirst({ statusLines: 2, adviceLines: 3, statusH: 2 * COACH_STATUS_LINE_H, hasAdvice: true })).toEqual({ statusLines: 2, adviceLines: 3 });
-    // Two budgeted status lines wrapping to four: the advice gets the box (two status lines are two advice lines more).
-    expect(coachAdviceFirst({ statusLines: 2, adviceLines: 1, statusH: 4 * COACH_STATUS_LINE_H, hasAdvice: true })).toEqual({ statusLines: 0, adviceLines: 3 });
-    // Lines enough on paper, but the bubble's cap leaves the box 32 px (measured at 667x375): the advice gets it.
-    expect(coachAdviceFirst({ statusLines: 2, adviceLines: 1, statusH: 2 * COACH_STATUS_LINE_H, boxH: 32, hasAdvice: true })).toEqual({ statusLines: 0, adviceLines: 3 });
-    expect(coachAdviceFirst({ statusLines: 2, adviceLines: 1, statusH: 2 * COACH_STATUS_LINE_H, boxH: 60, hasAdvice: true })).toEqual({ statusLines: 2, adviceLines: 1 });
-    // Before the status is measured, or with no advice to show, nothing changes.
-    expect(coachAdviceFirst({ statusLines: 1, adviceLines: 1, statusH: null, hasAdvice: true })).toEqual({ statusLines: 1, adviceLines: 1 });
-    expect(coachAdviceFirst({ statusLines: 1, adviceLines: 1, statusH: 80, hasAdvice: false })).toEqual({ statusLines: 1, adviceLines: 1 });
-  });
-
-  it('never cuts the coach text with an ellipsis: it scrolls inside the bubble', () => {
-    const src = readFileSync(join(__dirname, 'CoachPanel.tsx'), 'utf8');
-    const compact = src.slice(src.indexOf('if (compact)'), src.indexOf('return (\n    <View style={styles.coach} accessibilityRole'));
-    expect(compact).not.toMatch(/numberOfLines/);
-    expect(compact).toMatch(/<ScrollView/);
-  });
-
+describe('own pond and compass on short landscape (the claim buttons have a row of their own)', () => {
   it('gives the claim buttons a row of their own (short landscape) or floats them above my pond (tablets), never over it', () => {
     expect(dockHeight('none', false)).toBe(0);
     expect(dockHeight('hint', false)).toBe(TAP_HINT_DOCK_H);
@@ -157,12 +108,6 @@ describe('portrait felt (360×740 late in a hand)', () => {
   it('lets the portrait claim strip grow with its buttons, so a wrapped 胡 never sits under the hand rail', () => {
     const screen = readFileSync(join(__dirname, '../../screens/TableScreen.tsx'), 'utf8');
     expect(screen).toMatch(/actionStrip: \{ minHeight: ACTION_STRIP_H/);
-  });
-
-  it('pins my pond under the scrolling part of the felt, so it never scrolls out of view (any tile size)', () => {
-    const felt = readFileSync(join(__dirname, 'Felt.tsx'), 'utf8');
-    expect(felt).toMatch(/<\/ScrollView>\s*<View style=\{styles\.pinnedPond\}>\{myPond\(pinnedPerRow\)\}<\/View>/);
-    expect(felt).toMatch(/\{!portrait && myPond\(centerPerRow\)\}/);
   });
 
   it('drops the ring for the compass alone when even the smallest ring would not fit, and brings it back only with room for all of it', () => {

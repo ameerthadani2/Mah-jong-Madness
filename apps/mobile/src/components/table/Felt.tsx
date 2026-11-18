@@ -1,6 +1,8 @@
 /**
  * The felt: three opponents (left, across, right) with their hands, melds and ponds, the compass and wall in
- * the middle, my pond, the coach bubble and the claim buttons. Geometry comes from ./layout.ts.
+ * the middle, my pond and the claim buttons, and the coach where the layout puts it on the felt: pinned above my
+ * pond in portrait, in full under the right seat on tablets (a landscape phone has it above the hand: HandRail).
+ * Geometry comes from ./layout.ts.
  */
 import React, { useEffect, useRef, useState } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
@@ -11,9 +13,9 @@ import { tileDims } from '../tileDims';
 import { useDisplayScale } from '../../display/DisplayScale';
 import { fitPools, fitSideColumn, SIDE_GAP } from '../../display/tableFit';
 import { Row } from '../Ui';
-import { CoachPanel } from './CoachPanel';
+import { CoachBar, CoachPanel } from './CoachPanel';
 import { slideFrom } from './feel';
-import { coachBudget, compactCompassSize, dockHeight, fitWallSize, landscapeWallSize, type ActionDock, type TableLayout } from './layout';
+import { coachBarLines, compactCompassSize, dockHeight, fitWallSize, landscapeWallSize, type ActionDock, type TableLayout } from './layout';
 
 export type PlateProps = Omit<React.ComponentProps<typeof SeatBadge>, 'size' | 'vertical' | 'maxNameWidth'>;
 
@@ -26,6 +28,7 @@ export function Felt({
   status,
   hint,
   coachOpen,
+  onCoachMore,
   actions,
   dock = 'none',
   overlay,
@@ -39,6 +42,8 @@ export function Felt({
   status: string | null;
   hint: Hint | null;
   coachOpen: boolean;
+  /** Opens the coach's sheet (the bar's "More"). */
+  onCoachMore: () => void;
   /** The claim / discard buttons, docked just above my pond in landscape (portrait gives them a strip under the felt). */
   actions: React.ReactNode;
   /** What `actions` currently shows (nothing, the tap hint, or buttons): the dock makes room for it, never covering my pond. */
@@ -47,12 +52,10 @@ export function Felt({
   overlay?: React.ReactNode;
 }) {
   const { portrait, tablet, plate, sideWidth } = L;
-  // Short landscape: the coach bubble shares the middle row with my pond (the action dock has a row of its own
-  // under it), so it is budgeted from the measured heights (layout.ts coachBudget) and never covers my pond.
+  // Short landscape: the compass and my pond share the middle row (the action dock has a row of its own under it).
   const [columnH, setColumnH] = useState(0);
   const [pondH, setPondH] = useState(0);
   const centreDock = L.actions === 'center' ? dock : 'none';
-  const budget = coachBudget(columnH, centreDock, pondH);
   const dockH = dockHeight(centreDock, tablet);
   // Portrait: the wall ring shrinks (or goes) so the felt's content fits its scroll view late in a hand.
   const [wallSize, setWallSize] = useState(L.wallSize);
@@ -70,7 +73,6 @@ export function Felt({
   const sideMeld = meldScale === 1 ? 'xs' : Math.max(20, Math.min(Math.round(20 * meldScale), Math.floor(sideWidth / 4) - 1));
   const seatAt = (r: number) => (mySeat + r) % 4;
   const latestFor = (seat: number): TileId | undefined => (view.lastDiscard && view.lastDiscard.seat === seat ? view.lastDiscard.tile : undefined);
-  const waitKinds = new Set(hint?.waits.map((w) => w.kind) ?? []);
   const coach = coachOpen && hint ? hint : null;
 
   const statusPill = status ? (
@@ -81,11 +83,17 @@ export function Felt({
     </View>
   ) : null;
 
+  // Short landscape: when the centre column is short (large tiles, late in a hand, the claim buttons up), the across
+  // seat gives way first, so my pond and the claim buttons keep their rows: its pond scrolls, kept at its newest
+  // discards, down to one row (as a side seat's column does).
+  const topPondScroll = useRef<React.ElementRef<typeof ScrollView> | null>(null);
+  const [topPondH, setTopPondH] = useState(0);
   const topSeat = () => {
     const seat = seatAt(2);
     const p: PlayerView = view.players[seat];
+    const pond = <DiscardPool tiles={p.discards} size={pool} perRow={centerPerRow} align="center" latest={latestFor(seat)} enterFrom={slideFrom(2)} />;
     return (
-      <View style={styles.topSeat} onLayout={(e) => setTopH(Math.round(e.nativeEvent.layout.height))}>
+      <View style={[styles.topSeat, L.compact && styles.topSeatCompact]} onLayout={(e) => setTopH(Math.round(e.nativeEvent.layout.height))}>
         <Row gap={10} style={styles.topRow}>
           <SeatBadge {...plateProps(seat)} size={plate} maxNameWidth={portrait ? 110 : 120} />
           <HiddenHand count={p.handCount} tileW={tablet ? 15 : portrait ? 9 : 11} tileH={tablet ? 24 : portrait ? 15 : 17} />
@@ -93,7 +101,23 @@ export function Felt({
           {!portrait && <MeldsAndFlowers player={p} size={meldSize(tablet ? 'sm' : 'xs')} />}
         </Row>
         {portrait && <MeldsAndFlowers player={p} size={meldSize('xs')} style={styles.topMeldsPortrait} />}
-        <DiscardPool tiles={p.discards} size={pool} perRow={centerPerRow} align="center" latest={latestFor(seat)} enterFrom={slideFrom(2)} />
+        {L.compact ? (
+          <ScrollView
+            ref={topPondScroll}
+            style={[styles.topPond, { minHeight: Math.min(topPondH, tileDims(pool).h + 2) }]}
+            contentContainerStyle={styles.topPondContent}
+            showsVerticalScrollIndicator={false}
+            testID="top-pond"
+            onContentSizeChange={(_w, h) => {
+              setTopPondH(Math.round(h));
+              topPondScroll.current?.scrollToEnd({ animated: false });
+            }}
+          >
+            {pond}
+          </ScrollView>
+        ) : (
+          pond
+        )}
       </View>
     );
   };
@@ -204,19 +228,17 @@ export function Felt({
           {!portrait && myPond(centerPerRow)}
         </>
       ) : L.compact ? (
-        // Short landscape: the compass sits beside the coach and my pond instead of above them, so my pond
-        // clears the hand rail; the coach is top-aligned above my pond and never covers it or the compass.
-        // The claim buttons get a row of their own under this one (below), so my pond moves up rather than
-        // being covered, and the compass shrinks to the row that is left.
-        <View style={styles.compactMiddle} testID="felt-centre" onLayout={(e) => setColumnH(Math.round(e.nativeEvent.layout.height))}>
+        // Short landscape: the compass sits beside my pond instead of above it, so my pond clears the hand rail.
+        // The claim buttons get a row of their own under this one (below), so my pond moves up rather than being
+        // covered, and the compass shrinks to the row that is left. (The coach is a bar above the hand: HandRail.)
+        <View style={[styles.compactMiddle, { minHeight: pondH }]} testID="felt-centre" onLayout={(e) => setColumnH(Math.round(e.nativeEvent.layout.height))}>
           {compassSize > 0 && (
             <View style={{ alignItems: 'center', justifyContent: 'center', gap: 6, paddingHorizontal: 4 }}>
               {compassSize !== L.compassSize && React.isValidElement<{ size?: number }>(compass) ? React.cloneElement(compass, { size: compassSize }) : compass}
               {statusPill}
             </View>
           )}
-          <View style={{ flex: 1, minWidth: 0, justifyContent: 'space-between', gap: 4 }}>
-            {coach && L.coach === 'center' ? <CoachPanel hint={coach} waitKinds={waitKinds} compact budget={budget} /> : <View />}
+          <View style={{ flex: 1, minWidth: 0, justifyContent: 'flex-end' }}>
             {/* My pond keeps the Normal size here: its row is the tightest on the felt (the opponents' ponds still grow). */}
             {tileScale > 1 ? myPond(L.myPerRow, tileDims(L.pool).w) : myPond(myPerRow)}
           </View>
@@ -228,7 +250,6 @@ export function Felt({
               {compass}
               {statusPill}
             </View>
-            {coach && L.coach === 'center' && <CoachPanel hint={coach} waitKinds={waitKinds} compact />}
           </View>
           {myPond(centerPerRow)}
         </>
@@ -274,8 +295,13 @@ export function Felt({
             {centerColumn}
             {sideSeat(1)}
           </View>
-          {coach && <CoachPanel hint={coach} waitKinds={waitKinds} compact />}
           </ScrollView>
+          {/* Pinned with my pond under the scrolling part, so the coach can never be scrolled out of view. */}
+          {coach && (
+            <View style={styles.pinnedCoach}>
+              <CoachBar hint={coach} lines={coachBarLines('pinned')} onOpen={onCoachMore} />
+            </View>
+          )}
           <View style={styles.pinnedPond}>{myPond(pinnedPerRow)}</View>
         </>
       ) : (
@@ -285,8 +311,9 @@ export function Felt({
           <View style={{ gap: 8, flexShrink: 1 }}>
             {sideSeat(1)}
             {coach && L.coach === 'side' && (
-              <View style={{ width: sideWidth }}>
-                <CoachPanel hint={coach} waitKinds={waitKinds} />
+              // The coach keeps its height (the right seat gives way); past most of the column it scrolls, with "More".
+              <View style={{ width: sideWidth, flexShrink: 0 }}>
+                <CoachPanel hint={coach} maxHeight={centreH > 0 ? Math.round(centreH * 0.62) : undefined} onOpen={onCoachMore} />
               </View>
             )}
           </View>
@@ -310,6 +337,9 @@ const styles = StyleSheet.create({
   sideBodyContent: { gap: SIDE_GAP },
   centerCol: { flex: 1, alignItems: 'center', gap: 6, minWidth: 0 },
   topSeat: { alignItems: 'center', gap: 6, alignSelf: 'stretch' },
+  topSeatCompact: { flexShrink: 1, minHeight: 0 },
+  topPond: { flexGrow: 0, flexShrink: 1, alignSelf: 'stretch' },
+  topPondContent: { alignItems: 'center' },
   topRow: { justifyContent: 'center', flexWrap: 'wrap', rowGap: 4, maxWidth: '100%' },
   topMeldsPortrait: { justifyContent: 'center', maxWidth: '100%' },
   compactMiddle: { flex: 1, flexDirection: 'row', alignSelf: 'stretch', gap: 6, minHeight: 0 },
@@ -318,6 +348,7 @@ const styles = StyleSheet.create({
   statusText: { color: '#FFFFFF', fontSize: 12, fontWeight: '900' },
   actionCenter: { position: 'absolute', left: 0, right: 0, alignItems: 'center' },
   pinnedPond: { alignItems: 'center', paddingTop: 4, paddingBottom: 2 },
+  pinnedCoach: { paddingHorizontal: 6, paddingTop: 4 },
   actionScroll: { flexGrow: 1, justifyContent: 'center', alignItems: 'flex-end' },
   actionRow: { alignSelf: 'stretch', alignItems: 'center', justifyContent: 'flex-end' },
   overlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', gap: 10, zIndex: 25 },

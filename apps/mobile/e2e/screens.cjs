@@ -26,7 +26,11 @@
  * or a seat name is cut at a table in Traditional Chinese (each viewport at Normal text, and the portrait ones again at
  * Extra-large text: <size>-table-zh.png, <size>-table-zh-xl.png at every viewport; the hand tiles' size is logged as a note),
  * or the Shop's try-on preview fails its checks (runPreview below: <size>-preview-<kind>.png and -zh.png, at every
- * viewport and at 320x568). The preview, the exit sheet and Home's replace-table question also fail on the keyboard
+ * viewport and at 320x568), or the coach fails coachCheck at one of my decisions (on screen whenever its button shows it
+ * on, a line of its advice whole on screen on my turn, never covering my pond, my hand, the claim or discard buttons or
+ * the tap hint, never cut, and "More" beside advice longer than its lines) in the whole hand each table run plays: the
+ * main run at every viewport, the Extra-large runs, the zh-TW runs, and the coach runs on the smallest phones (568x320,
+ * 320x568) and at Large tiles at 667x375 (<size>-coach-*.png). The preview, the exit sheet and Home's replace-table question also fail on the keyboard
  * (dialogKeys): Tab ten times and Shift+Tab four times must stay on the dialog's own controls, never its scrim or the
  * page behind, and the page behind must be inert while the dialog is open and not after.
  */
@@ -146,8 +150,8 @@ async function homeFit(page) {
 /** Home in Traditional Chinese at one viewport: the same hard checks, on the longer of the two languages' labels. */
 /**
  * The table's hard checks, on the page as it stands: every seat name shown whole (a long one may take two lines,
- * never be cut), a landscape side seat's tag on two lines at most (name; relation and score), the coach's advice line in view
- * whenever the coach's bubble shows, and each HUD icon (emotes, coach, exit) a press of at least 44 x 44 px. The web ignores hitSlop,
+ * never be cut), a landscape side seat's tag on two lines at most (name; relation and score), and each HUD icon (emotes,
+ * coach, exit) a press of at least 44 x 44 px (the coach itself has coachCheck, below). The web ignores hitSlop,
  * so the box itself must be that big. Also returns the smallest hand tile, for the notes.
  */
 async function tableFit(page) {
@@ -180,31 +184,135 @@ async function tableFit(page) {
     }
     const hand = [...document.querySelectorAll('[data-testid="hand"] [data-testid^="tile-"], [data-testid="hand-discard"] [data-testid^="tile-"]')].map((e) => e.getBoundingClientRect());
     const tile = hand.length ? `${Math.round(Math.min(...hand.map((b) => b.width)))}x${Math.round(Math.min(...hand.map((b) => b.height)))}` : 'none';
-    // The coach's advice (the tile to discard, or the claim to make) is on screen whenever the bubble is: its first
-    // line inside the coach's scroll box, at every viewport and text size (a status line that wraps never pushes it out).
-    for (const box of [...document.querySelectorAll('[data-testid="coach-text"]')].filter(seen)) {
-      const adv = box.querySelector('[data-testid="coach-advice"]') || [...box.querySelectorAll('[dir="auto"]')].at(-1);
-      if (!adv || !adv.textContent.trim()) continue;
-      const a = adv.getBoundingClientRect();
-      const b = box.getBoundingClientRect();
-      const cs = getComputedStyle(adv);
-      const line = Math.min(a.height, parseFloat(cs.lineHeight) || parseFloat(cs.fontSize) * 1.3);
-      const bottom = Math.min(b.bottom, innerHeight);
-      if (a.top < b.top - 1 || a.top + line > bottom + 1) bad.push(`the coach's advice "${adv.textContent.slice(0, 30)}" is out of view: its first line at ${Math.round(a.top)}-${Math.round(a.top + line)} px, the coach's box ${Math.round(b.top)}-${Math.round(bottom)} px`);
-    }
     return { bad, tile };
   });
 }
 
 /**
- * The coach's advice out of view (tableFit's check), once the bubble has settled: a new status line is measured
- * one frame after it shows, so a finding is kept only if it is still there 600 ms later.
+ * The coach's hard checks, on the page as it stands at one of my decisions (`mine`: my turn to discard, where the coach
+ * always has advice, the tile to discard or the win; otherwise a claim chance, where it may have none). Whenever the
+ * coach is on (the HUD's cap button selected) it is on screen; on my turn a line of its advice is whole on screen: inside
+ * the window and every box that clips it, and the topmost thing where it is drawn; any advice it shows is; the coach is
+ * never cut by the window or a box around it, and never covers my pond, my hand, the claim or discard buttons or the tap
+ * hint (as drawn: what the felt clips away does not count); and advice longer than its lines ends in an ellipsis with
+ * "More" beside it, never cut without a sign.
  */
-async function coachOut(page) {
-  const out = (await tableFit(page)).bad.filter((x) => /coach's advice/.test(x));
-  if (!out.length) return [];
+async function coachCheck(page, mine) {
+  return page.evaluate((mine) => {
+    const bad = [];
+    const seen = (e) => { const b = e.getBoundingClientRect(); return b.width > 0 && b.height > 0; };
+    const clipOf = (el) => {
+      let c = { top: 0, left: 0, bottom: innerHeight, right: innerWidth };
+      for (let p = el.parentElement; p; p = p.parentElement) {
+        const st = getComputedStyle(p);
+        if (st.overflowY !== 'visible' || st.overflowX !== 'visible') {
+          const r = p.getBoundingClientRect();
+          c = { top: Math.max(c.top, r.top), left: Math.max(c.left, r.left), bottom: Math.min(c.bottom, r.bottom), right: Math.min(c.right, r.right) };
+        }
+      }
+      return c;
+    };
+    const shown = (el) => { const r = el.getBoundingClientRect(); const c = clipOf(el); return { top: Math.max(r.top, c.top), left: Math.max(r.left, c.left), bottom: Math.min(r.bottom, c.bottom), right: Math.min(r.right, c.right) }; };
+    const meet = (a, b) => Math.min(a.right, b.right) - Math.max(a.left, b.left) > 1 && Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top) > 1;
+    const leave = document.querySelector('[data-testid="leave-table"]');
+    const icons = leave ? [...leave.parentElement.querySelectorAll('[role="button"]')] : [];
+    const cap = icons.length >= 3 ? icons[icons.length - 2] : null;
+    const on = cap?.getAttribute('aria-selected') === 'true';
+    const coaches = [...document.querySelectorAll('[data-testid="coach"]')].filter(seen);
+    if (on && coaches.length === 0) bad.push("the coach is on (its button is selected) but not on screen");
+    // A line of advice is whole on screen: inside every clipping box, and nothing drawn over it at that line.
+    const whole = (a) => {
+      const r = a.getBoundingClientRect();
+      const st = getComputedStyle(a);
+      const line = Math.min(r.height, parseFloat(st.lineHeight) || parseFloat(st.fontSize) * 1.3);
+      const c = clipOf(a);
+      if (r.top < c.top - 1 || r.top + line > c.bottom + 1 || r.left < c.left - 1 || r.left + 20 > c.right + 1) return false;
+      const y = r.top + line / 2;
+      return [r.left + 4, (r.left + Math.min(r.right, c.right)) / 2].every((x) => { const hit = document.elementFromPoint(x, y); return !!hit && (a.contains(hit) || hit.contains(a)); });
+    };
+    const advice = [...document.querySelectorAll('[data-testid="coach-advice"]')].filter(seen);
+    for (const a of advice) {
+      if (!a.textContent.trim()) continue;
+      if (!whole(a)) bad.push(`the coach's advice "${a.textContent.slice(0, 30)}" has no line whole on screen`);
+      const cut = a.scrollHeight > a.clientHeight + 1 || a.scrollWidth > a.clientWidth + 1;
+      const more = [...document.querySelectorAll('[data-testid="coach-more"]')].some(seen);
+      if (cut && !more) bad.push(`the coach's advice "${a.textContent.slice(0, 30)}" is cut with no More to read the rest`);
+    }
+    if (on && mine && coaches.length > 0 && !advice.some((a) => a.textContent.trim() && whole(a))) bad.push("on my turn the coach shows no line of advice whole on screen");
+    for (const c of coaches) {
+      const r = c.getBoundingClientRect();
+      const k = clipOf(c);
+      if (r.top < k.top - 1 || r.bottom > k.bottom + 1 || r.left < k.left - 1 || r.right > k.right + 1) bad.push(`the coach is cut (${Math.round(r.left)},${Math.round(r.top)} to ${Math.round(r.right)},${Math.round(r.bottom)} inside ${Math.round(k.left)},${Math.round(k.top)} to ${Math.round(k.right)},${Math.round(k.bottom)})`);
+      const box = shown(c);
+      const hits = (sel) => [...document.querySelectorAll(sel)].filter(seen).some((e) => meet(box, shown(e)));
+      if (hits('[data-testid="my-pond"] [data-testid^="tile-"]')) bad.push('the coach covers my pond');
+      if (hits('[data-testid="hand"] [data-testid^="tile-"], [data-testid="hand-discard"] [data-testid^="tile-"]')) bad.push('the coach covers my hand');
+      if (hits('[data-testid="action-dock"] [role="button"], [data-testid="action-strip"] [role="button"]')) bad.push('the coach covers the claim or discard buttons');
+      const hint = [...document.querySelectorAll('div[dir="auto"]')].find((e) => /^(Tap a tile, tap again to discard|點一張牌，再點一次打出)$/.test(e.textContent) && seen(e));
+      if (hint && meet(box, shown(hint.parentElement))) bad.push('the coach covers the tap hint');
+    }
+    return bad;
+  }, mine);
+}
+
+/** coachCheck once the table has settled: a finding is kept only if it is still there 600 ms later (a new line is laid out a frame after it shows). */
+async function coachSettled(page, mine) {
+  if ((await coachCheck(page, mine)).length === 0) return [];
   await page.waitForTimeout(600);
-  return (await tableFit(page)).bad.filter((x) => /coach's advice/.test(x));
+  return coachCheck(page, mine);
+}
+
+/** Problems found at more than one decision, said once each with the number of decisions they were seen at. */
+function tally(found) {
+  const n = new Map();
+  for (const f of found) n.set(f, (n.get(f) ?? 0) + 1);
+  return [...n].map(([f, k]) => (k > 1 ? `${f} (at ${k} decisions)` : f));
+}
+
+/**
+ * Plays my seat through one whole hand (until the result sheet, or `untilDiscards` of my discards), passing every claim
+ * and discarding the lowest, right-most tile (the drawn one in landscape), and runs coachCheck at each of my decisions:
+ * my turn before and after a tile is picked, a win, and each claim chance. `onDiscard(n)` runs after my nth discard.
+ */
+async function playCoachedHand(page, { onDiscard = async () => undefined, untilDiscards = Infinity, limitMs = 240000 } = {}) {
+  const found = [];
+  let discards = 0;
+  const started = Date.now();
+  while (Date.now() - started < limitMs && discards < untilDiscards) {
+    if ((await visible(page, '[data-testid="result-sheet"]')) || (await visible(page, 'text=/^(Next hand|下一局)/'))) break;
+    let el;
+    if ((el = await visible(page, '[data-testid="claim-win"]'))) {
+      found.push(...(await coachSettled(page, true)));
+      await tap(page, el);
+      await page.waitForTimeout(400);
+      continue;
+    }
+    if ((el = await visible(page, '[data-testid="claim-pass"]'))) {
+      found.push(...(await coachSettled(page, false)));
+      await tap(page, el);
+      await page.waitForTimeout(300);
+      continue;
+    }
+    if ((el = await visible(page, '[data-testid="claim-discard"]'))) {
+      found.push(...(await coachSettled(page, true)));
+      await tap(page, el);
+      discards++;
+      await onDiscard(discards);
+      await page.waitForTimeout(300);
+      continue;
+    }
+    if (await visible(page, '[data-testid="hand-discard"]')) {
+      await page.waitForTimeout(250);
+      found.push(...(await coachSettled(page, true)));
+      const boxes = await page.$$eval('[data-testid="hand-discard"] [data-testid^="tile-"]', (els) => els.map((e) => { const r = e.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; }));
+      const hand = boxes.filter((b) => b.w > 0).sort((a, b) => b.y - a.y || b.x - a.x);
+      if (hand[0]) await page.mouse.click(hand[0].x + hand[0].w / 2, hand[0].y + hand[0].h / 2);
+      await page.waitForTimeout(250);
+      continue;
+    }
+    await page.waitForTimeout(250);
+  }
+  return { found: tally(found), discards };
 }
 
 /** A table in Traditional Chinese (bot names such as 小美（電腦）), at Normal or Extra-large text: <size>-table-zh[-xl].png. */
@@ -233,29 +341,15 @@ async function runTableZh(browser, port, [w, h], xl) {
   if (title !== '麻將狂熱') fails.push(`${where}: the page title is "${title}", not 麻將狂熱`);
   const fit = await tableFit(page);
   fails.push(...fit.bad.map((f) => `${where}: ${f}`));
-  // Play on for several of my discards (my pond grows a row, the coach's room shrinks): at each, before and after
-  // the tile is picked, the coach's advice must stay in view (tableFit).
-  const coach = new Set();
-  for (let i = 0, mine = 0; i < 120 && mine < 8; i++) {
-    let el;
-    if ((el = await visible(page, '[data-testid="claim-pass"]'))) { await tap(page, el); await page.waitForTimeout(300); continue; }
-    if (await visible(page, 'text=/胡/')) break;
-    const boxes = await page.$$eval('[data-testid^="tile-"]:not([data-testid="tile-back"])', (els) => els.map((e) => { const r = e.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; }));
-    if (!boxes.length) break;
-    const maxW = Math.max(...boxes.map((b) => b.w));
-    const hand = boxes.filter((b) => b.w >= maxW * 0.9).sort((a, b) => b.y - a.y || b.x - a.x);
-    if (await visible(page, '[data-testid="coach"]')) for (const f of await coachOut(page)) coach.add(f);
-    if (hand[0]) await page.mouse.click(hand[0].x + hand[0].w / 2, hand[0].y + hand[0].h / 2);
-    await page.waitForTimeout(250);
-    if ((el = await visible(page, 'text="打"'))) {
-      for (const f of await coachOut(page)) coach.add(f);
-      await tap(page, el);
-      mine++;
-      if (mine === 6) await page.screenshot({ path: path.join(out, `${tag}-${name}-later.png`) });
-    }
-    await page.waitForTimeout(300);
-  }
-  fails.push(...[...coach].map((f) => `${where}, later in the hand: ${f}`));
+  // Play on for several of my discards (my pond grows a row, the felt fills): at each of my decisions the coach is on
+  // screen with its advice whole (coachCheck).
+  const played = await playCoachedHand(page, {
+    untilDiscards: 8,
+    onDiscard: async (n) => {
+      if (n === 6) await page.screenshot({ path: path.join(out, `${tag}-${name}-later.png`) });
+    },
+  });
+  fails.push(...played.found.map((f) => `${where}, in the hand: ${f}`));
   await ctx.close();
   return { size: `${tag} ${name}`, finished: true, shots: [name, `${name}-later`], notes: [`smallest hand tile ${fit.tile} px (the hand cannot give every tile 44 px of width)`], fails, errors };
 }
@@ -317,6 +411,8 @@ async function run(browser, port, [w, h]) {
   await page.waitForSelector('[data-testid^="tile-"]', { timeout: 15000 });
   let discards = 0;
   const done = new Set();
+  // The coach's findings at each of my decisions through the whole hand (coachCheck).
+  const coach = [];
   const started = Date.now();
   while (Date.now() - started < 240000) {
     if (await visible(page, 'text=Next hand')) break;
@@ -324,8 +420,9 @@ async function run(browser, port, [w, h]) {
     if (!done.has('win-hold') && (await visible(page, '[data-testid="win-reveal"]'))) { done.add('win-hold'); await page.waitForTimeout(700); await shot('win-hold'); }
     if (!done.has('callout') && (await visible(page, '[data-testid="call-banner"]'))) { done.add('callout'); await shot('callout'); }
     let el;
-    if ((el = await visible(page, 'text=/胡!/'))) { await tap(page, el); await page.waitForTimeout(400); continue; }
+    if ((el = await visible(page, 'text=/胡!/'))) { coach.push(...(await coachSettled(page, true))); await tap(page, el); await page.waitForTimeout(400); continue; }
     if ((el = await visible(page, 'text="過"'))) {
+      coach.push(...(await coachSettled(page, false)));
       if (!done.has('claim')) {
         done.add('claim');
         await shot('table-claim');
@@ -337,6 +434,7 @@ async function run(browser, port, [w, h]) {
       continue;
     }
     if ((el = await visible(page, 'text="打"'))) {
+      coach.push(...(await coachSettled(page, true)));
       if (discards >= 3 && !done.has('selected')) { done.add('selected'); await shot('table-selected'); }
       await tap(page, el);
       discards++;
@@ -362,6 +460,7 @@ async function run(browser, port, [w, h]) {
     }
     // My discard turn: the first-game tap hint, or (once it has retired) the hand marked for discarding.
     if ((await visible(page, 'text=Tap a tile, tap again to discard')) || (await visible(page, '[data-testid="hand-discard"]'))) {
+      coach.push(...(await coachSettled(page, true)));
       const boxes = await page.$$eval('[data-testid^="tile-"]:not([data-testid="tile-back"])', (els) =>
         els.map((e) => { const r = e.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; }));
       const maxW = Math.max(...boxes.map((b) => b.w));
@@ -374,6 +473,7 @@ async function run(browser, port, [w, h]) {
     await page.waitForTimeout(300);
   }
   if (!done.has('mid')) await shot('table-mid');
+  fails.push(...tally(coach).map((f) => `Table (en), coach: ${f}`));
   const finished = !!(await visible(page, 'text=Next hand'));
   await page.waitForTimeout(600);
   await shot('result');
@@ -537,9 +637,10 @@ async function runBoards(browser, port, [w, h]) {
 }
 
 /**
- * Extra-large tiles in landscape: a table at Settings → Display → Tiles: Extra large, a few turns in, captured as
- * <size>-table-xl.png. Fails if the hand rail scrolls sideways (a hand tile off the rail), a hand tile is off screen, or
- * the hand is no larger than a row sharing the rail with my plate (Extra-large moves the plate above the hand).
+ * Extra-large tiles in landscape: a table at Settings → Display → Tiles: Extra large (and Extra-large text), played
+ * through a whole hand, captured five discards in as <size>-table-xl.png. Fails if the hand rail scrolls sideways (a
+ * hand tile off the rail), a hand tile is off screen, the hand is no larger than a row sharing the rail with my plate
+ * (Extra-large moves the plate above the hand), or the coach fails coachCheck at any of my decisions in the hand.
  */
 async function runXL(browser, port, [w, h]) {
   const tag = `${w}x${h}`;
@@ -556,39 +657,83 @@ async function runXL(browser, port, [w, h]) {
   await page.waitForSelector('[data-testid="start-match"]', { timeout: 30000 });
   await tapSel(page, '[data-testid="start-match"]', 300);
   await page.waitForSelector('[data-testid^="tile-"]', { timeout: 15000 });
-  let discards = 0;
-  const started = Date.now();
-  while (discards < 5 && Date.now() - started < 90000) {
-    if (await visible(page, 'text=Next hand')) break;
-    let el;
-    if ((el = await visible(page, 'text="過"'))) { await tap(page, el); await page.waitForTimeout(300); continue; }
-    if ((el = await visible(page, 'text="打"'))) { await tap(page, el); discards++; await page.waitForTimeout(300); continue; }
-    if ((await visible(page, 'text=Tap a tile, tap again to discard')) || (await visible(page, '[data-testid="hand-discard"]'))) {
-      const boxes = await page.$$eval('[data-testid^="tile-"]:not([data-testid="tile-back"])', (els) => els.map((e) => { const r = e.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; }));
-      const maxW = Math.max(...boxes.map((b) => b.w));
-      const hand = boxes.filter((b) => b.w >= maxW * 0.9).sort((a, b) => b.y - a.y || b.x - a.x);
-      if (hand[0]) await page.mouse.click(hand[0].x + hand[0].w / 2, hand[0].y + hand[0].h / 2);
-      await page.waitForTimeout(250);
-      continue;
-    }
-    await page.waitForTimeout(300);
+  // The hand's checks at Extra-large tiles, on the page as it stands.
+  let xlTile = 0;
+  const xlChecks = [];
+  const xlFit = async () => {
+    const bad = [];
+    if (await page.$('[data-testid="hand-scroll"]')) bad.push('extra-large hand scrolls sideways');
+    // Every seat tag still fits at Extra-large tiles (side seats on two lines at most).
+    bad.push(...(await tableFit(page)).bad.filter((f) => /seat/.test(f)));
+    const off = await page.$$eval('[data-testid="hand"] [data-testid^="tile-"], [data-testid="hand-discard"] [data-testid^="tile-"]', (els) =>
+      els.filter((e) => { const r = e.getBoundingClientRect(); return r.right > innerWidth + 1 || r.left < -1 || r.bottom > innerHeight + 1; }).length,
+    );
+    if (off) bad.push(`${off} extra-large hand tiles off screen`);
+    // Extra-large moves my plate and melds above the hand, so the row spans the screen: a hand tile at least as wide
+    // as 17 tiles across the footer allow (tableFit.ts fitRowTile), or the height cap where that is smaller.
+    xlTile = await page.$$eval('[data-testid="hand"] [data-testid^="tile-"], [data-testid="hand-discard"] [data-testid^="tile-"]', (els) => Math.round(Math.min(...els.map((e) => e.getBoundingClientRect().width))));
+    const want = Math.min(Math.floor((h * 0.2) / 1.4), Math.floor((w - 24 - 8 - 10 + 2) / 17) - 2);
+    if (!(xlTile >= want)) bad.push(`extra-large hand tiles are ${xlTile} px wide, under the ${want} px a full-width row gives`);
+    return bad;
+  };
+  // A whole hand, with the coach checked at each of my decisions; the shot and the hand checks a few turns in.
+  const played = await playCoachedHand(page, {
+    onDiscard: async (n) => {
+      if (n !== 5) return;
+      await page.waitForTimeout(500);
+      await page.screenshot({ path: path.join(out, `${tag}-table-xl.png`) });
+      xlChecks.push(...(await xlFit()));
+    },
+  });
+  const discards = played.discards;
+  if (discards < 5) {
+    await page.screenshot({ path: path.join(out, `${tag}-table-xl.png`) });
+    xlChecks.push(...(await xlFit()));
   }
-  await page.waitForTimeout(500);
-  await page.screenshot({ path: path.join(out, `${tag}-table-xl.png`) });
-  if (await page.$('[data-testid="hand-scroll"]')) fails.push('extra-large hand scrolls sideways');
-  // Every seat tag still fits at Extra-large tiles (side seats on two lines at most).
-  fails.push(...(await tableFit(page)).bad.filter((f) => /seat/.test(f)));
-  const off = await page.$$eval('[data-testid="hand"] [data-testid^="tile-"], [data-testid="hand-discard"] [data-testid^="tile-"]', (els) =>
-    els.filter((e) => { const r = e.getBoundingClientRect(); return r.right > innerWidth + 1 || r.left < -1 || r.bottom > innerHeight + 1; }).length,
-  );
-  if (off) fails.push(`${off} extra-large hand tiles off screen`);
-  // Extra-large moves my plate and melds above the hand, so the row spans the screen: a hand tile at least as wide
-  // as 17 tiles across the footer allow (tableFit.ts fitRowTile), or the height cap where that is smaller.
-  const tileW = await page.$$eval('[data-testid="hand"] [data-testid^="tile-"], [data-testid="hand-discard"] [data-testid^="tile-"]', (els) => Math.round(Math.min(...els.map((e) => e.getBoundingClientRect().width))));
-  const want = Math.min(Math.floor((h * 0.2) / 1.4), Math.floor((w - 24 - 8 - 10 + 2) / 17) - 2);
-  if (!(tileW >= want)) fails.push(`extra-large hand tiles are ${tileW} px wide, under the ${want} px a full-width row gives`);
+  fails.push(...xlChecks);
+  fails.push(...played.found.map((f) => `Extra-large tiles, coach: ${f}`));
   await ctx.close();
-  return { size: `${tag} xl`, finished: true, discards, shots: ['table-xl'], notes: [`hand tile ${tileW} px wide`], fails, errors };
+  return { size: `${tag} xl`, finished: true, discards, shots: ['table-xl'], notes: [`hand tile ${xlTile} px wide`], fails, errors };
+}
+
+/**
+ * The coach through a whole hand on the smallest phones and at the sizes where it used to vanish: 568x320 in landscape
+ * and 320x568 in portrait at Normal tiles in English and at Extra-large tiles and text in Traditional Chinese, and
+ * 667x375 at Large tiles and text in English (<size>-coach-<lang>-t<tiles>.png, a few turns in). Fails when coachCheck
+ * fails at any of my decisions.
+ */
+const COACH_RUNS = [
+  [[568, 320], 'en-US', 1, 1],
+  [[568, 320], 'zh-TW', 1.5, 1.3],
+  [[320, 568], 'en-US', 1, 1],
+  [[320, 568], 'zh-TW', 1.5, 1.3],
+  [[667, 375], 'en-US', 1.25, 1.15],
+];
+
+async function runCoach(browser, port, [[w, h], locale, tileScale, textScale]) {
+  const tag = `${w}x${h}`;
+  const name = `coach-${locale === 'zh-TW' ? 'zh' : 'en'}-t${tileScale}`;
+  const ctx = await browser.newContext({ viewport: { width: w, height: h }, locale });
+  await ctx.addInitScript(([t, x]) => {
+    localStorage.setItem('mjm.profile', JSON.stringify({ userId: 'user-e2e-1234567', userSecret: '0123456789abcdef0123456789abcdef', name: 'Tester', avatar: 'panda' }));
+    localStorage.setItem('mjm.display', JSON.stringify({ tileScale: t, textScale: x }));
+  }, [tileScale, textScale]);
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await page.goto(`http://localhost:${port}/`);
+  await page.waitForSelector('[data-testid="start-match"]', { timeout: 30000 });
+  await tapSel(page, '[data-testid="start-match"]', 300);
+  await page.waitForSelector('[data-testid^="tile-"]', { timeout: 15000 });
+  const played = await playCoachedHand(page, {
+    onDiscard: async (n) => {
+      if (n === 4) await page.screenshot({ path: path.join(out, `${tag}-${name}.png`) });
+    },
+  });
+  const finished = !!(await visible(page, '[data-testid="result-sheet"]'));
+  await ctx.close();
+  const where = `Coach (${tag}, ${locale}, tiles ${tileScale}, text ${textScale})`;
+  return { size: `${tag} ${name}`, finished, discards: played.discards, shots: [name], notes: finished ? [] : ['hand did not finish'], fails: played.found.map((f) => `${where}: ${f}`), errors };
 }
 
 /**
@@ -733,7 +878,7 @@ async function runPreview(browser, port, [w, h], zh) {
   const browser = await chromium.launch(process.env.PW_CHROMIUM ? { executablePath: process.env.PW_CHROMIUM } : {});
   // Large tiles in landscape: the landscape viewports again at Extra-large.
   const XL = SIZES.filter(([w, h]) => w > h);
-  // SCREENS_ONLY=preview,xl (say) runs only those groups: table, xl, table-zh, table-zh-xl, home-zh, boards, preview.
+  // SCREENS_ONLY=preview,xl (say) runs only those groups: table, xl, table-zh, table-zh-xl, home-zh, boards, preview, coach.
   const only = (process.env.SCREENS_ONLY || '').split(',').filter(Boolean);
   const want = (group) => only.length === 0 || only.includes(group);
   const results = await Promise.all([
@@ -744,6 +889,7 @@ async function runPreview(browser, port, [w, h], zh) {
     ...(want('home-zh') ? SIZES : []).map((s) => runHomeZh(browser, port, s).catch((e) => ({ size: `${s[0]}x${s[1]} zh-TW`, finished: false, notes: [e.message], errors: [] }))),
     ...(want('boards') ? SIZES : []).map((s) => runBoards(browser, port, s).catch((e) => ({ size: `${s[0]}x${s[1]} leaderboards`, finished: false, notes: [e.message], errors: [] }))),
     ...(want('preview') ? PREVIEW_SIZES : []).flatMap((s) => [false, true].map((zh) => runPreview(browser, port, s, zh).catch((e) => ({ size: `${s[0]}x${s[1]} preview${zh ? '-zh' : ''}`, finished: false, notes: [e.message], errors: [] })))),
+    ...(want('coach') ? COACH_RUNS.filter(([[w, h]]) => !wanted.length || wanted.includes(`${w}x${h}`)) : []).map((c) => runCoach(browser, port, c).catch((e) => ({ size: `${c[0][0]}x${c[0][1]} coach`, finished: false, notes: [e.message], errors: [] }))),
   ]);
   for (const r of results) console.log(JSON.stringify(r));
   await browser.close();
