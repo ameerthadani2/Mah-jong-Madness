@@ -584,8 +584,7 @@ describe('clock: a delay present from the start', () => {
           },
           onTick: (w) => {
             // The server waits for the phone's commitment and share, which it asked for 25 s late.
-            const vs = w.host.seats[seat];
-            if (((w.host.phase === 'commit' && !vs.commit) || (w.host.phase === 'reveal' && !vs.secret)) && w.host.deadline !== null) w.host.deadline = Math.max(w.host.deadline, w.clock.now + 5_000);
+            waitForShare(seat)(w);
             if (!dropped && dealt !== null && w.clock.now >= dealt + 2_000) {
               dropped = true;
               w.dropNow(1_000);
@@ -627,7 +626,8 @@ describe('clock: a delay present from the start', () => {
             // The phone joins again on a new link before the server has noticed the old one is gone: the share
             // sent over the old one never arrives, and the host asks for it again on the new one.
             const sent = w.c.serialize().records.some((r) => r.hand === 0 && r.attempts.some((a) => a.revealed));
-            if (!lost && w.host.phase === 'reveal' && !w.host.seats[seat].secret && sent) {
+            const h = w.host as unknown as { phase: string; seats: Array<{ secret?: string }> };
+            if (!lost && h.phase === 'reveal' && !h.seats[seat].secret && sent) {
               lost = true;
               w.reconnect();
             }
