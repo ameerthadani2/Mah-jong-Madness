@@ -433,7 +433,8 @@ export class TableClient {
    * The least arrival offset (`at - now`: this device's clock when a stamped frame arrived, less the
    * host's stamp on it) seen in this clock era and run of this device's clock (`clientClock`'s
    * `segment`), and when it was seen. It is how far ahead of the host's clock this device's is, plus
-   * the shortest one-way delay seen; the watch and the audit measure the frames after it against it.
+   * the shortest one-way delay seen; the audit measures the frames after it against it, and the
+   * watch's reference (`watchRefAt`) is never less.
    */
   private lagRef: { lag: number; at: number; era: number; seg: number } | null = null;
   /** The highest stamp received in that scope: the watch measures how far it trails this device's clock (see `checkLink`). */
