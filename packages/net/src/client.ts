@@ -461,6 +461,13 @@ export class TableClient {
   private linkStamped = false;
   /** When `checkLink` last ran. */
   private checkedAt: number | null = null;
+  /**
+   * When the watch began to measure the link in use without a break: null while it does not (no hand
+   * is played, the app did not run, the watch's grace after that, a link that has brought no stamp),
+   * and restarted when its checks were more than `RAN_GAP_MS` apart. A frame counts as live only if
+   * the watch measured it long enough to have dropped the link before an honest frame was that late.
+   */
+  private watchFrom: number | null = null;
   /** The latest stamp on a frame of the link in use (its epoch and the host's clock era). */
   private linkStamp: { epoch: number; era: number; now: number } | null = null;
   /** The last state frame of the link in use: its hand and turn. */
@@ -691,6 +698,7 @@ export class TableClient {
     this.firstLink = false;
     this.waitFrom = null;
     this.linkStamped = false;
+    this.watchFrom = null;
     // Binding a link is this app running, and nothing on the link can have arrived before it.
     this.boundAt = this.now();
     this.ran(this.boundAt);
@@ -814,29 +822,42 @@ export class TableClient {
    * `LINK_PAUSE_MS` means this app was not running (the phone slept, or the app was in the
    * background): for `2 × CLOCK_FRAME_MS + 2 s` after it the link is not blamed, so that frames that
    * waited in the device are handled first; the first call starts the same way.
+   *
+   * The watch measures only while a hand is played, and only from its first check that measures
+   * (`watchFrom`): not while a result or the deal's ceremony is shown, not in its grace, not on a link
+   * that has brought no stamp, and afresh after checks more than `RAN_GAP_MS` apart. So a frame counts
+   * as live (`noteStamp`) only when the watch had been measuring its link since before the frame was
+   * `2 × CLOCK_FRAME_MS + 2 s` late: frames that piled up while it was not (a stall across a deal, the
+   * app back from the background) are judged as late, never as held back on a live link.
    */
   checkLink(): 'ok' | 'silent' {
     const now = this.now();
     this.ran(now);
     // The first call, or the first after a pause: the wait starts now.
-    const paused = this.checkedAt === null || now - this.checkedAt > LINK_PAUSE_MS;
+    const since = this.checkedAt === null ? Number.POSITIVE_INFINITY : now - this.checkedAt;
+    const paused = since > LINK_PAUSE_MS;
     this.checkedAt = now;
     if (!this.playing()) {
       this.probedAt = null;
+      this.watchFrom = null;
       return 'ok';
     }
-    const probeAt = 2 * this.clockMs + 2_000;
+    const probeAt = this.probeAt();
     if (paused) {
       this.graceUntil = now + probeAt;
       this.probedAt = null;
+      this.watchFrom = null;
       return 'ok';
     }
     if (now < this.graceUntil) return 'ok';
     // A new link is watched from its first stamped frame (a link that brings nothing is the heartbeat's to drop).
     if (!this.linkStamped) {
       this.probedAt = null;
+      this.watchFrom = null;
       return 'ok';
     }
+    // The watch measures the link from here; a break in its checks starts the stretch again.
+    if (this.watchFrom === null || since > RAN_GAP_MS) this.watchFrom = now;
     const ref = this.refAt(now);
     let deficit: number;
     if (this.stampHigh !== null && ref !== null) {
@@ -862,6 +883,11 @@ export class TableClient {
   private ran(t: number): void {
     if (this.ranAt !== null && t - this.ranAt > RAN_GAP_MS) this.pause = { from: this.ranAt, to: t };
     this.ranAt = t;
+  }
+
+  /** How far the host's stamps may fall behind this device's clock before the watch asks for a `pong`: `2 × CLOCK_FRAME_MS + 2 s`, or less when the welcome announced a shorter clock-frame period. */
+  private probeAt(): number {
+    return 2 * this.clockMs + 2_000;
   }
 
   /** `t` falls within `PAUSE_GRACE_MS` after a pause: a frame handled then may have waited in the device through it. */
@@ -895,8 +921,9 @@ export class TableClient {
    * it (`ref`, null while the scope has none), whether its link was working (it had brought a stamp
    * not more than `LATE_MS` late against the reference) and whether it was live: working, while a
    * hand is played, with the watch checking it within the last `RAN_GAP_MS`, not just after a pause
-   * and not in the watch's grace after one. No honest frame on a live link is more than `LATE_MS`
-   * late: the watch drops a link before its stamps fall that far behind.
+   * and not in the watch's grace after one, and measured by the watch without a break since before it
+   * was `2 × CLOCK_FRAME_MS + 2 s` late. No honest frame on a live link is more than `LATE_MS` late:
+   * the watch drops a link before its stamps fall that far behind.
    */
   private noteStamp(now: unknown): { at: number; atLo: number; ref: number | null; live: boolean; working: boolean; seg: number } | null {
     if (typeof now !== 'number' || !Number.isFinite(now)) return null;
@@ -910,8 +937,11 @@ export class TableClient {
     const atLo = Math.min(at, this.frameAtLo ?? at);
     const ref = this.refAt(atLo);
     const working = this.workingEpoch === this.epoch;
-    const live = working && this.playing() && this.checkedAt !== null && at - this.checkedAt <= RAN_GAP_MS && !this.afterPause(at) && at >= this.graceUntil;
     const excess = ref === null ? 0 : atLo - now - ref;
+    // Live: the watch was measuring this link, and had been since before the frame was `probeAt` late,
+    // so it would have dropped the link before an honest frame was later than `LATE_MS`.
+    const watched = this.watchFrom !== null && excess <= at - this.watchFrom + this.probeAt();
+    const live = working && watched && this.playing() && this.checkedAt !== null && at - this.checkedAt <= RAN_GAP_MS && !this.afterPause(at) && at >= this.graceUntil;
     const lag = at - now;
     const cur = this.refAt(at);
     if (cur === null || lag <= cur) this.lagRef = { lag, at, era: this.era, seg };

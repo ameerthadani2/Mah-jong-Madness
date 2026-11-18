@@ -15,6 +15,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { legalActions, withRules } from '@mjm/engine';
 import { CLOCK_FRAME_MS, SILENT_ANSWER_MS, type HostMessage, type SerializedClient } from '../src/index';
+import { LATE_MS } from '../src/clientclock';
 import { Missed, scenario, seededDeals } from './support';
 import { holdTurn, stampOf, T0, wire, type Line, type Wire } from './wire';
 
@@ -337,6 +338,37 @@ describe('honest links stay green', () => {
       green(w);
     }));
 
+  it('a 20 s stall of the network from the deal of the next hand, the seat’s first turn of it coming in the same burst and the seat timed out: never red', () =>
+    scenario((i) => {
+      let stallFrom = -1;
+      let tc = -1;
+      const w: Wire = wire({
+        code: `HD${i}`,
+        rules: withRules({ handsPerMatch: 2, turnSeconds: 15, timeBankSeconds: 30 }),
+        think: (_k, t) => {
+          if (w.c.state.view?.handNumber !== 1 || (tc >= 0 && t !== tc)) return 800;
+          tc = t;
+          return Infinity;
+        },
+        // While the phone shows the first hand's result, nothing of the next hand reaches it for 20 s.
+        delay: (m, now) => {
+          if (stallFrom < 0 && m.t === 'state' && m.view.handNumber === 1) stallFrom = now;
+          return 50 + (stallFrom >= 0 && now < stallFrom + 20_000 ? stallFrom + 20_000 - now : 0);
+        },
+      });
+      w.finish();
+      need(w.c.state.lastAudit?.handNumber === 0);
+      w.shown.clear();
+      w.created.clear();
+      for (let e = 0; e < 600_000 && !(w.host.phase === 'playing' && w.host.game?.handNumber === 1); e += 500) w.step();
+      w.finish();
+      need(w.c.state.lastAudit?.handNumber === 1 && tc >= 0 && w.judged().includes(tc));
+      need((w.shown.get(tc) ?? 0) - (w.created.get(tc) ?? Number.POSITIVE_INFINITY) > LATE_MS);
+      const v = w.verdict();
+      expect(v.failures).toEqual([]);
+      expect(v.status).not.toBe('failed');
+    }));
+
   it.each([-2_000, -10_000, -60_000, 2_000])('the server’s wall clock stepped %i ms mid-hand, the table keeping its default clock: green, no drop', (step) => {
     vi.useFakeTimers();
     try {
@@ -521,6 +553,31 @@ describe('device clock: frames that waited in the device', () => {
       need(turn >= 0 && w.judged().includes(turn));
       expect(w.drops).toEqual([]);
       green(w);
+    }));
+
+  it('background 30 s across the seat’s turn start, what the server sent meanwhile held in the network until after the watch’s grace on waking, the seat timed out: never red', () =>
+    scenario((i) => {
+      let move = Number.POSITIVE_INFINITY;
+      let from = -1;
+      const w: Wire = wire({
+        code: `DN${i}`,
+        rules: QUICK,
+        background: (now) => from >= 0 && now > from && now <= from + 30_000,
+        think: (_k, tc) => (tc > move ? Infinity : 600),
+        // From the table's answer to the seat's move, everything waits in the network until 12 s after the app is back.
+        delay: (m, now) => {
+          if (from < 0 && m.t === 'state' && m.view.turnCounter > move) from = now;
+          return 50 + (from >= 0 && now < from + 42_000 ? from + 42_000 - now : 0);
+        },
+      });
+      need(w.toDiscard(2));
+      move = w.host.game!.turnCounter;
+      w.finish();
+      const late = [...w.created].filter(([tc, at]) => at >= from && at < from + 30_000 && (w.shown.get(tc) ?? 0) >= from + 42_000 && w.judged().includes(tc));
+      need(from >= 0 && late.length > 0);
+      const v = w.verdict();
+      expect(v.failures).toEqual([]);
+      expect(v.status).not.toBe('failed');
     }));
 
   it('asleep 30 s across the seat’s turn start (the monotonic clock stands still, the wall clock runs): green, no drop', () =>

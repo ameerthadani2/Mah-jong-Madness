@@ -156,7 +156,8 @@ export interface SeenState {
   ref?: number | null;
   /**
    * The frame came over a live link: a working one, while a hand was played, with the link watch
-   * checking it within `RAN_GAP_MS`, not just after a pause and not in the watch's grace after one.
+   * checking it within `RAN_GAP_MS`, not just after a pause and not in the watch's grace after one,
+   * and measuring it without a break since before the frame was `2 × CLOCK_FRAME_MS + 2 s` late.
    * No honest frame on a live link is more than `LATE_MS` late.
    */
   live?: boolean;
