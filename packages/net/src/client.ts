@@ -52,6 +52,7 @@ import {
   cleanPlay,
   CLIENT_SNAPSHOT_VERSION,
   isAudit,
+  finiteFigure,
   isCommitSet,
   isInt,
   isLateTurnRecord,
@@ -1630,7 +1631,7 @@ export class TableClient {
         this.handsEnded.add(h);
         if (this.openHand === h) this.openHand = null;
         this.atStart = false;
-        const end: SeenState = { tc: Number.POSITIVE_INFINITY, epoch: this.epoch, era: this.era, at: this.now(), now: typeof m.now === 'number' ? m.now : undefined, owes: false, deadline: null, timeBank: 0, inBank: false, hash: '', ...(stampedEnd ? { atLo: stampedEnd.atLo, ref: stampedEnd.ref, wref: stampedEnd.wref, live: stampedEnd.live, seg: stampedEnd.seg } : {}) };
+        const end: SeenState = { tc: Number.POSITIVE_INFINITY, epoch: this.epoch, era: this.era, at: this.now(), now: typeof m.now === 'number' && Number.isFinite(m.now) ? m.now : undefined, owes: false, deadline: null, timeBank: 0, inBank: false, hash: '', ...(stampedEnd ? { atLo: stampedEnd.atLo, ref: stampedEnd.ref, wref: stampedEnd.wref, live: stampedEnd.live, seg: stampedEnd.seg } : {}) };
         const { check, replayed, anchors, passed, late } = this.runAudit(m.audit, m.view, m.result, end);
         this.clockBase = foldClock(this.clockBase, this.era, this.plays.find((p) => p.hand === h) ?? null, end, anchors);
         // The strongest fixed point of this era, run of the app and run of this device's clock, for the
@@ -1769,21 +1770,23 @@ export class TableClient {
       }
     }
     const at = this.now();
+    // Kept as figures a saved record holds as they are: a stamp that is no reading of a clock is no stamp (as `noteStamp` takes it).
+    const now = typeof m.now === 'number' && Number.isFinite(m.now) ? m.now : undefined;
     // The hand's first frame over a later link than the last frame before it: the hand began without this device.
     if (play.before === undefined) play.before = play.seen.length === 0 && this.lastStamp && this.lastStamp.epoch !== this.epoch ? { ...this.lastStamp } : null;
-    if (typeof m.now === 'number') this.lastStamp = { at, now: m.now, epoch: this.epoch, era: this.era };
+    if (now !== undefined) this.lastStamp = { at, now, epoch: this.epoch, era: this.era };
     play.seen.push({
       tc: v.turnCounter,
       epoch: this.epoch,
       era: this.era,
       at,
-      now: typeof m.now === 'number' ? m.now : undefined,
+      now,
       ...(stamped ? { atLo: stamped.atLo, ref: stamped.ref, wref: stamped.wref, live: stamped.live, working: stamped.working, seg: stamped.seg } : {}),
       run: this.runId,
       onLink,
       owes,
-      deadline: typeof m.deadline === 'number' ? m.deadline : null,
-      timeBank: typeof m.timeBank === 'number' ? m.timeBank : 0,
+      deadline: typeof m.deadline === 'number' ? finiteFigure(m.deadline) : null,
+      timeBank: typeof m.timeBank === 'number' ? (finiteFigure(m.timeBank) ?? 0) : 0,
       inBank: m.inTimeBank === true,
       hash: m.hash,
     });

@@ -258,25 +258,32 @@ const LATE_LIMIT_MS = 3_600_000;
 const finiteTime = (x: unknown): x is number => typeof x === 'number' && Number.isFinite(x) && Math.abs(x) < TIME_LIMIT_MS;
 
 /**
- * A frame from a saved record, as this build reads it. Storage can be damaged, and the fields this
- * build added to judge how late a frame reached this device (`atLo`, `ref`, `wref`, `live`, `working`,
- * `seg`, `run`, `onLink`) can fail a hand when they are wrong, so they are kept only when they are
- * what this build writes: the measured ones together, with a stamp, `atLo` no later than `at`, `wref`
- * no lower than `ref` (both null, or both numbers no more than an hour below the frame's own offset),
- * `live` only on a working link, booleans and a run of the clock that are what they say; and the frame's
- * stamp and deadline are readings a clock can make. Otherwise all of them are dropped, so the frame reads
- * like one from a record saved before they were kept, which the rules that use them do not ask; and a
- * stamp no clock can make is dropped with them. What this cannot tell is damage that leaves the fields
- * consistent (a stamp moved back 20 s, say): the check figure saved with each frame (`seenSum`) tells
- * that. A frame whose figure still matches is marked `kept`, and judged as the run that saw it would
- * judge it; any other frame from a saved record (damaged, or saved before frames carried a figure) is
- * never failed for having shown the seat its turn late on a link that stayed open (`seenHere`): it
- * makes its hand amber, not red.
+ * A frame from a saved record, as this build reads it. Each frame is saved with a check figure worked
+ * out from all its fields (`seenSum`): a frame whose figure still matches is the one this device read,
+ * whatever its figures say, so it is marked `kept` and judged as the run that saw it would judge it.
+ * Any other frame (damaged, or saved before frames carried a figure) may be wrong anywhere, and the
+ * fields this build added to judge how late a frame reached this device (`atLo`, `ref`, `wref`, `live`,
+ * `working`, `seg`, `run`, `onLink`) can fail a hand when they are wrong, so they are kept only when
+ * they are what this build writes: the measured ones together, with a stamp, `atLo` no later than `at`,
+ * `wref` no lower than `ref` (both null, or both numbers no more than an hour below the frame's own
+ * offset), `live` only on a working link, booleans and a run of the clock that are what they say; and
+ * the frame's stamp and deadline are readings a clock can make. Otherwise all of them are dropped, so
+ * the frame reads like one from a record saved before they were kept, which the rules that use them do
+ * not ask; and a stamp no clock can make is dropped with them. Such a frame is never failed for having
+ * shown the seat its turn late on a link that stayed open (`seenHere`): it makes its hand amber, not red.
  */
 export function cleanSeen(f: SeenState): SeenState {
-  const { atLo, ref, wref, live, working, seg, run, onLink, sum: _sum, kept: _kept, ...old } = f as SeenState & { sum?: unknown };
-  void _sum;
+  const { atLo, ref, wref, live, working, seg, run, onLink, sum, kept: _kept, ...old } = f as SeenState & { sum?: unknown };
   void _kept;
+  // A frame whose check figure still matches is as this device read it: storage did not change it,
+  // so it is kept whole, however far its figures lie from what an honest host sends (a deadline a
+  // day before its stamp is still a cut clock).
+  if (typeof run === 'string' && typeof sum === 'string' && sum === seenSum(f)) {
+    const { sum: _s, kept: _k, ...clean } = f as SeenState & { sum?: unknown };
+    void _s;
+    void _k;
+    return { ...clean, kept: true };
+  }
   const now = f.now;
   const stamped = typeof now === 'number' && Number.isFinite(now) && finiteTime(f.at) && Math.abs(f.at - now) < TIME_LIMIT_MS;
   if (now !== undefined && !stamped) delete old.now;
@@ -301,13 +308,11 @@ export function cleanSeen(f: SeenState): SeenState {
         isInt(seg) &&
         seg >= 0));
   if (!ok) return old;
-  const sum = (f as { sum?: unknown }).sum;
   if (sum === undefined && f.kept === undefined) return f;
-  // A frame whose check figure still matches is as this device read it: storage did not change it.
   const { sum: _s, kept: _k, ...clean } = f as SeenState & { sum?: unknown };
   void _s;
   void _k;
-  return typeof run === 'string' && typeof sum === 'string' && sum === seenSum(f) ? { ...clean, kept: true } : clean;
+  return clean;
 }
 
 /**
@@ -326,6 +331,16 @@ export function seenSum(f: SeenState): string {
     h = Math.imul(h, 0x01000193) >>> 0;
   }
   return h.toString(16).padStart(8, '0');
+}
+
+/**
+ * A clock figure from the host (a deadline, a time bank) as a frame keeps it. JSON has no infinity:
+ * the wire text -1e400 reads as -Infinity, and a saved record would write that as null, which reads
+ * back as no deadline at all. An infinite figure is kept as the largest finite one of its sign, which
+ * every check reads as it reads the infinity; NaN, which no JSON text gives, as none.
+ */
+export function finiteFigure(x: number): number | null {
+  return Number.isNaN(x) ? null : Math.min(Number.MAX_VALUE, Math.max(-Number.MAX_VALUE, x));
 }
 
 /** A frame as it is saved: with its check figure (`seenSum`), and without the mark of a restored one. */

@@ -20,6 +20,8 @@ import type { PlayRecord, SeenState } from '../src/clientrecords';
 import { Missed, scenario, seededDeals } from './support';
 import { holdTurn, stampOf, T0, wire, type Line, type Wire } from './wire';
 
+type StateMsg = Extract<HostMessage, { t: 'state' }>;
+
 seededDeals();
 
 const need = (cond: boolean) => {
@@ -1378,13 +1380,13 @@ describe('match record: what a saved record keeps of each frame', () => {
   });
 
   /**
-   * The state that shows the seat its third turn cuts its clock to 5 s (its deadline 5 s after its stamp),
-   * on a link the phone held (`cut`); the table times the seat out of it, or (`moves`) the seat makes it in
-   * 0.8 s. Three seconds later the app restarts by itself, or (`kick`) the server says the seat was opened on
-   * another device and the user resumes the table from Home 5 s after that: a client restored from the
-   * saved record, as it was saved, joins on a new link.
+   * The state that shows the seat its third turn cuts its clock to 5 s (its deadline 5 s after its stamp,
+   * or as `cut` writes it), on a link the phone held (`cut`); the table times the seat out of it, or
+   * (`moves`) the seat makes it in 0.8 s. Three seconds later the app restarts by itself, or (`kick`) the
+   * server says the seat was opened on another device and the user resumes the table from Home 5 s after
+   * that: a client restored from the saved record, as it was saved, joins on a new link.
    */
-  function cutThenResume(code: string, cut: boolean, moves: boolean, kick: boolean) {
+  function cutThenResume(code: string, cut: boolean | ((m: StateMsg) => StateMsg), moves: boolean, kick: boolean) {
     let cutTc = -1;
     let owed = 0;
     let answered: number | null = null;
@@ -1396,7 +1398,7 @@ describe('match record: what a saved record keeps of each frame', () => {
         if (cutTc >= 0 || m.t !== 'state' || !w.owes() || w.host.game!.turnCounter !== m.view.turnCounter || typeof m.now !== 'number' || m.inTimeBank) return m;
         if (++owed < 3 || !legalActions(w.host.game!, 0).every((a) => a.type === 'discard')) return m;
         cutTc = m.view.turnCounter;
-        return cut ? { ...m, deadline: m.now + 5_000 } : m;
+        return typeof cut === 'function' ? cut(m) : cut ? { ...m, deadline: m.now + 5_000 } : m;
       },
       onTick: (w) => {
         if (cutTc >= 0 && answered === null && w.host.game && w.host.game.turnCounter > cutTc) answered = w.clock.now;
@@ -1420,6 +1422,20 @@ describe('match record: what a saved record keeps of each frame', () => {
       for (const moves of [false, true]) {
         const w = scenario((i) => cutThenResume(`MU${kick ? 'K' : 'R'}${moves ? 'P' : 'D'}${i}`, true, moves, kick));
         expect(w.verdict()).toMatchObject({ status: 'failed', failures: ['lateTurn'] });
+      }
+  });
+
+  it.each<[string, (m: StateMsg) => StateMsg]>([
+    ['sent as the text -1e400, which reads as -Infinity (a saved record would write it as null: no deadline at all)', (m) => ({ ...m, deadline: Number.NEGATIVE_INFINITY })],
+    ['two days before its stamp (no honest host sends one, and a record’s range checks would take it for damage)', (m) => ({ ...m, deadline: (m.now as number) - 2 * 86_400_000 })],
+    ['5 s after a stamp 1.1e13 ms ahead of this device’s clock (a stamp no clock makes)', (m) => ({ ...m, now: (m.now as number) + 1.1e13, deadline: (m.now as number) + 1.1e13 + 5_000 })],
+  ])('the same cut with the deadline %s: the state is read back as it was seen, so it is red after the resume as before it', (what, cut) => {
+    for (const kick of [false, true])
+      for (const moves of [false, true]) {
+        const w = scenario((i) => cutThenResume(`MW${kick ? 'K' : 'R'}${moves ? 'P' : 'D'}${i}`, cut, moves, kick));
+        expect(w.verdict().status).toBe('failed');
+        // A stamp far ahead also leaves the next frame stamped long before it, so the table's move after it fails as held back.
+        if (moves || !what.includes('ahead')) expect(w.verdict().failures).toEqual(expect.arrayContaining(['lateTurn']));
       }
   });
 

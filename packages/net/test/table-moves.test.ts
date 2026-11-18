@@ -13,7 +13,7 @@ import { chooseAction, kindOf, legalActions, withRules, type Action, type BotSki
 import { AUDIT_CAVEATS, AUDIT_FAILURES, failureKey, LoopbackHub, TableClient, TableHost, transportLink, type HostMessage, type Link } from '../src/index';
 import { armedLate, clockTrack, firstSend, fixedPoint, judgeTableMove, lateAnchor, lateCountMs, lateRef, lateWatch, seatRun, seenHere, sinceFixed, turnLateBy, unstamped } from '../src/clientmoves';
 import { DRIFT_RATE, LATE_MS, RTT_ALLOW_MS } from '../src/clientclock';
-import { cleanCeremony, cleanPlay, cleanSeen, isLateTurnRecord, savedSeen, withLateTurns, type PlayRecord, type SeenState } from '../src/clientrecords';
+import { cleanCeremony, cleanPlay, cleanSeen, finiteFigure, isLateTurnRecord, savedSeen, withLateTurns, type PlayRecord, type SeenState } from '../src/clientrecords';
 import { Missed, scenario, seededDeals } from './support';
 
 seededDeals(20261116);
@@ -528,6 +528,24 @@ describe('a frame from a saved record keeps the fields that judge how late it ca
     expect(cleanSeen({ ...live, kept: true })).not.toHaveProperty('kept');
     // A frame whose measured fields do not hold together loses them, its figure and any mark with them.
     expect(cleanSeen({ ...savedSeen(live), wref: 1 })).not.toHaveProperty('kept');
+  });
+
+  it('keeps a frame whose check figure still matches whole, with figures no honest host sends: a deadline two days before its stamp, a stamp 1.1e13 ms ahead of this device', () => {
+    const back = (f: SeenState) => cleanSeen(JSON.parse(JSON.stringify(savedSeen(f))) as SeenState);
+    for (const odd of [{ deadline: 200_000 - 2 * 86_400_000 }, { now: 200_000 + 1.1e13, deadline: 205_000 + 1.1e13 }, { deadline: -Number.MAX_VALUE }]) {
+      const f = { ...live, ...odd };
+      expect(back(f)).toEqual({ ...f, kept: true });
+      // Without the figure, the same frame reads as damaged.
+      expect(dropped(cleanSeen(f))).toBe(true);
+    }
+  });
+
+  it('keeps an infinite clock figure from the host as the largest finite one of its sign, which a saved record holds as it is (finiteFigure)', () => {
+    expect(finiteFigure(Number.NEGATIVE_INFINITY)).toBe(-Number.MAX_VALUE);
+    expect(finiteFigure(Number.POSITIVE_INFINITY)).toBe(Number.MAX_VALUE);
+    expect(finiteFigure(Number.NaN)).toBeNull();
+    expect(finiteFigure(215_000)).toBe(215_000);
+    expect(JSON.parse(JSON.stringify({ d: finiteFigure(JSON.parse('-1e400') as number) })).d).toBe(-Number.MAX_VALUE);
   });
 
   it('keeps the run of each move sent and each reveal only when it is what this build writes, and refuses a record that is not one', () => {
