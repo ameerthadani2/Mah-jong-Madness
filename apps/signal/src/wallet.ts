@@ -116,6 +116,20 @@ export type StoreOutcome =
  */
 export const MAX_STORE_EXPIRY_MS = 400 * 86_400_000;
 
+/**
+ * Prices a purchase row records are below this: `purchases.price` is `numeric(14, 4)`, which holds
+ * less than 10^10 once rounded to four decimals. A price outside 0 to that is recorded as null (on
+ * memory too), so a figure the column cannot hold never stops a credit.
+ */
+export const PRICE_LIMIT = 1e10;
+
+/** The price a purchase row records: the event's price when it is a number from 0 and below `PRICE_LIMIT` at four decimals, else null. */
+export function recordablePrice(price: unknown): number | null {
+  if (typeof price !== 'number' || !Number.isFinite(price) || price < 0) return null;
+  // Postgres rounds to four decimals before it checks the range, so check the rounded figure.
+  return Math.round(price * 10_000) < PRICE_LIMIT * 10_000 ? price : null;
+}
+
 export interface StoreResult {
   outcome: StoreOutcome;
   userId: string | null;
@@ -523,8 +537,9 @@ export class WalletService {
   /** `periodEndsAt`: for a subscription's first purchase or renewal, the end of the period it paid for. */
   private recordPurchase(tx: Repos, e: StoreEvent, userId: string, productId: string, transactionId: string, at: number, periodEndsAt: number | null = null) {
     const currency = e.currency && /^[A-Z]{3}$/.test(e.currency) ? e.currency : null;
-    // A purchase has no negative (or non-numeric) price: such a figure is not recorded as given.
-    const price = typeof e.price === 'number' && Number.isFinite(e.price) && e.price >= 0 ? e.price : null;
+    // A purchase has no negative (or non-numeric) price, and one the column cannot hold is not
+    // recorded as given either: the credit never fails over the price.
+    const price = recordablePrice(e.price);
     return tx.wallet.recordPurchase({
       userId,
       store: e.store,

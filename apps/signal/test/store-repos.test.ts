@@ -156,6 +156,26 @@ function contract(name: string, repos: () => Repos) {
       expect(await r.wallet.findPurchase(transactionId)).toMatchObject({ userId: u, store: 'play_store', productId: 'diamonds.60' });
     });
 
+    it('credits a pack whose price the purchases column cannot hold, and records no price for it', async () => {
+      const r = repos();
+      const wallet = new WalletService(r, { now: () => T0, log: () => {}, testerUserIds: [] });
+      const u = await user();
+      // numeric(14, 4) holds less than 10^10 at four decimals; a price at or past that is recorded as null.
+      const prices = [9_999_999_999.9999, 9_999_999_999.99995, 1e10, 1e11, 4.99];
+      for (const [i, price] of prices.entries()) {
+        const res = await wallet.applyStoreEvent(storeEvent(u, 'NON_RENEWING_PURCHASE', { storeProductId: 'diamonds.60', transactionId: `tx-price-${i}-${u}`, price, currency: 'TWD' }));
+        expect(res.outcome).toBe('credited');
+      }
+      expect(await r.wallet.get(u)).toMatchObject({ diamonds: 60 * prices.length });
+      expect((await r.wallet.listPurchases(u)).map((p) => [p.price, p.currency])).toEqual([
+        [9_999_999_999.9999, 'TWD'],
+        [null, null],
+        [null, null],
+        [null, null],
+        [4.99, 'TWD'],
+      ]);
+    });
+
     it('keeps the end of the period a subscription purchase paid for; none for a pack', async () => {
       const r = repos();
       const u = await user();

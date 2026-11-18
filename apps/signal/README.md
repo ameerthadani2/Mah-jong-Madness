@@ -28,7 +28,7 @@ With no environment at all the server runs: accounts, clubs and tables are kept 
 | `src/puzzles.ts` | Server-verified puzzle results: daily answers judged against the regenerated puzzle, Puzzle Rush runs issued by the server and served one puzzle at a time, each answer judged and stamped as it arrives (with the answer-time plausibility checks), the one puzzle rating per account (engine rules, `packages/engine/src/verify.ts`), and the daily, Rush and rating leaderboards (global or one club), the free Rush meter (one run a UTC day without Coach Gold), the human-time floors and the automation flags |
 | `src/admin.ts` | `POST /api/wallet/sync` (store reconciliation after Restore), `POST /api/admin/grant` (support grants behind `ADMIN_TOKEN`) and `GET /api/admin/users/:id/wallet` (one account's balances, entitlements, latest ledger entries and store events, behind the same token) |
 | `src/reconcile.ts` | RevenueCat REST client and the nightly reconciliation of missed store events |
-| `src/wallet.ts` | `WalletService`: credits, diamond spends, store events applied once (idempotent on the event id) |
+| `src/wallet.ts` | `WalletService`: credits, diamond spends, store events applied once (idempotent on the event id). A purchase price the `numeric(14,4)` column cannot hold (10^10 or more), or a negative one, is recorded as null and the purchase is still credited |
 | `src/revenuecat.ts` | RevenueCat webhook authentication and payload mapping to a vendor-neutral `StoreEvent` |
 | `src/push.ts` | `PushService` over `expo-server-sdk` (rate limits, receipts) and `SeatWatcher` ("your table is waiting") |
 | `src/metrics.ts` | The action-latency window behind `/health` |
