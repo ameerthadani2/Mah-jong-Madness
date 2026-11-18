@@ -126,6 +126,9 @@ export const AUDIT_CAVEATS = {
   restartClock: 'The server restarted during this match and then played for this seat before this device could check its clock again',
   lateShown: "This seat's turn reached this device late, or after its connection had been down for much of it, so this device cannot vouch that it saw all of that turn",
   skillUnknown: 'This device restored the match from a save that did not keep how strong the table said its bots are, so the moves the table made for bots and for seats out of time were not checked',
+  // Storage changed part of the saved record of the hand (a state whose check figure did not match when the
+  // app restarted, `cleanSeen`): the checks that would rest on it are not held against the table.
+  damaged: 'This app restarted with a damaged record of this hand, so the checks that rest on the damaged part were not made',
 } as const;
 
 export type AuditCaveat = keyof typeof AUDIT_CAVEATS;
@@ -1955,6 +1958,7 @@ export class TableClient {
     caveats.push(...tableMoveCaveats(notes));
     if (notes.lateShown) caveats.push(AUDIT_CAVEATS.lateShown);
     if (notes.skillUnknown) caveats.push(AUDIT_CAVEATS.skillUnknown);
+    if (notes.damaged) caveats.push(AUDIT_CAVEATS.damaged);
     const status: AuditStatus = failures.length > 0 ? 'failed' : 'partial';
     this.handsEnded.add(h);
     if (this.openHand === h) this.openHand = null;
@@ -2064,7 +2068,8 @@ export class TableClient {
     const lastAttempt = this.recordFor(h)?.attempts.slice(-1)[0];
     const firstFrame = this.plays.find((p) => p.hand === h)?.seen[0];
     const mySecret = revealsOk ? audit.reveals.find((r) => r.seat === me)?.secret : undefined;
-    if (tookPart && !stoodIn && this.secret && mySecret === this.secret && lastAttempt?.revealed && typeof lastAttempt.revealedAt === 'number' && firstFrame && typeof firstFrame.now === 'number' && firstFrame.epoch === lastAttempt.revealedEpoch && firstFrame.at >= lastAttempt.revealedAt) {
+    // (Not from a state restored damaged: its stamp may be anything, `cleanSeen`.)
+    if (tookPart && !stoodIn && this.secret && mySecret === this.secret && lastAttempt?.revealed && typeof lastAttempt.revealedAt === 'number' && firstFrame && firstFrame.kept !== false && typeof firstFrame.now === 'number' && firstFrame.epoch === lastAttempt.revealedEpoch && firstFrame.at >= lastAttempt.revealedAt) {
       anchors.push({ at: lastAttempt.revealedAt, now: firstFrame.now, era: firstFrame.era ?? 0, run: lastAttempt.revealedRun, seg: lastAttempt.revealedSeg, fat: firstFrame.at });
     }
     try {
@@ -2096,6 +2101,7 @@ export class TableClient {
     if (notes.restartClock) caveats.push(AUDIT_CAVEATS.restartClock);
     if (notes.lateShown) caveats.push(AUDIT_CAVEATS.lateShown);
     if (notes.skillUnknown) caveats.push(AUDIT_CAVEATS.skillUnknown);
+    if (notes.damaged) caveats.push(AUDIT_CAVEATS.damaged);
     // An app restart around the deal: this device cannot say it watched all of it, whatever its record now shows.
     // (A seat that joined mid-hand has already said it took no part in the deal.)
     if (this.lapseHand === h && this.lapseDeal && !joined && !caveats.includes(AUDIT_CAVEATS.appRestart)) caveats.push(AUDIT_CAVEATS.appRestart);
@@ -2121,6 +2127,8 @@ export class TableClient {
     const shown = new Map<number, string>();
     // A state restored damaged (`cleanSeen`: its check figure did not match) may hold any hash: it is not compared.
     for (const s of play?.seen ?? []) if (!shown.has(s.tc) && s.kept !== false) shown.set(s.tc, s.hash);
+    /** Some state of this hand was restored damaged: a clock check that may rest on it fails nothing, it makes the hand amber. */
+    const doubt = play?.seen.some((f) => f.kept === false) === true;
     const checkHash = (s: GameState) => {
       const want = shown.get(s.turnCounter);
       if (want !== undefined && hashState(s) !== want) failures.push(`The state this seat was shown at turn ${s.turnCounter} is not in the replay`);
@@ -2247,7 +2255,7 @@ export class TableClient {
               // have played that one), with the round trip from it to the first frame that shows the move.
               const f = frameAfter(n);
               const first = firstSend(copies);
-              if (f && first && typeof first.at === 'number' && typeof f.now === 'number' && f.epoch === first.epoch && f.at >= first.at) anchors.push({ at: first.at, now: f.now, era: f.era ?? 0, run: first.run, seg: first.seg, fat: f.at });
+              if (f && f.kept !== false && first && typeof first.at === 'number' && typeof f.now === 'number' && f.epoch === first.epoch && f.at >= first.at) anchors.push({ at: first.at, now: f.now, era: f.era ?? 0, run: first.run, seg: first.seg, fat: f.at });
             } else if (sent.some((x) => !x.used && !x.rejected && x.tc <= n)) problems.add(`The log changed a move this seat made (turn ${n})`);
             else problems.add(`The log shows a move this seat never made (turn ${n})`);
           } else if (isInt(n)) {
@@ -2283,7 +2291,9 @@ export class TableClient {
           // lying. (Only moves sent since this client began vouching for the log: before that none are matched.)
           const after = isInt(n) ? frameAfter(n) : null;
           if (after && play.ledgerFrom !== null && sent.some((x) => !x.used && x.tc >= (play.ledgerFrom as number) && x.tc <= n && x.epoch === after.epoch && typeof x.at === 'number' && after.at - x.at > MOVE_SLACK_MS && !(x.refusedAt !== undefined && x.refusedAt <= n) && legalFor(s, me, x.action) && !sameActionSafe(x.action, entry.action, s, me))) {
-            problems.add(`The table ignored a move this seat sent in good time and played its own instead (turn ${n})`);
+            if (after.kept === false) {
+              if (notes) notes.damaged = true;
+            } else problems.add(`The table ignored a move this seat sent in good time and played its own instead (turn ${n})`);
           }
         }
       }
@@ -2325,7 +2335,9 @@ export class TableClient {
         continue;
       }
       const verdict = judgeTableMove(this.moveJudge(), play, n, end, rules, anchors, track, gaps, prevOf.get(n) ?? -1, scope);
-      if (verdict === 'held') problems.add(`The host held back its frames on a link that stayed open, then played for this seat (turn ${n})`);
+      if (doubt && (verdict === 'held' || verdict === 'early' || verdict === 'downEarly')) {
+        if (notes) notes.damaged = true;
+      } else if (verdict === 'held') problems.add(`The host held back its frames on a link that stayed open, then played for this seat (turn ${n})`);
       else if (verdict === 'lateTurn') problems.add(`The host showed this seat its turn late, on a link that stayed open (turn ${n})`);
       else if (verdict === 'early') problems.add(`The table played for this seat while it was connected and its clock had not run out (turn ${n})`);
       else if (verdict === 'downEarly') problems.add(`The table played for this seat while its connection was down, before its clock could have run out (turn ${n})`);
@@ -2340,7 +2352,11 @@ export class TableClient {
       }
       else if (verdict === 'unanchored' && notes) notes.restartClock = true;
     }
-    for (const tc of track?.bankTaken ?? []) problems.add(`The table took time from this seat's time bank while its connection was down (turn ${tc})`);
+    for (const tc of track?.bankTaken ?? []) {
+      if (doubt) {
+        if (notes) notes.damaged = true;
+      } else problems.add(`The table took time from this seat's time bank while its connection was down (turn ${tc})`);
+    }
     failures.push(...problems);
     if (unchecked && notes) notes.skillUnknown = true;
     return s;
@@ -2441,6 +2457,8 @@ interface ReplayNotes {
   restartClock?: boolean;
   lateShown?: boolean;
   skillUnknown?: boolean;
+  /** A check of the table's moves for this seat could not be made, its record of the hand being damaged (`damaged`). */
+  damaged?: boolean;
   /** Claims the table passed for this seat while its link was down, or on a turn that reached this device late (`late`), in turn order. */
   passedClaims?: Array<{ turn: number; claim: PassedClaim; late?: boolean }>;
   /** The seat's turns whose state reached this device later than half the turn clock (`lateCountMs`), and how many of its turns it could measure. */

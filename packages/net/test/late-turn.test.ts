@@ -1468,6 +1468,88 @@ describe('match record: what a saved record keeps of each frame', () => {
       }
     });
 
+  /**
+   * An honest table over two hands. After the seat's second discard the app restarts from a record in
+   * which storage changed the stamp of the hand's deal (`edit`), every other field left as it was; then
+   * the table times the seat out of its next discard, and once more in the second hand.
+   */
+  function damagedDeal(code: string, edit: (deal: SeenState) => void) {
+    let armed = false;
+    const out: number[] = [];
+    const w = wire({
+      code,
+      rules: withRules({ handsPerMatch: 2, turnSeconds: 15, timeBankSeconds: 30 }),
+      think: (_k, tc) => {
+        // One timeout in each hand once the app has restarted: the first turn owed after it, and the first of hand 1.
+        if (!armed || out.length > (w.host.game?.handNumber ?? 0)) return 600;
+        out.push(tc);
+        return Infinity;
+      },
+    });
+    need(w.toDiscard(2));
+    w.restart((s) => {
+      const deal = s.plays[s.plays.length - 1].seen.find((f) => f.tc === 0);
+      need(typeof deal?.now === 'number');
+      edit(deal as SeenState);
+      return s;
+    });
+    armed = true;
+    w.finish();
+    need(out.length > 0 && w.judged().includes(out[0]));
+    const first = w.verdict();
+    for (let e = 0; e < 600_000 && w.host.phase === 'hand_over'; e += 500) w.step();
+    w.finish();
+    need(w.c.state.lastAudit?.handNumber === 1 && out.length > 1 && w.judged().includes(out[1]));
+    return { first, second: w.verdict() };
+  }
+
+  it.each<[string, (deal: SeenState) => void]>([
+    ['moved back 20 s', (deal) => (deal.now = (deal.now as number) - 20_000)],
+    ['with one digit changed (moved back about 1 000 s)', (deal) => (deal.now = (deal.now as number) - 1_000_000)],
+  ])('a saved record in which the stamp of the hand’s deal was %s: the deal’s fixed point is not taken from a damaged state, so neither the timeout after the restart nor one in the next hand fails', (_what, edit) => {
+    const { first, second } = scenario((i) => damagedDeal(`MD${_what.length}${i}`, edit));
+    expect(first.failures).toEqual([]);
+    expect(second.failures).toEqual([]);
+    expect(second.status).toBe('ok');
+  });
+
+  /**
+   * An honest table times the seat out of its third discard; a few seconds later the app restarts from a
+   * record in which storage moved back by 20 s the stamp of the state that followed the table's move (every
+   * other field left as it was), and the hand is played out.
+   */
+  function damagedAfterTimeout(code: string) {
+    let turn = -1;
+    let owed = 0;
+    const w = wire({
+      code,
+      think: (_k, tc) => {
+        if (turn < 0 && ++owed === 3) turn = tc;
+        return tc === turn ? Infinity : 600;
+      },
+    });
+    w.dealt();
+    need(w.until(() => turn >= 0 && w.tableMoves().includes(turn)));
+    for (let t = 0; t < 6; t++) w.step();
+    need(w.host.phase === 'playing');
+    w.restart((s) => {
+      const after = s.plays[s.plays.length - 1].seen.find((f) => f.tc > turn && typeof f.now === 'number');
+      need(after !== undefined);
+      (after as SeenState).now = ((after as SeenState).now as number) - 20_000;
+      return s;
+    });
+    w.finish();
+    need(w.judged().includes(turn));
+    return w;
+  }
+
+  it('a saved record in which the stamp of the state after a table move for the seat was moved back 20 s: the move seems early by it, but a damaged state fails nothing, so the hand is amber with the reason, never red', () => {
+    const w = scenario((i) => damagedAfterTimeout(`MT${i}`));
+    expect(w.verdict().failures).toEqual([]);
+    expect(w.verdict().status).toBe('partial');
+    expect(w.verdict().caveats).toContain('damaged');
+  });
+
   it('a saved record with one digit of a state’s hash changed: that state is not compared with the replay, so the hand does not fail, whether the table times the seat out or the seat moves', () => {
     for (const moves of [false, true]) {
       const w = scenario((i) =>

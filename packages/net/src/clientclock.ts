@@ -158,8 +158,9 @@ export function clientClock(opts: TableClientOptions = {}): () => number {
 export function foldClock(clockBase: ClockBase, era: number, play: PlayRecord | null, end: SeenState, anchors: ClockAnchor[]): ClockBase {
   const base: ClockBase = clockBase.era !== era ? { era, anchor: null, minOffset: null } : clockBase;
   for (const k of anchors) if (k.era === era) base.anchor = base.anchor === null ? k.at - k.now : Math.max(base.anchor, k.at - k.now);
+  // (Not from a state restored damaged: its stamp may be anything, `cleanSeen`.)
   for (const f of [...(play?.seen ?? []), end]) {
-    if ((f.era ?? 0) === era && typeof f.now === 'number') base.minOffset = base.minOffset === null ? f.at - f.now : Math.min(base.minOffset, f.at - f.now);
+    if ((f.era ?? 0) === era && typeof f.now === 'number' && f.kept !== false) base.minOffset = base.minOffset === null ? f.at - f.now : Math.min(base.minOffset, f.at - f.now);
   }
   return base;
 }
@@ -179,7 +180,7 @@ export function offsetFloor(clockBase: ClockBase, era: number, play: PlayRecord 
   for (const k of anchors) if (k.era === era) anchor = anchor === null ? k.at - k.now : Math.max(anchor, k.at - k.now);
   let min = base?.minOffset ?? null;
   for (const f of play?.seen ?? []) {
-    if ((f.era ?? 0) === era && f.tc <= n && typeof f.now === 'number') min = min === null ? f.at - f.now : Math.min(min, f.at - f.now);
+    if ((f.era ?? 0) === era && f.tc <= n && typeof f.now === 'number' && f.kept !== false) min = min === null ? f.at - f.now : Math.min(min, f.at - f.now);
   }
   const viaAnchor = anchor === null ? null : anchor - CLOCK_SKEW_MS;
   const viaFrames = min === null ? null : min - LATENCY_SLACK_MS;
