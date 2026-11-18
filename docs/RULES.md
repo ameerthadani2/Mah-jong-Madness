@@ -5,6 +5,11 @@
 * 144 tiles; each player holds 16, the dealer draws a 17th to start. Winning hand = 5 sets + 1 pair.
 * Bonus tiles (梅蘭竹菊春夏秋冬) are set aside on draw and replaced from the back of the wall.
 * The last 16 tiles are never drawn (configurable). If nobody wins by then: 流局, dealer keeps the deal (configurable).
+* A replacement, for a flower or for a kong, comes from the back of the wall but counts against the same 16: it is drawn only while a live tile is left. So:
+  * a flower drawn as the last live tile is set aside and the hand ends at once as a 流局, with no replacement. The flower still counts: if it is a player's eighth it wins 八仙過海, and if another player holds the other seven they take it for 七搶一 (both below), and the hand ends as that win instead;
+  * a flower drawn as a replacement when no live tile is left ends the hand the same way. A kong whose replacement is such a flower is made, and the hand is a 流局;
+  * a replacement can be the last live tile: a win on it is 海底撈月 as well as 槓上開花 or 花上自摸;
+  * a kong is not declared when no live tile is left to replace it, and the last discard (河底) can be won on but not called (below).
 * On a discard: 胡 > 碰/槓 > 吃. Chi only by the next player (and only when 吃 is allowed: see Rule options). If two can win, the nearest in turn order wins (or all, if 一炮多響 is on). With 過水 on, a player who passes a discard they could have won on cannot win on a discard until their own next draw.
 * Kongs: 暗槓 (4 in hand), 明槓 (3 in hand + discard), 加槓 (add to your pong). Each draws a replacement from the back. 加槓 can be robbed (搶槓).
 * A 暗槓 or 加槓 is declared only on a turn in which you drew a tile: from the wall, from the deal (the dealer's first turn) or as a kong replacement. A turn that began with a 吃 or 碰 ends with a discard and offers no kong; the kong can be declared on a later turn, after a draw. A kong also needs a replacement tile left to draw.
