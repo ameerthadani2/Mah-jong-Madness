@@ -1306,6 +1306,35 @@ describe('device clock: the phone’s wall clock set while the app was closed', 
     return w;
   }
 
+  it('the phone’s wall clock set 20 s forward while the app runs, after the table timed the seat out: the fixed points made after it (a new run of the device’s clock) call that timeout early, which they cannot tell, so the hand is amber with the reason, not red', () => {
+    const verdict = scenario((i) => {
+      let stepped = false;
+      let out = -1;
+      let owed = 0;
+      const w = wire({
+        code: `SG${i}`,
+        // The monotonic clock runs on, so the client sees the wall clock run ahead of it and starts a new run of its clock.
+        asleep: () => false,
+        devSkew: () => (stepped ? 20_000 : 0),
+        think: (_k, tc) => {
+          if (out < 0 && ++owed === 2) {
+            out = tc;
+            return Infinity;
+          }
+          return 600;
+        },
+      });
+      w.dealt();
+      need(w.until(() => out >= 0 && w.tableMoves().includes(out)));
+      for (let t = 0; t < 4; t++) w.step();
+      stepped = true;
+      w.finish();
+      need(w.judged().includes(out));
+      return w.verdict();
+    });
+    expect(verdict).toEqual({ status: 'partial', failures: [], caveats: ['appClock'] });
+  });
+
   it('a server whose clock leaps 20 s forward on the seat’s first turn after an app restart, before any fixed point of the new run: red without the restart, and amber with the reason after it, never green', () => {
     expect(scenario((i) => leap(`SL${i}`, false)).verdict()).toMatchObject({ status: 'failed', failures: ['playedEarly'] });
     expect(scenario((i) => leap(`SL${i}`, true)).verdict()).toEqual({ status: 'partial', failures: [], caveats: ['appClock'] });
