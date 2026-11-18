@@ -126,6 +126,11 @@ describe('claims the table passed for this seat while its link was down', () => 
     }
   });
 
+  it('the general explanation of amber names a turn that reached the phone late among its reasons, in both languages', () => {
+    expect(translator('en')('fairness.partialAfter')).toContain('one of your turns reached your phone late');
+    expect(translator('zh-TW')('fairness.partialAfter')).toContain('輪到你的某一手比較晚才送到你的手機');
+  });
+
   it('a turn shown late is one of the player’s turns in Traditional Chinese too, and is not said to have taken most of a turn', () => {
     // 一手 alone reads as any move at the table; the rule fires at 17 s, a share of the clock that depends on the speed.
     const text = caveatText(translator('zh-TW'), AUDIT_CAVEATS.lateShown);
