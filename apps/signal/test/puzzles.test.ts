@@ -609,7 +609,10 @@ function contract(name: string, repos: () => Repos) {
       expect((await f.call('POST', `/api/admin/puzzle-flags/rush-runs/${held.runId}`, { action: 'reject' }, admin)).status).toBe(404);
       expect((await f.call('GET', '/api/admin/puzzle-flags', undefined, admin)).json.heldRuns).toEqual([]);
       expect(mine((await f.board(human, 'rush?period=all')).rows)).toEqual(['Honest', 'Strong']);
-    });
+      // Six runs of about 55 answers, each puzzle made three times (served, judged, and here to answer it): about 4 s in
+      // memory and 4.5 to 5.2 s on Postgres since hard discard puzzles beat the sets-first read too (about 20 ms each,
+      // on average, against 7 ms; 2.7 and 4.2 s before), past the 5 s default.
+    }, 30_000);
 
     it('verifies a hard daily puzzle and the hard value and defence puzzles of a Rush run by regenerating them', async () => {
       const f = fixture(repos());
