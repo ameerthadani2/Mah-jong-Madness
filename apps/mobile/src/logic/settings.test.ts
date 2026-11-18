@@ -57,12 +57,17 @@ describe('what the app says about the bot tiers', () => {
       const pro = locale.settings.botAbout.pro;
       expect(pro).not.toMatch(/fast and efficient|keeps scoring tiles|strong|best|beats|出牌快|加台|最強|更強/i);
     }
-    // What Pro measurably does (docs/ARCHITECTURE.md): it folds far more when far from ready, and its overall edge is small.
+    // What Pro measurably does (docs/ARCHITECTURE.md): it folds far more when far from ready. Its overall edge is
+    // given with where it comes from: the team's 35,000 paired hands, which two later runs did not confirm.
     expect(en.settings.botAbout.pro).toMatch(/Folds far more often than Club when its hand is far from ready/);
-    expect(en.settings.botAbout.pro).toMatch(/only a little more than Club/);
+    expect(en.settings.botAbout.pro).toMatch(/In the team's own test of 35,000 paired hands it scored about 3 points a hand more than Club/);
+    expect(en.settings.botAbout.pro).toMatch(/two later runs of 1,000 and 4,000 hands showed no clear difference/);
+    expect(en.settings.botAbout.pro).not.toMatch(/a little more than Club/);
     expect(en.settings.botAbout.pro).toMatch(/the policy the coach's advice comes from/);
     expect(zhTW.settings.botAbout.pro).toMatch(/棄胡防守/);
-    expect(zhTW.settings.botAbout.pro).toMatch(/只比牌友略高/);
+    expect(zhTW.settings.botAbout.pro).toMatch(/開發團隊自己的 35,000 手配對測試/);
+    expect(zhTW.settings.botAbout.pro).toMatch(/沒有看出明顯差別/);
+    expect(zhTW.settings.botAbout.pro).not.toMatch(/只比牌友略高/);
     expect(zhTW.settings.botAbout.pro).toMatch(/教練/);
     // The Chinese description the engine's helper falls back on says the same.
     expect(zhTW.common.bots.pro).toBe(zhTW.settings.botAbout.pro);
