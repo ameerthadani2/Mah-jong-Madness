@@ -2040,8 +2040,11 @@ export class TableClient {
             if (match) {
               match.used = true;
               {
-                // The turn this move answered: shown late on a link that stayed up, or by a state that
-                // did not start a whole turn clock, fails; shown late otherwise is noted.
+                // The turn this move answered, judged by the first state that showed it (`seatRun`). A state
+                // that did not give the whole turn clock on a link this device held, or one later than any
+                // honest frame on a live link, fails. One shown late otherwise (against the least offset or
+                // the fixed points), or first shown on a new link with less than a whole clock (less
+                // LATE_MS) to go, is noted: this device cannot vouch that the player saw the whole turn.
                 const { run, i0 } = isInt(n) ? seatRun(play, n, prevMine) : { run: [] as SeenState[], i0: -1 };
                 const r0 = run[0];
                 if (r0) {

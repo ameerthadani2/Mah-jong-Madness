@@ -85,6 +85,7 @@ export interface AttemptRecord {
   /** This device's clock, and its link epoch, when it sent its secret. */
   revealedAt?: number;
   revealedEpoch?: number;
+  /** The run of the app and of this device's clock `revealedAt` was read in (fixed points are compared only within one). */
   revealedRun?: string;
   revealedSeg?: number;
 }
@@ -146,13 +147,20 @@ export interface SeenState {
   at: number;
   /** The host's clock when it sent the frame, if it said. */
   now?: number;
-  /** The earliest this frame can have arrived, when the app had not run for a while before it (else `at`). */
+  /**
+   * The earliest this frame can have arrived: earlier than `at` only when it was handled just after
+   * the app did not run (it may have waited in the device), and never before its link was bound.
+   */
   atLo?: number;
-  /** The era's least arrival offset (at - now) when the frame arrived; null before any. */
+  /** The least arrival offset (`at - now`) seen in this frame's scope (clock era and run of this device's clock) before it, allowing for drift; null when there was none. */
   ref?: number | null;
-  /** The frame came over a live link: one that had brought a timely stamp while a hand was played and the watch ran. */
+  /**
+   * The frame came over a live link: a working one, while a hand was played, with the link watch
+   * checking it within `RAN_GAP_MS`, not just after a pause and not in the watch's grace after one.
+   * No honest frame on a live link is more than `LATE_MS` late.
+   */
   live?: boolean;
-  /** The link had brought a timely stamp before this frame. */
+  /** The link had already brought a stamp not more than `LATE_MS` late (a client's first link counts from the start). Absent, never false, in records saved by older builds. */
   working?: boolean;
   /** The run of this device's clock it arrived in (a sleep correction starts a new one). */
   seg?: number;
