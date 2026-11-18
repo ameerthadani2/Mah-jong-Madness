@@ -366,8 +366,9 @@ export async function createSignalServer(opts: SignalServerOptions): Promise<Sig
   receipts.unref();
   const pruner = setInterval(() => {
     clubs.pruneFinishedTables(now() - DAY_MS);
-    // Join requests nobody answered in 30 days.
+    // Join requests nobody answered in 30 days, and stored join allowances that have refilled.
     clubs.expirePending();
+    clubs.pruneAllowances().catch((e: Error) => console.error('[signal] club join allowance prune failed', e.message));
     persister.prune().catch((e: Error) => console.error('[signal] snapshot prune failed', e.message));
     // Puzzle Rush runs never finished, a day after they expired.
     repos.repos.rushRuns.pruneUnfinished(now() - DAY_MS).catch((e: Error) => console.error('[signal] rush run prune failed', e.message));

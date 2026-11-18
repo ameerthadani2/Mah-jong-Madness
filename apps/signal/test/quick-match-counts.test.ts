@@ -1,9 +1,10 @@
 /**
- * The anti-collusion counts across a restart (migration 0017): how often each pair of accounts sat
- * together at quick-match tables (with `sharedAddress`) and each club's join allowance per address
- * and per device. The repositories on memory and (with DATABASE_URL_TEST) Postgres; the club
- * registry and the matchmaker writing through them; and on Postgres a whole server restarted on
- * the same database, whose admin views still read the counts and whose limits still hold.
+ * The anti-collusion counts across a restart (migrations 0017 and 0020): how often each pair of
+ * accounts sat together at quick-match tables (with `sharedAddress`), each club's daily join
+ * allowance per address and per device, and the hourly join allowances per address and per club.
+ * The repositories on memory and (with DATABASE_URL_TEST) Postgres; the club registry and the
+ * matchmaker writing through them; and on Postgres a whole server restarted on the same database,
+ * whose admin views still read the counts and whose limits still hold.
  */
 import { randomUUID } from 'node:crypto';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
@@ -20,6 +21,7 @@ import { createSignalServer, type SignalServer } from '../src/server';
 const PG_URL = process.env.DATABASE_URL_TEST?.trim();
 const T0 = Date.UTC(2026, 10, 17, 9, 0, 0);
 const DAY = 86_400_000;
+const HOUR = 3_600_000;
 
 function contract(name: string, repos: () => Repos) {
   describe(name, () => {
@@ -157,6 +159,81 @@ function contract(name: string, repos: () => Repos) {
       await third.load();
       (third as unknown as { clubs: Map<string, unknown> }).clubs.set(club.code, JSON.parse(JSON.stringify(second.club(club.code))));
       expect(third.joinClub(club.code, { userId: randomUUID(), name: 'Tomorrow' }, { ip }).status).toBe('joined');
+    });
+
+    it('keeps the hourly join buckets by kind and key, and prunes the ones an hour old', async () => {
+      const r = repos();
+      const club = 'H' + randomHex(3).toUpperCase();
+      const key = 'addr-' + randomHex(6);
+      await r.joinAllowances.saveHour({ kind: 'address', key, tokens: 9, updatedAt: T0 });
+      await r.joinAllowances.saveHour({ kind: 'address', key, tokens: 8.5, updatedAt: T0 + 10 });
+      await r.joinAllowances.saveHour({ kind: 'club', key: club, tokens: 59, updatedAt: T0 + 20 });
+      await r.joinAllowances.saveHour({ kind: 'club_new', key: club, tokens: 0, updatedAt: T0 - 2 * HOUR });
+      const mine = <T extends { key: string }>(rows: T[]) => rows.filter((x) => x.key === key || x.key === club);
+      expect(mine(await r.joinAllowances.listHours(T0 - HOUR)).sort((x, y) => x.updatedAt - y.updatedAt)).toEqual([
+        { kind: 'address', key, tokens: 8.5, updatedAt: T0 + 10 },
+        { kind: 'club', key: club, tokens: 59, updatedAt: T0 + 20 },
+      ]);
+      expect(await r.joinAllowances.pruneHours(T0 - HOUR)).toBeGreaterThanOrEqual(1);
+      expect(mine(await r.joinAllowances.listHours(0))).toHaveLength(2);
+    });
+
+    it('a club registry restarted on the same store still refuses an eleventh club from one address this hour, and a sixty-first join to one club', async () => {
+      const r = repos();
+      let clock = Date.now();
+      const now = () => clock;
+      const first = new ClubRegistry({ allowances: r.joinAllowances, now });
+      await first.load();
+      const clubs = Array.from({ length: CLUB_LIMITS.joinsPerHourPerIp + 1 }, (_, i) => first.createClub({ userId: randomUUID(), name: `Owner ${i}` }, `Hour club ${i}`, {}, {}));
+      const ip = '198.51.100.' + Math.floor(Math.random() * 200);
+      for (let i = 0; i < CLUB_LIMITS.joinsPerHourPerIp; i++) first.joinClub(clubs[i].code, { userId: randomUUID(), name: `P${i}` }, { ip });
+      const last = clubs[CLUB_LIMITS.joinsPerHourPerIp].code;
+      expect(() => first.joinClub(last, { userId: randomUUID(), name: 'Eleventh' }, { ip })).toThrow(/from this connection/);
+      // One club's hour, for established accounts and for new ones (each from its own address).
+      const big = clubs[1].code;
+      const fresh = { accountCreatedAt: clock };
+      for (let i = 0; i < CLUB_LIMITS.joinsPerHourPerClub - 1; i++) first.joinClub(big, { userId: randomUUID(), name: `E${i}` }, { ip: `10.1.${i}.9` });
+      for (let i = 0; i < CLUB_LIMITS.joinsPerHourPerClub; i++) first.joinClub(big, { userId: randomUUID(), name: `N${i}` }, { ip: `10.2.${i}.9`, ...fresh });
+      expect(() => first.joinClub(big, { userId: randomUUID(), name: 'E61' }, { ip: '203.0.113.1' })).toThrow(/a lot of join requests/);
+      expect(() => first.joinClub(big, { userId: randomUUID(), name: 'N61' }, { ip: '203.0.113.2', ...fresh })).toThrow(/a lot of join requests/);
+      await first.allowancesSaved();
+      // The store never holds the address itself.
+      expect(JSON.stringify(await r.joinAllowances.listHours(0))).not.toContain(ip);
+
+      // A restart a second later (a club refills one join a minute): every hourly allowance still stands.
+      clock += 1000;
+      const second = new ClubRegistry({ allowances: r.joinAllowances, now });
+      await second.load();
+      for (const c of clubs) (second as unknown as { clubs: Map<string, unknown> }).clubs.set(c.code, JSON.parse(JSON.stringify(first.club(c.code))));
+      expect(() => second.joinClub(last, { userId: randomUUID(), name: 'Eleventh' }, { ip })).toThrow(/from this connection/);
+      expect(() => second.joinClub(big, { userId: randomUUID(), name: 'E61' }, { ip: '203.0.113.3' })).toThrow(/a lot of join requests/);
+      expect(() => second.joinClub(big, { userId: randomUUID(), name: 'N61' }, { ip: '203.0.113.4', ...fresh })).toThrow(/a lot of join requests/);
+      // An hour on, they have refilled.
+      clock += HOUR;
+      const third = new ClubRegistry({ allowances: r.joinAllowances, now });
+      await third.load();
+      for (const c of clubs) (third as unknown as { clubs: Map<string, unknown> }).clubs.set(c.code, JSON.parse(JSON.stringify(second.club(c.code))));
+      expect(third.joinClub(last, { userId: randomUUID(), name: 'Eleventh' }, { ip }).status).toBe('joined');
+      expect(third.joinClub(big, { userId: randomUUID(), name: 'E61' }, { ip: '203.0.113.5' }).status).toBe('joined');
+    });
+
+    it('a club that turned down its whole queue keeps the hourly allowance it got back across a restart', async () => {
+      const r = repos();
+      let clock = Date.now();
+      const now = () => clock;
+      const first = new ClubRegistry({ allowances: r.joinAllowances, now });
+      await first.load();
+      const owner = { userId: randomUUID(), name: 'Owner' };
+      const club = first.createClub(owner, 'Queue club', {}, { joinRequiresApproval: true });
+      for (let i = 0; i < CLUB_LIMITS.joinsPerHourPerClub; i++) first.joinClub(club.code, { userId: randomUUID(), name: `Q${i}` }, { ip: `10.3.${i}.9` });
+      expect(() => first.joinClub(club.code, { userId: randomUUID(), name: 'Q61' }, { ip: '203.0.113.9' })).toThrow(/a lot of join requests/);
+      expect(first.rejectAll(club.code, owner.userId).rejected).toBe(CLUB_LIMITS.joinsPerHourPerClub);
+      await first.allowancesSaved();
+      clock += 1000;
+      const second = new ClubRegistry({ allowances: r.joinAllowances, now });
+      await second.load();
+      (second as unknown as { clubs: Map<string, unknown> }).clubs.set(club.code, JSON.parse(JSON.stringify(first.club(club.code))));
+      expect(second.joinClub(club.code, { userId: randomUUID(), name: 'Wanted' }, { ip: '203.0.113.10' }).status).toBe('pending');
     });
 
     it('a matchmaker writes its pair counts to the store, where a new matchmaker (a restart) leaves them', async () => {

@@ -18,7 +18,7 @@ import { BOT_SKILLS, randomHex, sanitizeRules, type BotSkill, type RuleSet } fro
 import type { HostEvent } from '@mjm/net';
 import { uniqueCode, type HexSource } from './codes';
 import { BucketTable, cleanField } from './limits';
-import { DELETED_PLAYER_NAME, type JoinAllowancesRepo } from './repos/types';
+import { DELETED_PLAYER_NAME, type JoinAllowancesRepo, type JoinHourRecord } from './repos/types';
 import type { ClubGate } from './rooms';
 
 export interface Identity {
@@ -230,6 +230,7 @@ export interface ClubPublicView {
 }
 
 const DAY_MS = 86_400_000;
+const HOUR_MS = 3_600_000;
 /** First retry after a failed club write; each further failure doubles it (up to a minute). */
 const RETRY_DELAY_MS = 1_000;
 
@@ -644,7 +645,10 @@ export class ClubRegistry {
   /** Whether a club owner holds The Four Winds Club; null while the store is not live (no check). */
   private ownerPlan: ((userId: string) => Promise<boolean>) | null = null;
   private planCheck: Promise<void> | null = null;
-  /** Joins and join requests over the API, per client address and per club (see `joinClub`). */
+  /**
+   * Joins and join requests over the API, by the hour: per client address across all clubs (keyed
+   * by the address's salted hash, `allowanceKey`) and per club (see `joinClub`).
+   */
   private readonly joinsByIp: BucketTable<string>;
   private readonly joinsByClub: BucketTable<string>;
   /** The same per-club allowance for accounts younger than `CLUB_LIMITS.newAccountMs`. */
@@ -653,8 +657,9 @@ export class ClubRegistry {
   private readonly joinsByClubAddress: BucketTable<string>;
   private readonly joinsByClubDevice: BucketTable<string>;
   /**
-   * Where those two are kept (the repositories: the database on Postgres, so a restart keeps
-   * them), keyed by a salted hash of the address or device; null keeps them in this process only.
+   * Where all five are kept (the repositories: the database on Postgres, so a restart, or the
+   * next machine after a deploy, keeps them), keyed by the club code or a salted hash of the
+   * address or device; null keeps them in this process only.
    */
   private readonly allowances: JoinAllowancesRepo | null;
   private allowanceSalt = randomBytes(16).toString('hex');
@@ -667,10 +672,10 @@ export class ClubRegistry {
     this.hex = opts.randomHex ?? randomHex;
     this.store = opts.store ?? null;
     this.retryDelayMs = opts.retryDelayMs ?? RETRY_DELAY_MS;
-    const hourly = (n: number) => new BucketTable<string>(n, n / 3600, { now: this.now, idleMs: 3_600_000 });
-    this.joinsByIp = hourly(CLUB_LIMITS.joinsPerHourPerIp);
-    this.joinsByClub = hourly(CLUB_LIMITS.joinsPerHourPerClub);
-    this.newJoinsByClub = hourly(CLUB_LIMITS.joinsPerHourPerClub);
+    const byHour = (n: number) => new BucketTable<string>(n, n / 3600, { now: this.now, idleMs: HOUR_MS });
+    this.joinsByIp = byHour(CLUB_LIMITS.joinsPerHourPerIp);
+    this.joinsByClub = byHour(CLUB_LIMITS.joinsPerHourPerClub);
+    this.newJoinsByClub = byHour(CLUB_LIMITS.joinsPerHourPerClub);
     const daily = (n: number) => new BucketTable<string>(n, n / 86_400, { now: this.now, idleMs: DAY_MS });
     this.joinsByClubAddress = daily(CLUB_LIMITS.joinsPerDayPerClubAddress);
     this.joinsByClubDevice = daily(CLUB_LIMITS.joinsPerDayPerClubDevice);
@@ -847,14 +852,30 @@ export class ClubRegistry {
   /** Read every club from the store (once, at boot, before the registry is used). */
   async load(): Promise<void> {
     if (this.allowances) {
-      // The join allowances per address and device as they stood before the restart (a day-old one has refilled).
+      // The join allowances as they stood before the restart: by the day per club and address or
+      // device, and by the hour per address and per club (a bucket a day, or an hour, old has refilled).
       this.allowanceSalt = await this.allowances.salt();
       const since = this.now() - DAY_MS;
       await this.allowances.prune(since);
       for (const a of await this.allowances.list(since)) (a.kind === 'address' ? this.joinsByClubAddress : this.joinsByClubDevice).restore(`${a.clubCode} ${a.key}`, a.tokens, a.updatedAt);
+      const hourAgo = this.now() - HOUR_MS;
+      await this.allowances.pruneHours(hourAgo);
+      for (const h of await this.allowances.listHours(hourAgo)) this.hourly(h.kind).restore(h.key, h.tokens, h.updatedAt);
     }
     if (!this.store) return;
     for (const c of await this.store.loadAll()) this.clubs.set(c.code, this.read(c));
+  }
+
+  /** The hourly join allowance of this kind: per address across all clubs, or per club for established or new accounts. */
+  private hourly(kind: JoinHourRecord['kind']): BucketTable<string> {
+    return kind === 'address' ? this.joinsByIp : kind === 'club' ? this.joinsByClub : this.newJoinsByClub;
+  }
+
+  /** Drop stored join allowances that have refilled (the server runs this every hour). */
+  async pruneAllowances(): Promise<void> {
+    if (!this.allowances) return;
+    await this.allowances.prune(this.now() - DAY_MS);
+    await this.allowances.pruneHours(this.now() - HOUR_MS);
   }
 
   /** Resolves once every join allowance spent so far is in the store (the API answers a join after it). */
@@ -872,6 +893,13 @@ export class ClubRegistry {
     const state = (kind === 'address' ? this.joinsByClubAddress : this.joinsByClubDevice).state(`${clubCode} ${key}`);
     if (!store || !state) return;
     this.allowanceWrites = this.allowanceWrites.then(() => store.save({ kind, clubCode, key, tokens: state.tokens, updatedAt: state.at })).catch((e: Error) => console.error('[signal] club join allowance not saved:', e.message));
+  }
+
+  private saveHour(kind: JoinHourRecord['kind'], key: string): void {
+    const store = this.allowances;
+    const state = this.hourly(kind).state(key);
+    if (!store || !state) return;
+    this.allowanceWrites = this.allowanceWrites.then(() => store.saveHour({ kind, key, tokens: state.tokens, updatedAt: state.at })).catch((e: Error) => console.error('[signal] club join allowance not saved:', e.message));
   }
 
   /** A club as read from the store, cleaned up; a join request with no date starts its 30 days now. */
@@ -1238,8 +1266,11 @@ export class ClubRegistry {
     const byDevice = deviceKey ? `${club.code} ${deviceKey}` : null;
     if (!this.joinsByClubAddress.has(byAddress)) throw new ClubError('rate_limited', 'Too many accounts have joined this club from this connection today; try again tomorrow');
     if (byDevice && !this.joinsByClubDevice.has(byDevice)) throw new ClubError('rate_limited', 'Too many accounts have joined this club from this device today; try again tomorrow');
-    if (!this.joinsByIp.take(from.ip)) throw new ClubError('rate_limited', 'Too many clubs joined from this connection; try again in an hour');
-    if (!(isNew ? this.newJoinsByClub : this.joinsByClub).take(club.code)) throw new ClubError('rate_limited', 'This club is getting a lot of join requests; try again later');
+    if (!this.joinsByIp.take(addressKey)) throw new ClubError('rate_limited', 'Too many clubs joined from this connection; try again in an hour');
+    this.saveHour('address', addressKey);
+    const clubKind = isNew ? 'club_new' : 'club';
+    if (!this.hourly(clubKind).take(club.code)) throw new ClubError('rate_limited', 'This club is getting a lot of join requests; try again later');
+    this.saveHour(clubKind, club.code);
     this.joinsByClubAddress.take(byAddress);
     this.saveAllowance('address', club.code, addressKey);
     if (byDevice && deviceKey) {
@@ -1315,11 +1346,21 @@ export class ClubRegistry {
     const rejected = club.pending.length - kept.length;
     if (rejected > 0) {
       club.pending = kept;
-      this.joinsByClub.forget(club.code);
-      this.newJoinsByClub.forget(club.code);
+      this.refillClubHours(club.code);
       this.persist(club);
     }
     return { club, rejected };
+  }
+
+  /** Give a club its hourly join allowances back, in the store too, so a restart does not take them away again. */
+  private refillClubHours(code: string): void {
+    const store = this.allowances;
+    const at = this.now();
+    for (const kind of ['club', 'club_new'] as const) {
+      this.hourly(kind).forget(code);
+      if (!store) continue;
+      this.allowanceWrites = this.allowanceWrites.then(() => store.saveHour({ kind, key: code, tokens: CLUB_LIMITS.joinsPerHourPerClub, updatedAt: at })).catch((e: Error) => console.error('[signal] club join allowance not saved:', e.message));
+    }
   }
 
   /**

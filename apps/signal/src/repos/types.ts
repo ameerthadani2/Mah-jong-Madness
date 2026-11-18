@@ -604,7 +604,17 @@ export interface JoinAllowanceRecord {
   updatedAt: number;
 }
 
-/** The club join allowances per address and device (src/clubs.ts), kept across restarts on Postgres. */
+/** An hourly club join allowance: its token bucket as it stood at `updatedAt`. */
+export interface JoinHourRecord {
+  /** `address`: one address's joins across all clubs; `club` and `club_new`: one club's, for established and for new accounts. */
+  kind: 'address' | 'club' | 'club_new';
+  /** For `address`, a salted hash of the address key (`JoinAllowancesRepo.salt`), never the address itself; otherwise the club code. */
+  key: string;
+  tokens: number;
+  updatedAt: number;
+}
+
+/** The club join allowances, daily per address and device and hourly per address and club (src/clubs.ts), kept across restarts on Postgres. */
 export interface JoinAllowancesRepo {
   /** The salt the keys are hashed with: one per database (memory: one per process). */
   salt(): Promise<string>;
@@ -616,6 +626,12 @@ export interface JoinAllowancesRepo {
   save(r: JoinAllowanceRecord): Promise<void>;
   /** Drops buckets last updated before `before` (they have refilled). Returns how many went. */
   prune(before: number): Promise<number>;
+  /** Every hourly bucket updated at or after `since`. */
+  listHours(since: number): Promise<JoinHourRecord[]>;
+  /** Inserts or replaces an hourly bucket. */
+  saveHour(r: JoinHourRecord): Promise<void>;
+  /** Drops hourly buckets last updated before `before` (they have refilled). Returns how many went. */
+  pruneHours(before: number): Promise<number>;
 }
 
 /** A Puzzle Rush run the server issued. The result fields are null until it is finished. */

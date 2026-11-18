@@ -9,6 +9,7 @@ import {
   type ClubsRepo,
   type JoinAllowanceRecord,
   type JoinAllowancesRepo,
+  type JoinHourRecord,
 } from './types';
 import { type Tx, isUuid, toDate, json } from './pgShared';
 
@@ -385,6 +386,15 @@ interface AllowanceRow {
 
 const allowanceFromRow = (r: AllowanceRow): JoinAllowanceRecord => ({ kind: r.kind, clubCode: r.club_code, key: r.key, tokens: Number(r.tokens), updatedAt: r.updated_at.getTime() });
 
+interface HourRow {
+  kind: JoinHourRecord['kind'];
+  key: string;
+  tokens: number;
+  updated_at: Date;
+}
+
+const hourFromRow = (r: HourRow): JoinHourRecord => ({ kind: r.kind, key: r.key, tokens: Number(r.tokens), updatedAt: r.updated_at.getTime() });
+
 export function pgJoinAllowances(q: Queryable): JoinAllowancesRepo {
   const COLS = 'kind, club_code, key, tokens, updated_at';
   return {
@@ -410,6 +420,21 @@ export function pgJoinAllowances(q: Queryable): JoinAllowancesRepo {
     },
     async prune(before) {
       const res = await q.query('DELETE FROM club_join_allowances WHERE updated_at < $1', [toDate(before)]);
+      return res.rowCount ?? 0;
+    },
+    async listHours(since) {
+      const res = await q.query<HourRow>('SELECT kind, key, tokens, updated_at FROM club_join_hours WHERE updated_at >= $1', [toDate(since)]);
+      return res.rows.map(hourFromRow);
+    },
+    async saveHour(r) {
+      await q.query(
+        `INSERT INTO club_join_hours (kind, key, tokens, updated_at) VALUES ($1, $2, $3, $4)
+         ON CONFLICT (kind, key) DO UPDATE SET tokens = excluded.tokens, updated_at = excluded.updated_at`,
+        [r.kind, r.key, Math.max(0, r.tokens), toDate(r.updatedAt)],
+      );
+    },
+    async pruneHours(before) {
+      const res = await q.query('DELETE FROM club_join_hours WHERE updated_at < $1', [toDate(before)]);
       return res.rowCount ?? 0;
     },
   };

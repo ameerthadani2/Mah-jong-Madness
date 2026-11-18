@@ -47,6 +47,7 @@ import {
   type QuickMatchPairRecord,
   type QuickMatchPairsRepo,
   type JoinAllowanceRecord,
+  type JoinHourRecord,
   type JoinAllowancesRepo,
   type PuzzleResultRecord,
   type PuzzleResultsRepo,
@@ -105,6 +106,8 @@ interface MemoryState {
   quickMatchShared: Map<string, { day: number; today: number; apart: boolean }>;
   /** club_join_allowances, by "kind club key", and the salt (counter_salt). */
   joinAllowances: Map<string, JoinAllowanceRecord>;
+  /** club_join_hours, by "kind key". */
+  joinHours: Map<string, JoinHourRecord>;
   counterSalt: string;
   /** Automation flags by user id (puzzle_flags). */
   puzzleFlags: Map<string, PuzzleFlagRecord>;
@@ -151,6 +154,7 @@ const emptyState = (): MemoryState => ({
   quickMatchPairs: new Map(),
   quickMatchShared: new Map(),
   joinAllowances: new Map(),
+  joinHours: new Map(),
   counterSalt: randomBytes(16).toString('hex'),
   puzzleFlags: new Map(),
   rushRuns: new Map(),
@@ -901,6 +905,21 @@ function memoryJoinAllowances(s: MemoryState): JoinAllowancesRepo {
       for (const [k, r] of [...s.joinAllowances]) {
         if (r.updatedAt >= before) continue;
         s.joinAllowances.delete(k);
+        n++;
+      }
+      return n;
+    },
+    async listHours(since) {
+      return [...s.joinHours.values()].filter((r) => r.updatedAt >= since).map(copy);
+    },
+    async saveHour(r) {
+      s.joinHours.set(`${r.kind} ${r.key}`, copy(r));
+    },
+    async pruneHours(before) {
+      let n = 0;
+      for (const [k, r] of [...s.joinHours]) {
+        if (r.updatedAt >= before) continue;
+        s.joinHours.delete(k);
         n++;
       }
       return n;

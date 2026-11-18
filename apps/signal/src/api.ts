@@ -612,6 +612,8 @@ export function buildRoutes(deps: ApiDeps, opts: Pick<ApiOptions, 'reportIpLimit
     r('POST', '/api/clubs/:code/pending/reject-all', async (ctx) => {
       const me = await member(ctx);
       const { club, rejected } = clubs.rejectAll(ctx.params.code, me.userId, ctx.body.userIds);
+      // The club's hourly allowance it gave back is stored before the answer, as a join's spend is.
+      await clubs.allowancesSaved();
       return { club: view(club, me.userId), rejected };
     }),
     r('POST', '/api/clubs/:code/members/:userId/role', async (ctx) => {
