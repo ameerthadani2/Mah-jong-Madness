@@ -45,6 +45,12 @@ export interface SignalServerOptions {
   sessions: SessionService;
   providers: ProviderConfig;
   config: SignalConfig;
+  /**
+   * The clock (ms) for the server's own timers, limits and records (default `Date.now`). When given
+   * (tests), the hosted tables keep it too; without it each keeps `steadyClock()` (see
+   * `RoomRegistryOptions.now`), so a server clock set back or forward moves none of their stamps or
+   * deadlines.
+   */
   now?: () => number;
   /** Delay before a bot acts at a hosted table (default 600 ms). */
   botDelayMs?: number;
@@ -214,7 +220,9 @@ export async function createSignalServer(opts: SignalServerOptions): Promise<Sig
     allowP2P: config.p2pRooms,
     maxHostedTables: config.maxHostedTables,
     maxTablesPerUser: config.maxTablesPerUser,
-    now,
+    // Only an injected clock: without one the registry keeps `Date.now` for its own limits and gives
+    // each hosted table `steadyClock()`, which a wall clock set back cannot stand still.
+    now: opts.now,
     botDelayMs: opts.botDelayMs,
     clubs: clubGate(clubs),
   });
