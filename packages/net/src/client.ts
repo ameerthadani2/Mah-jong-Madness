@@ -44,7 +44,7 @@ import { randomHex } from './sha256';
 import type { Link } from './host';
 import { CLOCK_FRAME_MS, RESTART_CAUSES, type Audit, type ClientMessage, type HostMessage, type SeatInfo } from './messages';
 import { isFrame, type Transport, type Unsubscribe } from './transport';
-import { clientClock, DRIFT_CAP_MS, DRIFT_RATE, foldClock, LATE_MS, LINK_PAUSE_MS, ORDER_SLACK_MS, PAUSE_GRACE_MS, RAN_GAP_MS, SILENT_ANSWER_MS, STEADY_SLACK_MS, WATCH_WINDOW_MS, type TableClientOptions } from './clientclock';
+import { clientClock, type ClockBase, DRIFT_CAP_MS, DRIFT_RATE, foldClock, LATE_MS, LINK_PAUSE_MS, ORDER_SLACK_MS, PAUSE_GRACE_MS, RAN_GAP_MS, SILENT_ANSWER_MS, STEADY_SLACK_MS, WATCH_WINDOW_MS, type TableClientOptions } from './clientclock';
 import { armedLate, clockTrack, firstSend, fixedPoint, heldLive, isBotSkill, judgeTableMove, lateAnchor, lateCountMs, lateRef, legalFor, sameActionSafe, seatRun, seenHere, tableRule, turnLateBy, unstamped, type LateScope, type MoveJudge } from './clientmoves';
 import {
   CHAINED_FIELDS,
@@ -124,6 +124,9 @@ export const AUDIT_CAVEATS = {
   passedChowLate: 'The table passed up a Chow this seat could make on a turn that reached this device late',
   passedKongLate: 'The table passed up a Kong this seat could make on a turn that reached this device late',
   restartClock: 'The server restarted during this match and then played for this seat before this device could check its clock again',
+  // The table's move for this seat is early only by what this device measured of the server's clock in
+  // another run of the app (`across`): its own clock may have been set while the app was closed.
+  appClock: "This app restarted during this hand, and the server's clock then no longer agreed with this device's as it had before, so this device cannot be sure the seat's time had run out when the table played for it",
   lateShown: "This seat's turn reached this device late, or after its connection had been down for much of it, so this device cannot vouch that it saw all of that turn",
   skillUnknown: 'This device restored the match from a save that did not keep how strong the table said its bots are, so the moves the table made for bots and for seats out of time were not checked',
   // Storage changed part of the saved record of the hand (a state whose check figure did not match when the
@@ -460,7 +463,7 @@ export class TableClient {
    */
   private era = 0;
   /** What the hands of this match already audited established about the host's clock in one era (see `offsetFloor`). */
-  private clockBase: { era: number; anchor: number | null; minOffset: number | null } = { era: 0, anchor: null, minOffset: null };
+  private clockBase: ClockBase = { era: 0, anchor: null, minOffset: null };
   /** The last time-stamped frame received: a state, or a hand's end. */
   private lastStamp: GapStart | null = null;
   /**
@@ -682,7 +685,8 @@ export class TableClient {
     const num = (x: unknown) => (typeof x === 'number' && Number.isFinite(x) ? x : null);
     const stamp = (x: unknown): GapStart | null => (isObject(x) && num(x.at) !== null && num(x.now) !== null && isInt(x.epoch) && isInt(x.era) ? { at: x.at as number, now: x.now as number, epoch: x.epoch, era: x.era } : null);
     this.era = k && isInt(k.era) ? k.era : 0;
-    this.clockBase = k && isObject(k.base) && isInt(k.base.era) ? { era: k.base.era, anchor: num(k.base.anchor), minOffset: num(k.base.minOffset) } : { era: this.era, anchor: null, minOffset: null };
+    // Kept with the run of the app it was measured in: it holds for the hand that spans this restart, and no further (`holdsIn`).
+    this.clockBase = k && isObject(k.base) && isInt(k.base.era) ? { era: k.base.era, ...(typeof k.base.run === 'string' ? { run: k.base.run } : {}), ...(isInt(k.base.seg) && k.base.seg >= 0 ? { seg: k.base.seg } : {}), anchor: num(k.base.anchor), minOffset: num(k.base.minOffset) } : { era: this.era, anchor: null, minOffset: null };
     this.lastStamp = k ? stamp(k.lastStamp) : null;
     this.ownAbsences = k && Array.isArray(k.ownAbsences) ? k.ownAbsences.filter(isInt) : [];
     this.gapVerdicts = k && Array.isArray(k.gapVerdicts) ? k.gapVerdicts.filter((g) => isObject(g) && num(g.at) !== null).map((g) => ({ at: g.at, ok: g.ok === true })) : [];
@@ -1634,9 +1638,9 @@ export class TableClient {
         this.handsEnded.add(h);
         if (this.openHand === h) this.openHand = null;
         this.atStart = false;
-        const end: SeenState = { tc: Number.POSITIVE_INFINITY, epoch: this.epoch, era: this.era, at: this.now(), now: typeof m.now === 'number' && Number.isFinite(m.now) ? m.now : undefined, owes: false, deadline: null, timeBank: 0, inBank: false, hash: '', ...(stampedEnd ? { atLo: stampedEnd.atLo, ref: stampedEnd.ref, wref: stampedEnd.wref, live: stampedEnd.live, seg: stampedEnd.seg } : {}) };
+        const end: SeenState = { tc: Number.POSITIVE_INFINITY, epoch: this.epoch, era: this.era, at: this.now(), now: typeof m.now === 'number' && Number.isFinite(m.now) ? m.now : undefined, run: this.runId, seg: this.seg(), owes: false, deadline: null, timeBank: 0, inBank: false, hash: '', ...(stampedEnd ? { atLo: stampedEnd.atLo, ref: stampedEnd.ref, wref: stampedEnd.wref, live: stampedEnd.live, seg: stampedEnd.seg } : {}) };
         const { check, replayed, anchors, passed, late } = this.runAudit(m.audit, m.view, m.result, end);
-        this.clockBase = foldClock(this.clockBase, this.era, this.plays.find((p) => p.hand === h) ?? null, end, anchors);
+        this.clockBase = foldClock(this.clockBase, this.era, { run: this.runId, seg: this.seg() }, this.plays.find((p) => p.hand === h) ?? null, end, anchors);
         // The strongest fixed point of this era, run of the app and run of this device's clock, for the
         // hands after this one: each worth no more than its round trip allows against the least arrival
         // offset known now (see `fixedPoint`), and kept with its round trip to be capped again later.
@@ -1945,7 +1949,7 @@ export class TableClient {
       }
     }
     let replayed: GameState | null = null;
-    const end: SeenState = { tc: Number.POSITIVE_INFINITY, epoch: this.epoch, era: this.era, at: this.now(), owes: false, deadline: null, timeBank: 0, inBank: false, hash: '' };
+    const end: SeenState = { tc: Number.POSITIVE_INFINITY, epoch: this.epoch, era: this.era, at: this.now(), run: this.runId, seg: this.seg(), owes: false, deadline: null, timeBank: 0, inBank: false, hash: '' };
     if (me !== null && Array.isArray(audit.log) && audit.log.some((e) => isObject(e) && e.seat === me)) this.missedMoves = true;
     try {
       replayed = this.replayChecked(base, audit.seed, rules, audit.log, h, end, failures, [], notes, unseen);
@@ -1957,6 +1961,7 @@ export class TableClient {
     if (isInt(audit.ceremonyAttempts) && audit.ceremonyAttempts > 1) caveats.push(AUDIT_CAVEATS.restarted);
     caveats.push(...tableMoveCaveats(notes));
     if (notes.lateShown) caveats.push(AUDIT_CAVEATS.lateShown);
+    if (notes.appClock) caveats.push(AUDIT_CAVEATS.appClock);
     if (notes.skillUnknown) caveats.push(AUDIT_CAVEATS.skillUnknown);
     if (notes.damaged) caveats.push(AUDIT_CAVEATS.damaged);
     const status: AuditStatus = failures.length > 0 ? 'failed' : 'partial';
@@ -2099,6 +2104,7 @@ export class TableClient {
     if (this.rewinds.some((x) => x.hand === h && x.undone)) caveats.push(AUDIT_CAVEATS.serverRestart);
     caveats.push(...tableMoveCaveats(notes));
     if (notes.restartClock) caveats.push(AUDIT_CAVEATS.restartClock);
+    if (notes.appClock) caveats.push(AUDIT_CAVEATS.appClock);
     if (notes.lateShown) caveats.push(AUDIT_CAVEATS.lateShown);
     if (notes.skillUnknown) caveats.push(AUDIT_CAVEATS.skillUnknown);
     if (notes.damaged) caveats.push(AUDIT_CAVEATS.damaged);
@@ -2351,6 +2357,7 @@ export class TableClient {
         if (claim) (notes.passedClaims ??= []).push({ turn: n, claim, ...(late ? { late } : {}) });
       }
       else if (verdict === 'unanchored' && notes) notes.restartClock = true;
+      else if (verdict === 'across' && notes) notes.appClock = true;
     }
     for (const tc of track?.bankTaken ?? []) {
       if (doubt) {
@@ -2455,6 +2462,8 @@ interface ReplayNotes {
   /** The table played for this seat on a turn shown too late for its stamp to be believed (`downLate`). */
   tableMovedLate?: boolean;
   restartClock?: boolean;
+  /** A move for this seat that only what was measured in another run of the app calls early (`across`). */
+  appClock?: boolean;
   lateShown?: boolean;
   skillUnknown?: boolean;
   /** A check of the table's moves for this seat could not be made, its record of the hand being damaged (`damaged`). */

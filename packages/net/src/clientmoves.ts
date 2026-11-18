@@ -6,7 +6,7 @@
  * as failures, is the client's (`TableClient.replayChecked`).
  */
 import { BOT_SKILLS, chooseAction, isLegal, legalActions, sameAction, type Action, type BotSkill, type GameState, type RuleSet } from '@mjm/engine';
-import { ARM_SLACK_MS, CLOCK_SLACK_MS, DRIFT_RATE, LATE_MS, offsetFloor, RTT_ALLOW_MS, type ClockBase } from './clientclock';
+import { ARM_SLACK_MS, CLOCK_SLACK_MS, DRIFT_RATE, holdsIn, LATE_MS, offsetFloor, RTT_ALLOW_MS, type ClockBase } from './clientclock';
 import { isObject, type CeremonyRecord, type ClockAnchor, type ClockTrack, type GapStart, type PlayRecord, type SeenState } from './clientrecords';
 
 /** What the table-move checks read of this client's clock record, and keep: `gapVerdicts` grows as stretches without a link are judged. */
@@ -207,8 +207,12 @@ export function unstamped(f: SeenState): boolean {
  * seat had is worked out from the rules and from what this client saw earlier in the hand
  * (`clockTrack`), never from the clock fields of the frame alone; how long it was given is read
  * from the host's time stamps, which are believed only as far as this device's own clock allows
- * (`offsetFloor`). `unanchored`: nothing was wrong that this device can see, but after a restart
- * of the host it has no fixed point yet to measure the stamps against.
+ * (`offsetFloor`), in the run of the app the frame after the move arrived in. `unanchored`: nothing
+ * was wrong that this device can see, but after a restart of the host it has no fixed point yet to
+ * measure the stamps against. `across`: nothing was wrong in that run of the app, but what was
+ * measured in another one (before an app restart, or after it for a move before it) calls the move
+ * early: the phone's clock may have been set while the app was closed, or the server's may have
+ * leapt, which this device cannot tell apart.
  *
  * Across a change of link, or with `gap` (from a frame before a state the audit could not believe
  * was timely), the move was made while this device had no timely view of the table. A seat that
@@ -220,7 +224,7 @@ export function unstamped(f: SeenState): boolean {
  * (`gaps` holds the stretches this replay has judged). Where this device left of its own accord, or
  * has no measure of the stretch, the move is noted and not judged.
  */
-function judgeFrom(j: MoveJudge, play: PlayRecord, n: number, rules: RuleSet, anchors: ClockAnchor[], track: ClockTrack, gaps: Set<number>, a: SeenState | null, b: SeenState, gap: boolean): 'ok' | 'early' | 'downEarly' | 'down' | 'unanchored' {
+function judgeFrom(j: MoveJudge, play: PlayRecord, n: number, rules: RuleSet, anchors: ClockAnchor[], track: ClockTrack, gaps: Set<number>, a: SeenState | null, b: SeenState, gap: boolean): 'ok' | 'early' | 'downEarly' | 'down' | 'unanchored' | 'across' {
   // What the frame itself says can only add time: a host that re-armed the clock (a rejoin) knows more than this client.
   const claimed = !a || a.deadline === null ? Number.NEGATIVE_INFINITY : a.inBank ? a.deadline : a.deadline + a.timeBank * 1000;
   if (a && a.epoch === b.epoch && !gap) {
@@ -229,13 +233,17 @@ function judgeFrom(j: MoveJudge, play: PlayRecord, n: number, rules: RuleSet, an
     const expiry = Math.max(track.bound.get(a) ?? Number.NEGATIVE_INFINITY, claimed);
     if (b.now < expiry - CLOCK_SLACK_MS) return 'early';
     const era = b.era ?? 0;
-    const floor = offsetFloor(j.clockBase, era, play, n, anchors);
+    const floor = offsetFloor(j.clockBase, era, play, n, anchors, b);
     if (floor === null || b.at - b.now < floor) return 'early';
+    // What was measured in another run of the app is not held against this one (the phone's clock may
+    // have been set while the app was closed), but neither is a move believed that only it calls early.
+    const across = offsetFloor(j.clockBase, era, play, n, anchors, null);
+    if (across !== null && b.at - b.now < across) return 'across';
     // A host that says it restarted is given a new clock era, and until this seat has moved or
     // revealed in it nothing ties its stamps to this device's clock but the 30 s for network
     // delay. That is too loose to say the seat's time had run out: the hand cannot be green.
     // (A fixed point made after this turn began does not help: the stamps may have leapt before it.)
-    const fixed = (j.clockBase.era === era && j.clockBase.anchor !== null) || anchors.some((k) => k.era === era && k.at <= a.at);
+    const fixed = (j.clockBase.era === era && holdsIn(j.clockBase, b) && j.clockBase.anchor !== null) || anchors.some((k) => k.era === era && holdsIn(k, b) && k.at <= a.at);
     return era > 0 && !fixed ? 'unanchored' : 'ok';
   }
   const from: GapStart | null = a ? (typeof a.now === 'number' ? { at: a.at, now: a.now, epoch: a.epoch, era: a.era ?? 0 } : null) : (play.before ?? null);
@@ -253,7 +261,7 @@ function judgeFrom(j: MoveJudge, play: PlayRecord, n: number, rules: RuleSet, an
   if (!own && from) {
     const turn = rules.turnSeconds * 1000;
     const expiry = !a ? from.now + turn + rules.timeBankSeconds * 1000 : a.owes ? Math.max(track.bound.get(a) ?? Number.NEGATIVE_INFINITY, claimed) : from.now + turn + (track.bank.get(a) ?? 0);
-    const floor = offsetFloor(j.clockBase, from.era, a ? play : null, a ? a.tc : -1, anchors);
+    const floor = offsetFloor(j.clockBase, from.era, a ? play : null, a ? a.tc : -1, anchors, b);
     if (Number.isFinite(expiry)) {
       // The moment `expiry` on the host's clock is no earlier than `expiry + floor` on this one.
       if (floor !== null && b.at < expiry + floor - CLOCK_SLACK_MS) verdict = 'downEarly';
@@ -295,7 +303,7 @@ function judgeFrom(j: MoveJudge, play: PlayRecord, n: number, rules: RuleSet, an
  *   or `down`, or `downEarly` when a whole clock cannot have run out since that frame.
  * Otherwise the move is judged by the clock (`judgeFrom`).
  */
-export function judgeTableMove(j: MoveJudge, play: PlayRecord, n: number, end: SeenState | null, rules: RuleSet, anchors: ClockAnchor[], track: ClockTrack, gaps: Set<number>, prevMove = -1, scope: LateScope | null = null): 'ok' | 'early' | 'downEarly' | 'down' | 'downLate' | 'unanchored' | 'held' | 'lateTurn' {
+export function judgeTableMove(j: MoveJudge, play: PlayRecord, n: number, end: SeenState | null, rules: RuleSet, anchors: ClockAnchor[], track: ClockTrack, gaps: Set<number>, prevMove = -1, scope: LateScope | null = null): 'ok' | 'early' | 'downEarly' | 'down' | 'downLate' | 'unanchored' | 'across' | 'held' | 'lateTurn' {
   let a: SeenState | null = null;
   let b: SeenState | null = null;
   for (const f of play.seen) {
@@ -403,7 +411,7 @@ export function clockTrack(clockBase: ClockBase, rec: CeremonyRecord | null, pla
         whole = play.before.now;
         if (play.before.era !== (f.era ?? 0)) bound = Number.NEGATIVE_INFINITY;
       }
-      const floor = last ? offsetFloor(clockBase, last.era, prev ? play : null, prev ? prev.tc : -1, anchors) : null;
+      const floor = last ? offsetFloor(clockBase, last.era, prev ? play : null, prev ? prev.tc : -1, anchors, f) : null;
       run = f.owes ? { start: f, known: deal && typeof f.now === 'number' } : null;
       bank = deal ? fullBank : f.owes ? null : stated(f);
       if (run?.known) bound = Math.max(bound, (f.now as number) + turn + fullBank);

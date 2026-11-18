@@ -86,11 +86,39 @@ export function steadyClock(wall: () => number = () => Date.now(), steady: () =>
   return () => w0 + (steady() - m0);
 }
 
-/** What this client knows of the host's clock in one clock era: the fixed points between the two clocks, and the least offset any frame showed. */
+/**
+ * What this client knows of the host's clock in one clock era, as measured in one run of the app and
+ * of this device's clock (`run`, `seg`; see `holdsIn`): the fixed points between the two clocks, and
+ * the least offset any frame showed.
+ */
 export interface ClockBase {
   era: number;
+  /** The run of the app it was measured in (absent in a record saved by an older build). */
+  run?: string;
+  /** The run of this device's clock it was measured in, or the latest of them. */
+  seg?: number;
   anchor: number | null;
   minOffset: number | null;
+}
+
+/** Where a reading of this device's clock was made: the run of the app (`TableClient.runId`) and the run of its clock (`clientClock`'s segment). */
+export interface ClockScope {
+  run?: string;
+  seg?: number;
+}
+
+/**
+ * Whether what was measured between the two clocks in scope `from` holds for a reading made in scope
+ * `at`. Only within one run of the app: a restart starts this device's clock afresh from its wall
+ * clock, which may have been set anywhere while the app was closed, so a fixed point from before it
+ * says nothing of the readings after it, nor these of those before. Within a run, from a run of this
+ * device's clock to the same or a later one: a later one starts where the wall clock ran ahead of the
+ * steady one (the phone slept, or its wall clock was set forward), which does not leave this device's
+ * clock behind where the earlier one put it against the host's. (Records saved by older builds keep no
+ * run: those readings are compared only with each other.)
+ */
+export function holdsIn(from: ClockScope, at: ClockScope): boolean {
+  return (from.run ?? null) === (at.run ?? null) && (from.seg ?? 0) <= (at.seg ?? 0);
 }
 
 export interface TableClientOptions {
@@ -153,34 +181,44 @@ export function clientClock(opts: TableClientOptions = {}): () => number {
 
 /**
  * Keep what an audited hand showed about the host's clock in era `era` for the hands after it (see
- * `offsetFloor`): the base to keep, a new one when the era moved on, else `clockBase` brought up to date.
+ * `offsetFloor`), as it holds in `scope`, the run of the app and of this device's clock now: the base
+ * to keep, a new one when the era moved on or the app restarted, else `clockBase` brought up to date.
  */
-export function foldClock(clockBase: ClockBase, era: number, play: PlayRecord | null, end: SeenState, anchors: ClockAnchor[]): ClockBase {
-  const base: ClockBase = clockBase.era !== era ? { era, anchor: null, minOffset: null } : clockBase;
-  for (const k of anchors) if (k.era === era) base.anchor = base.anchor === null ? k.at - k.now : Math.max(base.anchor, k.at - k.now);
+export function foldClock(clockBase: ClockBase, era: number, scope: ClockScope, play: PlayRecord | null, end: SeenState, anchors: ClockAnchor[]): ClockBase {
+  const base: ClockBase = clockBase.era !== era || !holdsIn(clockBase, scope) ? { era, anchor: null, minOffset: null } : clockBase;
+  base.run = scope.run;
+  base.seg = scope.seg;
+  for (const k of anchors) if (k.era === era && holdsIn(k, scope)) base.anchor = base.anchor === null ? k.at - k.now : Math.max(base.anchor, k.at - k.now);
   // (Not from a state restored damaged: its stamp may be anything, `cleanSeen`.)
   for (const f of [...(play?.seen ?? []), end]) {
-    if ((f.era ?? 0) === era && typeof f.now === 'number' && f.kept !== false) base.minOffset = base.minOffset === null ? f.at - f.now : Math.min(base.minOffset, f.at - f.now);
+    if ((f.era ?? 0) === era && typeof f.now === 'number' && f.kept !== false && holdsIn(f, scope)) base.minOffset = base.minOffset === null ? f.at - f.now : Math.min(base.minOffset, f.at - f.now);
   }
   return base;
 }
 
 /**
  * How far this device's clock is ahead of the host's in clock era `era`, at the least and less
- * the slack an honest table may need, or null when nothing is known. Two things bound it from
+ * the slack an honest table may need, for a reading of this device's clock made in scope `at`
+ * (the frame it is compared with), or null when nothing is known. Two things bound it from
  * below. A fixed point: the host cannot have played a move before this device sent it, so the
  * stamp on the frame that shows the move is no earlier than the sending. And every frame up to
  * turn `n`: none arrived before it was stamped, and a frame is not stamped far later, relative
  * to its arrival, than the frames before it. Both hold for the whole era, across links and
- * hands: a new socket does not give the host's clock a fresh allowance.
+ * hands, as long as the app runs (`holdsIn`): a new socket does not give the host's clock a
+ * fresh allowance, but a restart of the app, after which this device's clock may read anything,
+ * leaves it 30 s (`LATENCY_SLACK_MS`) until the next fixed point. With `at` null, what was measured
+ * in every run counts, as though this device's clock had not been set in between.
  */
-export function offsetFloor(clockBase: ClockBase, era: number, play: PlayRecord | null, n: number, anchors: ClockAnchor[]): number | null {
-  const base = clockBase.era === era ? clockBase : null;
+export function offsetFloor(clockBase: ClockBase, era: number, play: PlayRecord | null, n: number, anchors: ClockAnchor[], at: ClockScope | null): number | null {
+  // (`at` null: whatever scope each was measured in, as if this device's clock had never been set.)
+  const holds = (x: ClockScope) => at === null || holdsIn(x, at);
+  const base = clockBase.era === era && holds(clockBase) ? clockBase : null;
   let anchor = base?.anchor ?? null;
-  for (const k of anchors) if (k.era === era) anchor = anchor === null ? k.at - k.now : Math.max(anchor, k.at - k.now);
+  for (const k of anchors) if (k.era === era && holds(k)) anchor = anchor === null ? k.at - k.now : Math.max(anchor, k.at - k.now);
   let min = base?.minOffset ?? null;
+  // (A state restored damaged counts too: what storage changed can lower the least offset, which only loosens the floor.)
   for (const f of play?.seen ?? []) {
-    if ((f.era ?? 0) === era && f.tc <= n && typeof f.now === 'number' && f.kept !== false) min = min === null ? f.at - f.now : Math.min(min, f.at - f.now);
+    if ((f.era ?? 0) === era && f.tc <= n && typeof f.now === 'number' && holds(f)) min = min === null ? f.at - f.now : Math.min(min, f.at - f.now);
   }
   const viaAnchor = anchor === null ? null : anchor - CLOCK_SKEW_MS;
   const viaFrames = min === null ? null : min - LATENCY_SLACK_MS;

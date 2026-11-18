@@ -1210,6 +1210,108 @@ describe('device clock: frames that waited in the device', () => {
     }));
 });
 
+describe('device clock: the phone’s wall clock set while the app was closed', () => {
+  /**
+   * An honest table over two hands. After the seat's second discard the app restarts, and while it was
+   * closed the phone's wall clock was set `step` ms (back or forward): the restored app's clock reads that
+   * much off from the clock the record was kept by. The table times the seat out of one discard before the
+   * restart (`before`) or after it, and of one in the second hand; the seat plays every other turn.
+   */
+  function stepWhileClosed(code: string, step: number, before: boolean) {
+    let restarted = false;
+    const out: number[] = [];
+    let owed = 0;
+    const w = wire({
+      code,
+      rules: withRules({ handsPerMatch: 2, turnSeconds: 15, timeBankSeconds: 30 }),
+      devSkew: () => (restarted ? step : 0),
+      think: (_k, tc) => {
+        // The first hand: its second owed turn (before the restart) or the first one after it; the second hand: its first.
+        const h = w.host.game?.handNumber ?? 0;
+        if (h === 0 && !out.length && (before ? ++owed === 2 : restarted)) {
+          out.push(tc);
+          return Infinity;
+        }
+        if (h === 1 && out.length === 1) {
+          out.push(tc);
+          return Infinity;
+        }
+        return 600;
+      },
+    });
+    w.dealt();
+    if (before) need(w.until(() => out.length === 1 && w.tableMoves().includes(out[0])));
+    need(w.toDiscard(2));
+    restarted = true;
+    w.restart();
+    w.finish();
+    need(out.length === 1 && w.judged().includes(out[0]));
+    const first = w.verdict();
+    for (let e = 0; e < 600_000 && w.host.phase === 'hand_over'; e += 500) w.step();
+    w.finish();
+    need(w.c.state.lastAudit?.handNumber === 1 && out.length === 2 && w.judged().includes(out[1]));
+    return { first, second: w.verdict() };
+  }
+
+  it.each([-10_000, -60_000])('set back %i ms, the table timing the seat out after the restart and in the next hand: the timeout after the restart is early only by what the run before it measured, so that hand is amber with the reason, and the next one, measured by this run alone, green; never red', (step) => {
+    const { first, second } = scenario((i) => stepWhileClosed(`SW${step}${i}`, step, false));
+    expect(first).toEqual({ status: 'partial', failures: [], caveats: ['appClock'] });
+    expect(second).toEqual({ status: 'ok', failures: [], caveats: [] });
+  });
+
+  it.each([10_000, 60_000])('set forward %i ms, the table timing the seat out after the restart and in the next hand: green', (step) => {
+    const { first, second } = scenario((i) => stepWhileClosed(`SW${step}${i}`, step, false));
+    expect(first).toEqual({ status: 'ok', failures: [], caveats: [] });
+    expect(second).toEqual({ status: 'ok', failures: [], caveats: [] });
+  });
+
+  it.each([10_000, 60_000])('set forward %i ms, the table timing the seat out before the restart: the fixed points made after it call that timeout early, which they cannot tell (amber with the reason), never red', (step) => {
+    const { first, second } = scenario((i) => stepWhileClosed(`SB${step}${i}`, step, true));
+    expect(first).toEqual({ status: 'partial', failures: [], caveats: ['appClock'] });
+    expect(second).toEqual({ status: 'ok', failures: [], caveats: [] });
+  });
+
+  /**
+   * A server whose clock leaps 20 s forward 2 s into the seat's first turn after its fourth discard, which
+   * the seat leaves to run out, so the table times it out 20 s early by real time while its stamps hold
+   * together; it keeps the lead from then on. Between the two the app restarts (`restart`), or not: the
+   * seat makes no move in the new run before that turn.
+   */
+  function leap(code: string, restart: boolean) {
+    let armed = false;
+    let target = -1;
+    let shownAt: number | null = null;
+    let lead = 0;
+    const w = wire({
+      code,
+      // The bots take a second over each move, so there are moments when the seat owes nothing.
+      botDelayMs: 1_000,
+      hostSkew: () => lead,
+      think: (_k, tc) => {
+        if (armed && target < 0) target = tc;
+        return tc === target ? Infinity : 600;
+      },
+      onTick: (w) => {
+        if (target >= 0 && shownAt === null && w.shown.has(target)) shownAt = w.shown.get(target) as number;
+        if (shownAt !== null && lead === 0 && w.clock.now >= shownAt + 2_000) lead = 20_000;
+      },
+    });
+    need(w.toDiscard(4));
+    // The seat makes that discard first, and owes nothing when the app restarts.
+    need(w.until(() => !w.owes() && !w.current(), 20_000));
+    if (restart) w.restart();
+    armed = true;
+    w.finish();
+    need(lead > 0 && w.judged().includes(target));
+    return w;
+  }
+
+  it('a server whose clock leaps 20 s forward on the seat’s first turn after an app restart, before any fixed point of the new run: red without the restart, and amber with the reason after it, never green', () => {
+    expect(scenario((i) => leap(`SL${i}`, false)).verdict()).toMatchObject({ status: 'failed', failures: ['playedEarly'] });
+    expect(scenario((i) => leap(`SL${i}`, true)).verdict()).toEqual({ status: 'partial', failures: [], caveats: ['appClock'] });
+  });
+});
+
 describe('match record: what a saved record keeps of each frame', () => {
   const NEW_FIELDS = ['atLo', 'ref', 'wref', 'live', 'working', 'seg', 'run', 'onLink'] as const;
 

@@ -437,7 +437,8 @@ export interface SerializedClient {
   /** What this client knows about the host's clock and its own absences (absent in records saved by older builds). */
   clock?: {
     era: number;
-    base: { era: number; anchor: number | null; minOffset: number | null };
+    /** (`run` and `seg`: where it was measured, absent in records saved by older builds; see `holdsIn`.) */
+    base: { era: number; run?: string; seg?: number; anchor: number | null; minOffset: number | null };
     lastStamp: GapStart | null;
     ownAbsences: number[];
     gapVerdicts: Array<{ at: number; ok: boolean }>;
