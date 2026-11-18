@@ -1281,7 +1281,7 @@ describe('match record: what a saved record keeps of each frame', () => {
    * restored from the saved record, which `edit` may damage, joins at once on a new link. The table times the seat out of that turn, or (`moves`) the
    * seat makes it 6 s after it was shown.
    */
-  function restartOnLiveTurn(code: string, moves: boolean, edit?: (play: PlayRecord, r0: SeenState) => void) {
+  function restartOnLiveTurn(code: string, moves: boolean, edit?: (play: PlayRecord, r0: SeenState) => void, twice = false) {
     let armed = false;
     let turn = -1;
     const w = wire({
@@ -1304,6 +1304,12 @@ describe('match record: what a saved record keeps of each frame', () => {
       edit?.(play, r0 as SeenState);
       return s;
     });
+    if (twice) {
+      // The restored client saves its record, and the app restarts once more on the same turn.
+      for (let t = 0; t < 4; t++) w.step();
+      need(w.host.game!.turnCounter === turn);
+      w.restart();
+    }
     w.finish();
     need(w.judged().includes(turn) !== moves);
     return w;
@@ -1362,17 +1368,26 @@ describe('match record: what a saved record keeps of each frame', () => {
     expect(w.verdict().caveats).toContain('lateShown');
   });
 
+  const moveDeadline = (by: number) => (play: PlayRecord, shown: SeenState) => {
+    let k = play.seen.indexOf(shown);
+    while (k > 0 && play.seen[k - 1].owes) k--;
+    const r0 = play.seen[k];
+    need(r0.live === true && typeof r0.deadline === 'number');
+    r0.deadline = (r0.deadline as number) + by;
+  };
+
   it('the same with its deadline moved 5 s earlier: the state seems not to give the whole turn clock, which a restored frame is not failed for, so the turn counts as shown late, amber, never red, whether the table times the seat out or the seat moves', () => {
     for (const moves of [false, true]) {
-      const w = scenario((i) =>
-        restartOnLiveTurn(`MK${moves ? 'P' : 'D'}${i}`, moves, (play, shown) => {
-          let k = play.seen.indexOf(shown);
-          while (k > 0 && play.seen[k - 1].owes) k--;
-          const r0 = play.seen[k];
-          need(r0.live === true && typeof r0.deadline === 'number');
-          r0.deadline = (r0.deadline as number) - 5_000;
-        }),
-      );
+      const w = scenario((i) => restartOnLiveTurn(`MK${moves ? 'P' : 'D'}${i}`, moves, moveDeadline(-5_000)));
+      expect(w.verdict().failures).toEqual([]);
+      expect(w.verdict().status).toBe('partial');
+      expect(w.verdict().caveats).toContain('lateShown');
+    }
+  });
+
+  it('the same, and the app restarts once more on that turn: the restored client saves the damaged state without a check figure, so it is read back as damaged again, amber, never red', () => {
+    for (const moves of [false, true]) {
+      const w = scenario((i) => restartOnLiveTurn(`ML${moves ? 'P' : 'D'}${i}`, moves, moveDeadline(-5_000), true));
       expect(w.verdict().failures).toEqual([]);
       expect(w.verdict().status).toBe('partial');
       expect(w.verdict().caveats).toContain('lateShown');

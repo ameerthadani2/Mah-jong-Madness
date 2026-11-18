@@ -199,7 +199,9 @@ export interface SeenState {
   hash: string;
   /**
    * Restored from a saved record whose check figure for it still matched (`seenSum`): its figures are
-   * the ones this device read, so it is judged as the run that saw it would judge it. Never saved.
+   * the ones this device read, so it is judged as the run that saw it would judge it. False for a frame
+   * restored without one (damaged, or saved before frames carried one); absent for a frame this run of
+   * the app saw. Never saved.
    */
   kept?: boolean;
 }
@@ -269,8 +271,10 @@ const finiteTime = (x: unknown): x is number => typeof x === 'number' && Number.
  * offset), `live` only on a working link, booleans and a run of the clock that are what they say; and
  * the frame's stamp and deadline are readings a clock can make. Otherwise all of them are dropped, so
  * the frame reads like one from a record saved before they were kept, which the rules that use them do
- * not ask; and a stamp no clock can make is dropped with them. Such a frame is never failed for having
- * shown the seat its turn late on a link that stayed open (`seenHere`): it makes its hand amber, not red.
+ * not ask; and a stamp no clock can make is dropped with them. Such a frame is marked `kept: false`, and
+ * saved again without a figure (`savedSeen`), so it never comes to pass for one read intact; it is never
+ * failed for having shown the seat its turn late on a link that stayed open (`seenHere`): it makes its
+ * hand amber, not red.
  */
 export function cleanSeen(f: SeenState): SeenState {
   const { atLo, ref, wref, live, working, seg, run, onLink, sum, kept: _kept, ...old } = f as SeenState & { sum?: unknown };
@@ -307,12 +311,13 @@ export function cleanSeen(f: SeenState): SeenState {
         (!live || working) &&
         isInt(seg) &&
         seg >= 0));
-  if (!ok) return old;
-  if (sum === undefined && f.kept === undefined) return f;
+  // Marked as not kept, so that no figure is saved for it again (`savedSeen`): a figure worked out over
+  // what storage left would vouch for it after the next restart.
+  if (!ok) return { ...old, kept: false };
   const { sum: _s, kept: _k, ...clean } = f as SeenState & { sum?: unknown };
   void _s;
   void _k;
-  return clean;
+  return { ...clean, kept: false };
 }
 
 /**
@@ -343,11 +348,14 @@ export function finiteFigure(x: number): number | null {
   return Number.isNaN(x) ? null : Math.min(Number.MAX_VALUE, Math.max(-Number.MAX_VALUE, x));
 }
 
-/** A frame as it is saved: with its check figure (`seenSum`), and without the mark of a restored one. */
-export function savedSeen(f: SeenState): SeenState & { sum: string } {
-  const { kept: _k, ...rest } = f;
-  void _k;
-  return { ...rest, sum: seenSum(f) };
+/**
+ * A frame as it is saved: with its check figure (`seenSum`), and without the mark of a restored one. A
+ * frame restored without a matching figure (`kept: false`) is saved without one, so it is read back as
+ * not kept however often the app restarts.
+ */
+export function savedSeen(f: SeenState): SeenState & { sum?: string } {
+  const { kept, ...rest } = f;
+  return kept === false ? rest : { ...rest, sum: seenSum(f) };
 }
 
 /** The run of the app and of this device's clock a saved time was read in, kept only when both are what this build writes (else neither: it is then compared with nothing). */

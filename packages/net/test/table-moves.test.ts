@@ -13,7 +13,7 @@ import { chooseAction, kindOf, legalActions, withRules, type Action, type BotSki
 import { AUDIT_CAVEATS, AUDIT_FAILURES, failureKey, LoopbackHub, TableClient, TableHost, transportLink, type HostMessage, type Link } from '../src/index';
 import { armedLate, clockTrack, firstSend, fixedPoint, judgeTableMove, lateAnchor, lateCountMs, lateRef, lateWatch, seatRun, seenHere, sinceFixed, turnLateBy, unstamped } from '../src/clientmoves';
 import { DRIFT_RATE, LATE_MS, RTT_ALLOW_MS } from '../src/clientclock';
-import { cleanCeremony, cleanPlay, cleanSeen, finiteFigure, isLateTurnRecord, savedSeen, withLateTurns, type PlayRecord, type SeenState } from '../src/clientrecords';
+import { cleanCeremony, cleanPlay, cleanSeen, finiteFigure, isLateTurnRecord, savedSeen, seenSum, withLateTurns, type PlayRecord, type SeenState } from '../src/clientrecords';
 import { Missed, scenario, seededDeals } from './support';
 
 seededDeals(20261116);
@@ -458,14 +458,14 @@ describe('a frame from a saved record keeps the fields that judge how late it ca
   const MEASURED = ['atLo', 'ref', 'wref', 'live', 'working', 'seg', 'run', 'onLink'];
   const dropped = (f: SeenState) => MEASURED.every((k) => !(k in f));
 
-  it('keeps a frame as this build writes it, a stampless state with its link, and a frame from an older record, unchanged', () => {
-    expect(cleanSeen(live)).toBe(live);
+  it('keeps a frame as this build writes it, a stampless state with its link, and a frame from an older record, unchanged but marked as not kept: no check figure vouches for them', () => {
+    expect(cleanSeen(live)).toEqual({ ...live, kept: false });
     const bare = seen(41, true, { now: undefined, run: 'r', onLink: true });
-    expect(cleanSeen(bare)).toBe(bare);
+    expect(cleanSeen(bare)).toEqual({ ...bare, kept: false });
     const first = seen(0, true, { atLo: 1_000, ref: null, wref: null, live: false, working: true, seg: 0, run: 'r', onLink: false });
-    expect(cleanSeen(first)).toBe(first);
+    expect(cleanSeen(first)).toEqual({ ...first, kept: false });
     const older = seen(42, true);
-    expect(cleanSeen(older)).toBe(older);
+    expect(cleanSeen(older)).toEqual({ ...older, kept: false });
   });
 
   it('drops them all when one is junk, out of range or breaks what the others say, and keeps the rest of the frame', () => {
@@ -518,16 +518,27 @@ describe('a frame from a saved record keeps the fields that judge how late it ca
     expect(savedSeen(kept)).not.toHaveProperty('kept');
     expect(back(kept)).toEqual({ ...live, kept: true });
     const damaged = { ...savedSeen(live), deadline: 214_000 };
-    expect(cleanSeen(damaged)).not.toHaveProperty('kept');
+    expect(cleanSeen(damaged).kept).toBe(false);
     expect(cleanSeen(damaged)).not.toHaveProperty('sum');
     expect(seenHere(cleanSeen(damaged), 'another run')).toBe(false);
     const other = { ...savedSeen(live), sum: savedSeen({ ...live, tc: 41 }).sum };
-    expect(cleanSeen(other)).not.toHaveProperty('kept');
-    expect(cleanSeen(live)).not.toHaveProperty('kept');
+    expect(cleanSeen(other).kept).toBe(false);
+    expect(cleanSeen(live).kept).toBe(false);
     // A mark saved with the frame (only damage can put it there) is not believed either.
-    expect(cleanSeen({ ...live, kept: true })).not.toHaveProperty('kept');
+    expect(cleanSeen({ ...live, kept: true }).kept).toBe(false);
     // A frame whose measured fields do not hold together loses them, its figure and any mark with them.
-    expect(cleanSeen({ ...savedSeen(live), wref: 1 })).not.toHaveProperty('kept');
+    expect(cleanSeen({ ...savedSeen(live), wref: 1 }).kept).toBe(false);
+  });
+
+  it('saves a frame restored without a matching figure without one, so a second restart reads it as damaged again, never as kept', () => {
+    const damaged = cleanSeen({ ...savedSeen(live), deadline: 214_000 });
+    expect(savedSeen(damaged)).not.toHaveProperty('sum');
+    expect(savedSeen(damaged)).not.toHaveProperty('kept');
+    const again = cleanSeen(JSON.parse(JSON.stringify(savedSeen(damaged))) as SeenState);
+    expect(again.kept).toBe(false);
+    expect(seenHere(again, 'a third run')).toBe(false);
+    // A frame this run saw is saved with its figure.
+    expect(savedSeen(live).sum).toBe(seenSum(live));
   });
 
   it('keeps a frame whose check figure still matches whole, with figures no honest host sends: a deadline two days before its stamp, a stamp 1.1e13 ms ahead of this device', () => {
@@ -550,7 +561,7 @@ describe('a frame from a saved record keeps the fields that judge how late it ca
 
   it('keeps the run of each move sent and each reveal only when it is what this build writes, and refuses a record that is not one', () => {
     const play = cleanPlay({ hand: 0, seen: [live], sent: [{ tc: 1, action: { type: 'pass' }, epoch: 0, at: 5, run: 'r', seg: 0 }, { tc: 2, action: { type: 'pass' }, epoch: 0, at: 6, run: 7, seg: 0 }], ledgerFrom: 0 });
-    expect(play.seen[0]).toBe(live);
+    expect(play.seen[0]).toEqual({ ...live, kept: false });
     expect(play.sent[0]).toMatchObject({ run: 'r', seg: 0 });
     expect(play.sent[1]).not.toHaveProperty('run');
     expect(play.sent[1]).not.toHaveProperty('seg');
