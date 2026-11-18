@@ -10,8 +10,9 @@ import { useSyncExternalStore } from 'react';
 import { I18n, type TranslateOptions } from 'i18n-js';
 import { getLocales } from 'expo-localization';
 import { engineReasonTranslations } from '@mjm/engine';
+import { APP_NAME } from '../config';
 import { en, zhTW } from './locales';
-import { applyDocumentLang, type Locale, type LocalePreference, resolveLocale } from './resolve';
+import { applyDocumentLocale, type Locale, type LocalePreference, resolveLocale } from './resolve';
 
 export { type Locale, type LocalePreference, SUPPORTED_LOCALES, LOCALE_NAMES, resolveLocale, isLocale } from './resolve';
 
@@ -42,16 +43,21 @@ export function localePreference(): LocalePreference {
   return preference;
 }
 
+/** On the web, the page's lang and title follow the language the UI is shown in (./resolve.ts). */
+function applyPageLocale(): void {
+  applyDocumentLocale(i18n.locale as Locale, i18n.t('common.appName', { name: APP_NAME }));
+}
+
 /** Called once at boot with the saved setting, and again whenever the player changes it. */
 export function setLocalePreference(p: LocalePreference): void {
   preference = p;
   i18n.locale = currentLocale();
-  applyDocumentLang(i18n.locale as Locale);
+  applyPageLocale();
   for (const l of listeners) l();
 }
 
 i18n.locale = currentLocale();
-applyDocumentLang(i18n.locale as Locale);
+applyPageLocale();
 
 export function t(key: string, options?: TranslateOptions): string {
   return i18n.t(key, options);

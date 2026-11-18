@@ -18,7 +18,8 @@
  * the exit icon or on the result sheet's "Leave table" leaves the table, Start match replaces a saved table
  * without asking, one tap on the Resume card's "Abandon table" gives the saved table up, the English claim buttons carry no gloss, an Extra-large hand scrolls or runs off screen, the
  * Shop does not open, a Home card button clips its label in English or in Traditional Chinese (each viewport also
- * opens Home in zh-TW and writes <size>-home-zh.png), Home's cards run past the bottom edge at 844x390), or the
+ * opens Home in zh-TW and writes <size>-home-zh.png), Home's cards run past the bottom edge at 844x390, the page
+ * title is not the app's name in the page's language (Mahjong Mania; 麻將狂熱 in zh-TW, at Home and at the table)), or the
  * leaderboard screen (opened from Learn without a server, in English, zh-TW and Extra-large text: <size>-leaderboards.png,
  * -leaderboards-zh.png, -leaderboards-xl.png) does not show its offline state, clips text or has a choice under 44 px,
  * a table HUD icon takes a press smaller than 44 x 44 px, the Shop's Looks tab cuts a description (<size>-shop-looks.png),
@@ -227,6 +228,9 @@ async function runTableZh(browser, port, [w, h], xl) {
   const where = `Table (zh-TW${xl ? ', Extra-large text' : ''})`;
   const fails = [];
   if (!(await page.evaluate(() => [...document.querySelectorAll('[data-testid="seat-name"]')].some((e) => /電腦/.test(e.textContent))))) fails.push(`${where}: no bot seat is named in Chinese`);
+  // Going from Home to the table keeps the page's Chinese title (nothing else sets it).
+  const title = await page.title();
+  if (title !== '麻將狂熱') fails.push(`${where}: the page title is "${title}", not 麻將狂熱`);
   const fit = await tableFit(page);
   fails.push(...fit.bad.map((f) => `${where}: ${f}`));
   // Play on for several of my discards (my pond grows a row, the coach's room shrinks): at each, before and after
@@ -272,6 +276,10 @@ async function runHomeZh(browser, port, [w, h]) {
   const fails = [];
   // The page must really be in Chinese, or the check would pass on English labels.
   if (!(await page.evaluate(() => /[\u4e00-\u9fff]/.test(document.querySelector('[data-testid="open-clubs"]')?.textContent || '')))) fails.push('Home (zh-TW): the page is not in Chinese');
+  // The browser's tab names the app in the reader's language, and the page says which language it is in.
+  const head = await page.evaluate(() => ({ title: document.title, lang: document.documentElement.lang }));
+  if (head.title !== '麻將狂熱') fails.push(`Home (zh-TW): the page title is "${head.title}", not 麻將狂熱`);
+  if (head.lang !== 'zh-Hant-TW') fails.push(`Home (zh-TW): the page's lang is "${head.lang}", not zh-Hant-TW`);
   fails.push(...(await homeFit(page)).map((f) => `Home (zh-TW): ${f}`));
   // The wordmark reads the Chinese app name (common.appName), whole and on screen.
   const mark = await page.evaluate(() => {
@@ -303,6 +311,7 @@ async function run(browser, port, [w, h]) {
   await page.waitForTimeout(800);
   await shot('home');
   fails.push(...(await homeFit(page)).map((f) => `Home (en): ${f}`));
+  if ((await page.title()) !== 'Mahjong Mania') fails.push(`Home (en): the page title is "${await page.title()}", not Mahjong Mania`);
 
   await tapSel(page, '[data-testid="start-match"]', 300);
   await page.waitForSelector('[data-testid^="tile-"]', { timeout: 15000 });

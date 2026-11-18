@@ -46,7 +46,7 @@ Every filled shape has the same build: a lighter top tone, the fill, a darker ha
 ## Type
 
 * **Lilita One**: display text and numerals, white with an ink stroke (`StrokeText` layers offset copies behind the fill).
-* **Luckiest Guy**: the logo wordmark only. On a Traditional Chinese device the wordmark reads the locale's app name (`common.appName`, 麻將狂熱) in the display face, with the English name small and gold beneath.
+* **Luckiest Guy**: the logo wordmark only. On a Traditional Chinese device the wordmark reads the locale's app name (`common.appName`, 麻將狂熱) in the display face, with the English name small and gold beneath. On the web the page's title is that name too (麻將狂熱 in Traditional Chinese, Mahjong Mania in English), set with the page's `lang` whenever the language is chosen or changed (`i18n/resolve.ts` `applyDocumentLocale`); the app has no router that would set a title of its own.
 * **Fredoka** 500–700: UI labels and buttons.
 * **Nunito** 600–800: body text.
 * **Chinese**: never given a font family, so iOS uses PingFang TC and Android uses Noto Sans CJK at a heavy weight. CJK fonts are not bundled (they would add megabytes).

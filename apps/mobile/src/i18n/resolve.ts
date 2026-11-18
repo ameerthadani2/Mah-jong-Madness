@@ -31,12 +31,16 @@ export function htmlLang(locale: Locale): string {
 }
 
 /**
- * On the web, set the page's lang attribute to the language the UI is shown in (the exported page
- * declares English). Does nothing where there is no document, as on iOS and Android.
+ * On the web, make the page say which language the UI is shown in: its lang attribute (the exported page declares
+ * English), so a screen reader picks the right voice, and its title, the app's name in that language (`title`:
+ * 麻將狂熱 in Traditional Chinese), which the browser's tab, history and bookmarks show. Nothing else sets the title
+ * (the app has no router that would). Does nothing where there is no document, as on iOS and Android.
  */
-export function applyDocumentLang(locale: Locale, root: unknown = globalThis): void {
-  const doc = (root as { document?: { documentElement?: { lang?: string } } }).document;
-  if (doc?.documentElement) doc.documentElement.lang = htmlLang(locale);
+export function applyDocumentLocale(locale: Locale, title: string, root: unknown = globalThis): void {
+  const doc = (root as { document?: { documentElement?: { lang?: string }; title?: string } }).document;
+  if (!doc) return;
+  if (doc.documentElement) doc.documentElement.lang = htmlLang(locale);
+  if (title) doc.title = title;
 }
 
 export function isLocale(v: unknown): v is Locale {
