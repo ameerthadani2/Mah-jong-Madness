@@ -3,7 +3,7 @@ import { StyleSheet, View } from 'react-native';
 import type { ClaimQuestion } from '@mjm/engine';
 import { colors } from '../../theme';
 import { useT } from '../../i18n';
-import { explanationFor, claimButtons, claimOutcomeKey, SEAT_KEYS, seatRelation, tileName, type ClaimButton } from '../../logic/puzzle';
+import { answerExplanationFor, explanationFor, claimButtons, claimOutcomeKey, SEAT_KEYS, seatRelation, tileName, type ClaimButton } from '../../logic/puzzle';
 import { Tile } from '../Tile';
 import { Button, P, Pill, Row } from '../Ui';
 import { Icon } from '../Icons';
@@ -93,10 +93,10 @@ export function ClaimPuzzleView({ question, judge, onResult, onNext, nextLabel, 
       </View>
       <Checking show={checking} />
       {revealed && best && answered !== null && (
-        <Answer spoken={[t(answered ? 'puzzles.claim.right' : 'puzzles.claim.wrong'), ...(answered ? [] : [t('puzzles.claim.answer', { label: t(best.label.key, best.label.params) })]), explanationFor(revealed, locale)].join(' ')}>
+        <Answer spoken={[t(answered ? 'puzzles.claim.right' : 'puzzles.claim.wrong'), ...(answered ? [] : [t('puzzles.claim.answer', { label: t(best.label.key, best.label.params) })]), explanationFor(answerExplanationFor(revealed, picked), locale)].join(' ')}>
           <Verdict good={answered} goodKey="puzzles.claim.right" badKey="puzzles.claim.wrong" />
           {!answered && <P>{t('puzzles.claim.answer', { label: t(best.label.key, best.label.params) })}</P>}
-          <Explanation puzzle={revealed} />
+          <Explanation puzzle={answerExplanationFor(revealed, picked)} />
           <NextButton onNext={onNext} autoAdvance={autoAdvance} label={nextLabel} />
         </Answer>
       )}

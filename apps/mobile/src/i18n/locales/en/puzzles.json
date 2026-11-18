@@ -93,7 +93,9 @@
     "defenceMiddle": "The fewest hands wait on it",
     "valueSpeed": "Speed beats size here",
     "valueBoth": "Faster and at least as big",
-    "valueMoreTai": "Worth more 台 a win"
+    "valueMoreTai": "Worth more 台 a win",
+    "valueNearBest": "Nearly as good as the best",
+    "defenceMiddleNear": "Nearly as few hands wait on it"
   },
   "defence": {
     "intro": "Someone looks close to winning. Keep your shape, but which discard is safest?",

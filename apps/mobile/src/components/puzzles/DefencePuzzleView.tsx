@@ -3,7 +3,7 @@ import { StyleSheet, View } from 'react-native';
 import type { DefenceQuestion } from '@mjm/engine';
 import { colors } from '../../theme';
 import { useT } from '../../i18n';
-import { explanationFor, defenceSeats, defenceVerdicts, percent, SEAT_KEYS, threatKey, tileName } from '../../logic/puzzle';
+import { answerExplanationFor, explanationFor, defenceSeats, defenceVerdicts, percent, SEAT_KEYS, threatKey, tileName } from '../../logic/puzzle';
 import { Tile } from '../Tile';
 import { P, Pill, Row } from '../Ui';
 import { Answer, Checking, Explanation, KindMeld, KindRow, Label, NextButton, partStyles, useAnswer, Verdict, type ThemeViewProps } from './PuzzleParts';
@@ -65,10 +65,10 @@ export function DefencePuzzleView({ question, judge, onResult, onNext, nextLabel
       </View>
       <Checking show={checking} />
       {revealed && answered !== null && (
-        <Answer spoken={[t(answered ? 'puzzles.defence.safe' : 'puzzles.defence.unsafe'), ...(answered ? [] : [t('puzzles.defence.answer', { tile: tileName(revealed.answer, locale) })]), explanationFor(revealed, locale)].join(' ')}>
+        <Answer spoken={[t(answered ? 'puzzles.defence.safe' : 'puzzles.defence.unsafe'), ...(answered ? [] : [t('puzzles.defence.answer', { tile: tileName(revealed.answer, locale) })]), explanationFor(answerExplanationFor(revealed, picked === null ? null : question.hand[picked]), locale)].join(' ')}>
           <Verdict good={answered} goodKey="puzzles.defence.safe" badKey="puzzles.defence.unsafe" />
           {!answered && <P>{t('puzzles.defence.answer', { tile: tileName(revealed.answer, locale) })}</P>}
-          <Explanation puzzle={revealed} />
+          <Explanation puzzle={answerExplanationFor(revealed, picked === null ? null : question.hand[picked])} />
           <Label>{t('puzzles.defence.verdicts')}</Label>
           <View style={{ gap: 4 }} testID="defence-verdicts">
             {verdicts.map((v) => (

@@ -4,6 +4,7 @@
  * (plus parameters) or data, never English text, so components only call t().
  */
 import {
+  answerExplanation,
   dailyPuzzleDifficulty,
   judgePuzzleAnswer,
   kindInfo,
@@ -23,6 +24,7 @@ import {
   puzzleQuestion,
   type TaiItem,
   type ValuePuzzle,
+  type WaitsPuzzle,
 } from '@mjm/engine';
 
 /** A translation key and its parameters. */
@@ -154,6 +156,23 @@ export function explanationFor(p: { explanation: string; explanationZh: string }
   return locale === 'zh-TW' ? p.explanationZh : p.explanation;
 }
 
+/** A puzzle's reason and explanation in both languages. */
+export interface Explained {
+  reasonKey: string;
+  explanation: string;
+  explanationZh: string;
+}
+
+/**
+ * The explanation to show once the player has answered `answer` (null: not answered). A puzzle accepts
+ * every answer about as good as the best, and its own explanation is written for one of them; a right
+ * answer other than that one gets the engine's explanation of the player's own choice (`answerExplanation`),
+ * which is true of it and names the puzzle's answer too. Otherwise the puzzle's own explanation.
+ */
+export function answerExplanationFor(p: Exclude<AnyPuzzle, WaitsPuzzle>, answer: PuzzleAnswer | null): Explained {
+  return (answer === null ? null : answerExplanation(p, wireAnswer(answer))) ?? p;
+}
+
 /** A short headline for each engine reason key (the explanation itself comes from the engine). */
 const REASON_KEYS: Record<string, string> = {
   'puzzle.defence.theirDiscard': 'puzzles.reason.defenceTheirDiscard',
@@ -175,6 +194,8 @@ const REASON_KEYS: Record<string, string> = {
   'puzzle.value.speed': 'puzzles.reason.valueSpeed',
   'puzzle.value.both': 'puzzles.reason.valueBoth',
   'puzzle.value.moreTai': 'puzzles.reason.valueMoreTai',
+  'puzzle.value.nearBest': 'puzzles.reason.valueNearBest',
+  'puzzle.defence.middleNear': 'puzzles.reason.defenceMiddleNear',
 };
 
 /** The headline key for an engine reason key, or null for one the app does not know yet (then only the explanation shows). */

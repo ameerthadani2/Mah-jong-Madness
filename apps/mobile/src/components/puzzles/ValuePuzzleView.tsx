@@ -3,7 +3,7 @@ import { StyleSheet, Text, View } from 'react-native';
 import { KIND_WIND, type ValueQuestion } from '@mjm/engine';
 import { colors, fonts } from '../../theme';
 import { useT } from '../../i18n';
-import { explanationFor, taiFigure, tileName, valueProjections, type ValueProjection } from '../../logic/puzzle';
+import { answerExplanationFor, explanationFor, taiFigure, tileName, valueProjections, type ValueProjection } from '../../logic/puzzle';
 import { Tile } from '../Tile';
 import { P, Pill, Row } from '../Ui';
 import { Answer, Checking, Explanation, KindMeld, KindRow, Label, NextButton, partStyles, useAnswer, Verdict, type ThemeViewProps } from './PuzzleParts';
@@ -57,7 +57,7 @@ export function ValuePuzzleView({ question, judge, onResult, onNext, nextLabel, 
       </View>
       <Checking show={checking} />
       {revealed && answered !== null && (
-        <Answer spoken={[t(answered ? 'puzzles.value.good' : 'puzzles.value.bad'), explanationFor(revealed, locale)].join(' ')}>
+        <Answer spoken={[t(answered ? 'puzzles.value.good' : 'puzzles.value.bad'), explanationFor(answerExplanationFor(revealed, picked === null ? null : question.hand[picked]), locale)].join(' ')}>
           <Verdict good={answered} goodKey="puzzles.value.good" badKey="puzzles.value.bad" />
           <Label>{t('puzzles.value.projections')}</Label>
           <Row style={{ flexWrap: 'wrap', alignItems: 'stretch', rowGap: 6 }}>
@@ -65,7 +65,7 @@ export function ValuePuzzleView({ question, judge, onResult, onNext, nextLabel, 
               <Projection key={p.kind} p={p} />
             ))}
           </Row>
-          <Explanation puzzle={revealed} />
+          <Explanation puzzle={answerExplanationFor(revealed, picked === null ? null : question.hand[picked])} />
           <NextButton onNext={onNext} autoAdvance={autoAdvance} label={nextLabel} />
         </Answer>
       )}

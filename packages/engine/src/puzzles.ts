@@ -988,7 +988,11 @@ const pct = (x: number): string => `${(x * 100).toFixed(1)}%`;
 /** A positive chance to one decimal, or '' when it would print as "0.0%" (the text then says "under 0.1%"). */
 const smallPct = (x: number): string => (x < 0.0005 ? '' : pct(x));
 
-function defenceText(p: Pick<DefencePuzzle, 'answer' | 'answers' | 'threatSeat' | 'threatLevel' | 'reason' | 'efficient' | 'opponents' | 'options'>): PuzzleExplanation {
+/**
+ * The defence explanation of `p.answer` (with its own `reason`). `alternative`: the answer is a right
+ * answer other than the safest one, so "the fewest hands" becomes "about as few as the safest tile".
+ */
+function defenceText(p: Pick<DefencePuzzle, 'answer' | 'answers' | 'threatSeat' | 'threatLevel' | 'reason' | 'efficient' | 'opponents' | 'options'>, alternative = false): PuzzleExplanation {
   const t = tileEn(p.answer);
   const tz = tileZh(p.answer);
   const who = SEAT_EN[p.threatSeat];
@@ -1027,8 +1031,10 @@ function defenceText(p: Pick<DefencePuzzle, 'answer' | 'answers' | 'threatSeat' 
       zh = `${tz}是么九牌，能組成的順子比中張少。`;
       break;
     case 'middle':
-      en = `Counting the tiles you can see, ${t} completes the fewest of the hands ${who} could hold.`;
-      zh = `算一算看得到的牌，${tz}能讓${whoZh}胡的牌型最少。`;
+      en = alternative
+        ? `Counting the tiles you can see, ${t} completes about as few of the hands ${who} could hold as the safest tile.`
+        : `Counting the tiles you can see, ${t} completes the fewest of the hands ${who} could hold.`;
+      zh = alternative ? `算一算看得到的牌，${tz}能讓${whoZh}胡的牌型和最安全的那張差不多一樣少。` : `算一算看得到的牌，${tz}能讓${whoZh}胡的牌型最少。`;
       break;
   }
   const a = p.options.find((o) => o.kind === p.answer)!;
@@ -2198,6 +2204,80 @@ export function valuePatternRule(p: Pick<ValuePuzzle, 'options'>): boolean | nul
 
 export function checkValueAnswer(p: ValuePuzzle, kind: Kind): boolean {
   return p.answers.includes(kind);
+}
+
+/** The 台 a pong of the claim puzzle's discard is worth to the player (seat 0): a dragon, the seat wind, the round wind. */
+function claimPongTai(p: Pick<ClaimPuzzle, 'discard' | 'dealerSeat' | 'prevailingWind'>): number {
+  if (!isHonorKind(p.discard)) return 0;
+  if (p.discard >= KIND_DRAGON) return 1;
+  return (p.discard === seatWindKind(0, p.dealerSeat) ? 1 : 0) + (p.discard === prevailingWindKind(p.prevailingWind) ? 1 : 0);
+}
+
+/**
+ * The explanation to show for the answer a player gave (a tile kind, the waits, or a claim option id).
+ *
+ * Every theme but waits accepts several answers when they are about as good, and a puzzle's own
+ * explanation is written for one of them (`best` for a discard puzzle, `answer` for the others). A right
+ * answer other than that one gets an explanation that is true of what the player chose, and that names
+ * the puzzle's own answer as right too:
+ * - discard: the decision the chosen tile turns on (`discardDecision` with it as the best), then the
+ *   tile that keeps the most and its count;
+ * - defence: why the chosen tile is safe, by its own reason and count, with the safest named as about
+ *   as safe;
+ * - claim: what the chosen claim does, with the coach's choice named as about as good;
+ * - value: the chosen tile's winning tiles and value against the best, then the best against the rival.
+ * A wrong answer, or the puzzle's own, gets the puzzle's own explanation, as before. Null for a waits
+ * puzzle, which has none.
+ */
+export function answerExplanation(p: AnyPuzzle, answer: Kind | readonly Kind[] | string): PuzzleExplanation | null {
+  if (p.type === 'waits') return null;
+  const own: PuzzleExplanation = { reasonKey: p.reasonKey, explanation: p.explanation, explanationZh: p.explanationZh };
+  switch (p.type) {
+    case 'discard': {
+      if (typeof answer !== 'number' || answer === p.best || !p.answers.includes(answer)) return own;
+      const chosen = discardDecision({ ...p, best: answer });
+      const top = p.options.find((o) => o.kind === p.best)!;
+      const mine = p.options.find((o) => o.kind === answer)!;
+      const B = tileEn(p.best);
+      const Bz = tileZh(p.best);
+      const tie = mine.acceptance === top.acceptance;
+      return {
+        reasonKey: chosen.reasonKey,
+        explanation: `${chosen.explanation} ${tie ? `${capitalise(B)} is just as good: throwing it also keeps ${top.acceptance} tiles.` : `${capitalise(B)} keeps a few more, ${top.acceptance} tiles; yours keeps ${mine.acceptance}, within a tenth of that, so both count as right.`}`,
+        explanationZh: `${chosen.explanationZh}${tie ? `打${Bz}一樣好，也還有 ${top.acceptance} 張能進張。` : `打${Bz}多一點，還有 ${top.acceptance} 張能進張；你打的還有 ${mine.acceptance} 張，差不到一成，兩張都算對。`}`,
+      };
+    }
+    case 'defence': {
+      if (typeof answer !== 'number' || answer === p.answer || !p.answers.includes(answer)) return own;
+      const reason = p.options.find((o) => o.kind === answer)!.reason;
+      const text = defenceText({ ...p, answer, reason }, true);
+      // "The fewest hands wait on it" is the safest tile's: this one has about as few.
+      return reason === 'middle' ? { ...text, reasonKey: 'puzzle.defence.middleNear' } : text;
+    }
+    case 'claim': {
+      if (typeof answer !== 'string' || answer === p.answer.id || !p.answers.includes(answer)) return own;
+      const o = p.options.find((x) => x.id === answer)!;
+      return claimText({ ...p, answer: o }, o.type === 'pong' || o.type === 'kong' ? claimPongTai(p) : 0);
+    }
+    case 'value': {
+      if (typeof answer !== 'number' || answer === p.answer || !p.answers.includes(answer)) return own;
+      const a = p.options.find((o) => o.kind === p.answer)!;
+      const b = p.options.find((o) => o.kind === answer)!;
+      const r = p.options.find((o) => o.kind === p.rival)!;
+      // The best against the rival, as the puzzle explains it, without the line that names the other right answers.
+      const best = valueText({ ...p, answers: [p.answer] }, p.reasonKey, p.difficulty === 3 ? chasedPattern(a, r) : undefined);
+      const ratio = Math.round((100 * b.expectedScore!) / a.expectedScore!);
+      const B = tileEn(answer);
+      const Bz = tileZh(answer);
+      const scoreEn = ratio >= 100 ? 'the same as the best discard' : `${ratio}% of the best discard's, within 10% of it`;
+      const scoreZh = ratio >= 100 ? '和最好那張一樣' : `是最好那張的${ratio}%，差不到一成`;
+      return {
+        reasonKey: 'puzzle.value.nearBest',
+        explanation: `Throwing ${B} is right too: it leaves ${b.acceptance} winning tiles worth ${fmt1(b.expectedTai!)} 台 a win on average (up to ${b.bestTai} 台), so its expected score is ${scoreEn}. ${best.explanation}`,
+        explanationZh: `打${Bz}也算對：聽${b.acceptance}張，平均每次胡${fmt1(b.expectedTai!)}台（最多${b.bestTai}台），期望值${scoreZh}。${best.explanationZh}`,
+      };
+    }
+  }
 }
 
 /** Every puzzle theme. `Puzzle` is the two classic themes (discard and waits), the two-argument `rushPuzzle` rotation. */

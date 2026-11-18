@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, jest } from '@jest/globals';
 import React from 'react';
 import { AccessibilityInfo, Platform } from 'react-native';
 import { act, fireEvent, render, screen, within } from '@testing-library/react-native';
-import { claimPuzzle, claimQuestion, defencePuzzle, defenceQuestion, discardAnalysis, discardPuzzle, puzzleQuestion, valuePuzzle, valueQuestion, waitsPuzzle, type AnyPuzzle, type Kind, type PuzzleAnswerInput } from '@mjm/engine';
+import { answerExplanation, claimPuzzle, claimQuestion, defencePuzzle, defenceQuestion, discardAnalysis, discardPuzzle, kindInfo, puzzleQuestion, valuePuzzle, valueQuestion, waitsPuzzle, type AnyPuzzle, type Kind, type PuzzleAnswerInput } from '@mjm/engine';
 import { PuzzleView, type PuzzleResult } from '../PuzzleView';
 import { claimButtons, tileName, type Judged } from '../../logic/puzzle';
 import { FakeProviders } from '../../test/providers';
@@ -128,6 +128,69 @@ describe('the value puzzle view', () => {
     await fireEvent.press(tile(rival));
     expect(onResult.mock.calls[0][0]).toMatchObject({ correct: false, answer: rival });
     expect(screen.getByText('Another discard is worth more.')).toBeOnTheScreen();
+  });
+});
+
+describe('a right answer other than the puzzle\'s own is explained for itself', () => {
+  // Each puzzle accepts every answer about as good as the best, and its own explanation is written for
+  // one of them. A player who picks another right answer reads why that one is right.
+  afterEach(() => setLocalePreference('en'));
+
+  it('discard: the other right tile gets the decision it turns on, and the puzzle\'s tile is named too', async () => {
+    // 3 Characters is isolated (the puzzle's own answer); throwing one of the three pairs (2 Bamboo) keeps as many tiles.
+    const TWO = discardAnalysis([2, 6, 8, 9, 11, 13, 14, 18, 19, 19, 20, 23, 24, 31, 31, 32, 32], 'render-two-right');
+    expect(TWO.best).toBe(2);
+    expect(TWO.answers).toEqual([2, 19]);
+    expect(TWO.explanation).toMatch(/^Throw the isolated tile\./);
+    const mine = answerExplanation(TWO, 19)!;
+    await show(TWO);
+    await fireEvent.press(tile(19));
+    expect(screen.getByText('Good discard!')).toBeOnTheScreen();
+    expect(screen.getByText(mine.explanation)).toBeOnTheScreen();
+    expect(mine.explanation).toMatch(/^Break a pair\. You hold 3 pairs/);
+    expect(mine.explanation).toContain(kindInfo(2).nameEn);
+    expect(screen.queryByText(TWO.explanation)).toBeNull();
+    // In Chinese too.
+    setLocalePreference('zh-TW');
+    await show(TWO);
+    await fireEvent.press(screen.getAllByRole('button', { name: tileName(19, 'zh-TW') })[0]);
+    expect(screen.getByText(mine.explanationZh)).toBeOnTheScreen();
+    expect(mine.explanationZh).toMatch(/^拆對子。/);
+  });
+
+  it('defence: the other safe tile is explained by its own reason', async () => {
+    const other = DEFENCE.answers.find((k) => k !== DEFENCE.answer)!;
+    const mine = answerExplanation(DEFENCE, other)!;
+    await show(DEFENCE);
+    await fireEvent.press(tile(other));
+    expect(screen.getByText('Safe choice!')).toBeOnTheScreen();
+    expect(screen.getByText(mine.explanation)).toBeOnTheScreen();
+    expect(mine.reasonKey).toBe(`puzzle.defence.${DEFENCE.options.find((o) => o.kind === other)!.reason}`);
+    expect(mine.explanation).toContain(`${kindInfo(DEFENCE.answer).nameEn} is about as safe`);
+    expect(screen.queryByText(DEFENCE.explanation)).toBeNull();
+  });
+
+  it('claim: the other good call says what it does, and names the coach\'s call as about as good', async () => {
+    const other = CLAIM.answers.find((id) => id !== CLAIM.answer.id)!;
+    const mine = answerExplanation(CLAIM, other)!;
+    await show(CLAIM);
+    await fireEvent.press(screen.getByTestId(`claim-${other}`));
+    expect(screen.getByText('Good call!')).toBeOnTheScreen();
+    expect(screen.getByText(mine.explanation)).toBeOnTheScreen();
+    expect(mine.explanation).not.toBe(CLAIM.explanation);
+    expect(mine.explanation).toMatch(/about as good\./);
+  });
+
+  it('value: the other right discard leads with its own winning tiles and value', async () => {
+    const TWO = valuePuzzle('render-value-16', 2);
+    const other = TWO.answers.find((k) => k !== TWO.answer)!;
+    const mine = answerExplanation(TWO, other)!;
+    await show(TWO);
+    await fireEvent.press(tile(other));
+    expect(screen.getByText('Worth the most!')).toBeOnTheScreen();
+    expect(screen.getByText(mine.explanation)).toBeOnTheScreen();
+    expect(mine.explanation.startsWith(`Throwing ${kindInfo(other).nameEn} is right too`)).toBe(true);
+    expect(screen.getByText('Nearly as good as the best')).toBeOnTheScreen();
   });
 });
 

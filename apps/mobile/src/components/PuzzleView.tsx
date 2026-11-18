@@ -3,7 +3,7 @@ import { StyleSheet, Text, View } from 'react-native';
 import type { AnyPuzzle, DiscardQuestion, Kind, PuzzleDifficulty, PuzzleQuestion, WaitsQuestion } from '@mjm/engine';
 import { colors, fonts } from '../theme';
 import { useT } from '../i18n';
-import { explanationFor, localPuzzle, puzzleStatus, tileListText, tileName, type Judge, type PuzzleResult } from '../logic/puzzle';
+import { answerExplanationFor, explanationFor, localPuzzle, puzzleStatus, tileListText, tileName, type Judge, type PuzzleResult } from '../logic/puzzle';
 import { Tile } from './Tile';
 import { Button, P, Pill, Row } from './Ui';
 import { Answer, Checking, Explanation, NextButton, partStyles, useAnswer, Verdict, type ThemeViewProps } from './puzzles/PuzzleParts';
@@ -92,14 +92,16 @@ function DiscardPuzzleView({ question, judge, onResult, onNext, nextLabel, autoA
           const pickedText = pickedOpt ? t('puzzles.view.picked', { tile: tileName(pickedOpt.kind, locale), shape: shape(pickedOpt.shanten), kinds: pickedOpt.accepts.length, tiles: pickedOpt.acceptance }) : '';
           // The tiles that improve the hand are listed by name, as the rest of the sentence names tiles.
           const bestText = t('puzzles.view.best', { tile: tileName(bestOpt.kind, locale), shape: shape(bestOpt.shanten), kinds: bestOpt.accepts.length, tiles: bestOpt.acceptance, list: tileListText(bestOpt.accepts, locale) });
-          // The decision the puzzle turns on, named by the engine in both languages (absent from a puzzle revealed by an older server).
+          // The decision the puzzle turns on, named by the engine in both languages (absent from a puzzle revealed by an older server):
+          // for a right tile other than the puzzle's own, the decision that tile turns on.
           const decided = typeof revealed.explanation === 'string' && revealed.explanation !== '';
+          const explained = answerExplanationFor(revealed, question.hand[picked]);
           return (
-            <Answer spoken={[t(good ? 'puzzles.view.good' : 'puzzles.view.better'), pickedText, ...(good ? [] : [bestText]), ...(decided ? [explanationFor(revealed, locale)] : [])].join(' ')}>
+            <Answer spoken={[t(good ? 'puzzles.view.good' : 'puzzles.view.better'), pickedText, ...(good ? [] : [bestText]), ...(decided ? [explanationFor(explained, locale)] : [])].join(' ')}>
               <Verdict good={good} goodKey="puzzles.view.good" badKey="puzzles.view.better" />
               {pickedText ? <P>{pickedText}</P> : null}
               {!good && <P>{bestText}</P>}
-              {decided && <Explanation puzzle={revealed} />}
+              {decided && <Explanation puzzle={explained} />}
               <NextButton onNext={onNext} autoAdvance={autoAdvance} label={nextLabel} />
             </Answer>
           );
