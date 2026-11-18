@@ -102,6 +102,12 @@ export interface ClockAnchor {
   /** The run of the app and of this device's clock `at` was read in. */
   run?: string;
   seg?: number;
+  /**
+   * When the frame that answered it (the deal, or the first frame that shows the move made) reached
+   * this device: `fat - at` is the round trip as this device measured it, which caps what the fixed
+   * point is worth (see `fixedPoint`).
+   */
+  fat?: number;
 }
 
 /** A time-stamped frame as the start of a stretch without a link: when it arrived here, and the host's stamp on it. */

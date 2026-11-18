@@ -13,8 +13,8 @@
  * that sleep, and servers whose wall clock is set back, stay green.
  */
 import { describe, expect, it, vi } from 'vitest';
-import { legalActions, withRules } from '@mjm/engine';
-import { CLOCK_FRAME_MS, SILENT_ANSWER_MS, type HostMessage, type SerializedClient } from '../src/index';
+import { legalActions, withRules, type Action, type GameState } from '@mjm/engine';
+import { caveatKey, CLOCK_FRAME_MS, SILENT_ANSWER_MS, type HostMessage, type SerializedClient } from '../src/index';
 import { LATE_MS } from '../src/clientclock';
 import { Missed, scenario, seededDeals } from './support';
 import { holdTurn, stampOf, T0, wire, type Line, type Wire } from './wire';
@@ -290,6 +290,112 @@ describe('clock: a delay present from the start', () => {
       green(w);
     }),
   );
+
+  /** The server waits for the seat's commitment and secret however late they come (as a server may). */
+  const waitForShare = (seat: number) => (w: Wire) => {
+    const h = w.host as unknown as { phase: string; deadline: number | null; seats: Array<{ commit?: string; secret?: string }>; now: () => number };
+    const s = h.seats[seat];
+    if (((h.phase === 'commit' && !s.commit) || (h.phase === 'reveal' && !s.secret)) && h.deadline !== null) h.deadline = Math.max(h.deadline, h.now() + 5_000);
+  };
+
+  /**
+   * The same delay, with the stamp of the match's first stamped frame, the deal (the answer to this
+   * device's share), moved back `back` ms, so that the fixed point the deal makes would cancel the
+   * delay; at seat `seat`, over a match of `hands` (the server waits for the seat's late shares).
+   */
+  function backdated(code: string, ms: number, back: number, seat: number, hands = 1) {
+    let on = false;
+    let moved = false;
+    const w = wire({
+      code,
+      seat,
+      rules: withRules({ handsPerMatch: hands, turnSeconds: 15, timeBankSeconds: 30 }),
+      think: (k) => (k % 3 === 0 ? Infinity : 800),
+      map: (m) => {
+        const s = stampOf(m);
+        if (moved || s === undefined) return m;
+        moved = true;
+        return { ...m, now: s - back } as HostMessage;
+      },
+      delay: (m) => {
+        if (m.t === 'state') on = true;
+        return on && stampOf(m) !== undefined ? ms : 0;
+      },
+      onTick: waitForShare(seat),
+    });
+    for (let g = 0; g < 7_200 * hands && !w.c.state.matchOver; g++) w.step();
+    return w;
+  }
+  const byTable = (w: Wire, seat: number, a: { audit: { log: Array<{ seat: number; source?: string }> } }) => a.audit.log.some((e) => e.seat === seat && e.source !== 'player');
+
+  it.each([1, 2, 3])('seat %i: 25 s from the start, the deal stamped 25 s back so that its fixed point would cancel the delay: amber, never green', (seat) =>
+    scenario((i) => {
+      const w = backdated(`DB${seat}${i}`, 25_000, 25_000, seat);
+      need(w.c.state.audits.length === 1 && w.judged().length > 0);
+      expect(w.verdict().status).toBe('partial');
+      expect(w.verdict().caveats).toEqual(expect.arrayContaining(['tableMoved', 'lateShown']));
+    }),
+  );
+
+  it('seat 0, the dealer: the same over two hands, the second measured against the first hand’s fixed points: amber in both, never green', () =>
+    scenario((i) => {
+      const w = backdated(`DB0${i}`, 25_000, 25_000, 0, 2);
+      const audits = w.c.state.audits;
+      need(audits.length >= 2 && audits.every((a) => byTable(w, 0, a)));
+      for (const a of audits) {
+        expect(a.status).toBe('partial');
+        expect(a.caveats.map(caveatKey)).toContain('lateShown');
+      }
+    }));
+
+  it('seat 1, 25 s from the start: a move the seat sent again after the table had played its first copy, the second dropped unanswered, counts from its first copy: amber, never green', () =>
+    scenario((i) => {
+      const seat = 1;
+      let on = false;
+      let last: string | null = null;
+      let dropped = 0;
+      const w = wire({
+        code: `DM${i}`,
+        seat,
+        rules: withRules({ handsPerMatch: 2, turnSeconds: 15, timeBankSeconds: 30 }),
+        delay: (m) => {
+          if (m.t === 'state') on = true;
+          return on && stampOf(m) !== undefined ? 25_000 : 0;
+        },
+        onTick: waitForShare(seat),
+      });
+      // The server plays a late move on the seat's next turn when it is legal there (as an honest table
+      // does), and drops a second copy of the move it just played without a word (no honest table does):
+      // the log then credits the seat with a move this device sent twice, the second time after the
+      // table had played the first.
+      const h = w.host as unknown as { handle: (from: string, msg: unknown) => void; game: GameState | null; phase: string; seats: Array<{ peerId: string | null }> };
+      const handle = h.handle.bind(w.host);
+      h.handle = (from, msg) => {
+        const m = msg as { t?: string; action?: Action };
+        if (m?.t === 'action' && from === h.seats[seat].peerId && h.phase === 'playing' && h.game) {
+          const key = JSON.stringify(m.action);
+          if (!legalActions(h.game, seat).some((a) => JSON.stringify(a) === key)) {
+            if (key === last) return void dropped++;
+          } else last = key;
+        }
+        handle(from, msg);
+      };
+      for (let g = 0; g < 7_200 * 2 && !w.c.state.matchOver; g++) w.step();
+      const audits = w.c.state.audits;
+      need(dropped > 0 && audits.length >= 2 && audits.every((a) => byTable(w, seat, a)));
+      for (const a of audits) expect(a.status).not.toBe('ok');
+    }));
+
+  it('an honest round trip, 4 s each way from before the deal at seat 2, and a deal stamped 15 s back with a 15 s delay at seat 1: green', () =>
+    scenario((i) => {
+      const slow = wire({ code: `DH${i}`, seat: 2, think: (k) => (k % 3 === 0 ? Infinity : 800), up: () => 4_000, delay: () => 4_000 });
+      slow.finish();
+      need(slow.judged().length > 0);
+      green(slow);
+      const inside = backdated(`DI${i}`, 15_000, 15_000, 1);
+      need(inside.judged().length > 0);
+      green(inside);
+    }));
 });
 
 describe('honest links stay green', () => {

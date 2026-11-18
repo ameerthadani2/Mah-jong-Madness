@@ -45,7 +45,7 @@ import type { Link } from './host';
 import { CLOCK_FRAME_MS, RESTART_CAUSES, type Audit, type ClientMessage, type HostMessage, type SeatInfo } from './messages';
 import { isFrame, type Transport, type Unsubscribe } from './transport';
 import { clientClock, DRIFT_RATE, foldClock, LATE_MS, LINK_PAUSE_MS, ORDER_SLACK_MS, PAUSE_GRACE_MS, RAN_GAP_MS, SILENT_ANSWER_MS, WATCH_WINDOW_MS, type TableClientOptions } from './clientclock';
-import { armedLate, clockTrack, isBotSkill, judgeTableMove, lateAnchor, lateRef, lateWatch, legalFor, sameActionSafe, seatRun, tableRule, type LateScope, type MoveJudge } from './clientmoves';
+import { armedLate, clockTrack, firstSend, fixedPoint, isBotSkill, judgeTableMove, lateAnchor, lateRef, lateWatch, legalFor, sameActionSafe, seatRun, tableRule, type LateScope, type MoveJudge } from './clientmoves';
 import {
   CHAINED_FIELDS,
   CLIENT_SNAPSHOT_VERSION,
@@ -1542,14 +1542,17 @@ export class TableClient {
         const end: SeenState = { tc: Number.POSITIVE_INFINITY, epoch: this.epoch, era: this.era, at: this.now(), now: typeof m.now === 'number' ? m.now : undefined, owes: false, deadline: null, timeBank: 0, inBank: false, hash: '', ...(stampedEnd ? { atLo: stampedEnd.atLo, ref: stampedEnd.ref, wref: stampedEnd.wref, live: stampedEnd.live, seg: stampedEnd.seg } : {}) };
         const { check, replayed, anchors, passed } = this.runAudit(m.audit, m.view, m.result, end);
         this.clockBase = foldClock(this.clockBase, this.era, this.plays.find((p) => p.hand === h) ?? null, end, anchors);
-        // The strongest fixed point of this era, run of the app and run of this device's clock, for the hands after this one.
+        // The strongest fixed point of this era, run of the app and run of this device's clock, for the
+        // hands after this one: each worth no more than its round trip allows against the least arrival
+        // offset known now (see `fixedPoint`), and kept with its round trip to be capped again later.
         {
           const seg = this.seg();
           if (this.bestAnchor && (this.bestAnchor.era !== this.era || this.bestAnchor.seg !== seg)) this.bestAnchor = null;
+          const ref = this.refAt(this.now());
           for (const k of anchors) {
             if (k.era !== this.era || k.run !== this.runId || (k.seg ?? 0) !== seg) continue;
-            const value = k.at - k.now;
-            if (!this.bestAnchor || value > this.bestAnchor.value) this.bestAnchor = { era: this.era, run: this.runId, seg, value, at: k.at };
+            const value = fixedPoint(k, ref);
+            if (!this.bestAnchor || value > this.bestAnchor.value) this.bestAnchor = { era: this.era, run: this.runId, seg, value, at: k.at, ...(typeof k.fat === 'number' ? { rtt: k.fat - k.at } : {}) };
           }
         }
         if (typeof end.now === 'number') this.lastStamp = { at: end.at, now: end.now, epoch: this.epoch, era: this.era };
@@ -1961,7 +1964,7 @@ export class TableClient {
     const firstFrame = this.plays.find((p) => p.hand === h)?.seen[0];
     const mySecret = revealsOk ? audit.reveals.find((r) => r.seat === me)?.secret : undefined;
     if (tookPart && !stoodIn && this.secret && mySecret === this.secret && lastAttempt?.revealed && typeof lastAttempt.revealedAt === 'number' && firstFrame && typeof firstFrame.now === 'number' && firstFrame.epoch === lastAttempt.revealedEpoch && firstFrame.at >= lastAttempt.revealedAt) {
-      anchors.push({ at: lastAttempt.revealedAt, now: firstFrame.now, era: firstFrame.era ?? 0, run: lastAttempt.revealedRun, seg: lastAttempt.revealedSeg });
+      anchors.push({ at: lastAttempt.revealedAt, now: firstFrame.now, era: firstFrame.era ?? 0, run: lastAttempt.revealedRun, seg: lastAttempt.revealedSeg, fat: firstFrame.at });
     }
     try {
       replayed = this.replayChecked(start, audit.seed, rules, audit.log, h, end, failures, anchors, notes);
@@ -2113,7 +2116,8 @@ export class TableClient {
             // Any move this client sent and the log has not used yet may be the one: a move that reaches
             // the table late (after its clock ran out, say) is played on the seat's next turn if still legal.
             // Of several, the likeliest: one the host did not refuse, made on the latest turn.
-            const match = sent.filter((x) => !x.used && x.tc <= n && sameActionSafe(x.action, entry.action, s, me)).sort((a, b) => Number(!!a.rejected) - Number(!!b.rejected) || b.tc - a.tc)[0];
+            const copies = sent.filter((x) => !x.used && x.tc <= n && sameActionSafe(x.action, entry.action, s, me));
+            const match = copies.slice().sort((a, b) => Number(!!a.rejected) - Number(!!b.rejected) || b.tc - a.tc)[0];
             if (match) {
               match.used = true;
               {
@@ -2134,9 +2138,12 @@ export class TableClient {
                   else if (notes && (lateRef(r0) > LATE_MS || lateAnchor(r0, anchors, scope) > LATE_MS || (!r0.onLink && left < whole - LATE_MS))) notes.lateShown = true;
                 }
               }
-              // The host cannot have played this move before this device sent it: a fixed point between the two clocks.
+              // The host cannot have played this move before this device sent it: a fixed point between the
+              // two clocks. Of copies of the same move sent more than once, the first counts (the host may
+              // have played that one), with the round trip from it to the first frame that shows the move.
               const f = frameAfter(n);
-              if (f && typeof match.at === 'number' && typeof f.now === 'number' && f.epoch === match.epoch && f.at >= match.at) anchors.push({ at: match.at, now: f.now, era: f.era ?? 0, run: match.run, seg: match.seg });
+              const first = firstSend(copies);
+              if (f && first && typeof first.at === 'number' && typeof f.now === 'number' && f.epoch === first.epoch && f.at >= first.at) anchors.push({ at: first.at, now: f.now, era: f.era ?? 0, run: first.run, seg: first.seg, fat: f.at });
             } else if (sent.some((x) => !x.used && !x.rejected && x.tc <= n)) problems.add(`The log changed a move this seat made (turn ${n})`);
             else problems.add(`The log shows a move this seat never made (turn ${n})`);
           }

@@ -1,7 +1,7 @@
 /**
  * A table on one fake clock, for the tests of the link watch and of turns shown late: a TableHost,
- * a TableClient at seat 0 (the other seats are bots) and a network between them that a test makes
- * slow, uneven or hostile.
+ * a TableClient at seat 0 or at `seat` (the other seats are bots) and a network between them that a
+ * test makes slow, uneven or hostile.
  *
  * Each frame from the host waits `delay(m)` ms and none overtakes another (one ordered stream),
  * unless the server rewrites it (`map`; null drops it) or holds it (`hold`) until it lets it go;
@@ -34,6 +34,8 @@ export const stampOf = (m: HostMessage): number | undefined => {
 export interface Plan {
   code: string;
   rules?: RuleSet;
+  /** The seat the phone sits at (default 0, the first hand's dealer). */
+  seat?: number;
   /** Downlink delay (ms) of a frame the host sends at real time `now`. */
   delay?: (m: HostMessage, now: number) => number;
   /** Uplink delay (ms) of a message the phone sends at real time `now`. */
@@ -88,6 +90,7 @@ export type Wire = ReturnType<typeof wire>;
 
 export function wire(plan: Plan) {
   const rules = plan.rules ?? RULES;
+  const vs = plan.seat ?? 0;
   const clock = { now: T0 };
   let mono = 500_000;
   const hub = new LoopbackHub();
@@ -111,7 +114,7 @@ export function wire(plan: Plan) {
     /** When the watch dropped a link (real time), in order. */
     drops: [] as number[],
     pendingReconnectAt: null as number | null,
-    /** Turn → when the host first sent a state showing seat 0 that move, and when the phone first got a state of that turn. */
+    /** Turn → when the host first sent a state showing the phone's seat that move, and when the phone first got a state of that turn. */
     created: new Map<number, number>(),
     shown: new Map<number, number>(),
     /** The last state frame the phone got. */
@@ -119,9 +122,9 @@ export function wire(plan: Plan) {
     /** The moves the seat sent: the turn it acted on and when. */
     sent: [] as Array<{ tc: number; at: number }>,
     awake: () => !(plan.asleep?.(clock.now) || plan.background?.(clock.now)),
-    owes: () => host.phase === 'playing' && !!host.game && legalActions(host.game, 0).length > 0,
-    /** The table owes seat 0 a discard (its own turn, not a claim). */
-    discardTurn: () => w.owes() && legalActions(host.game!, 0).every((a) => a.type === 'discard'),
+    owes: () => host.phase === 'playing' && !!host.game && legalActions(host.game, vs).length > 0,
+    /** The table owes the phone's seat a discard (its own turn, not a claim). */
+    discardTurn: () => w.owes() && legalActions(host.game!, vs).every((a) => a.type === 'discard'),
     /** The phone shows the seat the move the table owes it now. */
     current: () => w.owes() && w.c.state.view?.turnCounter === host.game!.turnCounter,
     reconnect() {
@@ -205,10 +208,10 @@ export function wire(plan: Plan) {
       for (let e = 0; e < 3_600_000 && host.phase === 'playing'; e += 500) w.step();
       for (let e = 0; e < 120_000 && w.c.state.lastResult === null; e += 500) w.step();
     },
-    /** The turns at which the table has played for seat 0 in the hand on the table. */
-    tableMoves: (): number[] => (host.game?.actionLog ?? []).filter((e) => e.seat === 0 && e.source !== 'player').map((e) => e.n),
+    /** The turns at which the table has played for the phone's seat in the hand on the table. */
+    tableMoves: (): number[] => (host.game?.actionLog ?? []).filter((e) => e.seat === vs && e.source !== 'player').map((e) => e.n),
     /** The same in the hand the client last audited. */
-    judged: (): number[] => (w.c.state.lastAudit?.log ?? []).filter((e) => e.seat === 0 && e.source !== 'player').map((e) => e.n),
+    judged: (): number[] => (w.c.state.lastAudit?.log ?? []).filter((e) => e.seat === vs && e.source !== 'player').map((e) => e.n),
     verdict() {
       const st = w.c.state;
       return { status: st.auditStatus, failures: [...new Set(st.auditFailures.map(failureKey))], caveats: st.auditCaveats.map(caveatKey) };
@@ -246,7 +249,7 @@ export function wire(plan: Plan) {
         onMessage: (f) => {
           cb = f;
           return base.onMessage((m0) => {
-            if (m0.t === 'state' && host.game && legalActions(host.game, 0).length > 0 && host.game.turnCounter === m0.view.turnCounter && !w.created.has(m0.view.turnCounter)) w.created.set(m0.view.turnCounter, clock.now);
+            if (m0.t === 'state' && host.game && legalActions(host.game, vs).length > 0 && host.game.turnCounter === m0.view.turnCounter && !w.created.has(m0.view.turnCounter)) w.created.set(m0.view.turnCounter, clock.now);
             const m = plan.map ? plan.map(m0, w) : m0;
             if (m === null) return;
             if (plan.hold?.(m, w)) return void held.push(m);
@@ -281,7 +284,7 @@ export function wire(plan: Plan) {
     if (!s || host.phase !== 'playing') return;
     let acts: Action[] = [];
     try {
-      acts = legalActions(s, 0);
+      acts = legalActions(s, vs);
     } catch {
       acts = [];
     }
@@ -290,14 +293,14 @@ export function wire(plan: Plan) {
     if (owed.acted || clock.now - owed.since < owed.think) return;
     owed.acted = true;
     w.sent.push({ tc: s.turnCounter, at: clock.now });
-    w.c.act(chooseAction(s, 0, { seed: 'p' })!);
+    w.c.act(chooseAction(s, vs, { seed: 'p' })!);
   }
 
   w.line = line();
   const wallOf = () => clock.now + (plan.devSkew?.(clock.now) ?? 0);
   const clientOpts = plan.asleep ? { now: wallOf, monotonic: () => mono } : { now: wallOf };
   w.c = new TableClient(w.line.link, 'Victim', undefined, {}, clientOpts);
-  w.c.join();
+  w.c.join(plan.seat);
   host.start();
   upOn = true;
   return w;

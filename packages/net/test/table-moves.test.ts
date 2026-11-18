@@ -11,7 +11,8 @@
 import { describe, expect, it } from 'vitest';
 import { chooseAction, kindOf, legalActions, withRules, type Action, type BotSkill, type GameState } from '@mjm/engine';
 import { AUDIT_CAVEATS, AUDIT_FAILURES, failureKey, LoopbackHub, TableClient, TableHost, transportLink, type HostMessage, type Link } from '../src/index';
-import { armedLate, seatRun } from '../src/clientmoves';
+import { armedLate, firstSend, fixedPoint, lateAnchor, seatRun } from '../src/clientmoves';
+import { DRIFT_RATE, LATE_MS, RTT_ALLOW_MS } from '../src/clientclock';
 import type { PlayRecord, SeenState } from '../src/clientrecords';
 import { Missed, scenario, seededDeals } from './support';
 
@@ -381,5 +382,58 @@ describe('the state that starts a turn gives the whole turn clock (armedLate)', 
     expect(armedLate(seen(5, true, { onLink: true, now: undefined, deadline: 23_000 }), rules)).toBe(false);
     expect(armedLate(seen(5, true, { onLink: true, now: 10_000, deadline: null }), rules)).toBe(false);
     expect(armedLate(seen(5, true, { now: 10_000, deadline: 23_000 }), rules)).toBe(false);
+  });
+});
+
+describe('a fixed point is worth no more than its round trip allows (fixedPoint, lateAnchor)', () => {
+  // This device's clock is 10 s ahead of the host's. From the deal on, the server delays every frame it
+  // sends by 25 s; the uplink takes 100 ms. The device sent its share at 100 000 on its clock; the host dealt
+  // at 90 100 on its own, and the deal reached the device at 125 100. A turn the host made at 200 000
+  // reached it at 235 000, when the least arrival offset seen was 35 000 (every frame was 25 s late).
+  const turn = seen(40, true, { at: 235_000, atLo: 235_000, now: 200_000, ref: 35_000, run: 'r', seg: 0 });
+  const scope = { run: 'r', best: null };
+  const reveal = (now: number, fat = 125_100) => ({ at: 100_000, now, era: 0, run: 'r', seg: 0, fat });
+
+  it('an honest answer: its round trip gives what its stamp gives, and the 25 s delay shows', () => {
+    expect(fixedPoint(reveal(90_100), 35_000)).toBe(9_900);
+    expect(lateAnchor(turn, [reveal(90_100)], scope)).toBeGreaterThan(LATE_MS);
+  });
+
+  it('the deal stamped 25 s back: its stamp would cancel the delay, its round trip does not', () => {
+    expect(100_000 - 65_100).toBe(34_900);
+    expect(fixedPoint(reveal(65_100), 35_000)).toBe(9_900);
+    expect(lateAnchor(turn, [reveal(65_100)], scope)).toBeGreaterThan(LATE_MS);
+    // The strongest fixed point carried from an earlier hand is capped the same way, by its round trip.
+    expect(lateAnchor(turn, [], { run: 'r', best: { era: 0, run: 'r', seg: 0, value: 34_900, at: 100_000, rtt: 25_100 } })).toBeGreaterThan(LATE_MS);
+  });
+
+  it('the answer later on the way back than the least offset shows counts for that much less; with no round trip known, its stamp alone', () => {
+    expect(fixedPoint(reveal(90_100, 125_400), 35_000)).toBe(9_600);
+    expect(fixedPoint({ at: 100_000, now: 65_100 }, 35_000)).toBe(34_900);
+    expect(fixedPoint(reveal(65_100), null)).toBe(34_900);
+  });
+
+  it('with no least offset before it, a frame is measured against its own', () => {
+    const first = seen(0, true, { at: 125_100, atLo: 125_100, now: 65_100, ref: null, run: 'r', seg: 0 });
+    // The deal itself, stamped back: its own offset holds the delay, and the round trip of the share it answers is 25.1 s.
+    expect(lateAnchor(first, [reveal(65_100)], scope)).toBeCloseTo(25_100 - RTT_ALLOW_MS + DRIFT_RATE * 25_100, 6);
+  });
+});
+
+describe('a move sent more than once: the first copy is the fixed point (firstSend)', () => {
+  const copy = (tc: number, at: number | undefined, run = 'r', seg = 0) => ({ tc, at, run, seg });
+
+  it('is the earliest of the copies, whichever the log matched', () => {
+    const a = copy(28, 10_000);
+    const b = copy(35, 29_500);
+    expect(firstSend([b, a])).toBe(a);
+    expect(firstSend([a])).toBe(a);
+    expect(firstSend([])).toBeNull();
+  });
+
+  it('is none when a copy has no time, or was sent in another run of the app or of the device clock', () => {
+    expect(firstSend([copy(28, 10_000), copy(35, undefined)])).toBeNull();
+    expect(firstSend([copy(28, 10_000), copy(35, 29_500, 'other')])).toBeNull();
+    expect(firstSend([copy(28, 10_000), copy(35, 29_500, 'r', 1)])).toBeNull();
   });
 });

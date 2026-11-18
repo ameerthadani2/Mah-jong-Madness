@@ -16,10 +16,32 @@ export interface MoveJudge {
   ownAbsences: number[];
 }
 
-/** The run of the app (`TableClient.runId`) a fixed point is compared in, and the strongest fixed point of the hands already audited in it. */
+/**
+ * The run of the app (`TableClient.runId`) a fixed point is compared in, and the strongest fixed
+ * point of the hands already audited in it: what it was worth when its hand ended (`fixedPoint`),
+ * and its round trip, which caps it again against the least arrival offset known later.
+ */
 export interface LateScope {
   run: string;
-  best: { era: number; run: string; seg: number; value: number; at: number } | null;
+  best: { era: number; run: string; seg: number; value: number; at: number; rtt?: number } | null;
+}
+
+/**
+ * What a fixed point says of this device's clock against the host's: how far ahead of the host's it
+ * is at least. The host answered (with the deal, or the frame that shows a move made) after this
+ * device sent at `k.at`, and stamped the answer `k.now`: by that stamp, at least `k.at - k.now`. A
+ * host can move the stamp back, so the fixed point counts for no more than the round trip this device
+ * measured allows: the answer reached it at `k.fat`, no frame of the scope came sooner after its stamp
+ * than the least arrival offset `ref`, so the host's clock read at most `k.fat - ref` when it
+ * answered, and this device's is at least `ref - (k.fat - k.at)` ahead. It counts for the smaller of
+ * the two. A delay present since the scope began is in the round trip as well as in `ref`, so a
+ * backdated answer cannot hide it; an honest answer counts for what its stamp says, less the time it
+ * spent on the way back beyond the least.
+ */
+export function fixedPoint(k: Pick<ClockAnchor, 'at' | 'now' | 'fat'>, ref: number | null): number {
+  const stamped = k.at - k.now;
+  if (typeof k.fat !== 'number' || ref === null) return stamped;
+  return Math.min(stamped, ref - (k.fat - k.at));
 }
 
 /** How much later than the least arrival offset of its scope (clock era and run of this device's clock) allows `f` reached this device; 0 when nothing is known. */
@@ -42,18 +64,40 @@ export function lateWatch(f: SeenState): number {
  * (this device's moves and shares, which the host cannot have answered before they were sent),
  * beyond an uplink's allowance (`RTT_ALLOW_MS`). It sees a delay present since the scope began,
  * which the least arrival offset absorbs; a slow uplink looks the same, so it never fails a hand by
- * itself. 0 when there is no fixed point, or `f` arrived in another run of the app.
+ * itself. Each fixed point counts for no more than its round trip allows against the least
+ * arrival offset known when `f` arrived (`fixedPoint`; `f`'s own offset included), so a host that
+ * moves back the stamp on its answer cannot cancel the delay. 0 when there is no fixed point, or
+ * `f` arrived in another run of the app.
  */
 export function lateAnchor(f: SeenState, anchors: ClockAnchor[], scope: LateScope | null): number {
   if (typeof f.now !== 'number' || !scope || f.run !== scope.run) return 0;
   const atLo = f.atLo ?? f.at;
   const era = f.era ?? 0;
   const seg = f.seg ?? 0;
+  const own = atLo - f.now;
+  const ref = typeof f.ref === 'number' ? Math.min(f.ref, own) : own;
   let a = Number.NEGATIVE_INFINITY;
   const b = scope.best;
-  if (b && b.era === era && b.run === f.run && b.seg === seg && b.at <= atLo) a = b.value - DRIFT_RATE * (atLo - b.at);
-  for (const k of anchors) if (k.era === era && k.run === f.run && (k.seg ?? 0) === seg && k.at <= atLo) a = Math.max(a, k.at - k.now - DRIFT_RATE * (atLo - k.at));
+  if (b && b.era === era && b.run === f.run && b.seg === seg && b.at <= atLo) a = (typeof b.rtt === 'number' ? Math.min(b.value, ref - b.rtt) : b.value) - DRIFT_RATE * (atLo - b.at);
+  for (const k of anchors) if (k.era === era && k.run === f.run && (k.seg ?? 0) === seg && k.at <= atLo) a = Math.max(a, fixedPoint(k, ref) - DRIFT_RATE * (atLo - k.at));
   return Number.isFinite(a) ? atLo - f.now - (a + RTT_ALLOW_MS) : 0;
+}
+
+/**
+ * Of the moves this device sent that may have given the log the move it credits to the seat (the
+ * same move, sent on the turn of the entry or before it, and not already matched), the first: the
+ * host cannot have played the move before this device first sent it, whichever copy it played. Null
+ * when one of them has no time, or was sent in another run of the app or of this device's clock, so
+ * that the first cannot be told on one clock.
+ */
+export function firstSend<T extends { at?: number; run?: string; seg?: number }>(sends: T[]): T | null {
+  let first: T | null = null;
+  for (const x of sends) {
+    if (typeof x.at !== 'number') return null;
+    if (first && (x.run !== first.run || (x.seg ?? 0) !== (first.seg ?? 0))) return null;
+    if (!first || x.at < (first.at as number)) first = x;
+  }
+  return first;
 }
 
 /**
