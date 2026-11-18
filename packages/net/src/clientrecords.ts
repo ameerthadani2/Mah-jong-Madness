@@ -233,6 +233,85 @@ export interface PlayRecord {
   held?: number;
 }
 
+/** About 300 years in ms: no reading of this device's clock or the host's, nor the offset between the two, is that large. */
+const TIME_LIMIT_MS = 1e13;
+/** An honest deadline is within the longest turn clock and time bank of its stamp (minutes), never a day off. */
+const DEADLINE_LIMIT_MS = 86_400_000;
+/** No honest frame reaches this device an hour later than the least arrival offset before it allows: the watch drops a link long before. */
+const LATE_LIMIT_MS = 3_600_000;
+
+const finiteTime = (x: unknown): x is number => typeof x === 'number' && Number.isFinite(x) && Math.abs(x) < TIME_LIMIT_MS;
+
+/**
+ * A frame from a saved record, as this build reads it. Storage can be damaged, and the fields this
+ * build added to judge how late a frame reached this device (`atLo`, `ref`, `wref`, `live`, `working`,
+ * `seg`, `run`, `onLink`) can fail a hand when they are wrong, so they are kept only when they are
+ * what this build writes: the measured ones together, with a stamp, `atLo` no later than `at`, `wref`
+ * no lower than `ref` (both null, or both numbers no more than an hour below the frame's own offset),
+ * `live` only on a working link, booleans and a run of the clock that are what they say; and the frame's
+ * stamp and deadline are readings a clock can make. Otherwise all of them are dropped, so the frame reads
+ * like one from a record saved before they were kept, which the rules that use them do not ask; and a
+ * stamp no clock can make is dropped with them. What this cannot tell is damage that leaves the fields
+ * consistent (a stamp moved back 20 s, say): only the record's own copy says otherwise.
+ */
+export function cleanSeen(f: SeenState): SeenState {
+  const { atLo, ref, wref, live, working, seg, run, onLink, ...old } = f;
+  const now = f.now;
+  const stamped = typeof now === 'number' && Number.isFinite(now) && finiteTime(f.at) && Math.abs(f.at - now) < TIME_LIMIT_MS;
+  if (now !== undefined && !stamped) delete old.now;
+  const own = stamped && finiteTime(atLo) ? atLo - (now as number) : null;
+  const near = (x: unknown) => x === null || (finiteTime(x) && own !== null && own - x <= LATE_LIMIT_MS);
+  const measured = atLo !== undefined || ref !== undefined || wref !== undefined || live !== undefined || working !== undefined || seg !== undefined;
+  const ok =
+    (now === undefined || stamped) &&
+    (f.deadline === null || (typeof f.deadline === 'number' && Number.isFinite(f.deadline) && (!stamped || Math.abs(f.deadline - (now as number)) < DEADLINE_LIMIT_MS))) &&
+    (run === undefined || typeof run === 'string') &&
+    (onLink === undefined || typeof onLink === 'boolean') &&
+    (!measured ||
+      (own !== null &&
+        (atLo as number) <= f.at &&
+        near(ref) &&
+        near(wref) &&
+        (ref === null) === (wref === null) &&
+        (ref === null || (wref as number) >= (ref as number)) &&
+        typeof live === 'boolean' &&
+        typeof working === 'boolean' &&
+        (!live || working) &&
+        isInt(seg) &&
+        seg >= 0));
+  return ok ? f : old;
+}
+
+/** The run of the app and of this device's clock a saved time was read in, kept only when both are what this build writes (else neither: it is then compared with nothing). */
+function cleanRun<T extends object>(x: T, runKey: keyof T, segKey: keyof T): T {
+  const r = x[runKey] as unknown;
+  const s = x[segKey] as unknown;
+  if ((r === undefined && s === undefined) || (typeof r === 'string' && isInt(s) && s >= 0)) return x;
+  const out = { ...x };
+  delete out[runKey];
+  delete out[segKey];
+  return out;
+}
+
+/**
+ * A hand's record from a saved copy, with every frame cleaned (`cleanSeen`) and the run of each move
+ * sent kept only when it is what this build writes. Throws when the record is not one at all (its
+ * frames or moves are not lists of objects): the saved copy is damaged, and the client is then built
+ * from its rejoin token alone, as for any damaged copy.
+ */
+export function cleanPlay(p: unknown): PlayRecord {
+  if (!isObject(p) || !Array.isArray(p.seen) || !Array.isArray(p.sent) || !p.seen.every(isObject) || !p.sent.every(isObject)) throw new Error('damaged hand record');
+  const play = p as unknown as PlayRecord;
+  return { ...play, seen: play.seen.map(cleanSeen), sent: play.sent.map((x) => cleanRun(x, 'run', 'seg')) };
+}
+
+/** A ceremony record from a saved copy, with the run of each reveal's time kept only when it is what this build writes. */
+export function cleanCeremony(r: unknown): CeremonyRecord {
+  if (!isObject(r) || !Array.isArray(r.attempts) || !r.attempts.every(isObject)) throw new Error('damaged ceremony record');
+  const rec = r as unknown as CeremonyRecord;
+  return { ...rec, attempts: rec.attempts.map((a) => cleanRun(a, 'revealedRun', 'revealedSeg')) };
+}
+
 /** Match fields a hand must start from, as the previous hand left them. */
 export const CHAINED_FIELDS = ['scores', 'dealerSeat', 'dealerStreak', 'dealerRotations', 'prevailingWind'] as const;
 

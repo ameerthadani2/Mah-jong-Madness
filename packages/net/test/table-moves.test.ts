@@ -13,7 +13,7 @@ import { chooseAction, kindOf, legalActions, withRules, type Action, type BotSki
 import { AUDIT_CAVEATS, AUDIT_FAILURES, failureKey, LoopbackHub, TableClient, TableHost, transportLink, type HostMessage, type Link } from '../src/index';
 import { armedLate, firstSend, fixedPoint, lateAnchor, seatRun, unstamped } from '../src/clientmoves';
 import { DRIFT_RATE, LATE_MS, RTT_ALLOW_MS } from '../src/clientclock';
-import type { PlayRecord, SeenState } from '../src/clientrecords';
+import { cleanCeremony, cleanPlay, cleanSeen, type PlayRecord, type SeenState } from '../src/clientrecords';
 import { Missed, scenario, seededDeals } from './support';
 
 seededDeals(20261116);
@@ -449,5 +449,78 @@ describe('a move sent more than once: the first copy is the fixed point (firstSe
     expect(firstSend([copy(28, 10_000), copy(35, undefined)])).toBeNull();
     expect(firstSend([copy(28, 10_000), copy(35, 29_500, 'other')])).toBeNull();
     expect(firstSend([copy(28, 10_000), copy(35, 29_500, 'r', 1)])).toBeNull();
+  });
+});
+
+describe('a frame from a saved record keeps the fields that judge how late it came only when they are what this build writes (cleanSeen)', () => {
+  // As this build records a frame: stamped, measured by the watch on a live link.
+  const live = seen(40, true, { at: 235_000, atLo: 235_000, now: 200_000, ref: 35_000, wref: 35_200, live: true, working: true, seg: 0, run: 'r', onLink: true, deadline: 215_000 });
+  const MEASURED = ['atLo', 'ref', 'wref', 'live', 'working', 'seg', 'run', 'onLink'];
+  const dropped = (f: SeenState) => MEASURED.every((k) => !(k in f));
+
+  it('keeps a frame as this build writes it, a stampless state with its link, and a frame from an older record, unchanged', () => {
+    expect(cleanSeen(live)).toBe(live);
+    const bare = seen(41, true, { now: undefined, run: 'r', onLink: true });
+    expect(cleanSeen(bare)).toBe(bare);
+    const first = seen(0, true, { atLo: 1_000, ref: null, wref: null, live: false, working: true, seg: 0, run: 'r', onLink: false });
+    expect(cleanSeen(first)).toBe(first);
+    const older = seen(42, true);
+    expect(cleanSeen(older)).toBe(older);
+  });
+
+  it('drops them all when one is junk, out of range or breaks what the others say, and keeps the rest of the frame', () => {
+    const bad: Array<Partial<SeenState> | Record<string, unknown>> = [
+      { atLo: null },
+      { atLo: 'x' },
+      { atLo: 1e300 },
+      { atLo: 255_000 },
+      { ref: 'x' },
+      { wref: -1e300 },
+      { wref: 15_000 },
+      { ref: -7_000_000, wref: -7_000_000 },
+      { ref: null },
+      { live: 'x' },
+      { live: true, working: false },
+      { working: 7 },
+      { seg: -1 },
+      { seg: 0.5 },
+      { run: 7 },
+      { onLink: 'yes' },
+      { deadline: -1e300 },
+      { deadline: 'x' },
+    ];
+    for (const b of bad) {
+      const out = cleanSeen({ ...live, ...b } as SeenState);
+      expect(dropped(out)).toBe(true);
+      expect(out).toMatchObject({ tc: 40, at: 235_000, now: 200_000, owes: true, hash: 'h40' });
+    }
+    // Measured fields without a stamp, or some of them without the rest.
+    expect(dropped(cleanSeen({ ...live, now: undefined }))).toBe(true);
+    const { wref: _w, ...partial } = live;
+    void _w;
+    expect(dropped(cleanSeen(partial as SeenState))).toBe(true);
+  });
+
+  it('drops a stamp no clock can make with them', () => {
+    for (const now of [1e300, -1e300, null, 'x', Number.NaN]) {
+      const out = cleanSeen({ ...live, now } as unknown as SeenState);
+      expect(dropped(out)).toBe(true);
+      expect('now' in out).toBe(false);
+    }
+  });
+
+  it('keeps the run of each move sent and each reveal only when it is what this build writes, and refuses a record that is not one', () => {
+    const play = cleanPlay({ hand: 0, seen: [live], sent: [{ tc: 1, action: { type: 'pass' }, epoch: 0, at: 5, run: 'r', seg: 0 }, { tc: 2, action: { type: 'pass' }, epoch: 0, at: 6, run: 7, seg: 0 }], ledgerFrom: 0 });
+    expect(play.seen[0]).toBe(live);
+    expect(play.sent[0]).toMatchObject({ run: 'r', seg: 0 });
+    expect(play.sent[1]).not.toHaveProperty('run');
+    expect(play.sent[1]).not.toHaveProperty('seg');
+    expect(play.sent[1]).toMatchObject({ tc: 2, at: 6 });
+    const rec = cleanCeremony({ hand: 0, attempts: [{ n: 1, committed: true, revealed: true, stoodIn: false, revealedAt: 9, revealedRun: 'r', revealedSeg: -2 }], fromStart: true, linkLost: false, dealt: true });
+    expect(rec.attempts[0]).not.toHaveProperty('revealedRun');
+    expect(rec.attempts[0]).toMatchObject({ revealedAt: 9 });
+    expect(() => cleanPlay({ hand: 0, seen: [null], sent: [] })).toThrow();
+    expect(() => cleanPlay({ hand: 0, seen: [], sent: 'x' })).toThrow();
+    expect(() => cleanCeremony({ hand: 0, attempts: [3] })).toThrow();
   });
 });

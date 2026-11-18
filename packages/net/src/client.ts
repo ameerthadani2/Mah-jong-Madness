@@ -48,6 +48,8 @@ import { clientClock, DRIFT_CAP_MS, DRIFT_RATE, foldClock, LATE_MS, LINK_PAUSE_M
 import { armedLate, clockTrack, firstSend, fixedPoint, isBotSkill, judgeTableMove, lateAnchor, lateRef, lateWatch, legalFor, sameActionSafe, seatRun, tableRule, unstamped, type LateScope, type MoveJudge } from './clientmoves';
 import {
   CHAINED_FIELDS,
+  cleanCeremony,
+  cleanPlay,
   CLIENT_SNAPSHOT_VERSION,
   isAudit,
   isCommitSet,
@@ -613,8 +615,9 @@ export class TableClient {
     this.handsEnded = new Set((d.handsEnded ?? []).filter(isInt));
     this.tamper = new Map(d.tamper ?? []);
     this.handStart = d.handStart;
-    this.records = d.records ?? [];
-    this.plays = d.plays ?? [];
+    // The fields that judge how late a frame came are kept only when they are what this build writes (see `cleanSeen`).
+    this.records = Array.isArray(d.records) ? d.records.map(cleanCeremony) : [];
+    this.plays = Array.isArray(d.plays) ? d.plays.map(cleanPlay) : [];
     this.expected = d.expected;
     this.chainChecked = d.chainChecked;
     this.frozenBots = d.frozenBots;

@@ -16,6 +16,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { chooseAction, legalActions, withRules, type Action, type GameState } from '@mjm/engine';
 import { caveatKey, CLOCK_FRAME_MS, LoopbackHub, SILENT_ANSWER_MS, TableClient, TableHost, transportLink, type HostMessage, type SerializedClient } from '../src/index';
 import { LATE_MS } from '../src/clientclock';
+import type { PlayRecord, SeenState } from '../src/clientrecords';
 import { Missed, scenario, seededDeals } from './support';
 import { holdTurn, stampOf, T0, wire, type Line, type Wire } from './wire';
 
@@ -962,4 +963,74 @@ describe('match record: what a saved record keeps of each frame', () => {
       const { w } = shownLateThenRestart(`MO${i}`, strip);
       green(w);
     }));
+
+  /**
+   * The app restarts 2 s after the phone was shown one of the seat's turns over a live link (the next
+   * one after its sixth discard, when the watch has measured the link for a while), and a client
+   * restored from the saved record, which `edit` may damage, joins at once on a new link. The table times the seat out of that turn, or (`moves`) the
+   * seat makes it 6 s after it was shown.
+   */
+  function restartOnLiveTurn(code: string, moves: boolean, edit?: (play: PlayRecord, r0: SeenState) => void) {
+    let armed = false;
+    let turn = -1;
+    const w = wire({
+      code,
+      think: (_k, tc) => {
+        if (!armed) return 600;
+        if (turn < 0) turn = tc;
+        return tc === turn ? (moves ? 6_000 : Infinity) : 600;
+      },
+    });
+    need(w.toDiscard(6));
+    armed = true;
+    need(w.until(() => turn >= 0 && w.current(), 120_000));
+    for (let t = 0; t < 4; t++) w.step();
+    need(w.host.game!.turnCounter === turn);
+    w.restart((s) => {
+      const play = s.plays[s.plays.length - 1];
+      const r0 = play.seen.find((f) => f.tc === turn);
+      need(r0?.live === true);
+      edit?.(play, r0 as SeenState);
+      return s;
+    });
+    w.finish();
+    need(w.judged().includes(turn) !== moves);
+    return w;
+  }
+
+  /** What storage damage can leave in a saved record: NaN (null once the record is JSON), strings, huge and negative numbers, the wrong types. */
+  const JUNK: unknown[] = [NaN, 'x', '17', 1e300, -1e300, -5, true, false, {}, [], null, 99_999_999_999_999];
+  const DAMAGE: Array<[string, (play: PlayRecord, r0: SeenState) => void]> = [
+    [
+      'junk in every new field of every frame and move',
+      (play) => {
+        let k = 0;
+        for (const f of play.seen) for (const key of NEW_FIELDS) (f as unknown as Record<string, unknown>)[key] = JUNK[k++ % JUNK.length];
+        for (const x of play.sent) Object.assign(x, { run: JUNK[k++ % JUNK.length], seg: JUNK[k++ % JUNK.length] });
+      },
+    ],
+    ['its earliest arrival far in the future', (_p, r0) => (r0.atLo = 1e300)],
+    ['its earliest arrival 20 s after it arrived', (_p, r0) => (r0.atLo = r0.at + 20_000)],
+    ['the watch’s reference far below zero', (_p, r0) => (r0.wref = -1e300)],
+    ['the watch’s reference 20 s below the least offset', (_p, r0) => (r0.wref = (r0.ref as number) - 20_000)],
+    ['both references two hours below its own offset', (_p, r0) => (r0.ref = r0.wref = (r0.atLo as number) - (r0.now as number) - 7_200_000)],
+    ['its stamp far in the past', (_p, r0) => (r0.now = -1e300)],
+    ['its stamp far in the future', (_p, r0) => (r0.now = 1e300)],
+    ['its deadline far in the past', (_p, r0) => (r0.deadline = -1e300)],
+    ['live and working that are not booleans', (_p, r0) => Object.assign(r0, { live: 'x', working: 7 })],
+  ];
+
+  it('a restart on a turn shown over a live link, from an undamaged record: green, whether the table times the seat out or the seat moves', () => {
+    scenario((i) => green(restartOnLiveTurn(`MD${i}`, false)));
+    scenario((i) => green(restartOnLiveTurn(`MP${i}`, true)));
+  });
+
+  for (const [what, edit] of DAMAGE)
+    it(`a damaged saved record (the turn’s first frame with ${what}) is read as one saved before those fields were kept: never red, whether the table times the seat out or the seat moves`, () => {
+      for (const moves of [false, true]) {
+        const w = scenario((i) => restartOnLiveTurn(`MX${moves ? 'P' : 'D'}${i}`, moves, edit));
+        expect(w.verdict().status).not.toBe('failed');
+        expect(w.verdict().failures).toEqual([]);
+      }
+    });
 });
