@@ -44,7 +44,7 @@ import { randomHex } from './sha256';
 import type { Link } from './host';
 import { CLOCK_FRAME_MS, RESTART_CAUSES, type Audit, type ClientMessage, type HostMessage, type SeatInfo } from './messages';
 import { isFrame, type Transport, type Unsubscribe } from './transport';
-import { clientClock, DRIFT_RATE, foldClock, LATE_MS, LINK_PAUSE_MS, ORDER_SLACK_MS, PAUSE_GRACE_MS, RAN_GAP_MS, SILENT_ANSWER_MS, WATCH_WINDOW_MS, type TableClientOptions } from './clientclock';
+import { clientClock, DRIFT_CAP_MS, DRIFT_RATE, foldClock, LATE_MS, LINK_PAUSE_MS, ORDER_SLACK_MS, PAUSE_GRACE_MS, RAN_GAP_MS, SILENT_ANSWER_MS, WATCH_WINDOW_MS, type TableClientOptions } from './clientclock';
 import { armedLate, clockTrack, firstSend, fixedPoint, isBotSkill, judgeTableMove, lateAnchor, lateRef, lateWatch, legalFor, sameActionSafe, seatRun, tableRule, unstamped, type LateScope, type MoveJudge } from './clientmoves';
 import {
   CHAINED_FIELDS,
@@ -812,7 +812,7 @@ export class TableClient {
    * The watch does not count frames: it measures how far the host's stamps have fallen behind this
    * device's clock. Its reference (`watchRefAt`) is the least arrival offset (arrival less stamp) of
    * the frames that arrived in the last `WATCH_WINDOW_MS`, never less than `lagRef`, the least seen in
-   * this clock era and run of this device's clock (with `DRIFT_RATE` allowed for since it was seen).
+   * this clock era and run of this device's clock (with `DRIFT_RATE` allowed for since it was seen, at most `DRIFT_CAP_MS`).
    * A frame the host stamped `s` and sent at once has arrived by about `s` plus the reference; at
    * `now` the stamps are `now - (stampHigh + reference)` behind, the deficit. Stamps that crawl a
    * millisecond at a time leave the deficit growing whatever frames keep arriving, and so does a link
@@ -925,11 +925,11 @@ export class TableClient {
     return (this.now as unknown as { segment?: number }).segment ?? 0;
   }
 
-  /** The least arrival offset of this clock era and run of this device's clock at `t`, allowing for drift since it was seen (null: none yet). */
+  /** The least arrival offset of this clock era and run of this device's clock at `t`, allowing for drift since it was seen, at most `DRIFT_CAP_MS` (null: none yet). */
   private refAt(t: number): number | null {
     const r = this.lagRef;
     if (!r || r.era !== this.era || r.seg !== this.seg()) return null;
-    return r.lag + DRIFT_RATE * Math.max(0, t - r.at);
+    return r.lag + Math.min(DRIFT_CAP_MS, DRIFT_RATE * Math.max(0, t - r.at));
   }
 
   /**

@@ -482,6 +482,32 @@ describe('clock: a delay present from the start', () => {
     }));
 });
 
+describe('clock: a delay held for hours', () => {
+  it('from the second hand, every stamped frame slowed by 0.1 s a second up to 18 s and held there: the seat’s turns, 18 s late, are still amber after two hours', () => {
+    let start: number | null = null;
+    const w = wire({
+      code: 'DH18',
+      rules: withRules({ handsPerMatch: 60, turnSeconds: 30, timeBankSeconds: 60 }),
+      think: () => 800,
+      delay: (m, now) => (start === null || stampOf(m) === undefined ? 0 : Math.min(18_000, (now - start) / 10)),
+      onTick: (w) => {
+        if (start === null && w.c.state.audits.length > 0) start = w.clock.now;
+      },
+    });
+    const ended: Array<{ at: number; status: string; caveats: string[] }> = [];
+    for (let g = 0; g < 40_000 && !w.c.state.matchOver && (start === null || w.clock.now < start + 2.2 * 3_600_000); g++) {
+      w.step();
+      for (const a of w.c.state.audits.slice(ended.length)) ended.push({ at: w.clock.now, status: a.status, caveats: a.caveats.map((c) => caveatKey(c) ?? c) });
+    }
+    expect(start).not.toBeNull();
+    const late = ended.filter((h) => h.at > (start as number) + 3 * 60_000);
+    const afterTwoHours = late.filter((h) => h.at > (start as number) + 2 * 3_600_000);
+    expect(afterTwoHours.length).toBeGreaterThan(0);
+    expect(w.drops).toEqual([]);
+    for (const h of late) expect(h).toMatchObject({ status: 'partial', caveats: expect.arrayContaining(['lateShown']) });
+  }, 60_000);
+});
+
 describe('honest links stay green', () => {
   /** Every frame from the host waits 50 ms; from the moment the table sends the seat the state of its 4th move, the network stalls `ms`; the seat is timed out of that move. */
   function stalled(code: string, ms: number) {

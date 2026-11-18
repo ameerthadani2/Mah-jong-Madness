@@ -43,8 +43,15 @@ export const LATE_MS = 17_000;
  * the last 20 s stays where the crawl began until the watch has dropped the link, 13 s in.
  */
 export const WATCH_WINDOW_MS = 20_000;
-/** How fast the host's clock and this device's may drift apart (500 ppm; real clocks drift 200 ppm at worst): a least offset seen a while ago is relaxed by this much. */
+/** How fast the host's clock and this device's may drift apart (500 ppm; real clocks drift 200 ppm at worst): a least offset seen a while ago is relaxed by this much, up to `DRIFT_CAP_MS`. */
 export const DRIFT_RATE = 0.0005;
+/**
+ * The most a least arrival offset is relaxed for drift (`DRIFT_RATE`), however long ago it was seen.
+ * Honest frames come back to within it of the least offset long before (at 200 ppm the clocks drift
+ * this far in 40 minutes, and a frame near the least delay refreshes the reference), so a delay held
+ * for hours cannot grow the `LATE_MS` a turn may be shown late by more than this.
+ */
+export const DRIFT_CAP_MS = 500;
 /** A gap longer than this since this app last ran (handled a frame, checked the link, bound a link, sent a move) was a pause: the phone slept, or the app was in the background. */
 export const RAN_GAP_MS = 1_500;
 /** Frames handled within this long after a pause ended may have waited in the device through it: they may have arrived as early as it began (never before their link was bound). */
