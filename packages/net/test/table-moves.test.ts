@@ -11,6 +11,8 @@
 import { describe, expect, it } from 'vitest';
 import { chooseAction, kindOf, legalActions, withRules, type Action, type BotSkill, type GameState } from '@mjm/engine';
 import { AUDIT_CAVEATS, AUDIT_FAILURES, failureKey, LoopbackHub, TableClient, TableHost, transportLink, type HostMessage, type Link } from '../src/index';
+import { armedLate, seatRun } from '../src/clientmoves';
+import type { PlayRecord, SeenState } from '../src/clientrecords';
 import { Missed, scenario, seededDeals } from './support';
 
 seededDeals(20261116);
@@ -335,5 +337,49 @@ describe('the bot strength the table publishes', () => {
     expect(saved.pinnedSkill).toBe('unpublished');
     const restored = TableClient.restore(saved, transportLink(t.hub.create('p0-new'), 'host'), 'P0', undefined, { token: saved.state.token }, { now: () => t.clock.now });
     expect((restored.serialize() as { pinnedSkill?: unknown }).pinnedSkill).toBe('unpublished');
+  });
+});
+
+/** A state as the client records it: turn `tc`, whether it showed this seat a move, and anything else given. */
+const seen = (tc: number, owes: boolean, extra: Partial<SeenState> = {}): SeenState => ({ tc, epoch: 0, era: 0, at: 1_000 + tc, now: 1_000 + tc, owes, deadline: null, timeBank: 30, inBank: false, hash: `h${tc}`, ...extra });
+const played = (frames: SeenState[]): PlayRecord => ({ hand: 0, seen: frames, sent: [], ledgerFrom: 0 });
+
+describe('the states that showed this seat a move (seatRun)', () => {
+  it('run back from the last state at or before the move, over every state that owed a move since the seat last moved', () => {
+    const p = played([seen(3, false), seen(4, true), seen(5, true), seen(6, true)]);
+    expect(seatRun(p, 6, -1)).toEqual({ run: p.seen.slice(1), i0: 1 });
+    // The seat moved at turn 4: the move at turn 6 answers the states after it.
+    expect(seatRun(p, 6, 4)).toEqual({ run: p.seen.slice(2), i0: 2 });
+  });
+
+  it('are none when the last state at or before the move came at or before the seat’s own previous move', () => {
+    // The seat was shown turn 7 and moved there; no state came after, and the table moved for it at turn 9.
+    const p = played([seen(6, false), seen(7, true)]);
+    expect(seatRun(p, 9, 7)).toEqual({ run: [], i0: -1 });
+    expect(seatRun(p, 9, -1)).toEqual({ run: [p.seen[1]], i0: 1 });
+  });
+
+  it('are none when the last state at or before the move showed the seat nothing to do', () => {
+    expect(seatRun(played([seen(4, true), seen(5, false)]), 6, -1)).toEqual({ run: [], i0: -1 });
+    expect(seatRun(played([seen(8, true)]), 6, -1)).toEqual({ run: [], i0: -1 });
+  });
+});
+
+describe('the state that starts a turn gives the whole turn clock (armedLate)', () => {
+  const rules = withRules({ handsPerMatch: 1, turnSeconds: 15, timeBankSeconds: 30 });
+
+  it('on a link this device held, by its own deadline and stamp, with a second of slack', () => {
+    expect(armedLate(seen(5, true, { onLink: true, now: 10_000, deadline: 25_000 }), rules)).toBe(false);
+    expect(armedLate(seen(5, true, { onLink: true, now: 10_000, deadline: 24_000 }), rules)).toBe(false);
+    // Two seconds of the turn gone before the state was stamped, or the turn already in the bank: late.
+    expect(armedLate(seen(5, true, { onLink: true, now: 10_000, deadline: 23_000 }), rules)).toBe(true);
+    expect(armedLate(seen(5, true, { onLink: true, now: 10_000, deadline: 40_000, inBank: true }), rules)).toBe(true);
+  });
+
+  it('is not asked of a state that came first on a new link, of one with no stamp or deadline, or of a record from an older build', () => {
+    expect(armedLate(seen(5, true, { onLink: false, now: 10_000, deadline: 23_000 }), rules)).toBe(false);
+    expect(armedLate(seen(5, true, { onLink: true, now: undefined, deadline: 23_000 }), rules)).toBe(false);
+    expect(armedLate(seen(5, true, { onLink: true, now: 10_000, deadline: null }), rules)).toBe(false);
+    expect(armedLate(seen(5, true, { now: 10_000, deadline: 23_000 }), rules)).toBe(false);
   });
 });

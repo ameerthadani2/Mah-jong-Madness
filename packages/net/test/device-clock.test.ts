@@ -10,7 +10,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { chooseAction, legalActions, withRules } from '@mjm/engine';
-import { AUDIT_CAVEATS, clientClock, failureKey, LoopbackHub, TableClient, TableHost, transportLink, type Link } from '../src/index';
+import { AUDIT_CAVEATS, clientClock, failureKey, LoopbackHub, steadyClock, TableClient, TableHost, transportLink, type Link } from '../src/index';
 import { Missed, scenario, seededDeals } from './support';
 
 seededDeals();
@@ -225,6 +225,27 @@ describe('the client clock', () => {
     expect(now()).toBe(5_000_000 + 10 * 60_000 + 1_400);
   });
 
+  it('counts the times it follows the wall clock instead of the monotonic one (its runs, or segments)', () => {
+    const c = { wall: 5_000_000, mono: 42 };
+    const now = clientClock({ now: () => c.wall, monotonic: () => c.mono }) as (() => number) & { segment?: number };
+    now();
+    expect(now.segment).toBe(0);
+    // A wall clock set back, or ahead by less than a second more than the monotonic clock ran: the same run.
+    c.wall -= HOUR;
+    c.mono += 1_000;
+    now();
+    c.wall += 1_900;
+    c.mono += 1_000;
+    now();
+    expect(now.segment).toBe(0);
+    // Asleep: the wall clock ran on alone, and what the clock says of the host's after this is measured afresh.
+    c.wall += 30_000;
+    now();
+    expect(now.segment).toBe(1);
+    // A clock that is the injected `now` alone has no runs.
+    expect((clientClock({ now: () => c.wall }) as { segment?: number }).segment).toBeUndefined();
+  });
+
   it('with only `now` given, follows it exactly (the tests drive one clock)', () => {
     const c = { now: 7 };
     const now = clientClock({ now: () => c.now });
@@ -236,6 +257,27 @@ describe('the client clock', () => {
 
   it('defaults to the wall clock moved on by performance.now', () => {
     const now = clientClock();
+    expect(Math.abs(now() - Date.now())).toBeLessThan(1_000);
+  });
+});
+
+describe('the clock a server keeps its tables by', () => {
+  it('steadyClock starts at the wall time and then moves only by the monotonic clock: a wall clock set back 60 s or forward 2 s moves nothing', () => {
+    const c = { wall: 9_000_000, mono: 123 };
+    const now = steadyClock(() => c.wall, () => c.mono);
+    expect(now()).toBe(9_000_000);
+    c.wall -= 60_000;
+    c.mono += 500;
+    expect(now()).toBe(9_000_500);
+    c.wall += 62_000;
+    c.mono += 500;
+    expect(now()).toBe(9_001_000);
+    c.mono += 10_000;
+    expect(now()).toBe(9_011_000);
+  });
+
+  it('defaults to the wall clock moved on by performance.now', () => {
+    const now = steadyClock();
     expect(Math.abs(now() - Date.now())).toBeLessThan(1_000);
   });
 });

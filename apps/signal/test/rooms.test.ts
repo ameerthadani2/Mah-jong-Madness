@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { DEFAULT_RULES, RULE_LIMITS } from '@mjm/engine';
 import { CODE_ALPHABET, codeFromHex } from '../src/codes';
 import {
@@ -124,6 +124,35 @@ describe('RoomRegistry', () => {
     expect(reg.stats().hostedTables).toBe(1);
     reg.disconnect(a.id);
     expect(reg.stats().hostedTables).toBe(0);
+  });
+
+  it('keeps a hosted table on a steady clock: a server clock set back a minute, or forward 2 s, moves none of its stamps', () => {
+    vi.useFakeTimers({ now: 1_800_000_000_000 });
+    try {
+      // No clock given: the table keeps time by the server's monotonic clock from the wall time it opened at.
+      const reg = new RoomRegistry({ allowHosted: true });
+      const socket = fakeSocket();
+      const a = reg.handle(reg.connect(socket), { t: 'hello' });
+      reg.handle(a, { t: 'create', hosted: true });
+      const host = socket.out.find((m) => m.t === 'room')!.host!;
+      /** The table's stamp on its answer to a ping. */
+      const stamp = (): number => {
+        reg.handle(a, { t: 'to', to: host, data: { ch: 'game', msg: { t: 'ping', at: 1 } } });
+        const pong = [...socket.out].reverse().find((m) => m.t === 'from' && (m as unknown as { data: { msg: { t: string } } }).data.msg.t === 'pong');
+        return (pong as unknown as { data: { msg: { now: number } } }).data.msg.now;
+      };
+      const t0 = stamp();
+      expect(Math.abs(t0 - Date.now())).toBeLessThan(1_000);
+      vi.setSystemTime(Date.now() - 60_000);
+      vi.advanceTimersByTime(1_000);
+      expect(stamp()).toBe(t0 + 1_000);
+      vi.setSystemTime(Date.now() + 2_000);
+      vi.advanceTimersByTime(1_000);
+      expect(stamp()).toBe(t0 + 2_000);
+      reg.disconnect(a);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('rejects rooms without a server table unless relay-only rooms are enabled', () => {

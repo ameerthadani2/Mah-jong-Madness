@@ -1,0 +1,599 @@
+/**
+ * A server that wants to cut a seat's turn short without failing the hand can hold back the state
+ * that shows the seat its turn, and keep the link looking alive meanwhile with pongs and clock
+ * frames whose stamps creep forward a millisecond at a time, or run slow; or it can delay all it
+ * sends, under honest stamps. The phone measures the table's stamps against its own clock (the
+ * least arrival offset seen since the table's clock began), so stamps that fall behind count as
+ * silence: the link is dropped, and the time without it is judged as a drop. And it judges the
+ * state that first showed the seat each move: on a link it already held, that state must give the
+ * whole turn clock by its own deadline and stamp; on a live link it may reach the phone at most
+ * 17 s late; later than that, or later than the round trips of the seat's own moves allow, the
+ * table's move is judged as made while the seat had no link (amber at best). A turn skipped on a
+ * link that stayed open fails. Honest links that are slow, stall or slow down for good, phones
+ * that sleep, and servers whose wall clock is set back, stay green.
+ */
+import { describe, expect, it, vi } from 'vitest';
+import { legalActions, withRules } from '@mjm/engine';
+import { CLOCK_FRAME_MS, SILENT_ANSWER_MS, type HostMessage, type SerializedClient } from '../src/index';
+import { Missed, scenario, seededDeals } from './support';
+import { holdTurn, stampOf, T0, wire, type Line, type Wire } from './wire';
+
+seededDeals();
+
+const need = (cond: boolean) => {
+  if (!cond) throw new Missed();
+};
+/** The longest a link whose stamps stand still stays up while the watch runs once a second. */
+const SILENT_BOUND = 2 * CLOCK_FRAME_MS + 2_000 + SILENT_ANSWER_MS + 1_000;
+const green = (w: Wire) => expect(w.verdict()).toEqual({ status: 'ok', failures: [], caveats: [] });
+
+describe('held frames: stamps that crawl while the turn state is held', () => {
+  for (const all of [false, true]) {
+    it.each([25_000, 40_000, 44_000])(`a hold of %i ms, the clock frames and pongs crawling a millisecond at a time${all ? ', every other frame held too' : ''}: the link is dropped, and the hand is amber`, (ms) =>
+      scenario((i) => {
+        const h = holdTurn({ code: `CR${ms}${all}${i}`, think: (_k, tc) => (tc === h.st.heldTc ? Infinity : 600) }, { all });
+        need(h.arm());
+        const from = h.w.clock.now;
+        h.w.until(() => h.w.clock.now - from >= ms);
+        need(h.w.host.phase === 'playing');
+        h.release();
+        h.w.finish();
+        need(h.w.judged().includes(h.st.heldTc));
+        expect(h.w.drops.length).toBeGreaterThan(0);
+        expect(h.w.drops[0] - from).toBeLessThanOrEqual(SILENT_BOUND);
+        const v = h.w.verdict();
+        expect(v.status).toBe('partial');
+        expect(v.caveats).toContain('tableMoved');
+      }),
+    );
+  }
+
+  it('inside the bound: a 12 s hold released with its own stamp, the seat timed out, is green', () =>
+    scenario((i) => {
+      const h = holdTurn({ code: `CB12${i}`, think: (_k, tc) => (tc === h.st.heldTc ? Infinity : 600) });
+      need(h.arm());
+      const from = h.w.clock.now;
+      h.w.until(() => h.w.clock.now - from >= 12_000);
+      h.release();
+      h.w.finish();
+      need(h.w.judged().includes(h.st.heldTc));
+      green(h.w);
+    }));
+
+  it('past the bound: an 18 s hold released with its own stamp, the seat timed out, is not green', () =>
+    scenario((i) => {
+      const h = holdTurn({ code: `CB18${i}`, think: (_k, tc) => (tc === h.st.heldTc ? Infinity : 600) });
+      need(h.arm());
+      const from = h.w.clock.now;
+      h.w.until(() => h.w.clock.now - from >= 18_000);
+      h.release();
+      h.w.finish();
+      need(h.w.judged().includes(h.st.heldTc));
+      expect(h.w.verdict().status).not.toBe('ok');
+      expect(h.w.verdict().caveats).toContain('tableMoved');
+    }));
+
+  const slow = (base: number, _k: number, since: number, now: number) => base + 0.9 * (now - since);
+
+  it('stamps at 0.9 of real time, the turn state held 40 s and released with its own stamp, the seat moving at once: red lateTurn', () =>
+    scenario((i) => {
+      const h = holdTurn({ code: `CS9m${i}`, think: (_k, tc) => (tc === h.st.heldTc ? 0 : 600) }, { stamp: slow });
+      need(h.arm());
+      const from = h.w.clock.now;
+      h.w.until(() => h.w.clock.now - from >= 40_000);
+      h.release();
+      h.w.finish();
+      expect(h.w.drops).toEqual([]);
+      expect(h.w.verdict()).toMatchObject({ status: 'failed', failures: ['lateTurn'] });
+      expect(h.w.c.state.auditFailures).toContain(`The host showed this seat its turn late, on a link that stayed open (turn ${h.st.heldTc})`);
+    }));
+
+  it('stamps at 0.9 of real time, the same hold, the seat timed out: red heldFrame', () =>
+    scenario((i) => {
+      const h = holdTurn({ code: `CS9i${i}`, think: (_k, tc) => (tc === h.st.heldTc ? Infinity : 600) }, { stamp: slow });
+      need(h.arm());
+      const from = h.w.clock.now;
+      h.w.until(() => h.w.clock.now - from >= 40_000);
+      h.release();
+      h.w.finish();
+      need(h.w.judged().includes(h.st.heldTc));
+      expect(h.w.verdict()).toMatchObject({ status: 'failed', failures: ['heldFrame'] });
+    }));
+});
+
+describe('held frames: forged pongs', () => {
+  it('pongs that echo an old ping, freshly stamped, while the turn state is held 40 s and then released: red heldFrame', () =>
+    scenario((i) => {
+      const pings: number[] = [];
+      const h = holdTurn({
+        code: `PO${i}`,
+        think: (_k, tc) => (tc === h.st.heldTc ? Infinity : 600),
+        onTick: (w) => {
+          if (h.st.holding && pings.length > 0 && w.clock.now % 2_000 === 0) w.line.inject({ t: 'pong', at: pings[0], now: w.clock.now });
+        },
+      });
+      // The pings the phone sends (the server answers the first one over and over).
+      const send = h.w.c.ping.bind(h.w.c);
+      h.w.c.ping = () => {
+        pings.push(h.w.clock.now);
+        send();
+      };
+      need(h.arm());
+      const from = h.w.clock.now;
+      h.w.until(() => h.w.clock.now - from >= 40_000);
+      h.release();
+      h.w.finish();
+      need(h.w.judged().includes(h.st.heldTc));
+      expect(h.w.verdict()).toMatchObject({ status: 'failed', failures: ['heldFrame'] });
+    }));
+
+  it('pongs that echo an old ping, stamped at the crawl: the link is dropped, and the hand is amber', () =>
+    scenario((i) => {
+      const h = holdTurn({
+        code: `PC${i}`,
+        think: (_k, tc) => (tc === h.st.heldTc ? Infinity : 600),
+        onTick: (w) => {
+          if (h.st.holding && w.clock.now % 2_000 === 0) w.line.inject({ t: 'pong', at: h.st.since, now: h.crawl() });
+        },
+      });
+      need(h.arm());
+      const from = h.w.clock.now;
+      h.w.until(() => h.w.clock.now - from >= 40_000);
+      h.release();
+      h.w.finish();
+      need(h.w.judged().includes(h.st.heldTc));
+      expect(h.w.drops.length).toBeGreaterThan(0);
+      expect(h.w.verdict()).toMatchObject({ status: 'partial' });
+      expect(h.w.verdict().caveats).toContain('tableMoved');
+    }));
+});
+
+describe('clock: the state that starts a turn must give the whole turn clock', () => {
+  const nearly = (base: number, _k: number, since: number, now: number) => base + 0.99 * (now - since);
+
+  it('stamps at 0.99 of real time, the turn state held 12 s and released re-stamped to the crawl, its deadline untouched, the seat moving at once: red lateTurn', () =>
+    scenario((i) => {
+      const h = holdTurn({ code: `AR${i}`, think: (_k, tc) => (tc === h.st.heldTc ? 0 : 600) }, { stamp: nearly });
+      need(h.arm());
+      const from = h.w.clock.now;
+      h.w.until(() => h.w.clock.now - from >= 12_000);
+      h.release((m) => (m.t === 'state' ? { ...m, now: h.crawl() } : m));
+      h.w.finish();
+      expect(h.w.drops).toEqual([]);
+      expect(h.w.verdict()).toMatchObject({ status: 'failed', failures: ['lateTurn'] });
+    }));
+
+  it('the same, with the deadline moved as far as the stamp and the seat timed out: red playedEarly', () =>
+    scenario((i) => {
+      const h = holdTurn({ code: `AS${i}`, think: (_k, tc) => (tc === h.st.heldTc ? Infinity : 600) }, { stamp: nearly });
+      need(h.arm());
+      const from = h.w.clock.now;
+      h.w.until(() => h.w.clock.now - from >= 12_000);
+      h.release((m) => {
+        if (m.t !== 'state') return m;
+        const now = h.crawl();
+        return { ...m, now, deadline: m.deadline === null ? null : m.deadline + (now - (m.now ?? now)) };
+      });
+      h.w.finish();
+      need(h.w.judged().includes(h.st.heldTc));
+      expect(h.w.verdict()).toMatchObject({ status: 'failed', failures: ['playedEarly'] });
+    }));
+});
+
+describe('held frames: a turn skipped on a link that stays open', () => {
+  /** The server never sends the states `skip` picks (the clock frames meanwhile carry the turn before); the seat is timed out of that turn. */
+  function skipped(code: string, skip: (w: Wire, m: Extract<HostMessage, { t: 'state' }>) => boolean, arm: (w: Wire) => boolean) {
+    let armed = false;
+    let tc = -1;
+    let done = false;
+    const w: Wire = wire({
+      code,
+      think: (_k, t) => (t === tc ? Infinity : 600),
+      map: (m) => {
+        if (!armed || done) return m;
+        const g = w.host.game!;
+        if (tc < 0 && m.t === 'state' && g.turnCounter === m.view.turnCounter && skip(w, m)) tc = m.view.turnCounter;
+        if (tc < 0) return m;
+        if (g.turnCounter > tc) {
+          done = true;
+          return m;
+        }
+        if (m.t === 'state') return null;
+        return m.t === 'clock' ? { ...m, tc: tc - 1 } : m;
+      },
+    });
+    armed = arm(w);
+    w.finish();
+    return { w, tc: () => tc };
+  }
+
+  it('a discard turn: red heldFrame', () =>
+    scenario((i) => {
+      const s = skipped(`SK${i}`, (w) => w.discardTurn(), (w) => w.toDiscard(2));
+      need(s.tc() >= 0 && s.w.judged().includes(s.tc()));
+      expect(s.w.verdict()).toMatchObject({ status: 'failed', failures: ['heldFrame'] });
+    }));
+
+  it('a claim window offering a Pong, a Chow or a Kong: red heldFrame', () =>
+    scenario((i) => {
+      const s = skipped(
+        `SC${i}`,
+        (w) => w.host.game!.phase === 'claim' && legalActions(w.host.game!, 0).some((a) => a.type !== 'pass' && a.type !== 'hu'),
+        (w) => w.toDiscard(1),
+      );
+      need(s.tc() >= 0 && s.w.judged().includes(s.tc()));
+      expect(s.w.verdict()).toMatchObject({ status: 'failed', failures: ['heldFrame'] });
+    }));
+
+  /** Every state and clock frame of hand `hand` is kept off the link until the table has played for the seat. */
+  function opening(code: string, hand: number) {
+    let done = false;
+    const w: Wire = wire({
+      code,
+      rules: withRules({ handsPerMatch: hand + 1, turnSeconds: 15, timeBankSeconds: 30 }),
+      map: (m) => {
+        if (done || (m.t !== 'state' && m.t !== 'clock') || w.host.game?.handNumber !== hand) return m;
+        if (w.tableMoves().length === 0) return null;
+        done = true;
+        return m;
+      },
+    });
+    for (let g = 0; g < 7_200 && !(w.host.phase === 'playing' && w.host.game?.handNumber === hand); g++) w.step();
+    w.finish();
+    return { w, done: () => done };
+  }
+
+  it('the opening of the match, on the link this device revealed its share over: red heldFrame', () =>
+    scenario((i) => {
+      const o = opening(`SO${i}`, 0);
+      need(o.done());
+      expect(o.w.verdict()).toMatchObject({ status: 'failed', failures: ['heldFrame'] });
+    }));
+
+  it('the opening of the next hand, on the link that brought the hand before it: red heldFrame', () =>
+    scenario((i) => {
+      const o = opening(`SN${i}`, 1);
+      need(o.done() && o.w.c.state.audits.length === 2 && o.w.c.state.audits[0].status === 'ok');
+      expect(o.w.verdict()).toMatchObject({ status: 'failed', failures: ['heldFrame'] });
+    }));
+});
+
+describe('clock: a delay present from the start', () => {
+  /** Every stamped frame waits `ms` from the first state of the match on (the ceremony before it is prompt); the seat moves on two turns in three. */
+  function delayed(code: string, ms: number) {
+    let on = false;
+    const w = wire({
+      code,
+      think: (k) => (k % 3 === 0 ? Infinity : 800),
+      delay: (m) => {
+        if (m.t === 'state') on = true;
+        return on && stampOf(m) !== undefined ? ms : 0;
+      },
+    });
+    w.finish();
+    return w;
+  }
+
+  it('25 s from the start: amber, the table played for the seat and its turn was shown late, never green', () =>
+    scenario((i) => {
+      const w = delayed(`DL25${i}`, 25_000);
+      need(w.judged().length > 0);
+      expect(w.verdict().status).toBe('partial');
+      expect(w.verdict().caveats).toEqual(expect.arrayContaining(['tableMoved', 'lateShown']));
+    }));
+
+  it.each([15_000, 19_000])('%i ms from the start: green', (ms) =>
+    scenario((i) => {
+      const w = delayed(`DL${ms}${i}`, ms);
+      need(w.judged().length > 0);
+      green(w);
+    }),
+  );
+});
+
+describe('honest links stay green', () => {
+  /** Every frame from the host waits 50 ms; from the moment the table sends the seat the state of its 4th move, the network stalls `ms`; the seat is timed out of that move. */
+  function stalled(code: string, ms: number) {
+    let from = -1;
+    let tc = -1;
+    let k = 0;
+    const w: Wire = wire({
+      code,
+      think: (_k, t) => (t === tc ? Infinity : 800),
+      delay: (m, now) => {
+        if (from < 0 && m.t === 'state' && w.owes() && w.host.game!.turnCounter === m.view.turnCounter && ++k === 4) {
+          from = now;
+          tc = m.view.turnCounter;
+        }
+        return 50 + (from >= 0 && now >= from && now < from + ms ? from + ms - now : 0);
+      },
+    });
+    w.finish();
+    need(tc >= 0 && w.judged().includes(tc));
+    return w;
+  }
+
+  it.each([3_000, 6_000, 9_000])('a %i ms stall of the network as the seat is sent its turn, the seat timed out: green, no drop', (ms) =>
+    scenario((i) => {
+      const w = stalled(`HS${ms}${i}`, ms);
+      expect(w.drops).toEqual([]);
+      green(w);
+    }),
+  );
+
+  it('a 12 s stall of the network as the seat is sent its turn, the seat timed out: green', () =>
+    scenario((i) => {
+      const w = stalled(`HS12${i}`, 12_000);
+      green(w);
+    }));
+
+  it('a latency that rises by 5 s and stays up: green, no drop', () =>
+    scenario((i) => {
+      const t1 = T0 + 40_000 + 9_000 * i;
+      const w = wire({ code: `HR5${i}`, think: (k) => (k % 3 === 0 ? Infinity : 800), delay: (_m, now) => 50 + (now >= t1 ? 5_000 : 0) });
+      w.finish();
+      need(w.judged().length > 0);
+      expect(w.drops).toEqual([]);
+      green(w);
+    }));
+
+  it.each([-2_000, -10_000, -60_000, 2_000])('the server’s wall clock stepped %i ms mid-hand, the table keeping its default clock: green, no drop', (step) => {
+    vi.useFakeTimers();
+    try {
+      scenario((i) => {
+        const t1 = T0 + 60_000 + 11_000 * i;
+        const w = wire({ code: `HW${step}${i}`, hostClock: 'real', think: (k) => (k % 3 === 0 ? Infinity : 800), hostSkew: (now) => (now >= t1 ? step : 0) });
+        w.finish();
+        need(w.judged().length > 0 && Math.max(...w.shown.values()) > t1 + 10_000);
+        expect(w.drops).toEqual([]);
+        green(w);
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('4 s each way from before the deal, and a 12 s stall as the seat is sent its turn, the seat timed out: never red', () =>
+    scenario((i) => {
+      let stallFrom = -1;
+      let tc = -1;
+      let k = 0;
+      const w: Wire = wire({
+        code: `HY${i}`,
+        think: (_k, t) => (t === tc ? Infinity : 800),
+        up: () => 4_050,
+        delay: (m, now) => {
+          if (stallFrom < 0 && m.t === 'state' && w.owes() && w.host.game!.turnCounter === m.view.turnCounter && m.view.turnCounter !== tc && ++k === 4 + i) {
+            stallFrom = now;
+            tc = m.view.turnCounter;
+          }
+          return 4_050 + (stallFrom >= 0 && now >= stallFrom && now < stallFrom + 12_000 ? stallFrom + 12_000 - now : 0);
+        },
+      });
+      w.finish();
+      need(tc >= 0 && w.judged().includes(tc));
+      expect(w.verdict().status).not.toBe('failed');
+    }));
+});
+
+describe('reconnect: a server that forces the phone onto new links', () => {
+  /** The server crawls its stamps until the phone drops the link, and on each new link sends the last state the phone was shown, with its old stamp, ahead of what it holds; the seat is timed out. */
+  function staleResend(code: string, ms: number) {
+    let shown: Extract<HostMessage, { t: 'state' }> | null = null;
+    const h = holdTurn({
+      code,
+      think: (_k, tc) => (tc === h.st.heldTc ? Infinity : 600),
+      onReconnect: (w) => {
+        if (!h.st.holding) return;
+        shown ??= w.lastState;
+        if (shown) w.line.inject(shown);
+      },
+    });
+    need(h.arm());
+    const from = h.w.clock.now;
+    h.w.until(() => h.w.clock.now - from >= ms);
+    expect(h.w.drops.length).toBeGreaterThanOrEqual(2);
+    h.release();
+    h.w.finish();
+    need(h.w.judged().includes(h.st.heldTc));
+    return h.w;
+  }
+
+  it.each([30_000, 40_000])('stamps crawling until the phone drops the link, the last state it was shown re-sent with its old stamp on each new link, the turn released after %i ms on a later one: red playedEarly', (ms) =>
+    scenario((i) => {
+      const w = staleResend(`RS${ms}${i}`, ms);
+      expect(w.verdict()).toMatchObject({ status: 'failed', failures: ['playedEarly'] });
+    }),
+  );
+
+  it('the same, the hold lasting until just after a drop, so the turn comes on a fresh link: judged as a drop, amber', () =>
+    scenario((i) => {
+      const w = staleResend(`RT${i}`, 44_000);
+      expect(w.verdict().status).toBe('partial');
+      expect(w.verdict().caveats).toContain('tableMoved');
+    }));
+
+  it('the link closed as the seat comes to owe a move, the new one held 40 s (its welcome too) and then let through freshly stamped, the seat timed out: amber', () =>
+    scenario((i) => {
+      let armed = false;
+      let turn = -1;
+      let since = 0;
+      let back = false;
+      const w: Wire = wire({
+        code: `RC${i}`,
+        reconnectMs: 500,
+        think: (_k, tc) => (tc === turn ? Infinity : 600),
+        hold: (m, w) => {
+          if (!armed || back) return false;
+          if (turn < 0 && m.t === 'state' && w.owes() && w.host.game!.turnCounter === m.view.turnCounter) {
+            turn = m.view.turnCounter;
+            since = w.clock.now;
+            // The state that shows the seat its turn is never sent on the link it was meant for.
+            w.dropNow(500);
+            return true;
+          }
+          return turn >= 0 && w.line.id !== 'p0';
+        },
+        onTick: (w) => {
+          if (back || turn < 0 || w.line.id === 'p0' || w.clock.now - since < 40_000) return;
+          back = true;
+          w.line.release((m) => (stampOf(m) === undefined ? m : ({ ...m, now: w.clock.now } as HostMessage)));
+        },
+      });
+      need(w.toDiscard(2));
+      armed = true;
+      w.finish();
+      need(back && w.judged().includes(turn));
+      expect(w.verdict().status).toBe('partial');
+      expect(w.verdict().caveats).toContain('tableMoved');
+    }));
+
+  it('a slow reconnect: the watch drops a crawling link, joining again takes 10 s, and the held turn state comes at once on the new link with its own stamp: amber, never green', () =>
+    scenario((i) => {
+      let first: Line | null = null;
+      const h = holdTurn({
+        code: `RW${i}`,
+        reconnectMs: 10_000,
+        think: (_k, tc) => (tc === h.st.heldTc ? Infinity : 600),
+        onReconnect: (w) => {
+          if (!h.st.holding || !first) return;
+          h.st.holding = false;
+          h.st.released = true;
+          for (const m of first.held.splice(0)) w.line.inject(m);
+        },
+      });
+      need(h.arm());
+      first = h.w.line;
+      h.w.finish();
+      need(h.st.released && h.w.judged().includes(h.st.heldTc));
+      expect(h.w.drops).toHaveLength(1);
+      expect(h.w.verdict().status).toBe('partial');
+      expect(h.w.verdict().caveats).toContain('tableMoved');
+    }));
+
+  it('no storm: after a stall drops a link with 8 s each way, the new link, whose first frame takes 16 s, is kept', () =>
+    scenario((i) => {
+      let stallFrom = -1;
+      let tc = -1;
+      let k = 0;
+      const w: Wire = wire({
+        code: `RN${i}`,
+        think: (_k, t) => (t === tc ? Infinity : 800),
+        up: () => 8_050,
+        delay: (m, now) => {
+          if (stallFrom < 0 && m.t === 'state' && w.owes() && w.host.game!.turnCounter === m.view.turnCounter && ++k === 4) {
+            stallFrom = now;
+            tc = m.view.turnCounter;
+          }
+          return 8_050 + (stallFrom >= 0 && now >= stallFrom && now < stallFrom + 12_000 ? stallFrom + 12_000 - now : 0);
+        },
+      });
+      w.finish();
+      need(tc >= 0);
+      expect(w.drops).toHaveLength(1);
+      expect(w.c.state.lastResult).not.toBeNull();
+    }));
+});
+
+describe('device clock: frames that waited in the device', () => {
+  /** 10 s turns and a 10 s bank, so the table times the seat out while the app is not running. */
+  const QUICK = withRules({ handsPerMatch: 1, turnSeconds: 10, timeBankSeconds: 10 });
+
+  /** The app stops running for 30 s just as the seat's next move is sent it; the seat is timed out meanwhile. */
+  function pausedAcrossTurn(code: string, how: 'background' | 'asleep') {
+    let from = Number.POSITIVE_INFINITY;
+    let move = Number.POSITIVE_INFINITY;
+    const paused = (now: number) => now >= from && now < from + 30_000;
+    const w: Wire = wire({ code, rules: QUICK, [how]: paused, checkFirst: true, think: (_k, tc) => (tc > move ? Infinity : 600) });
+    need(w.toDiscard(2));
+    // The seat makes this move; the table answers with the seat's next turn in the same tick, which the app no longer handles.
+    move = w.host.game!.turnCounter;
+    need(w.until(() => w.host.game!.turnCounter > move, 10_000));
+    from = w.clock.now + 1;
+    const turn = w.owes() ? w.host.game!.turnCounter : -1;
+    w.finish();
+    return { w, turn };
+  }
+
+  it('background 30 s across the seat’s turn start, the link checked before the frames that waited are handled: green', () =>
+    scenario((i) => {
+      const { w, turn } = pausedAcrossTurn(`DB${i}`, 'background');
+      need(turn >= 0 && w.judged().includes(turn));
+      expect(w.drops).toEqual([]);
+      green(w);
+    }));
+
+  it('asleep 30 s across the seat’s turn start (the monotonic clock stands still, the wall clock runs): green, no drop', () =>
+    scenario((i) => {
+      const { w, turn } = pausedAcrossTurn(`DS${i}`, 'asleep');
+      need(turn >= 0 && w.judged().includes(turn));
+      expect(w.drops).toEqual([]);
+      green(w);
+    }));
+});
+
+describe('match record: what a saved record keeps of each frame', () => {
+  const NEW_FIELDS = ['atLo', 'ref', 'live', 'working', 'seg', 'run', 'onLink'] as const;
+
+  /**
+   * The link drops just as the seat's turn begins and comes back 20 s later, so the phone is first
+   * shown its turn on the new link with 25 s of its clock left; the table times the seat out. Then
+   * the app restarts, restored from its saved record (`edit` may change it), and the hand is played out.
+   */
+  function shownLateThenRestart(code: string, edit?: (saved: SerializedClient) => SerializedClient) {
+    let turn = Number.POSITIVE_INFINITY;
+    const w = wire({ code, think: (_k, tc) => (tc === turn ? Infinity : 600) });
+    need(w.toDiscard(2));
+    const move = w.host.game!.turnCounter;
+    need(w.until(() => w.host.game!.turnCounter > move, 10_000) && w.owes());
+    turn = w.host.game!.turnCounter;
+    // The state that shows the seat its turn is lost with the link.
+    w.dropNow(20_000);
+    need(w.until(() => w.host.game!.turnCounter > turn));
+    w.step(2_000);
+    let saved: SerializedClient | null = null;
+    w.restart((s) => {
+      saved = s;
+      return edit ? edit(JSON.parse(JSON.stringify(s)) as SerializedClient) : s;
+    });
+    w.finish();
+    need(w.judged().includes(turn));
+    return { w, saved: saved as unknown as SerializedClient, turn };
+  }
+
+  it('a save keeps the new fields of every frame and move, and the restored client judges by them: the turn shown late on the new link makes the hand amber', () =>
+    scenario((i) => {
+      const { w, saved, turn } = shownLateThenRestart(`MR${i}`);
+      const play = saved.plays.find((p) => p.seen.some((f) => f.tc === turn))!;
+      const shown = play.seen.filter((f) => f.tc === turn);
+      expect(shown.length).toBeGreaterThan(0);
+      for (const f of play.seen) for (const k of NEW_FIELDS) expect(f).toHaveProperty(k);
+      expect(shown[0]).toMatchObject({ working: false, onLink: false, live: false });
+      for (const x of play.sent) {
+        expect(typeof x.run).toBe('string');
+        expect(typeof x.seg).toBe('number');
+      }
+      // Saved again by the restored client, the frames before the restart keep them too.
+      const again = JSON.parse(JSON.stringify(w.c.serialize())) as SerializedClient;
+      const kept = again.plays.find((p) => p.hand === play.hand);
+      if (kept) expect(kept.seen.find((f) => f.tc === turn)).toMatchObject({ working: false, onLink: false });
+      expect(w.verdict().status).toBe('partial');
+      expect(w.verdict().caveats).toContain('tableMoved');
+    }));
+
+  it('a record saved by an older build, without those fields, judges as before: green', () =>
+    scenario((i) => {
+      const strip = (s: SerializedClient) => {
+        for (const p of s.plays) {
+          for (const f of p.seen) for (const k of NEW_FIELDS) delete f[k];
+          for (const x of p.sent) {
+            delete x.run;
+            delete x.seg;
+          }
+        }
+        return s;
+      };
+      const { w } = shownLateThenRestart(`MO${i}`, strip);
+      green(w);
+    }));
+});

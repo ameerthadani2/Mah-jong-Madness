@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { AUDIT_CAVEATS, AUDIT_FAILURES, auditFailure, failureKey, type AuditFailure } from '../src';
+import { AUDIT_CAVEATS, AUDIT_FAILURES, auditFailure, caveatKey, failureKey, type AuditFailure } from '../src';
 
 /**
  * The table client explains a failed hand in English sentences written where each check is made.
@@ -188,6 +188,12 @@ describe('audit failure texts', () => {
     expect(auditFailure('The table played for this seat and passed up its win (turn 17)')).toEqual({ key: 'passedUpWin', params: { turn: '17' } });
     expect(auditFailure('Replay failed: Not your turn')).toEqual({ key: 'replayFailed', params: { detail: 'Not your turn' } });
     expect(auditFailure('Host altered my secret')).toEqual({ key: 'mySecretAltered', params: {} });
+    expect(auditFailure('The host showed this seat its turn late, on a link that stayed open (turn 12)')).toEqual({ key: 'lateTurn', params: { turn: '12' } });
+  });
+
+  it('keys the caveat of a turn shown late', () => {
+    expect(caveatKey(AUDIT_CAVEATS.lateShown)).toBe('lateShown');
+    expect(caveatKey("This seat's turn reached this device late")).toBeNull();
   });
 
   it('tells the two "never asked to commit" sentences and the two attempt counts apart', () => {
