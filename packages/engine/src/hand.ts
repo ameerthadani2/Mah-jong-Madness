@@ -322,46 +322,65 @@ function groupOverlap(counts: Counts, from: number, to: number, honor: boolean):
   return result;
 }
 
+/** Strides of the DP state index ((a * CHOW_SPAN + b) * (TOTAL_SETS + 1) + s) * 2 + p, for chows started at k−1 (a) and k−2 (b). */
+const STRIDE_A = CHOW_SPAN * (TOTAL_SETS + 1) * 2;
+const STRIDE_B = (TOTAL_SETS + 1) * 2;
+/** The two rows of the DP, reused by every call (the tables it returns are fresh). */
+const dpRows = [new Int8Array(DP_SLOTS), new Int8Array(DP_SLOTS)];
+
 /**
  * Dynamic programme over the kinds of one group, right to left. The state at kind `k` is
  * (a, b, s, p): chows started at k−1 and k−2 that still cover k, and the sets and pairs the
  * target has yet to start. At each kind the target takes `ch` new chows, `po` pongs and `pa`
  * pairs, holding ch + a + b + 3·po + 2·pa copies, and the hand contributes min(held, count).
+ * The loops stop as soon as a kind would hold more than four copies; the result was checked equal,
+ * for every count vector of a suit and of the honours, to the plain loops it replaced.
  */
 function overlapTable(c: number[], honor: boolean): Int8Array {
   const n = c.length;
-  const idx = (a: number, b: number, s: number, p: number): number => ((a * CHOW_SPAN + b) * (TOTAL_SETS + 1) + s) * 2 + p;
-  let next = new Int8Array(DP_SLOTS).fill(-1);
-  next[idx(0, 0, 0, 0)] = 0;
+  let next = dpRows[0];
+  let cur = dpRows[1];
+  next.fill(-1);
+  next[0] = 0;
   for (let k = n - 1; k >= 0; k--) {
-    const cur = new Int8Array(DP_SLOTS).fill(-1);
+    cur.fill(-1);
     const chowMax = !honor && k + 2 < n ? MAX_COPIES : 0;
+    const held = c[k];
     for (let a = 0; a < CHOW_SPAN; a++) {
       for (let b = 0; a + b <= MAX_COPIES; b++) {
+        const inFlight = a + b;
+        const chowTop = Math.min(chowMax, MAX_COPIES - inFlight);
         for (let s = 0; s <= TOTAL_SETS; s++) {
           for (let p = 0; p <= 1; p++) {
             let bestHere = -1;
-            for (let ch = 0; ch <= chowMax && ch <= s; ch++) {
+            const chowLimit = Math.min(chowTop, s);
+            for (let ch = 0; ch <= chowLimit; ch++) {
+              const row = ch * STRIDE_A + a * STRIDE_B;
               for (let po = 0; po <= 1 && ch + po <= s; po++) {
+                const withPong = ch + inFlight + 3 * po;
+                if (withPong > MAX_COPIES) break;
+                const restSets = (s - ch - po) * 2;
                 for (let pa = 0; pa <= p; pa++) {
-                  const used = ch + a + b + 3 * po + 2 * pa;
-                  if (used > MAX_COPIES) continue;
-                  const rest = next[idx(ch, a, s - ch - po, p - pa)];
+                  const used = withPong + 2 * pa;
+                  if (used > MAX_COPIES) break;
+                  const rest = next[row + restSets + p - pa];
                   if (rest < 0) continue;
-                  const v = Math.min(c[k], used) + rest;
+                  const v = (held < used ? held : used) + rest;
                   if (v > bestHere) bestHere = v;
                 }
               }
             }
-            cur[idx(a, b, s, p)] = bestHere;
+            cur[a * STRIDE_A + b * STRIDE_B + s * 2 + p] = bestHere;
           }
         }
       }
     }
+    const done = next;
     next = cur;
+    cur = done;
   }
   const out = new Int8Array(OVERLAP_SLOTS);
-  for (let s = 0; s <= TOTAL_SETS; s++) for (let p = 0; p <= 1; p++) out[s * 2 + p] = next[idx(0, 0, s, p)];
+  for (let s = 0; s <= TOTAL_SETS; s++) for (let p = 0; p <= 1; p++) out[s * 2 + p] = next[s * 2 + p];
   return out;
 }
 

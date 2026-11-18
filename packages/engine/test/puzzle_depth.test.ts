@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { timeBound } from './helpers/timing';
-import { checkDiscardAnswer, countsFromKinds, DAILY_ISOLATED_TILE_SHARE, dailyPuzzle, discardAnalysis, discardDecision, DISCARD_DECISIONS, discardOptions, ISOLATED_TILE_PUZZLE_SHARE, isolatedTile, DEFENCE_SAFETY_ORDER, defenceOrderRule, defencePuzzle, discardPuzzle, kindInfo, LONE_HONOUR_PUZZLE_SHARE, loneHonours, sha256Hex, VALUE_BIG_PATTERN_TAI, valuePatternRule, valuePuzzle, valueSpeedRule, type DefenceOption, type DiscardPuzzle, type TaiItem, type ValueOption, type ValuePuzzle } from '../src/index';
+import { checkDiscardAnswer, countsFromKinds, DAILY_DISCARD_OPTIONS, dailyPuzzle, discardAnalysis, discardDecision, DISCARD_DECISIONS, discardOptions, ISOLATED_TILE_PUZZLE_SHARE, isolatedTile, DEFENCE_SAFETY_ORDER, defenceOrderRule, defencePuzzle, discardPuzzle, kindInfo, LONE_HONOUR_PUZZLE_SHARE, loneHonours, sha256Hex, VALUE_BIG_PATTERN_TAI, valuePatternRule, valuePuzzle, valueSpeedRule, type DefenceOption, type DiscardPuzzle, type TaiItem, type ValueOption, type ValuePuzzle } from '../src/index';
 
 // How often a one-line rule answers a puzzle: "keep the most winning tiles" for value puzzles, a
 // fixed safety order for defence puzzles. Easy and medium puzzles teach those rules; hard ones
@@ -268,7 +268,7 @@ describe('the daily and medium and hard discard puzzles need reading the shape',
     expect(easy.filter(loneHonourRule).length).toBeGreaterThan(0.75 * easy.length);
     // The daily reads the shape even on an easy day; the same seed as a drill does not.
     const monday = new Date(Date.UTC(2026, 10, 23));
-    expect(dailyPuzzle(monday)).toEqual(discardPuzzle('daily-2026-11-23', 1, { readShape: true, isolatedTileShare: DAILY_ISOLATED_TILE_SHARE }));
+    expect(dailyPuzzle(monday)).toEqual(discardPuzzle('daily-2026-11-23', 1, DAILY_DISCARD_OPTIONS));
   });
 });
 
@@ -304,10 +304,12 @@ describe('the daily and hard discard puzzles need comparing shapes', () => {
   const medium = Array.from({ length: 150 }, (_, i) => discardPuzzle(`shapes-${i}`, 2));
 
   it('the isolated-tile rule is right on under half of the daily puzzles, and still on some', () => {
+    // Since 18 November 2026 the daily is redrawn against a wider set of rules (test/puzzle_rules.test.ts
+    // measures them all); a spread hand still often turns on an isolated tile, so this rule sits near 40%.
     const right = dailies.filter(isolatedRule).length;
-    expect(right).toBeLessThan(0.4 * dailies.length);
+    expect(right).toBeLessThan(0.48 * dailies.length);
     expect(right).toBeGreaterThan(0.1 * dailies.length);
-    // Redrawing costs a few attempts: still a few milliseconds a puzzle (the slowest of 365 dates took about 160 ms on an easy day).
+    // Still a few milliseconds a puzzle (the slowest of 365 dates took about 150 ms, the first before the shanten tables fill).
     const ms = [...dailyMs].sort((a, b) => a - b);
     expect(ms[60]).toBeLessThan(timeBound(20));
     expect(ms[119]).toBeLessThan(timeBound(500));
@@ -328,7 +330,7 @@ describe('the daily and hard discard puzzles need comparing shapes', () => {
     expect(isolatedTile([0, 1, 2, 8, 13, 31])).toBe(31);
     expect(isolatedTile([0, 1, 2, 3])).toBeNull();
     expect(ISOLATED_TILE_PUZZLE_SHARE[1]).toBe(1);
-    expect(DAILY_ISOLATED_TILE_SHARE).toBeLessThan(0.5);
+    expect(DAILY_DISCARD_OPTIONS.deep).toBe(true);
   });
 
   it('keeps every answer exact: each discard within 10 percent of the best acceptance, at the best shanten', () => {

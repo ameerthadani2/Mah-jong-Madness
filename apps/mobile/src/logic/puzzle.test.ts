@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { claimPuzzle, DAILY_ISOLATED_TILE_SHARE, dailyPuzzle, dailySeed, defencePuzzle, discardPuzzle, kindInfo, PUZZLE_TYPES, puzzleOfType, valuePuzzle, waitsPuzzle, type AnyPuzzle, type ClaimPuzzle, type PuzzleType } from '@mjm/engine';
+import { claimPuzzle, DAILY_DISCARD_OPTIONS, dailyPuzzle, dailySeed, defencePuzzle, discardPuzzle, kindInfo, PUZZLE_TYPES, puzzleOfType, valuePuzzle, waitsPuzzle, type AnyPuzzle, type ClaimPuzzle, type PuzzleType } from '@mjm/engine';
 import { en, zhTW } from '../i18n/locales';
 import { checkPuzzleAnswer, claimButtons, claimOutcomeKey, dailyDifficulty, defenceSeats, defenceVerdicts, explanationFor, percent, PUZZLE_TYPE_KEYS, puzzleDifficultyOf, puzzleStatus, reasonTitleKey, seatRelation, SEAT_KEYS, taiFigure, threatKey, tileName, valueProjections } from './puzzle';
 
@@ -130,7 +130,7 @@ describe('difficulty', () => {
   it('matches the difficulty dailyPuzzle uses on every weekday', () => {
     for (let day = 1; day <= 7; day++) {
       const date = new Date(Date.UTC(2026, 10, day));
-      expect(dailyPuzzle(date)).toEqual(discardPuzzle(dailySeed(date), dailyDifficulty(date), { readShape: true, isolatedTileShare: DAILY_ISOLATED_TILE_SHARE }));
+      expect(dailyPuzzle(date)).toEqual(discardPuzzle(dailySeed(date), dailyDifficulty(date), DAILY_DISCARD_OPTIONS));
     }
     expect(dailyDifficulty(new Date(Date.UTC(2026, 10, 7)))).toBe(3); // Saturday
     expect(dailyDifficulty(new Date(Date.UTC(2026, 10, 2)))).toBe(1); // Monday
