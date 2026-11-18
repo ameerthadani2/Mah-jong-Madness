@@ -182,7 +182,7 @@ export class TablePersister {
         // A quick-match table admits only its matched accounts, after a restart too.
         const quick = this.rooms.quickPlayersOf(code);
         if (quick) snapshot.quickPlayers = quick;
-        // So are the pairs that never move each other's table rating.
+        // So are the linked pairs, which leave the table unrated.
         const linked = this.rooms.quickLinkedOf(code);
         if (linked?.length) snapshot.quickLinked = linked;
         // An account the club took off this table stays out of it after a restart.

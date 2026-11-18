@@ -264,8 +264,8 @@ export async function createSignalServer(opts: SignalServerOptions): Promise<Sig
         finishedAt: now(),
       })
       .catch((e: Error) => console.error(`[signal] match result for ${room} not saved:`, e.message));
-    // A finished quick-match match moves the table rating of its humans (bots never count, nor
-    // does a pair that queued from one address or device count for each other).
+    // A finished quick-match match moves the table rating of its humans (bots never count, and a
+    // table opened for a pair that queued from one address or device moves nobody).
     const quickPlayers = rooms.quickPlayersOf(room);
     if (quickPlayers) {
       void applyQuickMatchRating(repos.repos, { matchId: event.matchId, room, seats: event.seats, scores: event.scores, players: quickPlayers, linked: rooms.quickLinkedOf(room) }, now()).catch((e: Error) =>

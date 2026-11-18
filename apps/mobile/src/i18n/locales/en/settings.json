@@ -82,7 +82,7 @@
     "id": "Player id: %{id}",
     "tableRating": "Quick-match rating: %{rating}",
     "tableRatingProvisional": "Provisional: %{matches} of 20 rated matches played",
-    "tableRatingHint": "Moved by quick matches with other people; bots never count.",
+    "tableRatingHint": "Moved by quick matches with other people. Bots never count, and a match where two players joined from one connection or one device counts for no one.",
     "apple": "Sign in with Apple",
     "google": "Sign in with Google",
     "linkedApple": "Apple linked",

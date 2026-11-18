@@ -66,7 +66,7 @@ interface Room {
    * `emptySince` is when its last peer left (or when it was opened or restored), null while anyone
    * is connected: once started it closes `QUICK_ABANDONED_MS` after that.
    */
-  /** `linked`: the pairs of players that queued from one address or one device (they never move each other's table rating). */
+  /** `linked`: the pairs of players that queued from one address or one device (a table opened with one is not rated). */
   quick?: { players: Set<string>; linked: Array<[string, string]>; startBy: number; started: boolean; emptySince: number | null };
 }
 
