@@ -286,7 +286,10 @@ out) is logged and the process exits 1, so the platform shows a failed stop. The
 restores every unfinished table at boot under its own code; the apps reconnect with backoff and
 reclaim their seats with their rejoin tokens, and bots play for anyone not back yet. A restored
 table waits 15 minutes for its players. (With in-memory storage there is nothing to restore from,
-so a deploy ends every table.)
+so a deploy ends every table.) A snapshot that fails the restore check (`src/restoreCheck.ts`: its
+rules, or its hand as the engine replays it, are not what was played) is never restored as a live
+table. The boot logs it ("kept as damaged for an admin"), and `GET /api/admin/tables/damaged`
+lists it, with the reason and the accounts that were seated, for 30 days.
 
 ## Server first, then the app
 
