@@ -95,7 +95,7 @@ function Projection({ p }: { p: ValueProjection }) {
       {p.waits.length > 0 && (
         <>
           <KindRow kinds={p.waits} size="xs" />
-          <Text style={styles.item}>{t('puzzles.value.waits', { kinds: p.waits.length, tiles: p.acceptance })}</Text>
+          <Text style={styles.item}>{t('puzzles.value.waits', { kinds: t('puzzles.count.kinds', { count: p.waits.length }), tiles: t('puzzles.count.tiles', { count: p.acceptance }) })}</Text>
         </>
       )}
       <Text style={[styles.item, { fontFamily: fonts.uiBold }]}>{t('puzzles.value.share', { n: p.share })}</Text>

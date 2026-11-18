@@ -181,6 +181,16 @@ describe('a right answer other than the puzzle\'s own is explained for itself', 
     expect(mine.explanation).toMatch(/about as good\./);
   });
 
+  it('value: a discard ready on one kind of tile says "1 kind", and one winning tile is "1 tile"', async () => {
+    // render-value-2: one ready discard waits on one kind of which 3 are live, another on one kind with 1 live.
+    const ONE = valuePuzzle('render-value-2', 2);
+    await show(ONE);
+    await fireEvent.press(tile(ONE.answer));
+    expect(screen.getAllByText('1 kind / 3 tiles').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('1 kind / 1 tile').length).toBeGreaterThan(0);
+    expect(screen.queryByText(/\b1 kinds\b|\b1 tiles\b/)).toBeNull();
+  });
+
   it('value: the other right discard leads with its own winning tiles and value', async () => {
     const TWO = valuePuzzle('render-value-16', 2);
     const other = TWO.answers.find((k) => k !== TWO.answer)!;

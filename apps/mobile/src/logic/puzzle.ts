@@ -260,7 +260,7 @@ export function claimButtons<O extends ClaimQuestionOption>(p: { discard: Kind; 
 /** Where a claim option leaves the hand, shown on each button once the puzzle is answered. */
 export function claimOutcomeKey(o: ClaimOption): TextKey {
   if (o.type === 'hu') return { key: 'puzzles.claim.win' };
-  if (o.shantenAfter <= 0) return { key: 'puzzles.claim.ready', params: { tiles: o.acceptance } };
+  if (o.shantenAfter <= 0) return { key: 'puzzles.claim.ready', params: { count: o.acceptance } };
   return { key: 'puzzles.claim.away', params: { n: o.shantenAfter } };
 }
 

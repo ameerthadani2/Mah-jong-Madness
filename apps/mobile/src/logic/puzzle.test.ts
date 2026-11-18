@@ -1,10 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import { claimPuzzle, DAILY_DISCARD_OPTIONS, dailyPuzzle, dailySeed, defencePuzzle, discardPuzzle, kindInfo, PUZZLE_TYPES, puzzleOfType, valuePuzzle, waitsPuzzle, type AnyPuzzle, type ClaimPuzzle, type PuzzleType } from '@mjm/engine';
+import { I18n } from 'i18n-js';
 import { en, zhTW } from '../i18n/locales';
 import { checkPuzzleAnswer, claimButtons, claimOutcomeKey, dailyDifficulty, defenceSeats, defenceVerdicts, explanationFor, percent, PUZZLE_TYPE_KEYS, puzzleDifficultyOf, puzzleStatus, reasonTitleKey, seatRelation, SEAT_KEYS, taiFigure, threatKey, tileName, valueProjections } from './puzzle';
 
 const lookup = (tree: unknown, key: string): unknown => key.split('.').reduce<unknown>((n, part) => (n && typeof n === 'object' ? (n as Record<string, unknown>)[part] : undefined), tree);
-const inBothLocales = (key: string) => typeof lookup(en, key) === 'string' && typeof lookup(zhTW, key) === 'string';
+/** A text, or one with a singular and a plural form (i18n-js `one`/`other`, chosen by `count`). */
+const isText = (n: unknown) => typeof n === 'string' || (!!n && typeof n === 'object' && typeof (n as Record<string, unknown>).one === 'string' && typeof (n as Record<string, unknown>).other === 'string');
+const inBothLocales = (key: string) => isText(lookup(en, key)) && isText(lookup(zhTW, key));
+const i18n = new I18n({ en, 'zh-TW': zhTW });
+const say = (locale: string, key: string, params?: Record<string, unknown>) => i18n.t(key, { ...params, locale });
 
 describe('puzzleStatus', () => {
   it('reads shanten 0 on a 17-tile hand as one discard from ready, not ready', () => {
@@ -193,6 +198,13 @@ describe('claimButtons', () => {
       // Once answered, each button says where it leaves the hand.
       for (const x of b) expect(inBothLocales(claimOutcomeKey(x.option).key)).toBe(true);
     }
+  });
+
+  it('counts one winning tile in the singular, in English, on a button that leaves the hand ready', () => {
+    const ready = (acceptance: number) => claimOutcomeKey({ id: 'pong', type: 'pong', shantenAfter: 0, acceptance, accepted: true } as never);
+    expect(say('en', ready(1).key, ready(1).params)).toBe('Ready, 1 winning tile');
+    expect(say('en', ready(3).key, ready(3).params)).toBe('Ready, 3 winning tiles');
+    expect(say('zh-TW', ready(1).key, ready(1).params)).toBe('聽牌，1 張可以胡');
   });
 
   it('pictures the set each claim makes, the discard included', () => {

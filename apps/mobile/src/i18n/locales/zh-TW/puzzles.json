@@ -53,8 +53,8 @@
     "better": "還有更好的選擇。",
     "ready": "聽牌",
     "fromReady": "差 %{n} 張聽牌",
-    "picked": "%{tile}：%{shape}，%{kinds} 種 / %{tiles} 張進張。",
-    "best": "最佳是 %{tile}：%{shape}，%{kinds} 種 / %{tiles} 張進張（%{list}）。",
+    "picked": "%{tile}：%{shape}，%{kinds} / %{tiles}進張。",
+    "best": "最佳是 %{tile}：%{shape}，%{kinds} / %{tiles}進張（%{list}）。",
     "waitsIntro": "這副 16 張的手牌已經聽牌，把能胡的牌全部選出來。",
     "candidates": "候選牌",
     "check": "確認",
@@ -129,7 +129,10 @@
     "answer": "最佳：%{label}",
     "fine": "可以",
     "worse": "比較差",
-    "ready": "聽牌，%{tiles} 張可以胡",
+    "ready": {
+      "one": "聽牌，%{count} 張可以胡",
+      "other": "聽牌，%{count} 張可以胡"
+    },
     "away": "離聽牌 %{n} 步",
     "win": "直接胡牌"
   },
@@ -144,7 +147,7 @@
     "discard": "打%{tile}",
     "tai": "%{n} 台",
     "noLive": "沒有活的聽牌",
-    "waits": "%{kinds} 種 / %{tiles} 張",
+    "waits": "%{kinds} / %{tiles}",
     "avgTai": "平均每次胡 %{n} 台",
     "bestTai": "最多 %{n} 台",
     "share": "是最佳打法的 %{n}%",
@@ -282,6 +285,16 @@
       "badReply": "遊戲伺服器的回覆無法讀取，請再試一次。",
       "server": "遊戲伺服器發生問題，請稍後再試。",
       "banned": "這個帳號已被停權，無法查看排行榜。"
+    }
+  },
+  "count": {
+    "kinds": {
+      "one": "%{count} 種",
+      "other": "%{count} 種"
+    },
+    "tiles": {
+      "one": "%{count} 張",
+      "other": "%{count} 張"
     }
   }
 }

@@ -89,9 +89,9 @@ function DiscardPuzzleView({ question, judge, onResult, onNext, nextLabel, autoA
           const good = answered;
           const pickedOpt = revealed.options.find((o) => o.kind === question.hand[picked]);
           const bestOpt = revealed.options.find((o) => o.kind === revealed.best)!;
-          const pickedText = pickedOpt ? t('puzzles.view.picked', { tile: tileName(pickedOpt.kind, locale), shape: shape(pickedOpt.shanten), kinds: pickedOpt.accepts.length, tiles: pickedOpt.acceptance }) : '';
+          const pickedText = pickedOpt ? t('puzzles.view.picked', { tile: tileName(pickedOpt.kind, locale), shape: shape(pickedOpt.shanten), kinds: t('puzzles.count.kinds', { count: pickedOpt.accepts.length }), tiles: t('puzzles.count.tiles', { count: pickedOpt.acceptance }) }) : '';
           // The tiles that improve the hand are listed by name, as the rest of the sentence names tiles.
-          const bestText = t('puzzles.view.best', { tile: tileName(bestOpt.kind, locale), shape: shape(bestOpt.shanten), kinds: bestOpt.accepts.length, tiles: bestOpt.acceptance, list: tileListText(bestOpt.accepts, locale) });
+          const bestText = t('puzzles.view.best', { tile: tileName(bestOpt.kind, locale), shape: shape(bestOpt.shanten), kinds: t('puzzles.count.kinds', { count: bestOpt.accepts.length }), tiles: t('puzzles.count.tiles', { count: bestOpt.acceptance }), list: tileListText(bestOpt.accepts, locale) });
           // The decision the puzzle turns on, named by the engine in both languages (absent from a puzzle revealed by an older server):
           // for a right tile other than the puzzle's own, the decision that tile turns on.
           const decided = typeof revealed.explanation === 'string' && revealed.explanation !== '';
