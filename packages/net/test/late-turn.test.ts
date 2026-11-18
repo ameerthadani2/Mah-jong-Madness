@@ -92,6 +92,26 @@ describe('held frames: stamps that crawl while the turn state is held', () => {
       expect(h.w.c.state.auditFailures).toContain(`The host showed this seat its turn late, on a link that stayed open (turn ${h.st.heldTc})`);
     }));
 
+  for (const after of ['restart', 'kick'] as const) {
+    it(`the same hold, the seat moving at once, then ${after === 'kick' ? 'the server says the seat was opened on another device and the user resumes the table from Home 3 s later' : 'the app restarted 2 s after the move'}: still red, lateTurn among its reasons (a turn the seat answered before the restart is judged by the state the saved record kept)`, () =>
+      scenario((i) => {
+        const h = holdTurn({ code: `CS9${after}${i}`, think: (_k, tc) => (tc === h.st.heldTc ? 0 : 600) }, { stamp: slow });
+        need(h.arm());
+        const from = h.w.clock.now;
+        h.w.until(() => h.w.clock.now - from >= 40_000);
+        h.release();
+        need(h.w.until(() => h.w.host.game!.turnCounter > h.st.heldTc));
+        h.w.step(2_000);
+        if (after === 'kick') {
+          h.w.line.inject({ t: 'disconnected' });
+          h.w.step(3_000);
+        }
+        h.w.restart();
+        h.w.finish();
+        expect(h.w.verdict()).toMatchObject({ status: 'failed', failures: expect.arrayContaining(['lateTurn']) });
+      }));
+  }
+
   it('stamps at 0.9 of real time, the same hold, the seat timed out: red heldFrame', () =>
     scenario((i) => {
       const h = holdTurn({ code: `CS9i${i}`, think: (_k, tc) => (tc === h.st.heldTc ? Infinity : 600) }, { stamp: slow });
@@ -1355,6 +1375,57 @@ describe('match record: what a saved record keeps of each frame', () => {
       expect(w.verdict().status).toBe('partial');
       expect(w.verdict().caveats).toContain('lateShown');
     }
+  });
+
+  /**
+   * The state that shows the seat its third turn cuts its clock to 5 s (its deadline 5 s after its stamp),
+   * on a link the phone held (`cut`); the table times the seat out of it, or (`moves`) the seat makes it in
+   * 0.8 s. Three seconds later the app restarts by itself, or (`kick`) the server says the seat was opened on
+   * another device and the user resumes the table from Home 5 s after that: a client restored from the
+   * saved record, as it was saved, joins on a new link.
+   */
+  function cutThenResume(code: string, cut: boolean, moves: boolean, kick: boolean) {
+    let cutTc = -1;
+    let owed = 0;
+    let answered: number | null = null;
+    let done = false;
+    const w = wire({
+      code,
+      think: (_k, tc) => (tc === cutTc && !moves ? Infinity : tc === cutTc ? 800 : 600),
+      map: (m, w) => {
+        if (cutTc >= 0 || m.t !== 'state' || !w.owes() || w.host.game!.turnCounter !== m.view.turnCounter || typeof m.now !== 'number' || m.inTimeBank) return m;
+        if (++owed < 3 || !legalActions(w.host.game!, 0).every((a) => a.type === 'discard')) return m;
+        cutTc = m.view.turnCounter;
+        return cut ? { ...m, deadline: m.now + 5_000 } : m;
+      },
+      onTick: (w) => {
+        if (cutTc >= 0 && answered === null && w.host.game && w.host.game.turnCounter > cutTc) answered = w.clock.now;
+        if (done || answered === null || w.clock.now < answered + 3_000 || w.host.phase !== 'playing') return;
+        done = true;
+        if (kick) w.line.inject({ t: 'disconnected' });
+      },
+    });
+    w.dealt();
+    need(w.until(() => done));
+    if (kick) for (let t = 0; t < 10; t++) w.step();
+    need(w.host.phase === 'playing');
+    w.restart();
+    w.finish();
+    need(w.judged().includes(cutTc) !== moves);
+    return w;
+  }
+
+  it('a state that cut the seat’s turn clock to 5 s on a link the phone held, restored as it was saved (its check figure matches): red lateTurn, as in the run that saw it, whether the app restarted by itself or the server said the seat was opened on another device and the user resumed the table from Home, and whether the table timed the seat out or the seat moved', () => {
+    for (const kick of [false, true])
+      for (const moves of [false, true]) {
+        const w = scenario((i) => cutThenResume(`MU${kick ? 'K' : 'R'}${moves ? 'P' : 'D'}${i}`, true, moves, kick));
+        expect(w.verdict()).toMatchObject({ status: 'failed', failures: ['lateTurn'] });
+      }
+  });
+
+  it('the same with no cut: green, whether the app restarted by itself or the server said the seat was opened on another device', () => {
+    for (const kick of [false, true])
+      for (const moves of [false, true]) green(scenario((i) => cutThenResume(`MV${kick ? 'K' : 'R'}${moves ? 'P' : 'D'}${i}`, false, moves, kick)));
   });
 
   for (const [what, edit] of DAMAGE)

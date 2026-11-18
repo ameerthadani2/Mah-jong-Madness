@@ -11,9 +11,9 @@
 import { describe, expect, it } from 'vitest';
 import { chooseAction, kindOf, legalActions, withRules, type Action, type BotSkill, type GameState } from '@mjm/engine';
 import { AUDIT_CAVEATS, AUDIT_FAILURES, failureKey, LoopbackHub, TableClient, TableHost, transportLink, type HostMessage, type Link } from '../src/index';
-import { armedLate, clockTrack, firstSend, fixedPoint, judgeTableMove, lateAnchor, lateCountMs, lateRef, lateWatch, seatRun, sinceFixed, turnLateBy, unstamped } from '../src/clientmoves';
+import { armedLate, clockTrack, firstSend, fixedPoint, judgeTableMove, lateAnchor, lateCountMs, lateRef, lateWatch, seatRun, seenHere, sinceFixed, turnLateBy, unstamped } from '../src/clientmoves';
 import { DRIFT_RATE, LATE_MS, RTT_ALLOW_MS } from '../src/clientclock';
-import { cleanCeremony, cleanPlay, cleanSeen, isLateTurnRecord, withLateTurns, type PlayRecord, type SeenState } from '../src/clientrecords';
+import { cleanCeremony, cleanPlay, cleanSeen, isLateTurnRecord, savedSeen, withLateTurns, type PlayRecord, type SeenState } from '../src/clientrecords';
 import { Missed, scenario, seededDeals } from './support';
 
 seededDeals(20261116);
@@ -507,6 +507,27 @@ describe('a frame from a saved record keeps the fields that judge how late it ca
       expect(dropped(out)).toBe(true);
       expect('now' in out).toBe(false);
     }
+  });
+
+  it('marks a frame whose check figure still matches as kept, so it is judged as the run that saw it would judge it; one changed digit, a figure from another frame, or none, and it is not', () => {
+    const back = (f: SeenState) => cleanSeen(JSON.parse(JSON.stringify(savedSeen(f))) as SeenState);
+    const kept = back(live);
+    expect(kept).toEqual({ ...live, kept: true });
+    expect(seenHere(kept, 'another run')).toBe(true);
+    // Saved again, the mark is not: the figure is worked out afresh from the fields.
+    expect(savedSeen(kept)).not.toHaveProperty('kept');
+    expect(back(kept)).toEqual({ ...live, kept: true });
+    const damaged = { ...savedSeen(live), deadline: 214_000 };
+    expect(cleanSeen(damaged)).not.toHaveProperty('kept');
+    expect(cleanSeen(damaged)).not.toHaveProperty('sum');
+    expect(seenHere(cleanSeen(damaged), 'another run')).toBe(false);
+    const other = { ...savedSeen(live), sum: savedSeen({ ...live, tc: 41 }).sum };
+    expect(cleanSeen(other)).not.toHaveProperty('kept');
+    expect(cleanSeen(live)).not.toHaveProperty('kept');
+    // A mark saved with the frame (only damage can put it there) is not believed either.
+    expect(cleanSeen({ ...live, kept: true })).not.toHaveProperty('kept');
+    // A frame whose measured fields do not hold together loses them, its figure and any mark with them.
+    expect(cleanSeen({ ...savedSeen(live), wref: 1 })).not.toHaveProperty('kept');
   });
 
   it('keeps the run of each move sent and each reveal only when it is what this build writes, and refuses a record that is not one', () => {

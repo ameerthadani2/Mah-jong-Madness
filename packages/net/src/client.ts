@@ -64,6 +64,7 @@ import {
   nextDeal,
   nextHand,
   sameCommitSet,
+  savedSeen,
   snapshotFromView,
   withLateTurns,
   withPassed,
@@ -712,7 +713,8 @@ export class TableClient {
       tamper: [...this.tamper.entries()].slice(-8),
       handStart: this.handStart,
       records: this.records,
-      plays: this.plays.map((p) => ({ ...p, ledgerFrom: p.ledgerFrom === Number.POSITIVE_INFINITY ? null : p.ledgerFrom })),
+      // Each frame goes with its check figure, so a restored record can tell a damaged frame (`cleanSeen`).
+      plays: this.plays.map((p) => ({ ...p, seen: p.seen.map(savedSeen), ledgerFrom: p.ledgerFrom === Number.POSITIVE_INFINITY ? null : p.ledgerFrom })),
       expected: this.expected,
       chainChecked: this.chainChecked,
       frozenBots: this.frozenBots,
@@ -2196,6 +2198,26 @@ export class TableClient {
     const prevOf = new Map<number, number>();
     const scope = this.lateScope();
     const track0 = play ? clockTrack(this.clockBase, this.recordFor(play.hand), play, rules, anchors) : null;
+    /**
+     * The turn this seat's move at `n` answered (its move before that at `prevMine`), judged by the first
+     * state that showed it (`seatRun`). A state that did not give the whole turn clock on a link this device
+     * held, or one later than any honest frame on a live link, fails. One shown late otherwise (against the
+     * least offset or the fixed points), or first shown on a new link with less than a whole clock (less
+     * LATE_MS) to go, is noted: this device cannot vouch that the player saw the whole turn.
+     */
+    const judgeShown = (play: PlayRecord, n: number, prevMine: number) => {
+      const { run, i0 } = seatRun(play, n, prevMine);
+      const r0 = run[0];
+      if (!r0) return;
+      const before = i0 > 0 ? play.seen[i0 - 1] : null;
+      const tracked = (before ? track0?.bank.get(before) : null) ?? rules.timeBankSeconds * 1000;
+      // A run first shown on a new link: the host's own word for the bank it had at the turn's start counts if lower (it was spent while the link was down).
+      const whole = rules.turnSeconds * 1000 + Math.min(tracked, r0.timeBank * 1000);
+      const left = r0.deadline === null || typeof r0.now !== 'number' ? Number.POSITIVE_INFINITY : (r0.inBank ? r0.deadline : r0.deadline + r0.timeBank * 1000) - r0.now;
+      const here = seenHere(r0, this.runId);
+      if ((here && armedLate(r0, rules)) || heldLive(r0, this.runId)) problems.add(`The host showed this seat its turn late, on a link that stayed open (turn ${n})`);
+      else if (notes && (lateRef(r0) > LATE_MS || lateAnchor(r0, anchors, scope) > LATE_MS || unstamped(r0) || (!r0.onLink && left < whole - LATE_MS) || (!here && armedLate(r0, rules)))) notes.lateShown = true;
+    };
     for (const entry of log) {
       if (play && me !== null && isObject(entry) && entry.seat === me) {
         const n = entry.n;
@@ -2214,25 +2236,7 @@ export class TableClient {
             const match = copies.slice().sort((a, b) => Number(!!a.rejected) - Number(!!b.rejected) || b.tc - a.tc)[0];
             if (match) {
               match.used = true;
-              {
-                // The turn this move answered, judged by the first state that showed it (`seatRun`). A state
-                // that did not give the whole turn clock on a link this device held, or one later than any
-                // honest frame on a live link, fails. One shown late otherwise (against the least offset or
-                // the fixed points), or first shown on a new link with less than a whole clock (less
-                // LATE_MS) to go, is noted: this device cannot vouch that the player saw the whole turn.
-                const { run, i0 } = isInt(n) ? seatRun(play, n, prevMine) : { run: [] as SeenState[], i0: -1 };
-                const r0 = run[0];
-                if (r0) {
-                  const before = i0 > 0 ? play.seen[i0 - 1] : null;
-                  const tracked = (before ? track0?.bank.get(before) : null) ?? rules.timeBankSeconds * 1000;
-                  // A run first shown on a new link: the host's own word for the bank it had at the turn's start counts if lower (it was spent while the link was down).
-                  const whole = rules.turnSeconds * 1000 + Math.min(tracked, r0.timeBank * 1000);
-                  const left = r0.deadline === null || typeof r0.now !== 'number' ? Number.POSITIVE_INFINITY : (r0.inBank ? r0.deadline : r0.deadline + r0.timeBank * 1000) - r0.now;
-                  const here = seenHere(r0, this.runId);
-                  if ((here && armedLate(r0, rules)) || heldLive(r0, this.runId)) problems.add(`The host showed this seat its turn late, on a link that stayed open (turn ${n})`);
-                  else if (notes && (lateRef(r0) > LATE_MS || lateAnchor(r0, anchors, scope) > LATE_MS || unstamped(r0) || (!r0.onLink && left < whole - LATE_MS) || (!here && armedLate(r0, rules)))) notes.lateShown = true;
-                }
-              }
+              judgeShown(play, n, prevMine);
               // The host cannot have played this move before this device sent it: a fixed point between the
               // two clocks. Of copies of the same move sent more than once, the first counts (the host may
               // have played that one), with the round trip from it to the first frame that shows the move.
@@ -2241,6 +2245,11 @@ export class TableClient {
               if (f && first && typeof first.at === 'number' && typeof f.now === 'number' && f.epoch === first.epoch && f.at >= first.at) anchors.push({ at: first.at, now: f.now, era: f.era ?? 0, run: first.run, seg: first.seg, fat: f.at });
             } else if (sent.some((x) => !x.used && !x.rejected && x.tc <= n)) problems.add(`The log changed a move this seat made (turn ${n})`);
             else problems.add(`The log shows a move this seat never made (turn ${n})`);
+          } else if (isInt(n)) {
+            // A move from before this device could vouch for its ledger (an app restart, or the seat opened on
+            // another device, came in between): whoever sent it, the state that showed this seat the turn is
+            // judged as any other, so a server gains nothing by making the app start again.
+            judgeShown(play, n, prevMine);
           }
         } else {
           let couldWin = false;

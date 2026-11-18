@@ -197,6 +197,11 @@ export interface SeenState {
   timeBank: number;
   inBank: boolean;
   hash: string;
+  /**
+   * Restored from a saved record whose check figure for it still matched (`seenSum`): its figures are
+   * the ones this device read, so it is judged as the run that saw it would judge it. Never saved.
+   */
+  kept?: boolean;
 }
 
 /** One move this client sent. */
@@ -262,12 +267,16 @@ const finiteTime = (x: unknown): x is number => typeof x === 'number' && Number.
  * stamp and deadline are readings a clock can make. Otherwise all of them are dropped, so the frame reads
  * like one from a record saved before they were kept, which the rules that use them do not ask; and a
  * stamp no clock can make is dropped with them. What this cannot tell is damage that leaves the fields
- * consistent (a stamp moved back 20 s, say): only the record's own copy says otherwise. A frame from a
- * saved record is therefore never failed for having shown the seat its turn late on a link that stayed
- * open (`seenHere`): it makes its hand amber, not red.
+ * consistent (a stamp moved back 20 s, say): the check figure saved with each frame (`seenSum`) tells
+ * that. A frame whose figure still matches is marked `kept`, and judged as the run that saw it would
+ * judge it; any other frame from a saved record (damaged, or saved before frames carried a figure) is
+ * never failed for having shown the seat its turn late on a link that stayed open (`seenHere`): it
+ * makes its hand amber, not red.
  */
 export function cleanSeen(f: SeenState): SeenState {
-  const { atLo, ref, wref, live, working, seg, run, onLink, ...old } = f;
+  const { atLo, ref, wref, live, working, seg, run, onLink, sum: _sum, kept: _kept, ...old } = f as SeenState & { sum?: unknown };
+  void _sum;
+  void _kept;
   const now = f.now;
   const stamped = typeof now === 'number' && Number.isFinite(now) && finiteTime(f.at) && Math.abs(f.at - now) < TIME_LIMIT_MS;
   if (now !== undefined && !stamped) delete old.now;
@@ -291,7 +300,39 @@ export function cleanSeen(f: SeenState): SeenState {
         (!live || working) &&
         isInt(seg) &&
         seg >= 0));
-  return ok ? f : old;
+  if (!ok) return old;
+  const sum = (f as { sum?: unknown }).sum;
+  if (sum === undefined && f.kept === undefined) return f;
+  // A frame whose check figure still matches is as this device read it: storage did not change it.
+  const { sum: _s, kept: _k, ...clean } = f as SeenState & { sum?: unknown };
+  void _s;
+  void _k;
+  return typeof run === 'string' && typeof sum === 'string' && sum === seenSum(f) ? { ...clean, kept: true } : clean;
+}
+
+/**
+ * The check figure a saved frame carries (FNV-1a over its fields in a fixed order, 32 bits as hex):
+ * damage to the stored copy changes it, so a restored frame whose figure still matches is the one
+ * this device read. It is no seal against someone who edits the record on purpose, which the phone's
+ * own owner can always do; it tells apart storage that changed a digit.
+ */
+export function seenSum(f: SeenState): string {
+  // Fields left undefined are not saved (JSON drops them), so they are not counted either.
+  const fields = Object.entries(f).filter(([k, v]) => v !== undefined && k !== 'kept' && k !== 'sum');
+  const text = JSON.stringify(fields.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
+  let h = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) {
+    h ^= text.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h.toString(16).padStart(8, '0');
+}
+
+/** A frame as it is saved: with its check figure (`seenSum`), and without the mark of a restored one. */
+export function savedSeen(f: SeenState): SeenState & { sum: string } {
+  const { kept: _k, ...rest } = f;
+  void _k;
+  return { ...rest, sum: seenSum(f) };
 }
 
 /** The run of the app and of this device's clock a saved time was read in, kept only when both are what this build writes (else neither: it is then compared with nothing). */

@@ -60,13 +60,15 @@ export function lateWatch(f: SeenState): number {
 }
 
 /**
- * `f` was seen in the run of the app that judges it (`run`; null: any), not restored from a saved
- * record. Damage to a record can move a stamp and leave the fields around it consistent (`cleanSeen`),
- * and storage is the phone's, not the server's: a restored frame is never failed for being shown late
- * on a link that stayed open (`heldLive`, `armedLate`); it is judged as shown late (amber at worst).
+ * `f` was seen in the run of the app that judges it (`run`; null: any), or restored from a saved record
+ * whose check figure for it still matched (`kept`), so its figures are the ones this device read. Damage
+ * to a record can move a stamp and leave the fields around it consistent (`cleanSeen`), and storage is the
+ * phone's, not the server's: any other restored frame is never failed for being shown late on a link that
+ * stayed open (`heldLive`, `armedLate`); it is judged as shown late (amber at worst). A server that makes
+ * the app start again (by saying the seat was opened on another device, say) gains nothing by it.
  */
 export function seenHere(f: SeenState, run: string | null): boolean {
-  return run === null || f.run === run;
+  return run === null || f.run === run || f.kept === true;
 }
 
 /**
