@@ -82,9 +82,14 @@ describe('the Shop try-on preview', () => {
     expect(within(dialog).getAllByTestId(/^tile-/).length).toBeGreaterThanOrEqual(12);
     expect(within(dialog).getByRole('button', { name: 'Buy for 400 diamonds' })).toBeEnabled();
     expect(within(dialog).getByRole('button', { name: 'Close preview' })).toBeOnTheScreen();
-    // The scrim behind the sheet closes it on a tap but is no second button for a screen reader.
+    // The scrim behind the sheet closes it on a tap but is no second button for a screen reader, and no focus stop:
+    // React Native Web's focus trap moves focus to anything that will take it, a tabindex of -1 included.
     expect(screen.getAllByRole('button', { name: 'Close preview' })).toHaveLength(1);
-    expect(screen.getByTestId('preview-scrim', { includeHiddenElements: true }).props['aria-hidden']).toBe(true);
+    const scrim = screen.getByTestId('preview-scrim', { includeHiddenElements: true });
+    expect(scrim.props['aria-hidden']).toBe(true);
+    expect(scrim.props.tabIndex).toBeUndefined();
+    expect(scrim.props.focusable).toBeUndefined();
+    expect(scrim.props.accessibilityRole).toBeUndefined();
   });
 
   it('buys from the preview through the same purchase as the card, then offers to put the look on', async () => {

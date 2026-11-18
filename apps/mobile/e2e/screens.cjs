@@ -12,7 +12,8 @@
  * question a new player answers before the Shop), shop and settings, plus exit-sheet (the red exit icon's
  * confirmation) and, for each landscape viewport, table-xl (Extra-large tiles).
  * Each viewport plays one hand against bots in its own browser context, all in parallel. Set
- * SCREENS_SIZES=390x844,667x375 to capture a subset.
+ * SCREENS_SIZES=390x844,667x375 to capture a subset of the viewports, and SCREENS_ONLY=preview,xl (say) to run a
+ * subset of the groups (named where the runs start, at the end of this file).
  * Exits non-zero if a viewport cannot reach the result sheet, the page throws, or a hard check fails (one tap on
  * the exit icon or on the result sheet's "Leave table" leaves the table, Start match replaces a saved table
  * without asking, one tap on the Resume card's "Abandon table" gives the saved table up, the English claim buttons carry no gloss, an Extra-large hand scrolls or runs off screen, the
@@ -24,7 +25,9 @@
  * or a seat name is cut at a table in Traditional Chinese (each viewport at Normal text, and the portrait ones again at
  * Extra-large text: <size>-table-zh.png, <size>-table-zh-xl.png at every viewport; the hand tiles' size is logged as a note),
  * or the Shop's try-on preview fails its checks (runPreview below: <size>-preview-<kind>.png and -zh.png, at every
- * viewport and at 320x568).
+ * viewport and at 320x568). The preview, the exit sheet and Home's replace-table question also fail on the keyboard
+ * (dialogKeys): Tab ten times and Shift+Tab four times must stay on the dialog's own controls, never its scrim or the
+ * page behind, and the page behind must be inert while the dialog is open and not after.
  */
 const http = require('http');
 const fs = require('fs');
@@ -71,6 +74,44 @@ const tapSel = async (page, sel, wait = 900) => {
   await page.waitForTimeout(wait);
   return true;
 };
+
+/** Whether the app's root element (everything but a dialog's portal) is inert. */
+const pageInert = (page) => page.evaluate(() => !!document.getElementById('root')?.hasAttribute('inert'));
+
+/**
+ * An open dialog's keyboard checks: the page behind it is inert, and Tab (`tabs` times) then Shift+Tab (4 times) move
+ * focus only through the dialog's own controls, never to the scrim, to something hidden from screen readers or to the
+ * page behind. Reads document.activeElement after every key.
+ */
+async function dialogKeys(page, tabs = 10) {
+  const bad = [];
+  if (!(await pageInert(page))) bad.push('the page behind the dialog is not inert');
+  const focus = () =>
+    page.evaluate(() => {
+      const a = document.activeElement;
+      const dlg = [...document.querySelectorAll('[role="dialog"]')].find((d) => d.getBoundingClientRect().width > 0);
+      const name = a && a !== document.body ? a.getAttribute('data-testid') || a.getAttribute('aria-label') || a.tagName : 'nothing';
+      // A control, or a part of the dialog that scrolls (the browser makes a scroller a Tab stop so the keyboard can scroll it).
+      const st = a ? getComputedStyle(a) : null;
+      const scroller = !!a && /auto|scroll/.test(`${st.overflowY} ${st.overflowX}`) && (a.scrollHeight > a.clientHeight + 1 || a.scrollWidth > a.clientWidth + 1);
+      const control = !!a && (scroller || a.matches('[role="button"], button, a[href], input, textarea, [role="link"], [role="switch"], [role="checkbox"], [role="radio"], [role="tab"]'));
+      // The scrim covers the whole window: no focus stop, even as a labelled button.
+      const r = a ? a.getBoundingClientRect() : null;
+      const scrim = !!r && r.width >= innerWidth - 2 && r.height >= innerHeight - 2;
+      return { name, inDialog: !!(dlg && a && dlg.contains(a)), hidden: !!a?.closest('[aria-hidden="true"]'), control, scrim };
+    });
+  for (const [key, n] of [['Tab', tabs], ['Shift+Tab', 4]]) {
+    for (let i = 0; i < n; i++) {
+      await page.keyboard.press(key);
+      const f = await focus();
+      if (!f.inDialog || f.hidden || !f.control || f.scrim) {
+        bad.push(`${key} ${i + 1} put focus on ${f.name} (${!f.inDialog ? 'outside the dialog' : f.hidden ? 'hidden from screen readers' : f.scrim ? 'the scrim' : 'not a control'})`);
+        break;
+      }
+    }
+  }
+  return bad;
+}
 
 /**
  * Home's hard checks, run on the page as it stands. Card buttons are as wide as their card, so a label (with its
@@ -302,8 +343,10 @@ async function run(browser, port, [w, h]) {
         await tapSel(page, '[data-testid="leave-table"]', 700);
         if (!(await visible(page, '[data-testid="leave-sheet"]'))) fails.push('exit icon left without asking');
         await shot('exit-sheet');
+        fails.push(...(await dialogKeys(page)).map((f) => `Exit sheet: ${f}`));
         await tapSel(page, '[data-testid="leave-stay"]', 500);
         if (!(await visible(page, '[data-testid="leave-table"]'))) fails.push('keep playing did not return to the table');
+        if (await pageInert(page)) fails.push('Exit sheet: the table stays inert after the sheet closed');
       }
       await page.waitForTimeout(300);
       continue;
@@ -345,9 +388,13 @@ async function run(browser, port, [w, h]) {
     // A new match would take the saved table's place: Home asks first, and "Keep my table" changes nothing.
     await tapSel(page, '[data-testid="start-match"]', 900);
     if (!(await visible(page, '[data-testid="replace-table"]'))) fails.push('Start match replaced the saved table without asking');
-    else await shot('replace-table');
+    else {
+      await shot('replace-table');
+      fails.push(...(await dialogKeys(page)).map((f) => `Replace-table question: ${f}`));
+    }
     await tapSel(page, '[data-testid="confirm-no"]', 700);
     if (!(await visible(page, '[data-testid="resume-card"]'))) fails.push('"Keep my table" did not keep the saved table');
+    if (await pageInert(page)) fails.push('Replace-table question: Home stays inert after the question closed');
     // "Abandon table" on the Resume card ends the saved table for good: one tap must only ask, and "Keep my table" keeps it.
     const savedTable = () => page.evaluate(() => (localStorage.getItem('mjm.activeSession') || '').length);
     if (!(await tapSel(page, '[data-testid="abandon-table"]', 900))) fails.push('the Resume card has no "Abandon table" button');
@@ -657,6 +704,7 @@ async function runPreview(browser, port, [w, h], zh) {
     await page.screenshot({ path: path.join(out, `${tag}-${name}.png`) });
     shots.push(name);
     fails.push(...(await previewFit(page)).map((f) => `${where} ${id}: ${f}`));
+    fails.push(...(await dialogKeys(page)).map((f) => `${where} ${id}, keyboard: ${f}`));
     const owned = id === PREVIEW_OWNED;
     if (owned && !(await visible(page, '[data-testid="preview-equip"]'))) fails.push(`${where}: the owned ${id} offers no Equip`);
     if (!owned && !(await visible(page, '[data-testid="preview-buy"]'))) fails.push(`${where}: ${id} offers no Buy`);
@@ -664,6 +712,7 @@ async function runPreview(browser, port, [w, h], zh) {
     if (await visible(page, '[data-testid="look-preview"]')) fails.push(`${where}: ${id}'s preview does not close`);
     const focused = await page.evaluate(() => document.activeElement?.getAttribute('data-testid'));
     if (focused !== `preview-${id}`) fails.push(`${where}: focus went to ${focused || 'nothing'}, not back to ${id}'s card, when the preview closed`);
+    if (await pageInert(page)) fails.push(`${where}: the Shop stays inert after ${id}'s preview closed`);
   }
   await ctx.close();
   return { size: `${tag} preview${zh ? '-zh' : ''}`, finished: true, shots, notes: [], fails, errors };
@@ -675,14 +724,17 @@ async function runPreview(browser, port, [w, h], zh) {
   const browser = await chromium.launch(process.env.PW_CHROMIUM ? { executablePath: process.env.PW_CHROMIUM } : {});
   // Large tiles in landscape: the landscape viewports again at Extra-large.
   const XL = SIZES.filter(([w, h]) => w > h);
+  // SCREENS_ONLY=preview,xl (say) runs only those groups: table, xl, table-zh, table-zh-xl, home-zh, boards, preview.
+  const only = (process.env.SCREENS_ONLY || '').split(',').filter(Boolean);
+  const want = (group) => only.length === 0 || only.includes(group);
   const results = await Promise.all([
-    ...SIZES.map((s) => run(browser, port, s).catch((e) => ({ size: `${s[0]}x${s[1]}`, finished: false, notes: [e.message], errors: [] }))),
-    ...XL.map((s) => runXL(browser, port, s).catch((e) => ({ size: `${s[0]}x${s[1]} xl`, finished: false, notes: [e.message], errors: [] }))),
-    ...SIZES.map((s) => runTableZh(browser, port, s, false).catch((e) => ({ size: `${s[0]}x${s[1]} table-zh`, finished: false, notes: [e.message], errors: [] }))),
-    ...SIZES.map((s) => runTableZh(browser, port, s, true).catch((e) => ({ size: `${s[0]}x${s[1]} table-zh-xl`, finished: false, notes: [e.message], errors: [] }))),
-    ...SIZES.map((s) => runHomeZh(browser, port, s).catch((e) => ({ size: `${s[0]}x${s[1]} zh-TW`, finished: false, notes: [e.message], errors: [] }))),
-    ...SIZES.map((s) => runBoards(browser, port, s).catch((e) => ({ size: `${s[0]}x${s[1]} leaderboards`, finished: false, notes: [e.message], errors: [] }))),
-    ...PREVIEW_SIZES.flatMap((s) => [false, true].map((zh) => runPreview(browser, port, s, zh).catch((e) => ({ size: `${s[0]}x${s[1]} preview${zh ? '-zh' : ''}`, finished: false, notes: [e.message], errors: [] })))),
+    ...(want('table') ? SIZES : []).map((s) => run(browser, port, s).catch((e) => ({ size: `${s[0]}x${s[1]}`, finished: false, notes: [e.message], errors: [] }))),
+    ...(want('xl') ? XL : []).map((s) => runXL(browser, port, s).catch((e) => ({ size: `${s[0]}x${s[1]} xl`, finished: false, notes: [e.message], errors: [] }))),
+    ...(want('table-zh') ? SIZES : []).map((s) => runTableZh(browser, port, s, false).catch((e) => ({ size: `${s[0]}x${s[1]} table-zh`, finished: false, notes: [e.message], errors: [] }))),
+    ...(want('table-zh-xl') ? SIZES : []).map((s) => runTableZh(browser, port, s, true).catch((e) => ({ size: `${s[0]}x${s[1]} table-zh-xl`, finished: false, notes: [e.message], errors: [] }))),
+    ...(want('home-zh') ? SIZES : []).map((s) => runHomeZh(browser, port, s).catch((e) => ({ size: `${s[0]}x${s[1]} zh-TW`, finished: false, notes: [e.message], errors: [] }))),
+    ...(want('boards') ? SIZES : []).map((s) => runBoards(browser, port, s).catch((e) => ({ size: `${s[0]}x${s[1]} leaderboards`, finished: false, notes: [e.message], errors: [] }))),
+    ...(want('preview') ? PREVIEW_SIZES : []).flatMap((s) => [false, true].map((zh) => runPreview(browser, port, s, zh).catch((e) => ({ size: `${s[0]}x${s[1]} preview${zh ? '-zh' : ''}`, finished: false, notes: [e.message], errors: [] })))),
   ]);
   for (const r of results) console.log(JSON.stringify(r));
   await browser.close();

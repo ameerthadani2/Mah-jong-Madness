@@ -10,7 +10,7 @@
  * the table at once, and quick match never seats the two together.
  */
 import React, { useEffect, useState } from 'react';
-import { Modal, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
+import { Modal, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { useApp } from '../app-state';
 import { useAuth } from '../auth/AuthProvider';
 import { clubsApi, httpBase } from '../api/clubs';
@@ -19,6 +19,7 @@ import { friendlyError } from '../logic/errors';
 import { useT } from '../i18n';
 import { buildReport, REPORT_NOTE_MAX, REPORT_REASONS, type ReportReason, type ReportTarget } from '../legal/reports';
 import { colors, fonts, space } from '../theme';
+import { Scrim, useInertPage } from './Scrim';
 import { Button, Card, Chip, H2, P, Pill, Row } from './Ui';
 
 export function ReportPlayerSheet({ visible, target, onClose }: { visible: boolean; target: ReportTarget | null; onClose: () => void }) {
@@ -71,9 +72,12 @@ export function ReportPlayerSheet({ visible, target, onClose }: { visible: boole
     }
   };
 
+  // The table behind is inert on the web while the sheet is open; the scrim cancels on a tap but is no control, as
+  // the sheet's own Cancel (or Done) button is the one the keyboard and screen readers reach (./Scrim.tsx).
+  useInertPage(visible && !!target);
   return (
     <Modal visible={visible && !!target} transparent animationType="slide" onRequestClose={onClose}>
-      <Pressable style={styles.scrim} onPress={onClose} accessibilityRole="button" accessibilityLabel={t('legal.report.cancel')} />
+      <Scrim onPress={onClose} />
       <View style={styles.sheetWrap} pointerEvents="box-none">
         <Card style={styles.sheet} testID="report-sheet">
           <ScrollView contentContainerStyle={{ gap: space.md }} keyboardShouldPersistTaps="handled">
@@ -128,7 +132,6 @@ export function ReportPlayerSheet({ visible, target, onClose }: { visible: boole
 }
 
 const styles = StyleSheet.create({
-  scrim: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(16,20,47,0.55)' },
   sheetWrap: { flex: 1, justifyContent: 'flex-end', alignItems: 'center', padding: space.md },
   sheet: { width: '100%', maxWidth: 560, maxHeight: '85%' },
   input: { minHeight: 72, backgroundColor: '#FFFFFF', color: colors.ink, borderWidth: 3, borderColor: colors.ink, borderRadius: 14, paddingHorizontal: 12, paddingVertical: 10, fontSize: 15, fontFamily: fonts.body, textAlignVertical: 'top' },

@@ -114,6 +114,8 @@ describe("Home's buttons", () => {
     await fireEvent.press(screen.getByTestId('start-match'));
     expect(screen.getByText('Start a new match?')).toBeOnTheScreen();
     expect(calls.setSession).not.toHaveBeenCalled();
+    // The scrim behind the question is no second "Keep my table" button for a screen reader or the keyboard.
+    expect(screen.getAllByRole('button', { name: 'Keep my table' })).toHaveLength(1);
     await fireEvent.press(within(screen.getByTestId('replace-table')).getByRole('button', { name: 'Keep my table' }));
     expect(screen.queryByText('Start a new match?')).toBeNull();
     expect(calls.setSession).not.toHaveBeenCalled();

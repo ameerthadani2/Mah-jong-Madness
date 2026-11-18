@@ -28,6 +28,7 @@ import { AvatarPlate } from './Avatars';
 import { PackEmote } from './EmotePacks';
 import { WinCelebration } from './Celebrations';
 import { NATIVE } from './table/Motion';
+import { Scrim, useInertPage } from './Scrim';
 
 /** What the card offers for a look, handed to the preview unchanged. */
 export interface LookOffer {
@@ -243,6 +244,8 @@ export function LookPreview({
   const [playing, setPlaying] = useState<{ id: string; n: number } | null>(null);
   const [run, setRun] = useState(1);
   const productId = product?.id;
+  // The Shop behind the open preview is inert on the web, and comes back when it closes (components/Scrim.tsx).
+  useInertPage(!!product && !!offer);
   // A fresh preview starts with no emote shown and the celebration on its first run.
   useEffect(() => {
     setPlaying(null);
@@ -371,14 +374,14 @@ export function LookPreview({
   const dialogLabel = t('shop.preview.dialog', { title: text.title });
   // One named modal dialog for screen readers. On the web the Modal itself is a dialog (react-native-web gives its
   // outer element role="dialog" and aria-modal), so it takes the name and the sheet is not a second dialog; on a
-  // phone the sheet is the dialog. The scrim closes the preview on a tap but is hidden from screen readers and
-  // the keyboard: the sheet's own close button is the one they reach.
+  // phone the sheet is the dialog. The scrim closes the preview on a tap but is hidden from screen readers and is
+  // never a focus stop (components/Scrim.tsx): the sheet's own close button is the one they reach.
   const web = Platform.OS === 'web';
   const sheetA11y = web ? {} : { role: 'dialog' as const, 'aria-modal': true, 'aria-label': dialogLabel, accessibilityViewIsModal: true };
   const modalA11y = (web ? { 'aria-label': dialogLabel } : {}) as object;
   return (
     <Modal visible transparent animationType="fade" onRequestClose={onClose} supportedOrientations={['portrait', 'landscape']} {...modalA11y}>
-      <Pressable style={styles.scrim} onPress={onClose} accessibilityRole="none" aria-hidden focusable={false} tabIndex={-1} importantForAccessibility="no-hide-descendants" accessibilityElementsHidden testID="preview-scrim" />
+      <Scrim onPress={onClose} color="rgba(16,20,47,0.6)" testID="preview-scrim" />
       <View style={[styles.wrap, { padding: margin }]} pointerEvents="box-none">
         <View {...sheetA11y} testID="look-preview" style={[styles.shell, { width: sheetW, maxHeight: height - margin * 2 }]}>
           {/* A Card's look, drawn here so the sheet can shrink to the window and scroll its middle. */}
@@ -429,7 +432,6 @@ export function LookPreview({
 }
 
 const styles = StyleSheet.create({
-  scrim: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(16,20,47,0.6)' },
   wrap: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   shell: { borderWidth: 3, borderColor: colors.ink, borderRadius: radius.lg, paddingBottom: 5, backgroundColor: colors.creamShelf, flexShrink: 1 },
   sheet: { backgroundColor: colors.cream, borderRadius: radius.lg - 3, padding: 12, gap: space.sm, flexShrink: 1, overflow: 'hidden' },

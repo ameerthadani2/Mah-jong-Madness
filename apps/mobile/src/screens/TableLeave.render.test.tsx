@@ -40,7 +40,8 @@ describe("the table's exit icon", () => {
     const calls = await renderTable();
     await fireEvent.press(await screen.findByRole('button', { name: 'Leave table' }));
     expect(screen.getByText('Leave the table?')).toBeOnTheScreen();
-    expect(screen.getAllByRole('button', { name: 'Keep playing' }).length).toBeGreaterThan(0);
+    // One "Keep playing": the scrim behind the sheet keeps playing on a tap but is no second button.
+    expect(screen.getAllByRole('button', { name: 'Keep playing' })).toHaveLength(1);
     expect(screen.getByRole('button', { name: 'Back to Home' })).toBeOnTheScreen();
     expect(screen.getByRole('button', { name: 'Abandon table' })).toBeOnTheScreen();
     expect(calls.setSession).not.toHaveBeenCalled();

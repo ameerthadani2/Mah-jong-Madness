@@ -12,6 +12,7 @@ import { useT } from '../i18n';
 import { legalTarget, readLegalEnv, type LegalDoc } from '../legal/links';
 import { LegalScreen } from '../legal/LegalScreen';
 import { colors, fonts } from '../theme';
+import { useInertPage } from './Scrim';
 import { fontFor } from './Ui';
 import { Icon } from './Icons';
 
@@ -25,6 +26,8 @@ export function useLegalSheet(): { open(doc: LegalDoc): void; sheet: React.React
     if (target.kind === 'url') void Linking.openURL(target.url).catch(() => setDoc(d));
     else setDoc(d);
   };
+  // The screen behind the full-screen sheet is inert on the web while it is open (./Scrim.tsx).
+  useInertPage(doc !== null);
   const sheet = (
     <Modal visible={doc !== null} animationType="slide" onRequestClose={() => setDoc(null)}>
       <View style={styles.sheet}>

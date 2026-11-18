@@ -1,13 +1,19 @@
-/** A yes/no sheet at the bottom of the screen (ReportPlayerSheet's modal pattern): a scrim that answers no, and a card. */
+/**
+ * A yes/no sheet at the bottom of the screen (ReportPlayerSheet's modal pattern): a scrim that answers no on a tap,
+ * and a card. The scrim is no control and the page behind is inert on the web (../Scrim.tsx), so the keyboard and
+ * screen readers reach only the card's two buttons.
+ */
 import React from 'react';
-import { Modal, Pressable, StyleSheet, View } from 'react-native';
+import { Modal, StyleSheet, View } from 'react-native';
 import { space } from '../../theme';
+import { Scrim, useInertPage } from '../Scrim';
 import { Button, Card, H2, P } from '../Ui';
 
 export function ConfirmSheet({ visible, title, body, yes, no, onYes, onNo, testID }: { visible: boolean; title: string; body: string; yes: string; no: string; onYes: () => void; onNo: () => void; testID?: string }) {
+  useInertPage(visible);
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onNo} supportedOrientations={['portrait', 'landscape']}>
-      <Pressable style={styles.scrim} onPress={onNo} accessibilityRole="button" accessibilityLabel={no} />
+      <Scrim onPress={onNo} />
       <View style={styles.wrap} pointerEvents="box-none">
         <Card style={styles.sheet} testID={testID}>
           <H2>{title}</H2>
@@ -25,7 +31,6 @@ export function ConfirmSheet({ visible, title, body, yes, no, onYes, onNo, testI
 }
 
 const styles = StyleSheet.create({
-  scrim: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(16,20,47,0.55)' },
   wrap: { flex: 1, justifyContent: 'flex-end', alignItems: 'center', padding: space.md },
   sheet: { width: '100%', maxWidth: 520, gap: space.sm },
   buttons: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm, rowGap: space.sm },
