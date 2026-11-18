@@ -1756,7 +1756,8 @@ export class TableClient {
   private noteState(v: TableView, m: Extract<HostMessage, { t: 'state' }>, stamped: { at: number; atLo: number; ref: number | null; wref: number | null; live: boolean; working: boolean; seg: number } | null = null, onLink = false): void {
     if (!isInt(v.turnCounter) || typeof m.hash !== 'string') return;
     const play = this.playFor(v.handNumber);
-    const prior = play.seen.find((s) => s.tc === v.turnCounter);
+    // (A state restored damaged may hold any hash, `cleanSeen`: it is not compared.)
+    const prior = play.seen.find((s) => s.tc === v.turnCounter && s.kept !== false);
     if (prior && prior.hash !== m.hash) this.flag(v.handNumber, `Host showed two different states for turn ${v.turnCounter}`);
     // From here on this client watched the hand, so every move credited to its player must be one it sent.
     if (play.ledgerFrom === null || (play.ledgerFrom === Number.POSITIVE_INFINITY && !this.state.kicked)) play.ledgerFrom = v.turnCounter;
@@ -2118,7 +2119,8 @@ export class TableClient {
     /** The hand is one this device saw nothing of (`hand_missed`). */
     const missed = unseen !== undefined && play === unseen;
     const shown = new Map<number, string>();
-    for (const s of play?.seen ?? []) if (!shown.has(s.tc)) shown.set(s.tc, s.hash);
+    // A state restored damaged (`cleanSeen`: its check figure did not match) may hold any hash: it is not compared.
+    for (const s of play?.seen ?? []) if (!shown.has(s.tc) && s.kept !== false) shown.set(s.tc, s.hash);
     const checkHash = (s: GameState) => {
       const want = shown.get(s.turnCounter);
       if (want !== undefined && hashState(s) !== want) failures.push(`The state this seat was shown at turn ${s.turnCounter} is not in the replay`);

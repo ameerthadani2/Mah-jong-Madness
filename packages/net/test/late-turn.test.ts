@@ -1467,4 +1467,17 @@ describe('match record: what a saved record keeps of each frame', () => {
         expect(w.verdict().failures).toEqual([]);
       }
     });
+
+  it('a saved record with one digit of a state’s hash changed: that state is not compared with the replay, so the hand does not fail, whether the table times the seat out or the seat moves', () => {
+    for (const moves of [false, true]) {
+      const w = scenario((i) =>
+        restartOnLiveTurn(`MH${moves ? 'P' : 'D'}${i}`, moves, (_p, r0) => {
+          const k = r0.hash.search(/[0-9]/);
+          need(k >= 0);
+          r0.hash = r0.hash.slice(0, k) + String((Number(r0.hash[k]) + 1) % 10) + r0.hash.slice(k + 1);
+        }),
+      );
+      expect(w.verdict().failures).toEqual([]);
+    }
+  });
 });
