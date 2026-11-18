@@ -15,9 +15,11 @@
  * nothing the second time. Their ids start `sync:<account id>:`, the account they were applied
  * to: the store reports one subscription under whichever app user id holds it now, so the same
  * period seen for an old account and later for the account it was restored on are two events,
- * and the first can never stand in the way of the second. An account that is deleted, purged or
- * unknown is not synced at all, and each event is applied on its own: one that fails is logged
- * and counted, and the rest still apply.
+ * and the first can never stand in the way of the second. They are applied to the account they
+ * name (`fromSync`), never routed to the account a TRANSFER moved a purchase to, since the store's
+ * current record already says who holds it. An account that is deleted, purged or unknown is not
+ * synced at all, and each event is applied on its own: one that fails is logged and counted, and
+ * the rest still apply.
  *
  * It runs after Restore (`POST /api/wallet/sync`, admin.ts) and nightly for every account with
  * store activity in the last 7 days (`startReconcileJob`). Without REVENUECAT_SECRET_KEY there is
@@ -104,6 +106,8 @@ function baseEvent(userId: string, eventId: string, type: string, productId: str
     cancelReason: null,
     transferredFrom: [],
     transferredTo: [],
+    // The store's record of this account as it stands: applied to it as named, never routed.
+    fromSync: true,
     raw: { source: 'reconcile', productId, item: raw },
   };
 }

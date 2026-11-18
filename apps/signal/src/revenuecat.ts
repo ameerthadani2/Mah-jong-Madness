@@ -4,11 +4,14 @@
  * this file, not the wallet.
  *
  * RevenueCat posts `{ api_version: "1.0", event: { id, type, app_user_id, original_app_user_id,
- * aliases, product_id, transaction_id, purchased_at_ms, expiration_at_ms, store, environment,
- * price_in_purchased_currency, currency, cancel_reason, transferred_from, transferred_to, … } }`
+ * aliases, product_id, transaction_id, original_transaction_id, purchased_at_ms, expiration_at_ms,
+ * store, environment, price_in_purchased_currency, currency, cancel_reason, transferred_from,
+ * transferred_to, … } }`
  * with the Authorization header value configured in its dashboard; we expect
  * `Bearer <REVENUECAT_WEBHOOK_SECRET>`. The app configures the SDK with our user id as the app
- * user id, so `app_user_id` is the account to grant.
+ * user id, so `app_user_id` is the account to grant. `original_transaction_id` names the first
+ * purchase of a subscription; the wallet uses it to find the account that holds a subscription a
+ * TRANSFER moved.
  */
 import { createHash, timingSafeEqual } from 'node:crypto';
 import type { StoreEvent } from './wallet';
@@ -46,6 +49,7 @@ export function parseRevenueCatWebhook(body: unknown): StoreEvent | null {
     userIds: [...new Set(userIds)],
     storeProductId: str(ev.product_id),
     transactionId: str(ev.transaction_id),
+    originalTransactionId: str(ev.original_transaction_id),
     expiresAt: ms(ev.expiration_at_ms),
     purchasedAt: ms(ev.purchased_at_ms),
     eventAt: ms(ev.event_timestamp_ms),

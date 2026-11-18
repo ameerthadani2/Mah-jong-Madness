@@ -197,6 +197,11 @@ export function pgWallet(q: Queryable, tx: Tx): WalletRepo {
       const res = await q.query<PurchaseRow>('SELECT ' + PURCHASE_COLS + ' FROM purchases WHERE transaction_id = $1', [transactionId]);
       return res.rows[0] ? purchaseFromRow(res.rows[0]) : null;
     },
+    async movePurchases(fromUserId, toUserId, transactionIds) {
+      if (!isUuid(fromUserId) || !isUuid(toUserId) || transactionIds.length === 0) return 0;
+      const res = await q.query('UPDATE purchases SET user_id = $2 WHERE user_id = $1 AND transaction_id = ANY($3::text[])', [fromUserId, toUserId, transactionIds]);
+      return res.rowCount ?? 0;
+    },
     async getEntitlements(userId) {
       if (!isUuid(userId)) return [];
       const res = await q.query<EntitlementRow>('SELECT user_id, entitlement, expires_at, source, updated_at FROM entitlements WHERE user_id = $1 ORDER BY entitlement', [userId]);

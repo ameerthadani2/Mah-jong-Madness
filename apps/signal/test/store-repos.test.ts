@@ -370,6 +370,101 @@ function contract(name: string, repos: () => Repos) {
       expect(await plan(c)).toEqual([{ entitlement: 'fourwinds.month', expiresAt: T0 + 90 * DAY, active: true }]);
     });
 
+    it('after a TRANSFER, a late refund or renewal that still names the old account reaches the account that holds the plan', async () => {
+      const r = repos();
+      const lines: string[] = [];
+      let t = T0;
+      const wallet = new WalletService(r, { now: () => t, log: (l) => lines.push(l), testerUserIds: [] });
+      const [a, b] = [await user(), await user()];
+      const first = `tx-fw-${a}`;
+      const plan = { storeProductId: 'fourwinds.month', originalTransactionId: first };
+      expect((await wallet.applyStoreEvent(storeEvent(a, 'INITIAL_PURCHASE', { ...plan, transactionId: first, expiresAt: T0 + 30 * DAY }))).outcome).toBe('entitled');
+      t = T0 + DAY;
+      expect((await wallet.applyStoreEvent(storeEvent(null, 'TRANSFER', { transferredFrom: [a], transferredTo: [b] }))).outcome).toBe('transferred');
+      // The purchase moved with the plan, and the old account keeps a note that it did.
+      expect((await r.wallet.findPurchase(first))?.userId).toBe(b);
+      expect((await r.wallet.listLedger(a)).map((l) => [l.reason, l.ref])).toContainEqual(['transfer', `transfer:${first}`]);
+      // The refund was issued before the transfer and reaches us after it, naming the old account.
+      t = T0 + 2 * DAY;
+      expect(await wallet.applyStoreEvent(storeEvent(a, 'CANCELLATION', { ...plan, transactionId: first, cancelReason: 'CUSTOMER_SUPPORT', expiresAt: t }))).toMatchObject({ outcome: 'refunded', userId: b });
+      expect(await wallet.tierOf(b)).toBe('free');
+      expect(await wallet.tierOf(a)).toBe('free');
+      // A renewal that still names the old account, found by its original transaction, renews the new holder only.
+      const renewal = `tx-fw-r-${a}`;
+      expect(await wallet.applyStoreEvent(storeEvent(a, 'RENEWAL', { ...plan, transactionId: renewal, purchasedAt: T0 + 30 * DAY, expiresAt: T0 + 60 * DAY }))).toMatchObject({ outcome: 'entitled', userId: b });
+      expect(await wallet.tierOf(a)).toBe('free');
+      expect(await wallet.tierOf(b)).toBe('fourwinds');
+      expect((await r.wallet.findPurchase(renewal))?.userId).toBe(b);
+      expect((await r.storeEvents.listForUser(a, 10)).filter((x) => x.type !== 'INITIAL_PURCHASE')).toEqual([]);
+      expect(lines.filter((l) => l.includes('a TRANSFER moved its purchase'))).toHaveLength(2);
+    });
+
+    it('a refund of a moved period ends the plan when the other moved period was refunded before the TRANSFER', async () => {
+      const r = repos();
+      let t = T0;
+      const wallet = new WalletService(r, { now: () => t, log: () => {}, testerUserIds: [] });
+      const [a, b] = [await user(), await user()];
+      const [m1, m2] = [`tx-m1-${a}`, `tx-m2-${a}`];
+      const plan = { storeProductId: 'fourwinds.month', originalTransactionId: m1 };
+      await wallet.applyStoreEvent(storeEvent(a, 'INITIAL_PURCHASE', { ...plan, transactionId: m1, expiresAt: T0 + 30 * DAY }));
+      // The renewal is charged a day early; then the first month is refunded: the second still stands.
+      t = T0 + 29 * DAY;
+      await wallet.applyStoreEvent(storeEvent(a, 'RENEWAL', { ...plan, transactionId: m2, purchasedAt: t, expiresAt: T0 + 60 * DAY }));
+      t = T0 + 29 * DAY + 3_600_000;
+      await wallet.applyStoreEvent(storeEvent(a, 'CANCELLATION', { ...plan, transactionId: m1, cancelReason: 'CUSTOMER_SUPPORT', expiresAt: T0 + 30 * DAY }));
+      expect(await wallet.tierOf(a)).toBe('fourwinds');
+      t += 3_600_000;
+      await wallet.applyStoreEvent(storeEvent(null, 'TRANSFER', { transferredFrom: [a], transferredTo: [b] }));
+      expect(await wallet.tierOf(b)).toBe('fourwinds');
+      // The second month is refunded too, under the old account's name: nothing paid for is left.
+      t += 3_600_000;
+      expect(await wallet.applyStoreEvent(storeEvent(a, 'CANCELLATION', { ...plan, transactionId: m2, cancelReason: 'CUSTOMER_SUPPORT', expiresAt: T0 + 60 * DAY }))).toMatchObject({ outcome: 'refunded', userId: b });
+      expect(await wallet.tierOf(b)).toBe('free');
+    });
+
+    it('an event that names the store\'s new owner of a plan whose TRANSFER never reached us goes to the account it names', async () => {
+      const r = repos();
+      const wallet = new WalletService(r, { now: () => T0, log: () => {}, testerUserIds: [] });
+      const [a, b] = [await user(), await user()];
+      const first = `tx-missed-${a}`;
+      await wallet.applyStoreEvent(storeEvent(a, 'INITIAL_PURCHASE', { storeProductId: 'fourwinds.month', transactionId: first, originalTransactionId: first, expiresAt: T0 + 30 * DAY }));
+      // No TRANSFER on record: the store's word stands, so the renewal is B's, not the old buyer's.
+      expect(await wallet.applyStoreEvent(storeEvent(b, 'RENEWAL', { storeProductId: 'fourwinds.month', transactionId: `${first}-r`, originalTransactionId: first, purchasedAt: T0 + 30 * DAY, expiresAt: T0 + 60 * DAY }))).toMatchObject({ outcome: 'entitled', userId: b });
+      expect((await r.wallet.getEntitlements(a)).find((e) => e.entitlement === 'fourwinds.month')?.expiresAt).toBe(T0 + 30 * DAY);
+      expect((await r.wallet.findPurchase(first))?.userId).toBe(a);
+    });
+
+    it('a sync applies the plan to the account the store lists it under, even one a TRANSFER once moved it away from', async () => {
+      const r = repos();
+      const wallet = new WalletService(r, { now: () => T0, log: () => {}, testerUserIds: [] });
+      const [a, b] = [await user(), await user()];
+      const first = `tx-back-${a}`;
+      await wallet.applyStoreEvent(storeEvent(a, 'INITIAL_PURCHASE', { storeProductId: 'fourwinds.month', transactionId: first, originalTransactionId: first, expiresAt: T0 + 30 * DAY }));
+      await wallet.applyStoreEvent(storeEvent(null, 'TRANSFER', { transferredFrom: [a], transferredTo: [b] }));
+      // The store moved it back to A and that TRANSFER never reached us: the store's record of A is what counts.
+      const record = { subscriber: { subscriptions: { 'fourwinds.month': { expires_date: new Date(T0 + 30 * DAY).toISOString(), purchase_date: new Date(T0).toISOString(), store: 'app_store', is_sandbox: false, store_transaction_id: first } } } };
+      const reconciler = new Reconciler({ repos: r, wallet, client: { subscriber: async (id: string) => (id === a ? record : null) }, now: () => T0, log: () => {} });
+      expect((await reconciler.syncUser(a)).outcomes.map((o) => o.outcome)).toEqual(['entitled']);
+      expect(await wallet.tierOf(a)).toBe('fourwinds');
+    });
+
+    it('a late refund racing the TRANSFER it predates still reaches the account that holds the plan', async () => {
+      const r = repos();
+      const wallet = new WalletService(r, { now: () => T0, log: () => {}, testerUserIds: [] });
+      const [a, b] = [await user(), await user()];
+      const first = `tx-race-${a}`;
+      const plan = { storeProductId: 'fourwinds.month', transactionId: first, originalTransactionId: first };
+      await wallet.applyStoreEvent(storeEvent(a, 'INITIAL_PURCHASE', { ...plan, expiresAt: T0 + 30 * DAY }));
+      const [moved, refund] = await Promise.all([
+        wallet.applyStoreEvent(storeEvent(null, 'TRANSFER', { transferredFrom: [a], transferredTo: [b] })),
+        wallet.applyStoreEvent(storeEvent(a, 'CANCELLATION', { ...plan, cancelReason: 'CUSTOMER_SUPPORT', expiresAt: T0 })),
+      ]);
+      expect(moved.outcome).toBe('transferred');
+      expect(refund.outcome).toBe('refunded');
+      expect(await wallet.tierOf(a)).toBe('free');
+      expect(await wallet.tierOf(b)).toBe('free');
+    });
+
     it('a TRANSFER moves only the plans bought on the store it came from; support grants and other stores stay', async () => {
       const r = repos();
       const wallet = new WalletService(r, { now: () => T0, log: () => {}, testerUserIds: [] });

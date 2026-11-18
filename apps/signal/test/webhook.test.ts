@@ -127,6 +127,24 @@ describe('webhook events', () => {
     expect((await f.me(c.auth)).wallet).toEqual({ diamonds: 0, bonusDiamonds: 0 });
   });
 
+  it('after a TRANSFER, a refund that still names the old account ends the plan where it now is (found by original_transaction_id)', async () => {
+    const f = fixture();
+    const [a, b] = [await f.guest(), await f.guest()];
+    const plan = { product_id: 'fourwinds.month', original_transaction_id: 'tx-fw-1' };
+    expect((await f.post(rc('INITIAL_PURCHASE', a.userId, { ...plan, transaction_id: 'tx-fw-1' }))).json.outcome).toBe('entitled');
+    expect((await f.post(rc('TRANSFER', b.userId, { transferred_from: [a.userId], transferred_to: [b.userId] }))).json.outcome).toBe('transferred');
+    expect((await f.me(b.auth)).coachTier).toBe('fourwinds');
+    // The store sent the refund before the transfer; it arrives after it, naming A, for the renewal's transaction.
+    expect((await f.post(rc('RENEWAL', a.userId, { ...plan, transaction_id: 'tx-fw-2', purchased_at_ms: T0 + 30 * DAY, expiration_at_ms: T0 + 60 * DAY }))).json).toMatchObject({ outcome: 'extended' });
+    f.advance(DAY);
+    expect((await f.post(rc('CANCELLATION', a.userId, { ...plan, transaction_id: 'tx-fw-2', cancel_reason: 'CUSTOMER_SUPPORT', expiration_at_ms: f.now() }))).json.outcome).toBe('refunded');
+    expect((await f.me(a.auth)).coachTier).toBe('free');
+    // The first month is still paid for, and it is B's.
+    const me = await f.me(b.auth);
+    expect(me.coachTier).toBe('fourwinds');
+    expect(me.entitlements).toEqual([{ entitlement: 'fourwinds.month', expiresAt: new Date(T0 + 30 * DAY).toISOString(), active: true }]);
+  });
+
   it('RENEWAL extends; PRODUCT_CHANGE and BILLING_ISSUE record only; EXPIRATION ends it', async () => {
     const f = fixture();
     const g = await f.guest();

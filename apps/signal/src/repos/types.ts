@@ -236,6 +236,11 @@ export interface WalletRepo {
   listPurchases(userId: string): Promise<PurchaseRecord[]>;
   /** The purchase recorded for this store transaction, under whichever account holds it; null when none is. */
   findPurchase(transactionId: string): Promise<PurchaseRecord | null>;
+  /**
+   * A TRANSFER: the purchases of `fromUserId` with these transaction ids are held by `toUserId`
+   * from now on. Returns how many moved.
+   */
+  movePurchases(fromUserId: string, toUserId: string, transactionIds: string[]): Promise<number>;
   getEntitlements(userId: string): Promise<EntitlementRecord[]>;
   setEntitlement(entitlement: EntitlementRecord): Promise<void>;
   deleteEntitlement(userId: string, entitlement: string): Promise<boolean>;

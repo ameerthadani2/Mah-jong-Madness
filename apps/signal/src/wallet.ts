@@ -10,7 +10,9 @@
  *   its effects, so a redelivered event changes nothing. Diamond credits are additionally keyed
  *   on the store transaction id (purchases.transaction_id is unique), so one purchase is never
  *   credited twice, under two event ids or under two accounts, and its refund is taken from the
- *   account that holds the purchase.
+ *   account that holds the purchase. A TRANSFER moves a plan's purchases with the plan, and a
+ *   later event for one of them that names an account it moved away from (a refund or renewal
+ *   delivered late) is applied to the account that holds it now.
  *
  * Diamonds and entitlements have no monetary value and cannot be redeemed or transferred between
  * players. Work for one user is serialised in this process (one game server machine), and on
@@ -18,7 +20,7 @@
  */
 import { bundlePrice, COSMETIC_ENTITLEMENTS, PERIOD_MS, planOfEntitlement, productForStoreId, serverProduct, supportPlanKey, TIER_RANK, tierOfEntitlement, tierOfEntitlements, type CoachTier, type ServerProduct } from './catalog';
 import { NO_ANALYTICS, withConsent, type Analytics } from './observability';
-import type { EntitlementRecord, Repos, UserRecord, WalletRecord } from './repos/types';
+import type { EntitlementRecord, PurchaseRecord, Repos, UserRecord, WalletRecord } from './repos/types';
 
 export type WalletErrorCode = 'insufficient' | 'owned' | 'not_for_sale' | 'invalid' | 'not_found' | 'unauthorised' | 'rate_limited' | 'unavailable' | 'store_unreachable';
 
@@ -75,6 +77,17 @@ export interface StoreEvent {
   /** The store's product id (`coach.gold.month`, or Play's `coach.gold:month`). */
   storeProductId: string | null;
   transactionId: string | null;
+  /**
+   * The subscription's first transaction (`original_transaction_id`), when given: every renewal and
+   * refund of one subscription carries it, so it finds the purchase a TRANSFER moved (see
+   * `applyStoreEvent`).
+   */
+  originalTransactionId?: string | null;
+  /**
+   * True for an event read from the store's current record of the account it names (reconcile.ts):
+   * it is applied to that account as named, never routed through the purchases on record.
+   */
+  fromSync?: boolean;
   /** Subscription end as the store reports it (ms), when given. */
   expiresAt: number | null;
   purchasedAt: number | null;
@@ -380,13 +393,57 @@ export class WalletService {
     await tx.wallet.apply({ userId, delta: 0, bonus: 0, reason: 'refund', ref: WalletService.refundRef(transactionId), createdAt: at });
   }
 
+  /** The ledger ref that records that a TRANSFER moved this purchase away from the account it is written on. */
+  private static transferRef(transactionId: string): string {
+    return `transfer:${transactionId}`;
+  }
+
+  /**
+   * The account a subscription event goes to instead of the one it names, or null to apply it as
+   * named. Its purchase is the one on record for its transaction, or else for its original
+   * transaction (`originalTransactionId`, the subscription's first purchase). The event goes to
+   * the account that holds that purchase now when a TRANSFER moved the purchase, or the
+   * subscription's first purchase, away from the account the event names (that account carries
+   * `transferRef`), or when the event names no account we know. Otherwise the named account is the
+   * store's word: after a TRANSFER that never reached us, for one, the store names the new owner
+   * while the purchase is still on the old one. An event read from the store's current record
+   * (`fromSync`) is never routed.
+   */
+  private async routedHolder(repos: Repos, e: StoreEvent, named: UserRecord | null): Promise<UserRecord | null> {
+    if (e.fromSync || e.type === 'TRANSFER' || productForStoreId(e.storeProductId)?.kind !== 'subscription') return null;
+    const found: PurchaseRecord[] = [];
+    for (const id of new Set([e.transactionId, e.originalTransactionId])) {
+      const purchase = id ? await repos.wallet.findPurchase(id) : null;
+      if (purchase) found.push(purchase);
+    }
+    if (found.length === 0) return null;
+    const holder = await this.resolveUser([found[0].userId], repos);
+    if (!holder || holder.id === named?.id) return null;
+    if (!named) return holder;
+    const refs = new Set((await repos.wallet.listLedger(named.id)).map((l) => l.ref));
+    return found.some((p) => refs.has(WalletService.transferRef(p.transactionId))) ? holder : null;
+  }
+
   /** Apply a store notification once. A redelivery answers `duplicate` and changes nothing. */
   async applyStoreEvent(e: StoreEvent): Promise<StoreResult> {
+    // A TRANSFER can move the purchase between the look before the lock and the work under it:
+    // the event is then started again, so it locks the account it is applied to.
+    for (let attempt = 1; ; attempt++) {
+      try {
+        return await this.applyStoreEventOnce(e);
+      } catch (err) {
+        if (!(err instanceof Rerouted) || attempt >= 3) throw err;
+      }
+    }
+  }
+
+  private async applyStoreEventOnce(e: StoreEvent): Promise<StoreResult> {
     const seen = await this.repos.storeEvents.get(e.eventId);
     if (seen) return { outcome: 'duplicate', userId: seen.userId, duplicate: true };
     const product = productForStoreId(e.storeProductId);
     const resolved = e.type === 'TRANSFER' ? null : await this.resolveUser(e.userIds);
-    const keys = [resolved?.id ?? '', ...e.transferredFrom, ...e.transferredTo].filter(Boolean);
+    const routed = await this.routedHolder(this.repos, e, resolved);
+    const keys = [resolved?.id ?? '', routed?.id ?? '', ...e.transferredFrom, ...e.transferredTo].filter(Boolean);
     if (product?.kind === 'diamonds' && e.transactionId) {
       // One store transaction is worked on by one event at a time, whichever account each event
       // names, and the account that holds its purchase waits too (a refund debits that account).
@@ -398,7 +455,11 @@ export class WalletService {
       return await this.serialise(keys, () =>
         this.repos.transaction(async (tx) => {
           // Resolved again under the lock: the account may have been merged away (or deleted) while this event waited.
-          const user = resolved && (await this.resolveUser([resolved.id], tx));
+          const named = resolved && (await this.resolveUser([resolved.id], tx));
+          const holder = await this.routedHolder(tx, e, named);
+          if (holder && !keys.includes(holder.id)) throw new Rerouted();
+          if (holder) this.log(`[signal] store event ${e.eventId} (${e.type}) names ${named?.id ?? 'no account we know'}; a TRANSFER moved its purchase to ${holder.id}, which it is applied to`);
+          const user = holder ?? named;
           const fresh = await tx.storeEvents.record({
             eventId: e.eventId,
             vendor: e.vendor,
@@ -418,8 +479,8 @@ export class WalletService {
       );
     } catch (err) {
       // Postgres rolled the event row back with everything else; memory cannot, so forget it here
-      // and let the store's retry process the event again.
-      if (this.repos.kind === 'memory') await this.repos.storeEvents.delete(e.eventId);
+      // and let the store's retry process the event again. (A rerouted event wrote nothing.)
+      if (this.repos.kind === 'memory' && !(err instanceof Rerouted)) await this.repos.storeEvents.delete(e.eventId);
       throw err;
     }
   }
@@ -636,12 +697,14 @@ export class WalletService {
     for (const fromId of e.transferredFrom) {
       const from = await this.resolveUser([fromId], tx, true);
       if (!from || from.id === to.id) continue;
+      const purchases = await tx.wallet.listPurchases(from.id);
       // The store each plan was last bought or renewed on (purchases are listed oldest first).
       const boughtOn = new Map<string, string>();
-      for (const p of await tx.wallet.listPurchases(from.id)) {
+      for (const p of purchases) {
         const product = serverProduct(p.productId);
         if (product?.kind === 'subscription') boughtOn.set(product.entitlement, p.store);
       }
+      const plans = new Set<string>();
       for (const ent of await tx.wallet.getEntitlements(from.id)) {
         if (ent.source !== STORE_SOURCE) continue;
         const store = boughtOn.get(ent.entitlement);
@@ -652,9 +715,44 @@ export class WalletService {
         await tx.wallet.setEntitlement(next);
         theirs.set(ent.entitlement, next);
         await tx.wallet.deleteEntitlement(from.id, ent.entitlement);
+        plans.add(ent.entitlement);
         moved++;
       }
+      await this.movePlanPurchases(tx, from.id, to.id, purchases, plans, eventStore, at);
     }
     return { outcome: moved ? 'transferred' : 'recorded', userId: to.id };
+  }
+
+  /**
+   * The purchases behind the plans a TRANSFER moved (those bought on the event's store, when it
+   * names one) go with them: the new account holds them, so the refund of a period it now holds
+   * ends its plan and only the periods paid for stand (`paidUntil`). The old account keeps a zero
+   * ledger entry per purchase (`transferRef`), so a late event that still names it is applied to
+   * the new holder (`routedHolder`), and a refund already taken on a moved purchase is noted on
+   * the new account too.
+   */
+  private async movePlanPurchases(tx: Repos, fromId: string, toId: string, purchases: PurchaseRecord[], plans: ReadonlySet<string>, eventStore: string | null, at: number): Promise<void> {
+    const rows = purchases.filter((p) => {
+      const product = serverProduct(p.productId);
+      return product?.kind === 'subscription' && plans.has(product.entitlement) && (!eventStore || p.store === eventStore);
+    });
+    if (rows.length === 0) return;
+    await tx.wallet.movePurchases(fromId, toId, rows.map((p) => p.transactionId));
+    const fromRefs = new Set((await tx.wallet.listLedger(fromId)).map((l) => l.ref));
+    const toRefs = new Set((await tx.wallet.listLedger(toId)).map((l) => l.ref));
+    for (const p of rows) {
+      const moved = WalletService.transferRef(p.transactionId);
+      if (!fromRefs.has(moved)) await tx.wallet.apply({ userId: fromId, delta: 0, bonus: 0, reason: 'transfer', ref: moved, createdAt: at });
+      const refund = WalletService.refundRef(p.transactionId);
+      if (fromRefs.has(refund) && !toRefs.has(refund)) await tx.wallet.apply({ userId: toId, delta: 0, bonus: 0, reason: 'refund', ref: refund, createdAt: at });
+    }
+  }
+}
+
+/** Thrown under the lock when a TRANSFER moved the event's purchase to an account the event did not lock: the event starts again. */
+class Rerouted extends Error {
+  constructor() {
+    super('The purchase moved to another account; the event starts again');
+    this.name = 'Rerouted';
   }
 }

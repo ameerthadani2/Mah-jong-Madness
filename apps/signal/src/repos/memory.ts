@@ -617,6 +617,16 @@ function memoryWallet(s: MemoryState): WalletRepo {
       const row = s.purchases.find((p) => p.transactionId === transactionId);
       return row ? copy(row) : null;
     },
+    async movePurchases(fromUserId, toUserId, transactionIds) {
+      const ids = new Set(transactionIds);
+      let moved = 0;
+      for (const p of s.purchases) {
+        if (p.userId !== fromUserId || !ids.has(p.transactionId)) continue;
+        p.userId = toUserId;
+        moved++;
+      }
+      return moved;
+    },
     async getEntitlements(userId) {
       return [...s.entitlements.values()].filter((e) => e.userId === userId).map(copy);
     },
