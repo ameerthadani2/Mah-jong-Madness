@@ -44,8 +44,8 @@ import { randomHex } from './sha256';
 import type { Link } from './host';
 import { CLOCK_FRAME_MS, RESTART_CAUSES, type Audit, type ClientMessage, type HostMessage, type SeatInfo } from './messages';
 import { isFrame, type Transport, type Unsubscribe } from './transport';
-import { clientClock, DRIFT_RATE, foldClock, LATE_MS, LINK_PAUSE_MS, ORDER_SLACK_MS, PAUSE_GRACE_MS, RAN_GAP_MS, SILENT_ANSWER_MS, type TableClientOptions } from './clientclock';
-import { armedLate, clockTrack, isBotSkill, judgeTableMove, lateAnchor, lateRef, legalFor, sameActionSafe, seatRun, tableRule, type LateScope, type MoveJudge } from './clientmoves';
+import { clientClock, DRIFT_RATE, foldClock, LATE_MS, LINK_PAUSE_MS, ORDER_SLACK_MS, PAUSE_GRACE_MS, RAN_GAP_MS, SILENT_ANSWER_MS, WATCH_WINDOW_MS, type TableClientOptions } from './clientclock';
+import { armedLate, clockTrack, isBotSkill, judgeTableMove, lateAnchor, lateRef, lateWatch, legalFor, sameActionSafe, seatRun, tableRule, type LateScope, type MoveJudge } from './clientmoves';
 import {
   CHAINED_FIELDS,
   CLIENT_SNAPSHOT_VERSION,
@@ -438,6 +438,13 @@ export class TableClient {
   private lagRef: { lag: number; at: number; era: number; seg: number } | null = null;
   /** The highest stamp received in that scope: the watch measures how far it trails this device's clock (see `checkLink`). */
   private stampHigh: number | null = null;
+  /**
+   * The arrival offsets of the stamped frames of that scope that arrived in the last
+   * `WATCH_WINDOW_MS` (and of the last frame before them), the least of each second: the watch
+   * measures against the least of them (`watchRefAt`). Frames handled just after a pause are left
+   * out (they may have waited in the device).
+   */
+  private lagWin: Array<{ from: number; at: number; lag: number }> = [];
   /** With no `lagRef` to measure against (a new clock era, or this device's clock just followed a sleep), when the watch began to wait. */
   private waitFrom: number | null = null;
   /** This run of the app (a restored client is a new run, its clock read from the wall anew): fixed points are compared only within one. */
@@ -802,12 +809,18 @@ export class TableClient {
    * clock frames, or announces a longer period, is held to it all the same.
    *
    * The watch does not count frames: it measures how far the host's stamps have fallen behind this
-   * device's clock. `lagRef` is the least arrival offset (arrival less stamp) seen in this clock era
-   * and run of this device's clock, so a frame the host stamped `s` and sent at once has arrived by
-   * `s + lagRef`; at `now` the stamps are `now - (stampHigh + lagRef)` behind, the deficit (with
-   * `DRIFT_RATE` allowed for since `lagRef` was seen). Stamps that crawl a millisecond at a time, or
-   * run slow, leave the deficit growing whatever frames keep arriving, and so does a link that brings
-   * nothing; a frame the host delays under an honest stamp does not shrink it. When the deficit
+   * device's clock. Its reference (`watchRefAt`) is the least arrival offset (arrival less stamp) of
+   * the frames that arrived in the last `WATCH_WINDOW_MS`, never less than `lagRef`, the least seen in
+   * this clock era and run of this device's clock (with `DRIFT_RATE` allowed for since it was seen).
+   * A frame the host stamped `s` and sent at once has arrived by about `s` plus the reference; at
+   * `now` the stamps are `now - (stampHigh + reference)` behind, the deficit. Stamps that crawl a
+   * millisecond at a time leave the deficit growing whatever frames keep arriving, and so does a link
+   * that brings nothing: the least offset of the last 20 s stays where the crawl began until the
+   * deficit has reached 13 s. A network delay that rose and stayed up is in the reference once it has
+   * lasted 20 s, so a link that has grown slower is not dropped over and over. A delay that rises
+   * slowly, or stamps that run slow, can be taken in the same way: the audit measures every frame
+   * against `lagRef` all the same (`lateRef`), and the order of the stamps (`noteOrder`) and the
+   * state that starts each turn (`armedLate`) catch a turn held back under them. When the deficit
    * reaches `2 × CLOCK_FRAME_MS + 2 s` this client asks for a `pong` (which counts only through its
    * stamp); when the ping has been out `SILENT_ANSWER_MS` and the deficit has reached
    * `2 × CLOCK_FRAME_MS + 2 s + SILENT_ANSWER_MS`, the answer is 'silent'. The session then drops the
@@ -858,7 +871,7 @@ export class TableClient {
     }
     // The watch measures the link from here; a break in its checks starts the stretch again.
     if (this.watchFrom === null || since > RAN_GAP_MS) this.watchFrom = now;
-    const ref = this.refAt(now);
+    const ref = this.watchRefAt(now);
     let deficit: number;
     if (this.stampHigh !== null && ref !== null) {
       deficit = now - (this.stampHigh + ref);
@@ -914,18 +927,46 @@ export class TableClient {
   }
 
   /**
+   * The link watch's reference at `t`: the least arrival offset of the frames of this scope that
+   * arrived in the `WATCH_WINDOW_MS` before it (or of the last one, when none did), never less than
+   * `refAt(t)`; null while the scope has no reference. A network delay that rose and stayed up is in
+   * it once it has lasted that long; stamps that crawl are not, before the watch drops the link.
+   */
+  private watchRefAt(t: number): number | null {
+    const ref = this.refAt(t);
+    if (ref === null) return null;
+    let low = Number.POSITIVE_INFINITY;
+    for (const e of this.lagWin) if (e.at >= t - WATCH_WINDOW_MS) low = Math.min(low, e.lag);
+    const last = this.lagWin[this.lagWin.length - 1];
+    if (low === Number.POSITIVE_INFINITY && last) low = last.lag;
+    return low === Number.POSITIVE_INFINITY ? ref : Math.max(ref, low);
+  }
+
+  /** Keep the arrival offset `lag` of a frame that arrived at `at` for the watch's reference (one entry a second, the least). */
+  private noteLag(at: number, lag: number): void {
+    const last = this.lagWin[this.lagWin.length - 1];
+    if (last && at - last.from < 1_000) {
+      last.at = at;
+      last.lag = Math.min(last.lag, lag);
+    } else this.lagWin.push({ from: at, at, lag });
+    while (this.lagWin.length > 1 && this.lagWin[0].at < at - WATCH_WINDOW_MS) this.lagWin.shift();
+  }
+
+  /**
    * Note the stamp `now` of a frame (a state, a hand's end, a clock frame or a pong): what it says of
    * the host's clock against this device's. A frame that arrived with the least offset yet seen in
-   * its scope becomes the reference (`lagRef`), and the highest stamp feeds the watch (`checkLink`).
+   * its scope becomes the reference (`lagRef`); every frame's offset feeds the watch's reference
+   * (`watchRefAt`), and the highest stamp the watch's deficit (`checkLink`).
    * Returns when the frame arrived, the earliest it can have arrived (`atLo`), the reference before
-   * it (`ref`, null while the scope has none), whether its link was working (it had brought a stamp
-   * not more than `LATE_MS` late against the reference) and whether it was live: working, while a
-   * hand is played, with the watch checking it within the last `RAN_GAP_MS`, not just after a pause
-   * and not in the watch's grace after one, and measured by the watch without a break since before it
-   * was `2 × CLOCK_FRAME_MS + 2 s` late. No honest frame on a live link is more than `LATE_MS` late:
-   * the watch drops a link before its stamps fall that far behind.
+   * it (`ref`, null while the scope has none) and the watch's (`wref`), whether its link was working
+   * (it had brought a stamp not more than `LATE_MS` late against `ref`) and whether it was live:
+   * working, while a hand is played, with the watch checking it within the last `RAN_GAP_MS`, not just
+   * after a pause and not in the watch's grace after one, and measured by the watch without a break
+   * since before it was `2 × CLOCK_FRAME_MS + 2 s` late against `wref`. No honest frame on a live link
+   * is more than `LATE_MS` late against `wref`: the watch drops a link before its stamps fall that far
+   * behind.
    */
-  private noteStamp(now: unknown): { at: number; atLo: number; ref: number | null; live: boolean; working: boolean; seg: number } | null {
+  private noteStamp(now: unknown): { at: number; atLo: number; ref: number | null; wref: number | null; live: boolean; working: boolean; seg: number } | null {
     if (typeof now !== 'number' || !Number.isFinite(now)) return null;
     const at = this.now();
     const seg = this.seg();
@@ -933,22 +974,26 @@ export class TableClient {
       if (this.lagRef) this.waitFrom = null;
       this.lagRef = null;
       this.stampHigh = null;
+      this.lagWin = [];
     }
     const atLo = Math.min(at, this.frameAtLo ?? at);
     const ref = this.refAt(atLo);
+    const wref = this.watchRefAt(atLo);
     const working = this.workingEpoch === this.epoch;
     const excess = ref === null ? 0 : atLo - now - ref;
-    // Live: the watch was measuring this link, and had been since before the frame was `probeAt` late,
-    // so it would have dropped the link before an honest frame was later than `LATE_MS`.
-    const watched = this.watchFrom !== null && excess <= at - this.watchFrom + this.probeAt();
+    // Live: the watch was measuring this link, and had been since before the frame was `probeAt` late
+    // by its reference, so it would have dropped the link before an honest frame was later than `LATE_MS`.
+    const late = wref === null ? 0 : atLo - now - wref;
+    const watched = this.watchFrom !== null && late <= at - this.watchFrom + this.probeAt();
     const live = working && watched && this.playing() && this.checkedAt !== null && at - this.checkedAt <= RAN_GAP_MS && !this.afterPause(at) && at >= this.graceUntil;
     const lag = at - now;
     const cur = this.refAt(at);
     if (cur === null || lag <= cur) this.lagRef = { lag, at, era: this.era, seg };
+    if (!this.afterPause(at)) this.noteLag(at, lag);
     if (this.stampHigh === null || now > this.stampHigh) this.stampHigh = now;
     this.linkStamped = true;
     if (excess <= LATE_MS) this.workingEpoch = this.epoch;
-    return { at, atLo, ref, live, working, seg };
+    return { at, atLo, ref, wref, live, working, seg };
   }
 
   leave(): void {
@@ -1493,7 +1538,7 @@ export class TableClient {
         this.handsEnded.add(h);
         if (this.openHand === h) this.openHand = null;
         this.atStart = false;
-        const end: SeenState = { tc: Number.POSITIVE_INFINITY, epoch: this.epoch, era: this.era, at: this.now(), now: typeof m.now === 'number' ? m.now : undefined, owes: false, deadline: null, timeBank: 0, inBank: false, hash: '', ...(stampedEnd ? { atLo: stampedEnd.atLo, ref: stampedEnd.ref, live: stampedEnd.live, seg: stampedEnd.seg } : {}) };
+        const end: SeenState = { tc: Number.POSITIVE_INFINITY, epoch: this.epoch, era: this.era, at: this.now(), now: typeof m.now === 'number' ? m.now : undefined, owes: false, deadline: null, timeBank: 0, inBank: false, hash: '', ...(stampedEnd ? { atLo: stampedEnd.atLo, ref: stampedEnd.ref, wref: stampedEnd.wref, live: stampedEnd.live, seg: stampedEnd.seg } : {}) };
         const { check, replayed, anchors, passed } = this.runAudit(m.audit, m.view, m.result, end);
         this.clockBase = foldClock(this.clockBase, this.era, this.plays.find((p) => p.hand === h) ?? null, end, anchors);
         // The strongest fixed point of this era, run of the app and run of this device's clock, for the hands after this one.
@@ -1584,10 +1629,11 @@ export class TableClient {
   /**
    * One WebSocket is one ordered stream, and an honest host's stamps never go back (`TableHost.stamp`),
    * so its frames arrive in the order of their stamps. A frame of hand `hand` at turn `tc` that
-   * arrives after one stamped later than it (beyond `ORDER_SLACK_MS`) was held back by the host.
-   * This only keeps the order: it does not feed the link watch, which measures the stamps against
-   * this device's clock instead (`noteStamp`, `checkLink`), so a stamp that moves on by a
-   * millisecond does not count as hearing from the table.
+   * arrives after one stamped later than it (beyond `ORDER_SLACK_MS`) was held back by the host:
+   * this is what catches a state held back while the stamps of the frames sent past it run slow, a
+   * delay the watch's reference may take in (`watchRefAt`). It only keeps the order: it does not feed
+   * the link watch, which measures the stamps against this device's clock instead (`noteStamp`,
+   * `checkLink`), so a stamp that moves on by a millisecond does not count as hearing from the table.
    */
   private noteOrder(now: unknown, hand: number | null, tc: number | null): void {
     if (typeof now !== 'number' || !Number.isFinite(now)) return;
@@ -1605,7 +1651,7 @@ export class TableClient {
   }
 
   /** Record a state frame of the hand being played: its hash, timing and whether we owed a move. */
-  private noteState(v: TableView, m: Extract<HostMessage, { t: 'state' }>, stamped: { at: number; atLo: number; ref: number | null; live: boolean; working: boolean; seg: number } | null = null, onLink = false): void {
+  private noteState(v: TableView, m: Extract<HostMessage, { t: 'state' }>, stamped: { at: number; atLo: number; ref: number | null; wref: number | null; live: boolean; working: boolean; seg: number } | null = null, onLink = false): void {
     if (!isInt(v.turnCounter) || typeof m.hash !== 'string') return;
     const play = this.playFor(v.handNumber);
     const prior = play.seen.find((s) => s.tc === v.turnCounter);
@@ -1631,7 +1677,7 @@ export class TableClient {
       era: this.era,
       at,
       now: typeof m.now === 'number' ? m.now : undefined,
-      ...(stamped ? { atLo: stamped.atLo, ref: stamped.ref, live: stamped.live, working: stamped.working, seg: stamped.seg } : {}),
+      ...(stamped ? { atLo: stamped.atLo, ref: stamped.ref, wref: stamped.wref, live: stamped.live, working: stamped.working, seg: stamped.seg } : {}),
       run: this.runId,
       onLink,
       owes,
@@ -2083,7 +2129,7 @@ export class TableClient {
                   // A run first shown on a new link: the host's own word for the bank it had at the turn's start counts if lower (it was spent while the link was down).
                   const whole = rules.turnSeconds * 1000 + Math.min(tracked, r0.timeBank * 1000);
                   const left = r0.deadline === null || typeof r0.now !== 'number' ? Number.POSITIVE_INFINITY : (r0.inBank ? r0.deadline : r0.deadline + r0.timeBank * 1000) - r0.now;
-                  if (armedLate(r0, rules) || (r0.live && lateRef(r0) > LATE_MS)) problems.add(`The host showed this seat its turn late, on a link that stayed open (turn ${n})`);
+                  if (armedLate(r0, rules) || (r0.live && lateWatch(r0) > LATE_MS)) problems.add(`The host showed this seat its turn late, on a link that stayed open (turn ${n})`);
                   else if (notes && (lateRef(r0) > LATE_MS || lateAnchor(r0, anchors, scope) > LATE_MS || (!r0.onLink && left < whole - LATE_MS))) notes.lateShown = true;
                 }
               }

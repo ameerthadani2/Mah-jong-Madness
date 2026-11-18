@@ -29,6 +29,15 @@ export function lateRef(f: SeenState): number {
 }
 
 /**
+ * How much later than the link watch's reference (`SeenState.wref`) `f` reached this device: what
+ * the watch bounds on a live link. The same as `lateRef` for a frame saved without it.
+ */
+export function lateWatch(f: SeenState): number {
+  if (typeof f.now !== 'number' || typeof f.wref !== 'number') return lateRef(f);
+  return (f.atLo ?? f.at) - f.now - f.wref;
+}
+
+/**
  * How much later `f` reached this device than the fixed points made before it in its scope allow
  * (this device's moves and shares, which the host cannot have answered before they were sent),
  * beyond an uplink's allowance (`RTT_ALLOW_MS`). It sees a delay present since the scope began,
@@ -183,8 +192,8 @@ export function judgeTableMove(j: MoveJudge, play: PlayRecord, n: number, end: S
     if (r0) {
       armed = armedLate(r0, rules);
       const lr = lateRef(r0);
-      // Over a link the watch was keeping, no honest frame is that late: the host held it.
-      if (r0.live && lr > LATE_MS) return 'held';
+      // Over a link the watch was keeping, no honest frame is that late by its reference: the host held it.
+      if (r0.live && lateWatch(r0) > LATE_MS) return 'held';
       const late = lr > LATE_MS || lateAnchor(r0, anchors, scope) > LATE_MS;
       const prev = i0 > 0 ? play.seen[i0 - 1] : null;
       const whole = rules.turnSeconds * 1000 + ((prev ? track.bank.get(prev) : null) ?? rules.timeBankSeconds * 1000);

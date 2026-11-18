@@ -338,6 +338,34 @@ describe('honest links stay green', () => {
       green(w);
     }));
 
+  it('a latency that rises by 8 s over 30 s and stays up, then a 6 s stall of the network a minute later: green, no drop', () =>
+    scenario((i) => {
+      const t1 = T0 + 30_000 + 7_000 * i;
+      const t2 = t1 + 90_000;
+      const w = wire({
+        code: `HL8${i}`,
+        think: (k) => (k % 3 === 0 ? Infinity : 800),
+        delay: (_m, now) => 50 + Math.min(1, Math.max(0, (now - t1) / 30_000)) * 8_000 + (now >= t2 && now < t2 + 6_000 ? t2 + 6_000 - now : 0),
+      });
+      w.finish();
+      need(w.judged().length > 0 && Math.max(...w.shown.values()) > t2 + 15_000);
+      expect(w.drops).toEqual([]);
+      green(w);
+    }));
+
+  it('a latency that rises by 20 s over two minutes and stays up, the seat timed out now and then: its turns shown late are noted, never failed', () =>
+    scenario((i) => {
+      const t1 = T0 + 30_000 + 7_000 * i;
+      const w = wire({ code: `HL20${i}`, think: (k) => (k % 3 === 0 ? Infinity : 800), delay: (_m, now) => 50 + Math.min(1, Math.max(0, (now - t1) / 120_000)) * 20_000 });
+      w.finish();
+      const late = [...w.created].filter(([tc, at]) => (w.shown.get(tc) ?? 0) - at > LATE_MS + 1_000 && w.judged().includes(tc));
+      need(late.length > 0);
+      expect(w.drops).toEqual([]);
+      const v = w.verdict();
+      expect(v.failures).toEqual([]);
+      expect(v.caveats).toContain('lateShown');
+    }));
+
   it('a 20 s stall of the network from the deal of the next hand, the seat’s first turn of it coming in the same burst and the seat timed out: never red', () =>
     scenario((i) => {
       let stallFrom = -1;
@@ -590,7 +618,7 @@ describe('device clock: frames that waited in the device', () => {
 });
 
 describe('match record: what a saved record keeps of each frame', () => {
-  const NEW_FIELDS = ['atLo', 'ref', 'live', 'working', 'seg', 'run', 'onLink'] as const;
+  const NEW_FIELDS = ['atLo', 'ref', 'wref', 'live', 'working', 'seg', 'run', 'onLink'] as const;
 
   /**
    * The link drops just as the seat's turn begins and comes back 20 s later, so the phone is first

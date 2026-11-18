@@ -25,13 +25,24 @@ export const CLOCK_SKEW_MS = 5_000;
 export const LATENCY_SLACK_MS = 30_000;
 /**
  * How much later than the least arrival offset of its scope (`TableClient.lagRef`) a frame may reach
- * this device and still be believed to start the seat's clock at its stamp. The watch drops a link
- * whose stamps fall 13 s behind by that measure (`2 × CLOCK_FRAME_MS + 2 s + SILENT_ANSWER_MS`), and
- * it checks once a second, so no honest frame on a live link is later than about 15.5 s (13 s, a
- * check period and `RAN_GAP_MS`). A state later than this that shows the seat a move fails the hand
- * when its link was live, and is otherwise judged as a drop (`judgeTableMove`).
+ * this device and still be believed to start the seat's clock at its stamp; later than that, the
+ * table's move is judged as a drop (`judgeTableMove`). The watch drops a link whose stamps fall 13 s
+ * behind its own reference (`2 × CLOCK_FRAME_MS + 2 s + SILENT_ANSWER_MS`; see `WATCH_WINDOW_MS`),
+ * and it checks once a second, so no honest frame on a live link is later than about 15.5 s (13 s, a
+ * check period and `RAN_GAP_MS`) by that reference. A state that shows the seat a move and is later
+ * than this by the watch's reference fails the hand when its link was live.
  */
 export const LATE_MS = 17_000;
+/**
+ * How far back the link watch looks for its reference (`TableClient.watchRefAt`): the least arrival
+ * offset of the stamped frames that arrived in this long, never less than the least offset of the
+ * scope (`lagRef`). A network delay that rises and stays up is taken in once it has lasted this
+ * long, so a link that has merely grown slower is not dropped over and over (its frames are still
+ * measured against `lagRef` by the audit, and one more than `LATE_MS` late is noted as shown late).
+ * Stamps that crawl or stand still leave each frame's offset larger than the last, so the least of
+ * the last 20 s stays where the crawl began until the watch has dropped the link, 13 s in.
+ */
+export const WATCH_WINDOW_MS = 20_000;
 /** How fast the host's clock and this device's may drift apart (500 ppm; real clocks drift 200 ppm at worst): a least offset seen a while ago is relaxed by this much. */
 export const DRIFT_RATE = 0.0005;
 /** A gap longer than this since this app last ran (handled a frame, checked the link, bound a link, sent a move) was a pause: the phone slept, or the app was in the background. */

@@ -155,10 +155,16 @@ export interface SeenState {
   /** The least arrival offset (`at - now`) seen in this frame's scope (clock era and run of this device's clock) before it, allowing for drift; null when there was none. */
   ref?: number | null;
   /**
+   * The link watch's reference when it arrived: the least arrival offset of the frames of its scope
+   * that arrived in the `WATCH_WINDOW_MS` before it, never less than `ref` (null when there was none).
+   * A live frame is held to `LATE_MS` against it, which is what the watch bounds.
+   */
+  wref?: number | null;
+  /**
    * The frame came over a live link: a working one, while a hand was played, with the link watch
    * checking it within `RAN_GAP_MS`, not just after a pause and not in the watch's grace after one,
-   * and measuring it without a break since before the frame was `2 × CLOCK_FRAME_MS + 2 s` late.
-   * No honest frame on a live link is more than `LATE_MS` late.
+   * and measuring it without a break since before the frame was `2 × CLOCK_FRAME_MS + 2 s` late
+   * against `wref`. No honest frame on a live link is more than `LATE_MS` late against `wref`.
    */
   live?: boolean;
   /** The link had already brought a stamp not more than `LATE_MS` late (a client's first link counts from the start). Absent, never false, in records saved by older builds. */
