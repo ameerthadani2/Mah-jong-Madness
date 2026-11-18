@@ -785,8 +785,9 @@ export class TableHost {
     // or the returning client would expect its own share in the audit.
     if (seat.supplied && this.phase !== 'lobby' && this.phase !== 'match_over') this.sendTo(from, { t: 'stand_in', handNumber: this.snapshot.handNumber, attempt: this.ceremonyAttempts });
     if (this.phase === 'playing' && this.game) {
-      this.armClocks();
-      this.sendTo(from, this.stateMsg(seat.seat));
+      const t = this.stamp();
+      this.armClocks(t);
+      this.sendTo(from, this.stateMsg(seat.seat, t));
       this.runBots();
     } else if (this.phase === 'hand_over' && this.game) {
       const last = this.audits[this.audits.length - 1];
@@ -1041,8 +1042,9 @@ export class TableHost {
         this.onHandOver();
         return;
       }
-      this.armClocks();
-      this.broadcastState();
+      const t = this.stamp();
+      this.armClocks(t);
+      this.broadcastState(t);
       this.runBots();
     }
   }
@@ -1057,7 +1059,8 @@ export class TableHost {
 
   // ----------------------------------------------------------------- playing
 
-  private stateMsg(seat: number): HostMessage {
+  /** The state frame for `seat`, stamped `now` (by default a fresh `stamp()`). */
+  private stateMsg(seat: number, now = this.stamp()): HostMessage {
     const clock = this.clocks.get(seat);
     return {
       t: 'state',
@@ -1066,12 +1069,13 @@ export class TableHost {
       deadline: this.deadlineFor(seat),
       timeBank: Math.round(this.banks[seat] / 1000),
       inTimeBank: clock?.inBank ?? false,
-      now: this.stamp(),
+      now,
     };
   }
 
-  private broadcastState(): void {
-    this.broadcast((s) => this.stateMsg(s.seat));
+  /** Send every seat its state, every one stamped `now` (by default one fresh `stamp()` for all). */
+  private broadcastState(now = this.stamp()): void {
+    this.broadcast((s) => this.stateMsg(s.seat, now));
     this.notify();
     this.emit('state');
   }
@@ -1086,16 +1090,20 @@ export class TableHost {
 
   /**
    * Start a clock for every human who owes an action and has none, connected or held (its link
-   * dropped and its clock has not run out since); drop clocks for seats that no longer act.
+   * dropped and its clock has not run out since); drop clocks for seats that no longer act. `t` is
+   * the one reading of the clock this tick uses, for these clocks and for the stamps of the states
+   * sent with them (`broadcastState(t)`, `stateMsg(seat, t)`): the state that starts a seat's turn
+   * then gives it exactly the turn clock by its own deadline and stamp, whatever the process does
+   * in between (a garbage-collection pause, a throttled CPU), as a client checks (`armedLate`).
    */
-  private armClocks(): void {
+  private armClocks(t = this.stamp()): void {
     if (!this.game || this.game.phase === 'ended') {
       this.clocks.clear();
       return;
     }
     for (const s of this.seats) {
       const owes = !this.tablePlays(s) && legalActions(this.game, s.seat).length > 0;
-      if (owes && !this.clocks.has(s.seat)) this.clocks.set(s.seat, { base: this.now() + this.rules.turnSeconds * 1000, inBank: false });
+      if (owes && !this.clocks.has(s.seat)) this.clocks.set(s.seat, { base: t + this.rules.turnSeconds * 1000, inBank: false });
       else if (!owes && this.clocks.has(s.seat)) this.settleClock(s.seat);
     }
   }
@@ -1110,8 +1118,9 @@ export class TableHost {
       this.onHandOver();
       return;
     }
-    this.armClocks();
-    this.broadcastState();
+    const t = this.stamp();
+    this.armClocks(t);
+    this.broadcastState(t);
     this.runBots();
   }
 

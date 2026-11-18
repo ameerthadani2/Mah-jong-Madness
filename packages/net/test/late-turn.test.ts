@@ -13,8 +13,8 @@
  * that sleep, and servers whose wall clock is set back, stay green.
  */
 import { describe, expect, it, vi } from 'vitest';
-import { legalActions, withRules, type Action, type GameState } from '@mjm/engine';
-import { caveatKey, CLOCK_FRAME_MS, SILENT_ANSWER_MS, type HostMessage, type SerializedClient } from '../src/index';
+import { chooseAction, legalActions, withRules, type Action, type GameState } from '@mjm/engine';
+import { caveatKey, CLOCK_FRAME_MS, LoopbackHub, SILENT_ANSWER_MS, TableClient, TableHost, transportLink, type HostMessage, type SerializedClient } from '../src/index';
 import { LATE_MS } from '../src/clientclock';
 import { Missed, scenario, seededDeals } from './support';
 import { holdTurn, stampOf, T0, wire, type Line, type Wire } from './wire';
@@ -208,6 +208,60 @@ describe('clock: the state that starts a turn must give the whole turn clock', (
       h.w.finish();
       need(h.w.judged().includes(h.st.heldTc));
       expect(h.w.verdict()).toMatchObject({ status: 'failed', failures: ['playedEarly'] });
+    }));
+
+  it('an honest host whose process stands still 2 s while it writes the broadcast that starts a seat’s turn (a garbage-collection pause): the state still gives exactly the turn clock, and the hand is green', () =>
+    scenario((i) => {
+      // Two players, at seats 0 and 1 (the victim), and two bots; a network with no delay. The host keeps
+      // time by a clock that never steps back; in the broadcast that starts the victim's second turn, the
+      // process stands still 2 s right after it wrote seat 0's frame, before it builds the victim's.
+      const clock = { now: T0 };
+      const hub = new LoopbackHub();
+      const ht = hub.create('host');
+      const host = new TableHost(ht, { roomCode: `GC${i}`, rules: withRules({ handsPerMatch: 1, turnSeconds: 15, timeBankSeconds: 30 }), now: () => clock.now, matchId: `m-GC${i}` });
+      const game = () => (host as unknown as { game: GameState | null }).game;
+      const owes = (seat: number) => host.phase === 'playing' && !!game() && legalActions(game()!, seat).length > 0;
+      let turns = 0;
+      let shownOwing = false;
+      let stalled = false;
+      const gaps: number[] = [];
+      const send = ht.send.bind(ht);
+      ht.send = (to, msg) => {
+        const m = msg as HostMessage;
+        send(to, msg);
+        if (m.t !== 'state') return;
+        if (to === 'p0' && owes(1) && !shownOwing && ++turns === 2) {
+          stalled = true;
+          clock.now += 2_000;
+        }
+        if (to === 'p1') {
+          if (owes(1) && !shownOwing && typeof m.now === 'number' && m.deadline !== null) gaps.push(m.deadline - m.now);
+          shownOwing = owes(1);
+        }
+      };
+      const players = [0, 1].map((seat) => new TableClient(transportLink(hub.create(`p${seat}`), 'host'), `P${seat}`, undefined, {}, { now: () => clock.now }));
+      players.forEach((c, seat) => c.join(seat));
+      host.start();
+      const acted = [-1, -1];
+      const since = [0, 0];
+      for (let g = 0; g < 20_000 && host.phase === 'playing'; g++) {
+        clock.now += 500;
+        host.tick();
+        players.forEach((c, seat) => {
+          const s = c.localState();
+          if (!s || host.phase !== 'playing' || legalActions(s, seat).length === 0 || acted[seat] === s.turnCounter) return;
+          if (since[seat] === 0) since[seat] = clock.now;
+          if (clock.now - since[seat] < 1_500) return;
+          acted[seat] = s.turnCounter;
+          since[seat] = 0;
+          c.act(chooseAction(s, seat, { seed: 'p' })!);
+        });
+      }
+      need(stalled && host.phase === 'hand_over' && players[1].state.lastResult !== null);
+      expect(gaps.length).toBeGreaterThanOrEqual(2);
+      expect(new Set(gaps)).toEqual(new Set([15_000]));
+      expect(players[1].state.auditFailures).toEqual([]);
+      expect(players[1].state.auditStatus).toBe('ok');
     }));
 });
 
