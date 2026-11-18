@@ -45,7 +45,7 @@ import type { Link } from './host';
 import { CLOCK_FRAME_MS, RESTART_CAUSES, type Audit, type ClientMessage, type HostMessage, type SeatInfo } from './messages';
 import { isFrame, type Transport, type Unsubscribe } from './transport';
 import { clientClock, DRIFT_RATE, foldClock, LATE_MS, LINK_PAUSE_MS, ORDER_SLACK_MS, PAUSE_GRACE_MS, RAN_GAP_MS, SILENT_ANSWER_MS, WATCH_WINDOW_MS, type TableClientOptions } from './clientclock';
-import { armedLate, clockTrack, firstSend, fixedPoint, isBotSkill, judgeTableMove, lateAnchor, lateRef, lateWatch, legalFor, sameActionSafe, seatRun, tableRule, type LateScope, type MoveJudge } from './clientmoves';
+import { armedLate, clockTrack, firstSend, fixedPoint, isBotSkill, judgeTableMove, lateAnchor, lateRef, lateWatch, legalFor, sameActionSafe, seatRun, tableRule, unstamped, type LateScope, type MoveJudge } from './clientmoves';
 import {
   CHAINED_FIELDS,
   CLIENT_SNAPSHOT_VERSION,
@@ -1501,6 +1501,10 @@ export class TableClient {
         if (isInt(v.turnCounter)) {
           if (shownHere && shownHere.hand === h && v.turnCounter > shownHere.tc + 1) this.noteHeld(h, shownHere.tc + 1);
           else if (v.turnCounter > 0 && ((shownHere && shownHere.hand !== h) || (!shownHere && revealedHere))) this.noteHeld(h, 0);
+          // An honest host stamps every state. One with no stamp, on a link that has brought a state, a
+          // stamp or this device's share, would escape every check of when it was shown: it is not
+          // believed, and counts as held back (on a new link it is judged as shown late; see `unstamped`).
+          if (!stamped && (shownHere || revealedHere || this.linkStamped)) this.noteHeld(h, v.turnCounter);
         }
         this.noteState(v, m, stamped, shownHere !== null || revealedHere);
         if (isInt(v.turnCounter)) this.linkShown = { epoch: this.epoch, hand: h, tc: v.turnCounter };
@@ -2148,7 +2152,7 @@ export class TableClient {
                   const whole = rules.turnSeconds * 1000 + Math.min(tracked, r0.timeBank * 1000);
                   const left = r0.deadline === null || typeof r0.now !== 'number' ? Number.POSITIVE_INFINITY : (r0.inBank ? r0.deadline : r0.deadline + r0.timeBank * 1000) - r0.now;
                   if (armedLate(r0, rules) || (r0.live && lateWatch(r0) > LATE_MS)) problems.add(`The host showed this seat its turn late, on a link that stayed open (turn ${n})`);
-                  else if (notes && (lateRef(r0) > LATE_MS || lateAnchor(r0, anchors, scope) > LATE_MS || (!r0.onLink && left < whole - LATE_MS))) notes.lateShown = true;
+                  else if (notes && (lateRef(r0) > LATE_MS || lateAnchor(r0, anchors, scope) > LATE_MS || unstamped(r0) || (!r0.onLink && left < whole - LATE_MS))) notes.lateShown = true;
                 }
               }
               // The host cannot have played this move before this device sent it: a fixed point between the

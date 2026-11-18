@@ -118,11 +118,23 @@ export function seatRun(play: PlayRecord, n: number, prevMove: number): { run: S
  * The state that first showed this seat a move (`r0`), over a link that had already brought it an
  * earlier state (or its share for the hand), did not give a whole turn clock by its own deadline and
  * stamp: it was in the bank already, or its deadline was less than the turn clock (less
- * `ARM_SLACK_MS`) after its stamp. An honest host stamps that state in the tick it arms the clock.
+ * `ARM_SLACK_MS`) after its stamp. An honest host stamps that state in the tick it arms the clock, so
+ * one that came with no stamp at all did not give it either. A record saved by an older build (no
+ * `onLink`) is not asked.
  */
 export function armedLate(r0: SeenState, rules: RuleSet): boolean {
-  if (!r0.onLink || typeof r0.now !== 'number' || r0.deadline === null) return false;
+  if (!r0.onLink) return false;
+  if (typeof r0.now !== 'number') return true;
+  if (r0.deadline === null) return false;
   return r0.inBank || r0.deadline - r0.now < rules.turnSeconds * 1000 - ARM_SLACK_MS;
+}
+
+/**
+ * A state this build recorded with no time stamp (records saved by older builds, which kept no
+ * `onLink`, are not asked): no honest host sends one, so nothing of when it was shown is believed.
+ */
+export function unstamped(f: SeenState): boolean {
+  return f.onLink !== undefined && typeof f.now !== 'number';
 }
 
 /**
@@ -201,16 +213,17 @@ function judgeFrom(j: MoveJudge, play: PlayRecord, n: number, rules: RuleSet, an
  * a state skipped on a link that stayed open was held back (`held`). Then the run of states that
  * showed the seat the move since its previous move (`seatRun`) is judged by its first state, `r0`:
  * - on a link that had already brought this device a state, `r0` must give the whole turn clock by
- *   its own deadline and stamp (`armedLate`): `lateTurn` when not, unless the move was early anyway;
+ *   its own deadline and stamp (`armedLate`; a state with no stamp gives none): `lateTurn` when not,
+ *   unless the move was early anyway;
  * - over a live link (`SeenState.live`), `r0` may not be more than `LATE_MS` later than the least
  *   arrival offset of its scope allows (`lateRef`): `held` when it is, since the watch drops a link
  *   long before an honest frame on it is that late;
  * - later than that over a link that was not live, later than the fixed points of its scope allow
- *   (`lateAnchor`, which a slow uplink can also cause), or first shown on a new link (one that had
- *   brought no earlier state) or on one not yet working, with less than a whole clock (less
- *   `LATE_MS`) to go before the table moved: the stamp
- *   on `r0` is not believed to start the seat's clock, and the time before it is judged as time
- *   without a link, from the last frame before the run that was not late. That gives `downLate`
+ *   (`lateAnchor`, which a slow uplink can also cause), with no stamp on a new link (`unstamped`), or
+ *   first shown on a new link (one that had brought no earlier state) or on one not yet working, with
+ *   less than a whole clock (less `LATE_MS`) to go before the table moved: the stamp on `r0` is not
+ *   believed to start the seat's clock, and the time before it is judged as time without a link, from
+ *   the last stamped frame before the run that was not late. That gives `downLate`
  *   (the table played for the seat, and it was shown its turn late) or `down`, or `downEarly` when a
  *   whole clock cannot have run out since that frame.
  * Otherwise the move is judged by the clock (`judgeFrom`).
@@ -239,7 +252,7 @@ export function judgeTableMove(j: MoveJudge, play: PlayRecord, n: number, end: S
       const lr = lateRef(r0);
       // Over a link the watch was keeping, no honest frame is that late by its reference: the host held it.
       if (r0.live && lateWatch(r0) > LATE_MS) return 'held';
-      const late = lr > LATE_MS || lateAnchor(r0, anchors, scope) > LATE_MS;
+      const late = lr > LATE_MS || lateAnchor(r0, anchors, scope) > LATE_MS || unstamped(r0);
       const prev = i0 > 0 ? play.seen[i0 - 1] : null;
       const whole = rules.turnSeconds * 1000 + ((prev ? track.bank.get(prev) : null) ?? rules.timeBankSeconds * 1000);
       // Shown too late for its stamp to be believed, or first shown over a new link, or one not yet
@@ -251,7 +264,7 @@ export function judgeTableMove(j: MoveJudge, play: PlayRecord, n: number, end: S
         from = null;
         for (let k = i0 - 1; k >= 0; k--) {
           const f = play.seen[k];
-          if (lateRef(f) <= LATE_MS && lateAnchor(f, anchors, scope) <= LATE_MS) {
+          if (!unstamped(f) && lateRef(f) <= LATE_MS && lateAnchor(f, anchors, scope) <= LATE_MS) {
             from = f;
             break;
           }

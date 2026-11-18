@@ -102,6 +102,36 @@ describe('held frames: stamps that crawl while the turn state is held', () => {
     }));
 });
 
+describe('held frames: a turn state released without its time stamp', () => {
+  /** The stamp is optional on the wire; an honest host always sends it. */
+  const bare = (m: HostMessage): HostMessage => {
+    if (m.t !== 'state') return m;
+    const { now: _now, ...rest } = m;
+    void _now;
+    return rest as HostMessage;
+  };
+
+  it.each([25_000, 40_000])('the turn state held %i ms on a link that stays open, the clock frames freshly stamped meanwhile, then released without its stamp: red heldFrame when the seat is timed out, red lateTurn when it moves', (ms) =>
+    scenario((i) => {
+      for (const moves of [false, true]) {
+        const h = holdTurn({ code: `NS${ms}${moves}${i}`, think: (_k, tc) => (tc === h.st.heldTc ? (moves ? 1_000 : Infinity) : 600) }, { stamp: (_b, _k, _s, now) => now });
+        need(h.arm());
+        const from = h.w.clock.now;
+        h.w.until(() => h.w.clock.now - from >= ms);
+        need(h.w.host.phase === 'playing');
+        h.release(bare);
+        h.w.finish();
+        expect(h.w.drops).toEqual([]);
+        if (moves) expect(h.w.verdict()).toMatchObject({ status: 'failed', failures: ['lateTurn'] });
+        else {
+          need(h.w.judged().includes(h.st.heldTc));
+          expect(h.w.verdict()).toMatchObject({ status: 'failed', failures: ['heldFrame'] });
+        }
+      }
+    }),
+  );
+});
+
 describe('held frames: forged pongs', () => {
   it('pongs that echo an old ping, freshly stamped, while the turn state is held 40 s and then released: red heldFrame', () =>
     scenario((i) => {
@@ -584,8 +614,10 @@ describe('reconnect: a server that forces the phone onto new links', () => {
    * welcome too) for 40 s, then lets it through freshly stamped; the seat is timed out. Just before
    * what it held, the server may send on the new link, freshly stamped, a frame of its own (`first`):
    * an unasked pong, a clock frame, or the last hand's result again (in the second hand of a match).
+   * With `bare`, the first state it held (the one that shows the seat its turn) goes without its
+   * stamp; with `moves`, the seat moves 1 s after it is shown the turn.
    */
-  function dropTurn(code: string, first: 'none' | 'pong' | 'clock' | 'hand_over') {
+  function dropTurn(code: string, first: 'none' | 'pong' | 'clock' | 'hand_over', opts: { bare?: boolean; moves?: boolean } = {}) {
     let armed = false;
     let turn = -1;
     let since = 0;
@@ -595,7 +627,7 @@ describe('reconnect: a server that forces the phone onto new links', () => {
       code,
       rules: withRules({ handsPerMatch: first === 'hand_over' ? 2 : 1, turnSeconds: 15, timeBankSeconds: 30 }),
       reconnectMs: 500,
-      think: (_k, tc) => (tc === turn ? Infinity : 600),
+      think: (_k, tc) => (tc === turn ? (opts.moves ? 1_000 : Infinity) : 600),
       map: (m) => {
         if (m.t === 'hand_over') ended = m;
         return m;
@@ -619,7 +651,15 @@ describe('reconnect: a server that forces the phone onto new links', () => {
         if (first === 'pong') w.line.inject({ t: 'pong', at: 0, now });
         if (first === 'clock') w.line.inject({ t: 'clock', now, hand: g.handNumber, tc: g.turnCounter });
         if (first === 'hand_over' && ended) w.line.inject({ ...ended, now } as HostMessage);
-        w.line.release((m) => (stampOf(m) === undefined ? m : ({ ...m, now } as HostMessage)));
+        let strip = !!opts.bare;
+        w.line.release((m) => {
+          if (stampOf(m) === undefined) return m;
+          if (!strip || m.t !== 'state') return { ...m, now } as HostMessage;
+          strip = false;
+          const { now: _now, ...rest } = m;
+          void _now;
+          return rest as HostMessage;
+        });
       },
     });
     if (first === 'hand_over') {
@@ -630,7 +670,7 @@ describe('reconnect: a server that forces the phone onto new links', () => {
     need(w.toDiscard(2));
     armed = true;
     w.finish();
-    need(back && w.judged().includes(turn));
+    need(back && (opts.moves ? !w.judged().includes(turn) : w.judged().includes(turn)));
     const play = (w.c as unknown as { plays: Array<{ seen: Array<{ tc: number; working?: boolean; onLink?: boolean }> }> }).plays.at(-1)!;
     return { w, shown: play.seen.find((f) => f.tc === turn)! };
   }
@@ -650,6 +690,16 @@ describe('reconnect: a server that forces the phone onto new links', () => {
       expect(w.verdict().caveats).toContain('tableMoved');
     }),
   );
+
+  it('the same, the state that shows the turn let through on the new link without its stamp: amber, whether the table times the seat out or the seat moves (its turn shown late)', () =>
+    scenario((i) => {
+      const timedOut = dropTurn(`RB${i}`, 'none', { bare: true }).w;
+      expect(timedOut.verdict().status).toBe('partial');
+      expect(timedOut.verdict().caveats).toEqual(expect.arrayContaining(['tableMoved', 'lateShown']));
+      const moved = dropTurn(`RM${i}`, 'none', { bare: true, moves: true }).w;
+      expect(moved.verdict()).toMatchObject({ status: 'partial', failures: [] });
+      expect(moved.verdict().caveats).toContain('lateShown');
+    }));
 
   it('the same in a second hand, with the first hand’s result sent again freshly stamped on the new link: the turn’s state still came first on a new link, and the hand is amber', () =>
     scenario((i) => {

@@ -11,7 +11,7 @@
 import { describe, expect, it } from 'vitest';
 import { chooseAction, kindOf, legalActions, withRules, type Action, type BotSkill, type GameState } from '@mjm/engine';
 import { AUDIT_CAVEATS, AUDIT_FAILURES, failureKey, LoopbackHub, TableClient, TableHost, transportLink, type HostMessage, type Link } from '../src/index';
-import { armedLate, firstSend, fixedPoint, lateAnchor, seatRun } from '../src/clientmoves';
+import { armedLate, firstSend, fixedPoint, lateAnchor, seatRun, unstamped } from '../src/clientmoves';
 import { DRIFT_RATE, LATE_MS, RTT_ALLOW_MS } from '../src/clientclock';
 import type { PlayRecord, SeenState } from '../src/clientrecords';
 import { Missed, scenario, seededDeals } from './support';
@@ -377,11 +377,25 @@ describe('the state that starts a turn gives the whole turn clock (armedLate)', 
     expect(armedLate(seen(5, true, { onLink: true, now: 10_000, deadline: 40_000, inBank: true }), rules)).toBe(true);
   });
 
-  it('is not asked of a state that came first on a new link, of one with no stamp or deadline, or of a record from an older build', () => {
+  it('is not asked of a state that came first on a new link, of one with no deadline, or of a record from an older build', () => {
     expect(armedLate(seen(5, true, { onLink: false, now: 10_000, deadline: 23_000 }), rules)).toBe(false);
-    expect(armedLate(seen(5, true, { onLink: true, now: undefined, deadline: 23_000 }), rules)).toBe(false);
     expect(armedLate(seen(5, true, { onLink: true, now: 10_000, deadline: null }), rules)).toBe(false);
     expect(armedLate(seen(5, true, { now: 10_000, deadline: 23_000 }), rules)).toBe(false);
+    expect(armedLate(seen(5, true, { now: undefined, deadline: 23_000 }), rules)).toBe(false);
+  });
+
+  it('a state with no stamp on a link this device held gives no turn clock: late (an honest host stamps every state)', () => {
+    expect(armedLate(seen(5, true, { onLink: true, now: undefined, deadline: 23_000 }), rules)).toBe(true);
+    expect(armedLate(seen(5, true, { onLink: true, now: undefined, deadline: null }), rules)).toBe(true);
+  });
+});
+
+describe('a state recorded without its stamp (unstamped)', () => {
+  it('is one this build recorded with no stamp; a record from an older build, which kept no onLink, is not asked', () => {
+    expect(unstamped(seen(5, true, { onLink: false, now: undefined }))).toBe(true);
+    expect(unstamped(seen(5, true, { onLink: true, now: undefined }))).toBe(true);
+    expect(unstamped(seen(5, true, { onLink: false }))).toBe(false);
+    expect(unstamped(seen(5, true, { now: undefined }))).toBe(false);
   });
 });
 
