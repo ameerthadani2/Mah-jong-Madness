@@ -4,7 +4,8 @@
  * every player, this device included, verifies each hand).
  *
  * An online session survives a dropped socket: it rejoins the same room with the
- * saved rejoin token on a backoff of 1, 2, 4 … 60 s (src/logic/reconnect.ts) and
+ * saved rejoin token on a backoff of 1, 2, 4 … 60 s (src/logic/reconnect.ts), each attempt
+ * waiting longer for the server (10, 20, 40, then 60 s) after attempts it did not answer in time, and
  * rebinds its one TableClient to the new relay, so screens that follow
  * `session.onChange` never notice beyond the "Reconnecting" banner, and the client
  * keeps everything it needs to verify the deal (a fresh client would forget the
@@ -17,6 +18,7 @@ import {
   BANNED_CLOSE_CODE,
   BANNED_MESSAGE,
   isRoomUnavailable,
+  SIGNALING_TIMEOUT_MESSAGE,
   QueueError,
   LoopbackHub,
   RelayTransport,
@@ -34,7 +36,7 @@ import {
   type WebSocketLike,
 } from '@mjm/net';
 import { friendlyErrorMessage } from '../logic/errors';
-import { canRetry, CONNECTED, isWatcherMadeWay, nextDelayMs, reconnectStep, type ConnectionStatus, type ReconnectEvent, type ReconnectState } from '../logic/reconnect';
+import { canRetry, CONNECTED, handshakeTimeoutMs, isWatcherMadeWay, nextDelayMs, reconnectStep, type ConnectionStatus, type ReconnectEvent, type ReconnectState } from '../logic/reconnect';
 
 export type { ConnectionStatus } from '../logic/reconnect';
 
@@ -196,6 +198,7 @@ export function connectSignaling(
   url: string,
   auth: string | undefined,
   webSocket: WebSocketFactory = defaultSocket,
+  timeoutMs?: number,
 ): { signaling: SignalingClient; closeCode(): number | undefined; roomClosed(): string | undefined } {
   let lastCode: number | undefined;
   // The sentence of the last `{t:'error', code:'closed'}` frame: the signalling client reports that frame
@@ -246,7 +249,7 @@ export function connectSignaling(
     };
     return proxy;
   };
-  return { signaling: new SignalingClient(url, { auth, webSocket: wrapped }), closeCode: () => lastCode, roomClosed: () => closedWhy };
+  return { signaling: new SignalingClient(url, { auth, webSocket: wrapped, timeoutMs }), closeCode: () => lastCode, roomClosed: () => closedWhy };
 }
 
 /**
@@ -270,10 +273,13 @@ interface Connection {
   dropped: { handler: ((code: number | undefined, roomClosed?: string) => void) | null };
 }
 
-/** Connects, authenticates, and creates or joins the room. The caller binds a client to `link`. */
-async function openConnection(opts: OnlineOptions, action: 'create' | 'join', code: string): Promise<Connection> {
+/**
+ * Connects, authenticates, and creates or joins the room, waiting `timeoutMs` (default the signalling
+ * client's) for the server at each step. The caller binds a client to `link`.
+ */
+async function openConnection(opts: OnlineOptions, action: 'create' | 'join', code: string, timeoutMs?: number): Promise<Connection> {
   const auth = opts.auth ? await opts.auth() : undefined;
-  const { signaling, closeCode, roomClosed } = connectSignaling(opts.signalUrl, auth, opts.webSocket);
+  const { signaling, closeCode, roomClosed } = connectSignaling(opts.signalUrl, auth, opts.webSocket, timeoutMs);
   const dropped: Connection['dropped'] = { handler: null };
   // Registered first so the session sees the drop before the client marks itself disconnected.
   signaling.onClose(() => dropped.handler?.(closeCode(), roomClosed()));
@@ -310,6 +316,8 @@ class OnlineSession implements Session {
   private conn: ReconnectState = CONNECTED;
   private closed = false;
   private timer: ReturnType<typeof setTimeout> | null = null;
+  /** Reconnect attempts in a row the server did not answer in time: each waits longer (`handshakeTimeoutMs`); one that gets through starts the count again. */
+  private timeouts = 0;
   /** Asks the table client every second whether the link has gone silent (see `watchLink`). */
   private readonly watch: ReturnType<typeof setInterval>;
   private inFlight = false;
@@ -437,11 +445,14 @@ class OnlineSession implements Session {
     let connection: Connection | null = null;
     let failure: unknown = null;
     try {
-      connection = await openConnection(this.opts, 'join', this.roomCode);
+      connection = await openConnection(this.opts, 'join', this.roomCode, handshakeTimeoutMs(this.timeouts));
     } catch (e) {
       failure = e;
     }
     this.inFlight = false;
+    // A server that did not answer in time is given longer next time: the link may have slowed down
+    // for good. Any other ending says nothing of the link's speed, and one that got through is the speed it has.
+    this.timeouts = connection ? 0 : (failure as Error | null)?.message === SIGNALING_TIMEOUT_MESSAGE ? this.timeouts + 1 : 0;
     // Left meanwhile, or told to stop (the seat opened elsewhere, the match ended): the new link is not used.
     if (this.closed || this.conn.status !== 'reconnecting') {
       connection?.signaling.close();

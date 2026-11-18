@@ -18,6 +18,8 @@ class FakeSocket {
    * fires (1013, "try again later").
    */
   static accept: (ws: FakeSocket) => 'ok' | 'unauthorised' | 'banned' | 'down' | 'busy' = () => 'ok';
+  /** How long after the hello the server's answer reaches the phone (a slow link); 0: at once. */
+  static helloDelayMs: (ws: FakeSocket) => number = () => 0;
   readyState = 0;
   sent: Frame[] = [];
   closed = false;
@@ -57,7 +59,9 @@ class FakeSocket {
       return;
     }
     const answer = frame.t === 'hello' ? { t: 'hello', peerId: 'p-me', id: 'p-me', userId: 'u-1' } : FakeSocket.reply(frame, this);
-    if (answer) queueMicrotask(() => this.onmessage?.({ data: JSON.stringify(answer) }));
+    const later = frame.t === 'hello' ? FakeSocket.helloDelayMs(this) : 0;
+    if (answer && later > 0) setTimeout(() => this.onmessage?.({ data: JSON.stringify(answer) }), later);
+    else if (answer) queueMicrotask(() => this.onmessage?.({ data: JSON.stringify(answer) }));
   }
 
   /** The server pushes a frame. */
@@ -93,6 +97,7 @@ beforeEach(() => {
   FakeSocket.all = [];
   FakeSocket.last = null;
   FakeSocket.accept = () => 'ok';
+  FakeSocket.helloDelayMs = () => 0;
   FakeSocket.reply = roomReply;
   vi.stubGlobal('WebSocket', FakeSocket);
 });
@@ -386,6 +391,59 @@ describe('online reconnect', () => {
     expect(statuses.at(-1)).toBe('lost:10');
     await vi.advanceTimersByTimeAsync(10 * 60_000);
     expect(FakeSocket.all).toHaveLength(11);
+    s.close();
+  });
+
+  it('a link that slowed down for good: each attempt the server did not answer in time is followed by one that waits longer (10, 20, 40, then 60 s), and once one gets through the count starts again', async () => {
+    const { s, statuses, first } = await open();
+    // The downlink is 8 s slower now: opening a socket takes four round trips, so the hello is answered 33 s after the socket opens.
+    FakeSocket.helloDelayMs = () => 33_000;
+    first.serverClose(1006);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(FakeSocket.all).toHaveLength(2);
+    // The first attempt gives up after 10 s, the second after 20 s.
+    await vi.advanceTimersByTimeAsync(10_000 - 1);
+    expect(FakeSocket.all[1].closed).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(FakeSocket.all[1].closed).toBe(true);
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(FakeSocket.all).toHaveLength(3);
+    await vi.advanceTimersByTimeAsync(20_000 - 1);
+    expect(FakeSocket.all[2].closed).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(FakeSocket.all[2].closed).toBe(true);
+    // The third waits 40 s, and the hello comes at 33 s: the seat is back.
+    await vi.advanceTimersByTimeAsync(4_000);
+    expect(FakeSocket.all).toHaveLength(4);
+    await vi.advanceTimersByTimeAsync(33_000);
+    expect(s.status).toBe('connected');
+    expect(tableJoins(FakeSocket.all[3])).toHaveLength(1);
+    expect(statuses).toEqual(['reconnecting:1', 'reconnecting:2', 'reconnecting:3', 'connected:0']);
+    // The next drop starts again at 10 s.
+    FakeSocket.all[3].serverClose(1006);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(FakeSocket.all).toHaveLength(5);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(FakeSocket.all[4].closed).toBe(true);
+    expect(s.status).toBe('reconnecting');
+    s.close();
+  });
+
+  it('a server that refuses at once does not make the next attempt wait longer', async () => {
+    const { s, first } = await open();
+    FakeSocket.accept = () => 'down';
+    first.serverClose(1006);
+    await vi.advanceTimersByTimeAsync(1_000 + 2_000 + 4_000);
+    expect(FakeSocket.all).toHaveLength(4);
+    // Now slow: the attempt after three refusals still gives up after 10 s.
+    FakeSocket.accept = () => 'ok';
+    FakeSocket.helloDelayMs = () => 33_000;
+    await vi.advanceTimersByTimeAsync(8_000);
+    expect(FakeSocket.all).toHaveLength(5);
+    await vi.advanceTimersByTimeAsync(10_000 - 1);
+    expect(FakeSocket.all[4].closed).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(FakeSocket.all[4].closed).toBe(true);
     s.close();
   });
 

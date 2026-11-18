@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { backoffSeconds, CONNECTED, forgetsTable, isWatcherMadeWay, linkCopy, linkEnded, linkNotice, MAX_RECONNECT_ATTEMPTS, nextDelayMs, reconnectStep, type LinkNotice, type ReconnectEvent, type ReconnectState, canRetry } from './reconnect';
+import { SIGNALING_TIMEOUT_MS } from '@mjm/net';
+import { backoffSeconds, CONNECTED, forgetsTable, handshakeTimeoutMs, isWatcherMadeWay, linkCopy, linkEnded, linkNotice, MAX_RECONNECT_ATTEMPTS, nextDelayMs, reconnectStep, type LinkNotice, type ReconnectEvent, type ReconnectState, canRetry } from './reconnect';
 import { translator } from './translator.fixture';
 
 const run = (events: ReconnectEvent[], from: ReconnectState = CONNECTED) => events.reduce((s, e) => reconnectStep(s, e), from);
@@ -16,6 +17,23 @@ describe('backoffSeconds', () => {
   it('treats nonsense attempts as the first', () => {
     expect(backoffSeconds(0)).toBe(1);
     expect(backoffSeconds(-3)).toBe(1);
+  });
+});
+
+describe('handshakeTimeoutMs', () => {
+  it('waits as long as the signalling client at first, then 20 s, 40 s, and 60 s from the fourth attempt in a row the server did not answer in time', () => {
+    expect(handshakeTimeoutMs(0)).toBe(SIGNALING_TIMEOUT_MS);
+    expect([0, 1, 2, 3, 4, 9, 100].map(handshakeTimeoutMs)).toEqual([10_000, 20_000, 40_000, 60_000, 60_000, 60_000, 60_000]);
+  });
+
+  it('is long enough, by the third such attempt, for the four round trips that open a socket when the downlink is 8 s slower, and by the fourth when it is 11 s slower', () => {
+    expect(handshakeTimeoutMs(2)).toBeGreaterThan(4 * 8_300);
+    expect(handshakeTimeoutMs(3)).toBeGreaterThan(4 * 11_300);
+  });
+
+  it('treats nonsense counts as none', () => {
+    for (const n of [-1, Number.NaN, Number.NEGATIVE_INFINITY]) expect(handshakeTimeoutMs(n)).toBe(10_000);
+    expect(handshakeTimeoutMs(Number.POSITIVE_INFINITY)).toBe(10_000);
   });
 });
 

@@ -1,6 +1,7 @@
 /**
- * Reconnecting to an online table after the game server's socket drops: the backoff schedule
- * and a small state machine. Pure; src/game/session.ts drives it with real timers.
+ * Reconnecting to an online table after the game server's socket drops: the backoff schedule, how
+ * long each attempt waits for the server (`handshakeTimeoutMs`) and a small state machine. Pure;
+ * src/game/session.ts drives it with real timers.
  *
  *   connected ──closed──▶ reconnecting(1) ──failed──▶ reconnecting(2) … ──failed (10th)──▶ lost
  *        ▲                      │ succeeded                                   ▲
@@ -21,6 +22,26 @@ export function backoffSeconds(attempt: number): number {
 }
 
 export const backoffMs = (attempt: number): number => backoffSeconds(attempt) * 1000;
+
+/** How long an attempt waits for the game server at first: the signalling client's own `SIGNALING_TIMEOUT_MS`. */
+export const HANDSHAKE_TIMEOUT_MS = 10_000;
+/** The longest an attempt waits, however many before it timed out. */
+export const HANDSHAKE_TIMEOUT_MAX_MS = 60_000;
+
+/**
+ * How long an attempt waits for the game server, to open the socket and answer its hello and then to
+ * answer the join, after `timeouts` attempts in a row that it did not answer in time: 10 s, then 20,
+ * 40, and 60 s from the fourth on, until an attempt gets through (the count then starts again).
+ * Opening a socket takes four round trips (TCP, TLS, the upgrade and the hello), so a link whose
+ * downlink has slowed by 8 s and stayed slow (a handoff to a congested network) needs about 33 s, and
+ * with 10 s it could never get back to the table; 60 s lets a round trip of up to 15 s through. A
+ * server that refuses at once is not waited for any longer; one that never answers costs the longer
+ * waits (ten attempts then take about 12 minutes instead of 6 before the table is shown as lost).
+ */
+export function handshakeTimeoutMs(timeouts: number): number {
+  const n = Number.isFinite(timeouts) ? Math.max(0, Math.floor(timeouts)) : 0;
+  return Math.min(HANDSHAKE_TIMEOUT_MAX_MS, HANDSHAKE_TIMEOUT_MS * 2 ** Math.min(n, 8));
+}
 
 /** After this many failed attempts the table is shown as lost (the manual Reconnect remains). */
 export const MAX_RECONNECT_ATTEMPTS = 10;
