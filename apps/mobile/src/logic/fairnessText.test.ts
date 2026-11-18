@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { AUDIT_CAVEATS, AUDIT_FAILURES, type AuditFailure } from '@mjm/net';
 import { en, zhTW } from '../i18n/locales';
-import { caveatText, claimsPassedText, endUnverified, failureText } from './fairnessText';
+import { caveatText, claimsPassedLateText, claimsPassedText, endUnverified, failureText } from './fairnessText';
 import { translator } from './translator.fixture';
 
 /**
@@ -120,6 +120,17 @@ describe('claims the table passed for this seat while its link was down', () => 
       expect(caveatText(t, AUDIT_CAVEATS.passedPong), locale).toContain(word[0]);
       expect(caveatText(t, AUDIT_CAVEATS.passedChow), locale).toContain(word[1]);
       expect(caveatText(t, AUDIT_CAVEATS.passedKong), locale).toContain(word[2]);
+      expect(caveatText(t, AUDIT_CAVEATS.passedPongLate), locale).toContain(word[0]);
+      expect(caveatText(t, AUDIT_CAVEATS.passedChowLate), locale).toContain(word[1]);
+      expect(caveatText(t, AUDIT_CAVEATS.passedKongLate), locale).toContain(word[2]);
+    }
+  });
+
+  it('on a turn that reached the phone late are not said to have been passed while the connection was down, in either language', () => {
+    for (const [locale, down] of [['en', /connection was down/], ['zh-TW', /斷線/]] as const) {
+      const t = translator(locale);
+      for (const c of [AUDIT_CAVEATS.tableMovedLate, AUDIT_CAVEATS.passedPongLate, AUDIT_CAVEATS.passedChowLate, AUDIT_CAVEATS.passedKongLate]) expect(caveatText(t, c), locale).not.toMatch(down);
+      expect(caveatText(t, AUDIT_CAVEATS.tableMoved), locale).toMatch(down);
     }
   });
 
@@ -133,6 +144,18 @@ describe('claims the table passed for this seat while its link was down', () => 
     expect(claimsPassedText(translator('en'), { claimsPassedAway: one })).toContain('1 claim ');
     expect(claimsPassedText(translator('en'), { claimsPassedAway: three })).toContain('3 claims');
     expect(claimsPassedText(translator('zh-TW'), { claimsPassedAway: three })).toContain('3 次');
+  });
+
+  it('on turns that reached the phone late are counted apart, in their own words', () => {
+    const away = [{ hand: 0, turn: 12, claim: 'pong' as const }];
+    const late = [{ hand: 0, turn: 30, claim: 'kong' as const, late: true }, { hand: 1, turn: 8, claim: 'chow' as const, late: true }];
+    expect(claimsPassedText(translator('en'), { claimsPassedAway: [...away, ...late] })).toContain('1 claim ');
+    expect(claimsPassedLateText(translator('en'), { claimsPassedAway: [...away, ...late] })).toContain('2 claims');
+    expect(claimsPassedLateText(translator('en'), { claimsPassedAway: late })).toContain('reached your phone late');
+    expect(claimsPassedText(translator('en'), { claimsPassedAway: late })).toBeNull();
+    expect(claimsPassedLateText(translator('en'), { claimsPassedAway: away })).toBeNull();
+    expect(claimsPassedLateText(translator('en'), null)).toBeNull();
+    expect(claimsPassedLateText(translator('zh-TW'), { claimsPassedAway: late })).toContain('2 次');
   });
 });
 

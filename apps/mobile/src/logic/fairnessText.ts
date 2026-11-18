@@ -24,8 +24,17 @@ export function failureText(t: Translate, text: string): string {
  * then; a server that cuts the link whenever the player could claim shows up here as a pattern.
  */
 export function claimsPassedText(t: Translate, state: Pick<ClientState, 'claimsPassedAway'> | null | undefined): string | null {
-  const count = state?.claimsPassedAway?.length ?? 0;
+  const count = (state?.claimsPassedAway ?? []).filter((p) => p.late !== true).length;
   return count > 0 ? t('fairness.claimsPassedAway', { count }) : null;
+}
+
+/**
+ * The same for claims passed on a turn that reached this phone late, whether or not its link dropped
+ * (the turn was judged as a drop, but is not said to be one), or null when there were none.
+ */
+export function claimsPassedLateText(t: Translate, state: Pick<ClientState, 'claimsPassedAway'> | null | undefined): string | null {
+  const count = (state?.claimsPassedAway ?? []).filter((p) => p.late === true).length;
+  return count > 0 ? t('fairness.claimsPassedLate', { count }) : null;
 }
 
 /**

@@ -6,7 +6,7 @@ import { colors, fonts, space } from '../theme';
 import { Card, fontFor, H2, P, Pill, Row, ScreenHeader, SectionLabel } from '../components/Ui';
 import { Icon } from '../components/Icons';
 import { useT } from '../i18n';
-import { caveatText, claimsPassedText, endUnverified, failureText } from '../logic/fairnessText';
+import { caveatText, claimsPassedLateText, claimsPassedText, endUnverified, failureText } from '../logic/fairnessText';
 
 export function FairnessScreen() {
   const app = useApp();
@@ -14,6 +14,7 @@ export function FairnessScreen() {
   const state = useSession(app.session);
   const audits = state?.audits ?? [];
   const passed = claimsPassedText(t, state);
+  const passedLate = claimsPassedLateText(t, state);
   // Against bots the phone is the only party: it deals and it checks itself. Say so, and do not call the fifth secret a server's.
   const local = app.session?.mode === 'local';
   return (
@@ -55,6 +56,12 @@ export function FairnessScreen() {
       {passed && (
         <Text testID="fairness-claims-passed" style={{ color: colors.goldDim, fontSize: 12, fontFamily: fonts.bodyBold }}>
           {passed}
+        </Text>
+      )}
+      {/* The same on turns that reached the phone late, whether or not the link dropped: the pattern a held-back turn leaves. */}
+      {passedLate && (
+        <Text testID="fairness-claims-passed-late" style={{ color: colors.goldDim, fontSize: 12, fontFamily: fonts.bodyBold }}>
+          {passedLate}
         </Text>
       )}
       {audits

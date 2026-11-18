@@ -45,7 +45,9 @@ describe('held frames: stamps that crawl while the turn state is held', () => {
         expect(h.w.drops[0] - from).toBeLessThanOrEqual(SILENT_BOUND);
         const v = h.w.verdict();
         expect(v.status).toBe('partial');
-        expect(v.caveats).toContain('tableMoved');
+        // The table played for the seat with its link down (a 25 s hold: the turn comes first on the new link), or on a
+        // turn that reached the phone too late for its stamp to be believed (40 s and more): either is said, as it was.
+        expect(v.caveats).toEqual(expect.arrayContaining([ms < 40_000 ? 'tableMoved' : 'tableMovedLate']));
       }),
     );
   }
@@ -176,7 +178,7 @@ describe('held frames: forged pongs', () => {
       need(h.w.judged().includes(h.st.heldTc));
       expect(h.w.drops.length).toBeGreaterThan(0);
       expect(h.w.verdict()).toMatchObject({ status: 'partial' });
-      expect(h.w.verdict().caveats).toContain('tableMoved');
+      expect(h.w.verdict().caveats).toContain('tableMovedLate');
     }));
 });
 
@@ -365,7 +367,30 @@ describe('clock: a delay present from the start', () => {
       const w = delayed(`DL25${i}`, 25_000);
       need(w.judged().length > 0);
       expect(w.verdict().status).toBe('partial');
-      expect(w.verdict().caveats).toEqual(expect.arrayContaining(['tableMoved', 'lateShown']));
+      expect(w.verdict().caveats).toEqual(expect.arrayContaining(['tableMovedLate', 'lateShown']));
+      // The link never dropped, and the player is not told it did: not 'tableMoved', and no claim passed 'while the connection was down'.
+      expect(w.drops).toEqual([]);
+      expect(w.verdict().caveats).not.toContain('tableMoved');
+      for (const k of ['passedPong', 'passedChow', 'passedKong']) expect(w.verdict().caveats).not.toContain(k);
+      expect(w.c.state.claimsPassedAway.every((p) => p.late === true)).toBe(true);
+    }));
+
+  it('25 s from the start, claims the table passed for the seat: named as passed on a turn that reached the phone late, and counted so over the match, across an app restart', () =>
+    scenario((i) => {
+      const w = delayed(`DC25${i}`, 25_000);
+      const passed = w.c.state.claimsPassedAway;
+      need(passed.length > 0);
+      expect(w.drops).toEqual([]);
+      expect(passed.every((p) => p.late === true)).toBe(true);
+      const named = { pong: 'passedPongLate', chow: 'passedChowLate', kong: 'passedKongLate' } as const;
+      for (const k of new Set(passed.map((p) => p.claim))) expect(w.verdict().caveats).toContain(named[k]);
+      const saved = JSON.parse(JSON.stringify(w.c.serialize())) as SerializedClient;
+      const back = TableClient.restore(saved, transportLink(new LoopbackHub().create('elsewhere'), 'host'), 'Victim', undefined, { token: saved.state.token ?? undefined });
+      expect(back.state.claimsPassedAway).toEqual(passed);
+      // Anything but `true` in a saved record reads as a claim passed while the link was down.
+      saved.state.claimsPassedAway = passed.map((p) => ({ ...p, late: 'yes' as unknown as boolean }));
+      const odd = TableClient.restore(saved, transportLink(new LoopbackHub().create('odd'), 'host'), 'Victim', undefined, { token: saved.state.token ?? undefined });
+      expect(odd.state.claimsPassedAway.some((p) => 'late' in p)).toBe(false);
     }));
 
   it.each([15_000, 19_000])('%i ms from the start: green', (ms) =>
@@ -418,7 +443,7 @@ describe('clock: a delay present from the start', () => {
       const w = backdated(`DB${seat}${i}`, 25_000, 25_000, seat);
       need(w.c.state.audits.length === 1 && w.judged().length > 0);
       expect(w.verdict().status).toBe('partial');
-      expect(w.verdict().caveats).toEqual(expect.arrayContaining(['tableMoved', 'lateShown']));
+      expect(w.verdict().caveats).toEqual(expect.arrayContaining(['tableMovedLate', 'lateShown']));
     }),
   );
 
@@ -776,7 +801,7 @@ describe('reconnect: a server that forces the phone onto new links', () => {
     scenario((i) => {
       const timedOut = dropTurn(`RB${i}`, 'none', { bare: true }).w;
       expect(timedOut.verdict().status).toBe('partial');
-      expect(timedOut.verdict().caveats).toEqual(expect.arrayContaining(['tableMoved', 'lateShown']));
+      expect(timedOut.verdict().caveats).toEqual(expect.arrayContaining(['tableMovedLate', 'lateShown']));
       const moved = dropTurn(`RM${i}`, 'none', { bare: true, moves: true }).w;
       expect(moved.verdict()).toMatchObject({ status: 'partial', failures: [] });
       expect(moved.verdict().caveats).toContain('lateShown');
@@ -810,7 +835,7 @@ describe('reconnect: a server that forces the phone onto new links', () => {
       need(h.st.released && h.w.judged().includes(h.st.heldTc));
       expect(h.w.drops).toHaveLength(1);
       expect(h.w.verdict().status).toBe('partial');
-      expect(h.w.verdict().caveats).toContain('tableMoved');
+      expect(h.w.verdict().caveats).toContain('tableMovedLate');
     }));
 
   it('no storm: after a stall drops a link with 8 s each way, the new link, whose first frame takes 16 s, is kept', () =>

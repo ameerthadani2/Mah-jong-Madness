@@ -106,12 +106,19 @@ export const AUDIT_CAVEATS = {
   serverRestart: 'The server restarted during this hand and some turns were played again',
   appRestart: 'This app was restarted around this deal, so it cannot vouch for all of it',
   tableMoved: 'The table played for this seat while its connection was down',
+  // The same, on a turn whose state reached this device too late for its stamp to be believed (the
+  // drop judgement's `downLate`), whether or not the link dropped: a delay looks the same as a drop.
+  tableMovedLate: 'The table played for this seat on a turn that reached this device late, so it did not see that turn in time',
   // The claim the timeout rule passed for this seat while its link was down. An honest table does
   // this to a player who dropped; a server that cuts the link whenever the player could claim does
   // it every time, and the count over the match (`claimsPassedAway`) shows the pattern.
   passedPong: 'The table passed up a Pong this seat could make while its connection was down',
   passedChow: 'The table passed up a Chow this seat could make while its connection was down',
   passedKong: 'The table passed up a Kong this seat could make while its connection was down',
+  // The same, on a turn that reached this device late (counted with `late` in `claimsPassedAway`).
+  passedPongLate: 'The table passed up a Pong this seat could make on a turn that reached this device late',
+  passedChowLate: 'The table passed up a Chow this seat could make on a turn that reached this device late',
+  passedKongLate: 'The table passed up a Kong this seat could make on a turn that reached this device late',
   restartClock: 'The server restarted during this match and then played for this seat before this device could check its clock again',
   lateShown: "This seat's turn reached this device late, or after its connection had been down for much of it, so this device cannot vouch that it saw all of that turn",
   skillUnknown: 'This device restored the match from a save that did not keep how strong the table said its bots are, so the moves the table made for bots and for seats out of time were not checked',
@@ -127,9 +134,12 @@ export interface PassedClaimRecord {
   hand: number;
   turn: number;
   claim: PassedClaim;
+  /** On a turn that reached this device late (`downLate`), whether or not its link dropped. */
+  late?: boolean;
 }
 
 const PASSED_CAVEAT: Record<PassedClaim, string> = { pong: AUDIT_CAVEATS.passedPong, chow: AUDIT_CAVEATS.passedChow, kong: AUDIT_CAVEATS.passedKong };
+const PASSED_LATE_CAVEAT: Record<PassedClaim, string> = { pong: AUDIT_CAVEATS.passedPongLate, chow: AUDIT_CAVEATS.passedChowLate, kong: AUDIT_CAVEATS.passedKongLate };
 
 /** The key of a caveat text produced by this client, or null for any other text. */
 export function caveatKey(text: string): AuditCaveat | null {
@@ -299,9 +309,10 @@ export interface ClientState {
   /** Audited hands of this match (the last MAX_AUDITS), newest last. */
   audits: Array<{ audit: Audit; status: AuditStatus; failures: string[]; caveats: string[] }>;
   /**
-   * Every Pong, Chow or Kong the table passed for this seat while its link was down, over this match
-   * (cleared when a new match starts). One or two are what a dropped connection costs; many, at the
-   * moments this seat could claim, are the pattern of a server that cuts the link to take them away.
+   * Every Pong, Chow or Kong the table passed for this seat while its link was down, or on a turn
+   * that reached this device late (`late`), over this match (cleared when a new match starts). One
+   * or two are what a dropped or slow connection costs; many, at the moments this seat could claim,
+   * are the pattern of a server that cuts the link, or holds the turn back, to take them away.
    */
   claimsPassedAway: PassedClaimRecord[];
   chat: ChatLine[];
@@ -593,7 +604,7 @@ export class TableClient {
       ...st,
       rules: st.rules ? sanitizeRules(st.rules) : null,
       audits: Array.isArray(st.audits) ? st.audits.slice(-MAX_AUDITS) : [],
-      claimsPassedAway: Array.isArray(st.claimsPassedAway) ? st.claimsPassedAway.filter(isPassedClaimRecord) : [],
+      claimsPassedAway: Array.isArray(st.claimsPassedAway) ? st.claimsPassedAway.filter(isPassedClaimRecord).map((x) => ({ hand: x.hand, turn: x.turn, claim: x.claim, ...(x.late === true ? { late: true } : {}) })) : [],
       token: this.identity.token ?? st.token ?? null,
       connected: false,
       disconnected: true,
@@ -1871,8 +1882,7 @@ export class TableClient {
     }
     failures.push(...this.checkAccounting(audit));
     if (isInt(audit.ceremonyAttempts) && audit.ceremonyAttempts > 1) caveats.push(AUDIT_CAVEATS.restarted);
-    if (notes.tableMoved) caveats.push(AUDIT_CAVEATS.tableMoved);
-    caveats.push(...passedCaveats(notes));
+    caveats.push(...tableMoveCaveats(notes));
     if (notes.lateShown) caveats.push(AUDIT_CAVEATS.lateShown);
     if (notes.skillUnknown) caveats.push(AUDIT_CAVEATS.skillUnknown);
     const status: AuditStatus = failures.length > 0 ? 'failed' : 'partial';
@@ -2011,8 +2021,7 @@ export class TableClient {
     else if (tookPart && !stoodIn && rec && !rec.fromStart) caveats.push(AUDIT_CAVEATS.missedAttempts);
     if (this.gapHand === h) caveats.push(AUDIT_CAVEATS.gap);
     if (this.rewinds.some((x) => x.hand === h && x.undone)) caveats.push(AUDIT_CAVEATS.serverRestart);
-    if (notes.tableMoved) caveats.push(AUDIT_CAVEATS.tableMoved);
-    caveats.push(...passedCaveats(notes));
+    caveats.push(...tableMoveCaveats(notes));
     if (notes.restartClock) caveats.push(AUDIT_CAVEATS.restartClock);
     if (notes.lateShown) caveats.push(AUDIT_CAVEATS.lateShown);
     if (notes.skillUnknown) caveats.push(AUDIT_CAVEATS.skillUnknown);
@@ -2226,10 +2235,13 @@ export class TableClient {
       else if (verdict === 'early') problems.add(`The table played for this seat while it was connected and its clock had not run out (turn ${n})`);
       else if (verdict === 'downEarly') problems.add(`The table played for this seat while its connection was down, before its clock could have run out (turn ${n})`);
       else if ((verdict === 'down' || verdict === 'downLate') && notes) {
-        notes.tableMoved = true;
-        if (verdict === 'downLate') notes.lateShown = true;
+        // A turn shown too late for its stamp to be believed is judged as a drop, but it is not said
+        // to be one: the link may never have dropped.
+        const late = verdict === 'downLate';
+        if (late) notes.tableMovedLate = notes.lateShown = true;
+        else notes.tableMoved = true;
         const claim = claimAt.get(n);
-        if (claim) (notes.passedClaims ??= []).push({ turn: n, claim });
+        if (claim) (notes.passedClaims ??= []).push({ turn: n, claim, ...(late ? { late } : {}) });
       }
       else if (verdict === 'unanchored' && notes) notes.restartClock = true;
     }
@@ -2329,15 +2341,24 @@ export class TableClient {
 /** What a replay noticed that makes a hand amber rather than green. */
 interface ReplayNotes {
   tableMoved: boolean;
+  /** The table played for this seat on a turn shown too late for its stamp to be believed (`downLate`). */
+  tableMovedLate?: boolean;
   restartClock?: boolean;
   lateShown?: boolean;
   skillUnknown?: boolean;
-  /** Claims the table passed for this seat while its link was down, in turn order. */
-  passedClaims?: Array<{ turn: number; claim: PassedClaim }>;
+  /** Claims the table passed for this seat while its link was down, or on a turn that reached this device late (`late`), in turn order. */
+  passedClaims?: Array<{ turn: number; claim: PassedClaim; late?: boolean }>;
 }
 
-/** One caveat for each kind of claim the table passed for this seat while its link was down. */
-function passedCaveats(notes: ReplayNotes): string[] {
-  const kinds = new Set((notes.passedClaims ?? []).map((p) => p.claim));
-  return (['pong', 'chow', 'kong'] as const).filter((k) => kinds.has(k)).map((k) => PASSED_CAVEAT[k]);
+/** The caveats that say the table played for this seat without its watching: while its link was down, on a turn that reached it late, and each kind of claim passed in either. */
+function tableMoveCaveats(notes: ReplayNotes): string[] {
+  const out: string[] = [];
+  if (notes.tableMoved) out.push(AUDIT_CAVEATS.tableMoved);
+  if (notes.tableMovedLate) out.push(AUDIT_CAVEATS.tableMovedLate);
+  const passed = notes.passedClaims ?? [];
+  for (const late of [false, true]) {
+    const kinds = new Set(passed.filter((p) => (p.late === true) === late).map((p) => p.claim));
+    for (const k of ['pong', 'chow', 'kong'] as const) if (kinds.has(k)) out.push((late ? PASSED_LATE_CAVEAT : PASSED_CAVEAT)[k]);
+  }
+  return out;
 }

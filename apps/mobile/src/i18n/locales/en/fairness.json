@@ -35,9 +35,13 @@
     "serverRestart": "The server restarted during this hand, and some turns were played again.",
     "appRestart": "The app was restarted around this deal, so your phone cannot be sure it watched all of it. This is expected for the first hand after a restart; later hands can be Verified again.",
     "tableMoved": "The table played for you while your connection was down. It does that for a seat whose clock has run out or whose player has left the table; your phone did not watch those moves being made.",
+    "tableMovedLate": "The table played for you on a turn that reached your phone late, so your phone did not see that turn in time. It does that for a seat whose clock has run out; your phone cannot tell whether the delay was your connection's or the server's.",
     "passedPong": "While your connection was down, the table passed up a Pong you could have made. It does that for a seat that is away; if it keeps happening just when you could claim, see the count on the Fair play screen.",
     "passedChow": "While your connection was down, the table passed up a Chow you could have made. It does that for a seat that is away; if it keeps happening just when you could claim, see the count on the Fair play screen.",
     "passedKong": "While your connection was down, the table passed up a Kong you could have made. It does that for a seat that is away; if it keeps happening just when you could claim, see the count on the Fair play screen.",
+    "passedPongLate": "On a turn that reached your phone late, the table passed up a Pong you could have made. It does that for a seat whose clock has run out; if it keeps happening just when you could claim, see the count on the Fair play screen.",
+    "passedChowLate": "On a turn that reached your phone late, the table passed up a Chow you could have made. It does that for a seat whose clock has run out; if it keeps happening just when you could claim, see the count on the Fair play screen.",
+    "passedKongLate": "On a turn that reached your phone late, the table passed up a Kong you could have made. It does that for a seat whose clock has run out; if it keeps happening just when you could claim, see the count on the Fair play screen.",
     "restartClock": "The server restarted during this match and then played for you before your phone could check its clock again, so your phone cannot be sure your time had run out.",
     "lateShown": "Your phone was shown one of your turns late, or only after your connection had been down for much of it, so it cannot vouch that you saw the whole turn.",
     "skillUnknown": "This match was restored from a save made by an older version of the app, which did not keep how strong the table said its bots are, so your phone could not check the moves the table made for the bots, or for a player whose time ran out. The next match is checked in full."
@@ -132,5 +136,9 @@
   "claimsPassedAway": {
     "one": "In this match the table has passed up %{count} claim (Pong, Chow or Kong) for you while your connection was down. A dropped connection costs one now and then; a connection that drops every time you could claim is a pattern worth reporting.",
     "other": "In this match the table has passed up %{count} claims (Pong, Chow or Kong) for you while your connection was down. A dropped connection costs one now and then; a connection that drops every time you could claim is a pattern worth reporting."
+  },
+  "claimsPassedLate": {
+    "one": "In this match the table has passed up %{count} claim (Pong, Chow or Kong) for you on a turn that reached your phone late. A slow connection costs one now and then; turns that reach you late every time you could claim are a pattern worth reporting.",
+    "other": "In this match the table has passed up %{count} claims (Pong, Chow or Kong) for you on turns that reached your phone late. A slow connection costs one now and then; turns that reach you late every time you could claim are a pattern worth reporting."
   }
 }

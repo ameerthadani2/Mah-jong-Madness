@@ -128,6 +128,27 @@ describe('the fair play screen', () => {
     expect(screen.queryByTestId('fairness-claims-passed')).toBeNull();
   });
 
+  it('counts apart the claims passed on turns that reached the phone late, and does not say the connection was down for them', async () => {
+    const late: ClientState['claimsPassedAway'] = [
+      { hand: 1, turn: 33, claim: 'pong', late: true },
+      { hand: 2, turn: 17, claim: 'chow', late: true },
+    ];
+    const { session, push } = fakeSession({ audits: HANDS, claimsPassedAway: [...PASSED.slice(0, 1), ...late] });
+    await renderFairness(session);
+    expect(screen.getByTestId('fairness-claims-passed')).toHaveTextContent(/^In this match the table has passed up 1 claim \(Pong, Chow or Kong\) for you while your connection was down\./);
+    expect(screen.getByTestId('fairness-claims-passed-late')).toHaveTextContent(/^In this match the table has passed up 2 claims \(Pong, Chow or Kong\) for you on turns that reached your phone late\./);
+    expect(screen.getByTestId('fairness-claims-passed-late')).not.toHaveTextContent(/connection was down/);
+    // Only late ones: no sentence about a dropped connection at all.
+    await push({ audits: HANDS, claimsPassedAway: late.slice(0, 1) });
+    expect(screen.queryByTestId('fairness-claims-passed')).toBeNull();
+    expect(screen.getByTestId('fairness-claims-passed-late')).toHaveTextContent(/^In this match the table has passed up 1 claim \(Pong, Chow or Kong\) for you on a turn that reached your phone late\./);
+    // A hand's reason for a turn shown late names it as such.
+    await push({ audits: [entry(0, 'partial', { caveats: [AUDIT_CAVEATS.tableMovedLate, AUDIT_CAVEATS.passedPongLate] })], claimsPassedAway: late.slice(0, 1) });
+    expect(screen.getByText(/^The table played for you on a turn that reached your phone late, so your phone did not see that turn in time\./)).toBeOnTheScreen();
+    expect(screen.getByText(/^On a turn that reached your phone late, the table passed up a Pong you could have made\./)).toBeOnTheScreen();
+    expect(screen.queryByText(/while your connection was down/)).toBeNull();
+  });
+
   it('says when the final scores of a finished match are the table word alone', async () => {
     const { session, push } = fakeSession({ audits: HANDS, matchOver: true, matchEndVerified: true });
     await renderFairness(session);
@@ -153,5 +174,16 @@ describe('the fair play screen', () => {
     expect(screen.getByText('洗牌種子不是用公開的祕密算出來的。')).toBeOnTheScreen();
     expect(screen.getByTestId('fairness-claims-passed')).toHaveTextContent(/^這場比賽中，你斷線時牌桌替你放棄了 3 次吃、碰或槓。/);
     expect(screen.getAllByText(/^伺服器 承諾 /)).toHaveLength(3);
+  });
+
+  it('speaks Traditional Chinese for a turn that reached the phone late, and does not say the connection dropped', async () => {
+    setLocalePreference('zh-TW');
+    const late: ClientState['claimsPassedAway'] = [{ hand: 0, turn: 33, claim: 'kong', late: true }];
+    await renderFairness(fakeSession({ audits: [entry(0, 'partial', { caveats: [AUDIT_CAVEATS.tableMovedLate, AUDIT_CAVEATS.passedKongLate] })], claimsPassedAway: late }).session);
+    expect(screen.queryByTestId('fairness-claims-passed')).toBeNull();
+    expect(screen.getByTestId('fairness-claims-passed-late')).toHaveTextContent(/^這場比賽中，有幾手輪到你的牌比較晚才送到你的手機，牌桌在那幾手替你放棄了 1 次吃、碰或槓。/);
+    expect(screen.getByText(/^輪到你的某一手比較晚才送到你的手機，牌桌在那一手替你出了牌/)).toBeOnTheScreen();
+    expect(screen.getByText(/^輪到你的某一手比較晚才送到你的手機，牌桌在那一手替你放棄了一次可以槓的牌。/)).toBeOnTheScreen();
+    expect(screen.queryByText(/斷線/)).toBeNull();
   });
 });

@@ -68,8 +68,8 @@ export function isPassedClaimRecord(x: unknown): x is PassedClaimRecord {
 }
 
 /** The match's passed claims with hand `h`'s replaced by `found` (a hand checked again counts once). */
-export function withPassed(all: PassedClaimRecord[], h: number, found: Array<{ turn: number; claim: PassedClaim }>): PassedClaimRecord[] {
-  return [...all.filter((x) => x.hand !== h), ...found.map((f) => ({ hand: h, turn: f.turn, claim: f.claim }))].sort((a, b) => a.hand - b.hand || a.turn - b.turn);
+export function withPassed(all: PassedClaimRecord[], h: number, found: Array<{ turn: number; claim: PassedClaim; late?: boolean }>): PassedClaimRecord[] {
+  return [...all.filter((x) => x.hand !== h), ...found.map((f) => ({ hand: h, turn: f.turn, claim: f.claim, ...(f.late ? { late: true } : {}) }))].sort((a, b) => a.hand - b.hand || a.turn - b.turn);
 }
 
 /** What this client saw of one ceremony attempt. */
