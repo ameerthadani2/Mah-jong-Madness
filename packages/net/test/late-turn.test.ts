@@ -161,6 +161,33 @@ describe('held frames: forged pongs', () => {
       expect(h.w.verdict()).toMatchObject({ status: 'failed', failures: ['heldFrame'] });
     }));
 
+  it('the same, with the app restarted 2 s after the release: still red heldFrame (the state came in behind fresher stamps, which the phone noted then and its saved record keeps; the stamps restored with the record are not what fails it)', () =>
+    scenario((i) => {
+      const pings: number[] = [];
+      const h = holdTurn({
+        code: `PR${i}`,
+        think: (_k, tc) => (tc === h.st.heldTc ? Infinity : 600),
+        onTick: (w) => {
+          if (h.st.holding && pings.length > 0 && w.clock.now % 2_000 === 0) w.line.inject({ t: 'pong', at: pings[0], now: w.clock.now });
+        },
+      });
+      const send = h.w.c.ping.bind(h.w.c);
+      h.w.c.ping = () => {
+        pings.push(h.w.clock.now);
+        send();
+      };
+      need(h.arm());
+      const from = h.w.clock.now;
+      h.w.until(() => h.w.clock.now - from >= 40_000);
+      h.release();
+      need(h.w.host.game!.turnCounter === h.st.heldTc);
+      h.w.step(2_000);
+      h.w.restart();
+      h.w.finish();
+      need(h.w.judged().includes(h.st.heldTc));
+      expect(h.w.verdict()).toMatchObject({ status: 'failed', failures: ['heldFrame'] });
+    }));
+
   it('pongs that echo an old ping, stamped at the crawl: the link is dropped, and the hand is amber', () =>
     scenario((i) => {
       const h = holdTurn({
@@ -1209,6 +1236,49 @@ describe('match record: what a saved record keeps of each frame', () => {
   it('a restart on a turn shown over a live link, from an undamaged record: green, whether the table times the seat out or the seat moves', () => {
     scenario((i) => green(restartOnLiveTurn(`MD${i}`, false)));
     scenario((i) => green(restartOnLiveTurn(`MP${i}`, true)));
+  });
+
+  /** Move the stamp of the frame that first showed the seat its turn by `by` ms in the saved record, every other field left as it was. */
+  const moveStamp = (by: number) => (play: PlayRecord, shown: SeenState) => {
+    // The seat may have owed a move since a frame before it (a claim it let pass): the first of those.
+    let k = play.seen.indexOf(shown);
+    while (k > 0 && play.seen[k - 1].owes) k--;
+    const r0 = play.seen[k];
+    need(r0.live === true);
+    r0.now = (r0.now as number) + by;
+  };
+
+  it.each([20_000, 70_000, 300_000])('a saved record in which the frame that first showed the seat its turn has its stamp moved back %i ms and every other field left as it was (damage that stays consistent, as one changed digit can): a frame restored from storage is not held to a live link’s bound, so the turn counts as shown late, amber, never red, whether the table times the seat out or the seat moves', (back) => {
+    for (const moves of [false, true]) {
+      const w = scenario((i) => restartOnLiveTurn(`MC${back}${moves ? 'P' : 'D'}${i}`, moves, moveStamp(-back)));
+      expect(w.verdict().failures).toEqual([]);
+      expect(w.verdict().status).toBe('partial');
+      expect(w.verdict().caveats).toContain('lateShown');
+    }
+  });
+
+  it.each([3_000, 20_000])('the same with the stamp moved forward %i ms, the seat moving: the state seems not to give the whole turn clock, which a restored frame is not failed for either, so the turn counts as shown late, amber, never red', (fwd) => {
+    const w = scenario((i) => restartOnLiveTurn(`MF${fwd}${i}`, true, moveStamp(fwd)));
+    expect(w.verdict().failures).toEqual([]);
+    expect(w.verdict().status).toBe('partial');
+    expect(w.verdict().caveats).toContain('lateShown');
+  });
+
+  it('the same with its deadline moved 5 s earlier: the state seems not to give the whole turn clock, which a restored frame is not failed for, so the turn counts as shown late, amber, never red, whether the table times the seat out or the seat moves', () => {
+    for (const moves of [false, true]) {
+      const w = scenario((i) =>
+        restartOnLiveTurn(`MK${moves ? 'P' : 'D'}${i}`, moves, (play, shown) => {
+          let k = play.seen.indexOf(shown);
+          while (k > 0 && play.seen[k - 1].owes) k--;
+          const r0 = play.seen[k];
+          need(r0.live === true && typeof r0.deadline === 'number');
+          r0.deadline = (r0.deadline as number) - 5_000;
+        }),
+      );
+      expect(w.verdict().failures).toEqual([]);
+      expect(w.verdict().status).toBe('partial');
+      expect(w.verdict().caveats).toContain('lateShown');
+    }
   });
 
   for (const [what, edit] of DAMAGE)

@@ -45,7 +45,7 @@ import type { Link } from './host';
 import { CLOCK_FRAME_MS, RESTART_CAUSES, type Audit, type ClientMessage, type HostMessage, type SeatInfo } from './messages';
 import { isFrame, type Transport, type Unsubscribe } from './transport';
 import { clientClock, DRIFT_CAP_MS, DRIFT_RATE, foldClock, LATE_MS, LINK_PAUSE_MS, ORDER_SLACK_MS, PAUSE_GRACE_MS, RAN_GAP_MS, SILENT_ANSWER_MS, STEADY_SLACK_MS, WATCH_WINDOW_MS, type TableClientOptions } from './clientclock';
-import { armedLate, clockTrack, firstSend, fixedPoint, isBotSkill, judgeTableMove, lateAnchor, lateCountMs, lateRef, lateWatch, legalFor, sameActionSafe, seatRun, tableRule, turnLateBy, unstamped, type LateScope, type MoveJudge } from './clientmoves';
+import { armedLate, clockTrack, firstSend, fixedPoint, heldLive, isBotSkill, judgeTableMove, lateAnchor, lateCountMs, lateRef, legalFor, sameActionSafe, seatRun, seenHere, tableRule, turnLateBy, unstamped, type LateScope, type MoveJudge } from './clientmoves';
 import {
   CHAINED_FIELDS,
   cleanCeremony,
@@ -2227,8 +2227,9 @@ export class TableClient {
                   // A run first shown on a new link: the host's own word for the bank it had at the turn's start counts if lower (it was spent while the link was down).
                   const whole = rules.turnSeconds * 1000 + Math.min(tracked, r0.timeBank * 1000);
                   const left = r0.deadline === null || typeof r0.now !== 'number' ? Number.POSITIVE_INFINITY : (r0.inBank ? r0.deadline : r0.deadline + r0.timeBank * 1000) - r0.now;
-                  if (armedLate(r0, rules) || (r0.live && lateWatch(r0) > LATE_MS)) problems.add(`The host showed this seat its turn late, on a link that stayed open (turn ${n})`);
-                  else if (notes && (lateRef(r0) > LATE_MS || lateAnchor(r0, anchors, scope) > LATE_MS || unstamped(r0) || (!r0.onLink && left < whole - LATE_MS))) notes.lateShown = true;
+                  const here = seenHere(r0, this.runId);
+                  if ((here && armedLate(r0, rules)) || heldLive(r0, this.runId)) problems.add(`The host showed this seat its turn late, on a link that stayed open (turn ${n})`);
+                  else if (notes && (lateRef(r0) > LATE_MS || lateAnchor(r0, anchors, scope) > LATE_MS || unstamped(r0) || (!r0.onLink && left < whole - LATE_MS) || (!here && armedLate(r0, rules)))) notes.lateShown = true;
                 }
               }
               // The host cannot have played this move before this device sent it: a fixed point between the

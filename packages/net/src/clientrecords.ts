@@ -262,7 +262,9 @@ const finiteTime = (x: unknown): x is number => typeof x === 'number' && Number.
  * stamp and deadline are readings a clock can make. Otherwise all of them are dropped, so the frame reads
  * like one from a record saved before they were kept, which the rules that use them do not ask; and a
  * stamp no clock can make is dropped with them. What this cannot tell is damage that leaves the fields
- * consistent (a stamp moved back 20 s, say): only the record's own copy says otherwise.
+ * consistent (a stamp moved back 20 s, say): only the record's own copy says otherwise. A frame from a
+ * saved record is therefore never failed for having shown the seat its turn late on a link that stayed
+ * open (`seenHere`): it makes its hand amber, not red.
  */
 export function cleanSeen(f: SeenState): SeenState {
   const { atLo, ref, wref, live, working, seg, run, onLink, ...old } = f;

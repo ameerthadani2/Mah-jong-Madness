@@ -60,6 +60,26 @@ export function lateWatch(f: SeenState): number {
 }
 
 /**
+ * `f` was seen in the run of the app that judges it (`run`; null: any), not restored from a saved
+ * record. Damage to a record can move a stamp and leave the fields around it consistent (`cleanSeen`),
+ * and storage is the phone's, not the server's: a restored frame is never failed for being shown late
+ * on a link that stayed open (`heldLive`, `armedLate`); it is judged as shown late (amber at worst).
+ */
+export function seenHere(f: SeenState, run: string | null): boolean {
+  return run === null || f.run === run;
+}
+
+/**
+ * `f` came over a live link and reached this device more than `LATE_MS` later than the link watch's
+ * reference allowed (`lateWatch`): the watch drops a link, or measures it afresh, long before an
+ * honest frame on it is that late, so the host held it. Only a frame this run of the app saw
+ * (`seenHere`); a restored one that late is late against `lateRef` as well.
+ */
+export function heldLive(f: SeenState, run: string | null): boolean {
+  return f.live === true && seenHere(f, run) && lateWatch(f) > LATE_MS;
+}
+
+/**
  * How much later `f` reached this device than the fixed points made before it in its scope allow
  * (this device's moves and shares, which the host cannot have answered before they were sent),
  * beyond an uplink's allowance (`RTT_ALLOW_MS`). It sees a delay present since the scope began,
@@ -254,12 +274,13 @@ function judgeFrom(j: MoveJudge, play: PlayRecord, n: number, rules: RuleSet, an
  * showed the seat the move since its previous move (`seatRun`) is judged by its first state, `r0`:
  * - on a link that had already brought this device a state, `r0` must give the whole turn clock by
  *   its own deadline and stamp (`armedLate`; a state with no stamp gives none): `lateTurn` when not,
- *   unless the move was early anyway;
+ *   unless the move was early anyway (a state this run of the app saw: one restored from a saved
+ *   record, whose stamp or deadline storage may have changed, is judged as shown late, `seenHere`);
  * - over a live link (`SeenState.live`), `r0` may not be more than `LATE_MS` later than the link
  *   watch's reference allowed when it arrived (`lateWatch`, against `SeenState.wref`: the least arrival
  *   offset of the frames of the last `WATCH_WINDOW_MS`, never below the scope's own, `ref`): `held`
  *   when it is, since the watch drops a link long before an honest frame on it is that late by its
- *   reference;
+ *   reference (`heldLive`: a frame this run of the app saw; a restored one is judged by the next rule);
  * - more than `LATE_MS` later than the least arrival offset of its scope allows (`lateRef`), on any
  *   link (on a live one, a delay that rose and stayed up long enough for `wref` to take it in, so late
  *   against `lagRef` but not against the watch: judged late here, not held), later than the fixed
@@ -292,11 +313,13 @@ export function judgeTableMove(j: MoveJudge, play: PlayRecord, n: number, end: S
     const { run, i0 } = seatRun(play, n, prevMove);
     const r0 = run[0];
     if (r0) {
-      armed = armedLate(r0, rules);
+      const here = seenHere(r0, scope ? scope.run : null);
+      armed = here && armedLate(r0, rules);
       const lr = lateRef(r0);
       // Over a link the watch was keeping, no honest frame is that late by its reference: the host held it.
-      if (r0.live && lateWatch(r0) > LATE_MS) return 'held';
-      const late = lr > LATE_MS || lateAnchor(r0, anchors, scope) > LATE_MS || unstamped(r0);
+      if (heldLive(r0, scope ? scope.run : null)) return 'held';
+      // A restored state that did not give the whole turn clock is judged as shown late instead (`seenHere`).
+      const late = lr > LATE_MS || lateAnchor(r0, anchors, scope) > LATE_MS || unstamped(r0) || (!here && armedLate(r0, rules));
       const prev = i0 > 0 ? play.seen[i0 - 1] : null;
       const whole = rules.turnSeconds * 1000 + ((prev ? track.bank.get(prev) : null) ?? rules.timeBankSeconds * 1000);
       // Shown too late for its stamp to be believed, or first shown over a new link, or one not yet
