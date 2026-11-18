@@ -25,6 +25,7 @@ import {
   type BotSkill,
 } from '@mjm/engine';
 import { commitFor, deriveSeed, isSecret, makeSecret, verifyReveals, type Commitment, type Reveal } from './fairness';
+import { clientClock } from './clientclock';
 import { CLOCK_FRAME_MS, type Audit, type CeremonyRestart, type ClientMessage, type HostMessage, type RestartCause, type SeatInfo } from './messages';
 import type { Transport, Unsubscribe } from './transport';
 import { randomHex } from './sha256';
@@ -54,7 +55,7 @@ export interface HostOptions {
   matchId?: string;
   /** Fill empty seats with bots when the match starts (default true). */
   fillWithBots?: boolean;
-  /** Clock source (ms). Defaults to Date.now. */
+  /** Clock source (ms). Defaults to clientClock(): it never steps back, and follows the wall clock only across a sleep or a forward jump of more than 1 s. */
   now?: () => number;
   /** Delay before a bot acts, for a natural rhythm. 0 in tests. */
   botDelayMs?: number;
@@ -224,7 +225,7 @@ export class TableHost {
     // Clients sanitise the rules they are sent and replay with them, so the host must deal with the same set.
     this.rules = sanitizeRules(opts.restore?.rules ?? opts.rules ?? DEFAULT_RULES);
     this.matchId = opts.restore?.matchId ?? opts.matchId ?? randomHex(8);
-    this.now = opts.now ?? (() => Date.now());
+    this.now = opts.now ?? clientClock();
     this.botDelayMs = opts.botDelayMs ?? 0;
     this.schedule = opts.schedule ?? ((fn, ms) => void setTimeout(fn, ms));
     this.fillWithBots = opts.fillWithBots ?? true;
@@ -497,11 +498,14 @@ export class TableHost {
     return this.deadline;
   }
 
-  /** Expire base clocks into time banks, and auto-play seats whose bank is gone. */
   /**
-   * This host's clock for the stamps on its frames (`now`). It never goes back, even when the
-   * machine's clock is set back: a client fails a hand whose frames arrive out of the order of their
-   * stamps (an ordered stream cannot reorder them; only a host that held one back can).
+   * This host's clock for the stamps on its frames (`now`). It never goes back: a client fails a hand
+   * whose frames arrive out of the order of their stamps (an ordered stream cannot reorder them; only
+   * a host that held one back can). With the default clocks (`clientClock()` here, `steadyClock()` on
+   * the signal server) `now()` itself never goes back, so the stamps and the deadlines keep real time
+   * when the machine's wall clock is set back. That matters to a client: the state that starts a
+   * seat's turn must give it the whole turn clock by its own deadline and stamp (`armedLate`), and
+   * the stamps must keep up with the client's own clock (`TableClient.checkLink`).
    */
   private stamp(): number {
     this.lastStamp = Math.max(this.lastStamp, this.now());
@@ -527,6 +531,7 @@ export class TableHost {
     }
   }
 
+  /** Expire base clocks into time banks, and auto-play seats whose bank is gone. */
   private tickClocks(): void {
     const now = this.now();
     let changed = false;

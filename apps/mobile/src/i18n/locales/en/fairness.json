@@ -39,6 +39,7 @@
     "passedChow": "While your connection was down, the table passed up a Chow you could have made. It does that for a seat that is away; if it keeps happening just when you could claim, see the count on the Fair play screen.",
     "passedKong": "While your connection was down, the table passed up a Kong you could have made. It does that for a seat that is away; if it keeps happening just when you could claim, see the count on the Fair play screen.",
     "restartClock": "The server restarted during this match and then played for you before your phone could check its clock again, so your phone cannot be sure your time had run out.",
+    "lateShown": "Your phone was shown one of your turns late, or only after your connection had been down for much of it, so it cannot vouch that you saw the whole turn.",
     "skillUnknown": "This match was restored from a save made by an older version of the app, which did not keep how strong the table said its bots are, so your phone could not check the moves the table made for the bots, or for a player whose time ran out. The next match is checked in full."
   },
   "failure": {
@@ -98,6 +99,7 @@
     "passedUpWin": "The table played for you and passed up your win (turn %{turn}).",
     "playedEarly": "The table played for you while you were connected and still had time on your clock (turn %{turn}).",
     "heldFrame": "The server held back what it sent you on a connection that stayed open, then played for you (turn %{turn}).",
+    "lateTurn": "The server showed you your turn late, on a connection that stayed open (turn %{turn}).",
     "playedWhileDown": "The table played for you while your connection was down, before your clock could have run out (turn %{turn}).",
     "bankTaken": "The table took time from your time bank while your connection was down (turn %{turn}).",
     "moveIgnored": "The table ignored a move you sent in good time and played its own instead (turn %{turn}).",

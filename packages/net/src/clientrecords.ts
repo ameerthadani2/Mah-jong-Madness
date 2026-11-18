@@ -85,6 +85,8 @@ export interface AttemptRecord {
   /** This device's clock, and its link epoch, when it sent its secret. */
   revealedAt?: number;
   revealedEpoch?: number;
+  revealedRun?: string;
+  revealedSeg?: number;
 }
 
 /**
@@ -96,6 +98,9 @@ export interface ClockAnchor {
   now: number;
   /** The clock era the host's stamp belongs to (see `TableClient.era`). */
   era: number;
+  /** The run of the app and of this device's clock `at` was read in. */
+  run?: string;
+  seg?: number;
 }
 
 /** A time-stamped frame as the start of a stretch without a link: when it arrived here, and the host's stamp on it. */
@@ -141,6 +146,20 @@ export interface SeenState {
   at: number;
   /** The host's clock when it sent the frame, if it said. */
   now?: number;
+  /** The earliest this frame can have arrived, when the app had not run for a while before it (else `at`). */
+  atLo?: number;
+  /** The era's least arrival offset (at - now) when the frame arrived; null before any. */
+  ref?: number | null;
+  /** The frame came over a live link: one that had brought a timely stamp while a hand was played and the watch ran. */
+  live?: boolean;
+  /** The link had brought a timely stamp before this frame. */
+  working?: boolean;
+  /** The run of this device's clock it arrived in (a sleep correction starts a new one). */
+  seg?: number;
+  /** The client instance (run of the app) it arrived in. */
+  run?: string;
+  /** The link it came over had already brought an earlier state, or this device revealed its share for the hand on it. */
+  onLink?: boolean;
   /** This seat had a move to make in this view. */
   owes: boolean;
   deadline: number | null;
@@ -157,6 +176,9 @@ export interface SentAction {
   epoch: number;
   /** This device's clock when it sent the move. */
   at?: number;
+  /** The run of the app and of this device's clock `at` was read in. */
+  run?: string;
+  seg?: number;
   /** The host refused it (error code). */
   rejected?: string;
   /** The turn the host's own frames had reached when its refusal arrived. */

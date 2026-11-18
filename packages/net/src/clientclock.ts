@@ -1,12 +1,13 @@
 /**
  * Time on the table client: its own clock for its records (`clientClock`), the bounds it allows
- * the host's clock and the link (the link watch, `checkLink`, and the order of frames), and what
- * it has learned of the host's clock (`ClockBase`): how far ahead of the host's clock this
- * device's is at the least (`offsetFloor`).
+ * the host's clock and the link (the link watch, `checkLink`; the order of frames; how late a frame
+ * may reach this device, `LATE_MS`), and what it has learned of the host's clock (`ClockBase`): how
+ * far ahead of the host's clock this device's is at the least (`offsetFloor`). Also the clocks a
+ * host keeps time by, which never step back: `clientClock` by default, `steadyClock` on the server.
  */
 import type { ClockAnchor, PlayRecord, SeenState } from './clientrecords';
 
-/** How long `checkLink` waits for any frame after it asked for a `pong`, before it calls the link silent. */
+/** How long the watch's `pong` request may stay out, while the host's stamps keep falling behind, before `checkLink` calls the link silent. */
 export const SILENT_ANSWER_MS = 5_000;
 /** A gap between two `checkLink` calls longer than this means the app was not running. */
 export const LINK_PAUSE_MS = 5_000;
@@ -22,6 +23,38 @@ export const CLOCK_SKEW_MS = 5_000;
  * heartbeat and the link is replaced).
  */
 export const LATENCY_SLACK_MS = 30_000;
+/**
+ * How much later than the least arrival offset of its scope (`TableClient.lagRef`) a frame may reach
+ * this device and still be believed to start the seat's clock at its stamp. The watch drops a link
+ * whose stamps fall 13 s behind by that measure (`2 × CLOCK_FRAME_MS + 2 s + SILENT_ANSWER_MS`), and
+ * it checks once a second, so no honest frame on a live link is later than about 15.5 s (13 s, a
+ * check period and `RAN_GAP_MS`). A state later than this that shows the seat a move fails the hand
+ * when its link was live, and is otherwise judged as a drop (`judgeTableMove`).
+ */
+export const LATE_MS = 17_000;
+/** How fast the host's clock and this device's may drift apart (500 ppm; real clocks drift 200 ppm at worst): a least offset seen a while ago is relaxed by this much. */
+export const DRIFT_RATE = 0.0005;
+/** A gap longer than this since this app last ran (handled a frame, checked the link, bound a link, sent a move) was a pause: the phone slept, or the app was in the background. */
+export const RAN_GAP_MS = 1_500;
+/** Frames handled within this long after a pause ended may have waited in the device through it: they may have arrived as early as it began (never before their link was bound). */
+export const PAUSE_GRACE_MS = 2_000;
+/**
+ * What the uplink of a fixed point (a move or share this device sent) may have taken on an honest
+ * link. A frame later than the fixed points allow by more than this and `LATE_MS` is noted as shown
+ * late, never failed: a slow uplink looks the same from here (see `lateAnchor`).
+ */
+export const RTT_ALLOW_MS = 4_000;
+/** How much of the turn clock the state that starts a turn may already have used, by its own deadline and stamp: an honest host stamps it in the tick it arms the clock. */
+export const ARM_SLACK_MS = 1_000;
+/**
+ * A clock that starts at the wall time and then moves on by the monotonic clock alone: it ignores
+ * steps of the wall clock both ways and never goes back. The signal server's tables keep time by it.
+ */
+export function steadyClock(wall: () => number = () => Date.now(), steady: () => number = () => performance.now()): () => number {
+  const w0 = wall();
+  const m0 = steady();
+  return () => w0 + (steady() - m0);
+}
 
 /** What this client knows of the host's clock in one clock era: the fixed points between the two clocks, and the least offset any frame showed. */
 export interface ClockBase {
@@ -56,6 +89,11 @@ const SLEEP_GAP_MS = 1_000;
  * lengthens that drop as the phone measures it; a server cannot cause that, and it can only turn a
  * failure into the amber "played while the connection was down", never into green. Only across an
  * app restart, where no monotonic clock survives, do the records meet wall time anew.
+ *
+ * Each time the clock follows the wall clock instead of the monotonic one, its `segment` counter
+ * moves on (it starts at 0): a relation between this clock and the host's seen before then need not
+ * hold after, so the table client keeps what it measures of the host's clock per segment. A clock
+ * that is the injected `now` alone has no counter; it reads as 0.
  */
 export function clientClock(opts: TableClientOptions = {}): () => number {
   const wall = opts.now ?? (() => Date.now());
@@ -66,16 +104,21 @@ export function clientClock(opts: TableClientOptions = {}): () => number {
   let t = wall();
   let lastWall = t;
   let lastSteady = steady();
-  return () => {
+  const read = (() => {
     const w = wall();
     const m = steady();
     const dw = w - lastWall;
     const dm = m - lastSteady;
     lastWall = w;
     lastSteady = m;
-    t += dw > dm + SLEEP_GAP_MS ? dw : Math.max(0, dm);
+    if (dw > dm + SLEEP_GAP_MS) {
+      t += dw;
+      read.segment++;
+    } else t += Math.max(0, dm);
     return t;
-  };
+  }) as (() => number) & { segment: number };
+  read.segment = 0;
+  return read;
 }
 
 /**

@@ -6,7 +6,7 @@
  * as failures, is the client's (`TableClient.replayChecked`).
  */
 import { BOT_SKILLS, chooseAction, isLegal, legalActions, sameAction, type Action, type BotSkill, type GameState, type RuleSet } from '@mjm/engine';
-import { CLOCK_SLACK_MS, offsetFloor, type ClockBase } from './clientclock';
+import { ARM_SLACK_MS, CLOCK_SLACK_MS, DRIFT_RATE, LATE_MS, offsetFloor, RTT_ALLOW_MS, type ClockBase } from './clientclock';
 import { isObject, type CeremonyRecord, type ClockAnchor, type ClockTrack, type GapStart, type PlayRecord, type SeenState } from './clientrecords';
 
 /** What the table-move checks read of this client's clock record, and keep: `gapVerdicts` grows as stretches without a link are judged. */
@@ -16,8 +16,65 @@ export interface MoveJudge {
   ownAbsences: number[];
 }
 
+/** The run of the app (`TableClient.runId`) a fixed point is compared in, and the strongest fixed point of the hands already audited in it. */
+export interface LateScope {
+  run: string;
+  best: { era: number; run: string; seg: number; value: number; at: number } | null;
+}
+
+/** How much later than the least arrival offset of its scope (clock era and run of this device's clock) allows `f` reached this device; 0 when nothing is known. */
+export function lateRef(f: SeenState): number {
+  if (typeof f.now !== 'number' || typeof f.ref !== 'number') return 0;
+  return (f.atLo ?? f.at) - f.now - f.ref;
+}
+
 /**
- * Whether the table was entitled to the move the log has it making for this seat at turn `n`.
+ * How much later `f` reached this device than the fixed points made before it in its scope allow
+ * (this device's moves and shares, which the host cannot have answered before they were sent),
+ * beyond an uplink's allowance (`RTT_ALLOW_MS`). It sees a delay present since the scope began,
+ * which the least arrival offset absorbs; a slow uplink looks the same, so it never fails a hand by
+ * itself. 0 when there is no fixed point, or `f` arrived in another run of the app.
+ */
+export function lateAnchor(f: SeenState, anchors: ClockAnchor[], scope: LateScope | null): number {
+  if (typeof f.now !== 'number' || !scope || f.run !== scope.run) return 0;
+  const atLo = f.atLo ?? f.at;
+  const era = f.era ?? 0;
+  const seg = f.seg ?? 0;
+  let a = Number.NEGATIVE_INFINITY;
+  const b = scope.best;
+  if (b && b.era === era && b.run === f.run && b.seg === seg && b.at <= atLo) a = b.value - DRIFT_RATE * (atLo - b.at);
+  for (const k of anchors) if (k.era === era && k.run === f.run && (k.seg ?? 0) === seg && k.at <= atLo) a = Math.max(a, k.at - k.now - DRIFT_RATE * (atLo - k.at));
+  return Number.isFinite(a) ? atLo - f.now - (a + RTT_ALLOW_MS) : 0;
+}
+
+/**
+ * The frames that showed this seat the move it makes at turn `n`: the last frame at or before `n`,
+ * and the frames before it that showed the seat owing a move since its previous move (`prevMove`),
+ * from the first (`i0`). Empty when that last frame owed nothing, or came before the previous move.
+ */
+export function seatRun(play: PlayRecord, n: number, prevMove: number): { run: SeenState[]; i0: number } {
+  let iA = -1;
+  for (let i = 0; i < play.seen.length; i++) if (play.seen[i].tc <= n) iA = i;
+  if (iA < 0 || !play.seen[iA].owes || play.seen[iA].tc <= prevMove) return { run: [], i0: -1 };
+  let i0 = iA;
+  while (i0 > 0 && play.seen[i0 - 1].owes && play.seen[i0 - 1].tc > prevMove) i0--;
+  return { run: play.seen.slice(i0, iA + 1), i0 };
+}
+
+/**
+ * The state that first showed this seat a move (`r0`), over a link that had already brought it an
+ * earlier state (or its share for the hand), did not give a whole turn clock by its own deadline and
+ * stamp: it was in the bank already, or its deadline was less than the turn clock (less
+ * `ARM_SLACK_MS`) after its stamp. An honest host stamps that state in the tick it arms the clock.
+ */
+export function armedLate(r0: SeenState, rules: RuleSet): boolean {
+  if (!r0.onLink || typeof r0.now !== 'number' || r0.deadline === null) return false;
+  return r0.inBank || r0.deadline - r0.now < rules.turnSeconds * 1000 - ARM_SLACK_MS;
+}
+
+/**
+ * The clock check of a table move at turn `n`, from the frame `a` (the last this device holds at or
+ * before `n`, or null) to `b` (the first after it, or the hand's end).
  *
  * Over one unbroken link (`early` when not): the seat's time must have run out. How long the
  * seat had is worked out from the rules and from what this client saw earlier in the hand
@@ -26,27 +83,20 @@ export interface MoveJudge {
  * (`offsetFloor`). `unanchored`: nothing was wrong that this device can see, but after a restart
  * of the host it has no fixed point yet to measure the stamps against.
  *
- * Across a change of link, the move was made while this device had none. A seat that drops keeps
- * its clock, so the first such move needs a whole clock to have run out: what was left of the
- * move the seat owed in the last frame before, or, when its turn came later, a whole turn clock
- * and the bank it had. That is measured on this device's clock, from the last frame it held to
- * the first one after: `downEarly` when the time between is too short, `down` (the hand shows
- * that the table played for the seat) otherwise. Later moves in the same stretch are covered by
- * the first (`gaps` holds the stretches this replay has judged). Where this device left of its own accord, or has no measure of the stretch, the
- * move is noted and not judged.
+ * Across a change of link, or with `gap` (from a frame before a state the audit could not believe
+ * was timely), the move was made while this device had no timely view of the table. A seat that
+ * drops keeps its clock, so the first such move needs a whole clock to have run out: what was left
+ * of the move the seat owed in the last frame before, or, when its turn came later, a whole turn
+ * clock and the bank it had. That is measured on this device's clock, from the frame it held to the
+ * first one after: `downEarly` when the time between is too short, `down` (the hand shows that the
+ * table played for the seat) otherwise. Later moves in the same stretch are covered by the first
+ * (`gaps` holds the stretches this replay has judged). Where this device left of its own accord, or
+ * has no measure of the stretch, the move is noted and not judged.
  */
-export function judgeTableMove(j: MoveJudge, play: PlayRecord, n: number, end: SeenState | null, rules: RuleSet, anchors: ClockAnchor[], track: ClockTrack, gaps: Set<number>): 'ok' | 'early' | 'downEarly' | 'down' | 'unanchored' {
-  let a: SeenState | null = null;
-  let b: SeenState | null = null;
-  for (const f of play.seen) {
-    if (f.tc <= n) a = f;
-    else if (!b) b = f;
-  }
-  if (!b) b = end;
-  if (!b) return 'ok';
+function judgeFrom(j: MoveJudge, play: PlayRecord, n: number, rules: RuleSet, anchors: ClockAnchor[], track: ClockTrack, gaps: Set<number>, a: SeenState | null, b: SeenState, gap: boolean): 'ok' | 'early' | 'downEarly' | 'down' | 'unanchored' {
   // What the frame itself says can only add time: a host that re-armed the clock (a rejoin) knows more than this client.
   const claimed = !a || a.deadline === null ? Number.NEGATIVE_INFINITY : a.inBank ? a.deadline : a.deadline + a.timeBank * 1000;
-  if (a && a.epoch === b.epoch) {
+  if (a && a.epoch === b.epoch && !gap) {
     if (!a.owes) return 'ok';
     if (a.deadline === null || typeof b.now !== 'number') return 'early';
     const expiry = Math.max(track.bound.get(a) ?? Number.NEGATIVE_INFINITY, claimed);
@@ -87,6 +137,80 @@ export function judgeTableMove(j: MoveJudge, play: PlayRecord, n: number, end: S
   j.gapVerdicts.push({ at: startAt, ok: verdict === 'down' });
   if (j.gapVerdicts.length > 8) j.gapVerdicts.shift();
   return verdict;
+}
+
+/**
+ * Whether the table was entitled to the move the log has it making for this seat at turn `n`.
+ *
+ * First, whether this device was shown the move in good time. An honest host sends every turn's
+ * state to every seat it has a link to, so when the last frame before the move (`a`) and the first
+ * after it came over one link, `a` must be the state of turn `n` and show the seat owing the move:
+ * a state skipped on a link that stayed open was held back (`held`). Then the run of states that
+ * showed the seat the move since its previous move (`seatRun`) is judged by its first state, `r0`:
+ * - on a link that had already brought this device a state, `r0` must give the whole turn clock by
+ *   its own deadline and stamp (`armedLate`): `lateTurn` when not, unless the move was early anyway;
+ * - over a live link (`SeenState.live`), `r0` may not be more than `LATE_MS` later than the least
+ *   arrival offset of its scope allows (`lateRef`): `held` when it is, since the watch drops a link
+ *   long before an honest frame on it is that late;
+ * - later than that over a link that was not live, later than the fixed points of its scope allow
+ *   (`lateAnchor`, which a slow uplink can also cause), or first shown on a link that was not yet
+ *   working with less than a whole clock (less `LATE_MS`) to go before the table moved: the stamp
+ *   on `r0` is not believed to start the seat's clock, and the time before it is judged as time
+ *   without a link, from the last frame before the run that was not late. That gives `downLate`
+ *   (the table played for the seat, and it was shown its turn late) or `down`, or `downEarly` when a
+ *   whole clock cannot have run out since that frame.
+ * Otherwise the move is judged by the clock (`judgeFrom`).
+ */
+export function judgeTableMove(j: MoveJudge, play: PlayRecord, n: number, end: SeenState | null, rules: RuleSet, anchors: ClockAnchor[], track: ClockTrack, gaps: Set<number>, prevMove = -1, scope: LateScope | null = null): 'ok' | 'early' | 'downEarly' | 'down' | 'downLate' | 'unanchored' | 'held' | 'lateTurn' {
+  let a: SeenState | null = null;
+  let b: SeenState | null = null;
+  for (const f of play.seen) {
+    if (f.tc <= n) a = f;
+    else if (!b) b = f;
+  }
+  if (!b) b = end;
+  if (!b) return 'ok';
+  // Over one link the state the table moved from must have come, and shown this seat the move.
+  if (a && a.epoch === b.epoch && (a.tc !== n || !a.owes)) return 'held';
+  // `from`: where the time without a timely view of the table began (null: before the hand's first
+  // frame); undefined when the run's first state was believed.
+  let from: SeenState | null | undefined;
+  let byLate = false;
+  let armed = false;
+  if (a && a.owes) {
+    const { run, i0 } = seatRun(play, n, prevMove);
+    const r0 = run[0];
+    if (r0) {
+      armed = armedLate(r0, rules);
+      const lr = lateRef(r0);
+      // Over a link the watch was keeping, no honest frame is that late: the host held it.
+      if (r0.live && lr > LATE_MS) return 'held';
+      const late = lr > LATE_MS || lateAnchor(r0, anchors, scope) > LATE_MS;
+      const prev = i0 > 0 ? play.seen[i0 - 1] : null;
+      const whole = rules.turnSeconds * 1000 + ((prev ? track.bank.get(prev) : null) ?? rules.timeBankSeconds * 1000);
+      // Shown too late for its stamp to be believed, or first shown over a link that was not yet
+      // working with less than a whole clock (less LATE_MS) left: the time before it is judged as time
+      // without a link, from the last timely frame before it.
+      if (late || (r0.working === false && b.at - (r0.atLo ?? r0.at) < whole - LATE_MS)) {
+        byLate = late;
+        from = null;
+        for (let k = i0 - 1; k >= 0; k--) {
+          const f = play.seen[k];
+          if (lateRef(f) <= LATE_MS && lateAnchor(f, anchors, scope) <= LATE_MS) {
+            from = f;
+            break;
+          }
+        }
+      }
+    }
+  }
+  const v = judgeFrom(j, play, n, rules, anchors, track, gaps, a, b, false);
+  if (v === 'early' || v === 'downEarly') return v;
+  if (armed) return 'lateTurn';
+  if (from === undefined) return v;
+  if (from === null && !play.before) return byLate ? 'downLate' : 'down';
+  const g = judgeFrom(j, play, n, rules, anchors, track, gaps, from, b, true);
+  return g === 'downEarly' ? 'downEarly' : byLate ? 'downLate' : 'down';
 }
 
 /**

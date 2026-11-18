@@ -40,11 +40,12 @@ import {
   type TableView,
 } from '@mjm/engine';
 import { commitFor, deriveSeed, makeSecret, verifyReveals, type Commitment } from './fairness';
+import { randomHex } from './sha256';
 import type { Link } from './host';
 import { CLOCK_FRAME_MS, RESTART_CAUSES, type Audit, type ClientMessage, type HostMessage, type SeatInfo } from './messages';
 import { isFrame, type Transport, type Unsubscribe } from './transport';
-import { clientClock, foldClock, LINK_PAUSE_MS, ORDER_SLACK_MS, SILENT_ANSWER_MS, type TableClientOptions } from './clientclock';
-import { clockTrack, isBotSkill, judgeTableMove, legalFor, sameActionSafe, tableRule, type MoveJudge } from './clientmoves';
+import { clientClock, DRIFT_RATE, foldClock, LATE_MS, LINK_PAUSE_MS, ORDER_SLACK_MS, PAUSE_GRACE_MS, RAN_GAP_MS, SILENT_ANSWER_MS, type TableClientOptions } from './clientclock';
+import { armedLate, clockTrack, isBotSkill, judgeTableMove, lateAnchor, lateRef, legalFor, sameActionSafe, seatRun, tableRule, type LateScope, type MoveJudge } from './clientmoves';
 import {
   CHAINED_FIELDS,
   CLIENT_SNAPSHOT_VERSION,
@@ -71,7 +72,7 @@ import {
   type SerializedClient,
 } from './clientrecords';
 
-export { clientClock, SILENT_ANSWER_MS, type TableClientOptions } from './clientclock';
+export { clientClock, SILENT_ANSWER_MS, steadyClock, type TableClientOptions } from './clientclock';
 export { tableRule } from './clientmoves';
 export { CLIENT_SNAPSHOT_VERSION, type SerializedClient } from './clientrecords';
 
@@ -110,6 +111,7 @@ export const AUDIT_CAVEATS = {
   passedChow: 'The table passed up a Chow this seat could make while its connection was down',
   passedKong: 'The table passed up a Kong this seat could make while its connection was down',
   restartClock: 'The server restarted during this match and then played for this seat before this device could check its clock again',
+  lateShown: "This seat's turn reached this device late, or after its connection had been down for much of it, so this device cannot vouch that it saw all of that turn",
   skillUnknown: 'This device restored the match from a save that did not keep how strong the table said its bots are, so the moves the table made for bots and for seats out of time were not checked',
 } as const;
 
@@ -202,6 +204,7 @@ export const AUDIT_FAILURES = {
   passedUpWin: /^The table played for this seat and passed up its win \(turn (?<turn>[^)]*)\)$/,
   playedEarly: /^The table played for this seat while it was connected and its clock had not run out \(turn (?<turn>[^)]*)\)$/,
   heldFrame: /^The host held back its frames on a link that stayed open, then played for this seat \(turn (?<turn>[^)]*)\)$/,
+  lateTurn: /^The host showed this seat its turn late, on a link that stayed open \(turn (?<turn>[^)]*)\)$/,
   playedWhileDown: /^The table played for this seat while its connection was down, before its clock could have run out \(turn (?<turn>[^)]*)\)$/,
   bankTaken: /^The table took time from this seat's time bank while its connection was down \(turn (?<turn>[^)]*)\)$/,
   moveIgnored: /^The table ignored a move this seat sent in good time and played its own instead \(turn (?<turn>[^)]*)\)$/,
@@ -424,9 +427,38 @@ export class TableClient {
    * that says nothing leaves it at `CLOCK_FRAME_MS`: the bound is this client's, not the server's.
    */
   private clockMs = CLOCK_FRAME_MS;
-  /** When the link in use last brought a frame, and when this client then asked it for a `pong` (see `checkLink`). */
-  private heardAt: number | null = null;
+  /** When the watch asked the link in use for a `pong` because its stamps had fallen behind (see `checkLink`); null when it has not. */
   private probedAt: number | null = null;
+  /**
+   * The least arrival offset (`at - now`: this device's clock when a stamped frame arrived, less the
+   * host's stamp on it) seen in this clock era and run of this device's clock (`clientClock`'s
+   * `segment`), and when it was seen. It is how far ahead of the host's clock this device's is, plus
+   * the shortest one-way delay seen; the watch and the audit measure the frames after it against it.
+   */
+  private lagRef: { lag: number; at: number; era: number; seg: number } | null = null;
+  /** The highest stamp received in that scope: the watch measures how far it trails this device's clock (see `checkLink`). */
+  private stampHigh: number | null = null;
+  /** With no `lagRef` to measure against (a new clock era, or this device's clock just followed a sleep), when the watch began to wait. */
+  private waitFrom: number | null = null;
+  /** This run of the app (a restored client is a new run, its clock read from the wall anew): fixed points are compared only within one. */
+  private readonly runId = randomHex(4);
+  /** The strongest fixed point of the hands audited in this era, run of the app and run of this device's clock (see `lateAnchor`). */
+  private bestAnchor: LateScope['best'] = null;
+  /** When this app last ran: it handled a frame, checked the link, bound a link or sent a move. */
+  private ranAt: number | null = null;
+  /** The last stretch of more than `RAN_GAP_MS` in which this app did not run (the phone slept, or the app was in the background). */
+  private pause: { from: number; to: number } | null = null;
+  /** After the watch finds that this app was not running, it neither probes nor calls the link silent before this. */
+  private graceUntil = Number.NEGATIVE_INFINITY;
+  /** When the link in use was bound: nothing on it arrived earlier. */
+  private boundAt = Number.NEGATIVE_INFINITY;
+  /** The earliest the frame being handled can have arrived: earlier than now only just after a pause, when it may have waited in the device. */
+  private frameAtLo: number | null = null;
+  /** The link epoch that has brought a stamp that was not late against `lagRef` (-1: none yet). A client's first link counts from the start. */
+  private workingEpoch = -1;
+  private firstLink = true;
+  /** The link in use has brought a stamped frame: the watch measures it from then (a link that brings nothing is the heartbeat's to drop). */
+  private linkStamped = false;
   /** When `checkLink` last ran. */
   private checkedAt: number | null = null;
   /** The latest stamp on a frame of the link in use (its epoch and the host's clock era). */
@@ -651,16 +683,27 @@ export class TableClient {
 
   private bind(link: Link): void {
     this.link = link;
-    this.heardAt = null;
     this.probedAt = null;
+    // A client's first link follows no drop. A later one does not count as working (its frames
+    // as timely) until it brings a stamp that is not late against the clock relation seen so far,
+    // and the watch measures it from its first stamped frame (see `checkLink`).
+    this.workingEpoch = this.firstLink ? this.epoch : -1;
+    this.firstLink = false;
+    this.waitFrom = null;
+    this.linkStamped = false;
+    // Binding a link is this app running, and nothing on the link can have arrived before it.
+    this.boundAt = this.now();
+    this.ran(this.boundAt);
     this.unsubMessage = link.onMessage((m) => {
-      // Not a frame at all (not an object with a type): dropped before anything reads it, and it does
-      // not count as hearing from the table.
+      // Not a frame at all (not an object with a type): dropped before anything reads it.
       if (!isFrame(m)) return;
-      // The first frame on a link starts the silent-link watch; from then on only a frame whose
-      // stamp moves the link's clock on counts (see `noteOrder`): chat, emotes or stale stamps a
-      // server sends while it holds the table's frames back do not keep the link alive.
-      if (this.heardAt === null) this.heardAt = this.now();
+      // Any frame shows this app running; only stamps feed the watch (see `noteStamp`), so chat,
+      // emotes and stamps that crawl or stand still do not keep the link alive. A frame handled
+      // just after the app did not run may have waited in the device through the pause, though
+      // never from before its link was bound.
+      const t = this.now();
+      this.ran(t);
+      this.frameAtLo = this.afterPause(t) ? Math.max(this.pause!.from, this.boundAt) : t;
       try {
         this.onMessage(m);
       } catch (e) {
@@ -720,7 +763,9 @@ export class TableClient {
     const tc = v && isInt(v.turnCounter) ? v.turnCounter : undefined;
     if (v && tc !== undefined) {
       const play = this.playFor(v.handNumber);
-      play.sent.push({ tc, action, epoch: this.epoch, at: this.now() });
+      const at = this.now();
+      this.ran(at);
+      play.sent.push({ tc, action, epoch: this.epoch, at, run: this.runId, seg: this.seg() });
       if (play.sent.length > MAX_SENT) play.sent.splice(0, play.sent.length - MAX_SENT);
     }
     this.send({ t: 'action', seat: this.state.seat, action, expectHash: this.state.stateHash ?? undefined, turnCounter: tc });
@@ -744,38 +789,136 @@ export class TableClient {
 
   /**
    * Call about once a second while the link is up (the online session does). While a hand is played,
-   * an honest host never leaves this seat without a frame for longer than the protocol's clock-frame
-   * period (`CLOCK_FRAME_MS`, 3 s), whatever its `welcome` says: a host that sends no clock frames, or
-   * announces a longer period, is held to it all the same, and its silence counts as a drop. After
-   * `2 × CLOCK_FRAME_MS + 2 s` without a frame whose stamp moves the link's clock on (a chat line
-   * or a stale stamp does not count) this client asks for a `pong`; a host that
-   * answers at once, while it holds back what it sent before, is caught by the order of the stamps
-   * (`noteOrder`). When `SILENT_ANSWER_MS` more pass without a frame, the answer is 'silent': the
-   * link brings nothing although it may still look open, and the session drops it so that the
-   * time without a link is judged as a drop (the table may move for the seat in it only when its
-   * clock could have run out). A host can thus hold everything back, unseen, for at most that long.
-   * A gap between calls longer than `LINK_PAUSE_MS` means this app was not running (the phone
-   * slept, or the app was in the background): the wait starts again, and the link is not blamed;
-   * so does the first call.
+   * an honest host never leaves this seat without a stamped frame for longer than the protocol's
+   * clock-frame period (`CLOCK_FRAME_MS`, 3 s), whatever its `welcome` says: a host that sends no
+   * clock frames, or announces a longer period, is held to it all the same.
+   *
+   * The watch does not count frames: it measures how far the host's stamps have fallen behind this
+   * device's clock. `lagRef` is the least arrival offset (arrival less stamp) seen in this clock era
+   * and run of this device's clock, so a frame the host stamped `s` and sent at once has arrived by
+   * `s + lagRef`; at `now` the stamps are `now - (stampHigh + lagRef)` behind, the deficit (with
+   * `DRIFT_RATE` allowed for since `lagRef` was seen). Stamps that crawl a millisecond at a time, or
+   * run slow, leave the deficit growing whatever frames keep arriving, and so does a link that brings
+   * nothing; a frame the host delays under an honest stamp does not shrink it. When the deficit
+   * reaches `2 × CLOCK_FRAME_MS + 2 s` this client asks for a `pong` (which counts only through its
+   * stamp); when the ping has been out `SILENT_ANSWER_MS` and the deficit has reached
+   * `2 × CLOCK_FRAME_MS + 2 s + SILENT_ANSWER_MS`, the answer is 'silent'. The session then drops the
+   * link, and the time without one is judged as a drop: the table may move for the seat in it only
+   * when its clock could have run out. A host that answers at once, while it holds back what it sent
+   * before, is caught by the order of the stamps (`noteOrder`) or by the audit of the turn's state
+   * (`judgeTableMove`).
+   *
+   * While this scope has no `lagRef` yet (a new clock era, or this device's clock has just followed a
+   * sleep), the deficit is the time since the watch began to wait. A new link is watched from its
+   * first stamped frame; until then it is the heartbeat's to drop. A gap between calls longer than
+   * `LINK_PAUSE_MS` means this app was not running (the phone slept, or the app was in the
+   * background): for `2 × CLOCK_FRAME_MS + 2 s` after it the link is not blamed, so that frames that
+   * waited in the device are handled first; the first call starts the same way.
    */
   checkLink(): 'ok' | 'silent' {
     const now = this.now();
+    this.ran(now);
     // The first call, or the first after a pause: the wait starts now.
     const paused = this.checkedAt === null || now - this.checkedAt > LINK_PAUSE_MS;
     this.checkedAt = now;
-    const st = this.state;
-    const playing = st.connected && !st.disconnected && !st.kicked && !st.matchOver && st.seat !== null && st.view !== null && st.lastResult === null && st.ceremony === 'idle';
-    if (!playing || this.heardAt === null) return 'ok';
-    if (paused) {
-      this.heardAt = now;
+    if (!this.playing()) {
       this.probedAt = null;
       return 'ok';
     }
-    if (this.probedAt === null && now - this.heardAt >= 2 * this.clockMs + 2_000) {
+    const probeAt = 2 * this.clockMs + 2_000;
+    if (paused) {
+      this.graceUntil = now + probeAt;
+      this.probedAt = null;
+      return 'ok';
+    }
+    if (now < this.graceUntil) return 'ok';
+    // A new link is watched from its first stamped frame (a link that brings nothing is the heartbeat's to drop).
+    if (!this.linkStamped) {
+      this.probedAt = null;
+      return 'ok';
+    }
+    const ref = this.refAt(now);
+    let deficit: number;
+    if (this.stampHigh !== null && ref !== null) {
+      deficit = now - (this.stampHigh + ref);
+      this.waitFrom = null;
+    } else {
+      // No reference in this scope yet (a new clock era, or this device's clock just jumped): waited for from the first check.
+      if (this.waitFrom === null) this.waitFrom = now;
+      deficit = now - this.waitFrom;
+    }
+    if (deficit < probeAt) {
+      this.probedAt = null;
+      return 'ok';
+    }
+    if (this.probedAt === null) {
       this.probedAt = now;
       this.ping();
     }
-    return this.probedAt !== null && now - this.probedAt >= SILENT_ANSWER_MS ? 'silent' : 'ok';
+    return now - this.probedAt >= SILENT_ANSWER_MS && deficit >= probeAt + SILENT_ANSWER_MS ? 'silent' : 'ok';
+  }
+
+  /** This app ran at `t` (a frame, a check, a new link, a move): a gap of more than `RAN_GAP_MS` since it last ran was a pause. */
+  private ran(t: number): void {
+    if (this.ranAt !== null && t - this.ranAt > RAN_GAP_MS) this.pause = { from: this.ranAt, to: t };
+    this.ranAt = t;
+  }
+
+  /** `t` falls within `PAUSE_GRACE_MS` after a pause: a frame handled then may have waited in the device through it. */
+  private afterPause(t: number): boolean {
+    return this.pause !== null && t - this.pause.to <= PAUSE_GRACE_MS;
+  }
+
+  /** A hand is being played at this seat over a link that is up. */
+  private playing(): boolean {
+    const st = this.state;
+    return st.connected && !st.disconnected && !st.kicked && !st.matchOver && st.seat !== null && st.view !== null && st.lastResult === null && st.ceremony === 'idle';
+  }
+
+  /** The run of this device's clock (see `clientClock`): it moves on when the clock follows the wall across a sleep. */
+  private seg(): number {
+    return (this.now as unknown as { segment?: number }).segment ?? 0;
+  }
+
+  /** The least arrival offset of this clock era and run of this device's clock at `t`, allowing for drift since it was seen (null: none yet). */
+  private refAt(t: number): number | null {
+    const r = this.lagRef;
+    if (!r || r.era !== this.era || r.seg !== this.seg()) return null;
+    return r.lag + DRIFT_RATE * Math.max(0, t - r.at);
+  }
+
+  /**
+   * Note the stamp `now` of a frame (a state, a hand's end, a clock frame or a pong): what it says of
+   * the host's clock against this device's. A frame that arrived with the least offset yet seen in
+   * its scope becomes the reference (`lagRef`), and the highest stamp feeds the watch (`checkLink`).
+   * Returns when the frame arrived, the earliest it can have arrived (`atLo`), the reference before
+   * it (`ref`, null while the scope has none), whether its link was working (it had brought a stamp
+   * not more than `LATE_MS` late against the reference) and whether it was live: working, while a
+   * hand is played, with the watch checking it within the last `RAN_GAP_MS`, not just after a pause
+   * and not in the watch's grace after one. No honest frame on a live link is more than `LATE_MS`
+   * late: the watch drops a link before its stamps fall that far behind.
+   */
+  private noteStamp(now: unknown): { at: number; atLo: number; ref: number | null; live: boolean; working: boolean; seg: number } | null {
+    if (typeof now !== 'number' || !Number.isFinite(now)) return null;
+    const at = this.now();
+    const seg = this.seg();
+    if (!this.lagRef || this.lagRef.era !== this.era || this.lagRef.seg !== seg) {
+      if (this.lagRef) this.waitFrom = null;
+      this.lagRef = null;
+      this.stampHigh = null;
+    }
+    const atLo = Math.min(at, this.frameAtLo ?? at);
+    const ref = this.refAt(atLo);
+    const working = this.workingEpoch === this.epoch;
+    const live = working && this.playing() && this.checkedAt !== null && at - this.checkedAt <= RAN_GAP_MS && !this.afterPause(at) && at >= this.graceUntil;
+    const excess = ref === null ? 0 : atLo - now - ref;
+    const lag = at - now;
+    const cur = this.refAt(at);
+    if (cur === null || lag <= cur) this.lagRef = { lag, at, era: this.era, seg };
+    if (this.stampHigh === null || now > this.stampHigh) this.stampHigh = now;
+    this.linkStamped = true;
+    if (excess <= LATE_MS) this.workingEpoch = this.epoch;
+    return { at, atLo, ref, live, working, seg };
   }
 
   leave(): void {
@@ -1233,6 +1376,8 @@ export class TableClient {
             attempt.revealed = true;
             attempt.revealedAt = this.now();
             attempt.revealedEpoch = this.epoch;
+            attempt.revealedRun = this.runId;
+            attempt.revealedSeg = this.seg();
           }
         }
         this.send({ t: 'reveal', secret: this.secret });
@@ -1262,8 +1407,19 @@ export class TableClient {
         }
         const rec = this.recordFor(h);
         if (rec) rec.dealt = true;
+        const stamped = this.noteStamp(m.now);
         this.noteOrder(m.now, h, v.turnCounter);
-        this.noteState(v, m);
+        // An honest host sends every turn's state to every seat it has a link to, so a link that
+        // stayed up brings every turn: one skipped on it was held back. The first state of a hand
+        // is its deal, on a link that was up before the deal (it brought an earlier hand, or this
+        // device revealed its share for this hand over it).
+        const shownHere = this.linkShown && this.linkShown.epoch === this.epoch ? this.linkShown : null;
+        const revealedHere = !!this.recordFor(h)?.attempts.some((x) => x.revealed && x.revealedEpoch === this.epoch);
+        if (isInt(v.turnCounter)) {
+          if (shownHere && shownHere.hand === h && v.turnCounter > shownHere.tc + 1) this.noteHeld(h, shownHere.tc + 1);
+          else if (v.turnCounter > 0 && ((shownHere && shownHere.hand !== h) || (!shownHere && revealedHere))) this.noteHeld(h, 0);
+        }
+        this.noteState(v, m, stamped, shownHere !== null || revealedHere);
         if (isInt(v.turnCounter)) this.linkShown = { epoch: this.epoch, hand: h, tc: v.turnCounter };
         this.viewEpoch = this.epoch;
         this.update({ view: v, stateHash: m.hash, deadline: m.deadline, timeBank: m.timeBank, inTimeBank: m.inTimeBank, lastResult: null, lastError: null, ceremony: 'idle', intermissionDeadline: null });
@@ -1275,6 +1431,7 @@ export class TableClient {
           return;
         }
         const h = m.audit.handNumber;
+        const stampedEnd = this.noteStamp(m.now);
         this.noteOrder(m.now, null, null);
         if (this.handsEnded.has(h)) {
           // A returning seat is sent the result again. Whatever this frame carries, the result, view
@@ -1306,9 +1463,19 @@ export class TableClient {
         this.handsEnded.add(h);
         if (this.openHand === h) this.openHand = null;
         this.atStart = false;
-        const end: SeenState = { tc: Number.POSITIVE_INFINITY, epoch: this.epoch, era: this.era, at: this.now(), now: typeof m.now === 'number' ? m.now : undefined, owes: false, deadline: null, timeBank: 0, inBank: false, hash: '' };
+        const end: SeenState = { tc: Number.POSITIVE_INFINITY, epoch: this.epoch, era: this.era, at: this.now(), now: typeof m.now === 'number' ? m.now : undefined, owes: false, deadline: null, timeBank: 0, inBank: false, hash: '', ...(stampedEnd ? { atLo: stampedEnd.atLo, ref: stampedEnd.ref, live: stampedEnd.live, seg: stampedEnd.seg } : {}) };
         const { check, replayed, anchors, passed } = this.runAudit(m.audit, m.view, m.result, end);
         this.clockBase = foldClock(this.clockBase, this.era, this.plays.find((p) => p.hand === h) ?? null, end, anchors);
+        // The strongest fixed point of this era, run of the app and run of this device's clock, for the hands after this one.
+        {
+          const seg = this.seg();
+          if (this.bestAnchor && (this.bestAnchor.era !== this.era || this.bestAnchor.seg !== seg)) this.bestAnchor = null;
+          for (const k of anchors) {
+            if (k.era !== this.era || k.run !== this.runId || (k.seg ?? 0) !== seg) continue;
+            const value = k.at - k.now;
+            if (!this.bestAnchor || value > this.bestAnchor.value) this.bestAnchor = { era: this.era, run: this.runId, seg, value, at: k.at };
+          }
+        }
         if (typeof end.now === 'number') this.lastStamp = { at: end.at, now: end.now, epoch: this.epoch, era: this.era };
         const { status, failures, caveats } = check;
         // The next hand must start where this one, as replayed, left the match.
@@ -1366,11 +1533,13 @@ export class TableClient {
         this.update({ lastError: typeof m.message === 'string' ? m.message : 'The table reported an error.', lastErrorCode: typeof m.code === 'string' ? m.code : null });
         return;
       case 'pong':
+        this.noteStamp(m.now);
         this.noteOrder(m.now, null, null);
         if (typeof m.at === 'number') this.update({ rttMs: this.now() - m.at });
         return;
       case 'clock': {
         if (!isInt(m.hand) || !isInt(m.tc)) return;
+        this.noteStamp(m.now);
         this.noteOrder(m.now, m.hand, m.tc);
         // A turn this link was never shown the state of: the host sent that state and held it back.
         const shown = this.linkShown;
@@ -1386,17 +1555,16 @@ export class TableClient {
    * One WebSocket is one ordered stream, and an honest host's stamps never go back (`TableHost.stamp`),
    * so its frames arrive in the order of their stamps. A frame of hand `hand` at turn `tc` that
    * arrives after one stamped later than it (beyond `ORDER_SLACK_MS`) was held back by the host.
+   * This only keeps the order: it does not feed the link watch, which measures the stamps against
+   * this device's clock instead (`noteStamp`, `checkLink`), so a stamp that moves on by a
+   * millisecond does not count as hearing from the table.
    */
   private noteOrder(now: unknown, hand: number | null, tc: number | null): void {
     if (typeof now !== 'number' || !Number.isFinite(now)) return;
     const last = this.linkStamp;
     const same = last !== null && last.epoch === this.epoch && last.era === this.era;
     if (same && now < last.now - ORDER_SLACK_MS && hand !== null && tc !== null && isInt(tc)) this.noteHeld(hand, tc);
-    if (!same || now > last.now) {
-      this.linkStamp = { epoch: this.epoch, era: this.era, now };
-      this.heardAt = this.now();
-      this.probedAt = null;
-    }
+    if (!same || now > last.now) this.linkStamp = { epoch: this.epoch, era: this.era, now };
   }
 
   /** The host held back the state of turn `tc` of hand `hand` (or of an earlier turn already noted). */
@@ -1407,7 +1575,7 @@ export class TableClient {
   }
 
   /** Record a state frame of the hand being played: its hash, timing and whether we owed a move. */
-  private noteState(v: TableView, m: Extract<HostMessage, { t: 'state' }>): void {
+  private noteState(v: TableView, m: Extract<HostMessage, { t: 'state' }>, stamped: { at: number; atLo: number; ref: number | null; live: boolean; working: boolean; seg: number } | null = null, onLink = false): void {
     if (!isInt(v.turnCounter) || typeof m.hash !== 'string') return;
     const play = this.playFor(v.handNumber);
     const prior = play.seen.find((s) => s.tc === v.turnCounter);
@@ -1433,6 +1601,9 @@ export class TableClient {
       era: this.era,
       at,
       now: typeof m.now === 'number' ? m.now : undefined,
+      ...(stamped ? { atLo: stamped.atLo, ref: stamped.ref, live: stamped.live, working: stamped.working, seg: stamped.seg } : {}),
+      run: this.runId,
+      onLink,
       owes,
       deadline: typeof m.deadline === 'number' ? m.deadline : null,
       timeBank: typeof m.timeBank === 'number' ? m.timeBank : 0,
@@ -1602,6 +1773,7 @@ export class TableClient {
     if (isInt(audit.ceremonyAttempts) && audit.ceremonyAttempts > 1) caveats.push(AUDIT_CAVEATS.restarted);
     if (notes.tableMoved) caveats.push(AUDIT_CAVEATS.tableMoved);
     caveats.push(...passedCaveats(notes));
+    if (notes.lateShown) caveats.push(AUDIT_CAVEATS.lateShown);
     if (notes.skillUnknown) caveats.push(AUDIT_CAVEATS.skillUnknown);
     const status: AuditStatus = failures.length > 0 ? 'failed' : 'partial';
     this.handsEnded.add(h);
@@ -1712,7 +1884,7 @@ export class TableClient {
     const firstFrame = this.plays.find((p) => p.hand === h)?.seen[0];
     const mySecret = revealsOk ? audit.reveals.find((r) => r.seat === me)?.secret : undefined;
     if (tookPart && !stoodIn && this.secret && mySecret === this.secret && lastAttempt?.revealed && typeof lastAttempt.revealedAt === 'number' && firstFrame && typeof firstFrame.now === 'number' && firstFrame.epoch === lastAttempt.revealedEpoch && firstFrame.at >= lastAttempt.revealedAt) {
-      anchors.push({ at: lastAttempt.revealedAt, now: firstFrame.now, era: firstFrame.era ?? 0 });
+      anchors.push({ at: lastAttempt.revealedAt, now: firstFrame.now, era: firstFrame.era ?? 0, run: lastAttempt.revealedRun, seg: lastAttempt.revealedSeg });
     }
     try {
       replayed = this.replayChecked(start, audit.seed, rules, audit.log, h, end, failures, anchors, notes);
@@ -1742,6 +1914,7 @@ export class TableClient {
     if (notes.tableMoved) caveats.push(AUDIT_CAVEATS.tableMoved);
     caveats.push(...passedCaveats(notes));
     if (notes.restartClock) caveats.push(AUDIT_CAVEATS.restartClock);
+    if (notes.lateShown) caveats.push(AUDIT_CAVEATS.lateShown);
     if (notes.skillUnknown) caveats.push(AUDIT_CAVEATS.skillUnknown);
     // An app restart around the deal: this device cannot say it watched all of it, whatever its record now shows.
     // (A seat that joined mid-hand has already said it took no part in the deal.)
@@ -1844,9 +2017,19 @@ export class TableClient {
     let s = dealFromSnapshot(start, seed, rules);
     checkHash(s);
     checkRefusals(s);
+    /** The turn of this seat's last move in the log so far (-1: none), and, for each table move, the one before it. */
+    let lastMine = -1;
+    const prevOf = new Map<number, number>();
+    const scope = this.lateScope();
+    const track0 = play ? clockTrack(this.clockBase, this.recordFor(play.hand), play, rules, anchors) : null;
     for (const entry of log) {
       if (play && me !== null && isObject(entry) && entry.seat === me) {
         const n = entry.n;
+        const prevMine = lastMine;
+        if (isInt(n)) {
+          prevOf.set(n, lastMine);
+          lastMine = n;
+        }
         const source = byTable(entry) ? 'auto' : 'player';
         if (source === 'player') {
           if (play.ledgerFrom !== null && isInt(n) && n >= play.ledgerFrom) {
@@ -1856,9 +2039,24 @@ export class TableClient {
             const match = sent.filter((x) => !x.used && x.tc <= n && sameActionSafe(x.action, entry.action, s, me)).sort((a, b) => Number(!!a.rejected) - Number(!!b.rejected) || b.tc - a.tc)[0];
             if (match) {
               match.used = true;
+              {
+                // The turn this move answered: shown late on a link that stayed up, or by a state that
+                // did not start a whole turn clock, fails; shown late otherwise is noted.
+                const { run, i0 } = isInt(n) ? seatRun(play, n, prevMine) : { run: [] as SeenState[], i0: -1 };
+                const r0 = run[0];
+                if (r0) {
+                  const before = i0 > 0 ? play.seen[i0 - 1] : null;
+                  const tracked = (before ? track0?.bank.get(before) : null) ?? rules.timeBankSeconds * 1000;
+                  // A run first shown on a new link: the host's own word for the bank it had at the turn's start counts if lower (it was spent while the link was down).
+                  const whole = rules.turnSeconds * 1000 + Math.min(tracked, r0.timeBank * 1000);
+                  const left = r0.deadline === null || typeof r0.now !== 'number' ? Number.POSITIVE_INFINITY : (r0.inBank ? r0.deadline : r0.deadline + r0.timeBank * 1000) - r0.now;
+                  if (armedLate(r0, rules) || (r0.live && lateRef(r0) > LATE_MS)) problems.add(`The host showed this seat its turn late, on a link that stayed open (turn ${n})`);
+                  else if (notes && (lateRef(r0) > LATE_MS || lateAnchor(r0, anchors, scope) > LATE_MS || (!r0.onLink && left < whole - LATE_MS))) notes.lateShown = true;
+                }
+              }
               // The host cannot have played this move before this device sent it: a fixed point between the two clocks.
               const f = frameAfter(n);
-              if (f && typeof match.at === 'number' && typeof f.now === 'number' && f.epoch === match.epoch && f.at >= match.at) anchors.push({ at: match.at, now: f.now, era: f.era ?? 0 });
+              if (f && typeof match.at === 'number' && typeof f.now === 'number' && f.epoch === match.epoch && f.at >= match.at) anchors.push({ at: match.at, now: f.now, era: f.era ?? 0, run: match.run, seg: match.seg });
             } else if (sent.some((x) => !x.used && !x.rejected && x.tc <= n)) problems.add(`The log changed a move this seat made (turn ${n})`);
             else problems.add(`The log shows a move this seat never made (turn ${n})`);
           }
@@ -1915,11 +2113,14 @@ export class TableClient {
         problems.add(`The host held back its frames on a link that stayed open, then played for this seat (turn ${n})`);
         continue;
       }
-      const verdict = judgeTableMove(this.moveJudge(), play, n, end, rules, anchors, track, gaps);
-      if (verdict === 'early') problems.add(`The table played for this seat while it was connected and its clock had not run out (turn ${n})`);
+      const verdict = judgeTableMove(this.moveJudge(), play, n, end, rules, anchors, track, gaps, prevOf.get(n) ?? -1, scope);
+      if (verdict === 'held') problems.add(`The host held back its frames on a link that stayed open, then played for this seat (turn ${n})`);
+      else if (verdict === 'lateTurn') problems.add(`The host showed this seat its turn late, on a link that stayed open (turn ${n})`);
+      else if (verdict === 'early') problems.add(`The table played for this seat while it was connected and its clock had not run out (turn ${n})`);
       else if (verdict === 'downEarly') problems.add(`The table played for this seat while its connection was down, before its clock could have run out (turn ${n})`);
-      else if (verdict === 'down' && notes) {
+      else if ((verdict === 'down' || verdict === 'downLate') && notes) {
         notes.tableMoved = true;
+        if (verdict === 'downLate') notes.lateShown = true;
         const claim = claimAt.get(n);
         if (claim) (notes.passedClaims ??= []).push({ turn: n, claim });
       }
@@ -1929,6 +2130,11 @@ export class TableClient {
     failures.push(...problems);
     if (unchecked && notes) notes.skillUnknown = true;
     return s;
+  }
+
+  /** The run of the app and the strongest fixed point kept in it (see `lateAnchor`). */
+  private lateScope(): LateScope {
+    return { run: this.runId, best: this.bestAnchor };
   }
 
   /** What the table-move checks (`judgeTableMove`) read of this client's clock record, and keep. */
@@ -2017,6 +2223,7 @@ export class TableClient {
 interface ReplayNotes {
   tableMoved: boolean;
   restartClock?: boolean;
+  lateShown?: boolean;
   skillUnknown?: boolean;
   /** Claims the table passed for this seat while its link was down, in turn order. */
   passedClaims?: Array<{ turn: number; claim: PassedClaim }>;

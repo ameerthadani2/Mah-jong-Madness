@@ -3,7 +3,7 @@
  * can be unit-tested. Rooms are identified by short codes players can read out
  * loud (PokerBros-style club/table codes).
  */
-import { emotePackOf, isQuickChatId, isTableEmoteId, TableHost, type HostEvent, type SeatInfo, type SerializedHost, type Transport, type Unsubscribe } from '@mjm/net';
+import { emotePackOf, isQuickChatId, isTableEmoteId, steadyClock, TableHost, type HostEvent, type SeatInfo, type SerializedHost, type Transport, type Unsubscribe } from '@mjm/net';
 import { BOT_SKILLS, randomHex, sanitizeRules, type BotSkill, type RuleSet } from '@mjm/engine';
 import { uniqueCode, type HexSource } from './codes';
 import { LIMITS } from './config';
@@ -156,6 +156,12 @@ export interface RoomRegistryOptions {
   maxHostedTables?: number;
   /** Maximum number of unfinished tables one account may have opened (default `DEFAULT_MAX_TABLES_PER_USER`). */
   maxTablesPerUser?: number;
+  /**
+   * The clock (ms) for the registry's own timers and limits, and, when given, for the tables it
+   * hosts. Without it a hosted table keeps time by `steadyClock()`: the wall time when the table
+   * opened, moved on by the monotonic clock, so a server clock set back or forward moves none of its
+   * stamps or deadlines.
+   */
   now?: () => number;
   /** Secure random source for room codes and peer ids. Injected in tests. */
   randomHex?: HexSource;
@@ -478,7 +484,7 @@ export class RoomRegistry {
       rules: sanitizeRules(rules),
       botDelayMs: this.opts.botDelayMs ?? 600,
       botSkill: isBotSkill(botSkill) ? botSkill : undefined,
-      now: this.opts.now,
+      now: this.opts.now ?? steadyClock(),
       restore,
       isController: this.controllersOf(room),
       // The user id in a table join is the account the socket's session proved (`bindUser`), never the client's claim: an account may take its own seat back without the rejoin token.
