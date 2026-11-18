@@ -564,6 +564,82 @@ describe('clock: a delay present from the start', () => {
       }
     }));
 
+  it('seat 0 or 1, idle or making its own moves, 25 s from the start through the server’s own relay, which drops the link before the deal reaches the phone and asks for the share again on the next link, half a second before the deal arrives there: amber in both hands, and the second hand’s late turns are counted (the share’s fixed point stays where it first went out, on any link)', () =>
+    scenario((i) => {
+      for (const seat of [0, 1]) for (const think of [Infinity, 1_200]) {
+        const Q: Array<{ at: number; m: HostMessage }> = [];
+        let dealt: number | null = null;
+        let dropped = false;
+        let asked = false;
+        const w = wire({
+          code: `DN${seat}${think}${i}`,
+          seat,
+          rules: withRules({ handsPerMatch: 2, turnSeconds: 15, timeBankSeconds: 30 }),
+          think: () => think,
+          // The relay: every frame is held 25 s, and goes out on whatever link is up then (a lost link's frames too).
+          map: (m, w) => {
+            if (m.t === 'state' && dealt === null) dealt = w.clock.now;
+            Q.push({ at: Math.max(w.clock.now + 25_000, Q.length ? Q[Q.length - 1].at : 0), m });
+            return null;
+          },
+          onTick: (w) => {
+            // The server waits for the phone's commitment and share, which it asked for 25 s late.
+            const vs = w.host.seats[seat];
+            if (((w.host.phase === 'commit' && !vs.commit) || (w.host.phase === 'reveal' && !vs.secret)) && w.host.deadline !== null) w.host.deadline = Math.max(w.host.deadline, w.clock.now + 5_000);
+            if (!dropped && dealt !== null && w.clock.now >= dealt + 2_000) {
+              dropped = true;
+              w.dropNow(1_000);
+              return;
+            }
+            if (w.pendingReconnectAt !== null) return;
+            const next = Q.find((e) => e.m.t === 'state');
+            if (dropped && !asked && next?.m.t === 'state' && next.m.view.handNumber === 0 && w.clock.now >= next.at - 500) {
+              asked = true;
+              w.line.inject({ t: 'reveal_request', handNumber: 0 });
+            }
+            while (Q.length && Q[0].at <= w.clock.now) w.line.inject(Q.shift()!.m);
+          },
+        });
+        for (let e = 0; e < 1_200_000 && w.c.state.audits.length < 2 && !w.c.state.matchOver; e += 500) w.step();
+        need(asked && w.c.state.audits.length >= 2);
+        for (const a of w.c.state.audits) expect(a.status).toBe('partial');
+        const second = w.c.state.turnsShownLate.find((r) => r.hand === 1);
+        expect(second?.late.length ?? 0).toBeGreaterThan(0);
+      }
+    }));
+
+  it('an honest host that seats the phone again on a new link while the phone’s share is still on its way over the old one, and so asks for the share again and deals there: the hand is amber for the lost link only, as before, and the next hand green', () =>
+    scenario((i) => {
+      for (const seat of [0, 1]) {
+        let lost = false;
+        let asks = 0;
+        const w = wire({
+          code: `DL${seat}${i}`,
+          seat,
+          rules: withRules({ handsPerMatch: 2, turnSeconds: 15, timeBankSeconds: 30 }),
+          think: (k) => (k % 3 === 0 ? Infinity : 800),
+          up: () => 1_000,
+          map: (m) => {
+            if (m.t === 'reveal_request' && m.handNumber === 0) asks++;
+            return m;
+          },
+          onTick: (w) => {
+            // The phone joins again on a new link before the server has noticed the old one is gone: the share
+            // sent over the old one never arrives, and the host asks for it again on the new one.
+            const sent = w.c.serialize().records.some((r) => r.hand === 0 && r.attempts.some((a) => a.revealed));
+            if (!lost && w.host.phase === 'reveal' && !w.host.seats[seat].secret && sent) {
+              lost = true;
+              w.reconnect();
+            }
+          },
+        });
+        for (let e = 0; e < 1_200_000 && w.c.state.audits.length < 2 && !w.c.state.matchOver; e += 500) w.step();
+        need(lost && asks >= 2 && w.c.state.audits.length >= 2);
+        expect(w.c.state.audits.map((a) => a.status)).toEqual(['partial', 'ok']);
+        expect(w.c.state.audits[0].caveats.map(caveatKey)).toEqual(['linkLost']);
+      }
+    }));
+
   it('an honest round trip, 4 s each way from before the deal at seat 2, and a deal stamped 15 s back with a 15 s delay at seat 1: green', () =>
     scenario((i) => {
       const slow = wire({ code: `DH${i}`, seat: 2, think: (k) => (k % 3 === 0 ? Infinity : 800), up: () => 4_000, delay: () => 4_000 });

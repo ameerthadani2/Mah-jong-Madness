@@ -1530,9 +1530,10 @@ export class TableClient {
           return;
         }
         if (attempt) {
-          // The deal can follow the first time the share went out over this link: asked again on it, this
-          // device sends the share again but keeps that time (an honest host asks again only on a new link).
-          if (!(attempt.revealed && attempt.revealedEpoch === this.epoch && typeof attempt.revealedAt === 'number')) {
+          // The host may hold the share from the first time it went out, and deal from it whenever it likes:
+          // asked again, on this link or a new one, this device sends the share again but keeps that first
+          // time. A deal that then comes on another link has no fixed point from the share, which is sound.
+          if (!(attempt.revealed && typeof attempt.revealedAt === 'number')) {
             attempt.revealedAt = this.now();
             attempt.revealedEpoch = this.epoch;
             attempt.revealedRun = this.runId;
