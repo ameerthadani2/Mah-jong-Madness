@@ -8,19 +8,15 @@
  * (`assess7/engine_c/conn.ts`); the rest were added when the generator was changed, to see whether
  * redrawing against the first five only moved the answers to where another simple rule finds them.
  */
-import { countsFromKinds, shanten } from "../../src/index";
+import { countsFromKinds, shanten } from '../../src/index';
 
 export type Hand = readonly number[];
 export type DiscardRule = (hand: Hand) => number;
 
 const counts = (hand: Hand): number[] => countsFromKinds(hand);
-const kindsOf = (hand: Hand): number[] =>
-  [...new Set(hand)].sort((a, b) => a - b);
+const kindsOf = (hand: Hand): number[] => [...new Set(hand)].sort((a, b) => a - b);
 /** Honours first, then the outermost suited tile (terminals, then 2s and 8s ...), then the lowest kind. */
-const outerFirst = (a: number, b: number): number =>
-  (b >= 27 ? 1 : 0) - (a >= 27 ? 1 : 0) ||
-  Math.abs(4 - (b % 9)) - Math.abs(4 - (a % 9)) ||
-  a - b;
+const outerFirst = (a: number, b: number): number => (b >= 27 ? 1 : 0) - (a >= 27 ? 1 : 0) || Math.abs(4 - (b % 9)) - Math.abs(4 - (a % 9)) || a - b;
 const near = (c: number[], k: number, d: number): boolean => {
   if (k >= 27) return false;
   const r = k % 9;
@@ -29,8 +25,7 @@ const near = (c: number[], k: number, d: number): boolean => {
 /** Extra copies count 3, a neighbour one rank away 2, one two ranks away 1 (the assessor's weights). */
 const neighbours = (c: number[], k: number): number => {
   let s = (c[k] - 1) * 3;
-  for (const d of [-2, -1, 1, 2])
-    if (near(c, k, d)) s += Math.abs(d) === 1 ? 2 : 1;
+  for (const d of [-2, -1, 1, 2]) if (near(c, k, d)) s += Math.abs(d) === 1 ? 2 : 1;
   return s;
 };
 const shantenAfter = (c: number[], k: number): number => {
@@ -39,8 +34,7 @@ const shantenAfter = (c: number[], k: number): number => {
   c[k]++;
   return s;
 };
-const isolated = (c: number[], k: number): boolean =>
-  c[k] === 1 && ![-2, -1, 1, 2].some((d) => near(c, k, d));
+const isolated = (c: number[], k: number): boolean => c[k] === 1 && ![-2, -1, 1, 2].some((d) => near(c, k, d));
 
 /** The team's isolated-tile rule: a single with no neighbour within two in its suit, honours first. */
 export const isolatedTileRule: DiscardRule = (hand) => {
@@ -55,9 +49,7 @@ export const isolatedTileRule: DiscardRule = (hand) => {
 /** "The tile with the fewest neighbours", honours then terminals on a tie (the assessor's). */
 export const fewestNeighbours: DiscardRule = (hand) => {
   const c = counts(hand);
-  return kindsOf(hand).sort(
-    (a, b) => neighbours(c, a) - neighbours(c, b) || outerFirst(a, b),
-  )[0];
+  return kindsOf(hand).sort((a, b) => neighbours(c, a) - neighbours(c, b) || outerFirst(a, b))[0];
 };
 
 /** An isolated tile; else the outer tile of an edge (1-2, 8-9) or closed (1-3) 搭子; else the fewest neighbours (the assessor's). */
@@ -70,13 +62,8 @@ export const edgeFirst: DiscardRule = (hand) => {
     if (c[k] !== 1) continue;
     const r = k % 9;
     const h = (d: number) => near(c, k, d);
-    if ((r === 0 && h(1) && !h(2)) || (r === 8 && h(-1) && !h(-2)))
-      weak.push(k);
-    else if (
-      (h(2) && !h(1) && !h(-1) && !h(-2) && !h(3)) ||
-      (h(-2) && !h(-1) && !h(1) && !h(2) && !h(-3))
-    )
-      weak.push(k);
+    if ((r === 0 && h(1) && !h(2)) || (r === 8 && h(-1) && !h(-2))) weak.push(k);
+    else if ((h(2) && !h(1) && !h(-1) && !h(-2) && !h(3)) || (h(-2) && !h(-1) && !h(1) && !h(2) && !h(-3))) weak.push(k);
   }
   return weak.sort(outerFirst)[0] ?? fewestNeighbours(hand);
 };
@@ -85,12 +72,7 @@ export const edgeFirst: DiscardRule = (hand) => {
 export const fewestStepsThenNeighbours: DiscardRule = (hand) => {
   const c = counts(hand);
   const sh = new Map(kindsOf(hand).map((k) => [k, shantenAfter(c, k)]));
-  return kindsOf(hand).sort(
-    (a, b) =>
-      sh.get(a)! - sh.get(b)! ||
-      neighbours(c, a) - neighbours(c, b) ||
-      outerFirst(a, b),
-  )[0];
+  return kindsOf(hand).sort((a, b) => sh.get(a)! - sh.get(b)! || neighbours(c, a) - neighbours(c, b) || outerFirst(a, b))[0];
 };
 
 /** "The least connected tile": same-suit tiles within two ranks, two per extra copy; honours, then the outermost, on a tie (the challenger's). */
@@ -98,10 +80,7 @@ export const leastConnected: DiscardRule = (hand) => {
   const c = counts(hand);
   const links = (k: number) => {
     let n = 2 * (c[k] - 1);
-    if (k < 27)
-      for (let d = -2; d <= 2; d++)
-        if (d !== 0 && near(c, k, d))
-          n += c[k + d] * (Math.abs(d) === 1 ? 1.01 : 1);
+    if (k < 27) for (let d = -2; d <= 2; d++) if (d !== 0 && near(c, k, d)) n += c[k + d] * (Math.abs(d) === 1 ? 1.01 : 1);
     return n;
   };
   let best = -1;
@@ -128,49 +107,28 @@ export const weakestPartialFirst: DiscardRule = (hand) => {
     if (c[k] !== 1) continue;
     const r = k % 9;
     const h = (d: number) => near(c, k, d);
-    if ((r === 0 && h(1) && !h(2)) || (r === 8 && h(-1) && !h(-2)))
-      edge.push(k);
-    else if (
-      (r === 1 && h(-1) && c[k - 1] === 1 && !h(1) && !h(2)) ||
-      (r === 7 && h(1) && c[k + 1] === 1 && !h(-1) && !h(-2))
-    )
-      edge.push(k);
-    else if (
-      !h(1) &&
-      !h(-1) &&
-      ((h(2) && !h(-2) && !h(3) && c[k + 2] === 1) ||
-        (h(-2) && !h(2) && !h(-3) && c[k - 2] === 1))
-    )
-      closed.push(k);
+    if ((r === 0 && h(1) && !h(2)) || (r === 8 && h(-1) && !h(-2))) edge.push(k);
+    else if ((r === 1 && h(-1) && c[k - 1] === 1 && !h(1) && !h(2)) || (r === 7 && h(1) && c[k + 1] === 1 && !h(-1) && !h(-2))) edge.push(k);
+    else if (!h(1) && !h(-1) && ((h(2) && !h(-2) && !h(3) && c[k + 2] === 1) || (h(-2) && !h(2) && !h(-3) && c[k - 2] === 1))) closed.push(k);
   }
   const pick = edge.sort(outerFirst)[0] ?? closed.sort(outerFirst)[0];
   if (pick !== undefined) return pick;
   const singles = kindsOf(hand).filter((k) => c[k] === 1);
-  return singles.length
-    ? singles.sort(
-        (a, b) => neighbours(c, a) - neighbours(c, b) || outerFirst(a, b),
-      )[0]
-    : fewestNeighbours(hand);
+  return singles.length ? singles.sort((a, b) => neighbours(c, a) - neighbours(c, b) || outerFirst(a, b))[0] : fewestNeighbours(hand);
 };
 
 /** "Keep every pair, then the tile with the fewest neighbours". */
 export const keepPairsThenNeighbours: DiscardRule = (hand) => {
   const c = counts(hand);
   const singles = kindsOf(hand).filter((k) => c[k] === 1);
-  return singles.length
-    ? singles.sort(
-        (a, b) => neighbours(c, a) - neighbours(c, b) || outerFirst(a, b),
-      )[0]
-    : fewestNeighbours(hand);
+  return singles.length ? singles.sort((a, b) => neighbours(c, a) - neighbours(c, b) || outerFirst(a, b))[0] : fewestNeighbours(hand);
 };
 
 /** "Fewest steps to ready, then honours and terminals first" (no neighbour count). */
 export const fewestStepsThenOutermost: DiscardRule = (hand) => {
   const c = counts(hand);
   const sh = new Map(kindsOf(hand).map((k) => [k, shantenAfter(c, k)]));
-  return kindsOf(hand).sort(
-    (a, b) => sh.get(a)! - sh.get(b)! || outerFirst(a, b),
-  )[0];
+  return kindsOf(hand).sort((a, b) => sh.get(a)! - sh.get(b)! || outerFirst(a, b))[0];
 };
 
 /** "The tile the fewest unseen tiles would join": unseen copies of it and of the kinds within two of it in its suit. */
@@ -178,14 +136,10 @@ export const fewestJoiners: DiscardRule = (hand) => {
   const c = counts(hand);
   const joiners = (k: number) => {
     let n = 4 - c[k];
-    if (k < 27)
-      for (const d of [-2, -1, 1, 2])
-        if ((k % 9) + d >= 0 && (k % 9) + d <= 8) n += 4 - c[k + d];
+    if (k < 27) for (const d of [-2, -1, 1, 2]) if ((k % 9) + d >= 0 && (k % 9) + d <= 8) n += 4 - c[k + d];
     return n + 10 * (c[k] - 1);
   };
-  return kindsOf(hand).sort(
-    (a, b) => joiners(a) - joiners(b) || outerFirst(a, b),
-  )[0];
+  return kindsOf(hand).sort((a, b) => joiners(a) - joiners(b) || outerFirst(a, b))[0];
 };
 
 /** "Break a pair when you hold two or more (the one with the fewest neighbours), else the fewest neighbours". */
@@ -193,9 +147,7 @@ export const breakPairFirst: DiscardRule = (hand) => {
   const c = counts(hand);
   const pairs = kindsOf(hand).filter((k) => c[k] === 2);
   if (pairs.length < 2) return fewestNeighbours(hand);
-  return pairs.sort(
-    (a, b) => neighbours(c, a) - neighbours(c, b) || outerFirst(a, b),
-  )[0];
+  return pairs.sort((a, b) => neighbours(c, a) - neighbours(c, b) || outerFirst(a, b))[0];
 };
 
 /** "Fewest steps to ready; then break a pair when you hold two or more; then the fewest neighbours". */
@@ -205,13 +157,7 @@ export const fewestStepsThenPairs: DiscardRule = (hand) => {
   const many = kindsOf(hand).filter((k) => c[k] === 2).length >= 2;
   const pairFirst = (k: number) => (many && c[k] === 2 ? 0 : 1);
   const links = (k: number) => neighbours(c, k) - (c[k] - 1) * 3;
-  return kindsOf(hand).sort(
-    (a, b) =>
-      sh.get(a)! - sh.get(b)! ||
-      pairFirst(a) - pairFirst(b) ||
-      links(a) - links(b) ||
-      outerFirst(a, b),
-  )[0];
+  return kindsOf(hand).sort((a, b) => sh.get(a)! - sh.get(b)! || pairFirst(a) - pairFirst(b) || links(a) - links(b) || outerFirst(a, b))[0];
 };
 
 /**
@@ -225,13 +171,7 @@ export const fewestStepsThenMostConnectedPair: DiscardRule = (hand) => {
   const many = kindsOf(hand).filter((k) => c[k] === 2).length >= 2;
   const pairFirst = (k: number) => (many && c[k] === 2 ? 0 : 1);
   const links = (k: number) => neighbours(c, k) - (c[k] - 1) * 3;
-  return kindsOf(hand).sort(
-    (a, b) =>
-      sh.get(a)! - sh.get(b)! ||
-      pairFirst(a) - pairFirst(b) ||
-      links(b) - links(a) ||
-      a - b,
-  )[0];
+  return kindsOf(hand).sort((a, b) => sh.get(a)! - sh.get(b)! || pairFirst(a) - pairFirst(b) || links(b) - links(a) || a - b)[0];
 };
 
 /** "Fewest steps to ready, then the tile with the most neighbours". */
@@ -239,9 +179,7 @@ export const fewestStepsThenMostNeighbours: DiscardRule = (hand) => {
   const c = counts(hand);
   const sh = new Map(kindsOf(hand).map((k) => [k, shantenAfter(c, k)]));
   const links = (k: number) => neighbours(c, k) - (c[k] - 1) * 3;
-  return kindsOf(hand).sort(
-    (a, b) => sh.get(a)! - sh.get(b)! || links(b) - links(a) || a - b,
-  )[0];
+  return kindsOf(hand).sort((a, b) => sh.get(a)! - sh.get(b)! || links(b) - links(a) || a - b)[0];
 };
 
 /**
@@ -251,12 +189,7 @@ export const fewestStepsThenMostNeighbours: DiscardRule = (hand) => {
 export const secondChoice: DiscardRule = (hand) => {
   const c = counts(hand);
   const sh = new Map(kindsOf(hand).map((k) => [k, shantenAfter(c, k)]));
-  const order = kindsOf(hand).sort(
-    (a, b) =>
-      sh.get(a)! - sh.get(b)! ||
-      neighbours(c, a) - neighbours(c, b) ||
-      outerFirst(a, b),
-  );
+  const order = kindsOf(hand).sort((a, b) => sh.get(a)! - sh.get(b)! || neighbours(c, a) - neighbours(c, b) || outerFirst(a, b));
   return order[1] ?? order[0];
 };
 
@@ -296,25 +229,11 @@ export function neighbourWeightRules(): Record<string, DiscardRule> {
     [3, 3, 2],
   ]) {
     for (const stepsFirst of [false, true]) {
-      out[`weights ${wc}-${wa}-${wg}${stepsFirst ? " after steps" : ""}`] = (
-        hand,
-      ) => {
+      out[`weights ${wc}-${wa}-${wg}${stepsFirst ? ' after steps' : ''}`] = (hand) => {
         const c = counts(hand);
-        const score = (k: number) =>
-          (c[k] - 1) * wc +
-          [-2, -1, 1, 2].reduce(
-            (n, d) => n + (near(c, k, d) ? (Math.abs(d) === 1 ? wa : wg) : 0),
-            0,
-          );
-        const sh = stepsFirst
-          ? new Map(kindsOf(hand).map((k) => [k, shantenAfter(c, k)]))
-          : null;
-        return kindsOf(hand).sort(
-          (a, b) =>
-            (sh ? sh.get(a)! - sh.get(b)! : 0) ||
-            score(a) - score(b) ||
-            outerFirst(a, b),
-        )[0];
+        const score = (k: number) => (c[k] - 1) * wc + [-2, -1, 1, 2].reduce((n, d) => n + (near(c, k, d) ? (Math.abs(d) === 1 ? wa : wg) : 0), 0);
+        const sh = stepsFirst ? new Map(kindsOf(hand).map((k) => [k, shantenAfter(c, k)])) : null;
+        return kindsOf(hand).sort((a, b) => (sh ? sh.get(a)! - sh.get(b)! : 0) || score(a) - score(b) || outerFirst(a, b))[0];
       };
     }
   }
