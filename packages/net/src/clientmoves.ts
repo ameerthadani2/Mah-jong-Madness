@@ -255,17 +255,21 @@ function judgeFrom(j: MoveJudge, play: PlayRecord, n: number, rules: RuleSet, an
  * - on a link that had already brought this device a state, `r0` must give the whole turn clock by
  *   its own deadline and stamp (`armedLate`; a state with no stamp gives none): `lateTurn` when not,
  *   unless the move was early anyway;
- * - over a live link (`SeenState.live`), `r0` may not be more than `LATE_MS` later than the least
- *   arrival offset of its scope allows (`lateRef`): `held` when it is, since the watch drops a link
- *   long before an honest frame on it is that late;
- * - later than that over a link that was not live, later than the fixed points of its scope allow
- *   (`lateAnchor`, which a slow uplink can also cause), with no stamp on a new link (`unstamped`), or
- *   first shown on a new link (one that had brought no earlier state) or on one not yet working, with
- *   less than a whole clock (less `LATE_MS`) to go before the table moved: the stamp on `r0` is not
- *   believed to start the seat's clock, and the time before it is judged as time without a link, from
- *   the last stamped frame before the run that was not late. That gives `downLate`
- *   (the table played for the seat, and it was shown its turn late) or `down`, or `downEarly` when a
- *   whole clock cannot have run out since that frame.
+ * - over a live link (`SeenState.live`), `r0` may not be more than `LATE_MS` later than the link
+ *   watch's reference allowed when it arrived (`lateWatch`, against `SeenState.wref`: the least arrival
+ *   offset of the frames of the last `WATCH_WINDOW_MS`, never below the scope's own, `ref`): `held`
+ *   when it is, since the watch drops a link long before an honest frame on it is that late by its
+ *   reference;
+ * - more than `LATE_MS` later than the least arrival offset of its scope allows (`lateRef`), on any
+ *   link (on a live one, a delay that rose and stayed up long enough for `wref` to take it in, so late
+ *   against `lagRef` but not against the watch: judged late here, not held), later than the fixed
+ *   points of its scope allow (`lateAnchor`, which a slow uplink can also cause), with no stamp on a new
+ *   link (`unstamped`), or first shown on a new link (one that had brought no earlier state) or on one
+ *   not yet working, with less than a whole clock (less `LATE_MS`) to go before the table moved: the
+ *   stamp on `r0` is not believed to start the seat's clock, and the time before it is judged as time
+ *   without a link, from the last stamped frame before the run that was not late. That gives
+ *   `downLate` (the table played for the seat, and it was shown its turn late: amber, with `lateShown`)
+ *   or `down`, or `downEarly` when a whole clock cannot have run out since that frame.
  * Otherwise the move is judged by the clock (`judgeFrom`).
  */
 export function judgeTableMove(j: MoveJudge, play: PlayRecord, n: number, end: SeenState | null, rules: RuleSet, anchors: ClockAnchor[], track: ClockTrack, gaps: Set<number>, prevMove = -1, scope: LateScope | null = null): 'ok' | 'early' | 'downEarly' | 'down' | 'downLate' | 'unanchored' | 'held' | 'lateTurn' {

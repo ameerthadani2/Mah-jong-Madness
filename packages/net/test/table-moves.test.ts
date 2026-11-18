@@ -11,7 +11,7 @@
 import { describe, expect, it } from 'vitest';
 import { chooseAction, kindOf, legalActions, withRules, type Action, type BotSkill, type GameState } from '@mjm/engine';
 import { AUDIT_CAVEATS, AUDIT_FAILURES, failureKey, LoopbackHub, TableClient, TableHost, transportLink, type HostMessage, type Link } from '../src/index';
-import { armedLate, firstSend, fixedPoint, lateAnchor, lateCountMs, seatRun, sinceFixed, turnLateBy, unstamped } from '../src/clientmoves';
+import { armedLate, clockTrack, firstSend, fixedPoint, judgeTableMove, lateAnchor, lateCountMs, lateRef, lateWatch, seatRun, sinceFixed, turnLateBy, unstamped } from '../src/clientmoves';
 import { DRIFT_RATE, LATE_MS, RTT_ALLOW_MS } from '../src/clientclock';
 import { cleanCeremony, cleanPlay, cleanSeen, isLateTurnRecord, withLateTurns, type PlayRecord, type SeenState } from '../src/clientrecords';
 import { Missed, scenario, seededDeals } from './support';
@@ -568,5 +568,36 @@ describe('how late a turn reached this device, for the Fair play count (turnLate
     expect(withLateTurns(all, 2, { turns: [], of: 0 })).toEqual(all);
     expect(isLateTurnRecord({ hand: 0, late: [1], of: 1 })).toBe(true);
     for (const bad of [{ hand: 0, late: [1, 2], of: 1 }, { hand: 0, late: 'x', of: 3 }, { hand: 'a', late: [], of: 0 }, null, { hand: 0, late: [0.5], of: 2 }]) expect(isLateTurnRecord(bad)).toBe(false);
+  });
+});
+
+describe('a live turn is held only when it is late against the watch’s reference (judgeTableMove)', () => {
+  const rules = withRules({ handsPerMatch: 1, turnSeconds: 15, timeBankSeconds: 30 });
+  // One link, one clock era. The host's stamps follow real time; the downlink takes 50 ms until 30 s in,
+  // then 20 050 ms and stays there (a delay that rose and stayed up): by the seat's turn at 45 s, the
+  // watch's reference (the least offset of the last 20 s) has taken the new delay in.
+  const ref = (at: number) => 50 + DRIFT_RATE * Math.max(0, at - 1_050);
+  const frame = (tc: number, now: number, delay: number, owes: boolean, wref?: number): SeenState => {
+    const at = now + delay;
+    const r = tc === 0 ? null : ref(at);
+    return seen(tc, owes, { epoch: 1, at, now, atLo: at, ref: r, wref: wref ?? r, live: tc > 0, working: true, seg: 0, run: 'r', onLink: tc > 0, deadline: owes ? now + 15_000 : null, inBank: false });
+  };
+  const judge = (r0: SeenState) => {
+    const p = played([frame(0, 1_000, 50, false), frame(1, 10_000, 50, false), frame(2, 20_000, 50, false), frame(3, 40_000, 20_050, false, 20_050), r0, frame(5, 90_000, 20_050, false, 20_050)]);
+    const clockBase = { era: 0, anchor: null, minOffset: null };
+    return judgeTableMove({ clockBase, gapVerdicts: [], ownAbsences: [] }, p, 4, null, rules, [], clockTrack(clockBase, null, p, rules, []), new Set(), -1, null);
+  };
+
+  it('late against the least offset of its scope but not against the watch’s reference: judged late (the table played for the seat, amber), not held', () => {
+    const r0 = frame(4, 45_000, 20_050, true, 20_050);
+    expect(lateRef(r0)).toBeGreaterThan(17_000);
+    expect(lateWatch(r0)).toBeLessThan(1);
+    expect(judge(r0)).toBe('downLate');
+  });
+
+  it('late against the watch’s reference too: held', () => {
+    const r0 = frame(4, 45_000, 20_050, true);
+    expect(lateWatch(r0)).toBeGreaterThan(17_000);
+    expect(judge(r0)).toBe('held');
   });
 });
