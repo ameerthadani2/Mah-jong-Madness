@@ -15,7 +15,7 @@ import { fitPools, fitSideColumn, SIDE_GAP } from '../../display/tableFit';
 import { Row } from '../Ui';
 import { CoachBar, CoachPanel } from './CoachPanel';
 import { slideFrom } from './feel';
-import { coachBarLines, compactCompassSize, dockHeight, fitWallSize, landscapeWallSize, type ActionDock, type TableLayout } from './layout';
+import { coachBarLines, compactCompassSize, dockHeight, fitWallSize, landscapeWallSize, PINNED_COACH_H, type ActionDock, type TableLayout } from './layout';
 
 export type PlateProps = Omit<React.ComponentProps<typeof SeatBadge>, 'size' | 'vertical' | 'maxNameWidth'>;
 
@@ -32,6 +32,7 @@ export function Felt({
   actions,
   dock = 'none',
   overlay,
+  onShort,
 }: {
   view: TableView;
   mySeat: number;
@@ -50,6 +51,11 @@ export function Felt({
   dock?: ActionDock;
   /** Centre call-out and winner reveal, drawn over everything on the felt. */
   overlay?: React.ReactNode;
+  /**
+   * Portrait: the felt is too short for my pond and one line of the coach (or my pond alone, with the coach off).
+   * The table screen then gives the hand less height (smaller tiles at Large and Extra-large).
+   */
+  onShort?: () => void;
 }) {
   const { portrait, tablet, plate, sideWidth } = L;
   // Short landscape: the compass and my pond share the middle row (the action dock has a row of its own under it).
@@ -60,6 +66,8 @@ export function Felt({
   // Portrait: the wall ring shrinks (or goes) so the felt's content fits its scroll view late in a hand.
   const [wallSize, setWallSize] = useState(L.wallSize);
   const [scrollBox, setScrollBox] = useState({ view: 0, content: 0 });
+  // Portrait: the felt's inner height and my pond's, measured, so the pinned coach keeps a whole line of advice.
+  const [pinnedBox, setPinnedBox] = useState({ felt: -1, pond: -1 });
   useEffect(() => setWallSize(L.wallSize), [L.wallSize]);
   useEffect(() => {
     if (!portrait) return;
@@ -74,6 +82,17 @@ export function Felt({
   const seatAt = (r: number) => (mySeat + r) % 4;
   const latestFor = (seat: number): TileId | undefined => (view.lastDiscard && view.lastDiscard.seat === seat ? view.lastDiscard.tile : undefined);
   const coach = coachOpen && hint ? hint : null;
+  // Portrait: what the felt leaves above my pond for the pinned coach (undefined until both are measured; the felt
+  // may measure 0 when the hand and the claim buttons take the whole height).
+  const pinnedRoom = portrait && pinnedBox.felt >= 0 && pinnedBox.pond >= 0 ? pinnedBox.felt - pinnedBox.pond : undefined;
+  const short = pinnedRoom !== undefined && pinnedRoom < (coach ? PINNED_COACH_H.one : 0);
+  // Once per measured height: the table screen's answer (a smaller hand) changes the felt's height, which is
+  // measured again before it is asked once more.
+  const onShortRef = useRef(onShort);
+  onShortRef.current = onShort;
+  useEffect(() => {
+    if (short) onShortRef.current?.();
+  }, [short, pinnedBox.felt, pinnedBox.pond]);
 
   const statusPill = status ? (
     <View style={styles.status} testID="table-status">
@@ -276,7 +295,14 @@ export function Felt({
   return (
     <FeltFrame rail={L.rail} style={{ marginHorizontal: 8 }}>
       {portrait ? (
-        <>
+        <View
+          style={styles.portraitFelt}
+          testID="felt-portrait"
+          onLayout={(e) => {
+            const felt = Math.round(e.nativeEvent.layout.height);
+            setPinnedBox((b) => (b.felt === felt ? b : { ...b, felt }));
+          }}
+        >
           <ScrollView
           style={{ flex: 1 }}
           contentContainerStyle={styles.portraitBody}
@@ -299,11 +325,20 @@ export function Felt({
           {/* Pinned with my pond under the scrolling part, so the coach can never be scrolled out of view. */}
           {coach && (
             <View style={styles.pinnedCoach}>
-              <CoachBar hint={coach} lines={coachBarLines('pinned')} onOpen={onCoachMore} />
+              <CoachBar hint={coach} lines={coachBarLines('pinned', false, pinnedRoom)} onOpen={onCoachMore} />
             </View>
           )}
-          <View style={styles.pinnedPond}>{myPond(pinnedPerRow)}</View>
-        </>
+          <View
+            style={styles.pinnedPond}
+            testID="pinned-pond"
+            onLayout={(e) => {
+              const pond = Math.round(e.nativeEvent.layout.height);
+              setPinnedBox((b) => (b.pond === pond ? b : { ...b, pond }));
+            }}
+          >
+            {myPond(pinnedPerRow)}
+          </View>
+        </View>
       ) : (
         <View style={styles.cross}>
           {sideSeat(3)}
@@ -349,6 +384,7 @@ const styles = StyleSheet.create({
   actionCenter: { position: 'absolute', left: 0, right: 0, alignItems: 'center' },
   pinnedPond: { alignItems: 'center', paddingTop: 4, paddingBottom: 2 },
   pinnedCoach: { paddingHorizontal: 6, paddingTop: 4 },
+  portraitFelt: { flex: 1 },
   actionScroll: { flexGrow: 1, justifyContent: 'center', alignItems: 'flex-end' },
   actionRow: { alignSelf: 'stretch', alignItems: 'center', justifyContent: 'flex-end' },
   overlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', gap: 10, zIndex: 25 },

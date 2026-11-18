@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { calloutMs, RESULT_HOLD_MS, rollUp, rollUpMs, slideFrom } from './feel';
 import { readFileSync } from 'fs';
 import { join } from 'path';
-import { ACTION_DOCK_H, coachBarLines, compactCompassSize, dockHeight, fitTile, fitWallSize, handLayout, landscapeWallSize, matchOverLayout, MIN_TOUCH, resultLayout, slopFor, tableLayout, TAP_HINT_DOCK_H } from './layout';
+import { ACTION_DOCK_H, coachBarLines, compactCompassSize, dockHeight, fitTile, fitWallSize, handLayout, landscapeWallSize, matchOverLayout, MIN_TOUCH, PINNED_COACH_H, resultLayout, slopFor, tableLayout, TAP_HINT_DOCK_H } from './layout';
 
 describe('tableLayout', () => {
   it('docks the claim buttons over the centre column in landscape, never over a side pond', () => {
@@ -64,6 +64,20 @@ describe('the coach bar', () => {
     expect(coachBarLines('rail')).toEqual({ status: 0, advice: 1 });
     // Large and Extra-large tiles: beside my plate in the row the plate has of its own, which has the height for two.
     expect(coachBarLines('rail', true)).toEqual({ status: 0, advice: 2 });
+  });
+
+  it('pinned in portrait, gives up the status and then a line of advice as the felt above my pond runs short, never the last line', () => {
+    expect(coachBarLines('pinned', false, PINNED_COACH_H.full)).toEqual({ status: 1, advice: 2 });
+    expect(coachBarLines('pinned', false, PINNED_COACH_H.full - 1)).toEqual({ status: 0, advice: 2 });
+    expect(coachBarLines('pinned', false, PINNED_COACH_H.two)).toEqual({ status: 0, advice: 2 });
+    expect(coachBarLines('pinned', false, PINNED_COACH_H.two - 1)).toEqual({ status: 0, advice: 1 });
+    expect(coachBarLines('pinned', false, 0)).toEqual({ status: 0, advice: 1 });
+    expect(coachBarLines('pinned', false, -40)).toEqual({ status: 0, advice: 1 });
+    // Not measured yet: everything.
+    expect(coachBarLines('pinned', false, undefined)).toEqual({ status: 1, advice: 2 });
+    // The heights follow the bar's lines (9 px of border and padding, a 17 px status, 15 px advice lines, 4 px above it).
+    expect(PINNED_COACH_H.full).toBeGreaterThanOrEqual(9 + 17 + 2 * 15 + 4);
+    expect(PINNED_COACH_H.two).toBeGreaterThanOrEqual(9 + 2 * 15 + 4);
   });
 });
 

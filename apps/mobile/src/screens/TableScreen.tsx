@@ -128,6 +128,8 @@ export function TableScreen() {
   // The coach's sheet (everything it says), opened from its bar or panel.
   const [coachSheet, setCoachSheet] = useState(false);
   const [emotePicker, setEmotePicker] = useState(false);
+  // Portrait: how many steps the hand has been made smaller this deal, for a felt that was too short (see below).
+  const [squeeze, setSqueeze] = useState({ key: '', steps: 0 });
   // The red exit icon asks first (components/table/exit.ts): only "Abandon table" forgets the table.
   const [leaveAsk, setLeaveAsk] = useState(false);
   // Android's Back key asks the same question (src/logic/back.ts); once the match is over there is nothing to keep.
@@ -357,8 +359,17 @@ export function TableScreen() {
   // ---- Layout -------------------------------------------------------
   const L = tableLayout(width, height);
   // Settings → Display → Tiles grows the hand and my melds; portrait wraps into more rows, landscape moves my plate
-  // and melds above the hand so it spans the whole width (tableFit.ts).
-  const hand = fitHand(width, height, L, (me.hand ?? []).length, me.melds.reduce((n, m) => n + m.tiles.length, 0), me.melds.length, tileScale);
+  // and melds above the hand so it spans the whole width (tableFit.ts). In portrait, when that leaves the felt too
+  // short for my pond and a line of the coach (Felt's onShort: Extra-large tiles, melds and a claim strip on a small
+  // phone), the hand and my melds step down a size at a time, for the rest of the hand: never in the middle of a
+  // turn back up, so the tiles do not jump; the next deal starts from the chosen size again.
+  const squeezeKey = `${width}x${height}:${tileScale}:${view.handNumber}`;
+  const squeezeSteps = squeeze.key === squeezeKey ? squeeze.steps : 0;
+  const handScale = Math.max(1, tileScale - SQUEEZE_STEP * squeezeSteps);
+  const hand = fitHand(width, height, L, (me.hand ?? []).length, me.melds.reduce((n, m) => n + m.tiles.length, 0), me.melds.length, handScale);
+  const onFeltShort = () => {
+    if (L.portrait && handScale > 1) setSqueeze({ key: squeezeKey, steps: squeezeSteps + 1 });
+  };
 
   const seatAt = (r: number) => (mySeat + r) % 4;
   const seatInfo = (seat: number) => state.seats.find((s) => s.seat === seat);
@@ -460,6 +471,7 @@ export function TableScreen() {
           actions={L.actions === 'center' ? actionBar : null}
           dock={actions.some((a) => a.type !== 'discard') || (actions.length > 0 && selected !== null) ? 'buttons' : actions.length > 0 && tapHint.show ? 'hint' : 'none'}
           overlay={overlay}
+          onShort={onFeltShort}
         />
         {L.actions === 'strip' && (
           <View style={styles.actionStrip} testID="action-strip">
@@ -613,6 +625,9 @@ function safeHint(s: GameState, seat: number): Hint | null {
     return null;
   }
 }
+
+/** One step down of the hand's tile scale when the portrait felt is too short (Extra-large 1.5 → 1.25 → Normal). */
+const SQUEEZE_STEP = 0.25;
 
 const styles = StyleSheet.create({
   root: { flex: 1 },

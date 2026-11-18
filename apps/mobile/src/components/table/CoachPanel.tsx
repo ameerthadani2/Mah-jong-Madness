@@ -40,30 +40,39 @@ export function CoachBar({ hint, lines, onOpen, style }: { hint: Hint; lines: Co
       // A screen reader hears every word, whatever the ellipsis leaves on screen.
       accessibilityLabel={advice ? `${status} ${advice}` : status}
       accessibilityHint={t('table.coach.moreHint')}
-      // A one-line bar is 27 px tall: 8 px more above and below make a 44 pt press, short of the claim buttons above
-      // and of the hand's tiles below (they stand 12 px down their row).
-      hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
-      style={({ pressed }) => [styles.bar, pressed && styles.barPressed, style]}
+      // A one-line bar is 27 px tall: 9 px more above and below make a 44 pt press, short of the claim buttons above
+      // and of the hand's tiles below (they stand 12 px down their row). On a phone hitSlop adds them; the web ignores
+      // hitSlop, so there the press is padded by as much, with an equal negative margin that keeps the bar in place
+      // (as IconButton does).
+      hitSlop={Platform.OS === 'web' ? undefined : BAR_SLOP}
+      style={Platform.OS === 'web' ? styles.barWebPress : undefined}
     >
-      <CoachOwl size={18} />
-      <View style={styles.barText} testID="coach-text">
-        {statusLines > 0 && (
-          <Text numberOfLines={statusLines} style={styles.barStatus} testID="coach-status">
-            {status}
-          </Text>
-        )}
-        {advice !== null && (
-          <Text numberOfLines={lines.advice} style={styles.barAdvice} testID="coach-advice">
-            {advice}
-          </Text>
-        )}
-      </View>
-      <View style={styles.more} testID="coach-more">
-        <Text style={styles.moreText}>{t('table.coach.more')}</Text>
-      </View>
+      {({ pressed }) => (
+        <View style={[styles.bar, pressed && styles.barPressed, style]} testID="coach-face">
+          <CoachOwl size={18} />
+          <View style={styles.barText} testID="coach-text">
+            {statusLines > 0 && (
+              <Text numberOfLines={statusLines} style={styles.barStatus} testID="coach-status">
+                {status}
+              </Text>
+            )}
+            {advice !== null && (
+              <Text numberOfLines={lines.advice} style={styles.barAdvice} testID="coach-advice">
+                {advice}
+              </Text>
+            )}
+          </View>
+          <View style={styles.more} testID="coach-more">
+            <Text style={styles.moreText}>{t('table.coach.more')}</Text>
+          </View>
+        </View>
+      )}
     </Pressable>
   );
 }
+
+/** What the bar's press reaches past its drawn edges (on a phone by hitSlop, on the web by padding). */
+const BAR_SLOP = { top: 9, bottom: 9, left: 4, right: 4 } as const;
 
 /** Everything the coach says, at `factor` times the table's type (the sheet passes the reader's text size). */
 export function CoachDetails({ hint, factor = 1 }: { hint: Hint; factor?: number }) {
@@ -117,8 +126,13 @@ export function CoachDetails({ hint, factor = 1 }: { hint: Hint; factor?: number
 function MoreButton({ onPress }: { onPress: () => void }) {
   const { t } = useT();
   return (
-    <Pressable testID="coach-more" onPress={onPress} accessibilityRole="button" accessibilityLabel={t('table.coach.moreHint')} hitSlop={12} style={({ pressed }) => [styles.more, styles.moreAlone, pressed && styles.barPressed]}>
-      <Text style={styles.moreText}>{t('table.coach.more')}</Text>
+    // A 19 px pill: hitSlop makes a 44 pt press on a phone; the web ignores it, so there the padding does (as the bar's).
+    <Pressable testID="coach-more" onPress={onPress} accessibilityRole="button" accessibilityLabel={t('table.coach.moreHint')} hitSlop={Platform.OS === 'web' ? undefined : 12} style={[styles.moreAlone, Platform.OS === 'web' && styles.moreWebPress]}>
+      {({ pressed }) => (
+        <View style={[styles.more, pressed && styles.barPressed]}>
+          <Text style={styles.moreText}>{t('table.coach.more')}</Text>
+        </View>
+      )}
     </Pressable>
   );
 }
@@ -201,11 +215,13 @@ const TYPE = {
 const styles = StyleSheet.create({
   bar: { flexDirection: 'row', alignItems: 'center', gap: 6, minWidth: 0, backgroundColor: colors.cream, borderRadius: 14, borderWidth: 2.5, borderColor: colors.ink, paddingHorizontal: 6, paddingVertical: 2 },
   barPressed: { opacity: 0.85 },
+  barWebPress: { paddingTop: BAR_SLOP.top, paddingBottom: BAR_SLOP.bottom, paddingLeft: BAR_SLOP.left, paddingRight: BAR_SLOP.right, marginTop: -BAR_SLOP.top, marginBottom: -BAR_SLOP.bottom, marginLeft: -BAR_SLOP.left, marginRight: -BAR_SLOP.right },
   barText: { flex: 1, minWidth: 0 },
   barStatus: { color: colors.ink, fontFamily: fonts.uiBold, fontSize: 13, lineHeight: 17 },
   barAdvice: { color: colors.ink, fontSize: 12, lineHeight: 15, fontWeight: '700' },
   more: { flexShrink: 0, backgroundColor: colors.info, borderRadius: 999, borderWidth: 2, borderColor: colors.ink, paddingHorizontal: 8 },
   moreAlone: { alignSelf: 'flex-end' },
+  moreWebPress: { paddingVertical: 13, marginVertical: -13, paddingHorizontal: 6, marginHorizontal: -6 },
   moreText: { color: '#FFFFFF', fontFamily: fonts.uiBold, fontSize: 12, lineHeight: 15 },
   coach: { flexShrink: 0, backgroundColor: colors.cream, borderRadius: 16, padding: 8, gap: 4, borderWidth: 3, borderColor: colors.ink },
   coachTitle: { color: colors.ink, fontFamily: fonts.display, fontSize: 18 },

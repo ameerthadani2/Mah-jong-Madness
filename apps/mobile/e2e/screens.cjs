@@ -218,8 +218,11 @@ async function coachCheck(page, mine) {
     const icons = leave ? [...leave.parentElement.querySelectorAll('[role="button"]')] : [];
     const cap = icons.length >= 3 ? icons[icons.length - 2] : null;
     const on = cap?.getAttribute('aria-selected') === 'true';
+    // The bar as drawn (its press reaches past it on the web, as hitSlop does on a phone), and what of it is not clipped away.
+    const face = (c) => c.querySelector('[data-testid="coach-face"]') ?? c;
+    const onScreen = (e) => { const b = shown(e); return b.bottom - b.top > 1 && b.right - b.left > 1; };
     const coaches = [...document.querySelectorAll('[data-testid="coach"]')].filter(seen);
-    if (on && coaches.length === 0) bad.push("the coach is on (its button is selected) but not on screen");
+    if (on && !coaches.some((c) => onScreen(face(c)))) bad.push("the coach is on (its button is selected) but not on screen");
     // A line of advice is whole on screen: inside every clipping box, and nothing drawn over it at that line.
     const whole = (a) => {
       const r = a.getBoundingClientRect();
@@ -234,12 +237,21 @@ async function coachCheck(page, mine) {
     for (const a of advice) {
       if (!a.textContent.trim()) continue;
       if (!whole(a)) bad.push(`the coach's advice "${a.textContent.slice(0, 30)}" has no line whole on screen`);
-      const cut = a.scrollHeight > a.clientHeight + 1 || a.scrollWidth > a.clientWidth + 1;
+      // Cut by its own lines (an ellipsis), or by a box around it (a scroll box, the felt) past its first line.
+      const r = a.getBoundingClientRect();
+      const k = clipOf(a);
+      const boxed = r.bottom > k.bottom + 1 || r.right > k.right + 1;
+      const cut = a.scrollHeight > a.clientHeight + 1 || a.scrollWidth > a.clientWidth + 1 || boxed;
       const more = [...document.querySelectorAll('[data-testid="coach-more"]')].some(seen);
-      if (cut && !more) bad.push(`the coach's advice "${a.textContent.slice(0, 30)}" is cut with no More to read the rest`);
+      if (cut && !more) bad.push(`the coach's advice "${a.textContent.slice(0, 30)}" is cut${boxed ? ' by a box around it' : ''} with no More to read the rest`);
+    }
+    // The bar, and the panel's More, take a 44 pt press on the web too, where hitSlop does nothing (DESIGN.md).
+    for (const b of [...coaches, ...document.querySelectorAll('[data-testid="coach-more"][role="button"]')].filter(seen)) {
+      const r = b.getBoundingClientRect();
+      if (r.height < 43.5 || r.width < 43.5) bad.push(`the coach's ${b.dataset.testid === 'coach' ? 'bar' : 'More button'} is a ${Math.round(r.width)}x${Math.round(r.height)} px press, under 44`);
     }
     if (on && mine && coaches.length > 0 && !advice.some((a) => a.textContent.trim() && whole(a))) bad.push("on my turn the coach shows no line of advice whole on screen");
-    for (const c of coaches) {
+    for (const c of coaches.map(face)) {
       const r = c.getBoundingClientRect();
       const k = clipOf(c);
       if (r.top < k.top - 1 || r.bottom > k.bottom + 1 || r.left < k.left - 1 || r.right > k.right + 1) bad.push(`the coach is cut (${Math.round(r.left)},${Math.round(r.top)} to ${Math.round(r.right)},${Math.round(r.bottom)} inside ${Math.round(k.left)},${Math.round(k.top)} to ${Math.round(k.right)},${Math.round(k.bottom)})`);

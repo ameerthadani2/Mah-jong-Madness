@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, jest } from '@jest/globals';
 import React from 'react';
+import { Platform, StyleSheet } from 'react-native';
 import { fireEvent, render, screen, within } from '@testing-library/react-native';
 import type { Hint } from '@mjm/engine';
 import { CoachBar, CoachPanel, CoachSheet } from './CoachPanel';
@@ -14,7 +15,34 @@ const DISCARD = hint({ discardReasonKey: 'hint.discard.isolated', discardReasonP
 const ADVICE = 'Discard 北 (North); it does not fit any set you are building.';
 const STATUS = 'Two tiles from ready.';
 
-afterEach(() => setLocalePreference('auto'));
+const realOS = Platform.OS;
+function setOS(os: typeof Platform.OS) {
+  (Platform as { OS: typeof Platform.OS }).OS = os;
+}
+afterEach(() => {
+  setLocalePreference('auto');
+  setOS(realOS);
+});
+
+describe('the coach bar takes a 44 pt press', () => {
+  // A one-line bar is drawn 27 px tall.
+  it('on a phone by hitSlop, 9 px above and below', async () => {
+    setOS('ios');
+    await render(<CoachBar hint={DISCARD} lines={{ status: 0, advice: 1 }} onOpen={() => undefined} />);
+    const bar = screen.getByTestId('coach');
+    expect(bar.props.hitSlop).toMatchObject({ top: 9, bottom: 9 });
+  });
+
+  it('on the web, which ignores hitSlop, by padding as much with an equal negative margin (the bar stays where it is)', async () => {
+    setOS('web');
+    await render(<CoachBar hint={DISCARD} lines={{ status: 0, advice: 1 }} onOpen={() => undefined} />);
+    const style = StyleSheet.flatten(screen.getByTestId('coach').props.style);
+    expect(style).toMatchObject({ paddingTop: 9, paddingBottom: 9, marginTop: -9, marginBottom: -9 });
+    expect(27 + style.paddingTop + style.paddingBottom).toBeGreaterThanOrEqual(44);
+    // The bar as drawn is inside the press.
+    expect(within(screen.getByTestId('coach')).getByTestId('coach-face')).toBeOnTheScreen();
+  });
+});
 
 describe('the coach bar (phones)', () => {
   it('shows the tile to discard on the line it has, ellipsised past it, and opens the sheet with everything', async () => {

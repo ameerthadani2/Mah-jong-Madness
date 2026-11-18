@@ -101,10 +101,22 @@ export interface CoachBarLines {
  * the felt counts), two beside my plate where Large and Extra-large tiles give the plate a row of its own (`besidePlate`).
  * Whatever does not fit ends in an ellipsis, and the bar opens the coach's sheet, which holds everything.
  */
-export function coachBarLines(place: 'pinned' | 'rail', besidePlate = false): CoachBarLines {
-  if (place === 'pinned') return { status: 1, advice: 2 };
+export function coachBarLines(place: 'pinned' | 'rail', besidePlate = false, room?: number): CoachBarLines {
+  if (place === 'pinned') {
+    // The felt's height above my pond, once measured: when it cannot hold all three lines the status goes first,
+    // then a line of advice, so the bar keeps one whole line of advice (the sheet holds the rest).
+    if (room === undefined || !Number.isFinite(room) || room >= PINNED_COACH_H.full) return { status: 1, advice: 2 };
+    return { status: 0, advice: room >= PINNED_COACH_H.two ? 2 : 1 };
+  }
   return { status: 0, advice: besidePlate ? 2 : 1 };
 }
+
+/**
+ * The height the pinned coach bar takes in portrait with its gap above it (CoachPanel.tsx: 9 px of border and
+ * padding, a 17 px status line, 15 px advice lines, at least 27 px for the owl and "More"; Felt.tsx pads it 4 px):
+ * the status over two lines of advice, two lines of advice, one.
+ */
+export const PINNED_COACH_H = { full: 60, two: 43, one: 31 } as const;
 
 /** Height the landscape action dock takes: claim/discard buttons (larger on tablets), the tap-hint pill, or nothing. */
 export function dockHeight(dock: ActionDock, big: boolean): number {
