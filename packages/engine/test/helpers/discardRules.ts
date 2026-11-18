@@ -239,3 +239,89 @@ export function neighbourWeightRules(): Record<string, DiscardRule> {
   }
   return out;
 }
+
+/** What is left of the hand once complete sets are taken out: pongs first, then runs from the low end of each suit; runs first, then pongs; or the way that takes out the most sets. */
+function setsLeft(hand: Hand, read: 'pongs' | 'runs' | 'most'): number[] {
+  const c = counts(hand);
+  const pongs = () => {
+    for (let k = 0; k < 34; k++) while (c[k] >= 3) c[k] -= 3;
+  };
+  const runs = () => {
+    for (let k = 0; k < 27; k++) {
+      while (k % 9 <= 6 && c[k] > 0 && c[k + 1] > 0 && c[k + 2] > 0) {
+        c[k]--;
+        c[k + 1]--;
+        c[k + 2]--;
+      }
+    }
+  };
+  if (read !== 'most') {
+    if (read === 'pongs') pongs();
+    runs();
+    if (read === 'runs') pongs();
+    return c;
+  }
+  // Every way through the hand, low kinds first: a pong, a run or a leftover at each step.
+  const left = new Array<number>(34).fill(0);
+  let best = c.slice();
+  let most = -1;
+  const walk = (k: number, sets: number) => {
+    while (k < 34 && c[k] === 0) k++;
+    if (k === 34) {
+      if (sets > most) [most, best] = [sets, left.slice()];
+      return;
+    }
+    if (c[k] >= 3) {
+      c[k] -= 3;
+      walk(k, sets + 1);
+      c[k] += 3;
+    }
+    if (k < 27 && k % 9 <= 6 && c[k + 1] > 0 && c[k + 2] > 0) {
+      c[k]--;
+      c[k + 1]--;
+      c[k + 2]--;
+      walk(k, sets + 1);
+      c[k]++;
+      c[k + 1]++;
+      c[k + 2]++;
+    }
+    c[k]--;
+    left[k]++;
+    walk(k, sets);
+    c[k]++;
+    left[k]--;
+  };
+  walk(0, 0);
+  return best;
+}
+
+/**
+ * "Take out your complete sets, then throw the leftover tile with the fewest neighbours" (the seventh
+ * pass's engine checker): the sets taken out pongs first, runs first or the most sets; neighbours counted
+ * among the leftovers only, extra copies, kinds one rank away and kinds two ranks away weighted as given;
+ * honours then terminals on a tie; with or without first keeping the fewest steps to ready. One of a pair
+ * inside a run (the 2 of 2234) is a leftover single to this read, which the whole-hand counts never make it.
+ */
+export function setsFirstRules(): Record<string, DiscardRule> {
+  const out: Record<string, DiscardRule> = {};
+  for (const read of ['pongs', 'runs', 'most'] as const) {
+    for (const [wc, wa, wg] of [
+      [3, 2, 1],
+      [1, 1, 1],
+    ]) {
+      for (const stepsFirst of [false, true]) {
+        out[`sets first (${read}) ${wc}-${wa}-${wg}${stepsFirst ? ' after steps' : ''}`] = (hand) => {
+          const left = setsLeft(hand, read);
+          const pool = kindsOf(hand).filter((k) => left[k] > 0);
+          const from = pool.length > 0 ? pool : kindsOf(hand);
+          const c = pool.length > 0 ? left : counts(hand);
+          const all = counts(hand);
+          const score = (k: number) => (c[k] - 1) * wc + [-2, -1, 1, 2].reduce((n, d) => n + (near(c, k, d) ? (Math.abs(d) === 1 ? wa : wg) : 0), 0);
+          const sh = stepsFirst ? new Map(from.map((k) => [k, shantenAfter(all, k)])) : null;
+          return from.sort((a, b) => (sh ? sh.get(a)! - sh.get(b)! : 0) || score(a) - score(b) || outerFirst(a, b))[0];
+        };
+      }
+    }
+  }
+  return out;
+}

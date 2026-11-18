@@ -247,7 +247,9 @@ describe('the daily and medium and hard discard puzzles need reading the shape',
       // A puzzle is still a decision: never more than a third of the discards accepted.
       for (const p of all) expect(p.answers.length).toBeLessThanOrEqual(Math.max(2, Math.floor(p.options.length / 3)));
       ms.sort((a, b) => a - b);
-      expect(ms[75]).toBeLessThan(timeBound(20));
+      // A hard rule-proof hand must beat the sets-first reads too (since 19 November 2026), which takes a longer
+      // walk: about 13 ms (median) on an idle machine, against about 5 ms before.
+      expect(ms[75]).toBeLessThan(timeBound(30));
       expect(ms[149]).toBeLessThan(timeBound(500));
     });
   }

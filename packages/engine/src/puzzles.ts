@@ -115,8 +115,11 @@ export const ISOLATED_TILE_PUZZLE_SHARE: Record<1 | 2 | 3, number> = { 1: 1, 2: 
  *
  * - rule-proof, this share of seeds by difficulty: no tile a rule of thumb would throw first is accepted (`ruleOfThumbPicks`:
  *   the least connected tile by any count, the outermost tile, the outermost single, among all the tiles
- *   or among those that keep the best shanten). The answer is then often a tile that looks well
- *   connected, such as one of a pair inside a run;
+ *   or among those that keep the best shanten). At medium and hard (the daily's Tuesday, Thursday and
+ *   weekend puzzles, and hard drills and Rush), nor any of those among the tiles left over once the
+ *   complete sets are taken out (`ruleOfThumbPicks` with `sets`); without that, the answer was often one
+ *   of a pair inside a run, which "take out your sets, then throw the leftover with the fewest neighbours"
+ *   finds;
  * - spread, the rest: at least SPREAD_DISCARDS_PER_ANSWER discards that keep the hand as close to ready
  *   for each accepted one, so working out the shanten alone does not find the answer. The least
  *   connected tile is still right in about three in four of these, as in play.
@@ -127,8 +130,14 @@ export const ISOLATED_TILE_PUZZLE_SHARE: Record<1 | 2 | 3, number> = { 1: 1, 2: 
  * next 365 dailies and "fewest steps to ready, then fewest neighbours" on 253, and on 228 of 300 hard
  * puzzles; now the strongest of 15 rules and 16 neighbour weightings is right on about 45% of either
  * (test/puzzle_rules.test.ts pins them under 48%).
+ *
+ * The sets-first read was right on about three in four of both (268 of 365 dailies, 217 of 300 hard
+ * puzzles). Since medium and hard rule-proof hands beat it too, and more of their seeds draw one, it is
+ * right on about 40% of hard puzzles and 57 to 60% of dailies: under half of the medium and hard ones, but
+ * about three in four of the easy ones, which keep the older rule-proofing. Beating it there as well took a
+ * walk ten times as long (a median over 100 ms) and made the other rules stronger on those days.
  */
-export const RULE_PROOF_PUZZLE_SHARE: Record<1 | 2 | 3, number> = { 1: 0.55, 2: 0.55, 3: 0.5 };
+export const RULE_PROOF_PUZZLE_SHARE: Record<1 | 2 | 3, number> = { 1: 0.55, 2: 0.85, 3: 0.75 };
 /** A spread puzzle has at least this many discards that keep the best shanten for each accepted answer. */
 export const SPREAD_DISCARDS_PER_ANSWER = 3;
 /** The options the daily puzzle is generated with (`dailyPuzzle`), for callers that rebuild it by hand. */
@@ -138,6 +147,8 @@ export const DAILY_DISCARD_OPTIONS: Readonly<DiscardPuzzleOptions> = { readShape
  * hand that is a decision, and at that: bounds the time a puzzle takes.
  */
 const RULE_PROOF_STEPS = 110;
+/** The same at medium and hard, where a rule-proof hand must also beat the sets-first reads (`ruleOfThumbPicks` with `sets`), which fewer hands do. */
+const SETS_PROOF_STEPS = 350;
 const SPREAD_STEPS = 40;
 const DRAWN_STEPS = 50;
 
@@ -221,17 +232,126 @@ function leastOnEveryCount(set: readonly HeldKind[], key: (h: HeldKind) => reado
   return set.filter((_, i) => !keys.some((other, j) => j !== i && beats(other, keys[i]))).map((h) => h.kind);
 }
 
-function ruleOfThumbPicksOf(held: readonly HeldKind[]): Set<Kind> {
-  const best = Math.min(...held.map((h) => h.shanten));
+/**
+ * What is left of a hand once complete sets are taken out: pongs first and then runs from the low end of
+ * each suit, or runs first and then pongs (a beginner's read), or the way that takes out the most sets
+ * (the first such found, low kinds first). Leftover tiles per kind.
+ */
+function leftAfterSets(counts: Counts, read: (typeof SET_READS)[number]): Counts {
+  const c = counts.slice();
+  const pongs = () => {
+    for (let k = 0; k < NUM_PLAY_KINDS; k++) while (c[k] >= 3) c[k] -= 3;
+  };
+  const runs = () => {
+    for (let k = 0; k < KIND_WIND; k++) {
+      while (k % 9 <= 6 && c[k] > 0 && c[k + 1] > 0 && c[k + 2] > 0) {
+        c[k]--;
+        c[k + 1]--;
+        c[k + 2]--;
+      }
+    }
+  };
+  if (read === 'pongsFirst') {
+    pongs();
+    runs();
+    return c;
+  }
+  if (read === 'runsFirst') {
+    runs();
+    pongs();
+    return c;
+  }
+  const left = new Array<number>(NUM_PLAY_KINDS).fill(0);
+  let best: Counts = c.slice();
+  let most = -1;
+  let tiles = c.reduce((a, b) => a + b, 0);
+  const search = (k: number, sets: number) => {
+    // No way on from here takes out more sets than the most found so far.
+    if (sets + Math.floor(tiles / 3) <= most) return;
+    while (k < NUM_PLAY_KINDS && c[k] === 0) k++;
+    if (k >= NUM_PLAY_KINDS) {
+      if (sets > most) {
+        most = sets;
+        best = left.slice();
+      }
+      return;
+    }
+    tiles -= 3;
+    if (c[k] >= 3) {
+      c[k] -= 3;
+      search(k, sets + 1);
+      c[k] += 3;
+    }
+    if (k < KIND_WIND && k % 9 <= 6 && c[k + 1] > 0 && c[k + 2] > 0) {
+      c[k]--;
+      c[k + 1]--;
+      c[k + 2]--;
+      search(k, sets + 1);
+      c[k]++;
+      c[k + 1]++;
+      c[k + 2]++;
+    }
+    tiles += 2;
+    c[k]--;
+    left[k]++;
+    search(k, sets);
+    c[k]++;
+    left[k]--;
+    tiles += 1;
+  };
+  search(0, 0);
+  return best;
+}
+
+/** The held kinds left over in `left`, each with its shanten in the whole hand and its copies and neighbours counted among the leftovers only. */
+function leftoverKinds(held: readonly HeldKind[], left: Counts): HeldKind[] {
+  const out: HeldKind[] = [];
+  for (const h of held) {
+    const k = h.kind;
+    if (left[k] === 0) continue;
+    let nextKinds = 0;
+    let nextTiles = 0;
+    let gapKinds = 0;
+    let gapTiles = 0;
+    if (k < KIND_WIND) {
+      const r = k % 9;
+      for (const d of [-2, -1, 1, 2]) {
+        if (r + d < 0 || r + d > 8 || left[k + d] === 0) continue;
+        if (Math.abs(d) === 1) {
+          nextKinds++;
+          nextTiles += left[k + d];
+        } else {
+          gapKinds++;
+          gapTiles += left[k + d];
+        }
+      }
+    }
+    out.push({ ...h, copies: left[k], nextKinds, nextTiles, gapKinds, gapTiles });
+  }
+  return out;
+}
+
+/** The ways of taking out complete sets that the sets-first reads use (`leftAfterSets`). */
+const SET_READS = ['pongsFirst', 'runsFirst', 'mostSets'] as const;
+
+function ruleOfThumbPicksOf(held: readonly HeldKind[], withSets = false): Set<Kind> {
   const out = new Set<Kind>();
-  for (const set of [held, held.filter((h) => h.shanten === best)]) {
-    // The least connected tile, however a rule counts neighbours: by kinds or by tiles, with any weights.
-    for (const k of leastOnEveryCount(set, (h) => [h.copies, h.nextKinds, h.gapKinds])) out.add(k);
-    for (const k of leastOnEveryCount(set, (h) => [h.copies, h.nextTiles, h.gapTiles])) out.add(k);
-    // The outermost tile and the outermost single (honours first, then terminals ...; the lowest on a tie).
-    for (const singles of [false, true]) {
-      const pool = singles ? set.filter((h) => h.copies === 1) : set;
-      if (pool.length > 0) out.add(pool.reduce((a, h) => (h.position < a.position ? h : a)).kind);
+  const counts = new Array<number>(NUM_PLAY_KINDS).fill(0);
+  for (const h of held) counts[h.kind] = h.copies;
+  // The whole hand, and what is left once complete sets are taken out (each way a player might read them).
+  const views = [held, ...(withSets ? SET_READS.map((read) => leftoverKinds(held, leftAfterSets(counts, read))) : [])];
+  for (const view of views) {
+    if (view.length === 0) continue;
+    const best = Math.min(...view.map((h) => h.shanten));
+    for (const set of [view, view.filter((h) => h.shanten === best)]) {
+      // The least connected tile, however a rule counts neighbours: by kinds or by tiles, with any weights.
+      for (const k of leastOnEveryCount(set, (h) => [h.copies, h.nextKinds, h.gapKinds])) out.add(k);
+      for (const k of leastOnEveryCount(set, (h) => [h.copies, h.nextTiles, h.gapTiles])) out.add(k);
+      // The outermost tile and the outermost single (honours first, then terminals ...; the lowest on a tie).
+      for (const singles of [false, true]) {
+        const pool = singles ? set.filter((h) => h.copies === 1) : set;
+        if (pool.length > 0) out.add(pool.reduce((a, h) => (h.position < a.position ? h : a)).kind);
+      }
     }
   }
   return out;
@@ -245,9 +365,14 @@ function ruleOfThumbPicksOf(held: readonly HeldKind[]): Set<Kind> {
  * keep the best shanten.
  * That covers "throw the isolated tile", "the tile with the fewest neighbours" whatever the weights,
  * "fewest steps to ready, then fewest neighbours", "honours and terminals first" and the like.
+ *
+ * With `sets`, also the same picks among the tiles left over once complete sets are taken out, read
+ * three ways (`leftAfterSets`: pongs first, runs first, the most sets): "take out your sets, then throw
+ * the leftover with the fewest neighbours". Neighbours there are counted among the leftovers only, so
+ * one of a pair inside a run (the 2 of 2234) is a leftover single.
  */
-export function ruleOfThumbPicks(hand: readonly Kind[]): Kind[] {
-  return [...ruleOfThumbPicksOf(heldKinds(countsFromKinds(hand)))].sort((a, b) => a - b);
+export function ruleOfThumbPicks(hand: readonly Kind[], opts: { sets?: boolean } = {}): Kind[] {
+  return [...ruleOfThumbPicksOf(heldKinds(countsFromKinds(hand)), opts.sets === true)].sort((a, b) => a - b);
 }
 
 type DiscardDepth = 'drawn' | 'spread' | 'ruleProof';
@@ -313,13 +438,13 @@ function walkHand(rng: Rng, wall: Kind[], counts: Counts, maxShanten: number, mi
  * the best shanten are counted, and for a rule-proof hand the tiles a rule of thumb throws are counted
  * last, so the hand is dropped as soon as one of them keeps nearly as many tiles as the best of the rest.
  */
-function qualifyingAnswers(counts: Counts, depth: DiscardDepth): Kind[] | null {
+function qualifyingAnswers(counts: Counts, depth: DiscardDepth, setsProof = false): Kind[] | null {
   const held = heldKinds(counts);
   const bestShanten = Math.min(...held.map((h) => h.shanten));
   const keep = held.filter((h) => h.shanten === bestShanten).map((h) => h.kind);
   const spread = depth === 'spread';
   if (spread && keep.length < SPREAD_DISCARDS_PER_ANSWER) return null;
-  const ruledOut = depth === 'ruleProof' ? ruleOfThumbPicksOf(held) : null;
+  const ruledOut = depth === 'ruleProof' ? ruleOfThumbPicksOf(held, setsProof) : null;
   if (ruledOut && keep.every((k) => ruledOut.has(k))) return null;
   const unseen = counts.map((c) => 4 - c);
   const order = ruledOut ? [...keep.filter((k) => !ruledOut.has(k)), ...keep.filter((k) => ruledOut.has(k))] : keep;
@@ -356,11 +481,11 @@ function analysedPuzzle(seed: string, counts: Counts): DiscardPuzzle {
  * since the shanten tables of its suits are new. After RULE_PROOF_STEPS a rule-proof walk settles for a
  * spread hand, and after SPREAD_STEPS more for any hand that is a decision.
  */
-function deepDiscardPuzzle(seed: string, rng: Rng, maxS: number, minS: number, readShape: boolean, ruleProofShare: number): DiscardPuzzle {
+function deepDiscardPuzzle(seed: string, rng: Rng, maxS: number, minS: number, readShape: boolean, ruleProofShare: number, setsProof: boolean): DiscardPuzzle {
   const drawn = rng.next();
   const first: DiscardDepth = !readShape ? 'drawn' : drawn < ruleProofShare ? 'ruleProof' : 'spread';
   const plan: Array<[DiscardDepth, number]> = [
-    ...(first === 'ruleProof' ? [['ruleProof', RULE_PROOF_STEPS] as [DiscardDepth, number]] : []),
+    ...(first === 'ruleProof' ? [['ruleProof', setsProof ? SETS_PROOF_STEPS : RULE_PROOF_STEPS] as [DiscardDepth, number]] : []),
     ...(first !== 'drawn' ? [['spread', SPREAD_STEPS] as [DiscardDepth, number]] : []),
     ['drawn', DRAWN_STEPS],
   ];
@@ -370,7 +495,7 @@ function deepDiscardPuzzle(seed: string, rng: Rng, maxS: number, minS: number, r
   if (counts) {
     for (const [depth, steps] of plan) {
       for (let step = 0; step < steps; step++) {
-        if (qualifyingAnswers(counts, depth)) return analysedPuzzle(seed, counts);
+        if (qualifyingAnswers(counts, depth, setsProof)) return analysedPuzzle(seed, counts);
         walkHand(rng, wall, counts, maxS, minS, readShape);
       }
     }
@@ -392,7 +517,7 @@ export function discardPuzzle(seed: string, difficulty: 1 | 2 | 3 = 2, opts: Dis
   // Easy puzzles draw no extra number, so they stay exactly as they were for every seed.
   const readShapeOn = opts.readShape ?? difficulty >= 2;
   const readShape = readShapeOn && rng.next() >= LONE_HONOUR_PUZZLE_SHARE;
-  if (readShapeOn && (opts.deep ?? difficulty === 3)) return deepDiscardPuzzle(seed, rng, maxS, minS, readShape, RULE_PROOF_PUZZLE_SHARE[difficulty]);
+  if (readShapeOn && (opts.deep ?? difficulty === 3)) return deepDiscardPuzzle(seed, rng, maxS, minS, readShape, RULE_PROOF_PUZZLE_SHARE[difficulty], difficulty >= 2);
   const accept = readShape ? (hand: Kind[]) => loneHonours(hand).length === 0 : undefined;
   // A second draw (never at easy, so easy puzzles keep their seeds) decides whether the hand must beat the isolated-tile rule.
   const tileShare = opts.isolatedTileShare ?? ISOLATED_TILE_PUZZLE_SHARE[difficulty];
