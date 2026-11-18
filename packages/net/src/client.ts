@@ -125,8 +125,8 @@ export const AUDIT_CAVEATS = {
   passedKongLate: 'The table passed up a Kong this seat could make on a turn that reached this device late',
   restartClock: 'The server restarted during this match and then played for this seat before this device could check its clock again',
   // The table's move for this seat is early only by what this device measured of the server's clock in
-  // another run of the app (`across`): its own clock may have been set while the app was closed.
-  appClock: "This app restarted during this hand, and the server's clock then no longer agreed with this device's as it had before, so this device cannot be sure the seat's time had run out when the table played for it",
+  // another run of the app, or of its clock (`across`): its own clock may have been set in between.
+  appClock: "This device's clock was started afresh or set during this hand (the app restarted, or the phone's clock was changed), and the server's clock then no longer agreed with it as it had before, so this device cannot be sure the seat's time had run out when the table played for it",
   lateShown: "This seat's turn reached this device late, or after its connection had been down for much of it, so this device cannot vouch that it saw all of that turn",
   skillUnknown: 'This device restored the match from a save that did not keep how strong the table said its bots are, so the moves the table made for bots and for seats out of time were not checked',
   // Storage changed part of the saved record of the hand (a state whose check figure did not match when the

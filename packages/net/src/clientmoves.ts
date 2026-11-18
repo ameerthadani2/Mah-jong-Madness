@@ -209,10 +209,10 @@ export function unstamped(f: SeenState): boolean {
  * from the host's time stamps, which are believed only as far as this device's own clock allows
  * (`offsetFloor`), in the run of the app the frame after the move arrived in. `unanchored`: nothing
  * was wrong that this device can see, but after a restart of the host it has no fixed point yet to
- * measure the stamps against. `across`: nothing was wrong in that run of the app, but what was
- * measured in another one (before an app restart, or after it for a move before it) calls the move
- * early: the phone's clock may have been set while the app was closed, or the server's may have
- * leapt, which this device cannot tell apart.
+ * measure the stamps against. `across`: nothing was wrong in that run of the app and of this
+ * device's clock, but what was measured in another one (before an app restart, or after it for a
+ * move before it; or after the phone's clock was set forward) calls the move early: the phone's clock
+ * may have been set in between, or the server's may have leapt, which this device cannot tell apart.
  *
  * Across a change of link, or with `gap` (from a frame before a state the audit could not believe
  * was timely), the move was made while this device had no timely view of the table. A seat that
