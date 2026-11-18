@@ -700,7 +700,8 @@ async function runXL(browser, port, [w, h]) {
  * The coach through a whole hand on the smallest phones and at the sizes where it used to vanish: 568x320 in landscape
  * and 320x568 in portrait at Normal tiles in English and at Extra-large tiles and text in Traditional Chinese, and
  * 667x375 at Large tiles and text in English (<size>-coach-<lang>-t<tiles>.png, a few turns in). Fails when coachCheck
- * fails at any of my decisions.
+ * fails at any of my decisions, or when the coach's sheet (opened from the bar two discards in, <size>-coach-*-sheet.png)
+ * has no status, fails dialogKeys, or does not close on Escape.
  */
 const COACH_RUNS = [
   [[568, 320], 'en-US', 1, 1],
@@ -725,15 +726,30 @@ async function runCoach(browser, port, [[w, h], locale, tileScale, textScale]) {
   await page.waitForSelector('[data-testid="start-match"]', { timeout: 30000 });
   await tapSel(page, '[data-testid="start-match"]', 300);
   await page.waitForSelector('[data-testid^="tile-"]', { timeout: 15000 });
+  const sheet = [];
   const played = await playCoachedHand(page, {
     onDiscard: async (n) => {
       if (n === 4) await page.screenshot({ path: path.join(out, `${tag}-${name}.png`) });
+      if (n !== 2) return;
+      // The coach's sheet, from its bar: everything it says, a dialog that keeps the keyboard and the page as the other
+      // sheets do (dialogKeys), closed by Escape with focus back on the bar.
+      if (!(await tapSel(page, '[data-testid="coach"]', 700)) || !(await visible(page, '[data-testid="coach-sheet"]'))) {
+        sheet.push('the coach bar did not open its sheet');
+        return;
+      }
+      await page.screenshot({ path: path.join(out, `${tag}-${name}-sheet.png`) });
+      if (!(await page.evaluate(() => [...document.querySelectorAll('[data-testid="coach-sheet"] [data-testid="coach-sheet-status"]')].some((e) => e.textContent.trim())))) sheet.push("the coach's sheet has no status");
+      sheet.push(...(await dialogKeys(page)).map((f) => `the coach's sheet: ${f}`));
+      await page.keyboard.press('Escape');
+      await page.waitForTimeout(600);
+      if (await visible(page, '[data-testid="coach-sheet"]')) sheet.push("Escape did not close the coach's sheet");
+      if (await pageInert(page)) sheet.push("the table stays inert after the coach's sheet closed");
     },
   });
   const finished = !!(await visible(page, '[data-testid="result-sheet"]'));
   await ctx.close();
   const where = `Coach (${tag}, ${locale}, tiles ${tileScale}, text ${textScale})`;
-  return { size: `${tag} ${name}`, finished, discards: played.discards, shots: [name], notes: finished ? [] : ['hand did not finish'], fails: played.found.map((f) => `${where}: ${f}`), errors };
+  return { size: `${tag} ${name}`, finished, discards: played.discards, shots: [name, `${name}-sheet`], notes: finished ? [] : ['hand did not finish'], fails: [...sheet, ...played.found].map((f) => `${where}: ${f}`), errors };
 }
 
 /**
