@@ -93,6 +93,27 @@ Owner-blocked, as before:
 - a native zh-TW review;
 - devices and players.
 
+## Fixed since this pass (2026-11-18), not rescored
+
+Fairness item 1, the stamp hold, is fixed by units 17 and 17b (commits `20b6bd1` to `f7a90d6`). An independent code review of unit 17 found three ways around its first version; unit 17b closed them and two verifiers then attacked and re-measured the result.
+- **What changed.**
+  - The server's tables run on a steady clock.
+  - The phone measures every frame against the least delay it has seen between the server's stamps and its own clock. It keeps one such figure per run of the server's clock, of the app and of the phone's clock, and allows at most half a second for drift.
+  - The silent-link watch measures against the least delay of the last 20 s. A turn shown more than 17 s late on a connection the watch was measuring fails the hand; anywhere else it is amber.
+  - The phone's own moves and its share of the deal act as fixed points, each counted for no more than the round trip it measured. A turn state without its stamp fails the hand.
+- **The attacks, re-run by me on `f7a90d6`.** Every hand with a turn more than about 22 s late is now amber or red under each of these:
+  - the assessor's crawl at 25, 40 and 44 s;
+  - a delay present from the first frame (10 to 30 s), or ramped up to 40 s;
+  - a backdated deal stamp;
+  - an unasked pong or clock frame on a new connection;
+  - a share request replayed after the deal.
+- **What it costs honest players.** Over about 35,000 hands in about 80 honest network, clock and app conditions there was no new red and no drop loop, and fewer tables were lost than before, because a reconnect now waits 10, 20, 40, then 60 s for a slow server. Stalls of 9 to 14 s turn some extra hands amber, as `docs/FAIRNESS.md` states.
+- **Still open, all stated in `docs/FAIRNESS.md`.**
+  - A server can show every turn up to 17 s late and stay green, or about 22 s when it delays everything from the start under honest stamps. At Turbo and Hyper that is more than the whole clock. The Fair play screen now counts such turns over the match.
+  - A server that also sends its first frames at once, with stamps moved back by the delay, makes the delay look like a difference between the two clocks. In tests every turn 25 to 30 s late stayed green and the count read 0. Closing this needs a protocol change, for example states that echo the phone's latest ping, so the phone can measure each state's lateness against a round trip it timed itself.
+  - A state restored after an app restart is never failed red for being late, because damage in the phone's storage cannot be told from a hold. A hold followed by an app restart is therefore amber.
+  - Two issues predate unit 17 and are unchanged by it. A phone clock running 2,000 ppm slow over a two-hour match fails about 4 hands in 10 red (`playedEarly`); 200 ppm, the real-world worst, stays green. At Hyper with 8 s added each way, one hand failed `moveIgnored`.
+
 ---
 
 # Sixth pass (2026-11-17, afternoon), kept for its detail
