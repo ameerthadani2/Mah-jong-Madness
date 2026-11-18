@@ -1487,20 +1487,25 @@ export class TableClient {
         const h = m.handNumber;
         // Stood in, or holding no secret for this hand (we arrived mid-ceremony): nothing to reveal.
         if (this.standInHand === h || !this.secret || this.commitHand !== h) return;
+        const attempt = this.currentAttempt(h);
+        // This attempt's share went out and the hand has been dealt: an honest host asks for nothing more,
+        // and answering would move the time the share was sent, which the deal's fixed point is measured from.
+        if (attempt?.revealed && this.recordFor(h)?.dealt) return;
         if (this.commitsHand !== h) {
           // Revealing first would let the host pick its own share after seeing ours.
           this.flag(h, 'Host asked for my secret before publishing all commitments');
           return;
         }
-        {
-          const attempt = this.currentAttempt(h);
-          if (attempt) {
-            attempt.revealed = true;
+        if (attempt) {
+          // The deal can follow the first time the share went out over this link: asked again on it, this
+          // device sends the share again but keeps that time (an honest host asks again only on a new link).
+          if (!(attempt.revealed && attempt.revealedEpoch === this.epoch && typeof attempt.revealedAt === 'number')) {
             attempt.revealedAt = this.now();
             attempt.revealedEpoch = this.epoch;
             attempt.revealedRun = this.runId;
             attempt.revealedSeg = this.seg();
           }
+          attempt.revealed = true;
         }
         this.send({ t: 'reveal', secret: this.secret });
         this.update({ ceremony: 'revealed' });

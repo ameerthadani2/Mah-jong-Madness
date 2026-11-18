@@ -496,6 +496,47 @@ describe('clock: a delay present from the start', () => {
       for (const a of audits) expect(a.status).not.toBe('ok');
     }));
 
+  it('seat 1, which makes no move of its own, 25 s from the start: amber, and still amber when the server asks for its share again, a second before the deal reaches the phone, a second after, or on a new link once the deal has been shown (the share’s fixed point is measured from the first time it was sent)', () =>
+    scenario((i) => {
+      for (const again of [null, 'beforeDeal', 'afterDeal', 'newLink'] as const) {
+        /** When the host sent the deal. */
+        let dealt: number | null = null;
+        let asked = false;
+        const w = wire({
+          code: `DA${again}${i}`,
+          seat: 1,
+          think: () => Infinity,
+          delay: (m, now) => {
+            if (m.t === 'state' && dealt === null) dealt = now;
+            return dealt !== null && stampOf(m) !== undefined ? 25_000 : 0;
+          },
+          onTick: (w) => {
+            // No honest server asks again for a share over the link that brought it, nor once it has dealt from it.
+            if (again === null || again === 'newLink' || asked || dealt === null || !w.host.game) return;
+            const at = again === 'beforeDeal' ? dealt + 24_000 : (w.shown.get(0) ?? Infinity) + 1_000;
+            if (w.clock.now < at) return;
+            asked = true;
+            w.line.inject({ t: 'reveal_request', handNumber: w.host.game.handNumber });
+          },
+          onReconnect: (w) => {
+            if (again !== 'newLink' || asked || !w.host.game) return;
+            asked = true;
+            w.line.inject({ t: 'reveal_request', handNumber: w.host.game.handNumber });
+          },
+        });
+        if (again === 'newLink') {
+          // The link ends a second after the phone was shown the deal; the server asks again on the next one.
+          w.dealt();
+          w.until(() => w.shown.has(0) && w.clock.now >= w.shown.get(0)! + 1_000);
+          w.dropNow(1_000);
+        }
+        w.finish();
+        need(w.judged().length > 0 && asked === (again !== null));
+        expect(w.verdict().status).toBe('partial');
+        expect(w.verdict().caveats).toEqual(expect.arrayContaining(['tableMovedLate', 'lateShown']));
+      }
+    }));
+
   it('an honest round trip, 4 s each way from before the deal at seat 2, and a deal stamped 15 s back with a 15 s delay at seat 1: green', () =>
     scenario((i) => {
       const slow = wire({ code: `DH${i}`, seat: 2, think: (k) => (k % 3 === 0 ? Infinity : 800), up: () => 4_000, delay: () => 4_000 });
