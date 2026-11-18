@@ -27,7 +27,8 @@ export const LATENCY_SLACK_MS = 30_000;
  * How much later than the least arrival offset of its scope (`TableClient.lagRef`) a frame may reach
  * this device and still be believed to start the seat's clock at its stamp; later than that, the
  * table's move is judged as a drop (`judgeTableMove`). The watch drops a link whose stamps fall 13 s
- * behind its own reference (`2 × CLOCK_FRAME_MS + 2 s + SILENT_ANSWER_MS`; see `WATCH_WINDOW_MS`),
+ * behind its own reference (`2 × CLOCK_FRAME_MS + 2 s + SILENT_ANSWER_MS`; see `WATCH_WINDOW_MS`), or
+ * measures afresh one it keeps because its frames still come behind a steady delay (`STEADY_SLACK_MS`),
  * and it checks once a second, so no honest frame on a live link is later than about 15.5 s (13 s, a
  * check period and `RAN_GAP_MS`) by that reference. A state that shows the seat a move and is later
  * than this by the watch's reference fails the hand when its link was live.
@@ -43,6 +44,15 @@ export const LATE_MS = 17_000;
  * the last 20 s stays where the crawl began until the watch has dropped the link, 13 s in.
  */
 export const WATCH_WINDOW_MS = 20_000;
+/**
+ * How far apart the arrival offsets of the frames of the last `2 × CLOCK_FRAME_MS + 2 s` may lie for
+ * the link watch to count them as coming at the pace of their stamps, behind by a delay that holds
+ * steady (`TableClient.steadyBehind`): a network delay that rose in a step and stayed up. The watch
+ * keeps such a link while frames keep coming, as it would once its window has taken the delay in.
+ * Stamps that crawl or stand still leave each frame's offset larger than the last by the time
+ * between them, more than this within a few seconds.
+ */
+export const STEADY_SLACK_MS = 1_000;
 /** How fast the host's clock and this device's may drift apart (500 ppm; real clocks drift 200 ppm at worst): a least offset seen a while ago is relaxed by this much, up to `DRIFT_CAP_MS`. */
 export const DRIFT_RATE = 0.0005;
 /**

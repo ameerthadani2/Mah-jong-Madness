@@ -8,7 +8,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { SPEED_PRESETS, withRules } from '@mjm/engine';
-import { DRIFT_CAP_MS, LATE_MS, RTT_ALLOW_MS, SILENT_ANSWER_MS, WATCH_WINDOW_MS } from '../src/clientclock';
+import { DRIFT_CAP_MS, LATE_MS, RTT_ALLOW_MS, SILENT_ANSWER_MS, STEADY_SLACK_MS, WATCH_WINDOW_MS } from '../src/clientclock';
 import { lateCountMs } from '../src/clientmoves';
 import { CLOCK_FRAME_MS } from '../src/messages';
 
@@ -31,6 +31,11 @@ describe('the fair play charter states the late-turn limits the table client use
     expect(turnRow).toContain(`After ${s(SILENT_ANSWER_MS)} more seconds it drops the connection`);
     expect(turnRow).toContain(`the last ${s(WATCH_WINDOW_MS)} seconds`);
     expect(turnRow).toContain('a server can shorten the 3 and the 8 by announcing a shorter clock-frame period, never lengthen them');
+  });
+
+  it('the watch keeps a connection whose frames come at the pace of their stamps, the last within 4 seconds, behind a delay steady to within a second over 8 seconds', () => {
+    expect(STEADY_SLACK_MS).toBe(1_000);
+    expect(turnRow).toContain(`the last within ${s(CLOCK_FRAME_MS + 1_000)} seconds, behind by a delay that has held steady to within a second over the last ${s(2 * CLOCK_FRAME_MS + 2_000)} seconds`);
   });
 
   it('names every event after which the measure starts afresh: a sleep, an app restart, the phone’s clock set forward, an announced server restart', () => {

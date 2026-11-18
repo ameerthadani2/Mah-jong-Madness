@@ -687,6 +687,60 @@ describe('honest links stay green', () => {
       green(w);
     }));
 
+  it('a latency that rises in one step by 11 s each way and stays up (a round trip of 22 s, too slow to connect again): the link is kept, as frames keep coming at the pace of their stamps, and nothing fails', () =>
+    scenario((i) => {
+      const t1 = T0 + 40_000 + 9_000 * i;
+      const step = (now: number) => 50 + (now >= t1 ? 11_000 : 0);
+      /** When the host sent its last frame before the step, and its first after. */
+      let before = 0;
+      let after = 0;
+      const w = wire({
+        code: `HS11${i}`,
+        think: (k) => (k % 3 === 0 ? Infinity : 800),
+        // The bots take a second over each move, so frames come a second apart before the step as well as 3 s apart after it.
+        botDelayMs: 1_000,
+        delay: (_m, now) => {
+          if (now < t1) before = now;
+          else if (after === 0) after = now;
+          return step(now);
+        },
+        up: step,
+      });
+      w.finish();
+      // The frames stop for the 11 s and the gap between those two: a gap of 13 s or more is a link that brought nothing, and dropped.
+      need(w.judged().length > 0 && after > 0 && after - before <= 1_500);
+      expect(w.drops).toEqual([]);
+      expect(w.verdict().failures).toEqual([]);
+    }));
+
+  it('a server that slows every stamped frame in steps of 11 s, 25 s apart, up to 33 s, each taken where its frames come a second apart (a delay that rose and stayed, which the watch keeps): the seat’s turns shown more than 17 s late are never green', () =>
+    scenario((i) => {
+      /** When the first state was sent, the last step was taken and the last stamped frame was sent; how many steps were taken. */
+      let first: number | null = null;
+      let stepAt = Number.NEGATIVE_INFINITY;
+      let prev = Number.NEGATIVE_INFINITY;
+      let steps = 0;
+      const w = wire({
+        code: `HST${i}`,
+        think: (k) => (k % 3 === 0 ? Infinity : 800),
+        botDelayMs: 1_000,
+        delay: (m, now) => {
+          if (stampOf(m) === undefined) return 50 + 11_000 * steps;
+          if (first === null && m.t === 'state') first = now;
+          if (first !== null && m.t === 'state' && steps < 3 && now >= first + 20_000 + 1_000 * i && now - stepAt >= 25_000 && now - prev <= 1_000) {
+            steps++;
+            stepAt = now;
+          }
+          prev = now;
+          return 50 + 11_000 * steps;
+        },
+      });
+      w.finish();
+      const late = [...w.created].filter(([tc, at]) => (w.shown.get(tc) ?? 0) - at > LATE_MS + 1_000 && w.judged().includes(tc));
+      need(steps === 3 && late.length > 0 && w.drops.length === 0);
+      expect(w.verdict().status).not.toBe('ok');
+    }));
+
   it('a latency that rises by 8 s over 30 s and stays up, then a 6 s stall of the network a minute later: green, no drop', () =>
     scenario((i) => {
       const t1 = T0 + 30_000 + 7_000 * i;

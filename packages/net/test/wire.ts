@@ -69,6 +69,8 @@ export interface Plan {
   onReconnect?: (w: Wire) => void;
   /** Between hands (default 30 s, longer than any delay the tests put on a result). */
   intermissionSeconds?: number;
+  /** How long the host's bots take over each move, on the wire's clock (default 0: at once). */
+  botDelayMs?: number;
 }
 
 /** One link from the phone to the table. */
@@ -98,7 +100,17 @@ export function wire(plan: Plan) {
   const real = plan.hostClock === 'real';
   if (real) vi.setSystemTime(serverWall());
   const hostNow = plan.hostClock === 'wall' ? serverWall : clientClock({ now: serverWall, monotonic: () => clock.now });
-  const host = new TableHost(hub.create('host'), { roomCode: plan.code, rules, ...(real ? {} : { now: hostNow }), matchId: `m-${plan.code}`, intermissionSeconds: plan.intermissionSeconds ?? 30 });
+  /** The host's bots' moves, due on the wire's clock. */
+  const timers: Array<{ at: number; fn: () => void }> = [];
+  const host = new TableHost(hub.create('host'), {
+    roomCode: plan.code,
+    rules,
+    ...(real ? {} : { now: hostNow }),
+    matchId: `m-${plan.code}`,
+    intermissionSeconds: plan.intermissionSeconds ?? 30,
+    botDelayMs: plan.botDelayMs ?? 0,
+    schedule: (fn, ms) => void timers.push({ at: clock.now + ms, fn }),
+  });
   let lines = 0;
   let owed = { tc: -1, k: 0, since: 0, think: 0, acted: false };
   /** The uplink delay starts once the seat is taken (its first join goes straight through). */
@@ -159,6 +171,10 @@ export function wire(plan: Plan) {
       }
       if (!plan.asleep?.(clock.now)) mono += ms;
       w.line.uppump();
+      for (let i = 0; i < timers.length; ) {
+        if (timers[i].at <= clock.now) timers.splice(i, 1)[0].fn();
+        else i++;
+      }
       host.tick();
       plan.onTick?.(w);
       if (w.pendingReconnectAt !== null && clock.now >= w.pendingReconnectAt && w.awake()) {

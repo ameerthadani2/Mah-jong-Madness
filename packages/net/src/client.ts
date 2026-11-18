@@ -44,7 +44,7 @@ import { randomHex } from './sha256';
 import type { Link } from './host';
 import { CLOCK_FRAME_MS, RESTART_CAUSES, type Audit, type ClientMessage, type HostMessage, type SeatInfo } from './messages';
 import { isFrame, type Transport, type Unsubscribe } from './transport';
-import { clientClock, DRIFT_CAP_MS, DRIFT_RATE, foldClock, LATE_MS, LINK_PAUSE_MS, ORDER_SLACK_MS, PAUSE_GRACE_MS, RAN_GAP_MS, SILENT_ANSWER_MS, WATCH_WINDOW_MS, type TableClientOptions } from './clientclock';
+import { clientClock, DRIFT_CAP_MS, DRIFT_RATE, foldClock, LATE_MS, LINK_PAUSE_MS, ORDER_SLACK_MS, PAUSE_GRACE_MS, RAN_GAP_MS, SILENT_ANSWER_MS, STEADY_SLACK_MS, WATCH_WINDOW_MS, type TableClientOptions } from './clientclock';
 import { armedLate, clockTrack, firstSend, fixedPoint, isBotSkill, judgeTableMove, lateAnchor, lateCountMs, lateRef, lateWatch, legalFor, sameActionSafe, seatRun, tableRule, turnLateBy, unstamped, type LateScope, type MoveJudge } from './clientmoves';
 import {
   CHAINED_FIELDS,
@@ -867,7 +867,11 @@ export class TableClient {
    * link, and the time without one is judged as a drop: the table may move for the seat in it only
    * when its clock could have run out. A host that answers at once, while it holds back what it sent
    * before, is caught by the order of the stamps (`noteOrder`) or by the audit of the turn's state
-   * (`judgeTableMove`).
+   * (`judgeTableMove`). The one link kept at that point is one that still brings frames at the pace
+   * of their stamps, behind by a delay that has held steady (`steadyBehind`): a network delay that
+   * rose in a step and stayed up, which the reference takes in once it has lasted `WATCH_WINDOW_MS`
+   * (and which may be too slow for the app to connect again). The watch then measures it afresh from
+   * the next check, so no frame on it counts as live before it would on a link just joined.
    *
    * While this scope has no `lagRef` yet (a new clock era, or this device's clock has just followed a
    * sleep), the deficit is the time since the watch began to wait. A new link is watched from its
@@ -929,7 +933,36 @@ export class TableClient {
       this.probedAt = now;
       this.ping();
     }
-    return now - this.probedAt >= SILENT_ANSWER_MS && deficit >= probeAt + SILENT_ANSWER_MS ? 'silent' : 'ok';
+    if (now - this.probedAt < SILENT_ANSWER_MS || deficit < probeAt + SILENT_ANSWER_MS) return 'ok';
+    // Frames still come at the pace of their stamps, behind by a delay that holds steady: a network
+    // delay that rose in a step and stayed up, which the reference takes in once it has lasted
+    // `WATCH_WINDOW_MS`. The link is kept, but measured afresh from the next check: no frame that
+    // arrives before then counts as live (`noteStamp`), so none of them can fail a hand as held back.
+    if (this.steadyBehind(now)) {
+      this.watchFrom = null;
+      return 'ok';
+    }
+    return 'silent';
+  }
+
+  /**
+   * The link keeps bringing frames at the pace of their stamps, behind by a delay that holds steady:
+   * one arrived within a clock-frame period and a second, and the frames of the last `probeAt()`
+   * arrived with offsets within `STEADY_SLACK_MS` of one another. Not a link that brings nothing,
+   * nor one whose stamps crawl or stand still (each of its frames arrives later after its stamp
+   * than the one before it, by the time between them).
+   */
+  private steadyBehind(now: number): boolean {
+    const last = this.lagWin[this.lagWin.length - 1];
+    if (!last || now - last.at > this.clockMs + 1_000) return false;
+    let lo = Number.POSITIVE_INFINITY;
+    let hi = Number.NEGATIVE_INFINITY;
+    for (const e of this.lagWin) {
+      if (e.at < now - this.probeAt()) continue;
+      lo = Math.min(lo, e.lag);
+      hi = Math.max(hi, e.lag);
+    }
+    return hi - lo <= STEADY_SLACK_MS;
   }
 
   /** This app ran at `t` (a frame, a check, a new link, a move): a gap of more than `RAN_GAP_MS` since it last ran was a pause. */
