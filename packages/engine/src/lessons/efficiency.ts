@@ -83,7 +83,7 @@ export const EFFICIENCY_LESSONS: Lesson[] = [
     summaryZh: '為什麼兩面比嵌張、邊張好，弱的搭子怎麼變好，還有哪些牌型只是看起來很寬。',
     steps: [
       {
-        title: 'Three kinds of 搭子',
+        title: 'Three kinds of partial set (搭子)',
         titleZh: '三種搭子',
         body: 'A 兩面 such as 34m waits on either end: 2m or 5m. A 嵌張 such as 35p needs the middle tile, 4p. An 邊張 such as 12s or 89s sits against the end of the suit and needs one tile: 3s or 7s.',
         bodyZh: '兩面像 34m，兩頭都能進：2m 或 5m。嵌張像 35p，要中間那張 4p。邊張像 12s 或 89s，靠在花色的尾端，只能進一張：3s 或 7s。',
@@ -136,7 +136,7 @@ export const EFFICIENCY_LESSONS: Lesson[] = [
   {
     id: 'eff-pairs',
     track: 'efficiency',
-    title: 'Pairs, 搭子 and your 眼',
+    title: 'Pairs, partial sets (搭子) and your 眼',
     titleZh: '對子、搭子與眼',
     minutes: 3,
     summary: 'A winning hand needs exactly one pair. Learn when an extra pair is worth keeping and when to break even your 眼.',
@@ -265,7 +265,7 @@ export const EFFICIENCY_LESSONS: Lesson[] = [
       {
         title: 'The formula',
         titleZh: '計算公式',
-        body: 'For a hand of five sets and a pair: tiles from ready = 10 − 2 × sets − 搭子 − 1 if you have a 眼. Sets and 搭子 together count up to five, because that is all the hand has room for. 0 means ready (聽牌); −1 is a winning hand.',
+        body: 'For a hand of five sets and a pair: tiles from ready = 10 − 2 × sets − partial sets (搭子) − 1 if you have a 眼. Sets and 搭子 together count up to five, because that is all the hand has room for. 0 means ready (聽牌); −1 is a winning hand.',
         bodyZh: '五組面子加一對眼的牌：離聽牌還差幾張 = 10 − 2 × 面子數 − 搭子數 − 有眼再減 1。面子和搭子加起來最多只算五個，因為一手牌只有五個位置。0 就是聽牌，−1 就是胡了。',
       },
       {

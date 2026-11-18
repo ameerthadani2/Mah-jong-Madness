@@ -37,7 +37,10 @@ export const DRAGONS_EN = ['Red', 'Green', 'White'] as const;
 export const FLOWERS = ['梅', '蘭', '竹', '菊', '春', '夏', '秋', '冬'] as const;
 export const FLOWERS_EN = ['Plum', 'Orchid', 'Bamboo', 'Chrysanthemum', 'Spring', 'Summer', 'Autumn', 'Winter'] as const;
 export const SUIT_ZH: Record<Suit, string> = { m: '萬', p: '筒', s: '條', w: '風', d: '元', f: '花' };
+/** The suits' names in English, for a group of tiles ("1, 2 and 3 Dots"). */
 export const SUIT_EN: Record<Suit, string> = { m: 'Characters', p: 'Dots', s: 'Bamboo', w: 'Wind', d: 'Dragon', f: 'Bonus' };
+/** One suited tile's suit in English: "1 Character", "1 Dot", "1 Bamboo" (`TileInfo.nameEn`). */
+export const SUIT_TILE_EN: Record<'m' | 'p' | 's', string> = { m: 'Character', p: 'Dot', s: 'Bamboo' };
 
 export interface TileInfo {
   kind: Kind;
@@ -65,7 +68,7 @@ const CN_NUM = ['一', '二', '三', '四', '五', '六', '七', '八', '九'];
 
 function buildKinds(): TileInfo[] {
   const out: TileInfo[] = [];
-  const suits: Array<[Suit, number, string[]]> = [
+  const suits: Array<['m' | 'p' | 's', number, string[]]> = [
     ['m', KIND_M1, UNICODE_M],
     ['p', KIND_P1, UNICODE_P],
     ['s', KIND_S1, UNICODE_S],
@@ -78,7 +81,7 @@ function buildKinds(): TileInfo[] {
         rank: r,
         code: `${r}${suit}`,
         nameZh: `${CN_NUM[r - 1]}${SUIT_ZH[suit]}`,
-        nameEn: `${r} ${SUIT_EN[suit]}`,
+        nameEn: `${r} ${SUIT_TILE_EN[suit]}`,
         unicode: uni[r - 1],
         isHonor: false,
         isTerminal: r === 1 || r === 9,

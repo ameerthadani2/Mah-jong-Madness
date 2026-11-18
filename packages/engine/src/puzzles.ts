@@ -537,7 +537,7 @@ export function discardDecision(p: Pick<DiscardPuzzle, 'hand' | 'options' | 'ans
   if (weak) {
     return out(
       'weakerTaatsu',
-      `Break the weaker 搭子. ${B} and ${tileEn(weak.partner)} wait only on ${tileEn(weak.wait)} (${weak.edge ? 'an edge' : 'a middle'} wait); keep the 搭子 that wait on more. Throwing ${B} keeps ${n} tiles that improve the hand.`,
+      `Break the weaker partial set (搭子). ${B} and ${tileEn(weak.partner)} wait only on ${tileEn(weak.wait)} (${weak.edge ? 'an edge' : 'a middle'} wait); keep the partial sets that wait on more. Throwing ${B} keeps ${n} tiles that improve the hand.`,
       `拆比較弱的搭子。${Bz}和${tileZh(weak.partner)}是${weak.edge ? '邊張' : '嵌張'}，只等${tileZh(weak.wait)}；留下等牌較多的搭子。打${Bz}還有 ${n} 張能進張。`,
     );
   }

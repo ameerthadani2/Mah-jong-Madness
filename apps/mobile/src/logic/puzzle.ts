@@ -6,6 +6,7 @@
 import {
   answerExplanation,
   dailyPuzzleDifficulty,
+  SUIT_EN,
   judgePuzzleAnswer,
   kindInfo,
   puzzleDifficulty,
@@ -131,21 +132,23 @@ export function tileName(kind: Kind, locale: string): string {
 
 /**
  * A list of tiles in words, grouped by suit so that eighteen kinds still read as one line:
- * "6, 7, 8 Characters; 5, 7 Dots; North Wind, Green Dragon" / 「六、七、八萬；五、七筒；北、發」.
+ * "6, 7 and 8 Characters; 5 Dot; North Wind, Green Dragon" / 「六、七、八萬；五筒；北、發」.
+ * A group of one is that tile's own (singular) name; a group of more takes the suit's plural name.
  * (The engine's short codes, 6m 7p N F, are riichi notation that nothing in the app explains.)
  */
 export function tileListText(kinds: readonly Kind[], locale: string): string {
   const zh = locale === 'zh-TW';
-  const comma = zh ? '、' : ', ';
   const groups: string[] = [];
   const sorted = [...new Set(kinds)].sort((x, y) => x - y).map((k) => kindInfo(k));
   for (const suit of ['m', 'p', 's'] as const) {
     const ranks = sorted.filter((i) => i.suit === suit);
     if (!ranks.length) continue;
-    // 「六萬」 is rank then suit; "6 Characters" is rank, a space, then suit.
-    const suitName = zh ? ranks[0].nameZh.slice(1) : ranks[0].nameEn.slice(ranks[0].nameEn.indexOf(' '));
-    groups.push(ranks.map((i) => (zh ? i.nameZh.slice(0, 1) : String(i.rank))).join(comma) + suitName);
+    // 「六萬」 is rank then suit; "6 Character" is rank, a space, then suit, and "6 and 7 Characters" a group of them.
+    if (zh) groups.push(ranks.map((i) => i.nameZh.slice(0, 1)).join('、') + ranks[0].nameZh.slice(1));
+    else if (ranks.length === 1) groups.push(ranks[0].nameEn);
+    else groups.push(`${ranks.slice(0, -1).map((i) => i.rank).join(', ')} and ${ranks[ranks.length - 1].rank} ${SUIT_EN[suit]}`);
   }
+  const comma = zh ? '、' : ', ';
   const others = sorted.filter((i) => i.suit !== 'm' && i.suit !== 'p' && i.suit !== 's');
   if (others.length) groups.push(others.map((i) => (zh ? i.nameZh : i.nameEn)).join(comma));
   return groups.join(zh ? '；' : '; ');

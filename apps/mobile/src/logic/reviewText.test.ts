@@ -36,7 +36,7 @@ describe('hand review text', () => {
 
   it('names what the coach would do instead of a kong', () => {
     const en = appT('en');
-    expect(reviewReasonParams('review.turn.kongNotBest', { best: '5m' }, 'en', en).best).toBe('Discard 5 Characters');
+    expect(reviewReasonParams('review.turn.kongNotBest', { best: '5m' }, 'en', en).best).toBe('Discard 5 Character');
     expect(reviewReasonParams('review.turn.kongNotBest', { best: 'hu' }, 'en', en).best).toBe('Win');
     const zh = appT('zh-TW');
     expect(reviewReasonParams('review.turn.kongNotBest', { best: '5m' }, 'zh-TW', zh).best).toContain('五萬');
@@ -57,7 +57,7 @@ describe('hand review text', () => {
     expect(say(discard, 'en')).toBe('Discard South Wind');
     expect(say(discard, 'zh-TW', appT('zh-TW'))).toContain('南');
     const chi = { type: 'chi', tiles: [tileOf('4p'), tileOf('6p')] } as Action;
-    expect(say(chi, 'en')).toBe('Chi 4 Dots, 6 Dots');
+    expect(say(chi, 'en')).toBe('Chi 4 Dot, 6 Dot');
     expect(say(chi, 'en')).not.toMatch(HAN);
     expect(say(null, 'en')).toBe('—');
     expect(tileNames([kindFromCode('4p'), kindFromCode('6p')], 'zh-TW')).toBe('四筒、六筒');

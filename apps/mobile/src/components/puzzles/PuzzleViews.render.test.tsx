@@ -137,7 +137,7 @@ describe('a right answer other than the puzzle\'s own is explained for itself', 
   afterEach(() => setLocalePreference('en'));
 
   it('discard: the other right tile gets the decision it turns on, and the puzzle\'s tile is named too', async () => {
-    // 3 Characters is isolated (the puzzle's own answer); throwing one of the three pairs (2 Bamboo) keeps as many tiles.
+    // 3 Character is isolated (the puzzle's own answer); throwing one of the three pairs (2 Bamboo) keeps as many tiles.
     const TWO = discardAnalysis([2, 6, 8, 9, 11, 13, 14, 18, 19, 19, 20, 23, 24, 31, 31, 32, 32], 'render-two-right');
     expect(TWO.best).toBe(2);
     expect(TWO.answers).toEqual([2, 19]);
@@ -321,7 +321,7 @@ describe('a ranked puzzle served as its question', () => {
   });
 
   it('discard: once answered, names the decision the puzzle turns on, in English and in Traditional Chinese', async () => {
-    // The only pair (5 Dots) is the tempting discard; the engine names keeping it as the eyes.
+    // The only pair (5 Dot) is the tempting discard; the engine names keeping it as the eyes.
     const KEEP = discardAnalysis([3, 4, 5, 7, 8, 9, 9, 9, 10, 13, 13, 14, 15, 21, 22, 23, 25], 'render-keep-pair');
     const en = await showRanked(KEEP);
     await fireEvent.press(tile(13));

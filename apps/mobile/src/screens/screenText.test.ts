@@ -37,10 +37,13 @@ describe('tiles listed in a puzzle explanation', () => {
   const kinds = kindsFromString('6789m 5789p 1456789s N F B');
 
   it('are named in the reader\'s language, grouped by suit', () => {
-    expect(tileListText(kinds, 'en')).toBe('6, 7, 8, 9 Characters; 5, 7, 8, 9 Dots; 1, 4, 5, 6, 7, 8, 9 Bamboo; North Wind, Green Dragon, White Dragon');
+    expect(tileListText(kinds, 'en')).toBe('6, 7, 8 and 9 Characters; 5, 7, 8 and 9 Dots; 1, 4, 5, 6, 7, 8 and 9 Bamboo; North Wind, Green Dragon, White Dragon');
     expect(tileListText(kinds, 'zh-TW')).toBe('六、七、八、九萬；五、七、八、九筒；一、四、五、六、七、八、九條；北、發、白');
     expect(tileListText([kindFromCode('E')], 'en')).toBe('East Wind');
     expect(tileListText([kindFromCode('5m'), kindFromCode('5m')], 'zh-TW')).toBe('五萬');
+    // One tile of a suit is singular, two or more take the suit's plural name (before: "5 Characters", "1, 2 Dots").
+    expect(tileListText([kindFromCode('5m')], 'en')).toBe('5 Character');
+    expect(tileListText(kindsFromString('12p 3s'), 'en')).toBe('1 and 2 Dots; 3 Bamboo');
     expect(tileListText([], 'en')).toBe('');
   });
 

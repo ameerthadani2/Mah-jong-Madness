@@ -1,7 +1,7 @@
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { describe, expect, it } from 'vitest';
-import { ENGINE_REASON_KEYS, LESSONS } from '../src/index';
+import { discardAnalysis, discardPuzzle, ENGINE_REASON_KEYS, kindInfo, LESSONS } from '../src/index';
 
 /** Every string inside a value, with its path. */
 function strings(value: unknown, path = ''): Array<[string, string]> {
@@ -26,7 +26,37 @@ describe('plain Taiwanese wording', () => {
   it('keeps the lesson on counting exact: the formula, the five-slot limit and what 0 and -1 mean', () => {
     const steps = strings(LESSONS).map(([, s]) => s);
     expect(steps.some((s) => s.includes('離聽牌還差幾張 = 10 − 2 × 面子數 − 搭子數 − 有眼再減 1'))).toBe(true);
-    expect(steps.some((s) => s.includes('tiles from ready = 10 − 2 × sets − 搭子 − 1 if you have a 眼'))).toBe(true);
+    expect(steps.some((s) => s.includes('tiles from ready = 10 − 2 × sets − partial sets (搭子) − 1 if you have a 眼'))).toBe(true);
     expect(steps.some((s) => s.includes('面子和搭子加起來最多只算五個') && s.includes('0 就是聽牌，−1 就是胡了'))).toBe(true);
+  });
+});
+
+describe('English for an English reader', () => {
+  it('names one suited tile in the singular: 1 Character, 1 Dot, 1 Bamboo', () => {
+    // Before 18 November 2026: "1 Characters", "1 Dots".
+    expect([kindInfo(0).nameEn, kindInfo(9).nameEn, kindInfo(18).nameEn]).toEqual(['1 Character', '1 Dot', '1 Bamboo']);
+    for (let k = 0; k < 27; k++) expect(kindInfo(k).nameEn).toBe(`${(k % 9) + 1} ${['Character', 'Dot', 'Bamboo'][Math.floor(k / 9)]}`);
+  });
+
+  it('glosses 搭子 the first time a lesson uses it in English, as a partial set', () => {
+    const gloss = /partial sets? \(搭子\)/;
+    const unglossed: string[] = [];
+    for (const lesson of LESSONS) {
+      // In the order the lesson is read; Chinese fields end in Zh.
+      const english = strings(lesson).filter(([path, text]) => !/Zh$/.test(path) && text.includes('搭子'));
+      if (english.length > 0 && !gloss.test(english[0][1])) unglossed.push(`${lesson.id} ${english[0][0]}`);
+    }
+    expect(unglossed).toEqual([]);
+  });
+
+  it('glosses 搭子 in a puzzle explanation that names one', () => {
+    const weak = discardAnalysis([0, 2, 3, 3, 4, 4, 5, 10, 14, 16, 21, 22, 25, 25, 25, 33, 33]);
+    expect(weak.reasonKey).toBe('puzzle.discard.weakerTaatsu');
+    expect(weak.explanation).toMatch(/^Break the weaker partial set \(搭子\)\. 1 Character and 3 Character wait only on 2 Character/);
+    expect(weak.explanationZh).toMatch(/^拆比較弱的搭子。/);
+    for (let i = 0; i < 120; i++) {
+      const p = discardPuzzle(`gloss-${i}`, 3);
+      if (p.explanation.includes('搭子')) expect(p.explanation).toMatch(/partial set \(搭子\)/);
+    }
   });
 });
