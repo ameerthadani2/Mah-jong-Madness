@@ -873,8 +873,10 @@ async function runPreview(browser, port, [w, h], zh) {
       continue;
     }
     if (kind === 'emotes' && !zh) {
-      await tapSel(page, '[data-testid="preview-play-th.dumpling"]', 300);
-      if (!(await visible(page, '[data-testid="preview-emote-bubble"]'))) fails.push(`${where}: tapping an emote does not play it`);
+      await tapSel(page, '[data-testid="preview-play-th.dumpling"]', 0);
+      // The bubble pops in a moment after the tap; on a busy machine that moment can pass 300 ms, so wait up to 3 s for it.
+      const played = await page.waitForSelector('[data-testid="preview-emote-bubble"]', { state: 'visible', timeout: 3000 }).then(() => true, () => false);
+      if (!played) fails.push(`${where}: tapping an emote does not play it`);
     }
     if (kind === 'celebration') {
       const replay = await visible(page, '[data-testid="preview-replay"]');
