@@ -192,6 +192,8 @@ const REASON_KEYS: Record<string, string> = {
   'puzzle.claim.kong': 'puzzles.reason.claimKong',
   'puzzle.claim.ready': 'puzzles.reason.claimReady',
   'puzzle.claim.closer': 'puzzles.reason.claimCloser',
+  'puzzle.claim.even': 'puzzles.reason.claimEven',
+  'puzzle.claim.value': 'puzzles.reason.claimValue',
   'puzzle.value.keepPattern': 'puzzles.reason.valueKeepPattern',
   'puzzle.value.tradeSpeed': 'puzzles.reason.valueTradeSpeed',
   'puzzle.value.speed': 'puzzles.reason.valueSpeed',

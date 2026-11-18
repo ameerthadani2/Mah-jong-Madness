@@ -19,7 +19,7 @@ import { type Meld, type MeldType } from './meld';
 import { createRng, shuffle, WALL_RNG_VERSION, type Rng } from './rng';
 import { DEFAULT_RULES } from './rules';
 import { prevailingWindKind, scoreWin, seatWindKind, type TaiItem } from './scoring';
-import { isHonorKind, kindInfo, kindOf, KIND_DRAGON, KIND_WIND, NUM_PLAY_KINDS, NUM_TILES, rankOfKind, sortTiles, type Kind, type TileId } from './tiles';
+import { isHonorKind, kindInfo, kindOf, KIND_DRAGON, KIND_WIND, NUM_PLAY_KINDS, NUM_TILES, rankOfKind, sortTiles, SUIT_EN, type Kind, type TileId } from './tiles';
 
 export interface DiscardPuzzle {
   type: 'discard';
@@ -482,6 +482,10 @@ export function discardDecision(p: Pick<DiscardPuzzle, 'hand' | 'options' | 'ans
   const rivals = p.options.filter((o) => !p.answers.includes(o.kind)).sort((x, y) => rank(x) - rank(y) || x.kind - y.kind);
   const r = rivals[0];
   const pairs = counts.filter((c) => c === 2).length;
+  // The tile explained may be a right answer that keeps a little less than the best (`answerExplanation`):
+  // then it is not called the best, and the best wrong tile is not called the next best.
+  const most = b.acceptance >= Math.max(...p.answers.map((k) => opt(k).acceptance));
+  const alone = p.answers.length === 1;
   const B = tileEn(b.kind);
   const Bz = tileZh(b.kind);
   const n = b.acceptance;
@@ -500,27 +504,27 @@ export function discardDecision(p: Pick<DiscardPuzzle, 'hand' | 'options' | 'ans
   if (counts[b.kind] === 1 && hasNoNeighbour(counts, b.kind)) {
     return out(
       'isolated',
-      `Throw the isolated tile. Nothing in your hand connects to ${B}, so it is the tile you need least; after it goes, ${n} tiles still improve the hand.`,
-      `打孤張。手上沒有牌能和${Bz}連起來，它最沒用；打掉後還有 ${n} 張牌能進張。`,
+      `Throw the isolated tile. Nothing in your hand connects to ${B}, so ${most ? 'it is the tile you need least' : 'it does little for the hand'}; after it goes, ${n} tiles still improve the hand.`,
+      `打孤張。手上沒有牌能和${Bz}連起來，${most ? '它最沒用' : '它幫不上什麼忙'}；打掉後還有 ${n} 張牌能進張。`,
     );
   }
   if (counts[b.kind] === 2) {
     return pairs >= 2
       ? out(
           'breakPair',
-          `Break a pair. You hold ${pairs} pairs and need only one as your eyes; throwing one ${B} keeps the strongest shapes, and ${n} tiles still improve the hand.`,
-          `拆對子。你有 ${pairs} 組對子，做眼只要一組；拆一張${Bz}最划算，打掉後還有 ${n} 張牌能進張。`,
+          `Break a pair. You hold ${pairs} pairs and need only one as your eyes; throwing one ${B} keeps ${most ? 'the strongest shapes' : 'good shapes'}, and ${n} tiles still improve the hand.`,
+          `拆對子。你有 ${pairs} 組對子，做眼只要一組；拆一張${Bz}${most ? '最划算' : '也不錯'}，打掉後還有 ${n} 張牌能進張。`,
         )
       : out(
           'breakPair',
-          `Break the pair. The pair of ${B} does less for this hand than the shapes around it: throwing one keeps ${n} tiles that improve the hand, and new eyes are easy to find.`,
+          `Break the pair. The pair of ${tilesEn(b.kind)} does less for this hand than the shapes around it: throwing one keeps ${n} tiles that improve the hand, and new eyes are easy to find.`,
           `拆對子。${Bz}這對不如旁邊的搭子有用：打一張還有 ${n} 張牌能進張，眼之後再找就好。`,
         );
   }
   if (r && counts[r.kind] === 2 && pairs === 1) {
     return out(
       'keepPair',
-      `Keep the pair as your eyes. ${tileEn(r.kind)} is your only pair; breaking it ${costEn(r)}, while throwing ${B} keeps ${n} tiles that improve the hand.`,
+      `Keep the pair as your eyes. Your ${tilesEn(r.kind)} are your only pair; breaking it ${costEn(r)}, while throwing ${B} keeps ${n} tiles that improve the hand.`,
       `留對子做眼。${tileZh(r.kind)}是你唯一的對子；拆它${costZh(r)}，打${Bz}則還有 ${n} 張牌能進張。`,
     );
   }
@@ -543,8 +547,8 @@ export function discardDecision(p: Pick<DiscardPuzzle, 'hand' | 'options' | 'ans
   }
   return out(
     'compare',
-    r ? `Compare the shapes. Throwing ${B} keeps ${n} tiles that improve the hand; the closest other choice, ${tileEn(r.kind)}, ${costEn(r)}.` : `Compare the shapes. Throwing ${B} keeps ${n} tiles that improve the hand.`,
-    r ? `比較形狀。打${Bz}還有 ${n} 張能進張；次佳的${tileZh(r.kind)}${costZh(r)}。` : `比較形狀。打${Bz}還有 ${n} 張能進張。`,
+    r ? `Compare the shapes. Throwing ${B} keeps ${n} tiles that improve the hand; ${alone ? 'the closest other choice' : 'the best of the wrong choices'}, ${tileEn(r.kind)}, ${costEn(r)}.` : `Compare the shapes. Throwing ${B} keeps ${n} tiles that improve the hand.`,
+    r ? `比較形狀。打${Bz}還有 ${n} 張能進張；${alone ? '次佳的' : '錯的選項裡最好的'}${tileZh(r.kind)}${costZh(r)}。` : `比較形狀。打${Bz}還有 ${n} 張能進張。`,
   );
 }
 
@@ -842,6 +846,11 @@ function shapeWaits(counts: Counts, setsNeeded: number): Kind[] {
 }
 
 const tileEn = (k: Kind): string => kindInfo(k).nameEn;
+/** Two or more tiles of one kind in English: "4 Characters", "6 Dots", "5 Bamboo", "East Winds". */
+const tilesEn = (k: Kind): string => {
+  const t = kindInfo(k);
+  return t.isHonor ? `${t.nameEn}s` : `${t.rank} ${SUIT_EN[t.suit]}`;
+};
 const tileZh = (k: Kind): string => kindInfo(k).nameZh;
 const SEAT_EN = ['you', 'the player on your right', 'the player opposite', 'the player on your left'];
 const SEAT_ZH = ['你', '下家', '對家', '上家'];
@@ -879,6 +888,8 @@ export interface DefenceOption {
    */
   accepted: boolean;
   reason: DefenceReason;
+  /** For a discard that keeps the hand's shanten: the tiles left that would improve the hand after it (as `efficient` counts them). */
+  acceptance?: number;
 }
 
 export interface DefencePuzzle extends PuzzleExplanation {
@@ -1063,8 +1074,12 @@ function defenceText(p: Pick<DefencePuzzle, 'answer' | 'answers' | 'threatSeat' 
   const alsoZh = others.length > 0 ? `${others.map(tileZh).join('、')}差不多一樣安全，也算對。` : '';
   const keepEn = ' Throwing it also keeps your hand as close to ready as any other discard.';
   const keepZh = '打這張也不會讓你離聽牌更遠。';
-  const tradeEn = !p.answers.includes(p.efficient) ? ` ${tileEn(p.efficient)} would leave more useful tiles, but not while someone looks ready.` : '';
-  const tradeZh = !p.answers.includes(p.efficient) ? `打${tileZh(p.efficient)}進張比較多，但對方看起來快聽牌了，先求安全。` : '';
+  // Only when the efficient discard keeps strictly more than the tile explained (a tie is no trade).
+  const accOf = (k: Kind) => p.options.find((o) => o.kind === k)?.acceptance;
+  const [effAcc, ownAcc] = [accOf(p.efficient), accOf(p.answer)];
+  const trade = !p.answers.includes(p.efficient) && effAcc !== undefined && ownAcc !== undefined && effAcc > ownAcc;
+  const tradeEn = trade ? ` ${tileEn(p.efficient)} would leave more useful tiles, but not while someone looks ready.` : '';
+  const tradeZh = trade ? `打${tileZh(p.efficient)}進張比較多，但對方看起來快聽牌了，先求安全。` : '';
   return {
     reasonKey: `puzzle.defence.${p.reason}`,
     explanation: `${threatEn} ${en}${numbersEn}${orderEn}${alsoEn}${keepEn}${tradeEn}`,
@@ -1283,6 +1298,7 @@ function defenceAttempt(seed: string, difficulty: PuzzleDifficulty, rng: Rng, re
   let bestAcc = -1;
   for (const o of kept) {
     const acc = acceptanceAfter(counts, TOTAL_SETS, o.kind, unseen);
+    o.acceptance = acc;
     if (acc > bestAcc) {
       bestAcc = acc;
       efficient = o.kind;
@@ -1421,7 +1437,7 @@ function claimText(p: Pick<ClaimPuzzle, 'answer' | 'discard' | 'shantenBefore' |
     if (p.shantenBefore === 0 && concealed) {
       return {
         reasonKey: 'puzzle.claim.passReady',
-        explanation: `You are already ready (聽牌) with a concealed hand and ${a.acceptance} live winning tiles. No claim gets you closer, and calling would cost you 門清 (and 門清自摸 on a self-draw), so pass.${o.en}`,
+        explanation: `You are already ready (聽牌) with a concealed hand and ${a.acceptance} live winning ${a.acceptance === 1 ? 'tile' : 'tiles'}. No claim gets you closer, and calling would cost you 門清 (and 門清自摸 on a self-draw), so pass.${o.en}`,
         explanationZh: `你已經聽牌，而且是門清，還有${a.acceptance}張可以胡。吃碰不會讓你更接近胡牌，還會失去門清（自摸時的門清自摸），所以不要。${o.zh}`,
       };
     }
@@ -1432,16 +1448,20 @@ function claimText(p: Pick<ClaimPuzzle, 'answer' | 'discard' | 'shantenBefore' |
     };
   }
   const after = a.shantenAfter;
-  const stepsEn = after === 0 ? 'makes you ready (聽牌)' : `takes you from ${p.shantenBefore} to ${after} tiles from ready`;
-  const stepsZh = after === 0 ? '吃碰後就聽牌' : `從差${p.shantenBefore}張聽牌變成差${after}張`;
-  const waitEn = after === 0 && a.waits ? ` It leaves ${a.acceptance} live winning tiles.` : '';
+  // A claim accepted as about as good as passing may leave the hand just as far from ready: it is not said to bring it closer.
+  const closer = after < p.shantenBefore;
+  const tilesFrom = (k: number) => `${k} ${k === 1 ? 'tile' : 'tiles'} from ready`;
+  const stepsEn = !closer ? (after === 0 ? 'keeps you ready (聽牌), as passing does' : `leaves you ${tilesFrom(after)}, as passing does`) : after === 0 ? 'makes you ready (聽牌)' : `takes you from ${p.shantenBefore} to ${tilesFrom(after)}`;
+  const stepsZh = !closer ? (after === 0 ? '吃碰後還是聽牌，和不吃不碰一樣' : `吃碰後還是差${after}張聽牌，和不吃不碰一樣`) : after === 0 ? '吃碰後就聽牌' : `從差${p.shantenBefore}張聽牌變成差${after}張`;
+  const waitEn = after === 0 && a.waits ? ` It leaves ${a.acceptance} live winning ${a.acceptance === 1 ? 'tile' : 'tiles'}.` : '';
   const waitZh = after === 0 && a.waits ? `聽${a.acceptance}張。` : '';
-  const valueEn = valuePong ? ` The pong of ${tileEn(p.discard)} is also worth ${valuePong} 台.` : '';
-  const valueZh = valuePong ? `${tileZh(p.discard)}的刻子還有${valuePong}台。` : '';
+  // A pong that brings the hand no closer is taken for its 台: said so, not as an extra.
+  const valueEn = valuePong ? ` The pong of ${tileEn(p.discard)} is ${closer ? 'also ' : ''}worth ${valuePong} 台.` : '';
+  const valueZh = valuePong ? `${tileZh(p.discard)}的刻子${closer ? '還' : ''}有${valuePong}台。` : '';
   const kongEn = a.type === 'kong' ? ' A kong also brings a replacement tile from the back of the wall.' : '';
   const kongZh = a.type === 'kong' ? '槓還可以從牌尾補一張。' : '';
   return {
-    reasonKey: a.type === 'kong' ? 'puzzle.claim.kong' : after === 0 ? 'puzzle.claim.ready' : 'puzzle.claim.closer',
+    reasonKey: a.type === 'kong' ? 'puzzle.claim.kong' : !closer ? (valuePong ? 'puzzle.claim.value' : 'puzzle.claim.even') : after === 0 ? 'puzzle.claim.ready' : 'puzzle.claim.closer',
     explanation: `${label.en} ${stepsEn}.${waitEn}${valueEn}${kongEn}${othersText(p).en}`,
     explanationZh: `${label.zh}，${stepsZh}。${waitZh}${valueZh}${kongZh}${othersText(p).zh}`,
   };
@@ -1454,8 +1474,11 @@ function othersText(p: Pick<ClaimPuzzle, 'answer' | 'discard' | 'options'>): { e
   let en = '';
   let zh = '';
   if (also.length > 0) {
-    en += ` ${also.map((o) => claimLabel(o, p.discard).en).join(' and ')} ${also.length > 1 ? 'are' : 'is'} about as good.`;
-    zh += `${also.map((o) => claimLabel(o, p.discard).zh).join('、')}差不多一樣好。`;
+    // Passing is named as an act ("passing", 不吃不碰), not by its button's label.
+    const en1 = (o: ClaimOption, i: number) => (o.type === 'pass' ? (i === 0 ? 'Passing' : 'passing') : claimLabel(o, p.discard).en);
+    const zh1 = (o: ClaimOption) => (o.type === 'pass' ? '不吃不碰' : claimLabel(o, p.discard).zh);
+    en += ` ${also.map(en1).join(' and ')} ${also.length > 1 ? 'are' : 'is'} about as good.`;
+    zh += `${also.map(zh1).join('、')}也差不多一樣好。`;
   }
   if (worse.some((o) => o.shantenAfter > p.answer.shantenAfter)) {
     en += ' The other choices leave you further from ready.';

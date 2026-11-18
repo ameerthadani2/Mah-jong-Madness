@@ -86,6 +86,8 @@
     "claimKong": "槓牌多補一張",
     "claimReady": "吃碰後聽牌",
     "claimCloser": "吃碰後更接近聽牌",
+    "claimEven": "和不吃不碰差不多",
+    "claimValue": "碰了有台數",
     "valueKeepPattern": "保住牌型",
     "valueTradeSpeed": "慢一點也值得",
     "defencePassed": "他上一次打牌後別人打過",

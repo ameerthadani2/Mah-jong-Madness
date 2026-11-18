@@ -384,7 +384,7 @@ describe('the explanation names the decision the discard puzzle turns on', () =>
 
   it('the only pair, kept as the eyes', () => {
     const p = named([3, 4, 5, 7, 8, 9, 9, 9, 10, 13, 13, 14, 15, 21, 22, 23, 25], 'keepPair', 25);
-    expect(p.explanation).toBe('Keep the pair as your eyes. 5 Dot is your only pair; breaking it leaves only 14 tiles, while throwing 8 Bamboo keeps 17 tiles that improve the hand.');
+    expect(p.explanation).toBe('Keep the pair as your eyes. Your 5 Dots are your only pair; breaking it leaves only 14 tiles, while throwing 8 Bamboo keeps 17 tiles that improve the hand.');
     expect(p.explanationZh).toBe('留對子做眼。五筒是你唯一的對子；拆它只剩 14 張，打八條則還有 17 張牌能進張。');
     expect(p.answers).not.toContain(13);
   });
@@ -410,8 +410,10 @@ describe('the explanation names the decision the discard puzzle turns on', () =>
 
   it('otherwise, comparing the shapes outright', () => {
     const p = named([1, 2, 2, 3, 4, 10, 10, 10, 11, 15, 16, 17, 20, 21, 21, 25, 26], 'compare', 20);
-    expect(p.explanation).toBe('Compare the shapes. Throwing 3 Dot keeps 11 tiles that improve the hand; the closest other choice, 3 Character, takes you a step further from ready.');
-    expect(p.explanationZh).toBe('比較形狀。打三筒還有 11 張能進張；次佳的三萬會離聽牌更遠一步。');
+    // Another right answer keeps nearly as many, so 3 Character is the best of the wrong ones, not the next best.
+    expect(p.answers.length).toBeGreaterThan(1);
+    expect(p.explanation).toBe('Compare the shapes. Throwing 3 Dot keeps 11 tiles that improve the hand; the best of the wrong choices, 3 Character, takes you a step further from ready.');
+    expect(p.explanationZh).toBe('比較形狀。打三筒還有 11 張能進張；錯的選項裡最好的三萬會離聽牌更遠一步。');
   });
 
   it('every generated puzzle names one of the decisions, as the analysis of its own hand does', () => {

@@ -45,6 +45,15 @@ function discardFault(p: DiscardPuzzle, k: number): string {
   if (!named(x, k)) return 'does not name the tile';
   if (k !== p.best && !named(x, p.best)) return "does not name the puzzle's own answer";
   if (/[A-Za-z]/.test(x.explanationZh)) return 'Latin letters in the Chinese text';
+  // A right tile that keeps fewer than another is not called the best, and while another right answer
+  // exists no wrong tile is called the next best: the same explanation would say otherwise.
+  const acc = (j: number) => p.options.find((o) => o.kind === j)!.acceptance;
+  const fewer = acc(k) < Math.max(...p.answers.map(acc));
+  if (fewer && /keeps the strongest shapes|the tile you need least/.test(x.explanation)) return 'calls a tile that keeps fewer the best';
+  if (fewer && /最划算|它最沒用/.test(x.explanationZh)) return 'calls a tile that keeps fewer the best, in Chinese';
+  if (p.answers.length > 1 && (x.explanation.includes('the closest other choice') || x.explanationZh.includes('次佳的'))) return 'calls a wrong tile the next best';
+  // A pair is two tiles: "The pair of 4 Characters", "Your 6 Dots are your only pair".
+  if (/pair of \d (Character|Dot)\b|of (East|South|West|North) Wind\b|of (Red|Green|White) Dragon\b|is your only pair/.test(x.explanation)) return 'names a pair in the singular';
   switch (x.reasonKey) {
     case 'puzzle.discard.isolated':
       return isolated(c, k) ? '' : 'says isolated';
@@ -116,6 +125,8 @@ describe('the explanation shown is true of the answer the player gave', () => {
         alternatives++;
         const o = c.options.find((x) => x.id === id)!;
         const x = answerExplanation(c, id)!;
+        // A claim is said to bring the hand closer, or to make it ready, only when it does.
+        const closer = o.shantenAfter < c.shantenBefore;
         const fits =
           o.type === 'hu'
             ? x.reasonKey === 'puzzle.claim.hu'
@@ -123,8 +134,10 @@ describe('the explanation shown is true of the answer the player gave', () => {
               ? x.reasonKey.startsWith('puzzle.claim.pass')
               : o.type === 'kong'
                 ? x.reasonKey === 'puzzle.claim.kong'
-                : ['puzzle.claim.ready', 'puzzle.claim.closer'].includes(x.reasonKey);
-        expect(fits).toBe(true);
+                : closer
+                  ? ['puzzle.claim.ready', 'puzzle.claim.closer'].includes(x.reasonKey)
+                  : ['puzzle.claim.even', 'puzzle.claim.value'].includes(x.reasonKey);
+        expect(fits, `${c.seed} ${id}: ${x.reasonKey}`).toBe(true);
         expect(x.explanation).toMatch(/about as good\./);
       }
       const v = valuePuzzle(`explain-v-${i}`, d);
@@ -149,5 +162,60 @@ describe('the explanation shown is true of the answer the player gave', () => {
       }
     }
     expect(alternatives).toBeGreaterThan(40);
+  });
+});
+
+describe('claim and defence explanations say only what is true of the hand', () => {
+  const claims = Array.from({ length: 600 }, (_, i) => claimPuzzle(`explain-cl-${i}`, (1 + (i % 3)) as 1 | 2 | 3));
+
+  it('a claim that leaves the hand as far from ready as passing is not said to bring it closer, in either language; passing is named as an act', () => {
+    let even = 0;
+    for (const c of claims) {
+      for (const id of c.answers) {
+        const o = c.options.find((x) => x.id === id)!;
+        if (o.type !== 'chi' && o.type !== 'pong') continue;
+        const x = answerExplanation(c, id)!;
+        if (o.shantenAfter < c.shantenBefore) continue;
+        even++;
+        expect(['puzzle.claim.closer', 'puzzle.claim.ready'], `${c.seed} ${id}`).not.toContain(x.reasonKey);
+        expect(x.explanation).not.toMatch(/takes you from (\d+) to \1 /);
+        expect(x.explanationZh).not.toMatch(/從差(\d+)張聽牌變成差\1張/);
+        expect(x.explanation).toMatch(/as passing does/);
+      }
+      for (const id of c.answers) expect(answerExplanation(c, id)!.explanationZh).not.toContain('不要差不多');
+    }
+    expect(even).toBeGreaterThan(20);
+  });
+
+  it('counts of one take the singular in English: "1 tile from ready", "1 live winning tile"', () => {
+    let ones = 0;
+    for (const c of claims) {
+      for (const id of c.answers) {
+        const x = answerExplanation(c, id)!;
+        expect(x.explanation, c.seed).not.toMatch(/\b1 tiles\b|\b1 live winning tiles\b/);
+        if (/\b1 tile from ready\b|\b1 live winning tile\b/.test(x.explanation)) ones++;
+      }
+    }
+    expect(ones).toBeGreaterThan(20);
+  });
+
+  it('a defence explanation says another tile would leave more useful tiles only when it leaves more than the tile explained', () => {
+    let shown = 0;
+    let ties = 0;
+    for (let i = 0; i < 300; i++) {
+      const f = defencePuzzle(`explain-tr-${i}`, (1 + (i % 3)) as 1 | 2 | 3);
+      const acc = (k: number) => f.options.find((o) => o.kind === k)!.acceptance!;
+      for (const k of f.answers) {
+        const x = answerExplanation(f, k)!;
+        const said = x.explanation.includes('would leave more useful tiles');
+        expect(said, `${f.seed} ${k}`).toBe(x.explanationZh.includes('進張比較多'));
+        if (said) {
+          shown++;
+          expect(acc(f.efficient), `${f.seed} ${k}`).toBeGreaterThan(acc(k));
+        } else if (!f.answers.includes(f.efficient) && acc(f.efficient) === acc(k)) ties++;
+      }
+    }
+    expect(shown).toBeGreaterThan(50);
+    expect(ties).toBeGreaterThan(10);
   });
 });

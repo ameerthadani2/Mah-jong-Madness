@@ -86,6 +86,8 @@
     "claimKong": "槓 for the extra draw",
     "claimReady": "The claim makes you ready",
     "claimCloser": "The claim gets you closer",
+    "claimEven": "As good as passing",
+    "claimValue": "The pong is worth 台",
     "valueKeepPattern": "Keep the pattern",
     "valueTradeSpeed": "Worth a slower wait",
     "defencePassed": "Let pass since their last discard",
