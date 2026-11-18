@@ -52,7 +52,7 @@ const PASSED: ClientState['claimsPassedAway'] = [
  */
 function fakeSession(state: Partial<ClientState>, mode: 'local' | 'online' = 'online') {
   const listeners = new Set<(s: ClientState) => void>();
-  const full = { audits: [], claimsPassedAway: [], matchOver: false, matchEndVerified: false, auditCaveats: [], ...state } as unknown as ClientState;
+  const full = { audits: [], claimsPassedAway: [], turnsShownLate: [], matchOver: false, matchEndVerified: false, auditCaveats: [], ...state } as unknown as ClientState;
   const session = {
     mode,
     host: null,
@@ -149,6 +149,18 @@ describe('the fair play screen', () => {
     expect(screen.queryByText(/while your connection was down/)).toBeNull();
   });
 
+  it('counts the turns that reached the phone late out of those it measured, and keeps the count as the match goes on', async () => {
+    const { session, push } = fakeSession({ audits: HANDS, turnsShownLate: [{ hand: 0, late: [], of: 22 }] });
+    await renderFairness(session);
+    // None late: nothing said.
+    expect(screen.queryByTestId('fairness-turns-late')).toBeNull();
+    await push({ audits: HANDS, turnsShownLate: [{ hand: 0, late: [], of: 22 }, { hand: 1, late: [3, 7, 12], of: 19 }] });
+    expect(screen.getByTestId('fairness-turns-late')).toHaveTextContent(/^In this match 3 of your 41 turns reached you late: more than half their turn clock was gone by the time your phone showed them and your moves could reach the table\./);
+    expect(screen.getByTestId('fairness-turns-late')).toHaveTextContent(/A hand stops showing Verified only when a turn is more than 17 seconds late/);
+    await push({ audits: HANDS, turnsShownLate: [{ hand: 1, late: [3], of: 19 }] });
+    expect(screen.getByTestId('fairness-turns-late')).toHaveTextContent(/^In this match 1 of your 19 turns reached you late: more than half its turn clock was gone/);
+  });
+
   it('says when the final scores of a finished match are the table word alone', async () => {
     const { session, push } = fakeSession({ audits: HANDS, matchOver: true, matchEndVerified: true });
     await renderFairness(session);
@@ -174,6 +186,13 @@ describe('the fair play screen', () => {
     expect(screen.getByText('洗牌種子不是用公開的祕密算出來的。')).toBeOnTheScreen();
     expect(screen.getByTestId('fairness-claims-passed')).toHaveTextContent(/^這場比賽中，你斷線時牌桌替你放棄了 3 次吃、碰或槓。/);
     expect(screen.getAllByText(/^伺服器 承諾 /)).toHaveLength(3);
+  });
+
+  it('speaks Traditional Chinese for the count of turns that reached the phone late', async () => {
+    setLocalePreference('zh-TW');
+    await renderFairness(fakeSession({ audits: HANDS, turnsShownLate: [{ hand: 0, late: [2, 5], of: 30 }] }).session);
+    expect(screen.getByTestId('fairness-turns-late')).toHaveTextContent(/^這場比賽中，輪到你的 30 手裡，有 2 手晚到：等你的手機顯示出來、你的出牌能送到牌桌時，每手秒數已經過了一半以上。/);
+    expect(screen.getByTestId('fairness-turns-late')).toHaveTextContent(/只有晚到超過 17 秒時，牌局才不會顯示「已驗證」/);
   });
 
   it('speaks Traditional Chinese for a turn that reached the phone late, and does not say the connection dropped', async () => {

@@ -508,6 +508,72 @@ describe('clock: a delay present from the start', () => {
     }));
 });
 
+describe('the Fair play count of turns that reached the phone late (never a verdict)', () => {
+  const HYPER = withRules({ handsPerMatch: 1, turnSeconds: 4, timeBankSeconds: 0 });
+  const NORMAL = withRules({ handsPerMatch: 1, turnSeconds: 15, timeBankSeconds: 30 });
+  /** Every stamped frame `ms` late from the hand's first state, under honest stamps; the seat moves 0.8 s after its phone shows a turn. */
+  function slowed(code: string, rules: ReturnType<typeof withRules>, ms: number) {
+    let on = false;
+    const w = wire({
+      code,
+      rules,
+      think: () => 800,
+      delay: (m) => {
+        if (m.t === 'state') on = true;
+        return on && stampOf(m) !== undefined ? ms : 0;
+      },
+    });
+    w.finish();
+    const late = w.c.state.turnsShownLate.reduce((n, r) => n + r.late.length, 0);
+    const of = w.c.state.turnsShownLate.reduce((n, r) => n + r.of, 0);
+    return { w, late, of };
+  }
+
+  it('Hyper, 5 s from the start, inside the 17 s the audit allows: the hand is green and the table plays every turn, and every turn the phone measured is counted', () =>
+    scenario((i) => {
+      const { w, late, of } = slowed(`FC5${i}`, HYPER, 5_000);
+      need(of > 0);
+      green(w);
+      expect(w.judged().length).toBeGreaterThan(0);
+      expect(late).toBe(of);
+    }));
+
+  it('Hyper, an honest link: nothing counted', () =>
+    scenario((i) => {
+      const { w, late, of } = slowed(`FC0${i}`, HYPER, 0);
+      need(of > 0);
+      green(w);
+      expect(late).toBe(0);
+    }));
+
+  it('the bar is half the turn clock: 5 s late from the start costs a third of a Normal turn and is not counted; 9 s is', () =>
+    scenario((i) => {
+      const five = slowed(`FN5${i}`, NORMAL, 5_000);
+      need(five.of > 0);
+      green(five.w);
+      expect(five.late).toBe(0);
+      const nine = slowed(`FN9${i}`, NORMAL, 9_000);
+      need(nine.of > 0);
+      green(nine.w);
+      expect(nine.late).toBe(nine.of);
+    }));
+
+  it('is kept across an app restart, and a saved count that is not one is dropped', () =>
+    scenario((i) => {
+      const { w, late, of } = slowed(`FCR${i}`, HYPER, 5_000);
+      need(of > 0 && late > 0);
+      const saved = JSON.parse(JSON.stringify(w.c.serialize())) as SerializedClient;
+      const back = TableClient.restore(saved, transportLink(new LoopbackHub().create('elsewhere'), 'host'), 'Victim', undefined, { token: saved.state.token ?? undefined });
+      expect(back.state.turnsShownLate).toEqual(w.c.state.turnsShownLate);
+      saved.state.turnsShownLate = [{ hand: 0, late: [1, 2, 3], of: 2 }, { hand: 1, late: ['x' as unknown as number], of: 4 }, { hand: 2, late: [5], of: 3 }];
+      const odd = TableClient.restore(saved, transportLink(new LoopbackHub().create('odd'), 'host'), 'Victim', undefined, { token: saved.state.token ?? undefined });
+      expect(odd.state.turnsShownLate).toEqual([{ hand: 2, late: [5], of: 3 }]);
+      // A record saved before the count was kept restores with none.
+      delete (saved.state as Partial<typeof saved.state>).turnsShownLate;
+      expect(TableClient.restore(saved, transportLink(new LoopbackHub().create('older'), 'host'), 'Victim').state.turnsShownLate).toEqual([]);
+    }));
+});
+
 describe('clock: a delay held for hours', () => {
   it('from the second hand, every stamped frame slowed by 0.1 s a second up to 18 s and held there: the seat’s turns, 18 s late, are still amber after two hours', () => {
     let start: number | null = null;

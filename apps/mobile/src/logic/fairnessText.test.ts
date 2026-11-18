@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { AUDIT_CAVEATS, AUDIT_FAILURES, type AuditFailure } from '@mjm/net';
 import { en, zhTW } from '../i18n/locales';
-import { caveatText, claimsPassedLateText, claimsPassedText, endUnverified, failureText } from './fairnessText';
+import { caveatText, claimsPassedLateText, claimsPassedText, endUnverified, failureText, turnsLateText } from './fairnessText';
 import { translator } from './translator.fixture';
 
 /**
@@ -170,6 +170,32 @@ describe('claims the table passed for this seat while its link was down', () => 
     expect(claimsPassedLateText(translator('en'), { claimsPassedAway: away })).toBeNull();
     expect(claimsPassedLateText(translator('en'), null)).toBeNull();
     expect(claimsPassedLateText(translator('zh-TW'), { claimsPassedAway: late })).toContain('2 次');
+  });
+});
+
+describe('turns that reached the phone late, over the match', () => {
+  it('are counted out of the turns the phone measured, and say nothing when none was late', () => {
+    const recs = [
+      { hand: 0, late: [4, 9], of: 20 },
+      { hand: 1, late: [], of: 18 },
+      { hand: 2, late: [3], of: 15 },
+    ];
+    expect(turnsLateText(translator('en'), { turnsShownLate: recs })).toMatch(/^In this match 3 of your 53 turns reached you late: more than half their turn clock was gone/);
+    expect(turnsLateText(translator('en'), { turnsShownLate: [{ hand: 0, late: [4], of: 20 }] })).toMatch(/^In this match 1 of your 20 turns reached you late: more than half its turn clock was gone/);
+    expect(turnsLateText(translator('zh-TW'), { turnsShownLate: recs })).toMatch(/^這場比賽中，輪到你的 53 手裡，有 3 手晚到/);
+    expect(turnsLateText(translator('en'), { turnsShownLate: [{ hand: 1, late: [], of: 18 }] })).toBeNull();
+    expect(turnsLateText(translator('en'), { turnsShownLate: [] })).toBeNull();
+    expect(turnsLateText(translator('en'), null)).toBeNull();
+    // A record saved before the count was kept has none.
+    expect(turnsLateText(translator('en'), {} as { turnsShownLate: [] })).toBeNull();
+  });
+
+  it('say that a green hand can come with them, and never call them a failure', () => {
+    for (const [locale, verified] of [['en', 'Verified'], ['zh-TW', '已驗證']] as const) {
+      const text = turnsLateText(translator(locale), { turnsShownLate: [{ hand: 0, late: [1, 2], of: 2 }] }) ?? '';
+      expect(text, locale).toContain(verified);
+      expect(text, locale).toContain('17');
+    }
   });
 });
 

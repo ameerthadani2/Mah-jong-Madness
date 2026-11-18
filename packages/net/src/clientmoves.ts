@@ -70,7 +70,18 @@ export function lateWatch(f: SeenState): number {
  * `f` arrived in another run of the app.
  */
 export function lateAnchor(f: SeenState, anchors: ClockAnchor[], scope: LateScope | null): number {
-  if (typeof f.now !== 'number' || !scope || f.run !== scope.run) return 0;
+  const x = sinceFixed(f, anchors, scope);
+  return x === null ? 0 : x - RTT_ALLOW_MS;
+}
+
+/**
+ * How much later `f` reached this device than the fixed points made before it in its scope allow,
+ * with no allowance for the uplink (`lateAnchor` is this less `RTT_ALLOW_MS`): on an honest link, the
+ * round trip of a move and a frame. Null when there is no fixed point, or `f` arrived in another run
+ * of the app.
+ */
+export function sinceFixed(f: SeenState, anchors: ClockAnchor[], scope: LateScope | null): number | null {
+  if (typeof f.now !== 'number' || !scope || f.run !== scope.run) return null;
   const atLo = f.atLo ?? f.at;
   const era = f.era ?? 0;
   const seg = f.seg ?? 0;
@@ -80,7 +91,36 @@ export function lateAnchor(f: SeenState, anchors: ClockAnchor[], scope: LateScop
   const b = scope.best;
   if (b && b.era === era && b.run === f.run && b.seg === seg && b.at <= atLo) a = (typeof b.rtt === 'number' ? Math.min(b.value, ref - b.rtt) : b.value) - DRIFT_RATE * (atLo - b.at);
   for (const k of anchors) if (k.era === era && k.run === f.run && (k.seg ?? 0) === seg && k.at <= atLo) a = Math.max(a, fixedPoint(k, ref) - DRIFT_RATE * (atLo - k.at));
-  return Number.isFinite(a) ? atLo - f.now - (a + RTT_ALLOW_MS) : 0;
+  return Number.isFinite(a) ? atLo - f.now - a : null;
+}
+
+/** The least lateness a turn is counted at on the Fair play screen (`lateCountMs`), whatever the turn clock. */
+export const LATE_COUNT_MIN_MS = 2_000;
+
+/**
+ * How late a turn may reach this device, and the seat's moves the table, before the Fair play screen
+ * counts it as late (`ClientState.turnsShownLate`): half the rules' turn clock, and at least 2 s.
+ * Never a verdict. Half the turn clock is where the delay costs a real share of the turn at every
+ * speed (2 s at Hyper, 3.5 at Turbo, 5 at Fast, 7.5 at Normal, 15 at Relaxed): a server that shows
+ * each turn late, inside the 17 s the audit allows, takes nearly every turn at the fast speeds while
+ * the hands stay green, and the count is what shows it. An honest link's round trip is well under a
+ * second, so it is counted only for a stall that meets the start of a turn, or a connection slower
+ * than half a turn each way and back.
+ */
+export function lateCountMs(rules: RuleSet): number {
+  return Math.max(LATE_COUNT_MIN_MS, rules.turnSeconds * 500);
+}
+
+/**
+ * How late the state that first showed this seat a move (`r0`) reached this device, as the Fair play
+ * screen counts it: the larger of how much later than the least arrival offset of its scope allows
+ * (`lateRef`: a turn held back) and how much later than the fixed points before it allow, with no
+ * allowance for the uplink (`sinceFixed`: a delay present from the start, or a slow connection in
+ * either direction, which cost the seat the same). Infinity for a state with no stamp.
+ */
+export function turnLateBy(r0: SeenState, anchors: ClockAnchor[], scope: LateScope | null): number {
+  if (unstamped(r0)) return Number.POSITIVE_INFINITY;
+  return Math.max(lateRef(r0), sinceFixed(r0, anchors, scope) ?? Number.NEGATIVE_INFINITY);
 }
 
 /**

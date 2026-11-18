@@ -7,7 +7,7 @@
 import { advanceMatch, type Action, type BotSkill, type GameState, type MatchSnapshot, type RuleSet, type TableView } from '@mjm/engine';
 import { SHARE_SEATS, type Commitment, type Reveal } from './fairness';
 import type { Audit } from './messages';
-import type { ClientState, PassedClaim, PassedClaimRecord } from './client';
+import type { ClientState, LateTurnRecord, PassedClaim, PassedClaimRecord } from './client';
 
 const HEX64 = /^[0-9a-f]{64}$/;
 
@@ -65,6 +65,16 @@ export function sameCommitSet(a: Commitment[], b: Commitment[]): boolean {
 
 export function isPassedClaimRecord(x: unknown): x is PassedClaimRecord {
   return isObject(x) && isInt(x.hand) && isInt(x.turn) && (x.claim === 'pong' || x.claim === 'chow' || x.claim === 'kong');
+}
+
+export function isLateTurnRecord(x: unknown): x is LateTurnRecord {
+  return isObject(x) && isInt(x.hand) && Array.isArray(x.late) && x.late.every(isInt) && isInt(x.of) && x.of >= x.late.length;
+}
+
+/** The match's late turns with hand `h`'s replaced by what its audit found (a hand checked again counts once; one with no turn measured is left out). */
+export function withLateTurns(all: LateTurnRecord[], h: number, found: { turns: number[]; of: number }): LateTurnRecord[] {
+  const rest = all.filter((x) => x.hand !== h);
+  return (found.of > 0 ? [...rest, { hand: h, late: found.turns.slice(), of: found.of }] : rest).sort((a, b) => a.hand - b.hand);
 }
 
 /** The match's passed claims with hand `h`'s replaced by `found` (a hand checked again counts once). */

@@ -11,9 +11,9 @@
 import { describe, expect, it } from 'vitest';
 import { chooseAction, kindOf, legalActions, withRules, type Action, type BotSkill, type GameState } from '@mjm/engine';
 import { AUDIT_CAVEATS, AUDIT_FAILURES, failureKey, LoopbackHub, TableClient, TableHost, transportLink, type HostMessage, type Link } from '../src/index';
-import { armedLate, firstSend, fixedPoint, lateAnchor, seatRun, unstamped } from '../src/clientmoves';
+import { armedLate, firstSend, fixedPoint, lateAnchor, lateCountMs, seatRun, sinceFixed, turnLateBy, unstamped } from '../src/clientmoves';
 import { DRIFT_RATE, LATE_MS, RTT_ALLOW_MS } from '../src/clientclock';
-import { cleanCeremony, cleanPlay, cleanSeen, type PlayRecord, type SeenState } from '../src/clientrecords';
+import { cleanCeremony, cleanPlay, cleanSeen, isLateTurnRecord, withLateTurns, type PlayRecord, type SeenState } from '../src/clientrecords';
 import { Missed, scenario, seededDeals } from './support';
 
 seededDeals(20261116);
@@ -522,5 +522,51 @@ describe('a frame from a saved record keeps the fields that judge how late it ca
     expect(() => cleanPlay({ hand: 0, seen: [null], sent: [] })).toThrow();
     expect(() => cleanPlay({ hand: 0, seen: [], sent: 'x' })).toThrow();
     expect(() => cleanCeremony({ hand: 0, attempts: [3] })).toThrow();
+  });
+});
+
+describe('how late a turn reached this device, for the Fair play count (turnLateBy, lateCountMs)', () => {
+  const speed = (turnSeconds: number, timeBankSeconds: number) => withRules({ handsPerMatch: 1, turnSeconds, timeBankSeconds });
+
+  it('the bar is half the turn clock, and never under 2 s', () => {
+    expect([speed(30, 60), speed(15, 30), speed(10, 20), speed(7, 10), speed(4, 0), speed(3, 0)].map(lateCountMs)).toEqual([15_000, 7_500, 5_000, 3_500, 2_000, 2_000]);
+  });
+
+  // This device's clock is 10 s ahead of the host's. Its share went out at 100 000; 0.1 s later the host answered,
+  // at 90 100 by its own clock, and the answer reached the device at 100 300. The least arrival offset is 10 150, so
+  // the share's fixed point is worth 9 850 (its round trip allows no more). A turn the host stamped at 200 000 then
+  // reaches the device 0.25 s later, at 210 250, or later than that when it is delayed.
+  const scope = { run: 'r', best: null };
+  const share = { at: 100_000, now: 90_100, era: 0, run: 'r', seg: 0, fat: 100_300 };
+  const turn = (at: number, now: number, extra: Partial<SeenState> = {}) => seen(40, true, { at, atLo: at, now, ref: 10_150, run: 'r', seg: 0, onLink: true, ...extra });
+  const drift = (at: number) => DRIFT_RATE * (at - share.at);
+
+  it('an honest turn: its lateness is about the round trip, against the fixed point, with no allowance for the uplink', () => {
+    const f = turn(210_250, 200_000);
+    expect(sinceFixed(f, [share], scope)).toBeCloseTo(400 + drift(210_250), 6);
+    expect(turnLateBy(f, [share], scope)).toBeCloseTo(400 + drift(210_250), 6);
+    // The audit's own measure allows 4 s for a slow uplink: it does not see a 3 s delay at all; the count does.
+    expect(lateAnchor(turn(213_250, 200_000), [share], scope)).toBeLessThan(0);
+    expect(turnLateBy(turn(213_250, 200_000), [share], scope)).toBeCloseTo(3_400 + drift(213_250), 6);
+  });
+
+  it('a turn held back is late against the least arrival offset, with or without a fixed point', () => {
+    expect(turnLateBy(turn(215_150, 200_000), [], scope)).toBe(5_000);
+    expect(turnLateBy(turn(215_150, 200_000), [share], scope)).toBeCloseTo(5_300 + drift(215_150), 6);
+  });
+
+  it('a state with no stamp is late whatever else is known; a frame of another run of the app is measured by its least offset alone', () => {
+    expect(turnLateBy(turn(215_150, 200_000, { now: undefined }), [share], scope)).toBe(Number.POSITIVE_INFINITY);
+    expect(turnLateBy(turn(213_250, 200_000, { run: 'old' }), [share], scope)).toBe(3_100);
+    expect(sinceFixed(turn(213_250, 200_000, { run: 'old' }), [share], scope)).toBeNull();
+  });
+
+  it('a hand counted again replaces its own count, and a hand with no turn measured is left out', () => {
+    const all = withLateTurns(withLateTurns([], 0, { turns: [5, 9], of: 12 }), 1, { turns: [], of: 10 });
+    expect(all).toEqual([{ hand: 0, late: [5, 9], of: 12 }, { hand: 1, late: [], of: 10 }]);
+    expect(withLateTurns(all, 0, { turns: [5], of: 12 })).toEqual([{ hand: 0, late: [5], of: 12 }, { hand: 1, late: [], of: 10 }]);
+    expect(withLateTurns(all, 2, { turns: [], of: 0 })).toEqual(all);
+    expect(isLateTurnRecord({ hand: 0, late: [1], of: 1 })).toBe(true);
+    for (const bad of [{ hand: 0, late: [1, 2], of: 1 }, { hand: 0, late: 'x', of: 3 }, { hand: 'a', late: [], of: 0 }, null, { hand: 0, late: [0.5], of: 2 }]) expect(isLateTurnRecord(bad)).toBe(false);
   });
 });

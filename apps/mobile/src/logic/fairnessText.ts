@@ -38,6 +38,20 @@ export function claimsPassedLateText(t: Translate, state: Pick<ClientState, 'cla
 }
 
 /**
+ * The match's count of this seat's turns that reached the phone late (more than half the turn clock
+ * gone, `lateCountMs` in the table client), out of the turns it could measure, in the player's
+ * language, or null when none did. Never a verdict: a stall or a slow connection costs some, and a
+ * hand fails or turns amber only past 17 s. A count that rises with nearly every turn is what a
+ * server that shows every turn late, inside those 17 s, leaves at the fast speeds.
+ */
+export function turnsLateText(t: Translate, state: Pick<ClientState, 'turnsShownLate'> | null | undefined): string | null {
+  const recs = state?.turnsShownLate ?? [];
+  const count = recs.reduce((n, r) => n + r.late.length, 0);
+  const total = recs.reduce((n, r) => n + r.of, 0);
+  return count > 0 ? t('fairness.turnsLate', { count, total }) : null;
+}
+
+/**
  * True when the final scores on show are the table's word alone: the match is over, and the hands
  * this phone verified do not lead to that end (it was away for some, or joined late), or the last
  * hand's own check says it could not vouch for the scores that hand started from. Every place

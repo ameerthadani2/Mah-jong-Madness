@@ -45,7 +45,7 @@ import type { Link } from './host';
 import { CLOCK_FRAME_MS, RESTART_CAUSES, type Audit, type ClientMessage, type HostMessage, type SeatInfo } from './messages';
 import { isFrame, type Transport, type Unsubscribe } from './transport';
 import { clientClock, DRIFT_CAP_MS, DRIFT_RATE, foldClock, LATE_MS, LINK_PAUSE_MS, ORDER_SLACK_MS, PAUSE_GRACE_MS, RAN_GAP_MS, SILENT_ANSWER_MS, WATCH_WINDOW_MS, type TableClientOptions } from './clientclock';
-import { armedLate, clockTrack, firstSend, fixedPoint, isBotSkill, judgeTableMove, lateAnchor, lateRef, lateWatch, legalFor, sameActionSafe, seatRun, tableRule, unstamped, type LateScope, type MoveJudge } from './clientmoves';
+import { armedLate, clockTrack, firstSend, fixedPoint, isBotSkill, judgeTableMove, lateAnchor, lateCountMs, lateRef, lateWatch, legalFor, sameActionSafe, seatRun, tableRule, turnLateBy, unstamped, type LateScope, type MoveJudge } from './clientmoves';
 import {
   CHAINED_FIELDS,
   cleanCeremony,
@@ -54,6 +54,7 @@ import {
   isAudit,
   isCommitSet,
   isInt,
+  isLateTurnRecord,
   isObject,
   isPassedClaimRecord,
   isRevealSet,
@@ -64,6 +65,7 @@ import {
   nextHand,
   sameCommitSet,
   snapshotFromView,
+  withLateTurns,
   withPassed,
   type AttemptRecord,
   type CeremonyRecord,
@@ -128,6 +130,18 @@ export type AuditCaveat = keyof typeof AUDIT_CAVEATS;
 
 /** A claim on another seat's discard that the table can pass for a seat whose link is down. */
 export type PassedClaim = 'pong' | 'chow' | 'kong';
+
+/**
+ * One hand's turns of this seat whose state reached this device late enough to be counted on the
+ * Fair play screen (`lateCountMs`), out of the turns of the seat it could measure in that hand.
+ */
+export interface LateTurnRecord {
+  hand: number;
+  /** The turn counters of the seat's moves whose turn reached this device late. */
+  late: number[];
+  /** How many of the seat's turns in the hand this device could measure. */
+  of: number;
+}
 
 /** One claim the table passed for this seat while its link was down: the hand and turn, and which claim. */
 export interface PassedClaimRecord {
@@ -315,6 +329,15 @@ export interface ClientState {
    * are the pattern of a server that cuts the link, or holds the turn back, to take them away.
    */
   claimsPassedAway: PassedClaimRecord[];
+  /**
+   * Hand by hand over this match (cleared when a new match starts), the turns of this seat that
+   * reached this device later than half the turn clock (`lateCountMs`), out of those it could
+   * measure. Never a verdict: a stall or a slow connection costs some, and the audit fails or
+   * marks a hand only past 17 s. A count that rises with nearly every turn is what a server that
+   * shows every turn late, inside those 17 s, leaves at the fast speeds, where the table then plays
+   * the turns before the player sees them.
+   */
+  turnsShownLate: LateTurnRecord[];
   chat: ChatLine[];
   emotes: Array<{ seat: number; emote: string; at: number }>;
   lastError: string | null;
@@ -371,6 +394,7 @@ export class TableClient {
     inTimeBank: false,
     audits: [],
     claimsPassedAway: [],
+    turnsShownLate: [],
     chat: [],
     emotes: [],
     lastError: null,
@@ -605,6 +629,7 @@ export class TableClient {
       rules: st.rules ? sanitizeRules(st.rules) : null,
       audits: Array.isArray(st.audits) ? st.audits.slice(-MAX_AUDITS) : [],
       claimsPassedAway: Array.isArray(st.claimsPassedAway) ? st.claimsPassedAway.filter(isPassedClaimRecord).map((x) => ({ hand: x.hand, turn: x.turn, claim: x.claim, ...(x.late === true ? { late: true } : {}) })) : [],
+      turnsShownLate: Array.isArray(st.turnsShownLate) ? st.turnsShownLate.filter(isLateTurnRecord).map((x) => ({ hand: x.hand, late: x.late.slice(), of: x.of })) : [],
       token: this.identity.token ?? st.token ?? null,
       connected: false,
       disconnected: true,
@@ -1236,7 +1261,7 @@ export class TableClient {
     this.lastStamp = null;
     this.ownAbsences = [];
     this.gapVerdicts = [];
-    this.state = { ...this.state, matchOver: false, finalScores: null, matchEndVerified: false, view: null, lastResult: null, claimsPassedAway: [] };
+    this.state = { ...this.state, matchOver: false, finalScores: null, matchEndVerified: false, view: null, lastResult: null, claimsPassedAway: [], turnsShownLate: [] };
   }
 
   /** This client holds a record of the match being played: there is something a reset would wipe. */
@@ -1565,7 +1590,7 @@ export class TableClient {
         if (this.openHand === h) this.openHand = null;
         this.atStart = false;
         const end: SeenState = { tc: Number.POSITIVE_INFINITY, epoch: this.epoch, era: this.era, at: this.now(), now: typeof m.now === 'number' ? m.now : undefined, owes: false, deadline: null, timeBank: 0, inBank: false, hash: '', ...(stampedEnd ? { atLo: stampedEnd.atLo, ref: stampedEnd.ref, wref: stampedEnd.wref, live: stampedEnd.live, seg: stampedEnd.seg } : {}) };
-        const { check, replayed, anchors, passed } = this.runAudit(m.audit, m.view, m.result, end);
+        const { check, replayed, anchors, passed, late } = this.runAudit(m.audit, m.view, m.result, end);
         this.clockBase = foldClock(this.clockBase, this.era, this.plays.find((p) => p.hand === h) ?? null, end, anchors);
         // The strongest fixed point of this era, run of the app and run of this device's clock, for the
         // hands after this one: each worth no more than its round trip allows against the least arrival
@@ -1589,7 +1614,7 @@ export class TableClient {
         this.tamper.delete(h);
         if (this.gapHand === h) this.gapHand = null;
         const audits = [...this.state.audits, { audit: m.audit, status, failures, caveats }].slice(-MAX_AUDITS);
-        this.update({ view: m.view, lastResult: m.result, lastAudit: m.audit, auditStatus: status, auditFailures: failures, auditCaveats: caveats, deadline: null, intermissionDeadline: nextDeal(m), audits, claimsPassedAway: withPassed(this.state.claimsPassedAway, h, passed) });
+        this.update({ view: m.view, lastResult: m.result, lastAudit: m.audit, auditStatus: status, auditFailures: failures, auditCaveats: caveats, deadline: null, intermissionDeadline: nextDeal(m), audits, claimsPassedAway: withPassed(this.state.claimsPassedAway, h, passed), turnsShownLate: withLateTurns(this.state.turnsShownLate, h, late) });
         return;
       }
       case 'hand_missed':
@@ -1894,7 +1919,7 @@ export class TableClient {
     this.tamper.delete(h);
     // A record that fails is the host's doing now, not then: the hand on the table carries it too.
     if (status === 'failed') this.flag(this.activeHand(), `The record of hand ${h + 1}, played while this device was away, failed its checks`);
-    this.update({ audits: [...this.state.audits, { audit, status, failures, caveats }].slice(-MAX_AUDITS), claimsPassedAway: withPassed(this.state.claimsPassedAway, h, notes.passedClaims ?? []) });
+    this.update({ audits: [...this.state.audits, { audit, status, failures, caveats }].slice(-MAX_AUDITS), claimsPassedAway: withPassed(this.state.claimsPassedAway, h, notes.passedClaims ?? []), turnsShownLate: withLateTurns(this.state.turnsShownLate, h, { turns: notes.lateTurns ?? [], of: notes.turnsMeasured ?? 0 }) });
   }
 
   /** Exactly one commitment and one secret per seat 0–4: an extra share would let the host move the seed. */
@@ -1933,15 +1958,16 @@ export class TableClient {
   }
 
   /** verifyAudit, plus the replayed final state when the replay ran (to chain the next hand onto). */
-  private runAudit(audit: Audit, finalView: TableView, announced: HandResult | undefined, end: SeenState | null): { check: AuditCheck; replayed: GameState | null; anchors: ClockAnchor[]; passed: Array<{ turn: number; claim: PassedClaim }> } {
+  private runAudit(audit: Audit, finalView: TableView, announced: HandResult | undefined, end: SeenState | null): { check: AuditCheck; replayed: GameState | null; anchors: ClockAnchor[]; passed: Array<{ turn: number; claim: PassedClaim; late?: boolean }>; late: { turns: number[]; of: number } } {
     const failures: string[] = [];
     const caveats: string[] = [];
     let replayed: GameState | null = null;
     const anchors: ClockAnchor[] = [];
     const notes: ReplayNotes = { tableMoved: false };
     const rules = this.pinnedRules ?? this.state.rules;
-    if (!rules || !this.state.matchId) return { check: { status: 'unverified', failures: ['No match context'], caveats }, replayed, anchors, passed: [] };
-    if (!isAudit(audit) || !isView(finalView)) return { check: { status: 'failed', failures: ['The audit is malformed'], caveats }, replayed, anchors, passed: [] };
+    const none = { turns: [], of: 0 };
+    if (!rules || !this.state.matchId) return { check: { status: 'unverified', failures: ['No match context'], caveats }, replayed, anchors, passed: [], late: none };
+    if (!isAudit(audit) || !isView(finalView)) return { check: { status: 'failed', failures: ['The audit is malformed'], caveats }, replayed, anchors, passed: [], late: none };
     const h = audit.handNumber;
     const me = this.state.seat;
 
@@ -2030,7 +2056,7 @@ export class TableClient {
     if (this.lapseHand === h && this.lapseDeal && !joined && !caveats.includes(AUDIT_CAVEATS.appRestart)) caveats.push(AUDIT_CAVEATS.appRestart);
 
     const status: AuditStatus = failures.length > 0 ? 'failed' : caveats.length > 0 ? 'partial' : 'ok';
-    return { check: { status, failures, caveats }, replayed, anchors, passed: notes.passedClaims ?? [] };
+    return { check: { status, failures, caveats }, replayed, anchors, passed: notes.passedClaims ?? [], late: { turns: notes.lateTurns ?? [], of: notes.turnsMeasured ?? 0 } };
   }
 
   /**
@@ -2215,6 +2241,21 @@ export class TableClient {
     // States shown for turns the log never reached: the log was cut short or rewritten.
     for (const tc of shown.keys()) if (tc > s.turnCounter) problems.add(`The state this seat was shown at turn ${tc} is not in the replay`);
     const track = play ? clockTrack(this.clockBase, this.recordFor(play.hand), play, rules, anchors) : null;
+    // Each turn of this seat whose state reached this device late, for the count on the Fair play screen
+    // (never a verdict): judged by the state that first showed the seat the move (`seatRun`), against
+    // every fixed point the replay found.
+    if (play && me !== null && notes) {
+      const limit = lateCountMs(rules);
+      let prev = -1;
+      for (const entry of log) {
+        if (!isObject(entry) || entry.seat !== me || !isInt(entry.n)) continue;
+        const r0 = seatRun(play, entry.n, prev).run[0];
+        prev = entry.n;
+        if (!r0) continue;
+        notes.turnsMeasured = (notes.turnsMeasured ?? 0) + 1;
+        if (turnLateBy(r0, anchors, scope) > limit) (notes.lateTurns ??= []).push(entry.n);
+      }
+    }
     const gaps = new Set<number>();
     const marked = [...problems];
     problems.clear();
@@ -2348,6 +2389,9 @@ interface ReplayNotes {
   skillUnknown?: boolean;
   /** Claims the table passed for this seat while its link was down, or on a turn that reached this device late (`late`), in turn order. */
   passedClaims?: Array<{ turn: number; claim: PassedClaim; late?: boolean }>;
+  /** The seat's turns whose state reached this device later than half the turn clock (`lateCountMs`), and how many of its turns it could measure. */
+  lateTurns?: number[];
+  turnsMeasured?: number;
 }
 
 /** The caveats that say the table played for this seat without its watching: while its link was down, on a turn that reached it late, and each kind of claim passed in either. */

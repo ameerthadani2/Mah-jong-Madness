@@ -140,5 +140,9 @@
   "claimsPassedLate": {
     "one": "In this match the table has passed up %{count} claim (Pong, Chow or Kong) for you on a turn that reached your phone late. A slow connection costs one now and then; turns that reach you late every time you could claim are a pattern worth reporting.",
     "other": "In this match the table has passed up %{count} claims (Pong, Chow or Kong) for you on turns that reached your phone late. A slow connection costs one now and then; turns that reach you late every time you could claim are a pattern worth reporting."
+  },
+  "turnsLate": {
+    "one": "In this match %{count} of your %{total} turns reached you late: more than half its turn clock was gone by the time your phone showed it and your move could reach the table. A slow or unsteady connection does this now and then. A hand stops showing Verified only when a turn is more than 17 seconds late, so turns that keep reaching you late while your connection otherwise holds up are a pattern worth reporting.",
+    "other": "In this match %{count} of your %{total} turns reached you late: more than half their turn clock was gone by the time your phone showed them and your moves could reach the table. A slow or unsteady connection does this now and then. A hand stops showing Verified only when a turn is more than 17 seconds late, so turns that keep reaching you late while your connection otherwise holds up are a pattern worth reporting."
   }
 }

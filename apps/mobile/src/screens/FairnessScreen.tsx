@@ -6,7 +6,7 @@ import { colors, fonts, space } from '../theme';
 import { Card, fontFor, H2, P, Pill, Row, ScreenHeader, SectionLabel } from '../components/Ui';
 import { Icon } from '../components/Icons';
 import { useT } from '../i18n';
-import { caveatText, claimsPassedLateText, claimsPassedText, endUnverified, failureText } from '../logic/fairnessText';
+import { caveatText, claimsPassedLateText, claimsPassedText, endUnverified, failureText, turnsLateText } from '../logic/fairnessText';
 
 export function FairnessScreen() {
   const app = useApp();
@@ -15,6 +15,7 @@ export function FairnessScreen() {
   const audits = state?.audits ?? [];
   const passed = claimsPassedText(t, state);
   const passedLate = claimsPassedLateText(t, state);
+  const turnsLate = turnsLateText(t, state);
   // Against bots the phone is the only party: it deals and it checks itself. Say so, and do not call the fifth secret a server's.
   const local = app.session?.mode === 'local';
   return (
@@ -62,6 +63,13 @@ export function FairnessScreen() {
       {passedLate && (
         <Text testID="fairness-claims-passed-late" style={{ color: colors.goldDim, fontSize: 12, fontFamily: fonts.bodyBold }}>
           {passedLate}
+        </Text>
+      )}
+      {/* The turns that reached the phone with more than half their clock gone, over the match: never a verdict, but the pattern
+          a server leaves that shows every turn late inside the 17 s the audit allows, where at the fast speeds the table plays them. */}
+      {turnsLate && (
+        <Text testID="fairness-turns-late" style={{ color: colors.goldDim, fontSize: 12, fontFamily: fonts.bodyBold }}>
+          {turnsLate}
         </Text>
       )}
       {audits
