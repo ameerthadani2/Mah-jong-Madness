@@ -25,6 +25,7 @@ interface SnapshotRow {
   status: TableStatus;
   snapshot: unknown;
   updated_at: Date;
+  problem: string | null;
 }
 
 const snapshotFromRow = (r: SnapshotRow): TableSnapshotRecord => ({
@@ -33,16 +34,17 @@ const snapshotFromRow = (r: SnapshotRow): TableSnapshotRecord => ({
   status: r.status,
   snapshot: r.snapshot,
   updatedAt: r.updated_at.getTime(),
+  ...(r.problem !== null ? { problem: r.problem } : {}),
 });
 
 export function pgTableSnapshots(q: Queryable): TableSnapshotsRepo {
-  const COLS = 'room_code, club_code, status, snapshot, updated_at';
+  const COLS = 'room_code, club_code, status, snapshot, updated_at, problem';
   return {
     async save(s) {
       await q.query(
-        `INSERT INTO table_snapshots (room_code, club_code, status, snapshot, updated_at) VALUES ($1, $2, $3, $4::jsonb, $5)
-         ON CONFLICT (room_code) DO UPDATE SET club_code = excluded.club_code, status = excluded.status, snapshot = excluded.snapshot, updated_at = excluded.updated_at`,
-        [s.roomCode, s.clubCode, s.status, json(s.snapshot), toDate(s.updatedAt)],
+        `INSERT INTO table_snapshots (room_code, club_code, status, snapshot, updated_at, problem) VALUES ($1, $2, $3, $4::jsonb, $5, $6)
+         ON CONFLICT (room_code) DO UPDATE SET club_code = excluded.club_code, status = excluded.status, snapshot = excluded.snapshot, updated_at = excluded.updated_at, problem = excluded.problem`,
+        [s.roomCode, s.clubCode, s.status, json(s.snapshot), toDate(s.updatedAt), s.problem?.slice(0, 500) ?? null],
       );
     },
     async get(roomCode) {
@@ -50,7 +52,11 @@ export function pgTableSnapshots(q: Queryable): TableSnapshotsRepo {
       return res.rows[0] ? snapshotFromRow(res.rows[0]) : null;
     },
     async listActive() {
-      const res = await q.query<SnapshotRow>("SELECT " + COLS + " FROM table_snapshots WHERE status <> 'finished' ORDER BY updated_at, room_code");
+      const res = await q.query<SnapshotRow>("SELECT " + COLS + " FROM table_snapshots WHERE status IN ('open', 'playing') ORDER BY updated_at, room_code");
+      return res.rows.map(snapshotFromRow);
+    },
+    async listDamaged(limit) {
+      const res = await q.query<SnapshotRow>("SELECT " + COLS + " FROM table_snapshots WHERE status = 'damaged' ORDER BY updated_at DESC, room_code LIMIT $1", [limit]);
       return res.rows.map(snapshotFromRow);
     },
     async delete(roomCode) {
@@ -59,6 +65,10 @@ export function pgTableSnapshots(q: Queryable): TableSnapshotsRepo {
     },
     async pruneFinished(before) {
       const res = await q.query("DELETE FROM table_snapshots WHERE status = 'finished' AND updated_at < $1", [toDate(before)]);
+      return res.rowCount ?? 0;
+    },
+    async pruneDamaged(before) {
+      const res = await q.query("DELETE FROM table_snapshots WHERE status = 'damaged' AND updated_at < $1", [toDate(before)]);
       return res.rowCount ?? 0;
     },
   };

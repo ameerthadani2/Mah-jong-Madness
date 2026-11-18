@@ -102,7 +102,7 @@ describe('TablePersister', () => {
     expect((await repo.listActive()).map((s) => s.roomCode)).toEqual([b]);
   });
 
-  it('restores every unfinished table at boot under its own code, and gives up on a broken snapshot', async () => {
+  it('restores every unfinished table at boot under its own code, and keeps a broken snapshot as damaged instead', async () => {
     const first = setup();
     const code = first.rooms.createHostedRoom({ rules: { handsPerMatch: 3 }, clubCode: 'CLUB22' });
     const p = seat(first.rooms, code);
@@ -118,7 +118,7 @@ describe('TablePersister', () => {
     const restored = await second.persister.restore();
     expect(restored).toEqual([code]);
     expect(second.rooms.clubOf(code)).toBe('CLUB22');
-    expect((await first.repo.get('BROKEN'))!.status).toBe('finished');
+    expect(await first.repo.get('BROKEN')).toMatchObject({ status: 'damaged', problem: 'the snapshot version 99 is unknown' });
     const host = second.rooms.hostedTable(code)!;
     expect(host.phase).toBe('playing');
     // The restored room waits 15 minutes for its players, who reclaim their seats with their tokens.

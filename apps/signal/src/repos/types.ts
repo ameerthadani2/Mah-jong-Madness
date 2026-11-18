@@ -428,7 +428,8 @@ export interface ClubsRepo {
   anonymiseUser(userId: string): Promise<string[]>;
 }
 
-export type TableStatus = 'open' | 'playing' | 'finished';
+/** `damaged`: a snapshot that could not be restored as a live table, kept for an admin (src/restoreCheck.ts). */
+export type TableStatus = 'open' | 'playing' | 'finished' | 'damaged';
 
 export interface TableSnapshotRecord {
   roomCode: string;
@@ -437,16 +438,22 @@ export interface TableSnapshotRecord {
   /** The serialised host (SerializedHost); stored as opaque JSON. */
   snapshot: unknown;
   updatedAt: number;
+  /** Why a `damaged` snapshot could not be restored (at most 500 characters); absent otherwise. */
+  problem?: string;
 }
 
 export interface TableSnapshotsRepo {
   save(snapshot: TableSnapshotRecord): Promise<void>;
   get(roomCode: string): Promise<TableSnapshotRecord | null>;
-  /** Every snapshot whose table has not finished, to restore at boot. */
+  /** Every snapshot of a table still open or playing, to restore at boot (never a finished or damaged one). */
   listActive(): Promise<TableSnapshotRecord[]>;
+  /** The damaged snapshots, the latest found first, at most `limit` (the admin view). */
+  listDamaged(limit: number): Promise<TableSnapshotRecord[]>;
   delete(roomCode: string): Promise<boolean>;
   /** Removes finished snapshots last written before `before`. */
   pruneFinished(before: number): Promise<number>;
+  /** Removes damaged snapshots found before `before`. */
+  pruneDamaged(before: number): Promise<number>;
 }
 
 export interface MatchPlayer {

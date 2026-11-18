@@ -707,7 +707,14 @@ function memoryTableSnapshots(s: MemoryState): TableSnapshotsRepo {
       return row ? copy(row) : null;
     },
     async listActive() {
-      return [...s.snapshots.values()].filter((r) => r.status !== 'finished').map(copy);
+      return [...s.snapshots.values()].filter((r) => r.status === 'open' || r.status === 'playing').map(copy);
+    },
+    async listDamaged(limit) {
+      return [...s.snapshots.values()]
+        .filter((r) => r.status === 'damaged')
+        .sort((x, y) => y.updatedAt - x.updatedAt || (x.roomCode < y.roomCode ? -1 : 1))
+        .slice(0, limit)
+        .map(copy);
     },
     async delete(roomCode) {
       return s.snapshots.delete(roomCode);
@@ -715,6 +722,11 @@ function memoryTableSnapshots(s: MemoryState): TableSnapshotsRepo {
     async pruneFinished(before) {
       let n = 0;
       for (const [k, r] of [...s.snapshots]) if (r.status === 'finished' && r.updatedAt < before && s.snapshots.delete(k)) n++;
+      return n;
+    },
+    async pruneDamaged(before) {
+      let n = 0;
+      for (const [k, r] of [...s.snapshots]) if (r.status === 'damaged' && r.updatedAt < before && s.snapshots.delete(k)) n++;
       return n;
     },
   };

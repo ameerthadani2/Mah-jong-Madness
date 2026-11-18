@@ -9,8 +9,11 @@
  * taking the table as it is when the write runs, so a burst of changes is one write. `flush()`
  * writes everything pending at once (SIGTERM, `close()`).
  *
- * At boot `restore()` reopens every snapshot that has not finished; finished snapshots are pruned
- * once they are a day old.
+ * At boot `restore()` reopens every snapshot that has not finished, once it passes the engine's
+ * checks (restoreCheck.ts). One that fails, or that the registry cannot reopen, is not restored as
+ * a live table: it is logged and kept as `damaged` for an admin (`GET /api/admin/tables/damaged`),
+ * and its players find the table gone, as after any table that ended. Finished snapshots are pruned
+ * once they are a day old, damaged ones after 30 days.
  *
  * The account that opened a table travels inside the snapshot as `createdBy` (Postgres also
  * exposes it as the generated column `table_snapshots.created_by`, migration 0003), so a restored
@@ -19,10 +22,13 @@
  * restart neither opens a quick-match table to strangers nor lets an evicted player back in.
  */
 import type { SerializedHost, TableHost } from '@mjm/net';
-import type { TableSnapshotsRepo, TableStatus } from './repos/types';
-import type { RoomRegistry } from './rooms';
+import type { TableSnapshotRecord, TableSnapshotsRepo, TableStatus } from './repos/types';
+import { snapshotProblem } from './restoreCheck';
+import { RoomLimitError, type RoomRegistry } from './rooms';
 
 const DAY_MS = 86_400_000;
+/** How long a damaged snapshot is kept for an admin before the hourly prune drops it. */
+export const DAMAGED_KEEP_MS = 30 * DAY_MS;
 
 /** Counts of table snapshot writes since this process started, and when the last ones happened (ms). */
 export interface SnapshotWrites {
@@ -75,6 +81,8 @@ export class TablePersister {
   writes = 0;
   /** Number of snapshot writes the store refused or that never answered. */
   failures = 0;
+  /** Number of snapshots `restore()` found damaged and kept for an admin instead of restoring. */
+  damaged = 0;
   /** When the last snapshot write succeeded and when the last one failed (`now()`), or null. */
   lastSavedAt: number | null = null;
   lastFailedAt: number | null = null;
@@ -219,13 +227,21 @@ export class TablePersister {
 
   /**
    * Reopen every table that had not finished, however many there are (the hosted-table cap
-   * governs opening new tables only, so lowering it ends no live match). A snapshot that cannot be
-   * restored (malformed, an unknown version, or hosted tables turned off) is logged and marked
-   * finished, so it is not retried at every boot. Returns the codes restored.
+   * governs opening new tables only, so lowering it ends no live match). A snapshot that fails the
+   * engine's checks (`snapshotProblem`: malformed, an unknown version, or a game or rules the
+   * engine does not accept) or that the registry cannot reopen is never restored as a live table:
+   * it is logged and kept as `damaged`, with the reason, for an admin, and not retried at the next
+   * boot. With hosted tables turned off a snapshot is marked finished, as before. Returns the codes
+   * restored.
    */
   async restore(): Promise<string[]> {
     const restored: string[] = [];
     for (const s of await this.repo.listActive()) {
+      const problem = snapshotProblem(s.snapshot);
+      if (problem) {
+        await this.keepDamaged(s, problem);
+        continue;
+      }
       try {
         const snapshot = s.snapshot as SerializedHost & { createdBy?: unknown; quickPlayers?: unknown; quickLinked?: unknown; evicted?: unknown };
         const createdBy = snapshot && typeof snapshot.createdBy === 'string' && snapshot.createdBy ? snapshot.createdBy : undefined;
@@ -242,6 +258,11 @@ export class TablePersister {
         this.track(code);
         restored.push(code);
       } catch (e) {
+        if (!(e instanceof RoomLimitError)) {
+          await this.keepDamaged(s, (e as Error).message);
+          continue;
+        }
+        // Hosted tables are turned off: the snapshot is sound, this server just does not host.
         this.log(`[signal] table ${s.roomCode} could not be restored (${(e as Error).message}); marking it finished`);
         await this.repo.save({ ...s, status: 'finished', updatedAt: this.now() });
       }
@@ -250,8 +271,16 @@ export class TablePersister {
     return restored;
   }
 
-  /** Remove finished snapshots older than a day. */
-  prune(): Promise<number> {
-    return this.repo.pruneFinished(this.now() - DAY_MS);
+  /** A snapshot that cannot be restored as a live table: logged, and kept as it is, with the reason, for an admin. */
+  private async keepDamaged(s: TableSnapshotRecord, problem: string): Promise<void> {
+    this.damaged++;
+    this.log(`[signal] table ${s.roomCode} could not be restored (${problem}); kept as damaged for an admin, not restored`);
+    await this.repo.save({ ...s, status: 'damaged', problem: problem.slice(0, 500), updatedAt: this.now() });
+  }
+
+  /** Remove finished snapshots older than a day, and damaged ones found more than 30 days ago. */
+  async prune(): Promise<number> {
+    const finished = await this.repo.pruneFinished(this.now() - DAY_MS);
+    return finished + (await this.repo.pruneDamaged(this.now() - DAMAGED_KEEP_MS));
   }
 }

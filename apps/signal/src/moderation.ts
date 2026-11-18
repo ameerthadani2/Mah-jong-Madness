@@ -701,6 +701,20 @@ export function adminModerationRoutes<R>(r: ModerationRouteFactory<R>, deps: Mod
       }
       return { min, scope: repos.kind === 'pg' ? 'database' : 'process', pairs: pairs.map((p) => ({ a: accounts.get(p.a), b: accounts.get(p.b), tables: p.tables, sharedAddress: p.sharedAddress, lastAt: iso(p.lastAt) })) };
     }),
+    // Table snapshots a boot could not restore as live tables (src/restoreCheck.ts), the latest first:
+    // why, and the accounts that were seated, so support can tell them. Kept 30 days.
+    r('GET', '/api/admin/tables/damaged', async (ctx) => {
+      admin(ctx);
+      const rows = await repos.tableSnapshots.listDamaged(100);
+      const accountsOf = (seats: unknown): string[] =>
+        Array.isArray(seats) ? seats.flatMap((s) => (s && typeof s === 'object' && (s as { isBot?: unknown }).isBot === false && typeof (s as { userId?: unknown }).userId === 'string' ? [(s as { userId: string }).userId] : [])) : [];
+      return {
+        tables: rows.map((t) => {
+          const snap = (t.snapshot && typeof t.snapshot === 'object' ? t.snapshot : {}) as { phase?: unknown; seats?: unknown };
+          return { room: t.roomCode, club: t.clubCode, problem: t.problem ?? null, foundAt: iso(t.updatedAt), phase: typeof snap.phase === 'string' ? snap.phase : null, accounts: accountsOf(snap.seats) };
+        }),
+      };
+    }),
     // How many accounts joined a club today from each address and each device (hashed: the admin sees counts, not addresses).
     r('GET', '/api/admin/clubs/:code/join-allowances', async (ctx) => {
       admin(ctx);
