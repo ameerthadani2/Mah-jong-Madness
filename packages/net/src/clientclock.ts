@@ -113,9 +113,10 @@ export interface ClockScope {
  * clock, which may have been set anywhere while the app was closed, so a fixed point from before it
  * says nothing of the readings after it, nor these of those before. Within a run, from a run of this
  * device's clock to the same or a later one: a later one starts where the wall clock ran ahead of the
- * steady one (the phone slept, or its wall clock was set forward), which does not leave this device's
- * clock behind where the earlier one put it against the host's. (Records saved by older builds keep no
- * run: those readings are compared only with each other.)
+ * steady one (the phone slept, or its wall clock was set forward) and moves this device's clock on by
+ * the wall clock, which leaves it no further behind the host's than the earlier one did (unless the
+ * wall clock was also set back during a sleep, which this does not allow for). (Records saved by older
+ * builds keep no run: those readings are compared only with each other.)
  */
 export function holdsIn(from: ClockScope, at: ClockScope): boolean {
   return (from.run ?? null) === (at.run ?? null) && (from.seg ?? 0) <= (at.seg ?? 0);
