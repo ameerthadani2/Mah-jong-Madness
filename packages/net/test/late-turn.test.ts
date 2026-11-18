@@ -1665,3 +1665,47 @@ describe('match record: what a saved record keeps of each frame', () => {
     }
   });
 });
+
+describe('a seat opened on another device while the phone’s link was down', () => {
+  /**
+   * After the seat's third discard the phone's link drops for `away` ms. Meanwhile the player opens the
+   * seat on a tablet, with the phone's token, and plays it there (the phone hears nothing of it, the
+   * notice included). The phone then joins again on its token, which takes the seat back. If it stops
+   * (`kicked`), the player resumes the table from Home on it 5 s later; the hand is played out.
+   */
+  function playedElsewhere(code: string, away = 40_000) {
+    const w = wire({ code, botDelayMs: 1_000 });
+    need(w.toDiscard(3));
+    w.dropNow(away);
+    w.step();
+    const tablet = new TableClient(transportLink(w.hub.create('tablet'), 'host'), 'Tablet', undefined, { token: w.c.state.token ?? undefined });
+    tablet.join();
+    let played = 0;
+    let acted = -1;
+    while (w.pendingReconnectAt !== null && w.host.phase === 'playing') {
+      const s = tablet.localState();
+      if (!tablet.state.kicked && s && s.turnCounter !== acted && legalActions(s, 0).length > 0) {
+        acted = s.turnCounter;
+        tablet.act(chooseAction(s, 0, { seed: 'tablet' }) ?? legalActions(s, 0)[0]);
+        played++;
+      }
+      w.step();
+    }
+    need(played > 0 && w.host.phase === 'playing');
+    // The phone is back on its token.
+    for (let t = 0; t < 4; t++) w.step();
+    const kicked = w.c.state.kicked;
+    if (kicked) {
+      for (let t = 0; t < 10; t++) w.step();
+      w.restart();
+    }
+    w.finish();
+    return { w, kicked };
+  }
+
+  it('the phone, back on its token, is told the seat was held elsewhere and stops as if the lost notice had come; resumed from Home, the moves the tablet made are not taken for moves forged in the player’s name, so the hand is not red', () => {
+    const { w, kicked } = scenario((i) => playedElsewhere(`SE${i}`));
+    expect(w.verdict().failures).toEqual([]);
+    expect(kicked).toBe(true);
+  });
+});

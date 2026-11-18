@@ -794,6 +794,51 @@ describe('caveats the app translates', () => {
 });
 
 describe('a seat opened on another device', () => {
+  /** A link whose incoming frames are lost while `deaf.on` (a downlink that stalls). */
+  function deafLink(hub: LoopbackHub, id: string, deaf: { on: boolean }): Link {
+    const base = transportLink(hub.create(id), 'host');
+    return { ...base, onMessage: (cb) => base.onMessage((m) => void (deaf.on || cb(m))) };
+  }
+
+  it('tells a phone that comes back on its token that another device held the seat in between, so the phone stops as though the lost notice had come; a phone that only reconnects, or one restored from its record, is told nothing that stops it', () => {
+    const clock = { now: 1_000_000 };
+    const hub = new LoopbackHub();
+    const host = makeHost(hub, clock, 'KE');
+    const deaf = { on: false };
+    const a = new TableClient(deafLink(hub, 'p0', deaf), 'Phone');
+    a.join();
+    host.start();
+    const token = a.state.token!;
+    // The phone's downlink stalls: it never hears the 'disconnected' the tablet's join causes.
+    deaf.on = true;
+    const b = new TableClient(transportLink(hub.create('p0-tablet'), 'host'), 'Tablet', undefined, { token });
+    b.join();
+    expect(b.state.seat).toBe(0);
+    expect(b.state.kicked).toBe(false);
+    expect(a.state.kicked).toBe(false);
+    // The phone's watch drops the link and it joins again on its token: the seat is its own again, but it was held elsewhere.
+    deaf.on = false;
+    a.rebind(transportLink(hub.create('p0-again'), 'host'));
+    a.join();
+    expect(b.state.kicked).toBe(true);
+    expect(a.state.kicked).toBe(true);
+    expect(a.state.connected).toBe(false);
+    // The user resumes the table from Home on the phone (a client restored from its record, the same device),
+    // and its link drops and comes back with nobody in between: nothing stops it.
+    const a2 = TableClient.restore(JSON.parse(JSON.stringify(a.serialize())), transportLink(hub.create('p0-resumed'), 'host'), 'Phone', undefined, { token });
+    a2.join();
+    expect(a2.state.kicked).toBe(false);
+    a2.rebind(transportLink(hub.create('p0-resumed-2'), 'host'));
+    a2.join();
+    expect(a2.state.kicked).toBe(false);
+    expect(a2.state.seat).toBe(0);
+    // Restored after the tablet held the seat (the user resumed the table from Home): its first welcome stops nothing.
+    const b2 = TableClient.restore(JSON.parse(JSON.stringify(b.serialize())), transportLink(hub.create('p0-tablet-2'), 'host'), 'Tablet', undefined, { token });
+    b2.join();
+    expect(b2.state.kicked).toBe(false);
+    expect(b2.state.seat).toBe(0);
+  });
+
   it('sets kicked, not disconnected, on the old client', () => {
     const clock = { now: 1_000_000 };
     const hub = new LoopbackHub();

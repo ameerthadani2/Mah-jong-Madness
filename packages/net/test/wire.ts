@@ -120,6 +120,8 @@ export function wire(plan: Plan) {
   const w = {
     clock,
     host,
+    /** The network the host and the phone are on (another device can join it). */
+    hub,
     rules,
     c: null as unknown as TableClient,
     line: null as unknown as Line,

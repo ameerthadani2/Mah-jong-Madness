@@ -495,6 +495,13 @@ export class TableClient {
   private waitFrom: number | null = null;
   /** This run of the app (a restored client is a new run, its clock read from the wall anew): fixed points are compared only within one. */
   private readonly runId = randomHex(4);
+  /**
+   * The id this client gives the host as its device (`join.device`): the first run's id, kept across
+   * app restarts. On a rejoin the host says whether another device held the seat since (`welcome.elsewhere`).
+   */
+  private deviceId: string = this.runId;
+  /** This client (this run of the app) has been welcomed at the table: a later welcome is a rejoin. */
+  private welcomed = false;
   /** The strongest fixed point of the hands audited in this era, run of the app and run of this device's clock (see `lateAnchor`). */
   private bestAnchor: LateScope['best'] = null;
   /** When this app last ran: it handled a frame, checked the link, bound a link or sent a move. */
@@ -630,6 +637,7 @@ export class TableClient {
   }
 
   private load(d: SerializedClient): void {
+    if (typeof d.device === 'string' && /^[\w-]{6,64}$/.test(d.device)) this.deviceId = d.device;
     const st = d.state;
     this.state = {
       ...this.state,
@@ -709,6 +717,7 @@ export class TableClient {
     return {
       version: CLIENT_SNAPSHOT_VERSION,
       state: { ...state, audits: state.audits.slice(-MAX_AUDITS) },
+      device: this.deviceId,
       secret: this.secret,
       commits: this.commits,
       commitHand: this.commitHand,
@@ -810,7 +819,7 @@ export class TableClient {
 
   join(wantSeat?: number): void {
     const token = this.state.token ?? this.identity.token;
-    this.send({ t: 'join', name: this.name, avatar: this.avatar, wantSeat, token, userId: this.identity.userId, have: this.have() });
+    this.send({ t: 'join', name: this.name, avatar: this.avatar, wantSeat, token, userId: this.identity.userId, have: this.have(), device: this.deviceId });
   }
 
   /** The last hand of this match whose end this client holds (-1: none yet, but it watched from the lobby). */
@@ -1144,10 +1153,33 @@ export class TableClient {
     if (rec && !rec.dealt) rec.linkLost = true;
   }
 
-  /** The link in use ends by this device's own doing, or with its record in doubt (see `ownAbsences`). */
-  private noteOwnAbsence(): void {
-    if (!this.ownAbsences.includes(this.epoch)) this.ownAbsences.push(this.epoch);
+  /** The link in use (or the one of `epoch`) ends by this device's own doing, or with its record in doubt (see `ownAbsences`). */
+  private noteOwnAbsence(epoch = this.epoch): void {
+    if (!this.ownAbsences.includes(epoch)) this.ownAbsences.push(epoch);
     if (this.ownAbsences.length > 16) this.ownAbsences.shift();
+  }
+
+  /**
+   * The seat was opened on another device: what was played there is not this client's to vouch for,
+   * and it stops (the player resumes the table from Home to take the seat back).
+   */
+  private seatTaken(): void {
+    this.noteOwnAbsence();
+    this.noteLinkLost();
+    const play = this.plays[this.plays.length - 1];
+    if (play) play.ledgerFrom = Number.POSITIVE_INFINITY;
+    this.update({ connected: false, kicked: true, lastError: 'This seat was opened on another device.' });
+  }
+
+  /**
+   * The host says, on this client's rejoin, that another device held the seat since its last link
+   * (`welcome.elsewhere`): the 'disconnected' that ended that link never arrived. The time between
+   * that link and this one was spent elsewhere, and from here on it is as if the notice had come.
+   * A server that says so falsely gains no more than one that sends 'disconnected': the client stops.
+   */
+  private takenElsewhere(): void {
+    this.noteOwnAbsence(this.epoch - 1);
+    this.seatTaken();
   }
 
   private recordFor(hand: number): CeremonyRecord | null {
@@ -1405,6 +1437,10 @@ export class TableClient {
         this.clockMs = isInt(m.clockMs) && m.clockMs > 0 && m.clockMs < CLOCK_FRAME_MS ? m.clockMs : CLOCK_FRAME_MS;
         if (this.tableSkill && isBotSkill(this.pinnedSkill) && this.tableSkill !== this.pinnedSkill && !this.state.matchOver) this.flag(this.activeHand(), 'Host changed how strong its bots are during the match');
         this.update({ connected: true, disconnected: false, kicked: false, seat: m.seat, roomCode: m.roomCode, rules: this.pinnedRules ?? rules, seats, matchId: m.matchId, token: m.token, lastError: null });
+        // A rejoin to a seat another device took in between: the 'disconnected' that said so never came.
+        // (The first welcome of a client restored from its record is no rejoin: the restore noted its absence.)
+        if (m.elsewhere === true && this.welcomed) this.takenElsewhere();
+        this.welcomed = true;
         return;
       }
       case 'lobby':
@@ -1491,15 +1527,10 @@ export class TableClient {
         this.update({ standIn: true });
         return;
       }
-      case 'disconnected': {
+      case 'disconnected':
         // The seat was opened on another device. Moves there are not ours to vouch for.
-        this.noteOwnAbsence();
-        this.noteLinkLost();
-        const play = this.plays[this.plays.length - 1];
-        if (play) play.ledgerFrom = Number.POSITIVE_INFINITY;
-        this.update({ connected: false, kicked: true, lastError: 'This seat was opened on another device.' });
+        this.seatTaken();
         return;
-      }
       case 'commits': {
         if (!isInt(m.handNumber)) return;
         const h = m.handNumber;

@@ -402,6 +402,8 @@ export const CLIENT_SNAPSHOT_VERSION = 2;
 export interface SerializedClient {
   version: typeof CLIENT_SNAPSHOT_VERSION;
   state: Omit<ClientState, 'chat' | 'emotes' | 'rttMs'>;
+  /** The id this client gives the host as its device (`join.device`), kept across app restarts (absent in records saved by older builds). */
+  device?: string;
   secret: string | null;
   commits: Commitment[] | null;
   commitHand: number | null;

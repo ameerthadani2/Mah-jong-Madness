@@ -135,6 +135,8 @@ interface SeatState extends SeatInfo {
   ready: boolean;
   /** Rejoin token issued in `welcome`; lets a crashed client reclaim its seat. */
   token?: string;
+  /** The device (`join.device`) that took the seat last: a rejoin from another one is told so (`welcome.elsewhere`). */
+  device?: string;
   /**
    * This seat lost its link and its clock then ran out once: the table plays it at bot pace until
    * the player returns. A seat that only dropped keeps its turn clock and time bank (it is held),
@@ -632,7 +634,8 @@ export class TableHost {
         const token = typeof msg.token === 'string' && /^[0-9a-f]{32}$/.test(msg.token) ? msg.token : undefined;
         const userId = typeof msg.userId === 'string' && /^[\w-]{6,64}$/.test(msg.userId) ? msg.userId : undefined;
         const have = Number.isInteger(msg.have) && (msg.have as number) >= -1 ? (msg.have as number) : undefined;
-        return this.onJoin(from, name, avatar, wantSeat, token, userId, have);
+        const device = typeof msg.device === 'string' && /^[\w-]{6,64}$/.test(msg.device) ? msg.device : undefined;
+        return this.onJoin(from, name, avatar, wantSeat, token, userId, have, device);
       }
       case 'leave':
         return this.onLeave(from);
@@ -725,7 +728,7 @@ export class TableHost {
     return true;
   }
 
-  private onJoin(from: string, name: string, avatar: string | undefined, wantSeat?: number, token?: string, userId?: string, have?: number): void {
+  private onJoin(from: string, name: string, avatar: string | undefined, wantSeat?: number, token?: string, userId?: string, have?: number, device?: string): void {
     let seat = this.seats.find((s) => s.peerId === from && s.connected);
     let newOccupant = false;
     if (!seat && token) {
@@ -771,7 +774,11 @@ export class TableHost {
     seat.away = undefined;
     // A new occupant never inherits a previous player's token (that would let the old player kick them).
     if (newOccupant || !seat.token) seat.token = randomHex(16);
-    this.sendTo(from, { t: 'welcome', seat: seat.seat, roomCode: this.roomCode, rules: this.rules, seats: this.seatInfo(), matchId: this.matchId, token: seat.token, botSkill: this.botSkill, clockMs: CLOCK_FRAME_MS });
+    // A seat taken back from another device: its client is told, in case the 'disconnected' that ended its
+    // last link never reached it (it would then take that device's moves for ones forged in its name).
+    const elsewhere = !newOccupant && (seat.device ?? null) !== (device ?? null);
+    seat.device = device;
+    this.sendTo(from, { t: 'welcome', seat: seat.seat, roomCode: this.roomCode, rules: this.rules, seats: this.seatInfo(), matchId: this.matchId, token: seat.token, botSkill: this.botSkill, clockMs: CLOCK_FRAME_MS, ...(elsewhere ? { elsewhere: true } : {}) });
     // A returning seat first gets the audits of the hands that ended without it, so its client can
     // check them and carry its record of the match forward to the hand now on the table.
     if (!newOccupant && have !== undefined) this.sendMissed(from, have);

@@ -60,8 +60,10 @@ export type ClientMessage =
   /**
    * `have`: on a rejoin, the last hand of this match whose end the client holds (-1: none, but it
    * sat at the table from the lobby). The host answers with the audits of the hands after it.
+   * `device`: an id the client keeps for itself across reconnects and app restarts, so that the host
+   * can tell it, on a rejoin, that another device held its seat in between (`welcome.elsewhere`).
    */
-  | { t: 'join'; name: string; avatar?: string; wantSeat?: number; token?: string; userId?: string; have?: number }
+  | { t: 'join'; name: string; avatar?: string; wantSeat?: number; token?: string; userId?: string; have?: number; device?: string }
   | { t: 'leave' }
   | { t: 'commit'; hash: string }
   | { t: 'reveal'; secret: string }
@@ -90,7 +92,11 @@ export type HostMessage =
    * sends a `clock` frame when nothing else was sent). Informative only: the client's bound is
    * `CLOCK_FRAME_MS` whatever this says, and a value left out or above it counts as `CLOCK_FRAME_MS`.
    */
-  | { t: 'welcome'; seat: number; roomCode: string; rules: RuleSet; seats: SeatInfo[]; matchId: string; token: string; botSkill?: BotSkill; clockMs?: number }
+  /**
+   * `elsewhere`: on a rejoin, the seat was taken from another device (`join.device`) since this one
+   * last held it: the `disconnected` that said so may never have reached it.
+   */
+  | { t: 'welcome'; seat: number; roomCode: string; rules: RuleSet; seats: SeatInfo[]; matchId: string; token: string; botSkill?: BotSkill; clockMs?: number; elsewhere?: boolean }
   | { t: 'lobby'; seats: SeatInfo[] }
   /** `attempt`: which ceremony attempt at this hand (1 for the first). */
   | { t: 'commit_request'; handNumber: number; attempt?: number }
