@@ -154,8 +154,13 @@ function fixture(repos: Repos, opts: { limits?: boolean; dailyPuzzle?: (day: Dat
 const TODAY = '2026-11-16';
 const ADMIN = 'admin-token-for-puzzle-tests';
 
+// These tests play whole daily and Rush runs through the API, making each puzzle up to three times (served, judged,
+// and here to answer it). Since hard discard puzzles must beat the rules of thumb (about 20 ms each to make, against
+// 7 ms before), several take 4 to 6 s on Postgres or on a busy machine, past the 5 s default; 30 s still catches a hang.
+const API_RUN_MS = 30_000;
+
 function contract(name: string, repos: () => Repos) {
-  describe(name, () => {
+  describe(name, { timeout: API_RUN_MS }, () => {
     it('judges a daily answer itself, ignores a forged "correct", and rates it as the app does', async () => {
       const f = fixture(repos());
       const [a, b] = [await f.guest('Ana'), await f.guest('Bo')];
@@ -827,7 +832,7 @@ describe('plausible answer times', () => {
   });
 });
 
-describe('puzzle limits', () => {
+describe('puzzle limits', { timeout: API_RUN_MS }, () => {
   it('meters submissions and board reads per account, and Rush starts per address', async () => {
     const f = fixture(createMemoryRepos(), { limits: true });
     // Accounts with Coach Gold, so the free Rush meter (one run a day) does not stop them first.
