@@ -8,8 +8,9 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { SPEED_PRESETS, withRules } from '@mjm/engine';
-import { DRIFT_CAP_MS, LATE_MS, RTT_ALLOW_MS } from '../src/clientclock';
+import { DRIFT_CAP_MS, LATE_MS, RTT_ALLOW_MS, SILENT_ANSWER_MS, WATCH_WINDOW_MS } from '../src/clientclock';
 import { lateCountMs } from '../src/clientmoves';
+import { CLOCK_FRAME_MS } from '../src/messages';
 
 const doc = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'docs', 'FAIRNESS.md'), 'utf8');
 /** The table row on the turn clock, where the limits are stated. */
@@ -22,6 +23,14 @@ describe('the fair play charter states the late-turn limits the table client use
     expect(turnRow).toContain(`more than about ${s(LATE_MS + RTT_ALLOW_MS)} seconds late`);
     expect(DRIFT_CAP_MS).toBe(500);
     expect(turnRow).toContain('allowing at most half a second for the two clocks drifting apart');
+  });
+
+  it('the watch: a frame every 3 seconds, a probe 8 seconds behind, 5 more to answer, a 20-second window, which a server can shorten and never lengthen', () => {
+    expect(turnRow).toContain(`for ${s(CLOCK_FRAME_MS)} seconds`);
+    expect(turnRow).toContain(`fall ${s(2 * CLOCK_FRAME_MS + 2_000)} seconds behind`);
+    expect(turnRow).toContain(`After ${s(SILENT_ANSWER_MS)} more seconds it drops the connection`);
+    expect(turnRow).toContain(`the last ${s(WATCH_WINDOW_MS)} seconds`);
+    expect(turnRow).toContain('a server can shorten the 3 and the 8 by announcing a shorter clock-frame period, never lengthen them');
   });
 
   it('names every event after which the measure starts afresh: a sleep, an app restart, the phone’s clock set forward, an announced server restart', () => {

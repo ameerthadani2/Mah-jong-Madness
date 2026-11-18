@@ -59,7 +59,9 @@ export const PAUSE_GRACE_MS = 2_000;
 /**
  * What the uplink of a fixed point (a move or share this device sent) may have taken on an honest
  * link. A frame later than the fixed points allow by more than this and `LATE_MS` is noted as shown
- * late, never failed: a slow uplink looks the same from here (see `lateAnchor`).
+ * late, never failed for that alone: a slow uplink looks the same from here (see `lateAnchor`; the
+ * table's move it shows is then judged as a drop, which is red only when a whole clock cannot have
+ * run out).
  */
 export const RTT_ALLOW_MS = 4_000;
 /** How much of the turn clock the state that starts a turn may already have used, by its own deadline and stamp: an honest host stamps it in the tick it arms the clock. */
