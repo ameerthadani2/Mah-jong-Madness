@@ -126,6 +126,15 @@ describe('claims the table passed for this seat while its link was down', () => 
     }
   });
 
+  it('a turn shown late is one of the player’s turns in Traditional Chinese too, and is not said to have taken most of a turn', () => {
+    // 一手 alone reads as any move at the table; the rule fires at 17 s, a share of the clock that depends on the speed.
+    const text = caveatText(translator('zh-TW'), AUDIT_CAVEATS.lateShown);
+    expect(text).toBe(zhTW.fairness.caveat.lateShown);
+    expect(text).toContain('輪到你的');
+    expect(text).not.toContain('大半手');
+    expect(caveatText(translator('en'), AUDIT_CAVEATS.lateShown)).toContain('one of your turns');
+  });
+
   it('on a turn that reached the phone late are not said to have been passed while the connection was down, in either language', () => {
     for (const [locale, down] of [['en', /connection was down/], ['zh-TW', /斷線/]] as const) {
       const t = translator(locale);
