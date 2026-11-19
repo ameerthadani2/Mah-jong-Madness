@@ -2,10 +2,12 @@
  * The claim and discard buttons: big CJK verbs (過 吃 碰 槓 打 胡) with the tiles each would take. In a phone's portrait
  * strip and in the short landscape dock (`compact`) they keep to one row, so they never grow into the felt: three or more
  * buttons (two in a narrow dock) are drawn small (the English gloss only on Pass and Win, smaller tiles), and several 吃
- * choices are one 吃 button that opens them.
+ * choices are one 吃 button that opens them. The short landscape dock, which does not wrap, also gives its width
+ * (`maxWidth`): a row wider than that is drawn tighter, a step at a time, until it fits (`TIGHT` below), so no button, and
+ * least of all Win, is ever cut at its edge.
  */
 import React, { useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View, type LayoutChangeEvent } from 'react-native';
 import { kindOf, type Action, type Hint, type TableView, type TileId } from '@mjm/engine';
 import { colors, fonts } from '../../theme';
 import { useT, type Locale } from '../../i18n';
@@ -64,6 +66,15 @@ function ClaimButton({ label, gloss, a11y, tiles, kind, onPress, big, small, tes
   );
 }
 
+/**
+ * How much tighter a row in the short landscape dock is drawn, a step at a time while it is wider than the dock: 1, every
+ * button small; 2, Pass without its English gloss (Win keeps its); 3, Pong, Kong and a lone Chow without their tile
+ * pictures (their spoken names keep them, and the claimed tile is ringed on the felt; a 吃 choice keeps its tiles); 4, Win
+ * without its gloss.
+ */
+export const TIGHT = { small: 1, passGloss: 2, claimTiles: 3, winGloss: 4 } as const;
+const MAX_TIGHT = 4;
+
 export function ActionBar({
   actions,
   act,
@@ -76,6 +87,7 @@ export function ActionBar({
   wrap = true,
   compact = false,
   smallFrom = 3,
+  maxWidth,
 }: {
   actions: Action[];
   act: (a: Action) => void;
@@ -92,10 +104,14 @@ export function ActionBar({
   compact?: boolean;
   /** In a compact row, how many buttons make them small: 3, or 2 where the row is narrow (a 568 px phone's landscape dock). */
   smallFrom?: number;
+  /** The short landscape dock's width (measured): a row wider than this is drawn tighter until it fits (TIGHT). */
+  maxWidth?: number;
 }) {
   const { t, locale } = useT();
   // Which claim prompt the 吃 choices are open for (a new prompt starts closed).
   const [chiOpenFor, setChiOpenFor] = useState<string | null>(null);
+  // How tight this row is drawn (TIGHT), for the buttons it has now: a new set of buttons starts at 0 and is measured again.
+  const [tight, setTight] = useState<{ key: string; level: number }>({ key: '', level: 0 });
   if (actions.length === 0) return null;
   const hu = actions.find((a) => a.type === 'hu');
   const kongs = actions.filter((a) => a.type === 'kong');
@@ -111,9 +127,16 @@ export function ActionBar({
   // Several 吃 choices in a compact strip: one 吃 button that opens them (with a way back to the other claims).
   const chiGroup = compact && chis.length > 1;
   const chiOpen = chiGroup && chiOpenFor === prompt;
+  const rowKey = `${prompt}|${actions.map((a) => a.type).join(',')}|${selected ?? ''}|${chiOpen ? 'chi' : ''}`;
+  const level = tight.key === rowKey ? tight.level : 0;
+  // Measured in the dock: wider than it, a step tighter (the dock lays the row out again, and it is measured again).
+  const onRow = (e: LayoutChangeEvent) => {
+    if (maxWidth === undefined || maxWidth <= 0 || level >= MAX_TIGHT) return;
+    if (e.nativeEvent.layout.width > maxWidth + 0.5) setTight({ key: rowKey, level: level + 1 });
+  };
   if (chiOpen) {
     return (
-      <View style={[styles.actionBar, styles.actionBarSmall, { justifyContent: align, flexWrap: 'nowrap' }]} testID="chi-choices">
+      <View style={[styles.actionBar, styles.actionBarSmall, { justifyContent: align, flexWrap: 'nowrap' }]} testID="chi-choices" onLayout={onRow}>
         <ClaimButton testID="claim-chi-back" kind="ghost" label="‹" a11y={t('table.a11y.chiBack')} onPress={() => setChiOpenFor(null)} small />
         {chis.map((c, i) => {
           const tiles = (c as { tiles: TileId[] }).tiles;
@@ -123,11 +146,16 @@ export function ActionBar({
     );
   }
   const buttons = (pass ? 1 : 0) + (chiGroup ? 1 : chis.length) + (pong ? 1 : 0) + kongs.length + (canDiscard && selected !== null ? 1 : 0) + (hu ? 1 : 0);
-  const small = !!compact && buttons >= smallFrom;
-  // Small buttons keep the English gloss on Pass and Win only (the coach's line and every button's spoken name still say it).
-  const gloss = (key: string) => (small && key !== 'pass' && key !== 'win' && key !== 'selfDrawWin' ? undefined : t(`table.claimGloss.${key}`));
+  const small = !!compact && (buttons >= smallFrom || level >= TIGHT.small);
+  const win = (key: string) => key === 'win' || key === 'selfDrawWin';
+  // Small buttons keep the English gloss on Pass and Win only (the coach's line and every button's spoken name still say it);
+  // a tighter row drops Pass's, then Win's.
+  const gloss = (key: string) =>
+    (small && key !== 'pass' && !win(key)) || (key === 'pass' && level >= TIGHT.passGloss) || (win(key) && level >= TIGHT.winGloss) ? undefined : t(`table.claimGloss.${key}`);
+  // A tighter row draws Pong, Kong and a lone Chow without their tile pictures.
+  const claimTiles = (tiles: TileId[] | undefined) => (level >= TIGHT.claimTiles ? undefined : tiles);
   return (
-    <View style={[styles.actionBar, { justifyContent: align }, !wrap && { flexWrap: 'nowrap' }, small && styles.actionBarSmall]}>
+    <View style={[styles.actionBar, { justifyContent: align }, !wrap && { flexWrap: 'nowrap' }, small && styles.actionBarSmall]} onLayout={onRow} testID="claim-row">
       {tapHint && canDiscard && selected === null && !hu && kongs.length === 0 && (
         <View style={styles.tapHint}>
           <Icon name="play" size={14} />
@@ -140,16 +168,17 @@ export function ActionBar({
       ) : (
         chis.map((c, i) => {
           const tiles = (c as { tiles: TileId[] }).tiles;
-          return <ClaimButton key={i} kind={recommended(c) ? 'primary' : 'secondary'} label={t('table.claim.chi')} gloss={gloss('chi')} a11y={label(t('table.a11y.chi'), tiles)} tiles={tiles} onPress={() => act(c)} big={big} small={small} />;
+          return <ClaimButton key={i} kind={recommended(c) ? 'primary' : 'secondary'} label={t('table.claim.chi')} gloss={gloss('chi')} a11y={label(t('table.a11y.chi'), tiles)} tiles={claimTiles(tiles)} onPress={() => act(c)} big={big} small={small} />;
         })
       )}
-      {pong && <ClaimButton kind={recommended(pong) ? 'primary' : 'secondary'} label={t('table.claim.pong')} gloss={gloss('pong')} a11y={label(t('table.a11y.pong'), pendingTile !== undefined ? [pendingTile] : undefined)} tiles={pendingTile !== undefined ? [pendingTile] : undefined} onPress={() => act(pong)} big={big} small={small} />}
+      {pong && <ClaimButton kind={recommended(pong) ? 'primary' : 'secondary'} label={t('table.claim.pong')} gloss={gloss('pong')} a11y={label(t('table.a11y.pong'), pendingTile !== undefined ? [pendingTile] : undefined)} tiles={claimTiles(pendingTile !== undefined ? [pendingTile] : undefined)} onPress={() => act(pong)} big={big} small={small} />}
       {kongs.map((k, i) => {
         const tile = (k as { tile: TileId }).tile;
-        return <ClaimButton key={i} kind={recommended(k) ? 'primary' : 'premium'} label={t('table.claim.kong')} gloss={gloss('kong')} a11y={label(t('table.a11y.kong'), [tile])} tiles={[tile]} onPress={() => act(k)} big={big} small={small} />;
+        return <ClaimButton key={i} kind={recommended(k) ? 'primary' : 'premium'} label={t('table.claim.kong')} gloss={gloss('kong')} a11y={label(t('table.a11y.kong'), [tile])} tiles={claimTiles([tile])} onPress={() => act(k)} big={big} small={small} />;
       })}
       {canDiscard && selected !== null && <ClaimButton testID="claim-discard" kind="danger" label={t('table.claim.discard')} gloss={gloss('discard')} a11y={label(t('table.a11y.discard'), [selected])} tiles={[selected]} onPress={() => act({ type: 'discard', tile: selected })} big={big} small={small} />}
-      {hu && <ClaimButton testID="claim-win" kind="gold" label={t(view.phase === 'discard' ? 'table.claim.selfDrawWin' : 'table.claim.win')} gloss={gloss(view.phase === 'discard' ? 'selfDrawWin' : 'win')} a11y={t(view.phase === 'discard' ? 'table.a11y.selfDrawWin' : 'table.a11y.win')} onPress={() => act(hu)} big={!small} small={small} />}
+      {/* Win is drawn large where the row has the height (not in the short landscape dock, exactly a 50 px button tall). */}
+      {hu && <ClaimButton testID="claim-win" kind="gold" label={t(view.phase === 'discard' ? 'table.claim.selfDrawWin' : 'table.claim.win')} gloss={gloss(view.phase === 'discard' ? 'selfDrawWin' : 'win')} a11y={t(view.phase === 'discard' ? 'table.a11y.selfDrawWin' : 'table.a11y.win')} onPress={() => act(hu)} big={!small && wrap} small={small} />}
     </View>
   );
 }

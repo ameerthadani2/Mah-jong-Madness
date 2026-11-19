@@ -118,6 +118,8 @@ export function Felt({
   // Short landscape: the compass and my pond share the middle row (the action dock has a row of its own under it).
   const [columnH, setColumnH] = useState(0);
   const [pondH, setPondH] = useState(0);
+  // Short landscape: the dock's width, which the claim row is drawn to fit (ActionBar `maxWidth`: it never scrolls a button out of view).
+  const [dockW, setDockW] = useState(0);
   const centreDock = L.actions === 'center' ? dock : 'none';
   const dockH = dockHeight(centreDock, tablet, L.compact);
   // Portrait: the felt's inner height, the opponents' plates and the status line, measured for the fit (portraitFit.ts).
@@ -445,8 +447,8 @@ export function Felt({
           // in my row's place while it is up when the column has no room for both.
           dockH > 0 && (
             <View style={[styles.actionRow, { minHeight: dockH }, swapped && { flex: 1, justifyContent: 'center' }]} pointerEvents="box-none" testID="action-dock">
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ alignSelf: 'stretch', flexGrow: 0 }} contentContainerStyle={styles.actionScroll}>
-                {actions}
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ alignSelf: 'stretch', flexGrow: 0 }} contentContainerStyle={styles.actionScroll} onLayout={(e) => setDockW(Math.floor(e.nativeEvent.layout.width))}>
+                {dockW > 0 && React.isValidElement<{ maxWidth?: number }>(actions) ? React.cloneElement(actions, { maxWidth: dockW }) : actions}
               </ScrollView>
             </View>
           )
