@@ -19,7 +19,7 @@ import { NameRefusedNotice } from '../components/NameRefusedNotice';
 import { tableError } from '../components/table/tableErrors';
 import { ConfirmSheet } from '../components/table/ConfirmSheet';
 import { replacesTable } from '../logic/back';
-import { homeSmallWindowHeight, homeWindowHeight, isShortHome, LINK_GAP, LINK_HEIGHT, LINK_SLOP } from '../logic/homeFit';
+import { homePlayArtWidth, homeSmallWindowHeight, homeWindowHeight, isShortHome, LINK_GAP, LINK_HEIGHT, LINK_SLOP } from '../logic/homeFit';
 import { learnSummary } from '../logic/learn';
 import { botLabel, rulesSummary } from '../logic/rules-text';
 import { useT } from '../i18n';
@@ -180,7 +180,7 @@ export function HomeScreen() {
   );
 
   const playCard = (
-    <ModeCard key="play" colorsPair={WINDOWS.play} windowH={windowH} scene={<TableScene width="100%" height="100%" />} title={t('home.play.title')} style={wide ? { flex: 1.55 } : undefined} horizontal={!wide}>
+    <ModeCard key="play" colorsPair={WINDOWS.play} windowH={windowH} windowW={homePlayArtWidth(width)} scene={<TableScene width="100%" height="100%" />} title={t('home.play.title')} style={wide ? { flex: 1.55 } : undefined} horizontal={!wide}>
       {/* The whole rules line, clocks included: it wraps rather than ending in an ellipsis. */}
       <P dim style={styles.cardText} numberOfLines={phoneLand ? 2 : undefined}>
         {rulesSummary(app.settings.rules, t, locale)}
@@ -410,6 +410,7 @@ export function HomeScreen() {
 function ModeCard({
   colorsPair,
   windowH,
+  windowW = 156,
   scene,
   title,
   children,
@@ -420,6 +421,8 @@ function ModeCard({
 }: {
   colorsPair: readonly [string, string];
   windowH: number;
+  /** The picture's width when the card is a row (`horizontal`). */
+  windowW?: number;
   scene: React.ReactNode;
   title: string;
   children: React.ReactNode;
@@ -429,7 +432,7 @@ function ModeCard({
   badge?: React.ReactNode;
 }) {
   const window = (
-    <View style={[styles.window, horizontal ? { width: 156, alignSelf: 'stretch', minHeight: 150 } : { height: windowH }]}>
+    <View style={[styles.window, horizontal ? { width: windowW, alignSelf: 'stretch', minHeight: 150 } : { height: windowH }]}>
       <LinearGradient colors={colorsPair} style={StyleSheet.absoluteFill} />
       <View style={styles.windowShine} />
       <View style={{ position: 'absolute', left: 4, right: 4, top: 4, bottom: 4 }}>{scene}</View>

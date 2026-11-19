@@ -37,6 +37,15 @@ export function homeSmallWindowHeight(w: HomeWindow): number {
   return w.height < 780 ? 80 : 100;
 }
 
+/**
+ * Width of the picture beside the Play card's text on an upright phone, where the card is a row. Under 360 pt it gives
+ * the text more of the row, so the card's button keeps its whole label ("開始打牌" with its icon is about 106 pt and the
+ * button was 86 pt on a 320 pt phone).
+ */
+export function homePlayArtWidth(width: number): number {
+  return width < 360 ? 112 : 156;
+}
+
 /** The drawn height of a text link under a card; with LINK_SLOP it reaches the 44 pt touch target. */
 export const LINK_HEIGHT = 20;
 /** The gap between a card's buttons and the text link under them (HomeScreen's card foot). */

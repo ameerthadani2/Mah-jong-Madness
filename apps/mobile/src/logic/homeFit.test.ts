@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { LESSONS } from '@mjm/engine';
 import { MIN_TOUCH, slopFor } from '../components/table/layout';
 import { en, zhTW } from '../i18n/locales';
-import { homeSmallWindowHeight, homeWindowHeight, isShortHome, LINK_GAP, LINK_HEIGHT, LINK_SLOP, SHORT_HOME_HEIGHT } from './homeFit';
+import { homePlayArtWidth, homeSmallWindowHeight, homeWindowHeight, isShortHome, LINK_GAP, LINK_HEIGHT, LINK_SLOP, SHORT_HOME_HEIGHT } from './homeFit';
 
 const read = (rel: string) => readFileSync(join(__dirname, '..', rel), 'utf8');
 
@@ -67,5 +67,15 @@ describe('Home text and touch targets', () => {
     expect(home).toMatch(/title=\{t\(compact && !landscape \? 'home\.clubs\.openShort' : 'home\.clubs\.open'\)\} accessibilityLabel=\{t\('home\.clubs\.open'\)\}/);
     expect([...zhTW.home.clubs.openShort].length).toBeLessThanOrEqual(3);
     expect(en.home.clubs.openShort.length).toBeLessThanOrEqual(8);
+    // Quick match's too: 66 pt wide on a 320 pt phone, under the four characters of 快速配對.
+    expect([...zhTW.quickmatch.buttonShort].length).toBeLessThanOrEqual(2);
+    expect(en.quickmatch.buttonShort.length).toBeLessThanOrEqual(6);
+  });
+
+  it('gives the Play card’s text more of its row on a phone under 360 pt, so 開始打牌 is whole on its button', () => {
+    expect(homePlayArtWidth(320)).toBe(112);
+    expect(homePlayArtWidth(360)).toBe(156);
+    expect(homePlayArtWidth(390)).toBe(156);
+    expect(home).toMatch(/key="play" colorsPair=\{WINDOWS\.play\} windowH=\{windowH\} windowW=\{homePlayArtWidth\(width\)\}/);
   });
 });

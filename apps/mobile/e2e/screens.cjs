@@ -18,8 +18,8 @@
  * the exit icon or on the result sheet's "Leave table" leaves the table, a control on the result sheet takes a press under
  * 44 x 44 px or a tap on it reaches another, Start match replaces a saved table
  * without asking, one tap on the Resume card's "Abandon table" gives the saved table up, the English claim buttons carry no gloss, an Extra-large hand scrolls or runs off screen, the
- * Shop does not open, a Home card button clips its label in English or in Traditional Chinese (each viewport also
- * opens Home in zh-TW and writes <size>-home-zh.png), Home's cards run past the bottom edge at 844x390, the page
+ * Shop does not open, a Home card button clips its label in English or in Traditional Chinese (each viewport, and
+ * 320x568, also opens Home in zh-TW and writes <size>-home-zh.png), Home's cards run past the bottom edge at 844x390, the page
  * title is not the app's name in the page's language (Mahjong Mania; 麻將狂熱 in zh-TW, at Home and at the table)), or the
  * leaderboard screen (opened from Learn without a server, in English, zh-TW and Extra-large text: <size>-leaderboards.png,
  * -leaderboards-zh.png, -leaderboards-xl.png) does not show its offline state, clips text or has a choice under 44 px,
@@ -1213,6 +1213,8 @@ const PREVIEW_LOOKS = [
 const PREVIEW_OWNED = 'back.lotus';
 const ALL_PREVIEW_SIZES = [...ALL_SIZES, [320, 568]];
 const PREVIEW_SIZES = wanted.length ? ALL_PREVIEW_SIZES.filter(([w, h]) => wanted.includes(`${w}x${h}`)) : ALL_PREVIEW_SIZES;
+// Home in Traditional Chinese, whose labels are the widest on its narrowest cards: the five viewports and 320x568 too.
+const HOME_ZH_SIZES = PREVIEW_SIZES;
 
 async function previewFit(page) {
   return page.evaluate(() => {
@@ -1345,7 +1347,7 @@ async function runPreview(browser, port, [w, h], zh) {
     ...(want('xl') ? XL : []).map((s) => runXL(browser, port, s).catch((e) => ({ size: `${s[0]}x${s[1]} xl`, finished: false, notes: [e.message], errors: [] }))),
     ...(want('table-zh') ? SIZES : []).map((s) => runTableZh(browser, port, s, false).catch((e) => ({ size: `${s[0]}x${s[1]} table-zh`, finished: false, notes: [e.message], errors: [] }))),
     ...(want('table-zh-xl') ? SIZES : []).map((s) => runTableZh(browser, port, s, true).catch((e) => ({ size: `${s[0]}x${s[1]} table-zh-xl`, finished: false, notes: [e.message], errors: [] }))),
-    ...(want('home-zh') ? SIZES : []).map((s) => runHomeZh(browser, port, s).catch((e) => ({ size: `${s[0]}x${s[1]} zh-TW`, finished: false, notes: [e.message], errors: [] }))),
+    ...(want('home-zh') ? HOME_ZH_SIZES : []).map((s) => runHomeZh(browser, port, s).catch((e) => ({ size: `${s[0]}x${s[1]} zh-TW`, finished: false, notes: [e.message], errors: [] }))),
     ...(want('boards') ? SIZES : []).map((s) => runBoards(browser, port, s).catch((e) => ({ size: `${s[0]}x${s[1]} leaderboards`, finished: false, notes: [e.message], errors: [] }))),
     ...(want('preview') ? PREVIEW_SIZES : []).flatMap((s) => [false, true].map((zh) => runPreview(browser, port, s, zh).catch((e) => ({ size: `${s[0]}x${s[1]} preview${zh ? '-zh' : ''}`, finished: false, notes: [e.message], errors: [] })))),
     ...(want('coach') ? COACH_RUNS.filter(([[w, h]]) => !wanted.length || wanted.includes(`${w}x${h}`)) : []).map((c) => runCoach(browser, port, c).catch((e) => ({ size: `${c[0][0]}x${c[0][1]} coach`, finished: false, notes: [e.message], errors: [] }))),
