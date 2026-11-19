@@ -56,8 +56,11 @@ describe('the fair play charter states the late-turn limits the table client use
     expect(turnRow).toContain(`a move made in the last ${s(FLIGHT_SLACK_MS)} seconds your screen shows can be lost`);
   });
 
-  it('the server’s stamps are believed 5 s beyond the phone’s clock; the watch’s relation drifts by at most half a second', () => {
+  it('the server’s stamps are believed 5 s beyond the phone’s clock, a whole turn at Hyper, once per run; the watch’s relation drifts by at most half a second', () => {
     expect(turnRow).toContain(`believed up to ${s(CLOCK_SKEW_MS)} seconds beyond your phone's own clock`);
+    // At Hyper the allowance is more than the whole turn clock.
+    expect(SPEED_PRESETS.hyper.turnSeconds * 1000).toBeLessThanOrEqual(CLOCK_SKEW_MS);
+    expect(turnRow).toContain(`so a turn could be cut short by that much without failing (at Hyper, whose turn clock is ${SPEED_PRESETS.hyper.turnSeconds} seconds, a whole turn; the allowance holds once per run of the app and of the server's clock, not on every turn)`);
     expect(DRIFT_CAP_MS).toBe(500);
     expect(turnRow).toContain('allowing at most half a second for the two clocks drifting apart');
   });
@@ -80,6 +83,11 @@ describe('the fair play charter states the late-turn limits the table client use
     const sentence = turnRow.slice(turnRow.indexOf('After your phone sleeps'));
     expect(sentence).toMatch(/^After your phone sleeps, after the app restarts .*, after your phone's clock is set forward by more than a second, or after a restart the server announces, the measure starts afresh from the next answered ping, within a second/);
     expect(turnRow).toContain("For each run of the server's clock, of the app and of your phone's own clock");
+  });
+
+  it('the screen’s clock never counts to less than the rules’ clock, a later end it showed binds the table, and a restart while a move is owed is amber', () => {
+    expect(turnRow).toContain("It never counts to less than the rules' clock your phone tracked. A later end the server shows you binds it: if the table then plays for you before it, the hand fails, even if a later state took the time back.");
+    expect(turnRow).toContain("If the server says it restarted while you owed a move, and then plays that move for you, the hand is amber: the time your screen showed before the restart cannot be checked against the server's new clock.");
   });
 
   it('states how many states of a hand the phone keeps', () => {
