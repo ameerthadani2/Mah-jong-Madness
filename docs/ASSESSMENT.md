@@ -1,4 +1,96 @@
-# Mahjong Mania — objective assessment, seventh pass (date: 2026-11-17, evening)
+# Mahjong Mania — objective assessment, eighth pass (date: 2026-11-19)
+
+This re-scores the product on the same ten dimensions, weights and rubric as the seven earlier passes: 2026-11-04 (3.7/10), 2026-11-06 (5.4/10), 2026-11-13 (6.2/10), 2026-11-16 (6.5/10), and the fifth, sixth and seventh passes on 2026-11-17 (6.6, 6.7 and 6.7/10). Code assessed: commit `08570e9`, 657 commits, about 108,300 lines of TypeScript, 2,976 passing tests (engine 416, net 448, server 920 on Postgres, app 876, render 259, root project 57). Every gate was green locally, after one flaky screenshot check was fixed, and on GitHub CI (run 117).
+
+**Method.** The same as the seventh pass:
+- **Assessors.** Four group assessors, comparable like for like with passes 3 to 7.
+- **Challengers.** Four blind challengers on their own ports, databases and scratch folders. They had read the seventh pass's scores, so their agreement is anchored.
+- **Skeptics.** Two for each new serious defect (one reproduces it, one reads the code), and one for each serious seventh-pass defect called fixed.
+- **Judges, none needed.** The largest gap between the two sides was 0.2 (fairness and engineering).
+- **Final scores.** Each dimension's final score is the mean of the two.
+- **Size.** 24 agents, about 3.1 million tokens, 85 minutes.
+- **My own checks.** I re-ran the re-stamped hold probe on `08570e9` myself (item 1 below), looked at the small-portrait screenshots, and read the code each serious finding cites.
+
+## Scorecard (eighth pass)
+
+| Dimension (weight) | 4 Nov | 6 Nov | 13 Nov | 16 Nov | 17 Nov am | 17 Nov pm | 17 Nov eve | **19 Nov**: assessor / challenger → final | Why, in one line | Top gap |
+|---|---|---|---|---|---|---|---|---|---|---|
+| Rules fidelity and engine (12%) | 5.8 | 6.9 | 7.5 | 7.7 | 7.7 | 7.7 | 7.8 | 7.9 / 7.9 → **7.9** | Win situations are now tested through the real game: 27 detection tests and 7 wall-end tests drive game.ts into each one. On fresh seeds the independent scorer agreed on 40,000 of 40,000 hands, 1,500 self-play hands passed and 30,000 嚦咕嚦咕 hands matched. Everything still follows the team's own reading of RULES.md, 七對子, 十三么 and kong timing are not options, and three mutations of how game.ts detects 地胡 and 人胡 survive every rules test. | Recorded hands from a shipped Taiwanese product (owner); negative tests for 地胡 and 人胡; the variants as options |
+| Fairness, anti-rigging (10%) | 3.0 | 4.7 | 6.2 | 6.6 | 7.0 | 7.1 | 7.0 | 7.2 / 7.0 → **7.1** | The seventh pass's crawled holds now end amber or red, and every earlier attack still fails. But three holes remain: a server that answers pings, holds the turn state 20 to 40 s and releases it re-stamped still leaves most hands green; backdated first frames followed by a delay let the table play 17 of 17 of a victim's moves green, with turns up to 74.5 s late; and at Turbo and Hyper a 15 s delay from the start lets the table play every turn green. | A protocol change so the phone times each state's lateness itself (states that echo its latest ping); close the re-stamped hold |
+| Online multiplayer, clubs (14%) | 3.5 | 5.3 | 6.3 | 6.7 | 6.9 | 7.0 | 7.1 | 7.2 / 7.2 → **7.2** | Over real sockets on Postgres a restart restored a live table in 57 ms, with both players back in 73 ms and both audits ok. A linked pair plus a stranger moves nobody's rating, the hourly join allowance survives a crash, and a tampered snapshot is set aside as damaged. Nothing is deployed, two accounts on two networks are still rated against strangers, and an honest stranger behind a shared carrier address loses a rated table. | Deploy and play on phones (owner); a stronger signal for linked accounts |
+| Visual design, UX, feel (14%) | 5.0 | 6.0 | 6.6 | 6.9 | 7.0 | 7.1 | 7.1 | 7.2 / 7.2 → **7.2** | The coach no longer vanishes: a whole line of advice showed on every own decision across 15 small and Extra-large set-ups, and the sheets are named, inert dialogs that keep the keyboard. In small portrait at Extra-large tiles, though, the opponents' discards shrink into a scroll window 44 to 138 px tall (four skeptics confirmed it). The result sheet is not a modal, every sound is a placeholder, and nothing has run on a phone. | Commissioned audio and a device run (owner); the opponents' discards in view in small portrait at Extra-large tiles |
+| Learning, single-player (8%) | 3.5 | 5.3 | 5.9 | 6.1 | 6.3 | 6.4 | 6.5 | 6.7 / 6.6 → **6.7** | Explanations are now true of the answer the player chose (0 failures in about 2,900 checks), value and defence puzzles match exact recounts, and "fewest neighbours" fell to about 45% of dailies and 36% of hard puzzles. Simple rules still answer easy dailies and medium drills far above chance: a sets-first read gets 119 of 156 easy days. A rule that avoids the obvious tile answers 52% of hard puzzles, and a paced Rush script still ranks unflagged. | Rush and daily checks calibrated on real players (owner); easy and medium puzzles no simple read answers |
+| Monetisation, compliance, legal (10%) | 2.5 | 5.2 | 6.3 | 6.4 | 6.5 | 6.6 | 6.7 | 6.8 / 6.8 → **6.8** | The seventh pass's three store defects are fixed on memory and Postgres: an out-of-range price is credited with no price, refunds and renewals after a TRANSFER chain reach the holder, and store-check passed 7 of 7. No purchase has gone through a real store and the legal texts carry placeholders. A TRANSFER that arrives before its purchase leaves the plan behind, and the 400-day rule refuses store-granted extensions of yearly plans. | Store products and a sandbox run with npm run store-check; counsel (owner) |
+| Production, backend, platform (12%) | 2.3 | 5.0 | 6.0 | 6.1 | 6.2 | 6.3 | 6.4 | 6.5 / 6.5 → **6.5** | The production bundle held every server check on Postgres. All 21 migrations run at boot and SIGTERM on a hung database exits 1. A second process takes over the lock 0.4 s after the leader dies, with the table restored, and damaged snapshots are kept for an admin. Nothing is deployed, android-play has never run, and the only ios-testflight runs (1 Nov) failed. | First deploy and builds (owner) |
+| Engineering quality (8%) | 5.0 | 6.3 | 6.9 | 7.0 | 7.2 | 7.3 | 7.4 | 7.4 / 7.2 → **7.3** | npm audit now matches the docs (0 high), the fuzzers gave no crash and no server error, and all 6 of the assessor's mutations in new code were caught. Three of the challenger's six mutations in the new TRANSFER and restore code survive the server suite. client.ts (2,563 lines) and puzzles.ts (2,433) each grew by about a quarter, 25 of 94 app test files still read .tsx source, and the new workspace guard misses most ways out. | Tests for the new TRANSFER and restore branches; split client.ts and puzzles.ts |
+| Bot strength (6%) | 3.5 | 4.5 | 4.7 | 4.8 | 4.8 | 4.8 | 4.8 | 4.8 / 4.8 → **4.8** | 0 illegal moves in about 1.2 million decisions, and when far from ready Pro deals in less often than Club (2.1 to 2.2% against 3.3 to 3.4%). On fresh seeds Pro is again not shown stronger than Club (+5.36 a hand, se 3.35; −0.27, se 3.53). Its strength code has not changed since the fifth pass, and it is still part of Coach Gold. | A Pro that beats Club at 95% on held-out seeds |
+| Market position (6%) | 2.3 | 3.4 | 4.2 | 4.3 | 4.4 | 4.4 | 4.5 | 4.5 / 4.5 → **4.5** | Close to listing-ready on the product side: one name, a zh-TW page titled 麻將狂熱, listings within every store field limit, and a first discard in 5 taps. Nothing has shipped: 47 of 47 owner items are open, there is no licence, trademark or recorded voice, and Simplified-Chinese devices get English. | Trademark, licence, deployment, builds (owner) |
+
+**Overall weighted score: 6.8 / 10.**
+- **Final (mean per dimension): 6.81** (the seventh pass: 6.72).
+- **Assessors alone: 6.83**, comparable with the earlier passes (6.75, 6.67, 6.60, 6.45, 6.2, 5.4 and 3.7).
+- **Challengers alone: 6.79** (6.69).
+- **The fairness score.** Both sides scored fairness before the skeptics re-ran the re-stamped hold. The hold still works (item 1 below), so 7.1 is probably generous.
+
+## What this pass found (eighth pass)
+
+Serious defects that survived the skeptics:
+1. **A re-stamped hold still leaves most hands green** (fairness, major).
+   - **The attack.** The server answers the phone's pings with fresh stamps, or rewrites its clock frames to the last turn shown. It holds the victim's turn state for 20 to 40 s, then releases it with its stamp set to the release time and its deadline unchanged. The phone is shown 5 s of a 45 s turn (25 s after a 20 s hold), and the table times the seat out.
+   - **The evidence.** Both regression skeptics reproduced it with the seventh pass's own probe, and so did I on `08570e9` (4 runs each): the variant with rewritten clock frames was green 4 of 4, the one with only pongs answered 2 of 4, and a 20 s hold 4 of 4. The same probe's claim-window variant hides every claim chance of a hand and stays green 8 of 8 (`c2.mts`).
+   - **Why it is not caught.** The rule meant to catch it says a state that shows a new turn must give the whole clock by its own stamp and deadline (`armedLate` in `packages/net/src/clientmoves.ts`). It does not fire for these turns; finding out why is the first job of the fix.
+   - **A correction.** The seventh pass called this attack a probe mistake. That was wrong for this probe: it starts holding right after the victim's previous move, before the turn reaches the phone.
+2. **Backdated first frames, then a delay: up to 74.5 s late and still green** (fairness, major). `docs/FAIRNESS.md` states this residual, but as "25 to 30 seconds". The challenger had the table play 17 of 17 of a victim's moves in a green hand, with the Fair play count at 0.
+3. **At Turbo and Hyper, a 15 s delay from the start lets the table play every turn while the hand stays green** (fairness, major; both skeptics confirmed it). This is inside the stated 17 s bound, and FAIRNESS.md gives its cost per speed. At a 4 s turn, though, it means the player never moves.
+4. **In small portrait at Extra-large tiles, the opponents' discards shrink into a short scroll window** (UX, major; four skeptics confirmed it).
+   - **The sizes.** The window is 101 px tall at 375x667, and 44 to 57 px at 320x568 in zh-TW. None of its 18 to 32 tiles is fully visible, and the side seats' name tags are cut.
+   - **The cause.** Unit 18 pinned the coach above my pond, and the pinned coach, my pond and the 60 px action strip take their height first (`Felt.tsx` 303-340, `layout.ts` 108). The only safeguard shrinks the hand just enough to keep one coach line.
+
+Seventh-pass defects the skeptics confirmed fixed, or partly fixed:
+- **Fixed:** the crawled hold of 44 s (two skeptics).
+- **Fixed:** the coach vanishing in small landscape (two skeptics). 28 of 28 own turns showed advice on the seventh pass's own probe, and 28 of 28 more on five other sizes.
+- **Partly fixed:** the held-frame proof and a welcome without `clockMs`. Every bad `clockMs` is now ignored, but the re-stamped hold (item 1) remains.
+- **Partly fixed:** "fewest neighbours". It is now right on 43 to 48% of dailies and 33 to 37% of hard puzzles (it was 62% and 56%). Easy-day dailies (54%) and medium drills (71 to 73%) were not touched.
+
+New minor findings, each reported by one side (the next unit reproduces each before fixing it):
+- **Rules.** Three mutations of how game.ts detects 地胡 and 人胡 survive every rules test: there are no tests that a later draw, a chi, or a win on a non-dealer's discard voids them. An independent self-play checker catches the first.
+- **Bots.** Following 嚦咕嚦咕 is worth nothing measurable, and it costs Beginner points.
+- **Learning:**
+  - the coach and the daily disagree on 9 of 365 days;
+  - hard and daily puzzles are filtered so the obvious tile is wrong, so "avoid the obvious tile" answers 52% of hard puzzles;
+  - a daily-only script that waits 6 s ranks unflagged.
+- **Fairness.** Lateness is judged only while the app runs its link watch: in a harness without the watch, a 40 s hold released with its original stamps stays green.
+- **Multiplayer:**
+  - strangers behind one carrier IPv4 address make the whole table unrated, the honest third player included;
+  - same-address pairs are kept apart for good, not for the rest of the day.
+- **Production.** The restore check accepts a bot seat relabelled as human, and a hand record that never happened.
+- **Engineering:**
+  - three mutations in the new TRANSFER and restore code survive the server suite;
+  - the workspace guard misses paths built from `process.cwd()`, template literals or absolute strings.
+- **Monetisation:**
+  - a TRANSFER delivered before its purchase event leaves the plan on the old account;
+  - the 400-day rule refuses store-granted extensions of yearly plans, and Restore cannot repair it.
+- **UX:**
+  - at 568x320 with Extra-large tiles, the Discard and claim buttons cover the across seat's pond;
+  - in portrait the pinned coach overlaps my pond by 5 px, and in landscape a raised selected tile runs into the coach bar;
+  - the end-of-hand result sheet is not a modal: it has no dialog role, the table behind it is not inert, and Tab walks through the hand before reaching Next hand;
+  - when the coach recommends passing on a claim, the bar never says Pass;
+  - on the web, many Home and Settings controls are under 44 px.
+
+Owner-blocked, as before:
+- deployment;
+- native builds (android-play has never run, and the ios-testflight runs of 1 Nov failed);
+- store products and a sandbox purchase;
+- counsel, trademark and licence;
+- commissioned audio and the Taiwanese voice;
+- recorded hands from a shipped Taiwanese app;
+- a native zh-TW review;
+- devices and players.
+
+
+---
+
+# Seventh pass (2026-11-17, evening), kept for its detail
 
 This re-scores the product on the same ten dimensions, weights and rubric as the assessments of 2026-11-04 (3.7/10), 2026-11-06 (5.4/10), 2026-11-13 (6.2/10), 2026-11-16 (6.5/10) and the fifth and sixth passes earlier today (6.6/10 and 6.7/10). Code assessed: commit `c6e11f1`, 572 commits, about 99,600 lines of TypeScript, 2,670 passing tests (engine 373, net 288, server 928 on Postgres, app 856, render 225), every gate green locally and on GitHub CI (run 108).
 
