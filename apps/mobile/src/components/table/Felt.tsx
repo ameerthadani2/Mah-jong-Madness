@@ -1,21 +1,23 @@
 /**
  * The felt: three opponents (left, across, right) with their hands, melds and ponds, the compass and wall in
- * the middle, my pond and the claim buttons, and the coach where the layout puts it on the felt: pinned above my
- * pond in portrait, in full under the right seat on tablets (a landscape phone has it above the hand: HandRail).
- * Geometry comes from ./layout.ts.
+ * the middle, my pond and the claim buttons, and the coach in full under the right seat on tablets and tall landscape
+ * screens (a phone has its bar under the felt in portrait, TableScreen.tsx, and above the hand in landscape, HandRail).
+ * Geometry comes from ./layout.ts; in portrait nothing scrolls, and what gives way when the felt is short is
+ * display/portraitFit.ts.
  */
 import React, { useEffect, useRef, useState } from 'react';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ScrollView, StyleSheet, Text, View, type LayoutChangeEvent } from 'react-native';
 import type { Hint, PlayerView, TableView, TileId } from '@mjm/engine';
 import { DiscardPool, FeltFrame, MeldsAndFlowers, SeatBadge, WallRing } from '../TableParts';
 import { HiddenHand, scaledTile } from '../Tile';
 import { tileDims } from '../tileDims';
 import { useDisplayScale } from '../../display/DisplayScale';
 import { fitPools, fitSideColumn, SIDE_GAP } from '../../display/tableFit';
+import { CROSS_PAD, fitPortraitFelt } from '../../display/portraitFit';
 import { Row } from '../Ui';
-import { CoachBar, CoachPanel } from './CoachPanel';
+import { CoachPanel } from './CoachPanel';
 import { slideFrom } from './feel';
-import { coachBarLines, compactCompassSize, dockHeight, fitWallSize, landscapeWallSize, PINNED_COACH_H, type ActionDock, type TableLayout } from './layout';
+import { compactCompassSize, dockHeight, landscapeWallSize, type ActionDock, type TableLayout } from './layout';
 
 export type PlateProps = Omit<React.ComponentProps<typeof SeatBadge>, 'size' | 'vertical' | 'maxNameWidth'>;
 
@@ -52,8 +54,9 @@ export function Felt({
   /** Centre call-out and winner reveal, drawn over everything on the felt. */
   overlay?: React.ReactNode;
   /**
-   * Portrait: the felt is too short for my pond and one line of the coach (or my pond alone, with the coach off).
-   * The table screen then gives the hand less height (smaller tiles at Large and Extra-large).
+   * Portrait: the felt is too short even for what display/portraitFit.ts keeps at the least (each opponent's plate,
+   * melds and newest row of discards, and my newest row). The table screen then gives the hand less height (smaller
+   * tiles at Large and Extra-large).
    */
   onShort?: () => void;
 }) {
@@ -63,39 +66,69 @@ export function Felt({
   const [pondH, setPondH] = useState(0);
   const centreDock = L.actions === 'center' ? dock : 'none';
   const dockH = dockHeight(centreDock, tablet);
-  // Portrait: the wall ring shrinks (or goes) so the felt's content fits its scroll view late in a hand.
-  const [wallSize, setWallSize] = useState(L.wallSize);
-  const [scrollBox, setScrollBox] = useState({ view: 0, content: 0 });
-  // Portrait: the felt's inner height and my pond's, measured, so the pinned coach keeps a whole line of advice.
-  const [pinnedBox, setPinnedBox] = useState({ felt: -1, pond: -1 });
-  useEffect(() => setWallSize(L.wallSize), [L.wallSize]);
-  useEffect(() => {
-    if (!portrait) return;
-    setWallSize((w) => fitWallSize(w, scrollBox.content, scrollBox.view, L.wallSize, L.compassSize + 16));
-  }, [portrait, scrollBox.content, scrollBox.view, L.wallSize, L.compassSize]);
+  // Portrait: the felt's inner height, the opponents' plates and the status line, measured for the fit (portraitFit.ts).
+  const [pBox, setPBox] = useState({ felt: 0, right: 0, left: 0, top: 0, topW: 0, status: 0 });
+  const measureP = (key: 'felt' | 'right' | 'left' | 'top' | 'status') => (e: LayoutChangeEvent) => {
+    const h = Math.round(e.nativeEvent.layout.height);
+    const w = Math.round(e.nativeEvent.layout.width);
+    setPBox((b) => (b[key] === h && (key !== 'top' || b.topW === w) ? b : { ...b, [key]: h, ...(key === 'top' ? { topW: w } : null) }));
+  };
   // Settings → Display → Tiles grows the ponds and the opponents' melds (rows recomputed so they still fit).
   const { tileScale } = useDisplayScale();
-  const { tile: pool, centerPerRow, sidePerRow, myPerRow, meldScale } = fitPools(L, tileScale);
+  const pools = fitPools(L, tileScale);
+  const { meldScale } = pools;
   const meldSize = (size: 'xs' | 'sm') => scaledTile(size, meldScale);
   // A side seat's kong (four tiles) must still fit its column.
   const sideMeld = meldScale === 1 ? 'xs' : Math.max(20, Math.min(Math.round(20 * meldScale), Math.floor(sideWidth / 4) - 1));
   const seatAt = (r: number) => (mySeat + r) % 4;
   const latestFor = (seat: number): TileId | undefined => (view.lastDiscard && view.lastDiscard.seat === seat ? view.lastDiscard.tile : undefined);
   const coach = coachOpen && hint ? hint : null;
-  // Portrait: what the felt leaves above my pond for the pinned coach (undefined until both are measured; the felt
-  // may measure 0 when the hand and the claim buttons take the whole height).
-  const pinnedRoom = portrait && pinnedBox.felt >= 0 && pinnedBox.pond >= 0 ? pinnedBox.felt - pinnedBox.pond : undefined;
-  const short = pinnedRoom !== undefined && pinnedRoom < (coach ? PINNED_COACH_H.one : 0);
+  // Portrait: the felt fits its box (portraitFit.ts): the ring and the compass, the tile sizes, the rows of face-down
+  // tiles, the older rows of each pond and then the melds' tiles lying on their side give way, in that order, as far as
+  // they must.
+  const seatOf = (r: number) => view.players[seatAt(r)];
+  const portraitSeat = (r: number) => {
+    const p = seatOf(r);
+    return { melds: p.melds.map((m) => m.tiles.length), flowers: p.flowers.length, discards: p.discards.length, hand: p.handCount };
+  };
+  const topHandTile = tablet ? 15 : 9;
+  const across = seatOf(2);
+  const fit = fitPortraitFelt({
+    felt: portrait ? pBox.felt : 0,
+    sideW: sideWidth,
+    // The cross is padded 6 px a side, so the centre column is that much narrower than layout.ts's centerW.
+    centerW: L.centerW - 12,
+    pondW: L.centerW + 2 * sideWidth,
+    plates: { right: pBox.right, left: pBox.left, top: pBox.top },
+    topPlateW: pBox.topW,
+    topHandW: across.handCount > 0 ? (topHandTile - 1) * (across.handCount - 1) + topHandTile + 1 : 0,
+    topHandH: (tablet ? 24 : 15) + 2,
+    sideHandH: (tablet ? 22 : 15) + 2,
+    status: status ? pBox.status || 20 : 0,
+    right: portraitSeat(1),
+    across: portraitSeat(2),
+    left: portraitSeat(3),
+    mine: view.players[mySeat].discards.length,
+    pool: pools.tile,
+    meld: tileDims(meldSize(tablet ? 'sm' : 'xs')).w,
+    wallMax: L.wallSize,
+    compass: L.compassSize,
+  });
+  const pool = portrait ? fit.pool : pools.tile;
+  const centerPerRow = portrait ? fit.centerPerRow : pools.centerPerRow;
+  const sidePerRow = portrait ? fit.sidePerRow : pools.sidePerRow;
+  const myPerRow = pools.myPerRow;
   // Once per measured height: the table screen's answer (a smaller hand) changes the felt's height, which is
   // measured again before it is asked once more.
+  const short = portrait && !fit.fits;
   const onShortRef = useRef(onShort);
   onShortRef.current = onShort;
   useEffect(() => {
     if (short) onShortRef.current?.();
-  }, [short, pinnedBox.felt, pinnedBox.pond]);
+  }, [short, pBox.felt]);
 
   const statusPill = status ? (
-    <View style={styles.status} testID="table-status">
+    <View style={styles.status} testID="table-status" onLayout={portrait ? measureP('status') : undefined}>
       <Text numberOfLines={1} style={styles.statusText}>
         {status}
       </Text>
@@ -110,16 +143,19 @@ export function Felt({
   const topSeat = () => {
     const seat = seatAt(2);
     const p: PlayerView = view.players[seat];
-    const pond = <DiscardPool tiles={p.discards} size={pool} perRow={centerPerRow} align="center" latest={latestFor(seat)} enterFrom={slideFrom(2)} />;
+    const pond = (portrait ? p.discards.length > 0 : true) && (
+      <DiscardPool tiles={p.discards} size={pool} perRow={centerPerRow} align="center" latest={latestFor(seat)} enterFrom={slideFrom(2)} keepRows={portrait ? fit.keep.across : undefined} testID="pond-seat-2" />
+    );
+    const badge = <SeatBadge {...plateProps(seat)} size={plate} maxNameWidth={portrait ? 110 : 120} />;
     return (
       <View style={[styles.topSeat, L.compact && styles.topSeatCompact]} onLayout={(e) => setTopH(Math.round(e.nativeEvent.layout.height))}>
         <Row gap={10} style={styles.topRow}>
-          <SeatBadge {...plateProps(seat)} size={plate} maxNameWidth={portrait ? 110 : 120} />
-          <HiddenHand count={p.handCount} tileW={tablet ? 15 : portrait ? 9 : 11} tileH={tablet ? 24 : portrait ? 15 : 17} />
+          {portrait ? <View onLayout={measureP('top')} testID="plate-seat-2">{badge}</View> : badge}
+          {(!portrait || fit.hands) && <HiddenHand count={p.handCount} tileW={tablet ? 15 : portrait ? topHandTile : 11} tileH={tablet ? 24 : portrait ? 15 : 17} />}
           {/* Landscape has the width for melds on the same line; portrait gives them their own line so they never run over the side plates. */}
           {!portrait && <MeldsAndFlowers player={p} size={meldSize(tablet ? 'sm' : 'xs')} />}
         </Row>
-        {portrait && <MeldsAndFlowers player={p} size={meldSize('xs')} style={styles.topMeldsPortrait} />}
+        {portrait && <MeldsAndFlowers player={p} size={fit.meld} flowerSize={fit.meld} flat={fit.flat} style={styles.topMeldsPortrait} />}
         {L.compact ? (
           <ScrollView
             ref={topPondScroll}
@@ -156,21 +192,22 @@ export function Felt({
     const p = view.players[seat];
     const slim = Math.max(5, Math.min(11, Math.floor((sideWidth - 6) / Math.max(1, p.handCount)) + 1));
     const handH = tablet ? 22 : 15;
-    const badge = <SeatBadge {...plateProps(seat)} size={plate} vertical={portrait} side={!portrait} maxNameWidth={portrait ? sideWidth : sideWidth - plate - 12} />;
+    // Portrait: the tag under the avatar keeps to two lines too (the name on one, its relation and score on the other).
+    const badge = <SeatBadge {...plateProps(seat)} size={plate} vertical={portrait} side maxNameWidth={portrait ? sideWidth : sideWidth - plate - 12} />;
     const hidden = <HiddenHand count={p.handCount} tileW={slim} tileH={handH} />;
     const meldStyle = [{ maxWidth: sideWidth }, r === 1 ? { justifyContent: 'flex-end' as const } : undefined];
     const align = r === 1 ? 'flex-end' : 'flex-start';
     if (portrait) {
       return (
         <View style={[styles.sideSeat, { width: sideWidth }, r === 1 && { alignItems: 'flex-end' }]} key={seat}>
-          {badge}
-          {hidden}
-          <MeldsAndFlowers player={p} size={sideMeld} style={meldStyle} />
-          <DiscardPool tiles={p.discards} size={pool} perRow={sidePerRow} align={align} latest={latestFor(seat)} enterFrom={slideFrom(r)} />
+          <View onLayout={measureP(r === 1 ? 'right' : 'left')} testID={`plate-seat-${r}`}>{badge}</View>
+          {fit.hands && hidden}
+          <MeldsAndFlowers player={p} size={fit.meld} flowerSize={fit.meld} flat={fit.flat} style={meldStyle} />
+          {p.discards.length > 0 && <DiscardPool tiles={p.discards} size={pool} perRow={sidePerRow} align={align} latest={latestFor(seat)} enterFrom={slideFrom(r)} keepRows={r === 1 ? fit.keep.right : fit.keep.left} testID={`pond-seat-${r}`} />}
         </View>
       );
     }
-    const fit = fitSideColumn({
+    const col = fitSideColumn({
       width: sideWidth,
       column: sideBox[`col${r}`] ?? 0,
       plate: sideBox[`plate${r}`] ?? 0,
@@ -183,16 +220,16 @@ export function Felt({
     });
     const body = (
       <>
-        <MeldsAndFlowers player={p} size={fit.meld} flowerSize={fit.meld} style={meldStyle} />
-        <DiscardPool tiles={p.discards} size={fit.pool} perRow={fit.perRow} align={align} latest={latestFor(seat)} enterFrom={slideFrom(r)} />
+        <MeldsAndFlowers player={p} size={col.meld} flowerSize={col.meld} style={meldStyle} />
+        <DiscardPool tiles={p.discards} size={col.pool} perRow={col.perRow} align={align} latest={latestFor(seat)} enterFrom={slideFrom(r)} testID={`pond-seat-${r}`} />
       </>
     );
     return (
       // The left seat is stretched by the felt's row; the right one shares a column with the coach and takes what is left of it.
       <View style={[styles.sideSeat, { width: sideWidth }, r === 1 && { alignItems: 'flex-end', flex: 1, minHeight: 0 }]} key={seat} onLayout={measure(`col${r}`)}>
         <View onLayout={measure(`plate${r}`)}>{badge}</View>
-        {fit.showHand && hidden}
-        {fit.scroll ? (
+        {col.showHand && hidden}
+        {col.scroll ? (
           <ScrollView
             ref={(el) => {
               sideScroll.current[r] = el;
@@ -213,37 +250,40 @@ export function Felt({
     );
   };
 
-  const myPond = (perRow: number, size: number = pool) => (
+  const myPond = (perRow: number, size: number = pool, keepRows?: number) => (
     <View testID="my-pond" onLayout={(e) => setPondH(Math.round(e.nativeEvent.layout.height))}>
-      <DiscardPool tiles={view.players[mySeat].discards} size={size} perRow={perRow} align="center" latest={latestFor(mySeat)} enterFrom={slideFrom(0)} />
+      <DiscardPool tiles={view.players[mySeat].discards} size={size} perRow={perRow} align="center" latest={latestFor(mySeat)} enterFrom={slideFrom(0)} keepRows={keepRows} />
     </View>
   );
-  // Portrait: my pond is pinned under the scrolling part of the felt, across its whole width, so it can never
-  // scroll out of view late in a hand or at a large tile size (the opponents and the compass scroll instead).
-  const pinnedPerRow = Math.max(centerPerRow, Math.min(12, Math.floor((L.centerW + 2 * sideWidth) / (pool + 2))));
   const compassSize = L.compact ? compactCompassSize(columnH, L.compassSize) : L.compassSize;
   // Tablets in landscape: the ring takes what the across seat and my pond leave of the column (large tiles make
   // both taller), so my pond is never pushed off the bottom of the felt.
   const [topH, setTopH] = useState(0);
   const [centreH, setCentreH] = useState(0);
-  const shownWall = portrait ? wallSize : landscapeWallSize(centreH, topH, pondH, L.wallSize, L.compassSize + 16);
+  const shownWall = portrait ? fit.wall : landscapeWallSize(centreH, topH, pondH, L.wallSize, L.compassSize + 16);
+  // Portrait: the compass at the size the fit left it (0: it gave way), and the status line only where the fit kept it.
+  const portraitCompass = fit.compass > 0 && fit.compass !== L.compassSize && React.isValidElement<{ size?: number }>(compass) ? React.cloneElement(compass, { size: fit.compass }) : compass;
 
   const centerColumn = (
     <View style={styles.centerCol} onLayout={(e) => setCentreH(Math.round(e.nativeEvent.layout.height))}>
       {topSeat()}
       {L.showWall ? (
         <>
-          <View style={[styles.middle, { flexDirection: 'column', gap: 6 }]}>
-            {shownWall > 0 ? (
-              <WallRing remaining={view.tilesRemaining} size={shownWall}>
-                {compass}
-                {tablet && statusPill && <View style={{ marginTop: 22 }}>{statusPill}</View>}
-              </WallRing>
-            ) : (
-              compass
-            )}
-            {(!tablet || shownWall === 0) && statusPill}
-          </View>
+          {(!portrait || fit.wall > 0 || fit.compass > 0 || fit.status) && (
+            <View style={[styles.middle, { flexDirection: 'column', gap: 6 }]}>
+              {shownWall > 0 ? (
+                <WallRing remaining={view.tilesRemaining} size={shownWall}>
+                  {portrait ? portraitCompass : compass}
+                  {tablet && statusPill && (!portrait || fit.status) && <View style={{ marginTop: 22 }}>{statusPill}</View>}
+                </WallRing>
+              ) : portrait ? (
+                fit.compass > 0 && portraitCompass
+              ) : (
+                compass
+              )}
+              {(!tablet || shownWall === 0) && (!portrait || fit.status) && statusPill}
+            </View>
+          )}
           {!portrait && myPond(centerPerRow)}
         </>
       ) : L.compact ? (
@@ -295,48 +335,15 @@ export function Felt({
   return (
     <FeltFrame rail={L.rail} style={{ marginHorizontal: 8 }}>
       {portrait ? (
-        <View
-          style={styles.portraitFelt}
-          testID="felt-portrait"
-          onLayout={(e) => {
-            const felt = Math.round(e.nativeEvent.layout.height);
-            setPinnedBox((b) => (b.felt === felt ? b : { ...b, felt }));
-          }}
-        >
-          <ScrollView
-          style={{ flex: 1 }}
-          contentContainerStyle={styles.portraitBody}
-          testID="felt-scroll"
-          onLayout={(e) => {
-            const v = Math.round(e.nativeEvent.layout.height);
-            setScrollBox((b) => (b.view === v ? b : { ...b, view: v }));
-          }}
-          onContentSizeChange={(_w, h) => {
-            const c = Math.round(h);
-            setScrollBox((b) => (b.content === c ? b : { ...b, content: c }));
-          }}
-        >
-          <View style={styles.cross}>
+        // Nothing here scrolls: the seats fit the box (portraitFit.ts), with my pond pinned under them.
+        <View style={styles.portraitFelt} testID="felt-portrait" onLayout={measureP('felt')}>
+          <View style={[styles.cross, styles.portraitCross]} testID="felt-cross">
             {sideSeat(3)}
             {centerColumn}
             {sideSeat(1)}
           </View>
-          </ScrollView>
-          {/* Pinned with my pond under the scrolling part, so the coach can never be scrolled out of view. */}
-          {coach && (
-            <View style={styles.pinnedCoach}>
-              <CoachBar hint={coach} lines={coachBarLines('pinned', false, pinnedRoom)} onOpen={onCoachMore} />
-            </View>
-          )}
-          <View
-            style={styles.pinnedPond}
-            testID="pinned-pond"
-            onLayout={(e) => {
-              const pond = Math.round(e.nativeEvent.layout.height);
-              setPinnedBox((b) => (b.pond === pond ? b : { ...b, pond }));
-            }}
-          >
-            {myPond(pinnedPerRow)}
+          <View style={styles.pinnedPond} testID="pinned-pond">
+            {myPond(fit.myPerRow, fit.pool, fit.keep.mine)}
           </View>
         </View>
       ) : (
@@ -366,7 +373,9 @@ export function Felt({
 
 const styles = StyleSheet.create({
   cross: { flex: 1, flexDirection: 'row', gap: 8, padding: 6 },
-  portraitBody: { flexGrow: 1, paddingBottom: 8 },
+  // The fit keeps the seats inside (portraitFit.ts CROSS_PAD above and below them); anything past it (a measurement a
+  // frame late) is cut at the felt, never drawn over my pond.
+  portraitCross: { overflow: 'hidden', paddingVertical: CROSS_PAD },
   sideSeat: { gap: SIDE_GAP },
   sideBody: { flex: 1, minHeight: 0, alignSelf: 'stretch' },
   sideBodyContent: { gap: SIDE_GAP },
@@ -382,8 +391,8 @@ const styles = StyleSheet.create({
   status: { backgroundColor: 'rgba(16,20,47,0.6)', borderRadius: 999, paddingHorizontal: 10, paddingVertical: 2, maxWidth: 220 },
   statusText: { color: '#FFFFFF', fontSize: 12, fontWeight: '900' },
   actionCenter: { position: 'absolute', left: 0, right: 0, alignItems: 'center' },
-  pinnedPond: { alignItems: 'center', paddingTop: 4, paddingBottom: 2 },
-  pinnedCoach: { paddingHorizontal: 6, paddingTop: 4 },
+  // portraitFit.ts PINNED_POND_PAD.
+  pinnedPond: { alignItems: 'center', paddingTop: 3, paddingBottom: 1 },
   portraitFelt: { flex: 1 },
   actionScroll: { flexGrow: 1, justifyContent: 'center', alignItems: 'flex-end' },
   actionRow: { alignSelf: 'stretch', alignItems: 'center', justifyContent: 'flex-end' },

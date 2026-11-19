@@ -25,7 +25,7 @@ import { CallBanner, WinReveal, type Callout } from '../components/table/CallBan
 import { Felt, type PlateProps } from '../components/table/Felt';
 import { HandRail } from '../components/table/HandRail';
 import { CoachBar, CoachSheet } from '../components/table/CoachPanel';
-import { ACTION_STRIP_H, coachBarLines, slopFor, tableLayout } from '../components/table/layout';
+import { ACTION_STRIP_H, COACH_OVER_RAIL, coachBarLines, pinnedCoachFace, portraitCoachStatus, slopFor, tableLayout } from '../components/table/layout';
 import { fitHand } from '../display/tableFit';
 import { useDisplayScale } from '../display/DisplayScale';
 import { RESULT_HOLD_MS } from '../components/table/feel';
@@ -96,7 +96,7 @@ export function TableScreen() {
   const state = useMemo(() => (tableState ? withBotLabels(tableState, botNamer(botLabel)) : null), [tableState, botLabel]);
   const conn = useConnection(session);
   const sfx = useSfx();
-  const { tileScale } = useDisplayScale();
+  const { tileScale, osScale } = useDisplayScale();
   const { width: winW, height } = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const width = winW - insets.left - insets.right;
@@ -360,9 +360,9 @@ export function TableScreen() {
   const L = tableLayout(width, height);
   // Settings → Display → Tiles grows the hand and my melds; portrait wraps into more rows, landscape moves my plate
   // and melds above the hand so it spans the whole width (tableFit.ts). In portrait, when that leaves the felt too
-  // short for my pond and a line of the coach (Felt's onShort: Extra-large tiles, melds and a claim strip on a small
-  // phone), the hand and my melds step down a size at a time, for the rest of the hand: never in the middle of a
-  // turn back up, so the tiles do not jump; the next deal starts from the chosen size again.
+  // short for even the least of the seats (Felt's onShort, display/portraitFit.ts: Extra-large tiles, melds and a claim
+  // strip on a small phone), the hand and my melds step down a size at a time, for the rest of the hand: never in the
+  // middle of a turn back up, so the tiles do not jump; the next deal starts from the chosen size again.
   const squeezeKey = `${width}x${height}:${tileScale}:${view.handNumber}`;
   const squeezeSteps = squeeze.key === squeezeKey ? squeeze.steps : 0;
   const handScale = Math.max(1, tileScale - SQUEEZE_STEP * squeezeSteps);
@@ -432,7 +432,7 @@ export function TableScreen() {
       </>
     ) : null;
 
-  const actionBar = <ActionBar actions={actions} act={act} selected={selected} hint={hint} view={view} big={L.tablet} align={L.actions === 'center' ? 'center' : 'flex-end'} tapHint={tapHint.show} wrap={!L.compact} />;
+  const actionBar = <ActionBar actions={actions} act={act} selected={selected} hint={hint} view={view} big={L.tablet} align={L.actions === 'center' ? 'center' : 'flex-end'} tapHint={tapHint.show} wrap={!L.compact} compact={L.actions === 'strip' && !L.tablet} />;
 
   return (
     <TableThemeContext.Provider value={theme}>
@@ -442,6 +442,7 @@ export function TableScreen() {
           roomCode={session.roomCode}
           quickMatch={session.quickMatch === true}
           portrait={L.portrait}
+          twoRows={L.portrait && !L.tablet}
           clock={clock}
           myMove={myMove}
           timeBank={state.timeBank}
@@ -473,6 +474,12 @@ export function TableScreen() {
           overlay={overlay}
           onShort={onFeltShort}
         />
+        {/* Portrait: the coach's bar under the felt, over its wooden rail, so it takes nothing from the seats or my pond. */}
+        {L.coach === 'pinned' && hint && (
+          <View style={styles.portraitCoach} testID="coach-slot">
+            <CoachBar hint={hint} lines={coachBarLines('pinned', false, portraitCoachStatus(height))} face={pinnedCoachFace(portraitCoachStatus(height), osScale)} onOpen={() => setCoachSheet(true)} />
+          </View>
+        )}
         {L.actions === 'strip' && (
           <View style={styles.actionStrip} testID="action-strip">
             {actionBar}
@@ -633,6 +640,8 @@ const styles = StyleSheet.create({
   root: { flex: 1 },
   // Grows with its buttons (several 吃 options and 胡 wrap into more rows) so none runs under the hand rail.
   actionStrip: { minHeight: ACTION_STRIP_H, justifyContent: 'center', paddingHorizontal: 12, paddingVertical: 4 },
+  // Drawn over the felt's wooden rail (the felt keeps 18 px of frame under its last row), so it costs the felt about half its height.
+  portraitCoach: { marginTop: -COACH_OVER_RAIL, marginHorizontal: 14, zIndex: 1 },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12 },
   notice: { backgroundColor: colors.cream, borderWidth: 3, borderColor: colors.ink, borderRadius: 24, padding: 20, alignItems: 'center', gap: 10, borderBottomWidth: 8 },
   noticeTitle: { fontFamily: fonts.display, fontSize: 26, color: colors.ink },

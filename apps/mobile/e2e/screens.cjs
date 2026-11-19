@@ -30,7 +30,11 @@
  * on, a line of its advice whole on screen on my turn, never covering my pond, my hand, the claim or discard buttons or
  * the tap hint, never cut, and "More" beside advice longer than its lines) in the whole hand each table run plays: the
  * main run at every viewport, the Extra-large runs, the zh-TW runs, and the coach runs on the smallest phones (568x320,
- * 320x568) and at Large tiles at 667x375 (<size>-coach-*.png). The preview, the exit sheet and Home's replace-table question also fail on the keyboard
+ * 320x568) and at Large tiles at 667x375 (<size>-coach-*.png), or the portrait felt fails feltCheck at one of my decisions
+ * in any of those runs (it scrolls; an opponent's discard, the newest of each, my pond, my hand or a claim or discard button
+ * is not whole on screen; a "+N" chip for earlier discards is cut; or the coach's press reaches over my pond or my hand),
+ * including the felt runs at Large and Extra-large tiles and text at 390x844, 360x740, 375x667, 360x640 and 320x568
+ * (<size>-felt-*.png). The preview, the exit sheet and Home's replace-table question also fail on the keyboard
  * (dialogKeys): Tab ten times and Shift+Tab four times must stay on the dialog's own controls, never its scrim or the
  * page behind, and the page behind must be inert while the dialog is open and not after.
  */
@@ -267,11 +271,104 @@ async function coachCheck(page, mine) {
   }, mine);
 }
 
-/** coachCheck once the table has settled: a finding is kept only if it is still there 600 ms later (a new line is laid out a frame after it shows). */
+/**
+ * coachCheck once the table has settled: a finding is kept only if it is still there after two more looks 800 ms apart (a
+ * new line is laid out a frame after it shows, later on a busy machine).
+ */
 async function coachSettled(page, mine) {
-  if ((await coachCheck(page, mine)).length === 0) return [];
-  await page.waitForTimeout(600);
-  return coachCheck(page, mine);
+  let found = await coachCheck(page, mine);
+  for (let i = 0; i < 2 && found.length > 0; i++) {
+    await page.waitForTimeout(800);
+    found = await coachCheck(page, mine);
+  }
+  return found;
+}
+
+/**
+ * The portrait felt's hard checks at one of my decisions, on the page as it stands. Nothing on the felt scrolls, and
+ * every discard of every opponent is whole on screen: inside the window and every box that clips it, with nothing drawn
+ * over it (the topmost thing at five points of it is the tile), so the newest of each is too. A pond that keeps only its
+ * newest rows on a small phone (display/portraitFit.ts) says how many it leaves out with a "+N" chip, whole on screen
+ * too. Every tile of my pond and of my hand and every claim or discard button is whole on screen, and the coach's press
+ * (on the web, padded where its bar is short) reaches over no tile of my pond or my hand.
+ */
+async function feltCheck(page) {
+  return page.evaluate(() => {
+    const bad = [];
+    const portrait = innerHeight > innerWidth;
+    if (!portrait) return bad;
+    const seen = (e) => { const b = e.getBoundingClientRect(); return b.width > 0 && b.height > 0; };
+    const clipOf = (el) => {
+      let c = { top: 0, left: 0, bottom: innerHeight, right: innerWidth };
+      for (let p = el.parentElement; p; p = p.parentElement) {
+        const st = getComputedStyle(p);
+        if (st.overflowY !== 'visible' || st.overflowX !== 'visible') {
+          const r = p.getBoundingClientRect();
+          c = { top: Math.max(c.top, r.top), left: Math.max(c.left, r.left), bottom: Math.min(c.bottom, r.bottom), right: Math.min(c.right, r.right) };
+        }
+      }
+      return c;
+    };
+    // Drawn over: the topmost thing at five points of the box is not the element or inside it.
+    const under = (el, b) => [[0.5, 0.5], [0.2, 0.2], [0.8, 0.2], [0.2, 0.8], [0.8, 0.8]].some(([fx, fy]) => {
+      const hit = document.elementFromPoint(b.left + (b.right - b.left) * fx, b.top + (b.bottom - b.top) * fy);
+      return !hit || !(el.contains(hit) || hit.contains(el));
+    });
+    const whole = (el) => {
+      const r = el.getBoundingClientRect();
+      const c = clipOf(el);
+      return r.top >= c.top - 1 && r.bottom <= c.bottom + 1 && r.left >= c.left - 1 && r.right <= c.right + 1 && !under(el, r);
+    };
+    const meet = (a, b) => Math.min(a.right, b.right) - Math.max(a.left, b.left) > 1 && Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top) > 1;
+    const felt = document.querySelector('[data-testid="felt-portrait"]');
+    if (felt) {
+      for (const e of [felt, ...felt.querySelectorAll('div')]) {
+        const st = getComputedStyle(e);
+        if (/auto|scroll/.test(`${st.overflowY} ${st.overflowX}`) && (e.scrollHeight > e.clientHeight + 1 || e.scrollWidth > e.clientWidth + 1)) {
+          bad.push('the felt scrolls (its content is taller than the felt)');
+          break;
+        }
+      }
+    }
+    for (const pond of document.querySelectorAll('[data-testid^="pond-seat-"]')) {
+      const who = `${pond.dataset.testid.replace('pond-seat-', 'the ').replace(/1$/, 'right seat').replace(/2$/, 'across seat').replace(/3$/, 'left seat')}'s pond`;
+      const tiles = [...pond.querySelectorAll('[data-testid^="tile-"]')].filter(seen);
+      if (!tiles.length) continue;
+      if (!whole(tiles[tiles.length - 1])) bad.push(`${who}: its newest discard is not whole on screen`);
+      const cut = tiles.filter((t) => !whole(t));
+      if (cut.length) bad.push(`${who}: discards not whole on screen`);
+      const chip = pond.querySelector('[data-testid="pond-earlier"]');
+      if (chip && !whole(chip)) bad.push(`${who}: the chip for its earlier discards is not whole on screen`);
+    }
+    const MY_POND = '[data-testid="my-pond"] [data-testid^="tile-"]';
+    const HAND = '[data-testid="hand"] [data-testid^="tile-"], [data-testid="hand-discard"] [data-testid^="tile-"]';
+    for (const [what, sel] of [['my pond', MY_POND], ['my hand', HAND], ['the claim or discard buttons', '[data-testid="action-dock"] [role="button"], [data-testid="action-strip"] [role="button"]']]) {
+      const els = [...document.querySelectorAll(sel)].filter(seen);
+      const cut = els.filter((e) => !whole(e));
+      if (cut.length) bad.push(`${what}: not whole on screen`);
+    }
+    for (const c of [...document.querySelectorAll('[data-testid="coach"]')].filter(seen)) {
+      const box = c.getBoundingClientRect();
+      for (const [what, sel] of [['my pond', MY_POND], ['my hand', HAND]]) {
+        const n = [...document.querySelectorAll(sel)].filter(seen).filter((t) => meet(box, t.getBoundingClientRect())).length;
+        if (n) bad.push(`the coach's press reaches over ${what}`);
+      }
+    }
+    return bad;
+  });
+}
+
+/**
+ * feltCheck once the table has settled: a finding is kept only if it is still there after two more looks 800 ms apart (a
+ * discard slides in, and a row is laid out a frame late, both slower on a busy machine).
+ */
+async function feltSettled(page) {
+  let found = await feltCheck(page);
+  for (let i = 0; i < 2 && found.length > 0; i++) {
+    await page.waitForTimeout(800);
+    found = await feltCheck(page);
+  }
+  return found;
 }
 
 /** Problems found at more than one decision, said once each with the number of decisions they were seen at. */
@@ -283,8 +380,9 @@ function tally(found) {
 
 /**
  * Plays my seat through one whole hand (until the result sheet, or `untilDiscards` of my discards), passing every claim
- * and discarding the lowest, right-most tile (the drawn one in landscape), and runs coachCheck at each of my decisions:
- * my turn before and after a tile is picked, a win, and each claim chance. `onDiscard(n)` runs after my nth discard.
+ * and discarding the lowest, right-most tile (the drawn one in landscape), and runs coachCheck and feltCheck at each of my
+ * decisions: my turn before and after a tile is picked, a win, and each claim chance. `onDiscard(n)` runs after my nth
+ * discard.
  */
 async function playCoachedHand(page, { onDiscard = async () => undefined, untilDiscards = Infinity, limitMs = 240000 } = {}) {
   const found = [];
@@ -294,19 +392,19 @@ async function playCoachedHand(page, { onDiscard = async () => undefined, untilD
     if ((await visible(page, '[data-testid="result-sheet"]')) || (await visible(page, 'text=/^(Next hand|下一局)/'))) break;
     let el;
     if ((el = await visible(page, '[data-testid="claim-win"]'))) {
-      found.push(...(await coachSettled(page, true)));
+      found.push(...(await coachSettled(page, true)), ...(await feltSettled(page)));
       await tap(page, el);
       await page.waitForTimeout(400);
       continue;
     }
     if ((el = await visible(page, '[data-testid="claim-pass"]'))) {
-      found.push(...(await coachSettled(page, false)));
+      found.push(...(await coachSettled(page, false)), ...(await feltSettled(page)));
       await tap(page, el);
       await page.waitForTimeout(300);
       continue;
     }
     if ((el = await visible(page, '[data-testid="claim-discard"]'))) {
-      found.push(...(await coachSettled(page, true)));
+      found.push(...(await coachSettled(page, true)), ...(await feltSettled(page)));
       await tap(page, el);
       discards++;
       await onDiscard(discards);
@@ -315,7 +413,7 @@ async function playCoachedHand(page, { onDiscard = async () => undefined, untilD
     }
     if (await visible(page, '[data-testid="hand-discard"]')) {
       await page.waitForTimeout(250);
-      found.push(...(await coachSettled(page, true)));
+      found.push(...(await coachSettled(page, true)), ...(await feltSettled(page)));
       const boxes = await page.$$eval('[data-testid="hand-discard"] [data-testid^="tile-"]', (els) => els.map((e) => { const r = e.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; }));
       const hand = boxes.filter((b) => b.w > 0).sort((a, b) => b.y - a.y || b.x - a.x);
       if (hand[0]) await page.mouse.click(hand[0].x + hand[0].w / 2, hand[0].y + hand[0].h / 2);
@@ -423,8 +521,9 @@ async function run(browser, port, [w, h]) {
   await page.waitForSelector('[data-testid^="tile-"]', { timeout: 15000 });
   let discards = 0;
   const done = new Set();
-  // The coach's findings at each of my decisions through the whole hand (coachCheck).
+  // The coach's and the felt's findings at each of my decisions through the whole hand (coachCheck, feltCheck).
   const coach = [];
+  const feltFound = [];
   const started = Date.now();
   while (Date.now() - started < 240000) {
     if (await visible(page, 'text=Next hand')) break;
@@ -432,9 +531,10 @@ async function run(browser, port, [w, h]) {
     if (!done.has('win-hold') && (await visible(page, '[data-testid="win-reveal"]'))) { done.add('win-hold'); await page.waitForTimeout(700); await shot('win-hold'); }
     if (!done.has('callout') && (await visible(page, '[data-testid="call-banner"]'))) { done.add('callout'); await shot('callout'); }
     let el;
-    if ((el = await visible(page, 'text=/胡!/'))) { coach.push(...(await coachSettled(page, true))); await tap(page, el); await page.waitForTimeout(400); continue; }
+    if ((el = await visible(page, 'text=/胡!/'))) { coach.push(...(await coachSettled(page, true))); feltFound.push(...(await feltSettled(page))); await tap(page, el); await page.waitForTimeout(400); continue; }
     if ((el = await visible(page, 'text="過"'))) {
       coach.push(...(await coachSettled(page, false)));
+      feltFound.push(...(await feltSettled(page)));
       if (!done.has('claim')) {
         done.add('claim');
         await shot('table-claim');
@@ -447,6 +547,7 @@ async function run(browser, port, [w, h]) {
     }
     if ((el = await visible(page, 'text="打"'))) {
       coach.push(...(await coachSettled(page, true)));
+      feltFound.push(...(await feltSettled(page)));
       if (discards >= 3 && !done.has('selected')) { done.add('selected'); await shot('table-selected'); }
       await tap(page, el);
       discards++;
@@ -473,6 +574,7 @@ async function run(browser, port, [w, h]) {
     // My discard turn: the first-game tap hint, or (once it has retired) the hand marked for discarding.
     if ((await visible(page, 'text=Tap a tile, tap again to discard')) || (await visible(page, '[data-testid="hand-discard"]'))) {
       coach.push(...(await coachSettled(page, true)));
+      feltFound.push(...(await feltSettled(page)));
       const boxes = await page.$$eval('[data-testid^="tile-"]:not([data-testid="tile-back"])', (els) =>
         els.map((e) => { const r = e.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; }));
       const maxW = Math.max(...boxes.map((b) => b.w));
@@ -486,6 +588,7 @@ async function run(browser, port, [w, h]) {
   }
   if (!done.has('mid')) await shot('table-mid');
   fails.push(...tally(coach).map((f) => `Table (en), coach: ${f}`));
+  fails.push(...tally(feltFound).map((f) => `Table (en), felt: ${f}`));
   const finished = !!(await visible(page, 'text=Next hand'));
   await page.waitForTimeout(600);
   await shot('result');
@@ -770,6 +873,48 @@ async function runCoach(browser, port, [[w, h], locale, tileScale, textScale]) {
 }
 
 /**
+ * The portrait felt through a whole hand on the phones it is tightest on, at Large and Extra-large tiles and text in
+ * English and Traditional Chinese (<size>-felt-<lang>-t<tiles>-x<text>.png, six discards in): feltCheck and coachCheck
+ * at each of my decisions. With the main runs (390x844 and 360x740 at Normal), the Chinese table runs and the coach runs
+ * at 320x568, they cover every portrait size e2e:screens opens and the three it adds here (360x640, 375x667, 320x568).
+ */
+const FELT_RUNS = [
+  [[390, 844], 'en-US', 1.5, 1.3],
+  [[360, 740], 'zh-TW', 1.5, 1.3],
+  [[375, 667], 'en-US', 1.5, 1],
+  [[360, 640], 'zh-TW', 1.25, 1.3],
+  [[360, 640], 'en-US', 1.5, 1.15],
+  [[320, 568], 'en-US', 1.5, 1.15],
+  [[320, 568], 'zh-TW', 1, 1.3],
+];
+
+async function runFelt(browser, port, [[w, h], locale, tileScale, textScale]) {
+  const tag = `${w}x${h}`;
+  const name = `felt-${locale === 'zh-TW' ? 'zh' : 'en'}-t${tileScale}-x${textScale}`;
+  const ctx = await browser.newContext({ viewport: { width: w, height: h }, locale });
+  await ctx.addInitScript(([t, x]) => {
+    localStorage.setItem('mjm.profile', JSON.stringify({ userId: 'user-e2e-1234567', userSecret: '0123456789abcdef0123456789abcdef', name: 'Tester', avatar: 'panda' }));
+    localStorage.setItem('mjm.display', JSON.stringify({ tileScale: t, textScale: x }));
+  }, [tileScale, textScale]);
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await page.goto(`http://localhost:${port}/`);
+  await page.waitForSelector('[data-testid="start-match"]', { timeout: 30000 });
+  await tapSel(page, '[data-testid="start-match"]', 300);
+  await page.waitForSelector('[data-testid^="tile-"]', { timeout: 15000 });
+  const played = await playCoachedHand(page, {
+    onDiscard: async (n) => {
+      if (n === 6) await page.screenshot({ path: path.join(out, `${tag}-${name}.png`) });
+    },
+  });
+  const finished = !!(await visible(page, '[data-testid="result-sheet"]'));
+  await ctx.close();
+  const where = `Felt (${tag}, ${locale}, tiles ${tileScale}, text ${textScale})`;
+  return { size: `${tag} ${name}`, finished, discards: played.discards, shots: [name], notes: finished ? [] : ['hand did not finish'], fails: played.found.map((f) => `${where}: ${f}`), errors };
+}
+
+/**
  * The Shop's try-on preview, one look of each kind (a tile back the player owns, the rest not), at each viewport and
  * at 320x568, in English and again in Traditional Chinese with reduce motion on (<size>-preview-<kind>.png,
  * <size>-preview-<kind>-zh.png). Hard checks on each: a modal dialog named for the look, inside the screen; no text
@@ -913,7 +1058,7 @@ async function runPreview(browser, port, [w, h], zh) {
   const browser = await chromium.launch(process.env.PW_CHROMIUM ? { executablePath: process.env.PW_CHROMIUM } : {});
   // Large tiles in landscape: the landscape viewports again at Extra-large.
   const XL = SIZES.filter(([w, h]) => w > h);
-  // SCREENS_ONLY=preview,xl (say) runs only those groups: table, xl, table-zh, table-zh-xl, home-zh, boards, preview, coach.
+  // SCREENS_ONLY=preview,xl (say) runs only those groups: table, xl, table-zh, table-zh-xl, home-zh, boards, preview, coach, felt.
   const only = (process.env.SCREENS_ONLY || '').split(',').filter(Boolean);
   const want = (group) => only.length === 0 || only.includes(group);
   const results = await Promise.all([
@@ -925,6 +1070,7 @@ async function runPreview(browser, port, [w, h], zh) {
     ...(want('boards') ? SIZES : []).map((s) => runBoards(browser, port, s).catch((e) => ({ size: `${s[0]}x${s[1]} leaderboards`, finished: false, notes: [e.message], errors: [] }))),
     ...(want('preview') ? PREVIEW_SIZES : []).flatMap((s) => [false, true].map((zh) => runPreview(browser, port, s, zh).catch((e) => ({ size: `${s[0]}x${s[1]} preview${zh ? '-zh' : ''}`, finished: false, notes: [e.message], errors: [] })))),
     ...(want('coach') ? COACH_RUNS.filter(([[w, h]]) => !wanted.length || wanted.includes(`${w}x${h}`)) : []).map((c) => runCoach(browser, port, c).catch((e) => ({ size: `${c[0][0]}x${c[0][1]} coach`, finished: false, notes: [e.message], errors: [] }))),
+    ...(want('felt') ? FELT_RUNS.filter(([[w, h]]) => !wanted.length || wanted.includes(`${w}x${h}`)) : []).map((c) => runFelt(browser, port, c).catch((e) => ({ size: `${c[0][0]}x${c[0][1]} felt`, finished: false, notes: [e.message], errors: [] }))),
   ]);
   for (const r of results) console.log(JSON.stringify(r));
   await browser.close();

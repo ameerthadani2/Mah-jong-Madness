@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { calloutMs, RESULT_HOLD_MS, rollUp, rollUpMs, slideFrom } from './feel';
 import { readFileSync } from 'fs';
 import { join } from 'path';
-import { ACTION_DOCK_H, coachBarLines, compactCompassSize, dockHeight, fitTile, fitWallSize, handLayout, landscapeWallSize, matchOverLayout, MIN_TOUCH, PINNED_COACH_H, resultLayout, slopFor, tableLayout, TAP_HINT_DOCK_H } from './layout';
+import { ACTION_DOCK_H, coachBarLines, compactCompassSize, dockHeight, fitTile, handLayout, landscapeWallSize, matchOverLayout, MIN_TOUCH, pinnedCoachFace, portraitCoachStatus, resultLayout, slopFor, tableLayout, TAP_HINT_DOCK_H } from './layout';
 
 describe('tableLayout', () => {
   it('docks the claim buttons over the centre column in landscape, never over a side pond', () => {
@@ -18,7 +18,7 @@ describe('tableLayout', () => {
     expect(tableLayout(390, 844).statusInHud).toBe(false);
   });
 
-  it('places the coach above the hand on landscape phones, under the right seat on tablets, pinned above my pond in portrait', () => {
+  it('places the coach above the hand on landscape phones, under the right seat on tablets, pinned under the felt in portrait', () => {
     // Never in a share of the felt's middle on a phone: the ponds and the claim buttons can take all of it there.
     for (const [w, h] of [[844, 390], [667, 375], [640, 360], [568, 320], [932, 430]]) expect(tableLayout(w, h).coach, `${w}x${h}`).toBe('rail');
     expect(tableLayout(1024, 768).coach).toBe('side');
@@ -66,18 +66,22 @@ describe('the coach bar', () => {
     expect(coachBarLines('rail', true)).toEqual({ status: 0, advice: 2 });
   });
 
-  it('pinned in portrait, gives up the status and then a line of advice as the felt above my pond runs short, never the last line', () => {
-    expect(coachBarLines('pinned', false, PINNED_COACH_H.full)).toEqual({ status: 1, advice: 2 });
-    expect(coachBarLines('pinned', false, PINNED_COACH_H.full - 1)).toEqual({ status: 0, advice: 2 });
-    expect(coachBarLines('pinned', false, PINNED_COACH_H.two)).toEqual({ status: 0, advice: 2 });
-    expect(coachBarLines('pinned', false, PINNED_COACH_H.two - 1)).toEqual({ status: 0, advice: 1 });
-    expect(coachBarLines('pinned', false, 0)).toEqual({ status: 0, advice: 1 });
-    expect(coachBarLines('pinned', false, -40)).toEqual({ status: 0, advice: 1 });
-    // Not measured yet: everything.
-    expect(coachBarLines('pinned', false, undefined)).toEqual({ status: 1, advice: 2 });
-    // The heights follow the bar's lines (9 px of border and padding, a 17 px status, 15 px advice lines, 4 px above it).
-    expect(PINNED_COACH_H.full).toBeGreaterThanOrEqual(9 + 17 + 2 * 15 + 4);
-    expect(PINNED_COACH_H.two).toBeGreaterThanOrEqual(9 + 2 * 15 + 4);
+  it('pinned under the portrait felt, shows the status only on a tall phone or a tablet, and two lines of advice always', () => {
+    expect(coachBarLines('pinned', false, false)).toEqual({ status: 0, advice: 2 });
+    expect(portraitCoachStatus(844)).toBe(true);
+    expect(portraitCoachStatus(1024)).toBe(true);
+    for (const h of [568, 640, 667, 740]) expect(portraitCoachStatus(h), `${h}`).toBe(false);
+  });
+
+  it('draws the pinned bar at least 44 px tall, so it is its own press and needs no padding over its neighbours', () => {
+    // 9 px of border and padding, a 17 px status, 15 px advice lines.
+    expect(pinnedCoachFace(false)).toBe(MIN_TOUCH);
+    expect(pinnedCoachFace(true)).toBe(9 + 17 + 2 * 15);
+    // A larger OS text size grows the lines, never below 44.
+    expect(pinnedCoachFace(false, 1.4)).toBe(Math.ceil(9 + 30 * 1.4));
+    expect(pinnedCoachFace(true, 1.4)).toBe(Math.ceil(9 + 47 * 1.4));
+    expect(pinnedCoachFace(false, 0.8)).toBe(MIN_TOUCH);
+    expect(pinnedCoachFace(true, Number.NaN)).toBe(56);
   });
 });
 
@@ -100,17 +104,7 @@ describe('own pond and compass on short landscape (the claim buttons have a row 
   });
 });
 
-describe('portrait felt (360×740 late in a hand)', () => {
-  it('shrinks the wall ring so the felt content fits its scroll view, keeping my pond on screen', () => {
-    // Measured before: content 483 px against a 429 px view at 360×740 with a 124 px ring.
-    expect(fitWallSize(124, 483, 429, 124, 68)).toBe(70);
-    // Converges: at the new size the content fits and the ring stays.
-    expect(fitWallSize(70, 429, 429, 124, 68)).toBe(70);
-    // Grows back when there is room again, never past its full size.
-    expect(fitWallSize(70, 380, 429, 124, 68)).toBe(119);
-    expect(fitWallSize(119, 300, 429, 124, 68)).toBe(124);
-  });
-
+describe('the wall ring and the claim strip', () => {
   it('on a landscape tablet sizes the ring to what the across seat and my pond leave, so my pond stays on the felt', () => {
     expect(landscapeWallSize(0, 0, 0, 300, 112)).toBe(300);
     expect(landscapeWallSize(600, 130, 80, 300, 112)).toBe(300);
@@ -124,13 +118,6 @@ describe('portrait felt (360×740 late in a hand)', () => {
     expect(screen).toMatch(/actionStrip: \{ minHeight: ACTION_STRIP_H/);
   });
 
-  it('drops the ring for the compass alone when even the smallest ring would not fit, and brings it back only with room for all of it', () => {
-    expect(fitWallSize(80, 520, 429, 124, 68)).toBe(0);
-    expect(fitWallSize(0, 400, 429, 124, 68)).toBe(0);
-    expect(fitWallSize(0, 350, 429, 124, 68)).toBe(68);
-    // Unmeasured: unchanged.
-    expect(fitWallSize(124, 0, 429, 124, 68)).toBe(124);
-  });
 });
 
 describe('resultLayout', () => {

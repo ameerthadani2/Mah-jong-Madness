@@ -7,6 +7,8 @@ import { colors, fonts, nameFont } from '../theme';
 import { TableThemeContext } from '../themes';
 import { useT } from '../i18n';
 import { Tile, type TileSize } from './Tile';
+import { tileDims } from './tileDims';
+import { pondRowsShown } from '../display/portraitFit';
 import { AvatarPlate, seatAvatarId, type AvatarMood } from './Avatars';
 import { Emote } from './Emotes';
 import { SeatMotion, type SeatReaction } from './SeatMotion';
@@ -21,26 +23,30 @@ import { CompassNotice } from './table/CompassNotice';
 import { relLineExtra, relTagLabel, SEAT_TAG_CHROME, seatTagText, sideNameSize } from '../logic/seatName';
 import { useDisplayScale } from '../display/DisplayScale';
 
-export function MeldView({ meld, size = 'sm' }: { meld: Meld; size?: TileSize | number }) {
+/**
+ * One meld: its tiles a pixel apart, the claimed one lying on its side. `flat` (the portrait felt's last stage,
+ * display/portraitFit.ts): every tile upright and less room after the meld, so two share a narrow column.
+ */
+export function MeldView({ meld, size = 'sm', flat }: { meld: Meld; size?: TileSize | number; flat?: boolean }) {
   // Another seat's concealed kong arrives as placeholders until the hand ends: show all four face down.
   const unknown = meld.concealed && meld.tiles.every((t) => t === PLACEHOLDER_TILE);
   return (
-    <View style={styles.meld}>
+    <View style={[styles.meld, flat && styles.meldFlat]}>
       {meld.tiles.map((t, i) => {
         const hidden = unknown || (meld.type === 'kong' && meld.concealed && (i === 0 || i === 3));
-        return <Tile key={`${t}-${i}`} tile={t} size={size} faceDown={hidden} rotated={!meld.concealed && meld.claimed === t} />;
+        return <Tile key={`${t}-${i}`} tile={t} size={size} faceDown={hidden} rotated={!flat && !meld.concealed && meld.claimed === t} />;
       })}
     </View>
   );
 }
 
 /** A seat's exposed melds and set-aside flowers, in one wrapping row. */
-export function MeldsAndFlowers({ player, size = 'xs', flowerSize = 'xs', style }: { player: PlayerView; size?: TileSize | number; flowerSize?: TileSize | number; style?: StyleProp<ViewStyle> }) {
+export function MeldsAndFlowers({ player, size = 'xs', flowerSize = 'xs', style, flat }: { player: PlayerView; size?: TileSize | number; flowerSize?: TileSize | number; style?: StyleProp<ViewStyle>; flat?: boolean }) {
   if (player.melds.length === 0 && player.flowers.length === 0) return null;
   return (
     <View style={[styles.meldRow, style]}>
       {player.melds.map((m, i) => (
-        <MeldView key={i} meld={m} size={size} />
+        <MeldView key={i} meld={m} size={size} flat={flat} />
       ))}
       {player.flowers.length > 0 && (
         <View style={styles.flowers}>
@@ -64,15 +70,25 @@ export function TileStrip({ tiles, size = 'xs', max = 20 }: { tiles: TileId[]; s
   );
 }
 
-/** A seat's pond. The latest discard is ringed and, when `enterFrom` is given, slides in from that side. */
-export function DiscardPool({ tiles, size = 'xs', perRow = 8, latest, align = 'flex-start', enterFrom }: { tiles: TileId[]; size?: TileSize | number; perRow?: number; latest?: TileId; align?: 'flex-start' | 'center' | 'flex-end'; enterFrom?: { x: number; y: number } }) {
-  const rows: TileId[][] = [];
-  const n = Math.max(1, perRow);
-  for (let i = 0; i < tiles.length; i += n) rows.push(tiles.slice(i, i + n));
+/**
+ * A seat's pond. The latest discard is ringed and, when `enterFrom` is given, slides in from that side. With `keepRows`
+ * only the newest rows are drawn, after a "+N" chip that says how many earlier discards are not.
+ */
+export function DiscardPool({ tiles, size = 'xs', perRow = 8, latest, align = 'flex-start', enterFrom, keepRows, testID }: { tiles: TileId[]; size?: TileSize | number; perRow?: number; latest?: TileId; align?: 'flex-start' | 'center' | 'flex-end'; enterFrom?: { x: number; y: number }; keepRows?: number; testID?: string }) {
+  const { t: tr } = useT();
+  const { rows, earlier } = pondRowsShown(tiles, perRow, keepRows);
+  const { w, h } = tileDims(size);
   return (
-    <View style={{ gap: 2, alignItems: align }}>
+    <View style={{ gap: 2, alignItems: align }} testID={testID}>
       {rows.map((row, i) => (
         <View key={i} style={{ flexDirection: 'row', gap: 2 }}>
+          {i === 0 && earlier > 0 && (
+            <View style={[styles.earlier, { width: w, height: h, borderRadius: w * 0.17 }]} accessible accessibilityRole="text" accessibilityLabel={tr('table.a11y.pondEarlier', { n: earlier })} testID="pond-earlier">
+              <Text style={[styles.earlierText, { fontSize: Math.max(8, Math.round(w * 0.45)) }]} numberOfLines={1}>
+                +{earlier}
+              </Text>
+            </View>
+          )}
           {row.map((t) =>
             t === latest && enterFrom ? (
               <SlideIn key={t} from={enterFrom}>
@@ -191,7 +207,7 @@ export function SeatBadge({
           </View>
         )}
       </Pressable>
-      <View testID={side ? 'seat-tag-side' : 'seat-tag'} style={[styles.tag, vertical && { alignItems: 'center', marginTop: 4 }, { maxWidth: maxNameWidth }]}>
+      <View testID={side ? 'seat-tag-side' : 'seat-tag'} style={[styles.tag, vertical && { alignItems: 'center', marginTop: 2 }, { maxWidth: maxNameWidth }]}>
         {/* A name uses the tag's room and takes a second line rather than being cut (logic/seatName.ts); a side seat's stays on one line. */}
         <Text testID="seat-name" numberOfLines={nameSize === null ? 2 : 1} style={[styles.tagName, nameFont(name), vertical && { textAlign: 'center' }, nameSize !== null && { fontSize: nameSize }]}>
           {nameSize === null ? seatTagText(name, tagWidth) : name}
@@ -349,10 +365,15 @@ export function Compass({ prevailing, drawsLeft, seatWinds, active, size = 72, r
 
 const styles = StyleSheet.create({
   meld: { flexDirection: 'row', alignItems: 'flex-end', gap: 1, marginRight: 5 },
+  // display/portraitFit.ts FLAT_MELD_GAP.
+  meldFlat: { marginRight: 3 },
   meldRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'flex-end', rowGap: 3 },
   // Wraps inside a narrow column (a side seat with many flowers) instead of running out of it.
   flowers: { flexDirection: 'row', flexWrap: 'wrap', gap: 1, rowGap: 3, alignItems: 'flex-end', maxWidth: '100%' },
   strip: { flexDirection: 'row', flexWrap: 'wrap', gap: 2 },
+  // In a pond's first place: earlier discards that are not drawn (a dark tile-sized chip, so the rows keep their shape).
+  earlier: { backgroundColor: 'rgba(16,20,47,0.72)', borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.55)', alignItems: 'center', justifyContent: 'center' },
+  earlierText: { color: '#FFFFFF', fontWeight: '900' },
   seat: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   seatVertical: { flexDirection: 'column', gap: 0 },
   tag: { backgroundColor: 'rgba(16,20,47,0.78)', borderWidth: 2, borderColor: colors.ink, borderRadius: 10, paddingHorizontal: 7, paddingVertical: 2, minWidth: 0 },

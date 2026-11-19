@@ -16,6 +16,7 @@ export function TableHud({
   roomCode,
   quickMatch,
   portrait,
+  twoRows,
   clock,
   myMove,
   timeBank,
@@ -32,6 +33,11 @@ export function TableHud({
   /** A quick-match table: its code lets nobody in, so the header does not show it (src/logic/lobby.ts). */
   quickMatch?: boolean;
   portrait: boolean;
+  /**
+   * A phone in portrait: the chips keep two rows' height whether or not my clock is showing (it wraps to a second row
+   * on my turn), so the felt under the HUD keeps its height from turn to turn and its fit never changes for it.
+   */
+  twoRows?: boolean;
   /** The turn clock (counted down by HudClock itself, so the table does not re-render every second). */
   clock: TurnClock;
   myMove: boolean;
@@ -48,7 +54,7 @@ export function TableHud({
   const { t } = useT();
   return (
     <View style={styles.hud}>
-      <Row gap={6} style={{ flexShrink: 1, flexWrap: 'wrap', rowGap: 4 }}>
+      <Row gap={6} style={[{ flexShrink: 1, flexWrap: 'wrap', rowGap: 4 }, twoRows && styles.twoRows]}>
         <View style={styles.roundChip} accessible accessibilityRole="image" accessibilityLabel={roundSentence(t, view.prevailingWind, view.handNumber + 1, view.dealerStreak)}>
           <Text style={styles.roundWind}>{WINDS[view.prevailingWind]}</Text>
           <Text style={styles.roundText}>
@@ -90,7 +96,9 @@ export function TableHud({
 }
 
 const styles = StyleSheet.create({
-  hud: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 10, paddingTop: 4, paddingBottom: 6, gap: 8 },
+  hud: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 10, paddingTop: 3, paddingBottom: 4, gap: 8 },
+  // Two rows of 30 px chips and the gap between them.
+  twoRows: { minHeight: 64, alignContent: 'flex-start' },
   roundChip: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: colors.gold, borderWidth: 2.5, borderColor: colors.ink, borderRadius: 999, paddingLeft: 4, paddingRight: 10, height: 30 },
   roundWind: { width: 22, height: 22, borderRadius: 11, backgroundColor: colors.ink, color: colors.gold, textAlign: 'center', fontWeight: '900', fontSize: 14, lineHeight: 22, overflow: 'hidden' },
   roundText: { color: colors.ink, fontWeight: '900', fontSize: 13 },

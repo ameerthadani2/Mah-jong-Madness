@@ -11,9 +11,10 @@ export interface TableLayout {
   /** Short landscape phones (under 420 px tall): every vertical pixel counts. */
   compact: boolean;
   /**
-   * Where the coach goes (see coachBarLines): portrait pins it to the felt above my pond; a landscape phone gives it a
-   * bar above my hand; tablets and tall landscape screens show it in full under the right seat. Never in a share of
-   * the felt's middle, which the ponds and the claim buttons can take whole on a small phone.
+   * Where the coach goes (see coachBarLines): portrait pins its bar under the felt, over the felt's wooden rail, above
+   * the claim strip; a landscape phone gives it a bar above my hand; tablets and tall landscape screens show it in full
+   * under the right seat. Never in a share of the felt, which the ponds and the claim buttons can take whole on a small
+   * phone.
    */
   coach: 'pinned' | 'rail' | 'side';
   /** The "X discarded Y" pill sits in the HUD on short screens instead of under the compass. */
@@ -96,27 +97,40 @@ export interface CoachBarLines {
 }
 
 /**
- * The coach bar's lines where it is placed. Pinned in portrait: the status over two lines of advice. On a landscape
- * phone's rail, the advice alone: one line in a row of its own above the hand at Normal tiles (where every pixel of
- * the felt counts), two beside my plate where Large and Extra-large tiles give the plate a row of its own (`besidePlate`).
- * Whatever does not fit ends in an ellipsis, and the bar opens the coach's sheet, which holds everything.
+ * The coach bar's lines where it is placed. Pinned in portrait: the status over two lines of advice on a tall phone or a
+ * tablet, two lines of advice alone below that (`statusLine`: portraitCoachStatus). On a landscape phone's rail, the
+ * advice alone: one line in a row of its own above the hand at Normal tiles (where every pixel of the felt counts), two
+ * beside my plate where Large and Extra-large tiles give the plate a row of its own (`besidePlate`). Whatever does not
+ * fit ends in an ellipsis, and the bar opens the coach's sheet, which holds everything.
  */
-export function coachBarLines(place: 'pinned' | 'rail', besidePlate = false, room?: number): CoachBarLines {
-  if (place === 'pinned') {
-    // The felt's height above my pond, once measured: when it cannot hold all three lines the status goes first,
-    // then a line of advice, so the bar keeps one whole line of advice (the sheet holds the rest).
-    if (room === undefined || !Number.isFinite(room) || room >= PINNED_COACH_H.full) return { status: 1, advice: 2 };
-    return { status: 0, advice: room >= PINNED_COACH_H.two ? 2 : 1 };
-  }
+export function coachBarLines(place: 'pinned' | 'rail', besidePlate = false, statusLine = true): CoachBarLines {
+  if (place === 'pinned') return { status: statusLine ? 1 : 0, advice: 2 };
   return { status: 0, advice: besidePlate ? 2 : 1 };
 }
 
+/** Portrait: the pinned bar shows the status line too on a window at least this tall (a 390×844 phone, a tablet). */
+export const PORTRAIT_COACH_STATUS_MIN_H = 800;
+
+/** Whether the pinned portrait bar shows the status line over its advice (the felt of a shorter phone needs the room). */
+export function portraitCoachStatus(height: number): boolean {
+  return height >= PORTRAIT_COACH_STATUS_MIN_H;
+}
+
 /**
- * The height the pinned coach bar takes in portrait with its gap above it (CoachPanel.tsx: 9 px of border and
- * padding, a 17 px status line, 15 px advice lines, at least 27 px for the owl and "More"; Felt.tsx pads it 4 px):
- * the status over two lines of advice, two lines of advice, one.
+ * How far a coach bar under the felt is drawn up over the felt's wooden rail (the frame keeps 18 px under the felt; the
+ * bar stops 2 px short of it): the landscape bar at Normal tiles and the portrait bar.
  */
-export const PINNED_COACH_H = { full: 60, two: 43, one: 31 } as const;
+export const COACH_OVER_RAIL = 16;
+
+/**
+ * The pinned coach bar's height as drawn in portrait (CoachPanel.tsx CoachBar `face`): 9 px of border and padding, then
+ * the status line (17 px) over two lines of advice (15 px each), or the two lines of advice alone, grown with the OS text
+ * size, and never under 44 px, so the bar is its own press on the web too and covers nothing around it.
+ */
+export function pinnedCoachFace(statusLine: boolean, osScale = 1): number {
+  const text = (statusLine ? 17 + 2 * 15 : 2 * 15) * Math.max(1, Number.isFinite(osScale) ? osScale : 1);
+  return Math.max(MIN_TOUCH, Math.ceil(9 + text));
+}
 
 /** Height the landscape action dock takes: claim/discard buttons (larger on tablets), the tap-hint pill, or nothing. */
 export function dockHeight(dock: ActionDock, big: boolean): number {
@@ -128,20 +142,6 @@ export function compactCompassSize(rowH: number, max: number): number {
   if (rowH <= 0) return max;
   const s = Math.min(max, rowH - 6);
   return s >= 40 ? s : 0;
-}
-
-/**
- * Portrait: the wall ring around the compass is the felt's one stretchable piece. Given the ring's current size
- * and the felt's measured content and viewport heights, the size that makes the content fit (it grows back
- * when there is room again, never past `max`); below `min` the ring is dropped and the compass stands alone
- * (returns 0), so my pond is never scrolled out of the felt late in a hand.
- */
-export function fitWallSize(current: number, contentH: number, viewH: number, max: number, min: number): number {
-  if (contentH <= 0 || viewH <= 0) return current;
-  // Without the ring, bring it back only when there is room for the whole of it (no flicker at the edge).
-  if (current <= 0) return viewH - contentH >= min ? min : 0;
-  const next = Math.min(max, current - (contentH - viewH));
-  return next >= min ? Math.round(next) : 0;
 }
 
 export interface HandLayout {

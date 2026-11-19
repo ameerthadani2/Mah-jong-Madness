@@ -293,9 +293,9 @@ describe('a side seat in landscape', () => {
     const { readFileSync } = await import('fs');
     const { join } = await import('path');
     const felt = readFileSync(join(__dirname, '../components/table/Felt.tsx'), 'utf8');
-    expect(felt).toContain('const fit = fitSideColumn({');
-    expect(felt).toContain('{fit.showHand && hidden}');
-    expect(felt).toContain('<DiscardPool tiles={p.discards} size={fit.pool} perRow={fit.perRow}');
+    expect(felt).toContain('const col = fitSideColumn({');
+    expect(felt).toContain('{col.showHand && hidden}');
+    expect(felt).toContain('<DiscardPool tiles={p.discards} size={col.pool} perRow={col.perRow}');
     expect(felt).toContain('onContentSizeChange={() => sideScroll.current[r]?.scrollToEnd({ animated: false })}');
   });
 });

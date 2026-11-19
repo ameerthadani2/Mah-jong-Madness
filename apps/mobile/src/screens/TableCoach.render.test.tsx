@@ -11,8 +11,8 @@ import { DisplayScaleProvider } from '../display/DisplayScale';
 
 /**
  * The coach at the table, through the rendered screen on an offline table with three bots (fake timers, a fixed deal as
- * in TablePlay.render.test.tsx), in each place a layout gives it: above the hand on a landscape phone, pinned above my
- * pond in portrait, in full under the right seat on a tablet. While the coach is on it is on screen, with its advice
+ * in TablePlay.render.test.tsx), in each place a layout gives it: above the hand on a landscape phone, under the felt
+ * over its rail in portrait, in full under the right seat on a tablet. While the coach is on it is on screen, with its advice
  * on my turn; its button says so; its bar opens the sheet with everything it says.
  */
 jest.setTimeout(60_000);
@@ -131,59 +131,69 @@ describe('the coach on a landscape phone (667x375)', () => {
 });
 
 describe('the coach in portrait (390x844)', () => {
-  it('is pinned above my pond, outside the felt that scrolls, so it can never scroll out of view', async () => {
+  it('sits under the felt, over its rail, with the status over two lines of advice; my pond stays in the felt, and nothing scrolls', async () => {
     await renderTable(390, 844);
     await untilMyDiscard();
-    const felt = screen.getByTestId('felt-scroll');
+    const felt = screen.getByTestId('felt-portrait');
     expect(within(felt).queryByTestId('coach')).toBeNull();
-    expect(within(felt).queryByTestId('my-pond')).toBeNull();
-    expect(screen.getByTestId('coach-status')).toBeOnTheScreen();
-    expect(screen.getByTestId('coach-advice').props.children).toMatch(/^Discard /);
-    expect(screen.getByTestId('my-pond')).toBeOnTheScreen();
+    expect(within(felt).getByTestId('my-pond')).toBeOnTheScreen();
+    expect(screen.queryByTestId('felt-scroll')).toBeNull();
+    const slot = screen.getByTestId('coach-slot');
+    expect(within(slot).getByTestId('coach-status')).toBeOnTheScreen();
+    expect(within(slot).getByTestId('coach-advice').props.children).toMatch(/^Discard /);
+    expect(within(slot).getByTestId('coach-advice').props.numberOfLines).toBe(2);
+    // Drawn at least 44 px tall, so its press is the bar itself: no padding reaching over my pond or the claim strip.
+    const face = StyleSheet.flatten(within(slot).getByTestId('coach-face').props.style);
+    expect(face.height).toBeGreaterThanOrEqual(44);
+    expect(StyleSheet.flatten(within(slot).getByTestId('coach').props.style ?? {}).marginBottom ?? 0).toBe(0);
   });
 });
 
-describe('the coach in portrait on a small phone at Extra-large tiles (320x568)', () => {
+describe('the felt in portrait on a small phone (320x568)', () => {
   /** The width of my hand's first tile as drawn. */
   const handTile = () => {
     const tile = within(screen.getByTestId('hand-discard')).getAllByTestId(/^tile-/)[0];
     return StyleSheet.flatten(tile.props.style).width as number;
   };
-  /** The felt reports its height and my pond's (as onLayout does on a device). */
-  async function measure(felt: number, pond: number) {
-    const layout = (height: number) => ({ nativeEvent: { layout: { x: 0, y: 0, width: 280, height } } });
-    await fireEvent(screen.getByTestId('pinned-pond'), 'layout', layout(pond));
+  /** The felt reports its height and the opponents' plates theirs (as onLayout does on a device). */
+  async function measure(felt: number) {
+    const layout = (height: number, width = 80) => ({ nativeEvent: { layout: { x: 0, y: 0, width, height } } });
+    await fireEvent(screen.getByTestId('plate-seat-1'), 'layout', layout(73));
+    await fireEvent(screen.getByTestId('plate-seat-3'), 'layout', layout(73));
+    await fireEvent(screen.getByTestId('plate-seat-2'), 'layout', layout(40, 144));
     await fireEvent(screen.getByTestId('felt-portrait'), 'layout', layout(felt));
   }
 
-  it('keeps one whole line of advice and my pond when the felt runs short: the status goes first, then a line, and then the hand steps down a size until they fit', async () => {
+  it('shows the coach two lines of advice without the status, under the felt', async () => {
+    await renderTable(320, 568, 1.5);
+    await untilMyDiscard();
+    const slot = screen.getByTestId('coach-slot');
+    expect(within(slot).queryByTestId('coach-status')).toBeNull();
+    expect(within(slot).getByTestId('coach-advice').props.numberOfLines).toBe(2);
+    expect(within(screen.getByTestId('felt-portrait')).queryByTestId('coach')).toBeNull();
+  });
+
+  it('when even the least of the felt does not fit, the hand steps down a size at a time to Normal, and stays there for the hand', async () => {
     await renderTable(320, 568, 1.5);
     await untilMyDiscard();
     const big = handTile();
-    // Room for all three lines above my pond: the status and two lines of advice.
-    await measure(120, 30);
-    expect(screen.getByTestId('coach-status')).toBeOnTheScreen();
-    expect(screen.getByTestId('coach-advice').props.numberOfLines).toBe(2);
-    // Room for two: the advice keeps both, the status gives way.
-    await measure(80, 30);
-    expect(screen.queryByTestId('coach-status')).toBeNull();
-    expect(screen.getByTestId('coach-advice').props.numberOfLines).toBe(2);
+    // Room for the seats: the hand keeps its size.
+    await measure(400);
     expect(handTile()).toBe(big);
-    // Room for less than one line (melds and a claim strip took the height): one line, and the hand gets smaller.
-    await measure(40, 30);
-    expect(screen.getByTestId('coach-advice').props.numberOfLines).toBe(1);
+    // Too short for the plates and a row each: a size down.
+    await measure(60);
     const smaller = handTile();
     expect(smaller).toBeLessThan(big);
     // Still short at the new size: another step, down to Normal and no further.
-    await measure(38, 30);
+    await measure(58);
     expect(handTile()).toBeLessThan(smaller);
-    await measure(36, 30);
-    await measure(34, 30);
+    await measure(56);
+    await measure(54);
     const normal = handTile();
-    await measure(32, 30);
+    await measure(52);
     expect(handTile()).toBe(normal);
     // Room again later in the hand: the hand stays at the smaller size (it never jumps back mid-hand).
-    await measure(200, 30);
+    await measure(400);
     expect(handTile()).toBe(normal);
   });
 
@@ -191,9 +201,8 @@ describe('the coach in portrait on a small phone at Extra-large tiles (320x568)'
     await renderTable(320, 568, 1);
     await untilMyDiscard();
     const size = handTile();
-    await measure(30, 30);
+    await measure(30);
     expect(handTile()).toBe(size);
-    expect(screen.getByTestId('coach-advice').props.numberOfLines).toBe(1);
   });
 });
 

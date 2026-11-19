@@ -2,7 +2,7 @@
  * The coach (offline bot tables only), in three forms that share one rule: while the coach is on, it is on screen,
  * whole, and what does not fit is one tap away.
  *
- * - CoachBar: phones. A slim bar, pinned above my pond in portrait and above my hand in landscape (layout.ts
+ * - CoachBar: phones. A slim bar, under the felt over its rail in portrait and above my hand in landscape (layout.ts
  *   coachBarLines), never in a share of the felt that the ponds or the claim buttons can take. It shows the advice
  *   (the win, the tile to discard or the claim to make; coachText.ts) on the lines it has, ending in an ellipsis
  *   when it is longer, and the whole bar is a button, marked "More", that opens the sheet.
@@ -26,12 +26,18 @@ import { H2, IconButton, Row } from '../Ui';
 import { coachLines } from './coachText';
 import type { CoachBarLines } from './layout';
 
-/** The bar: the owl, the advice on the lines it has (or the status, when there is no advice), and "More". */
-export function CoachBar({ hint, lines, onOpen, style }: { hint: Hint; lines: CoachBarLines; onOpen: () => void; style?: StyleProp<ViewStyle> }) {
+/**
+ * The bar: the owl, the advice on the lines it has (or the status, when there is no advice), and "More". `face`, when
+ * given, is the bar's height as drawn (the pinned bar in portrait, pinnedCoachFace in layout.ts): at least 44 px, so the
+ * bar is its own press, and the same height at every decision, so the felt around it never moves.
+ */
+export function CoachBar({ hint, lines, onOpen, style, face }: { hint: Hint; lines: CoachBarLines; onOpen: () => void; style?: StyleProp<ViewStyle>; face?: number }) {
   const { t } = useT();
   const { status, advice } = coachLines(hint, t);
-  // Without advice, the status has the advice's lines too.
-  const statusLines = advice ? lines.status : Math.max(1, lines.status + lines.advice);
+  // Without advice, the status has the advice's lines too (a drawn-to-height bar: as many as its height holds).
+  const statusLines = advice ? lines.status : face !== undefined ? (lines.status > 0 ? 2 : 1) : Math.max(1, lines.status + lines.advice);
+  // A bar drawn at least 44 px tall needs no press beyond its edges.
+  const slop = face === undefined;
   return (
     <Pressable
       testID="coach"
@@ -44,11 +50,11 @@ export function CoachBar({ hint, lines, onOpen, style }: { hint: Hint; lines: Co
       // and of the hand's tiles below (they stand 12 px down their row). On a phone hitSlop adds them; the web ignores
       // hitSlop, so there the press is padded by as much, with an equal negative margin that keeps the bar in place
       // (as IconButton does).
-      hitSlop={Platform.OS === 'web' ? undefined : BAR_SLOP}
-      style={Platform.OS === 'web' ? styles.barWebPress : undefined}
+      hitSlop={slop && Platform.OS !== 'web' ? BAR_SLOP : undefined}
+      style={slop && Platform.OS === 'web' ? styles.barWebPress : undefined}
     >
       {({ pressed }) => (
-        <View style={[styles.bar, pressed && styles.barPressed, style]} testID="coach-face">
+        <View style={[styles.bar, face !== undefined && { height: face }, pressed && styles.barPressed, style]} testID="coach-face">
           <CoachOwl size={18} />
           <View style={styles.barText} testID="coach-text">
             {statusLines > 0 && (
