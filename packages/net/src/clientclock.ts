@@ -278,12 +278,13 @@ export interface OwnScope {
 
 /**
  * The clock the app shows for the move the seat owes (`TableClient.ownClock`): the clock the audit
- * holds the table to, counted by this device itself. `streak` holds the states that showed the seat
- * the move, the first (`r0`) first (`ownRun`); each gives an end of the turn clock and of the time
- * bank after it on the host's clock, and the latest of each counts (a host that re-arms the clock on
- * a rejoin can only add time): its deadline and its deadline plus the bank it states (less the host's
- * rounding, `BANK_ROUND_MS`), or, for a state already in the bank, its stamp and its deadline. So the
- * bank follows the turn clock without waiting for the state that says it has started.
+ * holds the table to, counted by this device itself. `end` is when the seat's time runs out on the
+ * host's clock, the end the audit holds the table to (`streakEnd`: the rules' clock as this device
+ * tracks it, or a later end a state of the streak claimed, each stated bank less the host's rounding,
+ * `BANK_ROUND_MS`). `streak` holds the states that showed the seat the move, the first (`r0`) first
+ * (`ownRun`); the turn clock ends at the latest deadline one of them gives before the bank (for a
+ * state already in the bank, its stamp), never after `end`. So the bank follows the turn clock without
+ * waiting for the state that says it has started. Only states of the latest one's clock era count.
  *
  * Those ends are placed on this device's clock by the strongest fixed point of the scope `at` is read
  * in (`points`: the hand's pongs and its deal; `best`: the strongest one carried from the hands before:
@@ -293,20 +294,18 @@ export interface OwnScope {
  * counted from its arrival (by its own stamp); with no fixed point, by that alone. Null when the seat
  * owes no move with a clock, or nothing places the host's clock on this device's.
  */
-export function ownClockFrom(streak: SeenState[], points: ClockAnchor[], best: { era: number; run: string; seg: number; value: number; at: number; rtt?: number } | null, ref: number | null, at: number, scope: OwnScope): OwnClock | null {
+export function ownClockFrom(streak: SeenState[], end: number, points: ClockAnchor[], best: { era: number; run: string; seg: number; value: number; at: number; rtt?: number } | null, ref: number | null, at: number, scope: OwnScope): OwnClock | null {
+  const era = streak.length > 0 ? (streak[streak.length - 1].era ?? 0) : 0;
   let turnEnd = Number.NEGATIVE_INFINITY;
-  let bankEnd = Number.NEGATIVE_INFINITY;
+  let clocked = false;
   for (const f of streak) {
-    if (f.deadline === null || !Number.isFinite(f.deadline)) continue;
-    if (f.inBank) {
-      if (typeof f.now === 'number') turnEnd = Math.max(turnEnd, f.now);
-      bankEnd = Math.max(bankEnd, f.deadline);
-    } else {
-      turnEnd = Math.max(turnEnd, f.deadline);
-      bankEnd = Math.max(bankEnd, f.deadline + Math.max(0, f.timeBank * 1000 - BANK_ROUND_MS));
-    }
+    if ((f.era ?? 0) !== era || f.deadline === null || !Number.isFinite(f.deadline)) continue;
+    clocked = true;
+    if (!f.inBank) turnEnd = Math.max(turnEnd, f.deadline);
+    else if (typeof f.now === 'number') turnEnd = Math.max(turnEnd, f.now);
   }
-  if (!Number.isFinite(bankEnd)) return null;
+  if (!clocked || !Number.isFinite(end)) return null;
+  const bankEnd = end;
   // (A state in the bank says the turn clock is over: never later than the bank's end.)
   turnEnd = Number.isFinite(turnEnd) ? Math.min(turnEnd, bankEnd) : bankEnd;
   const inScope = (x: { era?: number; run?: string; seg?: number }) => (x.era ?? 0) === scope.era && x.run === scope.run && (x.seg ?? 0) === scope.seg;

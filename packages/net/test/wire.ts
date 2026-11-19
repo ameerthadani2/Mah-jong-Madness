@@ -17,7 +17,7 @@
  */
 import { vi } from 'vitest';
 import { chooseAction, legalActions, withRules, type Action, type RuleSet } from '@mjm/engine';
-import { caveatKey, clientClock, failureKey, LoopbackHub, TableClient, TableHost, transportLink, type HostMessage, type Link, type SerializedClient } from '../src/index';
+import { caveatKey, clientClock, failureKey, LoopbackHub, TableClient, TableHost, transportLink, type HostMessage, type Link, type SerializedClient, type SerializedHost } from '../src/index';
 
 export const TURN = 15_000;
 export const BANK = 30_000;
@@ -64,6 +64,8 @@ export interface Plan {
   map?: (m: HostMessage, w: Wire) => HostMessage | null;
   /** The server holds a frame back (on the link it was sent on) until the test lets it go. */
   hold?: (m: HostMessage, w: Wire) => boolean;
+  /** Frames of the server's own making that it sends right behind a frame it sends (on the same link, in order). */
+  after?: (m: HostMessage, w: Wire) => HostMessage[];
   onTick?: (w: Wire) => void;
   /** Right after the phone joined on a new link. */
   onReconnect?: (w: Wire) => void;
@@ -95,22 +97,27 @@ export function wire(plan: Plan) {
   const vs = plan.seat ?? 0;
   const clock = { now: T0 };
   let mono = 500_000;
-  const hub = new LoopbackHub();
+  let hub = new LoopbackHub();
   const serverWall = () => clock.now + (plan.hostSkew?.(clock.now) ?? 0);
   const real = plan.hostClock === 'real';
   if (real) vi.setSystemTime(serverWall());
-  const hostNow = plan.hostClock === 'wall' ? serverWall : clientClock({ now: serverWall, monotonic: () => clock.now });
+  /** The host's clock, made afresh for each process the table runs in. */
+  const hostNow = () => (plan.hostClock === 'wall' ? serverWall : clientClock({ now: serverWall, monotonic: () => clock.now }));
   /** The host's bots' moves, due on the wire's clock. */
   const timers: Array<{ at: number; fn: () => void }> = [];
-  const host = new TableHost(hub.create('host'), {
-    roomCode: plan.code,
-    rules,
-    ...(real ? {} : { now: hostNow }),
-    matchId: `m-${plan.code}`,
-    intermissionSeconds: plan.intermissionSeconds ?? 30,
-    botDelayMs: plan.botDelayMs ?? 0,
-    schedule: (fn, ms) => void timers.push({ at: clock.now + ms, fn }),
-  });
+  /** The table in a process of the server's (`restore`: a table saved by an earlier one). */
+  const makeHost = (restore?: SerializedHost) =>
+    new TableHost(hub.create('host'), {
+      roomCode: plan.code,
+      rules,
+      ...(real ? {} : { now: hostNow() }),
+      matchId: `m-${plan.code}`,
+      intermissionSeconds: plan.intermissionSeconds ?? 30,
+      botDelayMs: plan.botDelayMs ?? 0,
+      schedule: (fn, ms) => void timers.push({ at: clock.now + ms, fn }),
+      ...(restore ? { restore } : {}),
+    });
+  let host = makeHost();
   let lines = 0;
   let owed = { tc: -1, k: 0, since: 0, think: 0, acted: false };
   /** The uplink delay starts once the seat is taken (its first join goes straight through). */
@@ -164,6 +171,21 @@ export function wire(plan: Plan) {
       w.drops.push(clock.now);
       w.line.close();
       w.pendingReconnectAt = clock.now + ms;
+    },
+    /**
+     * The server restarts: the table is saved, and restored in a new process (on a new network, with a
+     * clock of its own over the same wall clock); every link and every bot move it had scheduled is
+     * gone, and the phone joins it again `ms` later.
+     */
+    restartHost(ms = plan.reconnectMs ?? 1_000) {
+      const saved = JSON.parse(JSON.stringify(host.serialize())) as SerializedHost;
+      host.close();
+      timers.length = 0;
+      hub = new LoopbackHub();
+      host = makeHost(saved);
+      w.host = host;
+      w.hub = hub;
+      w.dropNow(ms);
     },
     step(ms = 500) {
       clock.now += ms;
@@ -271,7 +293,9 @@ export function wire(plan: Plan) {
             const m = plan.map ? plan.map(m0, w) : m0;
             if (m === null) return;
             if (plan.hold?.(m, w)) return void held.push(m);
-            down.push({ at: Math.max(clock.now + (plan.delay?.(m, clock.now) ?? 0), down.length ? down[down.length - 1].at : Number.NEGATIVE_INFINITY), m });
+            const at = Math.max(clock.now + (plan.delay?.(m, clock.now) ?? 0), down.length ? down[down.length - 1].at : Number.NEGATIVE_INFINITY);
+            down.push({ at, m });
+            for (const x of plan.after?.(m, w) ?? []) down.push({ at, m: x });
           });
         },
       },

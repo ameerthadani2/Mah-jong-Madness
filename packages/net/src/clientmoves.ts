@@ -252,13 +252,14 @@ export function seatRun(play: PlayRecord, n: number, prevMove: number): { run: S
  * the clock before it, or after one in the bank). A host arms a seat's clock afresh for each move it
  * owes, once the seat's previous move (its own, or the table's for it) is played, and keeps it while
  * other seats answer a claim; so over an honest hand the first state is `seatRun`'s for the move the
- * seat then makes. Empty when the latest state owes nothing.
+ * seat then makes. Empty when the latest state owes nothing. With `last`, the same as it stood when
+ * `play.seen[last]` was the latest state.
  */
-export function ownRun(play: PlayRecord, rules: RuleSet): SeenState[] {
+export function ownRun(play: PlayRecord, rules: RuleSet, last = play.seen.length - 1): SeenState[] {
   const seen = play.seen;
-  if (seen.length === 0 || !seen[seen.length - 1].owes) return [];
+  if (last < 0 || last >= seen.length || !seen[last].owes) return [];
   const turn = rules.turnSeconds * 1000;
-  let i = seen.length - 1;
+  let i = last;
   for (; i > 0; i--) {
     const f = seen[i];
     const prev = seen[i - 1];
@@ -266,7 +267,50 @@ export function ownRun(play: PlayRecord, rules: RuleSet): SeenState[] {
     const armed = !f.inBank && f.deadline !== null && typeof f.now === 'number' && f.deadline - f.now >= turn - ARM_SLACK_MS;
     if (armed && f.tc > prev.tc && (prev.deadline === null || prev.inBank || (f.deadline as number) > prev.deadline)) break;
   }
-  return seen.slice(i);
+  return seen.slice(i, last + 1);
+}
+
+/**
+ * The end a state claims for the move it shows the seat owing, on the host's clock: its deadline once
+ * in the bank, else its deadline plus the bank it states, less `round` (never below the deadline; the
+ * app takes off the host's rounding of the bank, `BANK_ROUND_MS`). Minus infinity with no deadline.
+ */
+export function claimEnd(f: SeenState, round = 0): number {
+  if (f.deadline === null || !Number.isFinite(f.deadline)) return Number.NEGATIVE_INFINITY;
+  return f.inBank || !Number.isFinite(f.timeBank) ? f.deadline : f.deadline + Math.max(0, f.timeBank * 1000 - round);
+}
+
+/**
+ * The end of the seat's clock for the move it owes in `play.seen[i]`, on the host's clock, as the
+ * audit holds the table to it (`judgeFrom`) and the app shows it (`TableClient.ownClock`): the larger
+ * of the rules' clock as this device tracks it (`bound`, `clockTrack`'s for that frame) and every end
+ * a state of the streak (`ownRun` over the frames up to `i`) claimed, in that frame's clock era. Any
+ * end the screen showed binds the table, even one a later state took back. Ends claimed in an earlier
+ * era are on a clock of the host's that its stamps no longer keep, so they are left out; a move the
+ * table plays across such a change is amber instead (`restartInRun`). The app passes `round` (the
+ * host's rounding of the bank it states) and shows that much less of each stated bank, so it never
+ * shows more than the host's own end.
+ */
+export function streakEnd(play: PlayRecord, i: number, rules: RuleSet, bound: number | null | undefined, round = 0): number {
+  let end = typeof bound === 'number' && !Number.isNaN(bound) ? bound : Number.NEGATIVE_INFINITY;
+  const a = play.seen[i];
+  if (!a) return end;
+  const era = a.era ?? 0;
+  for (const f of ownRun(play, rules, i)) if ((f.era ?? 0) === era) end = Math.max(end, claimEnd(f, round));
+  return end;
+}
+
+/**
+ * Whether the states that showed this seat the move it owed at turn `n` (`ownRun` up to the last frame
+ * at or before `n`) came in more than one clock era of the host: it announced a restart while the seat
+ * owed the move. The ends shown before the restart cannot be checked against its new clock
+ * (`streakEnd`), so a table move for the seat there is amber (`restartClock`).
+ */
+export function restartInRun(play: PlayRecord, n: number, rules: RuleSet): boolean {
+  let last = -1;
+  for (let k = 0; k < play.seen.length; k++) if (play.seen[k].tc <= n) last = k;
+  const run = ownRun(play, rules, last);
+  return run.some((f) => (f.era ?? 0) !== (run[0].era ?? 0));
 }
 
 /**
@@ -298,7 +342,8 @@ export function unstamped(f: SeenState): boolean {
  *
  * Over one unbroken link (`early` when not): the seat's time must have run out. How long the
  * seat had is worked out from the rules and from what this client saw earlier in the hand
- * (`clockTrack`), never from the clock fields of the frame alone; how long it was given is read
+ * (`clockTrack`), never from the clock fields of the frame alone, and is never less than any end a
+ * state of the move's streak claimed (`streakEnd`: the end the app showed); how long it was given is read
  * from the host's time stamps, which are believed only as far as this device's own clock allows
  * (`offsetFloor`), in the run of the app the frame after the move arrived in. `unanchored`: nothing
  * was wrong that this device can see, but after a restart of the host it has no fixed point yet to
@@ -318,8 +363,9 @@ export function unstamped(f: SeenState): boolean {
  * has no measure of the stretch, the move is noted and not judged.
  */
 function judgeFrom(j: MoveJudge, play: PlayRecord, n: number, rules: RuleSet, anchors: ClockAnchor[], track: ClockTrack, gaps: Set<number>, a: SeenState | null, b: SeenState, gap: boolean): 'ok' | 'early' | 'downEarly' | 'down' | 'unanchored' | 'across' {
-  // What the frame itself says can only add time: a host that re-armed the clock (a rejoin) knows more than this client.
-  const claimed = !a || a.deadline === null ? Number.NEGATIVE_INFINITY : a.inBank ? a.deadline : a.deadline + a.timeBank * 1000;
+  // What the frames say can only add time: a host that re-armed the clock (a rejoin) knows more than this client,
+  // and an end that any state of the move's streak claimed is one the app showed (`streakEnd`), so it binds the table.
+  const claimed = !a || a.deadline === null ? Number.NEGATIVE_INFINITY : streakEnd(play, play.seen.indexOf(a), rules, null);
   if (a && a.epoch === b.epoch && !gap) {
     if (!a.owes) return 'ok';
     if (a.deadline === null || typeof b.now !== 'number') return 'early';

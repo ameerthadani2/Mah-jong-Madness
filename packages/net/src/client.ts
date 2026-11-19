@@ -44,8 +44,8 @@ import { randomHex } from './sha256';
 import type { Link } from './host';
 import { CLOCK_FRAME_MS, RESTART_CAUSES, type Audit, type ClientMessage, type HostMessage, type SeatInfo } from './messages';
 import { isFrame, type Transport, type Unsubscribe } from './transport';
-import { clientClock, type ClockBase, DRIFT_CAP_MS, DRIFT_RATE, foldClock, LATE_MS, LINK_PAUSE_MS, MAX_PAUSES, MAX_PINGS, MAX_PONGS, NO_ANSWER_PINGS, ORDER_SLACK_MS, ownClockFrom, PAUSE_GRACE_MS, PONG_WINDOW_MS, RAN_GAP_MS, RTT_PUBLISH_MS, SILENT_ANSWER_MS, STEADY_SLACK_MS, WATCH_WINDOW_MS, type OwnClock, type TableClientOptions } from './clientclock';
-import { armedLate, clockTrack, firstSend, fixedPoint, flightAllowance, heldLive, isBotSkill, judgeTableMove, lateAnchor, lateBy, lateCountMs, lateLimitMs, lateRef, legalFor, ownRun, pausedIn, sameActionSafe, seatRun, seenHere, tableRule, turnLateBy, unstamped, type LateScope, type MoveJudge, type PongClock } from './clientmoves';
+import { BANK_ROUND_MS, clientClock, type ClockBase, DRIFT_CAP_MS, DRIFT_RATE, foldClock, LATE_MS, LINK_PAUSE_MS, MAX_PAUSES, MAX_PINGS, MAX_PONGS, NO_ANSWER_PINGS, ORDER_SLACK_MS, ownClockFrom, PAUSE_GRACE_MS, PONG_WINDOW_MS, RAN_GAP_MS, RTT_PUBLISH_MS, SILENT_ANSWER_MS, STEADY_SLACK_MS, WATCH_WINDOW_MS, type OwnClock, type TableClientOptions } from './clientclock';
+import { armedLate, clockTrack, firstSend, fixedPoint, flightAllowance, heldLive, isBotSkill, judgeTableMove, lateAnchor, lateBy, lateCountMs, lateLimitMs, lateRef, legalFor, ownRun, pausedIn, restartInRun, sameActionSafe, seatRun, seenHere, streakEnd, tableRule, turnLateBy, unstamped, type LateScope, type MoveJudge, type PongClock } from './clientmoves';
 import {
   CHAINED_FIELDS,
   cleanCeremony,
@@ -125,7 +125,7 @@ export const AUDIT_CAVEATS = {
   passedPongLate: 'The table passed up a Pong this seat could make on a turn that reached this device late',
   passedChowLate: 'The table passed up a Chow this seat could make on a turn that reached this device late',
   passedKongLate: 'The table passed up a Kong this seat could make on a turn that reached this device late',
-  restartClock: 'The server restarted during this match and then played for this seat before this device could check its clock again',
+  restartClock: 'The server restarted and then played for this seat before this device could check the time it had left',
   // The table's move for this seat is early only by what this device measured of the server's clock in
   // another run of the app, or of its clock (`across`): its own clock may have been set in between.
   appClock: "This device's clock was started afresh or set during this hand (the app restarted, or the phone's clock was changed), and the server's clock then no longer agreed with it as it had before, so this device cannot be sure the seat's time had run out when the table played for it",
@@ -1227,7 +1227,9 @@ export class TableClient {
    * ends, and when its time bank after it does; null when it owes no move with a clock. It is the clock
    * the audit holds the table to, counted by this device itself (`ownClockFrom`): from the states that
    * showed the seat the move (`ownRun`), placed on this device's clock by the strongest fixed point it
-   * holds, never later than the first of them allows counted from its arrival. It goes on to the bank
+   * holds, never later than the first of them allows counted from its arrival. It ends where the audit
+   * holds the table to (`streakEnd`): never before the rules' clock as this device tracks it, and at any
+   * later end a state of the move showed, even one a later state took back. It goes on to the bank
    * when the turn clock ends without waiting for the table to say so, and a wrong wall clock on the
    * phone does not move it. The app shows it for the seat's own move.
    */
@@ -1240,7 +1242,13 @@ export class TableClient {
     if (!play || run.length === 0) return null;
     const at = this.now();
     const deal = this.dealFixed(v.handNumber);
-    return ownClockFrom(run, [...(deal ? [deal] : []), ...(play.pongs ?? [])], this.bestAnchor, this.refAt(at), at, { era: this.era, run: this.runId, seg: this.seg() });
+    const points = [...(deal ? [deal] : []), ...(play.pongs ?? [])];
+    // The end the audit holds the table to (`streakEnd`): the rules' clock as this device tracks it for the
+    // latest state, or a later end any state of the streak claimed, each stated bank less the host's rounding.
+    const last = play.seen.length - 1;
+    const bound = clockTrack(this.clockBase, this.recordFor(v.handNumber), play, rules, points).bound.get(play.seen[last]);
+    const end = streakEnd(play, last, rules, bound, BANK_ROUND_MS);
+    return ownClockFrom(run, end, points, this.bestAnchor, this.refAt(at), at, { era: this.era, run: this.runId, seg: this.seg() });
   }
 
   /**
@@ -2614,6 +2622,9 @@ export class TableClient {
       }
       else if (verdict === 'unanchored' && notes) notes.restartClock = true;
       else if (verdict === 'across' && notes) notes.appClock = true;
+      // The host announced a restart while this seat owed the move it then played for it: an end the app showed
+      // before the restart is on a clock the host's new stamps do not keep, so it cannot be held to it (`streakEnd`).
+      if (notes && restartInRun(play, n, rules)) notes.restartClock = true;
     }
     for (const tc of track?.bankTaken ?? []) {
       if (doubt) {

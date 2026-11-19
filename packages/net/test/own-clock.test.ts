@@ -8,10 +8,10 @@
 import { describe, expect, it } from 'vitest';
 import { withRules } from '@mjm/engine';
 import { BANK_ROUND_MS, DRIFT_RATE, ownClockFrom } from '../src/clientclock';
-import { ownRun, seatRun } from '../src/clientmoves';
+import { ownRun, seatRun, streakEnd } from '../src/clientmoves';
 import type { ClockAnchor, PlayRecord, SeenState } from '../src/clientrecords';
 import { Missed, scenario, seededDeals } from './support';
-import { BANK, holdTurn, TURN, wire } from './wire';
+import { BANK, holdTurn, RULES, TURN, wire } from './wire';
 
 seededDeals();
 
@@ -20,6 +20,13 @@ const need = (cond: boolean) => {
 };
 const plays = (w: { c: unknown }) => (w.c as { plays: PlayRecord[] }).plays;
 const SCOPE = { era: 0, run: 'r', seg: 0 };
+
+/**
+ * The app's clock for `streak` (its latest state last), as `TableClient.ownClock` reads it: counted to the end the
+ * audit holds the table to (`streakEnd`), each stated bank less the host's rounding.
+ */
+const ownClock = (streak: SeenState[], points: ClockAnchor[], best: Parameters<typeof ownClockFrom>[3], ref: number | null, at: number, scope = SCOPE) =>
+  ownClockFrom(streak, streakEnd({ seen: streak } as unknown as PlayRecord, streak.length - 1, RULES, null, BANK_ROUND_MS), points, best, ref, at, scope);
 
 /** A state this device's run `r` saw arrive at `at`, stamped `now`, showing the seat a move with `deadline`. */
 const state = (tc: number, at: number, now: number, deadline: number, extra: Partial<SeenState> = {}): SeenState => ({ tc, epoch: 1, era: 0, at, atLo: at, now, run: 'r', seg: 0, onLink: true, owes: true, deadline, timeBank: BANK / 1000, inBank: false, hash: `h${tc}`, ...extra });
@@ -33,14 +40,14 @@ describe('ownClockFrom: the arithmetic (T17)', () => {
 
   it('the turn clock, then the bank to its deadline plus the bank stated (less the host’s rounding), placed by the best fixed point', () => {
     const at = 106_000;
-    const o = ownClockFrom([r0], [pong], null, 10_050, at, SCOPE)!;
+    const o = ownClock([r0], [pong], null, 10_050, at, SCOPE)!;
     const offset = 9_950 - DRIFT_RATE * (at - pong.at);
     expect(o.turnEnd).toBeCloseTo(95_000 + TURN + offset, 6);
     expect(o.bankEnd).toBeCloseTo(95_000 + TURN + BANK - BANK_ROUND_MS + offset, 6);
   });
 
   it('with no fixed point, the state’s own clock counted from its arrival', () => {
-    const o = ownClockFrom([r0], [], null, null, 106_000, SCOPE)!;
+    const o = ownClock([r0], [], null, null, 106_000, SCOPE)!;
     expect(o.turnEnd).toBe(105_080 + TURN);
     expect(o.bankEnd).toBe(105_080 + TURN + BANK - BANK_ROUND_MS);
   });
@@ -48,41 +55,41 @@ describe('ownClockFrom: the arithmetic (T17)', () => {
   it('never later than the state’s own clock counted from its arrival, whatever a fixed point says', () => {
     // A "fixed point" that would place the turn 5 s later than the state's own clock allows.
     const generous: ClockAnchor = { at: 100_000, now: 85_000, era: 0, run: 'r', seg: 0, fat: 100_050 };
-    const o = ownClockFrom([r0], [generous], null, null, 106_000, SCOPE)!;
+    const o = ownClock([r0], [generous], null, null, 106_000, SCOPE)!;
     expect(o.turnEnd).toBe(105_080 + TURN);
   });
 
   it('the strongest fixed point carried from earlier hands counts when it is stronger, capped by its round trip', () => {
     const best = { era: 0, run: 'r', seg: 0, value: 9_990, at: 50_000, rtt: 40 };
     const at = 106_000;
-    const o = ownClockFrom([r0], [pong], best, 10_050, at, SCOPE)!;
+    const o = ownClock([r0], [pong], best, 10_050, at, SCOPE)!;
     expect(o.turnEnd).toBeCloseTo(95_000 + TURN + Math.min(9_990, 10_050 - 40) - DRIFT_RATE * (at - 50_000), 6);
     // Of another run of the app, or another run of the device's clock, it does not count.
-    expect(ownClockFrom([r0], [], { ...best, run: 'x' }, 10_050, at, SCOPE)!.turnEnd).toBe(105_080 + TURN);
-    expect(ownClockFrom([r0], [], { ...best, seg: 1 }, 10_050, at, SCOPE)!.turnEnd).toBe(105_080 + TURN);
+    expect(ownClock([r0], [], { ...best, run: 'x' }, 10_050, at, SCOPE)!.turnEnd).toBe(105_080 + TURN);
+    expect(ownClock([r0], [], { ...best, seg: 1 }, 10_050, at, SCOPE)!.turnEnd).toBe(105_080 + TURN);
   });
 
   it('a later state that adds time moves the end (a re-armed clock on a rejoin); one that takes time does not', () => {
     const later = state(10, 106_080, 96_000, 95_000 + TURN + 4_000);
     const less = state(10, 106_080, 96_000, 95_000 + TURN - 4_000, { timeBank: 5 });
-    const base = ownClockFrom([r0], [pong], null, 10_050, 107_000, SCOPE)!;
-    const plus = ownClockFrom([r0, later], [pong], null, 10_050, 107_000, SCOPE)!;
-    const minus = ownClockFrom([r0, less], [pong], null, 10_050, 107_000, SCOPE)!;
+    const base = ownClock([r0], [pong], null, 10_050, 107_000, SCOPE)!;
+    const plus = ownClock([r0, later], [pong], null, 10_050, 107_000, SCOPE)!;
+    const minus = ownClock([r0, less], [pong], null, 10_050, 107_000, SCOPE)!;
     expect(plus.turnEnd - base.turnEnd).toBeCloseTo(4_000, 6);
     expect(minus).toEqual(base);
   });
 
   it('a state already in the bank: the turn clock is over at its stamp, and the bank ends at its deadline', () => {
     const bank = state(11, 120_080, 110_000, 110_000 + 20_000, { inBank: true, timeBank: 20 });
-    const o = ownClockFrom([r0, bank], [pong], null, 10_050, 121_000, SCOPE)!;
+    const o = ownClock([r0, bank], [pong], null, 10_050, 121_000, SCOPE)!;
     const offset = 9_950 - DRIFT_RATE * (121_000 - pong.at);
     expect(o.turnEnd).toBeCloseTo(110_000 + offset, 6);
     expect(o.bankEnd).toBeCloseTo(95_000 + TURN + BANK - BANK_ROUND_MS + offset, 6);
   });
 
   it('nothing when no state gives a deadline, or nothing places the host’s clock on this device’s', () => {
-    expect(ownClockFrom([{ ...r0, deadline: null }], [pong], null, null, 106_000, SCOPE)).toBeNull();
-    expect(ownClockFrom([{ ...r0, run: 'x' }], [], null, null, 106_000, SCOPE)).toBeNull();
+    expect(ownClock([{ ...r0, deadline: null }], [pong], null, null, 106_000, SCOPE)).toBeNull();
+    expect(ownClock([{ ...r0, run: 'x' }], [], null, null, 106_000, SCOPE)).toBeNull();
   });
 });
 
