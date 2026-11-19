@@ -33,7 +33,20 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - run: npm ci
+      - name: Install dependencies
+        # npm ci, up to three tries 15 s apart: the registry or the runner's network sometimes drops a connection (run 63
+        # failed on one). A failure that does not pass, such as a lockfile out of step with package.json, fails all three
+        # tries and the run.
+        run: |
+          for attempt in 1 2 3; do
+            if npm ci; then exit 0; fi
+            if [ "$attempt" -lt 3 ]; then
+              echo "::warning title=npm ci failed::Try $attempt of 3 failed; trying again in 15 seconds."
+              sleep 15
+            fi
+          done
+          echo "::error title=npm ci failed::npm ci failed three times."
+          exit 1
       - name: Export web build under the repo sub-path
         working-directory: apps/mobile
         env:

@@ -5,7 +5,7 @@
  * - the steps of the build workflows that decide whether a run may start, run as shell scripts
  *   with stand-in values.
  */
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -510,6 +510,49 @@ describe('workflow hygiene', () => {
     const ok = run(0);
     expect(ok.status).toBe(0);
     expect(ok.summary).toContain('importing');
+  });
+});
+
+describe('Web preview workflow: installing the dependencies', () => {
+  const install = workflowStepScript('web-preview.yml', 'name: Install dependencies');
+
+  /** Runs the step with a stand-in npm that fails `fails` times, as on a dropped connection, then works, and a stand-in sleep. */
+  const run = (fails: number) => {
+    const bin = mkdtempSync(join(tmpdir(), 'mjm-npm-'));
+    writeFileSync(join(bin, 'npm'), `#!/bin/bash\nn=$(( $(cat "${bin}/tries" 2>/dev/null || echo 0) + 1 ))\necho "$n" > "${bin}/tries"\nif [ "$n" -le ${fails} ]; then echo "npm error code ECONNRESET" >&2; exit 1; fi\necho "added 1500 packages"\n`);
+    writeFileSync(join(bin, 'sleep'), `#!/bin/bash\necho "$1" >> "${bin}/pauses"\n`);
+    chmodSync(join(bin, 'npm'), 0o755);
+    chmodSync(join(bin, 'sleep'), 0o755);
+    const r = runStep(install, { PATH: `${bin}:${process.env.PATH ?? ''}` });
+    const lines = (file: string) => {
+      try {
+        return readFileSync(join(bin, file), 'utf8').split('\n').filter(Boolean);
+      } catch {
+        return [];
+      }
+    };
+    return { status: r.status, tries: Number(lines('tries')[0] ?? 0), pauses: lines('pauses'), stdout: r.stdout };
+  };
+
+  it('tries npm ci again after a failure such as a dropped connection, with a pause, and goes on once it works', () => {
+    expect(run(0)).toMatchObject({ status: 0, tries: 1, pauses: [] });
+    expect(run(1)).toMatchObject({ status: 0, tries: 2, pauses: ['15'] });
+    expect(run(2)).toMatchObject({ status: 0, tries: 3, pauses: ['15', '15'] });
+  });
+
+  it('fails the run when npm ci fails every time, after three tries', () => {
+    const r = run(99);
+    expect(r).toMatchObject({ status: 1, tries: 3, pauses: ['15', '15'] });
+    expect(r.stdout).toContain('::error title=npm ci failed::npm ci failed three times.');
+  });
+
+  it('is how the build job installs, before the web export', () => {
+    const steps = workflow('web-preview.yml').jobs.build.steps ?? [];
+    const at = steps.findIndex((s) => s.name === 'Install dependencies');
+    expect(at).toBeGreaterThan(0);
+    expect(at).toBeLessThan(steps.findIndex((s) => s.name?.startsWith('Export web build')));
+    // No other step runs npm ci once, without the retries.
+    expect(steps.filter((s) => /^\s*npm ci\s*$/m.test(s.run ?? ''))).toEqual([]);
   });
 });
 
