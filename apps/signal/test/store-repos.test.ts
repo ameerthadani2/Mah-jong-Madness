@@ -176,6 +176,26 @@ function contract(name: string, repos: () => Repos) {
       ]);
     });
 
+    it('refuses as invalid, on every store alike, a subscription whose period would end more than 400 days ahead, however it is given; the webhook never throws over it', async () => {
+      const r = repos();
+      const wallet = new WalletService(r, { now: () => T0, log: () => {}, testerUserIds: [] });
+      // No expiry: the period runs from the purchase, which may lie past the end of JavaScript's dates (8.64e15) or far ahead.
+      const given: Array<Partial<StoreEvent>> = [8.64e15, 9e15, 1e17, 1e14, T0 + 400 * DAY].map((purchasedAt) => ({ purchasedAt }));
+      // An expiry past the end of the dates is refused as before, and its log line does not throw either.
+      given.push({ expiresAt: 9e15 }, { expiresAt: 1e17 });
+      for (const [i, extra] of given.entries()) {
+        const u = await user();
+        const res = await wallet.applyStoreEvent(storeEvent(u, 'INITIAL_PURCHASE', { storeProductId: 'fourwinds.month', transactionId: `tx-far-${i}-${u}`, price: 4.99, currency: 'USD', ...extra }));
+        expect(res.outcome, JSON.stringify(extra)).toBe('ignored_invalid');
+        expect(await r.wallet.getEntitlements(u)).toEqual([]);
+        expect(await r.wallet.listPurchases(u)).toEqual([]);
+      }
+      // An honest month still entitles, to a month after its purchase.
+      const u = await user();
+      expect((await wallet.applyStoreEvent(storeEvent(u, 'INITIAL_PURCHASE', { storeProductId: 'fourwinds.month', transactionId: `tx-month-${u}`, price: 4.99, currency: 'USD' }))).outcome).toBe('entitled');
+      expect((await r.wallet.getEntitlements(u)).map((e) => e.expiresAt)).toEqual([T0 + 31 * DAY]);
+    });
+
     it('keeps the end of the period a subscription purchase paid for; none for a pack', async () => {
       const r = repos();
       const u = await user();

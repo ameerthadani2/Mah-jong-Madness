@@ -192,6 +192,8 @@ const SPEND_SOURCE = 'diamonds';
 export const SUPPORT_SOURCE = 'support';
 
 const isLive = (e: Pick<EntitlementRecord, 'expiresAt'>, at: number) => e.expiresAt === null || e.expiresAt > at;
+/** A time for the log: an ISO date, or the bare figure for one past what a date can hold. */
+const when = (t: number): string => (Math.abs(t) <= 8.64e15 ? new Date(t).toISOString() : `at ${t} ms`);
 
 export class WalletService {
   private readonly now: () => number;
@@ -545,11 +547,14 @@ export class WalletService {
       case 'RENEWAL':
       case 'UNCANCELLATION':
       case 'SUBSCRIPTION_EXTENDED': {
-        if (e.expiresAt !== null && Math.min(e.eventAt ?? at, at) + MAX_STORE_EXPIRY_MS < e.expiresAt) {
-          this.log(`[signal] store event ${e.eventId} (${e.type}) expires ${new Date(e.expiresAt).toISOString()}, more than 400 days ahead; recorded as invalid, nothing granted`);
+        // The period's end: the store's expiry, or one period from the purchase. Either way one more than
+        // 400 days ahead is refused, on every store alike (a time past the end of JavaScript's dates is
+        // one Postgres cannot even hold).
+        const until = e.expiresAt ?? (e.purchasedAt ?? at) + PERIOD_MS[product.period];
+        if (Math.min(e.eventAt ?? at, at) + MAX_STORE_EXPIRY_MS < until) {
+          this.log(`[signal] store event ${e.eventId} (${e.type}) ends its period ${when(until)}, more than 400 days ahead; recorded as invalid, nothing granted`);
           return { outcome: 'ignored_invalid', userId };
         }
-        const until = e.expiresAt ?? (e.purchasedAt ?? at) + PERIOD_MS[product.period];
         // The period end is kept only under the store's own transaction id, which a refund names.
         if (e.type === 'INITIAL_PURCHASE' || e.type === 'RENEWAL') await this.recordPurchase(tx, e, userId, product.id, transactionId, at, e.transactionId ? until : null);
         // Events can arrive out of order: a period refunded before its purchase or renewal event
