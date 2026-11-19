@@ -10,6 +10,7 @@ import { describe, expect, it } from 'vitest';
 import { SPEED_PRESETS, withRules } from '@mjm/engine';
 import { DRIFT_CAP_MS, LATE_MS, RTT_ALLOW_MS, SILENT_ANSWER_MS, STEADY_SLACK_MS, WATCH_WINDOW_MS } from '../src/clientclock';
 import { lateCountMs } from '../src/clientmoves';
+import { MAX_SEEN } from '../src/clientrecords';
 import { CLOCK_FRAME_MS } from '../src/messages';
 
 const doc = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'docs', 'FAIRNESS.md'), 'utf8');
@@ -42,6 +43,10 @@ describe('the fair play charter states the late-turn limits the table client use
     const sentence = turnRow.slice(turnRow.indexOf('After your phone sleeps'));
     expect(sentence).toMatch(/^After your phone sleeps, after the app restarts .*, after your phone's clock is set forward by more than a second, or after a restart the server announces, the measure starts afresh/);
     expect(turnRow).toContain("For each run of the server's clock, of the app and of your phone's own clock");
+  });
+
+  it('states how many states of a hand the phone keeps', () => {
+    expect(doc).toContain(`It keeps up to ${MAX_SEEN} states of each hand`);
   });
 
   it('gives each speed’s turn clock and time bank as the rules have them, and the bar of the Fair play count as the client sets it', () => {

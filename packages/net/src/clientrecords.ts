@@ -257,6 +257,8 @@ export interface PlayRecord {
    * one it had stamped later, or a `clock` frame showed a turn whose state had not arrived.
    */
   held?: number;
+  /** More states came in this hand than `MAX_SEEN`, so some were not kept (`keepSeen`): the hand is amber at best. */
+  overflow?: boolean;
 }
 
 /** A stretch of turns the ledger vouches for: from `from` up to but not including `to`. */
@@ -430,6 +432,33 @@ export const CHAINED_FIELDS = ['scores', 'dealerSeat', 'dealerStreak', 'dealerRo
 /** Frames and sent moves remembered per hand (a hand is far shorter). */
 export const MAX_SEEN = 600;
 export const MAX_SENT = 300;
+
+/**
+ * Keep a hand's record of states within `MAX_SEEN` once a new one has been added. An honest table sends
+ * a seat well under a hundred states in a hand, so only a table that sends the same states again and
+ * again fills it. A state sent again for a turn this client already holds over the same link (the same
+ * turn, hash, link and clock era) gives way first: the first copy (which showed the seat the turn) and
+ * the latest (the last frame before what came next) are kept, and a copy between them goes. Only when
+ * there is none is the oldest state dropped. Either way the record is no longer whole (`overflow`).
+ */
+export function keepSeen(play: PlayRecord): void {
+  if (play.seen.length <= MAX_SEEN) return;
+  play.overflow = true;
+  const key = (f: SeenState) => `${f.tc}|${f.hash}|${f.epoch}|${f.era ?? 0}`;
+  const last = new Map<string, number>();
+  play.seen.forEach((f, i) => last.set(key(f), i));
+  const first = new Set<string>();
+  let drop = 0;
+  for (let i = 0; i < play.seen.length; i++) {
+    const k = key(play.seen[i]);
+    if (first.has(k) && (last.get(k) as number) > i) {
+      drop = i;
+      break;
+    }
+    first.add(k);
+  }
+  play.seen.splice(drop, play.seen.length - MAX_SEEN);
+}
 
 /** Version of `SerializedClient`; bump on any incompatible change. */
 export const CLIENT_SNAPSHOT_VERSION = 2;

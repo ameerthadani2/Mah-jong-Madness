@@ -60,9 +60,9 @@ import {
   isPassedClaimRecord,
   isRevealSet,
   isView,
+  keepSeen,
   ledgerSum,
   ledgerVouches,
-  MAX_SEEN,
   MAX_SENT,
   nextDeal,
   nextHand,
@@ -134,6 +134,8 @@ export const AUDIT_CAVEATS = {
   // Storage changed part of the saved record of the hand (a state whose check figure did not match when the
   // app restarted, `cleanSeen`): the checks that would rest on it are not held against the table.
   damaged: 'This app restarted with a damaged record of this hand, so the checks that rest on the damaged part were not made',
+  // The table sent more states in this hand than the record keeps (`keepSeen`): no honest table comes near it.
+  overflow: 'The table sent this device far more states in this hand than it keeps, so it could not keep them all and cannot vouch for the whole hand',
 } as const;
 
 export type AuditCaveat = keyof typeof AUDIT_CAVEATS;
@@ -1861,7 +1863,7 @@ export class TableClient {
       inBank: m.inTimeBank === true,
       hash: m.hash,
     });
-    if (play.seen.length > MAX_SEEN) play.seen.splice(0, play.seen.length - MAX_SEEN);
+    keepSeen(play);
   }
 
   /**
@@ -2028,6 +2030,7 @@ export class TableClient {
     if (notes.appClock) caveats.push(AUDIT_CAVEATS.appClock);
     if (notes.skillUnknown) caveats.push(AUDIT_CAVEATS.skillUnknown);
     if (notes.damaged) caveats.push(AUDIT_CAVEATS.damaged);
+    if (notes.overflow) caveats.push(AUDIT_CAVEATS.overflow);
     const status: AuditStatus = failures.length > 0 ? 'failed' : 'partial';
     this.handsEnded.add(h);
     if (this.openHand === h) this.openHand = null;
@@ -2172,6 +2175,7 @@ export class TableClient {
     if (notes.lateShown) caveats.push(AUDIT_CAVEATS.lateShown);
     if (notes.skillUnknown) caveats.push(AUDIT_CAVEATS.skillUnknown);
     if (notes.damaged) caveats.push(AUDIT_CAVEATS.damaged);
+    if (notes.overflow) caveats.push(AUDIT_CAVEATS.overflow);
     // An app restart around the deal: this device cannot say it watched all of it, whatever its record now shows.
     // (A seat that joined mid-hand has already said it took no part in the deal.)
     if (this.lapseHand === h && this.lapseDeal && !joined && !caveats.includes(AUDIT_CAVEATS.appRestart)) caveats.push(AUDIT_CAVEATS.appRestart);
@@ -2199,6 +2203,8 @@ export class TableClient {
     for (const s of play?.seen ?? []) if (!shown.has(s.tc) && s.kept !== false) shown.set(s.tc, s.hash);
     /** Some state of this hand was restored damaged: a clock check that may rest on it fails nothing, it makes the hand amber. */
     const doubt = play?.seen.some((f) => f.kept === false) === true;
+    // Not every state the table sent in this hand was kept: what was dropped cannot be checked.
+    if (play?.overflow === true && notes) notes.overflow = true;
     const checkHash = (s: GameState) => {
       const want = shown.get(s.turnCounter);
       if (want !== undefined && hashState(s) !== want) failures.push(`The state this seat was shown at turn ${s.turnCounter} is not in the replay`);
@@ -2534,6 +2540,8 @@ interface ReplayNotes {
   skillUnknown?: boolean;
   /** A check of the table's moves for this seat could not be made, its record of the hand being damaged (`damaged`). */
   damaged?: boolean;
+  /** The table sent more states in this hand than this client keeps (`PlayRecord.overflow`). */
+  overflow?: boolean;
   /** Claims the table passed for this seat while its link was down, or on a turn that reached this device late (`late`), in turn order. */
   passedClaims?: Array<{ turn: number; claim: PassedClaim; late?: boolean }>;
   /** The seat's turns whose state reached this device later than half the turn clock (`lateCountMs`), and how many of its turns it could measure. */

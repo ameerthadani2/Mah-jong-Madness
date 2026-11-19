@@ -46,7 +46,8 @@
     "appClock": "During this hand the app restarted or your phone's clock was changed, and afterwards the server's clock and your phone's no longer agreed as they had before, so your phone cannot be sure your time had run out when the table played for you.",
     "lateShown": "Your phone was shown one of your turns late, or only after your connection had been down for much of it, so it cannot vouch that you saw the whole turn.",
     "skillUnknown": "This match was restored from a save made by an older version of the app, which did not keep how strong the table said its bots are, so your phone could not check the moves the table made for the bots, or for a player whose time ran out. The next match is checked in full.",
-    "damaged": "Part of the record your phone had saved of this hand was damaged when the app restarted (its storage changed it), so your phone could not make the checks that rest on that part. The server cannot cause this."
+    "damaged": "Part of the record your phone had saved of this hand was damaged when the app restarted (its storage changed it), so your phone could not make the checks that rest on that part. The server cannot cause this.",
+    "overflow": "The table sent your phone far more states in this hand than any table needs to, more than your phone keeps for one hand, so it could not keep them all and cannot vouch for the whole hand. An honest table never comes near this."
   },
   "failure": {
     "dealtPlayedHand": "The table tried to deal a hand that had already been played.",

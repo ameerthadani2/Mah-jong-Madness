@@ -1944,3 +1944,59 @@ describe('time bank: taken as the phone comes back in a new run of the app', () 
     else expect(v.caveats).not.toContain('appClock');
   });
 });
+
+describe('a flood of states sent again', () => {
+  /**
+   * The server shows the seat its third owed turn with its clock cut to 5 s (`cut`), or as it is, and the
+   * seat leaves it to run out, so the table times it out. Then the server sends the state on show `n`
+   * times more, freshly stamped, a hundred every half second: more than the record of a hand keeps.
+   */
+  function floodAfterTurn(code: string, cut: boolean, n = 650) {
+    let owed = 0;
+    let cutTc = -1;
+    const last: { state: StateMsg | null } = { state: null };
+    const w = wire({
+      code,
+      botDelayMs: 1_000,
+      think: (_k, tc) => (tc === cutTc ? Infinity : 600),
+      map: (m, w) => {
+        if (m.t !== 'state') return m;
+        let out = m;
+        if (cutTc < 0 && w.owes() && w.host.game!.turnCounter === m.view.turnCounter && typeof m.now === 'number' && !m.inTimeBank && legalActions(w.host.game!, 0).every((a) => a.type === 'discard') && ++owed === 3) {
+          cutTc = m.view.turnCounter;
+          if (cut) out = { ...m, deadline: m.now + 5_000 };
+        }
+        last.state = out;
+        return out;
+      },
+    });
+    w.dealt();
+    need(w.until(() => cutTc >= 0 && w.tableMoves().includes(cutTc) && w.host.game!.turnCounter > cutTc + 1));
+    for (let sent = 0; sent < n && w.host.phase === 'playing'; ) {
+      for (let k = 0; k < 100 && sent < n; k++, sent++) w.line.inject({ ...last.state!, now: w.clock.now });
+      w.step();
+    }
+    w.finish();
+    const play = (w.c as unknown as { plays: PlayRecord[] }).plays.find((p) => p.hand === 0);
+    need(w.judged().includes(cutTc) && play !== undefined);
+    return { w, play: play! };
+  }
+
+  it('the turn cut to 5 s before the flood still fails its hand: a state sent again for a turn already held gives way first, so the cut state is kept, and the hand also says its record ran over', () => {
+    const { w, play } = scenario((i) => floodAfterTurn(`FL${i}`, true));
+    expect(play.seen.length).toBe(600);
+    expect(w.verdict()).toMatchObject({ status: 'failed', failures: ['lateTurn'], caveats: ['overflow'] });
+  });
+
+  it('the same flood after a turn shown as it was: the record ran over, so the hand is amber with the reason, never green', () => {
+    const { w } = scenario((i) => floodAfterTurn(`FN${i}`, false));
+    expect(w.verdict()).toEqual({ status: 'partial', failures: [], caveats: ['overflow'] });
+  });
+
+  it('honest: the same hand without the flood keeps every state it was shown, and is green', () => {
+    const { w, play } = scenario((i) => floodAfterTurn(`FH${i}`, false, 0));
+    expect(play.seen.length).toBeLessThan(150);
+    expect(play.overflow).toBeUndefined();
+    green(w);
+  });
+});
