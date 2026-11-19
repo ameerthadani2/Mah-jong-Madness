@@ -23,4 +23,18 @@ describe('plain Taiwanese wording in the app', () => {
     expect(prompt(zhTW.puzzles.view.status.oneFromReady)).toBe('你剛摸完牌。打對一張就聽牌。要打哪一張？');
     expect(strings(zhTW, 'zh-TW').filter(([, s]) => /打法打|打完後/.test(s))).toEqual([]);
   });
+
+  it('names the claim 吃 Chow in English everywhere a player meets it at the table: the coach, the buttons and the review', async () => {
+    const { engineStrings } = await import('./engineWording');
+    const at = (o: Record<string, unknown>, key: string) => key.split('.').reduce<unknown>((n, k) => (n as Record<string, unknown>)?.[k], o) as string;
+    // The coach's bar and sheet (the engine's template, in the app's wording), the claim button's gloss and spoken name.
+    expect(at(engineStrings('en'), 'hint.label.chi')).toBe('Chow (吃) %{handTiles} + %{tileName}');
+    expect(en.table.claimGloss.chi).toBe('Chow');
+    expect(en.table.a11y.chi).toBe('Chow');
+    expect(en.review.action.chi).toMatch(/^Chow /);
+    // No English line at the table or in the review says Chi; the engine's other templates are as it gives them.
+    expect([...strings(en.table, 'table'), ...strings(en.review, 'review')].filter(([, s]) => /\bChi\b/.test(s))).toEqual([]);
+    expect(at(engineStrings('en'), 'hint.label.pong')).toBe(at((await import('@mjm/engine')).engineReasonTranslations('en'), 'hint.label.pong'));
+    expect(at(engineStrings('zh-TW'), 'hint.label.chi')).toBe('吃 %{handTiles} + %{tileZh}');
+  });
 });

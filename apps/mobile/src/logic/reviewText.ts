@@ -23,7 +23,7 @@ export function tileNames(kinds: readonly Kind[], locale: string): string {
   return kinds.map((k) => tileName(k, locale)).join(locale === 'zh-TW' ? '、' : ', ');
 }
 
-/** "Discard 2 Bamboo", "Chi 4 Dot, 6 Dot", "Win": what the player did, or what the coach would have done. */
+/** "Discard 2 Bamboo", "Chow 4 Dot, 6 Dot", "Win": what the player did, or what the coach would have done. */
 export function reviewAction(a: ReviewedMove['actual'] | null, locale: string): Message {
   if (!a) return { key: 'review.action.none' };
   switch (a.type) {

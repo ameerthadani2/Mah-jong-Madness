@@ -57,7 +57,7 @@ describe('hand review text', () => {
     expect(say(discard, 'en')).toBe('Discard South Wind');
     expect(say(discard, 'zh-TW', appT('zh-TW'))).toContain('南');
     const chi = { type: 'chi', tiles: [tileOf('4p'), tileOf('6p')] } as Action;
-    expect(say(chi, 'en')).toBe('Chi 4 Dot, 6 Dot');
+    expect(say(chi, 'en')).toBe('Chow 4 Dot, 6 Dot');
     expect(say(chi, 'en')).not.toMatch(HAN);
     expect(say(null, 'en')).toBe('—');
     expect(tileNames([kindFromCode('4p'), kindFromCode('6p')], 'zh-TW')).toBe('四筒、六筒');

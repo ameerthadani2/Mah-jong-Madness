@@ -31,7 +31,7 @@
   "action": {
     "none": "—",
     "discard": "Discard %{tile}",
-    "chi": "Chi %{tiles}",
+    "chi": "Chow %{tiles}",
     "kong": "Kong %{tile}",
     "hu": "Win",
     "pong": "Pong",
