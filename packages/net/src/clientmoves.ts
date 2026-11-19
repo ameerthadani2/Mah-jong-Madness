@@ -304,13 +304,14 @@ export function streakEnd(play: PlayRecord, i: number, rules: RuleSet, bound: nu
  * Whether the states that showed this seat the move it owed at turn `n` (`ownRun` up to the last frame
  * at or before `n`) came in more than one clock era of the host: it announced a restart while the seat
  * owed the move. The ends shown before the restart cannot be checked against its new clock
- * (`streakEnd`), so a table move for the seat there is amber (`restartClock`).
+ * (`streakEnd`), so a table move for the seat there is amber (`restartClock`). A state restored
+ * damaged (`kept` false) may read any era, so it says nothing of a restart and is left out.
  */
 export function restartInRun(play: PlayRecord, n: number, rules: RuleSet): boolean {
   let last = -1;
   for (let k = 0; k < play.seen.length; k++) if (play.seen[k].tc <= n) last = k;
-  const run = ownRun(play, rules, last);
-  return run.some((f) => (f.era ?? 0) !== (run[0].era ?? 0));
+  const eras = new Set(ownRun(play, rules, last).filter((f) => f.kept !== false).map((f) => f.era ?? 0));
+  return eras.size > 1;
 }
 
 /**

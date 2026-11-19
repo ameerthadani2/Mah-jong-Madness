@@ -120,6 +120,9 @@ describe('streakEnd: the end the audit and the screen share', () => {
     const before = state(8, 99_000, 99_000, 99_000, { era: 0, owes: false, deadline: null });
     const fresh = state(10, 100_080, 100_000, 100_000 + TURN, { era: 1 });
     expect(restartInRun(playOf([before, fresh]), 10, RULES)).toBe(false);
+    // A state restored damaged may read any era (one flipped bit made it 5e-324): it says nothing of a restart.
+    expect(restartInRun(playOf([r0, { ...more, era: 5e-324, kept: false }]), 10, RULES)).toBe(false);
+    expect(restartInRun(playOf([r0, { ...more, kept: false }, after]), 10, RULES)).toBe(true);
   });
 });
 
