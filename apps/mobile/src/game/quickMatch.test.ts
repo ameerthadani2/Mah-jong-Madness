@@ -76,10 +76,13 @@ describe('startQuickMatch', () => {
     const { session } = startQuickMatch({ ...base, auth: async () => 'mjs_token', onStatus: (s) => statuses.push(s.humans), onMatched: (r) => (matched = r) });
     const s = await session;
     const ws = FakeSocket.last!;
-    expect(ws.sent.map((f) => f.t)).toEqual(['hello', 'queue', 'join', 'to']);
+    // The table join, then the ping the table client sends right behind every join (its answer ties the
+    // table's clock to the phone's within a second of sitting down).
+    expect(ws.sent.map((f) => f.t)).toEqual(['hello', 'queue', 'join', 'to', 'to']);
     expect(ws.sent[0]).toEqual({ t: 'hello', auth: 'mjs_token' });
     expect(ws.sent[1]).toEqual({ t: 'queue', preset: 'normal' });
     expect(ws.sent[3]).toMatchObject({ to: 'server-QM2345', data: { ch: 'game', msg: { t: 'join', name: 'Mei', userId: 'u-1' } } });
+    expect(ws.sent[4]).toMatchObject({ to: 'server-QM2345', data: { ch: 'game', msg: { t: 'ping', at: expect.any(Number) } } });
     expect(statuses).toEqual([2]);
     expect(matched).toBe('QM2345');
     expect(s.roomCode).toBe('QM2345');
@@ -157,10 +160,11 @@ describe('an account still seated at a quick-match table', () => {
     expect(sockets[0].sent.map((f) => f.t).slice(0, 2)).toEqual(['hello', 'queue']);
     expect(sockets[0].sent.map((f) => f.t)).not.toContain('join');
     expect(sockets[0].closed).toBe(true);
-    expect(sockets[1].sent.map((f) => f.t)).toEqual(['hello', 'join', 'to']);
+    expect(sockets[1].sent.map((f) => f.t)).toEqual(['hello', 'join', 'to', 'to']);
     expect(sockets[1].sent[0]).toEqual({ t: 'hello', auth: 'mjs_token' });
     expect(sockets[1].sent[1]).toMatchObject({ t: 'join', room: 'QM7777' });
     expect(tableJoin(sockets[1])).toMatchObject({ t: 'join', token: 'saved-rejoin-token', userId: 'u-1' });
+    expect(sockets[1].sent[3]).toMatchObject({ t: 'to', data: { ch: 'game', msg: { t: 'ping', at: expect.any(Number) } } });
     expect(seated).toEqual(['QM7777']);
     expect(asked).toEqual(['QM7777']);
     expect(s.roomCode).toBe('QM7777');
