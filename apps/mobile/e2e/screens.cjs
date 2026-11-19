@@ -753,8 +753,13 @@ async function runCoach(browser, port, [[w, h], locale, tileScale, textScale]) {
       if (!(await page.evaluate(() => [...document.querySelectorAll('[data-testid="coach-sheet"] [data-testid="coach-sheet-status"]')].some((e) => e.textContent.trim())))) sheet.push("the coach's sheet has no status");
       sheet.push(...(await dialogKeys(page)).map((f) => `the coach's sheet: ${f}`));
       await page.keyboard.press('Escape');
-      await page.waitForTimeout(600);
-      if (await visible(page, '[data-testid="coach-sheet"]')) sheet.push("Escape did not close the coach's sheet");
+      // The sheet fades out; on a busy machine that can take longer than a fixed wait, so poll for up to 3 s.
+      let open = true;
+      for (let t = 0; t < 30 && open; t++) {
+        await page.waitForTimeout(100);
+        open = !!(await visible(page, '[data-testid="coach-sheet"]'));
+      }
+      if (open) sheet.push("Escape did not close the coach's sheet");
       if (await pageInert(page)) sheet.push("the table stays inert after the coach's sheet closed");
     },
   });
