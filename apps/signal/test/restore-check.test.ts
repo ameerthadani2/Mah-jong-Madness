@@ -106,6 +106,11 @@ describe('snapshotProblem', () => {
       ['a score changed', (s) => void (s.game!.scores[0] += 100), /not what its deal and moves give/],
       ['three seats', (s) => void s.seats.pop(), /four seats/],
       ['a time bank that is not a number', (s) => void (s.banks[0] = 'x' as never), /time banks/],
+      ['a time bank below nothing', (s) => void (s.banks = s.banks.map(() => -600_000)), /time bank is outside what the rules give/],
+      ['a time bank above the whole bank', (s) => void (s.banks[2] = s.rules.timeBankSeconds * 1000 + 1), /time bank is outside what the rules give/],
+      ["bot strength 'garbage'", (s) => void (s.botSkill = 'garbage' as never), /bot strength/],
+      ['bot strength missing', (s) => void delete (s as Record<string, unknown>).botSkill, /bot strength/],
+      ['a player’s seat called a bot', (s) => void (s.seats[0].isBot = true), /seat 0 is called a bot/],
       ['a match position out of range', (s) => void (s.snapshot.dealerSeat = 7), /match position is not valid/],
       ['an unknown version', (s) => void (s.version = 2 as never), /version 2 is unknown/],
       ['a phase that cannot be resumed', (s) => void (s.phase = 'match_over'), /cannot be resumed/],
@@ -124,6 +129,14 @@ describe('snapshotProblem', () => {
     expect(snapshotProblem(moved)).toMatch(/does not follow the last hand/);
     expect(snapshotProblem({ ...copy(after), game: null })).toMatch(/last hand is missing/);
     expect(snapshotProblem(null)).toMatch(/not an object/);
+  });
+
+  it('passes the seat of a player who left as an older build wrote it (a bot named “… (away)”), and banks anywhere from nothing to the whole bank', () => {
+    const old = copy(playing[playing.length - 1]);
+    old.seats[0].isBot = true;
+    old.seats[0].name = `${old.seats[0].name} (away)`;
+    old.banks = [0, old.rules.timeBankSeconds * 1000, 1, 0.5];
+    expect(snapshotProblem(old)).toBeNull();
   });
 
   it('checks a rule set as the engine would take it', () => {
