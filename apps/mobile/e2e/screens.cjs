@@ -15,7 +15,8 @@
  * SCREENS_SIZES=390x844,667x375 to capture a subset of the viewports, and SCREENS_ONLY=preview,xl (say) to run a
  * subset of the groups (named where the runs start, at the end of this file).
  * Exits non-zero if a viewport cannot reach the result sheet, the page throws, or a hard check fails (one tap on
- * the exit icon or on the result sheet's "Leave table" leaves the table, Start match replaces a saved table
+ * the exit icon or on the result sheet's "Leave table" leaves the table, a control on the result sheet takes a press under
+ * 44 x 44 px or a tap on it reaches another, Start match replaces a saved table
  * without asking, one tap on the Resume card's "Abandon table" gives the saved table up, the English claim buttons carry no gloss, an Extra-large hand scrolls or runs off screen, the
  * Shop does not open, a Home card button clips its label in English or in Traditional Chinese (each viewport also
  * opens Home in zh-TW and writes <size>-home-zh.png), Home's cards run past the bottom edge at 844x390, the page
@@ -853,6 +854,10 @@ async function run(browser, port, [w, h]) {
   if (finished) {
     // The result sheet is a modal dialog: named, the table behind it inert, and the keyboard kept on its own buttons.
     fails.push(...(await resultModal(page)).map((f) => `Result sheet: ${f}`));
+    // Its controls, the audit pill among them, take a 44 px press, and a tap on one never reaches another (the table
+    // behind is inert, so only the sheet's are counted).
+    fails.push(...(await pressTargets(page)).map((f) => `Result sheet: ${f}`));
+    fails.push(...(await tapsReach(page)).map((f) => `Result sheet: ${f}`));
     if ((await tapSel(page, 'text=Review my hand', 1500)) || (await tapSel(page, 'text="Review"', 1500))) {
       await shot('review');
       await tapSel(page, '[data-testid="back"]', 900);

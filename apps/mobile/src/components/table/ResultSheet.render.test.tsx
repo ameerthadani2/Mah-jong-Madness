@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, jest } from '@jest/globals';
 import React from 'react';
-import { Platform, Text } from 'react-native';
+import { Dimensions, Platform, Text } from 'react-native';
 import { fireEvent, render, screen, within } from '@testing-library/react-native';
 import type { HandResult, TableView, WinRecord } from '@mjm/engine';
 import type { ClientState } from '@mjm/net';
@@ -31,6 +31,37 @@ async function renderResult(result: HandResult) {
 }
 
 const BIG = [item('all_pongs', '碰碰胡', 'All Pongs', 4), item('half_flush', '混一色', 'Half Flush', 4), item('self_drawn', '自摸', 'Self-drawn', 1), item('concealed', '門清', 'Concealed', 1), item('three_concealed', '三暗刻', 'Three Concealed Pongs', 2)];
+
+describe('the result sheet’s audit pill', () => {
+  const realOS = Platform.OS;
+  const onPlatform = (os: typeof Platform.OS) => Object.defineProperty(Platform, 'OS', { value: os, configurable: true, writable: true });
+  afterEach(() => {
+    onPlatform(realOS);
+  });
+  const draw = { type: 'draw', wins: [], scoreDelta: [0, 0, 0, 0], dealerContinues: true } as unknown as HandResult;
+
+  it('takes a 44 px press on the web, where hitSlop does nothing: the 27 px pill padded 9 px above and below', async () => {
+    onPlatform('web');
+    await renderResult(draw);
+    expect(screen.getByTestId('audit-status')).toHaveStyle({ paddingVertical: 9, marginVertical: -9, minHeight: 44 });
+  });
+
+  it('and the 20 px pill of the two-column sheet on a short landscape phone: by padding on the web, by hitSlop on a phone', async () => {
+    const real = Dimensions.get('window');
+    const dims = { width: 568, height: 320, scale: 2, fontScale: 1 };
+    Dimensions.set({ window: dims, screen: dims });
+    try {
+      onPlatform('web');
+      await renderResult(draw);
+      expect(screen.getByTestId('audit-status')).toHaveStyle({ paddingVertical: 12, marginVertical: -12, minHeight: 44 });
+      onPlatform('ios');
+      await renderResult(draw);
+      expect(20 + 2 * (screen.getByTestId('audit-status').props.hitSlop as number)).toBeGreaterThanOrEqual(44);
+    } finally {
+      Dimensions.set({ window: real, screen: real });
+    }
+  });
+});
 
 describe('the result sheet after a win', () => {
   it('names the winner and lists each 台 with its count', async () => {

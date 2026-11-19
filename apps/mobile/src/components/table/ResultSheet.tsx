@@ -16,8 +16,8 @@ import { MeldView } from '../TableParts';
 import { scaledTile, Tile } from '../Tile';
 import { useDisplayScale } from '../../display/DisplayScale';
 import { scaleTextStyle } from '../../display/scale';
-import { Button, P, Pill, Row, StrokeText } from '../Ui';
-import { matchOverLayout, resultLayout } from './layout';
+import { Button, P, Pill, Row, StrokeText, webPress } from '../Ui';
+import { matchOverLayout, resultLayout, slopFor } from './layout';
 import { useRollUp } from './Motion';
 import { NextHandCountdown } from './ClockParts';
 import { taiCapNote } from '../../logic/taiCap';
@@ -48,6 +48,10 @@ function EndModal({ label, onBack, notice, children }: { label: string; onBack: 
 const END_SCRIM = 'rgba(16,20,47,0.72)';
 
 const signed = (n: number) => `${n >= 0 ? '+' : ''}${n}`;
+
+/** The audit pill's drawn height (Ui.tsx Pill, 'md' and 'sm'). */
+const AUDIT_PILL = 27;
+const AUDIT_PILL_SM = 20;
 
 function WinCard({ w, state }: { w: WinRecord; state: ClientState }) {
   const { t, locale } = useT();
@@ -200,9 +204,11 @@ export function ResultSheet({ result, view, state, mySeat, autoNext, onNext, onL
     : audit === 'failed' ? 'table.audit.failed'
     : 'table.audit.pending',
   );
+  // The pill is 27 px tall (20 in the two-column sheet): a 44 px press by hitSlop on a phone, by padding on the web.
+  const pillH = twoCol ? AUDIT_PILL_SM : AUDIT_PILL;
   const auditRow = (
     <Row style={{ flexWrap: 'wrap', rowGap: 8 }}>
-      <Pressable onPress={onFairness} testID="audit-status" accessibilityRole="button" accessibilityLabel={auditText} hitSlop={10}>
+      <Pressable onPress={onFairness} testID="audit-status" accessibilityRole="button" accessibilityLabel={auditText} hitSlop={slopFor(pillH)} style={webPress(pillH)}>
         <Pill size={twoCol ? 'sm' : 'md'} text={auditText} icon={audit === 'ok' ? 'shield' : audit === 'failed' ? 'warning' : audit === 'partial' ? undefined : 'hourglass'} wrap={audit === 'partial' && !twoCol} tone={audit === 'ok' ? 'ok' : audit === 'partial' ? 'gold' : audit === 'failed' ? 'danger' : 'neutral'} />
       </Pressable>
       {state.auditFailures.map((f, i) => (
