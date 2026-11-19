@@ -1745,40 +1745,117 @@ describe('a seat opened on another device while the phone’s link was down', ()
    * whole bank, so only the drop is judged. Once the phone has been shown the table's move on the new
    * link, the server says the seat was taken: with `notice` ('disconnected'), or with a second welcome on
    * the same link that says another device held the seat (`welcome`). The user resumes the table from
-   * Home 5 s later and the hand is played out.
+   * Home 5 s later and the hand is played out. With `relabel`, the hand's record writes the moves the
+   * table made for the seat before the phone was back as the player's own.
    */
-  function noticeAfterReturn(code: string, notice: 'welcome' | 'notice') {
+  function noticeAfterReturn(code: string, notice: 'welcome' | 'notice', relabel = false) {
     let lead = 0;
     let target = -1;
+    let discards = 0;
     let back = false;
+    let returnedAt = Number.POSITIVE_INFINITY;
     const last: { welcome: Extract<HostMessage, { t: 'welcome' }> | null } = { welcome: null };
-    const w = wire({
+    const w: Wire = wire({
       code,
       botDelayMs: 1_000,
       hostSkew: () => lead,
-      think: (_k, tc) => (tc === target ? Infinity : 600),
+      // The seat never makes its fourth discard, from the moment it is shown it.
+      think: (_k, tc) => {
+        if (target < 0 && w.discardTurn() && w.host.game!.turnCounter === tc && ++discards === 4) target = tc;
+        return tc === target ? Infinity : 600;
+      },
       map: (m) => {
         if (m.t === 'welcome') last.welcome = m;
+        if (relabel && m.t === 'hand_over') return { ...m, audit: { ...m.audit, log: m.audit.log.map((e) => (e.seat === 0 && e.source !== 'player' && e.n >= target && e.n < returnedAt ? { ...e, source: 'player' as const } : e)) } };
         return lead > 0 && m.t === 'state' ? { ...m, timeBank: 30 } : m;
       },
     });
-    need(w.toDiscard(4));
-    target = w.host.game!.turnCounter;
+    w.dealt();
+    need(w.until(() => target >= 0));
     lead = 60_000;
     w.dropNow(3_000);
     need(w.until(() => w.pendingReconnectAt === null && (w.c.state.view?.turnCounter ?? -1) > target && w.tableMoves().includes(target), 20_000));
     need(last.welcome !== null);
+    returnedAt = w.c.state.view!.turnCounter;
     back = true;
     w.line.inject(notice === 'notice' || !last.welcome ? { t: 'disconnected' } : { ...last.welcome, elsewhere: true });
     for (let t = 0; t < 10; t++) w.step();
     if (w.c.state.kicked) w.restart();
     w.finish();
-    need(back && w.judged().includes(target));
+    need(back && (w.c.state.lastAudit?.log ?? []).some((e) => e.seat === 0 && e.n === target && (relabel || e.source !== 'player')));
     return w;
   }
 
   it('a notice that the seat was taken, sent after the phone was back and shown the table’s move, does not excuse a move made inside the drop: red, whether a second welcome on the same link says it or a ‘disconnected’ does', () => {
     for (const notice of ['welcome', 'notice'] as const) expect(scenario((i) => noticeAfterReturn(`NA${notice}${i}`, notice)).verdict()).toMatchObject({ status: 'failed', failures: ['playedWhileDown'] });
+  });
+
+  it('the same notice, and the hand’s record writes the table’s moves inside the drop as the player’s own: the ledger still vouches for every turn before the last state the phone was shown while it held the seat, so the hand is red, not green', () => {
+    for (const notice of ['welcome', 'notice'] as const) expect(scenario((i) => noticeAfterReturn(`NR${notice}${i}`, notice, true)).verdict()).toMatchObject({ status: 'failed', failures: ['moveInvented'] });
+  });
+
+  /**
+   * Honest: after the seat's fourth discard the player opens the seat on a tablet, with the phone's token,
+   * while the phone's link is up; the server tells the phone at once. The tablet plays the seat for 20 s,
+   * then the player resumes the table from Home on the phone, which takes the seat back. `edit` may change
+   * the record the phone saved before it is restored; `kicked` runs on the phone's wire just before that.
+   */
+  function tabletWhileUp(code: string, edit?: (saved: SerializedClient) => SerializedClient, kicked?: (w: Wire) => void) {
+    const w = wire({ code, botDelayMs: 1_000 });
+    need(w.toDiscard(4));
+    need(w.until(() => !w.owes() && !w.current(), 20_000));
+    const tablet = new TableClient(transportLink(w.hub.create('tablet'), 'host'), 'Tablet', undefined, { token: w.c.state.token ?? undefined });
+    tablet.join();
+    let played = 0;
+    let acted = -1;
+    for (let t = 0; t < 40 && w.host.phase === 'playing'; t++) {
+      const s = tablet.localState();
+      if (!tablet.state.kicked && s && s.turnCounter !== acted && legalActions(s, 0).length > 0) {
+        acted = s.turnCounter;
+        tablet.act(chooseAction(s, 0, { seed: 'tablet' }) ?? legalActions(s, 0)[0]);
+        played++;
+      }
+      w.step();
+    }
+    need(w.c.state.kicked && played > 0 && w.host.phase === 'playing');
+    kicked?.(w);
+    const vouched = w.c.serialize().plays.at(-1)?.vouched ?? [];
+    w.restart(edit);
+    w.finish();
+    return { w, vouched };
+  }
+
+  it('honest: a seat opened on a tablet while the phone’s link was up, played there, then taken back from Home: the ledger vouches for the turns before the notice, which are all the phone’s own, and the tablet’s moves after it are not held against the hand', () => {
+    const { w, vouched } = scenario((i) => tabletWhileUp(`TU${i}`));
+    expect(vouched).toHaveLength(1);
+    expect(w.verdict().failures).toEqual([]);
+  });
+
+  it('a server restart that resumes the hand before the notice: the turns from there are played again, perhaps by the other device, so the ledger stops vouching where the hand resumed', () => {
+    let before: Array<{ from: number; to: number }> = [];
+    let r = -1;
+    const { vouched } = scenario((i) =>
+      tabletWhileUp(`TR${i}`, undefined, (w) => {
+        before = w.c.serialize().plays.at(-1)?.vouched ?? [];
+        need(before.length === 1 && before[0].to - before[0].from >= 3);
+        r = before[0].to - 2;
+        w.line.inject({ t: 'restored', handNumber: w.host.game!.handNumber, turnCounter: r });
+      }),
+    );
+    expect(vouched).toEqual([{ from: before[0].from, to: r }]);
+  });
+
+  it('honest: the same, with one move the phone sent changed in the record it saved (storage damage): the record no longer vouches for those turns, so the hand is not red', () => {
+    const { w, vouched } = scenario((i) =>
+      tabletWhileUp(`TD${i}`, (saved) => {
+        const play = saved.plays[saved.plays.length - 1];
+        const x = play.sent[play.sent.length - 1];
+        x.tc += 1_000;
+        return saved;
+      }),
+    );
+    expect(vouched).toHaveLength(1);
+    expect(w.verdict().failures).toEqual([]);
   });
 });
 

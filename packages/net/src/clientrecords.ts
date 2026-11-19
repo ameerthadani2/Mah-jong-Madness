@@ -4,7 +4,7 @@
  * shape of its saved copy (`SerializedClient`); with the guards that check what the host sends
  * before the client uses it, and the match snapshots a hand starts from.
  */
-import { advanceMatch, type Action, type BotSkill, type GameState, type MatchSnapshot, type RuleSet, type TableView } from '@mjm/engine';
+import { advanceMatch, stableStringify, type Action, type BotSkill, type GameState, type MatchSnapshot, type RuleSet, type TableView } from '@mjm/engine';
 import { SHARE_SEATS, type Commitment, type Reveal } from './fairness';
 import type { Audit } from './messages';
 import type { ClientState, LateTurnRecord, PassedClaim, PassedClaimRecord } from './client';
@@ -240,6 +240,13 @@ export interface PlayRecord {
    */
   ledgerFrom: number | null;
   /**
+   * Earlier stretches of turns, each from `from` up to but not including `to`, for which the ledger
+   * still vouches after it stopped (the seat was opened on another device): this client held the seat
+   * on a link until it was shown the state of turn `to`, so every move before that turn was made while
+   * it held the seat, and one credited to its player must be one it sent.
+   */
+  vouched?: LedgerSpan[];
+  /**
    * The last stamped frame this client held before this hand's first frame, when that frame came
    * over an earlier link: the hand began, or went on, while this device had no link. Null when the
    * hand's first frame followed on the same link.
@@ -250,6 +257,17 @@ export interface PlayRecord {
    * one it had stamped later, or a `clock` frame showed a turn whose state had not arrived.
    */
   held?: number;
+}
+
+/** A stretch of turns the ledger vouches for: from `from` up to but not including `to`. */
+export interface LedgerSpan {
+  from: number;
+  to: number;
+}
+
+/** Whether every move the log credits to this seat's player at turn `n` must be one this client sent (`ledgerFrom`, `vouched`). */
+export function ledgerVouches(play: PlayRecord, n: number): boolean {
+  return (play.ledgerFrom !== null && n >= play.ledgerFrom) || (play.vouched ?? []).some((v) => n >= v.from && n < v.to);
 }
 
 /** About 300 years in ms: no reading of this device's clock or the host's, nor the offset between the two, is that large. */
@@ -331,13 +349,27 @@ export function cleanSeen(f: SeenState): SeenState {
 export function seenSum(f: SeenState): string {
   // Fields left undefined are not saved (JSON drops them), so they are not counted either.
   const fields = Object.entries(f).filter(([k, v]) => v !== undefined && k !== 'kept' && k !== 'sum');
-  const text = JSON.stringify(fields.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
+  return fnv(JSON.stringify(fields.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))));
+}
+
+/** FNV-1a over `text`, 32 bits as hex. */
+function fnv(text: string): string {
   let h = 0x811c9dc5;
   for (let i = 0; i < text.length; i++) {
     h ^= text.charCodeAt(i);
     h = Math.imul(h, 0x01000193) >>> 0;
   }
   return h.toString(16).padStart(8, '0');
+}
+
+/**
+ * The check figure a saved hand record carries for its ledger: the moves sent and the stretches the
+ * ledger still vouches for (`PlayRecord.vouched`). Those stretches hold a restored record to every
+ * move it lists, so they are read back only when the figure still matches (`cleanPlay`): storage that
+ * changed a move must not make the table's log look forged.
+ */
+export function ledgerSum(sent: unknown, vouched: unknown): string {
+  return fnv(stableStringify({ sent, vouched }));
 }
 
 /**
@@ -379,8 +411,10 @@ function cleanRun<T extends object>(x: T, runKey: keyof T, segKey: keyof T): T {
  */
 export function cleanPlay(p: unknown): PlayRecord {
   if (!isObject(p) || !Array.isArray(p.seen) || !Array.isArray(p.sent) || !p.seen.every(isObject) || !p.sent.every(isObject)) throw new Error('damaged hand record');
-  const play = p as unknown as PlayRecord;
-  return { ...play, seen: play.seen.map(cleanSeen), sent: play.sent.map((x) => cleanRun(x, 'run', 'seg')) };
+  const { vouched, ledgerSum: sum, ...play } = p as unknown as PlayRecord & { ledgerSum?: unknown };
+  // The stretches the ledger vouches for, only from a record whose moves and stretches storage left as they were.
+  const spans = Array.isArray(vouched) && typeof sum === 'string' && sum === ledgerSum(play.sent, vouched) && vouched.every((v) => isObject(v) && isInt(v.from) && isInt(v.to) && v.from < v.to) ? vouched : null;
+  return { ...play, seen: play.seen.map(cleanSeen), sent: play.sent.map((x) => cleanRun(x, 'run', 'seg')), ...(spans ? { vouched: spans } : {}) };
 }
 
 /** A ceremony record from a saved copy, with the run of each reveal's time kept only when it is what this build writes. */

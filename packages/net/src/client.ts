@@ -60,6 +60,8 @@ import {
   isPassedClaimRecord,
   isRevealSet,
   isView,
+  ledgerSum,
+  ledgerVouches,
   MAX_SEEN,
   MAX_SENT,
   nextDeal,
@@ -736,7 +738,7 @@ export class TableClient {
       handStart: this.handStart,
       records: this.records,
       // Each frame goes with its check figure, so a restored record can tell a damaged frame (`cleanSeen`).
-      plays: this.plays.map((p) => ({ ...p, seen: p.seen.map(savedSeen), ledgerFrom: p.ledgerFrom === Number.POSITIVE_INFINITY ? null : p.ledgerFrom })),
+      plays: this.plays.map((p) => ({ ...p, seen: p.seen.map(savedSeen), ledgerFrom: p.ledgerFrom === Number.POSITIVE_INFINITY ? null : p.ledgerFrom, ...(p.vouched?.length ? { ledgerSum: ledgerSum(p.sent, p.vouched) } : {}) })),
       expected: this.expected,
       chainChecked: this.chainChecked,
       frozenBots: this.frozenBots,
@@ -1175,8 +1177,28 @@ export class TableClient {
     this.noteOwnAbsence();
     this.noteLinkLost();
     const play = this.plays[this.plays.length - 1];
-    if (play) play.ledgerFrom = Number.POSITIVE_INFINITY;
+    if (play) {
+      this.closeLedger(play);
+      play.ledgerFrom = Number.POSITIVE_INFINITY;
+    }
     this.update({ connected: false, kicked: true, lastError: 'This seat was opened on another device.' });
+  }
+
+  /**
+   * The ledger stops vouching for `play` from here on (the seat was opened on another device), but not
+   * for the turns before the last state this client was shown while it held the seat: every move before
+   * that state was made while this device held the seat (an honest host stops sending to a link once
+   * another device takes its seat), so a notice that comes after it cannot excuse one this device never
+   * sent. The ledger began vouching in this run of the app, so only states this run saw count.
+   */
+  private closeLedger(play: PlayRecord): void {
+    const from = play.ledgerFrom;
+    if (from === null || !Number.isFinite(from) || this.handsEnded.has(play.hand)) return;
+    let to = from;
+    for (const f of play.seen) if (f.run === this.runId && f.tc > to) to = f.tc;
+    if (to <= from) return;
+    (play.vouched ??= []).push({ from, to });
+    if (play.vouched.length > 8) play.vouched.shift();
   }
 
   /**
@@ -1869,8 +1891,9 @@ export class TableClient {
         const kept = play.seen.filter((f) => f.tc <= r);
         undone = kept.length !== play.seen.length;
         play.seen = kept;
-        // Moves made on the turns undone are gone with them.
+        // Moves made on the turns undone are gone with them, and the turns played again may be another device's.
         play.sent = play.sent.filter((x) => x.tc < r || fresh(x.epoch));
+        if (play.vouched) play.vouched = play.vouched.map((v) => ({ from: v.from, to: Math.min(v.to, r) })).filter((v) => v.to > v.from);
         if (play.refusals) play.refusals = play.refusals.filter((x) => x.at <= r);
       }
     } else {
@@ -2288,7 +2311,7 @@ export class TableClient {
         }
         const source = byTable(entry) ? 'auto' : 'player';
         if (source === 'player') {
-          if (play.ledgerFrom !== null && isInt(n) && n >= play.ledgerFrom) {
+          if (isInt(n) && ledgerVouches(play, n)) {
             // Any move this client sent and the log has not used yet may be the one: a move that reaches
             // the table late (after its clock ran out, say) is played on the seat's next turn if still legal.
             // Of several, the likeliest: one the host did not refuse, made on the latest turn.
