@@ -122,13 +122,19 @@ describe('the wall ring and the claim strip', () => {
 
 describe('resultLayout', () => {
   it('uses two columns with a 2×2 score grid on 667×375 so the buttons are on screen', () => {
-    expect(resultLayout(667, 375)).toEqual({ twoCol: true, scoreCols: 2, stackButtons: false });
+    expect(resultLayout(667, 375)).toEqual({ twoCol: true, scoreCols: 2, stackButtons: false, shortReview: true });
   });
 
   it('stacks equal-width buttons on narrow portrait phones', () => {
     expect(resultLayout(360, 740).stackButtons).toBe(true);
     expect(resultLayout(390, 844).stackButtons).toBe(true);
     expect(resultLayout(1024, 768).stackButtons).toBe(false);
+  });
+
+  it('says "Review" rather than "Review my hand" where half a row is narrower than the long label (a 320 pt phone)', () => {
+    expect(resultLayout(320, 568).shortReview).toBe(true);
+    expect(resultLayout(360, 640).shortReview).toBe(false);
+    expect(resultLayout(390, 844).shortReview).toBe(false);
   });
 });
 

@@ -158,6 +158,24 @@ async function dialogKeys(page, tabs = 10) {
   return bad;
 }
 
+/** The result sheet's button labels, each whole inside its button (a label wider than its button is cut at both ends). */
+async function sheetLabels(page) {
+  return page.evaluate(() => {
+    const sheet = [...document.querySelectorAll('[data-testid="result-sheet"]')].find((e) => e.getBoundingClientRect().width > 0);
+    if (!sheet) return [];
+    const bad = new Set();
+    for (const b of sheet.querySelectorAll('[role="button"]')) {
+      const br = b.getBoundingClientRect();
+      for (const t of b.querySelectorAll('div[dir="auto"]')) {
+        const r = t.getBoundingClientRect();
+        if (r.width === 0 || !t.textContent.trim()) continue;
+        if (t.scrollWidth > t.clientWidth + 1 || r.left < br.left - 1 || r.right > br.right + 1) bad.add(`the result sheet's "${t.textContent.trim().slice(0, 24)}" is cut (${Math.round(r.width)} px of label in a ${Math.round(br.width)} px button)`);
+      }
+    }
+    return [...bad];
+  });
+}
+
 /**
  * The end-of-hand result sheet's hard checks: it is inside one named modal dialog (aria-modal, a name), and dialogKeys
  * passes on it (the table behind it inert, Tab and Shift+Tab only through its own buttons).
@@ -1210,9 +1228,12 @@ async function runFelt(browser, port, [[w, h], locale, tileScale, textScale, see
     discard: w > h ? 'coach' : 'last',
   });
   const finished = !!(await visible(page, '[data-testid="result-sheet"]'));
+  // The result sheet on these phones: its buttons' labels whole.
+  if (finished) await page.waitForTimeout(600);
+  const labels = finished ? await sheetLabels(page) : [];
   await ctx.close();
   const where = `Felt (${tag}, ${locale}, tiles ${tileScale}, text ${textScale}, seed ${SEED_OVERRIDE ?? seed})`;
-  return { size: `${tag} ${name}`, seed: SEED_OVERRIDE ?? seed, finished, discards: played.discards, prompts: played.prompts, shots: [name], notes: finished ? [] : ['hand did not finish'], fails: played.found.map((f) => `${where}: ${f}`), errors };
+  return { size: `${tag} ${name}`, seed: SEED_OVERRIDE ?? seed, finished, discards: played.discards, prompts: played.prompts, shots: [name], notes: finished ? [] : ['hand did not finish'], fails: [...played.found, ...labels].map((f) => `${where}: ${f}`), errors };
 }
 
 /**

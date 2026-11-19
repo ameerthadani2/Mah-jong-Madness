@@ -179,11 +179,16 @@ export interface ResultLayout {
   scoreCols: 1 | 2 | 4;
   /** Narrow portrait: buttons stacked full width, the two secondary ones sharing a row. */
   stackButtons: boolean;
+  /**
+   * The review button says "Review" rather than "Review my hand": in the two-column sheet, and on a phone under 360 pt,
+   * where the row's half (125 pt on a 320 pt phone) is narrower than the long label (132 pt).
+   */
+  shortReview: boolean;
 }
 
 export function resultLayout(width: number, height: number): ResultLayout {
   const twoCol = width > height && height < 560;
-  return { twoCol, scoreCols: twoCol ? (height < 420 ? 2 : 1) : width < 480 ? 2 : 4, stackButtons: !twoCol && width < 480 };
+  return { twoCol, scoreCols: twoCol ? (height < 420 ? 2 : 1) : width < 480 ? 2 : 4, stackButtons: !twoCol && width < 480, shortReview: twoCol || width < 360 };
 }
 
 export interface MatchOverLayout {

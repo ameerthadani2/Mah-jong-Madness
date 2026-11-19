@@ -286,7 +286,7 @@ export function ResultSheet({ result, view, state, mySeat, autoNext, onNext, onL
                   {autoNextNote}
                   {next}
                   <Row gap={8}>
-                    <Button kind="secondary" title={t('table.result.reviewMyHand')} onPress={onReview} style={{ flex: 1 }} />
+                    <Button kind="secondary" title={t(layout.shortReview ? 'table.result.review' : 'table.result.reviewMyHand')} accessibilityLabel={t('table.result.reviewMyHand')} onPress={onReview} style={{ flex: 1 }} />
                     <Button kind="ghost" title={t('table.result.leaveTable')} onPress={onLeave} style={{ flex: 1 }} />
                   </Row>
                 </View>

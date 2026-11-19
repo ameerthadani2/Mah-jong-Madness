@@ -63,6 +63,22 @@ describe('the result sheet’s audit pill', () => {
   });
 });
 
+describe('the result sheet’s buttons on a 320 pt phone', () => {
+  it('say "Review", which fits half the row, and still read "Review my hand" to a screen reader', async () => {
+    const real = Dimensions.get('window');
+    const dims = { width: 320, height: 568, scale: 2, fontScale: 1 };
+    Dimensions.set({ window: dims, screen: dims });
+    try {
+      await renderResult({ type: 'draw', wins: [], scoreDelta: [0, 0, 0, 0], dealerContinues: true } as unknown as HandResult);
+      const review = screen.getByRole('button', { name: 'Review my hand' });
+      expect(within(review).getAllByText('Review').length).toBeGreaterThan(0);
+      expect(within(review).queryAllByText('Review my hand')).toHaveLength(0);
+    } finally {
+      Dimensions.set({ window: real, screen: real });
+    }
+  });
+});
+
 describe('the result sheet after a win', () => {
   it('names the winner and lists each 台 with its count', async () => {
     await renderResult({ type: 'win', wins: [win({ tai: 12, taiUncapped: 12, items: BIG })], scoreDelta: [120, -40, -40, -40], dealerContinues: false });
