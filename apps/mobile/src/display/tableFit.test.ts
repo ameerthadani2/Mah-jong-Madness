@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { COMPACT_DOCK_H, dockHeight, handLayout, tableLayout } from '../components/table/layout';
 import { TILE_SCALES } from './scale';
 import { en, zhTW } from '../i18n/locales';
-import { COMPACT_GAP, COMPACT_TOP_MELD, compactTopMeld, fitCompactCentre, meldsLineWidth, MIN_COMPACT_MELD, MIN_COMPACT_POND, fitHand, fitPools, landscapeWideRoom, MAX_HAND_ROWS, WIDE_MELD_MAX, WIDE_PLATE_ROW_W, portraitRowRoom, rowWidth, wrapRows, fitSideColumn, fitSideSeat, meldWidth, MIN_MY_MELD, MIN_RAIL_TILE, MIN_SIDE_MELD, MIN_SIDE_POND, myMeldsWidth, SIDE_GAP, sidePondPerRow, sideSeatHeight } from './tableFit';
+import { COMPACT_GAP, COMPACT_TOP_MELD, compactTopMeld, fitCompactCentre, meldsLineWidth, MIN_COMPACT_MELD, MIN_COMPACT_POND, MIN_FLAT_MELD, fitHand, fitPools, landscapeWideRoom, MAX_HAND_ROWS, WIDE_MELD_MAX, WIDE_PLATE_ROW_W, portraitRowRoom, rowWidth, wrapRows, fitSideColumn, fitSideSeat, meldWidth, MIN_MY_MELD, MIN_RAIL_TILE, MIN_SIDE_MELD, MIN_SIDE_POND, myMeldsWidth, SIDE_GAP, sidePondPerRow, sideSeatHeight } from './tableFit';
 
 const VIEWPORTS: Array<[number, number]> = [
   [390, 844],
@@ -289,7 +289,14 @@ describe('a side seat in landscape', () => {
     expect(late.keep).toBeGreaterThanOrEqual(1);
     expect(late.keep).toBeLessThan(Math.ceil(15 / late.perRow));
     expect(late.height).toBeLessThanOrEqual(room(short, false));
-    // Not one row under the melds: only then does the column scroll.
+    // 568x320 at Extra-large tiles (a 121 px column under a 37 px plate, measured): four melds and two flowers leave no row
+    // of the pond at 14 px; flat at 12 px they take two lines, and the newest row of the pond fits under them.
+    const xs = { width: 128, column: 121, plate: 37, hand: 17, meld: 25, pool: 25 };
+    const four = fitSideColumn({ ...xs, melds: [3, 3, 3, 3], flowers: 2, discards: 15 });
+    expect(four).toMatchObject({ scroll: false, showHand: false, flat: true, meld: MIN_FLAT_MELD, keep: 1 });
+    expect(four.height).toBeLessThanOrEqual(room(xs, false));
+    expect(meldWidth(3, MIN_FLAT_MELD, true) * 3).toBeLessThanOrEqual(128);
+    // Not one row under the melds even flat: only then does the column scroll.
     expect(fitSideColumn({ ...short, column: 120, melds: [4, 4, 4, 4, 4], flowers: 8, discards: 24 })).toMatchObject({ scroll: true });
   });
 

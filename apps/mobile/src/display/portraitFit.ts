@@ -26,14 +26,13 @@
  * from the tile sizes as the components draw them, so the fit is unit-tested.
  */
 import { tileDims } from '../components/tileDims';
-import { SIDE_GAP, sidePondPerRow } from './tableFit';
+import { FLAT_MELD_GAP, MIN_FLAT_MELD, SIDE_GAP, sidePondPerRow } from './tableFit';
 
 /** The smallest pond and meld tiles the portrait felt draws (px wide) before ponds keep fewer rows instead. */
 export const MIN_POND = 16;
 export const MIN_MELD = 14;
-/** Flat melds (the last stage, 7): no tile on its side, 3 px apart, down to this size, so two share a narrow column. */
-export const MIN_FLAT_MELD = 12;
-export const FLAT_MELD_GAP = 3;
+/** Flat melds (the last stage, 7): no tile on its side, 3 px apart, down to MIN_FLAT_MELD, so two share a narrow column. */
+export { FLAT_MELD_GAP, MIN_FLAT_MELD };
 /** The compass is never drawn smaller than this; below it, it goes. */
 export const MIN_COMPASS = 40;
 /** Between the rows of a pond, and between the rows of melds. */

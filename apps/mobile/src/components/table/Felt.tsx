@@ -306,7 +306,7 @@ export function Felt({
     });
     const body = (
       <>
-        <MeldsAndFlowers player={p} size={col.meld} flowerSize={col.meld} style={meldStyle} />
+        <MeldsAndFlowers player={p} size={col.meld} flowerSize={col.meld} flat={col.flat} style={meldStyle} />
         <DiscardPool tiles={p.discards} size={col.pool} perRow={col.perRow} align={align} latest={latestFor(seat)} enterFrom={slideFrom(r)} keepRows={col.keep} testID={`pond-seat-${r}`} />
       </>
     );

@@ -191,6 +191,9 @@ export function fitPools(L: TableLayout, tileScale: number): PoolFit {
 
 /** The gap between a side seat's blocks (plate, melds, pond) and between the rows of its melds and of its pond. */
 export const SIDE_GAP = 6;
+/** Flat melds (no tile on its side to mark the claimed one), FLAT_MELD_GAP apart and down to MIN_FLAT_MELD: the last thing a side seat's melds give up, in portrait and in landscape. */
+export const MIN_FLAT_MELD = 12;
+export const FLAT_MELD_GAP = 3;
 const MELD_ROW_GAP = 3;
 const POND_GAP = 2;
 /** The smallest a side seat's meld and pond tiles are drawn (px wide) before its column scrolls instead. */
@@ -222,13 +225,15 @@ export interface SideSeatFit {
   scroll: boolean;
   /** Rows of the pond drawn, newest kept (Infinity: all of them), under melds that stay whole. */
   keep: number;
+  /** The melds lie flat (no tile on its side), so more of them share a line. */
+  flat: boolean;
 }
 
 const tileH = (w: number) => Math.round(w * 1.4);
 
-/** Width of one meld as TableParts draws it: the tiles a pixel apart, the claimed one lying on its side, 5 px after it. */
-export function meldWidth(tiles: number, w: number): number {
-  return tiles * w + (tiles - 1) + (tileH(w) - w) + 5;
+/** Width of one meld as TableParts draws it: the tiles a pixel apart, the claimed one lying on its side, 5 px after it; or flat (none on its side), FLAT_MELD_GAP after it. */
+export function meldWidth(tiles: number, w: number, flat = false): number {
+  return flat ? tiles * w + (tiles - 1) + FLAT_MELD_GAP : tiles * w + (tiles - 1) + (tileH(w) - w) + 5;
 }
 
 /** Tiles a side pond puts in a row (layout.ts's rule): three at least, seven at most. */
@@ -237,12 +242,12 @@ export function sidePondPerRow(width: number, w: number): number {
 }
 
 /** Height of a side seat's melds, flowers and pond at the given tile widths, wrapped into `width`. */
-export function sideSeatHeight(input: Pick<SideSeatInput, 'width' | 'melds' | 'flowers' | 'discards'>, meld: number, pool: number): number {
+export function sideSeatHeight(input: Pick<SideSeatInput, 'width' | 'melds' | 'flowers' | 'discards'>, meld: number, pool: number, flat = false): number {
   const { width, melds, flowers, discards } = input;
   let rows = 0;
   let x = 0;
   for (const n of melds) {
-    const w = meldWidth(n, meld);
+    const w = meldWidth(n, meld, flat);
     if (rows === 0 || x + w > width) {
       rows++;
       x = w;
@@ -267,7 +272,7 @@ export function sideSeatHeight(input: Pick<SideSeatInput, 'width' | 'melds' | 'f
  * only where not even one fits does the column scroll (`scroll`), which the felt keeps at the newest discards.
  */
 export function fitSideSeat(input: SideSeatInput): SideSeatFit {
-  const at = (meld: number, pool: number, scroll = false): SideSeatFit => ({ meld, pool, perRow: sidePondPerRow(input.width, pool), height: sideSeatHeight(input, meld, pool), scroll, keep: Infinity });
+  const at = (meld: number, pool: number, scroll = false): SideSeatFit => ({ meld, pool, perRow: sidePondPerRow(input.width, pool), height: sideSeatHeight(input, meld, pool), scroll, keep: Infinity, flat: false });
   const start = at(input.meld, input.pool);
   if (input.room <= 0 || start.height <= input.room) return start;
   const minMeld = Math.min(input.meld, MIN_SIDE_MELD);
@@ -280,12 +285,15 @@ export function fitSideSeat(input: SideSeatInput): SideSeatFit {
     const fit = at(minMeld, pool);
     if (fit.height <= input.room) return fit;
   }
-  // The melds whole at the smallest size, and as many of the pond's newest rows as fit under them.
-  const melds = sideSeatHeight({ ...input, discards: 0 }, minMeld, minPool);
-  const above = melds > 0 ? melds + SIDE_GAP : 0;
-  const rows = Math.floor((input.room - above + POND_GAP) / (tileH(minPool) + POND_GAP));
-  if (rows >= 1) return { ...at(minMeld, minPool), height: above + rows * tileH(minPool) + (rows - 1) * POND_GAP, keep: rows };
-  return at(minMeld, minPool, true);
+  // The melds whole at the smallest size, and as many of the pond's newest rows as fit under them; where not one does, the
+  // melds lie flat and smaller (MIN_FLAT_MELD), so more of them share a line.
+  const kept = (meld: number, flat: boolean): SideSeatFit | null => {
+    const melds = sideSeatHeight({ ...input, discards: 0 }, meld, minPool, flat);
+    const above = melds > 0 ? melds + SIDE_GAP : 0;
+    const rows = Math.floor((input.room - above + POND_GAP) / (tileH(minPool) + POND_GAP));
+    return rows >= 1 ? { ...at(meld, minPool), height: above + rows * tileH(minPool) + (rows - 1) * POND_GAP, keep: rows, flat } : null;
+  };
+  return kept(minMeld, false) ?? kept(Math.min(minMeld, MIN_FLAT_MELD), true) ?? at(minMeld, minPool, true);
 }
 
 export interface SideColumnInput extends Omit<SideSeatInput, 'room'> {
