@@ -36,9 +36,26 @@ describe('what the coach says', () => {
     expect(lines.advice).toContain('engine.hint.claim.noGain');
   });
 
-  it('has no advice when there is nothing to do now (the hand is over, another seat’s turn, or a claim it would pass on)', () => {
-    expect(coachLines(hint({ phase: 'ended', statusKey: 'hint.status.handOver' }), t).advice).toBeNull();
+  it('says Pass at a claim chance it would let go by, with why the claim on offer does not help', () => {
+    const lines = coachLines(hint({ phase: 'claim', claims: [claim(false, 'hint.label.pong'), claim(false, 'hint.label.chi')] }), t);
+    expect(lines.kind).toBe('pass');
+    expect(lines.advice).toMatch(/^table\.coach\.passLine /);
+    expect(lines.advice).toContain('engine.hint.claim.noGain');
+    // A recommended claim is named instead.
+    expect(coachLines(hint({ phase: 'claim', claims: [claim(false, 'hint.label.chi'), claim(true, 'hint.label.pong')] }), t).kind).toBe('claim');
+  });
+
+  it('says Pass in both languages', async () => {
+    const { en, zhTW } = await import('../../i18n/locales');
+    const line = (locale: typeof en) => (locale.table.coach as Record<string, string>).passLine;
+    expect(line(en)).toBe('Pass (過): %{reason}');
+    expect(line(zhTW)).toBe('過：%{reason}');
+  });
+
+  it('has no advice when there is nothing to do now (the hand is over, another seat’s turn)', () => {
+    expect(coachLines(hint({ phase: 'ended', statusKey: 'hint.status.handOver' }), t)).toMatchObject({ advice: null, kind: null });
     expect(coachLines(hint({ phase: 'discard', statusKey: 'hint.status.manyAway', statusParams: { shanten: 3 } }), t).advice).toBeNull();
-    expect(coachLines(hint({ phase: 'claim', claims: [claim(false, 'hint.label.pong')] }), t).advice).toBeNull();
+    // No claim on offer (the claim window is another seat's): nothing to pass on.
+    expect(coachLines(hint({ phase: 'claim', claims: [] }), t).advice).toBeNull();
   });
 });

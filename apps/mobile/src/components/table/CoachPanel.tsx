@@ -9,7 +9,7 @@
  * - CoachPanel: tablets and tall landscape screens. Everything, under the right seat; past the height it is given it
  *   scrolls, and a "More" button under it opens the sheet.
  * - CoachSheet: everything the coach says (status, win, discard, waits with what is left of each, every claim with
- *   its reason), in a modal sheet at the reader's text size.
+ *   its reason, and Pass where it would let a claim go by), in a modal sheet at the reader's text size.
  */
 import React, { useState } from 'react';
 import { Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions, type StyleProp, type TextStyle, type ViewStyle } from 'react-native';
@@ -85,11 +85,12 @@ export function CoachDetails({ hint, factor = 1 }: { hint: Hint; factor?: number
   const { t } = useT();
   const engine = (key: string, params?: Record<string, string | number>) => t(`engine.${key}`, params);
   const size = (s: TextStyle) => (factor === 1 ? s : scaleTextStyle(s, factor));
-  const { status, advice } = coachLines(hint, t);
+  const { status, advice, kind } = coachLines(hint, t);
   const preview = hint.winPreview ? advice : null;
   const discard = hint.discardReasonKey ? engine(hint.discardReasonKey, hint.discardReasonParams) : null;
-  // The advice (coachText.ts) is the line the e2e checks look for: the win, else the discard, else the recommended claim.
-  const adviceIs = preview !== null ? 'preview' : discard !== null ? 'discard' : 'claim';
+  // The advice (coachText.ts) is the line the e2e checks look for: the win, else the discard, else the recommended claim,
+  // else Pass at a claim chance the coach would let go by.
+  const adviceIs = preview !== null ? 'preview' : discard !== null ? 'discard' : kind === 'pass' ? 'pass' : 'claim';
   return (
     <>
       <Text style={size(TYPE.status)} testID="coach-sheet-status">
@@ -114,6 +115,14 @@ export function CoachDetails({ hint, factor = 1 }: { hint: Hint; factor?: number
               <Text style={size(TYPE.count)}>{t('table.coach.remaining', { n: w.remaining })}</Text>
             </View>
           ))}
+        </Row>
+      )}
+      {adviceIs === 'pass' && (
+        <Row gap={4} style={{ alignItems: 'flex-start' }}>
+          <Icon name="check" size={16} color={colors.cta} />
+          <Text style={[size(TYPE.line), { flex: 1 }, { color: colors.okText }]} testID="coach-advice">
+            {advice}
+          </Text>
         </Row>
       )}
       {hint.claims.map((c, i) => (

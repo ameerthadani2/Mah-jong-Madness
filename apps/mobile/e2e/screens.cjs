@@ -27,7 +27,7 @@
  * Extra-large text: <size>-table-zh.png, <size>-table-zh-xl.png at every viewport; the hand tiles' size is logged as a note),
  * or the Shop's try-on preview fails its checks (runPreview below: <size>-preview-<kind>.png and -zh.png, at every
  * viewport and at 320x568), or the coach fails coachCheck at one of my decisions (on screen whenever its button shows it
- * on, a line of its advice whole on screen on my turn, never covering my pond, my hand, the claim or discard buttons or
+ * on, a line of its advice whole on screen on my turn and at each claim chance, never covering my pond, my hand, the claim or discard buttons or
  * the tap hint, never cut, and "More" beside advice longer than its lines) in the whole hand each table run plays: the
  * main run at every viewport, the Extra-large runs, the zh-TW runs, and the coach runs on the smallest phones (568x320,
  * 320x568) and at Large tiles at 667x375 (<size>-coach-*.png), or the portrait felt fails feltCheck at one of my decisions
@@ -193,16 +193,17 @@ async function tableFit(page) {
 }
 
 /**
- * The coach's hard checks, on the page as it stands at one of my decisions (`mine`: my turn to discard, where the coach
- * always has advice, the tile to discard or the win; otherwise a claim chance, where it may have none). Whenever the
- * coach is on (the HUD's cap button selected) it is on screen; on my turn a line of its advice is whole on screen: inside
- * the window and every box that clips it, and the topmost thing where it is drawn; any advice it shows is; the coach is
+ * The coach's hard checks, on the page as it stands at one of my decisions (`advised`: my turn to discard, a win, or a
+ * claim chance, where the coach always has advice: the win, the tile to discard, the claim to make, or Pass with why).
+ * Whenever the coach is on (the HUD's cap button selected) it is on screen; at those decisions a line of its advice is
+ * whole on screen: inside the window and every box that clips it, and the topmost thing where it is drawn; any advice it
+ * shows is; the coach is
  * never cut by the window or a box around it, and never covers my pond, my hand, the claim or discard buttons or the tap
  * hint (as drawn: what the felt clips away does not count); and advice longer than its lines ends in an ellipsis with
  * "More" beside it, never cut without a sign.
  */
-async function coachCheck(page, mine) {
-  return page.evaluate((mine) => {
+async function coachCheck(page, advised) {
+  return page.evaluate((advised) => {
     const bad = [];
     const seen = (e) => { const b = e.getBoundingClientRect(); return b.width > 0 && b.height > 0; };
     const clipOf = (el) => {
@@ -254,7 +255,7 @@ async function coachCheck(page, mine) {
       const r = b.getBoundingClientRect();
       if (r.height < 43.5 || r.width < 43.5) bad.push(`the coach's ${b.dataset.testid === 'coach' ? 'bar' : 'More button'} is a ${Math.round(r.width)}x${Math.round(r.height)} px press, under 44`);
     }
-    if (on && mine && coaches.length > 0 && !advice.some((a) => a.textContent.trim() && whole(a))) bad.push("on my turn the coach shows no line of advice whole on screen");
+    if (on && advised && coaches.length > 0 && !advice.some((a) => a.textContent.trim() && whole(a))) bad.push('at my decision (my turn, a win or a claim chance) the coach shows no line of advice whole on screen');
     for (const c of coaches.map(face)) {
       const r = c.getBoundingClientRect();
       const k = clipOf(c);
@@ -268,18 +269,18 @@ async function coachCheck(page, mine) {
       if (hint && meet(box, shown(hint.parentElement))) bad.push('the coach covers the tap hint');
     }
     return bad;
-  }, mine);
+  }, advised);
 }
 
 /**
  * coachCheck once the table has settled: a finding is kept only if it is still there after two more looks 800 ms apart (a
  * new line is laid out a frame after it shows, later on a busy machine).
  */
-async function coachSettled(page, mine) {
-  let found = await coachCheck(page, mine);
+async function coachSettled(page, advised) {
+  let found = await coachCheck(page, advised);
   for (let i = 0; i < 2 && found.length > 0; i++) {
     await page.waitForTimeout(800);
-    found = await coachCheck(page, mine);
+    found = await coachCheck(page, advised);
   }
   return found;
 }
@@ -398,7 +399,7 @@ async function playCoachedHand(page, { onDiscard = async () => undefined, untilD
       continue;
     }
     if ((el = await visible(page, '[data-testid="claim-pass"]'))) {
-      found.push(...(await coachSettled(page, false)), ...(await feltSettled(page)));
+      found.push(...(await coachSettled(page, true)), ...(await feltSettled(page)));
       await tap(page, el);
       await page.waitForTimeout(300);
       continue;
@@ -533,7 +534,7 @@ async function run(browser, port, [w, h]) {
     let el;
     if ((el = await visible(page, 'text=/胡!/'))) { coach.push(...(await coachSettled(page, true))); feltFound.push(...(await feltSettled(page))); await tap(page, el); await page.waitForTimeout(400); continue; }
     if ((el = await visible(page, 'text="過"'))) {
-      coach.push(...(await coachSettled(page, false)));
+      coach.push(...(await coachSettled(page, true)));
       feltFound.push(...(await feltSettled(page)));
       if (!done.has('claim')) {
         done.add('claim');

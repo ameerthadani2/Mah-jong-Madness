@@ -34,6 +34,7 @@
     "taiItem": "%{name} %{tai}",
     "winPreview": "%{items} = %{tai} 台",
     "claimLine": "%{label}: %{reason}",
+    "passLine": "Pass (過): %{reason}",
     "remaining": "×%{n}",
     "more": "More",
     "moreHint": "Shows all of the coach's advice",

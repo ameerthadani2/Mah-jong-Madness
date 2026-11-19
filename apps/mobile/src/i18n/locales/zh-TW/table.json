@@ -34,6 +34,7 @@
     "taiItem": "%{name} %{tai}",
     "winPreview": "%{items} = %{tai} 台",
     "claimLine": "%{label}：%{reason}",
+    "passLine": "過：%{reason}",
     "remaining": "×%{n}",
     "more": "更多",
     "moreHint": "顯示教練的完整建議",

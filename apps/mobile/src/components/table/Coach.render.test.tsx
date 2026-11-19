@@ -138,3 +138,26 @@ describe('the coach panel (tablets)', () => {
     expect(onOpen).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('the coach at a claim chance it would let go by', () => {
+  const claim = (labelKey: string) => ({ action: { type: 'pass' as const }, label: '', labelKey, labelParams: { tileName: '五筒 (5 Dots)', tileZh: '五筒' }, recommended: false, reason: '', reasonKey: 'hint.claim.noGain', reasonParams: {} });
+  const PASSING = hint({ phase: 'claim', claims: [claim('hint.label.pong')] });
+
+  it('says Pass on the bar, with why the claim on offer does not help', async () => {
+    await render(<CoachBar hint={PASSING} lines={{ status: 0, advice: 2 }} onOpen={() => undefined} />);
+    expect(screen.getByTestId('coach-advice')).toHaveTextContent('Pass (過): This does not bring you closer to ready.');
+  });
+
+  it('says it in the sheet too, ticked, above the claim it lets go by', async () => {
+    await render(<CoachSheet visible hint={PASSING} onClose={() => undefined} />);
+    const sheet = screen.getByTestId('coach-sheet');
+    expect(within(sheet).getByTestId('coach-advice')).toHaveTextContent('Pass (過): This does not bring you closer to ready.');
+    expect(within(sheet).getByText(/^Pong \(碰\) 五筒 \(5 Dots\): /)).toBeOnTheScreen();
+  });
+
+  it('in Traditional Chinese', async () => {
+    setLocalePreference('zh-TW');
+    await render(<CoachBar hint={PASSING} lines={{ status: 0, advice: 2 }} onOpen={() => undefined} />);
+    expect(screen.getByTestId('coach-advice')).toHaveTextContent('過：吃碰這張不會讓你離聽牌更近。');
+  });
+});

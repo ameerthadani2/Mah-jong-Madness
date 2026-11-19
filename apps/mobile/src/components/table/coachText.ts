@@ -10,8 +10,10 @@ type Translate = (key: string, params?: Record<string, string | number>) => stri
 export interface CoachLines {
   /** How far the hand is from ready, that it is ready and on what, or that it can win now. */
   status: string;
-  /** The win and what it scores, the tile to discard, or the claim to make; null when the coach has nothing to do now. */
+  /** The win and what it scores, the tile to discard, the claim to make or that it would pass; null when the coach has nothing to do now. */
   advice: string | null;
+  /** What the advice is: a win, a discard, a claim, passing on a claim chance (null with no advice). */
+  kind: 'win' | 'discard' | 'claim' | 'pass' | null;
 }
 
 /** The coach's two sentences for `hint`. Engine sentences are reason keys rendered under `engine.` (src/i18n/index.ts). */
@@ -20,11 +22,16 @@ export function coachLines(hint: Hint, t: Translate): CoachLines {
   const status = engine(hint.statusKey, hint.statusParams);
   if (hint.winPreview) {
     const items = hint.winPreview.items.map((i) => t('table.coach.taiItem', { name: i.nameZh, tai: i.tai })).join(' · ');
-    return { status, advice: t('table.coach.winPreview', { items, tai: hint.winPreview.tai }) };
+    return { status, advice: t('table.coach.winPreview', { items, tai: hint.winPreview.tai }), kind: 'win' };
   }
-  if (hint.discardReasonKey) return { status, advice: engine(hint.discardReasonKey, hint.discardReasonParams) };
-  // A claim chance: the claim the coach recommends, named, with its reason (passing has no line of its own).
+  if (hint.discardReasonKey) return { status, advice: engine(hint.discardReasonKey, hint.discardReasonParams), kind: 'discard' };
+  // A claim chance: the claim the coach recommends, named, with its reason.
   const rec = hint.claims.find((c) => c.recommended);
-  if (rec) return { status, advice: t('table.coach.claimLine', { label: engine(rec.labelKey, rec.labelParams), reason: engine(rec.reasonKey, rec.reasonParams) }) };
-  return { status, advice: null };
+  if (rec) return { status, advice: t('table.coach.claimLine', { label: engine(rec.labelKey, rec.labelParams), reason: engine(rec.reasonKey, rec.reasonParams) }), kind: 'claim' };
+  // A claim chance the coach would let go by: it says Pass, with why the claim on offer does not help.
+  if (hint.phase === 'claim' && hint.claims.length > 0) {
+    const first = hint.claims[0];
+    return { status, advice: t('table.coach.passLine', { reason: engine(first.reasonKey, first.reasonParams) }), kind: 'pass' };
+  }
+  return { status, advice: null, kind: null };
 }
