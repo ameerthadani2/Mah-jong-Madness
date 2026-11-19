@@ -149,6 +149,32 @@ describe('the coach in portrait (390x844)', () => {
   });
 });
 
+describe('the status line under the compass in portrait (360x640)', () => {
+  it('keeps inside the centre column, so a long "X discarded Y" never runs over a side seat', async () => {
+    await renderTable(360, 640);
+    // The felt and the plates report their sizes (as onLayout does on a device): a felt with room for the status line.
+    const layout = (height: number, width = 80) => ({ nativeEvent: { layout: { x: 0, y: 0, width, height } } });
+    await fireEvent(screen.getByTestId('plate-seat-1'), 'layout', layout(73));
+    await fireEvent(screen.getByTestId('plate-seat-3'), 'layout', layout(73));
+    await fireEvent(screen.getByTestId('plate-seat-2'), 'layout', layout(40, 120));
+    await fireEvent(screen.getByTestId('felt-portrait'), 'layout', layout(420));
+    // Play on (passing every claim, discarding the first tile) until another seat's move shows the status line.
+    for (let i = 0; i < 400 && !screen.queryByTestId('table-status'); i++) {
+      const a = myActions();
+      if (a.some((x) => x.type === 'pass')) await fireEvent.press(screen.getByTestId('claim-pass'));
+      else if (a.some((x) => x.type === 'discard')) {
+        const tile = within(screen.getByTestId('hand-discard')).getAllByRole('button')[0];
+        await fireEvent.press(tile);
+        await fireEvent.press(tile);
+      }
+      await wait(300);
+    }
+    // A 360 px phone's centre column is about 128 px wide, narrower than the line's own 220 px cap.
+    await fireEvent(screen.getByTestId('centre-col'), 'layout', { nativeEvent: { layout: { x: 0, y: 0, width: 128, height: 300 } } });
+    expect(StyleSheet.flatten(screen.getByTestId('table-status').props.style).maxWidth).toBe(128);
+  });
+});
+
 describe('the felt in portrait on a small phone (320x568)', () => {
   /** The width of my hand's first tile as drawn. */
   const handTile = () => {

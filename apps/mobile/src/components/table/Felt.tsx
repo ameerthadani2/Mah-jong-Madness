@@ -22,6 +22,8 @@ export type PlateProps = Omit<React.ComponentProps<typeof SeatBadge>, 'size' | '
 
 /** Landscape: the gap between the across seat's plate and its melds. */
 const TOP_ROW_GAP = 10;
+/** The status line under the compass: at most this wide, and never wider than the centre column. */
+const STATUS_MAX_W = 220;
 
 export function Felt({
   view,
@@ -123,8 +125,11 @@ export function Felt({
   const sidePerRow = portrait ? fit.sidePerRow : pools.sidePerRow;
   const myPerRow = pools.myPerRow;
 
+  // The centre column's width, measured: the status line keeps inside it (a long "X discarded Y" on a 360 px phone ran
+  // over the left seat's newest discards), and in short landscape it sets the across seat's meld size (below).
+  const [centreW, setCentreW] = useState(0);
   const statusPill = status ? (
-    <View style={styles.status} testID="table-status" onLayout={portrait ? measureP('status') : undefined}>
+    <View style={[styles.status, centreW > 0 && { maxWidth: Math.min(STATUS_MAX_W, centreW) }]} testID="table-status" onLayout={portrait ? measureP('status') : undefined}>
       <Text numberOfLines={1} style={styles.statusText}>
         {status}
       </Text>
@@ -135,7 +140,6 @@ export function Felt({
   // column's width, which with the plate's sets the size that keeps its melds on the plate's line (compactTopMeld).
   const [compactTopRow, setCompactTopRow] = useState(0);
   const [compactPlate, setCompactPlate] = useState({ w: 0, h: 0 });
-  const [centreW, setCentreW] = useState(0);
   const topSeat = () => {
     const seat = seatAt(2);
     const p: PlayerView = view.players[seat];
@@ -311,6 +315,7 @@ export function Felt({
   const centerColumn = (
     <View
       style={[styles.centerCol, L.compact && { gap: COMPACT_GAP }]}
+      testID="centre-col"
       onLayout={(e) => {
         setCentreH(Math.round(e.nativeEvent.layout.height));
         setCentreW(Math.floor(e.nativeEvent.layout.width));
@@ -440,7 +445,7 @@ const styles = StyleSheet.create({
   topMeldsPortrait: { justifyContent: 'center', maxWidth: '100%' },
   compactMiddle: { flex: 1, flexDirection: 'row', alignSelf: 'stretch', gap: 6, minHeight: 0 },
   middle: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, alignSelf: 'stretch', flexGrow: 1 },
-  status: { backgroundColor: 'rgba(16,20,47,0.6)', borderRadius: 999, paddingHorizontal: 10, paddingVertical: 2, maxWidth: 220 },
+  status: { backgroundColor: 'rgba(16,20,47,0.6)', borderRadius: 999, paddingHorizontal: 10, paddingVertical: 2, maxWidth: STATUS_MAX_W },
   statusText: { color: '#FFFFFF', fontSize: 12, fontWeight: '900' },
   actionCenter: { position: 'absolute', left: 0, right: 0, alignItems: 'center' },
   // portraitFit.ts PINNED_POND_PAD.
