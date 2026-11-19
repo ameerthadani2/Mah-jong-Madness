@@ -595,7 +595,8 @@ function tally(found) {
  * and discarding the lowest, right-most tile (the drawn one in landscape), and runs coachCheck and feltCheck at each of my
  * decisions: my turn before and after a tile is picked, a win, and each claim chance; and discardsSheetCheck once (a
  * screenshot of the sheet to `sheetShot`, when given). It fails, too, when my hand's tiles get smaller between two of my
- * decisions without the table's "Tiles made smaller" notice. `onDiscard(n)` runs after my nth discard. With `discard`
+ * decisions without the table's "Tiles made smaller" notice, or when, with several 吃 choices open, there is no Pass among
+ * them or the row is not whole on screen. `onDiscard(n)` runs after my nth discard. With `discard`
  * 'coach' it discards the tile the coach rings instead, so the hand heads for a win and win prompts come up.
  */
 async function playCoachedHand(page, { onDiscard = async () => undefined, untilDiscards = Infinity, limitMs = 240000, sheetShot = null, discard = 'last' } = {}) {
@@ -644,6 +645,19 @@ async function playCoachedHand(page, { onDiscard = async () => undefined, untilD
     if ((el = await visible(page, '[data-testid="claim-pass"]'))) {
       await decision();
       await promptSeen();
+      // Several 吃 choices behind one 吃 button: open them. Pass is there too (the coach's advice may be Pass), and the
+      // row is whole on screen; then pass from it.
+      const chiOpen = await visible(page, '[data-testid="claim-chi-open"]');
+      if (chiOpen) {
+        await tap(page, chiOpen);
+        await page.waitForTimeout(400);
+        const pass = await visible(page, '[data-testid="chi-choices"] [data-testid="claim-pass"]');
+        if (!pass) found.push('with the 吃 choices open there is no Pass button');
+        else {
+          found.push(...(await feltSettled(page)).map((f) => `with the 吃 choices open, ${f}`));
+          el = pass;
+        }
+      }
       await tap(page, el);
       await page.waitForTimeout(300);
       continue;

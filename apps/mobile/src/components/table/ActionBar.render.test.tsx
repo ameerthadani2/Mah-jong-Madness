@@ -30,12 +30,25 @@ describe('the portrait claim strip on a phone', () => {
     await fireEvent.press(screen.getByTestId('claim-chi-open'));
     const choices = screen.getByTestId('chi-choices');
     expect(within(choices).getAllByRole('button', { name: /^Chow: / })).toHaveLength(2);
-    expect(screen.queryByTestId('claim-pass')).toBeNull();
+    // Pass is there too, so when the coach says Pass the button it names is on screen.
+    expect(within(choices).getByTestId('claim-pass')).toBeOnTheScreen();
+    expect(within(within(choices).getByTestId('claim-pass')).getByText('Pass')).toBeOnTheScreen();
     await fireEvent.press(screen.getByTestId('claim-chi-back'));
+    expect(screen.queryByTestId('chi-choices')).toBeNull();
     expect(screen.getByTestId('claim-pass')).toBeOnTheScreen();
     await fireEvent.press(screen.getByTestId('claim-chi-open'));
     await fireEvent.press(within(screen.getByTestId('chi-choices')).getAllByRole('button', { name: /^Chow: / })[1]);
     expect(act).toHaveBeenCalledWith(chi(8, 16));
+  });
+
+  it('passes from the 吃 choices in one tap, and drops Pass’s gloss there too when the dock is narrow', async () => {
+    const act = jest.fn();
+    await render(<ActionBar actions={CLAIMS} act={act} selected={null} hint={null} view={view(12)} compact wrap={false} smallFrom={2} maxWidth={240} />);
+    await fireEvent.press(screen.getByTestId('claim-chi-open'));
+    await fireEvent(screen.getByTestId('chi-choices'), 'layout', { nativeEvent: { layout: { x: 0, y: 0, width: 262, height: 50 } } });
+    expect(within(screen.getByTestId('claim-pass')).queryByText('Pass')).toBeNull();
+    await fireEvent.press(screen.getByTestId('claim-pass'));
+    expect(act).toHaveBeenCalledWith({ type: 'pass' });
   });
 
   it('starts closed at the next claim prompt', async () => {

@@ -2,7 +2,8 @@
  * The claim and discard buttons: big CJK verbs (過 吃 碰 槓 打 胡) with the tiles each would take. In a phone's portrait
  * strip and in the short landscape dock (`compact`) they keep to one row, so they never grow into the felt: three or more
  * buttons (two in a narrow dock) are drawn small (the English gloss only on Pass and Win, smaller tiles), and several 吃
- * choices are one 吃 button that opens them. The short landscape dock, which does not wrap, also gives its width
+ * choices are one 吃 button that opens them, with ‹ back to the other claims and Pass beside them (the coach's advice is
+ * then still a button on screen when it says Pass). The short landscape dock, which does not wrap, also gives its width
  * (`maxWidth`): a row wider than that is drawn tighter, a step at a time, until it fits (`TIGHT` below), so no button, and
  * least of all Win, is ever cut at its edge.
  */
@@ -135,7 +136,9 @@ export function ActionBar({
   // (The Chinese glosses are empty: there the gloss steps change nothing.)
   const winKey = view.phase === 'discard' ? 'selfDrawWin' : 'win';
   const steps = chiOpen
-    ? []
+    ? pass && t('table.claimGloss.pass')
+      ? [TIGHT.passGloss]
+      : []
     : ([[TIGHT.small, !!compact && buttons < smallFrom], [TIGHT.passGloss, !!pass && !!t('table.claimGloss.pass')], [TIGHT.claimTiles, !!pong || kongs.length > 0 || (!chiGroup && chis.length > 0)], [TIGHT.winGloss, !!hu && !!t(`table.claimGloss.${winKey}`)]] as const)
         .filter(([, changes]) => changes)
         .map(([step]) => step as number);
@@ -153,6 +156,7 @@ export function ActionBar({
     return (
       <View style={[styles.actionBar, styles.actionBarSmall, { justifyContent: align, flexWrap: 'nowrap' }]} testID="chi-choices" onLayout={onRow}>
         <ClaimButton testID="claim-chi-back" kind="ghost" label="‹" a11y={t('table.a11y.chiBack')} onPress={() => setChiOpenFor(null)} small />
+        {pass && <ClaimButton testID="claim-pass" kind="ghost" label={t('table.claim.pass')} gloss={level >= TIGHT.passGloss ? undefined : t('table.claimGloss.pass')} a11y={t('table.a11y.pass')} onPress={() => act(pass)} small />}
         {chis.map((c, i) => {
           const tiles = (c as { tiles: TileId[] }).tiles;
           return <ClaimButton key={i} kind={recommended(c) ? 'primary' : 'secondary'} label="" a11y={label(t('table.a11y.chi'), tiles)} tiles={tiles} onPress={() => act(c)} small />;
