@@ -2123,13 +2123,19 @@ describe('the table’s answers to the phone’s pings: how late a turn may come
    * moved back `d` ms; every frame after it reaches the phone `d` late under its honest stamp, pongs
    * included. Seat 1, two hands, the seat moving 1.2 s after it is shown a move.
    */
-  function backThenLate(code: string, d: number, turnSeconds: number, timeBankSeconds: number) {
+  function backThenLate(code: string, d: number, turnSeconds: number, timeBankSeconds: number, followOwn = false) {
     let stamped = 0;
-    return wire({
+    const w: Wire = wire({
       code,
       seat: 1,
       rules: withRules({ handsPerMatch: 2, turnSeconds, timeBankSeconds }),
-      think: () => 1_200,
+      // With `followOwn` the seat follows the app's own clock: it moves 1.2 s after it is shown a move, or half a second
+      // before that clock runs out if sooner, and not at all when it shows half a second or less.
+      think: () => {
+        const o = followOwn ? w.c.ownClock() : null;
+        const left = o ? o.bankEnd - w.c.clockNow() : Number.POSITIVE_INFINITY;
+        return left <= 500 ? Infinity : Math.min(1_200, left - 500);
+      },
       map: (m) => {
         const s = stampOf(m);
         if (s === undefined) return m;
@@ -2139,6 +2145,7 @@ describe('the table’s answers to the phone’s pings: how late a turn may come
       delay: () => (stamped > 1 ? d : 0),
       onTick: waitForShare(1),
     });
+    return w;
   }
   const playOut = (w: Wire) => {
     for (let g = 0; g < 14_400 && !w.c.state.matchOver; g++) w.step();
@@ -2168,9 +2175,9 @@ describe('the table’s answers to the phone’s pings: how late a turn may come
       }
     }));
 
-  it('item 2 with the deal itself as the frame stamped back 25 s: every fixed point the phone holds says the table’s clock is 25 s behind, as a server that runs its clock behind from the start does (a stated limit: the count sees nothing); the app’s own clock says the same, so the table playing over a move the seat made with time on it is noted, and no hand is green (T10)', () =>
+  it('item 2 with the deal itself as the frame stamped back 25 s: every fixed point the phone holds says the table’s clock is 25 s behind, as a server that runs its clock behind from the start does (a stated limit: the count sees nothing); the app’s own clock says the same, so a seat that follows it moves with time on it, the table playing over that move is noted, and no hand is green (T10)', () =>
     scenario((i) => {
-      const w = backThenLate(`I2b${i}`, 25_000, 15, 30);
+      const w = backThenLate(`I2b${i}`, 25_000, 15, 30, true);
       playOut(w);
       need(w.c.state.audits.length >= 2);
       noGreen(w);
