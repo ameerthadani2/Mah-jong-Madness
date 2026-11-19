@@ -39,7 +39,10 @@
  * 320x568, and at Extra-large tiles at 568x320 and 667x375 (<size>-felt-*.png), or the table's discards sheet fails
  * discardsSheetCheck once in each of those hands (a tap on an opponent's seat opens a named modal dialog with that seat first
  * and every one of its discards, those behind a "+N" chip too; <size>-felt-*-discards.png), or the end-of-hand result sheet
- * is not a named modal dialog. The preview, the exit sheet, Home's
+ * is not a named modal dialog. The felt and coach runs are seeded (seedContext): each deals the same hand every time, and in
+ * landscape the hand follows the coach, so the seeds at 568x320 meet a win offered with Pass and a Chow, a self-drawn win,
+ * and Pass, Chow, Pong and Kong at one discard in the narrow dock. SCREENS_SEED=n plays them all on seed n instead; each
+ * run's result lists the claim prompts it met. The preview, the exit sheet, Home's
  * replace-table question and the result sheet also fail on the keyboard
  * (dialogKeys): Tab ten times and Shift+Tab four times must stay on the dialog's own controls, never its scrim or the
  * page behind, and the page behind must be inert while the dialog is open and not after.
@@ -92,6 +95,32 @@ const tapSel = async (page, sel, wait = 900) => {
 
 /** Whether the app's root element (everything but a dialog's portal) is inert. */
 const pageInert = (page) => page.evaluate(() => !!document.getElementById('root')?.hasAttribute('inert'));
+
+/**
+ * A browser context whose pages draw Math.random and crypto.getRandomValues from one seeded generator (mulberry32), so a
+ * run deals the same hand every time; the bots' choices follow from the deal, and playCoachedHand's are fixed (it passes
+ * every claim and discards the lowest, right-most tile). A run is then the same hand on every build that draws the same
+ * numbers, unless a machine so busy that a turn clock runs out plays a tile for it. SCREENS_SEED=n gives every seeded run
+ * that seed instead (to look for a hand that meets a given case: each run's result lists the claim prompts it met).
+ */
+const SEED_OVERRIDE = process.env.SCREENS_SEED ? Number(process.env.SCREENS_SEED) : null;
+const seedContext = (ctx, seed) =>
+  ctx.addInitScript((seed) => {
+    let a = seed >>> 0;
+    const next = () => {
+      a = (a + 0x6d2b79f5) | 0;
+      let t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+    Math.random = next;
+    const fill = (arr) => {
+      const max = 2 ** (8 * (arr.BYTES_PER_ELEMENT || 1));
+      for (let i = 0; i < arr.length; i++) arr[i] = Math.floor(next() * max);
+      return arr;
+    };
+    Object.defineProperty(crypto, 'getRandomValues', { value: fill, configurable: true, writable: true });
+  }, SEED_OVERRIDE ?? seed);
 
 /**
  * An open dialog's keyboard checks: the page behind it is inert, and Tab (`tabs` times) then Shift+Tab (4 times) move
@@ -524,9 +553,10 @@ function tally(found) {
  * and discarding the lowest, right-most tile (the drawn one in landscape), and runs coachCheck and feltCheck at each of my
  * decisions: my turn before and after a tile is picked, a win, and each claim chance; and discardsSheetCheck once (a
  * screenshot of the sheet to `sheetShot`, when given). It fails, too, when my hand's tiles get smaller between two of my
- * decisions without the table's "Tiles made smaller" notice. `onDiscard(n)` runs after my nth discard.
+ * decisions without the table's "Tiles made smaller" notice. `onDiscard(n)` runs after my nth discard. With `discard`
+ * 'coach' it discards the tile the coach rings instead, so the hand heads for a win and win prompts come up.
  */
-async function playCoachedHand(page, { onDiscard = async () => undefined, untilDiscards = Infinity, limitMs = 240000, sheetShot = null } = {}) {
+async function playCoachedHand(page, { onDiscard = async () => undefined, untilDiscards = Infinity, limitMs = 240000, sheetShot = null, discard = 'last' } = {}) {
   const found = [];
   let discards = 0;
   // The table's discards sheet, once a hand: at my first turn where an opponent's pond has a "+N" chip, or else at my
@@ -536,6 +566,17 @@ async function playCoachedHand(page, { onDiscard = async () => undefined, untilD
   // smaller between two of them unless the table said so, its "Tiles made smaller" notice seen in between.
   let handW = null;
   let toldSmaller = false;
+  // The claim prompts met (the buttons on offer at each), for the run's result: which cases a seeded hand covers.
+  const prompts = [];
+  const promptSeen = async () =>
+    prompts.push(
+      await page.evaluate(() =>
+        [...document.querySelectorAll('[data-testid="action-dock"] [role="button"], [data-testid="action-strip"] [role="button"]')]
+          .filter((b) => b.getBoundingClientRect().width > 0)
+          .map((b) => (b.getAttribute('aria-label') || '').split(':')[0])
+          .join('+'),
+      ),
+    );
   const decision = async () => {
     found.push(...(await coachSettled(page, true)), ...(await feltSettled(page)));
     const w = await page.evaluate(() => {
@@ -553,12 +594,14 @@ async function playCoachedHand(page, { onDiscard = async () => undefined, untilD
     let el;
     if ((el = await visible(page, '[data-testid="claim-win"]'))) {
       await decision();
+      await promptSeen();
       await tap(page, el);
       await page.waitForTimeout(400);
       continue;
     }
     if ((el = await visible(page, '[data-testid="claim-pass"]'))) {
       await decision();
+      await promptSeen();
       await tap(page, el);
       await page.waitForTimeout(300);
       continue;
@@ -581,15 +624,24 @@ async function playCoachedHand(page, { onDiscard = async () => undefined, untilD
           found.push(...(await discardsSheetCheck(page, r, sheetShot)));
         }
       }
-      const boxes = await page.$$eval('[data-testid="hand-discard"] [data-testid^="tile-"]', (els) => els.map((e) => { const r = e.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; }));
+      // The tile the coach rings green (`discard` 'coach': the hand heads for a win, so win prompts come up), else the
+      // lowest, right-most one.
+      const boxes = await page.$$eval('[data-testid="hand-discard"] [data-testid^="tile-"]', (els) =>
+        els.map((e) => {
+          const r = e.getBoundingClientRect();
+          const coach = [...e.querySelectorAll('div')].some((d) => getComputedStyle(d).borderTopColor === 'rgb(53, 208, 74)');
+          return { x: r.x, y: r.y, w: r.width, h: r.height, coach };
+        }),
+      );
       const hand = boxes.filter((b) => b.w > 0).sort((a, b) => b.y - a.y || b.x - a.x);
-      if (hand[0]) await page.mouse.click(hand[0].x + hand[0].w / 2, hand[0].y + hand[0].h / 2);
+      const pick = (discard === 'coach' && hand.find((b) => b.coach)) || hand[0];
+      if (pick) await page.mouse.click(pick.x + pick.w / 2, pick.y + pick.h / 2);
       await page.waitForTimeout(250);
       continue;
     }
     await page.waitForTimeout(250);
   }
-  return { found: tally(found), discards };
+  return { found: tally(found), discards, prompts };
 }
 
 /** A table in Traditional Chinese (bot names such as 小美（電腦）), at Normal or Extra-large text: <size>-table-zh[-xl].png. */
@@ -991,14 +1043,15 @@ async function runXL(browser, port, [w, h]) {
  * has no status, fails dialogKeys, or does not close on Escape.
  */
 const COACH_RUNS = [
-  [[568, 320], 'en-US', 1, 1],
-  [[568, 320], 'zh-TW', 1.5, 1.3],
-  [[320, 568], 'en-US', 1, 1],
-  [[320, 568], 'zh-TW', 1.5, 1.3],
-  [[667, 375], 'en-US', 1.25, 1.15],
+  // 127: a self-drawn win at the end of the hand, in the 50 px dock.
+  [[568, 320], 'en-US', 1, 1, 127],
+  [[568, 320], 'zh-TW', 1.5, 1.3, 12],
+  [[320, 568], 'en-US', 1, 1, 13],
+  [[320, 568], 'zh-TW', 1.5, 1.3, 14],
+  [[667, 375], 'en-US', 1.25, 1.15, 15],
 ];
 
-async function runCoach(browser, port, [[w, h], locale, tileScale, textScale]) {
+async function runCoach(browser, port, [[w, h], locale, tileScale, textScale, seed]) {
   const tag = `${w}x${h}`;
   const name = `coach-${locale === 'zh-TW' ? 'zh' : 'en'}-t${tileScale}`;
   const ctx = await browser.newContext({ viewport: { width: w, height: h }, locale });
@@ -1006,6 +1059,7 @@ async function runCoach(browser, port, [[w, h], locale, tileScale, textScale]) {
     localStorage.setItem('mjm.profile', JSON.stringify({ userId: 'user-e2e-1234567', userSecret: '0123456789abcdef0123456789abcdef', name: 'Tester', avatar: 'panda' }));
     localStorage.setItem('mjm.display', JSON.stringify({ tileScale: t, textScale: x }));
   }, [tileScale, textScale]);
+  await seedContext(ctx, seed);
   const page = await ctx.newPage();
   const errors = [];
   page.on('pageerror', (e) => errors.push(e.message));
@@ -1015,6 +1069,8 @@ async function runCoach(browser, port, [[w, h], locale, tileScale, textScale]) {
   await page.waitForSelector('[data-testid^="tile-"]', { timeout: 15000 });
   const sheet = [];
   const played = await playCoachedHand(page, {
+    // Landscape: the hand follows the coach, so win prompts come up in the narrow dock.
+    discard: w > h ? 'coach' : 'last',
     onDiscard: async (n) => {
       if (n === 4) await page.screenshot({ path: path.join(out, `${tag}-${name}.png`) });
       if (n !== 2) return;
@@ -1040,8 +1096,8 @@ async function runCoach(browser, port, [[w, h], locale, tileScale, textScale]) {
   });
   const finished = !!(await visible(page, '[data-testid="result-sheet"]'));
   await ctx.close();
-  const where = `Coach (${tag}, ${locale}, tiles ${tileScale}, text ${textScale})`;
-  return { size: `${tag} ${name}`, finished, discards: played.discards, shots: [name, `${name}-sheet`], notes: finished ? [] : ['hand did not finish'], fails: [...sheet, ...played.found].map((f) => `${where}: ${f}`), errors };
+  const where = `Coach (${tag}, ${locale}, tiles ${tileScale}, text ${textScale}, seed ${SEED_OVERRIDE ?? seed})`;
+  return { size: `${tag} ${name}`, seed: SEED_OVERRIDE ?? seed, finished, discards: played.discards, prompts: played.prompts, shots: [name, `${name}-sheet`], notes: finished ? [] : ['hand did not finish'], fails: [...sheet, ...played.found].map((f) => `${where}: ${f}`), errors };
 }
 
 /**
@@ -1052,19 +1108,21 @@ async function runCoach(browser, port, [[w, h], locale, tileScale, textScale]) {
  * landscape phones at Extra-large tiles (568x320, 667x375).
  */
 const FELT_RUNS = [
-  [[390, 844], 'en-US', 1.5, 1.3],
-  [[360, 740], 'zh-TW', 1.5, 1.3],
-  [[375, 667], 'en-US', 1.5, 1],
-  [[360, 640], 'zh-TW', 1.25, 1.3],
-  [[360, 640], 'en-US', 1.5, 1.15],
-  [[320, 568], 'en-US', 1.5, 1.15],
-  [[320, 568], 'zh-TW', 1, 1.3],
-  [[568, 320], 'en-US', 1.5, 1],
-  [[568, 320], 'zh-TW', 1.5, 1.3],
-  [[667, 375], 'en-US', 1.5, 1.3],
+  [[390, 844], 'en-US', 1.5, 1.3, 21],
+  [[360, 740], 'zh-TW', 1.5, 1.3, 22],
+  [[375, 667], 'en-US', 1.5, 1, 23],
+  [[360, 640], 'zh-TW', 1.25, 1.3, 24],
+  [[360, 640], 'en-US', 1.5, 1.15, 25],
+  [[320, 568], 'en-US', 1.5, 1.15, 26],
+  [[320, 568], 'zh-TW', 1, 1.3, 27],
+  // 146: a win on a discard offered with Pass and a Chow (wider than the 240 px dock in English); 126: Pass, Chow, Pong and
+  // Kong at one discard.
+  [[568, 320], 'en-US', 1.5, 1.3, 146],
+  [[568, 320], 'zh-TW', 1.5, 1.3, 126],
+  [[667, 375], 'en-US', 1.5, 1.3, 30],
 ];
 
-async function runFelt(browser, port, [[w, h], locale, tileScale, textScale]) {
+async function runFelt(browser, port, [[w, h], locale, tileScale, textScale, seed]) {
   const tag = `${w}x${h}`;
   const name = `felt-${locale === 'zh-TW' ? 'zh' : 'en'}-t${tileScale}-x${textScale}`;
   const ctx = await browser.newContext({ viewport: { width: w, height: h }, locale });
@@ -1072,6 +1130,7 @@ async function runFelt(browser, port, [[w, h], locale, tileScale, textScale]) {
     localStorage.setItem('mjm.profile', JSON.stringify({ userId: 'user-e2e-1234567', userSecret: '0123456789abcdef0123456789abcdef', name: 'Tester', avatar: 'panda' }));
     localStorage.setItem('mjm.display', JSON.stringify({ tileScale: t, textScale: x }));
   }, [tileScale, textScale]);
+  await seedContext(ctx, seed);
   const page = await ctx.newPage();
   const errors = [];
   page.on('pageerror', (e) => errors.push(e.message));
@@ -1084,11 +1143,14 @@ async function runFelt(browser, port, [[w, h], locale, tileScale, textScale]) {
       if (n === 6) await page.screenshot({ path: path.join(out, `${tag}-${name}.png`) });
     },
     sheetShot: path.join(out, `${tag}-${name}-discards.png`),
+    // Landscape: the hand follows the coach, so win prompts come up in the narrow dock; portrait never wins, so the
+    // ponds fill up.
+    discard: w > h ? 'coach' : 'last',
   });
   const finished = !!(await visible(page, '[data-testid="result-sheet"]'));
   await ctx.close();
-  const where = `Felt (${tag}, ${locale}, tiles ${tileScale}, text ${textScale})`;
-  return { size: `${tag} ${name}`, finished, discards: played.discards, shots: [name], notes: finished ? [] : ['hand did not finish'], fails: played.found.map((f) => `${where}: ${f}`), errors };
+  const where = `Felt (${tag}, ${locale}, tiles ${tileScale}, text ${textScale}, seed ${SEED_OVERRIDE ?? seed})`;
+  return { size: `${tag} ${name}`, seed: SEED_OVERRIDE ?? seed, finished, discards: played.discards, prompts: played.prompts, shots: [name], notes: finished ? [] : ['hand did not finish'], fails: played.found.map((f) => `${where}: ${f}`), errors };
 }
 
 /**
