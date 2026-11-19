@@ -6,7 +6,7 @@
  * (`maxWidth`): a row wider than that is drawn tighter, a step at a time, until it fits (`TIGHT` below), so no button, and
  * least of all Win, is ever cut at its edge.
  */
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Text, View, type LayoutChangeEvent } from 'react-native';
 import { kindOf, type Action, type Hint, type TableView, type TileId } from '@mjm/engine';
 import { colors, fonts } from '../../theme';
@@ -73,7 +73,6 @@ function ClaimButton({ label, gloss, a11y, tiles, kind, onPress, big, small, tes
  * without its gloss.
  */
 export const TIGHT = { small: 1, passGloss: 2, claimTiles: 3, winGloss: 4 } as const;
-const MAX_TIGHT = 4;
 
 export function ActionBar({
   actions,
@@ -112,7 +111,8 @@ export function ActionBar({
   const [chiOpenFor, setChiOpenFor] = useState<string | null>(null);
   // How tight this row is drawn (TIGHT), for the buttons it has now: a new set of buttons starts at 0 and is measured again.
   const [tight, setTight] = useState<{ key: string; level: number }>({ key: '', level: 0 });
-  if (actions.length === 0) return null;
+  // The row's width as last laid out, and for which buttons at which tightness.
+  const [measured, setMeasured] = useState<{ key: string; level: number; w: number } | null>(null);
   const hu = actions.find((a) => a.type === 'hu');
   const kongs = actions.filter((a) => a.type === 'kong');
   const pong = actions.find((a) => a.type === 'pong');
@@ -129,11 +129,26 @@ export function ActionBar({
   const chiOpen = chiGroup && chiOpenFor === prompt;
   const rowKey = `${prompt}|${actions.map((a) => a.type).join(',')}|${selected ?? ''}|${chiOpen ? 'chi' : ''}`;
   const level = tight.key === rowKey ? tight.level : 0;
-  // Measured in the dock: wider than it, a step tighter (the dock lays the row out again, and it is measured again).
-  const onRow = (e: LayoutChangeEvent) => {
-    if (maxWidth === undefined || maxWidth <= 0 || level >= MAX_TIGHT) return;
-    if (e.nativeEvent.layout.width > maxWidth + 0.5) setTight({ key: rowKey, level: level + 1 });
-  };
+  const buttons = (pass ? 1 : 0) + (chiGroup ? 1 : chis.length) + (pong ? 1 : 0) + kongs.length + (canDiscard && selected !== null ? 1 : 0) + (hu ? 1 : 0);
+  // The steps (TIGHT) that change this row, so each one makes it narrower and is measured again: a row already small skips
+  // the first; one with no Pass, no claim with tiles or no Win skips that step. (The 吃 choices keep everything.)
+  // (The Chinese glosses are empty: there the gloss steps change nothing.)
+  const winKey = view.phase === 'discard' ? 'selfDrawWin' : 'win';
+  const steps = chiOpen
+    ? []
+    : ([[TIGHT.small, !!compact && buttons < smallFrom], [TIGHT.passGloss, !!pass && !!t('table.claimGloss.pass')], [TIGHT.claimTiles, !!pong || kongs.length > 0 || (!chiGroup && chis.length > 0)], [TIGHT.winGloss, !!hu && !!t(`table.claimGloss.${winKey}`)]] as const)
+        .filter(([, changes]) => changes)
+        .map(([step]) => step as number);
+  // Measured in the dock and wider than it: the next step (the dock lays the row out again, and it is measured again). Also
+  // when the dock's width comes after the row's (the row's own layout does not change then).
+  const onRow = (e: LayoutChangeEvent) => setMeasured({ key: rowKey, level, w: e.nativeEvent.layout.width });
+  useEffect(() => {
+    if (!measured || measured.key !== rowKey || measured.level !== level || maxWidth === undefined || maxWidth <= 0 || measured.w <= maxWidth + 0.5) return;
+    const next = steps.find((step) => step > level);
+    if (next !== undefined) setTight({ key: rowKey, level: next });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [measured, maxWidth, rowKey, level]);
+  if (actions.length === 0) return null;
   if (chiOpen) {
     return (
       <View style={[styles.actionBar, styles.actionBarSmall, { justifyContent: align, flexWrap: 'nowrap' }]} testID="chi-choices" onLayout={onRow}>
@@ -145,7 +160,6 @@ export function ActionBar({
       </View>
     );
   }
-  const buttons = (pass ? 1 : 0) + (chiGroup ? 1 : chis.length) + (pong ? 1 : 0) + kongs.length + (canDiscard && selected !== null ? 1 : 0) + (hu ? 1 : 0);
   const small = !!compact && (buttons >= smallFrom || level >= TIGHT.small);
   const win = (key: string) => key === 'win' || key === 'selfDrawWin';
   // Small buttons keep the English gloss on Pass and Win only (the coach's line and every button's spoken name still say it);

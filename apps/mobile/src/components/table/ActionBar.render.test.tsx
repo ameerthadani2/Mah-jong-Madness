@@ -4,6 +4,7 @@ import { StyleSheet } from 'react-native';
 import { fireEvent, render, screen, within } from '@testing-library/react-native';
 import type { Action, TableView, TileId } from '@mjm/engine';
 import { ActionBar } from './ActionBar';
+import { setLocalePreference } from '../../i18n';
 
 /**
  * A phone's portrait claim strip and short landscape dock (`compact`) keep to one row, so they never take height from the
@@ -75,8 +76,8 @@ describe('the short landscape dock, which never scrolls a button out of view', (
     const chow = () => screen.getByRole('button', { name: /^Chow: / });
     expect(within(screen.getByTestId('claim-pass')).getByText('Pass')).toBeOnTheScreen();
     expect(tilesOn(chow())).toBe(2);
-    // 256 px in a 240 px dock (568x320, English, the largest text): small already, then Pass gives up its gloss.
-    await fireEvent(screen.getByTestId('claim-row'), 'layout', layout(256));
+    // 256 px in a 240 px dock (568x320, English, the largest text). The buttons are small already, so the first step is
+    // Pass giving up its gloss.
     await fireEvent(screen.getByTestId('claim-row'), 'layout', layout(256));
     expect(within(screen.getByTestId('claim-pass')).queryByText('Pass')).toBeNull();
     expect(within(screen.getByTestId('claim-win')).getByText('Win')).toBeOnTheScreen();
@@ -94,6 +95,28 @@ describe('the short landscape dock, which never scrolls a button out of view', (
     await rerender(dock(WIN_CHOW, 20));
     expect(within(screen.getByTestId('claim-pass')).getByText('Pass')).toBeOnTheScreen();
     expect(within(screen.getByTestId('claim-win')).getByText('Win')).toBeOnTheScreen();
+  });
+
+  it('steps when the dock’s width comes after the row was laid out (the row’s own size does not change then)', async () => {
+    const { rerender } = await render(<ActionBar actions={WIN_CHOW} act={() => {}} selected={null} hint={null} view={view(12)} compact wrap={false} smallFrom={2} />);
+    await fireEvent(screen.getByTestId('claim-row'), 'layout', layout(256));
+    expect(within(screen.getByTestId('claim-pass')).getByText('Pass')).toBeOnTheScreen();
+    await rerender(dock(WIN_CHOW));
+    expect(within(screen.getByTestId('claim-pass')).queryByText('Pass')).toBeNull();
+  });
+
+  it('in Chinese, where the glosses are empty, goes straight to the claims without tiles', async () => {
+    setLocalePreference('zh-TW');
+    try {
+      const four: Action[] = [{ type: 'pass' }, chi(4, 8), { type: 'pong' } as Action, { type: 'kong', tile: 13 } as Action];
+      await render(dock(four));
+      const claims = () => screen.getAllByRole('button').filter((b) => /^(吃|碰|槓)：/.test(b.props.accessibilityLabel));
+      expect(claims().map(tilesOn)).toEqual([2, 1, 1]);
+      await fireEvent(screen.getByTestId('claim-row'), 'layout', layout(263));
+      expect(claims().map(tilesOn)).toEqual([0, 0, 0]);
+    } finally {
+      setLocalePreference('auto');
+    }
   });
 
   it('keeps a row that fits as it is, and a strip that may wrap never measures itself', async () => {
