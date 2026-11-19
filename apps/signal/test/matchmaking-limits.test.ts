@@ -28,7 +28,7 @@ function registry(opts: { fillMs?: number; maxHostedTables?: number } = {}) {
     openTable: (ids): string => rooms.createQuickMatchRoom(ids),
     seatedAt: (userId): string | undefined => rooms.quickTableOf(userId),
     charge: (peerIds): string[] => rooms.chargeQuickMatch(peerIds),
-    cooldownMs: (peerId): number => rooms.quickCooldownMs(peerId),
+    cooldown: (peerId) => rooms.quickCooldown(peerId),
   });
   const rooms: RoomRegistry = new RoomRegistry({ allowHosted: true, now: () => clock.now, botDelayMs: 0, queue: mm, maxHostedTables: opts.maxHostedTables });
   let n = 0;
@@ -239,6 +239,36 @@ describe('the wait for the create allowance', () => {
     while (!again.out.some((m) => m.t === 'matched') && clock.now < openedAt + 2 * LIMITS.createCooldownMs) advance(500);
     expect(clock.now).toBeGreaterThanOrEqual(openedAt + LIMITS.createCooldownMs);
     expect(clock.now).toBeLessThan(openedAt + LIMITS.createCooldownMs + 1_000);
+  });
+});
+
+describe('the wait for the address allowance', () => {
+  it('a player held back only by its address keeps its own allowance: every status says the address holds it, the wait it gives never grows, and the player is seated when the address has a table again', async () => {
+    const { rooms, peer, advance, clock } = registry();
+    const ip = '203.0.113.9';
+    // Other accounts on the same address (a household, a carrier's shared address) have just opened its six tables of the minute.
+    const socket: Socket = { send: () => undefined, close: () => undefined };
+    for (let i = 0; i < LIMITS.createsPerIpPerMinute; i++) expect(rooms.chargeQuickMatch([rooms.hello(rooms.connect(socket, ip), `user-house-${i}`)])).toEqual([]);
+    const late = peer(undefined, ip);
+    const queuedAt = clock.now;
+    rooms.handle(late.id, { t: 'queue' });
+    await flush();
+    while (!late.out.some((m) => m.t === 'matched') && clock.now < queuedAt + 30_000) {
+      advance(500);
+      // Refused for its address only, so its own allowance is untouched and the address is what it waits for.
+      if (!late.out.some((m) => m.t === 'matched')) expect(rooms.quickCooldown(late.id).by).toBe('address');
+    }
+    const matchedAt = clock.now;
+    const told = late.out.filter((m) => m.t === 'queue_status' && m.cooldownMs !== undefined);
+    expect(told.length).toBeGreaterThan(2);
+    for (const m of told) expect(m.cooldownBy).toBe('address');
+    // When each status says the wait ends (from the moment the player queued): never later than the one before (each is rounded up to the millisecond).
+    const ends = told.map((m) => (m.waitedMs as number) + (m.cooldownMs as number));
+    for (let i = 1; i < ends.length; i++) expect(ends[i]).toBeLessThanOrEqual(ends[i - 1] + 1);
+    // Seated in the tick the address has a table again (one every 10 s once its six are spent), as the first status said.
+    expect(ends[0]).toBeLessThanOrEqual(60_000 / LIMITS.createsPerIpPerMinute + 1);
+    expect(matchedAt - queuedAt).toBeGreaterThanOrEqual(ends[0]);
+    expect(matchedAt - queuedAt).toBeLessThan(ends[0] + 1_000);
   });
 });
 

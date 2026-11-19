@@ -95,6 +95,13 @@ describe('quick match', () => {
     expect(screen.queryByTestId('quickmatch-cooldown')).toBeNull();
   });
 
+  it('says it is the connection’s allowance, not the player’s own, when that is what holds the player', async () => {
+    await renderQuickMatch();
+    await step(() => (search().opts.onStatus as (s: QueueStatus) => void)({ ...status(1, 1000), cooldownMs: 8_400, cooldownBy: 'address' }));
+    expect(screen.getByText('Several tables were started from your internet connection in the last minute, and each connection can start 6 a minute, so we can seat you in 9 s.')).toBeOnTheScreen();
+    expect(screen.queryByText(/You started a table a moment ago/)).toBeNull();
+  });
+
   it('once matched, says so, holds Cancel, and takes the player to the table with Home behind it', async () => {
     const calls = await renderQuickMatch();
     await step(() => (search().opts.onMatched as () => void)());

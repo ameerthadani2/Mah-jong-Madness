@@ -38,9 +38,12 @@
  * (`{t:'queue_error', code:'seated', room}`), so the app can go back to it; and opening a table is charged to each matched player's create allowance and
  * once to each address they came from, exactly as creating a table is. A player with no
  * allowance left keeps its place in the queue until it has some, and the rest of the group is
- * seated without it. This is on purpose (a player cannot churn tables by leaving and queueing
- * again), so a player who left a table moments ago waits up to `createCooldownMs` (10 s) to be
- * seated again; its `queue_status` says how long (`cooldownMs`), and the app shows it.
+ * seated without it; nothing is charged to a player who is refused. This is on purpose (a player
+ * cannot churn tables by leaving and queueing again), so a player who left a table moments ago
+ * waits up to `createCooldownMs` (10 s) to be seated again, and players who share an address wait
+ * for its allowance too (`createsPerIpPerMinute`, one more table every 10 s once it is spent); its
+ * `queue_status` says how long (`cooldownMs`) and whose allowance it waits for (`cooldownBy`:
+ * `account` or `address`), and the app shows it.
  *
  * Refusals are `{t:'queue_error', code, message}` with code `banned`, `age_missing`, `age_under`,
  * `rate_limited`, `sign_in`, `unavailable`, `replaced` or `seated` (which also carries `room`).
@@ -149,9 +152,10 @@ export interface MatchmakerOptions {
   charge?(peerIds: string[]): string[];
   /**
    * How long (ms) until opening a table can be charged to this socket again (`charge`): 0 when it
-   * can now. A player waiting on it is told so (`queue_status.cooldownMs`).
+   * can now; and which allowance holds it back, its account's or its address's. A player waiting on
+   * it is told both (`queue_status.cooldownMs`, `cooldownBy`).
    */
-  cooldownMs?(peerId: string): number;
+  cooldown?(peerId: string): { ms: number; by: 'account' | 'address' };
   /**
    * Where the pair counts are kept (the repositories' `quickMatchPairs`: the database on Postgres,
    * so they survive a restart and the admin view reads them there). Without it they are kept in
@@ -178,7 +182,7 @@ interface Entry {
   /** The account's quick-match rating when it queued (src/tableRating.ts). */
   rating: number;
   lastStatusAt: number;
-  /** The last status it was sent carried a `cooldownMs`: it knows it waits for its table allowance. */
+  /** The last status it was sent carried a `cooldownMs`: it knows it waits for a table allowance. */
   toldCooldown: boolean;
 }
 
@@ -586,11 +590,11 @@ export class Matchmaker implements QueueGate {
     e.lastStatusAt = now;
     const position = this.ordered().indexOf(e) + 1;
     const humans = groups.find((g) => g.includes(e))?.length ?? 1;
-    // A player who opened a table moments ago is seated only once its allowance is back: say how long that is.
-    const cooldown = this.opts.cooldownMs?.(e.peer.peerId) ?? 0;
-    const cooldownMs = Number.isFinite(cooldown) && cooldown > 0 ? Math.ceil(cooldown) : 0;
+    // A player who opened a table moments ago (or whose address did) is seated only once its allowance is back: say how long that is, and whose it is.
+    const cooldown = this.opts.cooldown?.(e.peer.peerId) ?? { ms: 0, by: 'account' as const };
+    const cooldownMs = Number.isFinite(cooldown.ms) && cooldown.ms > 0 ? Math.ceil(cooldown.ms) : 0;
     e.toldCooldown = cooldownMs > 0;
-    e.peer.send({ t: 'queue_status', position, waitedMs: now - e.joinedAt, humans, fillMs: this.fillMs, ...(cooldownMs > 0 ? { cooldownMs } : {}) });
+    e.peer.send({ t: 'queue_status', position, waitedMs: now - e.joinedAt, humans, fillMs: this.fillMs, ...(cooldownMs > 0 ? { cooldownMs, cooldownBy: cooldown.by } : {}) });
   }
 }
 

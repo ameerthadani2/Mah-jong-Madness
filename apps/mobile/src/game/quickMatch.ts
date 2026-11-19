@@ -22,9 +22,12 @@ export interface QuickMatchView {
   botsInSeconds: number;
   /**
    * Seconds until the server may seat this player, when it opened a table moments ago (one new table
-   * per account every 10 s, `cooldownMs`); 0 when nothing holds it back.
+   * per account every 10 s, `cooldownMs`), or tables were opened from its connection faster than the
+   * connection allows (six a minute); 0 when nothing holds it back.
    */
   cooldownSeconds: number;
+  /** Whose allowance holds the player: its own (`account`, also from a server that does not say) or its connection's (`address`). */
+  cooldownBy: 'account' | 'address';
 }
 
 /**
@@ -42,6 +45,7 @@ export function quickMatchView(status: QueueStatus | null, waitedMs?: number): Q
     fillSeconds: Math.round(fillMs / 1000),
     botsInSeconds: Math.max(0, Math.ceil((fillMs - waited) / 1000)),
     cooldownSeconds: Math.max(0, Math.ceil((cooldownMs - sinceStatus) / 1000)),
+    cooldownBy: status?.cooldownBy === 'address' ? 'address' : 'account',
   };
 }
 

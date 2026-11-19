@@ -121,6 +121,12 @@ export interface QueueStatus {
    * moments ago: the milliseconds until its table allowance is back and the queue may seat it.
    */
   cooldownMs?: number;
+  /**
+   * With `cooldownMs`, the allowance that holds this player back: its own account's (`account`: it
+   * opened a table moments ago) or its address's (`address`: tables were opened from its connection,
+   * by any account, faster than the address allows). Absent on older servers.
+   */
+  cooldownBy?: 'account' | 'address';
 }
 
 /**

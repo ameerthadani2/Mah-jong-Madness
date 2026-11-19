@@ -214,9 +214,10 @@ export function QuickMatchScreen() {
               </View>
             ) : null}
             {phase === 'searching' && view.cooldownSeconds > 0 ? (
-              // The server holds a player who opened a table moments ago (one new table every 10 s): say so, and for how long.
+              // The server holds a player who opened a table moments ago (one new table every 10 s), or whose
+              // connection opened its six tables of the minute: say which, and for how long.
               <View testID="quickmatch-cooldown">
-                <P dim>{t('quickmatch.cooldown', { seconds: view.cooldownSeconds })}</P>
+                <P dim>{t(view.cooldownBy === 'address' ? 'quickmatch.cooldownAddress' : 'quickmatch.cooldown', { seconds: view.cooldownSeconds })}</P>
               </View>
             ) : null}
           </View>

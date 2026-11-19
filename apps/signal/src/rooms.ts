@@ -44,6 +44,9 @@ interface Peer {
   name?: string;
 }
 
+/** The key of a socket's account in the create allowance: its account, or the socket itself without one. */
+const createKey = (peer: Peer): string => (peer.userId ? `u:${peer.userId}` : `p:${peer.id}`);
+
 interface Room {
   code: string;
   host: string;
@@ -402,30 +405,40 @@ export class RoomRegistry {
   /**
    * Charge a quick-match table to the sockets it is opened for: one create from each account's
    * allowance and one from each distinct address (the same buckets a `create` spends). Returns
-   * the peer ids that had none left; the queue keeps those waiting and seats the others.
+   * the peer ids that had none left; the queue keeps those waiting and seats the others. Nothing
+   * is spent for a socket that is refused: an account held back only by its address keeps its own
+   * allowance, so its wait is the address's alone (`quickCooldown`).
    */
   chargeQuickMatch(peerIds: string[]): string[] {
     const refused: string[] = [];
-    const byIp = new Map<string, string[]>();
+    const byIp = new Map<string, Peer[]>();
+    const paid: Peer[] = [];
     for (const id of peerIds) {
       const peer = this.peers.get(id);
       if (!peer) continue;
-      if (!this.createsByUser.take(peer.userId ? `u:${peer.userId}` : `p:${peer.id}`)) refused.push(id);
-      else if (peer.ip !== undefined) byIp.set(peer.ip, [...(byIp.get(peer.ip) ?? []), id]);
+      if (!this.createsByUser.has(createKey(peer))) refused.push(id);
+      else if (peer.ip !== undefined) byIp.set(peer.ip, [...(byIp.get(peer.ip) ?? []), peer]);
+      else paid.push(peer);
     }
-    for (const [ip, ids] of byIp) if (!this.createsByIp.take(ip)) refused.push(...ids);
+    for (const [ip, peers] of byIp) {
+      if (!this.createsByIp.take(ip)) refused.push(...peers.map((p) => p.id));
+      else paid.push(...peers);
+    }
+    for (const peer of paid) this.createsByUser.take(createKey(peer));
     return refused;
   }
 
   /**
    * How long until a quick-match table can be charged to this socket (`chargeQuickMatch`): until
-   * its account's create allowance and its address's both hold one again. 0 when they do now.
+   * its account's create allowance and its address's both hold one again (0 when they do now),
+   * and which of the two holds it back the longer (`account` when neither does).
    */
-  quickCooldownMs(peerId: string): number {
+  quickCooldown(peerId: string): { ms: number; by: 'account' | 'address' } {
     const peer = this.peers.get(peerId);
-    if (!peer) return 0;
-    const byUser = this.createsByUser.msUntil(peer.userId ? `u:${peer.userId}` : `p:${peer.id}`);
-    return Math.max(byUser, peer.ip !== undefined ? this.createsByIp.msUntil(peer.ip) : 0);
+    if (!peer) return { ms: 0, by: 'account' };
+    const byUser = this.createsByUser.msUntil(createKey(peer));
+    const byIp = peer.ip !== undefined ? this.createsByIp.msUntil(peer.ip) : 0;
+    return byIp > byUser ? { ms: byIp, by: 'address' } : { ms: byUser, by: 'account' };
   }
 
   /**

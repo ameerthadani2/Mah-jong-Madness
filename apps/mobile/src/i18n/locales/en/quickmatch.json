@@ -13,6 +13,7 @@
   },
   "waited": "Waiting %{seconds} s",
   "cooldown": "You started a table a moment ago. Each player can start one every 10 seconds, so we can seat you in %{seconds} s.",
+  "cooldownAddress": "Several tables were started from your internet connection in the last minute, and each connection can start 6 a minute, so we can seat you in %{seconds} s.",
   "botsNote": "Bots fill empty seats after %{seconds} seconds",
   "botsSoon": "Bots join in %{seconds} s",
   "matched": "Table found! Taking your seat…",
