@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { ClientState } from '@mjm/net';
 import { shouldTick, tableEvents, type CueState, type TableEvent } from '../audio/cues';
+import { turnCountdown, type TurnClock, type TurnCountdown } from '../components/table/turnClock';
 import type { ReconnectState } from '../logic/reconnect';
 import type { Session } from './session';
 
@@ -56,6 +57,33 @@ export function useCountdown(deadline: number | null): number | null {
     return () => clearInterval(id);
   }, [deadline]);
   return s.deadline === deadline ? s.left : secondsLeft(deadline, Date.now());
+}
+
+/**
+ * A turn clock counted down (`turnCountdown`), checked every 250 ms while anybody is on the clock and changing once a
+ * second: my own move by the table client's own clock (`TurnClock.own`), which goes on to the bank when the turn clock
+ * ends without waiting for the table to say so; another seat's by its deadline against the wall clock. Only the
+ * component that calls it re-renders (the HUD clock, the seat timer ring, the clock ticker and announcer).
+ */
+export function useTurnCountdown(clock: TurnClock | null): TurnCountdown {
+  const deadline = clock?.deadline ?? null;
+  const own = clock?.own ?? null;
+  const bank = clock?.bank ?? false;
+  const total = clock?.total ?? 1;
+  const [s, setS] = useState(() => turnCountdown(clock, Date.now()));
+  useEffect(() => {
+    const c: TurnClock = { deadline, total, bank, own };
+    const tick = () =>
+      setS((p) => {
+        const n = turnCountdown(c, Date.now());
+        return p.left === n.left && p.bank === n.bank && p.total === n.total && p.period === n.period ? p : n;
+      });
+    tick();
+    if (deadline === null && own === null) return;
+    const id = setInterval(tick, 250);
+    return () => clearInterval(id);
+  }, [deadline, own, bank, total]);
+  return s;
 }
 
 /**

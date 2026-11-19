@@ -387,7 +387,8 @@ export function TableScreen() {
   const rules = state.rules;
   const turnSeat = view.phase === 'discard' ? view.turn : null;
   const timerSeat = myMove ? mySeat : turnSeat;
-  const clock: TurnClock = { deadline, total: rules ? (state.inTimeBank ? rules.timeBankSeconds || 1 : rules.turnSeconds || 1) : 1, bank: state.inTimeBank };
+  // My own move is counted by the table client's own clock (the turn, then the bank); another seat's by its deadline.
+  const clock: TurnClock = { deadline, total: rules ? (state.inTimeBank ? rules.timeBankSeconds || 1 : rules.turnSeconds || 1) : 1, bank: state.inTimeBank, ...(myMove ? { own: session.client } : {}) };
   const plateProps = (seat: number): PlateProps => ({
     seat,
     info: seatInfo(seat),

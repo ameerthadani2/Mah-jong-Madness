@@ -2,7 +2,7 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 import { describe, expect, it } from 'vitest';
 import { secondsLeft } from '../../game/useTable';
-import { clockNoticeMessage, clockUrgent, nextClockNotice, timerFraction, type ClockNotice, type TurnClock } from './turnClock';
+import { clockNoticeMessage, clockUrgent, nextClockNotice, timerFraction, turnCountdown, type ClockNotice, type TurnClock } from './turnClock';
 import { en, zhTW } from '../../i18n/locales';
 
 const read = (p: string) => readFileSync(join(__dirname, p), 'utf8');
@@ -27,11 +27,42 @@ describe('turn clock', () => {
 
   it('keeps the per-second countdown out of the table screen, so only the clock leaves re-render', () => {
     const screen = read('../../screens/TableScreen.tsx');
-    expect(screen).not.toMatch(/useCountdown\(/);
+    expect(screen).not.toMatch(/useCountdown\(|useTurnCountdown\(/);
     expect(screen).not.toMatch(/useClockTick\(/);
+    // My own move is counted by the table client's own clock.
+    expect(screen).toMatch(/myMove \? \{ own: session\.client \}/);
     // The leaves that do count down.
-    expect(read('./ClockParts.tsx')).toMatch(/useCountdown\(/);
-    expect(read('../TableParts.tsx')).toMatch(/useCountdown\(/);
+    expect(read('./ClockParts.tsx')).toMatch(/useTurnCountdown\(/);
+    expect(read('../TableParts.tsx')).toMatch(/useTurnCountdown\(/);
+  });
+});
+
+describe('my own clock (TurnClock.own: the table client’s own clock)', () => {
+  /** A table client whose own clock ends the turn at 15 s and the bank at 44.5 s, read at `now` on its own clock. */
+  const reader = (now: () => number, o: { turnEnd: number; bankEnd: number } | null = { turnEnd: 15_000, bankEnd: 44_500 }) => ({ ownClock: () => o, clockNow: now });
+
+  it('counts the turn clock, then the bank to its end, whatever the deadline and the wall clock say', () => {
+    let at = 0;
+    const own: TurnClock = { deadline: 999_999_999, total: 15, bank: false, own: reader(() => at) };
+    expect(turnCountdown(own, 0)).toEqual({ left: 15, bank: false, total: 15, period: 15_000 });
+    at = 14_001;
+    expect(turnCountdown(own, 0).left).toBe(1);
+    // The turn clock is over: the bank runs, with no state from the table to say so; the ring's total is the bank.
+    at = 15_000;
+    expect(turnCountdown(own, 0)).toEqual({ left: 30, bank: true, total: 30, period: 44_500 });
+    at = 44_000;
+    expect(turnCountdown(own, 0)).toMatchObject({ left: 1, bank: true });
+    at = 50_000;
+    expect(turnCountdown(own, 0)).toMatchObject({ left: 0, bank: true });
+  });
+
+  it('with no bank, the turn clock alone; with nothing to read, the deadline against the wall clock', () => {
+    const none: TurnClock = { deadline: 10_000, total: 4, bank: false, own: reader(() => 5_000, { turnEnd: 4_000, bankEnd: 4_000 }) };
+    expect(turnCountdown(none, 0)).toMatchObject({ left: 0, bank: false });
+    const blank: TurnClock = { deadline: 10_000, total: 15, bank: false, own: reader(() => 0, null) };
+    expect(turnCountdown(blank, 1_000)).toEqual({ left: 9, bank: false, total: 15, period: 10_000 });
+    expect(turnCountdown({ deadline: 10_000, total: 15, bank: true }, 4_000)).toEqual({ left: 6, bank: true, total: 15, period: 10_000 });
+    expect(turnCountdown(null, 0)).toEqual({ left: null, bank: false, total: 1, period: null });
   });
 });
 

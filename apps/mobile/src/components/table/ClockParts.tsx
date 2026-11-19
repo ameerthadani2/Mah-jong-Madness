@@ -1,11 +1,11 @@
 /**
  * The parts of the table that change every second, each counting the turn clock down on its own so only it
- * re-renders: the HUD clock chip, what a screen reader is told about the clock, and the clock-tick sound (the
- * seat timer ring is TableParts' SeatTimer).
+ * re-renders (`useTurnCountdown`: my own move by the table client's own clock): the HUD clock chip, what a screen
+ * reader is told about the clock, and the clock-tick sound (the seat timer ring is TableParts' SeatPlate).
  */
 import React, { useEffect, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
-import { useClockTick, useCountdown } from '../../game/useTable';
+import { useClockTick, useCountdown, useTurnCountdown } from '../../game/useTable';
 import { colors, fonts } from '../../theme';
 import { useT } from '../../i18n';
 import { Icon } from '../Icons';
@@ -19,13 +19,13 @@ import { nextHandAnnouncement, nextHandNote } from './nextHand';
  */
 export function HudClock({ clock }: { clock: TurnClock }) {
   const { t } = useT();
-  const left = useCountdown(clock.deadline);
+  const { left, bank, total, period } = useTurnCountdown(clock);
   if (left === null) return null;
-  const urgent = clockUrgent(left, clock);
-  const text = clock.bank ? t('table.timeBank', { s: left }) : t('table.seconds', { s: left });
+  const urgent = clockUrgent(left, { deadline: period, total, bank });
+  const text = bank ? t('table.timeBank', { s: left }) : t('table.seconds', { s: left });
   return (
-    <View style={[styles.chip, urgent && { backgroundColor: colors.danger }]} accessible accessibilityLabel={t(clock.bank ? 'table.a11y.clockBankNow' : 'table.a11y.clockNow', { s: left })} testID="hud-clock">
-      <Icon name={clock.bank ? 'hourglass' : 'clock'} size={18} />
+    <View style={[styles.chip, urgent && { backgroundColor: colors.danger }]} accessible accessibilityLabel={t(bank ? 'table.a11y.clockBankNow' : 'table.a11y.clockNow', { s: left })} testID="hud-clock">
+      <Icon name={bank ? 'hourglass' : 'clock'} size={18} />
       <Text style={styles.text}>{text}</Text>
     </View>
   );
@@ -38,11 +38,12 @@ export function HudClock({ clock }: { clock: TurnClock }) {
  */
 export function ClockAnnouncer({ clock, myMove }: { clock: TurnClock; myMove: boolean }) {
   const { t } = useT();
-  const left = useCountdown(clock.deadline);
+  const { left, bank, total, period } = useTurnCountdown(clock);
   const [notice, setNotice] = useState<ClockNotice | null>(null);
   useEffect(() => {
-    setNotice((prev) => nextClockNotice(prev, myMove ? left : null, clock));
-  }, [left, myMove, clock]);
+    // The period is the clock's own (my move: its turn, then its bank), so the bank is announced when it starts.
+    setNotice((prev) => nextClockNotice(prev, myMove ? left : null, { deadline: period, total, bank }));
+  }, [left, myMove, period, total, bank]);
   const message = notice ? clockNoticeMessage(notice) : null;
   const text = message ? t(message.key, message.params) : '';
   useAnnounce(text || null, notice);
@@ -55,7 +56,7 @@ export function ClockAnnouncer({ clock, myMove }: { clock: TurnClock; myMove: bo
 
 /** Plays `onTick` once a second for the last five seconds of my move. Renders nothing. */
 export function ClockTicker({ clock, myMove, onTick }: { clock: TurnClock; myMove: boolean; onTick: () => void }) {
-  useClockTick(useCountdown(clock.deadline), myMove, onTick);
+  useClockTick(useTurnCountdown(clock).left, myMove, onTick);
   return null;
 }
 

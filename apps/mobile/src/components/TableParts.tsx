@@ -14,7 +14,7 @@ import { Emote } from './Emotes';
 import { SeatMotion, type SeatReaction } from './SeatMotion';
 import { SlideIn } from './table/Motion';
 import { FeltPattern } from './FeltPattern';
-import { useCountdown } from '../game/useTable';
+import { useTurnCountdown } from '../game/useTable';
 import { clockUrgent, timerFraction, type TurnClock } from './table/turnClock';
 import { reactionShouldPlay } from './table/feel';
 import { slopFor } from './table/layout';
@@ -109,8 +109,10 @@ export function DiscardPool({ tiles, size = 'xs', perRow = 8, latest, align = 'f
  * re-renders every second, never the table around it.
  */
 function SeatPlate({ clock, ...plate }: Omit<React.ComponentProps<typeof AvatarPlate>, 'timer' | 'timerUrgent'> & { clock: TurnClock | null }) {
-  const left = useCountdown(clock?.deadline ?? null);
-  return <AvatarPlate {...plate} timer={clock ? timerFraction(left, clock) : null} timerUrgent={clock ? clockUrgent(left, clock) : false} />;
+  // My own plate counts my own clock (the turn, then the bank, as its own period); another seat's its deadline.
+  const { left, bank, total, period } = useTurnCountdown(clock);
+  const now = { deadline: period, total, bank };
+  return <AvatarPlate {...plate} timer={clock ? timerFraction(left, now) : null} timerUrgent={clock ? clockUrgent(left, now) : false} />;
 }
 
 /** Avatar plate with name tag, score, dealer and wind badges, turn ring and emote bubble. */
