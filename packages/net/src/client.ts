@@ -2395,6 +2395,8 @@ export class TableClient {
         if (notes) notes.damaged = true;
       } else problems.add(`The table took time from this seat's time bank while its connection was down (turn ${tc})`);
     }
+    // Only what earlier runs of the app measured says the bank was taken: the phone's clock may have been set in between.
+    if ((track?.bankAcross.length ?? 0) > 0 && notes) notes.appClock = true;
     failures.push(...problems);
     if (unchecked && notes) notes.skillUnknown = true;
     return s;

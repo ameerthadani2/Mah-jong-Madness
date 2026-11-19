@@ -368,8 +368,13 @@ export function judgeTableMove(j: MoveJudge, play: PlayRecord, n: number, end: S
  * Across a lost link this client cannot see what the seat spent, but it knows how long it was
  * gone: the first frame of the new link may not state a bank lower than the one tracked less
  * that time (`bankTaken`), and a move owed in that frame cannot have been on the clock for
- * longer than that either. The bound never moves back within a hand (an honest table's never
- * does), except where the host says it restarted and its clock may have started afresh.
+ * longer than that either. How long it was gone is measured in the run of the app the new link
+ * came in; where that run has nothing to measure by yet (the app restarted, or the table was
+ * resumed from Home, and the seat has not moved since), it is measured by what the earlier runs
+ * measured, which the phone's clock being set in between can make wrong, so a bank lower than
+ * that allows makes the hand amber (`bankAcross`), as does one that only that measure calls
+ * taken. The bound never moves back within a hand (an honest table's never does), except where
+ * the host says it restarted and its clock may have started afresh.
  */
 export function clockTrack(clockBase: ClockBase, rec: CeremonyRecord | null, play: PlayRecord, rules: RuleSet, anchors: ClockAnchor[]): ClockTrack {
   const turn = rules.turnSeconds * 1000;
@@ -378,7 +383,7 @@ export function clockTrack(clockBase: ClockBase, rec: CeremonyRecord | null, pla
   const stated = (f: SeenState) => Math.min(fullBank, Math.max(0, f.timeBank * 1000 - 500));
   // The first frame is the deal itself only if this client watched the deal over the same unbroken link.
   const fromDeal = rec !== null && rec.attempts.length > 0 && !rec.linkLost;
-  const out: ClockTrack = { bound: new Map(), bank: new Map(), bankTaken: [] };
+  const out: ClockTrack = { bound: new Map(), bank: new Map(), bankTaken: [], bankAcross: [] };
   let bound = Number.NEGATIVE_INFINITY;
   let bank: number | null = null;
   /** The frame in which the seat came to owe its current move; `known` when its clock started with that frame. */
@@ -412,15 +417,19 @@ export function clockTrack(clockBase: ClockBase, rec: CeremonyRecord | null, pla
         if (play.before.era !== (f.era ?? 0)) bound = Number.NEGATIVE_INFINITY;
       }
       const floor = last ? offsetFloor(clockBase, last.era, prev ? play : null, prev ? prev.tc : -1, anchors, f) : null;
+      // What every run of the app measured, as if this device's clock had not been set in between: a new
+      // run has no floor of its own until it has a fixed point, and the bank is checked against this then.
+      const across = last ? offsetFloor(clockBase, last.era, prev ? play : null, prev ? prev.tc : -1, anchors, null) : null;
       run = f.owes ? { start: f, known: deal && typeof f.now === 'number' } : null;
       bank = deal ? fullBank : f.owes ? null : stated(f);
       if (run?.known) bound = Math.max(bound, (f.now as number) + turn + fullBank);
-      if (last && floor !== null) {
-        // The longest this device can have been without a frame, on the host's side.
-        const gone = Math.max(0, f.at - (last.now + floor));
-        if (had !== null && f.timeBank * 1000 < had - gone - CLOCK_SLACK_MS) out.bankTaken.push(f.tc);
-        if (f.owes && whole !== null && typeof f.now === 'number') bound = Math.max(bound, f.now + turn + (had ?? 0) - Math.max(0, f.at - (whole + floor)));
+      if (last && had !== null) {
+        // The longest this device can have been without a frame, on the host's side, by floor `x`.
+        const taken = (x: number) => f.timeBank * 1000 < (had as number) - Math.max(0, f.at - (last.now + x)) - CLOCK_SLACK_MS;
+        if (floor !== null && taken(floor)) out.bankTaken.push(f.tc);
+        else if (across !== null && taken(across)) out.bankAcross.push(f.tc);
       }
+      if (last && floor !== null && f.owes && whole !== null && typeof f.now === 'number') bound = Math.max(bound, f.now + turn + (had ?? 0) - Math.max(0, f.at - (whole + floor)));
     } else if (f.owes && !run) {
       run = { start: f, known: typeof f.now === 'number' };
       if (run.known) bound = Math.max(bound, (f.now as number) + turn + (bank ?? 0));

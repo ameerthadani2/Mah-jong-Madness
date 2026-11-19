@@ -1738,3 +1738,89 @@ describe('a seat opened on another device while the phone’s link was down', ()
     expect(kicked).toBe(true);
   });
 });
+
+describe('time bank: taken as the phone comes back in a new run of the app', () => {
+  const banksOf = (host: TableHost) => (host as unknown as { banks: number[] }).banks;
+  /**
+   * After the seat's fourth discard, once it owes nothing, the app stops: the server says the seat was
+   * opened on another device and the user resumes the table from Home 7 s later (`kick`), or the app is
+   * closed for 7 s and opens again by itself. Either way a client restored from the saved record joins on
+   * a new link, a new run of the app with no fixed point of its own. As it comes back the server takes the
+   * seat's whole time bank (`take`), which every later state then states, and the seat leaves every later
+   * turn to run out, so the table times it out after the turn clock alone. The bots take 12 s over each
+   * move, so the seat's turns start more than 30 s apart. While the app is closed the phone's wall clock
+   * may be set `step` ms.
+   */
+  function bankOnResume(code: string, kick: boolean, take: boolean, step = 0) {
+    let back = false;
+    let closedAt: number | null = null;
+    const w = wire({
+      code,
+      botDelayMs: 12_000,
+      think: () => (back ? Infinity : 600),
+      background: (now) => closedAt !== null && !back && now >= closedAt,
+      devSkew: () => (back ? step : 0),
+    });
+    need(w.toDiscard(4));
+    need(w.until(() => !w.owes() && !w.current(), 20_000));
+    if (kick) {
+      w.line.inject({ t: 'disconnected' });
+      need(w.c.state.kicked);
+      for (let t = 0; t < 4; t++) w.step();
+    }
+    closedAt = w.clock.now;
+    for (let t = 0; t < 14; t++) w.step();
+    need(w.host.phase === 'playing');
+    const from = w.host.game!.turnCounter;
+    if (take) banksOf(w.host)[0] = 0;
+    back = true;
+    w.restart();
+    w.finish();
+    need(w.judged().some((n) => n > from));
+    return w;
+  }
+
+  it('a server that takes the whole bank as the seat resumes from Home, or as the app restarts, and then times the seat out by its turn clock alone: only what the run before measured can tell, so the hand is amber with the reason, never green', () => {
+    for (const kick of [true, false]) {
+      const w = scenario((i) => bankOnResume(`BR${kick ? 'K' : 'R'}${i}`, kick, true));
+      expect(w.verdict()).toEqual({ status: 'partial', failures: [], caveats: ['appClock'] });
+    }
+  });
+
+  it('honest: the same with the bank left as it was: green', () => {
+    for (const kick of [true, false]) green(scenario((i) => bankOnResume(`BH${kick ? 'K' : 'R'}${i}`, kick, false)));
+  });
+
+  /**
+   * Honest: the app is closed for 50 s while the seat owes its fourth discard, so the table runs out the
+   * seat's turn clock and its whole bank and times it out; meanwhile the phone's wall clock may be set
+   * `step` ms. The app opens again by itself and the seat plays every later turn.
+   */
+  function closedThroughBank(code: string, step: number) {
+    let closedAt: number | null = null;
+    let back = false;
+    const w = wire({
+      code,
+      background: (now) => closedAt !== null && !back && now >= closedAt,
+      devSkew: () => (back ? step : 0),
+    });
+    need(w.toDiscard(4));
+    const owed = w.host.game!.turnCounter;
+    closedAt = w.clock.now;
+    for (let t = 0; t < 100; t++) w.step();
+    need(w.host.phase === 'playing' && banksOf(w.host)[0] === 0 && w.tableMoves().includes(owed));
+    back = true;
+    w.restart();
+    w.finish();
+    need(w.judged().includes(owed));
+    return w;
+  }
+
+  it.each([0, -60_000])('honest: the bank run out while the app was closed, the phone’s wall clock set %i ms meanwhile: never red; set back, only the run before can measure the time away, so the bank the server states may seem taken (amber with the reason)', (step) => {
+    const v = scenario((i) => closedThroughBank(`BC${step}${i}`, step)).verdict();
+    expect(v.status).toBe('partial');
+    expect(v.failures).toEqual([]);
+    if (step < 0) expect(v.caveats).toContain('appClock');
+    else expect(v.caveats).not.toContain('appClock');
+  });
+});

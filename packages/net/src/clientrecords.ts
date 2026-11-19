@@ -136,6 +136,8 @@ export interface ClockTrack {
   bank: Map<SeenState, number | null>;
   /** Turns at which the first frame of a new link stated a bank lower than the time away allows. */
   bankTaken: number[];
+  /** The same, where only what other runs of the app measured says so (the phone's clock may have been set in between): amber. */
+  bankAcross: number[];
 }
 
 /** What this client saw of one hand's ceremony. */
