@@ -223,6 +223,48 @@ describe('the felt in portrait on a small phone (320x568)', () => {
     expect(handTile()).toBe(normal);
   });
 
+  it('starts the hand smaller from the deal where the felt cannot hold a middle game, says so, and keeps that size', async () => {
+    await renderTable(320, 568, 1.5);
+    for (let i = 0; i < 100 && !screen.queryByTestId('felt-portrait'); i++) await wait(100);
+    // Dealt, no discard yet: the felt of a 320x568 phone at Extra-large tiles (113 px), then at Large (149 px).
+    expect(client().state.view!.players.every((p) => p.discards.length === 0)).toBe(true);
+    const tile = () => StyleSheet.flatten(within(screen.getByTestId(/^hand(-discard)?$/)).getAllByTestId(/^tile-/)[0].props.style).width as number;
+    const xl = tile();
+    await measure(113);
+    const large = tile();
+    expect(large).toBeLessThan(xl);
+    expect(screen.getByTestId('tiles-smaller-notice')).toHaveTextContent('Tiles made smaller to fit this screen: Large');
+    await measure(149);
+    expect(tile()).toBeLessThan(large);
+    expect(screen.getByTestId('tiles-smaller-notice')).toHaveTextContent('Tiles made smaller to fit this screen: Normal');
+    // Normal holds a middle game (a 223 px felt): the hand keeps that size through its turns.
+    await measure(223);
+    const normal = tile();
+    await untilMyDiscard();
+    expect(tile()).toBe(normal);
+    // The notice goes after a while.
+    await wait(5000);
+    expect(screen.queryByTestId('tiles-smaller-notice')).toBeNull();
+  });
+
+  it('says so in the middle of a hand too, each time the hand gets smaller', async () => {
+    await renderTable(360, 640, 1.5);
+    await untilMyDiscard();
+    const first = within(screen.getByTestId('hand-discard')).getAllByRole('button')[0];
+    await fireEvent.press(first);
+    await fireEvent.press(first);
+    await untilMyDiscard();
+    const big = handTile();
+    // A 360x640 phone's felt at Extra-large tiles holds a middle game: no step at the deal, no notice.
+    await measure(158);
+    expect(handTile()).toBe(big);
+    expect(screen.queryByTestId('tiles-smaller-notice')).toBeNull();
+    // Too short for even the least of the seats now: a size down, and the table says so.
+    await measure(60);
+    expect(handTile()).toBeLessThan(big);
+    expect(screen.getByTestId('tiles-smaller-notice')).toHaveTextContent('Tiles made smaller to fit this screen: Large');
+  });
+
   it('at Normal tiles the hand keeps its size, whatever the felt measures', async () => {
     await renderTable(320, 568, 1);
     await untilMyDiscard();

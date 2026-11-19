@@ -523,7 +523,8 @@ function tally(found) {
  * Plays my seat through one whole hand (until the result sheet, or `untilDiscards` of my discards), passing every claim
  * and discarding the lowest, right-most tile (the drawn one in landscape), and runs coachCheck and feltCheck at each of my
  * decisions: my turn before and after a tile is picked, a win, and each claim chance; and discardsSheetCheck once (a
- * screenshot of the sheet to `sheetShot`, when given). `onDiscard(n)` runs after my nth discard.
+ * screenshot of the sheet to `sheetShot`, when given). It fails, too, when my hand's tiles get smaller between two of my
+ * decisions without the table's "Tiles made smaller" notice. `onDiscard(n)` runs after my nth discard.
  */
 async function playCoachedHand(page, { onDiscard = async () => undefined, untilDiscards = Infinity, limitMs = 240000, sheetShot = null } = {}) {
   const found = [];
@@ -531,24 +532,39 @@ async function playCoachedHand(page, { onDiscard = async () => undefined, untilD
   // The table's discards sheet, once a hand: at my first turn where an opponent's pond has a "+N" chip, or else at my
   // turn after my sixth discard (discardsSheetCheck).
   let sheetChecked = false;
+  // My hand's tile size at each of my decisions (I never meld here, so only the table can change it): it never gets
+  // smaller between two of them unless the table said so, its "Tiles made smaller" notice seen in between.
+  let handW = null;
+  let toldSmaller = false;
+  const decision = async () => {
+    found.push(...(await coachSettled(page, true)), ...(await feltSettled(page)));
+    const w = await page.evaluate(() => {
+      const t = [...document.querySelectorAll('[data-testid="hand"] [data-testid^="tile-"], [data-testid="hand-discard"] [data-testid^="tile-"]')].find((e) => e.getBoundingClientRect().width > 0);
+      return t ? Math.round(t.getBoundingClientRect().width) : null;
+    });
+    if (w !== null && handW !== null && w < handW - 1 && !toldSmaller && !(await visible(page, '[data-testid="tiles-smaller-notice"]'))) found.push(`my hand's tiles got smaller between two of my decisions (${handW} to ${w} px) and the table did not say so`);
+    if (w !== null) handW = w;
+    toldSmaller = false;
+  };
   const started = Date.now();
   while (Date.now() - started < limitMs && discards < untilDiscards) {
     if ((await visible(page, '[data-testid="result-sheet"]')) || (await visible(page, 'text=/^(Next hand|下一局)/'))) break;
+    if (await visible(page, '[data-testid="tiles-smaller-notice"]')) toldSmaller = true;
     let el;
     if ((el = await visible(page, '[data-testid="claim-win"]'))) {
-      found.push(...(await coachSettled(page, true)), ...(await feltSettled(page)));
+      await decision();
       await tap(page, el);
       await page.waitForTimeout(400);
       continue;
     }
     if ((el = await visible(page, '[data-testid="claim-pass"]'))) {
-      found.push(...(await coachSettled(page, true)), ...(await feltSettled(page)));
+      await decision();
       await tap(page, el);
       await page.waitForTimeout(300);
       continue;
     }
     if ((el = await visible(page, '[data-testid="claim-discard"]'))) {
-      found.push(...(await coachSettled(page, true)), ...(await feltSettled(page)));
+      await decision();
       await tap(page, el);
       discards++;
       await onDiscard(discards);
@@ -557,7 +573,7 @@ async function playCoachedHand(page, { onDiscard = async () => undefined, untilD
     }
     if (await visible(page, '[data-testid="hand-discard"]')) {
       await page.waitForTimeout(250);
-      found.push(...(await coachSettled(page, true)), ...(await feltSettled(page)));
+      await decision();
       if (!sheetChecked) {
         const r = await sheetSeat(page, discards >= 6);
         if (r !== null) {

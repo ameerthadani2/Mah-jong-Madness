@@ -15,7 +15,7 @@ import { tileDims } from '../tileDims';
 import { useDisplayScale } from '../../display/DisplayScale';
 import { useT } from '../../i18n';
 import { COMPACT_GAP, COMPACT_TOP_MELD, compactTopMeld, fitCompactCentre, fitPools, fitSideColumn, SIDE_GAP } from '../../display/tableFit';
-import { CROSS_PAD, fitPortraitFelt } from '../../display/portraitFit';
+import { CROSS_PAD, fitPortraitFelt, portraitDealFits } from '../../display/portraitFit';
 import { CoachPanel } from './CoachPanel';
 import { slideFrom } from './feel';
 import { compactCompassSize, dockHeight, landscapeWallSize, type ActionDock, type TableLayout } from './layout';
@@ -101,8 +101,8 @@ export function Felt({
   overlay?: React.ReactNode;
   /**
    * Portrait: the felt is too short even for what display/portraitFit.ts keeps at the least (each opponent's plate,
-   * melds and newest row of discards, and my newest row). The table screen then gives the hand less height (smaller
-   * tiles at Large and Extra-large).
+   * melds and newest row of discards, and my newest row), now or, from the deal, for a middle game (portraitDealFits). The
+   * table screen then gives the hand less height (smaller tiles at Large and Extra-large), and says so.
    */
   onShort?: () => void;
   /**
@@ -370,8 +370,10 @@ export function Felt({
   });
   const swapped = L.compact && compactFit.swap && dockH > 0;
   // Once per measured height: the table screen's answer (a smaller hand) changes the felt's height, which is
-  // measured again before it is asked once more.
-  const short = portrait ? !fit.fits : L.compact && !compactFit.fits;
+  // measured again before it is asked once more. In portrait also from the deal, where the felt cannot hold a middle game
+  // even at the least sizes (portraitDealFits), so the hand does not drop a size a turn or two in.
+  const dealFits = portraitDealFits({ felt: pBox.felt, sideW: sideWidth, plates: { right: pBox.right, left: pBox.left, top: pBox.top } });
+  const short = portrait ? !fit.fits || !dealFits : L.compact && !compactFit.fits;
   const onShortRef = useRef(onShort);
   onShortRef.current = onShort;
   useEffect(() => {

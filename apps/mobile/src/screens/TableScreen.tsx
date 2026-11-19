@@ -29,12 +29,13 @@ import { DiscardsSheet } from '../components/table/DiscardsSheet';
 import { ACTION_STRIP_H, COACH_OVER_RAIL, COMPACT_NARROW_DOCK, coachBarLines, pinnedCoachFace, portraitCoachStatus, slopFor, tableLayout } from '../components/table/layout';
 import { fitHand } from '../display/tableFit';
 import { useDisplayScale } from '../display/DisplayScale';
+import { SCALE_STEPS, TILE_SCALES } from '../display/scale';
 import { RESULT_HOLD_MS } from '../components/table/feel';
 import { MatchOverSheet, ResultSheet } from '../components/table/ResultSheet';
 import { TableHud } from '../components/table/TableHud';
 import { LeaveSheet } from '../components/table/LeaveSheet';
 import { ClockAnnouncer, ClockTicker } from '../components/table/ClockParts';
-import { useAnnounce } from '../components/table/announce';
+import { announce, useAnnounce } from '../components/table/announce';
 import type { TurnClock } from '../components/table/turnClock';
 import { exitPlan, type ExitChoice } from '../components/table/exit';
 import { celebrationFor } from '../components/table/celebrate';
@@ -80,6 +81,8 @@ function buzz(h: Haptic | null): void {
 const RULES_RESET_NOTICE_MS = 8000;
 /** How long the "discarded for you" notice stays up after a turn timeout. */
 const AUTO_DISCARD_NOTICE_MS = 3500;
+/** How long the table says it made the hand's tiles smaller to fit the screen. */
+const SMALLER_NOTICE_MS = 5000;
 
 /** Keys for call-outs and seat reactions, unique across table screens so a remounted portrait never mistakes a new event for one it played. */
 let eventKey = 0;
@@ -131,8 +134,16 @@ export function TableScreen() {
   // The table's discards (every seat's whole pond), opened from an opponent's seat on the felt with that seat first.
   const [discardsFor, setDiscardsFor] = useState<1 | 2 | 3 | null>(null);
   const [emotePicker, setEmotePicker] = useState(false);
-  // Portrait: how many steps the hand has been made smaller this deal, for a felt that was too short (see below).
+  // Portrait: how many steps the hand has been made smaller this deal, for a felt that was too short (see below), and the
+  // notice that says so.
   const [squeeze, setSqueeze] = useState({ key: '', steps: 0 });
+  const [smallerNotice, setSmallerNotice] = useState<number | null>(null);
+  const toldSmallerAtDeal = useRef(false);
+  useEffect(() => {
+    if (smallerNotice === null) return;
+    const id = setTimeout(() => setSmallerNotice((k) => (k === smallerNotice ? null : k)), SMALLER_NOTICE_MS);
+    return () => clearTimeout(id);
+  }, [smallerNotice]);
   // Landscape at Normal tiles: where my plate column starts over the felt's corner (HandRail), so the left seat ends above it.
   const [plateTop, setPlateTop] = useState<number | null>(null);
   // The red exit icon asks first (components/table/exit.ts): only "Abandon table" forgets the table.
@@ -379,8 +390,20 @@ export function TableScreen() {
   const handScale = Math.max(1, tileScale - SQUEEZE_STEP * squeezeSteps);
   const hand = fitHand(width, height, L, (me.hand ?? []).length, me.melds.reduce((n, m) => n + m.tiles.length, 0), me.melds.length, handScale);
   const onFeltShort = () => {
-    if ((L.portrait || L.compact) && handScale > 1) setSqueeze({ key: squeezeKey, steps: squeezeSteps + 1 });
+    if (!(L.portrait || L.compact) || handScale <= 1) return;
+    setSqueeze({ key: squeezeKey, steps: squeezeSteps + 1 });
+    // The table says so: every time in the middle of a hand, and the first time it happens at a deal (the felt of a small
+    // phone, whose hand starts smaller every deal: portraitDealFits).
+    const dealt = view.players.some((p) => p.discards.length > 0);
+    if (dealt || !toldSmallerAtDeal.current) {
+      toldSmallerAtDeal.current = true;
+      setSmallerNotice(++eventKey);
+      announce(smallerSays(handScale - SQUEEZE_STEP));
+    }
   };
+  // "Tiles made smaller to fit this screen: Large" (the size the hand is drawn at now).
+  const smallerSays = (scale: number) => t('table.tilesSmaller', { size: t(`settings.display.${SCALE_STEPS[Math.max(0, TILE_SCALES.findIndex((s) => Math.abs(s - scale) < 0.01))]}`) });
+  const smallerText = smallerNotice !== null && handScale < tileScale ? smallerSays(handScale) : null;
 
   const seatAt = (r: number) => (mySeat + r) % 4;
   const seatInfo = (seat: number) => state.seats.find((s) => s.seat === seat);
@@ -624,6 +647,12 @@ export function TableScreen() {
           <View style={styles.autoNotice} accessibilityLiveRegion="polite" testID="rules-reset-notice" pointerEvents="none">
             <Icon name="warning" size={22} />
             <Text style={[styles.toastText, nameFont(rulesResetText, fonts.bodyBold)]}>{rulesResetText}</Text>
+          </View>
+        )}
+        {smallerText && !autoNoticeText && (
+          <View style={styles.autoNotice} accessibilityLiveRegion="polite" testID="tiles-smaller-notice" pointerEvents="none">
+            <Icon name="magnifier" size={22} />
+            <Text style={[styles.toastText, nameFont(smallerText, fonts.bodyBold)]}>{smallerText}</Text>
           </View>
         )}
         {autoNoticeText && (

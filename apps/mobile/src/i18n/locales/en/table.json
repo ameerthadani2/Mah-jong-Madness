@@ -280,5 +280,6 @@
   "rulesReset": "This table's saved rules were damaged, so it carries on with the default rules.",
   "autoDiscard": "Time ran out: %{tile} was discarded for you.",
   "autoClaim": "Time ran out: the table called %{call} for you.",
+  "tilesSmaller": "Tiles made smaller to fit this screen: %{size}",
   "nextHandStarted": "The next hand has started."
 }

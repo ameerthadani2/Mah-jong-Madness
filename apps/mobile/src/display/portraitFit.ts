@@ -18,7 +18,9 @@
  *    MIN_FLAT_MELD, so two share a row of a narrow side column (a 320 px phone with four melds at a side seat).
  *
  * If even that does not fit, `fits` is false and the table screen gives the hand the next smaller tile size, for the rest
- * of the hand (Extra-large, then Large, then Normal): the felt grows by what the hand gives up.
+ * of the hand (Extra-large, then Large, then Normal): the felt grows by what the hand gives up. A felt that cannot hold even
+ * a middle game at those least sizes (`portraitDealFits`) gives way the same from the deal, so the hand starts at the size
+ * it can keep rather than dropping a size a turn or two in; the table says when it makes the hand smaller.
  *
  * Pure: every height is measured by the felt (the plates, whose text the reader's text size grows) or worked out here
  * from the tile sizes as the components draw them, so the fit is unit-tested.
@@ -177,6 +179,21 @@ function stack(...blocks: number[]): number {
 /** The compass's height as drawn: its wind badges stand out by half their size above and below it. */
 export function compassHeight(size: number): number {
   return size > 0 ? size + Math.round(size * 0.32) : 0;
+}
+
+/**
+ * Whether the felt holds a middle game at the least sizes: each side seat's plate over a row of flat melds (two pongs share
+ * one) and a row of its pond, the across seat's plate over a row of its pond, and a row of my pond, at MIN_POND and
+ * MIN_FLAT_MELD. Where it cannot (a 320x568 phone at Large and Extra-large tiles: its first discards already overflow the
+ * felt), the felt is short from the deal. Unmeasured: true.
+ */
+export function portraitDealFits(input: Pick<PortraitFeltInput, 'felt' | 'sideW' | 'plates'>): boolean {
+  const { felt, sideW, plates } = input;
+  if (felt <= 0 || plates.right <= 0 || plates.left <= 0 || plates.top <= 0) return true;
+  const row = pondHeight(1, MIN_POND);
+  const room = felt - 2 * CROSS_PAD - PINNED_POND_PAD - row;
+  const side = (plate: number) => stack(plate, meldsHeight(sideW, [3, 3], 0, MIN_FLAT_MELD, true), row);
+  return side(plates.right) <= room && side(plates.left) <= room && stack(plates.top, row) <= room;
 }
 
 export function fitPortraitFelt(input: PortraitFeltInput): PortraitFeltFit {

@@ -280,5 +280,6 @@
   "rulesReset": "這桌儲存的規則已損壞，所以改用預設規則繼續。",
   "autoDiscard": "時間到了：已替你打出%{tile}。",
   "autoClaim": "時間到了：已替你喊「%{call}」。",
+  "tilesSmaller": "牌已縮小，才放得進這個螢幕：%{size}",
   "nextHandStarted": "下一局開始了。"
 }

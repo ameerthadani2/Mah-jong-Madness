@@ -110,7 +110,7 @@
   "display": {
     "title": "Display",
     "tiles": "Tile size",
-    "tilesHelp": "Your hand, melds, ponds and the results. Extra large wraps the upright hand into three rows. Held sideways, Large and Extra large move your name and melds above the hand, so it stays in one row across the whole screen and grows with it; hold the phone upright for the largest tiles.",
+    "tilesHelp": "Your hand, melds, ponds and the results. Extra large wraps the upright hand into three rows. Held sideways, Large and Extra large move your name and melds above the hand, so it stays in one row across the whole screen and grows with it; hold the phone upright for the largest tiles. On a small phone held upright the table may draw your hand a size smaller so every seat still fits, and it says so when it does.",
     "text": "Text size",
     "textHelp": "Lessons, puzzles and other reading text.",
     "normal": "Normal",

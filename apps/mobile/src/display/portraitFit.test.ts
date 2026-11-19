@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { applyAction, chooseAction, legalActions, newGame, type GameState } from '@mjm/engine';
-import { compassHeight, CROSS_PAD, fitPortraitFelt, meldsHeight, MIN_COMPASS, MIN_FLAT_MELD, MIN_MELD, MIN_POND, myPondPerRow, PINNED_POND_PAD, pondHeight, pondRows, pondRowsShown, centerPondPerRow, type PortraitFeltFit, type PortraitFeltInput, type PortraitSeat } from './portraitFit';
+import { compassHeight, CROSS_PAD, fitPortraitFelt, meldsHeight, portraitDealFits, MIN_COMPASS, MIN_FLAT_MELD, MIN_MELD, MIN_POND, myPondPerRow, PINNED_POND_PAD, pondHeight, pondRows, pondRowsShown, centerPondPerRow, type PortraitFeltFit, type PortraitFeltInput, type PortraitSeat } from './portraitFit';
 import { SIDE_GAP, sidePondPerRow } from './tableFit';
 
 const seat = (discards: number, melds: number[] = [], flowers = 0, hand = 16 - 3 * melds.length): PortraitSeat => ({ melds, flowers, discards, hand });
@@ -157,6 +157,32 @@ describe('the portrait felt fits its box', () => {
     expect(failures).toEqual([]);
     // Forty whole hands of bot play: about two seconds on an idle machine, so it gets more than the usual five.
   }, 60_000);
+});
+
+describe('the felt from the deal', () => {
+  // The felt's inner height on the web export at each tile size, and its plates (measured with e2e probes at text 1.3).
+  const at = (felt: number, sideW: number, side: number) => portraitDealFits({ felt, sideW, plates: { right: side, left: side, top: 40 } });
+
+  it('cannot hold a middle game on a 320x568 phone at Large or Extra-large tiles, so the hand starts smaller', () => {
+    expect(at(113, 84, 72)).toBe(false);
+    expect(at(149, 84, 72)).toBe(false);
+    expect(at(223, 84, 72)).toBe(true);
+  });
+
+  it('holds one on a 360x640 phone at Extra-large tiles (the hand keeps its size from the deal), and before it is measured', () => {
+    expect(at(158, 86, 73)).toBe(true);
+    expect(portraitDealFits({ felt: 0, sideW: 84, plates: { right: 0, left: 0, top: 0 } })).toBe(true);
+  });
+
+  it('asks for what the fit keeps at the least: a plate over a row of flat melds and a row of the pond, and a row of mine', () => {
+    const need = 72 + SIDE_GAP + meldsHeight(84, [3, 3], 0, MIN_FLAT_MELD, true) + SIDE_GAP + pondHeight(1, MIN_POND);
+    const felt = need + 2 * CROSS_PAD + PINNED_POND_PAD + pondHeight(1, MIN_POND);
+    expect(at(felt, 84, 72)).toBe(true);
+    expect(at(felt - 1, 84, 72)).toBe(false);
+    // Where it holds that, the fit itself fits such a table at the least sizes.
+    const mid = fitPortraitFelt({ ...SMALL, felt, sideW: 84, plates: { right: 72, left: 72, top: 40 }, right: seat(9, [3, 3]), across: seat(9), left: seat(9, [3, 3]), mine: 9 });
+    expect(mid.fits).toBe(true);
+  });
 });
 
 describe('a pond keeping its newest rows', () => {
