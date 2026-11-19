@@ -235,6 +235,15 @@ export interface PlayRecord {
   /** Refusals of this seat's moves: the turn the move was made on (as the host echoed it) and the turn the host's frames had reached. */
   refusals?: Array<{ tc: number; at: number }>;
   /**
+   * Fixed points from the host's answers (`pong`) to this run's pings while the hand was on show: one per
+   * `PONG_WINDOW_MS` of ping time, the one with the shortest round trip, at most `MAX_PONGS`. They hold
+   * only within the run of the app that measured them (`holdsIn`), so they are never saved (`serialize`)
+   * nor read back from a saved record (`cleanPlay`).
+   */
+  pongs?: ClockAnchor[];
+  /** Pings this run sent while the hand was on show (never saved, like `pongs`). */
+  pinged?: number;
+  /**
    * Turn counter from which every move the log credits to this seat's player must be one this client
    * sent (it watched the hand from there with its ledger intact). Null when it cannot vouch at all.
    */
@@ -413,7 +422,10 @@ function cleanRun<T extends object>(x: T, runKey: keyof T, segKey: keyof T): T {
  */
 export function cleanPlay(p: unknown): PlayRecord {
   if (!isObject(p) || !Array.isArray(p.seen) || !Array.isArray(p.sent) || !p.seen.every(isObject) || !p.sent.every(isObject)) throw new Error('damaged hand record');
-  const { vouched, ledgerSum: sum, ...play } = p as unknown as PlayRecord & { ledgerSum?: unknown };
+  // (A run's pong fixed points and pings are never saved; a record that holds some is not read for them.)
+  const { vouched, ledgerSum: sum, pongs: _pongs, pinged: _pinged, ...play } = p as unknown as PlayRecord & { ledgerSum?: unknown };
+  void _pongs;
+  void _pinged;
   // The stretches the ledger vouches for, only from a record whose moves and stretches storage left as they were.
   const spans = Array.isArray(vouched) && typeof sum === 'string' && sum === ledgerSum(play.sent, vouched) && vouched.every((v) => isObject(v) && isInt(v.from) && isInt(v.to) && v.from < v.to) ? vouched : null;
   return { ...play, seen: play.seen.map(cleanSeen), sent: play.sent.map((x) => cleanRun(x, 'run', 'seg')), ...(spans ? { vouched: spans } : {}) };

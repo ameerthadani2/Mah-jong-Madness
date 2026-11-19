@@ -132,7 +132,7 @@ describe('claims the table passed for this seat while its link was down', () => 
   });
 
   it('a turn shown late is one of the player’s turns in Traditional Chinese too, and is not said to have taken most of a turn', () => {
-    // 一手 alone reads as any move at the table; the rule fires at 17 s, a share of the clock that depends on the speed.
+    // 一手 alone reads as any move at the table; the rule fires at half the turn clock (at least 2 s), a share that depends on the speed.
     const text = caveatText(translator('zh-TW'), AUDIT_CAVEATS.lateShown);
     expect(text).toBe(zhTW.fairness.caveat.lateShown);
     expect(text).toContain('輪到你的');
@@ -180,8 +180,8 @@ describe('turns that reached the phone late, over the match', () => {
       { hand: 1, late: [], of: 18 },
       { hand: 2, late: [3], of: 15 },
     ];
-    expect(turnsLateText(translator('en'), { turnsShownLate: recs })).toMatch(/^In this match 3 of your 53 turns reached you late: more than half their turn clock was gone/);
-    expect(turnsLateText(translator('en'), { turnsShownLate: [{ hand: 0, late: [4], of: 20 }] })).toMatch(/^In this match 1 of your 20 turns reached you late: more than half its turn clock was gone/);
+    expect(turnsLateText(translator('en'), { turnsShownLate: recs })).toMatch(/^In this match 3 of your 53 turns reached you late: more than a quarter of their turn clock \(at least 1 second\) was gone/);
+    expect(turnsLateText(translator('en'), { turnsShownLate: [{ hand: 0, late: [4], of: 20 }] })).toMatch(/^In this match 1 of your 20 turns reached you late: more than a quarter of its turn clock \(at least 1 second\) was gone/);
     expect(turnsLateText(translator('zh-TW'), { turnsShownLate: recs })).toMatch(/^這場比賽中，輪到你的 53 手裡，有 3 手晚到/);
     expect(turnsLateText(translator('en'), { turnsShownLate: [{ hand: 1, late: [], of: 18 }] })).toBeNull();
     expect(turnsLateText(translator('en'), { turnsShownLate: [] })).toBeNull();
@@ -194,7 +194,9 @@ describe('turns that reached the phone late, over the match', () => {
     for (const [locale, verified] of [['en', 'Verified'], ['zh-TW', '已驗證']] as const) {
       const text = turnsLateText(translator(locale), { turnsShownLate: [{ hand: 0, late: [1, 2], of: 2 }] }) ?? '';
       expect(text, locale).toContain(verified);
-      expect(text, locale).toContain('17');
+      // The limit past which a hand stops showing Verified: half the turn clock, at least 2 s (docs/FAIRNESS.md).
+      expect(text, locale).toContain(locale === 'en' ? 'more than half its turn clock late (at least 2 seconds)' : '超過每手秒數的一半（至少 2 秒）');
+      expect(text, locale).not.toContain('17');
     }
   });
 });

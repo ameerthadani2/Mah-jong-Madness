@@ -65,8 +65,8 @@ export function FairnessScreen() {
           {passedLate}
         </Text>
       )}
-      {/* The turns that reached the phone with more than half their clock gone, over the match: never a verdict, but the pattern
-          a server leaves that shows every turn late inside the 17 s the audit allows, where at the fast speeds the table plays them. */}
+      {/* The turns that reached the phone with more than a quarter of their clock gone (at least 1 s), over the match: never a
+          verdict, but the pattern a server leaves that shows every turn late inside the half a turn clock the audit allows. */}
       {turnsLate && (
         <Text testID="fairness-turns-late" style={{ color: colors.goldDim, fontSize: 12, fontFamily: fonts.bodyBold }}>
           {turnsLate}

@@ -7,7 +7,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { chooseAction, countsFromKinds, dealFromSnapshot, kindOf, legalActions, NUM_PLAY_KINDS, shanten, withRules, type GameState, type MatchSnapshot } from '@mjm/engine';
 import { AUDIT_CAVEATS, commitFor, deriveSeed, failureKey, LoopbackHub, makeSecret, sha256Hex, TableClient, TableHost, transportLink, type Audit, type HostMessage, type Link, type Reveal } from '../src/index';
-import { Missed, scenario } from './support';
+import { Missed, scenario, scenarioAsync } from './support';
 
 const RULES = withRules({ handsPerMatch: 1 });
 
@@ -912,8 +912,8 @@ describe('a server that plays for a seat behind a dropped link (assessment probe
       expect(t.verdict()).toEqual(['partial', [], [AUDIT_CAVEATS.tableMoved]]);
     }));
 
-  it('a restart the server only claims does not buy its clock a fresh allowance: a turn then cut short is amber, never green', () =>
-    scenario(() => {
+  it('a restart the server only claims does not buy its clock a fresh allowance: the phone pings the table as it joins, and the answer ties the new clock era to its own clock, so a turn then cut short is red', () =>
+    scenarioAsync(async () => {
       const t = seat('FR1');
       need(t.playUntil(nthDiscard(t, 3)));
       // The seat's bank is honestly down to 10 s when the blip comes.
@@ -925,10 +925,34 @@ describe('a server that plays for a seat behind a dropped link (assessment probe
       // On the seat's return the server says it restarted, at the very turn the phone last saw.
       (t.host as unknown as { restoredAt: { handNumber: number; turnCounter: number } }).restoredAt = { handNumber: t.host.game!.handNumber, turnCounter: t.host.game!.turnCounter };
       t.back();
+      // The app runs on: the ping it sends right behind the join goes out, and the table answers it.
+      await Promise.resolve();
       t.s.botTimerArmed = false;
       t.s.runBots();
       need(t.host.phase === 'playing' && t.discarding());
-      // With the phone's knowledge of its clock gone, it stamps 24.6 s ahead and plays 200 ms into the turn.
+      // It stamps 24.6 s ahead and plays 200 ms into the turn.
+      t.clock.now += 200;
+      t.clock.ahead += TURN + 10_000 - 400;
+      t.s.apply(0, t.s.timeoutAction(t.host.game!, 0), 'timeout');
+      t.finish();
+      expect(t.verdict()[0]).toBe('failed');
+      expect((t.verdict()[1] as string[]).map(failureKey)).toContain('playedEarly');
+    }));
+
+  it('the same, with no ping answered since the restart was claimed: nothing but the 30 s for network delay ties the new era to this device, so the hand is amber with the reason, never green', () =>
+    scenario(() => {
+      const t = seat('FR2');
+      need(t.playUntil(nthDiscard(t, 3)));
+      t.wait(TURN + 20_000);
+      t.s.botTimerArmed = true;
+      t.act();
+      t.drop();
+      t.clock.now += 800;
+      (t.host as unknown as { restoredAt: { handNumber: number; turnCounter: number } }).restoredAt = { handNumber: t.host.game!.handNumber, turnCounter: t.host.game!.turnCounter };
+      t.back();
+      t.s.botTimerArmed = false;
+      t.s.runBots();
+      need(t.host.phase === 'playing' && t.discarding());
       t.clock.now += 200;
       t.clock.ahead += TURN + 10_000 - 400;
       t.s.apply(0, t.s.timeoutAction(t.host.game!, 0), 'timeout');

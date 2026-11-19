@@ -155,10 +155,10 @@ describe('the fair play screen', () => {
     // None late: nothing said.
     expect(screen.queryByTestId('fairness-turns-late')).toBeNull();
     await push({ audits: HANDS, turnsShownLate: [{ hand: 0, late: [], of: 22 }, { hand: 1, late: [3, 7, 12], of: 19 }] });
-    expect(screen.getByTestId('fairness-turns-late')).toHaveTextContent(/^In this match 3 of your 41 turns reached you late: more than half their turn clock was gone by the time your phone showed them and your moves could reach the table\./);
-    expect(screen.getByTestId('fairness-turns-late')).toHaveTextContent(/A hand stops showing Verified only when a turn is more than 17 seconds late/);
+    expect(screen.getByTestId('fairness-turns-late')).toHaveTextContent(/^In this match 3 of your 41 turns reached you late: more than a quarter of their turn clock \(at least 1 second\) was gone by the time your phone showed them\./);
+    expect(screen.getByTestId('fairness-turns-late')).toHaveTextContent(/A hand stops showing Verified when a turn reaches you more than half its turn clock late \(at least 2 seconds\)/);
     await push({ audits: HANDS, turnsShownLate: [{ hand: 1, late: [3], of: 19 }] });
-    expect(screen.getByTestId('fairness-turns-late')).toHaveTextContent(/^In this match 1 of your 19 turns reached you late: more than half its turn clock was gone/);
+    expect(screen.getByTestId('fairness-turns-late')).toHaveTextContent(/^In this match 1 of your 19 turns reached you late: more than a quarter of its turn clock \(at least 1 second\) was gone/);
   });
 
   it('says when the final scores of a finished match are the table word alone', async () => {
@@ -191,8 +191,8 @@ describe('the fair play screen', () => {
   it('speaks Traditional Chinese for the count of turns that reached the phone late', async () => {
     setLocalePreference('zh-TW');
     await renderFairness(fakeSession({ audits: HANDS, turnsShownLate: [{ hand: 0, late: [2, 5], of: 30 }] }).session);
-    expect(screen.getByTestId('fairness-turns-late')).toHaveTextContent(/^這場比賽中，輪到你的 30 手裡，有 2 手晚到：等你的手機顯示出來、你的出牌能送到牌桌時，每手秒數已經過了一半以上。/);
-    expect(screen.getByTestId('fairness-turns-late')).toHaveTextContent(/只有晚到超過 17 秒時，牌局才不會顯示「已驗證」/);
+    expect(screen.getByTestId('fairness-turns-late')).toHaveTextContent(/^這場比賽中，輪到你的 30 手裡，有 2 手晚到：等你的手機顯示出來時，每手秒數已經過了四分之一以上（至少 1 秒）。/);
+    expect(screen.getByTestId('fairness-turns-late')).toHaveTextContent(/某一手晚到超過每手秒數的一半（至少 2 秒）時，牌局就不會顯示「已驗證」/);
   });
 
   it('speaks Traditional Chinese for a turn that reached the phone late, and does not say the connection dropped', async () => {

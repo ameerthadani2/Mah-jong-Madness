@@ -147,8 +147,11 @@ describe('the signalling client', () => {
     for (const v of VALUES) expect(() => socket.says({ t: 'from', from: 'host', data: { ch: 'game', msg: v } })).not.toThrow();
     expect(kept(client)).toBe(before);
     expect(client.state.lastError).toBeNull();
-    // A well-formed frame still gets through.
-    socket.says({ t: 'from', from: 'host', data: { ch: 'game', msg: { t: 'pong', at: 0, now: 1 } } });
+    // A well-formed frame still gets through: the answer to a ping this client sent.
+    client.ping();
+    const ping = socket.sent.map((f) => (f.data as { msg?: { t?: string; at?: number } } | undefined)?.msg).find((m) => m?.t === 'ping');
+    expect(ping).toBeDefined();
+    socket.says({ t: 'from', from: 'host', data: { ch: 'game', msg: { t: 'pong', at: ping!.at, now: 1 } } });
     expect(client.state.rttMs).not.toBeNull();
   });
 });

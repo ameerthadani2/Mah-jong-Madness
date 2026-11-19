@@ -4,20 +4,23 @@
  * frames whose stamps creep forward a millisecond at a time, or run slow; or it can delay all it
  * sends, under honest stamps. The phone measures the table's stamps against its own clock (the
  * least arrival offset seen since the table's clock began), so stamps that fall behind count as
- * silence: the link is dropped, and the time without it is judged as a drop. And it judges the
- * state that first showed the seat each move: on a link it already held, that state must give the
- * whole turn clock by its own deadline and stamp; on a live link it may reach the phone at most
- * 17 s late; later than that, or later than the round trips of the seat's own moves allow, the
- * table's move is judged as made while the seat had no link (amber at best). A turn skipped on a
- * link that stayed open fails. Honest links that are slow, stall or slow down for good, phones
- * that sleep, and servers whose wall clock is set back, stay green.
+ * silence: the link is dropped, and the time without it is judged as a drop. The phone pings the
+ * table once a second, and each answer is a fixed point between the two clocks: pongs whose stamps
+ * crawl make the table's honest stamps after them look early (red). And it judges the state that
+ * first showed the seat each move: on a link it already held, that state must give the whole turn
+ * clock by its own deadline and stamp; on a live link it may reach the phone at most 17 s late
+ * against the watch's reference; later than half the turn clock (at least 2 s) against the fixed
+ * points, the hand is amber, and the table's move is judged as made while the seat had no link. A
+ * turn skipped on a link that stayed open fails. Honest links that are slow or slow down for good,
+ * stalls that leave a turn less than half its clock late, phones that sleep, and servers whose wall
+ * clock is set back, stay green; a stall or a slow link that costs a turn more than that is amber.
  */
 import { describe, expect, it, vi } from 'vitest';
-import { chooseAction, legalActions, withRules, type Action, type GameState } from '@mjm/engine';
-import { caveatKey, CLOCK_FRAME_MS, LoopbackHub, SILENT_ANSWER_MS, TableClient, TableHost, transportLink, type HostMessage, type SerializedClient } from '../src/index';
+import { chooseAction, legalActions, withRules, type Action, type BotSkill, type GameState, type RuleSet } from '@mjm/engine';
+import { caveatKey, CLOCK_FRAME_MS, failureKey, LoopbackHub, SILENT_ANSWER_MS, TableClient, TableHost, tableRule, transportLink, type HostMessage, type SerializedClient } from '../src/index';
 import { LATE_MS } from '../src/clientclock';
 import { keepSeen, MAX_SEEN, type PlayRecord, type SeenState } from '../src/clientrecords';
-import { Missed, scenario, seededDeals } from './support';
+import { Missed, scenario, scenarioAsync, seededDeals } from './support';
 import { holdTurn, stampOf, T0, wire, type Line, type Wire } from './wire';
 
 type StateMsg = Extract<HostMessage, { t: 'state' }>;
@@ -33,7 +36,7 @@ const green = (w: Wire) => expect(w.verdict()).toEqual({ status: 'ok', failures:
 
 describe('held frames: stamps that crawl while the turn state is held', () => {
   for (const all of [false, true]) {
-    it.each([25_000, 40_000, 44_000])(`a hold of %i ms, the clock frames and pongs crawling a millisecond at a time${all ? ', every other frame held too' : ''}: the link is dropped, and the hand is amber`, (ms) =>
+    it.each([25_000, 40_000, 44_000])(`a hold of %i ms, the clock frames and pongs crawling a millisecond at a time${all ? ', every other frame held too' : ''}: the link is dropped, and the hand is red (the crawled pongs are fixed points that the table’s later stamps contradict)`, (ms) =>
       scenario((i) => {
         const h = holdTurn({ code: `CR${ms}${all}${i}`, think: (_k, tc) => (tc === h.st.heldTc ? Infinity : 600) }, { all });
         need(h.arm());
@@ -45,16 +48,14 @@ describe('held frames: stamps that crawl while the turn state is held', () => {
         need(h.w.judged().includes(h.st.heldTc));
         expect(h.w.drops.length).toBeGreaterThan(0);
         expect(h.w.drops[0] - from).toBeLessThanOrEqual(SILENT_BOUND);
-        const v = h.w.verdict();
-        expect(v.status).toBe('partial');
-        // The table played for the seat with its link down (a 25 s hold: the turn comes first on the new link), or on a
-        // turn that reached the phone too late for its stamp to be believed (40 s and more): either is said, as it was.
-        expect(v.caveats).toEqual(expect.arrayContaining([ms < 40_000 ? 'tableMoved' : 'tableMovedLate']));
+        // A pong answered a second after its ping and stamped a millisecond after the last is a fixed point: this
+        // device's clock is that far ahead of the table's. Every honest stamp after it then calls the table's move early.
+        expect(h.w.verdict()).toMatchObject({ status: 'failed', failures: ['playedEarly'] });
       }),
     );
   }
 
-  it('inside the bound: a 12 s hold released with its own stamp, the seat timed out, is green', () =>
+  it('a 12 s hold under crawling pongs, released with its own stamp, the seat timed out: red playedEarly', () =>
     scenario((i) => {
       const h = holdTurn({ code: `CB12${i}`, think: (_k, tc) => (tc === h.st.heldTc ? Infinity : 600) });
       need(h.arm());
@@ -63,10 +64,10 @@ describe('held frames: stamps that crawl while the turn state is held', () => {
       h.release();
       h.w.finish();
       need(h.w.judged().includes(h.st.heldTc));
-      green(h.w);
+      expect(h.w.verdict()).toMatchObject({ status: 'failed', failures: ['playedEarly'] });
     }));
 
-  it('past the bound: an 18 s hold released with its own stamp, the seat timed out, is not green', () =>
+  it('an 18 s hold under crawling pongs, released with its own stamp, the seat timed out: red playedEarly', () =>
     scenario((i) => {
       const h = holdTurn({ code: `CB18${i}`, think: (_k, tc) => (tc === h.st.heldTc ? Infinity : 600) });
       need(h.arm());
@@ -75,8 +76,7 @@ describe('held frames: stamps that crawl while the turn state is held', () => {
       h.release();
       h.w.finish();
       need(h.w.judged().includes(h.st.heldTc));
-      expect(h.w.verdict().status).not.toBe('ok');
-      expect(h.w.verdict().caveats).toContain('tableMoved');
+      expect(h.w.verdict()).toMatchObject({ status: 'failed', failures: ['playedEarly'] });
     }));
 
   const slow = (base: number, _k: number, since: number, now: number) => base + 0.9 * (now - since);
@@ -210,7 +210,7 @@ describe('held frames: forged pongs', () => {
       expect(h.w.verdict()).toMatchObject({ status: 'failed', failures: ['heldFrame'] });
     }));
 
-  it('pongs that echo an old ping, stamped at the crawl: the link is dropped, and the hand is amber', () =>
+  it('pongs that echo an old ping, stamped at the crawl: the link is dropped, and the hand is red (the table’s own crawled pongs contradict its later stamps)', () =>
     scenario((i) => {
       const h = holdTurn({
         code: `PC${i}`,
@@ -226,8 +226,7 @@ describe('held frames: forged pongs', () => {
       h.w.finish();
       need(h.w.judged().includes(h.st.heldTc));
       expect(h.w.drops.length).toBeGreaterThan(0);
-      expect(h.w.verdict()).toMatchObject({ status: 'partial' });
-      expect(h.w.verdict().caveats).toContain('tableMovedLate');
+      expect(h.w.verdict()).toMatchObject({ status: 'failed', failures: ['playedEarly'] });
     }));
 });
 
@@ -442,11 +441,12 @@ describe('clock: a delay present from the start', () => {
       expect(odd.state.claimsPassedAway.some((p) => 'late' in p)).toBe(false);
     }));
 
-  it.each([15_000, 19_000])('%i ms from the start: green', (ms) =>
+  it.each([15_000, 19_000])('%i ms from the start, the pongs as late as the rest: amber (the round trips put every turn more than half its clock late), never green', (ms) =>
     scenario((i) => {
       const w = delayed(`DL${ms}${i}`, ms);
       need(w.judged().length > 0);
-      green(w);
+      expect(w.verdict().status).toBe('partial');
+      expect(w.verdict().caveats).toEqual(expect.arrayContaining(['tableMovedLate', 'lateShown']));
     }),
   );
 
@@ -662,15 +662,25 @@ describe('clock: a delay present from the start', () => {
       }
     }));
 
-  it('an honest round trip, 4 s each way from before the deal at seat 2, and a deal stamped 15 s back with a 15 s delay at seat 1: green', () =>
+  it('an honest round trip from before the deal: 3 s each way (6 s, inside the 7.5 s a Normal turn may be late) is green; 4 s each way (8 s) is amber, never red', () =>
     scenario((i) => {
+      const fast = wire({ code: `DG${i}`, seat: 2, think: (k) => (k % 3 === 0 ? Infinity : 800), up: () => 3_000, delay: () => 3_000 });
+      fast.finish();
+      need(fast.judged().length > 0);
+      green(fast);
       const slow = wire({ code: `DH${i}`, seat: 2, think: (k) => (k % 3 === 0 ? Infinity : 800), up: () => 4_000, delay: () => 4_000 });
       slow.finish();
       need(slow.judged().length > 0);
-      green(slow);
+      expect(slow.verdict()).toMatchObject({ status: 'partial', failures: [] });
+      expect(slow.verdict().caveats).toContain('lateShown');
+    }));
+
+  it('seat 1, a deal stamped 15 s back with a 15 s delay: amber, never green', () =>
+    scenario((i) => {
       const inside = backdated(`DI${i}`, 15_000, 15_000, 1);
       need(inside.judged().length > 0);
-      green(inside);
+      expect(inside.verdict().status).toBe('partial');
+      expect(inside.verdict().caveats).toEqual(expect.arrayContaining(['tableMovedLate', 'lateShown']));
     }));
 });
 
@@ -695,11 +705,12 @@ describe('the Fair play count of turns that reached the phone late (never a verd
     return { w, late, of };
   }
 
-  it('Hyper, 5 s from the start, inside the 17 s the audit allows: the hand is green and the table plays every turn, and every turn the phone measured is counted', () =>
+  it('Hyper, 5 s from the start, more than the 2 s a Hyper turn may be late: the table plays every turn, the hand is amber, and every turn the phone measured is counted', () =>
     scenario((i) => {
       const { w, late, of } = slowed(`FC5${i}`, HYPER, 5_000);
       need(of > 0);
-      green(w);
+      expect(w.verdict().status).toBe('partial');
+      expect(w.verdict().caveats).toEqual(expect.arrayContaining(['tableMovedLate', 'lateShown']));
       expect(w.judged().length).toBeGreaterThan(0);
       expect(late).toBe(of);
     }));
@@ -712,15 +723,20 @@ describe('the Fair play count of turns that reached the phone late (never a verd
       expect(late).toBe(0);
     }));
 
-  it('the bar is half the turn clock: 5 s late from the start costs a third of a Normal turn and is not counted; 9 s is', () =>
+  it('the bar is half of the 7.5 s a Normal turn may be late: 3 s late from the start is green and not counted, 5 s is green and counted, 9 s is amber and counted', () =>
     scenario((i) => {
+      const three = slowed(`FN3${i}`, NORMAL, 3_000);
+      need(three.of > 0);
+      green(three.w);
+      expect(three.late).toBe(0);
       const five = slowed(`FN5${i}`, NORMAL, 5_000);
       need(five.of > 0);
       green(five.w);
-      expect(five.late).toBe(0);
+      expect(five.late).toBe(five.of);
       const nine = slowed(`FN9${i}`, NORMAL, 9_000);
       need(nine.of > 0);
-      green(nine.w);
+      expect(nine.w.verdict()).toMatchObject({ status: 'partial', failures: [] });
+      expect(nine.w.verdict().caveats).toContain('lateShown');
       expect(nine.late).toBe(nine.of);
     }));
 
@@ -788,7 +804,7 @@ describe('honest links stay green', () => {
     return w;
   }
 
-  it.each([3_000, 6_000, 9_000])('a %i ms stall of the network as the seat is sent its turn, the seat timed out: green, no drop', (ms) =>
+  it.each([3_000, 6_000])('a %i ms stall of the network as the seat is sent its turn, the seat timed out: green, no drop', (ms) =>
     scenario((i) => {
       const w = stalled(`HS${ms}${i}`, ms);
       expect(w.drops).toEqual([]);
@@ -796,11 +812,13 @@ describe('honest links stay green', () => {
     }),
   );
 
-  it('a 12 s stall of the network as the seat is sent its turn, the seat timed out: green', () =>
+  it.each([9_000, 12_000])('a %i ms stall of the network as the seat is sent its turn, more than the 7.5 s a Normal turn may be late, the seat timed out: amber (the turn reached the phone late), never red', (ms) =>
     scenario((i) => {
-      const w = stalled(`HS12${i}`, 12_000);
-      green(w);
-    }));
+      const w = stalled(`HS${ms}${i}`, ms);
+      expect(w.verdict()).toMatchObject({ status: 'partial', failures: [] });
+      expect(w.verdict().caveats).toEqual(expect.arrayContaining(['tableMovedLate', 'lateShown']));
+    }),
+  );
 
   it('a latency that rises by 5 s and stays up: green, no drop', () =>
     scenario((i) => {
@@ -866,7 +884,7 @@ describe('honest links stay green', () => {
       expect(w.verdict().status).not.toBe('ok');
     }));
 
-  it('a latency that rises by 8 s over 30 s and stays up, then a 6 s stall of the network a minute later: green, no drop', () =>
+  it('a latency that rises by 8 s over 30 s and stays up (every turn more than the 7.5 s a Normal turn may be late), then a 6 s stall of the network a minute later: amber, never red, no drop', () =>
     scenario((i) => {
       const t1 = T0 + 30_000 + 7_000 * i;
       const t2 = t1 + 90_000;
@@ -878,7 +896,8 @@ describe('honest links stay green', () => {
       w.finish();
       need(w.judged().length > 0 && Math.max(...w.shown.values()) > t2 + 15_000);
       expect(w.drops).toEqual([]);
-      green(w);
+      expect(w.verdict()).toMatchObject({ status: 'partial', failures: [] });
+      expect(w.verdict().caveats).toContain('lateShown');
     }));
 
   it('a latency that rises by 20 s over two minutes and stays up, the seat timed out now and then: its turns shown late are noted, never failed', () =>
@@ -994,11 +1013,10 @@ describe('reconnect: a server that forces the phone onto new links', () => {
     }),
   );
 
-  it('the same, the hold lasting until just after a drop, so the turn comes on a fresh link: judged as a drop, amber', () =>
+  it('the same, the hold lasting until just after a drop, so the turn comes on a fresh link: judged as a drop, and red: by the crawled pongs, the clock cannot have run out while the link was down', () =>
     scenario((i) => {
       const w = staleResend(`RT${i}`, 44_000);
-      expect(w.verdict().status).toBe('partial');
-      expect(w.verdict().caveats).toContain('tableMoved');
+      expect(w.verdict()).toMatchObject({ status: 'failed', failures: ['playedWhileDown'] });
     }));
 
   /**
@@ -1101,7 +1119,7 @@ describe('reconnect: a server that forces the phone onto new links', () => {
       expect(w.verdict().caveats).toContain('tableMoved');
     }));
 
-  it('a slow reconnect: the watch drops a crawling link, joining again takes 10 s, and the held turn state comes at once on the new link with its own stamp: amber, never green', () =>
+  it('a slow reconnect: the watch drops a crawling link, joining again takes 10 s, and the held turn state comes at once on the new link with its own stamp: red playedEarly (the crawled pongs contradict it), never green', () =>
     scenario((i) => {
       let first: Line | null = null;
       const h = holdTurn({
@@ -1120,11 +1138,10 @@ describe('reconnect: a server that forces the phone onto new links', () => {
       h.w.finish();
       need(h.st.released && h.w.judged().includes(h.st.heldTc));
       expect(h.w.drops).toHaveLength(1);
-      expect(h.w.verdict().status).toBe('partial');
-      expect(h.w.verdict().caveats).toContain('tableMovedLate');
+      expect(h.w.verdict()).toMatchObject({ status: 'failed', failures: ['playedEarly'] });
     }));
 
-  it('no storm: after a stall drops a link with 8 s each way, the new link, whose first frame takes 16 s, is kept', () =>
+  it('no storm: a stall with 8 s each way drops the link at most once (a pong a second keeps the watch fed), and the new link, whose first frame takes 16 s, is kept', () =>
     scenario((i) => {
       let stallFrom = -1;
       let tc = -1;
@@ -1143,7 +1160,7 @@ describe('reconnect: a server that forces the phone onto new links', () => {
       });
       w.finish();
       need(tc >= 0);
-      expect(w.drops).toHaveLength(1);
+      expect(w.drops.length).toBeLessThanOrEqual(1);
       expect(w.c.state.lastResult).not.toBeNull();
     }));
 });
@@ -1335,9 +1352,9 @@ describe('device clock: the phone’s wall clock set while the app was closed', 
     expect(verdict).toEqual({ status: 'partial', failures: [], caveats: ['appClock'] });
   });
 
-  it('a server whose clock leaps 20 s forward on the seat’s first turn after an app restart, before any fixed point of the new run: red without the restart, and amber with the reason after it, never green', () => {
+  it('a server whose clock leaps 20 s forward on the seat’s first turn after an app restart: red with or without the restart (the new run pings the table within a second, and its answer is a fixed point the leap contradicts)', () => {
     expect(scenario((i) => leap(`SL${i}`, false)).verdict()).toMatchObject({ status: 'failed', failures: ['playedEarly'] });
-    expect(scenario((i) => leap(`SL${i}`, true)).verdict()).toEqual({ status: 'partial', failures: [], caveats: ['appClock'] });
+    expect(scenario((i) => leap(`SL${i}`, true)).verdict()).toMatchObject({ status: 'failed', failures: ['playedEarly'] });
   });
 });
 
@@ -1900,10 +1917,10 @@ describe('time bank: taken as the phone comes back in a new run of the app', () 
     return w;
   }
 
-  it('a server that takes the whole bank as the seat resumes from Home, or as the app restarts, and then times the seat out by its turn clock alone: only what the run before measured can tell, so the hand is amber with the reason, never green', () => {
+  it('a server that takes the whole bank as the seat resumes from Home, or as the app restarts, and then times the seat out by its turn clock alone: red bankTaken (the new run pings the table within a second of joining, and its answer measures the time away)', () => {
     for (const kick of [true, false]) {
       const w = scenario((i) => bankOnResume(`BR${kick ? 'K' : 'R'}${i}`, kick, true));
-      expect(w.verdict()).toEqual({ status: 'partial', failures: [], caveats: ['appClock'] });
+      expect(w.verdict()).toMatchObject({ status: 'failed', failures: ['bankTaken'] });
     }
   });
 
@@ -2019,4 +2036,412 @@ describe('a flood of states sent again', () => {
     expect(play.overflow).toBeUndefined();
     green(w);
   });
+});
+
+describe('the table’s answers to the phone’s pings: how late a turn may come, a move in flight, the app’s pauses', () => {
+  const NORMAL = withRules({ handsPerMatch: 1, turnSeconds: 15, timeBankSeconds: 30 });
+  const HYPER = withRules({ handsPerMatch: 1, turnSeconds: 4, timeBankSeconds: 0 });
+  const TURBO = withRules({ handsPerMatch: 1, turnSeconds: 7, timeBankSeconds: 10 });
+  const counts = (w: Wire) => w.c.state.turnsShownLate.reduce((n, r) => ({ late: n.late + r.late.length, of: n.of + r.of }), { late: 0, of: 0 });
+  const internals = (w: Wire) => w.host as unknown as { handle: (from: string, msg: unknown) => void; banks: number[]; botSkill: BotSkill; matchId: string };
+
+  /**
+   * From the state that shows the seat its second discard on, the server holds every frame it sends the
+   * phone (pongs and clock frames too) for `ms`, then lets them go in order, as made: a stall of its own
+   * making. The seat moves 600 ms after it is shown a move, or (`idle`) leaves the held one to run out.
+   */
+  function stall(code: string, rules: RuleSet, ms: number, idle: boolean) {
+    const st = { from: -1, tc: -1, done: false };
+    const turns = new Set<number>();
+    const w: Wire = wire({
+      code,
+      rules,
+      think: (_k, tc) => (idle && tc === st.tc ? Infinity : 600),
+      hold: (m, w) => {
+        if (st.done) return false;
+        if (st.from < 0 && m.t === 'state' && w.discardTurn() && w.host.game!.turnCounter === m.view.turnCounter && !turns.has(m.view.turnCounter)) {
+          turns.add(m.view.turnCounter);
+          if (turns.size === 2) {
+            st.from = w.clock.now;
+            st.tc = m.view.turnCounter;
+          }
+        }
+        return st.from >= 0;
+      },
+      onTick: (w) => {
+        if (st.from >= 0 && !st.done && w.clock.now - st.from >= ms) {
+          st.done = true;
+          w.line.release();
+        }
+      },
+    });
+    w.finish();
+    need(st.done && w.c.state.lastAudit !== null);
+    return { w, st };
+  }
+
+  it('a turn the server holds, as made, for half its clock and a second more is amber: 8.5 s at Normal, 3 s at Hyper (it was 17 s at every speed) (T8)', () =>
+    scenario((i) => {
+      for (const [rules, ms] of [
+        [NORMAL, 8_500],
+        [HYPER, 3_000],
+      ] as const) {
+        const { w } = stall(`G8a${ms}${i}`, rules, ms, false);
+        expect(w.verdict()).toMatchObject({ status: 'partial', failures: [] });
+        expect(w.verdict().caveats).toContain('lateShown');
+      }
+    }));
+
+  it('held a second less than half its clock: green, and counted when later than half of that (Normal: 6.5 s counted, 3 s not) (T8)', () =>
+    scenario((i) => {
+      const near = stall(`G8b${i}`, NORMAL, 6_500, false);
+      green(near.w);
+      expect(counts(near.w).late).toBe(1);
+      const short = stall(`G8c${i}`, NORMAL, 3_000, false);
+      green(short.w);
+      expect(counts(short.w).late).toBe(0);
+    }));
+
+  it('every frame held 12 s as made (a stall the server makes), the seat timed out, Normal: amber, the table moved on a turn that reached the phone late (it was green) (T9)', () =>
+    scenario((i) => {
+      const { w, st } = stall(`G9${i}`, NORMAL, 12_000, true);
+      need(w.judged().includes(st.tc));
+      expect(w.drops).toEqual([]);
+      expect(w.verdict()).toMatchObject({ status: 'partial', failures: [] });
+      expect(w.verdict().caveats).toEqual(expect.arrayContaining(['tableMovedLate', 'lateShown']));
+    }));
+
+  /** The server waits for the seat's commitment and secret however late they come (as a server may). */
+  const waitForShare = (seat: number) => (w: Wire) => {
+    const h = w.host as unknown as { phase: string; deadline: number | null; seats: Array<{ commit?: string; secret?: string }>; now: () => number };
+    const s = h.seats[seat];
+    if (((h.phase === 'commit' && !s.commit) || (h.phase === 'reveal' && !s.secret)) && h.deadline !== null) h.deadline = Math.max(h.deadline, h.now() + 5_000);
+  };
+
+  /**
+   * The eighth assessment's item 2: the first stamped frame the phone gets is sent at once with its stamp
+   * moved back `d` ms; every frame after it reaches the phone `d` late under its honest stamp, pongs
+   * included. Seat 1, two hands, the seat moving 1.2 s after it is shown a move.
+   */
+  function backThenLate(code: string, d: number, turnSeconds: number, timeBankSeconds: number) {
+    let stamped = 0;
+    return wire({
+      code,
+      seat: 1,
+      rules: withRules({ handsPerMatch: 2, turnSeconds, timeBankSeconds }),
+      think: () => 1_200,
+      map: (m) => {
+        const s = stampOf(m);
+        if (s === undefined) return m;
+        stamped++;
+        return stamped === 1 ? ({ ...m, now: s - d } as HostMessage) : m;
+      },
+      delay: () => (stamped > 1 ? d : 0),
+      onTick: waitForShare(1),
+    });
+  }
+  const playOut = (w: Wire) => {
+    for (let g = 0; g < 14_400 && !w.c.state.matchOver; g++) w.step();
+  };
+  const noGreen = (w: Wire) => {
+    const audits = w.c.state.audits;
+    expect(audits.length).toBeGreaterThan(0);
+    for (const a of audits) expect(a.status).not.toBe('ok');
+    // Red only by the 30 s a move may lie unanswered.
+    expect(new Set(audits.flatMap((a) => a.failures).map((f) => failureKey(f)))).toEqual(new Set(audits.some((a) => a.failures.length > 0) ? ['moveIgnored'] : []));
+  };
+
+  it('item 2, as the app plays it: the ping behind the join goes out first, so the frame stamped back is its answer; then every frame 25 s late at Normal, or 20 s at Turbo: no green hand, and every turn the phone measured is counted (T10)', () =>
+    scenarioAsync(async (i) => {
+      for (const [d, turn, bank] of [
+        [25_000, 15, 30],
+        [20_000, 7, 10],
+      ] as const) {
+        const w = backThenLate(`I2a${d}${i}`, d, turn, bank);
+        await Promise.resolve();
+        playOut(w);
+        need(w.c.state.audits.length >= 2);
+        noGreen(w);
+        const { late, of } = counts(w);
+        expect(of).toBeGreaterThan(0);
+        expect(late).toBe(of);
+      }
+    }));
+
+  it('item 2 with the deal itself as the frame stamped back 25 s: every fixed point the phone holds says the table’s clock is 25 s behind, as a server that runs its clock behind from the start does (a stated limit: the count sees nothing); the app’s own clock says the same, so the table playing over a move the seat made with time on it is noted, and no hand is green (T10)', () =>
+    scenario((i) => {
+      const w = backThenLate(`I2b${i}`, 25_000, 15, 30);
+      playOut(w);
+      need(w.c.state.audits.length >= 2);
+      noGreen(w);
+      for (const a of w.c.state.audits) expect(a.failures.length > 0 || a.caveats.map((c) => caveatKey(c)).includes('inFlight')).toBe(true);
+      expect(counts(w).late).toBe(0);
+    }));
+
+  /** Every frame `ms` late from the hand's first state on, under honest stamps; the seat moves 0.8 s after it is shown a move. */
+  function lateFromStart(code: string, rules: RuleSet, ms: number) {
+    let on = false;
+    const w = wire({
+      code,
+      rules,
+      think: () => 800,
+      delay: (m) => {
+        if (m.t === 'state') on = true;
+        return on && stampOf(m) !== undefined ? ms : 0;
+      },
+    });
+    w.finish();
+    return w;
+  }
+
+  it.each([
+    ['Turbo', TURBO],
+    ['Hyper', HYPER],
+  ] as const)('item 3, %s: every frame 15 s late from the start under honest stamps is amber (it was green); with no delay, green (T11)', (_name, rules) =>
+    scenario((i) => {
+      const late = lateFromStart(`I3a${rules.turnSeconds}${i}`, rules, 15_000);
+      need(late.judged().length > 0);
+      expect(late.verdict().status).toBe('partial');
+      expect(late.verdict().caveats).toEqual(expect.arrayContaining(['tableMovedLate', 'lateShown']));
+      green(lateFromStart(`I3b${rules.turnSeconds}${i}`, rules, 0));
+    }),
+  );
+
+  /**
+   * The server never sends the seat the state that starts its turn on the link it has (after the deal): it
+   * closes that link instead (up to three times). The phone joins again; the server holds the join until `left` ms
+   * before the seat's clock runs out (null: it lets it through at once), then answers as an honest host
+   * answers a rejoin: the welcome, and the state stamped then, its deadline still running. The seat
+   * moves `think` ms after it is shown a move.
+   */
+  function kickAtTurn(code: string, rules: RuleSet, left: number | null, think: number) {
+    let holdUntil = Number.NEGATIVE_INFINITY;
+    let dead: string | null = null;
+    let closeNow = false;
+    const kicked = new Set<number>();
+    const w: Wire = wire({
+      code,
+      rules,
+      think: () => think,
+      // The bots take 0.7 s over each move, as the server's do.
+      botDelayMs: 700,
+      up: (now) => Math.max(0, holdUntil - now),
+      map: (m, w) => {
+        if (dead === w.line.id) return null;
+        // (Not the deal itself: a link lost before the hand's first state was the deal's.)
+        if (m.t === 'state' && m.view.turnCounter > 0 && kicked.size < 3 && w.discardTurn() && w.host.game!.turnCounter === m.view.turnCounter && !kicked.has(m.view.turnCounter) && w.clock.now >= holdUntil) {
+          kicked.add(m.view.turnCounter);
+          holdUntil = left === null ? w.clock.now : w.clock.now + rules.turnSeconds * 1_000 + internals(w).banks[0] - left;
+          dead = w.line.id;
+          closeNow = true;
+          return null;
+        }
+        return m;
+      },
+      onTick: (w) => {
+        if (!closeNow) return;
+        closeNow = false;
+        w.dropNow(Math.max(500, holdUntil - 200 - w.clock.now));
+      },
+    });
+    w.finish();
+    need(kicked.size > 0);
+    return w;
+  }
+
+  it.each([
+    ['Hyper', HYPER, 800, 1_500],
+    ['Turbo', TURBO, 1_500, 3_000],
+  ] as const)('a reconnect forced as the turn starts, the turn let through on the new link %s with too little of its clock left: amber, the table played while the link was down (it was green); a rejoin let through at once: green (T12)', (_name, rules, left, think) =>
+    scenario((i) => {
+      const kicked = kickAtTurn(`KT${rules.turnSeconds}${i}`, rules, left, think);
+      need(kicked.judged().length > 0);
+      expect(kicked.verdict()).toMatchObject({ status: 'partial', failures: [] });
+      expect(kicked.verdict().caveats).toContain('tableMoved');
+      green(kickAtTurn(`KC${rules.turnSeconds}${i}`, rules, null, think));
+    }),
+  );
+
+  /**
+   * Normal turns, no bank. On the seat's third discard the seat moves `think` ms after it is shown the
+   * turn, with a discard other than the one the table's timeout rule plays (`illegal`: a tile it does not
+   * hold), and the server drops that move unseen, so the table times the seat out.
+   */
+  function dropMove(code: string, think: number, illegal = false) {
+    const rules = withRules({ handsPerMatch: 1, turnSeconds: 15, timeBankSeconds: 0 });
+    const st = { tc: -1, discards: 0, dropped: 0 };
+    const w: Wire = wire({
+      code,
+      rules,
+      think: (_k, tc) => {
+        const s = w.c.localState();
+        const discard = !!s && legalActions(s, 0).every((a) => a.type === 'discard');
+        if (discard && st.tc < 0 && ++st.discards === 3) st.tc = tc;
+        return tc === st.tc ? think : 600;
+      },
+    });
+    const act = w.c.act.bind(w.c);
+    w.c.act = (a: Action) => {
+      const s = w.c.localState();
+      if (!s || s.turnCounter !== st.tc) return act(a);
+      const own = tableRule(s, 0, 'timeout', internals(w).botSkill, internals(w).matchId);
+      const other = legalActions(s, 0).find((x) => x.type === 'discard' && own?.type === 'discard' && x.tile !== own.tile);
+      // A tile the seat does not hold: the table refuses the move at once.
+      if (illegal) return act({ type: 'discard', tile: [...Array(144).keys()].find((t) => !s.players[0].hand.includes(t))! });
+      return act(other ?? a);
+    };
+    const h = internals(w);
+    const handle = h.handle.bind(w.host);
+    h.handle = (from, msg) => {
+      const m = msg as { t?: string; turnCounter?: number };
+      if (!illegal && m?.t === 'action' && m.turnCounter === st.tc && from.startsWith('p0')) return void st.dropped++;
+      handle(from, msg);
+    };
+    w.finish();
+    need(st.tc >= 0 && w.judged().includes(st.tc) && (illegal || st.dropped === 1));
+    return w;
+  }
+
+  it('a move sent with 6 s of its clock left that the server drops, the table playing its own: amber, the move was in flight (it was green) (T13)', () =>
+    scenario((i) => {
+      const w = dropMove(`IF6${i}`, 9_000);
+      expect(w.verdict()).toMatchObject({ status: 'partial', failures: [] });
+      expect(w.verdict().caveats).toContain('inFlight');
+    }));
+
+  it('the same with 1 s left: green (a move made in the last 1.5 s may honestly arrive too late); a move refused as illegal: nothing in flight (T13)', () =>
+    scenario((i) => {
+      green(dropMove(`IF1${i}`, 14_000));
+      const bad = dropMove(`IFX${i}`, 9_000, true);
+      expect(bad.verdict().caveats).not.toContain('inFlight');
+      expect(bad.verdict().failures).toEqual([]);
+    }));
+
+  /**
+   * The run-behind: every frame but a pong reaches the phone 10 s after the table made it, under its honest
+   * stamp; every pong goes back at once, stamped 10 s back, so that every fixed point agrees with a clock
+   * 10 s behind. Normal turns, no bank. On every move the seat waits `wait(left)` ms, `left` being what the
+   * app's own clock shows when the move is shown.
+   */
+  function runBehind(code: string, wait: (left: number) => number) {
+    const D = 10_000;
+    const w: Wire = wire({
+      code,
+      rules: withRules({ handsPerMatch: 1, turnSeconds: 15, timeBankSeconds: 0 }),
+      map: (m, w) => {
+        if (m.t !== 'pong') return m;
+        w.line.inject({ ...m, now: m.now - D });
+        return null;
+      },
+      delay: () => D,
+      onTick: waitForShare(0),
+      think: () => {
+        const o = w.c.ownClock();
+        return o ? wait(o.bankEnd - w.c.clockNow()) : 600;
+      },
+    });
+    w.finish();
+    return w;
+  }
+
+  it('a server that runs its clock 10 s behind and answers every ping at once: a seat that moves 1 s after its own clock starts is green; one that moves with 3 s left on its own clock, which the table plays over, is amber; the count sees nothing (a stated limit) (T14)', () =>
+    scenario((i) => {
+      const quick = runBehind(`RB1${i}`, () => 1_000);
+      need(quick.c.state.lastAudit !== null);
+      green(quick);
+      expect(counts(quick).late).toBe(0);
+      const slow = runBehind(`RB3${i}`, (left) => left - 3_000);
+      need(slow.judged().length > 0);
+      expect(slow.verdict()).toMatchObject({ status: 'partial', failures: [] });
+      expect(slow.verdict().caveats).toContain('inFlight');
+      expect(counts(slow).late).toBe(0);
+    }));
+
+  /**
+   * On the seat's third discard the seat moves at once and the server drops the move unseen; the app then
+   * does not run for `asleep` ms (0: it runs on). Normal, 15 + 30 s: the table times the seat out 45 s after
+   * the turn began, on the link that stayed up.
+   */
+  function lyingMove(code: string, asleep: number) {
+    const st = { tc: -1, discards: 0, at: Number.POSITIVE_INFINITY };
+    const w: Wire = wire({
+      code,
+      asleep: (now) => now >= st.at && now < st.at + asleep,
+      think: (_k, tc) => {
+        const s = w.c.localState();
+        if (s && legalActions(s, 0).every((a) => a.type === 'discard') && st.tc < 0 && ++st.discards === 3) st.tc = tc;
+        return 600;
+      },
+    });
+    // A discard other than the one the table's timeout rule plays.
+    const act = w.c.act.bind(w.c);
+    w.c.act = (a: Action) => {
+      const s = w.c.localState();
+      if (!s || s.turnCounter !== st.tc) return act(a);
+      const own = tableRule(s, 0, 'timeout', internals(w).botSkill, internals(w).matchId);
+      return act(legalActions(s, 0).find((x) => x.type === 'discard' && own?.type === 'discard' && x.tile !== own.tile) ?? a);
+    };
+    const h = internals(w);
+    const handle = h.handle.bind(w.host);
+    h.handle = (from, msg) => {
+      const m = msg as { t?: string; turnCounter?: number };
+      if (m?.t === 'action' && m.turnCounter === st.tc && from.startsWith('p0')) {
+        st.at = w.clock.now;
+        return;
+      }
+      handle(from, msg);
+    };
+    w.finish();
+    need(st.tc >= 0 && w.judged().includes(st.tc));
+    return w;
+  }
+
+  it('a move the app sent just before the phone slept 50 s, which never reached the table: amber (in flight), not red: the 30 s a move may lie unanswered leave out the time the app did not run (T15)', () =>
+    scenario((i) => {
+      const w = lyingMove(`SL50${i}`, 50_000);
+      expect(w.verdict()).toMatchObject({ status: 'partial', failures: [] });
+      expect(w.verdict().caveats).toContain('inFlight');
+    }));
+
+  it('the same with the app running all along, the move left lying 44 s on a live link: red, as before (T15)', () =>
+    scenario((i) => {
+      const w = lyingMove(`SL0${i}`, 0);
+      expect(w.verdict()).toMatchObject({ status: 'failed', failures: ['moveIgnored'] });
+    }));
+
+  /**
+   * After the seat's third discard the app goes to the background for 40 s (its clock runs on); the bots
+   * take 2 s over each move, so the seat's next turn is sent while the app is not running. The server
+   * lets the frames sent in that time reach the phone `extra` ms after the app is back.
+   */
+  function sentWhilePaused(code: string, extra: number) {
+    const st = { discards: 0, from: Number.POSITIVE_INFINITY, tc: -1 };
+    const away = (now: number) => now >= st.from && now < st.from + 40_000;
+    const w: Wire = wire({
+      code,
+      botDelayMs: 2_000,
+      background: away,
+      think: (_k, tc) => {
+        const s = w.c.localState();
+        if (s && legalActions(s, 0).every((a) => a.type === 'discard') && st.tc < 0 && ++st.discards === 3) st.tc = tc;
+        return 600;
+      },
+      delay: (_m, now) => (away(now) ? st.from + 40_000 + extra - now : 0),
+      onTick: (w) => {
+        if (st.tc >= 0 && st.from === Number.POSITIVE_INFINITY && w.c.localState()?.turnCounter !== st.tc) st.from = w.clock.now;
+      },
+    });
+    w.finish();
+    need(st.from < Number.POSITIVE_INFINITY && [...w.created.keys()].some((tc) => away(w.created.get(tc)!)));
+    return w;
+  }
+
+  it('a turn sent while the app was in the background for 40 s: handled as it comes back, or held 4 s more (past the grace for frames that waited in the device), green: the pause is not the server’s doing; held 9 s more after it is back, amber (T16)', () =>
+    scenario((i) => {
+      green(sentWhilePaused(`PW0${i}`, 0));
+      green(sentWhilePaused(`PW4${i}`, 4_000));
+      const held = sentWhilePaused(`PW9${i}`, 9_000);
+      expect(held.verdict()).toMatchObject({ status: 'partial', failures: [] });
+      expect(held.verdict().caveats).toContain('lateShown');
+    }));
 });

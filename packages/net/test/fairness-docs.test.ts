@@ -8,29 +8,66 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { SPEED_PRESETS, withRules } from '@mjm/engine';
-import { DRIFT_CAP_MS, LATE_MS, RTT_ALLOW_MS, SILENT_ANSWER_MS, STEADY_SLACK_MS, WATCH_WINDOW_MS } from '../src/clientclock';
-import { lateCountMs } from '../src/clientmoves';
+import { MOVE_SLACK_MS } from '../src/client';
+import { CLOCK_SKEW_MS, DRIFT_CAP_MS, LATE_MS, NO_ANSWER_PINGS, SILENT_ANSWER_MS, STEADY_SLACK_MS, WATCH_WINDOW_MS } from '../src/clientclock';
+import { FLIGHT_SLACK_MS, LATE_COUNT_MIN_MS, LATE_LIMIT_MIN_MS, lateCountMs, lateLimitMs } from '../src/clientmoves';
 import { MAX_SEEN } from '../src/clientrecords';
 import { CLOCK_FRAME_MS } from '../src/messages';
 
-const doc = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'docs', 'FAIRNESS.md'), 'utf8');
-/** The table row on the turn clock, where the limits are stated. */
+const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'docs');
+const doc = readFileSync(join(root, 'FAIRNESS.md'), 'utf8');
+const api = readFileSync(join(root, 'API.md'), 'utf8');
+/** The table rows on the turn clock and on the seat's own moves, where the limits are stated. */
 const turnRow = doc.split('\n').find((l) => l.startsWith('| The server did not play your turn before your time ran out')) ?? '';
+const movesRow = doc.split('\n').find((l) => l.startsWith('| The server did not change or drop your moves')) ?? '';
+const dropRow = doc.split('\n').find((l) => l.startsWith('| A dropped connection was not used to play your turn')) ?? '';
 const s = (ms: number) => String(ms / 1000);
+const rules = (k: keyof typeof SPEED_PRESETS) => withRules({ turnSeconds: SPEED_PRESETS[k].turnSeconds, timeBankSeconds: SPEED_PRESETS[k].timeBankSeconds });
 
 describe('the fair play charter states the late-turn limits the table client uses', () => {
-  it('17 seconds late is amber at best, about 21 against the round trips, with at most half a second for drift', () => {
-    expect(turnRow).toContain(`more than ${s(LATE_MS)} seconds after its stamp`);
-    expect(turnRow).toContain(`more than about ${s(LATE_MS + RTT_ALLOW_MS)} seconds late`);
+  it('the phone pings the table once a second and right after each join, and measures every state against the answers, its pauses left out', () => {
+    expect(turnRow).toContain('your phone pings the table once a second, and right after each join; the table answers each at once with its clock');
+    expect(turnRow).toContain('Time the app was not running is left out.');
+    expect(api).toContain('The app sends one once a second while it holds a seat and the session is connected, and one right after each `join`.');
+    expect(api).toContain(`A hand in which the app sent ${NO_ANSWER_PINGS} or more pings and no answer came back is amber.`);
+    expect(turnRow).toContain('A table that answers none of your pings during a hand makes the hand amber.');
+  });
+
+  it('a turn may reach the phone half its turn clock late, at least 2 s, as the client sets it at every speed', () => {
+    expect(LATE_LIMIT_MIN_MS).toBe(2_000);
+    const g = (k: keyof typeof SPEED_PRESETS) => s(lateLimitMs(rules(k)));
+    expect(turnRow).toContain(`later than half its turn clock, and at least ${s(LATE_LIMIT_MIN_MS)} seconds (${g('relaxed')} seconds at Relaxed, ${g('normal')} at Normal, ${g('fast')} at Fast, ${g('turbo')} at Turbo, ${g('hyper')} at Hyper), makes the hand amber, never green`);
+    expect(dropRow).toContain(`less half its turn clock (at least ${s(LATE_LIMIT_MIN_MS)} seconds)`);
+    expect(turnRow).toContain(`at Hyper a ${g('hyper')}-second stall as your turn starts is enough`);
+  });
+
+  it('the Fair play count’s bar is half of that, at least 1 s, at every speed', () => {
+    expect(LATE_COUNT_MIN_MS).toBe(1_000);
+    const bar = (k: keyof typeof SPEED_PRESETS) => s(lateCountMs(rules(k)));
+    expect(turnRow).toContain(`(the Fair play count counts each turn later than half of it: ${bar('relaxed')} seconds at Relaxed, ${bar('normal')} at Normal, ${bar('fast')} at Fast, ${bar('turbo')} at Turbo, ${bar('hyper')} at Hyper)`);
+    expect(doc).toContain('later than half the time a turn may be late (a quarter of the turn clock, at least 1 second)');
+  });
+
+  it('a move sent in good time that the table plays over is amber; in good time is more than 1.5 s before the end of the screen’s clock; one left 30 s, pauses left out, fails', () => {
+    expect(movesRow).toContain(`a legal move left unanswered for more than ${s(MOVE_SLACK_MS)} seconds and replaced by the table's own fails (time your app was not running is left out of the ${s(MOVE_SLACK_MS)} seconds)`);
+    expect(movesRow).toContain(`more than ${s(FLIGHT_SLACK_MS)} seconds before the end of the clock your screen showed`);
+    expect(movesRow).toContain(`more than the best round trip of the hand plus ${s(FLIGHT_SLACK_MS)} seconds, at most half the turn clock`);
+    expect(movesRow).toContain(`a move you sent in the last ${s(FLIGHT_SLACK_MS)} seconds your screen showed`);
+    expect(turnRow).toContain(`a move made in the last ${s(FLIGHT_SLACK_MS)} seconds your screen shows can be lost`);
+  });
+
+  it('the server’s stamps are believed 5 s beyond the phone’s clock; the watch’s relation drifts by at most half a second', () => {
+    expect(turnRow).toContain(`believed up to ${s(CLOCK_SKEW_MS)} seconds beyond your phone's own clock`);
     expect(DRIFT_CAP_MS).toBe(500);
     expect(turnRow).toContain('allowing at most half a second for the two clocks drifting apart');
   });
 
-  it('the watch: a frame every 3 seconds, a probe 8 seconds behind, 5 more to answer, a 20-second window, which a server can shorten and never lengthen', () => {
+  it('the watch: a frame every 3 seconds, a probe 8 seconds behind, 5 more to answer, a 20-second window, 17 s on a live link, which a server can shorten and never lengthen', () => {
     expect(turnRow).toContain(`for ${s(CLOCK_FRAME_MS)} seconds`);
     expect(turnRow).toContain(`fall ${s(2 * CLOCK_FRAME_MS + 2_000)} seconds behind`);
     expect(turnRow).toContain(`After ${s(SILENT_ANSWER_MS)} more seconds it drops the connection`);
     expect(turnRow).toContain(`the last ${s(WATCH_WINDOW_MS)} seconds`);
+    expect(turnRow).toContain(`the state must reach you within ${s(LATE_MS)} seconds of its stamp by the watch's measure`);
     expect(turnRow).toContain('a server can shorten the 3 and the 8 by announcing a shorter clock-frame period, never lengthen them');
   });
 
@@ -41,7 +78,7 @@ describe('the fair play charter states the late-turn limits the table client use
 
   it('names every event after which the measure starts afresh: a sleep, an app restart, the phone’s clock set forward, an announced server restart', () => {
     const sentence = turnRow.slice(turnRow.indexOf('After your phone sleeps'));
-    expect(sentence).toMatch(/^After your phone sleeps, after the app restarts .*, after your phone's clock is set forward by more than a second, or after a restart the server announces, the measure starts afresh/);
+    expect(sentence).toMatch(/^After your phone sleeps, after the app restarts .*, after your phone's clock is set forward by more than a second, or after a restart the server announces, the measure starts afresh from the next answered ping, within a second/);
     expect(turnRow).toContain("For each run of the server's clock, of the app and of your phone's own clock");
   });
 
@@ -49,14 +86,12 @@ describe('the fair play charter states the late-turn limits the table client use
     expect(doc).toContain(`It keeps up to ${MAX_SEEN} states of each hand`);
   });
 
-  it('gives each speed’s turn clock and time bank as the rules have them, and the bar of the Fair play count as the client sets it', () => {
-    const p = SPEED_PRESETS;
-    expect(turnRow).toContain(`the whole turn at Normal (${p.normal.turnSeconds} seconds) and at Fast (${p.fast.turnSeconds}), and more than half a turn at Relaxed (${p.relaxed.turnSeconds})`);
-    expect(turnRow).toContain(`At Turbo (${p.turbo.turnSeconds} seconds and a ${p.turbo.timeBankSeconds}-second bank) it is the whole clock, bank included`);
-    expect(p.turbo.turnSeconds + p.turbo.timeBankSeconds).toBeLessThanOrEqual(LATE_MS / 1000);
-    expect(p.hyper.timeBankSeconds).toBe(0);
-    expect(turnRow).toContain(`at Hyper (${p.hyper.turnSeconds} seconds, no bank) more than four times the clock`);
-    const bar = (k: keyof typeof SPEED_PRESETS) => s(lateCountMs(withRules({ turnSeconds: p[k].turnSeconds, timeBankSeconds: p[k].timeBankSeconds })));
-    expect(turnRow).toContain(`(${bar('hyper')} seconds at Hyper, ${bar('turbo')} at Turbo, ${bar('fast')} at Fast, ${bar('normal')} at Normal, ${bar('relaxed')} at Relaxed)`);
+  it('no longer gives 17 s as the bound on a late turn, says turns 25 to 30 s late stay green, or says a protocol change is still needed', () => {
+    expect(turnRow).not.toMatch(/amber at best/);
+    expect(turnRow).not.toMatch(/21 seconds/);
+    expect(doc).not.toMatch(/25 to 30 seconds/);
+    expect(doc).not.toMatch(/change to the protocol|protocol change/);
+    // 17 s is left only as the watch's bound on a live link.
+    expect(turnRow.match(/17 seconds/g)).toHaveLength(1);
   });
 });

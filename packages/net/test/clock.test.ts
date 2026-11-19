@@ -98,6 +98,18 @@ function wait(t: T, ms: number) {
   }
 }
 
+/**
+ * The same with the app running all the while: the online session checks the link once a second (and
+ * pings the table). Time in which the app does not run is left out of the 30 s a move may lie unanswered.
+ */
+function waitRunning(t: T, ms: number) {
+  for (let left = ms; left > 0; left -= 500) {
+    t.clock.now += Math.min(500, left);
+    t.host.tick();
+    if (t.clock.now % 1_000 === 0) t.c.checkLink();
+  }
+}
+
 /** Play the hand out: `onTurn(n)` decides what happens on the seat's n-th turn (true: handled). */
 function play(t: T, onTurn: (n: number) => boolean | void) {
   let n = 0;
@@ -379,7 +391,7 @@ describe('the table may not turn the seat’s own moves away', () => {
     play(t, () => {
       const tc = t.host.game!.turnCounter;
       act(t);
-      if (t.host.phase === 'playing' && t.host.game!.turnCounter === tc) wait(t, TURN + BANK + 1_000);
+      if (t.host.phase === 'playing' && t.host.game!.turnCounter === tc) waitRunning(t, TURN + BANK + 1_000);
       return true;
     });
     need(dropped === 1);

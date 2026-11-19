@@ -11,7 +11,7 @@
 import { describe, expect, it } from 'vitest';
 import { chooseAction, kindOf, legalActions, withRules, type Action, type BotSkill, type GameState } from '@mjm/engine';
 import { AUDIT_CAVEATS, AUDIT_FAILURES, failureKey, LoopbackHub, TableClient, TableHost, transportLink, type HostMessage, type Link } from '../src/index';
-import { armedLate, clockTrack, firstSend, fixedPoint, judgeTableMove, lateAnchor, lateCountMs, lateRef, lateWatch, seatRun, seenHere, sinceFixed, turnLateBy, unstamped } from '../src/clientmoves';
+import { armedLate, clockTrack, firstSend, fixedPoint, judgeTableMove, lateAnchor, lateCountMs, lateLimitMs, lateRef, lateWatch, seatRun, seenHere, sinceFixed, turnLateBy, unstamped } from '../src/clientmoves';
 import { DRIFT_RATE, LATE_MS, RTT_ALLOW_MS } from '../src/clientclock';
 import { cleanCeremony, cleanPlay, cleanSeen, finiteFigure, isLateTurnRecord, savedSeen, seenSum, withLateTurns, type PlayRecord, type SeenState } from '../src/clientrecords';
 import { Missed, scenario, seededDeals } from './support';
@@ -578,8 +578,10 @@ describe('a frame from a saved record keeps the fields that judge how late it ca
 describe('how late a turn reached this device, for the Fair play count (turnLateBy, lateCountMs)', () => {
   const speed = (turnSeconds: number, timeBankSeconds: number) => withRules({ handsPerMatch: 1, turnSeconds, timeBankSeconds });
 
-  it('the bar is half the turn clock, and never under 2 s', () => {
-    expect([speed(30, 60), speed(15, 30), speed(10, 20), speed(7, 10), speed(4, 0), speed(3, 0)].map(lateCountMs)).toEqual([15_000, 7_500, 5_000, 3_500, 2_000, 2_000]);
+  it('a turn may be half the turn clock late, and at least 2 s (lateLimitMs); the count’s bar is half that, and at least 1 s', () => {
+    const speeds = [speed(30, 60), speed(15, 30), speed(10, 20), speed(7, 10), speed(4, 0), speed(3, 0)];
+    expect(speeds.map(lateLimitMs)).toEqual([15_000, 7_500, 5_000, 3_500, 2_000, 2_000]);
+    expect(speeds.map(lateCountMs)).toEqual([7_500, 3_750, 2_500, 1_750, 1_000, 1_000]);
   });
 
   // This device's clock is 10 s ahead of the host's. Its share went out at 100 000; 0.1 s later the host answered,

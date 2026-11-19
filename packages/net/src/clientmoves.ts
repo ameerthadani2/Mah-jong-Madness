@@ -6,7 +6,7 @@
  * as failures, is the client's (`TableClient.replayChecked`).
  */
 import { BOT_SKILLS, chooseAction, isLegal, legalActions, sameAction, type Action, type BotSkill, type GameState, type RuleSet } from '@mjm/engine';
-import { ARM_SLACK_MS, CLOCK_SLACK_MS, DRIFT_RATE, holdsIn, LATE_MS, offsetFloor, RTT_ALLOW_MS, type ClockBase } from './clientclock';
+import { ARM_SLACK_MS, CLOCK_SLACK_MS, DRIFT_RATE, fixedPoint, holdsIn, LATE_MS, offsetFloor, RTT_ALLOW_MS, type ClockBase } from './clientclock';
 import { isObject, type CeremonyRecord, type ClockAnchor, type ClockTrack, type GapStart, type PlayRecord, type SeenState } from './clientrecords';
 
 /** What the table-move checks read of this client's clock record, and keep: `gapVerdicts` grows as stretches without a link are judged. */
@@ -19,30 +19,18 @@ export interface MoveJudge {
 /**
  * The run of the app (`TableClient.runId`) a fixed point is compared in, and the strongest fixed
  * point of the hands already audited in it: what it was worth when its hand ended (`fixedPoint`),
- * and its round trip, which caps it again against the least arrival offset known later.
+ * and its round trip, which caps it again against the least arrival offset known later. With the
+ * stretches of that run in which the app did not run (`pauses`, on this device's clock): the
+ * server cannot make the app pause, so the time a pause takes out of a frame's lateness is not
+ * the server's doing (`lateBy`).
  */
 export interface LateScope {
   run: string;
   best: { era: number; run: string; seg: number; value: number; at: number; rtt?: number } | null;
+  pauses?: ReadonlyArray<{ from: number; to: number }>;
 }
 
-/**
- * What a fixed point says of this device's clock against the host's: how far ahead of the host's it
- * is at least. The host answered (with the deal, or the frame that shows a move made) after this
- * device sent at `k.at`, and stamped the answer `k.now`: by that stamp, at least `k.at - k.now`. A
- * host can move the stamp back, so the fixed point counts for no more than the round trip this device
- * measured allows: the answer reached it at `k.fat`, no frame of the scope came sooner after its stamp
- * than the least arrival offset `ref`, so the host's clock read at most `k.fat - ref` when it
- * answered, and this device's is at least `ref - (k.fat - k.at)` ahead. It counts for the smaller of
- * the two. A delay present since the scope began is in the round trip as well as in `ref`, so a
- * backdated answer cannot hide it; an honest answer counts for what its stamp says, less the time it
- * spent on the way back beyond the least.
- */
-export function fixedPoint(k: Pick<ClockAnchor, 'at' | 'now' | 'fat'>, ref: number | null): number {
-  const stamped = k.at - k.now;
-  if (typeof k.fat !== 'number' || ref === null) return stamped;
-  return Math.min(stamped, ref - (k.fat - k.at));
-}
+export { fixedPoint } from './clientclock';
 
 /** How much later than the least arrival offset of its scope (clock era and run of this device's clock) allows `f` reached this device; 0 when nothing is known. */
 export function lateRef(f: SeenState): number {
@@ -116,21 +104,101 @@ export function sinceFixed(f: SeenState, anchors: ClockAnchor[], scope: LateScop
   return Number.isFinite(a) ? atLo - f.now - a : null;
 }
 
-/** The least lateness a turn is counted at on the Fair play screen (`lateCountMs`), whatever the turn clock. */
-export const LATE_COUNT_MIN_MS = 2_000;
+/**
+ * How a hand in which the table answered this device's pings is measured: `limit` (`lateLimitMs`), the
+ * fixed points of the hand the turns are measured against (`points`: its pongs and its deal), and the
+ * scope they are compared in, with the strongest fixed point carried from the hands before. These are
+ * exactly the fixed points the clock the app shows is placed by (`TableClient.ownClock`), so a turn the
+ * audit finds timely is one whose whole clock the app showed: an answer the table sends at once with its
+ * stamp moved back cannot make the audit call a turn timely while the app showed its clock run out; it
+ * moves the app's clock too, and the table playing over a move made with time showing is then noted
+ * (`inFlight`). The frames that showed this seat's own moves are not among them (the app cannot tell
+ * them as the hand is played); they count, as every fixed point does, against the table's own moves, its
+ * stamps and its banks, and for the round trip of `flightAllowance`.
+ */
+export interface PongClock {
+  limit: number;
+  points: ClockAnchor[];
+  scope: LateScope;
+}
+
+/** The least `lateLimitMs` gives, whatever the turn clock (Hyper's half turn). */
+export const LATE_LIMIT_MIN_MS = 2_000;
 
 /**
- * How late a turn may reach this device, and the seat's moves the table, before the Fair play screen
- * counts it as late (`ClientState.turnsShownLate`): half the rules' turn clock, and at least 2 s.
- * Never a verdict. Half the turn clock is where the delay costs a real share of the turn at every
- * speed (2 s at Hyper, 3.5 at Turbo, 5 at Fast, 7.5 at Normal, 15 at Relaxed): a server that shows
- * each turn late, inside the 17 s the audit allows, takes nearly every turn at the fast speeds while
- * the hands stay green, and the count is what shows it. An honest link's round trip is well under a
- * second, so it is counted only for a stall that meets the start of a turn, or a connection slower
- * than half a turn each way and back.
+ * How late (`lateBy`) the state that first shows this seat a move, its own turn or a claim, may reach
+ * this device in a hand the table answered this device's pings in (`PlayRecord.pongs`), and the hand
+ * stay green: half the rules' turn clock, at least 2 s (15 s at Relaxed, 7.5 at Normal, 5 at Fast,
+ * 3.5 at Turbo, 2 at Hyper). Later than that the hand is amber (`lateShown`), and a move the table
+ * then makes for the seat is judged as one made while it had no timely view of the table. On an
+ * honest link a turn is about one round trip late by that measure; a stall or a slow downlink that
+ * delays the start of a turn by more than this costs the same amber.
+ */
+export function lateLimitMs(rules: RuleSet): number {
+  return Math.max(LATE_LIMIT_MIN_MS, rules.turnSeconds * 500);
+}
+
+/** The least lateness a turn is counted at on the Fair play screen (`lateCountMs`), whatever the turn clock. */
+export const LATE_COUNT_MIN_MS = 1_000;
+
+/**
+ * How late (`lateBy`) a turn may reach this device in a hand the table answered this device's pings in
+ * before the Fair play screen counts it (`ClientState.turnsShownLate`): half of `lateLimitMs`, and at
+ * least 1 s (7.5 s at Relaxed, 3.75 at Normal, 2.5 at Fast, 1.75 at Turbo, 1 at Hyper). Never a verdict:
+ * a stall at the start of a turn counts it, and a server that shows every turn late inside the limit
+ * makes the count rise with nearly every turn. A hand without such answers is counted as before this
+ * measure: by `turnLateBy`, against `lateLimitMs`.
  */
 export function lateCountMs(rules: RuleSet): number {
-  return Math.max(LATE_COUNT_MIN_MS, rules.turnSeconds * 500);
+  return Math.max(LATE_COUNT_MIN_MS, lateLimitMs(rules) / 2);
+}
+
+/**
+ * What a move this device sent may honestly lose on its way beyond the least round trip measured
+ * before it was sent, before the table's playing over it is noted (`inFlight`, `flightAllowance`).
+ */
+export const FLIGHT_SLACK_MS = 1_500;
+
+/** How much of `[from, to]` (this device's clock) the app spent paused, by the `pauses` of its run. */
+export function pausedIn(pauses: ReadonlyArray<{ from: number; to: number }>, from: number, to: number): number {
+  let sum = 0;
+  for (const p of pauses) sum += Math.max(0, Math.min(p.to, to) - Math.max(p.from, from));
+  return sum;
+}
+
+/**
+ * How late `f` reached this device against the fixed points `points` of its scope made before it
+ * arrived and the scope's carried one (`sinceFixed`; in a hand with pong fixed points, `PongClock`'s),
+ * less the part of that time the app was paused (`LateScope.pauses`), which the server cannot cause.
+ * With an honest stamp it is at least how late the frame really was, and at most that plus the round
+ * trip of the fixed point it was measured against. Null when there is no fixed point, or `f` arrived in
+ * another run of the app.
+ */
+export function lateBy(f: SeenState, anchors: ClockAnchor[], scope: LateScope | null): number | null {
+  const late = sinceFixed(f, anchors, scope);
+  if (late === null) return null;
+  const atLo = f.atLo ?? f.at;
+  return late - pausedIn(scope?.pauses ?? [], atLo - late, atLo);
+}
+
+/**
+ * How much of a turn's clock a move sent at `x.at` may honestly have lost on its way, by the turn's
+ * first state's own clock counted from its arrival: the least round trip this device had measured, in
+ * the run of the app and of its clock it sent the move in and the host's clock era `era`, by the time
+ * it sent it (every fixed point of the hand: its pongs, its deal, the frames that showed this seat's
+ * earlier moves; and `best`, the strongest one carried from the hands before), plus `FLIGHT_SLACK_MS`;
+ * never more than `limit` (`lateLimitMs`), which is what it is with no round trip measured. A server
+ * can widen it only by being slow at every one of them, which is a slow link: an honest slow link
+ * loses those moves as well, and the clock the app shows (`TableClient.ownClock`) ends that much sooner.
+ */
+export function flightAllowance(x: { at: number; run?: string; seg?: number }, era: number, anchors: ClockAnchor[], best: LateScope['best'], limit: number): number {
+  let rtt = Number.POSITIVE_INFINITY;
+  for (const k of anchors) {
+    if (typeof k.fat !== 'number' || k.era !== era || k.run !== x.run || (k.seg ?? 0) !== (x.seg ?? 0) || k.fat > x.at) continue;
+    rtt = Math.min(rtt, k.fat - k.at);
+  }
+  if (best && typeof best.rtt === 'number' && best.era === era && best.run === x.run && best.seg === (x.seg ?? 0) && best.at + best.rtt <= x.at) rtt = Math.min(rtt, best.rtt);
+  return Number.isFinite(rtt) ? Math.min(limit, Math.max(0, rtt) + FLIGHT_SLACK_MS) : limit;
 }
 
 /**
@@ -174,6 +242,31 @@ export function seatRun(play: PlayRecord, n: number, prevMove: number): { run: S
   let i0 = iA;
   while (i0 > 0 && play.seen[i0 - 1].owes && play.seen[i0 - 1].tc > prevMove) i0--;
   return { run: play.seen.slice(i0, iA + 1), i0 };
+}
+
+/**
+ * The states that show this seat the move it owes now, as the hand is played (`TableClient.ownClock`),
+ * before any log says which move came last: from the latest state back while each shows the seat owing
+ * a move, to the first of them, or to the last that armed a new clock at a later turn than the state
+ * before it (the whole turn clock by its own deadline and stamp, not in the bank, ending later than
+ * the clock before it, or after one in the bank). A host arms a seat's clock afresh for each move it
+ * owes, once the seat's previous move (its own, or the table's for it) is played, and keeps it while
+ * other seats answer a claim; so over an honest hand the first state is `seatRun`'s for the move the
+ * seat then makes. Empty when the latest state owes nothing.
+ */
+export function ownRun(play: PlayRecord, rules: RuleSet): SeenState[] {
+  const seen = play.seen;
+  if (seen.length === 0 || !seen[seen.length - 1].owes) return [];
+  const turn = rules.turnSeconds * 1000;
+  let i = seen.length - 1;
+  for (; i > 0; i--) {
+    const f = seen[i];
+    const prev = seen[i - 1];
+    if (!prev.owes) break;
+    const armed = !f.inBank && f.deadline !== null && typeof f.now === 'number' && f.deadline - f.now >= turn - ARM_SLACK_MS;
+    if (armed && f.tc > prev.tc && (prev.deadline === null || prev.inBank || (f.deadline as number) > prev.deadline)) break;
+  }
+  return seen.slice(i);
 }
 
 /**
@@ -301,9 +394,21 @@ function judgeFrom(j: MoveJudge, play: PlayRecord, n: number, rules: RuleSet, an
  *   without a link, from the last stamped frame before the run that was not late. That gives
  *   `downLate` (the table played for the seat, and it was shown its turn late: amber, with `lateShown`)
  *   or `down`, or `downEarly` when a whole clock cannot have run out since that frame.
+ * In a hand in which the table answered this device's pings (`pong`, `PongClock`: every pong is a fixed
+ * point), late means later than its limit (`lateLimitMs`) by `lateBy` instead of the two `LATE_MS`
+ * measures, for `r0` and for the last timely frame alike, and a state first shown on a new link must
+ * leave the whole clock less that limit, not less `LATE_MS`. A frame no pong fixed point bounds is
+ * measured as before.
  * Otherwise the move is judged by the clock (`judgeFrom`).
  */
-export function judgeTableMove(j: MoveJudge, play: PlayRecord, n: number, end: SeenState | null, rules: RuleSet, anchors: ClockAnchor[], track: ClockTrack, gaps: Set<number>, prevMove = -1, scope: LateScope | null = null): 'ok' | 'early' | 'downEarly' | 'down' | 'downLate' | 'unanchored' | 'across' | 'held' | 'lateTurn' {
+export function judgeTableMove(j: MoveJudge, play: PlayRecord, n: number, end: SeenState | null, rules: RuleSet, anchors: ClockAnchor[], track: ClockTrack, gaps: Set<number>, prevMove = -1, scope: LateScope | null = null, pong: PongClock | null = null): 'ok' | 'early' | 'downEarly' | 'down' | 'downLate' | 'unanchored' | 'across' | 'held' | 'lateTurn' {
+  // In a hand with pong fixed points (`pong`): late is later than its limit by `lateBy`; a frame they do
+  // not bound is measured as in a hand without them.
+  const stale = (f: SeenState): boolean => {
+    const x = pong ? lateBy(f, pong.points, pong.scope) : null;
+    return x !== null ? x > (pong as PongClock).limit : lateRef(f) > LATE_MS || lateAnchor(f, anchors, scope) > LATE_MS;
+  };
+  const limit = pong ? pong.limit : null;
   let a: SeenState | null = null;
   let b: SeenState | null = null;
   for (const f of play.seen) {
@@ -325,23 +430,23 @@ export function judgeTableMove(j: MoveJudge, play: PlayRecord, n: number, end: S
     if (r0) {
       const here = seenHere(r0, scope ? scope.run : null);
       armed = here && armedLate(r0, rules);
-      const lr = lateRef(r0);
       // Over a link the watch was keeping, no honest frame is that late by its reference: the host held it.
       if (heldLive(r0, scope ? scope.run : null)) return 'held';
       // A restored state that did not give the whole turn clock is judged as shown late instead (`seenHere`).
-      const late = lr > LATE_MS || lateAnchor(r0, anchors, scope) > LATE_MS || unstamped(r0) || (!here && armedLate(r0, rules));
+      const late = stale(r0) || unstamped(r0) || (!here && armedLate(r0, rules));
       const prev = i0 > 0 ? play.seen[i0 - 1] : null;
       const whole = rules.turnSeconds * 1000 + ((prev ? track.bank.get(prev) : null) ?? rules.timeBankSeconds * 1000);
       // Shown too late for its stamp to be believed, or first shown over a new link, or one not yet
-      // working, with less than a whole clock (less LATE_MS) left: the time before it is judged as time
-      // without a link, from the last timely frame before it. The state itself says whether its link
-      // was new (`onLink`): what came over the link before it (a pong, a clock frame) cannot vouch for it.
-      if (late || ((r0.working === false || r0.onLink === false) && b.at - (r0.atLo ?? r0.at) < whole - LATE_MS)) {
+      // working, with less than a whole clock (less `limit` in a hand with pong fixed points, else less
+      // LATE_MS) left by this device's clock: the time before it is judged as time without a link, from
+      // the last timely frame before it. The state itself says whether its link was new (`onLink`): what
+      // came over the link before it (a pong, a clock frame) cannot vouch for it.
+      if (late || ((r0.working === false || r0.onLink === false) && b.at - (r0.atLo ?? r0.at) < whole - (limit ?? LATE_MS))) {
         byLate = late;
         from = null;
         for (let k = i0 - 1; k >= 0; k--) {
           const f = play.seen[k];
-          if (!unstamped(f) && lateRef(f) <= LATE_MS && lateAnchor(f, anchors, scope) <= LATE_MS) {
+          if (!unstamped(f) && !stale(f)) {
             from = f;
             break;
           }

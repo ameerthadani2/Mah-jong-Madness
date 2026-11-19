@@ -44,8 +44,8 @@ import { randomHex } from './sha256';
 import type { Link } from './host';
 import { CLOCK_FRAME_MS, RESTART_CAUSES, type Audit, type ClientMessage, type HostMessage, type SeatInfo } from './messages';
 import { isFrame, type Transport, type Unsubscribe } from './transport';
-import { clientClock, type ClockBase, DRIFT_CAP_MS, DRIFT_RATE, foldClock, LATE_MS, LINK_PAUSE_MS, ORDER_SLACK_MS, PAUSE_GRACE_MS, RAN_GAP_MS, SILENT_ANSWER_MS, STEADY_SLACK_MS, WATCH_WINDOW_MS, type TableClientOptions } from './clientclock';
-import { armedLate, clockTrack, firstSend, fixedPoint, heldLive, isBotSkill, judgeTableMove, lateAnchor, lateCountMs, lateRef, legalFor, sameActionSafe, seatRun, seenHere, tableRule, turnLateBy, unstamped, type LateScope, type MoveJudge } from './clientmoves';
+import { clientClock, type ClockBase, DRIFT_CAP_MS, DRIFT_RATE, foldClock, LATE_MS, LINK_PAUSE_MS, MAX_PAUSES, MAX_PINGS, MAX_PONGS, NO_ANSWER_PINGS, ORDER_SLACK_MS, ownClockFrom, PAUSE_GRACE_MS, PONG_WINDOW_MS, RAN_GAP_MS, RTT_PUBLISH_MS, SILENT_ANSWER_MS, STEADY_SLACK_MS, WATCH_WINDOW_MS, type OwnClock, type TableClientOptions } from './clientclock';
+import { armedLate, clockTrack, firstSend, fixedPoint, flightAllowance, heldLive, isBotSkill, judgeTableMove, lateAnchor, lateBy, lateCountMs, lateLimitMs, lateRef, legalFor, ownRun, pausedIn, sameActionSafe, seatRun, seenHere, tableRule, turnLateBy, unstamped, type LateScope, type MoveJudge, type PongClock } from './clientmoves';
 import {
   CHAINED_FIELDS,
   cleanCeremony,
@@ -80,7 +80,7 @@ import {
   type SerializedClient,
 } from './clientrecords';
 
-export { clientClock, SILENT_ANSWER_MS, steadyClock, type TableClientOptions } from './clientclock';
+export { clientClock, SILENT_ANSWER_MS, steadyClock, type OwnClock, type TableClientOptions } from './clientclock';
 export { tableRule } from './clientmoves';
 export { CLIENT_SNAPSHOT_VERSION, type SerializedClient } from './clientrecords';
 
@@ -136,6 +136,11 @@ export const AUDIT_CAVEATS = {
   damaged: 'This app restarted with a damaged record of this hand, so the checks that rest on the damaged part were not made',
   // The table sent more states in this hand than the record keeps (`keepSeen`): no honest table comes near it.
   overflow: 'The table sent this device far more states in this hand than it keeps, so it could not keep them all and cannot vouch for the whole hand',
+  // The table played for this seat over a legal move it sent with more of the turn's clock left than the
+  // best round trip of the hand and `FLIGHT_SLACK_MS` explain losing on the way (`flightAllowance`).
+  inFlight: 'The table played for this seat while a move it had sent in good time was still on its way',
+  // This device pinged the table through the hand and no answer came back: nothing tied the table's clock to its own.
+  noAnswer: "The table did not answer this device's timing checks during this hand",
 } as const;
 
 export type AuditCaveat = keyof typeof AUDIT_CAVEATS;
@@ -375,8 +380,8 @@ export function transportLink(transport: Transport, hostPeerId: string): Link {
 
 /** Audits kept (and saved) per table. */
 export const MAX_AUDITS = 50;
-/** A move sent this long before the table's own move for the same turn arrived was not lost to a slow network. */
-const MOVE_SLACK_MS = 30_000;
+/** A move sent this long before the table's own move for the same turn arrived, time the app did not run left out, was not lost to a slow network. */
+export const MOVE_SLACK_MS = 30_000;
 /** Marks, among the problems of a replay, a move the table made for this seat that is judged once the replay is done. */
 const JUDGE_LATER = '\u0000table move ';
 
@@ -499,6 +504,16 @@ export class TableClient {
   private waitFrom: number | null = null;
   /** This run of the app (a restored client is a new run, its clock read from the wall anew): fixed points are compared only within one. */
   private readonly runId = randomHex(4);
+  /**
+   * Pings this run sent that no pong has answered yet, by the `at` each carried (the host echoes it),
+   * with the run of this device's clock it was read in. Never saved: a pong is a fixed point only
+   * within the run of the app and of its clock that sent the ping.
+   */
+  private readonly pings = new Map<number, number>();
+  /** The last `MAX_PAUSES` stretches of this run in which the app did not run (see `ran`; never saved): no frame's lateness and no move's wait is the server's doing while they last. */
+  private readonly pauses: Array<{ from: number; to: number }> = [];
+  /** When this client last published a round trip (`rttMs`; see `RTT_PUBLISH_MS`). */
+  private rttAt: number | null = null;
   /**
    * The id this client gives the host as its device (`join.device`): the first run's id, kept across
    * app restarts. On a rejoin the host says whether another device held the seat since (`welcome.elsewhere`).
@@ -740,7 +755,8 @@ export class TableClient {
       handStart: this.handStart,
       records: this.records,
       // Each frame goes with its check figure, so a restored record can tell a damaged frame (`cleanSeen`).
-      plays: this.plays.map((p) => ({ ...p, seen: p.seen.map(savedSeen), ledgerFrom: p.ledgerFrom === Number.POSITIVE_INFINITY ? null : p.ledgerFrom, ...(p.vouched?.length ? { ledgerSum: ledgerSum(p.sent, p.vouched) } : {}) })),
+      // (A run's pong fixed points and pings are worth nothing in another run: they are not saved.)
+      plays: this.plays.map(({ pongs: _pongs, pinged: _pinged, ...p }) => ({ ...p, seen: p.seen.map(savedSeen), ledgerFrom: p.ledgerFrom === Number.POSITIVE_INFINITY ? null : p.ledgerFrom, ...(p.vouched?.length ? { ledgerSum: ledgerSum(p.sent, p.vouched) } : {}) })),
       expected: this.expected,
       chainChecked: this.chainChecked,
       frozenBots: this.frozenBots,
@@ -832,6 +848,14 @@ export class TableClient {
   join(wantSeat?: number): void {
     const token = this.state.token ?? this.identity.token;
     this.send({ t: 'join', name: this.name, avatar: this.avatar, wantSeat, token, userId: this.identity.userId, have: this.have(), device: this.deviceId });
+    // A ping right behind the join, so the table's answer ties its clock to this device's from the first
+    // frames of the link. Sent once `join` has returned: a transport that delivers at once must not be
+    // entered again from inside it.
+    const link = this.link;
+    const later = (f: () => void) => (typeof queueMicrotask === 'function' ? queueMicrotask(f) : void Promise.resolve().then(f));
+    later(() => {
+      if (this.link === link) this.ping();
+    });
   }
 
   /** The last hand of this match whose end this client holds (-1: none yet, but it watched from the lobby). */
@@ -869,8 +893,58 @@ export class TableClient {
     this.send({ t: 'emote', emote });
   }
 
+  /**
+   * Ask the table for its clock (`pong`). The ping carries this device's clock (`at`), which the table
+   * echoes: its answer, stamped after the ping reached it, is a fixed point between the two clocks
+   * (`notePong`). One ping per reading of the clock; while a hand is on show it is counted for that hand
+   * (`PlayRecord.pinged`), so a table that answers none of them makes the hand amber (`noAnswer`).
+   */
   ping(): void {
-    this.send({ t: 'ping', at: this.now() });
+    const at = this.now();
+    if (this.pings.has(at)) return;
+    this.pings.set(at, this.seg());
+    if (this.pings.size > MAX_PINGS) this.pings.delete(this.pings.keys().next().value as number);
+    const play = this.handOnShow();
+    if (play) play.pinged = (play.pinged ?? 0) + 1;
+    this.send({ t: 'ping', at });
+  }
+
+  /** The record of the hand on show while it is played (a view, no result yet, the hand not ended); null otherwise. */
+  private handOnShow(): PlayRecord | null {
+    const v = this.state.view;
+    if (!v || this.state.lastResult !== null || this.handsEnded.has(v.handNumber)) return null;
+    return this.plays.find((p) => p.hand === v.handNumber) ?? null;
+  }
+
+  /**
+   * The table's answer to a ping: a fixed point between its clock and this device's (`ClockAnchor`): it
+   * stamped the answer (`now`) after the ping this device sent at `at` reached it, and the answer
+   * reached this device at `fat`. Only an answer to a ping this run sent, read in the run of this
+   * device's clock it is in now, and only the first answer to each: anything else is ignored. While a
+   * hand is on show the hand keeps it (`PlayRecord.pongs`), one per `PONG_WINDOW_MS` of ping time (the
+   * one with the shortest round trip), and its audit measures every state against it (`lateBy`).
+   */
+  private notePong(at: unknown, now: unknown): void {
+    if (typeof at !== 'number' || !Number.isFinite(at) || typeof now !== 'number' || !Number.isFinite(now)) return;
+    const seg = this.pings.get(at);
+    if (seg === undefined) return;
+    this.pings.delete(at);
+    const fat = this.now();
+    if (seg !== this.seg() || fat < at) return;
+    // Nothing on screen reads the round trip: publishing it with every pong would re-render the table and save the record each second.
+    if (this.rttAt === null || fat - this.rttAt >= RTT_PUBLISH_MS) {
+      this.rttAt = fat;
+      this.update({ rttMs: fat - at });
+    }
+    const play = this.handOnShow();
+    if (!play) return;
+    const k: ClockAnchor = { at, now, era: this.era, run: this.runId, seg, fat };
+    const pongs = (play.pongs ??= []);
+    const last = pongs[pongs.length - 1];
+    if (last && last.run === k.run && last.era === k.era && (last.seg ?? 0) === seg && Math.floor(last.at / PONG_WINDOW_MS) === Math.floor(at / PONG_WINDOW_MS)) {
+      if (fat - at < (last.fat as number) - last.at) pongs[pongs.length - 1] = k;
+    } else pongs.push(k);
+    if (pongs.length > MAX_PONGS) pongs.splice(0, pongs.length - MAX_PONGS);
   }
 
   /**
@@ -921,6 +995,15 @@ export class TableClient {
   checkLink(): 'ok' | 'silent' {
     const now = this.now();
     this.ran(now);
+    const verdict = this.watchLink(now);
+    // A ping a second while this device holds a seat on a link that is up, whatever the watch found:
+    // every answer is a fixed point between the table's clock and this device's (`notePong`).
+    if (this.state.seat !== null && this.state.connected) this.ping();
+    return verdict;
+  }
+
+  /** The link watch's check at `now` (see `checkLink`). */
+  private watchLink(now: number): 'ok' | 'silent' {
     // The first call, or the first after a pause: the wait starts now.
     const since = this.checkedAt === null ? Number.POSITIVE_INFINITY : now - this.checkedAt;
     const paused = since > LINK_PAUSE_MS;
@@ -998,7 +1081,11 @@ export class TableClient {
 
   /** This app ran at `t` (a frame, a check, a new link, a move): a gap of more than `RAN_GAP_MS` since it last ran was a pause. */
   private ran(t: number): void {
-    if (this.ranAt !== null && t - this.ranAt > RAN_GAP_MS) this.pause = { from: this.ranAt, to: t };
+    if (this.ranAt !== null && t - this.ranAt > RAN_GAP_MS) {
+      this.pause = { from: this.ranAt, to: t };
+      this.pauses.push(this.pause);
+      if (this.pauses.length > MAX_PAUSES) this.pauses.shift();
+    }
     this.ranAt = t;
   }
 
@@ -1123,6 +1210,47 @@ export class TableClient {
   /** Engine-shaped state for running hints/bots locally on the visible information. */
   localState(): GameState | null {
     return this.state.view ? viewToState(this.state.view) : null;
+  }
+
+  /**
+   * This seat's clock for the move it owes, on this device's clock (`clockNow`): when its turn clock
+   * ends, and when its time bank after it does; null when it owes no move with a clock. It is the clock
+   * the audit holds the table to, counted by this device itself (`ownClockFrom`): from the states that
+   * showed the seat the move (`ownRun`), placed on this device's clock by the strongest fixed point it
+   * holds, never later than the first of them allows counted from its arrival. It goes on to the bank
+   * when the turn clock ends without waiting for the table to say so, and a wrong wall clock on the
+   * phone does not move it. The app shows it for the seat's own move.
+   */
+  ownClock(): OwnClock | null {
+    const v = this.state.view;
+    const rules = this.pinnedRules ?? this.state.rules;
+    if (!v || !rules || this.state.seat === null || this.state.lastResult !== null || this.handsEnded.has(v.handNumber)) return null;
+    const play = this.plays.find((p) => p.hand === v.handNumber);
+    const run = play ? ownRun(play, rules) : [];
+    if (!play || run.length === 0) return null;
+    const at = this.now();
+    const deal = this.dealFixed(v.handNumber);
+    return ownClockFrom(run, [...(deal ? [deal] : []), ...(play.pongs ?? [])], this.bestAnchor, this.refAt(at), at, { era: this.era, run: this.runId, seg: this.seg() });
+  }
+
+  /**
+   * The deal of hand `h` as a fixed point between the two clocks, when this device revealed its share in
+   * the attempt that was dealt and the hand's first frame came after it, over the same link: the host
+   * cannot have dealt from that share before this device sent it. (The audit also holds the deal to the
+   * share it revealed: a deal without it fails, `runAudit`.) Null otherwise.
+   */
+  private dealFixed(h: number): ClockAnchor | null {
+    if (this.commitHand !== h || this.standInHand === h || !this.secret) return null;
+    const last = this.recordFor(h)?.attempts.slice(-1)[0];
+    const first = this.plays.find((p) => p.hand === h)?.seen[0];
+    // (Not from a state restored damaged: its stamp may be anything, `cleanSeen`.)
+    if (!last?.revealed || typeof last.revealedAt !== 'number' || !first || first.kept === false || typeof first.now !== 'number' || first.epoch !== last.revealedEpoch || first.at < last.revealedAt) return null;
+    return { at: last.revealedAt, now: first.now, era: first.era ?? 0, run: last.revealedRun, seg: last.revealedSeg, fat: first.at };
+  }
+
+  /** This device's clock as the table client reads it (`clientClock`): what `ownClock` is measured against. */
+  clockNow(): number {
+    return this.now();
   }
 
   private send(msg: ClientMessage): void {
@@ -1711,13 +1839,17 @@ export class TableClient {
         // offset known now (see `fixedPoint`), and kept with its round trip to be capped again later.
         {
           const seg = this.seg();
-          if (this.bestAnchor && (this.bestAnchor.era !== this.era || this.bestAnchor.seg !== seg)) this.bestAnchor = null;
           const ref = this.refAt(this.now());
-          for (const k of anchors) {
-            if (k.era !== this.era || k.run !== this.runId || (k.seg ?? 0) !== seg) continue;
-            const value = fixedPoint(k, ref);
-            if (!this.bestAnchor || value > this.bestAnchor.value) this.bestAnchor = { era: this.era, run: this.runId, seg, value, at: k.at, ...(typeof k.fat === 'number' ? { rtt: k.fat - k.at } : {}) };
-          }
+          const strongest = (best: LateScope['best'], points: ClockAnchor[]): LateScope['best'] => {
+            let out = best && best.era === this.era && best.seg === seg ? best : null;
+            for (const k of points) {
+              if (k.era !== this.era || k.run !== this.runId || (k.seg ?? 0) !== seg) continue;
+              const value = fixedPoint(k, ref);
+              if (!out || value > out.value) out = { era: this.era, run: this.runId, seg, value, at: k.at, ...(typeof k.fat === 'number' ? { rtt: k.fat - k.at } : {}) };
+            }
+            return out;
+          };
+          this.bestAnchor = strongest(this.bestAnchor, anchors);
         }
         if (typeof end.now === 'number') this.lastStamp = { at: end.at, now: end.now, epoch: this.epoch, era: this.era };
         const { status, failures, caveats } = check;
@@ -1776,13 +1908,13 @@ export class TableClient {
         this.update({ lastError: typeof m.message === 'string' ? m.message : 'The table reported an error.', lastErrorCode: typeof m.code === 'string' ? m.code : null });
         return;
       case 'pong':
-        // On a link that has brought no state, a pong's stamp is not believed: an honest host sends the
-        // state first, and this client pings a link only once it has brought a stamp.
+        // On a link that has brought no state, a pong's stamp does not feed the watch: an honest host sends
+        // the state first. As a fixed point it counts on any link (`notePong`).
         if (this.stateHere()) {
           this.noteStamp(m.now);
           this.noteOrder(m.now, null, null);
         }
-        if (typeof m.at === 'number') this.update({ rttMs: this.now() - m.at });
+        this.notePong(m.at, m.now);
         return;
       case 'clock': {
         if (!isInt(m.hand) || !isInt(m.tc)) return;
@@ -2031,6 +2163,8 @@ export class TableClient {
     if (notes.skillUnknown) caveats.push(AUDIT_CAVEATS.skillUnknown);
     if (notes.damaged) caveats.push(AUDIT_CAVEATS.damaged);
     if (notes.overflow) caveats.push(AUDIT_CAVEATS.overflow);
+    if (notes.inFlight) caveats.push(AUDIT_CAVEATS.inFlight);
+    if (notes.noAnswer) caveats.push(AUDIT_CAVEATS.noAnswer);
     const status: AuditStatus = failures.length > 0 ? 'failed' : 'partial';
     this.handsEnded.add(h);
     if (this.openHand === h) this.openHand = null;
@@ -2137,13 +2271,9 @@ export class TableClient {
     this.checkSeed(audit, commitsOk && revealsOk, failures);
     const start = this.handStart && this.handStart.handNumber === h ? this.handStart : snapshotFromView(finalView, true);
     // The deal used this device's secret, so the hand's first frame was made after the secret was sent.
-    const lastAttempt = this.recordFor(h)?.attempts.slice(-1)[0];
-    const firstFrame = this.plays.find((p) => p.hand === h)?.seen[0];
     const mySecret = revealsOk ? audit.reveals.find((r) => r.seat === me)?.secret : undefined;
-    // (Not from a state restored damaged: its stamp may be anything, `cleanSeen`.)
-    if (tookPart && !stoodIn && this.secret && mySecret === this.secret && lastAttempt?.revealed && typeof lastAttempt.revealedAt === 'number' && firstFrame && firstFrame.kept !== false && typeof firstFrame.now === 'number' && firstFrame.epoch === lastAttempt.revealedEpoch && firstFrame.at >= lastAttempt.revealedAt) {
-      anchors.push({ at: lastAttempt.revealedAt, now: firstFrame.now, era: firstFrame.era ?? 0, run: lastAttempt.revealedRun, seg: lastAttempt.revealedSeg, fat: firstFrame.at });
-    }
+    const deal = tookPart && !stoodIn && mySecret === this.secret ? this.dealFixed(h) : null;
+    if (deal) anchors.push(deal);
     try {
       replayed = this.replayChecked(start, audit.seed, rules, audit.log, h, end, failures, anchors, notes);
       if (hashState(replayed) !== audit.finalHash) failures.push('Replaying the action log does not reproduce the final state');
@@ -2176,6 +2306,8 @@ export class TableClient {
     if (notes.skillUnknown) caveats.push(AUDIT_CAVEATS.skillUnknown);
     if (notes.damaged) caveats.push(AUDIT_CAVEATS.damaged);
     if (notes.overflow) caveats.push(AUDIT_CAVEATS.overflow);
+    if (notes.inFlight) caveats.push(AUDIT_CAVEATS.inFlight);
+    if (notes.noAnswer) caveats.push(AUDIT_CAVEATS.noAnswer);
     // An app restart around the deal: this device cannot say it watched all of it, whatever its record now shows.
     // (A seat that joined mid-hand has already said it took no part in the deal.)
     if (this.lapseHand === h && this.lapseDeal && !joined && !caveats.includes(AUDIT_CAVEATS.appRestart)) caveats.push(AUDIT_CAVEATS.appRestart);
@@ -2286,13 +2418,26 @@ export class TableClient {
     let lastMine = -1;
     const prevOf = new Map<number, number>();
     const scope = this.lateScope();
+    // The table's answers to this run's pings during the hand are fixed points like the deal and this seat's
+    // moves (they count wherever those do). With them every turn is measured by `lateBy` against
+    // `lateLimitMs` (`limit`); a hand without them is measured as before.
+    // (`anchors` holds the deal's fixed point at most, so far: `runAudit`.)
+    const dealt = anchors.slice();
+    const pongs = play && !missed ? (play.pongs ?? []) : [];
+    for (const k of pongs) anchors.push(k);
+    const pong: PongClock | null = pongs.length > 0 ? { limit: lateLimitMs(rules), points: [...dealt, ...pongs], scope } : null;
+    const limit = pong ? pong.limit : null;
+    // This device pinged the table through the hand and nothing came back: the hand cannot be green, so a
+    // server gains nothing by not answering.
+    if (play && notes && !missed && pongs.length === 0 && (play.pinged ?? 0) >= NO_ANSWER_PINGS) notes.noAnswer = true;
     const track0 = play ? clockTrack(this.clockBase, this.recordFor(play.hand), play, rules, anchors) : null;
     /**
      * The turn this seat's move at `n` answered (its move before that at `prevMine`), judged by the first
      * state that showed it (`seatRun`). A state that did not give the whole turn clock on a link this device
-     * held, or one later than any honest frame on a live link, fails. One shown late otherwise (against the
-     * least offset or the fixed points), or first shown on a new link with less than a whole clock (less
-     * LATE_MS) to go, is noted: this device cannot vouch that the player saw the whole turn.
+     * held, or one later than any honest frame on a live link, fails. One shown late otherwise (by `lateBy`
+     * against `limit` in a hand with pong fixed points; else against the least offset or the fixed points),
+     * or first shown on a new link with less than a whole clock (less `limit`, or LATE_MS) to go, is noted:
+     * this device cannot vouch that the player saw the whole turn.
      */
     const judgeShown = (play: PlayRecord, n: number, prevMine: number) => {
       const { run, i0 } = seatRun(play, n, prevMine);
@@ -2305,7 +2450,11 @@ export class TableClient {
       const left = r0.deadline === null || typeof r0.now !== 'number' ? Number.POSITIVE_INFINITY : (r0.inBank ? r0.deadline : r0.deadline + r0.timeBank * 1000) - r0.now;
       const here = seenHere(r0, this.runId);
       if ((here && armedLate(r0, rules)) || heldLive(r0, this.runId)) problems.add(`The host showed this seat its turn late, on a link that stayed open (turn ${n})`);
-      else if (notes && (lateRef(r0) > LATE_MS || lateAnchor(r0, anchors, scope) > LATE_MS || unstamped(r0) || (!r0.onLink && left < whole - LATE_MS) || (!here && armedLate(r0, rules)))) notes.lateShown = true;
+      else if (notes) {
+        const by = pong ? lateBy(r0, pong.points, pong.scope) : null;
+        const late = by !== null ? by > (limit as number) : lateRef(r0) > LATE_MS || lateAnchor(r0, anchors, scope) > LATE_MS;
+        if (late || unstamped(r0) || (!r0.onLink && left < whole - (limit ?? LATE_MS)) || (!here && armedLate(r0, rules))) notes.lateShown = true;
+      }
     };
     for (const entry of log) {
       if (play && me !== null && isObject(entry) && entry.seat === me) {
@@ -2363,10 +2512,26 @@ export class TableClient {
           }
           // Judged after the replay, when every fixed point between the two clocks is known; the mark keeps its place among the problems.
           if (isInt(n)) problems.add(`${JUDGE_LATER}${n}`);
-          // A legal move this device sent for this turn long before, over a link that never dropped, was left
-          // lying. (Only moves sent since this client began vouching for the log: before that none are matched.)
+          // The legal moves this device sent for this turn, since it began vouching for the log, over the link
+          // the table's move came over, that the log has not used and the table did not refuse by then: the
+          // table played its own over them. (Before the ledger vouches, none are matched.)
           const after = isInt(n) ? frameAfter(n) : null;
-          if (after && play.ledgerFrom !== null && sent.some((x) => !x.used && x.tc >= (play.ledgerFrom as number) && x.tc <= n && x.epoch === after.epoch && typeof x.at === 'number' && after.at - x.at > MOVE_SLACK_MS && !(x.refusedAt !== undefined && x.refusedAt <= n) && legalFor(s, me, x.action) && !sameActionSafe(x.action, entry.action, s, me))) {
+          const from = play.ledgerFrom;
+          const lying = (x: (typeof sent)[number]): x is (typeof sent)[number] & { at: number } => after !== null && from !== null && isInt(n) && !x.used && x.tc >= from && x.tc <= n && x.epoch === after.epoch && typeof x.at === 'number' && !(x.refusedAt !== undefined && x.refusedAt <= n) && legalFor(s, me, x.action) && !sameActionSafe(x.action, entry.action, s, me);
+          // One sent in good time (`inFlight`, amber): sent after the turn's first state arrived, with more of
+          // that state's own clock left, counted from its arrival, than the best round trip measured by then
+          // and `FLIGHT_SLACK_MS` explain losing on the way (`flightAllowance`).
+          if (after && limit !== null && notes && isInt(n)) {
+            const r0 = seatRun(play, n, prevMine).run[0];
+            if (r0 && r0.deadline !== null && typeof r0.now === 'number') {
+              const ends = r0.at + (r0.inBank ? r0.deadline : r0.deadline + r0.timeBank * 1000) - r0.now;
+              const shown = r0.atLo ?? r0.at;
+              if (sent.some((x) => lying(x) && x.tc >= r0.tc && x.run === r0.run && x.at >= shown && x.at + flightAllowance(x, r0.era ?? 0, anchors, scope.best, limit) <= ends)) notes.inFlight = true;
+            }
+          }
+          // One left lying for more than `MOVE_SLACK_MS` (time the app was not running left out) over a link
+          // that never dropped: no network is that slow.
+          if (after && sent.some((x) => lying(x) && after.at - x.at - (x.run === this.runId ? pausedIn(this.pauses, x.at, after.at) : 0) > MOVE_SLACK_MS)) {
             if (after.kept === false) {
               if (notes) notes.damaged = true;
             } else problems.add(`The table ignored a move this seat sent in good time and played its own instead (turn ${n})`);
@@ -2384,8 +2549,9 @@ export class TableClient {
     // Each turn of this seat whose state reached this device late, for the count on the Fair play screen
     // (never a verdict): judged by the state that first showed the seat the move (`seatRun`), against
     // every fixed point the replay found.
+    // In a hand with pong fixed points: by `lateBy`, against `lateCountMs` (half of `limit`); otherwise, and
+    // for a turn no fixed point bounds, by `turnLateBy` against `lateLimitMs`, as before.
     if (play && me !== null && notes) {
-      const limit = lateCountMs(rules);
       let prev = -1;
       for (const entry of log) {
         if (!isObject(entry) || entry.seat !== me || !isInt(entry.n)) continue;
@@ -2393,7 +2559,8 @@ export class TableClient {
         prev = entry.n;
         if (!r0) continue;
         notes.turnsMeasured = (notes.turnsMeasured ?? 0) + 1;
-        if (turnLateBy(r0, anchors, scope) > limit) (notes.lateTurns ??= []).push(entry.n);
+        const by = pong && !unstamped(r0) ? lateBy(r0, pong.points, pong.scope) : null;
+        if (by !== null ? by > lateCountMs(rules) : turnLateBy(r0, anchors, scope) > lateLimitMs(rules)) (notes.lateTurns ??= []).push(entry.n);
       }
     }
     const gaps = new Set<number>();
@@ -2410,7 +2577,7 @@ export class TableClient {
         problems.add(`The host held back its frames on a link that stayed open, then played for this seat (turn ${n})`);
         continue;
       }
-      const verdict = judgeTableMove(this.moveJudge(), play, n, end, rules, anchors, track, gaps, prevOf.get(n) ?? -1, scope);
+      const verdict = judgeTableMove(this.moveJudge(), play, n, end, rules, anchors, track, gaps, prevOf.get(n) ?? -1, scope, pong);
       if (doubt && (verdict === 'held' || verdict === 'early' || verdict === 'downEarly')) {
         if (notes) notes.damaged = true;
       } else if (verdict === 'held') problems.add(`The host held back its frames on a link that stayed open, then played for this seat (turn ${n})`);
@@ -2441,9 +2608,9 @@ export class TableClient {
     return s;
   }
 
-  /** The run of the app and the strongest fixed point kept in it (see `lateAnchor`). */
+  /** The run of the app, the strongest fixed point kept in it (see `lateAnchor`) and its pauses (see `lateBy`). */
   private lateScope(): LateScope {
-    return { run: this.runId, best: this.bestAnchor };
+    return { run: this.runId, best: this.bestAnchor, pauses: this.pauses };
   }
 
   /** What the table-move checks (`judgeTableMove`) read of this client's clock record, and keep. */
@@ -2542,9 +2709,13 @@ interface ReplayNotes {
   damaged?: boolean;
   /** The table sent more states in this hand than this client keeps (`PlayRecord.overflow`). */
   overflow?: boolean;
+  /** The table played for this seat over a move it sent in good time (`AUDIT_CAVEATS.inFlight`). */
+  inFlight?: boolean;
+  /** The table answered none of the pings this device sent during the hand (`AUDIT_CAVEATS.noAnswer`). */
+  noAnswer?: boolean;
   /** Claims the table passed for this seat while its link was down, or on a turn that reached this device late (`late`), in turn order. */
   passedClaims?: Array<{ turn: number; claim: PassedClaim; late?: boolean }>;
-  /** The seat's turns whose state reached this device later than half the turn clock (`lateCountMs`), and how many of its turns it could measure. */
+  /** The seat's turns whose state reached this device late enough to be counted (`lateCountMs`, or `lateLimitMs` without pong fixed points), and how many of its turns it could measure. */
   lateTurns?: number[];
   turnsMeasured?: number;
 }

@@ -76,6 +76,24 @@ export const PAUSE_GRACE_MS = 2_000;
 export const RTT_ALLOW_MS = 4_000;
 /** How much of the turn clock the state that starts a turn may already have used, by its own deadline and stamp: an honest host stamps it in the tick it arms the clock. */
 export const ARM_SLACK_MS = 1_000;
+/** The host rounds a time bank to whole seconds: a bank it states may be up to this much more than it holds. */
+export const BANK_ROUND_MS = 500;
+/**
+ * Pings remembered until answered, by the `at` each carried (the oldest is dropped beyond this). The
+ * client sends one a second while it holds a seat on a link that is up (`TableClient.checkLink`), and
+ * one right after each join; the host answers each at once with its clock (`pong`).
+ */
+export const MAX_PINGS = 64;
+/** A hand keeps one pong fixed point per this much of ping time: the one with the shortest round trip. */
+export const PONG_WINDOW_MS = 10_000;
+/** And at most this many (two hours of windows). */
+export const MAX_PONGS = 720;
+/** A hand in which this device sent this many pings and kept no answer is amber (`noAnswer`): nothing tied the table's clock to its own. */
+export const NO_ANSWER_PINGS = 5;
+/** The round trip a pong measured is published (`ClientState.rttMs`) at most this often: each publication re-renders the table and saves the record. */
+export const RTT_PUBLISH_MS = 10_000;
+/** The stretches in which the app did not run that a client keeps (`TableClient.pauses`, in memory only). */
+export const MAX_PAUSES = 16;
 /**
  * A clock that starts at the wall time and then moves on by the monotonic clock alone: it ignores
  * steps of the wall clock both ways and never goes back. The signal server's tables keep time by it.
@@ -225,4 +243,83 @@ export function offsetFloor(clockBase: ClockBase, era: number, play: PlayRecord 
   const viaFrames = min === null ? null : min - LATENCY_SLACK_MS;
   if (viaAnchor === null || viaFrames === null) return viaAnchor ?? viaFrames;
   return Math.max(viaAnchor, viaFrames);
+}
+
+/**
+ * What a fixed point says of this device's clock against the host's: how far ahead of the host's it
+ * is at least. The host answered (with the deal, the frame that shows a move made, or a pong) after
+ * this device sent at `k.at`, and stamped the answer `k.now`: by that stamp, at least `k.at - k.now`.
+ * A host can move the stamp back, so the fixed point counts for no more than the round trip this
+ * device measured allows: the answer reached it at `k.fat`, no frame of the scope came sooner after
+ * its stamp than the least arrival offset `ref`, so the host's clock read at most `k.fat - ref` when
+ * it answered, and this device's is at least `ref - (k.fat - k.at)` ahead. It counts for the smaller
+ * of the two. A delay present since the scope began is in the round trip as well as in `ref`, so a
+ * backdated answer cannot hide it; an honest answer counts for what its stamp says, less the time it
+ * spent on the way back beyond the least.
+ */
+export function fixedPoint(k: Pick<ClockAnchor, 'at' | 'now' | 'fat'>, ref: number | null): number {
+  const stamped = k.at - k.now;
+  if (typeof k.fat !== 'number' || ref === null) return stamped;
+  return Math.min(stamped, ref - (k.fat - k.at));
+}
+
+/** This seat's clock for the move it owes, on this device's clock: when the turn clock ends, and when the time bank after it does. */
+export interface OwnClock {
+  turnEnd: number;
+  bankEnd: number;
+}
+
+/** The host's clock era, the run of the app and the run of this device's clock a reading is made in: what a fixed point must share with it to place the host's clock on it. */
+export interface OwnScope {
+  era: number;
+  run: string;
+  seg: number;
+}
+
+/**
+ * The clock the app shows for the move the seat owes (`TableClient.ownClock`): the clock the audit
+ * holds the table to, counted by this device itself. `streak` holds the states that showed the seat
+ * the move, the first (`r0`) first (`ownRun`); each gives an end of the turn clock and of the time
+ * bank after it on the host's clock, and the latest of each counts (a host that re-arms the clock on
+ * a rejoin can only add time): its deadline and its deadline plus the bank it states (less the host's
+ * rounding, `BANK_ROUND_MS`), or, for a state already in the bank, its stamp and its deadline. So the
+ * bank follows the turn clock without waiting for the state that says it has started.
+ *
+ * Those ends are placed on this device's clock by the strongest fixed point of the scope `at` is read
+ * in (`points`: the hand's pongs and its deal; `best`: the strongest one carried from the hands before:
+ * the same fixed points the audit measures the turns against, `PongClock`), each worth
+ * what its round trip allows against `ref`, the least arrival offset now (`fixedPoint`), less the drift
+ * since it was made; never later than the first state of the streak this device's clock can place,
+ * counted from its arrival (by its own stamp); with no fixed point, by that alone. Null when the seat
+ * owes no move with a clock, or nothing places the host's clock on this device's.
+ */
+export function ownClockFrom(streak: SeenState[], points: ClockAnchor[], best: { era: number; run: string; seg: number; value: number; at: number; rtt?: number } | null, ref: number | null, at: number, scope: OwnScope): OwnClock | null {
+  let turnEnd = Number.NEGATIVE_INFINITY;
+  let bankEnd = Number.NEGATIVE_INFINITY;
+  for (const f of streak) {
+    if (f.deadline === null || !Number.isFinite(f.deadline)) continue;
+    if (f.inBank) {
+      if (typeof f.now === 'number') turnEnd = Math.max(turnEnd, f.now);
+      bankEnd = Math.max(bankEnd, f.deadline);
+    } else {
+      turnEnd = Math.max(turnEnd, f.deadline);
+      bankEnd = Math.max(bankEnd, f.deadline + Math.max(0, f.timeBank * 1000 - BANK_ROUND_MS));
+    }
+  }
+  if (!Number.isFinite(bankEnd)) return null;
+  // (A state in the bank says the turn clock is over: never later than the bank's end.)
+  turnEnd = Number.isFinite(turnEnd) ? Math.min(turnEnd, bankEnd) : bankEnd;
+  const inScope = (x: { era?: number; run?: string; seg?: number }) => (x.era ?? 0) === scope.era && x.run === scope.run && (x.seg ?? 0) === scope.seg;
+  let offset = Number.NEGATIVE_INFINITY;
+  for (const k of points) if (inScope(k)) offset = Math.max(offset, fixedPoint(k, ref) - DRIFT_RATE * Math.max(0, at - k.at));
+  if (best && best.era === scope.era && best.run === scope.run && best.seg === scope.seg) {
+    const value = typeof best.rtt === 'number' && ref !== null ? Math.min(best.value, ref - best.rtt) : best.value;
+    offset = Math.max(offset, value - DRIFT_RATE * Math.max(0, at - best.at));
+  }
+  const first = streak.find((f) => typeof f.now === 'number' && inScope(f));
+  const own = first ? (first.atLo ?? first.at) - (first.now as number) : null;
+  const placed = Number.isFinite(offset) ? (own !== null ? Math.min(offset, own) : offset) : own;
+  if (placed === null) return null;
+  const out = { turnEnd: turnEnd + placed, bankEnd: bankEnd + placed };
+  return Number.isFinite(out.turnEnd) && Number.isFinite(out.bankEnd) ? out : null;
 }
