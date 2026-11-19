@@ -567,7 +567,8 @@ CI (`.github/workflows/ci.yml`) runs them against a `postgres:16` service contai
 `docker` job builds `apps/signal/Dockerfile` and boots the image as production boots it: on its own
 `postgres:16` service with `DATABASE_URL`, `MIGRATE_ON_BOOT=1` and a pepper made for the run (no
 `ALLOW_EPHEMERAL`; the image sets `NODE_ENV=production`), then checks `/health` and plays the smoke
-test with `--expect-storage pg`, as the deploy workflow does against the live machine.
+test with `--expect-storage pg`, as the deploy workflow does against the live machine. When that job
+fails or runs out of time, the server's log is kept with the run as the `signal-log` artifact.
 
 ## Other hosts
 

@@ -112,6 +112,14 @@ jobs:
         run: |
           docker logs signal > signal.log 2>&1 || true
           docker rm -f signal > /dev/null 2>&1 || true
+      - name: Keep the server's log
+        # The health loop prints the log only when /health never answers, so a failed smoke test or a job that runs out
+        # of time (GitHub cancels it) would leave nothing to read once the runner is gone.
+        if: failure() || cancelled()
+        uses: actions/upload-artifact@v6
+        with:
+          name: signal-log
+          path: signal.log
 
   e2e:
     if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository

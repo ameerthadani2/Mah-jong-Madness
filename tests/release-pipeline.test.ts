@@ -19,6 +19,12 @@ type Platform = 'ios' | 'android';
 type SubmitProfile = { extends?: string; ios?: Record<string, unknown>; android?: Record<string, unknown> };
 type EasJson = { build: Record<string, { env?: Record<string, string> }>; submit?: Record<string, SubmitProfile> };
 const readEas = (): EasJson => JSON.parse(readFileSync(EAS_JSON, 'utf8')) as EasJson;
+
+/** A workflow file as GitHub reads it: parsed as YAML, so a step is its fields rather than lines of text. */
+type Step = { name?: string; id?: string; if?: string; uses?: string; run?: string; with?: Record<string, unknown> };
+type Workflow = { jobs: Record<string, { steps?: Step[] }> };
+const { load } = require('js-yaml') as { load(text: string): unknown };
+const workflow = (file: string): Workflow => load(readFileSync(join(ROOT, '.github/workflows', file), 'utf8')) as Workflow;
 const { applyBuildEnv } = require(join(ROOT, '.github/scripts/eas-build-env.cjs')) as { applyBuildEnv: (eas: EasJson, env: Record<string, string | undefined>) => EasJson };
 
 /** What ios-testflight.yml exports before `eas build --auto-submit` (stand-in values of the real shapes). */
@@ -416,6 +422,14 @@ describe('workflows that act for the default branch', () => {
 describe('workflow hygiene', () => {
   const workflows = readdirSync(join(ROOT, '.github/workflows')).filter((f) => f.endsWith('.yml'));
 
+  it('parses every workflow as YAML, each job with its steps', () => {
+    for (const file of workflows) {
+      const jobs = Object.entries(workflow(file).jobs ?? {});
+      expect(jobs.length, file).toBeGreaterThan(0);
+      for (const [name, job] of jobs) expect(job.steps?.length ?? 0, `${file}: job ${name}`).toBeGreaterThan(0);
+    }
+  });
+
   it('runs every job on a pinned runner image with the Node 24 releases of checkout and setup-node', () => {
     for (const file of workflows) {
       const text = readFileSync(join(ROOT, '.github/workflows', file), 'utf8');
@@ -517,5 +531,15 @@ describe("CI's image check", () => {
     expect(run).toContain('mahjong-signal:ci');
     expect(job).toContain('npm run smoke -w @mjm/signal -- http://127.0.0.1:8787 --expect-storage pg');
     expect(job).not.toContain('--expect-storage memory');
+  });
+
+  it("keeps the container's log as an artifact when the job fails or runs out of time", () => {
+    const steps = workflow('ci.yml').jobs.docker.steps ?? [];
+    const write = steps.findIndex((s) => /docker logs signal > signal\.log/.test(s.run ?? ''));
+    const upload = steps.findIndex((s) => s.uses?.startsWith('actions/upload-artifact@') && s.with?.path === 'signal.log');
+    // The log is written whatever happened, then kept when a step failed or the job was cancelled (a time limit cancels it).
+    expect(steps[write]?.if).toBe('always()');
+    expect(upload).toBeGreaterThan(write);
+    expect(steps[upload].if).toBe('failure() || cancelled()');
   });
 });
