@@ -1,7 +1,11 @@
-/** End of hand: the result sheet (winner cards with a 台 roll-up, scores, audit, next hand) and the match-over card. */
+/**
+ * End of hand: the result sheet (winner cards with a 台 roll-up, scores, audit, next hand) and the match-over card. Each
+ * is a modal dialog over the table (EndModal): named for its title, the table behind it inert on the web, Tab and
+ * Shift+Tab kept on its own buttons, the dimmed scrim no control (../Scrim.tsx).
+ */
 import React, { useState } from 'react';
 import { caveatText, endUnverified, failureText } from '../../logic/fairnessText';
-import { Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import { Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import type { HandResult, TableView, WinRecord } from '@mjm/engine';
 import type { ClientState } from '@mjm/net';
 import { colors, fonts, nameFont, space } from '../../theme';
@@ -18,6 +22,30 @@ import { useRollUp } from './Motion';
 import { NextHandCountdown } from './ClockParts';
 import { taiCapNote } from '../../logic/taiCap';
 import { signedChange } from '../../logic/tableRating';
+import { Scrim, useInertPage } from '../Scrim';
+
+/**
+ * The end-of-hand sheets' modal: a Modal over the whole table with the dimmed scrim, which does nothing on a tap (the
+ * sheet closes only by its own buttons; Android's Back key does what `onBack` says, as at the table). As LookPreview: on
+ * the web the Modal itself is the dialog (react-native-web makes it one) and takes the name; on a phone the sheet is.
+ * `notice` is drawn over the sheet: the table's link banner, which must stay in reach while the sheet is up.
+ */
+function EndModal({ label, onBack, notice, children }: { label: string; onBack: () => void; notice?: React.ReactNode; children: (sheetA11y: object) => React.ReactNode }) {
+  useInertPage(true);
+  const web = Platform.OS === 'web';
+  const sheetA11y = web ? {} : { role: 'dialog' as const, 'aria-modal': true, 'aria-label': label, accessibilityViewIsModal: true };
+  const modalA11y = (web ? { 'aria-label': label } : {}) as object;
+  return (
+    <Modal visible transparent animationType="fade" onRequestClose={onBack} supportedOrientations={['portrait', 'landscape']} {...modalA11y}>
+      <Scrim color={END_SCRIM} />
+      {children(sheetA11y)}
+      {notice}
+    </Modal>
+  );
+}
+
+/** The table dims under the end-of-hand sheets a little more than under the other sheets. */
+const END_SCRIM = 'rgba(16,20,47,0.72)';
 
 const signed = (n: number) => `${n >= 0 ? '+' : ''}${n}`;
 
@@ -122,7 +150,7 @@ function EndUnverifiedNote({ state, testID }: { state: ClientState; testID: stri
   );
 }
 
-export function ResultSheet({ result, view, state, mySeat, autoNext, onNext, onLeave, onReview, onFairness }: { result: HandResult; view: TableView; state: ClientState; mySeat: number; /** An online table: the next hand is dealt by itself a few seconds after this one, ready or not. */ autoNext?: boolean; onNext: () => void; onLeave: () => void; onReview: () => void; onFairness: () => void }) {
+export function ResultSheet({ result, view, state, mySeat, autoNext, onNext, onLeave, onReview, onFairness, notice }: { result: HandResult; view: TableView; state: ClientState; mySeat: number; /** An online table: the next hand is dealt by itself a few seconds after this one, ready or not. */ autoNext?: boolean; onNext: () => void; onLeave: () => void; onReview: () => void; onFairness: () => void; /** The table's link banner, drawn over the sheet. */ notice?: React.ReactNode }) {
   const { t } = useT();
   const [ready, setReady] = useState(false);
   const { width, height } = useWindowDimensions();
@@ -204,61 +232,71 @@ export function ResultSheet({ result, view, state, mySeat, autoNext, onNext, onL
   // Online the table does not wait for this sheet: say so, or a player reading on finds a hand already under way.
   // The host says when it deals the next hand: count down to it (./ClockParts.tsx, so only the line re-renders).
   const autoNextNote = autoNext ? <NextHandCountdown deadline={state.intermissionDeadline ?? null} style={styles.autoNext} /> : null;
+  // The dialog's name is the ribbon's text: the title, and the English line under it where there is one.
+  const label = sub ? `${title} ${sub}` : title;
   if (twoCol) {
     return (
-      <View style={[styles.overlay, { padding: height < 420 ? 8 : space.md }]}>
-        <View style={[styles.overlayCard, styles.overlayWide]} testID="result-sheet">
-          <ScrollView style={{ flex: 1.45 }} contentContainerStyle={{ gap: 8 }}>
-            {ribbonView}
-            {results}
-          </ScrollView>
-          <ScrollView style={{ flex: 1 }} contentContainerStyle={{ flexGrow: 1, gap: 8, justifyContent: 'space-between' }}>
-            {scores}
-            <EndUnverifiedNote state={state} testID="result-end-unverified" />
-            {auditRow}
-            <View style={{ gap: 6 }}>
-              {autoNextNote}
-              {next}
-              <Row gap={6}>
-                <Button small kind="secondary" title={t('table.result.review')} onPress={onReview} style={{ flex: 1 }} />
-                <Button small kind="ghost" title={t('table.result.leaveTable')} onPress={onLeave} style={{ flex: 1 }} />
-              </Row>
+      <EndModal label={label} onBack={onLeave} notice={notice}>
+        {(a11y) => (
+          <View style={[styles.overlay, { padding: height < 420 ? 8 : space.md }]} pointerEvents="box-none">
+            <View style={[styles.overlayCard, styles.overlayWide]} testID="result-sheet" {...a11y}>
+              <ScrollView style={{ flex: 1.45 }} contentContainerStyle={{ gap: 8 }}>
+                {ribbonView}
+                {results}
+              </ScrollView>
+              <ScrollView style={{ flex: 1 }} contentContainerStyle={{ flexGrow: 1, gap: 8, justifyContent: 'space-between' }}>
+                {scores}
+                <EndUnverifiedNote state={state} testID="result-end-unverified" />
+                {auditRow}
+                <View style={{ gap: 6 }}>
+                  {autoNextNote}
+                  {next}
+                  <Row gap={6}>
+                    <Button small kind="secondary" title={t('table.result.review')} onPress={onReview} style={{ flex: 1 }} />
+                    <Button small kind="ghost" title={t('table.result.leaveTable')} onPress={onLeave} style={{ flex: 1 }} />
+                  </Row>
+                </View>
+              </ScrollView>
+            </View>
+          </View>
+            )}
+          </EndModal>
+        );
+      }
+      return (
+        <EndModal label={label} onBack={onLeave} notice={notice}>
+      {(a11y) => (
+        <View style={styles.overlay} pointerEvents="box-none">
+          <ScrollView style={{ width: '100%' }} contentContainerStyle={styles.overlayScroll}>
+            <View style={styles.overlayCard} testID="result-sheet" {...a11y}>
+              {ribbonView}
+              {results}
+              {scores}
+              <EndUnverifiedNote state={state} testID="result-end-unverified" />
+              {auditRow}
+              {layout.stackButtons ? (
+                // Narrow phones: one full-width primary, the two secondary actions sharing a row at equal widths.
+                <View style={{ gap: 8 }}>
+                  {autoNextNote}
+                  {next}
+                  <Row gap={8}>
+                    <Button kind="secondary" title={t('table.result.reviewMyHand')} onPress={onReview} style={{ flex: 1 }} />
+                    <Button kind="ghost" title={t('table.result.leaveTable')} onPress={onLeave} style={{ flex: 1 }} />
+                  </Row>
+                </View>
+              ) : (
+                <Row style={{ flexWrap: 'wrap', rowGap: 8 }}>
+                  {autoNextNote && <View style={{ flexBasis: '100%' }}>{autoNextNote}</View>}
+                  {next}
+                  <Button kind="secondary" title={t('table.result.reviewMyHand')} onPress={onReview} />
+                  <Button kind="ghost" title={t('table.result.leaveTable')} onPress={onLeave} />
+                </Row>
+              )}
             </View>
           </ScrollView>
         </View>
-      </View>
-    );
-  }
-  return (
-    <View style={styles.overlay}>
-      <ScrollView style={{ width: '100%' }} contentContainerStyle={styles.overlayScroll}>
-        <View style={styles.overlayCard} testID="result-sheet">
-          {ribbonView}
-          {results}
-          {scores}
-          <EndUnverifiedNote state={state} testID="result-end-unverified" />
-          {auditRow}
-          {layout.stackButtons ? (
-            // Narrow phones: one full-width primary, the two secondary actions sharing a row at equal widths.
-            <View style={{ gap: 8 }}>
-              {autoNextNote}
-              {next}
-              <Row gap={8}>
-                <Button kind="secondary" title={t('table.result.reviewMyHand')} onPress={onReview} style={{ flex: 1 }} />
-                <Button kind="ghost" title={t('table.result.leaveTable')} onPress={onLeave} style={{ flex: 1 }} />
-              </Row>
-            </View>
-          ) : (
-            <Row style={{ flexWrap: 'wrap', rowGap: 8 }}>
-              {autoNextNote && <View style={{ flexBasis: '100%' }}>{autoNextNote}</View>}
-              {next}
-              <Button kind="secondary" title={t('table.result.reviewMyHand')} onPress={onReview} />
-              <Button kind="ghost" title={t('table.result.leaveTable')} onPress={onLeave} />
-            </Row>
-          )}
-        </View>
-      </ScrollView>
-    </View>
+      )}
+    </EndModal>
   );
 }
 
@@ -273,49 +311,54 @@ export function MatchOverSheet({ state, onLeave, rating }: { state: ClientState;
   const scores = state.finalScores ?? [];
   const order = scores.map((s, i) => ({ s, i })).sort((a, b) => b.s - a.s);
   return (
-    <View style={[styles.overlay, { padding: L.pad }]}>
-      {/* Never taller than the window: the ranks scroll inside the card (a short phone, a large text size, the note). */}
-      <View style={[styles.overlayCard, styles.matchCard, { maxHeight: L.maxHeight }, L.compact && { paddingVertical: 8 }]} testID="match-over">
-        <ScrollView style={{ flexGrow: 0 }} contentContainerStyle={{ gap: L.compact ? 6 : space.md }} testID="match-over-scroll">
-          <View style={[styles.ribbon, { backgroundColor: colors.gold }, L.compact && { paddingVertical: 2 }]} accessibilityRole="header">
-            <Icon name="trophy" size={L.trophy} />
-            <StrokeText style={{ fontSize: L.title }} strokeWidth={2.5} drop={2}>
-              {t('table.matchOver')}
-            </StrokeText>
+    <EndModal label={t('table.matchOver')} onBack={onLeave}>
+      {(a11y) => (
+        <View style={[styles.overlay, { padding: L.pad }]} pointerEvents="box-none">
+          {/* Never taller than the window: the ranks scroll inside the card (a short phone, a large text size, the note). */}
+          <View style={[styles.overlayCard, styles.matchCard, { maxHeight: L.maxHeight }, L.compact && { paddingVertical: 8 }]} testID="match-over" {...a11y}>
+            <ScrollView style={{ flexGrow: 0 }} contentContainerStyle={{ gap: L.compact ? 6 : space.md }} testID="match-over-scroll">
+              <View style={[styles.ribbon, { backgroundColor: colors.gold }, L.compact && { paddingVertical: 2 }]} accessibilityRole="header">
+                <Icon name="trophy" size={L.trophy} />
+                <StrokeText style={{ fontSize: L.title }} strokeWidth={2.5} drop={2}>
+                  {t('table.matchOver')}
+                </StrokeText>
+              </View>
+              {order.map(({ s, i }, rank) => {
+                const info = state.seats.find((x) => x.seat === i);
+                return (
+                  <Row key={i} style={[styles.rankRow, { paddingVertical: L.rowPad }]}>
+                    <View style={[styles.rankNum, rank === 0 && { backgroundColor: colors.gold }, L.compact && styles.rankNumSmall]}>
+                      <Text style={styles.rankNumText}>{rank + 1}</Text>
+                    </View>
+                    <AvatarPlate id={seatAvatarId(info, i)} size={L.avatar} />
+                    <Text style={[styles.itemText, { flex: 1 }, nameFont(info?.name)]}>{info?.name}</Text>
+                    <Text style={[styles.rankScore, { color: s >= 0 ? colors.okText : colors.dangerText }]}>{signed(s)}</Text>
+                  </Row>
+                );
+              })}
+              {rating === 'pending' && (
+                <Text style={styles.ratingNote} testID="match-rating">
+                  {t('table.ratingPending')}
+                </Text>
+              )}
+              {rating && rating !== 'pending' && (
+                <Text style={styles.ratingNote} testID="match-rating">
+                  {t('table.ratingChange', { rating: rating.rating, change: signedChange(rating.change) })}
+                </Text>
+              )}
+              <EndUnverifiedNote state={state} testID="match-end-unverified" />
+              <Button large={!L.compact} title={t('table.backHome')} onPress={onLeave} testID="match-over-home" />
+            </ScrollView>
           </View>
-          {order.map(({ s, i }, rank) => {
-            const info = state.seats.find((x) => x.seat === i);
-            return (
-              <Row key={i} style={[styles.rankRow, { paddingVertical: L.rowPad }]}>
-                <View style={[styles.rankNum, rank === 0 && { backgroundColor: colors.gold }, L.compact && styles.rankNumSmall]}>
-                  <Text style={styles.rankNumText}>{rank + 1}</Text>
-                </View>
-                <AvatarPlate id={seatAvatarId(info, i)} size={L.avatar} />
-                <Text style={[styles.itemText, { flex: 1 }, nameFont(info?.name)]}>{info?.name}</Text>
-                <Text style={[styles.rankScore, { color: s >= 0 ? colors.okText : colors.dangerText }]}>{signed(s)}</Text>
-              </Row>
-            );
-          })}
-          {rating === 'pending' && (
-            <Text style={styles.ratingNote} testID="match-rating">
-              {t('table.ratingPending')}
-            </Text>
-          )}
-          {rating && rating !== 'pending' && (
-            <Text style={styles.ratingNote} testID="match-rating">
-              {t('table.ratingChange', { rating: rating.rating, change: signedChange(rating.change) })}
-            </Text>
-          )}
-          <EndUnverifiedNote state={state} testID="match-end-unverified" />
-          <Button large={!L.compact} title={t('table.backHome')} onPress={onLeave} testID="match-over-home" />
-        </ScrollView>
-      </View>
-    </View>
+        </View>
+      )}
+    </EndModal>
   );
 }
 
 const styles = StyleSheet.create({
-  overlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(16,20,47,0.72)', alignItems: 'center', justifyContent: 'center', padding: space.md, zIndex: 40 },
+  // In the modal, over its scrim (EndModal): lays the card out in the middle of the window.
+  overlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', padding: space.md },
   overlayScroll: { flexGrow: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 16 },
   overlayCard: { backgroundColor: colors.cream, borderRadius: 26, padding: space.lg, paddingTop: 10, gap: space.md, width: '100%', maxWidth: 720, borderWidth: 3, borderColor: colors.ink, borderBottomWidth: 8 },
   overlayWide: { flexDirection: 'row', maxWidth: 860, flex: 1, padding: 10, paddingTop: 8, gap: 10 },

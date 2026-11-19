@@ -1,6 +1,7 @@
-import { afterEach, describe, expect, it } from '@jest/globals';
+import { afterEach, describe, expect, it, jest } from '@jest/globals';
 import React from 'react';
-import { render, screen } from '@testing-library/react-native';
+import { Platform, Text } from 'react-native';
+import { fireEvent, render, screen, within } from '@testing-library/react-native';
 import type { HandResult, TableView, WinRecord } from '@mjm/engine';
 import type { ClientState } from '@mjm/net';
 import { MatchOverSheet, ResultSheet } from './ResultSheet';
@@ -145,5 +146,72 @@ describe('the match-over card after a quick match', () => {
     } finally {
       setLocalePreference('auto');
     }
+  });
+});
+
+describe('the end-of-hand sheets are modal dialogs', () => {
+  const realOS = Platform.OS;
+  const setOS = (os: typeof Platform.OS) => {
+    (Platform as { OS: typeof Platform.OS }).OS = os;
+  };
+  afterEach(() => setOS(realOS));
+  /** The props of the rendered Modal (the host element react-native's Modal draws), searched from the root. */
+  function modalProps(): Record<string, unknown> {
+    type Node = { type?: unknown; props?: Record<string, unknown>; children?: unknown[] };
+    const find = (n: Node): Node | null => {
+      if (n && typeof n === 'object' && n.type === 'Modal') return n;
+      for (const c of n?.children ?? []) {
+        const hit = typeof c === 'object' && c ? find(c as Node) : null;
+        if (hit) return hit;
+      }
+      return null;
+    };
+    const modal = find(screen.root as unknown as Node);
+    if (!modal?.props) throw new Error('no Modal rendered');
+    return modal.props;
+  }
+  const DRAW: HandResult = { type: 'draw', wins: [], scoreDelta: [0, 0, 0, 0], dealerContinues: true };
+
+  it('the result sheet: on the web the Modal is the dialog, named by the ribbon, and Back asks to leave', async () => {
+    setOS('web');
+    const onLeave = jest.fn();
+    const state = { seats: SEATS, auditStatus: 'ok', auditFailures: [], auditCaveats: [], matchOver: false } as unknown as ClientState;
+    await render(<ResultSheet result={DRAW} view={{ scores: [0, 0, 0, 0] } as unknown as TableView} state={state} mySeat={0} onNext={() => {}} onLeave={onLeave} onReview={() => {}} onFairness={() => {}} />);
+    expect(modalProps()['aria-label']).toBe('流局 Draw');
+    // The scrim behind it is no control, and Android's Back key asks before leaving (as the table's own Back does).
+    (modalProps().onRequestClose as () => void)();
+    expect(onLeave).toHaveBeenCalled();
+  });
+
+  it('on a phone the sheet itself is the modal dialog, named the same', async () => {
+    setOS('ios');
+    await renderResult(DRAW);
+    const sheet = screen.getByTestId('result-sheet');
+    expect(sheet.props.role).toBe('dialog');
+    expect(sheet.props['aria-modal']).toBe(true);
+    expect(sheet.props['aria-label']).toBe('流局 Draw');
+    expect(sheet.props.accessibilityViewIsModal).toBe(true);
+    expect(modalProps()['aria-label']).toBeUndefined();
+  });
+
+  it('draws the table’s link banner inside its modal, in front, with its button in reach', async () => {
+    const onRetry = jest.fn();
+    const state = { seats: SEATS, auditStatus: 'ok', auditFailures: [], auditCaveats: [], matchOver: false } as unknown as ClientState;
+    const banner = (
+      <Text testID="link-banner" onPress={onRetry}>
+        Reconnecting
+      </Text>
+    );
+    await render(<ResultSheet result={DRAW} view={{ scores: [0, 0, 0, 0] } as unknown as TableView} state={state} mySeat={0} onNext={() => {}} onLeave={() => {}} onReview={() => {}} onFairness={() => {}} notice={banner} />);
+    await fireEvent.press(screen.getByTestId('link-banner'));
+    expect(onRetry).toHaveBeenCalled();
+  });
+
+  it('the match-over card: on the web the Modal is the dialog, named Match over', async () => {
+    setOS('web');
+    const over = { seats: SEATS, auditStatus: 'ok', auditFailures: [], auditCaveats: [], matchOver: true, finalScores: [10, -5, -5, 0] } as unknown as ClientState;
+    await render(<MatchOverSheet state={over} onLeave={() => {}} />);
+    expect(modalProps()['aria-label']).toBe('Match over');
+    expect(within(screen.getByTestId('match-over')).getByRole('button', { name: 'Back to home' })).toBeOnTheScreen();
   });
 });

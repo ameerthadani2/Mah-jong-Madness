@@ -5,18 +5,19 @@
  * stop, so Tab and Shift+Tab move only through the sheet's own buttons, which include the one that closes it. It is a
  * plain view with a touch responder rather than a Pressable, because React Native Web gives every Pressable a
  * tabindex, and its Modal's focus trap moves focus to any element that will take it, a tabindex of -1 included.
+ * Without `onPress` (the end-of-hand sheets, which close only by their own buttons) a tap on it does nothing.
  */
 import React, { useEffect } from 'react';
 import { Platform, StyleSheet, View } from 'react-native';
 import { holdPageInert } from '../display/inert';
 
-export function Scrim({ onPress, testID, color = 'rgba(16,20,47,0.55)' }: { onPress: () => void; testID?: string; color?: string }) {
+export function Scrim({ onPress, testID, color = 'rgba(16,20,47,0.55)' }: { onPress?: () => void; testID?: string; color?: string }) {
   return (
     <View
       testID={testID}
       style={[styles.scrim, { backgroundColor: color }]}
       onStartShouldSetResponder={() => true}
-      onResponderRelease={onPress}
+      onResponderRelease={onPress ?? undefined}
       aria-hidden
       importantForAccessibility="no-hide-descendants"
       accessibilityElementsHidden

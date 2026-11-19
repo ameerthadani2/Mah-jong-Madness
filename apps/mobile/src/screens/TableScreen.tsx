@@ -432,6 +432,47 @@ export function TableScreen() {
       </>
     ) : null;
 
+  // The link banner: the session rejoining on its own, or a link that will not come back by itself.
+  const bannerView =
+    notice === 'reconnecting' ? (
+      // The session is rejoining on its own (1, 2, 4 … 60 s); the player may skip the wait.
+      <View style={styles.banner} accessibilityLiveRegion="polite">
+        <Icon name="hourglass" size={28} />
+        <View style={{ flex: 1 }}>
+          <Text style={styles.bannerTitle}>{t('table.connection.reconnectingTitle')}</Text>
+          <Text style={styles.bannerText}>{t('table.connection.reconnectingText', { n: conn.attempt })}</Text>
+        </View>
+        <Button small title={t('table.connection.retryNow')} onPress={() => session.retryNow()} />
+      </View>
+    ) : ended ? (
+      // The session will not come back by itself: ten failed attempts, a refused session (4401), the server
+      // saying the table is gone (then the saved record goes too), the seat opened on another device (this
+      // one must not take it back unasked), a watcher who made way for a player, or the account banned
+      // while at the table (the record goes too: no seat is given back to it). Each says which.
+      <View style={styles.banner} accessibilityLiveRegion="assertive" testID={`link-${ended.notice}`}>
+        <Icon name="warning" size={28} />
+        <View style={{ flex: 1 }}>
+          <Text style={styles.bannerTitle}>{t(ended.copy.title)}</Text>
+          <Text style={styles.bannerText}>{t(ended.copy.text)}</Text>
+          {ended.notice === 'banned' ? <SupportLink reason="mistake" style={{ marginTop: 4 }} /> : null}
+        </View>
+        <Button
+          small
+          title={t(ended.copy.leave)}
+          onPress={() => {
+            // "Reconnect" on a lost link does what it says when trying again can help; otherwise the table is
+            // closed here and Home's Resume card is the way back.
+            if (ended.notice === 'lost' && session.reconnect()) return;
+            if (forgetsTable(ended.notice)) app.setActiveSession(null);
+            app.setSession(null);
+            app.reset({ name: 'home' });
+          }}
+        />
+      </View>
+    ) : null;
+  // The end-of-hand result sheet is up (a modal dialog over the table: components/table/ResultSheet.tsx).
+  const resultUp = !!state.lastResult && showResult && !state.matchOver;
+
   const actionBar = <ActionBar actions={actions} act={act} selected={selected} hint={hint} view={view} big={L.tablet} align={L.actions === 'center' ? 'center' : 'flex-end'} tapHint={tapHint.show} wrap={!L.compact} compact={L.actions === 'strip' && !L.tablet} />;
 
   return (
@@ -456,7 +497,6 @@ export function TableScreen() {
         />
         <ClockTicker clock={clock} myMove={myMove} onTick={() => sfx.sfx('tick')} />
         <ClockAnnouncer clock={clock} myMove={myMove} />
-        <LeaveSheet visible={leaveAsk} online={session.mode === 'online'} quickMatch={session.quickMatch} onChoose={exit} />
 
         <ReportPlayerSheet visible={reporting !== null} target={reporting} onClose={() => setReporting(null)} />
         <Felt
@@ -576,50 +616,20 @@ export function TableScreen() {
           </View>
         )}
         {/* Not under the match-over card: its buttons would stay reachable there, and "Leave table" asks first while a match is on. */}
-        {state.lastResult && showResult && !state.matchOver && <ResultSheet result={state.lastResult} view={view} state={state} mySeat={mySeat} autoNext={session.mode === 'online'} onNext={() => session.client.ready()} onLeave={() => setLeaveAsk(true)} onReview={() => app.go({ name: 'review' })} onFairness={() => app.go({ name: 'fairness' })} />}
+        {resultUp && state.lastResult && <ResultSheet result={state.lastResult} view={view} state={state} mySeat={mySeat} autoNext={session.mode === 'online'} onNext={() => session.client.ready()} onLeave={() => setLeaveAsk(true)} onReview={() => app.go({ name: 'review' })} onFairness={() => app.go({ name: 'fairness' })} notice={bannerView} />}
         {state.matchOver && <MatchOverSheet state={state} onLeave={leave} rating={quickOver ? ratingChange : null} />}
-        {notice === 'reconnecting' ? (
-          // The session is rejoining on its own (1, 2, 4 … 60 s); the player may skip the wait.
-          <View style={styles.banner} accessibilityLiveRegion="polite">
-            <Icon name="hourglass" size={28} />
-            <View style={{ flex: 1 }}>
-              <Text style={styles.bannerTitle}>{t('table.connection.reconnectingTitle')}</Text>
-              <Text style={styles.bannerText}>{t('table.connection.reconnectingText', { n: conn.attempt })}</Text>
-            </View>
-            <Button small title={t('table.connection.retryNow')} onPress={() => session.retryNow()} />
-          </View>
-        ) : ended ? (
-          // The session will not come back by itself: ten failed attempts, a refused session (4401), the server
-          // saying the table is gone (then the saved record goes too), the seat opened on another device (this
-          // one must not take it back unasked), a watcher who made way for a player, or the account banned
-          // while at the table (the record goes too: no seat is given back to it). Each says which.
-          <View style={styles.banner} accessibilityLiveRegion="assertive" testID={`link-${ended.notice}`}>
-            <Icon name="warning" size={28} />
-            <View style={{ flex: 1 }}>
-              <Text style={styles.bannerTitle}>{t(ended.copy.title)}</Text>
-              <Text style={styles.bannerText}>{t(ended.copy.text)}</Text>
-              {ended.notice === 'banned' ? <SupportLink reason="mistake" style={{ marginTop: 4 }} /> : null}
-            </View>
-            <Button
-              small
-              title={t(ended.copy.leave)}
-              onPress={() => {
-                // "Reconnect" on a lost link does what it says when trying again can help; otherwise the table is
-                // closed here and Home's Resume card is the way back.
-                if (ended.notice === 'lost' && session.reconnect()) return;
-                if (forgetsTable(ended.notice)) app.setActiveSession(null);
-                app.setSession(null);
-                app.reset({ name: 'home' });
-              }}
-            />
-          </View>
-        ) : (
+        {/* After the end-of-hand sheets, and mounted only while asked: on the web each Modal's layer is added to the page when
+            it mounts, so a sheet mounted later is drawn over one mounted earlier. Keyed by the result sheet, so a result
+            sheet that comes up while it is open does not cover it. */}
+        {leaveAsk && <LeaveSheet key={resultUp ? 'over-result' : 'table'} visible online={session.mode === 'online'} quickMatch={session.quickMatch} onChoose={exit} />}
+        {/* Over the result sheet, which is a modal, the link banner is drawn inside the sheet's modal (in front, in reach). */}
+        {!resultUp && bannerView}
+        {!bannerView &&
           state.lastError && (
             <View style={styles.toast} accessibilityLiveRegion="polite">
               <Text style={[styles.toastText, nameFont(tableError({ code: state.lastErrorCode ?? undefined, message: state.lastError }, t), fonts.bodyBold)]}>{tableError({ code: state.lastErrorCode ?? undefined, message: state.lastError }, t)}</Text>
             </View>
-          )
-        )}
+          )}
       </View>
     </TableThemeContext.Provider>
   );

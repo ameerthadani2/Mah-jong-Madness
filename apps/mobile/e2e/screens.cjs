@@ -34,7 +34,8 @@
  * in any of those runs (it scrolls; an opponent's discard, the newest of each, my pond, my hand or a claim or discard button
  * is not whole on screen; a "+N" chip for earlier discards is cut; or the coach's press reaches over my pond or my hand),
  * including the felt runs at Large and Extra-large tiles and text at 390x844, 360x740, 375x667, 360x640 and 320x568
- * (<size>-felt-*.png). The preview, the exit sheet and Home's replace-table question also fail on the keyboard
+ * (<size>-felt-*.png), or the end-of-hand result sheet is not a named modal dialog. The preview, the exit sheet, Home's
+ * replace-table question and the result sheet also fail on the keyboard
  * (dialogKeys): Tab ten times and Shift+Tab four times must stay on the dialog's own controls, never its scrim or the
  * page behind, and the page behind must be inert while the dialog is open and not after.
  */
@@ -119,6 +120,23 @@ async function dialogKeys(page, tabs = 10) {
       }
     }
   }
+  return bad;
+}
+
+/**
+ * The end-of-hand result sheet's hard checks: it is inside one named modal dialog (aria-modal, a name), and dialogKeys
+ * passes on it (the table behind it inert, Tab and Shift+Tab only through its own buttons).
+ */
+async function resultModal(page) {
+  const bad = [];
+  const dialog = await page.evaluate(() => {
+    const sheet = [...document.querySelectorAll('[data-testid="result-sheet"]')].find((e) => e.getBoundingClientRect().width > 0);
+    const d = sheet?.closest('[role="dialog"]');
+    return sheet ? { inDialog: !!d, modal: d?.getAttribute('aria-modal') ?? null, name: d?.getAttribute('aria-label') ?? '' } : null;
+  });
+  if (!dialog) return ['the result sheet is not showing'];
+  if (!dialog.inDialog || dialog.modal !== 'true' || !dialog.name.trim()) bad.push(`it is not in a named modal dialog (aria-modal ${dialog.modal}, name "${dialog.name}")`);
+  bad.push(...(await dialogKeys(page)));
   return bad;
 }
 
@@ -596,6 +614,8 @@ async function run(browser, port, [w, h]) {
   if (!finished) notes.push('hand did not finish');
 
   if (finished) {
+    // The result sheet is a modal dialog: named, the table behind it inert, and the keyboard kept on its own buttons.
+    fails.push(...(await resultModal(page)).map((f) => `Result sheet: ${f}`));
     if ((await tapSel(page, 'text=Review my hand', 1500)) || (await tapSel(page, 'text="Review"', 1500))) {
       await shot('review');
       await tapSel(page, '[data-testid="back"]', 900);
