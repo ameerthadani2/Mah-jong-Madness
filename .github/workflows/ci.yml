@@ -52,7 +52,8 @@ jobs:
       # vitest.config.ts (coverage.thresholds; docs/ARCHITECTURE.md, How the app is tested).
       - run: npm run coverage
       # The repository's own tests in tests/ (the rest of what `npm test` runs): the workflows' steps, the release
-      # configuration, the app's catalogue against the server's, and the server's tests staying inside apps/signal.
+      # configuration, the app's catalogue against the server's, the server's tests staying inside apps/signal, and the
+      # lockfile against the advisories acted on.
       - run: npm run test:repo
       # The app's render tests: components and screens rendered under jest (apps/mobile/jest.config.js).
       - run: npm run test:render

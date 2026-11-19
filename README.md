@@ -17,7 +17,7 @@ empty seats so a table always runs; offline you play the same engine against bot
 | `packages/net` | Table protocol: commit–reveal shuffle seed with a five-share ceremony, host-authoritative lock-step, hidden-information views, per-hand audit that every client verifies, timers/auto-play, rejoin tokens. Transports: WebSocket relay to the game server, in-memory loopback. |
 | `apps/mobile` | Expo / React Native app (iOS, Android, web): home, club (create/join by code), lobby, landscape table with coach panel, quick match, result and audit screens, Learn (36 lessons in six tracks, puzzles in five themes, two drills), the Shop, house-rule settings. |
 | `apps/signal` | The game server: hosts every online table, relays the players' sockets, and runs the HTTP API (accounts and sessions, clubs, quick match, the wallet and store webhooks, reports, blocks and moderation, push) over Postgres or in-memory storage. Rate-limited and input-validated. |
-| `tests/` | The repository's own tests, for checks that read more than one workspace: the workflows' steps, the release configuration, the app's catalogue against the server's. |
+| `tests/` | The repository's own tests, for checks that read more than one workspace: the workflows' steps, the release configuration, the app's catalogue against the server's, the lockfile against the advisories acted on. |
 | `docs/` | Architecture, rules/scoring reference, Fair Play Charter, product definition, monetisation plan, store compliance checklist, design system, roadmap. |
 
 ## Try it from a phone
