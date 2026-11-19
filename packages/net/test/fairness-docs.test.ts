@@ -44,7 +44,7 @@ describe('the fair play charter states the late-turn limits the table client use
   it('the Fair play count’s bar is half of that, at least 1 s, at every speed', () => {
     expect(LATE_COUNT_MIN_MS).toBe(1_000);
     const bar = (k: keyof typeof SPEED_PRESETS) => s(lateCountMs(rules(k)));
-    expect(turnRow).toContain(`(the Fair play count counts each turn later than half of it: ${bar('relaxed')} seconds at Relaxed, ${bar('normal')} at Normal, ${bar('fast')} at Fast, ${bar('turbo')} at Turbo, ${bar('hyper')} at Hyper)`);
+    expect(turnRow).toContain(`(the Fair play count, which measures your turns against the table's answers to your pings alone, counts each turn later than half of it: ${bar('relaxed')} seconds at Relaxed, ${bar('normal')} at Normal, ${bar('fast')} at Fast, ${bar('turbo')} at Turbo, ${bar('hyper')} at Hyper)`);
     expect(doc).toContain('later than half the time a turn may be late (a quarter of the turn clock, at least 1 second)');
   });
 

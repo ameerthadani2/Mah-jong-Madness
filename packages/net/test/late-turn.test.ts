@@ -2175,14 +2175,16 @@ describe('the table’s answers to the phone’s pings: how late a turn may come
       }
     }));
 
-  it('item 2 with the deal itself as the frame stamped back 25 s: every fixed point the phone holds says the table’s clock is 25 s behind, as a server that runs its clock behind from the start does (a stated limit: the count sees nothing); the app’s own clock says the same, so a seat that follows it moves with time on it, the table playing over that move is noted, and no hand is green (T10)', () =>
+  it('item 2 with the deal itself as the frame stamped back 25 s: the deal says the table’s clock is 25 s behind, and the audit and the app’s own clock both take it so; a seat that follows that clock moves with time on it, the table playing over that move is noted, no hand is green, and the Fair play count, which measures against the answers to the pings alone, counts every turn (T10)', () =>
     scenario((i) => {
       const w = backThenLate(`I2b${i}`, 25_000, 15, 30, true);
       playOut(w);
       need(w.c.state.audits.length >= 2);
       noGreen(w);
       for (const a of w.c.state.audits) expect(a.failures.length > 0 || a.caveats.map((c) => caveatKey(c)).includes('inFlight')).toBe(true);
-      expect(counts(w).late).toBe(0);
+      const { late, of } = counts(w);
+      expect(of).toBeGreaterThan(0);
+      expect(late).toBe(of);
     }));
 
   /** Every frame `ms` late from the hand's first state on, under honest stamps; the seat moves 0.8 s after it is shown a move. */

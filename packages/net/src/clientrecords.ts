@@ -235,7 +235,8 @@ export interface PlayRecord {
   /** Refusals of this seat's moves: the turn the move was made on (as the host echoed it) and the turn the host's frames had reached. */
   refusals?: Array<{ tc: number; at: number }>;
   /**
-   * Fixed points from the host's answers (`pong`) to this run's pings while the hand was on show: one per
+   * Fixed points from the host's answers (`pong`) to this run's pings while the hand was on show, or its deal
+   * was being agreed: one per
    * `PONG_WINDOW_MS` of ping time, the one with the shortest round trip, at most `MAX_PONGS`. They hold
    * only within the run of the app that measured them (`holdsIn`), so they are never saved (`serialize`)
    * nor read back from a saved record (`cleanPlay`).

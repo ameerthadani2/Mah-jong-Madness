@@ -506,10 +506,11 @@ export class TableClient {
   private readonly runId = randomHex(4);
   /**
    * Pings this run sent that no pong has answered yet, by the `at` each carried (the host echoes it),
-   * with the run of this device's clock it was read in. Never saved: a pong is a fixed point only
-   * within the run of the app and of its clock that sent the ping.
+   * with the run of this device's clock it was read in and the hand it was sent for (`handOnShow`; null:
+   * none). Never saved: a pong is a fixed point only within the run of the app and of its clock that sent
+   * the ping.
    */
-  private readonly pings = new Map<number, number>();
+  private readonly pings = new Map<number, { seg: number; hand: number | null }>();
   /** The last `MAX_PAUSES` stretches of this run in which the app did not run (see `ran`; never saved): no frame's lateness and no move's wait is the server's doing while they last. */
   private readonly pauses: Array<{ from: number; to: number }> = [];
   /** When this client last published a round trip (`rttMs`; see `RTT_PUBLISH_MS`). */
@@ -528,6 +529,8 @@ export class TableClient {
   private heardOnLink = false;
   /** The strongest fixed point of the hands audited in this era, run of the app and run of this device's clock (see `lateAnchor`). */
   private bestAnchor: LateScope['best'] = null;
+  /** The same, of their pongs alone: what the Fair play count measures the next hand's first turns against. */
+  private bestPong: LateScope['best'] = null;
   /** When this app last ran: it handled a frame, checked the link, bound a link or sent a move. */
   private ranAt: number | null = null;
   /** The last stretch of more than `RAN_GAP_MS` in which this app did not run (the phone slept, or the app was in the background). */
@@ -902,34 +905,41 @@ export class TableClient {
   ping(): void {
     const at = this.now();
     if (this.pings.has(at)) return;
-    this.pings.set(at, this.seg());
-    if (this.pings.size > MAX_PINGS) this.pings.delete(this.pings.keys().next().value as number);
     const play = this.handOnShow();
+    this.pings.set(at, { seg: this.seg(), hand: play ? play.hand : null });
+    if (this.pings.size > MAX_PINGS) this.pings.delete(this.pings.keys().next().value as number);
     if (play) play.pinged = (play.pinged ?? 0) + 1;
     this.send({ t: 'ping', at });
   }
 
-  /** The record of the hand on show while it is played (a view, no result yet, the hand not ended); null otherwise. */
+  /**
+   * The record of the hand on show while it is played (a view, no result yet, the hand not ended), or of the
+   * hand whose deal is being agreed (its first turns come right after the deal, and the deal's own fixed point
+   * holds the time the table waited for every share); null otherwise.
+   */
   private handOnShow(): PlayRecord | null {
     const v = this.state.view;
-    if (!v || this.state.lastResult !== null || this.handsEnded.has(v.handNumber)) return null;
-    return this.plays.find((p) => p.hand === v.handNumber) ?? null;
+    if (v && this.state.lastResult === null && !this.handsEnded.has(v.handNumber)) return this.plays.find((p) => p.hand === v.handNumber) ?? null;
+    const h = this.openHand;
+    return h !== null && this.state.ceremony !== 'idle' && !this.handsEnded.has(h) ? this.playFor(h) : null;
   }
 
   /**
    * The table's answer to a ping: a fixed point between its clock and this device's (`ClockAnchor`): it
    * stamped the answer (`now`) after the ping this device sent at `at` reached it, and the answer
    * reached this device at `fat`. Only an answer to a ping this run sent, read in the run of this
-   * device's clock it is in now, and only the first answer to each: anything else is ignored. While a
-   * hand is on show the hand keeps it (`PlayRecord.pongs`), one per `PONG_WINDOW_MS` of ping time (the
-   * one with the shortest round trip), and its audit measures every state against it (`lateBy`).
+   * device's clock it is in now, and only the first answer to each: anything else is ignored. The hand
+   * the ping was sent for keeps it while it is still that hand's time (`handOnShow`, `PlayRecord.pongs`),
+   * one per `PONG_WINDOW_MS` of ping time (the one with the shortest round trip), and its audit measures
+   * every state against it (`lateBy`).
    */
   private notePong(at: unknown, now: unknown): void {
     if (typeof at !== 'number' || !Number.isFinite(at) || typeof now !== 'number' || !Number.isFinite(now)) return;
-    const seg = this.pings.get(at);
-    if (seg === undefined) return;
+    const sent = this.pings.get(at);
+    if (sent === undefined) return;
     this.pings.delete(at);
     const fat = this.now();
+    const seg = sent.seg;
     if (seg !== this.seg() || fat < at) return;
     // Nothing on screen reads the round trip: publishing it with every pong would re-render the table and save the record each second.
     if (this.rttAt === null || fat - this.rttAt >= RTT_PUBLISH_MS) {
@@ -937,7 +947,7 @@ export class TableClient {
       this.update({ rttMs: fat - at });
     }
     const play = this.handOnShow();
-    if (!play) return;
+    if (!play || play.hand !== sent.hand) return;
     const k: ClockAnchor = { at, now, era: this.era, run: this.runId, seg, fat };
     const pongs = (play.pongs ??= []);
     const last = pongs[pongs.length - 1];
@@ -1850,6 +1860,7 @@ export class TableClient {
             return out;
           };
           this.bestAnchor = strongest(this.bestAnchor, anchors);
+          this.bestPong = strongest(this.bestPong, this.plays.find((p) => p.hand === h)?.pongs ?? []);
         }
         if (typeof end.now === 'number') this.lastStamp = { at: end.at, now: end.now, epoch: this.epoch, era: this.era };
         const { status, failures, caveats } = check;
@@ -2549,8 +2560,11 @@ export class TableClient {
     // Each turn of this seat whose state reached this device late, for the count on the Fair play screen
     // (never a verdict): judged by the state that first showed the seat the move (`seatRun`), against
     // every fixed point the replay found.
-    // In a hand with pong fixed points: by `lateBy`, against `lateCountMs` (half of `limit`); otherwise, and
-    // for a turn no fixed point bounds, by `turnLateBy` against `lateLimitMs`, as before.
+    // In a hand with pong fixed points: by `lateBy` against the table's answers to the pings alone (this hand's
+    // and the strongest of the hands before), against `lateCountMs` (half of `limit`); otherwise, and for a turn
+    // they do not bound (one shown before the first answer of a run), by `turnLateBy` against `lateLimitMs`, as
+    // before. Not against the deal or a move's frame: the deal's round trip holds the time the table waited for
+    // every share, and either may be an answer sent at once with its stamp moved back. The count is never a verdict.
     if (play && me !== null && notes) {
       let prev = -1;
       for (const entry of log) {
@@ -2559,7 +2573,7 @@ export class TableClient {
         prev = entry.n;
         if (!r0) continue;
         notes.turnsMeasured = (notes.turnsMeasured ?? 0) + 1;
-        const by = pong && !unstamped(r0) ? lateBy(r0, pong.points, pong.scope) : null;
+        const by = pong && !unstamped(r0) ? lateBy(r0, pongs, { ...scope, best: this.bestPong }) : null;
         if (by !== null ? by > lateCountMs(rules) : turnLateBy(r0, anchors, scope) > lateLimitMs(rules)) (notes.lateTurns ??= []).push(entry.n);
       }
     }

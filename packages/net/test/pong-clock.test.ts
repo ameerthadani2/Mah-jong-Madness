@@ -162,7 +162,7 @@ describe('the phone’s pings (T3)', () => {
       clock.now += 10;
       c.ping();
     }
-    const pings = (c as unknown as { pings: Map<number, number> }).pings;
+    const pings = (c as unknown as { pings: Map<number, unknown> }).pings;
     expect(pings.size).toBe(MAX_PINGS);
     expect(pings.has(net.pings()[0].at)).toBe(false);
     expect(pings.has(net.pings()[net.pings().length - 1].at)).toBe(true);
@@ -215,7 +215,7 @@ describe('pong fixed points (T4)', () => {
     // A device clock that is only the injected wall clock can be set back.
     clock.now -= 1_000;
     net.deliver({ t: 'pong', at, now: 5 });
-    expect((c as unknown as { pings: Map<number, number> }).pings.has(at)).toBe(false);
+    expect((c as unknown as { pings: Map<number, unknown> }).pings.has(at)).toBe(false);
     expect(c.state.rttMs).toBeNull();
   });
 
@@ -243,6 +243,28 @@ describe('pong fixed points (T4)', () => {
       const next = round(500);
       expect(t.pongs().map((k) => k.at)).toEqual([best, next]);
     }));
+
+  it('one answered while a hand’s deal is agreed is kept for that hand; one to a ping sent before it, or for another hand, is not', () => {
+    const clock = { now: 60_000 };
+    const net = fakeLink();
+    const c = new TableClient(net.link, 'A', undefined, {}, { now: () => clock.now });
+    net.deliver(welcome());
+    // A ping in the lobby, answered once the deal of hand 0 is being agreed: it was sent for no hand.
+    c.ping();
+    const early = net.pings()[0].at;
+    net.deliver({ t: 'commit_request', handNumber: 0, attempt: 1 });
+    clock.now += 100;
+    net.deliver({ t: 'pong', at: early, now: 50_000 });
+    expect(plays(c).find((p) => p.hand === 0)?.pongs ?? []).toEqual([]);
+    // A ping sent during the deal is kept for hand 0.
+    clock.now += 1_000;
+    c.ping();
+    const during = net.pings()[1].at;
+    clock.now += 100;
+    net.deliver({ t: 'pong', at: during, now: 51_000 });
+    expect(plays(c).find((p) => p.hand === 0)?.pongs).toEqual([{ at: during, now: 51_000, era: 0, run: expect.any(String), seg: 0, fat: during + 100 }]);
+    expect(plays(c).find((p) => p.hand === 0)?.pinged).toBe(1);
+  });
 
   it('none is kept while no hand is on show (between hands, before the deal)', async () => {
     const clock = { now: 70_000 };
@@ -297,7 +319,7 @@ describe('pong fixed points and pings are never saved (T6)', () => {
       for (const k of ['"pongs"', '"pinged"', '"pings"', '"pauses"']) expect(text).not.toContain(k);
       const back = TableClient.restore(saved, transportLink(new LoopbackHub().create('back'), 'host'), 'Victim', undefined, { token: saved.state.token ?? undefined });
       expect(plays(back).every((p) => p.pongs === undefined && p.pinged === undefined)).toBe(true);
-      expect((back as unknown as { pings: Map<number, number> }).pings.size).toBe(0);
+      expect((back as unknown as { pings: Map<number, unknown> }).pings.size).toBe(0);
       expect((back as unknown as { pauses: unknown[] }).pauses).toEqual([]);
       // A record that holds some (an edited one, or one from a build that kept them) gives none back.
       const edited = JSON.parse(text) as SerializedClient & { plays: Array<Record<string, unknown>> };
