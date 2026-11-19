@@ -23,7 +23,7 @@
  * leaderboard screen (opened from Learn without a server, in English, zh-TW and Extra-large text: <size>-leaderboards.png,
  * -leaderboards-zh.png, -leaderboards-xl.png) does not show its offline state, clips text or has a choice under 44 px,
  * a table HUD icon takes a press smaller than 44 x 44 px, a control on Home (in English and in zh-TW) or anywhere in
- * Settings takes a press smaller than 44 x 44 px, the Shop's Looks tab cuts a description (<size>-shop-looks.png),
+ * Settings takes a press smaller than 44 x 44 px, a tap on a control's face on Home reaches another control (tapsReach), the Shop's Looks tab cuts a description (<size>-shop-looks.png),
  * or a seat name is cut at a table in Traditional Chinese (each viewport at Normal text, and the portrait ones again at
  * Extra-large text: <size>-table-zh.png, <size>-table-zh-xl.png at every viewport; the hand tiles' size is logged as a note),
  * or the Shop's try-on preview fails its checks (runPreview below: <size>-preview-<kind>.png and -zh.png, at every
@@ -222,6 +222,39 @@ async function pressTargets(page) {
         const name = (e.getAttribute('aria-label') || e.textContent || e.dataset.testid || e.tagName).replace(/\s+/g, ' ').trim().slice(0, 28);
         return `"${name}" is a ${Math.round(r.width)}x${Math.round(r.height)} px press, under 44`;
       });
+  });
+}
+
+/**
+ * A tap anywhere on a control's drawn face reaches that control, never another control whose press reaches over it (a
+ * padded press, Ui.tsx webPress, drawn after it). Samples every control on screen across its face (its box less the
+ * padding that pads its press), every 2 px down and at five points across.
+ */
+async function tapsReach(page) {
+  return page.evaluate(() => {
+    const sel = '[role="button"], button, a[href], [role="link"], [role="tab"], [role="switch"], [role="radio"], [role="checkbox"]';
+    const controls = [...document.querySelectorAll(sel)].filter((e) => {
+      const r = e.getBoundingClientRect();
+      return r.width > 0 && r.height > 0 && !e.closest('[aria-hidden="true"]') && !e.closest('[inert]');
+    });
+    const name = (e) => (e.getAttribute('aria-label') || e.textContent || e.dataset.testid || e.tagName).replace(/\s+/g, ' ').trim().slice(0, 28);
+    const bad = new Map();
+    for (const c of controls) {
+      const r = c.getBoundingClientRect();
+      const st = getComputedStyle(c);
+      const face = { top: r.top + parseFloat(st.paddingTop), bottom: r.bottom - parseFloat(st.paddingBottom), left: r.left + parseFloat(st.paddingLeft), right: r.right - parseFloat(st.paddingRight) };
+      for (let y = Math.max(0, Math.ceil(face.top)) + 0.5; y < Math.min(face.bottom, innerHeight); y += 2)
+        for (const fx of [0.1, 0.3, 0.5, 0.7, 0.9]) {
+          const x = face.left + (face.right - face.left) * fx;
+          if (x < 0 || x >= innerWidth) continue;
+          const owner = document.elementFromPoint(x, y)?.closest(sel);
+          if (owner && owner !== c && !c.contains(owner) && !owner.contains(c)) {
+            const k = `a tap on "${name(c)}" reaches "${name(owner)}"`;
+            if (!bad.has(k)) bad.set(k, Math.round(y - face.top));
+          }
+        }
+    }
+    return [...bad].map(([k, y]) => `${k} (${y} px down its face)`);
   });
 }
 
@@ -705,6 +738,7 @@ async function runHomeZh(browser, port, [w, h]) {
   if (head.lang !== 'zh-Hant-TW') fails.push(`Home (zh-TW): the page's lang is "${head.lang}", not zh-Hant-TW`);
   fails.push(...(await homeFit(page)).map((f) => `Home (zh-TW): ${f}`));
   fails.push(...(await pressTargets(page)).map((f) => `Home (zh-TW): ${f}`));
+  fails.push(...(await tapsReach(page)).map((f) => `Home (zh-TW): ${f}`));
   // The wordmark reads the Chinese app name (common.appName), whole and on screen.
   const mark = await page.evaluate(() => {
     const els = [...document.querySelectorAll('div[dir="auto"]')].filter((e) => e.children.length === 0 && e.textContent === '麻將狂熱' && e.getBoundingClientRect().width > 0);
@@ -736,6 +770,7 @@ async function run(browser, port, [w, h]) {
   await shot('home');
   fails.push(...(await homeFit(page)).map((f) => `Home (en): ${f}`));
   fails.push(...(await pressTargets(page)).map((f) => `Home (en): ${f}`));
+  fails.push(...(await tapsReach(page)).map((f) => `Home (en): ${f}`));
   if ((await page.title()) !== 'Mahjong Mania') fails.push(`Home (en): the page title is "${await page.title()}", not Mahjong Mania`);
 
   await tapSel(page, '[data-testid="start-match"]', 300);

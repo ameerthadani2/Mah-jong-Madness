@@ -3,6 +3,8 @@
  * with their buttons and the links under them must end above the bottom edge (and the home indicator), so the
  * card art shrinks there and the blurbs are left out.
  */
+import { MIN_TOUCH } from '../components/table/layout';
+
 export interface HomeWindow {
   /** Wide enough for the cards side by side. */
   wide: boolean;
@@ -35,5 +37,13 @@ export function homeSmallWindowHeight(w: HomeWindow): number {
   return w.height < 780 ? 80 : 100;
 }
 
-/** The drawn height of a text link under a card; with `slopFor` it reaches the 44 pt touch target. */
+/** The drawn height of a text link under a card; with LINK_SLOP it reaches the 44 pt touch target. */
 export const LINK_HEIGHT = 20;
+/** The gap between a card's buttons and the text link under them (HomeScreen's card foot). */
+export const LINK_GAP = 8;
+/**
+ * A text link's press beyond its drawn line, to 44 pt: up 2 px short of the button above it (its edge can fall between
+ * pixels), so a tap on that button's bottom edge stays the button's; the rest below, and some to the sides. A phone takes
+ * it as hitSlop; the web, which ignores hitSlop, as padding with an equal negative margin (HomeScreen `linkWebPress`).
+ */
+export const LINK_SLOP = { top: LINK_GAP - 2, bottom: MIN_TOUCH - LINK_HEIGHT - (LINK_GAP - 2), left: 12, right: 12 } as const;

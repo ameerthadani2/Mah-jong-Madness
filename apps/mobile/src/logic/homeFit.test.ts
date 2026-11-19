@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { LESSONS } from '@mjm/engine';
 import { MIN_TOUCH, slopFor } from '../components/table/layout';
 import { en, zhTW } from '../i18n/locales';
-import { homeSmallWindowHeight, homeWindowHeight, isShortHome, LINK_HEIGHT, SHORT_HOME_HEIGHT } from './homeFit';
+import { homeSmallWindowHeight, homeWindowHeight, isShortHome, LINK_GAP, LINK_HEIGHT, LINK_SLOP, SHORT_HOME_HEIGHT } from './homeFit';
 
 const read = (rel: string) => readFileSync(join(__dirname, '..', rel), 'utf8');
 
@@ -48,8 +48,13 @@ describe('Home text and touch targets', () => {
   });
 
   it('draws the text links and the chips tall enough for their hitSlop to reach 44 pt', () => {
-    expect(LINK_HEIGHT + 2 * slopFor(LINK_HEIGHT)).toBeGreaterThanOrEqual(MIN_TOUCH);
-    expect(home.match(/hitSlop=\{slopFor\(LINK_HEIGHT\)\}/g)).toHaveLength(2);
+    expect(LINK_HEIGHT + LINK_SLOP.top + LINK_SLOP.bottom).toBeGreaterThanOrEqual(MIN_TOUCH);
+    // A link's press reaches up only as far as the gap to the button above it: a tap on that button's bottom edge stays
+    // the button's (the web's padding is the same: linkWebPress).
+    expect(LINK_SLOP.top).toBeLessThanOrEqual(LINK_GAP - 2);
+    expect(home.match(/hitSlop=\{LINK_SLOP\} style=\{\[styles\.link, linkWebPress\]\}/g)).toHaveLength(2);
+    expect(home).toMatch(/paddingTop: LINK_SLOP\.top, marginTop: -LINK_SLOP\.top, paddingBottom: LINK_SLOP\.bottom, marginBottom: -LINK_SLOP\.bottom/);
+    expect(home).toMatch(/cardFoot: \{[^}]*gap: LINK_GAP/);
     expect(home).toMatch(/link: \{[^}]*minHeight: LINK_HEIGHT/);
     const ui = read('components/Ui.tsx');
     const chip = Number(/export const CHIP_HEIGHT = (\d+);/.exec(ui)?.[1]);

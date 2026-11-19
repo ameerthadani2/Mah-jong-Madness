@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native';
+import { Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BOT_SKILLS, LESSON_TRACKS, LESSONS, type BotSkill } from '@mjm/engine';
 import { allowedBotSkill, diamondsOwed, hasTier, totalDiamonds } from '../monetisation/wallet';
@@ -19,15 +19,15 @@ import { NameRefusedNotice } from '../components/NameRefusedNotice';
 import { tableError } from '../components/table/tableErrors';
 import { ConfirmSheet } from '../components/table/ConfirmSheet';
 import { replacesTable } from '../logic/back';
-import { homeSmallWindowHeight, homeWindowHeight, isShortHome, LINK_HEIGHT } from '../logic/homeFit';
+import { homeSmallWindowHeight, homeWindowHeight, isShortHome, LINK_GAP, LINK_HEIGHT, LINK_SLOP } from '../logic/homeFit';
 import { learnSummary } from '../logic/learn';
 import { botLabel, rulesSummary } from '../logic/rules-text';
 import { useT } from '../i18n';
 import { colors, fonts, nameFont, space } from '../theme';
-import { Button, Card, Chip, fontFor, GemCounter, IconButton, P, Pill, Row, webPress } from '../components/Ui';
+import { Button, Card, Chip, fontFor, GemCounter, IconButton, P, Pill, Row } from '../components/Ui';
 import { AvatarPlate, avatarName } from '../components/Avatars';
 import { useOwnedEquipped } from '../monetisation/useEquipped';
-import { slopFor } from '../components/table/layout';
+import { MIN_TOUCH, slopFor } from '../components/table/layout';
 import { ChestScene, ClubhouseScene, ScrollScene, TableScene } from '../components/Scenes';
 import { Icon } from '../components/Icons';
 import { Logo } from '../components/Logo';
@@ -206,7 +206,7 @@ export function HomeScreen() {
         {/* No icon, and the short label on a portrait phone: the card's button is as narrow as 73 pt there, and a clipped label is worse than a short one. */}
         <Button testID="open-quickmatch" title={t(compact && !landscape ? 'quickmatch.buttonShort' : 'quickmatch.button')} accessibilityLabel={`${t('quickmatch.button')}. ${t('quickmatch.buttonHint')}`} small={compact} large={tablet} onPress={goQuickMatch} />
         {!compact && (
-          <Pressable onPress={goOnline} hitSlop={slopFor(LINK_HEIGHT)} style={[styles.link, webPress(LINK_HEIGHT)]} accessibilityRole="link" accessibilityLabel={t('home.clubs.quickTable')}>
+          <Pressable onPress={goOnline} hitSlop={LINK_SLOP} style={[styles.link, linkWebPress]} accessibilityRole="link" accessibilityLabel={t('home.clubs.quickTable')}>
             <Icon name="users" size={18} />
             <Text style={[styles.linkText, fontFor(t('home.clubs.quickTable'), fonts.uiBold)]}>{t('home.clubs.quickTable')}</Text>
           </Pressable>
@@ -235,7 +235,7 @@ export function HomeScreen() {
       <View style={styles.cardFoot}>
         <Button testID="open-learn" title={t('home.learn.open')} kind="premium" small={compact} large={tablet} onPress={() => app.go({ name: 'learn' })} />
         {!compact && (
-          <Pressable onPress={() => app.go({ name: 'daily' })} hitSlop={slopFor(LINK_HEIGHT)} style={[styles.link, webPress(LINK_HEIGHT)]} accessibilityRole="link" accessibilityLabel={dailyDone ? t('home.learn.dailyDone') : t('home.learn.daily')}>
+          <Pressable onPress={() => app.go({ name: 'daily' })} hitSlop={LINK_SLOP} style={[styles.link, linkWebPress]} accessibilityRole="link" accessibilityLabel={dailyDone ? t('home.learn.dailyDone') : t('home.learn.daily')}>
             <Icon name={dailyDone ? 'check' : 'scroll'} size={18} color={colors.cta} />
             <Text style={[styles.linkText, fontFor(t('home.learn.daily'), fonts.uiBold)]}>{dailyDone ? t('home.learn.dailyDone') : t('home.learn.daily')}</Text>
           </Pressable>
@@ -449,6 +449,9 @@ function ModeCard({
   );
 }
 
+/** The web ignores hitSlop: there a text link's press is LINK_SLOP as padding, with an equal negative margin that keeps its place. */
+const linkWebPress = Platform.OS === 'web' ? { paddingTop: LINK_SLOP.top, marginTop: -LINK_SLOP.top, paddingBottom: LINK_SLOP.bottom, marginBottom: -LINK_SLOP.bottom, minHeight: MIN_TOUCH } : undefined;
+
 const styles = StyleSheet.create({
   wrap: { padding: space.lg, gap: space.md, flexGrow: 1 },
   topBar: { flexDirection: 'row', alignItems: 'center', gap: space.md, justifyContent: 'space-between' },
@@ -461,7 +464,7 @@ const styles = StyleSheet.create({
   windowShine: { position: 'absolute', top: -40, left: -20, width: 120, height: 120, borderRadius: 60, backgroundColor: 'rgba(255,255,255,0.35)' },
   cardTitle: { fontFamily: fonts.display, color: colors.ink, fontSize: 22, letterSpacing: 0.3 },
   cardText: { fontSize: 12, lineHeight: 16 },
-  cardFoot: { marginTop: 'auto', gap: 8, paddingTop: 2 },
+  cardFoot: { marginTop: 'auto', gap: LINK_GAP, paddingTop: 2 },
   link: { flexDirection: 'row', alignItems: 'center', gap: 6, alignSelf: 'center', minHeight: LINK_HEIGHT },
   linkText: { fontFamily: fonts.uiBold, color: colors.infoShelf, fontSize: 14, textDecorationLine: 'underline' },
   notify: { width: 26, height: 26, borderRadius: 13, backgroundColor: colors.danger, borderWidth: 3, borderColor: colors.ink, alignItems: 'center', justifyContent: 'center' },
