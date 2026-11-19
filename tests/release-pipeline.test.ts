@@ -471,6 +471,16 @@ describe('workflow hygiene', () => {
     expect(readFileSync(join(ROOT, '.github/workflows/ci.yml'), 'utf8')).toMatch(/^permissions:\n {2}contents: read\n\n/m);
   });
 
+  it("runs every workspace's tests and the repository's own tests in CI, as the root `npm test` does", () => {
+    const ci = readFileSync(join(ROOT, '.github/workflows/ci.yml'), 'utf8');
+    const scripts = (JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')) as { scripts: Record<string, string> }).scripts;
+    expect(ci).toMatch(/^ {6}- run: npm run coverage$/m);
+    // These tests (tests/ at the root) run in no workspace's suite, so CI runs them on their own.
+    expect(ci).toMatch(/^ {6}- run: npm run test:repo$/m);
+    expect(scripts.test).toMatch(/&& npm run test:repo$/);
+    expect(scripts['test:repo']).toBe('vitest run --config tests/vitest.config.mts');
+  });
+
   it('fails the avatar import step when the import script fails, and still shows its output', () => {
     const step = workflowStepScript('avatar-art.yml', 'name: Resize and register portraits');
     const run = (exitCode: number) => {

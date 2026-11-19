@@ -2,7 +2,7 @@
  * The server's product table: what each store product or diamond purchase grants. Entitlements
  * are decided here and nowhere else; the app only reads them back from `GET /api/me`.
  *
- * Ids match `apps/mobile/src/monetisation/catalog.ts` (test/catalog.test.ts checks every
+ * Ids match `apps/mobile/src/monetisation/catalog.ts` (tests/catalog.test.ts at the root checks every
  * product here against that file: same kind, same price tier, same diamonds, and the other way
  * round). The catalogue (docs/MONETISATION.md): diamond packs; cosmetics bought with diamonds
  * (table looks, tile backs, avatar frames, emote packs, win celebrations and bundles of them);

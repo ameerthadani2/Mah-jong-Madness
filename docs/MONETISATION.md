@@ -46,7 +46,7 @@ Decided for launch (plan Phase 4, updated by the owner on 9 Nov): we ship the su
 
 ## Catalogue (implemented in `apps/mobile/src/monetisation/catalog.ts` and `apps/signal/src/catalog.ts`)
 
-The two files list the same products (the server's `test/catalog.test.ts` reads the app's file). The server decides every grant from store webhooks and diamond spends; the app only reads `GET /api/me`. Prices below are US dollar planning tiers: the Shop only ever shows the localised price string the store returns, and regional pricing uses the stores' tiers.
+The two files list the same products (`tests/catalog.test.ts` at the repository root reads both). The server decides every grant from store webhooks and diamond spends; the app only reads `GET /api/me`. Prices below are US dollar planning tiers: the Shop only ever shows the localised price string the store returns, and regional pricing uses the stores' tiers.
 
 **Diamonds** (consumable; purchased diamonds never expire; bonus diamonds are kept on a separate ledger and spent first). The badge is the bonus as a share of the 60-per-dollar base, rounded.
 

@@ -48,9 +48,12 @@ jobs:
       - run: npm run typecheck
       - run: npm run lint
       - run: npm run i18n:check
-      # Every workspace's tests (what `npm test` runs) with coverage. Fails when a test fails or a workspace falls below a
-      # floor in its vitest.config.ts (coverage.thresholds; docs/ARCHITECTURE.md, How the app is tested).
+      # Every workspace's tests with coverage. Fails when a test fails or a workspace falls below a floor in its
+      # vitest.config.ts (coverage.thresholds; docs/ARCHITECTURE.md, How the app is tested).
       - run: npm run coverage
+      # The repository's own tests in tests/ (the rest of what `npm test` runs): the workflows' steps, the release
+      # configuration, the app's catalogue against the server's, and the server's tests staying inside apps/signal.
+      - run: npm run test:repo
       # The app's render tests: components and screens rendered under jest (apps/mobile/jest.config.js).
       - run: npm run test:render
       - run: npm run sim -- 40

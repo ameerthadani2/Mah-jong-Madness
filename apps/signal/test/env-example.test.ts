@@ -5,8 +5,11 @@
  */
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { ROOT } from './workflow-steps.js';
+
+/** The server's workspace, apps/signal. */
+const SIGNAL = fileURLToPath(new URL('..', import.meta.url));
 
 function sources(dir: string): string[] {
   return readdirSync(dir).flatMap((name) => {
@@ -18,7 +21,7 @@ function sources(dir: string): string[] {
 /** Every `env.NAME` and `env['NAME']` in the server's source and scripts. */
 function namesRead(): string[] {
   const names = new Set<string>();
-  for (const file of [...sources(join(ROOT, 'apps/signal/src')), ...sources(join(ROOT, 'apps/signal/scripts'))]) {
+  for (const file of [...sources(join(SIGNAL, 'src')), ...sources(join(SIGNAL, 'scripts'))]) {
     const text = readFileSync(file, 'utf8');
     for (const m of text.matchAll(/\benv\.([A-Z][A-Z0-9_]+)\b|\benv\[['"]([A-Z][A-Z0-9_]+)['"]\]/g)) names.add(m[1] ?? m[2]);
   }
@@ -36,17 +39,17 @@ describe('the server environment is documented where an owner looks', () => {
   });
 
   it('names every one of them in apps/signal/.env.example', () => {
-    const example = readFileSync(join(ROOT, 'apps/signal/.env.example'), 'utf8');
+    const example = readFileSync(join(SIGNAL, '.env.example'), 'utf8');
     expect(read.filter((name) => !mentions(example, name))).toEqual([]);
   });
 
   it('names every one of them in apps/signal/README.md', () => {
-    const readme = readFileSync(join(ROOT, 'apps/signal/README.md'), 'utf8');
+    const readme = readFileSync(join(SIGNAL, 'README.md'), 'utf8');
     expect(read.filter((name) => !mentions(readme, name))).toEqual([]);
   });
 
   it('gives a settable line (NAME=) in the example to everything an owner sets', () => {
-    const example = readFileSync(join(ROOT, 'apps/signal/.env.example'), 'utf8');
+    const example = readFileSync(join(SIGNAL, '.env.example'), 'utf8');
     // Set by the platform or kept only for a warning: described in a comment, not offered as a line.
     const described = ['NODE_ENV', 'FLY_IMAGE_REF', 'DATA_DIR'];
     const lines = new Set(example.split('\n').map((l) => /^([A-Z][A-Z0-9_]+)=/.exec(l)?.[1]).filter(Boolean));

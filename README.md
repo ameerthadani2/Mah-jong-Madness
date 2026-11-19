@@ -17,6 +17,7 @@ empty seats so a table always runs; offline you play the same engine against bot
 | `packages/net` | Table protocol: commit–reveal shuffle seed with a five-share ceremony, host-authoritative lock-step, hidden-information views, per-hand audit that every client verifies, timers/auto-play, rejoin tokens. Transports: WebSocket relay to the game server, in-memory loopback. |
 | `apps/mobile` | Expo / React Native app (iOS, Android, web): home, club (create/join by code), lobby, landscape table with coach panel, quick match, result and audit screens, Learn (36 lessons in six tracks, puzzles in five themes, two drills), the Shop, house-rule settings. |
 | `apps/signal` | The game server: hosts every online table, relays the players' sockets, and runs the HTTP API (accounts and sessions, clubs, quick match, the wallet and store webhooks, reports, blocks and moderation, push) over Postgres or in-memory storage. Rate-limited and input-validated. |
+| `tests/` | The repository's own tests, for checks that read more than one workspace: the workflows' steps, the release configuration, the app's catalogue against the server's. |
 | `docs/` | Architecture, rules/scoring reference, Fair Play Charter, product definition, monetisation plan, store compliance checklist, design system, roadmap. |
 
 ## Try it from a phone
@@ -30,10 +31,10 @@ empty seats so a table always runs; offline you play the same engine against bot
 
 ```bash
 npm install            # Node ≥ 20
-npm test               # every workspace's logic tests (vitest)
+npm test               # every workspace's logic tests (vitest), then the repository's own (tests/)
 npm run coverage       # the same tests with coverage, one summary line a workspace; fails below a floor
 npm run test:render    # the app's render tests: components and screens under jest (apps/mobile)
-npm run typecheck      # every workspace
+npm run typecheck      # every workspace, and tests/
 npm run sim -- 50      # 50 bot-vs-bot matches, prints win/draw stats
 npm run signal         # game server on :8787 (in memory, guest sign-in)
 npm run mobile         # Expo dev server; press i / a / w

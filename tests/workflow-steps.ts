@@ -9,7 +9,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 /** The repository root. */
-export const ROOT = fileURLToPath(new URL('../../..', import.meta.url));
+export const ROOT = fileURLToPath(new URL('..', import.meta.url));
 
 /** The `run: |` script of the step that carries `marker` (its `- id:` or `- name:` line) in a workflow file. */
 export function workflowStepScript(workflow: string, marker: string): string {
