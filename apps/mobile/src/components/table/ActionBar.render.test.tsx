@@ -5,8 +5,9 @@ import type { Action, TableView, TileId } from '@mjm/engine';
 import { ActionBar } from './ActionBar';
 
 /**
- * A phone's portrait claim strip (`compact`) keeps to one row, so it never takes height from the felt: three or more
- * buttons are drawn small with the English gloss on Pass only, and several 吃 choices are one 吃 button that opens them.
+ * A phone's portrait claim strip and short landscape dock (`compact`) keep to one row, so they never take height from the
+ * felt: three or more buttons (two in a narrow dock) are drawn small with the English gloss on Pass only, and several 吃
+ * choices are one 吃 button that opens them.
  */
 const view = (pendingTile: number) => ({ phase: 'claim', pending: { from: 3, tile: pendingTile, kind: 'discard' } }) as unknown as TableView;
 const chi = (a: number, b: number): Action => ({ type: 'chi', tiles: [a as TileId, b as TileId] }) as Action;
@@ -42,6 +43,16 @@ describe('the portrait claim strip on a phone', () => {
     await rerender(<ActionBar actions={CLAIMS} act={() => {}} selected={null} hint={null} view={view(20)} compact />);
     expect(screen.queryByTestId('chi-choices')).toBeNull();
     expect(screen.getByTestId('claim-chi-open')).toBeOnTheScreen();
+  });
+
+  it('in a narrow short-landscape dock (`smallFrom` 2), draws Pass and one 吃 small too, so they fit 252 px', async () => {
+    const two: Action[] = [{ type: 'pass' }, chi(4, 8)];
+    const { rerender } = await render(<ActionBar actions={two} act={() => {}} selected={null} hint={null} view={view(12)} compact smallFrom={2} />);
+    expect(within(screen.getByRole('button', { name: /^Chow: / })).queryByText('Chow')).toBeNull();
+    expect(within(screen.getByTestId('claim-pass')).getByText('Pass')).toBeOnTheScreen();
+    // A wider dock keeps two buttons at full size, with their glosses.
+    await rerender(<ActionBar actions={two} act={() => {}} selected={null} hint={null} view={view(12)} compact />);
+    expect(within(screen.getByRole('button', { name: /^Chow: / })).getByText('Chow')).toBeOnTheScreen();
   });
 
   it('keeps every 吃 choice and every gloss where the strip is not a phone’s (tablets, landscape)', async () => {

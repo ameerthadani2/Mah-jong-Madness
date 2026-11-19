@@ -306,3 +306,110 @@ export function fitSideColumn(input: SideColumnInput): SideColumnFit {
   if (!withHand.scroll || hand <= 0) return { ...withHand, showHand: true };
   return { ...fitSideSeat({ ...seat, room: under }), showHand: false };
 }
+
+/** Short landscape's centre column: the gap between its blocks (the across seat's plate row, its pond, my row, the dock). */
+export const COMPACT_GAP = 4;
+/** The smallest the across seat's pond tiles get there (as in portrait, portraitFit.ts MIN_POND). */
+export const MIN_COMPACT_POND = 16;
+/** The across seat's meld tiles there: this size, smaller (to MIN_COMPACT_MELD) to stay on its plate's line. */
+export const COMPACT_TOP_MELD = 16;
+export const MIN_COMPACT_MELD = 12;
+
+/** Width of a seat's melds and flowers on one line, as MeldsAndFlowers draws them (each meld then its margin, then the flowers). */
+export function meldsLineWidth(melds: readonly number[], flowers: number, w: number): number {
+  return melds.reduce((x, n) => x + meldWidth(n, w), 0) + (flowers > 0 ? flowers * (w + 1) - 1 : 0);
+}
+
+/**
+ * Short landscape: the across seat's meld tile size, the largest from COMPACT_TOP_MELD down to MIN_COMPACT_MELD that keeps
+ * its melds and flowers beside its plate (`room`: the centre column's width less the plate's and the row's gap). Past
+ * that they wrap under the plate (and give way while the buttons are up, when the column is short: fitCompactCentre).
+ */
+export function compactTopMeld(room: number, melds: readonly number[], flowers: number): number {
+  for (let w = COMPACT_TOP_MELD; w > MIN_COMPACT_MELD; w--) if (meldsLineWidth(melds, flowers, w) <= room) return w;
+  return MIN_COMPACT_MELD;
+}
+
+export interface CompactCentreInput {
+  /** The centre column's measured height (0: not measured yet). */
+  column: number;
+  /** The across seat's plate row (its plate and melds), measured. */
+  topRow: number;
+  /** Its plate alone, measured: the row when its melds wrapped under the plate and give way (0: not known). */
+  plate?: number;
+  /** What the claim and discard dock takes under my row now: 0, the tap hint's height or the buttons'. */
+  dock: number;
+  /** Discards, tiles a row and a tile's width, for the across seat's pond and for mine. */
+  across: { discards: number; perRow: number; tile: number };
+  mine: { discards: number; perRow: number; tile: number };
+}
+
+export interface CompactCentreFit {
+  /** Rows each pond draws, newest kept (Infinity: all of them). */
+  keepAcross: number;
+  keepMine: number;
+  /** Their heights as drawn. */
+  acrossH: number;
+  mineH: number;
+  /** The across seat's pond tiles' width: as given, or smaller (down to MIN_COMPACT_POND) when its one row needs it. */
+  acrossTile: number;
+  /**
+   * While the buttons are up, the across seat's melds, wrapped under its plate, give way to one row of its pond (they
+   * come back when the buttons go).
+   */
+  hideTopMelds: boolean;
+  /**
+   * The buttons take my row's place while they are up (my pond is not drawn under them, and comes back when they go:
+   * no claim or discard decision needs it).
+   */
+  swap: boolean;
+  /** Even then one row of the across seat's pond does not fit: the hand should give way (TableScreen's squeeze). */
+  fits: boolean;
+}
+
+/**
+ * Short landscape (under 420 px tall): the centre column holds the across seat's plate row, its pond, my row (the compass
+ * beside my pond) and, at a decision, the claim and discard buttons in a row of their own, so nothing is drawn under
+ * them. When that is more than the column, my pond keeps only its newest rows, then the across seat's pond, each at least
+ * one, with a "+N" chip for the earlier discards (DiscardPool `keepRows`). Past that, while the buttons are up they take
+ * my row's place (`swap`); then the across seat's one row gets smaller tiles, down to MIN_COMPACT_POND; then, if its melds
+ * wrapped under its plate, they give way while the buttons are up (`hideTopMelds`); and past that `fits` is false and the
+ * hand steps down a size, as in portrait.
+ */
+export function fitCompactCentre(input: CompactCentreInput): CompactCentreFit {
+  const rowsOf = (p: CompactCentreInput['across']) => (p.discards > 0 ? Math.ceil(p.discards / Math.max(1, p.perRow)) : 0);
+  const height = (rows: number, tile: number) => (rows > 0 ? rows * tileDims(tile).h + (rows - 1) * 2 : 0);
+  const ra = rowsOf(input.across);
+  const rm = rowsOf(input.mine);
+  const A = input.across.tile;
+  const top = (ka: number, aw = A, row = input.topRow) => row + (ka > 0 ? COMPACT_GAP + height(ka, aw) : 0);
+  const need = (ka: number, km: number, aw = A) => top(ka, aw) + COMPACT_GAP + height(km, input.mine.tile) + (input.dock > 0 ? COMPACT_GAP + input.dock : 0);
+  const result = (ka: number, km: number, swap: boolean, fits: boolean, aw = A, hideTopMelds = false): CompactCentreFit => ({
+    keepAcross: ka >= ra ? Infinity : ka,
+    keepMine: km >= rm ? Infinity : km,
+    acrossH: height(Math.min(ka, ra), aw),
+    mineH: height(Math.min(km, rm), input.mine.tile),
+    acrossTile: aw,
+    hideTopMelds,
+    swap,
+    fits,
+  });
+  if (input.column <= 0 || input.topRow <= 0 || need(ra, rm) <= input.column) return result(ra, rm, false, true);
+  for (let km = rm - 1; km >= 1; km--) if (need(ra, km) <= input.column) return result(ra, km, false, true);
+  const km = Math.min(1, rm);
+  for (let ka = ra - 1; ka >= 1; ka--) if (need(ka, km) <= input.column) return result(ka, km, false, true);
+  const ka1 = Math.min(1, ra);
+  if (need(ka1, km) <= input.column) return result(ka1, km, false, true);
+  // The buttons in my row's place: the across seat keeps as many rows as that leaves, at least one.
+  const swap = input.dock > 0;
+  if (swap) for (let ka = ra; ka >= ka1; ka--) if (top(ka) + COMPACT_GAP + input.dock <= input.column) return result(ka, km, true, true);
+  // Then smaller tiles in the across seat's one row.
+  const room = (aw: number) => (swap ? top(ka1, aw) + COMPACT_GAP + input.dock : need(ka1, km, aw));
+  const least = Math.min(A, MIN_COMPACT_POND);
+  for (let aw = A - 1; aw >= least; aw--) if (room(aw) <= input.column) return result(ka1, km, swap, true, aw);
+  // Then, while the buttons are up, the across seat's melds where they wrapped under its plate.
+  const plate = input.plate ?? 0;
+  if (swap && ka1 > 0 && plate > 0 && plate < input.topRow)
+    for (let aw = A; aw >= least; aw--) if (top(ka1, aw, plate) + COMPACT_GAP + input.dock <= input.column) return result(ka1, km, true, true, aw, true);
+  return result(ka1, km, swap, false, least);
+}

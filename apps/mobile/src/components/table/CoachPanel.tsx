@@ -47,7 +47,8 @@ export function CoachBar({ hint, lines, onOpen, style, face }: { hint: Hint; lin
       accessibilityLabel={advice ? `${status} ${advice}` : status}
       accessibilityHint={t('table.coach.moreHint')}
       // A one-line bar is 27 px tall: 9 px more above and below make a 44 pt press, short of the claim buttons above
-      // and of the hand's tiles below (they stand 12 px down their row). On a phone hitSlop adds them; the web ignores
+      // and of the hand's tiles below (14 px down; a raised tile, 4 px down, is drawn over the press and takes the tap
+      // there: HandRail's hand row). On a phone hitSlop adds them; the web ignores
       // hitSlop, so there the press is padded by as much, with an equal negative margin that keeps the bar in place
       // (as IconButton does).
       hitSlop={slop && Platform.OS !== 'web' ? BAR_SLOP : undefined}

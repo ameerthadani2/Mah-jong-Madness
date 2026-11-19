@@ -3,7 +3,7 @@
  * bar sits here too, just above the hand: beside my plate and melds where they have a row of their own (Large and
  * Extra-large tiles), or in a slim row of its own beside my plate (Normal tiles).
  */
-import React, { useRef } from 'react';
+import React, { useCallback, useEffect, useRef } from 'react';
 import { ScrollView, StyleSheet, View } from 'react-native';
 import type { PlayerView, TileId } from '@mjm/engine';
 import { colors } from '../../theme';
@@ -30,6 +30,7 @@ export function HandRail({
   best,
   onTile,
   coach,
+  onPlateTop,
 }: {
   me: PlayerView;
   layout: TableLayout;
@@ -51,6 +52,11 @@ export function HandRail({
   onTile: (tile: TileId) => void;
   /** Landscape phones: the coach's bar (CoachPanel.tsx CoachBar), while the coach is on. */
   coach?: React.ReactNode;
+  /**
+   * Landscape at Normal tiles: where my plate column (my flowers over my plate) starts, as a window y; null where it has a
+   * row of its own above the hand. The felt's left seat ends above it (Felt `leftSeatEnd`).
+   */
+  onPlateTop?: (y: number | null) => void;
 }) {
   const { t, locale } = useT();
   const { portrait, tablet } = L;
@@ -59,6 +65,22 @@ export function HandRail({
   const myPlate = <SeatBadge {...plate} size={tablet ? 54 : above ? 36 : 40} vertical={!above} maxNameWidth={above ? 120 : plateW - 4} />;
   const hand = me.hand ?? [];
   const scroller = useRef<React.ComponentRef<typeof ScrollView>>(null);
+  // My plate column grows upward over the felt's corner, the more the more flowers I have; measured in the window when it
+  // is laid out, and again when the hand's size or my flowers change (its own box may not move then).
+  const plateCol = useRef<React.ElementRef<typeof View>>(null);
+  const reportPlate = useCallback(() => {
+    if (!onPlateTop) return;
+    if (above) {
+      onPlateTop(null);
+      return;
+    }
+    plateCol.current?.measureInWindow((_x, y, _w, h) => {
+      if (h > 0) onPlateTop(Math.round(y));
+    });
+  }, [onPlateTop, above]);
+  useEffect(() => {
+    reportPlate();
+  }, [reportPlate, handTile, me.flowers.length]);
   const tiles = (
     <View style={[styles.handTiles, portrait && { flexWrap: 'wrap', rowGap: 6, justifyContent: 'center' }]} accessibilityRole="list" accessibilityLabel={t('table.a11y.hand', { n: hand.length })} testID={canDiscard ? 'hand-discard' : 'hand'}>
       {hand.map((tile, i) => (
@@ -97,11 +119,13 @@ export function HandRail({
           {coach}
         </View>
       )}
-      <View style={styles.handRow}>
+      {/* Over the coach's row (its press reaches below its bar), so a raised selected tile takes the press where it is; its
+          empty space lets presses through to the bar. */}
+      <View style={styles.handRow} pointerEvents="box-none">
         {!above && (
           <View style={{ width: plateW }}>
             {/* Grows upward so my avatar overlaps the rail instead of stealing height from the felt. */}
-            <View style={[styles.myPlateCol, { width: plateW }]}>
+            <View ref={plateCol} style={[styles.myPlateCol, { width: plateW }]} onLayout={reportPlate}>
               {me.flowers.length > 0 && (
                 <View style={styles.myFlowers}>
                   {me.flowers.map((f) => (
@@ -140,7 +164,7 @@ export function HandRail({
 
 const styles = StyleSheet.create({
   footer: { paddingHorizontal: 12, paddingBottom: 4, paddingTop: 2 },
-  handRow: { flexDirection: 'row', alignItems: 'flex-end' },
+  handRow: { flexDirection: 'row', alignItems: 'flex-end', zIndex: 2 },
   myPlateCol: { position: 'absolute', left: 0, bottom: 4, alignItems: 'center', gap: 4 },
   myFlowers: { flexDirection: 'row', flexWrap: 'wrap', gap: 1, justifyContent: 'center' },
   myMelds: { flexDirection: 'row', alignItems: 'flex-end', marginLeft: 10, paddingBottom: 7 },

@@ -30,11 +30,13 @@
  * on, a line of its advice whole on screen on my turn and at each claim chance, never covering my pond, my hand, the claim or discard buttons or
  * the tap hint, never cut, and "More" beside advice longer than its lines) in the whole hand each table run plays: the
  * main run at every viewport, the Extra-large runs, the zh-TW runs, and the coach runs on the smallest phones (568x320,
- * 320x568) and at Large tiles at 667x375 (<size>-coach-*.png), or the portrait felt fails feltCheck at one of my decisions
- * in any of those runs (it scrolls; an opponent's discard, the newest of each, my pond, my hand or a claim or discard button
- * is not whole on screen; a "+N" chip for earlier discards is cut; or the coach's press reaches over my pond or my hand),
- * including the felt runs at Large and Extra-large tiles and text at 390x844, 360x740, 375x667, 360x640 and 320x568
- * (<size>-felt-*.png), or the end-of-hand result sheet is not a named modal dialog. The preview, the exit sheet, Home's
+ * 320x568) and at Large tiles at 667x375 (<size>-coach-*.png), or the felt fails feltCheck at one of my decisions in any
+ * of those runs (the portrait felt scrolls; an opponent's discard (in landscape the across seat's), the newest of each, my
+ * pond, my hand or a claim or discard button is not whole on screen; a button covers a discard; something lies over the
+ * top edge of a tile of my hand; a "+N" chip for earlier discards is cut; or the coach's press reaches over my pond or my
+ * hand in portrait, or its bar meets my hand in landscape), including the felt runs at Large and Extra-large tiles and text at 390x844, 360x740, 375x667, 360x640 and
+ * 320x568, and at Extra-large tiles at 568x320 and 667x375 (<size>-felt-*.png), or the end-of-hand result sheet is not a
+ * named modal dialog. The preview, the exit sheet, Home's
  * replace-table question and the result sheet also fail on the keyboard
  * (dialogKeys): Tab ten times and Shift+Tab four times must stay on the dialog's own controls, never its scrim or the
  * page behind, and the page behind must be inert while the dialog is open and not after.
@@ -304,18 +306,23 @@ async function coachSettled(page, advised) {
 }
 
 /**
- * The portrait felt's hard checks at one of my decisions, on the page as it stands. Nothing on the felt scrolls, and
- * every discard of every opponent is whole on screen: inside the window and every box that clips it, with nothing drawn
- * over it (the topmost thing at five points of it is the tile), so the newest of each is too. A pond that keeps only its
- * newest rows on a small phone (display/portraitFit.ts) says how many it leaves out with a "+N" chip, whole on screen
- * too. Every tile of my pond and of my hand and every claim or discard button is whole on screen, and the coach's press
- * (on the web, padded where its bar is short) reaches over no tile of my pond or my hand.
+ * The felt's hard checks at one of my decisions, on the page as it stands. Whole on screen means inside the window and
+ * every box that clips it, with nothing drawn over it (the topmost thing at five points of it is the element).
+ * - Portrait: nothing on the felt scrolls, and every discard of every opponent is whole on screen, so the newest of each
+ *   is too. Landscape: the newest discard of each opponent is whole on screen, and every discard of the across seat (a
+ *   side seat's column may scroll its older rows out of view).
+ * - No claim or discard button covers any part of a discard on screen.
+ * - A pond that keeps only its newest rows (display/portraitFit.ts, and fitCompactCentre on a short landscape phone)
+ *   says how many it leaves out with a "+N" chip, whole on screen too.
+ * - Every tile of my pond and of my hand (the raised one too) and every claim or discard button is whole on screen, and
+ *   nothing lies over the top edge of a tile of my hand (the coach's press over a raised tile took the tap there).
+ * - Portrait: the coach's press (on the web, padded where its bar is short) reaches over no tile of my pond or my hand.
+ *   Landscape: the coach's bar (over the hand) meets no tile of my hand.
  */
 async function feltCheck(page) {
   return page.evaluate(() => {
     const bad = [];
     const portrait = innerHeight > innerWidth;
-    if (!portrait) return bad;
     const seen = (e) => { const b = e.getBoundingClientRect(); return b.width > 0 && b.height > 0; };
     const clipOf = (el) => {
       let c = { top: 0, left: 0, bottom: innerHeight, right: innerWidth };
@@ -338,8 +345,16 @@ async function feltCheck(page) {
       const c = clipOf(el);
       return r.top >= c.top - 1 && r.bottom <= c.bottom + 1 && r.left >= c.left - 1 && r.right <= c.right + 1 && !under(el, r);
     };
+    // The part of a box left on screen by the boxes that clip it.
+    const shown = (el) => {
+      const r = el.getBoundingClientRect();
+      const c = clipOf(el);
+      return { top: Math.max(r.top, c.top), left: Math.max(r.left, c.left), bottom: Math.min(r.bottom, c.bottom), right: Math.min(r.right, c.right) };
+    };
     const meet = (a, b) => Math.min(a.right, b.right) - Math.max(a.left, b.left) > 1 && Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top) > 1;
-    const felt = document.querySelector('[data-testid="felt-portrait"]');
+    const BUTTONS = '[data-testid="action-dock"] [role="button"], [data-testid="action-strip"] [role="button"]';
+    const buttons = [...document.querySelectorAll(BUTTONS)].filter(seen).map(shown);
+    const felt = portrait && document.querySelector('[data-testid="felt-portrait"]');
     if (felt) {
       for (const e of [felt, ...felt.querySelectorAll('div')]) {
         const st = getComputedStyle(e);
@@ -354,23 +369,39 @@ async function feltCheck(page) {
       const tiles = [...pond.querySelectorAll('[data-testid^="tile-"]')].filter(seen);
       if (!tiles.length) continue;
       if (!whole(tiles[tiles.length - 1])) bad.push(`${who}: its newest discard is not whole on screen`);
-      const cut = tiles.filter((t) => !whole(t));
-      if (cut.length) bad.push(`${who}: discards not whole on screen`);
+      if ((portrait || pond.dataset.testid === 'pond-seat-2') && tiles.some((t) => !whole(t))) bad.push(`${who}: discards not whole on screen`);
+      const covered = tiles.map(shown).filter((s) => s.bottom - s.top > 1 && s.right - s.left > 1 && buttons.some((b) => meet(b, s)));
+      if (covered.length) bad.push(`${who}: the claim or discard buttons cover its discards`);
       const chip = pond.querySelector('[data-testid="pond-earlier"]');
       if (chip && !whole(chip)) bad.push(`${who}: the chip for its earlier discards is not whole on screen`);
     }
     const MY_POND = '[data-testid="my-pond"] [data-testid^="tile-"]';
     const HAND = '[data-testid="hand"] [data-testid^="tile-"], [data-testid="hand-discard"] [data-testid^="tile-"]';
-    for (const [what, sel] of [['my pond', MY_POND], ['my hand', HAND], ['the claim or discard buttons', '[data-testid="action-dock"] [role="button"], [data-testid="action-strip"] [role="button"]']]) {
+    for (const [what, sel] of [['my pond', MY_POND], ['my hand', HAND], ['the claim or discard buttons', BUTTONS]]) {
       const els = [...document.querySelectorAll(sel)].filter(seen);
       const cut = els.filter((e) => !whole(e));
       if (cut.length) bad.push(`${what}: not whole on screen`);
     }
+    // A tap anywhere on a tile of my hand takes it: nothing lies over its top edge either (2 px in), where a raised
+    // tile meets the press of the coach's bar above it.
+    const topEdgeCovered = (el) => {
+      const r = el.getBoundingClientRect();
+      return [0.25, 0.5, 0.75].some((fx) => {
+        const hit = document.elementFromPoint(r.left + r.width * fx, r.top + 2);
+        return !hit || !(el.contains(hit) || hit.contains(el));
+      });
+    };
+    if ([...document.querySelectorAll(HAND)].filter(seen).some(topEdgeCovered)) bad.push("my hand: something lies over a tile's top edge (a tap there misses it)");
     for (const c of [...document.querySelectorAll('[data-testid="coach"]')].filter(seen)) {
-      const box = c.getBoundingClientRect();
-      for (const [what, sel] of [['my pond', MY_POND], ['my hand', HAND]]) {
-        const n = [...document.querySelectorAll(sel)].filter(seen).filter((t) => meet(box, t.getBoundingClientRect())).length;
-        if (n) bad.push(`the coach's press reaches over ${what}`);
+      if (portrait) {
+        const box = c.getBoundingClientRect();
+        for (const [what, sel] of [['my pond', MY_POND], ['my hand', HAND]]) {
+          const n = [...document.querySelectorAll(sel)].filter(seen).filter((t) => meet(box, t.getBoundingClientRect())).length;
+          if (n) bad.push(`the coach's press reaches over ${what}`);
+        }
+      } else {
+        const face = (c.querySelector('[data-testid="coach-face"]') || c).getBoundingClientRect();
+        if ([...document.querySelectorAll(HAND)].filter(seen).some((t) => meet(face, t.getBoundingClientRect()))) bad.push("the coach's bar meets my hand");
       }
     }
     return bad;
@@ -894,10 +925,11 @@ async function runCoach(browser, port, [[w, h], locale, tileScale, textScale]) {
 }
 
 /**
- * The portrait felt through a whole hand on the phones it is tightest on, at Large and Extra-large tiles and text in
- * English and Traditional Chinese (<size>-felt-<lang>-t<tiles>-x<text>.png, six discards in): feltCheck and coachCheck
- * at each of my decisions. With the main runs (390x844 and 360x740 at Normal), the Chinese table runs and the coach runs
- * at 320x568, they cover every portrait size e2e:screens opens and the three it adds here (360x640, 375x667, 320x568).
+ * The felt through a whole hand on the phones it is tightest on, at Large and Extra-large tiles and text in English and
+ * Traditional Chinese (<size>-felt-<lang>-t<tiles>-x<text>.png, six discards in): feltCheck and coachCheck at each of my
+ * decisions. With the main runs (390x844 and 360x740 at Normal), the Chinese table runs and the coach runs at 320x568,
+ * they cover every portrait size e2e:screens opens and the three it adds here (360x640, 375x667, 320x568); and the short
+ * landscape phones at Extra-large tiles (568x320, 667x375).
  */
 const FELT_RUNS = [
   [[390, 844], 'en-US', 1.5, 1.3],
@@ -907,6 +939,9 @@ const FELT_RUNS = [
   [[360, 640], 'en-US', 1.5, 1.15],
   [[320, 568], 'en-US', 1.5, 1.15],
   [[320, 568], 'zh-TW', 1, 1.3],
+  [[568, 320], 'en-US', 1.5, 1],
+  [[568, 320], 'zh-TW', 1.5, 1.3],
+  [[667, 375], 'en-US', 1.5, 1.3],
 ];
 
 async function runFelt(browser, port, [[w, h], locale, tileScale, textScale]) {

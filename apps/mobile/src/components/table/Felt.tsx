@@ -12,14 +12,16 @@ import { DiscardPool, FeltFrame, MeldsAndFlowers, SeatBadge, WallRing } from '..
 import { HiddenHand, scaledTile } from '../Tile';
 import { tileDims } from '../tileDims';
 import { useDisplayScale } from '../../display/DisplayScale';
-import { fitPools, fitSideColumn, SIDE_GAP } from '../../display/tableFit';
+import { COMPACT_GAP, COMPACT_TOP_MELD, compactTopMeld, fitCompactCentre, fitPools, fitSideColumn, SIDE_GAP } from '../../display/tableFit';
 import { CROSS_PAD, fitPortraitFelt } from '../../display/portraitFit';
-import { Row } from '../Ui';
 import { CoachPanel } from './CoachPanel';
 import { slideFrom } from './feel';
 import { compactCompassSize, dockHeight, landscapeWallSize, type ActionDock, type TableLayout } from './layout';
 
 export type PlateProps = Omit<React.ComponentProps<typeof SeatBadge>, 'size' | 'vertical' | 'maxNameWidth'>;
+
+/** Landscape: the gap between the across seat's plate and its melds. */
+const TOP_ROW_GAP = 10;
 
 export function Felt({
   view,
@@ -35,6 +37,7 @@ export function Felt({
   dock = 'none',
   overlay,
   onShort,
+  leftSeatEnd = null,
 }: {
   view: TableView;
   mySeat: number;
@@ -59,13 +62,18 @@ export function Felt({
    * tiles at Large and Extra-large).
    */
   onShort?: () => void;
+  /**
+   * Landscape at Normal tiles: where my plate column, growing up from the hand rail over the felt's corner, starts (a
+   * window y: HandRail `onPlateTop`). The left seat's column ends 4 px above it, so my flowers never cover its discards.
+   */
+  leftSeatEnd?: number | null;
 }) {
   const { portrait, tablet, plate, sideWidth } = L;
   // Short landscape: the compass and my pond share the middle row (the action dock has a row of its own under it).
   const [columnH, setColumnH] = useState(0);
   const [pondH, setPondH] = useState(0);
   const centreDock = L.actions === 'center' ? dock : 'none';
-  const dockH = dockHeight(centreDock, tablet);
+  const dockH = dockHeight(centreDock, tablet, L.compact);
   // Portrait: the felt's inner height, the opponents' plates and the status line, measured for the fit (portraitFit.ts).
   const [pBox, setPBox] = useState({ felt: 0, right: 0, left: 0, top: 0, status: 0 });
   const measureP = (key: 'felt' | 'right' | 'left' | 'top' | 'status') => (e: LayoutChangeEvent) => {
@@ -114,14 +122,6 @@ export function Felt({
   const centerPerRow = portrait ? fit.centerPerRow : pools.centerPerRow;
   const sidePerRow = portrait ? fit.sidePerRow : pools.sidePerRow;
   const myPerRow = pools.myPerRow;
-  // Once per measured height: the table screen's answer (a smaller hand) changes the felt's height, which is
-  // measured again before it is asked once more.
-  const short = portrait && !fit.fits;
-  const onShortRef = useRef(onShort);
-  onShortRef.current = onShort;
-  useEffect(() => {
-    if (short) onShortRef.current?.();
-  }, [short, pBox.felt]);
 
   const statusPill = status ? (
     <View style={styles.status} testID="table-status" onLayout={portrait ? measureP('status') : undefined}>
@@ -131,11 +131,11 @@ export function Felt({
     </View>
   ) : null;
 
-  // Short landscape: when the centre column is short (large tiles, late in a hand, the claim buttons up), the across
-  // seat gives way first, so my pond and the claim buttons keep their rows: its pond scrolls, kept at its newest
-  // discards, down to one row (as a side seat's column does).
-  const topPondScroll = useRef<React.ElementRef<typeof ScrollView> | null>(null);
-  const [topPondH, setTopPondH] = useState(0);
+  // Short landscape: the across seat's plate row and its plate, measured for fitCompactCentre (display/tableFit.ts), and the
+  // column's width, which with the plate's sets the size that keeps its melds on the plate's line (compactTopMeld).
+  const [compactTopRow, setCompactTopRow] = useState(0);
+  const [compactPlate, setCompactPlate] = useState({ w: 0, h: 0 });
+  const [centreW, setCentreW] = useState(0);
   const topSeat = () => {
     const seat = seatAt(2);
     const p: PlayerView = view.players[seat];
@@ -157,27 +157,22 @@ export function Felt({
             <MeldsAndFlowers player={p} size={fit.meld} flowerSize={fit.meld} flat={fit.flat} style={styles.topMeldsPortrait} />
           </>
         ) : (
-          <Row gap={10} style={styles.topRow}>
-            {badge}
-            <HiddenHand count={p.handCount} tileW={tablet ? 15 : 11} tileH={tablet ? 24 : 17} />
-            {/* Landscape has the width for melds on the same line. */}
-            <MeldsAndFlowers player={p} size={meldSize(tablet ? 'sm' : 'xs')} />
-          </Row>
+          // Landscape has the width for melds on the same line. Short landscape leaves out the row of face-down tiles (what
+          // the seat holds is what its melds leave of sixteen): on a 568 px phone it took a line of its own.
+          // Its row is measured with the melds in it: not while they give way (hideTopMelds), so the fit's answer holds.
+          <View style={styles.topRow} onLayout={L.compact && !compactFit.hideTopMelds ? (e) => setCompactTopRow(Math.round(e.nativeEvent.layout.height)) : undefined}>
+            {L.compact ? <View onLayout={(e) => setCompactPlate({ w: Math.round(e.nativeEvent.layout.width), h: Math.round(e.nativeEvent.layout.height) })}>{badge}</View> : badge}
+            {!L.compact && <HiddenHand count={p.handCount} tileW={tablet ? 15 : 11} tileH={tablet ? 24 : 17} />}
+            {!(L.compact && compactFit.hideTopMelds) && <MeldsAndFlowers player={p} size={L.compact ? topMeld : meldSize(tablet ? 'sm' : 'xs')} flowerSize={L.compact ? topMeld : 'xs'} />}
+          </View>
         )}
         {L.compact ? (
-          <ScrollView
-            ref={topPondScroll}
-            style={[styles.topPond, { minHeight: Math.min(topPondH, tileDims(pool).h + 2) }]}
-            contentContainerStyle={styles.topPondContent}
-            showsVerticalScrollIndicator={false}
-            testID="top-pond"
-            onContentSizeChange={(_w, h) => {
-              setTopPondH(Math.round(h));
-              topPondScroll.current?.scrollToEnd({ animated: false });
-            }}
-          >
-            {pond}
-          </ScrollView>
+          // Short landscape: its newest rows that fit above my row and the buttons (fitCompactCentre), never under them.
+          p.discards.length > 0 && (
+            <View testID="top-pond">
+              <DiscardPool tiles={p.discards} size={compactFit.acrossTile} perRow={compactTop.perRow} align="center" latest={latestFor(seat)} enterFrom={slideFrom(2)} keepRows={compactFit.keepAcross} testID="pond-seat-2" />
+            </View>
+          )
         ) : (
           pond
         )}
@@ -195,6 +190,17 @@ export function Felt({
     setSideBox((s) => (s[key] === h ? s : { ...s, [key]: h }));
   };
   const sideScroll = useRef<{ 1: React.ElementRef<typeof ScrollView> | null; 3: React.ElementRef<typeof ScrollView> | null }>({ 1: null, 3: null });
+  // Landscape: the left seat's column, measured in the window against my plate column's top (leftSeatEnd). Its padding
+  // keeps its discards above my flowers; its outer box, and so this measure, does not change with it.
+  const leftRef = useRef<React.ElementRef<typeof View>>(null);
+  const [leftBottom, setLeftBottom] = useState<number | null>(null);
+  const leftClear = !portrait && leftSeatEnd !== null && leftBottom !== null ? Math.max(0, leftBottom - leftSeatEnd + 4) : 0;
+  const onLeftLayout = (e: LayoutChangeEvent) => {
+    measure('col3')(e);
+    leftRef.current?.measureInWindow((_x, y, _w, h) => {
+      if (h > 0) setLeftBottom(Math.round(y + h));
+    });
+  };
   const sideSeat = (r: 1 | 3) => {
     const seat = seatAt(r);
     const p = view.players[seat];
@@ -217,7 +223,7 @@ export function Felt({
     }
     const col = fitSideColumn({
       width: sideWidth,
-      column: sideBox[`col${r}`] ?? 0,
+      column: Math.max(0, (sideBox[`col${r}`] ?? 0) - (r === 3 ? leftClear : 0)),
       plate: sideBox[`plate${r}`] ?? 0,
       hand: p.handCount > 0 ? handH + 2 : 0,
       melds: p.melds.map((m) => m.tiles.length),
@@ -234,7 +240,12 @@ export function Felt({
     );
     return (
       // The left seat is stretched by the felt's row; the right one shares a column with the coach and takes what is left of it.
-      <View style={[styles.sideSeat, { width: sideWidth }, r === 1 && { alignItems: 'flex-end', flex: 1, minHeight: 0 }]} key={seat} onLayout={measure(`col${r}`)}>
+      <View
+        ref={r === 3 ? leftRef : undefined}
+        style={[styles.sideSeat, { width: sideWidth }, r === 1 && { alignItems: 'flex-end', flex: 1, minHeight: 0 }, r === 3 && leftClear > 0 && { paddingBottom: leftClear }]}
+        key={seat}
+        onLayout={r === 3 ? onLeftLayout : measure(`col${r}`)}
+      >
         <View onLayout={measure(`plate${r}`)}>{badge}</View>
         {col.showHand && hidden}
         {col.scroll ? (
@@ -269,11 +280,42 @@ export function Felt({
   const [topH, setTopH] = useState(0);
   const [centreH, setCentreH] = useState(0);
   const shownWall = portrait ? fit.wall : landscapeWallSize(centreH, topH, pondH, L.wallSize, L.compassSize + 16);
+  // Short landscape: what of the two ponds fits above the buttons, and whether the buttons take my row's place.
+  // My pond keeps the Normal size here (its row is the tightest on the felt; the opponents' ponds still grow).
+  const myCompact = tileScale > 1 ? { perRow: L.myPerRow, tile: tileDims(L.pool).w } : { perRow: myPerRow, tile: tileDims(pool).w };
+  // The across seat's pond keeps the Normal size here too: with its plate row, my row and the buttons it shares a column
+  // of 120 to 160 px on a 568 px phone (the side seats' ponds still grow).
+  const compactTop = { tile: tileDims(L.pool).w, perRow: L.centerPerRow };
+  const across = seatOf(2);
+  const topMeld = centreW > 0 && compactPlate.w > 0 ? compactTopMeld(centreW - compactPlate.w - TOP_ROW_GAP, across.melds.map((m) => m.tiles.length), across.flowers.length) : COMPACT_TOP_MELD;
+  const compactFit = fitCompactCentre({
+    column: L.compact ? centreH : 0,
+    topRow: compactTopRow,
+    plate: compactPlate.h,
+    dock: L.compact ? dockH : 0,
+    across: { discards: seatOf(2).discards.length, perRow: compactTop.perRow, tile: compactTop.tile },
+    mine: { discards: view.players[mySeat].discards.length, perRow: myCompact.perRow, tile: myCompact.tile },
+  });
+  const swapped = L.compact && compactFit.swap && dockH > 0;
+  // Once per measured height: the table screen's answer (a smaller hand) changes the felt's height, which is
+  // measured again before it is asked once more.
+  const short = portrait ? !fit.fits : L.compact && !compactFit.fits;
+  const onShortRef = useRef(onShort);
+  onShortRef.current = onShort;
+  useEffect(() => {
+    if (short) onShortRef.current?.();
+  }, [short, pBox.felt, centreH]);
   // Portrait: the compass at the size the fit left it (0: it gave way), and the status line only where the fit kept it.
   const portraitCompass = fit.compass > 0 && fit.compass !== L.compassSize && React.isValidElement<{ size?: number }>(compass) ? React.cloneElement(compass, { size: fit.compass }) : compass;
 
   const centerColumn = (
-    <View style={styles.centerCol} onLayout={(e) => setCentreH(Math.round(e.nativeEvent.layout.height))}>
+    <View
+      style={[styles.centerCol, L.compact && { gap: COMPACT_GAP }]}
+      onLayout={(e) => {
+        setCentreH(Math.round(e.nativeEvent.layout.height));
+        setCentreW(Math.floor(e.nativeEvent.layout.width));
+      }}
+    >
       {topSeat()}
       {L.showWall ? (
         <>
@@ -298,18 +340,19 @@ export function Felt({
         // Short landscape: the compass sits beside my pond instead of above it, so my pond clears the hand rail.
         // The claim buttons get a row of their own under this one (below), so my pond moves up rather than being
         // covered, and the compass shrinks to the row that is left. (The coach is a bar above the hand: HandRail.)
-        <View style={[styles.compactMiddle, { minHeight: pondH }]} testID="felt-centre" onLayout={(e) => setColumnH(Math.round(e.nativeEvent.layout.height))}>
-          {compassSize > 0 && (
-            <View style={{ alignItems: 'center', justifyContent: 'center', gap: 6, paddingHorizontal: 4 }}>
-              {compassSize !== L.compassSize && React.isValidElement<{ size?: number }>(compass) ? React.cloneElement(compass, { size: compassSize }) : compass}
-              {statusPill}
-            </View>
-          )}
-          <View style={{ flex: 1, minWidth: 0, justifyContent: 'flex-end' }}>
-            {/* My pond keeps the Normal size here: its row is the tightest on the felt (the opponents' ponds still grow). */}
-            {tileScale > 1 ? myPond(L.myPerRow, tileDims(L.pool).w) : myPond(myPerRow)}
+        // While the buttons are up and the column is too short for both, they take this row's place (`swapped`): my pond
+        // is not drawn under them and comes back when they go.
+        !swapped && (
+          <View style={[styles.compactMiddle, { minHeight: compactFit.mineH }]} testID="felt-centre" onLayout={(e) => setColumnH(Math.round(e.nativeEvent.layout.height))}>
+            {compassSize > 0 && (
+              <View style={{ alignItems: 'center', justifyContent: 'center', gap: 6, paddingHorizontal: 4 }}>
+                {compassSize !== L.compassSize && React.isValidElement<{ size?: number }>(compass) ? React.cloneElement(compass, { size: compassSize }) : compass}
+                {statusPill}
+              </View>
+            )}
+            <View style={{ flex: 1, minWidth: 0, justifyContent: 'flex-end' }}>{myPond(myCompact.perRow, myCompact.tile, compactFit.keepMine)}</View>
           </View>
-        </View>
+        )
       ) : (
         <>
           <View style={styles.middle}>
@@ -323,9 +366,10 @@ export function Felt({
       )}
       {L.actions === 'center' &&
         (L.compact ? (
-          // Short landscape: a row of its own under the compass and my pond (which moves up rather than being covered).
+          // Short landscape: a row of its own under the compass and my pond (which moves up rather than being covered), or
+          // in my row's place while it is up when the column has no room for both.
           dockH > 0 && (
-            <View style={[styles.actionRow, { minHeight: dockH }]} pointerEvents="box-none" testID="action-dock">
+            <View style={[styles.actionRow, { minHeight: dockH }, swapped && { flex: 1, justifyContent: 'center' }]} pointerEvents="box-none" testID="action-dock">
               <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ alignSelf: 'stretch', flexGrow: 0 }} contentContainerStyle={styles.actionScroll}>
                 {actions}
               </ScrollView>
@@ -389,10 +433,10 @@ const styles = StyleSheet.create({
   sideBodyContent: { gap: SIDE_GAP },
   centerCol: { flex: 1, alignItems: 'center', gap: 6, minWidth: 0 },
   topSeat: { alignItems: 'center', gap: 6, alignSelf: 'stretch' },
-  topSeatCompact: { flexShrink: 1, minHeight: 0 },
-  topPond: { flexGrow: 0, flexShrink: 1, alignSelf: 'stretch' },
-  topPondContent: { alignItems: 'center' },
-  topRow: { justifyContent: 'center', flexWrap: 'wrap', rowGap: 4, maxWidth: '100%' },
+  // Short landscape: its blocks stack COMPACT_GAP apart, and what does not fit is cut here, never drawn under the buttons.
+  topSeatCompact: { gap: COMPACT_GAP, flexShrink: 1, minHeight: 0, overflow: 'hidden' },
+  // Gaps set one by one: react-native-web lets a `gap` win over a `rowGap` given with it.
+  topRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', flexWrap: 'wrap', columnGap: TOP_ROW_GAP, rowGap: 4, maxWidth: '100%' },
   topMeldsPortrait: { justifyContent: 'center', maxWidth: '100%' },
   compactMiddle: { flex: 1, flexDirection: 'row', alignSelf: 'stretch', gap: 6, minHeight: 0 },
   middle: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, alignSelf: 'stretch', flexGrow: 1 },

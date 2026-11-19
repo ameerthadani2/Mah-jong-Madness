@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { handLayout, tableLayout } from '../components/table/layout';
+import { COMPACT_DOCK_H, dockHeight, handLayout, tableLayout } from '../components/table/layout';
 import { TILE_SCALES } from './scale';
 import { en, zhTW } from '../i18n/locales';
-import { fitHand, fitPools, landscapeWideRoom, MAX_HAND_ROWS, WIDE_MELD_MAX, WIDE_PLATE_ROW_W, portraitRowRoom, rowWidth, wrapRows, fitSideColumn, fitSideSeat, meldWidth, MIN_MY_MELD, MIN_RAIL_TILE, MIN_SIDE_MELD, MIN_SIDE_POND, myMeldsWidth, SIDE_GAP, sidePondPerRow, sideSeatHeight } from './tableFit';
+import { COMPACT_GAP, COMPACT_TOP_MELD, compactTopMeld, fitCompactCentre, meldsLineWidth, MIN_COMPACT_MELD, MIN_COMPACT_POND, fitHand, fitPools, landscapeWideRoom, MAX_HAND_ROWS, WIDE_MELD_MAX, WIDE_PLATE_ROW_W, portraitRowRoom, rowWidth, wrapRows, fitSideColumn, fitSideSeat, meldWidth, MIN_MY_MELD, MIN_RAIL_TILE, MIN_SIDE_MELD, MIN_SIDE_POND, myMeldsWidth, SIDE_GAP, sidePondPerRow, sideSeatHeight } from './tableFit';
 
 const VIEWPORTS: Array<[number, number]> = [
   [390, 844],
@@ -320,5 +320,71 @@ describe('what Settings says about the tile size', () => {
     expect(en.settings.display.tilesHelp).toMatch(/upright/);
     expect(zhTW.settings.display.tilesHelp).not.toMatch(/左右滑動/);
     expect(zhTW.settings.display.tilesHelp).toMatch(/直向/);
+  });
+});
+
+describe('the centre column on a short landscape phone', () => {
+  it('gives the buttons a row of exactly their 50 px there (the dock elsewhere keeps its margin)', () => {
+    expect(dockHeight('buttons', false, true)).toBe(COMPACT_DOCK_H);
+    expect(COMPACT_DOCK_H).toBe(50);
+    expect(dockHeight('buttons', false)).toBeGreaterThan(COMPACT_DOCK_H);
+    expect(dockHeight('none', false, true)).toBe(0);
+  });
+
+  // 568x320 at Normal tiles: a 157 px column, a 32 px plate row, rows of 20 px (28 px tall) tiles, the buttons' 50 px row.
+  const base = { column: 157, topRow: 32, dock: 0, across: { discards: 0, perRow: 9, tile: 20 }, mine: { discards: 0, perRow: 8, tile: 20 } };
+  it('keeps every row while they fit, and before it is measured', () => {
+    expect(fitCompactCentre({ ...base, across: { ...base.across, discards: 9 }, mine: { ...base.mine, discards: 8 } })).toMatchObject({ keepAcross: Infinity, keepMine: Infinity, acrossTile: 20, fits: true });
+    expect(fitCompactCentre({ ...base, column: 0, across: { ...base.across, discards: 30 } })).toMatchObject({ keepAcross: Infinity, fits: true });
+  });
+
+  it('with the buttons up, keeps my newest row first, then the across seat’s, never under one row each, so nothing goes under the buttons', () => {
+    const late = { ...base, dock: COMPACT_DOCK_H, across: { ...base.across, discards: 17 }, mine: { ...base.mine, discards: 15 } };
+    const f = fitCompactCentre(late);
+    expect(f).toMatchObject({ keepAcross: 1, keepMine: 1, swap: false, fits: true });
+    expect(32 + COMPACT_GAP + f.acrossH + COMPACT_GAP + f.mineH + COMPACT_GAP + COMPACT_DOCK_H).toBeLessThanOrEqual(157);
+    // A taller column: my pond gives way first.
+    expect(fitCompactCentre({ ...late, column: 190 })).toMatchObject({ keepAcross: Infinity, keepMine: 1, fits: true });
+  });
+
+  it('then has the buttons take my row’s place while they are up, then draws the across seat’s row smaller, and only past that says the hand should give way', () => {
+    // A 40 px plate row (a 2-line tag): one row each and the buttons do not fit 157 px.
+    const tall = { ...base, topRow: 40, dock: COMPACT_DOCK_H, across: { ...base.across, discards: 12 }, mine: { ...base.mine, discards: 12 } };
+    const f = fitCompactCentre(tall);
+    expect(f).toMatchObject({ swap: true, acrossTile: 20, fits: true });
+    expect(40 + COMPACT_GAP + f.acrossH + COMPACT_GAP + COMPACT_DOCK_H).toBeLessThanOrEqual(157);
+    expect(f.acrossH).toBeGreaterThanOrEqual(28);
+    // Without the buttons my row stays.
+    expect(fitCompactCentre({ ...tall, dock: 0 }).swap).toBe(false);
+    // Extra-large tiles with my melds above the hand leave a 121 px column (measured on the 568x320 export): the across
+    // seat's newest row is drawn with smaller tiles rather than cut.
+    const xl = fitCompactCentre({ ...tall, column: 121 });
+    expect(xl).toMatchObject({ swap: true, keepAcross: 1, fits: true });
+    expect(xl.acrossTile).toBeLessThan(20);
+    expect(xl.acrossTile).toBeGreaterThanOrEqual(MIN_COMPACT_POND);
+    expect(40 + COMPACT_GAP + xl.acrossH + COMPACT_GAP + COMPACT_DOCK_H).toBeLessThanOrEqual(121);
+    // Not even at the smallest: the hand steps down.
+    expect(fitCompactCentre({ ...tall, column: 100 })).toMatchObject({ fits: false, acrossTile: MIN_COMPACT_POND });
+  });
+
+  it('draws the across seat’s melds smaller to keep them beside its plate, and has them give way while the buttons are up only where they wrapped under it', () => {
+    // A 252 px column and a 110 px plate leave 132 px: two melds of three at 16 px.
+    expect(compactTopMeld(132, [3, 3], 0)).toBe(COMPACT_TOP_MELD);
+    // A 127 px plate (zh-TW at the largest text) leaves 115 px: the two at a smaller size, still beside it.
+    const two = compactTopMeld(115, [3, 3], 0);
+    expect(two).toBeLessThan(COMPACT_TOP_MELD);
+    expect(two).toBeGreaterThanOrEqual(MIN_COMPACT_MELD);
+    expect(meldsLineWidth([3, 3], 0, two)).toBeLessThanOrEqual(115);
+    // Three do not fit even at the smallest: they wrap under the plate.
+    expect(compactTopMeld(115, [3, 3, 3], 0)).toBe(MIN_COMPACT_MELD);
+    expect(meldsLineWidth([3, 3, 3], 0, MIN_COMPACT_MELD)).toBeGreaterThan(115);
+    // Wrapped (a 66 px row under a 40 px plate), with the buttons up in a 121 px column: one row of the pond, melds gone.
+    const wrapped = { column: 121, topRow: 66, plate: 40, dock: COMPACT_DOCK_H, across: { discards: 12, perRow: 9, tile: 20 }, mine: { discards: 12, perRow: 8, tile: 20 } };
+    const f = fitCompactCentre(wrapped);
+    expect(f).toMatchObject({ swap: true, hideTopMelds: true, keepAcross: 1, fits: true });
+    expect(40 + COMPACT_GAP + f.acrossH + COMPACT_GAP + COMPACT_DOCK_H).toBeLessThanOrEqual(121);
+    // Without the buttons they stay; on one line with the plate they never go (the hand steps down instead).
+    expect(fitCompactCentre({ ...wrapped, dock: 0 }).hideTopMelds).toBe(false);
+    expect(fitCompactCentre({ ...wrapped, topRow: 40, column: 100 })).toMatchObject({ hideTopMelds: false, fits: false });
   });
 });

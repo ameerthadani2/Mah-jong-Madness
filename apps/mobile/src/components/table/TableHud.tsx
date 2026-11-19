@@ -17,6 +17,7 @@ export function TableHud({
   quickMatch,
   portrait,
   twoRows,
+  oneRow,
   clock,
   myMove,
   timeBank,
@@ -38,6 +39,11 @@ export function TableHud({
    * on my turn), so the felt under the HUD keeps its height from turn to turn and its fit never changes for it.
    */
   twoRows?: boolean;
+  /**
+   * Short landscape, where the status line sits here: the HUD keeps to one row, the status line taking what the chips
+   * and the buttons leave (it ends in an ellipsis), so the felt under it keeps its height when a claim's status shows.
+   */
+  oneRow?: boolean;
   /** The turn clock (counted down by HudClock itself, so the table does not re-render every second). */
   clock: TurnClock;
   myMove: boolean;
@@ -54,7 +60,7 @@ export function TableHud({
   const { t } = useT();
   return (
     <View style={styles.hud}>
-      <Row gap={6} style={[{ flexShrink: 1, flexWrap: 'wrap', rowGap: 4 }, twoRows && styles.twoRows]}>
+      <Row gap={6} style={[{ flexShrink: 1, flexWrap: 'wrap', rowGap: 4 }, twoRows && styles.twoRows, oneRow && styles.oneRow]}>
         <View style={styles.roundChip} accessible accessibilityRole="image" accessibilityLabel={roundSentence(t, view.prevailingWind, view.handNumber + 1, view.dealerStreak)}>
           <Text style={styles.roundWind}>{WINDS[view.prevailingWind]}</Text>
           <Text style={styles.roundText}>
@@ -80,7 +86,7 @@ export function TableHud({
         )}
       </Row>
       {status && (
-        <View style={styles.status} testID="table-status">
+        <View style={[styles.status, oneRow && styles.statusFlex]} testID="table-status">
           <Text numberOfLines={1} style={styles.statusText}>
             {status}
           </Text>
@@ -99,6 +105,8 @@ const styles = StyleSheet.create({
   hud: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 10, paddingTop: 3, paddingBottom: 4, gap: 8 },
   // Two rows of 30 px chips and the gap between them.
   twoRows: { minHeight: 64, alignContent: 'flex-start' },
+  oneRow: { flexWrap: 'nowrap', flexShrink: 0 },
+  statusFlex: { flexGrow: 1, minWidth: 0 },
   roundChip: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: colors.gold, borderWidth: 2.5, borderColor: colors.ink, borderRadius: 999, paddingLeft: 4, paddingRight: 10, height: 30 },
   roundWind: { width: 22, height: 22, borderRadius: 11, backgroundColor: colors.ink, color: colors.gold, textAlign: 'center', fontWeight: '900', fontSize: 14, lineHeight: 22, overflow: 'hidden' },
   roundText: { color: colors.ink, fontWeight: '900', fontSize: 13 },

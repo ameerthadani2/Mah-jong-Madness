@@ -132,9 +132,18 @@ export function pinnedCoachFace(statusLine: boolean, osScale = 1): number {
   return Math.max(MIN_TOUCH, Math.ceil(9 + text));
 }
 
+/** The buttons' row on short landscape: exactly the 50 pt buttons (every pixel of that column counts). */
+export const COMPACT_DOCK_H = 50;
+
+/**
+ * Short landscape: a centre column narrower than this (252 px on a 568 px phone) draws even two claim buttons small. At
+ * full size Pass and a 吃 with its two tiles take about 255 px, 285 at the largest text (324 px on a 640 px phone).
+ */
+export const COMPACT_NARROW_DOCK = 300;
+
 /** Height the landscape action dock takes: claim/discard buttons (larger on tablets), the tap-hint pill, or nothing. */
-export function dockHeight(dock: ActionDock, big: boolean): number {
-  return dock === 'buttons' ? (big ? ACTION_DOCK_H + 10 : ACTION_DOCK_H) : dock === 'hint' ? TAP_HINT_DOCK_H : 0;
+export function dockHeight(dock: ActionDock, big: boolean, compact = false): number {
+  return dock === 'buttons' ? (big ? ACTION_DOCK_H + 10 : compact ? COMPACT_DOCK_H : ACTION_DOCK_H) : dock === 'hint' ? TAP_HINT_DOCK_H : 0;
 }
 
 /** Short landscape: the compass shrinks to the middle row's height (`rowH`, measured) and goes when under 40 px. */

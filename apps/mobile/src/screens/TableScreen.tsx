@@ -25,7 +25,7 @@ import { CallBanner, WinReveal, type Callout } from '../components/table/CallBan
 import { Felt, type PlateProps } from '../components/table/Felt';
 import { HandRail } from '../components/table/HandRail';
 import { CoachBar, CoachSheet } from '../components/table/CoachPanel';
-import { ACTION_STRIP_H, COACH_OVER_RAIL, coachBarLines, pinnedCoachFace, portraitCoachStatus, slopFor, tableLayout } from '../components/table/layout';
+import { ACTION_STRIP_H, COACH_OVER_RAIL, COMPACT_NARROW_DOCK, coachBarLines, pinnedCoachFace, portraitCoachStatus, slopFor, tableLayout } from '../components/table/layout';
 import { fitHand } from '../display/tableFit';
 import { useDisplayScale } from '../display/DisplayScale';
 import { RESULT_HOLD_MS } from '../components/table/feel';
@@ -130,6 +130,8 @@ export function TableScreen() {
   const [emotePicker, setEmotePicker] = useState(false);
   // Portrait: how many steps the hand has been made smaller this deal, for a felt that was too short (see below).
   const [squeeze, setSqueeze] = useState({ key: '', steps: 0 });
+  // Landscape at Normal tiles: where my plate column starts over the felt's corner (HandRail), so the left seat ends above it.
+  const [plateTop, setPlateTop] = useState<number | null>(null);
   // The red exit icon asks first (components/table/exit.ts): only "Abandon table" forgets the table.
   const [leaveAsk, setLeaveAsk] = useState(false);
   // Android's Back key asks the same question (src/logic/back.ts); once the match is over there is nothing to keep.
@@ -361,14 +363,16 @@ export function TableScreen() {
   // Settings → Display → Tiles grows the hand and my melds; portrait wraps into more rows, landscape moves my plate
   // and melds above the hand so it spans the whole width (tableFit.ts). In portrait, when that leaves the felt too
   // short for even the least of the seats (Felt's onShort, display/portraitFit.ts: Extra-large tiles, melds and a claim
-  // strip on a small phone), the hand and my melds step down a size at a time, for the rest of the hand: never in the
-  // middle of a turn back up, so the tiles do not jump; the next deal starts from the chosen size again.
+  // strip on a small phone), and in short landscape when the centre column cannot hold a row of the across seat's pond
+  // above the buttons (display/tableFit.ts fitCompactCentre), the hand and my melds step down a size at a time, for the
+  // rest of the hand: never in the middle of a turn back up, so the tiles do not jump; the next deal starts from the
+  // chosen size again.
   const squeezeKey = `${width}x${height}:${tileScale}:${view.handNumber}`;
   const squeezeSteps = squeeze.key === squeezeKey ? squeeze.steps : 0;
   const handScale = Math.max(1, tileScale - SQUEEZE_STEP * squeezeSteps);
   const hand = fitHand(width, height, L, (me.hand ?? []).length, me.melds.reduce((n, m) => n + m.tiles.length, 0), me.melds.length, handScale);
   const onFeltShort = () => {
-    if (L.portrait && handScale > 1) setSqueeze({ key: squeezeKey, steps: squeezeSteps + 1 });
+    if ((L.portrait || L.compact) && handScale > 1) setSqueeze({ key: squeezeKey, steps: squeezeSteps + 1 });
   };
 
   const seatAt = (r: number) => (mySeat + r) % 4;
@@ -473,7 +477,7 @@ export function TableScreen() {
   // The end-of-hand result sheet is up (a modal dialog over the table: components/table/ResultSheet.tsx).
   const resultUp = !!state.lastResult && showResult && !state.matchOver;
 
-  const actionBar = <ActionBar actions={actions} act={act} selected={selected} hint={hint} view={view} big={L.tablet} align={L.actions === 'center' ? 'center' : 'flex-end'} tapHint={tapHint.show} wrap={!L.compact} compact={L.actions === 'strip' && !L.tablet} />;
+  const actionBar = <ActionBar actions={actions} act={act} selected={selected} hint={hint} view={view} big={L.tablet} align={L.actions === 'center' ? 'center' : 'flex-end'} tapHint={tapHint.show} wrap={!L.compact} compact={(L.actions === 'strip' || L.compact) && !L.tablet} smallFrom={L.compact && L.centerW < COMPACT_NARROW_DOCK ? 2 : 3} />;
 
   return (
     <TableThemeContext.Provider value={theme}>
@@ -484,6 +488,7 @@ export function TableScreen() {
           quickMatch={session.quickMatch === true}
           portrait={L.portrait}
           twoRows={L.portrait && !L.tablet}
+          oneRow={L.statusInHud}
           clock={clock}
           myMove={myMove}
           timeBank={state.timeBank}
@@ -513,6 +518,7 @@ export function TableScreen() {
           dock={actions.some((a) => a.type !== 'discard') || (actions.length > 0 && selected !== null) ? 'buttons' : actions.length > 0 && tapHint.show ? 'hint' : 'none'}
           overlay={overlay}
           onShort={onFeltShort}
+          leftSeatEnd={L.portrait ? null : plateTop}
         />
         {/* Portrait: the coach's bar under the felt, over its wooden rail, so it takes nothing from the seats or my pond. */}
         {L.coach === 'pinned' && hint && (
@@ -541,6 +547,7 @@ export function TableScreen() {
           best={hint?.bestDiscard?.tile}
           onTile={onTile}
           coach={L.coach === 'rail' && hint ? <CoachBar hint={hint} lines={coachBarLines('rail', hand.wide)} onOpen={() => setCoachSheet(true)} /> : undefined}
+          onPlateTop={setPlateTop}
         />
         <CoachSheet visible={coachSheet} hint={hint} onClose={() => setCoachSheet(false)} />
 

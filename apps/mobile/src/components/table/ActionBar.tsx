@@ -1,7 +1,8 @@
 /**
  * The claim and discard buttons: big CJK verbs (過 吃 碰 槓 打 胡) with the tiles each would take. In a phone's portrait
- * strip (`compact`) they keep to one row, so the strip never grows into the felt: three or more buttons are drawn small
- * (the English gloss only on Pass and Win, smaller tiles), and several 吃 choices are one 吃 button that opens them.
+ * strip and in the short landscape dock (`compact`) they keep to one row, so they never grow into the felt: three or more
+ * buttons (two in a narrow dock) are drawn small (the English gloss only on Pass and Win, smaller tiles), and several 吃
+ * choices are one 吃 button that opens them.
  */
 import React, { useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
@@ -32,7 +33,7 @@ const PAL: Record<ButtonKind, [string, string, string]> = {
  * Chunky claim button: a big CJK verb plus the tiles it would take. In English the verb carries a small gloss
  * before it ("Pong 碰"); the zh-TW gloss is empty.
  */
-function ClaimButton({ label, gloss, a11y, tiles, kind, onPress, big, small, testID }: { label: string; gloss?: string; a11y: string; tiles?: TileId[]; kind: ButtonKind; onPress: () => void; big?: boolean; /** A portrait strip with three or more buttons: less padding, smaller tiles. */ small?: boolean; testID?: string }) {
+function ClaimButton({ label, gloss, a11y, tiles, kind, onPress, big, small, testID }: { label: string; gloss?: string; a11y: string; tiles?: TileId[]; kind: ButtonKind; onPress: () => void; big?: boolean; /** A compact row (ActionBar `compact`) with three or more buttons: less padding, smaller tiles. */ small?: boolean; testID?: string }) {
   const [fill, light, shelf] = PAL[kind];
   const h = big ? 60 : 50;
   return (
@@ -74,6 +75,7 @@ export function ActionBar({
   tapHint = true,
   wrap = true,
   compact = false,
+  smallFrom = 3,
 }: {
   actions: Action[];
   act: (a: Action) => void;
@@ -84,10 +86,12 @@ export function ActionBar({
   align?: 'center' | 'flex-end';
   /** The first-game "tap a tile" pill (it retires after the player's first few discards: ./tapHint.ts). */
   tapHint?: boolean;
-  /** Short landscape: one row only (the dock scrolls sideways when several 吃 options are up), so it never grows over my pond. */
+  /** Short landscape: one row only (the dock scrolls sideways if even the compact row is wider), so it never grows over my pond. */
   wrap?: boolean;
-  /** A phone's portrait strip: kept to one row (small buttons, one 吃 for several), so it never takes height from the felt. */
+  /** A phone's portrait strip or short landscape dock: one row (small buttons, one 吃 for several), so it never takes height from the felt. */
   compact?: boolean;
+  /** In a compact row, how many buttons make them small: 3, or 2 where the row is narrow (a 568 px phone's landscape dock). */
+  smallFrom?: number;
 }) {
   const { t, locale } = useT();
   // Which claim prompt the 吃 choices are open for (a new prompt starts closed).
@@ -119,7 +123,7 @@ export function ActionBar({
     );
   }
   const buttons = (pass ? 1 : 0) + (chiGroup ? 1 : chis.length) + (pong ? 1 : 0) + kongs.length + (canDiscard && selected !== null ? 1 : 0) + (hu ? 1 : 0);
-  const small = !!compact && buttons >= 3;
+  const small = !!compact && buttons >= smallFrom;
   // Small buttons keep the English gloss on Pass and Win only (the coach's line and every button's spoken name still say it).
   const gloss = (key: string) => (small && key !== 'pass' && key !== 'win' && key !== 'selfDrawWin' ? undefined : t(`table.claimGloss.${key}`));
   return (
