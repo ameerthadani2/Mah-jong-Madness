@@ -67,11 +67,10 @@ export function Felt({
   const centreDock = L.actions === 'center' ? dock : 'none';
   const dockH = dockHeight(centreDock, tablet);
   // Portrait: the felt's inner height, the opponents' plates and the status line, measured for the fit (portraitFit.ts).
-  const [pBox, setPBox] = useState({ felt: 0, right: 0, left: 0, top: 0, topW: 0, status: 0 });
+  const [pBox, setPBox] = useState({ felt: 0, right: 0, left: 0, top: 0, status: 0 });
   const measureP = (key: 'felt' | 'right' | 'left' | 'top' | 'status') => (e: LayoutChangeEvent) => {
     const h = Math.round(e.nativeEvent.layout.height);
-    const w = Math.round(e.nativeEvent.layout.width);
-    setPBox((b) => (b[key] === h && (key !== 'top' || b.topW === w) ? b : { ...b, [key]: h, ...(key === 'top' ? { topW: w } : null) }));
+    setPBox((b) => (b[key] === h ? b : { ...b, [key]: h }));
   };
   // Settings → Display → Tiles grows the ponds and the opponents' melds (rows recomputed so they still fit).
   const { tileScale } = useDisplayScale();
@@ -92,7 +91,6 @@ export function Felt({
     return { melds: p.melds.map((m) => m.tiles.length), flowers: p.flowers.length, discards: p.discards.length, hand: p.handCount };
   };
   const topHandTile = tablet ? 15 : 9;
-  const across = seatOf(2);
   const fit = fitPortraitFelt({
     felt: portrait ? pBox.felt : 0,
     sideW: sideWidth,
@@ -100,8 +98,6 @@ export function Felt({
     centerW: L.centerW - 12,
     pondW: L.centerW + 2 * sideWidth,
     plates: { right: pBox.right, left: pBox.left, top: pBox.top },
-    topPlateW: pBox.topW,
-    topHandW: across.handCount > 0 ? (topHandTile - 1) * (across.handCount - 1) + topHandTile + 1 : 0,
     topHandH: (tablet ? 24 : 15) + 2,
     sideHandH: (tablet ? 22 : 15) + 2,
     status: status ? pBox.status || 20 : 0,
@@ -149,13 +145,25 @@ export function Felt({
     const badge = <SeatBadge {...plateProps(seat)} size={plate} maxNameWidth={portrait ? 110 : 120} />;
     return (
       <View style={[styles.topSeat, L.compact && styles.topSeatCompact]} onLayout={(e) => setTopH(Math.round(e.nativeEvent.layout.height))}>
-        <Row gap={10} style={styles.topRow}>
-          {portrait ? <View onLayout={measureP('top')} testID="plate-seat-2">{badge}</View> : badge}
-          {(!portrait || fit.hands) && <HiddenHand count={p.handCount} tileW={tablet ? 15 : portrait ? topHandTile : 11} tileH={tablet ? 24 : portrait ? 15 : 17} />}
-          {/* Landscape has the width for melds on the same line; portrait gives them their own line so they never run over the side plates. */}
-          {!portrait && <MeldsAndFlowers player={p} size={meldSize(tablet ? 'sm' : 'xs')} />}
-        </Row>
-        {portrait && <MeldsAndFlowers player={p} size={fit.meld} flowerSize={fit.meld} flat={fit.flat} style={styles.topMeldsPortrait} />}
+        {portrait ? (
+          // Portrait: the plate, then its row of face-down tiles and its melds each on a line of their own (portraitFit.ts
+          // stacks them with the column's gap), so they never run over the side plates.
+          <>
+            <View onLayout={measureP('top')} testID="plate-seat-2">
+              {badge}
+            </View>
+            {/* Narrowed, as a side seat's, so the row fits the centre column. */}
+            {fit.hands && <HiddenHand count={p.handCount} tileW={Math.max(5, Math.min(topHandTile, Math.floor((L.centerW - 18) / Math.max(1, p.handCount)) + 1))} tileH={tablet ? 24 : 15} />}
+            <MeldsAndFlowers player={p} size={fit.meld} flowerSize={fit.meld} flat={fit.flat} style={styles.topMeldsPortrait} />
+          </>
+        ) : (
+          <Row gap={10} style={styles.topRow}>
+            {badge}
+            <HiddenHand count={p.handCount} tileW={tablet ? 15 : 11} tileH={tablet ? 24 : 17} />
+            {/* Landscape has the width for melds on the same line. */}
+            <MeldsAndFlowers player={p} size={meldSize(tablet ? 'sm' : 'xs')} />
+          </Row>
+        )}
         {L.compact ? (
           <ScrollView
             ref={topPondScroll}

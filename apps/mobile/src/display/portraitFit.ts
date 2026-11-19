@@ -40,8 +40,6 @@ export const MELD_ROW_GAP = 3;
 export const CROSS_PAD = 3;
 /** My pond, pinned under the seats: 3 px above it, 1 below (Felt.tsx pinnedPond). */
 export const PINNED_POND_PAD = 4;
-/** The across seat's row of face-down tiles wraps under its plate with this gap. */
-export const TOP_ROW_GAP = 4;
 
 const tileH = (w: number) => tileDims(w).h;
 
@@ -64,10 +62,7 @@ export interface PortraitFeltInput {
   pondW: number;
   /** Measured plate heights: each side seat's (avatar over its tag), and the across seat's (avatar beside its tag). */
   plates: { right: number; left: number; top: number };
-  /** The across seat's plate width (its row of backs goes beside it when both fit the centre column). */
-  topPlateW: number;
-  /** The rows of face-down tiles as drawn: the across seat's width, and its height and a side seat's. */
-  topHandW: number;
+  /** The rows of face-down tiles as drawn (a line of their own under the plate): the across seat's height and a side seat's. */
   topHandH: number;
   sideHandH: number;
   /** The status line under the compass, measured (0: none). */
@@ -196,13 +191,10 @@ export function fitPortraitFelt(input: PortraitFeltInput): PortraitFeltFit {
   const sideRows = (seat: PortraitSeat, keep: number) => Math.min(keep, pondRows(seat.discards, sidePondPerRow(sideW, s.pool)));
   const sideNeed = (seat: PortraitSeat, plate: number, keep: number) =>
     stack(plate, s.hands && seat.hand > 0 ? input.sideHandH : 0, meldsHeight(sideW, seat.melds, seat.flowers, s.meld, s.flat), pondHeight(sideRows(seat, keep), s.pool));
-  const topRowH = () => {
-    if (!s.hands || input.across.hand <= 0) return plates.top;
-    return input.topPlateW + 10 + input.topHandW <= centerW ? Math.max(plates.top, input.topHandH) : plates.top + TOP_ROW_GAP + input.topHandH;
-  };
   const topRows = (keep: number) => Math.min(keep, pondRows(input.across.discards, centerPondPerRow(centerW, s.pool)));
-  // The across seat (its plate row, melds and pond), without the compass under it.
-  const topNeed = (keep: number) => stack(topRowH(), meldsHeight(centerW, input.across.melds, input.across.flowers, s.meld, s.flat), pondHeight(topRows(keep), s.pool));
+  // The across seat (its plate, row of face-down tiles, melds and pond), without the compass under it.
+  const topNeed = (keep: number) =>
+    stack(plates.top, s.hands && input.across.hand > 0 ? input.topHandH : 0, meldsHeight(centerW, input.across.melds, input.across.flowers, s.meld, s.flat), pondHeight(topRows(keep), s.pool));
   // What the middle (ring or compass, and the status line) takes of what the across seat leaves.
   const middle = (left: number) => {
     const status = input.status > 0 ? input.status + SIDE_GAP : 0;

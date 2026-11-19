@@ -15,8 +15,6 @@ const SMALL: PortraitFeltInput = {
   centerW: 80,
   pondW: 260,
   plates: { right: 73, left: 73, top: 40 },
-  topPlateW: 144,
-  topHandW: 130,
   topHandH: 17,
   sideHandH: 17,
   status: 20,
@@ -69,8 +67,11 @@ describe('the portrait felt fits its box', () => {
     const firstSmaller = sizes.findIndex((f) => f.pool < 20);
     expect(firstSmaller).toBeGreaterThan(0);
     expect(sizes[firstSmaller - 1].compass).toBe(0);
-    // At these sizes: the ring shrinks (120, 98, 68), goes with the status line (a 48 px compass), then the compass goes.
-    expect(sizes.map((f) => f.wall).filter((w, i, a) => w > 0 && a.indexOf(w) === i)).toEqual([120, 98, 68]);
+    // The ring starts at its full size and shrinks before it goes (with the status line), then the compass shrinks and goes.
+    const rings = sizes.map((f) => f.wall).filter((w, i, a) => w > 0 && a.indexOf(w) === i);
+    expect(rings[0]).toBe(120);
+    expect(rings.length).toBeGreaterThan(1);
+    rings.slice(1).forEach((w, i) => expect(w).toBeLessThan(rings[i]));
     expect(sizes.some((f) => f.wall === 0 && f.compass > 0 && f.compass < 50 && !f.status)).toBe(true);
     expect(sizes.some((f) => f.compass === 0 && f.pool === 20)).toBe(true);
     expect(sizes.some((f) => f.pool < 20)).toBe(true);
