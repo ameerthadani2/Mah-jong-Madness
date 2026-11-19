@@ -25,6 +25,7 @@ import { CallBanner, WinReveal, type Callout } from '../components/table/CallBan
 import { Felt, type PlateProps } from '../components/table/Felt';
 import { HandRail } from '../components/table/HandRail';
 import { CoachBar, CoachSheet } from '../components/table/CoachPanel';
+import { DiscardsSheet } from '../components/table/DiscardsSheet';
 import { ACTION_STRIP_H, COACH_OVER_RAIL, COMPACT_NARROW_DOCK, coachBarLines, pinnedCoachFace, portraitCoachStatus, slopFor, tableLayout } from '../components/table/layout';
 import { fitHand } from '../display/tableFit';
 import { useDisplayScale } from '../display/DisplayScale';
@@ -127,6 +128,8 @@ export function TableScreen() {
   const coachOpen = coachAllowed && coachWanted;
   // The coach's sheet (everything it says), opened from its bar or panel.
   const [coachSheet, setCoachSheet] = useState(false);
+  // The table's discards (every seat's whole pond), opened from an opponent's seat on the felt with that seat first.
+  const [discardsFor, setDiscardsFor] = useState<1 | 2 | 3 | null>(null);
   const [emotePicker, setEmotePicker] = useState(false);
   // Portrait: how many steps the hand has been made smaller this deal, for a felt that was too short (see below).
   const [squeeze, setSqueeze] = useState({ key: '', steps: 0 });
@@ -163,6 +166,10 @@ export function TableScreen() {
   useEffect(() => {
     if (!hint || handOver) setCoachSheet(false);
   }, [hint, handOver]);
+  // The discards sheet closes when the hand ends too.
+  useEffect(() => {
+    if (handOver) setDiscardsFor(null);
+  }, [handOver]);
 
   // Progress bookkeeping once per finished hand (keyed in persisted progress so remounts never double count).
   useEffect(() => {
@@ -520,6 +527,7 @@ export function TableScreen() {
           overlay={overlay}
           onShort={onFeltShort}
           leftSeatEnd={L.portrait ? null : plateTop}
+          onSeatPress={setDiscardsFor}
         />
         {/* Portrait: the coach's bar under the felt, over its wooden rail, so it takes nothing from the seats or my pond. */}
         {L.coach === 'pinned' && hint && (
@@ -551,6 +559,7 @@ export function TableScreen() {
           onPlateTop={setPlateTop}
         />
         <CoachSheet visible={coachSheet} hint={hint} onClose={() => setCoachSheet(false)} />
+        <DiscardsSheet visible={discardsFor !== null && !handOver} first={discardsFor} view={view} mySeat={mySeat} seatName={seatName} onClose={() => setDiscardsFor(null)} />
 
         {emotePicker && (
           <View style={styles.emotePanel}>

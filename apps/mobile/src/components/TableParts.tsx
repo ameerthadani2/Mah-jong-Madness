@@ -71,6 +71,16 @@ export function TileStrip({ tiles, size = 'xs', max = 20 }: { tiles: TileId[]; s
 }
 
 /**
+ * The "+N" chip's text in a tile `w` px wide: "+12" on one line where it fits (a bold digit is about 0.62 of the font
+ * size), else the "+" over the number, so the count is never cut to "+…" on the smallest tiles.
+ */
+export function earlierChip(earlier: number, w: number): { text: string; lines: 1 | 2; font: number } {
+  const font = Math.max(8, Math.round(w * 0.45));
+  const room = w - 3;
+  return `+${earlier}`.length * font * 0.62 <= room ? { text: `+${earlier}`, lines: 1, font } : { text: `+\n${earlier}`, lines: 2, font };
+}
+
+/**
  * A seat's pond. The latest discard is ringed and, when `enterFrom` is given, slides in from that side. With `keepRows`
  * only the newest rows are drawn, after a "+N" chip that says how many earlier discards are not.
  */
@@ -78,14 +88,15 @@ export function DiscardPool({ tiles, size = 'xs', perRow = 8, latest, align = 'f
   const { t: tr } = useT();
   const { rows, earlier } = pondRowsShown(tiles, perRow, keepRows);
   const { w, h } = tileDims(size);
+  const chip = earlierChip(earlier, w);
   return (
     <View style={{ gap: 2, alignItems: align }} testID={testID}>
       {rows.map((row, i) => (
         <View key={i} style={{ flexDirection: 'row', gap: 2 }}>
           {i === 0 && earlier > 0 && (
             <View style={[styles.earlier, { width: w, height: h, borderRadius: w * 0.17 }]} accessible accessibilityRole="text" accessibilityLabel={tr('table.a11y.pondEarlier', { n: earlier })} testID="pond-earlier">
-              <Text style={[styles.earlierText, { fontSize: Math.max(8, Math.round(w * 0.45)) }]} numberOfLines={1}>
-                +{earlier}
+              <Text style={[styles.earlierText, { fontSize: chip.font, lineHeight: chip.lines === 2 ? Math.round(chip.font * 1.1) : undefined }]} numberOfLines={chip.lines}>
+                {chip.text}
               </Text>
             </View>
           )}
@@ -375,7 +386,7 @@ const styles = StyleSheet.create({
   strip: { flexDirection: 'row', flexWrap: 'wrap', gap: 2 },
   // In a pond's first place: earlier discards that are not drawn (a dark tile-sized chip, so the rows keep their shape).
   earlier: { backgroundColor: 'rgba(16,20,47,0.72)', borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.55)', alignItems: 'center', justifyContent: 'center' },
-  earlierText: { color: '#FFFFFF', fontWeight: '900' },
+  earlierText: { color: '#FFFFFF', fontWeight: '900', textAlign: 'center' },
   seat: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   seatVertical: { flexDirection: 'column', gap: 0 },
   tag: { backgroundColor: 'rgba(16,20,47,0.78)', borderWidth: 2, borderColor: colors.ink, borderRadius: 10, paddingHorizontal: 7, paddingVertical: 2, minWidth: 0 },

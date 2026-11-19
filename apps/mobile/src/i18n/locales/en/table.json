@@ -41,6 +41,18 @@
     "close": "Close the advice",
     "sheetLabel": "The coach's advice"
   },
+  "discards": {
+    "title": "Discards",
+    "sheetLabel": "Every discard at the table",
+    "close": "Close the discards",
+    "seat": "%{name} · %{rel}",
+    "count": {
+      "one": "%{count} discard",
+      "other": "%{count} discards"
+    },
+    "none": "No discards yet",
+    "sets": "Sets and flowers"
+  },
   "connection": {
     "lostTitle": "Connection lost",
     "lostText": "Your seat is saved. A bot plays for you until you are back.",
@@ -220,6 +232,11 @@
     "reportHint": "Long press to report this player",
     "tileBack": "Face-down tile",
     "pondEarlier": "Earlier discards not shown: %{n}",
+    "seatHint": "Shows every discard and set at the table",
+    "seatButton": {
+      "one": "%{name}, %{rel}, score %{score}, %{count} discard",
+      "other": "%{name}, %{rel}, score %{score}, %{count} discards"
+    },
     "clockNow": "Your clock: %{s} seconds left",
     "clockBankNow": "Your time bank: %{s} seconds left",
     "clockLow": "%{s} seconds left",

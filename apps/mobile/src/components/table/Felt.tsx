@@ -3,15 +3,17 @@
  * the middle, my pond and the claim buttons, and the coach in full under the right seat on tablets and tall landscape
  * screens (a phone has its bar under the felt in portrait, TableScreen.tsx, and above the hand in landscape, HandRail).
  * Geometry comes from ./layout.ts; in portrait nothing scrolls, and what gives way when the felt is short is
- * display/portraitFit.ts.
+ * display/portraitFit.ts. Each opponent's seat is one button that opens the table's discards (`onSeatPress`,
+ * DiscardsSheet.tsx), so what the felt has no room for is one tap away.
  */
 import React, { useEffect, useRef, useState } from 'react';
-import { ScrollView, StyleSheet, Text, View, type LayoutChangeEvent } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View, type LayoutChangeEvent, type StyleProp, type ViewStyle } from 'react-native';
 import type { Hint, PlayerView, TableView, TileId } from '@mjm/engine';
 import { DiscardPool, FeltFrame, MeldsAndFlowers, SeatBadge, WallRing } from '../TableParts';
 import { HiddenHand, scaledTile } from '../Tile';
 import { tileDims } from '../tileDims';
 import { useDisplayScale } from '../../display/DisplayScale';
+import { useT } from '../../i18n';
 import { COMPACT_GAP, COMPACT_TOP_MELD, compactTopMeld, fitCompactCentre, fitPools, fitSideColumn, SIDE_GAP } from '../../display/tableFit';
 import { CROSS_PAD, fitPortraitFelt } from '../../display/portraitFit';
 import { CoachPanel } from './CoachPanel';
@@ -19,6 +21,44 @@ import { slideFrom } from './feel';
 import { compactCompassSize, dockHeight, landscapeWallSize, type ActionDock, type TableLayout } from './layout';
 
 export type PlateProps = Omit<React.ComponentProps<typeof SeatBadge>, 'size' | 'vertical' | 'maxNameWidth'>;
+
+/** An opponent's seat as one button: what a screen reader hears, and what a tap and a long press do. */
+interface SeatButton {
+  label: string;
+  hint: string;
+  onPress: () => void;
+  onLongPress?: () => void;
+}
+
+/**
+ * An opponent's seat on the felt (its plate, melds and pond): with `button`, one button that opens the table's discards
+ * (DiscardsSheet.tsx, this seat first), so the discards a small felt keeps behind its "+N" chip are one tap away; on an
+ * online table a long press on it reports the player (the plate's own long press moves here, so no button is inside
+ * another). Without `button`, a plain view.
+ */
+const SeatBox = React.forwardRef<React.ElementRef<typeof View>, { button: SeatButton | null; style?: StyleProp<ViewStyle>; onLayout?: (e: LayoutChangeEvent) => void; testID?: string; children: React.ReactNode }>(function SeatBox({ button, style, onLayout, testID, children }, ref) {
+  if (!button)
+    return (
+      <View ref={ref} style={style} onLayout={onLayout} testID={testID}>
+        {children}
+      </View>
+    );
+  return (
+    <Pressable
+      ref={ref}
+      onPress={button.onPress}
+      onLongPress={button.onLongPress}
+      accessibilityRole="button"
+      accessibilityLabel={button.label}
+      accessibilityHint={button.hint}
+      style={({ pressed }) => [style, pressed && styles.seatPressed]}
+      onLayout={onLayout}
+      testID={testID}
+    >
+      {children}
+    </Pressable>
+  );
+});
 
 /** Landscape: the gap between the across seat's plate and its melds. */
 const TOP_ROW_GAP = 10;
@@ -40,6 +80,7 @@ export function Felt({
   overlay,
   onShort,
   leftSeatEnd = null,
+  onSeatPress,
 }: {
   view: TableView;
   mySeat: number;
@@ -69,7 +110,10 @@ export function Felt({
    * window y: HandRail `onPlateTop`). The left seat's column ends 4 px above it, so my flowers never cover its discards.
    */
   leftSeatEnd?: number | null;
+  /** A tap on an opponent's seat (1 right, 2 across, 3 left, relative to mine): the table opens its discards sheet. */
+  onSeatPress?: (rel: 1 | 2 | 3) => void;
 }) {
+  const { t } = useT();
   const { portrait, tablet, plate, sideWidth } = L;
   // Short landscape: the compass and my pond share the middle row (the action dock has a row of its own under it).
   const [columnH, setColumnH] = useState(0);
@@ -90,6 +134,28 @@ export function Felt({
   // A side seat's kong (four tiles) must still fit its column.
   const sideMeld = meldScale === 1 ? 'xs' : Math.max(20, Math.min(Math.round(20 * meldScale), Math.floor(sideWidth / 4) - 1));
   const seatAt = (r: number) => (mySeat + r) % 4;
+  // Each opponent's seat is one button (SeatBox) that opens the discards sheet; it carries the plate's long press too.
+  const seatButton = (r: 1 | 2 | 3): SeatButton | null => {
+    if (!onSeatPress) return null;
+    const seat = seatAt(r);
+    const props = plateProps(seat);
+    const offline = !!props.info && !props.info.connected && !props.info.isBot;
+    const label = t('table.a11y.seatButton', {
+      name: props.info?.name || t('table.seat', { n: seat + 1 }),
+      rel: t(`table.relSeatShort.${r === 1 ? 'right' : r === 2 ? 'across' : 'left'}`),
+      score: `${props.score >= 0 ? '+' : ''}${props.score}`,
+      count: view.players[seat].discards.length,
+    });
+    const brk = t('table.a11y.sentenceBreak');
+    return {
+      label: offline ? `${label}${brk}${t('table.offline')}` : label,
+      hint: props.onLongPress && props.onLongPressHint ? `${t('table.a11y.seatHint')}${brk}${props.onLongPressHint}` : t('table.a11y.seatHint'),
+      onPress: () => onSeatPress(r),
+      onLongPress: props.onLongPress,
+    };
+  };
+  // The plate's own props: no long press of its own when its seat is the button that carries it.
+  const plateFor = (seat: number): PlateProps => (onSeatPress ? { ...plateProps(seat), onLongPress: undefined, onLongPressHint: undefined } : plateProps(seat));
   const latestFor = (seat: number): TileId | undefined => (view.lastDiscard && view.lastDiscard.seat === seat ? view.lastDiscard.tile : undefined);
   const coach = coachOpen && hint ? hint : null;
   // Portrait: the felt fits its box (portraitFit.ts): the ring and the compass, the tile sizes, the rows of face-down
@@ -146,9 +212,9 @@ export function Felt({
     const pond = (portrait ? p.discards.length > 0 : true) && (
       <DiscardPool tiles={p.discards} size={pool} perRow={centerPerRow} align="center" latest={latestFor(seat)} enterFrom={slideFrom(2)} keepRows={portrait ? fit.keep.across : undefined} testID="pond-seat-2" />
     );
-    const badge = <SeatBadge {...plateProps(seat)} size={plate} maxNameWidth={portrait ? 110 : 120} />;
+    const badge = <SeatBadge {...plateFor(seat)} size={plate} maxNameWidth={portrait ? 110 : 120} />;
     return (
-      <View style={[styles.topSeat, L.compact && styles.topSeatCompact]} onLayout={(e) => setTopH(Math.round(e.nativeEvent.layout.height))}>
+      <SeatBox button={seatButton(2)} style={[styles.topSeat, L.compact && styles.topSeatCompact]} onLayout={(e) => setTopH(Math.round(e.nativeEvent.layout.height))} testID="seat-press-2">
         {portrait ? (
           // Portrait: the plate, then its row of face-down tiles and its melds each on a line of their own (portraitFit.ts
           // stacks them with the column's gap), so they never run over the side plates.
@@ -180,7 +246,7 @@ export function Felt({
         ) : (
           pond
         )}
-      </View>
+      </SeatBox>
     );
   };
 
@@ -211,18 +277,18 @@ export function Felt({
     const slim = Math.max(5, Math.min(11, Math.floor((sideWidth - 6) / Math.max(1, p.handCount)) + 1));
     const handH = tablet ? 22 : 15;
     // Portrait: the tag under the avatar keeps to two lines too (the name on one, its relation and score on the other).
-    const badge = <SeatBadge {...plateProps(seat)} size={plate} vertical={portrait} side maxNameWidth={portrait ? sideWidth : sideWidth - plate - 12} />;
+    const badge = <SeatBadge {...plateFor(seat)} size={plate} vertical={portrait} side maxNameWidth={portrait ? sideWidth : sideWidth - plate - 12} />;
     const hidden = <HiddenHand count={p.handCount} tileW={slim} tileH={handH} />;
     const meldStyle = [{ maxWidth: sideWidth }, r === 1 ? { justifyContent: 'flex-end' as const } : undefined];
     const align = r === 1 ? 'flex-end' : 'flex-start';
     if (portrait) {
       return (
-        <View style={[styles.sideSeat, { width: sideWidth }, r === 1 && { alignItems: 'flex-end' }]} key={seat}>
+        <SeatBox button={seatButton(r)} style={[styles.sideSeat, { width: sideWidth }, r === 1 && { alignItems: 'flex-end' }]} key={seat} testID={`seat-press-${r}`}>
           <View onLayout={measureP(r === 1 ? 'right' : 'left')} testID={`plate-seat-${r}`}>{badge}</View>
           {fit.hands && hidden}
           <MeldsAndFlowers player={p} size={fit.meld} flowerSize={fit.meld} flat={fit.flat} style={meldStyle} />
           {p.discards.length > 0 && <DiscardPool tiles={p.discards} size={pool} perRow={sidePerRow} align={align} latest={latestFor(seat)} enterFrom={slideFrom(r)} keepRows={r === 1 ? fit.keep.right : fit.keep.left} testID={`pond-seat-${r}`} />}
-        </View>
+        </SeatBox>
       );
     }
     const col = fitSideColumn({
@@ -244,11 +310,13 @@ export function Felt({
     );
     return (
       // The left seat is stretched by the felt's row; the right one shares a column with the coach and takes what is left of it.
-      <View
+      <SeatBox
+        button={seatButton(r)}
         ref={r === 3 ? leftRef : undefined}
         style={[styles.sideSeat, { width: sideWidth }, r === 1 && { alignItems: 'flex-end', flex: 1, minHeight: 0 }, r === 3 && leftClear > 0 && { paddingBottom: leftClear }]}
         key={seat}
         onLayout={r === 3 ? onLeftLayout : measure(`col${r}`)}
+        testID={`seat-press-${r}`}
       >
         <View onLayout={measure(`plate${r}`)}>{badge}</View>
         {col.showHand && hidden}
@@ -269,7 +337,7 @@ export function Felt({
             {body}
           </View>
         )}
-      </View>
+      </SeatBox>
     );
   };
 
@@ -434,6 +502,7 @@ const styles = StyleSheet.create({
   // frame late) is cut at the felt, never drawn over my pond.
   portraitCross: { overflow: 'hidden', paddingVertical: CROSS_PAD },
   sideSeat: { gap: SIDE_GAP },
+  seatPressed: { opacity: 0.85 },
   sideBody: { flex: 1, minHeight: 0, alignSelf: 'stretch' },
   sideBodyContent: { gap: SIDE_GAP },
   centerCol: { flex: 1, alignItems: 'center', gap: 6, minWidth: 0 },

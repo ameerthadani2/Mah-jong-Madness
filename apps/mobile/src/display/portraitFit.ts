@@ -10,8 +10,9 @@
  *    then goes (the HUD still shows the wall count, and the seat plates' rings whose turn it is);
  * 3. the ponds' and the opponents' melds' tiles get smaller, the same size for every seat, down to MIN_POND and MIN_MELD;
  * 4. the side seats' rows of face-down tiles go (what they hold is what their melds leave of sixteen);
- * 5. each opponent's pond keeps only its newest rows, at least one: a chip in the first place left says how many earlier
- *    discards are not shown ("+12"), so the newest discard of every seat is always on the felt;
+ * 5. each opponent's pond keeps only its newest rows, at least one, filled with its newest discards after a chip that says
+ *    how many earlier ones are not shown ("+12"), so the newest discard of every seat is always on the felt, and every
+ *    discard is one tap away (a tap on the seat opens the table's discards: components/table/DiscardsSheet.tsx);
  * 6. my pond keeps only its newest rows too, at least one, with the same chip;
  * 7. the opponents' melds lie flat (no tile on its side to mark the claimed one) and get smaller still, down to
  *    MIN_FLAT_MELD, so two share a row of a narrow side column (a 320 px phone with four melds at a side seat).
@@ -102,8 +103,9 @@ export interface PortraitFeltFit {
 
 /**
  * Which of a pond's tiles are drawn when it keeps only its newest `keepRows` rows (the portrait felt, fitPortraitFelt below):
- * the rows stay as the whole pond lays them out, and a chip takes the first place left, so the newest discard is always
- * drawn. A full first row gives up its oldest tile to the chip; a short one (the newest row, alone) has room beside it.
+ * the kept rows are filled with the newest discards, a chip in the first place saying how many earlier ones are not drawn,
+ * so the newest discard is always drawn and the rows show as many as they hold (the whole pond is one tap away, in the
+ * table's discards sheet). A pond that keeps all its rows lays them out from its first discard.
  */
 export function pondRowsShown<T>(tiles: readonly T[], perRow: number, keepRows?: number): { rows: T[][]; earlier: number } {
   const n = Math.max(1, perRow);
@@ -111,9 +113,12 @@ export function pondRowsShown<T>(tiles: readonly T[], perRow: number, keepRows?:
   for (let i = 0; i < tiles.length; i += n) rows.push(tiles.slice(i, i + n));
   const keep = keepRows !== undefined && Number.isFinite(keepRows) ? Math.max(1, Math.floor(keepRows)) : rows.length;
   if (keep >= rows.length) return { rows, earlier: 0 };
-  const shown = rows.slice(rows.length - keep);
-  if (shown[0].length >= n) shown[0] = shown[0].slice(1);
-  return { rows: shown, earlier: tiles.length - shown.reduce((s, r) => s + r.length, 0) };
+  // The chip takes the first place: the rows hold the newest keep × n − 1 discards (at least the newest one).
+  const shown = tiles.slice(tiles.length - Math.max(1, keep * n - 1));
+  const first = Math.max(1, n - 1);
+  const kept: T[][] = [shown.slice(0, first)];
+  for (let i = first; i < shown.length; i += n) kept.push(shown.slice(i, i + n));
+  return { rows: kept, earlier: tiles.length - shown.length };
 }
 
 /** Rows of `count` tiles at `perRow` a row. */

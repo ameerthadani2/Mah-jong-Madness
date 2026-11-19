@@ -36,8 +36,10 @@
  * pond, my hand or a claim or discard button is not whole on screen; a button covers a discard; something lies over the
  * top edge of a tile of my hand; a "+N" chip for earlier discards is cut; or the coach's press reaches over my pond or my
  * hand in portrait, or its bar meets my hand in landscape), including the felt runs at Large and Extra-large tiles and text at 390x844, 360x740, 375x667, 360x640 and
- * 320x568, and at Extra-large tiles at 568x320 and 667x375 (<size>-felt-*.png), or the end-of-hand result sheet is not a
- * named modal dialog. The preview, the exit sheet, Home's
+ * 320x568, and at Extra-large tiles at 568x320 and 667x375 (<size>-felt-*.png), or the table's discards sheet fails
+ * discardsSheetCheck once in each of those hands (a tap on an opponent's seat opens a named modal dialog with that seat first
+ * and every one of its discards, those behind a "+N" chip too; <size>-felt-*-discards.png), or the end-of-hand result sheet
+ * is not a named modal dialog. The preview, the exit sheet, Home's
  * replace-table question and the result sheet also fail on the keyboard
  * (dialogKeys): Tab ten times and Shift+Tab four times must stay on the dialog's own controls, never its scrim or the
  * page behind, and the page behind must be inert while the dialog is open and not after.
@@ -444,6 +446,72 @@ async function feltSettled(page) {
   return found;
 }
 
+/**
+ * The table's discards sheet, from an opponent's seat on the felt (`r`: 1 right, 2 across, 3 left): a tap on the seat opens
+ * it, a named modal dialog with that seat first and every one of its discards (those the felt shows and those its "+N" chip
+ * counts), the newest last; dialogKeys passes on it; Escape closes it and the table is no longer inert.
+ */
+async function discardsSheetCheck(page, r, shot) {
+  const who = r === 1 ? 'the right seat' : r === 2 ? 'the across seat' : 'the left seat';
+  const bad = [];
+  const felt = await page.evaluate((r) => {
+    const pond = document.querySelector(`[data-testid="pond-seat-${r}"]`);
+    const tiles = pond ? [...pond.querySelectorAll('[data-testid^="tile-"]')].filter((t) => t.getBoundingClientRect().width > 0) : [];
+    const chip = pond?.querySelector('[data-testid="pond-earlier"]');
+    return { shown: tiles.length, earlier: chip ? Number(chip.textContent.replace(/\D/g, '')) : 0, newest: tiles.length ? tiles[tiles.length - 1].dataset.testid : null };
+  }, r);
+  const seat = await visible(page, `[data-testid="seat-press-${r}"]`);
+  if (!seat || (await seat.getAttribute('role')) !== 'button') return [`${who} is not a button that opens the table's discards`];
+  await tap(page, seat);
+  let open = false;
+  for (let t = 0; t < 30 && !open; t++) {
+    await page.waitForTimeout(100);
+    open = !!(await visible(page, '[data-testid="discards-sheet"]'));
+  }
+  if (!open) return [`a tap on ${who} did not open the table's discards`];
+  await page.waitForTimeout(400);
+  if (shot) await page.screenshot({ path: shot });
+  const sheet = await page.evaluate((r) => {
+    const s = document.querySelector('[data-testid="discards-sheet"]');
+    const d = s?.closest('[role="dialog"]');
+    const pond = document.querySelector(`[data-testid="discards-pond-${r}"]`);
+    const tiles = pond ? [...pond.querySelectorAll('[data-testid^="tile-"]')] : [];
+    const box = s ? s.getBoundingClientRect() : null;
+    const off = box && (box.left < -1 || box.top < -1 || box.right > innerWidth + 1 || box.bottom > innerHeight + 1);
+    return { modal: d?.getAttribute('aria-modal') ?? null, name: d?.getAttribute('aria-label') ?? '', n: tiles.length, last: tiles.length ? tiles[tiles.length - 1].dataset.testid : null, first: document.querySelector('[data-testid^="discards-seat-"]')?.dataset.testid ?? null, off };
+  }, r);
+  if (sheet.modal !== 'true' || !sheet.name.trim()) bad.push(`the discards sheet is not a named modal dialog (aria-modal ${sheet.modal}, name "${sheet.name}")`);
+  if (sheet.off) bad.push('the discards sheet runs off the screen');
+  if (sheet.first !== `discards-seat-${r}`) bad.push(`the discards sheet does not start with ${who}`);
+  if (sheet.n !== felt.shown + felt.earlier) bad.push(`the discards sheet shows ${sheet.n} of ${who}'s ${felt.shown + felt.earlier} discards`);
+  if (felt.newest && sheet.last !== felt.newest) bad.push(`the discards sheet does not end with ${who}'s newest discard`);
+  bad.push(...(await dialogKeys(page)).map((f) => `the discards sheet: ${f}`));
+  await page.keyboard.press('Escape');
+  for (let t = 0; t < 30 && open; t++) {
+    await page.waitForTimeout(100);
+    open = !!(await visible(page, '[data-testid="discards-sheet"]'));
+  }
+  if (open) bad.push('Escape did not close the discards sheet');
+  if (await pageInert(page)) bad.push('the table stays inert after the discards sheet closed');
+  return bad.map((f) => `${f} (${felt.shown} shown, ${felt.earlier} behind the chip)`);
+}
+
+/**
+ * Which opponent's discards sheet to check at this decision: the first seat whose pond has a "+N" chip; with `any`, the
+ * opponent with the most discards (null when none has one yet).
+ */
+const sheetSeat = (page, any) =>
+  page.evaluate((any) => {
+    const ponds = [1, 2, 3].map((r) => {
+      const p = document.querySelector(`[data-testid="pond-seat-${r}"]`);
+      return { r, chip: !!p?.querySelector('[data-testid="pond-earlier"]'), n: p ? p.querySelectorAll('[data-testid^="tile-"]').length : 0 };
+    });
+    const chipped = ponds.find((p) => p.chip);
+    if (chipped) return chipped.r;
+    const most = [...ponds].sort((a, b) => b.n - a.n)[0];
+    return any && most.n > 0 ? most.r : null;
+  }, any);
+
 /** Problems found at more than one decision, said once each with the number of decisions they were seen at. */
 function tally(found) {
   const n = new Map();
@@ -454,12 +522,15 @@ function tally(found) {
 /**
  * Plays my seat through one whole hand (until the result sheet, or `untilDiscards` of my discards), passing every claim
  * and discarding the lowest, right-most tile (the drawn one in landscape), and runs coachCheck and feltCheck at each of my
- * decisions: my turn before and after a tile is picked, a win, and each claim chance. `onDiscard(n)` runs after my nth
- * discard.
+ * decisions: my turn before and after a tile is picked, a win, and each claim chance; and discardsSheetCheck once (a
+ * screenshot of the sheet to `sheetShot`, when given). `onDiscard(n)` runs after my nth discard.
  */
-async function playCoachedHand(page, { onDiscard = async () => undefined, untilDiscards = Infinity, limitMs = 240000 } = {}) {
+async function playCoachedHand(page, { onDiscard = async () => undefined, untilDiscards = Infinity, limitMs = 240000, sheetShot = null } = {}) {
   const found = [];
   let discards = 0;
+  // The table's discards sheet, once a hand: at my first turn where an opponent's pond has a "+N" chip, or else at my
+  // turn after my sixth discard (discardsSheetCheck).
+  let sheetChecked = false;
   const started = Date.now();
   while (Date.now() - started < limitMs && discards < untilDiscards) {
     if ((await visible(page, '[data-testid="result-sheet"]')) || (await visible(page, 'text=/^(Next hand|下一局)/'))) break;
@@ -487,6 +558,13 @@ async function playCoachedHand(page, { onDiscard = async () => undefined, untilD
     if (await visible(page, '[data-testid="hand-discard"]')) {
       await page.waitForTimeout(250);
       found.push(...(await coachSettled(page, true)), ...(await feltSettled(page)));
+      if (!sheetChecked) {
+        const r = await sheetSeat(page, discards >= 6);
+        if (r !== null) {
+          sheetChecked = true;
+          found.push(...(await discardsSheetCheck(page, r, sheetShot)));
+        }
+      }
       const boxes = await page.$$eval('[data-testid="hand-discard"] [data-testid^="tile-"]', (els) => els.map((e) => { const r = e.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; }));
       const hand = boxes.filter((b) => b.w > 0).sort((a, b) => b.y - a.y || b.x - a.x);
       if (hand[0]) await page.mouse.click(hand[0].x + hand[0].w / 2, hand[0].y + hand[0].h / 2);
@@ -989,6 +1067,7 @@ async function runFelt(browser, port, [[w, h], locale, tileScale, textScale]) {
     onDiscard: async (n) => {
       if (n === 6) await page.screenshot({ path: path.join(out, `${tag}-${name}.png`) });
     },
+    sheetShot: path.join(out, `${tag}-${name}-discards.png`),
   });
   const finished = !!(await visible(page, '[data-testid="result-sheet"]'));
   await ctx.close();

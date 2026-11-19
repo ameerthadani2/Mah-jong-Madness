@@ -168,18 +168,21 @@ describe('a pond keeping its newest rows', () => {
     expect(pondRowsShown(tiles(9), 4, 3).earlier).toBe(0);
   });
 
-  it('keeps the newest rows, the chip taking the oldest place left, so the newest discard is always drawn', () => {
-    // A full first row gives up its oldest tile to the chip.
+  it('fills the rows it keeps with the newest discards, after the chip, so the newest is always drawn', () => {
+    // The chip takes the first place; the kept rows hold the newest keep × 4 − 1 discards.
     expect(pondRowsShown(tiles(8), 4, 1)).toEqual({ rows: [[5, 6, 7]], earlier: 5 });
-    expect(pondRowsShown(tiles(10), 4, 2)).toEqual({ rows: [[5, 6, 7], [8, 9]], earlier: 5 });
-    // The newest row alone and short: the chip goes beside it.
-    expect(pondRowsShown(tiles(9), 4, 1)).toEqual({ rows: [[8]], earlier: 8 });
+    expect(pondRowsShown(tiles(10), 4, 2)).toEqual({ rows: [[3, 4, 5], [6, 7, 8, 9]], earlier: 3 });
+    // The pond's own newest row is short (its ninth discard alone): the kept row still shows three.
+    expect(pondRowsShown(tiles(9), 4, 1)).toEqual({ rows: [[6, 7, 8]], earlier: 6 });
     for (const n of [1, 5, 12, 23]) for (const keep of [1, 2, 3]) {
       const { rows, earlier } = pondRowsShown(tiles(n), 4, keep);
       const drawn = rows.flat();
       expect(drawn[drawn.length - 1], `${n} ${keep}`).toBe(n - 1);
       expect(earlier + drawn.length).toBe(n);
-      // With the chip, no row is wider than the pond's.
+      // The newest discards, in order.
+      expect(drawn).toEqual(tiles(n).slice(earlier));
+      // Behind a chip, every kept row is full; with the chip, no row is wider than the pond's.
+      if (earlier > 0) expect(drawn.length).toBe(keep * 4 - 1);
       rows.forEach((r, i) => expect(r.length + (i === 0 && earlier > 0 ? 1 : 0)).toBeLessThanOrEqual(4));
     }
   });
