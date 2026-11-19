@@ -280,6 +280,30 @@ describe('pong fixed points (T4)', () => {
   });
 });
 
+describe('the answer carried to the next hands for the Fair play count', () => {
+  it('is the one worth most now, each less DRIFT_RATE for every ms since it was taken: on a phone whose clock runs slow, the last hand’s, not the oldest', () =>
+    scenario((i) => {
+      // The phone's clock runs 200 ppm slow, so every answer puts the phone's clock a little less ahead of
+      // the table's than the one before: by its own figure, the oldest answer is always the strongest.
+      let t0: number | null = null;
+      const w = wire({ code: `PB${i}`, rules: withRules({ handsPerMatch: 2, turnSeconds: 15, timeBankSeconds: 30 }), intermissionSeconds: 1_800, devSkew: (now) => -(now - (t0 ??= now)) * 0.000_2 });
+      const carried = () => (w.c as unknown as { bestPong: { at: number } | null }).bestPong;
+      for (let g = 0; g < 20_000 && w.c.state.audits.length < 1; g++) w.step();
+      need(w.c.state.audits.length === 1 && w.c.state.view !== null);
+      const h0 = w.c.state.view!.handNumber;
+      const first = plays(w.c).find((p) => p.hand === h0)?.pongs ?? [];
+      need(first.length > 0 && carried() !== null);
+      expect(first.map((k) => k.at)).toContain(carried()!.at);
+      for (let g = 0; g < 20_000 && w.c.state.audits.length < 2; g++) w.step();
+      need(w.c.state.audits.length === 2 && w.c.state.view !== null && w.c.state.view.handNumber !== h0);
+      const second = plays(w.c).find((p) => p.hand === w.c.state.view!.handNumber)?.pongs ?? [];
+      need(second.length > 0);
+      // Half an hour on, the first hand's answers are worth DRIFT_RATE × 30 min less, more than the 200 ppm the
+      // phone's clock lost: the next hand's first turns are measured against the second hand's answer.
+      expect(second.map((k) => k.at)).toContain(carried()!.at);
+    }));
+});
+
 describe('the round trip is published at most every 10 s (T5)', () => {
   it('60 pongs in 60 s cause at most 7 state updates', () => {
     const clock = { now: 20_000 };

@@ -529,7 +529,7 @@ export class TableClient {
   private heardOnLink = false;
   /** The strongest fixed point of the hands audited in this era, run of the app and run of this device's clock (see `lateAnchor`). */
   private bestAnchor: LateScope['best'] = null;
-  /** The same, of their pongs alone: what the Fair play count measures the next hand's first turns against. */
+  /** The same, of their pongs alone, each weighed less `DRIFT_RATE` for every ms since it was taken: what the Fair play count measures the next hand's first turns against. */
   private bestPong: LateScope['best'] = null;
   /** When this app last ran: it handled a frame, checked the link, bound a link or sent a move. */
   private ranAt: number | null = null;
@@ -1847,20 +1847,25 @@ export class TableClient {
         // The strongest fixed point of this era, run of the app and run of this device's clock, for the
         // hands after this one: each worth no more than its round trip allows against the least arrival
         // offset known now (see `fixedPoint`), and kept with its round trip to be capped again later.
+        // The pongs are weighed as they are used, each less `DRIFT_RATE` for every ms since it was taken:
+        // on a phone whose clock runs a little slow the oldest answer has the highest figure of its own,
+        // and kept for hours it would make the first turns of a hand look late to the Fair play count.
         {
           const seg = this.seg();
-          const ref = this.refAt(this.now());
-          const strongest = (best: LateScope['best'], points: ClockAnchor[]): LateScope['best'] => {
+          const at = this.now();
+          const ref = this.refAt(at);
+          const strongest = (best: LateScope['best'], points: ClockAnchor[], aged: boolean): LateScope['best'] => {
+            const worth = (b: NonNullable<LateScope['best']>) => b.value - (aged ? DRIFT_RATE * Math.max(0, at - b.at) : 0);
             let out = best && best.era === this.era && best.seg === seg ? best : null;
             for (const k of points) {
               if (k.era !== this.era || k.run !== this.runId || (k.seg ?? 0) !== seg) continue;
-              const value = fixedPoint(k, ref);
-              if (!out || value > out.value) out = { era: this.era, run: this.runId, seg, value, at: k.at, ...(typeof k.fat === 'number' ? { rtt: k.fat - k.at } : {}) };
+              const b = { era: this.era, run: this.runId, seg, value: fixedPoint(k, ref), at: k.at, ...(typeof k.fat === 'number' ? { rtt: k.fat - k.at } : {}) };
+              if (!out || worth(b) > worth(out)) out = b;
             }
             return out;
           };
-          this.bestAnchor = strongest(this.bestAnchor, anchors);
-          this.bestPong = strongest(this.bestPong, this.plays.find((p) => p.hand === h)?.pongs ?? []);
+          this.bestAnchor = strongest(this.bestAnchor, anchors, false);
+          this.bestPong = strongest(this.bestPong, this.plays.find((p) => p.hand === h)?.pongs ?? [], true);
         }
         if (typeof end.now === 'number') this.lastStamp = { at: end.at, now: end.now, epoch: this.epoch, era: this.era };
         const { status, failures, caveats } = check;
