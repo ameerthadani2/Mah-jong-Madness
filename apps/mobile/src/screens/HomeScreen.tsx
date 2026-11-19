@@ -24,7 +24,7 @@ import { learnSummary } from '../logic/learn';
 import { botLabel, rulesSummary } from '../logic/rules-text';
 import { useT } from '../i18n';
 import { colors, fonts, nameFont, space } from '../theme';
-import { Button, Card, Chip, fontFor, GemCounter, IconButton, P, Pill, Row } from '../components/Ui';
+import { Button, Card, Chip, fontFor, GemCounter, IconButton, P, Pill, Row, webPress } from '../components/Ui';
 import { AvatarPlate, avatarName } from '../components/Avatars';
 import { useOwnedEquipped } from '../monetisation/useEquipped';
 import { slopFor } from '../components/table/layout';
@@ -206,7 +206,7 @@ export function HomeScreen() {
         {/* No icon, and the short label on a portrait phone: the card's button is as narrow as 73 pt there, and a clipped label is worse than a short one. */}
         <Button testID="open-quickmatch" title={t(compact && !landscape ? 'quickmatch.buttonShort' : 'quickmatch.button')} accessibilityLabel={`${t('quickmatch.button')}. ${t('quickmatch.buttonHint')}`} small={compact} large={tablet} onPress={goQuickMatch} />
         {!compact && (
-          <Pressable onPress={goOnline} hitSlop={slopFor(LINK_HEIGHT)} style={styles.link} accessibilityRole="link" accessibilityLabel={t('home.clubs.quickTable')}>
+          <Pressable onPress={goOnline} hitSlop={slopFor(LINK_HEIGHT)} style={[styles.link, webPress(LINK_HEIGHT)]} accessibilityRole="link" accessibilityLabel={t('home.clubs.quickTable')}>
             <Icon name="users" size={18} />
             <Text style={[styles.linkText, fontFor(t('home.clubs.quickTable'), fonts.uiBold)]}>{t('home.clubs.quickTable')}</Text>
           </Pressable>
@@ -235,7 +235,7 @@ export function HomeScreen() {
       <View style={styles.cardFoot}>
         <Button testID="open-learn" title={t('home.learn.open')} kind="premium" small={compact} large={tablet} onPress={() => app.go({ name: 'learn' })} />
         {!compact && (
-          <Pressable onPress={() => app.go({ name: 'daily' })} hitSlop={slopFor(LINK_HEIGHT)} style={styles.link} accessibilityRole="link" accessibilityLabel={dailyDone ? t('home.learn.dailyDone') : t('home.learn.daily')}>
+          <Pressable onPress={() => app.go({ name: 'daily' })} hitSlop={slopFor(LINK_HEIGHT)} style={[styles.link, webPress(LINK_HEIGHT)]} accessibilityRole="link" accessibilityLabel={dailyDone ? t('home.learn.dailyDone') : t('home.learn.daily')}>
             <Icon name={dailyDone ? 'check' : 'scroll'} size={18} color={colors.cta} />
             <Text style={[styles.linkText, fontFor(t('home.learn.daily'), fonts.uiBold)]}>{dailyDone ? t('home.learn.dailyDone') : t('home.learn.daily')}</Text>
           </Pressable>

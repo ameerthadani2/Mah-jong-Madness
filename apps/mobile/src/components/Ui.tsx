@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Pressable, StyleSheet, Text, TextInput, View, type StyleProp, type TextStyle, type ViewStyle } from 'react-native';
+import { Platform, Pressable, StyleSheet, Text, TextInput, View, type StyleProp, type TextStyle, type ViewStyle } from 'react-native';
 import { atLimit, HOLD_DELAY_MS, HOLD_REPEAT_MS, holdMultiplier, stepped, typedValue } from '../logic/stepper';
 import { colors, fonts, hasCJK, pillTones, radius, space, type PillTone } from '../theme';
 import { Icon, type IconName } from './Icons';
@@ -106,6 +106,19 @@ const KIND: Record<ButtonKind, { fill: string; light: string; shelf: string; tex
 };
 
 /** Chunky two-tone button: ink outline, lighter top tone, hard shelf; drops onto the shelf when pressed. */
+/**
+ * The web ignores hitSlop: there a control drawn `h` px tall is padded to a 44 px press, with an equal negative margin
+ * that keeps its place in the layout (as IconButton is), and at least 44 px tall should its content be shorter than `h`
+ * (a box's own minHeight counts its padding). `up`: all of it above the control, none below, so a control at the bottom
+ * of a scrolling box never makes the box scroll (a box that scrolls by a pixel is a Tab stop in Chrome). A phone keeps
+ * its hitSlop.
+ */
+export function webPress(h: number, up = false): ViewStyle | undefined {
+  const pad = Math.ceil((MIN_TOUCH - h) / 2);
+  if (Platform.OS !== 'web' || pad <= 0) return undefined;
+  return up ? { paddingTop: 2 * pad, marginTop: -2 * pad, minHeight: MIN_TOUCH } : { paddingVertical: pad, marginVertical: -pad, minHeight: MIN_TOUCH };
+}
+
 export function Button({
   title,
   onPress,
@@ -144,7 +157,9 @@ export function Button({
       accessibilityRole="button"
       accessibilityLabel={accessibilityLabel ?? title}
       accessibilityState={{ disabled: !!disabled }}
-      style={[{ opacity: disabled ? 0.5 : 1 }, style]}
+      // A small button is 42 px (its face, shelf and 3 px border): 2 px more above it on the web (it often ends a
+      // scrolling column, as on the result sheet).
+      style={[{ opacity: disabled ? 0.5 : 1 }, webPress(minHeight + shelf + 6, true), style]}
     >
       {({ pressed }) => (
         <View style={{ paddingTop: pressed ? shelf : 0 }}>
@@ -338,6 +353,9 @@ export function Toggle({ label, value, onChange }: { label: string; value: boole
   );
 }
 
+/** The stepper's value, a line of this height (tap it to type a value). */
+const STEP_TAP_H = 24;
+
 export function Stepper({ label, value, onChange, step = 1, min = 0, max = 9999, format }: { label: string; value: number; onChange: (v: number) => void; step?: number; min?: number; max?: number; format?: (v: number) => string }) {
   const limits = { min, max, step };
   // The latest value and callback, for the repeat timer of a held button.
@@ -401,7 +419,7 @@ export function Stepper({ label, value, onChange, step = 1, min = 0, max = 9999,
             style={[styles.stepValue, styles.stepInput]}
           />
         ) : (
-          <Pressable onPress={() => setTyping(String(value))} hitSlop={slopFor(24, 4)} accessibilityRole="button" accessibilityLabel={`${label}: ${shown}`} accessibilityHint={t('common.typeValue')}>
+          <Pressable onPress={() => setTyping(String(value))} hitSlop={slopFor(STEP_TAP_H, 4)} style={webPress(STEP_TAP_H)} accessibilityRole="button" accessibilityLabel={`${label}: ${shown}`} accessibilityHint={t('common.typeValue')}>
             <Text style={[styles.stepValue, styles.stepTap, fontFor(shown, fonts.display)]}>{shown}</Text>
           </Pressable>
         )}
@@ -421,11 +439,16 @@ export const CHIP_HEIGHT = 34;
  */
 export function Chip({ label, selected, onPress, locked, dark, testID }: { label: string; selected?: boolean; onPress?: () => void; locked?: boolean; dark?: boolean; testID?: string }) {
   return (
-    <Pressable testID={testID} onPress={onPress} hitSlop={slopFor(CHIP_HEIGHT, 4)} accessibilityRole="button" accessibilityLabel={locked ? t('common.lockedChip', { label }) : label} accessibilityState={{ selected: !!selected }} aria-selected={!!selected} style={({ pressed }) => [styles.chip, dark && styles.chipDark, selected && styles.chipOn, pressed && { transform: [{ translateY: 1 }] }]}>
-      {locked && <Icon name="lock" size={15} />}
-      <Text numberOfLines={1} style={[styles.chipText, fontFor(label, fonts.uiBold), dark && !selected && { color: '#FFFFFF' }]}>
-        {label}
-      </Text>
+    // The press is the chip, padded to 44 px on the web (webPress); the chip itself is drawn inside it, at least 44 wide.
+    <Pressable testID={testID} onPress={onPress} hitSlop={slopFor(CHIP_HEIGHT, 4)} accessibilityRole="button" accessibilityLabel={locked ? t('common.lockedChip', { label }) : label} accessibilityState={{ selected: !!selected }} aria-selected={!!selected} style={webPress(CHIP_HEIGHT)}>
+      {({ pressed }) => (
+        <View style={[styles.chip, dark && styles.chipDark, selected && styles.chipOn, pressed && { transform: [{ translateY: 1 }] }]}>
+          {locked && <Icon name="lock" size={15} />}
+          <Text numberOfLines={1} style={[styles.chipText, fontFor(label, fonts.uiBold), dark && !selected && { color: '#FFFFFF' }]}>
+            {label}
+          </Text>
+        </View>
+      )}
     </Pressable>
   );
 }
@@ -435,21 +458,27 @@ export function Chip({ label, selected, onPress, locked, dark, testID }: { label
  * (`diamondsOwed`): the balance can then be below zero, so the capsule turns red, prints a real
  * minus sign, and its label says how many diamonds are owed instead of reading a bare number.
  */
+const GEM_H = 40;
+
 export function GemCounter({ amount, owed, onPress, testID }: { amount: number; owed?: number; onPress?: () => void; testID?: string }) {
   const view = gemCounter(t, amount, owed);
   return (
-    <Pressable testID={testID} onPress={onPress} hitSlop={6} accessibilityRole="button" accessibilityLabel={view.label} style={({ pressed }) => [styles.gemWrap, pressed && { transform: [{ translateY: 2 }] }]}>
-      <View style={[styles.gemPill, view.owed && styles.gemPillOwed]}>
-        <StrokeText style={{ fontSize: 17 }} strokeWidth={1.5} drop={1}>
-          {view.text}
-        </StrokeText>
-      </View>
-      <View style={styles.gemIcon}>
-        <Icon name="gem" size={30} />
-      </View>
-      {onPress && (
-        <View style={styles.gemPlus}>
-          <Icon name="plus" size={16} />
+    <Pressable testID={testID} onPress={onPress} hitSlop={6} accessibilityRole="button" accessibilityLabel={view.label} style={webPress(GEM_H)}>
+      {({ pressed }) => (
+        <View style={[styles.gemWrap, pressed && { transform: [{ translateY: 2 }] }]}>
+          <View style={[styles.gemPill, view.owed && styles.gemPillOwed]}>
+            <StrokeText style={{ fontSize: 17 }} strokeWidth={1.5} drop={1}>
+              {view.text}
+            </StrokeText>
+          </View>
+          <View style={styles.gemIcon}>
+            <Icon name="gem" size={30} />
+          </View>
+          {onPress && (
+            <View style={styles.gemPlus}>
+              <Icon name="plus" size={16} />
+            </View>
+          )}
         </View>
       )}
     </Pressable>
@@ -529,13 +558,13 @@ const styles = StyleSheet.create({
   toggleTop: { position: 'absolute', top: 0, left: 0, right: 0, height: '45%', backgroundColor: '#DDE2F0' },
   knob: { width: 22, height: 22, borderRadius: 11, backgroundColor: '#FFFFFF', borderWidth: 2.5, borderColor: colors.ink },
   stepValue: { color: colors.ink, fontSize: 18, minWidth: 64, textAlign: 'center' },
-  stepTap: { textDecorationLine: 'underline', textDecorationStyle: 'dotted' },
+  stepTap: { textDecorationLine: 'underline', textDecorationStyle: 'dotted', lineHeight: STEP_TAP_H },
   stepInput: { fontFamily: fonts.display, backgroundColor: '#FFFFFF', borderWidth: 2, borderColor: colors.ink, borderRadius: 8, paddingVertical: 2, paddingHorizontal: 4, width: 96 },
-  chip: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: colors.creamLight, borderWidth: 2, borderColor: colors.ink, paddingHorizontal: 11, paddingVertical: 5, borderRadius: 999, borderBottomWidth: 4, minHeight: CHIP_HEIGHT },
+  chip: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, backgroundColor: colors.creamLight, borderWidth: 2, borderColor: colors.ink, paddingHorizontal: 11, paddingVertical: 5, borderRadius: 999, borderBottomWidth: 4, minHeight: CHIP_HEIGHT, minWidth: MIN_TOUCH },
   chipDark: { backgroundColor: 'rgba(16,20,47,0.55)' },
   chipOn: { backgroundColor: colors.gold },
   chipText: { color: colors.ink, fontSize: 13 },
-  gemWrap: { flexDirection: 'row', alignItems: 'center', paddingLeft: 14, height: 40 },
+  gemWrap: { flexDirection: 'row', alignItems: 'center', paddingLeft: 14, height: GEM_H },
   gemPill: { minWidth: 76, height: 30, borderRadius: 15, borderWidth: 3, borderColor: colors.ink, backgroundColor: 'rgba(16,20,47,0.55)', justifyContent: 'center', paddingLeft: 22, paddingRight: 24 },
   gemPillOwed: { backgroundColor: colors.dangerShelf },
   gemIcon: { position: 'absolute', left: 0, top: 4 },

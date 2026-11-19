@@ -14,6 +14,7 @@ import { LegalScreen } from '../legal/LegalScreen';
 import { colors, fonts } from '../theme';
 import { useInertPage } from './Scrim';
 import { fontFor } from './Ui';
+import { MIN_TOUCH } from './table/layout';
 import { Icon } from './Icons';
 
 const LEGAL_ENV = readLegalEnv();
@@ -45,7 +46,9 @@ export function LegalLinks({ style, dark }: { style?: StyleProp<ViewStyle>; dark
   const { t } = useT();
   const { open, sheet } = useLegalSheet();
   const link = (doc: LegalDoc, label: string) => (
-    <Pressable testID={`open-${doc}`} accessibilityRole="link" onPress={() => open(doc)} hitSlop={8} style={styles.link}>
+    // The web ignores hitSlop: there the link's line is 44 px tall. It ends a page or a sheet, so it is not padded past
+    // its place (Ui.tsx webPress), which could make the box around it scroll.
+    <Pressable testID={`open-${doc}`} accessibilityRole="link" onPress={() => open(doc)} hitSlop={8} style={[styles.link, Platform.OS === 'web' && { minHeight: MIN_TOUCH }]}>
       <Text style={[styles.linkText, dark && { color: '#FFFFFF' }, fontFor(label, fonts.uiBold)]}>{label}</Text>
     </Pressable>
   );

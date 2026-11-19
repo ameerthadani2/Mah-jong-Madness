@@ -22,7 +22,8 @@
  * title is not the app's name in the page's language (Mahjong Mania; 麻將狂熱 in zh-TW, at Home and at the table)), or the
  * leaderboard screen (opened from Learn without a server, in English, zh-TW and Extra-large text: <size>-leaderboards.png,
  * -leaderboards-zh.png, -leaderboards-xl.png) does not show its offline state, clips text or has a choice under 44 px,
- * a table HUD icon takes a press smaller than 44 x 44 px, the Shop's Looks tab cuts a description (<size>-shop-looks.png),
+ * a table HUD icon takes a press smaller than 44 x 44 px, a control on Home (in English and in zh-TW) or anywhere in
+ * Settings takes a press smaller than 44 x 44 px, the Shop's Looks tab cuts a description (<size>-shop-looks.png),
  * or a seat name is cut at a table in Traditional Chinese (each viewport at Normal text, and the portrait ones again at
  * Extra-large text: <size>-table-zh.png, <size>-table-zh-xl.png at every viewport; the hand tiles' size is logged as a note),
  * or the Shop's try-on preview fails its checks (runPreview below: <size>-preview-<kind>.png and -zh.png, at every
@@ -168,6 +169,28 @@ async function homeFit(page) {
       if (scroller && scroller.scrollHeight > scroller.clientHeight + 1) bad.push(`the cards run past the bottom edge (${scroller.scrollHeight} in ${scroller.clientHeight})`);
     }
     return bad;
+  });
+}
+
+/**
+ * Every control on the page as it stands (Home, or all of Settings, on screen or scrolled out of view) takes a press of
+ * at least 44 x 44 px. The web ignores hitSlop, so the box itself must be that big: a control drawn smaller is padded
+ * to it, with an equal negative margin that keeps its place (Ui.tsx `webPress`, as IconButton does).
+ */
+async function pressTargets(page) {
+  return page.evaluate(() => {
+    const sel = '[role="button"], button, a[href], [role="link"], [role="tab"], [role="switch"], [role="radio"], [role="checkbox"]';
+    const shown = [...document.querySelectorAll(sel)].filter((e) => {
+      const r = e.getBoundingClientRect();
+      return r.width > 0 && r.height > 0 && !e.closest('[aria-hidden="true"]') && !e.closest('[inert]');
+    });
+    return shown
+      .filter((e) => { const r = e.getBoundingClientRect(); return r.width < 43.5 || r.height < 43.5; })
+      .map((e) => {
+        const r = e.getBoundingClientRect();
+        const name = (e.getAttribute('aria-label') || e.textContent || e.dataset.testid || e.tagName).replace(/\s+/g, ' ').trim().slice(0, 28);
+        return `"${name}" is a ${Math.round(r.width)}x${Math.round(r.height)} px press, under 44`;
+      });
   });
 }
 
@@ -535,6 +558,7 @@ async function runHomeZh(browser, port, [w, h]) {
   if (head.title !== '麻將狂熱') fails.push(`Home (zh-TW): the page title is "${head.title}", not 麻將狂熱`);
   if (head.lang !== 'zh-Hant-TW') fails.push(`Home (zh-TW): the page's lang is "${head.lang}", not zh-Hant-TW`);
   fails.push(...(await homeFit(page)).map((f) => `Home (zh-TW): ${f}`));
+  fails.push(...(await pressTargets(page)).map((f) => `Home (zh-TW): ${f}`));
   // The wordmark reads the Chinese app name (common.appName), whole and on screen.
   const mark = await page.evaluate(() => {
     const els = [...document.querySelectorAll('div[dir="auto"]')].filter((e) => e.children.length === 0 && e.textContent === '麻將狂熱' && e.getBoundingClientRect().width > 0);
@@ -565,6 +589,7 @@ async function run(browser, port, [w, h]) {
   await page.waitForTimeout(800);
   await shot('home');
   fails.push(...(await homeFit(page)).map((f) => `Home (en): ${f}`));
+  fails.push(...(await pressTargets(page)).map((f) => `Home (en): ${f}`));
   if ((await page.title()) !== 'Mahjong Mania') fails.push(`Home (en): the page title is "${await page.title()}", not Mahjong Mania`);
 
   await tapSel(page, '[data-testid="start-match"]', 300);
@@ -721,6 +746,7 @@ async function run(browser, port, [w, h]) {
 
   if ((await tapSel(page, '[data-testid="open-settings"]', 1000)) || (await tapSel(page, 'text=Tester', 1000))) {
     await shot('settings');
+    fails.push(...(await pressTargets(page)).map((f) => `Settings: ${f}`));
     // A switch must say whether it is on: react-native-web drops accessibilityState, so the aria attribute carries it.
     const switches = await page.evaluate(() => [...document.querySelectorAll('[role="switch"]')].map((e) => e.getAttribute('aria-checked')));
     if (switches.length === 0) notes.push('no switch found in Settings');
