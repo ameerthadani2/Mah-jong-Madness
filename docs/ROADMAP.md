@@ -39,3 +39,7 @@ The programme that takes the app from the audited 3.7/10 (`docs/ASSESSMENT.md`) 
 
 ## Later
 - Optional rule variants (七對子, 一條龍, 三色同順, 一炮多響 payment splits); Pinyin/Bopomofo tile labels; spectator seats; colour-blind tile marks; a public engine and verifier release.
+- Fairness, two older red hands the honest batteries still find (both occur on the code before unit 20 too; neither comes from the timing rules):
+  - **A move from one hand played in the next** (`moveInvented`, Hyper with the phone asleep). The phone wakes, a timer owed from the previous hand sends a Pass on the stale view before the queued frames are read, and the host plays it in the next hand's claim window. Fix: a `hand` field on `action`, echoed on its refusal; the host refuses a move for another hand, and the phone files the refusal under that hand.
+  - **The deal ceremony fails after an app restart with kicks** (`myCommitAltered`, `mySecretAltered`, kick-many-play). The seat is opened on another device seconds after the app resumes. Cause not traced yet.
+- Fairness, one at a time and each with its own honest battery, now that a join is followed by a ping answer within a second: retire `RTT_ALLOW_MS`, `LATENCY_SLACK_MS`, `restartClock` and most `appClock` ambers; base the link watch's crawl defences on whether a recent ping was answered; shrink `CLOCK_SKEW_MS` toward 1 s.
