@@ -16,7 +16,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { chooseAction, legalActions, withRules, type Action, type GameState } from '@mjm/engine';
 import { caveatKey, CLOCK_FRAME_MS, LoopbackHub, SILENT_ANSWER_MS, TableClient, TableHost, transportLink, type HostMessage, type SerializedClient } from '../src/index';
 import { LATE_MS } from '../src/clientclock';
-import type { PlayRecord, SeenState } from '../src/clientrecords';
+import { keepSeen, MAX_SEEN, type PlayRecord, type SeenState } from '../src/clientrecords';
 import { Missed, scenario, seededDeals } from './support';
 import { holdTurn, stampOf, T0, wire, type Line, type Wire } from './wire';
 
@@ -1991,6 +1991,26 @@ describe('a flood of states sent again', () => {
   it('the same flood after a turn shown as it was: the record ran over, so the hand is amber with the reason, never green', () => {
     const { w } = scenario((i) => floodAfterTurn(`FN${i}`, false));
     expect(w.verdict()).toEqual({ status: 'partial', failures: [], caveats: ['overflow'] });
+  });
+
+  it('the record keeps the first and the latest copy of a state sent again over one link, and drops the oldest state only when there is no copy to drop', () => {
+    const f = (tc: number, at: number, epoch = 1): SeenState => ({ tc, epoch, era: 0, at, owes: false, deadline: null, timeBank: 0, inBank: false, hash: `h${tc}` });
+    // Turn 0, then turn 5 again and again over one link: a copy between the first and the latest gives way.
+    const copies: PlayRecord = { hand: 0, seen: [f(0, 0), ...Array.from({ length: MAX_SEEN }, (_, i) => f(5, i + 1))], sent: [], ledgerFrom: 0 };
+    keepSeen(copies);
+    expect(copies.seen.length).toBe(MAX_SEEN);
+    expect(copies.seen.map((x) => x.at).slice(0, 3)).toEqual([0, 1, 3]);
+    expect(copies.seen.at(-1)!.at).toBe(MAX_SEEN);
+    expect(copies.overflow).toBe(true);
+    // The same turn over another link is a state of its own: with no copy left to drop, the oldest goes.
+    const links: PlayRecord = { hand: 0, seen: Array.from({ length: MAX_SEEN + 1 }, (_, i) => f(5, i, i)), sent: [], ledgerFrom: 0 };
+    keepSeen(links);
+    expect(links.seen.map((x) => x.at)[0]).toBe(1);
+    expect(links.seen.length).toBe(MAX_SEEN);
+    // Within the limit nothing is dropped, and the record is whole.
+    const few: PlayRecord = { hand: 0, seen: [f(1, 1), f(1, 2), f(1, 3)], sent: [], ledgerFrom: 0 };
+    keepSeen(few);
+    expect([few.seen.length, few.overflow]).toEqual([3, undefined]);
   });
 
   it('honest: the same hand without the flood keeps every state it was shown, and is green', () => {
