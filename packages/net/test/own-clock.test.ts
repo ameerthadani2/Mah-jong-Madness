@@ -6,7 +6,7 @@
  * the table to say so, and a wrong wall clock on the phone does not move it.
  */
 import { describe, expect, it } from 'vitest';
-import { withRules } from '@mjm/engine';
+import { chooseAction, legalActions, withRules, type Action } from '@mjm/engine';
 import { BANK_ROUND_MS, DRIFT_RATE, ownClockFrom } from '../src/clientclock';
 import { ownRun, seatRun, streakEnd } from '../src/clientmoves';
 import type { ClockAnchor, PlayRecord, SeenState } from '../src/clientrecords';
@@ -64,9 +64,20 @@ describe('ownClockFrom: the arithmetic (T17)', () => {
     const at = 106_000;
     const o = ownClock([r0], [pong], best, 10_050, at, SCOPE)!;
     expect(o.turnEnd).toBeCloseTo(95_000 + TURN + Math.min(9_990, 10_050 - 40) - DRIFT_RATE * (at - 50_000), 6);
-    // Of another run of the app, or another run of the device's clock, it does not count.
-    expect(ownClock([r0], [], { ...best, run: 'x' }, 10_050, at, SCOPE)!.turnEnd).toBe(105_080 + TURN);
-    expect(ownClock([r0], [], { ...best, seg: 1 }, 10_050, at, SCOPE)!.turnEnd).toBe(105_080 + TURN);
+    // Of another run of the app, or another run of the device's clock, it does not count: the clock is then placed by
+    // the state's own arrival or the scope's least arrival offset, whichever allows less.
+    expect(ownClock([r0], [], { ...best, run: 'x' }, 10_050, at, SCOPE)!.turnEnd).toBe(95_000 + TURN + 10_050);
+    expect(ownClock([r0], [], { ...best, seg: 1 }, 10_050, at, SCOPE)!.turnEnd).toBe(95_000 + TURN + 10_050);
+  });
+
+  it('with no fixed point, never later than the least arrival offset of the scope allows either: a state held 12 s on its way (no ping answered since a resume) does not buy the screen 12 s', () => {
+    const held = state(10, 117_080, 95_000, 95_000 + TURN);
+    // The frames before it came at once: the scope's least arrival offset is 10 050.
+    const o = ownClock([held], [], null, 10_050, 118_000, SCOPE)!;
+    expect(o.turnEnd).toBe(95_000 + TURN + 10_050);
+    expect(o.bankEnd).toBe(95_000 + TURN + BANK - BANK_ROUND_MS + 10_050);
+    // With no reference yet in the scope, its own arrival alone.
+    expect(ownClock([held], [], null, null, 118_000, SCOPE)!.turnEnd).toBe(117_080 + TURN);
   });
 
   it('a later state that adds time moves the end (a re-armed clock on a rejoin); one that takes time does not', () => {
@@ -187,6 +198,58 @@ describe('the own clock at the table', () => {
         // Read when the phone is first shown the move: within the round trip (1 s), never a minute off.
         for (const c of checks) expect(Math.abs(c.own - c.host)).toBeLessThanOrEqual(1_000 + 50);
       }
+    }));
+
+  it('after the app restarts, with no ping answered in its new run, a turn held 12 s on its way: the screen counts from the least arrival offset of the run, not from the held state’s arrival, so a seat that moves when its screen shows 3 s makes its move', () =>
+    scenario((i) => {
+      const hostOf = (w: ReturnType<typeof wire>) => w.host as unknown as { clocks: Map<number, { base: number }>; banks: number[]; now: () => number };
+      let restarted = -1;
+      let target = -1;
+      let holdUntil = -1;
+      let acted = false;
+      let first: { screen: number; host: number } | null = null;
+      const w: ReturnType<typeof wire> = wire({
+        code: `OH${i}`,
+        botDelayMs: 700,
+        think: (_k, tc) => (tc === target ? Infinity : 600),
+        map: (m, w) => {
+          // From the restart on, the server answers no ping until the held turn is over.
+          if (m.t === 'pong' && restarted >= 0 && (target < 0 || (w.host.game?.turnCounter ?? 0) <= target)) return null;
+          // The seat's first turn at least 3 s after the restart: every frame from its state on waits 12 s.
+          if (restarted >= 0 && target < 0 && w.clock.now >= restarted + 3_000 && m.t === 'state' && w.discardTurn() && w.host.game!.turnCounter === m.view.turnCounter) {
+            target = m.view.turnCounter;
+            holdUntil = w.clock.now + 12_000;
+          }
+          return m;
+        },
+        delay: (_m, now) => (holdUntil > now ? holdUntil - now : 0),
+        onTick: (w) => {
+          const v = w.c.state.view;
+          if (restarted < 0 && v && v.turnCounter > 8 && !w.owes() && v.turnCounter === w.host.game?.turnCounter) {
+            restarted = w.clock.now;
+            w.restart();
+            return;
+          }
+          const s = w.c.localState();
+          if (target < 0 || acted || !s || s.turnCounter !== target || legalActions(s, 0).length === 0) return;
+          const o = w.c.ownClock();
+          const c = hostOf(w).clocks.get(0);
+          if (!o || !c) return;
+          const left = o.bankEnd - w.c.clockNow();
+          first ??= { screen: left, host: c.base + hostOf(w).banks[0] - hostOf(w).now() };
+          if (left > 3_000) return;
+          acted = true;
+          w.c.act(chooseAction(s, 0, { seed: 'p' }) as Action);
+        },
+      });
+      w.finish();
+      need(target >= 0 && first !== null);
+      const f = first as unknown as { screen: number; host: number };
+      // The screen showed the table's own time left (the 12 s hold came off it, within a wire step), never 12 s more.
+      expect(f.screen).toBeLessThanOrEqual(f.host + 500);
+      // The seat made its move: the table played none for it at the held turn.
+      expect(w.judged()).not.toContain(target);
+      expect(acted).toBe(true);
     }));
 
   it('null while the seat owes nothing; with no ping answered (a local table), placed by the deal, never later than the state’s own clock from its arrival', () =>

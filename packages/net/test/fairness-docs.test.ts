@@ -88,6 +88,7 @@ describe('the fair play charter states the late-turn limits the table client use
   it('the screen’s clock never counts to less than the rules’ clock, a later end it showed binds the table, and a restart while a move is owed is amber', () => {
     expect(turnRow).toContain("It never counts to less than the rules' clock your phone tracked. A later end the server shows you binds it: if the table then plays for you before it, the hand fails, even if a later state took the time back.");
     expect(turnRow).toContain("If the server says it restarted while you owed a move, and then plays that move for you, the hand is amber: the time your screen showed before the restart cannot be checked against the server's new clock.");
+    expect(turnRow).toContain('Until a ping is answered after the app restarts or your phone sleeps, it is placed by the quickest frame your phone has had since, so a turn the server holds on its way does not make it show more time.');
   });
 
   it('states how many states of a hand the phone keeps', () => {

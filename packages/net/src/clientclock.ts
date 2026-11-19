@@ -291,8 +291,9 @@ export interface OwnScope {
  * the same fixed points the audit measures the turns against, `PongClock`), each worth
  * what its round trip allows against `ref`, the least arrival offset now (`fixedPoint`), less the drift
  * since it was made; never later than the first state of the streak this device's clock can place,
- * counted from its arrival (by its own stamp); with no fixed point, by that alone. Null when the seat
- * owes no move with a clock, or nothing places the host's clock on this device's.
+ * counted from its arrival (by its own stamp), nor than the least arrival offset of the scope now
+ * (`ref`); with no fixed point, by the smaller of those two. Null when the seat owes no move with a
+ * clock, or nothing places the host's clock on this device's.
  */
 export function ownClockFrom(streak: SeenState[], end: number, points: ClockAnchor[], best: { era: number; run: string; seg: number; value: number; at: number; rtt?: number } | null, ref: number | null, at: number, scope: OwnScope): OwnClock | null {
   const era = streak.length > 0 ? (streak[streak.length - 1].era ?? 0) : 0;
@@ -317,7 +318,11 @@ export function ownClockFrom(streak: SeenState[], end: number, points: ClockAnch
   }
   const first = streak.find((f) => typeof f.now === 'number' && inScope(f));
   const own = first ? (first.atLo ?? first.at) - (first.now as number) : null;
-  const placed = Number.isFinite(offset) ? (own !== null ? Math.min(offset, own) : offset) : own;
+  // Never later than the first state allows counted from its arrival, nor than the least arrival offset of the
+  // scope (`ref`, what the audit measures a state's lateness against when no fixed point bounds it, `lateRef`):
+  // a state held on its way, with no answered ping since a resume or a sleep, cannot buy the screen time.
+  let placed: number | null = Number.isFinite(offset) ? offset : null;
+  for (const x of [own, ref]) if (x !== null) placed = placed === null ? x : Math.min(placed, x);
   if (placed === null) return null;
   const out = { turnEnd: turnEnd + placed, bankEnd: bankEnd + placed };
   return Number.isFinite(out.turnEnd) && Number.isFinite(out.bankEnd) ? out : null;
