@@ -402,6 +402,7 @@ async function coachSettled(page, advised) {
  * - No claim or discard button covers any part of a discard on screen.
  * - A pond that keeps only its newest rows (display/portraitFit.ts, and fitCompactCentre on a short landscape phone)
  *   says how many it leaves out with a "+N" chip, whole on screen too.
+ * - Every tile of an opponent's melds and flowers is whole on screen (none scrolled away or under its plate).
  * - Every tile of my pond and of my hand (the raised one too) and every claim or discard button is whole on screen, and
  *   nothing lies over the top edge of a tile of my hand (the coach's press over a raised tile took the tap there).
  * - Portrait: the coach's press (on the web, padded where its bar is short) reaches over no tile of my pond or my hand.
@@ -462,6 +463,13 @@ async function feltCheck(page) {
       if (covered.length) bad.push(`${who}: the claim or discard buttons cover its discards`);
       const chip = pond.querySelector('[data-testid="pond-earlier"]');
       if (chip && !whole(chip)) bad.push(`${who}: the chip for its earlier discards is not whole on screen`);
+    }
+    // An opponent's melds and flowers (its seat's face-up tiles outside its pond) are whole on screen: they never scroll
+    // or sit under its plate, whatever its pond gives up.
+    for (const seat of document.querySelectorAll('[data-testid^="seat-press-"]')) {
+      const who = `the ${{ 1: 'right', 2: 'across', 3: 'left' }[seat.dataset.testid.slice(-1)]} seat`;
+      const melds = [...seat.querySelectorAll('[data-testid^="tile-"]')].filter((t) => t.dataset.testid !== 'tile-back' && !t.closest('[data-testid^="pond-seat-"]') && !t.parentElement.closest('[data-testid^="tile-"]') && seen(t));
+      if (melds.some((t) => !whole(t))) bad.push(`${who}'s melds: not whole on screen`);
     }
     const MY_POND = '[data-testid="my-pond"] [data-testid^="tile-"]';
     const HAND = '[data-testid="hand"] [data-testid^="tile-"], [data-testid="hand-discard"] [data-testid^="tile-"]';

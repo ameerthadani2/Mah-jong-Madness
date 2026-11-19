@@ -254,8 +254,8 @@ export function Felt({
 
   // Landscape: a side seat's melds, flowers and pond share the short column under its plate. They shrink to fit
   // it (display/tableFit.ts fitSideSeat); if they still do not, the row of face-down tiles goes (its count is
-  // what the melds leave of sixteen), and past that the column scrolls, kept at its end, where the newest
-  // discards are. (Portrait scrolls the whole felt instead.)
+  // what the melds leave of sixteen), then the pond keeps its newest rows under the melds, which stay whole, and
+  // only past that does the column scroll, kept at its end, where the newest discards are.
   const [sideBox, setSideBox] = useState<Record<string, number>>({});
   const measure = (key: string) => (e: { nativeEvent: { layout: { height: number } } }) => {
     const h = Math.round(e.nativeEvent.layout.height);
@@ -307,7 +307,7 @@ export function Felt({
     const body = (
       <>
         <MeldsAndFlowers player={p} size={col.meld} flowerSize={col.meld} style={meldStyle} />
-        <DiscardPool tiles={p.discards} size={col.pool} perRow={col.perRow} align={align} latest={latestFor(seat)} enterFrom={slideFrom(r)} testID={`pond-seat-${r}`} />
+        <DiscardPool tiles={p.discards} size={col.pool} perRow={col.perRow} align={align} latest={latestFor(seat)} enterFrom={slideFrom(r)} keepRows={col.keep} testID={`pond-seat-${r}`} />
       </>
     );
     return (

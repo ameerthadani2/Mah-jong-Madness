@@ -272,13 +272,25 @@ describe('a side seat in landscape', () => {
     expect(fit.height).toBeLessThanOrEqual(143);
   });
 
-  it('gives up the row of face-down tiles before it scrolls, and scrolls only when nothing else is left', () => {
+  it('gives up the row of face-down tiles, then keeps the newest rows of the pond under melds that stay whole, and scrolls only when not one row fits', () => {
     const tight = fitSideColumn({ ...small, melds: [3, 3, 3, 3], flowers: 2, discards: 20 });
     expect(tight.showHand).toBe(false);
     expect(tight.scroll).toBe(false);
     expect(tight.height).toBeLessThanOrEqual(room(small, false));
-    const impossible = fitSideColumn({ ...small, melds: [4, 4, 4, 4, 4], flowers: 8, discards: 24 });
-    expect(impossible).toMatchObject({ scroll: true, showHand: false, meld: MIN_SIDE_MELD, pool: MIN_SIDE_POND });
+    // Five kongs and eight flowers: the melds whole at the smallest size, one row of the pond under them (a "+N" chip for
+    // the earlier discards), where the column used to scroll its melds away under the plate.
+    const most = fitSideColumn({ ...small, melds: [4, 4, 4, 4, 4], flowers: 8, discards: 24 });
+    expect(most).toMatchObject({ scroll: false, showHand: false, meld: MIN_SIDE_MELD, pool: MIN_SIDE_POND, keep: 1 });
+    expect(most.height).toBeLessThanOrEqual(room(small, false));
+    // A 568x320 phone's short column late in a hand: three melds and fifteen discards keep two rows of the pond.
+    const short = { width: 128, column: 150, plate: 45, hand: 17, meld: 20, pool: 20 };
+    const late = fitSideColumn({ ...short, melds: [3, 3, 4], flowers: 1, discards: 15 });
+    expect(late).toMatchObject({ scroll: false, showHand: false, meld: MIN_SIDE_MELD, pool: MIN_SIDE_POND });
+    expect(late.keep).toBeGreaterThanOrEqual(1);
+    expect(late.keep).toBeLessThan(Math.ceil(15 / late.perRow));
+    expect(late.height).toBeLessThanOrEqual(room(short, false));
+    // Not one row under the melds: only then does the column scroll.
+    expect(fitSideColumn({ ...short, column: 120, melds: [4, 4, 4, 4, 4], flowers: 8, discards: 24 })).toMatchObject({ scroll: true });
   });
 
   it('keeps a kong inside the column at every size it may take', () => {
@@ -296,6 +308,7 @@ describe('a side seat in landscape', () => {
     expect(felt).toContain('const col = fitSideColumn({');
     expect(felt).toContain('{col.showHand && hidden}');
     expect(felt).toContain('<DiscardPool tiles={p.discards} size={col.pool} perRow={col.perRow}');
+    expect(felt).toContain('keepRows={col.keep} testID={`pond-seat-${r}`}');
     expect(felt).toContain('onContentSizeChange={() => sideScroll.current[r]?.scrollToEnd({ animated: false })}');
   });
 });

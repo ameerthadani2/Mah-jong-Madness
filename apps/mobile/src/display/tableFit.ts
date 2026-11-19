@@ -14,8 +14,9 @@
  *   tall) stop at Large so the side ponds never run off the felt.
  * - A side seat in landscape has one short column for its melds, flowers and discards. `fitSideColumn` shrinks
  *   the melds first, then the pond, until they fit the column; when even the smallest sizes do not (four melds
- *   late in a hand on a small phone) the row of face-down tiles makes way, and past that the column scrolls
- *   and stays at its newest discards.
+ *   late in a hand on a small phone) the row of face-down tiles makes way, and past that the pond keeps only its
+ *   newest rows under the melds, which stay whole, with a "+N" chip for the earlier discards (the table's discards
+ *   sheet has them all). Only where not even one row fits under the melds does the column scroll.
  *
  * Pure, so the fit is unit-tested at the reference viewports.
  */
@@ -217,8 +218,10 @@ export interface SideSeatFit {
   perRow: number;
   /** Height the melds, flowers and pond take at these sizes. */
   height: number;
-  /** They do not fit even at the smallest sizes: the column scrolls. */
+  /** Not even one row of the pond fits under the melds at the smallest sizes: the column scrolls. */
   scroll: boolean;
+  /** Rows of the pond drawn, newest kept (Infinity: all of them), under melds that stay whole. */
+  keep: number;
 }
 
 const tileH = (w: number) => Math.round(w * 1.4);
@@ -260,10 +263,11 @@ export function sideSeatHeight(input: Pick<SideSeatInput, 'width' | 'melds' | 'f
  * Sizes for a side seat's melds and pond in landscape so that both stay on the felt: the sizes given while
  * they fit `room`, then smaller melds (the discards are what a player reads to judge what is safe, so the
  * pond keeps its size longest), then a smaller pond. Never below MIN_SIDE_MELD and MIN_SIDE_POND: past
- * that the column scrolls (`scroll`), which the felt keeps at the newest discards.
+ * that the melds stay whole and the pond keeps its newest rows that fit under them (`keep`, at least one), and
+ * only where not even one fits does the column scroll (`scroll`), which the felt keeps at the newest discards.
  */
 export function fitSideSeat(input: SideSeatInput): SideSeatFit {
-  const at = (meld: number, pool: number, scroll = false): SideSeatFit => ({ meld, pool, perRow: sidePondPerRow(input.width, pool), height: sideSeatHeight(input, meld, pool), scroll });
+  const at = (meld: number, pool: number, scroll = false): SideSeatFit => ({ meld, pool, perRow: sidePondPerRow(input.width, pool), height: sideSeatHeight(input, meld, pool), scroll, keep: Infinity });
   const start = at(input.meld, input.pool);
   if (input.room <= 0 || start.height <= input.room) return start;
   const minMeld = Math.min(input.meld, MIN_SIDE_MELD);
@@ -276,6 +280,11 @@ export function fitSideSeat(input: SideSeatInput): SideSeatFit {
     const fit = at(minMeld, pool);
     if (fit.height <= input.room) return fit;
   }
+  // The melds whole at the smallest size, and as many of the pond's newest rows as fit under them.
+  const melds = sideSeatHeight({ ...input, discards: 0 }, minMeld, minPool);
+  const above = melds > 0 ? melds + SIDE_GAP : 0;
+  const rows = Math.floor((input.room - above + POND_GAP) / (tileH(minPool) + POND_GAP));
+  if (rows >= 1) return { ...at(minMeld, minPool), height: above + rows * tileH(minPool) + (rows - 1) * POND_GAP, keep: rows };
   return at(minMeld, minPool, true);
 }
 
@@ -295,15 +304,15 @@ export interface SideColumnFit extends SideSeatFit {
 /**
  * A side seat's whole column in landscape: the plate, the row of face-down tiles, then the melds and the pond
  * fitted into what is left (`fitSideSeat`). When they do not fit even at the smallest sizes, the face-down row
- * goes first (how many tiles the seat holds is what its melds leave of sixteen), and only then does the
- * column scroll.
+ * goes first (how many tiles the seat holds is what its melds leave of sixteen), and only then does the pond
+ * keep fewer rows (or, past that, the column scroll).
  */
 export function fitSideColumn(input: SideColumnInput): SideColumnFit {
   const { column, plate, hand, ...seat } = input;
   const measured = column > 0 && plate > 0;
   const under = measured ? Math.max(1, column - plate - SIDE_GAP) : 0;
   const withHand = fitSideSeat({ ...seat, room: measured ? Math.max(1, under - (hand > 0 ? hand + SIDE_GAP : 0)) : 0 });
-  if (!withHand.scroll || hand <= 0) return { ...withHand, showHand: true };
+  if ((!withHand.scroll && withHand.keep === Infinity) || hand <= 0) return { ...withHand, showHand: true };
   return { ...fitSideSeat({ ...seat, room: under }), showHand: false };
 }
 
