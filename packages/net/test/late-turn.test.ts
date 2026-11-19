@@ -1737,6 +1737,49 @@ describe('a seat opened on another device while the phone’s link was down', ()
     expect(w.verdict().failures).toEqual([]);
     expect(kicked).toBe(true);
   });
+
+  /**
+   * The link drops just as the phone is shown its seat's fourth discard, and the server's clock leaps a
+   * minute, so the table times the seat out at once, long before its clock could have run out. The phone
+   * joins again 3 s later and is welcomed with no word of another device; the server states the seat's
+   * whole bank, so only the drop is judged. Once the phone has been shown the table's move on the new
+   * link, the server says the seat was taken: with `notice` ('disconnected'), or with a second welcome on
+   * the same link that says another device held the seat (`welcome`). The user resumes the table from
+   * Home 5 s later and the hand is played out.
+   */
+  function noticeAfterReturn(code: string, notice: 'welcome' | 'notice') {
+    let lead = 0;
+    let target = -1;
+    let back = false;
+    const last: { welcome: Extract<HostMessage, { t: 'welcome' }> | null } = { welcome: null };
+    const w = wire({
+      code,
+      botDelayMs: 1_000,
+      hostSkew: () => lead,
+      think: (_k, tc) => (tc === target ? Infinity : 600),
+      map: (m) => {
+        if (m.t === 'welcome') last.welcome = m;
+        return lead > 0 && m.t === 'state' ? { ...m, timeBank: 30 } : m;
+      },
+    });
+    need(w.toDiscard(4));
+    target = w.host.game!.turnCounter;
+    lead = 60_000;
+    w.dropNow(3_000);
+    need(w.until(() => w.pendingReconnectAt === null && (w.c.state.view?.turnCounter ?? -1) > target && w.tableMoves().includes(target), 20_000));
+    need(last.welcome !== null);
+    back = true;
+    w.line.inject(notice === 'notice' || !last.welcome ? { t: 'disconnected' } : { ...last.welcome, elsewhere: true });
+    for (let t = 0; t < 10; t++) w.step();
+    if (w.c.state.kicked) w.restart();
+    w.finish();
+    need(back && w.judged().includes(target));
+    return w;
+  }
+
+  it('a notice that the seat was taken, sent after the phone was back and shown the table’s move, does not excuse a move made inside the drop: red, whether a second welcome on the same link says it or a ‘disconnected’ does', () => {
+    for (const notice of ['welcome', 'notice'] as const) expect(scenario((i) => noticeAfterReturn(`NA${notice}${i}`, notice)).verdict()).toMatchObject({ status: 'failed', failures: ['playedWhileDown'] });
+  });
 });
 
 describe('time bank: taken as the phone comes back in a new run of the app', () => {

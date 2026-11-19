@@ -502,6 +502,11 @@ export class TableClient {
   private deviceId: string = this.runId;
   /** This client (this run of the app) has been welcomed at the table: a later welcome is a rejoin. */
   private welcomed = false;
+  /**
+   * The link in use has brought a frame this client handled. An honest host answers a join with its
+   * welcome before anything else, so only a welcome that is a link's first frame is a rejoin's.
+   */
+  private heardOnLink = false;
   /** The strongest fixed point of the hands audited in this era, run of the app and run of this device's clock (see `lateAnchor`). */
   private bestAnchor: LateScope['best'] = null;
   /** When this app last ran: it handled a frame, checked the link, bound a link or sent a move. */
@@ -762,6 +767,7 @@ export class TableClient {
     // and the watch measures it from its first stamped frame (see `checkLink`).
     this.workingEpoch = this.firstLink ? this.epoch : -1;
     this.firstLink = false;
+    this.heardOnLink = false;
     this.waitFrom = null;
     this.linkStamped = false;
     this.watchFrom = null;
@@ -782,6 +788,8 @@ export class TableClient {
         this.onMessage(m);
       } catch (e) {
         this.update({ lastError: `Ignored a malformed message from the table (${(e as Error).message}).`, lastErrorCode: null });
+      } finally {
+        if (this.link === link) this.heardOnLink = true;
       }
     });
     this.unsubClose =
@@ -1438,8 +1446,10 @@ export class TableClient {
         if (this.tableSkill && isBotSkill(this.pinnedSkill) && this.tableSkill !== this.pinnedSkill && !this.state.matchOver) this.flag(this.activeHand(), 'Host changed how strong its bots are during the match');
         this.update({ connected: true, disconnected: false, kicked: false, seat: m.seat, roomCode: m.roomCode, rules: this.pinnedRules ?? rules, seats, matchId: m.matchId, token: m.token, lastError: null });
         // A rejoin to a seat another device took in between: the 'disconnected' that said so never came.
-        // (The first welcome of a client restored from its record is no rejoin: the restore noted its absence.)
-        if (m.elsewhere === true && this.welcomed) this.takenElsewhere();
+        // (The first welcome of a client restored from its record is no rejoin: the restore noted its absence.
+        // Nor is a welcome after the first frame of its link: what this device was shown on the link already
+        // is not to be excused after the fact, as the time before it would be.)
+        if (m.elsewhere === true && this.welcomed && !this.heardOnLink) this.takenElsewhere();
         this.welcomed = true;
         return;
       }
