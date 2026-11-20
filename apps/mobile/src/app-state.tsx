@@ -181,15 +181,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         void storage.clearActiveSession();
         return;
       }
-      if (!st.token) return;
+      // Saved whatever the client holds for a token: an honest table always gives one, and a table that leaves it out
+      // must not stop the record being kept (a resume would then find an older one). Kept under the room the session
+      // joined, never one a welcome names (`savedClientFor`).
+      const token = st.token ?? '';
       const record: ActiveSession =
         session.mode === 'local'
-          ? { kind: 'local', host: session.host!.serialize(), token: st.token, name: shown, avatar: profile.avatar, savedAt: Date.now() }
+          ? { kind: 'local', host: session.host!.serialize(), token, name: shown, avatar: profile.avatar, savedAt: Date.now() }
           : {
               kind: 'online',
               signalUrl: session.serverUrl ?? signalUrl,
               roomCode: session.roomCode,
-              token: st.token,
+              token,
               name: shown,
               avatar: profile.avatar,
               clubCode: session.clubCode,

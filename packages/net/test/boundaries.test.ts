@@ -241,3 +241,34 @@ describe('a link the server goes on feeding after it said the seat was opened on
       }));
   }
 });
+
+describe('a welcome that leaves out the token, or names another room', () => {
+  it('Normal, a second welcome on a link already welcomed with no token, an empty one or another room code: the phone keeps its token and room, so the app goes on keeping the table’s record; a welcome with a new token still gives it', () =>
+    scenario((i) => {
+      for (const edit of ['missing', 'empty', 'room', 'new'] as const) {
+        let sent = false;
+        let first: { token: string | null; roomCode: string | null } | null = null;
+        const w = wire({
+          code: `WT${edit}${i}`,
+          rules: NORMAL,
+          botDelayMs: 700,
+          onTick: (w) => {
+            const g = w.host.game;
+            if (sent || !g || w.host.phase !== 'playing' || g.actionLog.filter((e) => e.seat === 0 && e.source === 'player').length < 3) return;
+            sent = true;
+            first = { token: w.c.state.token, roomCode: w.c.state.roomCode };
+            const base = { t: 'welcome', seat: 0, roomCode: first.roomCode, rules: w.rules, seats: w.c.state.seats, matchId: w.c.state.matchId, token: first.token, clockMs: 3_000 };
+            const fresh = 'ab'.repeat(16);
+            const welcome = edit === 'missing' ? { ...base, token: undefined } : edit === 'empty' ? { ...base, token: '' } : edit === 'room' ? { ...base, roomCode: 'ELSEWHERE' } : { ...base, token: fresh };
+            w.line.inject(welcome as never);
+            const st = w.c.state;
+            expect(st.roomCode).toBe(first.roomCode);
+            expect(st.token).toBe(edit === 'new' ? fresh : first.token);
+          },
+        });
+        w.finish();
+        need(sent && first !== null);
+        expect((first as unknown as { token: string | null }).token).toMatch(/^[0-9a-f]{32}$/);
+      }
+    }));
+});

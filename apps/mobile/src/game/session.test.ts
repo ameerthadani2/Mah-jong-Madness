@@ -807,6 +807,28 @@ describe('cold resume after an app restart', () => {
     expect(other.client.state.audits).toEqual([]);
     other.close();
   });
+
+  it('restores the record kept under the room the session joined, whatever room a welcome named', async () => {
+    const saved = savedRecord();
+    // The table's welcome named another room; the app kept the record under the one it joined.
+    saved.state.roomCode = 'ELSEWHERE';
+    setSavedClientSource((url, room, token) => (url === base.signalUrl && room === 'ABC123' && token === saved.state.token ? saved : undefined));
+    const s = await createOnlineSession({ ...base, action: 'join', code: 'ABC123', token: saved.state.token! });
+    expect(s.client.state.audits).toHaveLength(1);
+    s.close();
+  });
+
+  it('restores a record kept with no token (the table gave none) for a resume with none, and never onto a seat that has one', async () => {
+    const saved = savedRecord();
+    saved.state.token = null;
+    setSavedClientSource((url, room, token) => (url === base.signalUrl && room === 'ABC123' && token === '' ? saved : undefined));
+    const s = await createOnlineSession({ ...base, action: 'join', code: 'ABC123', token: '' });
+    expect(s.client.state.audits).toHaveLength(1);
+    s.close();
+    const other = await createOnlineSession({ ...base, action: 'join', code: 'ABC123', token: TOKEN, restoreClient: saved });
+    expect(other.client.state.audits).toEqual([]);
+    other.close();
+  });
 });
 
 describe('connectSignaling', () => {

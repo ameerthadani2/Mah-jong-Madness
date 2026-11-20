@@ -165,11 +165,14 @@ export function setSavedClientSource(source: SavedClientSource | null): void {
   savedClientSource = source;
 }
 
-/** The saved record to restore for this table, if it matches the room and the seat's token. */
+/**
+ * The saved record to restore for this table, if it is the seat's: one kept under this room (the source matches the room
+ * the session joined, not one a welcome named) for the seat's token, or for no token when the table gave none.
+ */
 function savedClientFor(opts: OnlineOptions, code: string): SerializedClient | undefined {
-  if (!opts.token) return undefined;
-  const saved = opts.restoreClient ?? savedClientSource?.(opts.signalUrl, code, opts.token);
-  if (!saved || saved.state?.roomCode !== code || saved.state?.token !== opts.token) return undefined;
+  const token = opts.token ?? '';
+  const saved = opts.restoreClient ?? savedClientSource?.(opts.signalUrl, code, token);
+  if (!saved || (saved.state?.token ?? '') !== token) return undefined;
   return saved;
 }
 

@@ -1727,6 +1727,11 @@ export class TableClient {
           return;
         }
         const seats = Array.isArray(m.seats) ? m.seats : [];
+        // The rejoin token: a welcome that carries none (or an empty one) leaves the one this client holds, as an honest
+        // table always gives one and the app keeps the table's record under it. The table's room code is pinned from the
+        // first welcome: the app keeps the record under the room it joined, which a welcome does not move.
+        const token = typeof m.token === 'string' && m.token !== '' ? m.token : this.state.token;
+        const roomCode = this.state.roomCode ?? (typeof m.roomCode === 'string' ? m.roomCode : null);
         // The seat and the match are pinned from the first deal this client hears of until the hands
         // it verified say the match is over. Before that there is nothing a new seat could undo.
         const pinned = this.state.matchId !== null && this.state.seat !== null && this.hasEvidence() && !this.matchEnded;
@@ -1734,7 +1739,7 @@ export class TableClient {
           // Same table, same match, same token: an honest host returns the same seat in the same match.
           const problem = m.matchId !== this.state.matchId ? 'Host moved this seat into a different match mid-match' : 'Host moved this seat to another seat mid-match';
           this.flag(this.activeHand(), problem);
-          this.update({ connected: true, disconnected: false, kicked: false, seats, token: typeof m.token === 'string' ? m.token : this.state.token, lastError: null });
+          this.update({ connected: true, disconnected: false, kicked: false, seats, token, lastError: null });
           // With no hand left to audit, the flag would never be seen.
           if (this.state.matchOver) this.failNow(problem);
           return;
@@ -1754,7 +1759,7 @@ export class TableClient {
         // Informative only: a table that leaves it out, or announces more than the protocol's period, is held to that period.
         this.clockMs = isInt(m.clockMs) && m.clockMs > 0 && m.clockMs < CLOCK_FRAME_MS ? m.clockMs : CLOCK_FRAME_MS;
         if (this.tableSkill && isBotSkill(this.pinnedSkill) && this.tableSkill !== this.pinnedSkill && !this.state.matchOver) this.flag(this.activeHand(), 'Host changed how strong its bots are during the match');
-        this.update({ connected: true, disconnected: false, kicked: false, seat: m.seat, roomCode: m.roomCode, rules: this.pinnedRules ?? rules, seats, matchId: m.matchId, token: m.token, lastError: null });
+        this.update({ connected: true, disconnected: false, kicked: false, seat: m.seat, roomCode, rules: this.pinnedRules ?? rules, seats, matchId: m.matchId, token, lastError: null });
         // A rejoin to a seat another device took in between: the 'disconnected' that said so never came.
         // (The first welcome of a client restored from its record is no rejoin: the restore noted its absence.
         // Nor is a welcome after the first frame of its link: what this device was shown on the link already

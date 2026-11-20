@@ -16,3 +16,16 @@ describe('hardware back', () => {
     expect(effect).toContain("if (Platform.OS !== 'android') return;");
   });
 });
+
+describe('the resumable table record', () => {
+  it('is kept whatever the client holds for a token, under the room the session joined', () => {
+    const at = code.indexOf('const save = () => {');
+    expect(at).toBeGreaterThan(0);
+    const save = code.slice(at, code.indexOf('const scheduler = saveScheduler(save);', at));
+    // A welcome that leaves the token out must not stop the record being kept: a resume would find an older one.
+    expect(save).not.toMatch(/if \(!st\.token\) return;/);
+    expect(save).toContain("const token = st.token ?? '';");
+    expect(save).toContain('roomCode: session.roomCode,');
+    expect(save).not.toMatch(/roomCode: st\.roomCode/);
+  });
+});
