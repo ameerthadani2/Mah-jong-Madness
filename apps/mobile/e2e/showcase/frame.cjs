@@ -105,7 +105,15 @@ function collageHtml(it, logo) {
   const gap = 70;
   const total = it.srcs.length * (sw + 2 * bz) + (it.srcs.length - 1) * gap;
   const top = H - sh - 2 * bz - 70;
-  const phones = it.srcs.map((s, i) => device(shot(s), (W - total) / 2 + i * (sw + 2 * bz + gap), top + (i % 2 ? -40 : 0), sw, sh, bz, 66)).join('');
+  // The phone at `center` (if any) is the hero: 12% larger and raised; the others alternate a little.
+  const phones = it.srcs
+    .map((s, i) => {
+      const left = (W - total) / 2 + i * (sw + 2 * bz + gap);
+      if (i !== it.center) return device(shot(s), left, top + (i % 2 ? -40 : 0), sw, sh, bz, 66);
+      const k = 1.12;
+      return device(shot(s), left - ((k - 1) * (sw + 2 * bz)) / 2, top - 70, Math.round(sw * k), Math.round(sh * k), bz, 72);
+    })
+    .join('');
   const extra = `.cap { position: absolute; left: 100px; right: 100px; top: 0; height: ${top - 40}px; display: flex; align-items: center; justify-content: center; gap: 60px; }
   .title { font-size: ${it.lang === 'zh' ? 104 : 112}px; --stroke: 14px; --drop: 8px; text-align: left; } .sub { font-size: 44px; padding: 12px 36px 14px; --sb: 5px; }
   .stack { display: flex; flex-direction: column; gap: 22px; align-items: flex-start; }`;

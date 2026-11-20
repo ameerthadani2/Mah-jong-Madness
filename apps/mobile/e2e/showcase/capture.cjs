@@ -2,7 +2,7 @@
  * Showcase capture (docs/SCREENSHOTS.md): staged screenshots of the app for people to look at. Not a test.
  * Needs a web export built with `--dev` and EXPO_PUBLIC_STORE_MODE=mock (so the Shop shows prices), the game server on
  * localhost:8787 seeded by seed.cjs, and the storage state boot.cjs saved for the account.
- * Usage: node capture.cjs <webdir> <outdir> <state.json> <en|zh> <phone|tablet> [deal seed] [only=table,learn,clubs,shop]
+ * Usage: node capture.cjs <webdir> <outdir> <state.json> <en|zh> <phone|tablet> [deal seed] [only=table,look,learn,clubs,shop,fair]
  */
 const fs = require('fs');
 const path = require('path');
@@ -64,9 +64,16 @@ async function shot(page, name) {
   console.log('  shot', `${device}-${lang}-${name}.png`);
 }
 
-async function open(browser, { seeded = false } = {}) {
+/** The Night Market set (seed.cjs grants it): its table, tile back, avatar frame and emotes. */
+const NIGHT_MARKET = () => {
+  localStorage.setItem('mjm.settings', JSON.stringify({ ...JSON.parse(localStorage.getItem('mjm.settings') || '{}'), tableTheme: 'nightmarket' }));
+  localStorage.setItem('mjm.equipped', JSON.stringify({ tileBack: 'back.midnight', frame: 'frame.lantern', emotes: 'emotes.nightmarket', celebration: null }));
+};
+
+async function open(browser, { seeded = false, look = false } = {}) {
   const ctx = await browser.newContext({ ...DEVICES[device], locale: lang === 'zh' ? 'zh-TW' : 'en-US', storageState: stateFile, colorScheme: 'light' });
   await ctx.addInitScript(LIVED_IN);
+  if (look) await ctx.addInitScript(NIGHT_MARKET);
   if (seeded) await ctx.addInitScript(SEEDED_DEAL);
   const page = await ctx.newPage();
   page.on('pageerror', (e) => console.log('  pageerror', e.message.slice(0, 160)));
@@ -91,10 +98,14 @@ const hideTestStoreNotice = (page) =>
     }
   }, T('shop', 'mock'));
 
-/** The seeded hand: Home, a claim the coach advises on, a turn with the coach's tile ringed, the win, the result. */
-async function storyTable(browser) {
-  const { ctx, page } = await open(browser, { seeded: true });
-  await shot(page, 'home');
+/**
+ * The seeded hand: Home, a claim the coach advises on, a turn with the coach's tile ringed, the win, the result, the
+ * hand's check and its review. With `look`, the same hand at the Night Market table (shots named look-*).
+ */
+async function storyTable(browser, { look = false } = {}) {
+  const { ctx, page } = await open(browser, { seeded: true, look });
+  const pre = look ? 'look-' : '';
+  if (!look) await shot(page, 'home');
   await page.evaluate((s) => window.__arm(s), DEAL);
   await tapSel(page, '[data-testid="start-match"]', 300);
   await page.waitForSelector('[data-testid^="tile-"]', { timeout: 30000 });
@@ -103,7 +114,7 @@ async function storyTable(browser) {
     if (done.has(name)) return;
     done.add(name);
     await page.waitForTimeout(wait);
-    await shot(page, name);
+    await shot(page, pre + name);
   };
   const r = await playHand(page, {
     on: async (event, discards) => {
@@ -115,7 +126,8 @@ async function storyTable(browser) {
   });
   if (!r.done) console.log('  the hand did not finish');
   await page.waitForTimeout(3500);
-  await shot(page, 'result');
+  await shot(page, pre + 'result');
+  if (look) return ctx.close();
   const text = await page.$eval('[data-testid="result-sheet"]', (e) => e.innerText.replace(/\s+/g, ' ')).catch(() => '');
   console.log('  result:', text.slice(0, 200));
   if (await tapSel(page, '[data-testid="audit-status"]', 1500)) {
@@ -138,6 +150,36 @@ async function storyLearn(browser) {
     await shot(page, 'boards-daily');
     if (await tapSel(page, '[data-testid="board-tab-rush"]', 2000)) await shot(page, 'boards-rush');
     if (await tapSel(page, '[data-testid="board-tab-rating"]', 2000)) await shot(page, 'boards-rating');
+  }
+  await ctx.close();
+}
+
+/**
+ * A hand at an online table: the player's club opens a server table, bots fill the seats, the hand is played as in the
+ * seeded story (the deal is the server's and the seats', so it differs every time), and the hand's check is shown at
+ * the top of the Fair play page's list of this table's hands.
+ */
+async function storyFair(browser) {
+  const { ctx, page } = await open(browser);
+  await tapSel(page, '[data-testid="open-clubs"]', 2500);
+  if (!(await tapText(page, T('clubs', 'open'), 2500))) return ctx.close();
+  if (!(await tapText(page, T('clubs', 'tables.open'), 4000))) return ctx.close();
+  if (!(await tapText(page, T('lobby', 'startWithBots'), 3000))) return ctx.close();
+  await page.waitForSelector('[data-testid^="tile-"]', { timeout: 60000 });
+  const r = await playHand(page);
+  if (!r.done) console.log('  the online hand did not finish');
+  await page.waitForTimeout(3500);
+  await shot(page, 'online-result');
+  if (await tapSel(page, '[data-testid="audit-status"]', 2000)) {
+    await shot(page, 'fair-online-top');
+    const heading = T('fairness', 'sessionHands');
+    // The list is the end of the page, so this scrolls as far as it goes: the hand's card whole at the bottom.
+    await page.evaluate((text) => {
+      const h = [...document.querySelectorAll('div')].find((d) => d.childElementCount === 0 && d.textContent === text);
+      if (h) h.scrollIntoView({ block: 'start' });
+    }, heading);
+    await page.waitForTimeout(900);
+    await shot(page, 'fair-online');
   }
   await ctx.close();
 }
@@ -187,6 +229,8 @@ async function storyShop(browser) {
   const browser = await launch();
   try {
     if (want('table')) await storyTable(browser);
+    if (want('look')) await storyTable(browser, { look: true });
+    if (want('fair')) await storyFair(browser);
     if (want('learn')) await storyLearn(browser);
     if (want('clubs')) await storyClubs(browser);
     if (want('shop')) await storyShop(browser);

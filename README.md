@@ -7,7 +7,9 @@ Online tables run on the game server. Every seat and the server commit to a secr
 and every phone re-derives the seed and replays the hand afterwards: every hand is logged and checked on your phone. Bots fill
 empty seats so a table always runs; offline you play the same engine against bots on your own phone.
 
-![Table screen with coach panel](docs/screenshot-table.png)
+![Mahjong Mania: Learn, the coach at the table, a self-drawn win, its 5-tai result, and a club's house rules](docs/screenshots/en-00-collage.jpg)
+
+More in [docs/SCREENSHOTS.md](docs/SCREENSHOTS.md): the store-style set in English and Traditional Chinese, phone and tablet.
 
 ## What is in this repository
 

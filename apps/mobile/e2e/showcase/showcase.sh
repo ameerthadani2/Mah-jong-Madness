@@ -58,10 +58,12 @@ DATABASE_URL="$DB" node "$HERE/seed.cjs" "$OUT/state-en.json" "$OUT/state-zh.jso
 start_server
 
 echo "== captures"
-node "$HERE/capture.cjs" "$OUT/web" "$OUT/shots" "$OUT/state-en.json" en phone "$DEAL"
-node "$HERE/capture.cjs" "$OUT/web" "$OUT/shots" "$OUT/state-zh.json" zh phone "$DEAL"
-node "$HERE/capture.cjs" "$OUT/web" "$OUT/shots" "$OUT/state-en.json" en tablet "$DEAL" only=table,learn,shop
-node "$HERE/capture.cjs" "$OUT/web" "$OUT/shots" "$OUT/state-zh.json" zh tablet "$DEAL" only=table,learn,shop
+for lang in en zh; do
+  # Each language's names on the sample players, and the other language's sample player off the boards.
+  DATABASE_URL="$DB" node "$HERE/seed.cjs" "$OUT/state-en.json" "$OUT/state-zh.json" "$lang"
+  node "$HERE/capture.cjs" "$OUT/web" "$OUT/shots" "$OUT/state-$lang.json" "$lang" phone "$DEAL"
+  node "$HERE/capture.cjs" "$OUT/web" "$OUT/shots" "$OUT/state-$lang.json" "$lang" tablet "$DEAL" only=table,fair,learn,shop
+done
 stop_server
 
 echo "== frames"

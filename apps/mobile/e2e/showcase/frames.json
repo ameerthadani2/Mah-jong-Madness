@@ -4,189 +4,223 @@
     "lang": "en",
     "out": "en-00-collage",
     "title": "Taiwanese 16-tile mahjong",
-    "sub": "Play · Learn · Clubs · Verified deals",
+    "sub": "Play · Learn · Clubs · Verified shuffles",
     "logo": "phone-en-home.png",
     "srcs": [
-      "phone-en-home.png",
-      "phone-en-win-prompt.png",
-      "phone-en-result.png",
       "phone-en-learn.png",
-      "phone-en-club-standings.png"
-    ]
+      "phone-en-table-turn.png",
+      "phone-en-win-reveal.png",
+      "phone-en-result.png",
+      "phone-en-club-rules.png"
+    ],
+    "center": 2
   },
   {
     "kind": "phone",
     "lang": "en",
-    "out": "en-01-home",
-    "src": "phone-en-home.png",
+    "out": "en-01-hero",
+    "src": "phone-en-win-reveal.png",
     "title": "Taiwanese 16-tile mahjong, done right",
-    "sub": "Play bots, friends and clubs"
+    "sub": "Play bots, friends or your club"
   },
   {
     "kind": "phone",
     "lang": "en",
-    "out": "en-02-win",
-    "src": "phone-en-win-prompt.png",
+    "out": "en-02-worth",
+    "src": "phone-en-result.png",
     "title": "Know exactly what your hand is worth",
-    "sub": "Every 台 counted for you"
+    "sub": "Every tai (台) counted and explained"
   },
   {
     "kind": "phone",
     "lang": "en",
     "out": "en-03-coach",
-    "src": "phone-en-table-claim.png",
-    "title": "A coach at your shoulder",
+    "src": "phone-en-table-turn.png",
+    "title": "A coach at your side",
     "sub": "Advice on every discard and claim"
   },
   {
     "kind": "phone",
     "lang": "en",
-    "out": "en-04-verified",
-    "src": "phone-en-result.png",
-    "title": "Every hand checked on your phone",
-    "sub": "Shuffle &amp; log verified"
-  },
-  {
-    "kind": "phone",
-    "lang": "en",
-    "out": "en-05-learn",
+    "out": "en-04-learn",
     "src": "phone-en-learn.png",
-    "title": "Learn it the smart way",
-    "sub": "Lessons, daily puzzles, Puzzle Rush"
+    "title": "From beginner to pro",
+    "sub": "Lessons, daily puzzles and drills"
   },
   {
     "kind": "phone",
     "lang": "en",
-    "out": "en-06-boards",
+    "out": "en-05-review",
+    "src": "phone-en-review.png",
+    "title": "Every decision, graded",
+    "sub": "Review your hands, from Best to Blunder"
+  },
+  {
+    "kind": "phone",
+    "lang": "en",
+    "out": "en-06-clubs",
+    "src": "phone-en-club-rules.png",
+    "title": "Your club,<br>your house rules",
+    "sub": "Free to join · run one with The Four Winds Club"
+  },
+  {
+    "kind": "phone",
+    "lang": "en",
+    "out": "en-07-looks",
+    "src": "phone-en-look-table-claim.png",
+    "title": "Make the table yours",
+    "sub": "Nothing you buy changes your tiles"
+  },
+  {
+    "kind": "phone",
+    "lang": "en",
+    "out": "en-08-boards",
     "src": "phone-en-boards-daily.png",
     "title": "Climb the leaderboards",
-    "sub": "Daily, Rush and rating boards"
+    "sub": "Daily puzzle, Puzzle Rush, rating"
   },
   {
     "kind": "phone",
     "lang": "en",
-    "out": "en-07-clubs",
-    "src": "phone-en-club-standings.png",
-    "title": "Run your own club",
-    "sub": "House rules, members, season standings"
-  },
-  {
-    "kind": "phone",
-    "lang": "en",
-    "out": "en-08-looks",
-    "src": "phone-en-shop-preview.png",
-    "title": "Make the table yours",
-    "sub": "Table looks, tile backs, frames and more"
+    "out": "en-09-fair",
+    "src": "phone-en-fair-online.png",
+    "title": "Your phone checks the shuffle",
+    "sub": "Online tables: shuffle &amp; log verified"
   },
   {
     "kind": "tablet",
     "lang": "en",
-    "out": "en-09-tablet-table",
-    "src": "tablet-en-win-prompt.png",
+    "out": "en-10-tablet-table",
+    "src": "tablet-en-win-reveal.png",
     "title": "Gorgeous on tablets",
     "sub": "Big table, every tile in view"
   },
   {
     "kind": "tablet",
     "lang": "en",
-    "out": "en-10-tablet-learn",
-    "src": "tablet-en-learn.png",
-    "title": "Learn on the big screen",
-    "sub": "Lessons, puzzles and drills"
+    "out": "en-11-tablet-review",
+    "src": "tablet-en-review.png",
+    "title": "Every decision, graded",
+    "sub": "Review your hands, from Best to Blunder"
+  },
+  {
+    "kind": "tablet",
+    "lang": "en",
+    "out": "en-12-tablet-fair",
+    "src": "tablet-en-fair-online.png",
+    "title": "Every shuffle, checked",
+    "sub": "Online tables: shuffle &amp; log verified"
   },
   {
     "kind": "collage",
     "lang": "zh",
     "out": "zh-00-collage",
-    "title": "台灣十六張麻將",
-    "sub": "打牌・學習・俱樂部・公平驗證",
+    "title": "道地台灣十六張",
+    "sub": "打牌‧學習‧俱樂部‧公平洗牌",
     "logo": "phone-zh-home.png",
     "srcs": [
-      "phone-zh-home.png",
-      "phone-zh-win-prompt.png",
-      "phone-zh-result.png",
       "phone-zh-learn.png",
-      "phone-zh-club-standings.png"
-    ]
+      "phone-zh-table-turn.png",
+      "phone-zh-win-reveal.png",
+      "phone-zh-result.png",
+      "phone-zh-club-rules.png"
+    ],
+    "center": 2
   },
   {
     "kind": "phone",
     "lang": "zh",
-    "out": "zh-01-home",
-    "src": "phone-zh-home.png",
+    "out": "zh-01-hero",
+    "src": "phone-zh-win-reveal.png",
     "title": "台灣十六張麻將<br>道地又好玩",
-    "sub": "電腦、好友、俱樂部，隨時開打"
+    "sub": "三缺一？電腦馬上補位"
   },
   {
     "kind": "phone",
     "lang": "zh",
-    "out": "zh-02-win",
-    "src": "phone-zh-win-prompt.png",
+    "out": "zh-02-worth",
+    "src": "phone-zh-result.png",
     "title": "胡幾台，一目了然",
-    "sub": "台數自動幫你算好"
+    "sub": "台數自動算，不用再吵"
   },
   {
     "kind": "phone",
     "lang": "zh",
     "out": "zh-03-coach",
-    "src": "phone-zh-table-claim.png",
+    "src": "phone-zh-table-turn.png",
     "title": "教練隨時在旁指點",
-    "sub": "每次打牌、吃碰都有建議"
+    "sub": "打哪張、要不要吃碰，都有建議"
   },
   {
     "kind": "phone",
     "lang": "zh",
-    "out": "zh-04-verified",
-    "src": "phone-zh-result.png",
-    "title": "每一局都在<br>手機上驗證",
-    "sub": "洗牌與紀錄已驗證"
-  },
-  {
-    "kind": "phone",
-    "lang": "zh",
-    "out": "zh-05-learn",
+    "out": "zh-04-learn",
     "src": "phone-zh-learn.png",
     "title": "從入門到高手",
-    "sub": "課程、每日謎題、謎題衝刺"
+    "sub": "36 堂課，每天都有新題"
   },
   {
     "kind": "phone",
     "lang": "zh",
-    "out": "zh-06-boards",
+    "out": "zh-05-review",
+    "src": "phone-zh-review.png",
+    "title": "每一手都幫你評分",
+    "sub": "從最佳到大失誤，一看就懂"
+  },
+  {
+    "kind": "phone",
+    "lang": "zh",
+    "out": "zh-06-clubs",
+    "src": "phone-zh-club-rules.png",
+    "title": "揪牌友組俱樂部",
+    "sub": "加入免費‧開設需四風俱樂部"
+  },
+  {
+    "kind": "phone",
+    "lang": "zh",
+    "out": "zh-07-looks",
+    "src": "phone-zh-look-table-claim.png",
+    "title": "打造專屬牌桌",
+    "sub": "外觀任你換，不影響摸到的牌"
+  },
+  {
+    "kind": "phone",
+    "lang": "zh",
+    "out": "zh-08-boards",
     "src": "phone-zh-boards-daily.png",
     "title": "挑戰排行榜",
-    "sub": "每日謎題、謎題衝刺、謎題積分"
+    "sub": "每日一題，看誰解得最快"
   },
   {
     "kind": "phone",
     "lang": "zh",
-    "out": "zh-07-clubs",
-    "src": "phone-zh-club-standings.png",
-    "title": "經營自己的俱樂部",
-    "sub": "自訂規則、成員管理、賽季排名"
-  },
-  {
-    "kind": "phone",
-    "lang": "zh",
-    "out": "zh-08-looks",
-    "src": "phone-zh-shop-preview.png",
-    "title": "打造專屬牌桌",
-    "sub": "桌布、牌背、頭像框，任你挑選"
+    "out": "zh-09-fair",
+    "src": "phone-zh-fair-online.png",
+    "title": "洗牌公平，<br>每局可驗證",
+    "sub": "線上牌局，手機幫你驗洗牌"
   },
   {
     "kind": "tablet",
     "lang": "zh",
-    "out": "zh-09-tablet-table",
-    "src": "tablet-zh-win-prompt.png",
+    "out": "zh-10-tablet-table",
+    "src": "tablet-zh-win-reveal.png",
     "title": "平板上更過癮",
     "sub": "大桌面，每張牌都看得清楚"
   },
   {
     "kind": "tablet",
     "lang": "zh",
-    "out": "zh-10-tablet-learn",
-    "src": "tablet-zh-learn.png",
-    "title": "大螢幕上學麻將",
-    "sub": "課程、謎題、練習一次掌握"
+    "out": "zh-11-tablet-review",
+    "src": "tablet-zh-review.png",
+    "title": "每一手都幫你評分",
+    "sub": "從最佳到大失誤，一看就懂"
+  },
+  {
+    "kind": "tablet",
+    "lang": "zh",
+    "out": "zh-12-tablet-fair",
+    "src": "tablet-zh-fair-online.png",
+    "title": "洗牌公平，每局可驗證",
+    "sub": "線上牌局，手機幫你驗洗牌"
   }
 ]

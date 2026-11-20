@@ -5,6 +5,9 @@
  *   node seed.cjs <state-en.json> <state-zh.json> clubs   creates the two clubs over the API (the server fills in rules)
  *   node seed.cjs <state-en.json> <state-zh.json> data    fills everything in SQL (DATABASE_URL); restart the server
  *                                                         afterwards so it loads the club members
+ *   node seed.cjs <state-en.json> <state-zh.json> en|zh   before each language's captures: the players' names in that
+ *                                                         language, and the other language's sample player off the
+ *                                                         boards (the two are one person shown twice)
  */
 const { randomUUID } = require('crypto');
 const { Client } = require('pg');
@@ -18,24 +21,30 @@ const auth = (file) => {
   throw new Error('no account in ' + file);
 };
 
+/**
+ * [English name, Chinese name, avatar]. Each avatar fits its name, and the players near one another on a board wear
+ * different ones (the bots wear uncle, auntie and hoops; the sample player wears lady).
+ */
 const PLAYERS = [
-  ['Jason Lin', 'gent'],
-  ['阿德', 'uncle'],
-  ['Wei-Ting', 'student'],
-  ['Grace H.', 'shades'],
-  ['老張', 'boss'],
-  ['Kevin Wu', 'hoops'],
-  ['阿嬤 Ama', 'grandma'],
-  ['Yu-Chen', 'sporty'],
-  ['虎哥 Tiger', 'cowboy'],
-  ['美華', 'auntie'],
-  ['Daniel Tsai', 'chef'],
-  ['小雨', 'student'],
-  ['Hsin-Yi', 'shades'],
-  ['Mahjong Mike', 'hoops'],
-  ['阿翔', 'sporty'],
-  ['Lily Chen', 'auntie'],
+  ['Jason Lin', '志成', 'boss'],
+  ['阿德', '阿德', 'uncle'],
+  ['Wei-Ting', '薇婷', 'sporty'],
+  ['Grace H.', '郁涵', 'hoops'],
+  ['老張', '老張', 'gent'],
+  ['Kevin Wu', '凱文', 'student'],
+  ['阿嬤 Ama', '阿嬤', 'grandma'],
+  ['Yu-Chen', '宇辰', 'shades'],
+  ['Uncle Lee', '老李', 'gent'],
+  ['美華', '美華', 'auntie'],
+  ['虎哥 Tiger', '虎哥', 'cowboy'],
+  ['Auntie Chen', '陳媽媽', 'auntie'],
+  ['Ming', '阿明', 'chef'],
+  ['Mahjong Mike', 'Mike', 'gent'],
+  ['阿翔', '阿翔', 'chef'],
+  ['Grandma Lin', '林奶奶', 'grandma'],
 ];
+/** The Night Market set, owned by both sample players so a table can be shown in it. */
+const LOOKS = ['theme.nightmarket', 'back.midnight', 'frame.lantern', 'emotes.nightmarket'];
 /** The fictional players are told apart from real guests by this birth year. */
 const SAMPLE_YEAR = 1985;
 
@@ -63,10 +72,13 @@ async function data() {
   await db.query("DELETE FROM users WHERE kind = 'guest' AND birth_year = $1", [SAMPLE_YEAR]);
   for (const u of [en, zh]) for (const table of ['puzzle_results', 'puzzle_rush_runs', 'puzzle_ratings']) await db.query(`DELETE FROM ${table} WHERE user_id = $1`, [u]);
   const ids = [];
-  for (const [name, avatar] of PLAYERS) {
+  for (const [i, [name, , avatar]] of PLAYERS.entries()) {
     const id = randomUUID();
     ids.push(id);
-    await db.query("INSERT INTO users (id, kind, display_name, avatar, birth_year, created_at, last_seen_at) VALUES ($1, 'guest', $2, $3, $4, now() - interval '90 days', now())", [id, name, avatar, SAMPLE_YEAR]);
+    await db.query(
+      "INSERT INTO users (id, kind, display_name, avatar, email, birth_year, created_at, last_seen_at) VALUES ($1, 'guest', $2, $3, $4, $5, now() - interval '90 days', now())",
+      [id, name, avatar, `showcase-${i}@example.invalid`, SAMPLE_YEAR],
+    );
   }
   const today = new Date().toISOString().slice(0, 10);
   // Today's daily: most solved, a few wrong; the two showcase players third and fourth.
@@ -137,7 +149,7 @@ async function data() {
     const points = [1840, 1515, 1260, 990, 860, 610, 420, 300, -150, -380, -620];
     for (let i = 0; i < members.length; i++) {
       const m = members[i];
-      const [name, avatar] = PLAYERS[m];
+      const [name, , avatar] = PLAYERS[m];
       const played = 14 + ((m * 7) % 11);
       await db.query(
         "INSERT INTO club_members (club_code, user_id, role, status, display_name, avatar, joined_at, season_points, lifetime_points, matches_played, matches_won, hands_won) VALUES ($1, $2, $3, 'member', $4, $5, now() - make_interval(days => $6::int + 10), $7::int, $7::int + 900, $8, $9, $10)",
@@ -151,12 +163,33 @@ async function data() {
   }
   for (const u of [en, zh]) {
     await db.query('INSERT INTO wallets (user_id, diamonds, bonus_diamonds, updated_at) VALUES ($1, 1240, 60, now()) ON CONFLICT (user_id) DO UPDATE SET diamonds = 1240, bonus_diamonds = 60', [u]);
+    for (const look of LOOKS) {
+      await db.query("INSERT INTO entitlements (user_id, entitlement, expires_at, source, updated_at) VALUES ($1, $2, NULL, 'support', now()) ON CONFLICT (user_id, entitlement) DO NOTHING", [u, look]);
+    }
   }
   console.log('seeded', ids.length, 'players and clubs', owned.rows.map((r) => r.code).join(', '));
   await db.end();
 }
 
-(step === 'clubs' ? clubs() : data()).catch((e) => {
+/** One language's names on every sample player, and the other language's sample player off the boards. */
+async function language(lang) {
+  if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is not set');
+  const db = new Client({ connectionString: process.env.DATABASE_URL });
+  await db.connect();
+  for (const [i, [enName, zhName]] of PLAYERS.entries()) {
+    const name = lang === 'zh' ? zhName : enName;
+    const r = await db.query('UPDATE users SET display_name = $2 WHERE email = $1 RETURNING id', [`showcase-${i}@example.invalid`, name]);
+    for (const row of r.rows) await db.query('UPDATE club_members SET display_name = $2 WHERE user_id = $1', [row.id, name]);
+  }
+  const shown = auth(lang === 'zh' ? stateZh : stateEn).userId;
+  const hidden = auth(lang === 'zh' ? stateEn : stateZh).userId;
+  await db.query('UPDATE users SET leaderboard_visible = true WHERE id = $1', [shown]);
+  await db.query('UPDATE users SET leaderboard_visible = false WHERE id = $1', [hidden]);
+  console.log('names in', lang);
+  await db.end();
+}
+
+(step === 'clubs' ? clubs() : step === 'en' || step === 'zh' ? language(step) : data()).catch((e) => {
   console.error(e);
   process.exit(1);
 });
