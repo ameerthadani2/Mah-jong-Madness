@@ -475,10 +475,10 @@ export class TableClient {
   /** Built from a rejoin token alone, with no record of what came before. */
   private noHistory = false;
   /**
-   * Built with neither a rejoin token nor a record. Such a client sits down in the lobby, or takes its account's own seat
-   * back part-way through a match (a server-hosted table gives a signed-in account its seat back without the token: from
-   * another device, or a link that brought no token), so the first hand it hears of may be any, and until then it cannot
-   * tell which (see `enterHand`).
+   * Built with neither a rejoin token nor a record, and not yet on any hand. Such a client sits down in the lobby, or
+   * takes its account's own seat back part-way through a match (a server-hosted table gives a signed-in account its seat
+   * back without the token: from another device, or a link that brought no token), so the first hand it hears of may be
+   * any, and until then it cannot tell which (see `enterHand`, which clears it).
    */
   private fresh = false;
   /** Hands whose `hand_over` we received. */
@@ -1606,6 +1606,10 @@ export class TableClient {
       this.lapseHand = h;
       this.lapseDeal = before || !this.recordFor(h)?.dealt;
     }
+    // The first hand a client with neither a token nor a record hears of (`fresh`), whatever came before it (a notice that
+    // the table made this seat's share, say): later hands, and a new match at the table, it was there for.
+    const takenBack = this.fresh;
+    this.fresh = false;
     if (this.openHand === h) {
       this.handEpoch = this.epoch;
       return;
@@ -1623,7 +1627,7 @@ export class TableClient {
         this.failNow(problem);
       } else this.noteGap(h);
     } else if (base?.matchOver) this.flag(h, 'Host dealt another hand after the match was over');
-    else if (this.fresh && h > 0 && !this.hasEvidence()) {
+    else if (takenBack && h > 0) {
       // Sat down with neither a token nor a record, and the first hand it hears of is not the match's first: the table
       // gave the account its own seat back part-way through the match (or dealt a client in the lobby out of turn, which
       // this client cannot tell from it). Nothing it holds says where this hand should start.
@@ -1859,7 +1863,7 @@ export class TableClient {
       case 'commit_request': {
         const h = m.handNumber;
         // The first deal a client with neither a token nor a record hears of may be well under way (`fresh`).
-        const recordless = this.noHistory || (this.fresh && !this.hasEvidence());
+        const recordless = this.noHistory || this.fresh;
         const v = this.state.view;
         if (v && v.handNumber === h && v.phase !== 'ended' && this.state.lastResult === null && this.state.ceremony === 'idle') {
           // A hand with this number is already being played: a fresh ceremony now would be a re-deal.

@@ -188,7 +188,57 @@ function takenBack(code: string, mode: 'fresh' | 'token' | 'record') {
   return { w, moved, hand1 };
 }
 
+/**
+ * The same, but the first device goes before hand 1 is dealt: it drops its commitment for hand 1 and closes, so the table
+ * makes the seat's share for that hand; once hand 1 is played, the account opens the table on another device with
+ * neither the record nor the token. The table tells it first that it made the seat's share, then shows it hand 1.
+ */
+function takenBackStoodIn(code: string) {
+  let gone = false;
+  let back = false;
+  const w = wire({
+    code,
+    rules: withRules({ handsPerMatch: 2, turnSeconds: 15, timeBankSeconds: 30 }),
+    botDelayMs: 700,
+    intermissionSeconds: 5,
+    watch: false,
+    upFilter: (m, w) => !(m.t === 'commit' && (w.host as unknown as { snapshot: { handNumber: number } }).snapshot.handNumber === 1),
+    onTick: (w) => {
+      const hand = (w.host as unknown as { snapshot: { handNumber: number } }).snapshot.handNumber;
+      if (!gone && w.host.phase === 'commit' && hand === 1) {
+        gone = true;
+        w.line.close();
+        return;
+      }
+      if (!gone || back || w.host.phase !== 'playing' || w.host.game?.handNumber !== 1) return;
+      back = true;
+      const restore = TableClient.restore;
+      TableClient.restore = (_saved, link, name, avatar, _identity, opts) => new TableClient(link, name, avatar, { userId: 'acct-0' }, opts);
+      try {
+        w.restart();
+      } finally {
+        TableClient.restore = restore;
+      }
+    },
+  });
+  (w.host as unknown as { verifiedUserIds: boolean }).verifiedUserIds = true;
+  (w.host as unknown as { seats: Array<{ userId?: string }> }).seats[0].userId = 'acct-0';
+  w.dealt();
+  for (let k = 0; k < 4_000 && w.host.phase !== 'match_over'; k++) w.step();
+  const hand1 = w.c.state.audits.find((a) => a.audit.handNumber === 1);
+  return { w, back, hand1 };
+}
+
 describe('a seat the account takes back with neither the record nor the token (another device, a notification)', () => {
+  it('honest table, the seat’s share for hand 1 made by the table while no device held it: the new client is told so, then shown hand 1, which is amber, never red', () =>
+    scenario((i) => {
+      const a = takenBackStoodIn(`TBS${i}`);
+      need(a.back && !!a.hand1);
+      expect(a.hand1!.failures).toEqual([]);
+      expect(a.hand1!.status).toBe('partial');
+      expect(a.hand1!.caveats.map(caveatKey)).toEqual(expect.arrayContaining(['standIn', 'gap']));
+    }));
+
   it('honest table: the first hand the new client is shown, hand 1, is amber (joined, its starting scores unchecked), never red; with the token alone the same; from the record, green', () =>
     scenario((i) => {
       const a = takenBack(`TBF${i}`, 'fresh');
