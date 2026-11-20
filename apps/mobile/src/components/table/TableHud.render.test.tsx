@@ -65,3 +65,18 @@ describe('the table HUD icons', () => {
     expect(screen.queryByText('6TYR8N')).toBeNull();
   });
 });
+
+describe('the HUD’s status line (short landscape)', () => {
+  it('takes up to three short lines rather than end before the tile, no taller than the HUD’s icons', async () => {
+    const view = { prevailingWind: 0, handNumber: 0, dealerStreak: 0, drawsLeft: 80 } as unknown as TableView;
+    await render(
+      <TableHud view={view} roomCode="ABCD" quickMatch={false} portrait={false} oneRow clock={{ deadline: null, total: 15, bank: false }} myMove={false} timeBank={0} status="阿花 (Bot) discarded 4 Character" emotesOpen={false} onEmotes={() => {}} coachAllowed coachOpen={false} onCoach={() => {}} onLeave={() => {}} />,
+    );
+    const text = screen.getByText('阿花 (Bot) discarded 4 Character');
+    expect(text.props.numberOfLines).toBe(3);
+    const line = StyleSheet.flatten(text.props.style) as { lineHeight: number };
+    const pill = StyleSheet.flatten(screen.getByTestId('table-status').props.style) as { paddingVertical: number };
+    // Three lines and the pill's padding stay under the 40 pt icons, so the felt keeps its height between turns.
+    expect(3 * line.lineHeight + 2 * pill.paddingVertical).toBeLessThanOrEqual(40);
+  });
+});

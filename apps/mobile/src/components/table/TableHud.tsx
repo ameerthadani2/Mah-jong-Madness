@@ -85,9 +85,11 @@ export function TableHud({
           </View>
         )}
       </Row>
+      {/* Short landscape's "X discarded Y": up to three short lines rather than one cut before the tile (no taller than the
+          HUD's icons, so the felt does not move between turns). */}
       {status && (
         <View style={[styles.status, oneRow && styles.statusFlex]} testID="table-status">
-          <Text numberOfLines={1} style={styles.statusText}>
+          <Text numberOfLines={3} style={styles.statusText}>
             {status}
           </Text>
         </View>
@@ -112,6 +114,6 @@ const styles = StyleSheet.create({
   roundText: { color: colors.ink, fontWeight: '900', fontSize: 13 },
   hudChip: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: 'rgba(16,20,47,0.7)', borderWidth: 2.5, borderColor: colors.ink, borderRadius: 999, paddingLeft: 5, paddingRight: 10, height: 30 },
   hudChipText: { color: '#FFFFFF', fontFamily: fonts.display, fontSize: 15 },
-  status: { backgroundColor: 'rgba(16,20,47,0.6)', borderRadius: 999, paddingHorizontal: 10, paddingVertical: 3, flexShrink: 1, maxWidth: 260 },
-  statusText: { color: '#FFFFFF', fontSize: 12, fontWeight: '900' },
+  status: { backgroundColor: 'rgba(16,20,47,0.6)', borderRadius: 14, paddingHorizontal: 10, paddingVertical: 1, flexShrink: 1, maxWidth: 260 },
+  statusText: { color: '#FFFFFF', fontSize: 11, lineHeight: 12, fontWeight: '900' },
 });
