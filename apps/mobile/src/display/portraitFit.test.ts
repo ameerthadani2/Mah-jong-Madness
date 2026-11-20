@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { applyAction, chooseAction, legalActions, newGame, type GameState } from '@mjm/engine';
 import { compassHeight, CROSS_PAD, fitPortraitFelt, meldsHeight, portraitDealFits, MIN_COMPASS, MIN_FLAT_MELD, MIN_MELD, MIN_POND, myPondPerRow, PINNED_POND_PAD, pondHeight, pondRows, pondRowsShown, centerPondPerRow, type PortraitFeltFit, type PortraitFeltInput, type PortraitSeat } from './portraitFit';
-import { SIDE_GAP, sidePondPerRow } from './tableFit';
+import { meldWidth, SIDE_GAP, sidePondPerRow } from './tableFit';
 
 const seat = (discards: number, melds: number[] = [], flowers = 0, hand = 16 - 3 * melds.length): PortraitSeat => ({ melds, flowers, discards, hand });
 
@@ -157,6 +157,21 @@ describe('the portrait felt fits its box', () => {
     expect(failures).toEqual([]);
     // Forty whole hands of bot play: about two seconds on an idle machine, so it gets more than the usual five.
   }, 60_000);
+});
+
+describe('a side seat’s melds in their column', () => {
+  it('keep a kong, its claimed tile on its side, inside the column: the melds start no larger than that allows', () => {
+    // A 320 pt phone at Normal tiles: an 84 px column, where a kong at 20 px is 96 px wide.
+    expect(meldWidth(4, 20)).toBe(96);
+    const small = fitPortraitFelt({ ...SMALL, felt: 600, sideW: 84, right: seat(4, [4]), meld: 20 });
+    expect(meldWidth(4, small.meld)).toBeLessThanOrEqual(84);
+    // A 414x896 phone at Large tiles: a 99 px column and 25 px melds (a 118 px kong) start at 20 px.
+    const large = fitPortraitFelt({ ...SMALL, felt: 900, sideW: 99, centerW: 160, left: seat(6, [3, 4]), meld: 25, pool: 25 });
+    expect(large.meld).toBe(20);
+    expect(meldWidth(4, large.meld)).toBeLessThanOrEqual(99);
+    // Pongs alone keep the reader's size where they fit.
+    expect(fitPortraitFelt({ ...SMALL, felt: 900, sideW: 99, centerW: 160, left: seat(6, [3]), meld: 25, pool: 25 }).meld).toBe(25);
+  });
 });
 
 describe('the felt from the deal', () => {

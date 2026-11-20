@@ -198,7 +198,11 @@ export function portraitDealFits(input: Pick<PortraitFeltInput, 'felt' | 'sideW'
 export function fitPortraitFelt(input: PortraitFeltInput): PortraitFeltFit {
   const { sideW, centerW, pondW, plates } = input;
   const startPool = Math.max(MIN_POND, input.pool);
-  const startMeld = Math.max(MIN_MELD, input.meld);
+  // A side seat's widest meld (a kong, its claimed tile on its side) stays inside its column: the melds start no larger than
+  // that allows (a kong at 20 px is 96 px, wider than a 320 pt phone's 84 px column).
+  const widest = Math.max(0, ...[input.right, input.left].flatMap((seat) => seat.melds));
+  let startMeld = Math.max(MIN_MELD, input.meld);
+  while (startMeld > MIN_MELD && widest > 0 && meldW(widest, startMeld) > sideW) startMeld--;
   const all = { right: Infinity, across: Infinity, left: Infinity, mine: Infinity };
   // One state, changed a step at a time in the order the module comment gives.
   const s = { pool: startPool, meld: startMeld, hands: true, flat: false, keep: { ...all } };

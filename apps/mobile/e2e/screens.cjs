@@ -420,7 +420,8 @@ async function coachSettled(page, advised) {
  * - No claim or discard button covers any part of a discard on screen.
  * - A pond that keeps only its newest rows (display/portraitFit.ts, and fitCompactCentre on a short landscape phone)
  *   says how many it leaves out with a "+N" chip, whole on screen too.
- * - Every tile of an opponent's melds and flowers is whole on screen (none scrolled away or under its plate).
+ * - Every tile of an opponent's melds and flowers is whole on screen (none scrolled away or under its plate), and in
+ *   portrait a side seat's tiles stay inside its column.
  * - Every tile of my pond and of my hand (the raised one too) and every claim or discard button is whole on screen, and
  *   nothing lies over the top edge of a tile of my hand (the coach's press over a raised tile took the tap there).
  * - Portrait: the coach's press (on the web, padded where its bar is short) reaches over no tile of my pond or my hand.
@@ -489,6 +490,18 @@ async function feltCheck(page) {
       const melds = [...seat.querySelectorAll('[data-testid^="tile-"]')].filter((t) => t.dataset.testid !== 'tile-back' && !t.closest('[data-testid^="pond-seat-"]') && !t.parentElement.closest('[data-testid^="tile-"]') && seen(t));
       if (melds.some((t) => !whole(t))) bad.push(`${who}'s melds: not whole on screen`);
     }
+    // Portrait: a side seat's tiles (a kong with its claimed tile on its side among them) stay inside its column.
+    if (portrait)
+      for (const r of [1, 3]) {
+        const col = document.querySelector(`[data-testid="seat-press-${r}"]`);
+        if (!col) continue;
+        const cb = col.getBoundingClientRect();
+        const out = [...col.querySelectorAll('[data-testid^="tile-"]')].filter(seen).filter((t) => {
+          const b = t.getBoundingClientRect();
+          return b.left < cb.left - 1 || b.right > cb.right + 1;
+        });
+        if (out.length) bad.push(`the ${r === 1 ? 'right' : 'left'} seat's tiles run past its column`);
+      }
     const MY_POND = '[data-testid="my-pond"] [data-testid^="tile-"]';
     const HAND = '[data-testid="hand"] [data-testid^="tile-"], [data-testid="hand-discard"] [data-testid^="tile-"]';
     for (const [what, sel] of [['my pond', MY_POND], ['my hand', HAND], ['the claim or discard buttons', BUTTONS]]) {
