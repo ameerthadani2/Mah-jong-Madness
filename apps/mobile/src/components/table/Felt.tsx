@@ -258,7 +258,8 @@ export function Felt({
           <View style={styles.topRow} onLayout={L.compact && !compactFit.hideTopMelds ? (e) => setCompactTopRow(Math.round(e.nativeEvent.layout.height)) : undefined}>
             {L.compact ? <View onLayout={(e) => setCompactPlate({ w: Math.round(e.nativeEvent.layout.width), h: Math.round(e.nativeEvent.layout.height) })}>{badge}</View> : badge}
             {!L.compact && <HiddenHand count={p.handCount} tileW={tablet ? 15 : 11} tileH={tablet ? 24 : 17} />}
-            {!(L.compact && compactFit.hideTopMelds) && <MeldsAndFlowers player={p} size={L.compact ? topMeld : meldSize(tablet ? 'sm' : 'xs')} flowerSize={L.compact ? topMeld : 'xs'} />}
+            {/* No wider than the column: past its width the melds wrap onto another line rather than run under a side seat. */}
+            {!(L.compact && compactFit.hideTopMelds) && <MeldsAndFlowers player={p} size={L.compact ? topMeld : meldSize(tablet ? 'sm' : 'xs')} flowerSize={L.compact ? topMeld : 'xs'} style={styles.topMeldsLand} />}
           </View>
         )}
         {L.compact ? (
@@ -553,6 +554,7 @@ const styles = StyleSheet.create({
   // Gaps set one by one: react-native-web lets a `gap` win over a `rowGap` given with it.
   topRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', flexWrap: 'wrap', columnGap: TOP_ROW_GAP, rowGap: 4, maxWidth: '100%' },
   topMeldsPortrait: { justifyContent: 'center', maxWidth: '100%' },
+  topMeldsLand: { justifyContent: 'center', maxWidth: '100%', flexShrink: 1 },
   compactMiddle: { flex: 1, flexDirection: 'row', alignSelf: 'stretch', gap: 6, minHeight: 0 },
   middle: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, alignSelf: 'stretch', flexGrow: 1 },
   status: { backgroundColor: 'rgba(16,20,47,0.6)', borderRadius: 999, paddingHorizontal: 10, paddingVertical: 2, maxWidth: STATUS_MAX_W },

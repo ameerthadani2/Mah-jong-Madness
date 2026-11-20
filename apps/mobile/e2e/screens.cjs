@@ -1109,6 +1109,12 @@ async function runBoards(browser, port, [w, h]) {
  * hand tile off the rail), a hand tile is off screen, the hand is no larger than a row sharing the rail with my plate
  * (Extra-large moves the plate above the hand), or the coach fails coachCheck at any of my decisions in the hand.
  */
+/**
+ * The Extra-large runs' seed (seedContext; the hand follows the coach): the across seat claims three sets and a flower, a
+ * line of melds wider than a 1024 px tablet's centre column at Extra-large tiles.
+ */
+const XL_SEED = 301;
+
 async function runXL(browser, port, [w, h]) {
   const tag = `${w}x${h}`;
   const fails = [];
@@ -1117,6 +1123,7 @@ async function runXL(browser, port, [w, h]) {
     localStorage.setItem('mjm.profile', JSON.stringify({ userId: 'user-e2e-1234567', userSecret: '0123456789abcdef0123456789abcdef', name: 'Tester', avatar: 'panda' }));
     localStorage.setItem('mjm.display', JSON.stringify({ tileScale: 1.5, textScale: 1.3 }));
   });
+  await seedContext(ctx, XL_SEED);
   const page = await ctx.newPage();
   const errors = [];
   page.on('pageerror', (e) => errors.push(e.message));
@@ -1145,6 +1152,7 @@ async function runXL(browser, port, [w, h]) {
   };
   // A whole hand, with the coach checked at each of my decisions; the shot and the hand checks a few turns in.
   const played = await playCoachedHand(page, {
+    discard: 'coach',
     onDiscard: async (n) => {
       if (n !== 5) return;
       await page.waitForTimeout(500);
@@ -1160,7 +1168,7 @@ async function runXL(browser, port, [w, h]) {
   fails.push(...xlChecks);
   fails.push(...played.found.map((f) => `Extra-large tiles, coach: ${f}`));
   await ctx.close();
-  return { size: `${tag} xl`, finished: true, discards, shots: ['table-xl'], notes: [`hand tile ${xlTile} px wide`], fails, errors };
+  return { size: `${tag} xl`, seed: SEED_OVERRIDE ?? XL_SEED, finished: true, discards, prompts: played.prompts, shots: ['table-xl'], notes: [`hand tile ${xlTile} px wide`], fails, errors };
 }
 
 /**
