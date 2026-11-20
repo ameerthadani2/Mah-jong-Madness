@@ -659,6 +659,22 @@ async function playCoachedHand(page, { onDiscard = async () => undefined, untilD
   // smaller between two of them unless the table said so, its "Tiles made smaller" notice seen in between.
   let handW = null;
   let toldSmaller = false;
+  // The notice stays 5 s. With every run of this file sharing one browser, the checks at a decision can take longer than
+  // that, so polling for it between two decisions misses it now and then. The page notes each time it draws the notice
+  // instead, and the check at each decision reads and clears that note (`smallerDrawn`).
+  await page.evaluate(() => {
+    const note = () => {
+      if (document.querySelector('[data-testid="tiles-smaller-notice"]')) window.__mjmTilesSmaller = true;
+    };
+    new MutationObserver(note).observe(document.body, { childList: true, subtree: true, characterData: true });
+    note();
+  });
+  const smallerDrawn = () =>
+    page.evaluate(() => {
+      const drawn = !!window.__mjmTilesSmaller;
+      window.__mjmTilesSmaller = false;
+      return drawn;
+    });
   // Each opponent's melds and flowers on the felt (its face-up tiles outside its pond): they only ever grow in a hand, so
   // fewer at one of my decisions than at the one before means the felt hid some.
   const meldsSeen = {};
@@ -679,7 +695,8 @@ async function playCoachedHand(page, { onDiscard = async () => undefined, untilD
       const t = [...document.querySelectorAll('[data-testid="hand"] [data-testid^="tile-"], [data-testid="hand-discard"] [data-testid^="tile-"]')].find((e) => e.getBoundingClientRect().width > 0);
       return t ? Math.round(t.getBoundingClientRect().width) : null;
     });
-    if (w !== null && handW !== null && w < handW - 1 && !toldSmaller && !(await visible(page, '[data-testid="tiles-smaller-notice"]'))) found.push(`my hand's tiles got smaller between two of my decisions (${handW} to ${w} px) and the table did not say so`);
+    const drawn = await smallerDrawn();
+    if (w !== null && handW !== null && w < handW - 1 && !toldSmaller && !drawn && !(await visible(page, '[data-testid="tiles-smaller-notice"]'))) found.push(`my hand's tiles got smaller between two of my decisions (${handW} to ${w} px) and the table did not say so`);
     if (w !== null) handW = w;
     toldSmaller = false;
     const melds = await page.evaluate(() =>
