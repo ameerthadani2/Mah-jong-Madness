@@ -663,3 +663,49 @@ describe('a restart during the move (R9, T28)', () => {
       expect(w.verdict().failures).toEqual([]);
     }));
 });
+
+/**
+ * Normal. At the seat's third own turn (a discard) it moves 5 s after the turn is shown, with most of the turn clock
+ * still on its screen; the server drops that move and (`cut`) cuts the link at once, as a lost connection would. The
+ * phone joins again a second later and is shown the turn again; the seat does not move again, and the table times it
+ * out. `cut` false: the same drop on a link that stays up (the control).
+ */
+function droppedThenCut(code: string, cut: boolean) {
+  let target = -1;
+  let dropped: Action | null = null;
+  const mineN = (w: Wire) => w.host.game!.actionLog.filter((e) => e.seat === 0 && e.source === 'player').length;
+  const w = wire({
+    code,
+    botDelayMs: 700,
+    think: (_k, tc) => (tc === target ? 5_000 : 600),
+    map: (m, w) => {
+      if (target < 0 && m.t === 'state' && w.discardTurn() && w.host.game!.turnCounter === m.view.turnCounter && mineN(w) >= 2) target = m.view.turnCounter;
+      return m;
+    },
+    upFilter: (m, w) => {
+      if (dropped || m.t !== 'action' || m.turnCounter !== target) return true;
+      dropped = m.action;
+      if (cut) w.dropNow(1_000);
+      return false;
+    },
+  });
+  w.finish();
+  const taken = w.c.state.lastAudit?.log.find((e) => e.seat === 0 && e.n === target && e.source !== 'player');
+  // (Only a move other than the one dropped took anything from the seat.)
+  return { w, dropped: dropped !== null, taken: taken !== undefined && JSON.stringify(taken.action) !== JSON.stringify(dropped) };
+}
+
+describe('a move the server drops and then cuts the link (R4 across links)', () => {
+  it('Normal: the move made with most of the turn clock showing, dropped, the link cut at once and the seat timed out on the new link: amber inFlight, never green; without the cut red, the move left lying more than 30 s on a link that never dropped', () =>
+    scenario((i) => {
+      const t = droppedThenCut(`SDC${i}`, true);
+      need(t.dropped && t.taken);
+      expect(t.w.drops).toHaveLength(1);
+      expect(t.w.verdict()).toMatchObject({ status: 'partial', failures: [] });
+      expect(t.w.verdict().caveats).toContain('inFlight');
+      // Without the cut the move lies 40 s on a link that never dropped before the table plays over it: no network is that slow.
+      const ctl = droppedThenCut(`SDC${i}`, false);
+      need(ctl.dropped && ctl.taken);
+      expect(ctl.w.verdict()).toMatchObject({ status: 'failed', failures: ['moveIgnored'] });
+    }));
+});

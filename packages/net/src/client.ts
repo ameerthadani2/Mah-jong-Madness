@@ -2732,12 +2732,15 @@ export class TableClient {
           }
           // Judged after the replay, when every fixed point between the two clocks is known; the mark keeps its place among the problems.
           if (isInt(n)) problems.add(`${JUDGE_LATER}${n}`);
-          // The legal moves this device sent for this turn, since it began vouching for the log, over the link
-          // the table's move came over, that the log has not used and the table did not refuse by then: the
-          // table played its own over them. (Before the ledger vouches, none are matched.)
+          // The legal moves this device sent for this turn, since it began vouching for the log, that the log has not
+          // used and the table did not refuse by then: the table played its own over them. (Before the ledger vouches,
+          // none are matched.) For the in-good-time rule, one sent over the link the table's move came over or an
+          // earlier one (a server that drops the move and cuts the link, or says the seat was opened on another
+          // device, loses it as a slow network would); for the 30 s rule, only one over that link (`sameLink`).
           const after = isInt(n) ? frameAfter(n) : null;
           const from = play.ledgerFrom;
-          const lying = (x: (typeof sent)[number]): x is (typeof sent)[number] & { at: number } => after !== null && from !== null && isInt(n) && !x.used && x.tc >= from && x.tc <= n && x.epoch === after.epoch && typeof x.at === 'number' && !(x.refusedAt !== undefined && x.refusedAt <= n) && legalFor(s, me, x.action) && !sameActionSafe(x.action, entry.action, s, me);
+          const lying = (x: (typeof sent)[number], sameLink = false): x is (typeof sent)[number] & { at: number } =>
+            after !== null && from !== null && isInt(n) && !x.used && x.tc >= from && x.tc <= n && (sameLink ? x.epoch === after.epoch : x.epoch <= after.epoch) && typeof x.at === 'number' && !(x.refusedAt !== undefined && x.refusedAt <= n) && legalFor(s, me, x.action) && !sameActionSafe(x.action, entry.action, s, me);
           // One sent in good time (`inFlight`, amber): sent after the turn's first state arrived, with more of
           // the clock the app showed left, counted from that state's arrival, than the best round trip measured by
           // then and `FLIGHT_SLACK_MS` explain losing on the way (`flightAllowance`). The clock the app showed ends
@@ -2775,7 +2778,7 @@ export class TableClient {
           }
           // One left lying for more than `MOVE_SLACK_MS` (time the app was not running left out) over a link
           // that never dropped: no network is that slow.
-          if (after && sent.some((x) => lying(x) && after.at - x.at - pausedIn(scopeOf(scope, x.run)?.pauses ?? [], x.at, after.at) > MOVE_SLACK_MS)) {
+          if (after && sent.some((x) => lying(x, true) && after.at - x.at - pausedIn(scopeOf(scope, x.run)?.pauses ?? [], x.at, after.at) > MOVE_SLACK_MS)) {
             if (after.kept === false) {
               if (notes) notes.damaged = true;
             } else problems.add(`The table ignored a move this seat sent in good time and played its own instead (turn ${n})`);
