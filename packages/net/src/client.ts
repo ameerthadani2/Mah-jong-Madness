@@ -214,6 +214,9 @@ export const AUDIT_FAILURES = {
   // A frame of a known type that does not carry what an honest host always sends in it, or carries it as another type
   // (`intake`): the client takes nothing from it.
   malformedFrame: 'Host sent a malformed frame',
+  // An honest host answers `not_seated` only on a link it seats no one on: on one where it seated this device, which still
+  // holds the seat there, the answer leaves a move this seat made there unanswered, unjudged.
+  seatDenied: 'Host said this device had no seat on a connection where the table had seated it',
   // A frame naming a hand or turn an honest host would not name at that point: a clock frame for a turn other than the
   // one whose state it last sent the link, or a deal's frame for a hand other than the one being dealt.
   strayFrame: 'Host sent a frame about a hand or turn this device was not on',
@@ -473,6 +476,12 @@ export class TableClient {
    * notice says the table was restored.
    */
   private aheadOf: number | null = null;
+  /**
+   * The link epoch on which the table last seated this client (its `welcome`). Until that link goes the table holds the
+   * seat for it there, unless it takes the seat away on that link (a club's eviction, `evicted`) or opens it on another
+   * device (`disconnected`, `kicked`).
+   */
+  private seatedOn = -1;
   /** Hand for which the host says it supplied our share. */
   private standInHand: number | null = null;
   /** The hand already under way when we first saw the table (we could not take part in its deal). */
@@ -1842,6 +1851,8 @@ export class TableClient {
     if (!OPENING_FRAMES.has(m.t)) this.opening = false;
     switch (m.t) {
       case 'welcome': {
+        // Whatever else it says, a welcome seats this client on this link.
+        this.seatedOn = this.epoch;
         const seats = m.seats;
         // The rejoin token (an honest table gives one in every welcome, `intake`). The table's room code is pinned from
         // the first welcome: the app keeps the record under the room it joined, which a welcome does not move.
@@ -2194,6 +2205,11 @@ export class TableClient {
         this.update({ emotes: [...this.state.emotes.slice(-20), { seat: m.seat, emote: m.emote, at: this.now() }] });
         return;
       case 'error':
+        // The table took the seat away on this link: from here on it answers `not_seated` there.
+        if (m.code === 'evicted') this.seatedOn = -1;
+        // Sent on a link the table seated this client on, which still holds the seat, `not_seated` is the server's own
+        // making: the move it answers would go unanswered (it names no turn, so it excuses no move, `noteRefusal`).
+        else if (m.code === 'not_seated' && this.seatedOn === this.epoch && this.holdsSeat()) this.flag(this.activeHand(), 'Host said this device had no seat on a connection where the table had seated it');
         this.noteRefusal(m);
         this.update({ lastError: m.message, lastErrorCode: m.code });
         return;

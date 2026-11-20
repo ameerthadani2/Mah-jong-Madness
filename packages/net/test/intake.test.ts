@@ -272,7 +272,76 @@ function refused(code: string, mode: 'notc' | 'notSeated' | 'tc' | 'silent') {
   return { w, attacked: dropped > 0 && !!entry && entry.source !== 'player' };
 }
 
+/**
+ * Normal. On the seat's third discard turn its move is dropped on its way and the server answers `not_seated`, with no
+ * turn, on the connection it seated the phone on; the seat, told its move went nowhere, makes another legal discard, and
+ * the table plays that one (so the table never moves for it, and no clock rule is reached).
+ */
+function notSeatedThenOwn(code: string) {
+  let target: number | null = null;
+  let first: Action | null = null;
+  let second = false;
+  const w = wire({
+    code,
+    rules: NORMAL,
+    botDelayMs: 700,
+    think: (_k, tc) => (tc === target ? Infinity : 600),
+    onTick: (w) => {
+      moveOn(w, target);
+      const g = w.host.game;
+      if (second || first === null || !g || g.turnCounter !== target || w.c.state.lastErrorCode !== 'not_seated') return;
+      const other = legalActions(g, 0).find((a) => a.type === 'discard' && !sameAction(a, first as Action, g, 0));
+      if (!other) return;
+      second = true;
+      w.c.act(other);
+    },
+    map: (m, w) => {
+      if (target === null && m.t === 'state' && thirdDue(w, m)) target = m.view.turnCounter;
+      return m;
+    },
+    upFilter: (m, w) => {
+      if (m.t !== 'action' || target === null || m.turnCounter !== target || first !== null) return true;
+      first = m.action;
+      w.line.inject({ t: 'error', code: 'not_seated', message: 'Join the table first.' } as HostMessage);
+      return false;
+    },
+  });
+  w.finish();
+  const entry = target === null ? undefined : w.c.state.lastAudit?.log.find((e) => e.seat === 0 && e.n === target);
+  return { w, attacked: second && !!entry && entry.source === 'player' };
+}
+
 describe('a refusal that names no turn', () => {
+  it('a legal move dropped and answered "not seated" on the connection the table seated the phone on, then another move of the seat played in its place: red (it was once green)', () =>
+    scenario((i) => {
+      const a = notSeatedThenOwn(`INO${i}`);
+      need(a.attacked);
+      expect(a.w.verdict()).toMatchObject({ status: 'failed', failures: ['seatDenied'] });
+    }));
+
+  it('"not seated" where an honest table sends it: to a connection it took the seat away on (a club eviction), or never seated the phone on: nothing failed', () => {
+    const hub = new LoopbackHub();
+    const host = new TableHost(hub.create('host'), { roomCode: 'INE', rules: NORMAL, matchId: 'm-INE' });
+    const down: HostMessage[] = [];
+    const tap = (id: string): Link => {
+      const base = transportLink(hub.create(id), 'host');
+      return { ...base, onMessage: (cb) => base.onMessage((m) => (down.push(m), cb(m))) };
+    };
+    const a = new TableClient(tap('pA'), 'A', undefined, { userId: 'user-evicted-1' });
+    a.join();
+    expect(a.state.seat).toBe(0);
+    host.evictUser('user-evicted-1');
+    a.chat('gg');
+    // A full table seats nobody on the fifth connection: it is answered as one that holds no seat.
+    for (const id of ['pB', 'pC', 'pD', 'pE']) new TableClient(transportLink(hub.create(id), 'host'), id).join();
+    const e = new TableClient(tap('pF'), 'F');
+    e.join();
+    e.chat('gg');
+    expect(down.filter((m) => m.t === 'error').map((m) => (m as { code: string }).code)).toEqual(['evicted', 'not_seated', 'full', 'not_seated']);
+    expect(a.serialize().tamper).toEqual([]);
+    expect(e.serialize().tamper).toEqual([]);
+  });
+
   it('a legal move dropped and refused as illegal with no turn named: red, the refusal is malformed (it was once green); named: red, a legal move refused', () =>
     scenario((i) => {
       const a = refused(`INR${i}`, 'notc');
@@ -284,11 +353,11 @@ describe('a refusal that names no turn', () => {
       expect(b.w.verdict()).toMatchObject({ status: 'failed', failures: ['legalMoveRefused'] });
     }));
 
-  it('the same refused as not seated, with no turn: the refusal excuses nothing, so the move counts as one the table ignored, as when no refusal comes', () =>
+  it('the same refused as not seated, with no turn: red, an answer an honest table gives only to a connection it seats no one on; it excuses nothing, so the move counts as one the table ignored, as when no refusal comes', () =>
     scenario((i) => {
       const a = refused(`INS${i}`, 'notSeated');
       need(a.attacked);
-      expect(a.w.verdict()).toMatchObject({ status: 'failed', failures: ['moveIgnored'] });
+      expect(a.w.verdict()).toMatchObject({ status: 'failed', failures: ['seatDenied', 'moveIgnored'] });
       const b = refused(`INS${i}`, 'silent');
       need(b.attacked);
       expect(b.w.verdict()).toMatchObject({ status: 'failed', failures: ['moveIgnored'] });
