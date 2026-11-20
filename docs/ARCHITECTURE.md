@@ -42,7 +42,7 @@ tests, sim   ──┘         │
 
 | Threat | Mitigation |
 | --- | --- |
-| Host rigs the shuffle | Seed is a hash of every seat's secret; commitments are published before any secret is revealed. |
+| Host rigs the shuffle | Seed is a hash of every seat's secret; commitments are published before any secret is revealed. Each client keeps the set of each hand under that hand, so a frame about another hand cannot replace the set it revealed against. |
 | Host fakes actions or results | Action log + seed are published; each client replays them and compares the hash of every state it was shown, a digest of every view it was shown (and of the result's view) with the replayed state's view for its seat, the turn each log entry names with the turn the replay is at, and its own final hand. |
 | Client sends illegal actions | Host validates against `legalActions`; errors are returned, state is re-sent. |
 | Client acts for another seat | Peer id → seat binding; rejected. |

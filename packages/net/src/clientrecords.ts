@@ -615,9 +615,12 @@ export interface SerializedClient {
   /** The id this client gives the host as its device (`join.device`), kept across app restarts (absent in records saved by older builds). */
   device?: string;
   secret: string | null;
+  /** The set of the hand last published (`commitsHand`), as records saved before the sets were kept per hand hold it. */
   commits: Commitment[] | null;
   commitHand: number | null;
   commitsHand: number | null;
+  /** The commitment set of each of the last few hands (absent in records saved by older builds: `commits` then). */
+  commitSets?: Array<{ hand: number; commits: Commitment[] }>;
   standInHand: number | null;
   joinedHand: number | null;
   firstHand: number | null;

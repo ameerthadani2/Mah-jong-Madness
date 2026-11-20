@@ -453,11 +453,15 @@ export class TableClient {
     kicked: false,
   };
   private secret: string | null = null;
-  private commits: Commitment[] | null = null;
+  /**
+   * The commitment sets this client was shown, one per hand (a hand's is cleared by each new attempt at its deal), for
+   * the last few hands (`MAX_HAND_RECORDS`; never the hand this client is on). A set is kept under the hand it names: a
+   * frame about another hand neither replaces nor empties it, so the set this client revealed against is the one the
+   * audit is held to (`setFor`).
+   */
+  private commitSets: Array<{ hand: number; commits: Commitment[] }> = [];
   /** Hand our current secret was committed for. */
   private commitHand: number | null = null;
-  /** Hand the stored commitment set belongs to (cleared on every new attempt). */
-  private commitsHand: number | null = null;
   /** Hand for which the host says it supplied our share. */
   private standInHand: number | null = null;
   /** The hand already under way when we first saw the table (we could not take part in its deal). */
@@ -744,9 +748,10 @@ export class TableClient {
       lastErrorCode: null,
     };
     this.secret = d.secret;
-    this.commits = d.commits;
+    // (A record saved before the sets were kept per hand holds one set, under `commits` and `commitsHand`.)
+    const sets = Array.isArray(d.commitSets) ? d.commitSets : d.commits && isInt(d.commitsHand) ? [{ hand: d.commitsHand, commits: d.commits }] : [];
+    this.commitSets = sets.filter((x) => isObject(x) && isInt(x.hand) && isCommitSet(x.commits)).map((x) => ({ hand: x.hand, commits: x.commits.map((c) => ({ seat: c.seat, hash: c.hash })) }));
     this.commitHand = d.commitHand;
-    this.commitsHand = d.commitsHand;
     this.standInHand = d.standInHand;
     this.joinedHand = d.joinedHand;
     this.firstHand = d.firstHand;
@@ -812,9 +817,11 @@ export class TableClient {
       state: { ...state, audits: state.audits.slice(-MAX_AUDITS) },
       device: this.deviceId,
       secret: this.secret,
-      commits: this.commits,
+      // The set of the hand last published, as records saved before the sets were kept per hand hold it.
+      commits: this.commitSets[this.commitSets.length - 1]?.commits ?? null,
       commitHand: this.commitHand,
-      commitsHand: this.commitsHand,
+      commitsHand: this.commitSets[this.commitSets.length - 1]?.hand ?? null,
+      commitSets: this.commitSets.map((x) => ({ hand: x.hand, commits: x.commits.map((c) => ({ ...c })) })),
       standInHand: this.standInHand,
       joinedHand: this.joinedHand,
       firstHand: this.firstHand,
@@ -1505,6 +1512,22 @@ export class TableClient {
     return this.records.find((r) => r.hand === hand) ?? null;
   }
 
+  /** The commitment set this client holds for hand `h` (null: none). */
+  private setFor(h: number): Commitment[] | null {
+    return this.commitSets.find((x) => x.hand === h)?.commits ?? null;
+  }
+
+  /** Keep `commits` as hand `h`'s set, for the last few hands, never giving up the hand this client is on (`trimHands`). */
+  private holdSet(h: number, commits: Commitment[]): void {
+    this.dropSet(h);
+    this.commitSets.push({ hand: h, commits: commits.map((c) => ({ seat: c.seat, hash: c.hash })) });
+    this.trimHands(this.commitSets, MAX_HAND_RECORDS, (x) => x.hand);
+  }
+
+  private dropSet(h: number): void {
+    this.commitSets = this.commitSets.filter((x) => x.hand !== h);
+  }
+
   private playFor(hand: number): PlayRecord {
     let play = this.plays.find((p) => p.hand === hand);
     if (!play) {
@@ -1622,9 +1645,8 @@ export class TableClient {
   /** Forget the previous match's verification record (its audits stay on the list). */
   private resetMatch(): void {
     this.secret = null;
-    this.commits = null;
+    this.commitSets = [];
     this.commitHand = null;
-    this.commitsHand = null;
     this.standInHand = null;
     this.joinedHand = null;
     this.firstHand = null;
@@ -1820,8 +1842,8 @@ export class TableClient {
         else rec.attempts.push({ n, committed: true, revealed: false, stoodIn: false });
         this.ceremonyEpoch = this.epoch;
         this.secret = makeSecret();
-        this.commits = null;
-        this.commitsHand = null;
+        // A new attempt publishes a new set: the one held for this hand belonged to the last attempt.
+        this.dropSet(h);
         this.commitHand = h;
         if (this.standInHand === h) this.standInHand = null;
         // Record the commitment before sending it: the host may answer at once.
@@ -1858,9 +1880,8 @@ export class TableClient {
           if (at) at.stoodIn = true;
           else {
             r.attempts.push({ n, committed: false, revealed: false, stoodIn: true });
-            // Commitments we hold belong to an earlier attempt, not to the one this stand-in is for.
-            this.commits = null;
-            this.commitsHand = null;
+            // Commitments we hold for this hand belong to an earlier attempt, not to the one this stand-in is for.
+            this.dropSet(h);
           }
           r.attempts.sort((a, b) => a.n - b.n);
         } else return;
@@ -1887,11 +1908,12 @@ export class TableClient {
           this.flag(this.activeHand(), 'Host sent a frame about a hand or turn this device was not on');
           return;
         }
-        if (this.commits && this.commitsHand === h) {
+        const held = this.setFor(h);
+        if (held) {
           // Published once per attempt; only a new commit_request opens the next set. An honest host
           // re-sends the same set (to a returning seat); a different one would let it re-pick its
           // own share after seeing ours.
-          if (!sameCommitSet(this.commits, m.commits)) this.flag(h, 'Host changed the commitments after publishing them');
+          if (!sameCommitSet(held, m.commits)) this.flag(h, 'Host changed the commitments after publishing them');
           return;
         }
         if (this.secret && this.commitHand === h && this.standInHand !== h) {
@@ -1901,8 +1923,7 @@ export class TableClient {
             return;
           }
         }
-        this.commits = m.commits;
-        this.commitsHand = h;
+        this.holdSet(h, m.commits);
         return;
       }
       case 'reveal_request': {
@@ -1913,7 +1934,7 @@ export class TableClient {
         // This attempt's share went out and the hand has been dealt: an honest host asks for nothing more,
         // and answering would move the time the share was sent, which the deal's fixed point is measured from.
         if (attempt?.revealed && this.recordFor(h)?.dealt) return;
-        if (this.commitsHand !== h) {
+        if (!this.setFor(h)) {
           // Revealing first would let the host pick its own share after seeing ours.
           this.flag(h, 'Host asked for my secret before publishing all commitments');
           return;
@@ -2269,10 +2290,7 @@ export class TableClient {
         this.commitHand = null;
         this.secret = null;
       }
-      if (this.commitsHand === h) {
-        this.commits = null;
-        this.commitsHand = null;
-      }
+      this.dropSet(h);
       if (this.standInHand === h) this.standInHand = null;
       if (this.handStart?.handNumber === h) this.handStart = null;
       if (this.chainChecked === h) this.chainChecked = null;
@@ -2367,11 +2385,9 @@ export class TableClient {
         const myReveal = revealsOk ? audit.reveals.find((r) => r.seat === me) : undefined;
         if (!myReveal || myReveal.secret !== this.secret) failures.push('Host altered my secret');
       }
-      if (this.commits && this.commitsHand === h) {
-        for (const c of this.commits) {
-          const a = commitsOk ? audit.commits.find((x) => x.seat === c.seat) : undefined;
-          if (!a || a.hash !== c.hash) failures.push(`Commitment for seat ${c.seat} changed after the fact`);
-        }
+      for (const c of this.setFor(h) ?? []) {
+        const a = commitsOk ? audit.commits.find((x) => x.seat === c.seat) : undefined;
+        if (!a || a.hash !== c.hash) failures.push(`Commitment for seat ${c.seat} changed after the fact`);
       }
     }
     let replayed: GameState | null = null;
@@ -2485,8 +2501,8 @@ export class TableClient {
     // 5. The commitments we were shown before revealing (only our own share depended on them).
     if (forgot) {
       // Whatever set this client holds belongs to an attempt before the one that was dealt.
-    } else if (this.commits && this.commitsHand === h) {
-      for (const c of this.commits) {
+    } else if (this.setFor(h)) {
+      for (const c of this.setFor(h) ?? []) {
         const a = commitsOk ? audit.commits.find((x) => x.seat === c.seat) : undefined;
         if (!a || a.hash !== c.hash) failures.push(`Commitment for seat ${c.seat} changed after the fact`);
       }
