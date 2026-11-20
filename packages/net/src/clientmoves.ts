@@ -198,8 +198,8 @@ export function unanswered(f: SeenState, from: ReadonlyArray<PingStart> | undefi
 }
 
 /**
- * How much of a turn's clock a move sent at `x.at` may honestly have lost on its way, by the turn's
- * first state's own clock counted from its arrival: the least round trip this device had measured, in
+ * How much of a turn's clock a move sent at `x.at` may honestly have lost on its way, by the clock the
+ * app showed (`streakEnd`) counted from the arrival of the turn's first state: the least round trip this device had measured, in
  * the run of the app and of its clock it sent the move in and the host's clock era `era`, by the time
  * it sent it (every fixed point of the hand: its pongs, its deal, the frames that showed this seat's
  * earlier moves; and `best`, the strongest one carried from the hands before), plus `FLIGHT_SLACK_MS`;

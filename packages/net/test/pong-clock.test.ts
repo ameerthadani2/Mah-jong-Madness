@@ -451,6 +451,47 @@ describe('unanswered: a frame long into a silence of the table’s answers in it
   });
 });
 
+describe('an honest table whose first answers of a scope are slower than the next ones (T31)', () => {
+  const HYPER = withRules({ handsPerMatch: 1, turnSeconds: 4, timeBankSeconds: 0 });
+  it('Hyper, after a server restart the first 4.5 s of frames on the new link take 1 s longer: a turn shown before a quicker answer replaced the first is measured by the first answer, and is not late', () =>
+    scenario((i) => {
+      let restartedAt: number | null = null;
+      let slowUntil = Number.NEGATIVE_INFINITY;
+      const w = wire({
+        code: `PH${i}`,
+        rules: HYPER,
+        botDelayMs: 700,
+        delay: (_m, now) => (now < slowUntil ? 1_000 : 0),
+        onTick: (w) => {
+          const g = w.host.game;
+          if (restartedAt !== null || !g || w.host.phase !== 'playing' || w.owes() || w.pendingReconnectAt !== null) return;
+          // After the seat's third move, at the start of a 10 s window of ping time, so that the quicker answers come in the first's window.
+          if (g.actionLog.filter((e) => e.seat === 0 && e.source === 'player').length < 3 || w.clock.now % 10_000 !== 0) return;
+          restartedAt = w.clock.now;
+          w.restartHost(1_000);
+          slowUntil = w.clock.now + 1_000 + 4_500;
+        },
+      });
+      w.finish();
+      need(restartedAt !== null && w.c.state.lastAudit !== null);
+      const play = plays(w.c).find((p) => p.hand === w.c.state.lastAudit!.handNumber)!;
+      // The first ping whose answer is quick is the one sent once the slow start is over (pings go out on the whole second).
+      const quick = Math.ceil((slowUntil as number) / 1_000) * 1_000;
+      // A turn of the seat shown in the new era after the first quick ping went out, and long enough after the era's
+      // first ping that it would be taken as late if the first, slower answer had been replaced by the quick one.
+      const between = play.seen.filter((f) => f.owes && (f.era ?? 0) === 1 && (f.atLo ?? f.at) < quick && unanswered(f, play.pingedFrom, 2_000));
+      need(between.length > 0);
+      const v = w.verdict();
+      expect(v.failures).toEqual([]);
+      expect(v.caveats).not.toContain('lateShown');
+      expect(v.caveats).not.toContain('tableMovedLate');
+      // The first answer of the era stays beside the quicker one that took over its 10 s window.
+      const era1 = (play.pongs ?? []).filter((k) => k.era === 1);
+      expect(era1[0].at).toBeLessThan(quick);
+      expect(era1.some((k) => k.at === quick)).toBe(true);
+    }));
+});
+
 describe('a table that answers no ping once the earlier answers stopped counting (R6 by scope, T30)', () => {
   const HYPER = withRules({ handsPerMatch: 1, turnSeconds: 4, timeBankSeconds: 0 });
   for (const mode of ['restart', 'app'] as const) {
