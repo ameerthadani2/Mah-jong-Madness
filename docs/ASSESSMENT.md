@@ -48,6 +48,12 @@ Serious defects that survived the skeptics:
      - **Slow links lost the table.** The app's ping a second had stopped the host's clock frames, so a link whose delay rose 8 or 9 s each way at once went quiet for 11 s. The signalling heartbeat dropped it, and the table was lost (lat8-both-step at Relaxed: 8 drops in 200 matches, against 1 on `19199c3`). Answers to pings no longer put clock frames off: 1 drop again, and fewer than on `19199c3` at 10 and 11 s steps (lat11 at Relaxed: 67 drops in 200 matches, against 166).
      - **A fast phone clock.** A phone clock running 2,000 ppm fast, ten times the real-world worst, turns most later hands of a long match amber. FAIRNESS.md now says so.
      - **The honest batteries afterwards** (998 conditions and speeds, 20 matches each, about 128,800 hands): no red hand that `19199c3` does not also have, and amber within 0.2 points of `4549a19` at every speed.
+     - **Still open after the recheck (2026-11-20).** A malicious-server recheck of that repair found three more ways to stay green. All three were already there before it (`4549a19`):
+       - a rejoin the server never welcomes stops the phone's pings, so later hands fall back to the old 17 s bound (Hyper, turns held 3 s that the table then plays: 25 of 25 hands green);
+       - a move made after a forced app resume is not counted by the rule for moves lost on their way (a dropped move with 3 to 25 s on the screen: green);
+       - turns held before a forced resume lose their measure, because a run's answers to pings are not saved (Normal, turns 10 s late: 18 of 18 runs green).
+
+       The next unit closes them.
 2. **Backdated first frames, then a delay: up to 74.5 s late and still green** (fairness, major). `docs/FAIRNESS.md` states this residual, but as "25 to 30 seconds". The challenger had the table play 17 of 17 of a victim's moves in a green hand, with the Fair play count at 0.
    - Closed by unit 20: each turn is measured against the table's answers to a ping a second; the bound is half the turn clock (2 s at Hyper). With the app's ping going out right behind its join, as it does, the probe's backdated frame is the answer to that ping, and every hand is amber with every turn counted. If the server backdates the deal itself instead and delays everything after it, pings included, the count still counts every turn (it measures turns against the answers to pings alone), and the hand is amber whenever the table plays over a move the player made with time on the screen's clock. What stays out of sight is a server whose whole clock runs behind from the first frame, or one that sends a single answer to a ping at once with its stamp moved back and everything after it late: to the phone that is a fast connection to a clock that is behind (a stated limit in FAIRNESS.md). The screen's clock counts that same clock, so such a server gains only the moves made in the last 1.5 s.
 3. **At Turbo and Hyper, a 15 s delay from the start lets the table play every turn while the hand stays green** (fairness, major; both skeptics confirmed it). This is inside the stated 17 s bound, and FAIRNESS.md gives its cost per speed. At a 4 s turn, though, it means the player never moves.
@@ -55,6 +61,21 @@ Serious defects that survived the skeptics:
 4. **In small portrait at Extra-large tiles, the opponents' discards shrink into a short scroll window** (UX, major; four skeptics confirmed it).
    - **The sizes.** The window is 101 px tall at 375x667, and 44 to 57 px at 320x568 in zh-TW. None of its 18 to 32 tiles is fully visible, and the side seats' name tags are cut.
    - **The cause.** Unit 18 pinned the coach above my pond, and the pinned coach, my pond and the 60 px action strip take their height first (`Felt.tsx` 303-340, `layout.ts` 108). The only safeguard shrinks the hand just enough to keep one coach line.
+   - **After unit 20 (2026-11-20).**
+     - **The felt.** The portrait felt now fits its box with nothing scrolling. Older discards sit behind a "+N" chip. A tap on any opponent's seat opens a sheet with every seat's whole pond in play order: a named dialog, with the page behind it inert. At 360x640 with Extra-large tiles the felt shows 65% of the opponents' discards (57% before), and every hidden one is a tap away.
+     - **Tile size.** On a 320 pt phone the hand starts at the size the felt can keep, and the app says so. Before, it shrank silently from the second turn.
+     - **The checkers' other findings, fixed:**
+       - the Win button stays whole in the 568x320 dock;
+       - Pass shows beside the 吃 choices;
+       - the across seat's melds stay on screen;
+       - status lines wrap instead of cutting off the tile;
+       - Home's links no longer take taps meant for the buttons above them;
+       - the audit pill on the web is 44 px.
+     - **Still open:**
+       - on the web, the across seat's button is 37 to 40 px tall until that seat has discarded;
+       - at 568x320, a claim with three chow options scrolls sideways in the 240 px dock (rare).
+
+       None of this has been checked on a device.
 
 Seventh-pass defects the skeptics confirmed fixed, or partly fixed:
 - **Fixed:** the crawled hold of 44 s (two skeptics).
@@ -86,6 +107,8 @@ New minor findings, each reported by one side (the next unit reproduces each bef
   - the end-of-hand result sheet is not a modal: it has no dialog role, the table behind it is not inert, and Tab walks through the hand before reaching Next hand;
   - when the coach recommends passing on a claim, the bar never says Pass;
   - on the web, many Home and Settings controls are under 44 px.
+
+  Unit 20 fixed these five UX findings (see item 4).
 
 Owner-blocked, as before:
 - deployment;
