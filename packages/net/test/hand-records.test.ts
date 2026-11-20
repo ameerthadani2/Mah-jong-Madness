@@ -8,7 +8,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { legalActions, sameAction, withRules, type Action, type GameState } from '@mjm/engine';
-import { commitFor, TableClient, type HostMessage, type Link, type SerializedClient } from '../src/index';
+import { commitFor, MAX_AUDITS, TableClient, type HostMessage, type Link, type SerializedClient } from '../src/index';
 import { makeSecret } from '../src/fairness';
 import { keepSeen, MAX_SENT, type CeremonyRecord, type PlayRecord } from '../src/clientrecords';
 import { Missed, scenario, seededDeals } from './support';
@@ -100,6 +100,7 @@ interface Records {
   rewinds: Array<{ hand: number; tc: number; undone: boolean }>;
   handsEnded: Set<number>;
   ownAbsences: number[];
+  gapVerdicts: Array<{ at: number; ok: boolean }>;
   openHand: number | null;
   flag(hand: number, problem: string): void;
   holdSet(hand: number, commits: Array<{ seat: number; hash: string }>): void;
@@ -135,6 +136,20 @@ function filled(): TableClient {
   }
   for (let h = 200; h < 260; h++) r.handsEnded.add(h);
   for (let e = 0; e < 20; e++) r.noteOwnAbsence(e);
+  // The table-move checks' verdicts on stretches without a link, as `judgeTableMove` keeps them (the last 8).
+  for (let k = 0; k < 12; k++) {
+    r.gapVerdicts.push({ at: 1_000 * k, ok: k % 2 === 0 });
+    if (r.gapVerdicts.length > 8) r.gapVerdicts.shift();
+  }
+  // What the match's audits, passed claims and late turns hold, the audits as the client caps them (`MAX_AUDITS`).
+  const audit = { matchId: 'm-HR', handNumber: 0, seed: 's', commits: [], reveals: [], log: [], finalHash: 'h', rngVersion: 'v', ceremonyAttempts: 1, restarts: [], restartReasons: [] };
+  const audits = Array.from({ length: 60 }, (_, k) => ({ audit: { ...audit, handNumber: 200 + k }, status: 'ok' as const, failures: [], caveats: [] })).slice(-MAX_AUDITS);
+  (c as unknown as { state: TableClient['state'] }).state = {
+    ...c.state,
+    audits,
+    claimsPassedAway: Array.from({ length: 20 }, (_, k) => ({ hand: 200 + k, turn: k, claim: 'pong' as const })),
+    turnsShownLate: Array.from({ length: 20 }, (_, k) => ({ hand: 200 + k, late: [k], of: k + 1 })),
+  };
   // The hand on show's own record: more states, moves and answers to pings than it keeps.
   for (let k = 0; k < 650; k++) {
     play.seen.push({ tc: k, epoch: 1, era: 0, at: 1_000 + k, now: 900 + k, run: 'run1', onLink: true, owes: k % 4 === 0, deadline: 20_000 + k, timeBank: 30, inBank: false, hash: `h${k}`, view: `${k}`.padStart(32, '0') });
@@ -170,6 +185,10 @@ function holdings(c: TableClient) {
     pongs: (play.pongs ?? []).map((k) => [k.at, k.now, k.fat]),
     pingedFrom: (play.pingedFrom ?? []).map((k) => k.at),
     pinged: play.pinged,
+    gapVerdicts: r.gapVerdicts.map((g) => [g.at, g.ok]),
+    audits: c.state.audits.map((a) => a.audit.handNumber),
+    claimsPassedAway: c.state.claimsPassedAway,
+    turnsShownLate: c.state.turnsShownLate,
   };
 }
 
@@ -184,6 +203,7 @@ describe('the saved record keeps what memory keeps', () => {
     expect(r.plays.map((x) => x.hand)).toContain(ON);
     expect(r.records.map((x) => x.hand)).toContain(ON);
     expect(r.rewinds.map((x) => x.hand)).toContain(ON);
+    expect([r.gapVerdicts.length, c.state.audits.length]).toEqual([8, MAX_AUDITS]);
     const saved = JSON.parse(JSON.stringify(c.serialize())) as SerializedClient;
     const back = TableClient.restore(saved, nowhere(), 'Victim', undefined, { token: saved.state.token ?? undefined }, { now: () => 5_000_000 });
     const before = holdings(c);
