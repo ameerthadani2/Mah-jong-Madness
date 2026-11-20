@@ -2759,17 +2759,17 @@ export class TableClient {
              * (`q`; its own claim, counted from its arrival), and from the first state of the clock the app showed
              * (`ownRun`) in the latest state's clock era that it saw (`streakEnd`, counted from that state's arrival).
              */
-            const endIn = (xr: string | undefined): { shown: number; ends: number; era: number } | null => {
+            const endIn = (xr: string | undefined): { shown: number; ends: number } | null => {
               const q = run.find((f) => f.run === xr);
               if (!q) return null;
               const own = q.deadline !== null && typeof q.now === 'number' ? q.at + (q.inBank ? q.deadline : q.deadline + q.timeBank * 1000) - q.now : Number.NEGATIVE_INFINITY;
               const p = streak.find((f) => (f.era ?? 0) === (a.era ?? 0) && typeof f.now === 'number' && f.run === xr);
               const ends = p && Number.isFinite(end) ? Math.max(own, p.at + end - (p.now as number)) : own;
-              return ends > Number.NEGATIVE_INFINITY ? { shown: q.atLo ?? q.at, ends, era: q.era ?? 0 } : null;
+              return ends > Number.NEGATIVE_INFINITY ? { shown: q.atLo ?? q.at, ends } : null;
             };
             const timely = (x: (typeof sent)[number] & { at: number }): boolean => {
               const e = endIn(x.run);
-              return e !== null && x.at >= e.shown && x.at + flightAllowance(x, e.era, anchors, scopeOf(scope, x.run)?.best ?? null, limit) <= e.ends;
+              return e !== null && x.at >= e.shown && x.at + flightAllowance(x, anchors, scope, limit) <= e.ends;
             };
             if (r0 && sent.some((x) => lying(x) && x.tc >= r0.tc && timely(x))) notes.inFlight = true;
           }

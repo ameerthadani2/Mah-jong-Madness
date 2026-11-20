@@ -10,7 +10,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { chooseAction, legalActions, withRules, type Action, type RuleSet } from '@mjm/engine';
 import type { HostMessage } from '../src/index';
 import { BANK_ROUND_MS, type ClockBase } from '../src/clientclock';
-import { claimEnd, clockTrack, ownRun, restartInRun, streakEnd } from '../src/clientmoves';
+import { claimEnd, clockTrack, FLIGHT_SLACK_MS, flightAllowance, ownRun, restartInRun, streakEnd, type LateScope } from '../src/clientmoves';
 import type { CeremonyRecord, ClockAnchor, PlayRecord, SeenState } from '../src/clientrecords';
 import { Missed, scenario, seededDeals } from './support';
 import { BANK, RULES, TURN, wire, type Wire } from './wire';
@@ -384,9 +384,10 @@ describe('a move sent with time on the screen, lost to the table’s own (R4 aga
  * closes half a second later and the user resumes the table from Home a second after that (a new run of the app, on a
  * new link the table welcomes, every ping answered, the app's join ping sent). The seat moves when its screen shows
  * `show` ms; the server drops that move and the host times the seat out at the turn's true end. `kick` false: the same
- * drop with no resume (the control).
+ * drop with no resume (the control). `silent`: from the notice on the server answers no ping until the turn is over
+ * (the app's join ping included), so the new run of the app measures no round trip of its own before the move.
  */
-function resumedDrop(code: string, kick: boolean, show: number, nth = 2) {
+function resumedDrop(code: string, kick: boolean, show: number, nth = 2, silent = false) {
   let target = -1;
   let turns = 0;
   const seen = new Set<number>();
@@ -418,6 +419,7 @@ function resumedDrop(code: string, kick: boolean, show: number, nth = 2) {
         seen.add(m.view.turnCounter);
         if (++turns === nth) target = m.view.turnCounter;
       }
+      if (silent && kicked && m.t === 'pong' && w.host.phase === 'playing' && w.host.game!.turnCounter <= target) return null;
       return m;
     },
     onTick: (w) => {
@@ -455,7 +457,37 @@ function resumedDrop(code: string, kick: boolean, show: number, nth = 2) {
   return { w, target, over, kicked, screenAtSend: screenAtSend as number | null };
 }
 
+describe('the round trip that bounds a move lost on its way (flightAllowance)', () => {
+  const scope: LateScope = { run: 'r2', best: null, pauses: [], earlier: [{ run: 'r1', best: null, pauses: [] }] };
+  const k = (run: string, at: number, rtt: number, era = 0, seg = 0): ClockAnchor => ({ at, now: at, era, run, seg, fat: at + rtt });
+  const x = { at: 100_000, run: 'r2', seg: 0 };
+  it('is the least round trip measured before the move was sent, in an earlier run of the app or another era of the host as well as its own; never one measured after it, in a later run or in a run the record does not hold', () => {
+    expect(flightAllowance(x, [], scope, 7_500)).toBe(7_500);
+    expect(flightAllowance(x, [k('r1', 10_000, 200)], scope, 7_500)).toBe(200 + FLIGHT_SLACK_MS);
+    expect(flightAllowance(x, [k('r2', 50_000, 300, 1)], scope, 7_500)).toBe(300 + FLIGHT_SLACK_MS);
+    expect(flightAllowance(x, [k('r2', 50_000, 300), k('r1', 10_000, 900)], scope, 7_500)).toBe(300 + FLIGHT_SLACK_MS);
+    expect(flightAllowance(x, [k('r2', 120_000, 100)], scope, 7_500)).toBe(7_500);
+    expect(flightAllowance({ at: 100_000, run: 'r1', seg: 0 }, [k('r2', 10_000, 100)], scope, 7_500)).toBe(7_500);
+    expect(flightAllowance(x, [k('r9', 10_000, 100)], scope, 7_500)).toBe(7_500);
+    expect(flightAllowance(x, [k('r2', 10_000, 100, 0, 1)], scope, 7_500)).toBe(7_500);
+    // The strongest tie each run carried from the hands before, by the same rule; never more than the limit.
+    const carried: LateScope = { ...scope, earlier: [{ run: 'r1', best: { era: 0, run: 'r1', seg: 0, value: 0, at: 5_000, rtt: 150 }, pauses: [] }] };
+    expect(flightAllowance(x, [], carried, 7_500)).toBe(150 + FLIGHT_SLACK_MS);
+    expect(flightAllowance(x, [k('r1', 10_000, 20_000)], scope, 7_500)).toBe(7_500);
+  });
+});
+
 describe('a move made after an app resume the server forced, lost to the table’s own (R4 in the run that sent the move)', () => {
+  it('Normal: the same with 5 s on the screen, and the table answering no ping of the new run of the app until the turn is over: the hand’s best round trip, measured before the resume, still bounds the allowance, so amber inFlight, never green', () =>
+    scenario((i) => {
+      reseed(7_800 + i);
+      const t = resumedDrop(`SEQ${i}`, true, 5_000, 2, true);
+      need(t.target >= 0 && t.kicked && t.over);
+      expect(t.screenAtSend).toBeGreaterThan(4_000);
+      expect(t.w.verdict().failures).toEqual([]);
+      expect(t.w.verdict().status).toBe('partial');
+      expect(t.w.verdict().caveats).toContain('inFlight');
+    }));
   for (const show of [3_000, 10_000]) {
     it(`Normal: the seat opened “on another device” a second into the turn, the table resumed from Home, the move made with ${show / 1000} s on the screen dropped and the seat timed out: amber inFlight, never green; the same without the resume`, () =>
       scenario((i) => {

@@ -216,21 +216,33 @@ export function unanswered(f: SeenState, from: ReadonlyArray<PingStart> | undefi
 
 /**
  * How much of a turn's clock a move sent at `x.at` may honestly have lost on its way, by the clock the
- * app showed (`streakEnd`) counted from the arrival of the turn's first state: the least round trip this device had measured, in
- * the run of the app and of its clock it sent the move in and the host's clock era `era`, by the time
- * it sent it (every fixed point of the hand: its pongs, its deal, the frames that showed this seat's
- * earlier moves; and `best`, the strongest one carried from the hands before), plus `FLIGHT_SLACK_MS`;
- * never more than `limit` (`lateLimitMs`), which is what it is with no round trip measured. A server
- * can widen it only by being slow at every one of them, which is a slow link: an honest slow link
- * loses those moves as well, and the clock the app shows (`TableClient.ownClock`) ends that much sooner.
+ * app showed (`streakEnd`) counted from the arrival of the turn's first state: the least round trip this device had measured by the
+ * time it sent it (every fixed point of the hand: its pongs, its deal, the frames that showed this seat's earlier moves;
+ * and the strongest one each run carried from the hands before), plus `FLIGHT_SLACK_MS`; never more than `limit`
+ * (`lateLimitMs`), which is what it is with no round trip measured. A round trip is a duration on one clock, so one
+ * measured in an earlier run of the app (`scope`: the runs in the order the record holds them), in an earlier run of the
+ * phone's clock, or in another clock era of the host's counts as well as one of the move's own: a server that makes the
+ * app start again during the turn (by saying the seat was opened on another device, say), or says it restarted, and
+ * then answers no ping, does not widen it. A server can widen it only by being slow at every one of them, which is a
+ * slow link: an honest slow link loses those moves as well, and the clock the app shows (`TableClient.ownClock`) ends
+ * that much sooner.
  */
-export function flightAllowance(x: { at: number; run?: string; seg?: number }, era: number, anchors: ClockAnchor[], best: LateScope['best'], limit: number): number {
+export function flightAllowance(x: { at: number; run?: string; seg?: number }, anchors: ClockAnchor[], scope: LateScope | null, limit: number): number {
+  const order = scope ? [...(scope.earlier ?? []).map((e) => e.run), scope.run] : [];
+  const xi = x.run === undefined ? -1 : order.indexOf(x.run);
+  /** A round trip that ended at `end` in run `run` and its clock segment `seg` was measured before the move was sent. */
+  const before = (run: string | undefined, seg: number, end: number): boolean => {
+    if (run === undefined) return false;
+    if (run === x.run) return seg < (x.seg ?? 0) || (seg === (x.seg ?? 0) && end <= x.at);
+    const ki = order.indexOf(run);
+    return ki >= 0 && xi >= 0 && ki < xi;
+  };
   let rtt = Number.POSITIVE_INFINITY;
-  for (const k of anchors) {
-    if (typeof k.fat !== 'number' || k.era !== era || k.run !== x.run || (k.seg ?? 0) !== (x.seg ?? 0) || k.fat > x.at) continue;
-    rtt = Math.min(rtt, k.fat - k.at);
+  for (const k of anchors) if (typeof k.fat === 'number' && before(k.run, k.seg ?? 0, k.fat)) rtt = Math.min(rtt, k.fat - k.at);
+  for (const s of scope ? [...(scope.earlier ?? []), scope] : []) {
+    const b = s.best;
+    if (b && typeof b.rtt === 'number' && before(b.run, b.seg, b.at + b.rtt)) rtt = Math.min(rtt, b.rtt);
   }
-  if (best && typeof best.rtt === 'number' && best.era === era && best.run === x.run && best.seg === (x.seg ?? 0) && best.at + best.rtt <= x.at) rtt = Math.min(rtt, best.rtt);
   return Number.isFinite(rtt) ? Math.min(limit, Math.max(0, rtt) + FLIGHT_SLACK_MS) : limit;
 }
 
