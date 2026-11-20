@@ -756,8 +756,8 @@ export class TableClient {
     this.joinedHand = d.joinedHand;
     this.firstHand = d.firstHand;
     this.noHistory = d.noHistory === true;
-    this.handsEnded = new Set((d.handsEnded ?? []).filter(isInt));
-    this.tamper = new Map(d.tamper ?? []);
+    this.handsEnded = new Set((Array.isArray(d.handsEnded) ? d.handsEnded : []).filter(isInt));
+    this.tamper = new Map((Array.isArray(d.tamper) ? d.tamper : []).filter((e): e is [number, string[]] => Array.isArray(e) && isInt(e[0]) && Array.isArray(e[1])).map(([h, list]) => [h, list.filter((x) => typeof x === 'string')]));
     this.handStart = d.handStart;
     // The fields that judge how late a frame came are kept only when they are what this build writes (see `cleanSeen`).
     this.records = Array.isArray(d.records) ? d.records.map(cleanCeremony) : [];
@@ -806,7 +806,11 @@ export class TableClient {
     for (const play of this.plays) if (!this.handsEnded.has(play.hand)) play.ledgerFrom = Number.POSITIVE_INFINITY;
   }
 
-  /** Everything needed to carry on verifying after an app restart (see `TableClient.restore`). */
+  /**
+   * Everything needed to carry on verifying after an app restart (see `TableClient.restore`). It keeps exactly what this
+   * client keeps in memory: every collection is already held to its cap as it grows (`trimHands`, `flag`), never at
+   * the cost of the hand this client is on, so it is written whole and comes back the same.
+   */
   serialize(): SerializedClient {
     const { chat: _c, emotes: _e, rttMs: _r, ...state } = this.state;
     void _c;
@@ -826,8 +830,8 @@ export class TableClient {
       joinedHand: this.joinedHand,
       firstHand: this.firstHand,
       noHistory: this.noHistory,
-      handsEnded: [...this.handsEnded].sort((a, b) => a - b).slice(-MAX_AUDITS),
-      tamper: [...this.tamper.entries()].slice(-8),
+      handsEnded: [...this.handsEnded].sort((a, b) => a - b),
+      tamper: [...this.tamper.entries()].map(([h, list]) => [h, list.slice()]),
       handStart: this.handStart,
       records: this.records,
       // Each frame goes with its check figure, so a restored record can tell a damaged frame (`cleanSeen`), and so
