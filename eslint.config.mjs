@@ -36,8 +36,8 @@ export default tseslint.config(
     rules: { ...js.configs.recommended.rules, 'no-unused-vars': ['error', UNUSED] },
   },
   {
-    // The end-to-end scripts also run functions inside the page.
-    files: ['apps/mobile/e2e/*.cjs'],
+    // The end-to-end and showcase scripts also run functions inside the page.
+    files: ['apps/mobile/e2e/**/*.cjs'],
     languageOptions: { globals: { ...globals.node, ...globals.browser } },
   },
 );
