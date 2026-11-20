@@ -69,6 +69,27 @@ Serious defects that survived the skeptics:
        - two minors: a new match reuses the last match's clock tie, and a move the server drops just before it cuts the link is lost in a green hand.
 
        I reproduced six of them with their controls. One more surfaced in the score-rewrite probe: a match whose hand failed red for a score rewrite still shows its final scores as verified. Unit 20d closes these.
+     - **Closed by unit 20d (2026-11-20).** All nine, and the verified final scores:
+       - a restart notice is taken only as a returning link's first word, a notice for an earlier hand is red, and at most one clock era begins per hand on show;
+       - commitments and stand-in notices are taken only for the hand being dealt, and a malformed set counts against the hand on show;
+       - a clock frame must name the turn the link was last shown, and every per-hand record (flags, plays, rewinds) gives up ended hands first and never the hand on show;
+       - a refusal, an app restart and a seat-taken notice are held against the hand on show;
+       - a new match starts a new clock era with no tie carried over;
+       - a welcome without a token keeps the client's own, and the app saves its record whatever the token;
+       - a move lost on its way is bounded by the hand's best round trip from any run of the app, and a move lost with its link counts as in flight;
+       - a match with a failed hand never shows its final scores as verified.
+
+       Each item's own probe went from 3 to 29 green runs per job to none, on four salts. Every control matched. The honest battery (128,842 hands) has no new red hand, no extra lost table and no drop loop. Its cost is 99 hands, about 0.08%, that go from green to amber with the caveat that a move was lost with its connection; FAIRNESS.md states it.
+     - **Still open after unit 20d's checks (2026-11-20).** A malicious recheck found one more defect, and a sweep of every field of every frame found ten. All of them predate unit 20. I reproduced three, each with its control, on a salt the sweep did not use:
+       - **The server can re-pick its own share after the phone reveals** (blocker; 4 of 4 green). The phone keeps one commitment set. A well-formed set for a later hand, sent on a fresh link, replaces the set it revealed against. The server's share is then chosen after it has seen the phone's: in the sweep's probe, the victim's honour tiles went from 3.4 to 7.2 a hand on average.
+       - **The view the phone was shown is never compared with the replay** (blocker; 12 of 12 green). The server can hide a win from the view while sending the true hash.
+       - **The log's turn numbers are never compared with the replay** (blocker). A move made for the seat and logged at turn -1 or null escapes every check of the seat's moves.
+       - **Lax intake** (two blockers, two majors). A refusal that names no turn excuses the move without judging it. A state without a turn number is shown, but a move made on it goes unrecorded. A deadline sent as text is shown but filed as none. A state without a hash is never measured for lateness.
+       - **The saved record keeps fewer flags than the phone's memory** (blocker). After a forced resume, a score rewrite between hands is green.
+       - **Honest false red** (major; 4 of 4 red). An account that takes its seat back without the saved token is red "dealt out of turn" at the next hand.
+       - **A cap on vouched stretches** (minor). Nine seat-taken notices in one hand push out a vouched stretch.
+
+       Unit 20e closes these.
 2. **Backdated first frames, then a delay: up to 74.5 s late and still green** (fairness, major). `docs/FAIRNESS.md` states this residual, but as "25 to 30 seconds". The challenger had the table play 17 of 17 of a victim's moves in a green hand, with the Fair play count at 0.
    - Closed by unit 20: each turn is measured against the table's answers to a ping a second; the bound is half the turn clock (2 s at Hyper). With the app's ping going out right behind its join, as it does, the probe's backdated frame is the answer to that ping, and every hand is amber with every turn counted. If the server backdates the deal itself instead and delays everything after it, pings included, the count still counts every turn (it measures turns against the answers to pings alone), and the hand is amber whenever the table plays over a move the player made with time on the screen's clock. What stays out of sight is a server whose whole clock runs behind from the first frame, or one that sends a single answer to a ping at once with its stamp moved back and everything after it late: to the phone that is a fast connection to a clock that is behind (a stated limit in FAIRNESS.md). The screen's clock counts that same clock, so such a server gains only the moves made in the last 1.5 s.
 3. **At Turbo and Hyper, a 15 s delay from the start lets the table play every turn while the hand stays green** (fairness, major; both skeptics confirmed it). This is inside the stated 17 s bound, and FAIRNESS.md gives its cost per speed. At a 4 s turn, though, it means the player never moves.
