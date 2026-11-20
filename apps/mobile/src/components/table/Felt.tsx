@@ -194,11 +194,13 @@ export function Felt({
   const myPerRow = pools.myPerRow;
 
   // The centre column's width, measured: the status line keeps inside it (a long "X discarded Y" on a 360 px phone ran
-  // over the left seat's newest discards), and in short landscape it sets the across seat's meld size (below).
+  // over the left seat's newest discards), and in short landscape it sets the across seat's meld size (below). Where one
+  // line of the column is too short for it, it takes a second and a third, so it says which tile went (portraitFit.ts takes
+  // its measured height).
   const [centreW, setCentreW] = useState(0);
   const statusPill = status ? (
     <View style={[styles.status, centreW > 0 && { maxWidth: Math.min(STATUS_MAX_W, centreW) }]} testID="table-status" onLayout={portrait ? measureP('status') : undefined}>
-      <Text numberOfLines={1} style={styles.statusText}>
+      <Text numberOfLines={3} style={styles.statusText}>
         {status}
       </Text>
     </View>
@@ -519,7 +521,7 @@ const styles = StyleSheet.create({
   compactMiddle: { flex: 1, flexDirection: 'row', alignSelf: 'stretch', gap: 6, minHeight: 0 },
   middle: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, alignSelf: 'stretch', flexGrow: 1 },
   status: { backgroundColor: 'rgba(16,20,47,0.6)', borderRadius: 999, paddingHorizontal: 10, paddingVertical: 2, maxWidth: STATUS_MAX_W },
-  statusText: { color: '#FFFFFF', fontSize: 12, fontWeight: '900' },
+  statusText: { color: '#FFFFFF', fontSize: 12, fontWeight: '900', textAlign: 'center' },
   actionCenter: { position: 'absolute', left: 0, right: 0, alignItems: 'center' },
   // portraitFit.ts PINNED_POND_PAD.
   pinnedPond: { alignItems: 'center', paddingTop: 3, paddingBottom: 1 },

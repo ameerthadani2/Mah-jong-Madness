@@ -172,6 +172,8 @@ describe('the status line under the compass in portrait (360x640)', () => {
     // A 360 px phone's centre column is about 128 px wide, narrower than the line's own 220 px cap.
     await fireEvent(screen.getByTestId('centre-col'), 'layout', { nativeEvent: { layout: { x: 0, y: 0, width: 128, height: 300 } } });
     expect(StyleSheet.flatten(screen.getByTestId('table-status').props.style).maxWidth).toBe(128);
+    // Narrower than the line: it takes more lines (three at most) rather than end in an ellipsis before the tile.
+    expect(within(screen.getByTestId('table-status')).getByText(/ discarded |'s turn$/).props.numberOfLines).toBe(3);
   });
 });
 

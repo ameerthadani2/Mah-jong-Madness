@@ -422,6 +422,7 @@ async function coachSettled(page, advised) {
  *   says how many it leaves out with a "+N" chip, whole on screen too.
  * - Every tile of an opponent's melds and flowers is whole on screen (none scrolled away or under its plate), and in
  *   portrait a side seat's tiles stay inside its column.
+ * - The "X discarded Y" line under the compass is not cut.
  * - Every tile of my pond and of my hand (the raised one too) and every claim or discard button is whole on screen, and
  *   nothing lies over the top edge of a tile of my hand (the coach's press over a raised tile took the tap there).
  * - Portrait: the coach's press (on the web, padded where its bar is short) reaches over no tile of my pond or my hand.
@@ -502,6 +503,10 @@ async function feltCheck(page) {
         });
         if (out.length) bad.push(`the ${r === 1 ? 'right' : 'left'} seat's tiles run past its column`);
       }
+    // The "X discarded Y" line under the compass says the whole of it (it takes a second line rather than being cut).
+    for (const t of [...document.querySelectorAll('[data-testid="table-status"] div[dir="auto"]')].filter(seen)) {
+      if (t.scrollWidth > t.clientWidth + 1 || t.scrollHeight > t.clientHeight + 1) bad.push(`the status line is cut ("${t.textContent.slice(0, 40)}")`);
+    }
     const MY_POND = '[data-testid="my-pond"] [data-testid^="tile-"]';
     const HAND = '[data-testid="hand"] [data-testid^="tile-"], [data-testid="hand-discard"] [data-testid^="tile-"]';
     for (const [what, sel] of [['my pond', MY_POND], ['my hand', HAND], ['the claim or discard buttons', BUTTONS]]) {
