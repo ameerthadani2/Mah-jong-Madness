@@ -20,7 +20,6 @@ import { CoachPanel } from './CoachPanel';
 import { acrossTagBeside } from '../../logic/seatName';
 import { slideFrom } from './feel';
 import { compactCompassSize, dockHeight, landscapeWallSize, slopFor, type ActionDock, type TableLayout } from './layout';
-import { webPress } from '../Ui';
 
 export type PlateProps = Omit<React.ComponentProps<typeof SeatBadge>, 'size' | 'vertical' | 'maxNameWidth'>;
 
@@ -49,7 +48,9 @@ const SeatBox = React.forwardRef<React.ElementRef<typeof View>, { button: SeatBu
       </View>
     );
   // A seat is at least its plate (40 px tall in portrait, 37 in short landscape, before it has a pond): a 44 px press by
-  // hitSlop on a phone, by padding on the web (webPress, which keeps its place).
+  // hitSlop on a phone. (Not padded on the web: the side columns are measured for the fit with their padding, and a
+  // seat's box is its plate and pond, at least 44 px tall once it has discarded, which is when the sheet has something
+  // to show.)
   return (
     <Pressable
       ref={ref}
@@ -59,7 +60,7 @@ const SeatBox = React.forwardRef<React.ElementRef<typeof View>, { button: SeatBu
       accessibilityRole="button"
       accessibilityLabel={button.label}
       accessibilityHint={button.hint}
-      style={({ pressed }) => [style, webPress(SEAT_MIN_H), pressed && styles.seatPressed]}
+      style={({ pressed }) => [style, pressed && styles.seatPressed]}
       onLayout={onLayout}
       testID={testID}
     >
