@@ -4,7 +4,7 @@
  * shape of its saved copy (`SerializedClient`); with the guards that check what the host sends
  * before the client uses it, and the match snapshots a hand starts from.
  */
-import { advanceMatch, stableStringify, type Action, type BotSkill, type GameState, type MatchSnapshot, type RuleSet, type TableView } from '@mjm/engine';
+import { advanceMatch, sha256Hex, stableStringify, type Action, type BotSkill, type GameState, type MatchSnapshot, type RuleSet, type TableView } from '@mjm/engine';
 import { SHARE_SEATS, type Commitment, type Reveal } from './fairness';
 import type { Audit } from './messages';
 import type { ClientState, LateTurnRecord, PassedClaim, PassedClaimRecord } from './client';
@@ -200,12 +200,27 @@ export interface SeenState {
   inBank: boolean;
   hash: string;
   /**
+   * The digest of the view the frame showed this seat (`viewDigest`): at the audit it must be the view of the replayed
+   * state at its turn (`viewFor`), as the hash must be that state's. Absent in records saved by older builds.
+   */
+  view?: string;
+  /**
    * Restored from a saved record whose check figure for it still matched (`seenSum`): its figures are
    * the ones this device read, so it is judged as the run that saw it would judge it. False for a frame
    * restored without one (damaged, or saved before frames carried one); absent for a frame this run of
    * the app saw. Never saved.
    */
   kept?: boolean;
+}
+
+/**
+ * A short digest of a seat's view as it travels (its JSON form, keys in a fixed order): SHA-256, 128 bits as hex. The
+ * phone keeps one for each state it is shown, since the view itself is too large to keep, and the hash the host sends
+ * covers hidden tiles the phone cannot check it against: the view is what the app shows and acts on, so the audit holds
+ * it to the replay (`TableClient.replayChecked`). A collision would need some 2^64 tries.
+ */
+export function viewDigest(v: unknown): string {
+  return sha256Hex(stableStringify(JSON.parse(JSON.stringify(v ?? null)) as unknown)).slice(0, 32);
 }
 
 /** One move this client sent. */

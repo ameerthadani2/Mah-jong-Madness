@@ -3,11 +3,14 @@
  *
  * At the end of a hand the phone replays the action log from the seed and holds the table to what it saw on the way:
  * each entry of the log is the move made at the turn the replay has reached, and says so (`LoggedAction.n`), since
- * every check of the seat's own moves is keyed by that number.
+ * every check of the seat's own moves is keyed by that number; and each view the phone was shown, which is what the
+ * app shows and acts on, is the replayed state's view for the seat at that turn (`viewFor`), as the state hash the
+ * host sends with it must be that state's. The hash covers tiles the seat may not see, so it says nothing of the view.
  */
 import { describe, expect, it } from 'vitest';
-import { legalActions, sameAction, withRules, type Action, type GameState } from '@mjm/engine';
-import type { HostMessage } from '../src/index';
+import { legalActions, sameAction, viewToState, withRules, type Action, type GameState } from '@mjm/engine';
+import { TableClient, type HostMessage } from '../src/index';
+import type { PlayRecord } from '../src/clientrecords';
 import { Missed, scenario, seededDeals } from './support';
 import { wire, type Wire } from './wire';
 
@@ -91,3 +94,92 @@ describe('the turn number of each entry of the log', () => {
   });
 });
 
+/**
+ * Normal. Whenever the view the host sends the seat offers it a win (a claim on another seat's discard, or its own
+ * draw), the server shows it without the win: the claim offer's `hu` set false, or the drawn tile's mark left out (a
+ * self-drawn win needs it). Every other field, the state hash included, is the host's. The seat answers from the view
+ * on show, as the app does, so it lets the win go.
+ */
+function hideWin(code: string, hide: boolean) {
+  const offered = new Set<number>();
+  const w = wire({
+    code,
+    rules: NORMAL,
+    botDelayMs: 700,
+    think: () => 1_000,
+    map: (m) => {
+      if (m.t !== 'state') return m;
+      const v = m.view;
+      let win = false;
+      try {
+        win = legalActions(viewToState(v), 0).some((a) => a.type === 'hu');
+      } catch {
+        win = false;
+      }
+      if (!win) return m;
+      offered.add(v.turnCounter);
+      if (!hide) return m;
+      const copy = JSON.parse(JSON.stringify(m)) as Extract<HostMessage, { t: 'state' }>;
+      if (v.phase === 'claim') for (const o of copy.view.pending?.offers ?? []) (o as { hu?: boolean }).hu = false;
+      else delete copy.view.lastDrawn;
+      return copy;
+    },
+  });
+  w.finish();
+  const won = w.c.state.lastAudit?.log.some((e) => e.seat === 0 && e.action.type === 'hu') ?? false;
+  return { w, offered, won };
+}
+
+describe('the views the seat was shown', () => {
+  it('a win hidden from the seat’s view, with the true state hash: red, the view is not the replayed one; the same frames unchanged: the seat takes the win, green', () =>
+    scenario((i) => {
+      const a = hideWin(`RTV${i}`, true);
+      need(a.offered.size > 0 && !a.won);
+      expect(a.w.verdict().status).toBe('failed');
+      expect(a.w.verdict().failures).toEqual(['viewDiffers']);
+      const b = hideWin(`RTV${i}`, false);
+      need(b.offered.size > 0);
+      expect(b.won).toBe(true);
+      expect(b.w.verdict()).toMatchObject({ status: 'ok', failures: [] });
+    }));
+
+  it('keeps a digest of each view, saved with the record, and an app restart keeps holding the table to it', () =>
+    scenario((i) => {
+      const offered = new Set<number>();
+      let restarted = false;
+      const w = wire({
+        code: `RTR${i}`,
+        rules: NORMAL,
+        botDelayMs: 700,
+        think: () => 1_000,
+        map: (m) => {
+          if (m.t !== 'state') return m;
+          let win = false;
+          try {
+            win = legalActions(viewToState(m.view), 0).some((a) => a.type === 'hu');
+          } catch {
+            win = false;
+          }
+          if (!win || m.view.phase === 'claim') return m;
+          offered.add(m.view.turnCounter);
+          const copy = JSON.parse(JSON.stringify(m)) as Extract<HostMessage, { t: 'state' }>;
+          delete copy.view.lastDrawn;
+          return copy;
+        },
+        onTick: (w) => {
+          // Once the doctored view has gone by and the seat has moved on, the app restarts.
+          if (!restarted && offered.size > 0 && w.host.game && w.host.game.turnCounter > Math.max(...offered) + 2) {
+            restarted = true;
+            w.restart();
+          }
+        },
+      });
+      w.finish();
+      need(offered.size > 0 && restarted && !(w.c.state.lastAudit?.log.some((e) => e.seat === 0 && e.action.type === 'hu') ?? true));
+      const seen = (w.c as unknown as { plays: PlayRecord[] }).plays.flatMap((p) => p.seen);
+      expect(seen.every((f) => typeof f.view === 'string' && f.view.length === 32)).toBe(true);
+      expect(w.verdict().status).toBe('failed');
+      expect(w.verdict().failures).toEqual(['viewDiffers']);
+      expect(w.c).toBeInstanceOf(TableClient);
+    }));
+});

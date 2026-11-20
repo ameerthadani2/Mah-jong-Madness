@@ -27,6 +27,7 @@ import {
   newGame,
   sanitizeRules,
   stableStringify,
+  viewFor,
   viewToState,
   WALL_RNG_VERSION,
   applyAction,
@@ -69,6 +70,7 @@ import {
   sameCommitSet,
   savedPlay,
   snapshotFromView,
+  viewDigest,
   withSum,
   withLateTurns,
   withPassed,
@@ -251,6 +253,9 @@ export const AUDIT_FAILURES = {
   scoresDiffer: 'Announced scores differ from the replayed hand',
   myHandDiffers: 'My final hand differs from the replay',
   shownStateMissing: /^The state this seat was shown at turn (?<turn>-?\d+) is not in the replay$/,
+  // The hash covers tiles this seat may not see, so it cannot tell what the seat was shown: the view itself is held to
+  // the replay too (an honest host sends exactly the replayed state's view for the seat).
+  viewDiffers: /^The view of the table this seat was shown at turn (?<turn>-?\d+) is not the replayed one$/,
   // This seat's own moves and the moves made for it.
   legalMoveRefused: /^The host refused a legal move this seat made \(turn (?<turn>[^)]*)\)$/,
   moveChanged: /^The log changed a move this seat made \(turn (?<turn>[^)]*)\)$/,
@@ -2198,6 +2203,7 @@ export class TableClient {
       timeBank: typeof m.timeBank === 'number' ? (finiteFigure(m.timeBank) ?? 0) : 0,
       inBank: m.inTimeBank === true,
       hash: m.hash,
+      view: viewDigest(v),
     });
     keepSeen(play);
   }
@@ -2502,6 +2508,8 @@ export class TableClient {
       // The result and scores the host announced must be the ones the replay produces.
       if (announced && stableStringify(replayed.result) !== stableStringify(announced)) failures.push('Announced result differs from the replayed hand');
       if (replayed.scores.join(',') !== finalView.scores.join(',')) failures.push('Announced scores differ from the replayed hand');
+      // The result's view is what the result screen shows: the replayed state's view for this seat, and nothing else.
+      if (me !== null && viewDigest(finalView) !== viewDigest(viewFor(replayed, me))) failures.push(`The view of the table this seat was shown at turn ${replayed.turnCounter} is not the replayed one`);
       // The replayed state must agree with everything we were shown about our own seat.
       if (me !== null && finalView.players[me]?.hand) {
         const mine = replayed.players[me].hand.slice().sort((a, b) => a - b).join(',');
@@ -2553,8 +2561,14 @@ export class TableClient {
     /** The hand is one this device saw nothing of (`hand_missed`). */
     const missed = unseen !== undefined && play === unseen;
     const shown = new Map<number, string>();
-    // A state restored damaged (`cleanSeen`: its check figure did not match) may hold any hash: it is not compared.
-    for (const s of play?.seen ?? []) if (!shown.has(s.tc) && s.kept !== false) shown.set(s.tc, s.hash);
+    /** The digests of the views this seat was shown at each turn (`SeenState.view`): every one must be the replayed state's view. */
+    const views = new Map<number, Set<string>>();
+    // A state restored damaged (`cleanSeen`: its check figure did not match) may hold any hash or view: it is not compared.
+    for (const s of play?.seen ?? []) {
+      if (s.kept === false) continue;
+      if (!shown.has(s.tc)) shown.set(s.tc, s.hash);
+      if (typeof s.view === 'string') views.set(s.tc, (views.get(s.tc) ?? new Set<string>()).add(s.view));
+    }
     /** Some state of this hand was restored damaged: a clock check that may rest on it fails nothing, it makes the hand amber. */
     const doubt = play?.seen.some((f) => f.kept === false) === true;
     // Not every state the table sent in this hand was kept: what was dropped cannot be checked.
@@ -2563,6 +2577,12 @@ export class TableClient {
       const want = shown.get(s.turnCounter);
       if (want !== undefined && hashState(s) !== want) failures.push(`The state this seat was shown at turn ${s.turnCounter} is not in the replay`);
       shown.delete(s.turnCounter);
+      const seen = views.get(s.turnCounter);
+      if (seen && me !== null) {
+        const own = viewDigest(viewFor(s, me));
+        if ([...seen].some((d) => d !== own)) failures.push(`The view of the table this seat was shown at turn ${s.turnCounter} is not the replayed one`);
+        views.delete(s.turnCounter);
+      }
     };
     const sent = (play?.sent ?? []).map((x) => ({ ...x, used: false }));
     const problems = new Set<string>();

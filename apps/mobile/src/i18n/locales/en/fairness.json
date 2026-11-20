@@ -106,6 +106,7 @@
     "scoresDiffer": "The announced scores are not what replaying the hand gives.",
     "myHandDiffers": "Your final hand is not what replaying the hand gives.",
     "shownStateMissing": "What your phone was shown at turn %{turn} does not appear in the replay.",
+    "viewDiffers": "What your phone showed you at turn %{turn} is not what the replay gives your seat at that turn.",
     "legalMoveRefused": "The table refused a legal move you made (turn %{turn}).",
     "moveChanged": "The record changed a move you made (turn %{turn}).",
     "moveInvented": "The record shows a move you never made (turn %{turn}).",

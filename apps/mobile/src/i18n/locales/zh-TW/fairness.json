@@ -106,6 +106,7 @@
     "scoresDiffer": "牌桌宣布的分數，和重播這一局得到的不一樣。",
     "myHandDiffers": "你最後的手牌，和重播這一局得到的不一樣。",
     "shownStateMissing": "你的手機在第 %{turn} 手看到的牌桌狀態，在重播裡找不到。",
+    "viewDiffers": "你的手機在第 %{turn} 手給你看的牌桌，和重播這一局在那一手給你這個位子看的不一樣。",
     "legalMoveRefused": "牌桌拒絕了你合法的一步（第 %{turn} 手）。",
     "moveChanged": "紀錄把你打的一步改掉了（第 %{turn} 手）。",
     "moveInvented": "紀錄裡有一步你根本沒打過（第 %{turn} 手）。",
