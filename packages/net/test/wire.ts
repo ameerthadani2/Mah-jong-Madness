@@ -374,7 +374,8 @@ export interface HoldSpec {
 }
 
 export function holdTurn(plan: Omit<Plan, 'map' | 'hold'>, spec: HoldSpec = {}) {
-  const st = { armed: false, holding: false, released: false, base: 0, k: 0, since: 0, shownTc: -1, heldTc: -1 };
+  /** `sentTc`: the turn of the last state the server let through; its clock frames go on naming it while it holds the next. */
+  const st = { armed: false, holding: false, released: false, base: 0, k: 0, since: 0, shownTc: -1, heldTc: -1, sentTc: -1 };
   const w = wire({
     ...plan,
     map: (m) => {
@@ -389,14 +390,20 @@ export function holdTurn(plan: Omit<Plan, 'map' | 'hold'>, spec: HoldSpec = {}) 
       return m.t === 'clock' ? { ...m, now, tc: st.shownTc } : ({ ...m, now } as HostMessage);
     },
     hold: (m, w) => {
-      if (!st.armed || st.released) return false;
+      const pass = () => {
+        if (m.t === 'state') st.sentTc = m.view.turnCounter;
+        return false;
+      };
+      if (!st.armed || st.released) return pass();
       if (!st.holding && m.t === 'state' && w.owes() && w.host.game!.turnCounter === m.view.turnCounter) {
         st.holding = true;
         st.since = w.clock.now;
-        st.shownTc = w.c.state.view?.turnCounter ?? -1;
+        // The turn of the last state it sent, whether or not that state has reached the phone yet: a clock frame that
+        // named an earlier turn than the phone was shown would give the server away at once (`strayFrame`).
+        st.shownTc = st.sentTc;
         st.heldTc = m.view.turnCounter;
       }
-      if (!st.holding) return false;
+      if (!st.holding) return pass();
       if (m.t === 'state') return true;
       return !!spec.all && m.t !== 'clock' && m.t !== 'pong';
     },

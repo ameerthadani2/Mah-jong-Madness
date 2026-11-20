@@ -72,6 +72,7 @@
     "endUnsupported": "The table announced the end of the match, but the hands your phone checked do not lead to it.",
     "twoStates": "The table showed your phone two different versions of the table at turn %{turn}.",
     "restartedTwice": "The table said it restarted this hand more than once.",
+    "strayFrame": "The table sent your phone a message about a hand or turn it was not playing.",
     "missedOtherMatch": "The table sent the record of a hand from a different match.",
     "missedBroken": "The records of the hands your phone missed do not follow on from the last hand it checked.",
     "missedWhileConnected": "The table said your phone missed a hand, although it was connected the whole time.",

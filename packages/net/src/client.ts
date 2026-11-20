@@ -208,6 +208,9 @@ export const AUDIT_FAILURES = {
   endUnsupported: 'Host announced the end of the match, which the hands this device verified do not support',
   twoStates: /^Host showed two different states for turn (?<turn>-?\d+)$/,
   restartedTwice: 'Host said it restarted this hand more than once',
+  // A frame naming a hand or turn an honest host would not name at that point: a clock frame for a turn other than the
+  // one whose state it last sent the link, or a deal's frame for a hand other than the one being dealt.
+  strayFrame: 'Host sent a frame about a hand or turn this device was not on',
   // The hands this device was away for.
   missedOtherMatch: 'Host sent the record of a hand from a different match',
   missedBroken: 'The record of the hands this device missed does not follow from the last hand it verified',
@@ -382,6 +385,10 @@ export function transportLink(transport: Transport, hostPeerId: string): Link {
 
 /** Audits kept (and saved) per table. */
 export const MAX_AUDITS = 50;
+/** Hands whose play and ceremony records are kept: the one on show and the ones just before (see `trimHands`). */
+const MAX_HAND_RECORDS = 3;
+/** Hands whose flags are kept until they are audited (see `flag`). */
+const MAX_FLAGGED_HANDS = 12;
 /** A move sent this long before the table's own move for the same turn arrived, time the app did not run left out, was not lost to a slow network. */
 export const MOVE_SLACK_MS = 30_000;
 /** Marks, among the problems of a replay, a move the table made for this seat that is judged once the replay is done. */
@@ -1338,17 +1345,43 @@ export class TableClient {
     const list = this.tamper.get(hand) ?? [];
     if (!list.includes(problem)) list.push(problem);
     this.tamper.set(hand, list);
-    // Only hands not yet audited need their flags; keep the map small.
-    if (this.tamper.size > 12) this.tamper.delete(this.tamper.keys().next().value as number);
+    // Only hands not yet audited need their flags; keep the map small, never at the cost of the hand this client is on.
+    if (this.tamper.size > MAX_FLAGGED_HANDS) {
+      const keys = [...this.tamper.keys()];
+      const drop = this.handToDrop(keys, (k) => k, hand);
+      if (drop !== null) this.tamper.delete(drop);
+    }
   }
 
-  /** The hand a problem seen now belongs to: the one under way, or the next one to be dealt. */
+  /**
+   * The hand this client is on, which every problem seen now belongs to: the one it was last asked to commit to or
+   * shown, until that hand's result arrives (`openHand`), else the one on show, else the next one to be dealt.
+   */
   private activeHand(): number {
+    if (this.openHand !== null && !this.handsEnded.has(this.openHand)) return this.openHand;
     const v = this.state.view;
     if (v && !this.handsEnded.has(v.handNumber)) return v.handNumber;
     if (this.expected) return this.expected.handNumber;
     const ended = [...this.handsEnded];
     return ended.length > 0 ? Math.max(...ended) + 1 : 0;
+  }
+
+  /**
+   * Which entry a per-hand collection that has grown past its cap gives up: the oldest of a hand that has ended, else
+   * the oldest of any other hand but the one this client is on (`activeHand`) and `keep`. A frame about a hand the table
+   * has no business naming makes no entry (see `onMessage`); this keeps the hand on show whatever else comes.
+   */
+  private handToDrop<T>(list: readonly T[], handOf: (x: T) => number, keep: number | null = null): T | null {
+    const on = this.activeHand();
+    return list.find((x) => this.handsEnded.has(handOf(x))) ?? list.find((x) => handOf(x) !== on && handOf(x) !== keep) ?? null;
+  }
+
+  /** Keep `list` (entries of hands, oldest first) to `max` entries without giving up the hand this client is on (`handToDrop`). */
+  private trimHands<T>(list: T[], max: number, handOf: (x: T) => number): void {
+    while (list.length > max) {
+      const drop = this.handToDrop(list, handOf);
+      list.splice(drop === null ? 0 : list.indexOf(drop), 1);
+    }
   }
 
   /** The first state of a hand we were never asked to commit to: we arrived after its deal. */
@@ -1424,7 +1457,7 @@ export class TableClient {
     if (!play) {
       play = { hand, seen: [], sent: [], ledgerFrom: null };
       this.plays.push(play);
-      if (this.plays.length > 3) this.plays.shift();
+      this.trimHands(this.plays, MAX_HAND_RECORDS, (p) => p.hand);
     }
     return play;
   }
@@ -1710,7 +1743,7 @@ export class TableClient {
           // Watched from the start only when the first request it hears of is attempt 1.
           rec = { hand: h, attempts: [], fromStart: n === 1, linkLost: false, dealt: false };
           this.records.push(rec);
-          if (this.records.length > 3) this.records.shift();
+          this.trimHands(this.records, MAX_HAND_RECORDS, (r) => r.hand);
           if (n !== 1 && !this.noHistory && this.quietSince === this.epoch) this.flag(h, `Host never asked this seat to commit to attempts 1–${n - 1} of this hand`);
         } else if (again) {
           // The same attempt, asked again after a lost link: a fresh secret takes the place of the one that never arrived.
@@ -1746,7 +1779,7 @@ export class TableClient {
           const r = rec ?? { hand: h, attempts: [], fromStart: false, linkLost: true, dealt: false };
           if (!rec) {
             this.records.push(r);
-            if (this.records.length > 3) this.records.shift();
+            this.trimHands(this.records, MAX_HAND_RECORDS, (x) => x.hand);
           }
           const at = r.attempts.find((a) => a.n === n);
           if (at) at.stoodIn = true;
@@ -1999,11 +2032,18 @@ export class TableClient {
         if (!isInt(m.hand) || !isInt(m.tc)) return;
         // Nor a clock frame: an honest host sends one only to a seat it has sent the turn's state.
         if (!this.stateHere()) return;
+        const shown = this.linkShown as NonNullable<TableClient['linkShown']>;
+        // It names the turn whose state it last sent this link (`TableHost.sendClockFrames`): that turn, or a later one of
+        // the same hand when it held that turn's state back. Any other hand or turn is the server's own making: the hand
+        // this client is on fails, and nothing of the frame is taken (no record of another hand, no stamp, no order).
+        if (m.hand !== shown.hand || m.tc < shown.tc) {
+          this.flag(this.activeHand(), 'Host sent a frame about a hand or turn this device was not on');
+          return;
+        }
         this.noteStamp(m.now);
         this.noteOrder(m.now, m.hand, m.tc);
         // A turn this link was never shown the state of: the host sent that state and held it back.
-        const shown = this.linkShown;
-        if (shown && shown.epoch === this.epoch && shown.hand === m.hand && m.tc > shown.tc) this.noteHeld(m.hand, shown.tc + 1);
+        if (m.tc > shown.tc) this.noteHeld(m.hand, shown.tc + 1);
         return;
       }
       default:

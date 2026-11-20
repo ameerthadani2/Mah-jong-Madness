@@ -72,6 +72,7 @@
     "endUnsupported": "牌桌宣布比賽結束，但照你的手機核對過的牌局，算不出這個結果。",
     "twoStates": "在第 %{turn} 手，牌桌讓你的手機看到了兩種不同的牌桌狀態。",
     "restartedTwice": "牌桌說這一局重新啟動了不只一次。",
+    "strayFrame": "牌桌傳給你的手機一則訊息，講的是它沒有在打的一局或一手。",
     "missedOtherMatch": "牌桌送來的牌局紀錄屬於另一場比賽。",
     "missedBroken": "你的手機錯過的那幾局，紀錄和它最後核對過的一局接不起來。",
     "missedWhileConnected": "牌桌說你的手機錯過了一局，但它其實一直連著線。",
