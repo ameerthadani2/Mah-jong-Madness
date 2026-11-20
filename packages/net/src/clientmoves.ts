@@ -28,6 +28,19 @@ export interface LateScope {
   run: string;
   best: { era: number; run: string; seg: number; value: number; at: number; rtt?: number } | null;
   pauses?: ReadonlyArray<{ from: number; to: number }>;
+  /**
+   * The same for the earlier runs of the app whose frames the record holds, as each saved them (`RunScope`): a frame
+   * an earlier run saw is measured in that run's scope, against its own fixed points (`scopeOf`). A run nothing was
+   * saved of (a record from an older build) has none, and its frames are not measured by fixed points.
+   */
+  earlier?: ReadonlyArray<{ run: string; best: LateScope['best']; pauses?: ReadonlyArray<{ from: number; to: number }> }>;
+}
+
+/** The scope a frame (or a move) of run `run` of the app is measured in: `scope` itself for the run that judges, an earlier run's as saved (`LateScope.earlier`), or null. */
+export function scopeOf(scope: LateScope | null, run: string | undefined): Omit<LateScope, 'earlier'> | null {
+  if (!scope || run === undefined) return null;
+  if (run === scope.run) return scope;
+  return scope.earlier?.find((e) => e.run === run) ?? null;
 }
 
 export { fixedPoint } from './clientclock';
@@ -77,7 +90,7 @@ export function heldLive(f: SeenState, run: string | null): boolean {
  * itself. Each fixed point counts for no more than its round trip allows against the least
  * arrival offset known when `f` arrived (`fixedPoint`; `f`'s own offset included), so a host that
  * moves back the stamp on its answer cannot cancel the delay. 0 when there is no fixed point, or
- * `f` arrived in another run of the app.
+ * nothing was kept of the run of the app `f` arrived in (`sinceFixed`).
  */
 export function lateAnchor(f: SeenState, anchors: ClockAnchor[], scope: LateScope | null): number {
   const x = sinceFixed(f, anchors, scope);
@@ -87,18 +100,20 @@ export function lateAnchor(f: SeenState, anchors: ClockAnchor[], scope: LateScop
 /**
  * How much later `f` reached this device than the fixed points made before it in its scope allow,
  * with no allowance for the uplink (`lateAnchor` is this less `RTT_ALLOW_MS`): on an honest link, the
- * round trip of a move and a frame. Null when there is no fixed point, or `f` arrived in another run
- * of the app.
+ * round trip of a move and a frame. Measured in the run of the app `f` arrived in (`scopeOf`): a frame an
+ * earlier run saw against that run's fixed points, as that run measured it. Null when there is no fixed
+ * point, or nothing was kept of the run `f` arrived in.
  */
 export function sinceFixed(f: SeenState, anchors: ClockAnchor[], scope: LateScope | null): number | null {
-  if (typeof f.now !== 'number' || !scope || f.run !== scope.run) return null;
+  const s = scopeOf(scope, f.run);
+  if (typeof f.now !== 'number' || !s) return null;
   const atLo = f.atLo ?? f.at;
   const era = f.era ?? 0;
   const seg = f.seg ?? 0;
   const own = atLo - f.now;
   const ref = typeof f.ref === 'number' ? Math.min(f.ref, own) : own;
   let a = Number.NEGATIVE_INFINITY;
-  const b = scope.best;
+  const b = s.best;
   if (b && b.era === era && b.run === f.run && b.seg === seg && b.at <= atLo) a = (typeof b.rtt === 'number' ? Math.min(b.value, ref - b.rtt) : b.value) - DRIFT_RATE * (atLo - b.at);
   for (const k of anchors) if (k.era === era && k.run === f.run && (k.seg ?? 0) === seg && k.at <= atLo) a = Math.max(a, fixedPoint(k, ref) - DRIFT_RATE * (atLo - k.at));
   return Number.isFinite(a) ? atLo - f.now - a : null;
@@ -171,14 +186,14 @@ export function pausedIn(pauses: ReadonlyArray<{ from: number; to: number }>, fr
  * arrived and the scope's carried one (`sinceFixed`; in a hand with pong fixed points, `PongClock`'s),
  * less the part of that time the app was paused (`LateScope.pauses`), which the server cannot cause.
  * With an honest stamp it is at least how late the frame really was, and at most that plus the round
- * trip of the fixed point it was measured against. Null when there is no fixed point, or `f` arrived in
- * another run of the app.
+ * trip of the fixed point it was measured against. The pauses are those of the run of the app `f` arrived in
+ * (`scopeOf`). Null when there is no fixed point, or nothing was kept of the run `f` arrived in.
  */
 export function lateBy(f: SeenState, anchors: ClockAnchor[], scope: LateScope | null): number | null {
   const late = sinceFixed(f, anchors, scope);
   if (late === null) return null;
   const atLo = f.atLo ?? f.at;
-  return late - pausedIn(scope?.pauses ?? [], atLo - late, atLo);
+  return late - pausedIn(scopeOf(scope, f.run)?.pauses ?? [], atLo - late, atLo);
 }
 
 /**
@@ -190,9 +205,11 @@ export function lateBy(f: SeenState, anchors: ClockAnchor[], scope: LateScope | 
  * answers from before stop counting; a table that then answers none cannot leave the seat's turns to the older, looser
  * measures (`LATE_MS`): a turn this far into such a silence is not timely, and the table's move on it is judged as
  * one made while the seat had no timely view of the table. Inside `limit` of that first ping the older measures
- * still apply.
+ * still apply. With `scope`, not asked of a frame of a run of the app nothing was kept of (`scopeOf`): what answers
+ * that run had is not known either, so its silence is not.
  */
-export function unanswered(f: SeenState, from: ReadonlyArray<PingStart> | undefined, limit: number): boolean {
+export function unanswered(f: SeenState, from: ReadonlyArray<PingStart> | undefined, limit: number, scope?: LateScope | null): boolean {
+  if (scope !== undefined && !scopeOf(scope, f.run)) return false;
   const atLo = f.atLo ?? f.at;
   return (from ?? []).some((p) => p.era === (f.era ?? 0) && p.run === f.run && p.seg === (f.seg ?? 0) && p.at <= atLo - limit);
 }
@@ -471,7 +488,7 @@ export function judgeTableMove(j: MoveJudge, play: PlayRecord, n: number, end: S
   const stale = (f: SeenState): boolean => {
     const x = pong ? lateBy(f, pong.points, pong.scope) : null;
     if (x !== null) return x > (pong as PongClock).limit;
-    return (pong !== null && unanswered(f, play.pingedFrom, pong.limit)) || lateRef(f) > LATE_MS || lateAnchor(f, anchors, scope) > LATE_MS;
+    return (pong !== null && unanswered(f, play.pingedFrom, pong.limit, pong.scope)) || lateRef(f) > LATE_MS || lateAnchor(f, anchors, scope) > LATE_MS;
   };
   const limit = pong ? pong.limit : null;
   let a: SeenState | null = null;

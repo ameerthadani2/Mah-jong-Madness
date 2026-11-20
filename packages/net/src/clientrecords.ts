@@ -235,6 +235,32 @@ export interface PingStart {
   at: number;
 }
 
+/**
+ * The strongest fixed point of the hands a run of the app audited in one clock era and run of this device's clock
+ * (`TableClient.bestAnchor`, `bestPong`): what it was worth when its hand ended, and its round trip.
+ */
+export interface CarriedPoint {
+  era: number;
+  run: string;
+  seg: number;
+  value: number;
+  at: number;
+  rtt?: number;
+}
+
+/**
+ * What a run of the app knew that the frames it saw are measured by, beyond the fixed points the hand records keep: the
+ * strongest fixed points it carried from the hands before (`best`, and `bestPong` for the Fair play count) and the
+ * stretches in which the app did not run (`pauses`). Saved with the record, so a turn that run saw is measured after
+ * an app restart as that run would have measured it (`LateScope.earlier`).
+ */
+export interface RunScope {
+  run: string;
+  best: CarriedPoint | null;
+  bestPong: CarriedPoint | null;
+  pauses: Array<{ from: number; to: number }>;
+}
+
 /** What this client saw and did while one hand was played. */
 export interface PlayRecord {
   hand: number;
@@ -243,18 +269,19 @@ export interface PlayRecord {
   /** Refusals of this seat's moves: the turn the move was made on (as the host echoed it) and the turn the host's frames had reached. */
   refusals?: Array<{ tc: number; at: number }>;
   /**
-   * Fixed points from the host's answers (`pong`) to this run's pings while the hand was on show, or its deal
-   * was being agreed: one per
-   * `PONG_WINDOW_MS` of ping time, the one with the shortest round trip, at most `MAX_PONGS`. They hold
-   * only within the run of the app that measured them (`holdsIn`), so they are never saved (`serialize`)
-   * nor read back from a saved record (`cleanPlay`).
+   * Fixed points from the host's answers (`pong`) to the pings this device sent while the hand was on show, or its
+   * deal was being agreed: one per `PONG_WINDOW_MS` of ping time, the one with the shortest round trip, at most
+   * `MAX_PONGS`. Each holds only within the run of the app that measured it (its `run`; `holdsIn`), and measures only
+   * the frames that run saw. They are saved with the record, each with a check figure (`entrySum`), so the turns a
+   * run saw are measured after an app restart as that run would have measured them; one whose figure does not match
+   * is not read back (`cleanPlay`).
    */
   pongs?: ClockAnchor[];
-  /** Pings this run sent while the hand was on show (never saved, like `pongs`). */
+  /** Pings this device sent while the hand was on show, over every run of the app (saved with the record). */
   pinged?: number;
   /**
-   * The first ping this run sent while the hand was on show in each clock era of the host and run of this device's
-   * clock (never saved, like `pongs`): from then on an honest table's answers bound every frame of that scope.
+   * The first ping each run of the app sent while the hand was on show in each clock era of the host and run of this
+   * device's clock: from then on an honest table's answers bound every frame of that scope. Saved like `pongs`.
    */
   pingedFrom?: PingStart[];
   /**
@@ -388,6 +415,62 @@ function fnv(text: string): string {
 }
 
 /**
+ * The check figure a saved entry other than a frame carries (an answer to a ping, the first ping of a scope, what a
+ * run of the app carried: `PlayRecord.pongs`, `pingedFrom`, `RunScope`): FNV-1a over its fields, in a fixed order,
+ * nested ones included, its own `sum` left out. As with a frame's (`seenSum`), damage to the stored copy changes it.
+ */
+export function entrySum(x: object): string {
+  const { sum: _sum, ...rest } = x as { sum?: unknown };
+  void _sum;
+  return fnv(stableStringify(rest));
+}
+
+/** `x` as saved: with its check figure (`entrySum`). */
+export function withSum<T extends object>(x: T): T & { sum: string } {
+  return { ...x, sum: entrySum(x) };
+}
+
+/** A saved entry whose check figure still matches: what this device wrote. */
+const summed = (x: unknown): x is Record<string, unknown> & { sum: string } => isObject(x) && typeof x.sum === 'string' && x.sum === entrySum(x);
+const isRun = (x: unknown): x is string => typeof x === 'string' && x.length > 0 && x.length <= 64;
+const isCount = (x: unknown): x is number => isInt(x) && x >= 0;
+
+/** An answer to a ping from a saved record, when its check figure matches and its figures are a reading of the two clocks; else null (it is not read back). */
+export function cleanPong(x: unknown): ClockAnchor | null {
+  if (!summed(x) || !finiteTime(x.at) || !finiteTime(x.now) || !finiteTime(x.fat) || x.fat < x.at || !isCount(x.era) || !isRun(x.run) || !isCount(x.seg)) return null;
+  return { at: x.at, now: x.now, era: x.era, run: x.run, seg: x.seg, fat: x.fat };
+}
+
+/** The first ping of a scope from a saved record, on the same terms (`cleanPong`). */
+export function cleanPingStart(x: unknown): PingStart | null {
+  if (!summed(x) || !finiteTime(x.at) || !isCount(x.era) || !isRun(x.run) || !isCount(x.seg)) return null;
+  return { era: x.era, run: x.run, seg: x.seg, at: x.at };
+}
+
+/** A carried fixed point of run `run`, as `cleanRunScope` reads it (null: none, or not one this build writes). */
+function cleanCarried(x: unknown, run: string): CarriedPoint | null | undefined {
+  if (x === null) return null;
+  if (!isObject(x) || x.run !== run || !isCount(x.era) || !isCount(x.seg) || !finiteTime(x.value) || !finiteTime(x.at)) return undefined;
+  if (x.rtt !== undefined && !(finiteTime(x.rtt) && x.rtt >= 0)) return undefined;
+  return { era: x.era, run, seg: x.seg, value: x.value, at: x.at, ...(typeof x.rtt === 'number' ? { rtt: x.rtt } : {}) };
+}
+
+/** What an earlier run of the app carried (`RunScope`), from a saved record: only when its check figure matches and every figure is what this build writes; else null. */
+export function cleanRunScope(x: unknown, maxPauses: number): RunScope | null {
+  if (!summed(x) || !isRun(x.run) || !Array.isArray(x.pauses) || x.pauses.length > maxPauses) return null;
+  const run = x.run;
+  const best = cleanCarried(x.best, run);
+  const bestPong = cleanCarried(x.bestPong, run);
+  if (best === undefined || bestPong === undefined) return null;
+  const pauses: Array<{ from: number; to: number }> = [];
+  for (const p of x.pauses) {
+    if (!isObject(p) || !finiteTime(p.from) || !finiteTime(p.to) || p.from > p.to) return null;
+    pauses.push({ from: p.from, to: p.to });
+  }
+  return { run, best, bestPong, pauses };
+}
+
+/**
  * The check figure a saved hand record carries for its ledger: the moves sent and the stretches the
  * ledger still vouches for (`PlayRecord.vouched`). Those stretches hold a restored record to every
  * move it lists, so they are read back only when the figure still matches (`cleanPlay`): storage that
@@ -430,20 +513,40 @@ function cleanRun<T extends object>(x: T, runKey: keyof T, segKey: keyof T): T {
 
 /**
  * A hand's record from a saved copy, with every frame cleaned (`cleanSeen`) and the run of each move
- * sent kept only when it is what this build writes. Throws when the record is not one at all (its
- * frames or moves are not lists of objects): the saved copy is damaged, and the client is then built
- * from its rejoin token alone, as for any damaged copy.
+ * sent kept only when it is what this build writes. The answers to pings and the first pings of each
+ * scope come back only where their check figure matches (`cleanPong`, `cleanPingStart`): each measures
+ * only the frames of the run of the app that made it, as it did in that run. Throws when the record is
+ * not one at all (its frames or moves are not lists of objects): the saved copy is damaged, and the
+ * client is then built from its rejoin token alone, as for any damaged copy.
  */
 export function cleanPlay(p: unknown): PlayRecord {
   if (!isObject(p) || !Array.isArray(p.seen) || !Array.isArray(p.sent) || !p.seen.every(isObject) || !p.sent.every(isObject)) throw new Error('damaged hand record');
-  // (A run's pong fixed points and pings are never saved; a record that holds some is not read for them.)
-  const { vouched, ledgerSum: sum, pongs: _pongs, pinged: _pinged, pingedFrom: _pingedFrom, ...play } = p as unknown as PlayRecord & { ledgerSum?: unknown };
-  void _pongs;
-  void _pinged;
-  void _pingedFrom;
+  const { vouched, ledgerSum: sum, pongs: savedPongs, pinged: savedPinged, pingedFrom: savedFrom, ...play } = p as unknown as Omit<PlayRecord, 'pongs' | 'pinged' | 'pingedFrom'> & { ledgerSum?: unknown; pongs?: unknown; pinged?: unknown; pingedFrom?: unknown };
   // The stretches the ledger vouches for, only from a record whose moves and stretches storage left as they were.
   const spans = Array.isArray(vouched) && typeof sum === 'string' && sum === ledgerSum(play.sent, vouched) && vouched.every((v) => isObject(v) && isInt(v.from) && isInt(v.to) && v.from < v.to) ? vouched : null;
-  return { ...play, seen: play.seen.map(cleanSeen), sent: play.sent.map((x) => cleanRun(x, 'run', 'seg')), ...(spans ? { vouched: spans } : {}) };
+  const pongs = Array.isArray(savedPongs) ? savedPongs.map(cleanPong).filter((k): k is ClockAnchor => k !== null) : [];
+  const pingedFrom = Array.isArray(savedFrom) ? savedFrom.map(cleanPingStart).filter((k): k is PingStart => k !== null) : [];
+  return {
+    ...play,
+    seen: play.seen.map(cleanSeen),
+    sent: play.sent.map((x) => cleanRun(x, 'run', 'seg')),
+    ...(spans ? { vouched: spans } : {}),
+    ...(pongs.length > 0 ? { pongs } : {}),
+    ...(pingedFrom.length > 0 ? { pingedFrom } : {}),
+    ...(isCount(savedPinged) && savedPinged < 1e9 ? { pinged: savedPinged } : {}),
+  };
+}
+
+/** A hand's record as it is saved: each frame with its check figure, and each answer to a ping and first ping with its own (`entrySum`). */
+export function savedPlay(p: PlayRecord): PlayRecord & { ledgerSum?: string } {
+  return {
+    ...p,
+    seen: p.seen.map(savedSeen),
+    ledgerFrom: p.ledgerFrom === Number.POSITIVE_INFINITY ? null : p.ledgerFrom,
+    ...(p.vouched?.length ? { ledgerSum: ledgerSum(p.sent, p.vouched) } : {}),
+    ...(p.pongs ? { pongs: p.pongs.map(withSum) } : {}),
+    ...(p.pingedFrom ? { pingedFrom: p.pingedFrom.map(withSum) } : {}),
+  };
 }
 
 /** A ceremony record from a saved copy, with the run of each reveal's time kept only when it is what this build writes. */
@@ -536,6 +639,8 @@ export interface SerializedClient {
     lastStamp: GapStart | null;
     ownAbsences: number[];
     gapVerdicts: Array<{ at: number; ok: boolean }>;
+    /** What each run of the app whose frames the record holds carried (`RunScope`), each with its check figure (absent in records saved by older builds). */
+    runs?: Array<RunScope & { sum?: string }>;
   };
 }
 

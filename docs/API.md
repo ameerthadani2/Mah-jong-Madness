@@ -124,7 +124,7 @@ Client → host:
 The table's `ping` and older builds:
 - An old app with a new server: unchanged (the server is unchanged).
 - A new app with an old server, or with an old app hosting: every host in the repository answers pings this way, so the server is judged by the older checks and the new ones, and an honest one passes both. No server is deployed.
-- Records saved by an older build hold no answers to pings; their hands are judged as before. The app never saves the answers to its pings either: they hold only within one run of the app.
+- Records saved by an older build hold no answers to pings; their hands are judged as before. The app saves the answers to its pings with its record, with the first ping of each scope and the pauses of each run of the app, each with its run and a check figure: after an app restart or a resume from Home they measure only the states the run that made them saw, as that run measured them, and one whose figure no longer matches is not read back.
 - Cost: one frame of about 30 bytes up and one of about 50 bytes down per seat per second. The relay allows 30 frames a second per socket (`LIMITS.messagesPerSec`).
 
 Host → client:

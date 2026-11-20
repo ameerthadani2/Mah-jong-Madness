@@ -30,6 +30,8 @@ describe('the fair play charter states the late-turn limits the table client use
     expect(turnRow).toContain('Time the app was not running is left out.');
     expect(api).toContain('The app sends one once a second while it holds a seat on a socket that is up, whether or not the table has welcomed it there, and one right after each `join`.');
     expect(turnRow).toContain('It pings, and watches the connection (below), whether or not the table has welcomed it on that connection');
+    expect(turnRow).toContain('so a turn shown late stays late after the app restarts or the table is resumed from Home');
+    expect(api).toContain('The app saves the answers to its pings with its record');
     expect(api).toContain(`A hand in which the app sent ${NO_ANSWER_PINGS} or more pings and no answer came back is amber.`);
     expect(turnRow).toContain('A table that answers none of your pings during a hand makes the hand amber.');
   });

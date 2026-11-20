@@ -94,8 +94,10 @@ export const NO_ANSWER_PINGS = 5;
 export const MAX_PING_SCOPES = 16;
 /** The round trip a pong measured is published (`ClientState.rttMs`) at most this often: each publication re-renders the table and saves the record. */
 export const RTT_PUBLISH_MS = 10_000;
-/** The stretches in which the app did not run that a client keeps (`TableClient.pauses`, in memory only). */
+/** The stretches in which the app did not run that a client keeps for each run of the app (`TableClient.pauses`; saved with the record, `RunScope`). */
 export const MAX_PAUSES = 16;
+/** The runs of the app a client keeps what they carried for (`RunScope`, `TableClient.earlier`): those whose frames the hands on record hold, the latest this many. */
+export const MAX_RUN_SCOPES = 32;
 /**
  * A clock that starts at the wall time and then moves on by the monotonic clock alone: it ignores
  * steps of the wall clock both ways and never goes back. The signal server's tables keep time by it.

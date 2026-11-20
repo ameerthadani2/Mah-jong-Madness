@@ -3,7 +3,8 @@
  * table answers each ping at once with its clock. Each answer is a fixed point between the table's
  * clock and the phone's: the table stamped it after the ping reached it. A hand keeps one such fixed
  * point per 10 s of ping time (the one with the shortest round trip), only within the run of the app
- * and of its clock that sent the ping, and never in its saved record. A table that answers no ping
+ * and of its clock that sent the ping; its saved record keeps them with their run and a check figure,
+ * and after an app restart they measure only the frames of that run. A table that answers no ping
  * during a hand makes the hand amber.
  */
 import { describe, expect, it } from 'vitest';
@@ -368,8 +369,8 @@ describe('the round trip is published at most every 10 s (T5)', () => {
   });
 });
 
-describe('pong fixed points and pings are never saved (T6)', () => {
-  it('a saved record holds no pongs, pings, ping counts or pauses; a restored client starts with none, and drops any a record holds', () =>
+describe('pong fixed points and first pings are saved with their run and a check figure (T6)', () => {
+  it('a saved record holds the hand’s answers to pings, its first pings and its ping count, and what the run carried with its pauses, each with a check figure; a restored client reads them back as the earlier run’s, never the pings still unanswered, and drops an entry whose figure does not match', () =>
     scenario((i) => {
       const w = wire({ code: `PS${i}` });
       need(w.toDiscard(2));
@@ -377,23 +378,45 @@ describe('pong fixed points and pings are never saved (T6)', () => {
       w.c.checkLink();
       w.clock.now += 3_000;
       w.c.checkLink();
+      const run = (w.c as unknown as { runId: string }).runId;
       const live = plays(w.c).find((p) => p.hand === w.c.state.view?.handNumber)!;
       need((live.pongs?.length ?? 0) > 0 && (live.pinged ?? 0) > 0 && (live.pingedFrom?.length ?? 0) > 0);
-      expect((w.c as unknown as { pauses: unknown[] }).pauses.length).toBeGreaterThan(0);
-      const saved = JSON.parse(JSON.stringify(w.c.serialize())) as SerializedClient;
-      const text = JSON.stringify(saved);
-      for (const k of ['"pongs"', '"pinged"', '"pingedFrom"', '"pings"', '"pauses"']) expect(text).not.toContain(k);
-      const back = TableClient.restore(saved, transportLink(new LoopbackHub().create('back'), 'host'), 'Victim', undefined, { token: saved.state.token ?? undefined });
-      expect(plays(back).every((p) => p.pongs === undefined && p.pinged === undefined && p.pingedFrom === undefined)).toBe(true);
+      const pauses = (w.c as unknown as { pauses: Array<{ from: number; to: number }> }).pauses;
+      expect(pauses.length).toBeGreaterThan(0);
+      const saved = JSON.parse(JSON.stringify(w.c.serialize())) as SerializedClient & { plays: Array<Record<string, unknown>> };
+      const sp = saved.plays.find((p) => p.hand === live.hand)! as unknown as { pongs: Array<Record<string, unknown>>; pingedFrom: Array<Record<string, unknown>>; pinged: number };
+      expect(sp.pongs).toHaveLength(live.pongs!.length);
+      expect(sp.pongs.every((k) => k.run === run && typeof k.sum === 'string')).toBe(true);
+      expect(sp.pingedFrom.every((k) => k.run === run && typeof k.sum === 'string')).toBe(true);
+      expect(sp.pinged).toBe(live.pinged);
+      const runs = saved.clock!.runs!;
+      expect(runs.map((r) => r.run)).toEqual([run]);
+      expect(runs[0].pauses).toEqual(pauses);
+      expect(typeof runs[0].sum).toBe('string');
+      // The pings still unanswered are never saved: an answer to one is worth nothing in another run.
+      expect(JSON.stringify(saved)).not.toContain('"pings"');
+      const restore = (rec: unknown) => TableClient.restore(rec, transportLink(new LoopbackHub().create(`back${Math.random()}`), 'host'), 'Victim', undefined, { token: saved.state.token ?? undefined });
+      const back = restore(saved);
+      const bp = plays(back).find((p) => p.hand === live.hand)!;
+      expect(bp.pongs).toEqual(live.pongs);
+      expect(bp.pingedFrom).toEqual(live.pingedFrom);
+      expect(bp.pinged).toBe(live.pinged);
+      expect((back as unknown as { earlier: unknown[] }).earlier).toEqual([{ run, best: null, bestPong: null, pauses }]);
       expect((back as unknown as { pings: Map<number, unknown> }).pings.size).toBe(0);
       expect((back as unknown as { pauses: unknown[] }).pauses).toEqual([]);
-      // A record that holds some (an edited one, or one from a build that kept them) gives none back.
-      const edited = JSON.parse(text) as SerializedClient & { plays: Array<Record<string, unknown>> };
-      edited.plays[edited.plays.length - 1].pongs = [{ at: 1, now: 0, era: 0, run: 'x', seg: 0, fat: 2 }];
-      edited.plays[edited.plays.length - 1].pinged = 40;
-      edited.plays[edited.plays.length - 1].pingedFrom = [{ era: 0, run: 'x', seg: 0, at: 1 }];
-      const again = TableClient.restore(edited, transportLink(new LoopbackHub().create('again'), 'host'), 'Victim', undefined, { token: saved.state.token ?? undefined });
-      expect(plays(again).every((p) => p.pongs === undefined && p.pinged === undefined && p.pingedFrom === undefined)).toBe(true);
+      // Damaged storage: one answer whose stamp changed, a first ping whose run changed and a run whose pauses changed
+      // are not read back; the rest are. An entry with no figure (an edited record) is not read back either.
+      const edited = JSON.parse(JSON.stringify(saved)) as typeof saved;
+      const ep = edited.plays.find((p) => p.hand === live.hand)! as unknown as { pongs: Array<Record<string, unknown>>; pingedFrom: Array<Record<string, unknown>> };
+      ep.pongs[0].now = (ep.pongs[0].now as number) + 1;
+      ep.pingedFrom[0].run = 'other';
+      ep.pongs.push({ at: 1, now: 0, era: 0, run, seg: 0, fat: 2 });
+      edited.clock!.runs![0].pauses = [{ from: 1, to: 2 }];
+      const again = restore(edited);
+      const ap = plays(again).find((p) => p.hand === live.hand)!;
+      expect(ap.pongs).toEqual(live.pongs!.slice(1).length > 0 ? live.pongs!.slice(1) : undefined);
+      expect(ap.pingedFrom).toEqual(live.pingedFrom!.slice(1).length > 0 ? live.pingedFrom!.slice(1) : undefined);
+      expect((again as unknown as { earlier: unknown[] }).earlier).toEqual([]);
     }));
 });
 

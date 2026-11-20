@@ -44,12 +44,13 @@ import { randomHex } from './sha256';
 import type { Link } from './host';
 import { CLOCK_FRAME_MS, RESTART_CAUSES, type Audit, type ClientMessage, type HostMessage, type SeatInfo } from './messages';
 import { isFrame, type Transport, type Unsubscribe } from './transport';
-import { BANK_ROUND_MS, clientClock, type ClockBase, DRIFT_CAP_MS, DRIFT_RATE, foldClock, LATE_MS, LINK_PAUSE_MS, MAX_PAUSES, MAX_PING_SCOPES, MAX_PINGS, MAX_PONGS, NO_ANSWER_PINGS, ORDER_SLACK_MS, ownClockFrom, PAUSE_GRACE_MS, PONG_WINDOW_MS, RAN_GAP_MS, RTT_PUBLISH_MS, SILENT_ANSWER_MS, STEADY_SLACK_MS, WATCH_WINDOW_MS, type OwnClock, type TableClientOptions } from './clientclock';
-import { armedLate, clockTrack, firstSend, fixedPoint, flightAllowance, heldLive, isBotSkill, judgeTableMove, lateAnchor, lateBy, lateCountMs, lateLimitMs, lateRef, legalFor, ownRun, pausedIn, restartInRun, sameActionSafe, seatRun, seenHere, streakEnd, tableRule, turnLateBy, unanswered, unstamped, type LateScope, type MoveJudge, type PongClock } from './clientmoves';
+import { BANK_ROUND_MS, clientClock, type ClockBase, DRIFT_CAP_MS, DRIFT_RATE, foldClock, LATE_MS, LINK_PAUSE_MS, MAX_PAUSES, MAX_PING_SCOPES, MAX_PINGS, MAX_RUN_SCOPES, MAX_PONGS, NO_ANSWER_PINGS, ORDER_SLACK_MS, ownClockFrom, PAUSE_GRACE_MS, PONG_WINDOW_MS, RAN_GAP_MS, RTT_PUBLISH_MS, SILENT_ANSWER_MS, STEADY_SLACK_MS, WATCH_WINDOW_MS, type OwnClock, type TableClientOptions } from './clientclock';
+import { armedLate, clockTrack, firstSend, fixedPoint, flightAllowance, heldLive, isBotSkill, judgeTableMove, lateAnchor, lateBy, lateCountMs, lateLimitMs, lateRef, legalFor, ownRun, pausedIn, restartInRun, sameActionSafe, scopeOf, seatRun, seenHere, streakEnd, tableRule, turnLateBy, unanswered, unstamped, type LateScope, type MoveJudge, type PongClock } from './clientmoves';
 import {
   CHAINED_FIELDS,
   cleanCeremony,
   cleanPlay,
+  cleanRunScope,
   CLIENT_SNAPSHOT_VERSION,
   isAudit,
   finiteFigure,
@@ -61,14 +62,14 @@ import {
   isRevealSet,
   isView,
   keepSeen,
-  ledgerSum,
   ledgerVouches,
   MAX_SENT,
   nextDeal,
   nextHand,
   sameCommitSet,
-  savedSeen,
+  savedPlay,
   snapshotFromView,
+  withSum,
   withLateTurns,
   withPassed,
   type AttemptRecord,
@@ -76,6 +77,7 @@ import {
   type ClockAnchor,
   type GapStart,
   type PlayRecord,
+  type RunScope,
   type SeenState,
   type SerializedClient,
 } from './clientrecords';
@@ -511,7 +513,7 @@ export class TableClient {
    * the ping.
    */
   private readonly pings = new Map<number, { seg: number; hand: number | null }>();
-  /** The last `MAX_PAUSES` stretches of this run in which the app did not run (see `ran`; never saved): no frame's lateness and no move's wait is the server's doing while they last. */
+  /** The last `MAX_PAUSES` stretches of this run in which the app did not run (see `ran`; saved with the record, `runScopes`): no frame's lateness and no move's wait is the server's doing while they last. */
   private readonly pauses: Array<{ from: number; to: number }> = [];
   /** When this client last published a round trip (`rttMs`; see `RTT_PUBLISH_MS`). */
   private rttAt: number | null = null;
@@ -531,6 +533,12 @@ export class TableClient {
   private bestAnchor: LateScope['best'] = null;
   /** The same, of their pongs alone, each weighed less `DRIFT_RATE` for every ms since it was taken: what the Fair play count measures the next hand's first turns against. */
   private bestPong: LateScope['best'] = null;
+  /**
+   * What the earlier runs of the app whose frames the record holds carried (their strongest fixed points and their
+   * pauses), as each saved it: a frame such a run saw is measured in its scope, as that run measured it
+   * (`LateScope.earlier`). Restored from the record; this run's own is saved beside them (`serialize`).
+   */
+  private earlier: RunScope[] = [];
   /** When this app last ran: it handled a frame, checked the link, bound a link or sent a move. */
   private ranAt: number | null = null;
   /** The last stretch of more than `RAN_GAP_MS` in which this app did not run (the phone slept, or the app was in the background). */
@@ -731,6 +739,9 @@ export class TableClient {
     this.lastStamp = k ? stamp(k.lastStamp) : null;
     this.ownAbsences = k && Array.isArray(k.ownAbsences) ? k.ownAbsences.filter(isInt) : [];
     this.gapVerdicts = k && Array.isArray(k.gapVerdicts) ? k.gapVerdicts.filter((g) => isObject(g) && num(g.at) !== null).map((g) => ({ at: g.at, ok: g.ok === true })) : [];
+    // What the earlier runs carried, where its check figure matches (one that does not is not read back: those runs'
+    // frames are then not measured by fixed points, as before such figures were kept).
+    this.earlier = k && Array.isArray(k.runs) ? k.runs.map((x) => cleanRunScope(x, MAX_PAUSES)).filter((x): x is RunScope => x !== null && x.run !== this.runId).slice(-MAX_RUN_SCOPES) : [];
     // What this device did before the app stopped is not all on record (it may have left the table).
     this.noteOwnAbsence();
     this.lapse = true;
@@ -763,9 +774,9 @@ export class TableClient {
       tamper: [...this.tamper.entries()].slice(-8),
       handStart: this.handStart,
       records: this.records,
-      // Each frame goes with its check figure, so a restored record can tell a damaged frame (`cleanSeen`).
-      // (A run's pong fixed points and pings are worth nothing in another run: they are not saved.)
-      plays: this.plays.map(({ pongs: _pongs, pinged: _pinged, pingedFrom: _pingedFrom, ...p }) => ({ ...p, seen: p.seen.map(savedSeen), ledgerFrom: p.ledgerFrom === Number.POSITIVE_INFINITY ? null : p.ledgerFrom, ...(p.vouched?.length ? { ledgerSum: ledgerSum(p.sent, p.vouched) } : {}) })),
+      // Each frame goes with its check figure, so a restored record can tell a damaged frame (`cleanSeen`), and so
+      // does each answer to a ping and first ping of a scope: each measures only the frames of the run that made it.
+      plays: this.plays.map(savedPlay),
       expected: this.expected,
       chainChecked: this.chainChecked,
       frozenBots: this.frozenBots,
@@ -784,7 +795,7 @@ export class TableClient {
       rewinds: this.rewinds,
       lapseHand: this.lapseHand,
       lapseDeal: this.lapseDeal,
-      clock: { era: this.era, base: { ...this.clockBase }, lastStamp: this.lastStamp, ownAbsences: this.ownAbsences.slice(), gapVerdicts: this.gapVerdicts.slice() },
+      clock: { era: this.era, base: { ...this.clockBase }, lastStamp: this.lastStamp, ownAbsences: this.ownAbsences.slice(), gapVerdicts: this.gapVerdicts.slice(), runs: this.runScopes().map(withSum) },
     };
   }
 
@@ -2511,7 +2522,7 @@ export class TableClient {
       else if (notes) {
         const by = pong ? lateBy(r0, pong.points, pong.scope) : null;
         // One no fixed point bounds: late when the table had left the pings of its scope unanswered past the limit (`unanswered`).
-        const late = by !== null ? by > (limit as number) : (pong !== null && unanswered(r0, play.pingedFrom, pong.limit)) || lateRef(r0) > LATE_MS || lateAnchor(r0, anchors, scope) > LATE_MS;
+        const late = by !== null ? by > (limit as number) : (pong !== null && unanswered(r0, play.pingedFrom, pong.limit, pong.scope)) || lateRef(r0) > LATE_MS || lateAnchor(r0, anchors, scope) > LATE_MS;
         if (late || unstamped(r0) || (!r0.onLink && left < whole - (limit ?? LATE_MS)) || (!here && armedLate(r0, rules))) notes.lateShown = true;
       }
     };
@@ -2608,13 +2619,13 @@ export class TableClient {
             };
             const timely = (x: (typeof sent)[number] & { at: number }): boolean => {
               const e = endIn(x.run);
-              return e !== null && x.at >= e.shown && x.at + flightAllowance(x, e.era, anchors, scope.best, limit) <= e.ends;
+              return e !== null && x.at >= e.shown && x.at + flightAllowance(x, e.era, anchors, scopeOf(scope, x.run)?.best ?? null, limit) <= e.ends;
             };
             if (r0 && sent.some((x) => lying(x) && x.tc >= r0.tc && timely(x))) notes.inFlight = true;
           }
           // One left lying for more than `MOVE_SLACK_MS` (time the app was not running left out) over a link
           // that never dropped: no network is that slow.
-          if (after && sent.some((x) => lying(x) && after.at - x.at - (x.run === this.runId ? pausedIn(this.pauses, x.at, after.at) : 0) > MOVE_SLACK_MS)) {
+          if (after && sent.some((x) => lying(x) && after.at - x.at - pausedIn(scopeOf(scope, x.run)?.pauses ?? [], x.at, after.at) > MOVE_SLACK_MS)) {
             if (after.kept === false) {
               if (notes) notes.damaged = true;
             } else problems.add(`The table ignored a move this seat sent in good time and played its own instead (turn ${n})`);
@@ -2639,13 +2650,14 @@ export class TableClient {
     // every share, and either may be an answer sent at once with its stamp moved back. The count is never a verdict.
     if (play && me !== null && notes) {
       let prev = -1;
+      const pongScope = this.lateScope(true);
       for (const entry of log) {
         if (!isObject(entry) || entry.seat !== me || !isInt(entry.n)) continue;
         const r0 = seatRun(play, entry.n, prev).run[0];
         prev = entry.n;
         if (!r0) continue;
         notes.turnsMeasured = (notes.turnsMeasured ?? 0) + 1;
-        const by = pong && !unstamped(r0) ? lateBy(r0, pongs, { ...scope, best: this.bestPong }) : null;
+        const by = pong && !unstamped(r0) ? lateBy(r0, pongs, pongScope) : null;
         if (by !== null ? by > lateCountMs(rules) : turnLateBy(r0, anchors, scope) > lateLimitMs(rules)) (notes.lateTurns ??= []).push(entry.n);
       }
     }
@@ -2697,9 +2709,35 @@ export class TableClient {
     return s;
   }
 
-  /** The run of the app, the strongest fixed point kept in it (see `lateAnchor`) and its pauses (see `lateBy`). */
-  private lateScope(): LateScope {
-    return { run: this.runId, best: this.bestAnchor, pauses: this.pauses };
+  /**
+   * The run of the app, the strongest fixed point kept in it (see `lateAnchor`; with `pongs`, the strongest of its
+   * answers to pings, as the Fair play count weighs them) and its pauses (see `lateBy`), with the same for each earlier
+   * run of the app whose frames the record holds (`earlier`).
+   */
+  private lateScope(pongs = false): LateScope {
+    return {
+      run: this.runId,
+      best: pongs ? this.bestPong : this.bestAnchor,
+      pauses: this.pauses,
+      earlier: this.earlier.map((e) => ({ run: e.run, best: pongs ? e.bestPong : e.best, pauses: e.pauses })),
+    };
+  }
+
+  /**
+   * What this run of the app carries, and what the earlier runs carried, for the record: only the runs whose frames,
+   * moves, answers or pings the hands on record hold, at most `MAX_RUN_SCOPES` (the latest).
+   */
+  private runScopes(): RunScope[] {
+    const used = new Set<string>();
+    for (const p of this.plays) {
+      for (const f of p.seen) if (typeof f.run === 'string') used.add(f.run);
+      for (const x of p.sent) if (typeof x.run === 'string') used.add(x.run);
+      for (const k of p.pongs ?? []) if (typeof k.run === 'string') used.add(k.run);
+      for (const k of p.pingedFrom ?? []) used.add(k.run);
+    }
+    const mine = (b: LateScope['best']) => (b && b.run === this.runId ? { ...b } : null);
+    const own: RunScope = { run: this.runId, best: mine(this.bestAnchor), bestPong: mine(this.bestPong), pauses: this.pauses.map((p) => ({ from: p.from, to: p.to })) };
+    return [...this.earlier.filter((e) => used.has(e.run)), own].slice(-MAX_RUN_SCOPES);
   }
 
   /** What the table-move checks (`judgeTableMove`) read of this client's clock record, and keep. */
