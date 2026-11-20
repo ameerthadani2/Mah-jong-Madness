@@ -90,6 +90,8 @@ export const PONG_WINDOW_MS = 10_000;
 export const MAX_PONGS = 720;
 /** A hand in which this device sent this many pings and kept no answer is amber (`noAnswer`): nothing tied the table's clock to its own. */
 export const NO_ANSWER_PINGS = 5;
+/** A hand keeps the first ping of at most this many scopes (clock era of the host, run of this device's clock; `PlayRecord.pingedFrom`). */
+export const MAX_PING_SCOPES = 16;
 /** The round trip a pong measured is published (`ClientState.rttMs`) at most this often: each publication re-renders the table and saves the record. */
 export const RTT_PUBLISH_MS = 10_000;
 /** The stretches in which the app did not run that a client keeps (`TableClient.pauses`, in memory only). */

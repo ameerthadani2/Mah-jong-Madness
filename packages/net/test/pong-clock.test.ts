@@ -10,7 +10,8 @@ import { describe, expect, it } from 'vitest';
 import { withRules, type RuleSet } from '@mjm/engine';
 import { caveatKey, LoopbackHub, TableClient, TableHost, transportLink, type ClientMessage, type HostMessage, type Link, type SerializedClient } from '../src/index';
 import { MAX_PINGS, NO_ANSWER_PINGS, PONG_WINDOW_MS, RTT_PUBLISH_MS } from '../src/clientclock';
-import type { ClockAnchor, PlayRecord } from '../src/clientrecords';
+import { unanswered } from '../src/clientmoves';
+import type { ClockAnchor, PingStart, PlayRecord, SeenState } from '../src/clientrecords';
 import { Missed, scenario, seededDeals } from './support';
 import { wire, type Wire } from './wire';
 
@@ -219,7 +220,7 @@ describe('pong fixed points (T4)', () => {
     expect(c.state.rttMs).toBeNull();
   });
 
-  it('one fixed point per 10 s of ping time: the one with the shortest round trip', () =>
+  it('one fixed point per 10 s of ping time: the one with the shortest round trip; and the first answer of the run of the clock, whatever its round trip', () =>
     scenario((i) => {
       const t = table(`PF3${i}`);
       need(t.c.state.view !== null && t.c.state.lastResult === null);
@@ -232,16 +233,21 @@ describe('pong fixed points (T4)', () => {
         t.answer(at, t.clock.now - rtt / 2);
         return at;
       };
-      round(400);
+      // The first answer stays: a frame that came before the next one is bound by it alone.
+      const first = round(400);
       t.pass(1_000);
       const best = round(100);
       t.pass(1_000);
       round(300);
-      expect(t.pongs()).toHaveLength(1);
-      expect(t.pongs()[0].at).toBe(best);
+      expect(t.pongs().map((k) => k.at)).toEqual([first, best]);
       t.pass(PONG_WINDOW_MS);
       const next = round(500);
-      expect(t.pongs().map((k) => k.at)).toEqual([best, next]);
+      t.pass(1_000);
+      round(600);
+      t.pass(1_000);
+      const better = round(200);
+      expect(t.pongs().map((k) => k.at)).toEqual([first, best, better]);
+      expect(next).toBeLessThan(better);
     }));
 
   it('one answered while a hand’s deal is agreed is kept for that hand; one to a ping sent before it, or for another hand, is not', () => {
@@ -336,21 +342,22 @@ describe('pong fixed points and pings are never saved (T6)', () => {
       w.clock.now += 3_000;
       w.c.checkLink();
       const live = plays(w.c).find((p) => p.hand === w.c.state.view?.handNumber)!;
-      need((live.pongs?.length ?? 0) > 0 && (live.pinged ?? 0) > 0);
+      need((live.pongs?.length ?? 0) > 0 && (live.pinged ?? 0) > 0 && (live.pingedFrom?.length ?? 0) > 0);
       expect((w.c as unknown as { pauses: unknown[] }).pauses.length).toBeGreaterThan(0);
       const saved = JSON.parse(JSON.stringify(w.c.serialize())) as SerializedClient;
       const text = JSON.stringify(saved);
-      for (const k of ['"pongs"', '"pinged"', '"pings"', '"pauses"']) expect(text).not.toContain(k);
+      for (const k of ['"pongs"', '"pinged"', '"pingedFrom"', '"pings"', '"pauses"']) expect(text).not.toContain(k);
       const back = TableClient.restore(saved, transportLink(new LoopbackHub().create('back'), 'host'), 'Victim', undefined, { token: saved.state.token ?? undefined });
-      expect(plays(back).every((p) => p.pongs === undefined && p.pinged === undefined)).toBe(true);
+      expect(plays(back).every((p) => p.pongs === undefined && p.pinged === undefined && p.pingedFrom === undefined)).toBe(true);
       expect((back as unknown as { pings: Map<number, unknown> }).pings.size).toBe(0);
       expect((back as unknown as { pauses: unknown[] }).pauses).toEqual([]);
       // A record that holds some (an edited one, or one from a build that kept them) gives none back.
       const edited = JSON.parse(text) as SerializedClient & { plays: Array<Record<string, unknown>> };
       edited.plays[edited.plays.length - 1].pongs = [{ at: 1, now: 0, era: 0, run: 'x', seg: 0, fat: 2 }];
       edited.plays[edited.plays.length - 1].pinged = 40;
+      edited.plays[edited.plays.length - 1].pingedFrom = [{ era: 0, run: 'x', seg: 0, at: 1 }];
       const again = TableClient.restore(edited, transportLink(new LoopbackHub().create('again'), 'host'), 'Victim', undefined, { token: saved.state.token ?? undefined });
-      expect(plays(again).every((p) => p.pongs === undefined && p.pinged === undefined)).toBe(true);
+      expect(plays(again).every((p) => p.pongs === undefined && p.pinged === undefined && p.pingedFrom === undefined)).toBe(true);
     }));
 });
 
@@ -382,4 +389,91 @@ describe('a table that answers no ping (T7)', () => {
       need(w.c.state.audits.length > 0);
       expect(w.c.state.auditCaveats.map(caveatKey)).not.toContain('noAnswer');
     }));
+});
+
+/**
+ * Once the phone has moved three times and owes nothing, the server makes the earlier fixed points void (`restart`: it
+ * announces a restart, a new clock era; `app`: the app restarts, a new run) or does nothing (`none`, the control). From
+ * then it answers no ping until it has held the state of each of the seat's next `holds` turns `hold` ms (every frame
+ * to the phone waits from that state on), with honest stamps, and 5 s more; then it answers again. The seat makes each
+ * move `think` ms after it is shown. (The switch comes on a whole second, when no answer to a ping is on its way.)
+ */
+function withheld(code: string, rules: RuleSet, mode: 'restart' | 'app' | 'none', hold: number, think: number, holds = 3) {
+  let switched: number | null = null;
+  let holdUntil: number | null = null;
+  const held: number[] = [];
+  const w = wire({
+    code,
+    rules,
+    botDelayMs: 700,
+    think: () => think,
+    map: (m, w) => {
+      if (switched === null) return m;
+      if (m.t === 'pong' && (held.length < holds || (holdUntil !== null && w.clock.now < holdUntil + 5_000))) return null;
+      const g = w.host.game;
+      if (held.length < holds && w.clock.now >= switched + 3_000 && (holdUntil === null || w.clock.now >= holdUntil) && m.t === 'state' && g && w.owes() && g.turnCounter === m.view.turnCounter && typeof m.deadline === 'number' && !m.inTimeBank && typeof m.now === 'number' && m.deadline - m.now >= rules.turnSeconds * 1000 - 1_000) {
+        held.push(m.view.turnCounter);
+        holdUntil = w.clock.now + hold;
+      }
+      return m;
+    },
+    delay: (_m, now) => (holdUntil !== null && now < holdUntil ? holdUntil - now : 0),
+    onTick: (w) => {
+      const g = w.host.game;
+      if (switched !== null || !g || w.host.phase !== 'playing' || w.owes() || w.pendingReconnectAt !== null) return;
+      if (g.actionLog.filter((e) => e.seat === 0 && e.source === 'player').length < 3 || w.clock.now % 1_000 !== 0) return;
+      switched = w.clock.now;
+      if (mode === 'restart') w.line.inject({ t: 'restored', handNumber: g.handNumber, turnCounter: g.turnCounter });
+      if (mode === 'app') w.restart();
+    },
+  });
+  w.finish();
+  return { w, held, taken: held.filter((tc) => w.judged().includes(tc)) };
+}
+
+describe('unanswered: a frame long into a silence of the table’s answers in its own scope', () => {
+  const f = (extra: Partial<SeenState> = {}): SeenState => ({ tc: 5, epoch: 1, era: 1, at: 50_000, atLo: 50_000, now: 49_900, run: 'r', seg: 0, onLink: true, owes: true, deadline: 52_000, timeBank: 0, inBank: false, hash: 'h', ...extra });
+  const from: PingStart[] = [
+    { era: 0, run: 'r', seg: 0, at: 10_000 },
+    { era: 1, run: 'r', seg: 0, at: 47_000 },
+  ];
+  it('more than the limit after the first ping of its era, run of the app and run of the clock; not at or inside it, nor by the pings of another scope', () => {
+    expect(unanswered(f(), from, 2_000)).toBe(true);
+    expect(unanswered(f(), from, 3_000)).toBe(true);
+    expect(unanswered(f(), from, 3_001)).toBe(false);
+    // Measured from the earliest it can have arrived (after a pause).
+    expect(unanswered(f({ atLo: 48_500 }), from, 2_000)).toBe(false);
+    expect(unanswered(f({ era: 2 }), from, 2_000)).toBe(false);
+    expect(unanswered(f({ run: 'other' }), from, 2_000)).toBe(false);
+    expect(unanswered(f({ seg: 1 }), from, 2_000)).toBe(false);
+    expect(unanswered(f({ era: 0 }), from, 2_000)).toBe(true);
+    expect(unanswered(f(), undefined, 2_000)).toBe(false);
+  });
+});
+
+describe('a table that answers no ping once the earlier answers stopped counting (R6 by scope, T30)', () => {
+  const HYPER = withRules({ handsPerMatch: 1, turnSeconds: 4, timeBankSeconds: 0 });
+  for (const mode of ['restart', 'app'] as const) {
+    const what = mode === 'restart' ? 'after a restart it announces' : 'after the app restarts';
+    it(`Hyper, ${what}: turns held 3 s with no ping answered, the table plays them: amber tableMovedLate, never green; with no restart as well`, () =>
+      scenario((i) => {
+        const t = withheld(`PW${mode}${i}`, HYPER, mode, 3_000, 1_500);
+        need(t.taken.length > 0 && t.w.drops.length === 0);
+        const v = t.w.verdict();
+        expect(v.failures).toEqual([]);
+        expect(v.status).toBe('partial');
+        expect(v.caveats).toContain('tableMovedLate');
+        const ctl = withheld(`PW${mode}${i}`, HYPER, 'none', 3_000, 1_500);
+        need(ctl.taken.length > 0);
+        expect(ctl.w.verdict().status).toBe('partial');
+        expect(ctl.w.verdict().caveats).toContain('tableMovedLate');
+      }));
+    it(`Normal, ${what}: turns held 10 s with no ping answered, the seat moves itself: amber lateShown, never green`, () =>
+      scenario((i) => {
+        const t = withheld(`PV${mode}${i}`, RULES, mode, 10_000, 1_000);
+        need(t.held.length >= 2 && t.taken.length === 0 && t.w.drops.length === 0);
+        expect(t.w.verdict()).toMatchObject({ status: 'partial', failures: [] });
+        expect(t.w.verdict().caveats).toContain('lateShown');
+      }));
+  }
 });

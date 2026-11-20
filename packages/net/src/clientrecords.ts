@@ -227,6 +227,14 @@ export interface SentAction {
   used?: boolean;
 }
 
+/** The first ping a run of the app sent in one clock era of the host and run of this device's clock (`PlayRecord.pingedFrom`). */
+export interface PingStart {
+  era: number;
+  run: string;
+  seg: number;
+  at: number;
+}
+
 /** What this client saw and did while one hand was played. */
 export interface PlayRecord {
   hand: number;
@@ -244,6 +252,11 @@ export interface PlayRecord {
   pongs?: ClockAnchor[];
   /** Pings this run sent while the hand was on show (never saved, like `pongs`). */
   pinged?: number;
+  /**
+   * The first ping this run sent while the hand was on show in each clock era of the host and run of this device's
+   * clock (never saved, like `pongs`): from then on an honest table's answers bound every frame of that scope.
+   */
+  pingedFrom?: PingStart[];
   /**
    * Turn counter from which every move the log credits to this seat's player must be one this client
    * sent (it watched the hand from there with its ledger intact). Null when it cannot vouch at all.
@@ -424,9 +437,10 @@ function cleanRun<T extends object>(x: T, runKey: keyof T, segKey: keyof T): T {
 export function cleanPlay(p: unknown): PlayRecord {
   if (!isObject(p) || !Array.isArray(p.seen) || !Array.isArray(p.sent) || !p.seen.every(isObject) || !p.sent.every(isObject)) throw new Error('damaged hand record');
   // (A run's pong fixed points and pings are never saved; a record that holds some is not read for them.)
-  const { vouched, ledgerSum: sum, pongs: _pongs, pinged: _pinged, ...play } = p as unknown as PlayRecord & { ledgerSum?: unknown };
+  const { vouched, ledgerSum: sum, pongs: _pongs, pinged: _pinged, pingedFrom: _pingedFrom, ...play } = p as unknown as PlayRecord & { ledgerSum?: unknown };
   void _pongs;
   void _pinged;
+  void _pingedFrom;
   // The stretches the ledger vouches for, only from a record whose moves and stretches storage left as they were.
   const spans = Array.isArray(vouched) && typeof sum === 'string' && sum === ledgerSum(play.sent, vouched) && vouched.every((v) => isObject(v) && isInt(v.from) && isInt(v.to) && v.from < v.to) ? vouched : null;
   return { ...play, seen: play.seen.map(cleanSeen), sent: play.sent.map((x) => cleanRun(x, 'run', 'seg')), ...(spans ? { vouched: spans } : {}) };

@@ -44,8 +44,8 @@ import { randomHex } from './sha256';
 import type { Link } from './host';
 import { CLOCK_FRAME_MS, RESTART_CAUSES, type Audit, type ClientMessage, type HostMessage, type SeatInfo } from './messages';
 import { isFrame, type Transport, type Unsubscribe } from './transport';
-import { BANK_ROUND_MS, clientClock, type ClockBase, DRIFT_CAP_MS, DRIFT_RATE, foldClock, LATE_MS, LINK_PAUSE_MS, MAX_PAUSES, MAX_PINGS, MAX_PONGS, NO_ANSWER_PINGS, ORDER_SLACK_MS, ownClockFrom, PAUSE_GRACE_MS, PONG_WINDOW_MS, RAN_GAP_MS, RTT_PUBLISH_MS, SILENT_ANSWER_MS, STEADY_SLACK_MS, WATCH_WINDOW_MS, type OwnClock, type TableClientOptions } from './clientclock';
-import { armedLate, clockTrack, firstSend, fixedPoint, flightAllowance, heldLive, isBotSkill, judgeTableMove, lateAnchor, lateBy, lateCountMs, lateLimitMs, lateRef, legalFor, ownRun, pausedIn, restartInRun, sameActionSafe, seatRun, seenHere, streakEnd, tableRule, turnLateBy, unstamped, type LateScope, type MoveJudge, type PongClock } from './clientmoves';
+import { BANK_ROUND_MS, clientClock, type ClockBase, DRIFT_CAP_MS, DRIFT_RATE, foldClock, LATE_MS, LINK_PAUSE_MS, MAX_PAUSES, MAX_PING_SCOPES, MAX_PINGS, MAX_PONGS, NO_ANSWER_PINGS, ORDER_SLACK_MS, ownClockFrom, PAUSE_GRACE_MS, PONG_WINDOW_MS, RAN_GAP_MS, RTT_PUBLISH_MS, SILENT_ANSWER_MS, STEADY_SLACK_MS, WATCH_WINDOW_MS, type OwnClock, type TableClientOptions } from './clientclock';
+import { armedLate, clockTrack, firstSend, fixedPoint, flightAllowance, heldLive, isBotSkill, judgeTableMove, lateAnchor, lateBy, lateCountMs, lateLimitMs, lateRef, legalFor, ownRun, pausedIn, restartInRun, sameActionSafe, seatRun, seenHere, streakEnd, tableRule, turnLateBy, unanswered, unstamped, type LateScope, type MoveJudge, type PongClock } from './clientmoves';
 import {
   CHAINED_FIELDS,
   cleanCeremony,
@@ -759,7 +759,7 @@ export class TableClient {
       records: this.records,
       // Each frame goes with its check figure, so a restored record can tell a damaged frame (`cleanSeen`).
       // (A run's pong fixed points and pings are worth nothing in another run: they are not saved.)
-      plays: this.plays.map(({ pongs: _pongs, pinged: _pinged, ...p }) => ({ ...p, seen: p.seen.map(savedSeen), ledgerFrom: p.ledgerFrom === Number.POSITIVE_INFINITY ? null : p.ledgerFrom, ...(p.vouched?.length ? { ledgerSum: ledgerSum(p.sent, p.vouched) } : {}) })),
+      plays: this.plays.map(({ pongs: _pongs, pinged: _pinged, pingedFrom: _pingedFrom, ...p }) => ({ ...p, seen: p.seen.map(savedSeen), ledgerFrom: p.ledgerFrom === Number.POSITIVE_INFINITY ? null : p.ledgerFrom, ...(p.vouched?.length ? { ledgerSum: ledgerSum(p.sent, p.vouched) } : {}) })),
       expected: this.expected,
       chainChecked: this.chainChecked,
       frozenBots: this.frozenBots,
@@ -900,15 +900,26 @@ export class TableClient {
    * Ask the table for its clock (`pong`). The ping carries this device's clock (`at`), which the table
    * echoes: its answer, stamped after the ping reached it, is a fixed point between the two clocks
    * (`notePong`). One ping per reading of the clock; while a hand is on show it is counted for that hand
-   * (`PlayRecord.pinged`), so a table that answers none of them makes the hand amber (`noAnswer`).
+   * (`PlayRecord.pinged`), so a table that answers none of them makes the hand amber (`noAnswer`), and the first
+   * one of each clock era of the host and run of this device's clock is kept (`PlayRecord.pingedFrom`): a turn
+   * that reaches this device well after it, when the table has answered none of that scope's pings, is not timely
+   * (`unanswered`).
    */
   ping(): void {
     const at = this.now();
     if (this.pings.has(at)) return;
     const play = this.handOnShow();
-    this.pings.set(at, { seg: this.seg(), hand: play ? play.hand : null });
+    const seg = this.seg();
+    this.pings.set(at, { seg, hand: play ? play.hand : null });
     if (this.pings.size > MAX_PINGS) this.pings.delete(this.pings.keys().next().value as number);
-    if (play) play.pinged = (play.pinged ?? 0) + 1;
+    if (play) {
+      play.pinged = (play.pinged ?? 0) + 1;
+      const from = (play.pingedFrom ??= []);
+      if (!from.some((p) => p.era === this.era && p.run === this.runId && p.seg === seg)) {
+        from.push({ era: this.era, run: this.runId, seg, at });
+        if (from.length > MAX_PING_SCOPES) from.shift();
+      }
+    }
     this.send({ t: 'ping', at });
   }
 
@@ -930,8 +941,9 @@ export class TableClient {
    * reached this device at `fat`. Only an answer to a ping this run sent, read in the run of this
    * device's clock it is in now, and only the first answer to each: anything else is ignored. The hand
    * the ping was sent for keeps it while it is still that hand's time (`handOnShow`, `PlayRecord.pongs`),
-   * one per `PONG_WINDOW_MS` of ping time (the one with the shortest round trip), and its audit measures
-   * every state against it (`lateBy`).
+   * one per `PONG_WINDOW_MS` of ping time (the one with the shortest round trip), and the first of each clock
+   * era of the host and run of this device's clock as well: every frame of that scope after it is measured
+   * against something (`lateBy`, `unanswered`). Its audit measures every state against them.
    */
   private notePong(at: unknown, now: unknown): void {
     if (typeof at !== 'number' || !Number.isFinite(at) || typeof now !== 'number' || !Number.isFinite(now)) return;
@@ -951,7 +963,9 @@ export class TableClient {
     const k: ClockAnchor = { at, now, era: this.era, run: this.runId, seg, fat };
     const pongs = (play.pongs ??= []);
     const last = pongs[pongs.length - 1];
-    if (last && last.run === k.run && last.era === k.era && (last.seg ?? 0) === seg && Math.floor(last.at / PONG_WINDOW_MS) === Math.floor(at / PONG_WINDOW_MS)) {
+    const same = (x: ClockAnchor | undefined): boolean => !!x && x.run === k.run && x.era === k.era && (x.seg ?? 0) === seg;
+    // (The first of a scope stays, whatever its round trip: a frame that came before the next one is bound by it alone.)
+    if (same(last) && same(pongs[pongs.length - 2]) && Math.floor(last.at / PONG_WINDOW_MS) === Math.floor(at / PONG_WINDOW_MS)) {
       if (fat - at < (last.fat as number) - last.at) pongs[pongs.length - 1] = k;
     } else pongs.push(k);
     if (pongs.length > MAX_PONGS) pongs.splice(0, pongs.length - MAX_PONGS);
@@ -2476,7 +2490,8 @@ export class TableClient {
       if ((here && armedLate(r0, rules)) || heldLive(r0, this.runId)) problems.add(`The host showed this seat its turn late, on a link that stayed open (turn ${n})`);
       else if (notes) {
         const by = pong ? lateBy(r0, pong.points, pong.scope) : null;
-        const late = by !== null ? by > (limit as number) : lateRef(r0) > LATE_MS || lateAnchor(r0, anchors, scope) > LATE_MS;
+        // One no fixed point bounds: late when the table had left the pings of its scope unanswered past the limit (`unanswered`).
+        const late = by !== null ? by > (limit as number) : (pong !== null && unanswered(r0, play.pingedFrom, pong.limit)) || lateRef(r0) > LATE_MS || lateAnchor(r0, anchors, scope) > LATE_MS;
         if (late || unstamped(r0) || (!r0.onLink && left < whole - (limit ?? LATE_MS)) || (!here && armedLate(r0, rules))) notes.lateShown = true;
       }
     };

@@ -7,7 +7,7 @@
  */
 import { BOT_SKILLS, chooseAction, isLegal, legalActions, sameAction, type Action, type BotSkill, type GameState, type RuleSet } from '@mjm/engine';
 import { ARM_SLACK_MS, CLOCK_SLACK_MS, DRIFT_RATE, fixedPoint, holdsIn, LATE_MS, offsetFloor, RTT_ALLOW_MS, type ClockBase } from './clientclock';
-import { isObject, type CeremonyRecord, type ClockAnchor, type ClockTrack, type GapStart, type PlayRecord, type SeenState } from './clientrecords';
+import { isObject, type CeremonyRecord, type ClockAnchor, type ClockTrack, type GapStart, type PingStart, type PlayRecord, type SeenState } from './clientrecords';
 
 /** What the table-move checks read of this client's clock record, and keep: `gapVerdicts` grows as stretches without a link are judged. */
 export interface MoveJudge {
@@ -179,6 +179,22 @@ export function lateBy(f: SeenState, anchors: ClockAnchor[], scope: LateScope | 
   if (late === null) return null;
   const atLo = f.atLo ?? f.at;
   return late - pausedIn(scope?.pauses ?? [], atLo - late, atLo);
+}
+
+/**
+ * Whether `f` reached this device more than `limit` (`lateLimitMs`) after the first ping it sent in `f`'s scope (the
+ * host's clock era, the run of the app and the run of its clock; `PlayRecord.pingedFrom`). Asked of a frame no fixed
+ * point of its scope bounds (`lateBy` is null) in a hand the table answered pings in: then none of the pings of that
+ * scope sent before `f` arrived was answered during the hand. An honest table answers each at once, and the answer to
+ * that first one would bound `f`. After a restart the host announces, an app restart or resume, or a sleep, the
+ * answers from before stop counting; a table that then answers none cannot leave the seat's turns to the older, looser
+ * measures (`LATE_MS`): a turn this far into such a silence is not timely, and the table's move on it is judged as
+ * one made while the seat had no timely view of the table. Inside `limit` of that first ping the older measures
+ * still apply.
+ */
+export function unanswered(f: SeenState, from: ReadonlyArray<PingStart> | undefined, limit: number): boolean {
+  const atLo = f.atLo ?? f.at;
+  return (from ?? []).some((p) => p.era === (f.era ?? 0) && p.run === f.run && p.seg === (f.seg ?? 0) && p.at <= atLo - limit);
 }
 
 /**
@@ -450,10 +466,12 @@ function judgeFrom(j: MoveJudge, play: PlayRecord, n: number, rules: RuleSet, an
  */
 export function judgeTableMove(j: MoveJudge, play: PlayRecord, n: number, end: SeenState | null, rules: RuleSet, anchors: ClockAnchor[], track: ClockTrack, gaps: Set<number>, prevMove = -1, scope: LateScope | null = null, pong: PongClock | null = null): 'ok' | 'early' | 'downEarly' | 'down' | 'downLate' | 'unanchored' | 'across' | 'held' | 'lateTurn' {
   // In a hand with pong fixed points (`pong`): late is later than its limit by `lateBy`; a frame they do
-  // not bound is measured as in a hand without them.
+  // not bound is late when the table had left the pings of its scope unanswered for longer than that limit
+  // (`unanswered`), and is otherwise measured as in a hand without them.
   const stale = (f: SeenState): boolean => {
     const x = pong ? lateBy(f, pong.points, pong.scope) : null;
-    return x !== null ? x > (pong as PongClock).limit : lateRef(f) > LATE_MS || lateAnchor(f, anchors, scope) > LATE_MS;
+    if (x !== null) return x > (pong as PongClock).limit;
+    return (pong !== null && unanswered(f, play.pingedFrom, pong.limit)) || lateRef(f) > LATE_MS || lateAnchor(f, anchors, scope) > LATE_MS;
   };
   const limit = pong ? pong.limit : null;
   let a: SeenState | null = null;
