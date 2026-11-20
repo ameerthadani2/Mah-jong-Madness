@@ -52,8 +52,23 @@ Serious defects that survived the skeptics:
        - a rejoin the server never welcomes stops the phone's pings, so later hands fall back to the old 17 s bound (Hyper, turns held 3 s that the table then plays: 25 of 25 hands green);
        - a move made after a forced app resume is not counted by the rule for moves lost on their way (a dropped move with 3 to 25 s on the screen: green);
        - turns held before a forced resume lose their measure, because a run's answers to pings are not saved (Normal, turns 10 s late: 18 of 18 runs green).
+     - **Closed by unit 20c (2026-11-20).**
+       - The phone pings and watches any link on which it holds a seat, whether or not the server welcomed it there. Hyper, turns held 3 s: no green hand left.
+       - A move is timed in the run of the app that sent it, from the first state of the turn that run saw. With a forced resume at any point of a turn, no green hand loses a move (35 to 52 per probe before).
+       - The record now saves each run's answers to pings, its first pings and its pauses, each with a check figure. Turns shown late before a forced resume stay late after it: no green held run left (18 of 18 before).
+       - Once the server says the seat was opened on another device, the phone takes nothing more from that link and sends no move on it. Before, a server that kept feeding that link had every later hand green.
+       - Two costs, both stated in FAIRNESS.md: turns stalled 9 to 14 s before an app restart or resume now stay amber, and so does the time until the player resumes after a true "opened on another device" notice (about 10 more amber hands of 120 in those honest rows). The honest battery (about 128,800 hands) has no new red hand and no extra lost table.
+     - **Still open after unit 20c's checks (2026-11-20).** A recheck of the repair and a sweep of every boundary the audit crosses found nine more gaps. None comes from unit 20c, and most were already there before unit 20 (`19199c3`). Most turn on frames that name a hand the phone is not playing:
+       - restart notices for made-up hands start a new clock era each time, so turns held past the limit stay green at every speed;
+       - twelve malformed commitment frames for made-up hands push the hand's flags out of the phone's memory, so a score rewrite between hands is green;
+       - three clock frames for other hands push the hand's record out, so a table move made early is green;
+       - one such frame makes a refusal of a legal win go unrecorded, so that hand stays green;
+       - four restart notices for other hands erase the record of a restart that took back turns (green instead of amber);
+       - a welcome without a rejoin token stops the app saving its record, so a forced resume restores an old one and held turns are green again;
+       - after a forced resume, the rule for moves lost on their way uses only the new run's round trips, so a move lost with 5 s on the screen stays green;
+       - two minors: a new match reuses the last match's clock tie, and a move the server drops just before it cuts the link is lost in a green hand.
 
-       The next unit closes them.
+       I reproduced six of them with their controls. One more surfaced in the score-rewrite probe: a match whose hand failed red for a score rewrite still shows its final scores as verified. Unit 20d closes these.
 2. **Backdated first frames, then a delay: up to 74.5 s late and still green** (fairness, major). `docs/FAIRNESS.md` states this residual, but as "25 to 30 seconds". The challenger had the table play 17 of 17 of a victim's moves in a green hand, with the Fair play count at 0.
    - Closed by unit 20: each turn is measured against the table's answers to a ping a second; the bound is half the turn clock (2 s at Hyper). With the app's ping going out right behind its join, as it does, the probe's backdated frame is the answer to that ping, and every hand is amber with every turn counted. If the server backdates the deal itself instead and delays everything after it, pings included, the count still counts every turn (it measures turns against the answers to pings alone), and the hand is amber whenever the table plays over a move the player made with time on the screen's clock. What stays out of sight is a server whose whole clock runs behind from the first frame, or one that sends a single answer to a ping at once with its stamp moved back and everything after it late: to the phone that is a fast connection to a clock that is behind (a stated limit in FAIRNESS.md). The screen's clock counts that same clock, so such a server gains only the moves made in the last 1.5 s.
 3. **At Turbo and Hyper, a 15 s delay from the start lets the table play every turn while the hand stays green** (fairness, major; both skeptics confirmed it). This is inside the stated 17 s bound, and FAIRNESS.md gives its cost per speed. At a 4 s turn, though, it means the player never moves.
