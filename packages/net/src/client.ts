@@ -244,6 +244,9 @@ export const AUDIT_FAILURES = {
   // Replaying the hand.
   replayMismatch: 'Replaying the action log does not reproduce the final state',
   replayFailed: /^Replay failed: (?<detail>[\s\S]*)$/,
+  // Every check of this seat's own moves is keyed by the turn number each entry of the log carries: an entry numbered
+  // other than the turn the replay is at would escape them.
+  logTurn: /^The log numbers the move made at turn (?<turn>-?\d+) as another turn$/,
   resultDiffers: 'Announced result differs from the replayed hand',
   scoresDiffer: 'Announced scores differ from the replayed hand',
   myHandDiffers: 'My final hand differs from the replay',
@@ -2677,6 +2680,9 @@ export class TableClient {
       }
     };
     for (const entry of log) {
+      // Each entry is the move made at the turn the replay has reached, and says so: an honest host logs every move with
+      // the turn it was made on (`applyAction`), and every check of this seat's moves below is keyed by that number.
+      if (!isObject(entry) || entry.n !== s.turnCounter) problems.add(`The log numbers the move made at turn ${s.turnCounter} as another turn`);
       if (play && me !== null && isObject(entry) && entry.seat === me) {
         const n = entry.n;
         const prevMine = lastMine;

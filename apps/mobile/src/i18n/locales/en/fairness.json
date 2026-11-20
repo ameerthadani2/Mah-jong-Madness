@@ -101,6 +101,7 @@
     "unknownShuffle": "The deal used a shuffle method this app does not know (%{version}).",
     "replayMismatch": "Replaying the recorded moves does not lead to the final state the table announced.",
     "replayFailed": "The recorded moves could not be replayed (%{detail}).",
+    "logTurn": "The record numbers the move made at turn %{turn} as a different turn.",
     "resultDiffers": "The announced result is not what replaying the hand gives.",
     "scoresDiffer": "The announced scores are not what replaying the hand gives.",
     "myHandDiffers": "Your final hand is not what replaying the hand gives.",

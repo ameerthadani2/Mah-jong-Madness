@@ -101,6 +101,7 @@
     "unknownShuffle": "這次發牌用了這個 App 不認得的洗牌方式（%{version}）。",
     "replayMismatch": "照紀錄重播這一局，得不到牌桌宣布的最後狀態。",
     "replayFailed": "這一局沒辦法照紀錄重播（%{detail}）。",
+    "logTurn": "紀錄把第 %{turn} 手打的那一步，標成了另一手。",
     "resultDiffers": "牌桌宣布的結果，和重播這一局得到的不一樣。",
     "scoresDiffer": "牌桌宣布的分數，和重播這一局得到的不一樣。",
     "myHandDiffers": "你最後的手牌，和重播這一局得到的不一樣。",
