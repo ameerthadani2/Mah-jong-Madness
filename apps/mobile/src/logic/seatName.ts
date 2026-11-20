@@ -96,3 +96,21 @@ export function relLineExtra(score: number, offline: string | null, fontSize = 1
   const scoreW = estimateTextWidth(`${score >= 0 ? '+' : ''}${score}`, fontSize + 1) * BOLD_WIDTH + gap;
   return scoreW + (offline ? estimateTextWidth(offline, fontSize) * BOLD_WIDTH + gap : 0);
 }
+
+/**
+ * Portrait: whether the across seat's plate keeps its tag beside its avatar (its usual form), as SeatBadge draws it: a tag
+ * as wide as its name (or the wider line of a name broken before its label) or its relation line, whichever is wider, up
+ * to `maxTag`. Beside the avatar and its 8 px gap it may run past the centre column by 4 px a side, into the cross's gaps;
+ * any further and it runs under a side seat's plate (a 320 pt phone, whose centre column is 80 px). Where it would, the
+ * plate takes a side seat's form instead: its avatar over a two-line tag as wide as the column.
+ */
+export function acrossTagBeside(name: string, relFull: string, relShort: string, score: number, plate: number, columnW: number, maxTag = 110): boolean {
+  const room = maxTag - SEAT_TAG_CHROME;
+  const nameW = Math.max(...seatTagText(name, room).split('\n').map((line) => estimateTextWidth(line, 12)));
+  const relW = estimateTextWidth(relTagLabel(relFull, relShort, room), 11) * BOLD_WIDTH;
+  // The score shares the relation's line where it fits, and wraps under it where it does not.
+  const relLine = relW + relLineExtra(score, null) <= room ? relW + relLineExtra(score, null) : relW;
+  const tag = Math.min(maxTag, SEAT_TAG_CHROME + Math.max(nameW, relLine));
+  return plate + 8 + tag <= columnW + 8;
+}
+

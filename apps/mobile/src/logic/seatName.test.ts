@@ -2,7 +2,7 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 import { describe, expect, it } from 'vitest';
 import { en, zhTW } from '../i18n/locales';
-import { BOT_NAME_SLOT, botBaseName, botNamer, estimateTextWidth, relLineExtra, relTagLabel, seatDisplayName, seatTagText, SEAT_TAG_CHROME, SIDE_NAME_MIN_SIZE, sideNameSize, withBotLabels } from './seatName';
+import { acrossTagBeside, BOT_NAME_SLOT, botBaseName, botNamer, estimateTextWidth, relLineExtra, relTagLabel, seatDisplayName, seatTagText, SEAT_TAG_CHROME, SIDE_NAME_MIN_SIZE, sideNameSize, withBotLabels } from './seatName';
 
 const fill = (template: string) => (name: string) => template.replace('%{name}', name);
 const enBot = fill(en.common.botName);
@@ -119,3 +119,23 @@ describe("a side seat's name on one line", () => {
     expect(relTagLabel('Right 下家', 'Right', side - relLineExtra(-1250, null))).toBe('Right');
   });
 });
+
+describe('the across seat’s plate in portrait', () => {
+  // The centre column's width as measured on the web export (its plate: a 34 px avatar).
+  const zh = (column: number) => acrossTagBeside('老王（電腦）', zhTW.table.relSeat.across, zhTW.table.relSeatShort.across, 0, 34, column);
+  const enTag = (column: number) => acrossTagBeside('老王 (Bot)', en.table.relSeat.across, en.table.relSeatShort.across, 0, 34, column);
+
+  it('takes a side seat’s form on a 320 pt phone, where its tag beside the avatar ran under the right seat’s plate', () => {
+    expect(zh(80)).toBe(false);
+    expect(enTag(80)).toBe(false);
+    // 360 pt: the Chinese tag ran 4 px under the right seat's plate.
+    expect(zh(116)).toBe(false);
+  });
+
+  it('keeps its tag beside its avatar where the column has the room, as on a 390 pt phone', () => {
+    expect(zh(132)).toBe(true);
+    expect(enTag(132)).toBe(true);
+    expect(zh(200)).toBe(true);
+  });
+});
+

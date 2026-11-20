@@ -17,6 +17,7 @@ import { useT } from '../../i18n';
 import { COMPACT_GAP, COMPACT_TOP_MELD, compactTopMeld, fitCompactCentre, fitPools, fitSideColumn, SIDE_GAP } from '../../display/tableFit';
 import { CROSS_PAD, fitPortraitFelt, portraitDealFits } from '../../display/portraitFit';
 import { CoachPanel } from './CoachPanel';
+import { acrossTagBeside } from '../../logic/seatName';
 import { slideFrom } from './feel';
 import { compactCompassSize, dockHeight, landscapeWallSize, type ActionDock, type TableLayout } from './layout';
 
@@ -169,7 +170,9 @@ export function Felt({
     return { melds: p.melds.map((m) => m.tiles.length), flowers: p.flowers.length, discards: p.discards.length, hand: p.handCount };
   };
   const topHandTile = tablet ? 15 : 9;
-  const fit = fitPortraitFelt({
+  // The centre column's width, measured (below).
+  const [centreW, setCentreW] = useState(0);
+  const fitInput = {
     felt: portrait ? pBox.felt : 0,
     sideW: sideWidth,
     // The cross is padded 6 px a side, so the centre column is that much narrower than layout.ts's centerW.
@@ -187,7 +190,17 @@ export function Felt({
     meld: tileDims(meldSize(tablet ? 'sm' : 'xs')).w,
     wallMax: L.wallSize,
     compass: L.compassSize,
-  });
+  };
+  // Portrait: the across seat's plate has its tag beside its avatar where the centre column has the room (with the cross's
+  // gaps); where it would run under a side seat's plate (a 320 pt phone), it takes a side seat's form, the avatar over a
+  // two-line tag as wide as the column, as tall as a side seat's plate. That form is the taller, so it is taken only where
+  // the felt still fits with it: where it does not (four melds at the across seat on a 320 pt phone at Normal tiles), the
+  // newest discards come first and the tag stays beside the avatar, drawn over the side seat's avatar (centreOver).
+  const acrossProps = plateProps(seatAt(2));
+  const acrossCrowded = portrait && centreW > 0 && !acrossTagBeside(acrossProps.info?.name || t('table.seat', { n: seatAt(2) + 1 }), t('table.relSeat.across'), t('table.relSeatShort.across'), acrossProps.score, plate, centreW);
+  const sideFormH = Math.max(pBox.right, pBox.left);
+  const acrossSideForm = acrossCrowded && sideFormH > 0 && fitPortraitFelt({ ...fitInput, plates: { ...fitInput.plates, top: sideFormH } }).fits;
+  const fit = fitPortraitFelt(fitInput);
   const pool = portrait ? fit.pool : pools.tile;
   const centerPerRow = portrait ? fit.centerPerRow : pools.centerPerRow;
   const sidePerRow = portrait ? fit.sidePerRow : pools.sidePerRow;
@@ -197,7 +210,6 @@ export function Felt({
   // over the left seat's newest discards), and in short landscape it sets the across seat's meld size (below). Where one
   // line of the column is too short for it, it takes a second and a third, so it says which tile went (portraitFit.ts takes
   // its measured height).
-  const [centreW, setCentreW] = useState(0);
   const statusPill = status ? (
     <View style={[styles.status, centreW > 0 && { maxWidth: Math.min(STATUS_MAX_W, centreW) }]} testID="table-status" onLayout={portrait ? measureP('status') : undefined}>
       <Text numberOfLines={3} style={styles.statusText}>
@@ -216,7 +228,8 @@ export function Felt({
     const pond = (portrait ? p.discards.length > 0 : true) && (
       <DiscardPool tiles={p.discards} size={pool} perRow={centerPerRow} align="center" latest={latestFor(seat)} enterFrom={slideFrom(2)} keepRows={portrait ? fit.keep.across : undefined} testID="pond-seat-2" />
     );
-    const badge = <SeatBadge {...plateFor(seat)} size={plate} maxNameWidth={portrait ? 110 : 120} />;
+    // Portrait: the avatar beside its tag, or a side seat's form where the centre column is too narrow for that (acrossSideForm).
+    const badge = acrossSideForm ? <SeatBadge {...plateFor(seat)} size={plate} vertical side maxNameWidth={centreW} /> : <SeatBadge {...plateFor(seat)} size={plate} maxNameWidth={portrait ? 110 : 120} />;
     return (
       <SeatBox button={seatButton(2)} style={[styles.topSeat, L.compact && styles.topSeatCompact]} onLayout={(e) => setTopH(Math.round(e.nativeEvent.layout.height))} testID="seat-press-2">
         {portrait ? (
@@ -399,7 +412,9 @@ export function Felt({
 
   const centerColumn = (
     <View
-      style={[styles.centerCol, L.compact && { gap: COMPACT_GAP }]}
+      // Where the across seat's tag stays beside its avatar in a column too narrow for it (acrossSideForm), the column is
+      // drawn over the side seats', so the tag runs over a side seat's avatar, never under it.
+      style={[styles.centerCol, L.compact && { gap: COMPACT_GAP }, acrossCrowded && !acrossSideForm && styles.centreOver]}
       testID="centre-col"
       onLayout={(e) => {
         setCentreH(Math.round(e.nativeEvent.layout.height));
@@ -523,6 +538,7 @@ const styles = StyleSheet.create({
   sideBody: { flex: 1, minHeight: 0, alignSelf: 'stretch' },
   sideBodyContent: { gap: SIDE_GAP },
   centerCol: { flex: 1, alignItems: 'center', gap: 6, minWidth: 0 },
+  centreOver: { zIndex: 2 },
   topSeat: { alignItems: 'center', gap: 6, alignSelf: 'stretch' },
   // Short landscape: its blocks stack COMPACT_GAP apart, and what does not fit is cut here, never drawn under the buttons.
   topSeatCompact: { gap: COMPACT_GAP, flexShrink: 1, minHeight: 0, overflow: 'hidden' },

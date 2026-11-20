@@ -240,6 +240,8 @@ describe('a pond keeping its newest rows', () => {
     // pong and a pong share one.
     expect(meldsHeight(84, [3, 4], 0, 14)).toBe(20 + 3 + 20);
     expect(meldsHeight(84, [3, 3], 0, 12, true)).toBe(17);
+    // A 320 pt phone's 80 px centre column holds two flat pongs on a line too.
+    expect(meldsHeight(80, [3, 3], 0, 12, true)).toBe(17);
     expect(meldsHeight(84, [], 0, 14)).toBe(0);
   });
 });

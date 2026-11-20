@@ -422,7 +422,7 @@ async function coachSettled(page, advised) {
  *   says how many it leaves out with a "+N" chip, whole on screen too.
  * - Every tile of an opponent's melds and flowers is whole on screen (none scrolled away or under its plate), and in
  *   portrait a side seat's tiles stay inside its column.
- * - The "X discarded Y" line under the compass is not cut.
+ * - The "X discarded Y" line under the compass is not cut, and no seat's plate is drawn over another's name tag.
  * - Every tile of my pond and of my hand (the raised one too) and every claim or discard button is whole on screen, and
  *   nothing lies over the top edge of a tile of my hand (the coach's press over a raised tile took the tap there).
  * - Portrait: the coach's press (on the web, padded where its bar is short) reaches over no tile of my pond or my hand.
@@ -503,6 +503,19 @@ async function feltCheck(page) {
         });
         if (out.length) bad.push(`the ${r === 1 ? 'right' : 'left'} seat's tiles run past its column`);
       }
+    // No seat's plate is drawn over another seat's name tag (the across seat's, between the side seats' plates in portrait).
+    for (const plate of document.querySelectorAll('[data-testid^="plate-seat-"]')) {
+      const tag = plate.querySelector('[data-testid="seat-tag"], [data-testid="seat-tag-side"]');
+      if (!tag || !seen(tag)) continue;
+      const b = tag.getBoundingClientRect();
+      let over = null;
+      for (let y = b.top + 2; y < b.bottom - 1 && !over; y += 3)
+        for (let x = b.left + 2; x < b.right - 1 && !over; x += 3) {
+          const other = document.elementFromPoint(x, y)?.closest('[data-testid^="plate-seat-"]');
+          if (other && other !== plate) over = other.dataset.testid;
+        }
+      if (over) bad.push(`${plate.dataset.testid}'s name tag is under ${over}`);
+    }
     // The "X discarded Y" line under the compass says the whole of it (it takes a second line rather than being cut).
     for (const t of [...document.querySelectorAll('[data-testid="table-status"] div[dir="auto"]')].filter(seen)) {
       if (t.scrollWidth > t.clientWidth + 1 || t.scrollHeight > t.clientHeight + 1) bad.push(`the status line is cut ("${t.textContent.slice(0, 40)}")`);

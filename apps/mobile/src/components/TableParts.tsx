@@ -379,7 +379,7 @@ export function Compass({ prevailing, drawsLeft, seatWinds, active, size = 72, r
 const styles = StyleSheet.create({
   meld: { flexDirection: 'row', alignItems: 'flex-end', gap: 1, marginRight: 5 },
   // display/tableFit.ts FLAT_MELD_GAP.
-  meldFlat: { marginRight: 3 },
+  meldFlat: { marginRight: 2 },
   meldRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'flex-end', rowGap: 3 },
   // Wraps inside a narrow column (a side seat with many flowers) instead of running out of it.
   flowers: { flexDirection: 'row', flexWrap: 'wrap', gap: 1, rowGap: 3, alignItems: 'flex-end', maxWidth: '100%' },

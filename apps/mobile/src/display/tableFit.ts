@@ -191,9 +191,13 @@ export function fitPools(L: TableLayout, tileScale: number): PoolFit {
 
 /** The gap between a side seat's blocks (plate, melds, pond) and between the rows of its melds and of its pond. */
 export const SIDE_GAP = 6;
-/** Flat melds (no tile on its side to mark the claimed one), FLAT_MELD_GAP apart and down to MIN_FLAT_MELD: the last thing a side seat's melds give up, in portrait and in landscape. */
+/**
+ * Flat melds (no tile on its side to mark the claimed one), FLAT_MELD_GAP apart and down to MIN_FLAT_MELD: the last thing an
+ * opponent's melds give up, in portrait and in landscape. Two flat pongs at 12 px are then 80 px wide, so they share a line
+ * of a 320 pt phone's 80 px centre column as of its side columns.
+ */
 export const MIN_FLAT_MELD = 12;
-export const FLAT_MELD_GAP = 3;
+export const FLAT_MELD_GAP = 2;
 const MELD_ROW_GAP = 3;
 const POND_GAP = 2;
 /** The smallest a side seat's meld and pond tiles are drawn (px wide) before its column scrolls instead. */
