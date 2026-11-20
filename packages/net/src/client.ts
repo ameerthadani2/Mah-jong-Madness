@@ -1376,6 +1376,20 @@ export class TableClient {
     return list.find((x) => this.handsEnded.has(handOf(x))) ?? list.find((x) => handOf(x) !== on && handOf(x) !== keep) ?? null;
   }
 
+  /**
+   * Whether a frame about the deal of hand `h` (its commitments, a share the host made for this seat) is one an honest
+   * host could send now: it names the hand this client is on (`activeHand`), being dealt or played, or a later one on
+   * a link that has brought nothing about that hand yet (the table may have played on while this device had no link,
+   * and a returning seat is told about the deal in progress); never another hand that has ended. The hand this client
+   * was last asked to commit to or shown (`openHand`) counts whatever came of it: a deal of a hand already played is
+   * failed when the table turns to it (`enterHand`), and its frames are then taken as that deal's.
+   */
+  private dealsHand(h: number): boolean {
+    if (h === this.openHand) return true;
+    const on = this.activeHand();
+    return !this.handsEnded.has(h) && (h === on || (h > on && this.handEpoch !== this.epoch));
+  }
+
   /** Keep `list` (entries of hands, oldest first) to `max` entries without giving up the hand this client is on (`handToDrop`). */
   private trimHands<T>(list: T[], max: number, handOf: (x: T) => number): void {
     while (list.length > max) {
@@ -1766,6 +1780,12 @@ export class TableClient {
       case 'stand_in': {
         if (!isInt(m.handNumber)) return;
         const h = m.handNumber;
+        // Only the hand being dealt: a stand-in for any other is the server's own making, and makes no record. (A
+        // returning seat is told again between hands about the hand that has just ended: nothing to note.)
+        if (!this.dealsHand(h)) {
+          if (!this.handsEnded.has(h)) this.flag(this.activeHand(), 'Host sent a frame about a hand or turn this device was not on');
+          return;
+        }
         const rec = this.recordFor(h);
         const cur = this.currentAttempt(h);
         const n = isInt(m.attempt) && m.attempt >= 1 ? m.attempt : (cur?.n ?? 1);
@@ -1804,8 +1824,15 @@ export class TableClient {
         if (!isInt(m.handNumber)) return;
         const h = m.handNumber;
         if (!isCommitSet(m.commits)) {
-          this.flag(h, 'Host published a malformed set of commitments');
+          // Never honest, whatever hand it names: it counts against the hand this client is on.
+          this.flag(this.activeHand(), 'Host published a malformed set of commitments');
           this.update({ lastError: 'The table sent a malformed set of commitments.' });
+          return;
+        }
+        // Published for the hand being dealt only (a returning seat is sent it again): a set for any other hand is the
+        // server's own making, and takes the place of nothing this client holds.
+        if (!this.dealsHand(h)) {
+          this.flag(this.activeHand(), 'Host sent a frame about a hand or turn this device was not on');
           return;
         }
         if (this.commits && this.commitsHand === h) {

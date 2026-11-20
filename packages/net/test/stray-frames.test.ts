@@ -173,3 +173,75 @@ describe('the hand a refusal, an app restart and the seat-taken notice are held 
       expect(plays(w.c).find((p) => p.hand === 0)?.ledgerFrom).toBe(Number.POSITIVE_INFINITY);
     }));
 });
+
+/**
+ * Normal, two rotations. Between hand 0 and hand 1 the server moves 300 points from the seat to seat 1 in the scores
+ * hand 1 starts from, and deals hand 1 from them; once hand 1's first state has reached the phone it sends `flood`
+ * malformed commitment sets, each for a hand never dealt (5001, 5002, ...). Each was once flagged against the hand it
+ * named, and the twelfth pushed hand 1's flags, the scores' among them, out of the twelve hands' flags the phone keeps.
+ */
+function movedScores(code: string, flood: number) {
+  let patched = false;
+  let flooded = false;
+  const w = wire({
+    code,
+    rules: withRules({ handsPerMatch: 2, turnSeconds: 15, timeBankSeconds: 30 }),
+    botDelayMs: 700,
+    intermissionSeconds: 5,
+    think: () => 1_000,
+    onTick: (w) => {
+      const snap = (w.host as unknown as { snapshot: { handNumber: number; matchOver: boolean; scores: number[] } }).snapshot;
+      if (!patched && snap.handNumber === 1 && !snap.matchOver) {
+        patched = true;
+        snap.scores = snap.scores.slice();
+        snap.scores[0] -= 300;
+        snap.scores[1] += 300;
+      }
+      const v = w.c.state.view;
+      if (patched && !flooded && v && v.handNumber === 1 && w.c.state.lastResult === null) {
+        flooded = true;
+        for (let j = 1; j <= flood; j++) w.line.inject({ t: 'commits', handNumber: 5000 + j, commits: [] } as unknown as HostMessage);
+      }
+    },
+  });
+  for (let k = 0; k < 20_000 && !w.c.state.matchOver; k++) w.step();
+  return { w, patched, flooded, second: w.c.state.audits.find((a) => a.audit.handNumber === 1) };
+}
+
+describe('frames about the deal of a hand the phone is not on', () => {
+  it('Normal, the scores moved between hands, then twelve malformed commitment sets for hands never dealt: the hand fails for the scores and for the malformed sets; with none sent it fails for the scores', () =>
+    scenario((i) => {
+      const a = movedScores(`SCM${i}`, 12);
+      need(a.patched && a.flooded && a.second !== undefined);
+      expect(a.second!.status).toBe('failed');
+      expect(a.second!.failures).toEqual(expect.arrayContaining(['Hand started with scores different from where the previous hand left them', 'Host published a malformed set of commitments']));
+      const b = movedScores(`SCM${i}`, 0);
+      need(b.second !== undefined);
+      expect(b.second!.failures).toEqual(['Hand started with scores different from where the previous hand left them']);
+    }));
+
+  it('a well-formed commitment set, or a share the host made for this seat, for a hand other than the one being played fails the hand and takes the place of nothing; the same for the hand being played changes nothing', () =>
+    scenario((i) => {
+      const commits = (h: number) => ({ t: 'commits', handNumber: h, commits: [0, 1, 2, 3, 4].map((seat) => ({ seat, hash: 'ab'.repeat(32) })) }) as unknown as HostMessage;
+      const run = (frame: HostMessage | null) => {
+        let sent = false;
+        const w = wire({
+          code: `SCS${i}`,
+          rules: NORMAL,
+          botDelayMs: 700,
+          onTick: (w) => {
+            if (sent || !w.c.state.view || mine(w) < 2 || w.host.phase !== 'playing') return;
+            sent = true;
+            if (frame) w.line.inject(frame);
+          },
+        });
+        w.finish();
+        need(sent);
+        return w.verdict();
+      };
+      expect(run(commits(7))).toMatchObject({ status: 'failed', failures: ['strayFrame'] });
+      expect(run({ t: 'stand_in', handNumber: 7, attempt: 1 } as HostMessage)).toMatchObject({ status: 'failed', failures: ['strayFrame'] });
+      expect(run({ t: 'stand_in', handNumber: 0, attempt: 1 } as HostMessage)).toEqual({ status: 'ok', failures: [], caveats: [] });
+      expect(run(null)).toEqual({ status: 'ok', failures: [], caveats: [] });
+    }));
+});
