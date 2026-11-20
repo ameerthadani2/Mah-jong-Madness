@@ -94,8 +94,36 @@ const tapSel = async (page, sel, wait = 900) => {
   return true;
 };
 
+/**
+ * Whether `check()` comes true within `ms` (polled every 100 ms). A sheet slides in or fades out, and the page behind it
+ * comes back after it closes, over times a busy machine stretches (all of this file's runs share one browser): a check
+ * of how things end up must wait for them rather than look once after a fixed pause.
+ */
+const until = async (page, check, ms = 3000) => {
+  for (let t = 0; ; t += 100) {
+    if (await check()) return true;
+    if (t >= ms) return false;
+    await page.waitForTimeout(100);
+  }
+};
+const shownWithin = (page, sel, ms) => until(page, async () => !!(await visible(page, sel)), ms);
+const goneWithin = (page, sel, ms) => until(page, async () => !(await visible(page, sel)), ms);
+/**
+ * Tap `sel` and wait `wait` ms, as a check always has (the page behind goes inert and the dialog takes the keyboard in
+ * that time), then give `target` up to 3 s more to show; one that took longer gets `wait` ms more to settle the same way.
+ */
+const openWithin = async (page, sel, target, wait) => {
+  if (!(await tapSel(page, sel, wait))) return false;
+  if (await visible(page, target)) return true;
+  if (!(await shownWithin(page, target))) return false;
+  await page.waitForTimeout(wait);
+  return true;
+};
+
 /** Whether the app's root element (everything but a dialog's portal) is inert. */
 const pageInert = (page) => page.evaluate(() => !!document.getElementById('root')?.hasAttribute('inert'));
+/** Whether the page behind a dialog that just closed stays inert (it is given up to 3 s to come back: `until`). */
+const staysInert = async (page) => !(await until(page, async () => !(await pageInert(page))));
 
 /**
  * A browser context whose pages draw Math.random and crypto.getRandomValues from one seeded generator (mulberry32), so a
@@ -130,7 +158,7 @@ const seedContext = (ctx, seed) =>
  */
 async function dialogKeys(page, tabs = 10) {
   const bad = [];
-  if (!(await pageInert(page))) bad.push('the page behind the dialog is not inert');
+  if (!(await until(page, () => pageInert(page)))) bad.push('the page behind the dialog is not inert');
   const focus = () =>
     page.evaluate(() => {
       const a = document.activeElement;
@@ -612,7 +640,7 @@ async function discardsSheetCheck(page, r, shot) {
     open = !!(await visible(page, '[data-testid="discards-sheet"]'));
   }
   if (open) bad.push('Escape did not close the discards sheet');
-  if (await pageInert(page)) bad.push('the table stays inert after the discards sheet closed');
+  if (await staysInert(page)) bad.push('the table stays inert after the discards sheet closed');
   return bad.map((f) => `${f} (${felt.shown} shown, ${felt.earlier} behind the chip)`);
 }
 
@@ -922,13 +950,12 @@ async function run(browser, port, [w, h]) {
       if (discards === 4 && !done.has('exit-sheet')) {
         // The red exit icon asks first: one tap must not leave the table.
         done.add('exit-sheet');
-        await tapSel(page, '[data-testid="leave-table"]', 700);
-        if (!(await visible(page, '[data-testid="leave-sheet"]'))) fails.push('exit icon left without asking');
+        if (!(await openWithin(page, '[data-testid="leave-table"]', '[data-testid="leave-sheet"]', 700))) fails.push('exit icon left without asking');
         await shot('exit-sheet');
         fails.push(...(await dialogKeys(page)).map((f) => `Exit sheet: ${f}`));
         await tapSel(page, '[data-testid="leave-stay"]', 500);
-        if (!(await visible(page, '[data-testid="leave-table"]'))) fails.push('keep playing did not return to the table');
-        if (await pageInert(page)) fails.push('Exit sheet: the table stays inert after the sheet closed');
+        if (!(await goneWithin(page, '[data-testid="leave-sheet"]')) || !(await visible(page, '[data-testid="leave-table"]'))) fails.push('keep playing did not return to the table');
+        if (await staysInert(page)) fails.push('Exit sheet: the table stays inert after the sheet closed');
       }
       await page.waitForTimeout(300);
       continue;
@@ -978,15 +1005,14 @@ async function run(browser, port, [w, h]) {
   if (finished) {
     if (!(await visible(page, '[data-testid="resume-card"]'))) fails.push('no Resume card on Home after stepping away from the table');
     // A new match would take the saved table's place: Home asks first, and "Keep my table" changes nothing.
-    await tapSel(page, '[data-testid="start-match"]', 900);
-    if (!(await visible(page, '[data-testid="replace-table"]'))) fails.push('Start match replaced the saved table without asking');
+    if (!(await openWithin(page, '[data-testid="start-match"]', '[data-testid="replace-table"]', 900))) fails.push('Start match replaced the saved table without asking');
     else {
       await shot('replace-table');
       fails.push(...(await dialogKeys(page)).map((f) => `Replace-table question: ${f}`));
     }
     await tapSel(page, '[data-testid="confirm-no"]', 700);
-    if (!(await visible(page, '[data-testid="resume-card"]'))) fails.push('"Keep my table" did not keep the saved table');
-    if (await pageInert(page)) fails.push('Replace-table question: Home stays inert after the question closed');
+    if (!(await goneWithin(page, '[data-testid="replace-table"]')) || !(await visible(page, '[data-testid="resume-card"]'))) fails.push('"Keep my table" did not keep the saved table');
+    if (await staysInert(page)) fails.push('Replace-table question: Home stays inert after the question closed');
     // "Abandon table" on the Resume card ends the saved table for good: one tap must only ask, and "Keep my table" keeps it.
     const savedTable = () => page.evaluate(() => (localStorage.getItem('mjm.activeSession') || '').length);
     if (!(await tapSel(page, '[data-testid="abandon-table"]', 900))) fails.push('the Resume card has no "Abandon table" button');
@@ -1229,7 +1255,8 @@ async function runCoach(browser, port, [[w, h], locale, tileScale, textScale, se
       if (n !== 2) return;
       // The coach's sheet, from its bar: everything it says, a dialog that keeps the keyboard and the page as the other
       // sheets do (dialogKeys), closed by Escape with focus back on the bar.
-      if (!(await tapSel(page, '[data-testid="coach"]', 700)) || !(await visible(page, '[data-testid="coach-sheet"]'))) {
+      // The sheet slides in; on a busy machine that can take longer than the usual pause (`openWithin`).
+      if (!(await openWithin(page, '[data-testid="coach"]', '[data-testid="coach-sheet"]', 700))) {
         sheet.push('the coach bar did not open its sheet');
         return;
       }
@@ -1244,7 +1271,7 @@ async function runCoach(browser, port, [[w, h], locale, tileScale, textScale, se
         open = !!(await visible(page, '[data-testid="coach-sheet"]'));
       }
       if (open) sheet.push("Escape did not close the coach's sheet");
-      if (await pageInert(page)) sheet.push("the table stays inert after the coach's sheet closed");
+      if (await staysInert(page)) sheet.push("the table stays inert after the coach's sheet closed");
     },
   });
   const finished = !!(await visible(page, '[data-testid="result-sheet"]'));
@@ -1440,10 +1467,10 @@ async function runPreview(browser, port, [w, h], zh) {
     if (owned && !(await visible(page, '[data-testid="preview-equip"]'))) fails.push(`${where}: the owned ${id} offers no Equip`);
     if (!owned && !(await visible(page, '[data-testid="preview-buy"]'))) fails.push(`${where}: ${id} offers no Buy`);
     await tapSel(page, '[data-testid="preview-close"]', 500);
-    if (await visible(page, '[data-testid="look-preview"]')) fails.push(`${where}: ${id}'s preview does not close`);
-    const focused = await page.evaluate(() => document.activeElement?.getAttribute('data-testid'));
-    if (focused !== `preview-${id}`) fails.push(`${where}: focus went to ${focused || 'nothing'}, not back to ${id}'s card, when the preview closed`);
-    if (await pageInert(page)) fails.push(`${where}: the Shop stays inert after ${id}'s preview closed`);
+    if (!(await goneWithin(page, '[data-testid="look-preview"]'))) fails.push(`${where}: ${id}'s preview does not close`);
+    const focusedOn = () => page.evaluate(() => document.activeElement?.getAttribute('data-testid'));
+    if (!(await until(page, async () => (await focusedOn()) === `preview-${id}`))) fails.push(`${where}: focus went to ${(await focusedOn()) || 'nothing'}, not back to ${id}'s card, when the preview closed`);
+    if (await staysInert(page)) fails.push(`${where}: the Shop stays inert after ${id}'s preview closed`);
   }
   await ctx.close();
   return { size: `${tag} preview${zh ? '-zh' : ''}`, finished: true, shots, notes: [], fails, errors };
