@@ -759,10 +759,10 @@ export class TableClient {
     this.noteOwnAbsence();
     this.lapse = true;
     // The app stopped: the link it had is gone. Moves sent just before the last save may be missing
-    // from the ledger, so it vouches for the current hand's log only from the next state it sees.
+    // from the ledger, so it vouches for the log of a hand still under way only from the next state it sees.
+    // (Every such hand, whichever record was made last.)
     this.noteLinkLost();
-    const play = this.plays[this.plays.length - 1];
-    if (play && !this.handsEnded.has(play.hand)) play.ledgerFrom = Number.POSITIVE_INFINITY;
+    for (const play of this.plays) if (!this.handsEnded.has(play.hand)) play.ledgerFrom = Number.POSITIVE_INFINITY;
   }
 
   /** Everything needed to carry on verifying after an app restart (see `TableClient.restore`). */
@@ -1411,8 +1411,9 @@ export class TableClient {
   private seatTaken(): void {
     this.noteOwnAbsence();
     this.noteLinkLost();
-    const play = this.plays[this.plays.length - 1];
-    if (play) {
+    // Every hand still under way, whichever record was made last.
+    for (const play of this.plays) {
+      if (this.handsEnded.has(play.hand)) continue;
       this.closeLedger(play);
       play.ledgerFrom = Number.POSITIVE_INFINITY;
     }
@@ -2182,13 +2183,15 @@ export class TableClient {
   private noteRefusal(m: Extract<HostMessage, { t: 'error' }>): void {
     const code = typeof m.code === 'string' ? m.code : 'error';
     if (!['illegal', 'not_playing', 'wrong_seat', 'not_seated'].includes(code)) return;
-    const play = this.plays[this.plays.length - 1];
-    if (!play) return;
+    // A refusal answers a move this seat made in the hand being played, the one on show (`act` files each move
+    // under it), never the hand of whichever record was made last.
+    const v = this.state.view;
+    const play = v && !this.handsEnded.has(v.handNumber) ? this.plays.find((p) => p.hand === v.handNumber) : undefined;
+    if (!play || !v) return;
     const open = play.sent.filter((s) => !s.rejected && (!isInt(m.turnCounter) || s.tc === m.turnCounter));
     const target = open[open.length - 1];
     // Every state the host reached before it refused has arrived before the refusal (frames come in order).
-    const v = this.state.view;
-    const at = v && v.handNumber === play.hand && isInt(v.turnCounter) ? v.turnCounter : undefined;
+    const at = isInt(v.turnCounter) ? v.turnCounter : undefined;
     if (target) {
       target.rejected = code;
       target.refusedAt = at;

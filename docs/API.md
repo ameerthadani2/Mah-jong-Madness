@@ -146,7 +146,7 @@ Host → client:
 | `{ "t": "chat", … }`, `{ "t": "emote", … }` | A seat's phrase or emote (next section) |
 | `{ "t": "pong", "at", "now" }` | Answer to `ping`, sent at once and in order with the link's other frames: `at` exactly as received, `now` the host's clock (the clock of every other stamp; it never goes back). It does not put off the seat's next `clock` frame |
 | `{ "t": "clock", "now", "hand", "tc" }` | While a hand is played, to a seat that was sent nothing for `clockMs` (its `pong`s do not count): the hand and turn the table is at (a turn whose `state` the seat was already sent) and the host's clock. A host that never sends it is not trusted for longer: the app watches the link at the 3 s period all the same. A table whose stamps fall 13 s behind the phone's clock (against the closest relation seen in the last 20 s, never closer than any since the table's clock began), whatever frames it sends, is dropped and judged as a drop, unless its frames keep arriving at the pace of their stamps behind a delay that has held steady (see `ping`). It names the hand and turn of the last `state` the host sent that socket (a later turn only when that `state` was held back): a `clock` frame for another hand, or for an earlier turn, fails the hand the app is on, and the app takes nothing else from it. Older apps ignore it |
-| `{ "t": "error", "code", "message", "turnCounter"? }` | A refusal; the codes are below |
+| `{ "t": "error", "code", "message", "turnCounter"? }` | A refusal; the codes are below. The app holds a refusal of a move against the hand it shows (the move was made on it), and fails that hand when the move was legal in the state the table's own frames showed |
 
 Table error codes, and what the app does:
 

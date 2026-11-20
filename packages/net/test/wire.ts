@@ -17,7 +17,7 @@
  */
 import { vi } from 'vitest';
 import { chooseAction, legalActions, withRules, type Action, type RuleSet } from '@mjm/engine';
-import { caveatKey, clientClock, failureKey, LoopbackHub, TableClient, TableHost, transportLink, type HostMessage, type Link, type SerializedClient, type SerializedHost } from '../src/index';
+import { caveatKey, clientClock, failureKey, LoopbackHub, TableClient, TableHost, transportLink, type ClientMessage, type HostMessage, type Link, type SerializedClient, type SerializedHost } from '../src/index';
 
 export const TURN = 15_000;
 export const BANK = 30_000;
@@ -40,6 +40,8 @@ export interface Plan {
   delay?: (m: HostMessage, now: number) => number;
   /** Uplink delay (ms) of a message the phone sends at real time `now`. */
   up?: (now: number) => number;
+  /** The server drops a message from the phone (it never reaches the table) when this returns false. */
+  upFilter?: (m: ClientMessage, w: Wire) => boolean;
   /** The server's wall clock is `now + hostSkew(now)`. */
   hostSkew?: (now: number) => number;
   /**
@@ -292,6 +294,7 @@ export function wire(plan: Plan) {
           return () => closeHandlers.delete(f);
         },
         send: (m) => {
+          if (plan.upFilter && !plan.upFilter(m as ClientMessage, w)) return;
           if (!plan.up || !upOn) return base.send(m);
           up.push({ at: Math.max(clock.now + plan.up(clock.now), up.length ? up[up.length - 1].at : Number.NEGATIVE_INFINITY), m });
           l.uppump();

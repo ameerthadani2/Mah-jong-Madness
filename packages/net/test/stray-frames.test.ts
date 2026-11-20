@@ -9,7 +9,7 @@
  * record, and the hand the phone is on fails.
  */
 import { describe, expect, it } from 'vitest';
-import { withRules, type Action, type GameState } from '@mjm/engine';
+import { legalActions, withRules, type Action, type GameState } from '@mjm/engine';
 import type { HostMessage, TableClient } from '../src/index';
 import type { PlayRecord } from '../src/clientrecords';
 import { Missed, scenario, seededDeals } from './support';
@@ -102,5 +102,74 @@ describe('clock frames for a hand the phone is not on', () => {
       expect(run((w) => ({ t: 'clock', now: now(w), hand: 1, tc: tc(w) }) as HostMessage)).toMatchObject({ status: 'failed', failures: ['strayFrame'] });
       expect(run((w) => ({ t: 'clock', now: now(w), hand: 0, tc: tc(w) }) as HostMessage)).toEqual({ status: 'ok', failures: [], caveats: [] });
       expect(run(() => null)).toEqual({ status: 'ok', failures: [], caveats: [] });
+    }));
+});
+
+/**
+ * Normal. Once the seat has made three moves the app restarts, restored from a record whose last-made hand record is
+ * another hand's (`other`; the order a server once brought about with one stray clock frame). Then the server refuses
+ * the seat's next discard as illegal (it never reaches the table) though it is legal, and the seat, told so, discards
+ * another tile, which the table plays.
+ */
+function refusedAfterRestart(code: string, other: boolean) {
+  let armed = false;
+  let refused: { tc: number; action: Action } | null = null;
+  let retried = false;
+  const w = wire({
+    code,
+    rules: NORMAL,
+    botDelayMs: 700,
+    think: () => 1_000,
+    upFilter: (m, w) => {
+      if (!armed || refused || m.t !== 'action' || m.action.type !== 'discard' || typeof m.turnCounter !== 'number') return true;
+      refused = { tc: m.turnCounter, action: m.action };
+      w.line.inject({ t: 'error', code: 'illegal', message: 'That move is not allowed now.', turnCounter: m.turnCounter } as HostMessage);
+      return false;
+    },
+    onTick: (w) => {
+      if (!refused || retried || w.c.state.lastErrorCode !== 'illegal') return;
+      const s = w.c.localState();
+      if (!s || s.turnCounter !== refused.tc) return;
+      const first = JSON.stringify(refused.action);
+      const another = legalActions(s, 0).find((a) => a.type === 'discard' && JSON.stringify(a) !== first);
+      if (!another) return;
+      retried = true;
+      w.c.act(another);
+    },
+  });
+  need(w.toDiscard(3));
+  w.restart((saved) => {
+    if (other) saved.plays.push({ hand: 9001, seen: [], sent: [], ledgerFrom: 2 } as never);
+    return saved;
+  });
+  const ledgerAfterRestart = plays(w.c).find((p) => p.hand === 0)?.ledgerFrom;
+  armed = true;
+  w.finish();
+  need(retried);
+  return { w, ledgerAfterRestart };
+}
+
+describe('the hand a refusal, an app restart and the seat-taken notice are held against', () => {
+  it('Normal, the app restarted from a record whose last-made hand record is another hand’s, then a legal discard refused: red legalMoveRefused, as without that record; the restored client vouches for the hand on show only from its next state', () =>
+    scenario((i) => {
+      const a = refusedAfterRestart(`SRF${i}`, true);
+      expect(a.ledgerAfterRestart).toBe(Number.POSITIVE_INFINITY);
+      expect(a.w.verdict().status).toBe('failed');
+      expect(a.w.verdict().failures).toEqual(expect.arrayContaining(['legalMoveRefused']));
+      const b = refusedAfterRestart(`SRF${i}`, false);
+      expect(b.w.verdict().failures).toEqual(expect.arrayContaining(['legalMoveRefused']));
+    }));
+
+  it('the seat-taken notice stops the ledger of the hand on show, whichever record was made last', () =>
+    scenario((i) => {
+      const w = wire({ code: `SRK${i}`, rules: NORMAL, botDelayMs: 700 });
+      need(w.toDiscard(3));
+      w.restart((saved) => {
+        saved.plays.push({ hand: 9001, seen: [], sent: [], ledgerFrom: 2 } as never);
+        return saved;
+      });
+      need(w.until(() => typeof plays(w.c).find((p) => p.hand === 0)?.ledgerFrom === 'number' && Number.isFinite(plays(w.c).find((p) => p.hand === 0)!.ledgerFrom as number)));
+      w.line.inject({ t: 'disconnected' } as HostMessage);
+      expect(plays(w.c).find((p) => p.hand === 0)?.ledgerFrom).toBe(Number.POSITIVE_INFINITY);
     }));
 });
