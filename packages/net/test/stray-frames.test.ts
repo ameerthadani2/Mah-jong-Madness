@@ -582,6 +582,10 @@ describe('the final scores of a match with a hand that failed its check', () => 
       delete saved.state.matchFailed;
       const older = TableClient.restore(saved, transportLink(new LoopbackHub().create('older'), 'host'), 'Victim');
       expect([older.state.matchFailed, older.state.matchEndVerified]).toEqual([true, false]);
+      // A damaged entry among the saved audits is read past, not taken for a record that cannot be restored.
+      saved.state.audits.unshift(null);
+      const damaged = TableClient.restore(saved, transportLink(new LoopbackHub().create('damaged'), 'host'), 'Victim');
+      expect([damaged.state.matchFailed, damaged.serialize().handsEnded.length > 0]).toEqual([true, true]);
       const w = wire({ code: `SFH${i}`, rules: withRules({ handsPerMatch: 2, turnSeconds: 15, timeBankSeconds: 30 }), botDelayMs: 700, intermissionSeconds: 5, think: () => 1_000 });
       for (let k = 0; k < 20_000 && !w.c.state.matchOver; k++) w.step();
       need(w.c.state.matchOver && w.c.state.audits.every((x) => x.status === 'ok'));

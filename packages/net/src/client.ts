@@ -765,7 +765,7 @@ export class TableClient {
     this.chainGap = d.chainGap === true || this.gapHand !== null;
     this.missedMoves = d.missedMoves === true;
     // (A record saved before the flag was kept says so by the audits it holds of this match.)
-    const matchFailed = st.matchFailed === true || this.state.audits.some((a) => a.status === 'failed' && isObject(a.audit) && a.audit.matchId === this.state.matchId);
+    const matchFailed = st.matchFailed === true || this.state.audits.some((a) => isObject(a) && a.status === 'failed' && isObject(a.audit) && a.audit.matchId === this.state.matchId);
     this.state = { ...this.state, matchFailed, matchEndVerified: this.matchEnded && !this.chainGap && !this.missedMoves && !matchFailed && this.state.matchOver };
     this.rewinds = Array.isArray(d.rewinds) ? d.rewinds.filter((x) => isObject(x) && isInt(x.hand) && isInt(x.tc)) : [];
     this.eraHand = isInt(d.eraHand) ? d.eraHand : null;
