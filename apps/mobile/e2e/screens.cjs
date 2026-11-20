@@ -631,7 +631,8 @@ function tally(found) {
  * and discarding the lowest, right-most tile (the drawn one in landscape), and runs coachCheck and feltCheck at each of my
  * decisions: my turn before and after a tile is picked, a win, and each claim chance; and discardsSheetCheck once (a
  * screenshot of the sheet to `sheetShot`, when given). It fails, too, when my hand's tiles get smaller between two of my
- * decisions without the table's "Tiles made smaller" notice, or when, with several 吃 choices open, there is no Pass among
+ * decisions without the table's "Tiles made smaller" notice, when an opponent shows fewer meld tiles at one of my
+ * decisions than at the one before (the felt hid some), or when, with several 吃 choices open, there is no Pass among
  * them or the row is not whole on screen. `onDiscard(n)` runs after my nth discard. With `discard`
  * 'coach' it discards the tile the coach rings instead, so the hand heads for a win and win prompts come up.
  */
@@ -645,6 +646,9 @@ async function playCoachedHand(page, { onDiscard = async () => undefined, untilD
   // smaller between two of them unless the table said so, its "Tiles made smaller" notice seen in between.
   let handW = null;
   let toldSmaller = false;
+  // Each opponent's melds and flowers on the felt (its face-up tiles outside its pond): they only ever grow in a hand, so
+  // fewer at one of my decisions than at the one before means the felt hid some.
+  const meldsSeen = {};
   // The claim prompts met (the buttons on offer at each), for the run's result: which cases a seeded hand covers.
   const prompts = [];
   const promptSeen = async () =>
@@ -665,6 +669,19 @@ async function playCoachedHand(page, { onDiscard = async () => undefined, untilD
     if (w !== null && handW !== null && w < handW - 1 && !toldSmaller && !(await visible(page, '[data-testid="tiles-smaller-notice"]'))) found.push(`my hand's tiles got smaller between two of my decisions (${handW} to ${w} px) and the table did not say so`);
     if (w !== null) handW = w;
     toldSmaller = false;
+    const melds = await page.evaluate(() =>
+      Object.fromEntries(
+        [1, 2, 3].map((r) => {
+          const seat = document.querySelector(`[data-testid="seat-press-${r}"]`);
+          const tiles = seat ? [...seat.querySelectorAll('[data-testid^="tile-"]')].filter((t) => t.dataset.testid !== 'tile-back' && !t.closest('[data-testid^="pond-seat-"]') && !t.parentElement.closest('[data-testid^="tile-"]') && t.getBoundingClientRect().width > 0) : [];
+          return [r, tiles.length];
+        }),
+      ),
+    );
+    for (const r of [1, 2, 3]) {
+      if (meldsSeen[r] !== undefined && melds[r] < meldsSeen[r]) found.push(`the ${{ 1: 'right', 2: 'across', 3: 'left' }[r]} seat's melds went from ${meldsSeen[r]} tiles to ${melds[r]} between two of my decisions`);
+      meldsSeen[r] = Math.max(meldsSeen[r] ?? 0, melds[r]);
+    }
   };
   const started = Date.now();
   while (Date.now() - started < limitMs && discards < untilDiscards) {

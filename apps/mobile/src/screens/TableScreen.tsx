@@ -391,14 +391,19 @@ export function TableScreen() {
   const hand = fitHand(width, height, L, (me.hand ?? []).length, me.melds.reduce((n, m) => n + m.tiles.length, 0), me.melds.length, handScale);
   const onFeltShort = () => {
     if (!(L.portrait || L.compact) || handScale <= 1) return;
-    setSqueeze({ key: squeezeKey, steps: squeezeSteps + 1 });
+    // A step that draws the hand no smaller gives the felt nothing (a 568x320 phone draws Extra-large and Large both 29 px
+    // wide, a row of their own above the rail), and the felt, its height unchanged, would not ask again: take the next too.
+    const handAt = (steps: number) => fitHand(width, height, L, (me.hand ?? []).length, me.melds.reduce((n, m) => n + m.tiles.length, 0), me.melds.length, Math.max(1, tileScale - SQUEEZE_STEP * steps));
+    let steps = squeezeSteps + 1;
+    for (let next = handAt(steps); tileScale - SQUEEZE_STEP * steps > 1 && next.tile === hand.tile && next.wide === hand.wide && next.rows === hand.rows; next = handAt(steps)) steps++;
+    setSqueeze({ key: squeezeKey, steps });
     // The table says so: every time in the middle of a hand, and the first time it happens at a deal (the felt of a small
     // phone, whose hand starts smaller every deal: portraitDealFits).
     const dealt = view.players.some((p) => p.discards.length > 0);
     if (dealt || !toldSmallerAtDeal.current) {
       toldSmallerAtDeal.current = true;
       setSmallerNotice(++eventKey);
-      announce(smallerSays(handScale - SQUEEZE_STEP));
+      announce(smallerSays(Math.max(1, tileScale - SQUEEZE_STEP * steps)));
     }
   };
   // "Tiles made smaller to fit this screen: Large" (the size the hand is drawn at now).

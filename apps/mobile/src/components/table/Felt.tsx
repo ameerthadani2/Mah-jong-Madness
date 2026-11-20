@@ -373,11 +373,22 @@ export function Felt({
     mine: { discards: view.players[mySeat].discards.length, perRow: myCompact.perRow, tile: myCompact.tile },
   });
   const swapped = L.compact && compactFit.swap && dockH > 0;
+  // Short landscape: the fit as it will be when the claim or discard buttons come up. Where they would hide the across
+  // seat's melds (they had wrapped under its plate) or not fit at all, the hand is made smaller now (onShort, said by the
+  // table), between my decisions rather than while I choose a discard; only at Normal tiles do the melds give way.
+  const compactUp = fitCompactCentre({
+    column: L.compact ? centreH : 0,
+    topRow: compactTopRow,
+    plate: compactPlate.h,
+    dock: L.compact ? dockHeight('buttons', tablet, true) : 0,
+    across: { discards: seatOf(2).discards.length, perRow: compactTop.perRow, tile: compactTop.tile },
+    mine: { discards: view.players[mySeat].discards.length, perRow: myCompact.perRow, tile: myCompact.tile },
+  });
   // Once per measured height: the table screen's answer (a smaller hand) changes the felt's height, which is
   // measured again before it is asked once more. In portrait also from the deal, where the felt cannot hold a middle game
   // even at the least sizes (portraitDealFits), so the hand does not drop a size a turn or two in.
   const dealFits = portraitDealFits({ felt: pBox.felt, sideW: sideWidth, plates: { right: pBox.right, left: pBox.left, top: pBox.top } });
-  const short = portrait ? !fit.fits || !dealFits : L.compact && !compactFit.fits;
+  const short = portrait ? !fit.fits || !dealFits : L.compact && (!compactFit.fits || !compactUp.fits || compactUp.hideTopMelds);
   const onShortRef = useRef(onShort);
   onShortRef.current = onShort;
   useEffect(() => {
