@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { SPEED_PRESETS, withRules } from '@mjm/engine';
 import { MOVE_SLACK_MS } from '../src/client';
-import { CLOCK_SKEW_MS, DRIFT_CAP_MS, DRIFT_RATE, LATE_MS, NO_ANSWER_PINGS, SILENT_ANSWER_MS, STEADY_SLACK_MS, WATCH_WINDOW_MS } from '../src/clientclock';
+import { CLOCK_SKEW_MS, DRIFT_CAP_MS, DRIFT_RATE, LATE_MS, MAX_PING_SCOPES, MAX_RUN_SCOPES, NO_ANSWER_PINGS, SILENT_ANSWER_MS, STEADY_SLACK_MS, WATCH_WINDOW_MS } from '../src/clientclock';
 import { FLIGHT_SLACK_MS, LATE_COUNT_MIN_MS, LATE_LIMIT_MIN_MS, lateCountMs, lateLimitMs } from '../src/clientmoves';
 import { MAX_SEEN } from '../src/clientrecords';
 import { CLOCK_FRAME_MS } from '../src/messages';
@@ -107,6 +107,11 @@ describe('the fair play charter states the late-turn limits the table client use
     expect(turnRow).toContain('Until a ping is answered after the app restarts or your phone sleeps, it is placed by the quickest frame your phone has had since, so a turn the server holds on its way does not make it show more time.');
   });
 
+  it('states how many runs of the app the record keeps ties for, how many first pings per hand, and what more forced resumes than that cost', () => {
+    expect(turnRow).toContain(`The record keeps what the last ${MAX_RUN_SCOPES} runs of the app whose frames it holds carried, and in each hand the first ping of ${MAX_PING_SCOPES} runs`);
+    expect(turnRow).toContain(`one that had you do so ${MAX_PING_SCOPES} times in one hand, or ${MAX_RUN_SCOPES} times across the hands on record, would push the oldest run's ties or first ping out of the record`);
+  });
+
   it('states how many states of a hand the phone keeps', () => {
     expect(doc).toContain(`It keeps up to ${MAX_SEEN} states of each hand`);
   });
@@ -116,7 +121,10 @@ describe('the fair play charter states the late-turn limits the table client use
     expect(turnRow).not.toMatch(/21 seconds/);
     expect(doc).not.toMatch(/25 to 30 seconds/);
     expect(doc).not.toMatch(/change to the protocol|protocol change/);
-    // 17 s is left only as the watch's bound on a live link.
-    expect(turnRow.match(/17 seconds/g)).toHaveLength(1);
+    // 17 s is left only as the watch's bound on a live link, and as what a run pushed out of the record by more forced
+    // resumes than it keeps falls back to.
+    expect(turnRow.match(/17 seconds/g)).toHaveLength(2);
+    expect(turnRow).toContain("the state must reach you within 17 seconds of its stamp by the watch's measure");
+    expect(turnRow).toContain('would then be measured only as an app that kept no ties measures them (17 seconds');
   });
 });
