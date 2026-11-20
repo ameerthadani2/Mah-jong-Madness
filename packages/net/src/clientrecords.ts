@@ -608,6 +608,8 @@ export interface SerializedClient {
   /** The set of the hand last published (`commitsHand`), as records saved before the sets were kept per hand hold it. */
   commits: Commitment[] | null;
   commitHand: number | null;
+  /** The hand the client was on when a later hand's deal frame reached it (`TableClient.aheadOf`; absent in older records). */
+  aheadOf?: number | null;
   commitsHand: number | null;
   /** The commitment set of each of the last few hands (absent in records saved by older builds: `commits` then). */
   commitSets?: Array<{ hand: number; commits: Commitment[] }>;

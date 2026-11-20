@@ -62,13 +62,37 @@ function repick(code: string, mode: 'later' | 'standIn' | 'resend' | 'plain') {
   return { w, attacked: swapped && cut };
 }
 
+/**
+ * Normal. Once the seat has made three moves in hand 0 and owes nothing, the server cuts the link; right behind the new
+ * welcome it sends `commits`, a well-formed set for hand 1, or `standIn`, a notice that it made the seat's share for
+ * hand 1 (`none`: nothing). Then the table plays hand 0 on, honestly.
+ */
+function aheadThenOn(code: string, kind: 'commits' | 'standIn' | 'none') {
+  let sent = false;
+  const w = wire({
+    code,
+    rules: NORMAL,
+    botDelayMs: 700,
+    onTick: (w) => {
+      const g = w.host.game;
+      if (sent || !g || w.host.phase !== 'playing' || g.handNumber !== 0 || w.owes() || mineMoves(w) < 3) return;
+      sent = true;
+      if (kind === 'commits') w.afterWelcome({ t: 'commits', handNumber: 1, commits: madeUp() } as HostMessage);
+      if (kind === 'standIn') w.afterWelcome({ t: 'stand_in', handNumber: 1, attempt: 1 } as HostMessage);
+      w.dropNow();
+    },
+  });
+  w.finish();
+  return { w, sent };
+}
+
 describe('the commitments of each hand', () => {
   it('a set for the next hand behind a new welcome, then the hand on show’s set with a share picked after the reveal: red, the set the phone revealed against is kept', () =>
     scenario((i) => {
       const a = repick(`HRL${i}`, 'later');
       need(a.attacked);
       expect(a.w.verdict().status).toBe('failed');
-      expect(a.w.verdict().failures).toEqual(expect.arrayContaining(['commitsChanged', 'commitChangedAfter']));
+      expect(a.w.verdict().failures).toEqual(expect.arrayContaining(['strayFrame', 'commitsChanged', 'commitChangedAfter']));
     }));
 
   it('a stand-in notice for the next hand behind a new welcome, then that set: red, the set is not emptied', () =>
@@ -76,7 +100,20 @@ describe('the commitments of each hand', () => {
       const a = repick(`HRS${i}`, 'standIn');
       need(a.attacked);
       expect(a.w.verdict().status).toBe('failed');
-      expect(a.w.verdict().failures).toEqual(expect.arrayContaining(['commitsChanged', 'commitChangedAfter']));
+      expect(a.w.verdict().failures).toEqual(expect.arrayContaining(['strayFrame', 'commitsChanged', 'commitChangedAfter']));
+    }));
+
+  it('a set or stand-in notice for the next hand behind a new welcome, then the hand on show plays on as before: red, a frame about a hand the phone was not on; nothing sent: green', () =>
+    scenario((i) => {
+      for (const kind of ['commits', 'standIn'] as const) {
+        const a = aheadThenOn(`HRA${kind}${i}`, kind);
+        need(a.sent);
+        expect(a.w.verdict().status, kind).toBe('failed');
+        expect(a.w.verdict().failures, kind).toEqual(['strayFrame']);
+      }
+      const b = aheadThenOn(`HRAcommits${i}`, 'none');
+      need(b.sent);
+      expect(b.w.verdict()).toMatchObject({ status: 'ok', failures: [] });
     }));
 
   it('the same set sent again alone, or nothing sent: red as before', () =>

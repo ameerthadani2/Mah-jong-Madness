@@ -466,6 +466,13 @@ export class TableClient {
   private commitSets: Array<{ hand: number; commits: Commitment[] }> = [];
   /** Hand our current secret was committed for. */
   private commitHand: number | null = null;
+  /**
+   * The hand this client was on when a frame about a later hand's deal (its commitments, or a share the host made for
+   * this seat) reached it: honest only when that hand ended while this device had no link, and the host sent no record
+   * of it, so no frame about it may follow (`aboutHand`). Cleared when the client moves on to another hand, or a restart
+   * notice says the table was restored.
+   */
+  private aheadOf: number | null = null;
   /** Hand for which the host says it supplied our share. */
   private standInHand: number | null = null;
   /** The hand already under way when we first saw the table (we could not take part in its deal). */
@@ -764,6 +771,7 @@ export class TableClient {
     const sets = Array.isArray(d.commitSets) ? d.commitSets : d.commits && isInt(d.commitsHand) ? [{ hand: d.commitsHand, commits: d.commits }] : [];
     this.commitSets = sets.filter((x) => isObject(x) && isInt(x.hand) && isCommitSet(x.commits)).map((x) => ({ hand: x.hand, commits: x.commits.map((c) => ({ seat: c.seat, hash: c.hash })) }));
     this.commitHand = d.commitHand;
+    this.aheadOf = isInt(d.aheadOf) ? d.aheadOf : null;
     this.standInHand = d.standInHand;
     this.joinedHand = d.joinedHand;
     this.firstHand = d.firstHand;
@@ -836,6 +844,7 @@ export class TableClient {
       // The set of the hand last published, as records saved before the sets were kept per hand hold it.
       commits: this.commitSets[this.commitSets.length - 1]?.commits ?? null,
       commitHand: this.commitHand,
+      aheadOf: this.aheadOf,
       commitsHand: this.commitSets[this.commitSets.length - 1]?.hand ?? null,
       commitSets: this.commitSets.map((x) => ({ hand: x.hand, commits: x.commits.map((c) => ({ ...c })) })),
       standInHand: this.standInHand,
@@ -1552,6 +1561,23 @@ export class TableClient {
     this.commitSets = this.commitSets.filter((x) => x.hand !== h);
   }
 
+  /**
+   * A frame names hand `h`. After a frame about a later hand's deal reached this client while it was on another hand
+   * (`aheadOf`), a frame about that hand is the server's own making: an honest host deals the next hand only once the
+   * one before has ended, and then sends nothing more about it.
+   */
+  private aboutHand(h: number): void {
+    if (this.aheadOf === null || h !== this.aheadOf) return;
+    this.aheadOf = null;
+    this.flag(h, 'Host sent a frame about a hand or turn this device was not on');
+  }
+
+  /** A frame about the deal of hand `h` was taken while this client is on another hand that has not ended (see `aheadOf`). */
+  private noteAhead(h: number): void {
+    const on = this.activeHand();
+    if (h !== on && !this.handsEnded.has(on)) this.aheadOf = on;
+  }
+
   private playFor(hand: number): PlayRecord {
     let play = this.plays.find((p) => p.hand === hand);
     if (!play) {
@@ -1610,6 +1636,9 @@ export class TableClient {
     // the table made this seat's share, say): later hands, and a new match at the table, it was there for.
     const takenBack = this.fresh;
     this.fresh = false;
+    // A hand this client was on, after a frame about a later hand's deal: the server's own making. Any other moves it on.
+    if (this.aheadOf !== null && h === this.aheadOf) this.aboutHand(h);
+    else this.aheadOf = null;
     if (this.openHand === h) {
       this.handEpoch = this.epoch;
       return;
@@ -1680,6 +1709,7 @@ export class TableClient {
     this.secret = null;
     this.commitSets = [];
     this.commitHand = null;
+    this.aheadOf = null;
     this.standInHand = null;
     this.joinedHand = null;
     this.firstHand = null;
@@ -1908,6 +1938,7 @@ export class TableClient {
       }
       case 'stand_in': {
         const h = m.handNumber;
+        this.aboutHand(h);
         // Only the hand being dealt: a stand-in for any other is the server's own making, and makes no record. (A
         // returning seat is told again between hands about the hand that has just ended: nothing to note.)
         if (!this.dealsHand(h)) {
@@ -1938,6 +1969,7 @@ export class TableClient {
             this.dropSet(h);
           }
           r.attempts.sort((a, b) => a.n - b.n);
+          this.noteAhead(h);
         } else return;
         this.standInHand = h;
         this.update({ standIn: true });
@@ -1949,6 +1981,7 @@ export class TableClient {
         return;
       case 'commits': {
         const h = m.handNumber;
+        this.aboutHand(h);
         // (A malformed set never gets here, whatever hand it names: it counts against the hand this client is on, `malformed`.)
         // Published for the hand being dealt only (a returning seat is sent it again): a set for any other hand is the
         // server's own making, and takes the place of nothing this client holds.
@@ -1972,10 +2005,12 @@ export class TableClient {
           }
         }
         this.holdSet(h, m.commits);
+        this.noteAhead(h);
         return;
       }
       case 'reveal_request': {
         const h = m.handNumber;
+        this.aboutHand(h);
         // Stood in, or holding no secret for this hand (we arrived mid-ceremony): nothing to reveal.
         if (this.standInHand === h || !this.secret || this.commitHand !== h) return;
         const attempt = this.currentAttempt(h);
@@ -2172,6 +2207,7 @@ export class TableClient {
         this.notePong(m.at, m.now);
         return;
       case 'clock': {
+        this.aboutHand(m.hand);
         // Nor a clock frame: an honest host sends one only to a seat it has sent the turn's state.
         if (!this.stateHere()) return;
         const shown = this.linkShown as NonNullable<TableClient['linkShown']>;
@@ -2276,6 +2312,8 @@ export class TableClient {
    * second notice, for another hand, while the same hand is on show is a second restart.
    */
   private noteRestore(h: number, r: number): void {
+    // A restored table may be behind what it sent before it restarted (a later hand's deal included).
+    this.aheadOf = null;
     if (this.handsEnded.has(h)) return;
     const on = this.activeHand();
     const known = this.rewinds.find((x) => x.hand === h);
