@@ -195,7 +195,7 @@ export class TableHost {
   private readonly intermissionMs: number;
   private readonly botNames: string[];
   private readonly localLinks = new Map<string, (msg: HostMessage) => void>();
-  /** When each peer was last sent a frame, on `now` (see `sendClockFrames`). */
+  /** When each peer was last sent a frame other than a `pong`, on `now` (see `sendClockFrames`). */
   private readonly lastSent = new Map<string, number>();
   /** The last state each peer was sent: its hand and turn. */
   private readonly shown = new Map<string, { hand: number; tc: number }>();
@@ -519,6 +519,9 @@ export class TableHost {
    * `clock` frame: the turn the hand is at, stamped. A client that hears nothing for much longer
    * knows the link is silent, and one shown a turn it was never sent the state of knows a frame was
    * held back. Sent only to a seat that was sent that turn's state (an honest table always was).
+   * A `pong` does not put it off: the app pings once a second, so its answers would leave the seat
+   * without clock frames, and a link whose delay rises several seconds in one step would then bring
+   * nothing for that delay plus the period, longer than the signalling heartbeat waits (`PONG_TIMEOUT_MS`).
    */
   private sendClockFrames(): void {
     const game = this.game;
@@ -598,7 +601,8 @@ export class TableHost {
   // ----------------------------------------------------------------- routing
 
   private sendTo(peerId: string, msg: HostMessage): void {
-    this.lastSent.set(peerId, this.now());
+    // (A pong is no reason to put off the seat's next clock frame: `sendClockFrames`.)
+    if (msg.t !== 'pong') this.lastSent.set(peerId, this.now());
     if (msg.t === 'state') this.shown.set(peerId, { hand: msg.view.handNumber, tc: msg.view.turnCounter });
     const local = this.localLinks.get(peerId);
     if (local) local(msg);

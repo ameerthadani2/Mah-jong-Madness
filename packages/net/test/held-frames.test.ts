@@ -426,4 +426,25 @@ describe('honest links are not flagged', () => {
       for (const m of clocks) expect(m).toMatchObject({ hand: t.host.game!.handNumber, tc: t.c.state.view!.turnCounter });
       expect(clocks.every((m, i) => i === 0 || m.now - clocks[i - 1].now >= CLOCK_FRAME_MS)).toBe(true);
     }));
+
+  // The app pings once a second. If each answer put the clock frame off, a seat would get none while it pings, and a
+  // link whose delay rose 8 s each way in one step would bring nothing for 11 s: the signalling heartbeat, which waits
+  // 10 s, dropped such links and the table was lost (unit 20's honest check, lat8-both-step).
+  it('pongs do not put off the clock frame: a phone that pings every second still gets one after each quiet spell', () =>
+    scenario(() => {
+      const t = table('HL4P');
+      const got: HostMessage[] = [];
+      const orig = t.net.delay;
+      t.net.delay = (m) => (got.push(m), orig(m));
+      need(toDiscard(t, 1));
+      got.length = 0;
+      t.wait(CLOCK_FRAME_MS * 3, 1_000);
+      expect(got.filter((m) => m.t === 'pong').length).toBeGreaterThanOrEqual(8);
+      const clocks = got.filter((m): m is Extract<HostMessage, { t: 'clock' }> => m.t === 'clock');
+      expect(clocks.length).toBeGreaterThanOrEqual(2);
+      expect(clocks.length).toBeLessThanOrEqual(3);
+      // Never more than a period and the host's half-second tick without a frame that is not a pong.
+      const quiet = got.filter((m) => m.t !== 'pong').map((m) => (m as { now?: number }).now ?? Number.NaN);
+      expect(quiet.every((n, i) => i === 0 || n - quiet[i - 1] <= CLOCK_FRAME_MS + 500)).toBe(true);
+    }));
 });
