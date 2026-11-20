@@ -4,7 +4,7 @@
  * Shift+Tab kept on its own buttons, the dimmed scrim no control (../Scrim.tsx).
  */
 import React, { useState } from 'react';
-import { caveatText, endUnverified, failureText } from '../../logic/fairnessText';
+import { caveatText, endNote, failureText } from '../../logic/fairnessText';
 import { Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import type { HandResult, TableView, WinRecord } from '@mjm/engine';
 import type { ClientState } from '@mjm/net';
@@ -140,16 +140,17 @@ function ScoreChip({ name, avatar, total, delta, mine, small, cols }: { name: st
 }
 
 /**
- * Beside final scores this phone could not check: the match is over, but the hands it verified do
- * not lead to that end. Amber like a logged hand, never a failure.
+ * Beside final scores this phone does not show as verified: the match is over, but the hands it verified do not lead
+ * to that end (amber like a logged hand), or a hand of the match failed its check (red, like that hand).
  */
 function EndUnverifiedNote({ state, testID }: { state: ClientState; testID: string }) {
   const { t } = useT();
   const { fontFactor } = useDisplayScale();
-  if (!endUnverified(state)) return null;
+  const note = endNote(state);
+  if (!note) return null;
   return (
-    <Text testID={testID} style={scaleTextStyle(styles.endNote, fontFactor)}>
-      {t('fairness.endUnverified')}
+    <Text testID={testID} style={scaleTextStyle(note === 'failed' ? styles.endFailed : styles.endNote, fontFactor)}>
+      {t(note === 'failed' ? 'fairness.endFailed' : 'fairness.endUnverified')}
     </Text>
   );
 }
@@ -393,5 +394,6 @@ const styles = StyleSheet.create({
   rankScore: { fontFamily: fonts.display, fontSize: 20 },
   autoNext: { color: colors.inkDim, fontSize: 12, fontFamily: fonts.bodyBold },
   endNote: { color: colors.goldDim, fontSize: 12, fontFamily: fonts.bodyBold },
+  endFailed: { color: colors.dangerText, fontSize: 12, fontFamily: fonts.bodyBold },
   ratingNote: { color: colors.ink, fontSize: 14, fontFamily: fonts.bodyBold, textAlign: 'center' },
 });

@@ -13,6 +13,7 @@
   "sessionHands": "This table's hands",
   "none": "No hands finished yet.",
   "endUnverified": "The match is over, but your phone could not check the final scores: it does not hold an unbroken record of this match's hands.",
+  "endFailed": "The match is over, but its final scores are not shown as verified: a hand of this match failed its check, so the scores reached through it are the table's word.",
   "hand": "Hand %{n}",
   "status": {
     "ok": "Verified",

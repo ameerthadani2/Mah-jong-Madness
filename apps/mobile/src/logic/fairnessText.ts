@@ -65,3 +65,15 @@ export function endUnverified(state: (Pick<ClientState, 'matchOver' | 'matchEndV
   // hand started from: final scores reached through it are not checked either, whatever the last hand added.
   return (state.auditCaveats ?? []).some((c) => caveatKey(c) === 'gap');
 }
+
+/**
+ * Why the final scores on show are not shown as verified, or null when they are, or when no match is over: `failed`,
+ * a hand of this match failed its check (the phone caught the table out, so the final scores reached through that
+ * hand are the table's word: `fairness.endFailed`); `unchecked`, the hands this phone verified do not lead to that
+ * end (`fairness.endUnverified`).
+ */
+export function endNote(state: (Pick<ClientState, 'matchOver' | 'matchEndVerified'> & { matchFailed?: boolean; auditCaveats?: readonly string[] }) | null | undefined): 'failed' | 'unchecked' | null {
+  if (!state || state.matchOver !== true) return null;
+  if (state.matchFailed === true) return 'failed';
+  return endUnverified(state) ? 'unchecked' : null;
+}

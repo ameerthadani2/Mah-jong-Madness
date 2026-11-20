@@ -180,6 +180,25 @@ describe('the match-over card after a quick match', () => {
     expect(screen.getByTestId('match-rating')).toHaveTextContent('Quick-match rating 1488 (-12)');
   });
 
+  it('says beside the final scores why they are not shown as verified: a hand of the match failed its check (red), or the phone could not follow the match (amber); nothing when they are verified', async () => {
+    const { rerender } = await render(<MatchOverSheet state={{ ...over, matchEndVerified: true, matchFailed: false }} onLeave={() => {}} />);
+    expect(screen.queryByTestId('match-end-unverified')).toBeNull();
+    await rerender(<MatchOverSheet state={{ ...over, matchEndVerified: false, matchFailed: true }} onLeave={() => {}} />);
+    expect(screen.getByTestId('match-end-unverified')).toHaveTextContent(/^The match is over, but its final scores are not shown as verified: a hand of this match failed its check/);
+    await rerender(<MatchOverSheet state={{ ...over, matchEndVerified: false, matchFailed: false }} onLeave={() => {}} />);
+    expect(screen.getByTestId('match-end-unverified')).toHaveTextContent(/^The match is over, but your phone could not check the final scores/);
+  });
+
+  it('says why in Chinese too', async () => {
+    setLocalePreference('zh-TW');
+    try {
+      await render(<MatchOverSheet state={{ ...over, matchEndVerified: false, matchFailed: true }} onLeave={() => {}} />);
+      expect(screen.getByTestId('match-end-unverified')).toHaveTextContent(/^比賽已經結束，但最終分數不算核對過：這場比賽有一局沒有通過檢查/);
+    } finally {
+      setLocalePreference('auto');
+    }
+  });
+
   it('shows no rating line at any other table', async () => {
     await render(<MatchOverSheet state={over} onLeave={() => {}} />);
     expect(screen.queryByTestId('match-rating')).toBeNull();

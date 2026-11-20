@@ -6,7 +6,7 @@ import { colors, fonts, space } from '../theme';
 import { Card, fontFor, H2, P, Pill, Row, ScreenHeader, SectionLabel } from '../components/Ui';
 import { Icon } from '../components/Icons';
 import { useT } from '../i18n';
-import { caveatText, claimsPassedLateText, claimsPassedText, endUnverified, failureText, turnsLateText } from '../logic/fairnessText';
+import { caveatText, claimsPassedLateText, claimsPassedText, endNote, failureText, turnsLateText } from '../logic/fairnessText';
 
 export function FairnessScreen() {
   const app = useApp();
@@ -47,10 +47,11 @@ export function FairnessScreen() {
       </Card>
       <SectionLabel>{t('fairness.sessionHands')}</SectionLabel>
       {audits.length === 0 && <Pill text={t('fairness.none')} icon="hourglass" />}
-      {/* The end of a match is believed only when the hands this phone verified lead to it; say so when they do not. */}
-      {endUnverified(state) && (
-        <Text testID="fairness-end-unverified" style={{ color: colors.goldDim, fontSize: 12, fontFamily: fonts.bodyBold }}>
-          {t('fairness.endUnverified')}
+      {/* The end of a match is believed only when the hands this phone verified lead to it, and its final scores are shown
+          as verified only when no hand of the match failed its check; say why when they are not. */}
+      {endNote(state) && (
+        <Text testID="fairness-end-unverified" style={{ color: endNote(state) === 'failed' ? colors.dangerText : colors.goldDim, fontSize: 12, fontFamily: fonts.bodyBold }}>
+          {t(endNote(state) === 'failed' ? 'fairness.endFailed' : 'fairness.endUnverified')}
         </Text>
       )}
       {/* The claims the table passed for this seat while its link was down, over the match: the pattern a cut link leaves. */}

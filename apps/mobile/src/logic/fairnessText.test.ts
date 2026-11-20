@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { AUDIT_CAVEATS, AUDIT_FAILURES, type AuditFailure } from '@mjm/net';
 import { en, zhTW } from '../i18n/locales';
-import { caveatText, claimsPassedLateText, claimsPassedText, endUnverified, failureText, turnsLateText } from './fairnessText';
+import { caveatText, claimsPassedLateText, claimsPassedText, endNote, endUnverified, failureText, turnsLateText } from './fairnessText';
 import { translator } from './translator.fixture';
 
 /**
@@ -237,7 +237,9 @@ describe('final scores this phone could not check', () => {
     // The hand result at the end of a match (both layouts) and the match-over ranking.
     expect(sheet.match(/<EndUnverifiedNote state=\{state\} testID="result-end-unverified" \/>/g)).toHaveLength(2);
     expect(sheet.match(/<EndUnverifiedNote state=\{state\} testID="match-end-unverified" \/>/g)).toHaveLength(1);
-    expect(sheet).toContain('if (!endUnverified(state)) return null;');
+    // (`endNote` asks `endUnverified`, and says first whether a hand of the match failed its check.)
+    expect(sheet).toContain('const note = endNote(state);');
+    expect(sheet).toContain('if (!note) return null;');
   });
 });
 
@@ -262,5 +264,24 @@ describe('the Fair play screen after a match against bots', () => {
     expect(all).not.toContain('快速配桌');
     expect(zhTW.fairness.trust).toContain('快速配對');
     expect(zhTW.lobby.quickStarts).toContain('快速配對');
+  });
+});
+
+describe('why final scores are not shown as verified', () => {
+  it('a hand of the match failed its check, whatever else the end says; else the phone could not follow the match; else nothing', () => {
+    expect(endNote({ matchOver: true, matchEndVerified: false, matchFailed: true })).toBe('failed');
+    expect(endNote({ matchOver: true, matchEndVerified: true, matchFailed: true })).toBe('failed');
+    expect(endNote({ matchOver: true, matchEndVerified: false, matchFailed: true, auditCaveats: [AUDIT_CAVEATS.gap] })).toBe('failed');
+    expect(endNote({ matchOver: true, matchEndVerified: false })).toBe('unchecked');
+    expect(endNote({ matchOver: true, matchEndVerified: true, auditCaveats: [AUDIT_CAVEATS.gap] })).toBe('unchecked');
+    expect(endNote({ matchOver: true, matchEndVerified: true, matchFailed: false })).toBeNull();
+    // No final scores while the match is on, and none without a table.
+    expect(endNote({ matchOver: false, matchEndVerified: false, matchFailed: true })).toBeNull();
+    expect(endNote(null)).toBeNull();
+  });
+
+  it('says so in both languages', () => {
+    expect(en.fairness.endFailed).toMatch(/a hand of this match failed its check/);
+    expect(zhTW.fairness.endFailed).toMatch(/這場比賽有一局沒有通過檢查/);
   });
 });

@@ -340,6 +340,12 @@ export interface ClientState {
    * end against (it lost its record, or missed hands whose records it was never shown).
    */
   matchEndVerified: boolean;
+  /**
+   * A hand of this match failed its checks (red, or the table did something during the match that it must not):
+   * this device caught the table out, so the final scores, reached through that hand, are the table's word and are
+   * not shown as verified (`matchEndVerified` stays false).
+   */
+  matchFailed: boolean;
   /** Rejoin token from the host; persist it to resume after a crash. */
   token: string | null;
   /** Remaining time bank (seconds) and whether the clock is currently eating into it. */
@@ -422,6 +428,7 @@ export class TableClient {
     matchOver: false,
     finalScores: null,
     matchEndVerified: false,
+    matchFailed: false,
     token: null,
     timeBank: 0,
     inTimeBank: false,
@@ -757,7 +764,9 @@ export class TableClient {
     this.gapHand = isInt(d.gapHand) ? d.gapHand : null;
     this.chainGap = d.chainGap === true || this.gapHand !== null;
     this.missedMoves = d.missedMoves === true;
-    this.state = { ...this.state, matchEndVerified: this.matchEnded && !this.chainGap && !this.missedMoves && this.state.matchOver };
+    // (A record saved before the flag was kept says so by the audits it holds of this match.)
+    const matchFailed = st.matchFailed === true || this.state.audits.some((a) => a.status === 'failed' && isObject(a.audit) && a.audit.matchId === this.state.matchId);
+    this.state = { ...this.state, matchFailed, matchEndVerified: this.matchEnded && !this.chainGap && !this.missedMoves && !matchFailed && this.state.matchOver };
     this.rewinds = Array.isArray(d.rewinds) ? d.rewinds.filter((x) => isObject(x) && isInt(x.hand) && isInt(x.tc)) : [];
     this.eraHand = isInt(d.eraHand) ? d.eraHand : null;
     this.lapseHand = isInt(d.lapseHand) ? d.lapseHand : null;
@@ -1643,7 +1652,7 @@ export class TableClient {
     this.lastStamp = null;
     this.ownAbsences = [];
     this.gapVerdicts = [];
-    this.state = { ...this.state, matchOver: false, finalScores: null, matchEndVerified: false, view: null, lastResult: null, claimsPassedAway: [], turnsShownLate: [] };
+    this.state = { ...this.state, matchOver: false, finalScores: null, matchEndVerified: false, matchFailed: false, view: null, lastResult: null, claimsPassedAway: [], turnsShownLate: [] };
   }
 
   /** This client holds a record of the match being played: there is something a reset would wipe. */
@@ -1697,7 +1706,7 @@ export class TableClient {
       this.liveFailure = { audit: last, status: 'failed', failures: [problem], caveats: [] };
       audits = [...audits, this.liveFailure].slice(-MAX_AUDITS);
     }
-    this.update({ auditStatus: 'failed', auditFailures: failures, auditCaveats: [], audits });
+    this.update({ auditStatus: 'failed', auditFailures: failures, auditCaveats: [], audits, matchFailed: true, matchEndVerified: false });
   }
 
   /** The bot seats as listed now; once frozen, any change is the host's doing. */
@@ -1983,7 +1992,7 @@ export class TableClient {
           const failures = [...new Set([...(this.tamper.get(h) ?? []), ...(live?.failures ?? []), problem])];
           const audits = [...this.state.audits.filter((a) => a !== live), { audit: m.audit, status: 'failed' as const, failures, caveats: [] }].slice(-MAX_AUDITS);
           this.liveFailure = null;
-          this.update({ auditStatus: 'failed', auditFailures: failures, auditCaveats: [], deadline: null, audits });
+          this.update({ auditStatus: 'failed', auditFailures: failures, auditCaveats: [], deadline: null, audits, matchFailed: true, matchEndVerified: false });
           return;
         }
         this.enterHand(h);
@@ -2030,7 +2039,7 @@ export class TableClient {
         this.tamper.delete(h);
         if (this.gapHand === h) this.gapHand = null;
         const audits = [...this.state.audits, { audit: m.audit, status, failures, caveats }].slice(-MAX_AUDITS);
-        this.update({ view: m.view, lastResult: m.result, lastAudit: m.audit, auditStatus: status, auditFailures: failures, auditCaveats: caveats, deadline: null, intermissionDeadline: nextDeal(m), audits, claimsPassedAway: withPassed(this.state.claimsPassedAway, h, passed), turnsShownLate: withLateTurns(this.state.turnsShownLate, h, late) });
+        this.update({ view: m.view, lastResult: m.result, lastAudit: m.audit, auditStatus: status, auditFailures: failures, auditCaveats: caveats, deadline: null, intermissionDeadline: nextDeal(m), audits, claimsPassedAway: withPassed(this.state.claimsPassedAway, h, passed), turnsShownLate: withLateTurns(this.state.turnsShownLate, h, late), ...(status === 'failed' ? { matchFailed: true } : {}) });
         return;
       }
       case 'hand_missed':
@@ -2064,10 +2073,11 @@ export class TableClient {
             return;
           }
           if (verdict === 'verified') this.matchEnded = true;
-          // The end itself is checked (and frees the record for a new match), but scores that rest on a hand whose start could not be checked are not shown as verified.
-          const matchEndVerified = this.matchEnded && !this.chainGap && !this.missedMoves;
           // No hand is left to carry what was flagged since the last audit: put it on show now.
           for (const p of this.tamper.get(this.activeHand()) ?? []) this.failNow(p);
+          // The end itself is checked (and frees the record for a new match), but scores that rest on a hand whose start
+          // could not be checked, or that a hand this device caught the table out in led to, are not shown as verified.
+          const matchEndVerified = this.matchEnded && !this.chainGap && !this.missedMoves && !this.state.matchFailed;
           // The last hand's verified view stays on show; the host's is used only when this device holds none.
           const own = this.state.view;
           const view = own && this.state.lastResult !== null && own.handNumber === m.view.handNumber ? own : m.view;
@@ -2306,7 +2316,7 @@ export class TableClient {
       if (prior && stableStringify(prior.audit) !== stableStringify(audit)) {
         const problem = 'Host sent a different audit for a hand it had already ended';
         this.flag(this.activeHand(), problem);
-        this.update({ audits: [...this.state.audits, { audit, status: 'failed' as const, failures: [problem], caveats: [] }].slice(-MAX_AUDITS) });
+        this.update({ audits: [...this.state.audits, { audit, status: 'failed' as const, failures: [problem], caveats: [] }].slice(-MAX_AUDITS), matchFailed: true, matchEndVerified: false });
       }
       return;
     }
@@ -2378,7 +2388,7 @@ export class TableClient {
     this.tamper.delete(h);
     // A record that fails is the host's doing now, not then: the hand on the table carries it too.
     if (status === 'failed') this.flag(this.activeHand(), `The record of hand ${h + 1}, played while this device was away, failed its checks`);
-    this.update({ audits: [...this.state.audits, { audit, status, failures, caveats }].slice(-MAX_AUDITS), claimsPassedAway: withPassed(this.state.claimsPassedAway, h, notes.passedClaims ?? []), turnsShownLate: withLateTurns(this.state.turnsShownLate, h, { turns: notes.lateTurns ?? [], of: notes.turnsMeasured ?? 0 }) });
+    this.update({ audits: [...this.state.audits, { audit, status, failures, caveats }].slice(-MAX_AUDITS), claimsPassedAway: withPassed(this.state.claimsPassedAway, h, notes.passedClaims ?? []), turnsShownLate: withLateTurns(this.state.turnsShownLate, h, { turns: notes.lateTurns ?? [], of: notes.turnsMeasured ?? 0 }), ...(status === 'failed' ? { matchFailed: true } : {}) });
   }
 
   /** Exactly one commitment and one secret per seat 0–4: an extra share would let the host move the seed. */

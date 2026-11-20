@@ -10,7 +10,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { legalActions, withRules, type Action, type GameState } from '@mjm/engine';
-import { AUDIT_CAVEATS, caveatKey, failureKey, type HostMessage, type TableClient } from '../src/index';
+import { AUDIT_CAVEATS, caveatKey, failureKey, LoopbackHub, TableClient, transportLink, type HostMessage } from '../src/index';
 import type { PlayRecord } from '../src/clientrecords';
 import { Missed, scenario, seededDeals } from './support';
 import { wire, type Wire } from './wire';
@@ -565,5 +565,26 @@ describe('a new match at the table', () => {
       need(b.leapt && b.second !== undefined);
       expect(b.second!.status).toBe('partial');
       expect(b.second!.caveats).toContain(AUDIT_CAVEATS.lateShown);
+    }));
+});
+
+describe('the final scores of a match with a hand that failed its check', () => {
+  it('Normal, the scores moved between hands: the match ends, but its final scores are not shown as verified, also in a client restored from its record; a match with no failed hand ends verified', () =>
+    scenario((i) => {
+      const a = movedScores(`SFE${i}`, 0);
+      need(a.patched && a.second !== undefined && a.w.c.state.matchOver);
+      expect(a.second!.status).toBe('failed');
+      expect([a.w.c.state.matchFailed, a.w.c.state.matchEndVerified]).toEqual([true, false]);
+      const saved = JSON.parse(JSON.stringify(a.w.c.serialize()));
+      const restored = TableClient.restore(saved, transportLink(new LoopbackHub().create('again'), 'host'), 'Victim');
+      expect([restored.state.matchFailed, restored.state.matchEndVerified]).toEqual([true, false]);
+      // A record saved before the flag was kept: the failed audit it holds of this match says so.
+      delete saved.state.matchFailed;
+      const older = TableClient.restore(saved, transportLink(new LoopbackHub().create('older'), 'host'), 'Victim');
+      expect([older.state.matchFailed, older.state.matchEndVerified]).toEqual([true, false]);
+      const w = wire({ code: `SFH${i}`, rules: withRules({ handsPerMatch: 2, turnSeconds: 15, timeBankSeconds: 30 }), botDelayMs: 700, intermissionSeconds: 5, think: () => 1_000 });
+      for (let k = 0; k < 20_000 && !w.c.state.matchOver; k++) w.step();
+      need(w.c.state.matchOver && w.c.state.audits.every((x) => x.status === 'ok'));
+      expect([w.c.state.matchFailed, w.c.state.matchEndVerified]).toEqual([false, true]);
     }));
 });

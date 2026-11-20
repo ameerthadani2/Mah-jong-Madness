@@ -7,6 +7,7 @@ import { FairnessScreen } from './FairnessScreen';
 import type { Session } from '../game/session';
 import { FakeProviders } from '../test/providers';
 import { setLocalePreference } from '../i18n';
+import { colors } from '../theme';
 
 type AuditEntry = ClientState['audits'][number];
 
@@ -167,6 +168,23 @@ describe('the fair play screen', () => {
     expect(screen.queryByTestId('fairness-end-unverified')).toBeNull();
     await push({ audits: HANDS, matchOver: true, matchEndVerified: false });
     expect(screen.getByTestId('fairness-end-unverified')).toHaveTextContent(/^The match is over, but your phone could not check the final scores/);
+  });
+
+  it('says when a hand of the match failed its check: the final scores are not shown as verified, in red, whatever else the end says', async () => {
+    const { session, push } = fakeSession({ audits: HANDS, matchOver: true, matchEndVerified: true, matchFailed: false });
+    await renderFairness(session);
+    expect(screen.queryByTestId('fairness-end-unverified')).toBeNull();
+    await push({ audits: HANDS, matchOver: true, matchEndVerified: false, matchFailed: true });
+    expect(screen.getByTestId('fairness-end-unverified')).toHaveTextContent(/^The match is over, but its final scores are not shown as verified: a hand of this match failed its check/);
+    expect(screen.getByTestId('fairness-end-unverified')).toHaveStyle({ color: colors.dangerText });
+    // Not the note for a phone that could not follow the match: this one caught the table out.
+    expect(screen.getByTestId('fairness-end-unverified')).not.toHaveTextContent(/could not check the final scores/);
+  });
+
+  it('says the same in Traditional Chinese', async () => {
+    setLocalePreference('zh-TW');
+    await renderFairness(fakeSession({ audits: HANDS, matchOver: true, matchEndVerified: false, matchFailed: true }).session);
+    expect(screen.getByTestId('fairness-end-unverified')).toHaveTextContent(/^比賽已經結束，但最終分數不算核對過：這場比賽有一局沒有通過檢查/);
   });
 
   it('against bots, says the phone deals and checks itself, and calls the fifth share the table', async () => {
