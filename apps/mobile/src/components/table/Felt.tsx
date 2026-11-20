@@ -19,9 +19,13 @@ import { CROSS_PAD, fitPortraitFelt, portraitDealFits } from '../../display/port
 import { CoachPanel } from './CoachPanel';
 import { acrossTagBeside } from '../../logic/seatName';
 import { slideFrom } from './feel';
-import { compactCompassSize, dockHeight, landscapeWallSize, type ActionDock, type TableLayout } from './layout';
+import { compactCompassSize, dockHeight, landscapeWallSize, slopFor, type ActionDock, type TableLayout } from './layout';
+import { webPress } from '../Ui';
 
 export type PlateProps = Omit<React.ComponentProps<typeof SeatBadge>, 'size' | 'vertical' | 'maxNameWidth'>;
+
+/** The least a seat on the felt is drawn tall: its plate alone (short landscape's, 37 px). */
+const SEAT_MIN_H = 36;
 
 /** An opponent's seat as one button: what a screen reader hears, and what a tap and a long press do. */
 interface SeatButton {
@@ -44,15 +48,18 @@ const SeatBox = React.forwardRef<React.ElementRef<typeof View>, { button: SeatBu
         {children}
       </View>
     );
+  // A seat is at least its plate (40 px tall in portrait, 37 in short landscape, before it has a pond): a 44 px press by
+  // hitSlop on a phone, by padding on the web (webPress, which keeps its place).
   return (
     <Pressable
       ref={ref}
       onPress={button.onPress}
       onLongPress={button.onLongPress}
+      hitSlop={slopFor(SEAT_MIN_H)}
       accessibilityRole="button"
       accessibilityLabel={button.label}
       accessibilityHint={button.hint}
-      style={({ pressed }) => [style, pressed && styles.seatPressed]}
+      style={({ pressed }) => [style, webPress(SEAT_MIN_H), pressed && styles.seatPressed]}
       onLayout={onLayout}
       testID={testID}
     >
