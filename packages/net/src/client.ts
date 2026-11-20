@@ -2543,12 +2543,23 @@ export class TableClient {
           const from = play.ledgerFrom;
           const lying = (x: (typeof sent)[number]): x is (typeof sent)[number] & { at: number } => after !== null && from !== null && isInt(n) && !x.used && x.tc >= from && x.tc <= n && x.epoch === after.epoch && typeof x.at === 'number' && !(x.refusedAt !== undefined && x.refusedAt <= n) && legalFor(s, me, x.action) && !sameActionSafe(x.action, entry.action, s, me);
           // One sent in good time (`inFlight`, amber): sent after the turn's first state arrived, with more of
-          // that state's own clock left, counted from its arrival, than the best round trip measured by then
-          // and `FLIGHT_SLACK_MS` explain losing on the way (`flightAllowance`).
+          // the clock the app showed left, counted from that state's arrival, than the best round trip measured by
+          // then and `FLIGHT_SLACK_MS` explain losing on the way (`flightAllowance`). The clock the app showed ends
+          // where the audit holds the table to (`streakEnd`, with the rules' clock as this device tracked it, as
+          // `ownClock` counts it), not where the first state's own claim does: a state that says the bank is spent,
+          // or a later end the server keeps, makes the screen show more time than that claim, and a move made in it
+          // is made in good time.
           if (after && limit !== null && notes && isInt(n)) {
-            const r0 = seatRun(play, n, prevMine).run[0];
-            if (r0 && r0.deadline !== null && typeof r0.now === 'number') {
-              const ends = r0.at + (r0.inBank ? r0.deadline : r0.deadline + r0.timeBank * 1000) - r0.now;
+            const { run } = seatRun(play, n, prevMine);
+            const r0 = run[0];
+            const a = run[run.length - 1];
+            const ia = a ? play.seen.indexOf(a) : -1;
+            // Counted from the first state of the clock the app showed (`ownRun`) in the latest state's clock era.
+            const p0 = ia >= 0 ? ownRun(play, rules, ia).find((f) => (f.era ?? 0) === (a.era ?? 0) && typeof f.now === 'number') : undefined;
+            const end = ia >= 0 ? streakEnd(play, ia, rules, track0?.bound.get(a), BANK_ROUND_MS) : Number.NEGATIVE_INFINITY;
+            const own = r0 && r0.deadline !== null && typeof r0.now === 'number' ? r0.at + (r0.inBank ? r0.deadline : r0.deadline + r0.timeBank * 1000) - r0.now : Number.NEGATIVE_INFINITY;
+            const ends = p0 && p0.run === r0?.run && Number.isFinite(end) ? Math.max(own, p0.at + end - (p0.now as number)) : own;
+            if (r0 && ends > Number.NEGATIVE_INFINITY) {
               const shown = r0.atLo ?? r0.at;
               if (sent.some((x) => lying(x) && x.tc >= r0.tc && x.run === r0.run && x.at >= shown && x.at + flightAllowance(x, r0.era ?? 0, anchors, scope.best, limit) <= ends)) notes.inFlight = true;
             }

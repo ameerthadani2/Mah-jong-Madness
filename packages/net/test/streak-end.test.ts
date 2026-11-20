@@ -286,6 +286,99 @@ describe('an end the screen showed binds the table (R9)', () => {
     }));
 });
 
+/**
+ * The server shows the seat its `nth` own turn and drops the move the seat sends for it by its screen (when the screen
+ * shows `show` ms) once the host's clock passes `cut`, then lets the host time the seat out. `bank0`: the states that
+ * show the turn before the bank state no bank (the host keeps the real one, and its state in the bank is honest), and
+ * the move is dropped once the turn clock is over; `ext`: right behind the turn's first state the server sends a copy
+ * with its deadline 20 s later, keeps to it (the host's clock moves 20 s), and drops the move once the first state's
+ * own end is over; `none`: honest states, dropped as `bank0`.
+ */
+function swallowed(code: string, kind: 'bank0' | 'ext' | 'none', show: number, nth = 2) {
+  const X = 20_000;
+  let target = -1;
+  let turns = 0;
+  /** On the host's clock: the turn's first state's own end (deadline plus the bank it states), and when the move is dropped. */
+  let firstEnd: number | null = null;
+  let cut: number | null = null;
+  let extSent = false;
+  const seen = new Set<number>();
+  const sent: Action[] = [];
+  let dropped: Action | null = null;
+  let screenAtSend: number | null = null;
+  const w = wire({
+    code,
+    botDelayMs: 700,
+    think: (_k, tc) => (tc === target ? Infinity : 600),
+    map: (m, w) => {
+      if (m.t !== 'state' || typeof m.deadline !== 'number' || m.inTimeBank || !w.discardTurn() || w.host.game!.turnCounter !== m.view.turnCounter) return m;
+      if (target < 0 && !seen.has(m.view.turnCounter)) {
+        seen.add(m.view.turnCounter);
+        if (++turns === nth) target = m.view.turnCounter;
+      }
+      if (m.view.turnCounter !== target) return m;
+      const out = kind === 'bank0' ? { ...m, timeBank: 0 } : m;
+      if (firstEnd === null) {
+        firstEnd = out.deadline! + out.timeBank * 1000;
+        cut = kind === 'ext' ? firstEnd : m.deadline!;
+        if (kind === 'ext') hostOf(w).clocks.get(0)!.base += X;
+      }
+      return out;
+    },
+    after: (m, w) => {
+      if (kind !== 'ext' || extSent || m.t !== 'state' || m.view.turnCounter !== target || m.inTimeBank || typeof m.deadline !== 'number') return [];
+      extSent = true;
+      return [{ ...m, deadline: m.deadline + X, now: hostOf(w).now() }];
+    },
+    onTick: (w) => {
+      if (target < 0 || sent.length > 0 || !shownOwing(w, target)) return;
+      const left = screenLeft(w);
+      if (left === null || left > show) return;
+      screenAtSend = left;
+      const a = chooseAction(w.c.localState()!, 0, { seed: 'p' }) as Action;
+      sent.push(a);
+      w.c.act(a);
+    },
+  });
+  // The server drops the seat's move for the turn once the host's clock passes the cut.
+  const send = w.line.link.send;
+  w.line.link.send = (m) => {
+    const x = m as { t?: string; turnCounter?: number; action?: Action };
+    if (x.t === 'action' && x.turnCounter === target && cut !== null && hostOf(w).now() >= cut) {
+      dropped = x.action ?? null;
+      return;
+    }
+    send(m);
+  };
+  w.finish();
+  const audit = w.c.state.lastAudit;
+  const taken = audit?.log.find((e) => e.seat === 0 && e.n === target && e.source !== 'player');
+  // The table played its own move over the one the seat sent (a timeout move equal to the seat's takes nothing).
+  const over = dropped !== null && taken !== undefined && JSON.stringify(taken.action) !== JSON.stringify(dropped);
+  return { w, target, over, screenAtSend: screenAtSend as number | null };
+}
+
+describe('a move sent with time on the screen, lost to the table’s own (R4 against the end the screen showed, T29)', () => {
+  for (const [kind, what] of [
+    ['bank0', 'the turn’s state says the bank is spent while the host keeps it, so the screen runs on into the bank the phone tracked'],
+    ['ext', 'right behind the turn’s state, a copy with a deadline 20 s later that the host keeps to'],
+  ] as const) {
+    it(`Normal: ${what}; the seat moves when its screen shows 3 s, the server drops the move and the table plays its own at the end: amber inFlight, never green`, () =>
+      scenario((i) => {
+        reseed(7_300 + i);
+        const t = swallowed(`SEF${kind}${i}`, kind, 3_000);
+        need(t.target >= 0 && t.over);
+        expect(t.screenAtSend).toBeGreaterThan(2_000);
+        expect(t.w.verdict()).toEqual({ status: 'partial', failures: [], caveats: ['inFlight'] });
+        // The same deal with honest states, the move dropped once the turn clock is over: amber inFlight as well.
+        reseed(7_300 + i);
+        const honest = swallowed(`SEF${kind}${i}`, 'none', 3_000);
+        need(honest.target === t.target && honest.over);
+        expect(honest.w.verdict()).toEqual({ status: 'partial', failures: [], caveats: ['inFlight'] });
+      }));
+  }
+});
+
 describe('honest ends (T27)', () => {
   const speeds: Array<[string, number, number]> = [
     ['Relaxed', 30, 60],
