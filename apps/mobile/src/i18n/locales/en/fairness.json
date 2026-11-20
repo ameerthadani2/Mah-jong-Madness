@@ -73,6 +73,7 @@
     "endUnsupported": "The table announced the end of the match, but the hands your phone checked do not lead to it.",
     "twoStates": "The table showed your phone two different versions of the table at turn %{turn}.",
     "restartedTwice": "The table said it restarted this hand more than once.",
+    "malformedFrame": "The table sent your phone a message that left out something every honest table sends, or sent it in the wrong form.",
     "strayFrame": "The table sent your phone a message about a hand or turn it was not playing.",
     "restartMidLink": "The table said it had restarted, but not when your phone joined it again, the only time a restarted table says so.",
     "missedOtherMatch": "The table sent the record of a hand from a different match.",

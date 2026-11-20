@@ -13,7 +13,7 @@ import { chooseAction, kindOf, legalActions, withRules, type Action, type BotSki
 import { AUDIT_CAVEATS, AUDIT_FAILURES, failureKey, LoopbackHub, TableClient, TableHost, transportLink, type HostMessage, type Link } from '../src/index';
 import { armedLate, clockTrack, firstSend, fixedPoint, judgeTableMove, lateAnchor, lateCountMs, lateLimitMs, lateRef, lateWatch, seatRun, seenHere, sinceFixed, turnLateBy, unstamped } from '../src/clientmoves';
 import { DRIFT_RATE, LATE_MS, RTT_ALLOW_MS } from '../src/clientclock';
-import { cleanCeremony, cleanPlay, cleanSeen, finiteFigure, isLateTurnRecord, savedSeen, seenSum, withLateTurns, type PlayRecord, type SeenState } from '../src/clientrecords';
+import { cleanCeremony, cleanPlay, cleanSeen, isLateTurnRecord, savedSeen, seenSum, withLateTurns, type PlayRecord, type SeenState } from '../src/clientrecords';
 import { Missed, scenario, seededDeals } from './support';
 
 seededDeals(20261116);
@@ -549,14 +549,6 @@ describe('a frame from a saved record keeps the fields that judge how late it ca
       // Without the figure, the same frame reads as damaged.
       expect(dropped(cleanSeen(f))).toBe(true);
     }
-  });
-
-  it('keeps an infinite clock figure from the host as the largest finite one of its sign, which a saved record holds as it is (finiteFigure)', () => {
-    expect(finiteFigure(Number.NEGATIVE_INFINITY)).toBe(-Number.MAX_VALUE);
-    expect(finiteFigure(Number.POSITIVE_INFINITY)).toBe(Number.MAX_VALUE);
-    expect(finiteFigure(Number.NaN)).toBeNull();
-    expect(finiteFigure(215_000)).toBe(215_000);
-    expect(JSON.parse(JSON.stringify({ d: finiteFigure(JSON.parse('-1e400') as number) })).d).toBe(-Number.MAX_VALUE);
   });
 
   it('keeps the run of each move sent and each reveal only when it is what this build writes, and refuses a record that is not one', () => {

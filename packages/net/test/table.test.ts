@@ -73,8 +73,8 @@ describe('P2P table over loopback', () => {
     host.start();
     const c = clients[1];
     const other = clients[0];
-    // Pretend to act for seat 0 from seat 1's connection
-    (c as unknown as { send: (m: unknown) => void }).send({ t: 'action', seat: 0, action: { type: 'pass' } });
+    // Pretend to act for seat 0 from seat 1's connection (on the view it shows, as the app's moves always name it)
+    (c as unknown as { send: (m: unknown) => void }).send({ t: 'action', seat: 0, action: { type: 'pass' }, turnCounter: c.state.view!.turnCounter });
     expect(c.state.lastError).toMatch(/own seat/);
     const s = other.localState()!;
     if (legalActions(s, 0).length === 0) {

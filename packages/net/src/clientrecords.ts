@@ -496,16 +496,6 @@ export function ledgerSum(sent: unknown, vouched: unknown): string {
 }
 
 /**
- * A clock figure from the host (a deadline, a time bank) as a frame keeps it. JSON has no infinity:
- * the wire text -1e400 reads as -Infinity, and a saved record would write that as null, which reads
- * back as no deadline at all. An infinite figure is kept as the largest finite one of its sign, which
- * every check reads as it reads the infinity; NaN, which no JSON text gives, as none.
- */
-export function finiteFigure(x: number): number | null {
-  return Number.isNaN(x) ? null : Math.min(Number.MAX_VALUE, Math.max(-Number.MAX_VALUE, x));
-}
-
-/**
  * A frame as it is saved: with its check figure (`seenSum`), and without the mark of a restored one. A
  * frame restored without a matching figure (`kept: false`) is saved without one, so it is read back as
  * not kept however often the app restarts.

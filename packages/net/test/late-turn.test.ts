@@ -1588,8 +1588,16 @@ describe('match record: what a saved record keeps of each frame', () => {
       }
   });
 
+  it('the same cut with the deadline sent as the text -1e400, which reads as -Infinity: no clock gives that figure, so the state is malformed, never shown, and the hand is red', () => {
+    for (const kick of [false, true]) {
+      // (The seat is never shown the turn, so it cannot move on it: the table times it out.)
+      const w = scenario((i) => cutThenResume(`MWI${kick ? 'K' : 'R'}${i}`, (m) => ({ ...m, deadline: Number.NEGATIVE_INFINITY }), false, kick));
+      expect(w.verdict().status).toBe('failed');
+      expect(w.verdict().failures).toEqual(expect.arrayContaining(['malformedFrame']));
+    }
+  });
+
   it.each<[string, (m: StateMsg) => StateMsg]>([
-    ['sent as the text -1e400, which reads as -Infinity (a saved record would write it as null: no deadline at all)', (m) => ({ ...m, deadline: Number.NEGATIVE_INFINITY })],
     ['two days before its stamp (no honest host sends one, and a record’s range checks would take it for damage)', (m) => ({ ...m, deadline: (m.now as number) - 2 * 86_400_000 })],
     ['5 s after a stamp 1.1e13 ms ahead of this device’s clock (a stamp no clock makes)', (m) => ({ ...m, now: (m.now as number) + 1.1e13, deadline: (m.now as number) + 1.1e13 + 5_000 })],
   ])('the same cut with the deadline %s: the state is read back as it was seen, so it is red after the resume as before it', (what, cut) => {

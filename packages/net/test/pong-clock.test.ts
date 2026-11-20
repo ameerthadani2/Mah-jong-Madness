@@ -45,7 +45,8 @@ function fakeLink() {
   return { link, sent, deliver: (m: HostMessage) => cb?.(m), close: () => closer?.(), pings: () => sent.filter((m): m is Extract<ClientMessage, { t: 'ping' }> => m.t === 'ping') };
 }
 
-const welcome = (rules: RuleSet = RULES): HostMessage => ({ t: 'welcome', seat: 0, roomCode: 'PONG', rules, seats: [], matchId: 'm-PONG', token: 'a'.repeat(32) });
+const SEATS = [0, 1, 2, 3].map((seat) => ({ seat, name: `P${seat}`, peerId: null, isBot: false, connected: seat === 0 }));
+const welcome = (rules: RuleSet = RULES): HostMessage => ({ t: 'welcome', seat: 0, roomCode: 'PONG', rules, seats: SEATS, matchId: 'm-PONG', token: 'a'.repeat(32) });
 
 /**
  * A real table on one fake clock, its frames to the phone passed on at once except the table's own

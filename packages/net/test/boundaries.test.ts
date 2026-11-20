@@ -243,7 +243,7 @@ describe('a link the server goes on feeding after it said the seat was opened on
 });
 
 describe('a welcome that leaves out the token, or names another room', () => {
-  it('Normal, a second welcome on a link already welcomed with no token, an empty one or another room code: the phone keeps its token and room, so the app goes on keeping the table’s record; a welcome with a new token still gives it', () =>
+  it('Normal, a second welcome on a link already welcomed with no token, an empty one or another room code: the phone keeps its token and room, so the app goes on keeping the table’s record (a welcome with no token is malformed, so the hand fails); a welcome with a new token still gives it', () =>
     scenario((i) => {
       for (const edit of ['missing', 'empty', 'room', 'new'] as const) {
         let sent = false;
@@ -269,6 +269,9 @@ describe('a welcome that leaves out the token, or names another room', () => {
         w.finish();
         need(sent && first !== null);
         expect((first as unknown as { token: string | null }).token).toMatch(/^[0-9a-f]{32}$/);
+        // An honest table gives a token in every welcome: one without is taken as nothing, and fails the hand on show.
+        if (edit === 'missing' || edit === 'empty') expect(w.verdict()).toMatchObject({ status: 'failed', failures: ['malformedFrame'] });
+        else expect(w.verdict().failures).toEqual([]);
       }
     }));
 });

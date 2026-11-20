@@ -80,12 +80,14 @@ describe('client hardening', () => {
     // A fake host: a bare transport sending hand-crafted frames.
     const fake = hub.create('host');
     const c = new TableClient(transportLink(hub.create('p0'), 'host'), 'Target');
-    fake.send('p0', { t: 'welcome', seat: 0, roomCode: 'J', rules: { basePoints: 'lots', evil: true }, seats: [], matchId: 'junk', token: 'f'.repeat(32) });
+    // (Four seats, as every welcome lists them: a welcome without them is malformed and taken as nothing.)
+    const seats = [0, 1, 2, 3].map((seat) => ({ seat, name: `P${seat}`, peerId: null, isBot: false, connected: seat === 0 }));
+    fake.send('p0', { t: 'welcome', seat: 0, roomCode: 'J', rules: { basePoints: 'lots', evil: true }, seats, matchId: 'junk', token: 'f'.repeat(32) });
     expect(c.state.seat).toBe(0);
     expect(c.state.rules!.basePoints).toBeTypeOf('number');
     expect((c.state.rules as unknown as Record<string, unknown>).evil).toBeUndefined();
     const players = [0, 1, 2, 3].map(() => ({ handCount: 16, melds: [], flowers: [], discards: [] }));
-    const view = { handNumber: 0, players, scores: [0, 0, 0, 0] };
+    const view = { handNumber: 0, turnCounter: 0, players, scores: [0, 0, 0, 0] };
     const junk: unknown[] = [
       { t: 'state' },
       { t: 'state', view: null },

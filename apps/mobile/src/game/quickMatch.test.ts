@@ -7,6 +7,9 @@ import zhTW from '../i18n/locales/zh-TW/quickmatch.json';
 import { quickMatchAnnouncement, quickMatchFailure, quickMatchView, RATE_LIMIT_WAIT_MS, retryWaitSeconds, runQuickMatch, savedRejoinToken, unseenTableClose } from './quickMatch';
 import { createOnlineSession, startQuickMatch } from './session';
 
+/** The four seats every welcome lists (the table client takes a welcome without them as malformed). */
+const SEATS = [0, 1, 2, 3].map((seat) => ({ seat, name: `P${seat}`, peerId: null, isBot: false, connected: true }));
+
 type Frame = Record<string, unknown>;
 
 /** A scripted game server behind a fake WebSocket. */
@@ -180,7 +183,7 @@ describe('an account still seated at a quick-match table', () => {
     expect(join).toMatchObject({ t: 'join', userId: 'u-1' });
     expect(join.token).toBeUndefined();
     // The table answers welcome with the seat's new token; the client holds it, which is what the app saves.
-    FakeSocket.last!.push({ t: 'from', from: 'server-QM7777', data: { ch: 'game', msg: { t: 'welcome', seat: 2, token: 'fresh-token', roomCode: 'QM7777', matchId: 'm-1', rules: DEFAULT_RULES, seats: [] } } });
+    FakeSocket.last!.push({ t: 'from', from: 'server-QM7777', data: { ch: 'game', msg: { t: 'welcome', seat: 2, token: 'fresh-token', roomCode: 'QM7777', matchId: 'm-1', rules: DEFAULT_RULES, seats: SEATS } } });
     await flush();
     expect(s.client.state.token).toBe('fresh-token');
     s.close();

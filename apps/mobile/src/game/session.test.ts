@@ -89,6 +89,8 @@ const TRY_AGAIN_LATER = 1013;
 /** The game server's sentence to a watcher whose place a player needed (WATCHER_DROPPED in apps/signal/src/rooms.ts). */
 const WATCHER_DROPPED = 'A player needed your place at this table; join again to sit down.';
 const TOKEN = '0123456789abcdef0123456789abcdef';
+/** The four seats every welcome lists (the table client takes a welcome without them as malformed). */
+const SEATS = [0, 1, 2, 3].map((seat) => ({ seat, name: `P${seat}`, peerId: null, isBot: false, connected: true }));
 const base = { signalUrl: 'wss://game.example/ws', name: 'Tester', avatar: 'lady', userId: 'user-123456', rules: DEFAULT_RULES };
 const roomReply = (f: Frame): Frame | null => (f.t === 'create' || f.t === 'join' ? { t: 'room', room: 'ABC123', peers: ['p-me', 'server-1'], host: 'server-1' } : null);
 const tableJoins = (ws: FakeSocket) => ws.sent.filter((f) => f.t === 'to' && (f.data as { msg?: { t?: string } }).msg?.t === 'join').map((f) => (f.data as { msg: Frame }).msg);
@@ -191,7 +193,7 @@ describe('createOnlineSession', () => {
 
 describe('a seat at the table, or the refusal', () => {
   const fromTable = (msg: Frame): Frame => ({ t: 'from', from: 'server-1', data: { ch: 'game', msg } });
-  const welcomeFrame = fromTable({ t: 'welcome', seat: 2, roomCode: 'ABC123', rules: DEFAULT_RULES, seats: [], matchId: 'm1', token: TOKEN });
+  const welcomeFrame = fromTable({ t: 'welcome', seat: 2, roomCode: 'ABC123', rules: DEFAULT_RULES, seats: SEATS, matchId: 'm1', token: TOKEN });
 
   it('resolves once the table has seated the player', async () => {
     const s = await createOnlineSession({ ...base, action: 'join', code: 'ABC123' });
@@ -302,7 +304,7 @@ describe('online reconnect', () => {
     const seen: ClientState[] = [];
     s.onChange((st) => seen.push(st));
     // The host welcomed us with a rejoin token, then the network dropped.
-    first.push({ t: 'from', from: 'server-1', data: { ch: 'game', msg: { t: 'welcome', seat: 2, roomCode: 'ABC123', rules: DEFAULT_RULES, seats: [], matchId: 'm1', token: 'f'.repeat(32) } } });
+    first.push({ t: 'from', from: 'server-1', data: { ch: 'game', msg: { t: 'welcome', seat: 2, roomCode: 'ABC123', rules: DEFAULT_RULES, seats: SEATS, matchId: 'm1', token: 'f'.repeat(32) } } });
     expect(seen.at(-1)?.token).toBe('f'.repeat(32));
     first.serverClose(1006);
     expect(s.status).toBe('reconnecting');
@@ -320,7 +322,7 @@ describe('online reconnect', () => {
     // One client per table: it keeps what it recorded about the deal across the reconnect.
     expect(s.client).toBe(oldClient);
     expect(statuses).toEqual(['reconnecting:1', 'connected:0']);
-    second.push({ t: 'from', from: 'server-1', data: { ch: 'game', msg: { t: 'welcome', seat: 2, roomCode: 'ABC123', rules: DEFAULT_RULES, seats: [], matchId: 'm1', token: 'e'.repeat(32) } } });
+    second.push({ t: 'from', from: 'server-1', data: { ch: 'game', msg: { t: 'welcome', seat: 2, roomCode: 'ABC123', rules: DEFAULT_RULES, seats: SEATS, matchId: 'm1', token: 'e'.repeat(32) } } });
     expect(seen.at(-1)?.token).toBe('e'.repeat(32));
     expect(seen.at(-1)?.disconnected).toBe(false);
     // Frames still arriving on the old socket are no longer heard.
@@ -358,7 +360,7 @@ describe('online reconnect', () => {
 
   it('a link that drops is reconnected; only a seat opened on another device ends the session', async () => {
     const { s, first } = await open();
-    first.push({ t: 'from', from: 'server-1', data: { ch: 'game', msg: { t: 'welcome', seat: 0, roomCode: 'ABC123', rules: DEFAULT_RULES, seats: [], matchId: 'm1', token: TOKEN } } });
+    first.push({ t: 'from', from: 'server-1', data: { ch: 'game', msg: { t: 'welcome', seat: 0, roomCode: 'ABC123', rules: DEFAULT_RULES, seats: SEATS, matchId: 'm1', token: TOKEN } } });
     first.serverClose(1006);
     expect(s.client.state.disconnected).toBe(true);
     expect(s.client.state.kicked).toBe(false);
@@ -545,7 +547,7 @@ describe('online reconnect', () => {
     s.close();
   });
 
-  const welcome = { t: 'from', from: 'server-1', data: { ch: 'game', msg: { t: 'welcome', seat: 0, roomCode: 'ABC123', rules: DEFAULT_RULES, seats: [], matchId: 'm1', token: TOKEN } } };
+  const welcome = { t: 'from', from: 'server-1', data: { ch: 'game', msg: { t: 'welcome', seat: 0, roomCode: 'ABC123', rules: DEFAULT_RULES, seats: SEATS, matchId: 'm1', token: TOKEN } } };
   const seatOpenedElsewhere = { t: 'from', from: 'server-1', data: { ch: 'game', msg: { t: 'disconnected' } } };
 
   it('a device whose seat was opened elsewhere never comes back by itself, however long it waits', async () => {

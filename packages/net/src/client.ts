@@ -44,6 +44,7 @@ import { commitFor, deriveSeed, makeSecret, verifyReveals, type Commitment } fro
 import { randomHex } from './sha256';
 import type { Link } from './host';
 import { CLOCK_FRAME_MS, RESTART_CAUSES, type Audit, type ClientMessage, type HostMessage, type SeatInfo } from './messages';
+import { intake } from './intake';
 import { isFrame, type Transport, type Unsubscribe } from './transport';
 import { BANK_ROUND_MS, clientClock, type ClockBase, DRIFT_CAP_MS, DRIFT_RATE, foldClock, LATE_MS, LINK_PAUSE_MS, MAX_PAUSES, MAX_PING_SCOPES, MAX_PINGS, MAX_RUN_SCOPES, MAX_PONGS, NO_ANSWER_PINGS, ORDER_SLACK_MS, ownClockFrom, PAUSE_GRACE_MS, PONG_WINDOW_MS, RAN_GAP_MS, RTT_PUBLISH_MS, SILENT_ANSWER_MS, STEADY_SLACK_MS, WATCH_WINDOW_MS, type OwnClock, type TableClientOptions } from './clientclock';
 import { armedLate, clockTrack, firstSend, fixedPoint, flightAllowance, heldLive, isBotSkill, judgeTableMove, lateAnchor, lateBy, lateCountMs, lateLimitMs, lateRef, legalFor, ownRun, pausedIn, restartInRun, sameActionSafe, scopeOf, seatRun, seenHere, streakEnd, tableRule, turnLateBy, unanswered, unstamped, type LateScope, type MoveJudge, type PongClock } from './clientmoves';
@@ -54,7 +55,6 @@ import {
   cleanRunScope,
   CLIENT_SNAPSHOT_VERSION,
   isAudit,
-  finiteFigure,
   isCommitSet,
   isInt,
   isLateTurnRecord,
@@ -211,6 +211,9 @@ export const AUDIT_FAILURES = {
   endUnsupported: 'Host announced the end of the match, which the hands this device verified do not support',
   twoStates: /^Host showed two different states for turn (?<turn>-?\d+)$/,
   restartedTwice: 'Host said it restarted this hand more than once',
+  // A frame of a known type that does not carry what an honest host always sends in it, or carries it as another type
+  // (`intake`): the client takes nothing from it.
+  malformedFrame: 'Host sent a malformed frame',
   // A frame naming a hand or turn an honest host would not name at that point: a clock frame for a turn other than the
   // one whose state it last sent the link, or a deal's frame for a hand other than the one being dealt.
   strayFrame: 'Host sent a frame about a hand or turn this device was not on',
@@ -1759,22 +1762,44 @@ export class TableClient {
     if (bots.join(',') !== this.frozenBots.join(',')) this.flag(this.activeHand(), 'Host changed which seats are bots during the match');
   }
 
-  private onMessage(m: HostMessage): void {
-    if (!isObject(m) || typeof m.t !== 'string') return;
+  /**
+   * A frame of a known type that does not carry what an honest host always sends in it, or carries it as another type
+   * (`intake`): the client shows nothing of it, acts on nothing in it and files nothing from it, and the hand it is on
+   * fails. A set of commitments that is not one keeps its own failure.
+   */
+  private malformed(t: string, field: string): void {
+    if (t === 'commits' && field === 'commits') {
+      this.flag(this.activeHand(), 'Host published a malformed set of commitments');
+      this.update({ lastError: 'The table sent a malformed set of commitments.', lastErrorCode: null });
+      return;
+    }
+    this.flag(this.activeHand(), 'Host sent a malformed frame');
+    this.update({ lastError: `The table sent a malformed ${t} frame (${field}).`, lastErrorCode: null });
+  }
+
+  private onMessage(raw: HostMessage): void {
+    // Every frame meets the protocol's contract for its type before anything of it is used (`intake`).
+    const taken = intake(raw);
+    if (taken === null) {
+      // A type no seat is sent: nothing of it is read (it still ends a link's opening).
+      if (isObject(raw) && typeof raw.t === 'string' && !OPENING_FRAMES.has(raw.t)) this.opening = false;
+      return;
+    }
+    if (!taken.ok) {
+      this.opening = false;
+      this.malformed(taken.t, taken.field);
+      return;
+    }
+    const m = taken.frame;
     // A link's opening ends at its first frame about the table's play (`opening`).
     if (!OPENING_FRAMES.has(m.t)) this.opening = false;
     switch (m.t) {
       case 'welcome': {
-        if (!isInt(m.seat) || m.seat < 0 || m.seat > 3 || typeof m.matchId !== 'string') {
-          this.update({ lastError: 'The table sent a malformed welcome.', lastErrorCode: null });
-          return;
-        }
-        const seats = Array.isArray(m.seats) ? m.seats : [];
-        // The rejoin token: a welcome that carries none (or an empty one) leaves the one this client holds, as an honest
-        // table always gives one and the app keeps the table's record under it. The table's room code is pinned from the
-        // first welcome: the app keeps the record under the room it joined, which a welcome does not move.
-        const token = typeof m.token === 'string' && m.token !== '' ? m.token : this.state.token;
-        const roomCode = this.state.roomCode ?? (typeof m.roomCode === 'string' ? m.roomCode : null);
+        const seats = m.seats;
+        // The rejoin token (an honest table gives one in every welcome, `intake`). The table's room code is pinned from
+        // the first welcome: the app keeps the record under the room it joined, which a welcome does not move.
+        const token = m.token;
+        const roomCode = this.state.roomCode ?? m.roomCode;
         // The seat and the match are pinned from the first deal this client hears of until the hands
         // it verified say the match is over. Before that there is nothing a new seat could undo.
         const pinned = this.state.matchId !== null && this.state.seat !== null && this.hasEvidence() && !this.matchEnded;
@@ -1814,13 +1839,10 @@ export class TableClient {
         return;
       }
       case 'lobby':
-        if (Array.isArray(m.seats)) {
-          this.checkBots(m.seats);
-          this.update({ seats: m.seats });
-        }
+        this.checkBots(m.seats);
+        this.update({ seats: m.seats });
         return;
       case 'commit_request': {
-        if (!isInt(m.handNumber)) return;
         const h = m.handNumber;
         const v = this.state.view;
         if (v && v.handNumber === h && v.phase !== 'ended' && this.state.lastResult === null && this.state.ceremony === 'idle') {
@@ -1865,7 +1887,6 @@ export class TableClient {
         return;
       }
       case 'stand_in': {
-        if (!isInt(m.handNumber)) return;
         const h = m.handNumber;
         // Only the hand being dealt: a stand-in for any other is the server's own making, and makes no record. (A
         // returning seat is told again between hands about the hand that has just ended: nothing to note.)
@@ -1907,14 +1928,8 @@ export class TableClient {
         this.seatTaken();
         return;
       case 'commits': {
-        if (!isInt(m.handNumber)) return;
         const h = m.handNumber;
-        if (!isCommitSet(m.commits)) {
-          // Never honest, whatever hand it names: it counts against the hand this client is on.
-          this.flag(this.activeHand(), 'Host published a malformed set of commitments');
-          this.update({ lastError: 'The table sent a malformed set of commitments.' });
-          return;
-        }
+        // (A malformed set never gets here, whatever hand it names: it counts against the hand this client is on, `malformed`.)
         // Published for the hand being dealt only (a returning seat is sent it again): a set for any other hand is the
         // server's own making, and takes the place of nothing this client holds.
         if (!this.dealsHand(h)) {
@@ -1969,10 +1984,6 @@ export class TableClient {
         return;
       }
       case 'state': {
-        if (!isView(m.view)) {
-          this.update({ lastError: 'The table sent a malformed state.' });
-          return;
-        }
         const v = m.view;
         const h = v.handNumber;
         if (this.handsEnded.has(h)) {
@@ -1999,25 +2010,20 @@ export class TableClient {
         // device revealed its share for this hand over it).
         const shownHere = this.linkShown && this.linkShown.epoch === this.epoch ? this.linkShown : null;
         const revealedHere = !!this.recordFor(h)?.attempts.some((x) => x.revealed && x.revealedEpoch === this.epoch);
-        if (isInt(v.turnCounter)) {
-          if (shownHere && shownHere.hand === h && v.turnCounter > shownHere.tc + 1) this.noteHeld(h, shownHere.tc + 1);
-          else if (v.turnCounter > 0 && ((shownHere && shownHere.hand !== h) || (!shownHere && revealedHere))) this.noteHeld(h, 0);
-          // An honest host stamps every state. One with no stamp, on a link that has brought a state, a
-          // stamp or this device's share, would escape every check of when it was shown: it is not
-          // believed, and counts as held back (on a new link it is judged as shown late; see `unstamped`).
-          if (!stamped && (shownHere || revealedHere || this.linkStamped)) this.noteHeld(h, v.turnCounter);
-        }
+        if (shownHere && shownHere.hand === h && v.turnCounter > shownHere.tc + 1) this.noteHeld(h, shownHere.tc + 1);
+        else if (v.turnCounter > 0 && ((shownHere && shownHere.hand !== h) || (!shownHere && revealedHere))) this.noteHeld(h, 0);
+        // An honest host stamps every state. One with no stamp, on a link that has brought a state, a
+        // stamp or this device's share, would escape every check of when it was shown: it is not
+        // believed, and counts as held back (on a new link it is judged as shown late; see `unstamped`).
+        if (!stamped && (shownHere || revealedHere || this.linkStamped)) this.noteHeld(h, v.turnCounter);
         this.noteState(v, m, stamped, shownHere !== null || revealedHere);
-        if (isInt(v.turnCounter)) this.linkShown = { epoch: this.epoch, hand: h, tc: v.turnCounter };
+        this.linkShown = { epoch: this.epoch, hand: h, tc: v.turnCounter };
         this.viewEpoch = this.epoch;
+        // What goes on show is what `noteState` filed: the same view, hash and clock figures, as `intake` took them.
         this.update({ view: v, stateHash: m.hash, deadline: m.deadline, timeBank: m.timeBank, inTimeBank: m.inTimeBank, lastResult: null, lastError: null, ceremony: 'idle', intermissionDeadline: null });
         return;
       }
       case 'hand_over': {
-        if (!isView(m.view) || !isAudit(m.audit) || !isObject(m.result)) {
-          this.update({ lastError: 'The table sent a malformed hand result.' });
-          return;
-        }
         const h = m.audit.handNumber;
         const stampedEnd = this.noteStamp(m.now, true);
         this.noteOrder(m.now, null, null);
@@ -2090,10 +2096,9 @@ export class TableClient {
         return;
       }
       case 'hand_missed':
-        if (isAudit(m.audit)) this.auditMissed(m.audit);
+        this.auditMissed(m.audit);
         return;
       case 'restored': {
-        if (!isInt(m.handNumber) || !isInt(m.turnCounter) || m.turnCounter < -1) return;
         // Once per link, in its opening only: anywhere else a notice is the server's own making, and changes nothing.
         const opening = this.opening;
         this.opening = false;
@@ -2105,10 +2110,6 @@ export class TableClient {
         return;
       }
       case 'match_over':
-        if (!isView(m.view) || !Array.isArray(m.scores)) {
-          this.update({ lastError: 'The table sent a malformed match result.' });
-          return;
-        }
         {
           const verdict = this.matchEndVerdict(m.scores, m.view);
           if (verdict === 'refuse') {
@@ -2132,16 +2133,14 @@ export class TableClient {
         }
         return;
       case 'chat':
-        if (typeof m.text !== 'string') return;
         this.update({ chat: [...this.state.chat.slice(-99), { seat: m.seat, name: m.name, text: m.text, at: this.now() }] });
         return;
       case 'emote':
-        if (typeof m.emote !== 'string') return;
         this.update({ emotes: [...this.state.emotes.slice(-20), { seat: m.seat, emote: m.emote, at: this.now() }] });
         return;
       case 'error':
         this.noteRefusal(m);
-        this.update({ lastError: typeof m.message === 'string' ? m.message : 'The table reported an error.', lastErrorCode: typeof m.code === 'string' ? m.code : null });
+        this.update({ lastError: m.message, lastErrorCode: m.code });
         return;
       case 'pong':
         // On a link that has brought no state, a pong's stamp does not feed the watch: an honest host sends
@@ -2153,7 +2152,6 @@ export class TableClient {
         this.notePong(m.at, m.now);
         return;
       case 'clock': {
-        if (!isInt(m.hand) || !isInt(m.tc)) return;
         // Nor a clock frame: an honest host sends one only to a seat it has sent the turn's state.
         if (!this.stateHere()) return;
         const shown = this.linkShown as NonNullable<TableClient['linkShown']>;
@@ -2201,7 +2199,6 @@ export class TableClient {
 
   /** Record a state frame of the hand being played: its hash, timing and whether we owed a move. */
   private noteState(v: TableView, m: Extract<HostMessage, { t: 'state' }>, stamped: { at: number; atLo: number; ref: number | null; wref: number | null; live: boolean; working: boolean; seg: number } | null = null, onLink = false): void {
-    if (!isInt(v.turnCounter) || typeof m.hash !== 'string') return;
     const play = this.playFor(v.handNumber);
     // (A state restored damaged may hold any hash, `cleanSeen`: it is not compared.)
     const prior = play.seen.find((s) => s.tc === v.turnCounter && s.kept !== false);
@@ -2218,8 +2215,8 @@ export class TableClient {
       }
     }
     const at = this.now();
-    // Kept as figures a saved record holds as they are: a stamp that is no reading of a clock is no stamp (as `noteStamp` takes it).
-    const now = typeof m.now === 'number' && Number.isFinite(m.now) ? m.now : undefined;
+    // (A stamp, when there is one, is a finite figure: `intake`.)
+    const now = m.now;
     // The hand's first frame over a later link than the last frame before it: the hand began without this device.
     if (play.before === undefined) play.before = play.seen.length === 0 && this.lastStamp && this.lastStamp.epoch !== this.epoch ? { ...this.lastStamp } : null;
     if (now !== undefined) this.lastStamp = { at, now, epoch: this.epoch, era: this.era };
@@ -2233,9 +2230,10 @@ export class TableClient {
       run: this.runId,
       onLink,
       owes,
-      deadline: typeof m.deadline === 'number' ? finiteFigure(m.deadline) : null,
-      timeBank: typeof m.timeBank === 'number' ? (finiteFigure(m.timeBank) ?? 0) : 0,
-      inBank: m.inTimeBank === true,
+      // The figures the app shows (`state`): finite, as `intake` holds every state to.
+      deadline: m.deadline,
+      timeBank: m.timeBank,
+      inBank: m.inTimeBank,
       hash: m.hash,
       view: viewDigest(v),
     });
@@ -2316,26 +2314,30 @@ export class TableClient {
     this.trimHands(this.rewinds, MAX_REWINDS, (x) => x.hand);
   }
 
-  /** The host refused a move: mark it in the ledger so the audit does not expect it in the log. */
+  /**
+   * The host refused a move: mark it in the ledger so the audit does not expect it in the log, and file the refusal for
+   * the audit to judge (`checkRefusals`). A refusal that names no turn excuses no move: the host names the turn of every
+   * move of a seated player it refuses (`intake` holds it to that), and a `not_seated`, which it sends a link that holds
+   * no seat, answers no move this seat made there. Such a move stays as sent, for the rules on moves the table played over.
+   */
   private noteRefusal(m: Extract<HostMessage, { t: 'error' }>): void {
-    const code = typeof m.code === 'string' ? m.code : 'error';
-    if (!['illegal', 'not_playing', 'wrong_seat', 'not_seated'].includes(code)) return;
+    const code = m.code;
+    if (!['illegal', 'not_playing', 'wrong_seat', 'not_seated'].includes(code) || !isInt(m.turnCounter)) return;
+    const tc = m.turnCounter;
     // A refusal answers a move this seat made in the hand being played, the one on show (`act` files each move
     // under it), never the hand of whichever record was made last.
     const v = this.state.view;
     const play = v && !this.handsEnded.has(v.handNumber) ? this.plays.find((p) => p.hand === v.handNumber) : undefined;
     if (!play || !v) return;
-    const open = play.sent.filter((s) => !s.rejected && (!isInt(m.turnCounter) || s.tc === m.turnCounter));
+    const open = play.sent.filter((s) => !s.rejected && s.tc === tc);
     const target = open[open.length - 1];
     // Every state the host reached before it refused has arrived before the refusal (frames come in order).
-    const at = isInt(v.turnCounter) ? v.turnCounter : undefined;
+    const at = v.turnCounter;
+    // Only a refusal of a move made in this hand counts here (a stray answer to an older hand's move does not).
     if (target) {
       target.rejected = code;
       target.refusedAt = at;
-    }
-    // Only a refusal of a move made in this hand counts here (a stray answer to an older hand's move does not).
-    if (target && isInt(m.turnCounter) && at !== undefined) {
-      play.refusals = [...(play.refusals ?? []), { tc: m.turnCounter, at }].slice(-MAX_SENT);
+      play.refusals = [...(play.refusals ?? []), { tc, at }].slice(-MAX_SENT);
     }
   }
 
