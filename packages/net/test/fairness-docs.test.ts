@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { SPEED_PRESETS, withRules } from '@mjm/engine';
 import { MOVE_SLACK_MS } from '../src/client';
-import { CLOCK_SKEW_MS, DRIFT_CAP_MS, LATE_MS, NO_ANSWER_PINGS, SILENT_ANSWER_MS, STEADY_SLACK_MS, WATCH_WINDOW_MS } from '../src/clientclock';
+import { CLOCK_SKEW_MS, DRIFT_CAP_MS, DRIFT_RATE, LATE_MS, NO_ANSWER_PINGS, SILENT_ANSWER_MS, STEADY_SLACK_MS, WATCH_WINDOW_MS } from '../src/clientclock';
 import { FLIGHT_SLACK_MS, LATE_COUNT_MIN_MS, LATE_LIMIT_MIN_MS, lateCountMs, lateLimitMs } from '../src/clientmoves';
 import { MAX_SEEN } from '../src/clientrecords';
 import { CLOCK_FRAME_MS } from '../src/messages';
@@ -63,6 +63,19 @@ describe('the fair play charter states the late-turn limits the table client use
     expect(turnRow).toContain(`so a turn could be cut short by that much without failing (at Hyper, whose turn clock is ${SPEED_PRESETS.hyper.turnSeconds} seconds, a whole turn; the allowance holds once per run of the app and of the server's clock, not on every turn)`);
     expect(DRIFT_CAP_MS).toBe(500);
     expect(turnRow).toContain('allowing at most half a second for the two clocks drifting apart');
+  });
+
+  // Unit 20's honest check: a phone clock 2,000 ppm fast made most later hands of a 48-hand match amber, which the
+  // charter did not say. The drift the phone allows is the code's; the times follow from it and the limit.
+  it('states the drift it allows (500 ppm, half a second since the closest tie) and what a phone clock far beyond it costs', () => {
+    expect(DRIFT_RATE).toBe(0.0005);
+    expect(turnRow).toContain(`Your phone allows its clock and the server's to drift apart by ${DRIFT_RATE * 1e6} parts per million, and by half a second at most since the closest tie; real clocks drift less than half that.`);
+    expect(turnRow).toContain('A phone clock that runs far faster, 2,000 parts per million say, makes its turns look later and later, so the later hands of a long match are amber: from about 20 minutes in at Hyper and about an hour in at Normal. One that runs that much slower makes the table\'s moves for you look early, and can fail such hands.');
+    // At 2,000 ppm the turns fall 2 ms a second behind, of which the phone allows half a second in all: past the limit after
+    // (limit + 0.5 s) / 2 ms a second.
+    const minutes = (k: keyof typeof SPEED_PRESETS) => (lateLimitMs(rules(k)) + DRIFT_CAP_MS) / 0.002 / 60_000;
+    expect(Math.round(minutes('hyper'))).toBe(21);
+    expect(Math.round(minutes('normal'))).toBe(67);
   });
 
   it('the watch: a frame every 3 seconds, a probe 8 seconds behind, 5 more to answer, a 20-second window, 17 s on a live link, which a server can shorten and never lengthen', () => {
