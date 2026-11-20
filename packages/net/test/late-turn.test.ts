@@ -1815,9 +1815,10 @@ describe('a seat opened on another device while the phone’s link was down', ()
    * Honest: after the seat's fourth discard the player opens the seat on a tablet, with the phone's token,
    * while the phone's link is up; the server tells the phone at once. The tablet plays the seat for 20 s,
    * then the player resumes the table from Home on the phone, which takes the seat back. `edit` may change
-   * the record the phone saved before it is restored; `kicked` runs on the phone's wire just before that.
+   * the record the phone saved before it is restored; `kicked` runs on the phone's wire just before that, and
+   * `resumed` right after the restored client has joined (`vouched` is then what its record vouches for).
    */
-  function tabletWhileUp(code: string, edit?: (saved: SerializedClient) => SerializedClient, kicked?: (w: Wire) => void) {
+  function tabletWhileUp(code: string, edit?: (saved: SerializedClient) => SerializedClient, kicked?: (w: Wire) => void, resumed?: (w: Wire) => void) {
     const w = wire({ code, botDelayMs: 1_000 });
     need(w.toDiscard(4));
     need(w.until(() => !w.owes() && !w.current(), 20_000));
@@ -1836,8 +1837,12 @@ describe('a seat opened on another device while the phone’s link was down', ()
     }
     need(w.c.state.kicked && played > 0 && w.host.phase === 'playing');
     kicked?.(w);
-    const vouched = w.c.serialize().plays.at(-1)?.vouched ?? [];
+    let vouched = w.c.serialize().plays.at(-1)?.vouched ?? [];
     w.restart(edit);
+    if (resumed) {
+      resumed(w);
+      vouched = w.c.serialize().plays.at(-1)?.vouched ?? [];
+    }
     w.finish();
     return { w, vouched };
   }
@@ -1851,13 +1856,18 @@ describe('a seat opened on another device while the phone’s link was down', ()
   it('a server restart that resumes the hand before the notice: the turns from there are played again, perhaps by the other device, so the ledger stops vouching where the hand resumed', () => {
     let before: Array<{ from: number; to: number }> = [];
     let r = -1;
+    // (A restart drops every link: the notice reaches the phone when it is back, as the restored table's first word on the new link.)
     const { vouched } = scenario((i) =>
-      tabletWhileUp(`TR${i}`, undefined, (w) => {
-        before = w.c.serialize().plays.at(-1)?.vouched ?? [];
-        need(before.length === 1 && before[0].to - before[0].from >= 3);
-        r = before[0].to - 2;
-        w.line.inject({ t: 'restored', handNumber: w.host.game!.handNumber, turnCounter: r });
-      }),
+      tabletWhileUp(
+        `TR${i}`,
+        undefined,
+        (w) => {
+          before = w.c.serialize().plays.at(-1)?.vouched ?? [];
+          need(before.length === 1 && before[0].to - before[0].from >= 3);
+          r = before[0].to - 2;
+        },
+        (w) => w.line.inject({ t: 'restored', handNumber: w.host.game!.handNumber, turnCounter: r }),
+      ),
     );
     expect(vouched).toEqual([{ from: before[0].from, to: r }]);
   });

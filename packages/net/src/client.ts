@@ -560,6 +560,12 @@ export class TableClient {
    * welcomes a link before it sends anything else on it, and one that never does must not turn the measures off.
    */
   private linkOpen = true;
+  /**
+   * The link on which this client learnt that its seat was opened on another device (`seatTaken`): it takes nothing
+   * more from it. An honest host sends nothing more to a link once another device takes its seat, so a frame that comes
+   * there anyway is not shown, played on or measured; the player takes the seat back from Home, on a new link.
+   */
+  private kickedLink: Link | null = null;
   /** When `checkLink` last ran. */
   private checkedAt: number | null = null;
   /**
@@ -818,6 +824,8 @@ export class TableClient {
     this.unsubMessage = link.onMessage((m) => {
       // Not a frame at all (not an object with a type): dropped before anything reads it.
       if (!isFrame(m)) return;
+      // The seat was opened on another device on this link: this client takes nothing more from it (`kickedLink`).
+      if (this.state.kicked && this.kickedLink === link) return;
       // Any frame shows this app running; only stamps feed the watch (see `noteStamp`), so chat,
       // emotes and stamps that crawl or stand still do not keep the link alive. A frame handled
       // just after the app did not run may have waited in the device through the pause, though
@@ -888,7 +896,8 @@ export class TableClient {
   }
 
   act(action: Action): void {
-    if (this.state.seat === null) return;
+    // Nor does it send a move once its seat was opened on another device: the player takes the seat back from Home first.
+    if (this.state.seat === null || this.state.kicked) return;
     // A view from before the link was lost says nothing about the table now: wait for the first state on this link.
     if (this.viewEpoch !== this.epoch) return;
     const v = this.state.view;
@@ -1374,6 +1383,7 @@ export class TableClient {
       this.closeLedger(play);
       play.ledgerFrom = Number.POSITIVE_INFINITY;
     }
+    this.kickedLink = this.link;
     this.update({ connected: false, kicked: true, lastError: 'This seat was opened on another device.' });
   }
 

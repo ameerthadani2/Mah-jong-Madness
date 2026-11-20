@@ -8,6 +8,9 @@
  * An app resume the server forces (by saying the seat was opened on another device) does not take the measure of the
  * turns shown before it: the answers to the pings of each run, its first pings and its pauses are saved with the
  * record, each with its run and a check figure, and a frame an earlier run saw is measured against them.
+ *
+ * And once the phone has been told its seat was opened on another device, it takes nothing more from that link and
+ * sends no move on it (it would no longer measure it): a server that goes on sending the table there gets no verdict.
  */
 import { describe, expect, it } from 'vitest';
 import { withRules, type RuleSet } from '@mjm/engine';
@@ -183,4 +186,58 @@ describe('a frame an earlier run of the app saw is measured in that run’s scop
     expect(unanswered(f, from, 7_500, judging([{ run: 'old', best: null, pauses: [] }]))).toBe(true);
     expect(unanswered(f, from, 7_500, judging([]))).toBe(false);
   });
+});
+
+/**
+ * Hyper, two hands. Three seconds into the seat's first turn the server says the seat was opened on another device
+ * (`notice`: a 'disconnected' on the link; `elsewhere`: it drops the link and welcomes the phone's rejoin with
+ * `elsewhere`), and goes on sending every frame on that link; from the second hand on it holds each of the seat's turns
+ * 3 s. The seat keeps playing what its phone shows.
+ */
+function keptFeeding(code: string, kind: 'notice' | 'elsewhere') {
+  let welcomes = 0;
+  let done = false;
+  let firstOwed: number | null = null;
+  let made: Wire | null = null;
+  let viewAtKick: string | null = null;
+  const w = wire({
+    code,
+    rules: HYPER2,
+    botDelayMs: 700,
+    fireClose: true,
+    think: () => 1_500,
+    map: (m) => (m.t === 'welcome' && welcomes++ > 0 && kind === 'elsewhere' ? { ...m, elsewhere: true } : m),
+    delay: (m) => {
+      const g = made?.host.game;
+      if (!made || !g || g.handNumber < 1) return 0;
+      return m.t === 'state' && made.owes() && g.turnCounter === m.view.turnCounter ? 3_000 : 0;
+    },
+    onTick: (w) => {
+      const g = w.host.game;
+      if (w.c.state.kicked && viewAtKick === null) viewAtKick = JSON.stringify(w.c.state.view);
+      if (done || !g || g.handNumber !== 0 || !w.owes() || w.host.phase !== 'playing') return;
+      firstOwed ??= w.clock.now;
+      if (w.clock.now < firstOwed + 3_000) return;
+      done = true;
+      if (kind === 'notice') w.line.inject({ t: 'disconnected' });
+      else w.dropNow(1_000);
+    },
+  });
+  made = w;
+  for (let k = 0; k < 14_400 && w.host.phase !== 'match_over'; k++) w.step();
+  return { w, viewAtKick, hostHands: w.host.audits.length };
+}
+
+describe('a link the server goes on feeding after it said the seat was opened on another device', () => {
+  for (const kind of ['notice', 'elsewhere'] as const) {
+    it(`Hyper, ${kind === 'notice' ? 'a ‘disconnected’ notice' : 'a rejoin welcomed with ‘elsewhere’'}, then the table sent on that link and the next hand’s turns held 3 s: the phone takes nothing more from it and plays nothing there, so no later hand is green`, () =>
+      scenario((i) => {
+        const t = keptFeeding(`KF${kind}${i}`, kind);
+        need(t.viewAtKick !== null && t.hostHands >= 2);
+        expect(t.w.c.state.kicked).toBe(true);
+        expect(JSON.stringify(t.w.c.state.view)).toBe(t.viewAtKick);
+        expect(t.w.c.state.audits.filter((a) => a.audit.handNumber >= 1 && a.status === 'ok')).toEqual([]);
+        expect((t.w.host.audits[1]?.log ?? []).filter((e) => e.seat === 0 && e.source === 'player')).toEqual([]);
+      }));
+  }
 });
