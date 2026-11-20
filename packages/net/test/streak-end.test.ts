@@ -379,6 +379,101 @@ describe('a move sent with time on the screen, lost to the table’s own (R4 aga
   }
 });
 
+/**
+ * Normal. One second into the seat's `nth` own turn the server says the seat was opened on another device; the link
+ * closes half a second later and the user resumes the table from Home a second after that (a new run of the app, on a
+ * new link the table welcomes, every ping answered, the app's join ping sent). The seat moves when its screen shows
+ * `show` ms; the server drops that move and the host times the seat out at the turn's true end. `kick` false: the same
+ * drop with no resume (the control).
+ */
+function resumedDrop(code: string, kick: boolean, show: number, nth = 2) {
+  let target = -1;
+  let turns = 0;
+  const seen = new Set<number>();
+  let closeAt: number | null = null;
+  let resumeAt: number | null = null;
+  let kicked = false;
+  let resumed = !kick;
+  let acted = false;
+  let dropped: Action | null = null;
+  let screenAtSend: number | null = null;
+  /** The server drops the seat's move for the target turn on the link in use. */
+  const drop = (w: Wire) => {
+    const send = w.line.link.send;
+    w.line.link.send = (m) => {
+      const x = m as { t?: string; turnCounter?: number; action?: Action };
+      if (x.t === 'action' && x.turnCounter === target) {
+        dropped = x.action ?? null;
+        return;
+      }
+      send(m);
+    };
+  };
+  const w = wire({
+    code,
+    botDelayMs: 700,
+    think: (_k, tc) => (tc === target ? Infinity : 600),
+    map: (m, w) => {
+      if (target < 0 && m.t === 'state' && typeof m.deadline === 'number' && !m.inTimeBank && w.discardTurn() && w.host.game!.turnCounter === m.view.turnCounter && !seen.has(m.view.turnCounter)) {
+        seen.add(m.view.turnCounter);
+        if (++turns === nth) target = m.view.turnCounter;
+      }
+      return m;
+    },
+    onTick: (w) => {
+      const now = w.clock.now;
+      const shown = target >= 0 ? w.shown.get(target) : undefined;
+      if (kick && !kicked && shown !== undefined && now >= shown + 1_000) {
+        kicked = true;
+        w.line.inject({ t: 'disconnected' });
+        closeAt = now + 500;
+      }
+      if (closeAt !== null && now >= closeAt) {
+        closeAt = null;
+        w.line.close();
+        resumeAt = now + 1_000;
+      }
+      if (resumeAt !== null && now >= resumeAt) {
+        resumeAt = null;
+        w.restart();
+        w.c.ping();
+        drop(w);
+        resumed = true;
+      }
+      if (!resumed || acted || target < 0 || !shownOwing(w, target)) return;
+      const left = screenLeft(w);
+      if (left === null || left > show) return;
+      acted = true;
+      screenAtSend = left;
+      w.c.act(chooseAction(w.c.localState()!, 0, { seed: 'p' }) as Action);
+    },
+  });
+  if (!kick) drop(w);
+  w.finish();
+  const taken = w.c.state.lastAudit?.log.find((e) => e.seat === 0 && e.n === target && e.source !== 'player');
+  const over = dropped !== null && taken !== undefined && JSON.stringify(taken.action) !== JSON.stringify(dropped);
+  return { w, target, over, kicked, screenAtSend: screenAtSend as number | null };
+}
+
+describe('a move made after an app resume the server forced, lost to the table’s own (R4 in the run that sent the move)', () => {
+  for (const show of [3_000, 10_000]) {
+    it(`Normal: the seat opened “on another device” a second into the turn, the table resumed from Home, the move made with ${show / 1000} s on the screen dropped and the seat timed out: amber inFlight, never green; the same without the resume`, () =>
+      scenario((i) => {
+        reseed(7_700 + i);
+        const t = resumedDrop(`SER${show}${i}`, true, show);
+        need(t.target >= 0 && t.kicked && t.over);
+        expect(t.screenAtSend).toBeGreaterThan(show - 1_000);
+        expect(t.w.verdict().failures).toEqual([]);
+        expect(t.w.verdict().status).toBe('partial');
+        expect(t.w.verdict().caveats).toContain('inFlight');
+        reseed(7_700 + i);
+        const ctl = resumedDrop(`SER${show}${i}`, false, show);
+        need(ctl.target === t.target && ctl.over);
+        expect(ctl.w.verdict()).toEqual({ status: 'partial', failures: [], caveats: ['inFlight'] });
+      }));
+  }
+});
+
 describe('honest ends (T27)', () => {
   const speeds: Array<[string, number, number]> = [
     ['Relaxed', 30, 60],
