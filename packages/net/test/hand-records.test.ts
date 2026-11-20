@@ -7,12 +7,12 @@
  * under the same caps, and never without the hand on show.
  */
 import { describe, expect, it } from 'vitest';
-import { withRules } from '@mjm/engine';
+import { legalActions, sameAction, withRules, type Action, type GameState } from '@mjm/engine';
 import { commitFor, TableClient, type HostMessage, type Link, type SerializedClient } from '../src/index';
 import { makeSecret } from '../src/fairness';
 import { keepSeen, MAX_SENT, type CeremonyRecord, type PlayRecord } from '../src/clientrecords';
 import { Missed, scenario, seededDeals } from './support';
-import { wire } from './wire';
+import { wire, type Wire } from './wire';
 
 seededDeals();
 
@@ -20,6 +20,8 @@ const need = (cond: boolean) => {
   if (!cond) throw new Missed();
 };
 const NORMAL = withRules({ handsPerMatch: 1, turnSeconds: 15, timeBankSeconds: 30 });
+/** The seat's own moves in the hand so far. */
+const mineMoves = (w: Wire) => w.host.game!.actionLog.filter((e) => e.seat === 0 && e.source === 'player').length;
 /** Five well-formed commitments the server makes up. */
 const madeUp = () => [0, 1, 2, 3, 4].map((seat) => ({ seat, hash: commitFor(makeSecret()) }));
 
@@ -215,5 +217,87 @@ describe('the saved record keeps what memory keeps', () => {
     const back = TableClient.restore(saved, nowhere(), 'Victim', undefined, { token: saved.state.token ?? undefined }, { now: () => 5_000_000 });
     expect(recs(back).commitSets).toEqual([{ hand: ON, commits: set }]);
     expect([...recs(back).tamper.entries()]).toEqual([[ON, ['kept']]]);
+  });
+});
+
+/**
+ * Normal. On the seat's second discard turn, half a second after the phone was shown it, the host plays a discard the
+ * seat would not make, logged as the seat's own. Once the phone has been shown three turns past it, and again each time
+ * the restored app has been shown three more, the server says the seat was opened on another device: the app saves at
+ * once and the player resumes from Home a second later, `kicks` times in all. Each notice closes the ledger into a
+ * stretch it still vouches for; the first holds the forged move.
+ */
+function vouched(code: string, kicks: number) {
+  let forged: number | null = null;
+  let done = 0;
+  let lastTc = -1;
+  let resumeAt: number | null = null;
+  const w = wire({
+    code,
+    rules: NORMAL,
+    botDelayMs: 700,
+    think: () => 2_000,
+    onTick: (w) => {
+      const g = w.host.game;
+      if (!g || w.host.phase !== 'playing') return;
+      if (resumeAt !== null && w.clock.now >= resumeAt) {
+        resumeAt = null;
+        w.restart();
+        return;
+      }
+      if (forged === null && w.discardTurn() && w.current() && mineMoves(w) >= 1 && w.clock.now - (w.shown.get(g.turnCounter) ?? Infinity) >= 500) {
+        const h = w.host as unknown as { apply(seat: number, a: Action, source: string): void; timeoutAction(g: GameState, seat: number): Action };
+        const timeout = h.timeoutAction(g, 0);
+        const move = legalActions(g, 0).find((a) => a.type === 'discard' && !sameAction(a, timeout, g, 0));
+        if (!move) return;
+        forged = g.turnCounter;
+        lastTc = forged;
+        h.apply(0, move, 'player');
+        return;
+      }
+      // This run of the app has been shown three turns of the hand past the last notice: its stretch covers turns.
+      const c = w.c as unknown as { plays: PlayRecord[]; runId: string };
+      const turns = new Set((c.plays.find((p) => p.hand === 0)?.seen ?? []).filter((f) => f.run === c.runId && f.tc > lastTc).map((f) => f.tc));
+      if (forged !== null && done < kicks && resumeAt === null && !w.c.state.kicked && turns.size >= 3) {
+        done++;
+        lastTc = Math.max(...turns);
+        w.line.inject({ t: 'disconnected' } as HostMessage);
+        resumeAt = w.clock.now + 1_000;
+      }
+    },
+  });
+  w.finish();
+  const spans = (w.c as unknown as { plays: PlayRecord[] }).plays.find((p) => p.hand === 0)?.vouched ?? [];
+  return { w, forged, done, spans };
+}
+
+describe('the stretches the ledger vouches for', () => {
+  it('nine seat-taken notices with resumes after a move forged in the seat’s name: red, the stretch that holds it is kept; one notice: red too', () =>
+    scenario((i) => {
+      const a = vouched(`HRV${i}`, 9);
+      need(a.forged !== null && a.done === 9);
+      expect(a.w.verdict().status).toBe('failed');
+      expect(a.w.verdict().failures).toEqual(expect.arrayContaining(['moveInvented']));
+      expect(a.spans.some((v) => v.from <= a.forged! && a.forged! < v.to)).toBe(true);
+      const b = vouched(`HRV${i}`, 1);
+      need(b.forged !== null && b.done === 1);
+      expect(b.w.verdict().failures).toEqual(expect.arrayContaining(['moveInvented']));
+    }));
+
+  it('stretches that touch or overlap are kept as one, and stretches of different turns stay apart', () => {
+    const c = new TableClient(nowhere(), 'Victim', undefined, {}, { now: () => 5_000_000 });
+    const r = c as unknown as { plays: PlayRecord[]; runId: string; playFor(h: number): PlayRecord; closeLedger(p: PlayRecord): void };
+    const play = r.playFor(0);
+    const close = (from: number, to: number) => {
+      play.ledgerFrom = from;
+      play.seen = [{ tc: to, epoch: 0, at: 0, run: r.runId, owes: false, deadline: null, timeBank: 0, inBank: false, hash: 'x' }];
+      r.closeLedger(play);
+    };
+    for (let k = 0; k < 20; k++) close(10 * k, 10 * k + 5);
+    expect(play.vouched).toHaveLength(20);
+    close(5, 10);
+    close(3, 12);
+    expect(play.vouched?.slice(0, 2)).toEqual([{ from: 0, to: 15 }, { from: 20, to: 25 }]);
+    expect(play.vouched).toHaveLength(19);
   });
 });

@@ -78,6 +78,7 @@ import {
   type CeremonyRecord,
   type ClockAnchor,
   type GapStart,
+  type LedgerSpan,
   type PlayRecord,
   type RunScope,
   type SeenState,
@@ -1489,7 +1490,9 @@ export class TableClient {
    * for the turns before the last state this client was shown while it held the seat: every move before
    * that state was made while this device held the seat (an honest host stops sending to a link once
    * another device takes its seat), so a notice that comes after it cannot excuse one this device never
-   * sent. The ledger began vouching in this run of the app, so only states this run saw count.
+   * sent. The ledger began vouching in this run of the app, so only states this run saw count. Every stretch of the
+   * hand is kept (two that touch or overlap become one): each takes a seat-taken notice and a resume from Home, and
+   * dropping the oldest would excuse a move forged in it.
    */
   private closeLedger(play: PlayRecord): void {
     const from = play.ledgerFrom;
@@ -1497,8 +1500,14 @@ export class TableClient {
     let to = from;
     for (const f of play.seen) if (f.run === this.runId && f.tc > to) to = f.tc;
     if (to <= from) return;
-    (play.vouched ??= []).push({ from, to });
-    if (play.vouched.length > 8) play.vouched.shift();
+    const spans = [...(play.vouched ?? []), { from, to }].sort((a, b) => a.from - b.from);
+    const merged: LedgerSpan[] = [];
+    for (const v of spans) {
+      const last = merged[merged.length - 1];
+      if (last && v.from <= last.to) last.to = Math.max(last.to, v.to);
+      else merged.push({ from: v.from, to: v.to });
+    }
+    play.vouched = merged;
   }
 
   /**
