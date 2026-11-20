@@ -6,7 +6,15 @@
  */
 import { describe, expect, it } from 'vitest';
 import { withRules } from '@mjm/engine';
-import { LoopbackHub, TableHost, type HostMessage } from '../src/index';
+import { caveatKey, LoopbackHub, TableClient, TableHost, type HostMessage } from '../src/index';
+import { Missed, scenario, seededDeals } from './support';
+import { wire } from './wire';
+
+seededDeals();
+
+const need = (cond: boolean) => {
+  if (!cond) throw new Missed();
+};
 
 /** A raw peer that records what the host sends it. */
 function peer(hub: LoopbackHub, id: string) {
@@ -139,5 +147,69 @@ describe('at a table a device hosts (user ids are only claims)', () => {
     const back = peer(hub, 'a2');
     back.send({ t: 'join', name: 'Alice', userId: 'alice-1', token: aliceToken });
     expect(welcome(back.received)).toMatchObject({ seat: 0, token: aliceToken });
+  });
+});
+
+/**
+ * Normal, an honest server-hosted table of two hands, the phone's seat bound to an account. Hand 0 is played on one
+ * device; once hand 1 is dealt and the seat owes nothing, that device's app closes and the account opens the table on
+ * another: `fresh`, a client with neither the record nor the rejoin token (the account takes its seat back by itself, as
+ * after a notification on another phone); `token`, a client with the rejoin token alone; `record`, the saved record and
+ * token (Home's Resume on the same device).
+ */
+function takenBack(code: string, mode: 'fresh' | 'token' | 'record') {
+  let moved = false;
+  const w = wire({
+    code,
+    rules: withRules({ handsPerMatch: 2, turnSeconds: 15, timeBankSeconds: 30 }),
+    botDelayMs: 700,
+    intermissionSeconds: 5,
+    onTick: (w) => {
+      const g = w.host.game;
+      if (moved || !g || g.handNumber !== 1 || w.host.phase !== 'playing' || w.owes() || w.c.state.view?.handNumber !== 1) return;
+      moved = true;
+      const token = w.c.state.token ?? undefined;
+      const restore = TableClient.restore;
+      TableClient.restore = (saved, link, name, avatar, _identity, opts) =>
+        mode === 'fresh' ? new TableClient(link, name, avatar, { userId: 'acct-0' }, opts) : mode === 'token' ? new TableClient(link, name, avatar, { token, userId: 'acct-0' }, opts) : restore.call(TableClient, saved, link, name, avatar, { token, userId: 'acct-0' }, opts);
+      try {
+        w.restart();
+      } finally {
+        TableClient.restore = restore;
+      }
+    },
+  });
+  // The game server's table: a signed-in account takes its own seat back without a token.
+  (w.host as unknown as { verifiedUserIds: boolean }).verifiedUserIds = true;
+  (w.host as unknown as { seats: Array<{ userId?: string }> }).seats[0].userId = 'acct-0';
+  w.finish();
+  for (let k = 0; k < 600 && w.host.phase !== 'match_over'; k++) w.step();
+  const hand1 = w.c.state.audits.find((a) => a.audit.handNumber === 1);
+  return { w, moved, hand1 };
+}
+
+describe('a seat the account takes back with neither the record nor the token (another device, a notification)', () => {
+  it('honest table: the first hand the new client is shown, hand 1, is amber (joined, its starting scores unchecked), never red; with the token alone the same; from the record, green', () =>
+    scenario((i) => {
+      const a = takenBack(`TBF${i}`, 'fresh');
+      need(a.moved && !!a.hand1);
+      expect(a.w.c.state.seat).toBe(0);
+      expect(a.hand1!.status).toBe('partial');
+      expect(a.hand1!.failures).toEqual([]);
+      expect(a.hand1!.caveats.map(caveatKey)).toEqual(expect.arrayContaining(['joined', 'gap']));
+      const b = takenBack(`TBF${i}`, 'token');
+      need(b.moved && !!b.hand1);
+      expect(b.hand1!.status).toBe('partial');
+      expect(b.hand1!.caveats.map(caveatKey)).toEqual(expect.arrayContaining(['joined', 'gap']));
+      const c = takenBack(`TBF${i}`, 'record');
+      need(c.moved && !!c.hand1);
+      expect(c.hand1!.status).toBe('ok');
+    }));
+
+  it('a client with neither a token nor a record that sits down in the lobby still holds the match’s first hand to a new match’s start', () => {
+    const w = wire({ code: 'TBL', rules: withRules({ handsPerMatch: 1, turnSeconds: 15, timeBankSeconds: 30 }), botDelayMs: 300 });
+    w.finish();
+    expect(w.c.state.audits[0]).toMatchObject({ status: 'ok', failures: [], caveats: [] });
+    expect((w.c.serialize() as unknown as { chainGap?: boolean }).chainGap).toBe(false);
   });
 });

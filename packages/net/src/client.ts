@@ -474,6 +474,13 @@ export class TableClient {
   private firstHand: number | null = null;
   /** Built from a rejoin token alone, with no record of what came before. */
   private noHistory = false;
+  /**
+   * Built with neither a rejoin token nor a record. Such a client sits down in the lobby, or takes its account's own seat
+   * back part-way through a match (a server-hosted table gives a signed-in account its seat back without the token: from
+   * another device, or a link that brought no token), so the first hand it hears of may be any, and until then it cannot
+   * tell which (see `enterHand`).
+   */
+  private fresh = false;
   /** Hands whose `hand_over` we received. */
   private handsEnded = new Set<number>();
   /** Host misbehaviour seen during each hand. */
@@ -711,7 +718,7 @@ export class TableClient {
       // Whatever an earlier run of the app did at this table is unknown: the deal of the first hand
       // this client hears of may have been agreed, in part, before it existed.
       this.lapse = true;
-    }
+    } else this.fresh = true;
   }
 
   /**
@@ -732,6 +739,7 @@ export class TableClient {
   }
 
   private load(d: SerializedClient): void {
+    this.fresh = false;
     if (typeof d.device === 'string' && /^[\w-]{6,64}$/.test(d.device)) this.deviceId = d.device;
     const st = d.state;
     this.state = {
@@ -1615,7 +1623,12 @@ export class TableClient {
         this.failNow(problem);
       } else this.noteGap(h);
     } else if (base?.matchOver) this.flag(h, 'Host dealt another hand after the match was over');
-    else if (base ? h !== base.handNumber : this.handsEnded.size > 0 && this.gapHand === null && h !== Math.max(...this.handsEnded) + 1) {
+    else if (this.fresh && h > 0 && !this.hasEvidence()) {
+      // Sat down with neither a token nor a record, and the first hand it hears of is not the match's first: the table
+      // gave the account its own seat back part-way through the match (or dealt a client in the lobby out of turn, which
+      // this client cannot tell from it). Nothing it holds says where this hand should start.
+      this.noteGap(h);
+    } else if (base ? h !== base.handNumber : this.handsEnded.size > 0 && this.gapHand === null && h !== Math.max(...this.handsEnded) + 1) {
       this.carryFlags(base ? base.handNumber : Math.max(...this.handsEnded) + 1, h);
       if (this.quietSince === this.epoch) this.flag(h, 'Host dealt a hand out of turn');
       else this.noteGap(h);
@@ -1818,7 +1831,8 @@ export class TableClient {
         if (this.pinnedRules && stableStringify(rules) !== stableStringify(this.pinnedRules)) this.flag(this.activeHand(), 'Host changed the rules mid-match');
         if (this.state.matchId === null) {
           this.quietSince = this.epoch;
-          // Without a token the host seats nobody after the first deal, so this client is in the lobby.
+          // With no token this client sat down in the lobby, unless the table gave its account its own seat back part-way
+          // through the match (`fresh`): the first hand it hears of says which (`enterHand`).
           this.atStart = !this.noHistory;
         }
         this.checkBots(seats);
@@ -1844,6 +1858,8 @@ export class TableClient {
         return;
       case 'commit_request': {
         const h = m.handNumber;
+        // The first deal a client with neither a token nor a record hears of may be well under way (`fresh`).
+        const recordless = this.noHistory || (this.fresh && !this.hasEvidence());
         const v = this.state.view;
         if (v && v.handNumber === h && v.phase !== 'ended' && this.state.lastResult === null && this.state.ceremony === 'idle') {
           // A hand with this number is already being played: a fresh ceremony now would be a re-deal.
@@ -1868,7 +1884,7 @@ export class TableClient {
           rec = { hand: h, attempts: [], fromStart: n === 1, linkLost: false, dealt: false };
           this.records.push(rec);
           this.trimHands(this.records, MAX_HAND_RECORDS, (r) => r.hand);
-          if (n !== 1 && !this.noHistory && this.quietSince === this.epoch) this.flag(h, `Host never asked this seat to commit to attempts 1–${n - 1} of this hand`);
+          if (n !== 1 && !recordless && this.quietSince === this.epoch) this.flag(h, `Host never asked this seat to commit to attempts 1–${n - 1} of this hand`);
         } else if (again) {
           // The same attempt, asked again after a lost link: a fresh secret takes the place of the one that never arrived.
         } else if (last && n <= last.n) this.flag(h, `Host ran attempt ${n} of this hand's deal twice`);

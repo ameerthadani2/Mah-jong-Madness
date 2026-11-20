@@ -165,6 +165,15 @@ export function setSavedClientSource(source: SavedClientSource | null): void {
   savedClientSource = source;
 }
 
+/** The rejoin token this device saved for a table, when it holds that table's record (app-state registers it). */
+type SavedTokenSource = (signalUrl: string, roomCode: string) => string | undefined;
+let savedTokenSource: SavedTokenSource | null = null;
+
+/** Register where the saved table's rejoin token is found for a join that brings none; null unregisters. */
+export function setSavedTokenSource(source: SavedTokenSource | null): void {
+  savedTokenSource = source;
+}
+
 /**
  * The saved record to restore for this table, if it is the seat's: one kept under this room (the source matches the room
  * the session joined, not one a welcome named) for the seat's token, or for no token when the table gave none.
@@ -547,8 +556,13 @@ export async function createOnlineSession(opts: OnlineOptions): Promise<Session>
     await opts.onUnauthorised();
     connection = await openConnection(opts, opts.action, code);
   }
-  const identity = { token: opts.token, userId: opts.userId };
-  const saved = opts.action === 'join' ? savedClientFor(opts, connection.room.room) : undefined;
+  // A join that brings no token, to a table this device holds a record for (a notification, a club's table, Join by code, a
+  // quick match's `seated` answer): it joins with that record's token, and its client takes up the record, as Home's
+  // Resume does. Joined without them the account still gets its own seat back, but as a client with no record of the
+  // match, which can check neither the hand it is shown nor the scores it starts from.
+  const token = opts.token ?? (opts.action === 'join' ? savedTokenSource?.(opts.signalUrl, connection.room.room) || undefined : undefined);
+  const identity = { token, userId: opts.userId };
+  const saved = opts.action === 'join' ? savedClientFor({ ...opts, token }, connection.room.room) : undefined;
   const client = saved ? TableClient.restore(saved, connection.link, opts.name, opts.avatar, identity) : new TableClient(connection.link, opts.name, opts.avatar, identity);
   const session = new OnlineSession(opts, connection, client);
   client.join();

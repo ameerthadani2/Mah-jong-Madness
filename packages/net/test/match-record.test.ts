@@ -6,7 +6,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { chooseAction, dealFromSnapshot, legalActions, viewFor, withRules, type GameState, type MatchSnapshot } from '@mjm/engine';
-import { deriveSeed, LoopbackHub, TableClient, TableHost, transportLink, type Audit, type HostMessage, type Reveal, type SeatInfo } from '../src/index';
+import { AUDIT_CAVEATS, deriveSeed, LoopbackHub, TableClient, TableHost, transportLink, type Audit, type HostMessage, type Reveal, type SeatInfo } from '../src/index';
 import { seededDeals } from './support';
 
 seededDeals();
@@ -280,20 +280,30 @@ describe('hands follow one another without a jump', () => {
     expect(c.state.auditFailures).toContain('Host started another hand before the one in progress had ended');
   });
 
-  it('a player seated from the lobby is dealt the first hand of a new match, whatever number the host gives it', () => {
+  it('a player seated from the lobby is dealt the first hand of a new match: hand 0 with the scores moved is red; a later hand first is amber, its starting scores unchecked, as for a client that holds only a token', () => {
     for (const fromLobby of [true, false]) {
       const { clock, hub, host, h } = table(fromLobby ? 'SK2' : 'SK2T', 8);
       // The host starts the match at "hand 5" with the scores already moved.
       h.snapshot = { ...h.snapshot, handNumber: 5, scores: [-900, 300, 300, 300] };
-      // A client that holds only a token cannot know how the match began; one from the lobby can.
+      // A client that holds only a token cannot know how the match began. Nor can one that sat down with neither a token
+      // nor a record: the table may have given its account its own seat back part-way through the match (stated limit).
       const c = new TableClient(transportLink(hub.create('p0'), 'host'), 'Victim', undefined, fromLobby ? {} : { token: 'f'.repeat(32) });
       c.join();
       host.start();
       playOut(host, c, clock);
       expect(c.state.lastAudit!.handNumber).toBe(5);
-      if (fromLobby) expect([c.state.auditStatus, c.state.auditFailures]).toEqual(['failed', ['Host dealt a hand out of turn']]);
-      else expect(c.state.auditStatus).not.toBe('failed');
+      expect(c.state.auditStatus).toBe('partial');
+      expect(c.state.auditCaveats).toContain(AUDIT_CAVEATS.gap);
     }
+    // Dealt hand 0, the match's first, a client from the lobby holds it to a new match's start.
+    const { clock, hub, host, h } = table('SK2Z', 8);
+    h.snapshot = { ...h.snapshot, scores: [-900, 300, 300, 300] };
+    const c = new TableClient(transportLink(hub.create('p0'), 'host'), 'Victim');
+    c.join();
+    host.start();
+    playOut(host, c, clock);
+    expect(c.state.lastAudit!.handNumber).toBe(0);
+    expect([c.state.auditStatus, c.state.auditFailures]).toEqual(['failed', ['The match started with scores different from a new match']]);
   });
 
   it('a seat changed in the lobby, before any deal, is not held against the host', () => {

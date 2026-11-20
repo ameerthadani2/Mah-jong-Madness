@@ -2,7 +2,7 @@ import React, { createContext, useContext, useEffect, useMemo, useRef, useState 
 import { BackHandler, Platform } from 'react-native';
 import { DEFAULT_PROFILE, DEFAULT_PROGRESS, DEFAULT_SETTINGS, storage, type ActiveSession, type Profile, type Progress, type Settings } from './storage';
 import { clientSaves, saveScheduler } from './game/persist';
-import { setSavedClientSource, type CloseOptions, type Session } from './game/session';
+import { setSavedClientSource, setSavedTokenSource, type CloseOptions, type Session } from './game/session';
 import { acceptedName } from './logic/profile';
 import type { ShopFocus } from './logic/shopFocus';
 import type { BoardKind } from './api/puzzles';
@@ -166,7 +166,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const rec = activeRef.current;
       return rec?.kind === 'online' && rec.signalUrl === url && rec.roomCode === room && rec.token === token ? rec.client : undefined;
     });
-    return () => setSavedClientSource(null);
+    // Every join to the saved table brings its token (a notification, a club's table, Join by code), not Resume alone.
+    setSavedTokenSource((url, room) => {
+      const rec = activeRef.current;
+      return rec?.kind === 'online' && rec.signalUrl === url && rec.roomCode === room && rec.token ? rec.token : undefined;
+    });
+    return () => {
+      setSavedClientSource(null);
+      setSavedTokenSource(null);
+    };
   }, []);
 
   // Keep the resumable-session record in sync with whatever table we are at. A name the server refused

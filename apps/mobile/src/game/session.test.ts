@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { chooseAction, DEFAULT_RULES, legalActions, withRules } from '@mjm/engine';
 import { LoopbackHub, TableClient, TableHost, transportLink, type ClientState, type SerializedClient } from '@mjm/net';
-import { connectSignaling, createLocalSession, createOnlineSession, isUnauthorised, seatOrRefusal, setSavedClientSource, UNAUTHORISED_CLOSE, type Session } from './session';
+import { connectSignaling, createLocalSession, createOnlineSession, isUnauthorised, seatOrRefusal, setSavedClientSource, setSavedTokenSource, UNAUTHORISED_CLOSE, type Session } from './session';
 import { friendlyErrorMessage } from '../logic/errors';
 import { linkNotice } from '../logic/reconnect';
 
@@ -787,7 +787,10 @@ describe('cold resume after an app restart', () => {
     return JSON.parse(JSON.stringify(c.serialize())) as SerializedClient;
   }
 
-  afterEach(() => setSavedClientSource(null));
+  afterEach(() => {
+    setSavedClientSource(null);
+    setSavedTokenSource(null);
+  });
 
   it('restores the saved client record passed in the options', async () => {
     const saved = savedRecord();
@@ -818,6 +821,26 @@ describe('cold resume after an app restart', () => {
     const s = await createOnlineSession({ ...base, action: 'join', code: 'ABC123', token: saved.state.token! });
     expect(s.client.state.audits).toHaveLength(1);
     s.close();
+  });
+
+  it('a join that brings no token, to the table this device saved (a notification, a club table, Join by code, a quick match’s seated answer), joins with the saved token and takes up the saved record', async () => {
+    const saved = savedRecord();
+    setSavedClientSource((url, room, token) => (url === base.signalUrl && room === 'ABC123' && token === saved.state.token ? saved : undefined));
+    setSavedTokenSource((url, room) => (url === base.signalUrl && room === 'ABC123' ? saved.state.token! : undefined));
+    const s = await createOnlineSession({ ...base, action: 'join', code: 'ABC123' });
+    expect(tableJoins(FakeSocket.last!)).toEqual([expect.objectContaining({ t: 'join', token: saved.state.token })]);
+    expect(s.client.state.audits).toHaveLength(1);
+    s.close();
+    // A join that brings a token of its own keeps it; a table this device saved no record of gets none.
+    const own = await createOnlineSession({ ...base, action: 'join', code: 'ABC123', token: TOKEN });
+    expect(tableJoins(FakeSocket.last!)).toEqual([expect.objectContaining({ t: 'join', token: TOKEN })]);
+    expect(own.client.state.audits).toEqual([]);
+    own.close();
+    setSavedTokenSource((url, room) => (room === 'OTHER1' ? saved.state.token! : undefined));
+    const other = await createOnlineSession({ ...base, action: 'join', code: 'ABC123' });
+    expect(tableJoins(FakeSocket.last!)[0]).not.toHaveProperty('token');
+    expect(other.client.state.audits).toEqual([]);
+    other.close();
   });
 
   it('restores a record kept with no token (the table gave none) for a resume with none, and never onto a seat that has one', async () => {
