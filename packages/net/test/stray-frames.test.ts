@@ -10,7 +10,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { legalActions, withRules, type Action, type GameState } from '@mjm/engine';
-import type { HostMessage, TableClient } from '../src/index';
+import { caveatKey, failureKey, type HostMessage, type TableClient } from '../src/index';
 import type { PlayRecord } from '../src/clientrecords';
 import { Missed, scenario, seededDeals } from './support';
 import { wire, type Wire } from './wire';
@@ -243,5 +243,265 @@ describe('frames about the deal of a hand the phone is not on', () => {
       expect(run({ t: 'stand_in', handNumber: 7, attempt: 1 } as HostMessage)).toMatchObject({ status: 'failed', failures: ['strayFrame'] });
       expect(run({ t: 'stand_in', handNumber: 0, attempt: 1 } as HostMessage)).toEqual({ status: 'ok', failures: [], caveats: [] });
       expect(run(null)).toEqual({ status: 'ok', failures: [], caveats: [] });
+    }));
+});
+
+const HYPER4 = withRules({ handsPerMatch: 4, turnSeconds: 4, timeBankSeconds: 0 });
+/** Every audit the phone holds, as `hand: status [failure keys] [caveat keys]`. */
+const audits = (w: Wire) =>
+  w.c.state.audits.map((a) => ({ hand: a.audit.handNumber, status: a.status, failures: a.failures.map((f) => failureKeyOf(f)), caveats: a.caveats.map((c) => caveatKeyOf(c)) }));
+const failureKeyOf = (f: string) => failureKey(f) ?? f;
+const caveatKeyOf = (c: string) => caveatKey(c) ?? c;
+const STRAY = ['strayFrame', 'restartMidLink', 'restartedTwice'];
+
+/**
+ * The honest orders a returning or restarted table sends (`TableHost.onJoin`): the welcome, the records of the hands
+ * that ended while the link was down, the restart notice, a stand-in notice, then the state, the hand's result or the
+ * deal in progress. A server restart drops every link; the restored table names the hand it resumed, with its turn,
+ * or the next hand at -1 when it was between hands, on each rejoin until that hand ends.
+ */
+describe('honest returns and restarts keep their verdicts', () => {
+  /**
+   * Hyper, four rotations. After the seat's second move its link goes dead both ways without the table noticing (the
+   * phone's own watch is off), so the table plays on, timing the seat out. Once the table has reached hand `back` the
+   * phone joins again on a new link and takes the seat back (`restartIn`: the server restarts first, which drops every
+   * link, and the phone joins the restored table 2 s later).
+   */
+  function away(code: string, back: number, restartIn: boolean) {
+    let dead = false;
+    let started = false;
+    let returned = false;
+    const w = wire({
+      code,
+      rules: HYPER4,
+      botDelayMs: 300,
+      intermissionSeconds: 3,
+      watch: false,
+      map: (m) => (dead ? null : m),
+      upFilter: () => !dead,
+      onTick: (w) => {
+        const g = w.host.game;
+        if (!started && g && g.handNumber === 0 && w.host.phase === 'playing' && !w.owes() && mine(w) >= 2) {
+          started = true;
+          dead = true;
+        }
+        if (started && !returned && g && g.handNumber >= back && w.host.phase === 'playing' && g.turnCounter > 6) {
+          returned = true;
+          dead = false;
+          if (restartIn) w.restartHost(2_000);
+          else w.reconnect();
+        }
+      },
+    });
+    for (let k = 0; k < 40_000 && !w.c.state.matchOver; k++) w.step();
+    return { w, returned };
+  }
+
+  it('Hyper, the link dead for two hands without the table noticing, the phone back in the third: the hands it missed are amber (it was away), none red, and a later hand green; the same with the server restarted in the third hand just before the phone is back', () =>
+    scenario((i) => {
+      for (const restartIn of [false, true]) {
+        const t = away(`SHA${restartIn ? 'r' : ''}${i}`, 2, restartIn);
+        need(t.returned && t.w.c.state.matchOver);
+        const all = audits(t.w);
+        need(all.some((a) => a.hand >= 3));
+        expect(all.filter((a) => a.status === 'failed')).toEqual([]);
+        for (const a of all) expect(a.failures.filter((f) => STRAY.includes(f))).toEqual([]);
+        expect(all.filter((a) => a.hand < 2).every((a) => a.status === 'partial' && a.caveats.includes('away'))).toBe(true);
+        expect(all.find((a) => a.hand === 3)?.status).toBe('ok');
+      }
+    }));
+
+  /**
+   * Normal, two rotations, the server restarted once (`at`): `mid` while the seat owes nothing in hand 0, `between` while
+   * hand 0's result is shown, `deal` while hand 1's deal is being agreed. The phone joins again 1 s later.
+   */
+  function restartAt(code: string, at: 'mid' | 'between' | 'deal') {
+    let done = false;
+    const w = wire({
+      code,
+      rules: withRules({ handsPerMatch: 2, turnSeconds: 15, timeBankSeconds: 30 }),
+      botDelayMs: 700,
+      intermissionSeconds: 5,
+      onTick: (w) => {
+        if (done) return;
+        const g = w.host.game;
+        const phase = w.host.phase;
+        const go =
+          at === 'mid' ? phase === 'playing' && g?.handNumber === 0 && !w.owes() && mine(w) >= 3 && w.c.state.view?.turnCounter === g.turnCounter
+          : at === 'between' ? phase === 'hand_over' && w.c.state.lastResult !== null
+          : (phase === 'commit' || phase === 'reveal') && (w.host as unknown as { snapshot: { handNumber: number } }).snapshot.handNumber === 1;
+        if (!go) return;
+        done = true;
+        w.restartHost(1_000);
+      },
+    });
+    for (let k = 0; k < 20_000 && !w.c.state.matchOver; k++) w.step();
+    return { w, done };
+  }
+
+  it('Normal, the server restarted mid-hand with the seat owing nothing, and while a hand’s result was shown: every hand green', () =>
+    scenario((i) => {
+      for (const at of ['mid', 'between'] as const) {
+        const t = restartAt(`SHR${at}${i}`, at);
+        need(t.done && t.w.c.state.matchOver);
+        const all = audits(t.w);
+        need(all.length >= 2);
+        expect(all.map((a) => [a.hand, a.status])).toEqual(all.map((a) => [a.hand, 'ok']));
+      }
+    }));
+
+  it('Normal, the server restarted while the next deal was being agreed: that deal is run again, so its hand is amber (the deal was restarted), never red; every other hand green', () =>
+    scenario((i) => {
+      const t = restartAt(`SHD${i}`, 'deal');
+      need(t.done && t.w.c.state.matchOver);
+      const all = audits(t.w);
+      const second = all.find((a) => a.hand === 1);
+      need(second !== undefined);
+      expect(second!.status).toBe('partial');
+      expect(second!.failures).toEqual([]);
+      expect(all.filter((a) => a.hand !== 1).every((a) => a.status === 'ok')).toBe(true);
+    }));
+
+  it('Normal, the seat’s commitment for the next deal lost on its way and the phone back on a new link while the table still waits for it: asked again, it commits on the new link; that hand amber (its link was lost during the deal), never red; the others green', () =>
+    scenario((i) => {
+      let lost = false;
+      let back = false;
+      const w = wire({
+        code: `SHC${i}`,
+        rules: withRules({ handsPerMatch: 2, turnSeconds: 15, timeBankSeconds: 30 }),
+        botDelayMs: 700,
+        intermissionSeconds: 5,
+        upFilter: (m, w) => {
+          if (lost || m.t !== 'commit' || (w.host as unknown as { snapshot: { handNumber: number } }).snapshot.handNumber !== 1) return true;
+          lost = true;
+          return false;
+        },
+        onTick: (w) => {
+          if (!lost || back || w.host.phase !== 'commit') return;
+          back = true;
+          // The old link is not closed: the table learns of the new one from the join, as when it has not seen the drop.
+          w.reconnect();
+        },
+      });
+      for (let k = 0; k < 20_000 && !w.c.state.matchOver; k++) w.step();
+      need(back && w.c.state.matchOver);
+      const all = audits(w);
+      const second = all.find((a) => a.hand === 1);
+      need(second !== undefined);
+      expect(second!.failures).toEqual([]);
+      expect(second!.status).toBe('partial');
+      expect(all.filter((a) => a.hand !== 1).every((a) => a.status === 'ok')).toBe(true);
+    }));
+});
+
+/**
+ * Normal. From the seat's second move on, the server holds the state of each of its next three turns 10 s (every
+ * other frame behind it waits too, its answers to pings aside; honest stamps) and, just before each held state,
+ * announces a restart for a hand never dealt (1001, 1002, ...) on the link that never dropped (`notice`), or does not
+ * (the control). Such a notice once began a new clock era each time, so no turn held under it was measured.
+ */
+function heldUnderNotices(code: string, notice: boolean) {
+  let holdUntil: number | null = null;
+  let heldNow: number | null = null;
+  let j = 0;
+  const held: number[] = [];
+  const w = wire({
+    code,
+    rules: NORMAL,
+    botDelayMs: 700,
+    think: () => 1_000,
+    map: (m, w) => {
+      const g = w.host.game;
+      const holding = holdUntil !== null && w.clock.now < holdUntil;
+      if (m.t === 'pong' && holding) {
+        w.line.inject(m);
+        return null;
+      }
+      if (!holding && held.length < 3 && m.t === 'state' && g && w.owes() && g.turnCounter === m.view.turnCounter && typeof m.deadline === 'number' && !m.inTimeBank && typeof m.now === 'number' && m.deadline - m.now >= 14_000 && mine(w) >= 2) {
+        held.push(m.view.turnCounter);
+        heldNow = m.view.turnCounter;
+        holdUntil = w.clock.now + 10_000 + (w.clock.now % 1_000 === 0 ? 300 : 0);
+      }
+      return m;
+    },
+    delay: (_m, now) => (holdUntil !== null && now < holdUntil ? holdUntil - now : 0),
+    before: (m) => {
+      if (!notice || m.t !== 'state' || m.view.turnCounter !== heldNow) return [];
+      heldNow = null;
+      return [{ t: 'restored', handNumber: 1000 + ++j, turnCounter: 0 } as HostMessage];
+    },
+  });
+  w.finish();
+  return { w, held };
+}
+
+describe('restart notices for a hand the phone is not on, or more than one in a hand', () => {
+  it('Normal, three turns held 10 s, each under a restart notice for a hand never dealt, on a link that never dropped: red (the notices change nothing, and the turns stay late); without the notices amber lateShown', () =>
+    scenario((i) => {
+      const a = heldUnderNotices(`SRN${i}`, true);
+      need(a.held.length >= 2);
+      expect(a.w.verdict().status).toBe('failed');
+      expect(a.w.verdict().failures).toEqual(['restartMidLink']);
+      expect(a.w.verdict().caveats).toContain('lateShown');
+      const b = heldUnderNotices(`SRN${i}`, false);
+      need(b.held.length >= 2);
+      expect(b.w.verdict()).toMatchObject({ status: 'partial', failures: [] });
+      expect(b.w.verdict().caveats).toContain('lateShown');
+    }));
+
+  it('Normal, the link dropped on two of the seat’s turns, each time with a restart notice for a hand never dealt as the new link’s first word: the first may begin a new clock era, the second, with the same hand on show, is a second restart: red', () =>
+    scenario((i) => {
+      let drops = 0;
+      let lastTc = -1;
+      const w = wire({
+        code: `SRD${i}`,
+        rules: NORMAL,
+        botDelayMs: 700,
+        think: () => 1_000,
+        onTick: (w) => {
+          const g = w.host.game;
+          if (drops >= 2 || !g || w.host.phase !== 'playing' || w.pendingReconnectAt !== null || !w.current() || mine(w) < 2 || g.turnCounter === lastTc) return;
+          lastTc = g.turnCounter;
+          w.afterWelcome({ t: 'restored', handNumber: 1001 + drops, turnCounter: 0 } as HostMessage);
+          drops++;
+          w.dropNow(500);
+        },
+      });
+      w.finish();
+      need(drops === 2);
+      expect(w.verdict().status).toBe('failed');
+      expect(w.verdict().failures).toEqual(['restartedTwice']);
+    }));
+
+  it('Normal, a restart that took back a turn, announced as the new link’s first word, then four notices for hands never dealt on that link: red, and the restart that took back the turn is still named', () =>
+    scenario((i) => {
+      let notice: { hand: number; tc: number } | null = null;
+      let extras = false;
+      const w = wire({
+        code: `SRU${i}`,
+        rules: NORMAL,
+        botDelayMs: 700,
+        think: () => 1_000,
+        onTick: (w) => {
+          const g = w.host.game;
+          if (notice || !g || w.host.phase !== 'playing' || w.owes()) return;
+          const mineN = g.actionLog.filter((e) => e.seat === 0);
+          const v = w.c.state.view;
+          if (mineN.length < 3 || !v || v.turnCounter !== g.turnCounter || v.turnCounter < mineN[mineN.length - 1].n + 3) return;
+          notice = { hand: g.handNumber, tc: v.turnCounter - 1 };
+          w.afterWelcome({ t: 'restored', handNumber: notice.hand, turnCounter: notice.tc } as HostMessage);
+          w.dropNow(1_000);
+        },
+        after: (m) => {
+          if (!notice || extras || m.t !== 'state' || w.pendingReconnectAt !== null) return [];
+          extras = true;
+          return [1, 2, 3, 4].map((k) => ({ t: 'restored', handNumber: 1000 + k, turnCounter: 0 }) as HostMessage);
+        },
+      });
+      w.finish();
+      need(notice !== null && extras);
+      expect(w.verdict().status).toBe('failed');
+      expect(w.verdict().failures).toEqual(['restartMidLink']);
+      expect(w.verdict().caveats).toContain('serverRestart');
     }));
 });

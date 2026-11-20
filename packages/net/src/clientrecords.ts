@@ -629,6 +629,8 @@ export interface SerializedClient {
   chainGap?: boolean;
   missedMoves?: boolean;
   rewinds: Array<{ hand: number; tc: number; undone: boolean }>;
+  /** The hand on show when a restart notice last began a clock era (absent in records saved by older builds). */
+  eraHand?: number | null;
   lapseHand: number | null;
   lapseDeal: boolean;
   /** What this client knows about the host's clock and its own absences (absent in records saved by older builds). */

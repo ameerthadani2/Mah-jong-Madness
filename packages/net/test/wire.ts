@@ -68,6 +68,8 @@ export interface Plan {
   hold?: (m: HostMessage, w: Wire) => boolean;
   /** Frames of the server's own making that it sends right behind a frame it sends (on the same link, in order). */
   after?: (m: HostMessage, w: Wire) => HostMessage[];
+  /** The same, right before it (they wait with it, and arrive just before it). */
+  before?: (m: HostMessage, w: Wire) => HostMessage[];
   onTick?: (w: Wire) => void;
   /** Right after the phone joined on a new link. */
   onReconnect?: (w: Wire) => void;
@@ -128,6 +130,8 @@ export function wire(plan: Plan) {
   let owed = { tc: -1, k: 0, since: 0, think: 0, acted: false };
   /** The uplink delay starts once the seat is taken (its first join goes straight through). */
   let upOn = false;
+  /** Frames the server sends right behind the next `welcome` (`w.afterWelcome`). */
+  const behindWelcome: HostMessage[] = [];
   /** The app did not run at the last step. */
   let wasOff = false;
   const w = {
@@ -171,6 +175,13 @@ export function wire(plan: Plan) {
       w.line = line();
       w.c = TableClient.restore(saved, w.line.link, 'Victim', undefined, { token: saved.state.token ?? undefined }, clientOpts);
       w.c.join();
+    },
+    /**
+     * The server sends `m` right behind the next `welcome` it sends, on that link: where a restarted table says so
+     * when a seat joins again (`TableHost.onJoin`; no hand was missed in between).
+     */
+    afterWelcome(m: HostMessage) {
+      behindWelcome.push(m);
     },
     /** The phone drops the link in use and joins again `ms` later. */
     dropNow(ms = plan.reconnectMs ?? 1_000) {
@@ -307,7 +318,9 @@ export function wire(plan: Plan) {
             if (m === null) return;
             if (plan.hold?.(m, w)) return void held.push(m);
             const at = Math.max(clock.now + (plan.delay?.(m, clock.now) ?? 0), down.length ? down[down.length - 1].at : Number.NEGATIVE_INFINITY);
+            for (const x of plan.before?.(m, w) ?? []) down.push({ at, m: x });
             down.push({ at, m });
+            if (m.t === 'welcome') for (const x of behindWelcome.splice(0)) down.push({ at, m: x });
             for (const x of plan.after?.(m, w) ?? []) down.push({ at, m: x });
           });
         },

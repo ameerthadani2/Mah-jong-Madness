@@ -452,7 +452,8 @@ describe('a table that answers no ping (T7)', () => {
 
 /**
  * Once the phone has moved three times and owes nothing, the server makes the earlier fixed points void (`restart`: it
- * announces a restart, a new clock era; `app`: the app restarts, a new run) or does nothing (`none`, the control). From
+ * drops the link and announces a restart as the new link's first word, a new clock era; `app`: the app restarts, a new
+ * run) or does nothing (`none`, the control). From
  * then it answers no ping until it has held the state of each of the seat's next `holds` turns `hold` ms (every frame
  * to the phone waits from that state on), with honest stamps, and 5 s more; then it answers again. The seat makes each
  * move `think` ms after it is shown. (The switch comes on a whole second, when no answer to a ping is on its way.)
@@ -482,7 +483,11 @@ function withheld(code: string, rules: RuleSet, mode: 'restart' | 'app' | 'none'
       if (switched !== null || !g || w.host.phase !== 'playing' || w.owes() || w.pendingReconnectAt !== null) return;
       if (g.actionLog.filter((e) => e.seat === 0 && e.source === 'player').length < 3 || w.clock.now % 1_000 !== 0) return;
       switched = w.clock.now;
-      if (mode === 'restart') w.line.inject({ t: 'restored', handNumber: g.handNumber, turnCounter: g.turnCounter });
+      // (Announced as a restarted table does: the link drops, and the notice is the new link's first word.)
+      if (mode === 'restart') {
+        w.afterWelcome({ t: 'restored', handNumber: g.handNumber, turnCounter: g.turnCounter });
+        w.dropNow(500);
+      }
       if (mode === 'app') w.restart();
     },
   });
@@ -558,7 +563,7 @@ describe('a table that answers no ping once the earlier answers stopped counting
     it(`Hyper, ${what}: turns held 3 s with no ping answered, the table plays them: amber tableMovedLate, never green; with no restart as well`, () =>
       scenario((i) => {
         const t = withheld(`PW${mode}${i}`, HYPER, mode, 3_000, 1_500);
-        need(t.taken.length > 0 && t.w.drops.length === 0);
+        need(t.taken.length > 0 && t.w.drops.length === (mode === 'restart' ? 1 : 0));
         const v = t.w.verdict();
         expect(v.failures).toEqual([]);
         expect(v.status).toBe('partial');
@@ -571,7 +576,7 @@ describe('a table that answers no ping once the earlier answers stopped counting
     it(`Normal, ${what}: turns held 10 s with no ping answered, the seat moves itself: amber lateShown, never green`, () =>
       scenario((i) => {
         const t = withheld(`PV${mode}${i}`, RULES, mode, 10_000, 1_000);
-        need(t.held.length >= 2 && t.taken.length === 0 && t.w.drops.length === 0);
+        need(t.held.length >= 2 && t.taken.length === 0 && t.w.drops.length === (mode === 'restart' ? 1 : 0));
         expect(t.w.verdict()).toMatchObject({ status: 'partial', failures: [] });
         expect(t.w.verdict().caveats).toContain('lateShown');
       }));

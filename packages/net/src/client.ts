@@ -211,6 +211,9 @@ export const AUDIT_FAILURES = {
   // A frame naming a hand or turn an honest host would not name at that point: a clock frame for a turn other than the
   // one whose state it last sent the link, or a deal's frame for a hand other than the one being dealt.
   strayFrame: 'Host sent a frame about a hand or turn this device was not on',
+  // A restart notice anywhere but on a new link, right after its welcome and the records of the hands missed: a restart
+  // drops every link, and the restored table says so as its first word when each device joins again.
+  restartMidLink: 'Host said it restarted, but not as its first word when this device joined again',
   // The hands this device was away for.
   missedOtherMatch: 'Host sent the record of a hand from a different match',
   missedBroken: 'The record of the hands this device missed does not follow from the last hand it verified',
@@ -389,6 +392,10 @@ export const MAX_AUDITS = 50;
 const MAX_HAND_RECORDS = 3;
 /** Hands whose flags are kept until they are audited (see `flag`). */
 const MAX_FLAGGED_HANDS = 12;
+/** Restart notices kept (see `noteRestore`): at most one begins a clock era per hand on show. */
+const MAX_REWINDS = 4;
+/** Frames that may come in a link's opening, between its `welcome` and a restart notice (`TableClient.opening`). */
+const OPENING_FRAMES: ReadonlySet<string> = new Set(['hand_missed', 'lobby', 'pong', 'chat', 'emote', 'restored']);
 /** A move sent this long before the table's own move for the same turn arrived, time the app did not run left out, was not lost to a slow network. */
 export const MOVE_SLACK_MS = 30_000;
 /** Marks, among the problems of a replay, a move the table made for this seat that is judged once the replay is done. */
@@ -639,6 +646,17 @@ export class TableClient {
    */
   private rewinds: Array<{ hand: number; tc: number; undone: boolean }> = [];
   /**
+   * The hand on show (`activeHand`) when a restart notice last began a clock era: a server may announce one restart
+   * per hand, so a second notice while the same hand is on show, for another hand, begins none (`noteRestore`).
+   */
+  private eraHand: number | null = null;
+  /**
+   * The link in use opened as a returning seat's does: its first frame was the `welcome`, and only the records of the
+   * hands it missed (and frames that name no hand) have followed. A restarted table's notice comes here and nowhere
+   * else (`TableHost.onJoin`), once per link.
+   */
+  private opening = false;
+  /**
    * This client was restored from a saved record, which may be a moment older than the last thing
    * the app did before it stopped, or built from a rejoin token with no record at all: `lapse`
    * until it next hears of a hand, then `lapseHand` is that hand, whose deal it may have taken
@@ -741,6 +759,7 @@ export class TableClient {
     this.missedMoves = d.missedMoves === true;
     this.state = { ...this.state, matchEndVerified: this.matchEnded && !this.chainGap && !this.missedMoves && this.state.matchOver };
     this.rewinds = Array.isArray(d.rewinds) ? d.rewinds.filter((x) => isObject(x) && isInt(x.hand) && isInt(x.tc)) : [];
+    this.eraHand = isInt(d.eraHand) ? d.eraHand : null;
     this.lapseHand = isInt(d.lapseHand) ? d.lapseHand : null;
     this.lapseDeal = d.lapseDeal === true;
     const k = isObject(d.clock) ? d.clock : null;
@@ -806,6 +825,7 @@ export class TableClient {
       chainGap: this.chainGap,
       missedMoves: this.missedMoves,
       rewinds: this.rewinds,
+      eraHand: this.eraHand,
       lapseHand: this.lapseHand,
       lapseDeal: this.lapseDeal,
       clock: { era: this.era, base: { ...this.clockBase }, lastStamp: this.lastStamp, ownAbsences: this.ownAbsences.slice(), gapVerdicts: this.gapVerdicts.slice(), runs: this.runScopes().map(withSum) },
@@ -821,6 +841,7 @@ export class TableClient {
     this.workingEpoch = this.firstLink ? this.epoch : -1;
     this.firstLink = false;
     this.heardOnLink = false;
+    this.opening = false;
     this.waitFrom = null;
     this.linkStamped = false;
     this.linkOpen = true;
@@ -1609,6 +1630,7 @@ export class TableClient {
     this.chainGap = false;
     this.missedMoves = false;
     this.rewinds = [];
+    this.eraHand = null;
     this.lapse = false;
     this.lapseHand = null;
     this.lapseDeal = false;
@@ -1683,6 +1705,8 @@ export class TableClient {
 
   private onMessage(m: HostMessage): void {
     if (!isObject(m) || typeof m.t !== 'string') return;
+    // A link's opening ends at its first frame about the table's play (`opening`).
+    if (!OPENING_FRAMES.has(m.t)) this.opening = false;
     switch (m.t) {
       case 'welcome': {
         if (!isInt(m.seat) || m.seat < 0 || m.seat > 3 || typeof m.matchId !== 'string') {
@@ -1724,6 +1748,8 @@ export class TableClient {
         // is not to be excused after the fact, as the time before it would be.)
         if (m.elsewhere === true && this.welcomed && !this.heardOnLink) this.takenElsewhere();
         this.welcomed = true;
+        // A welcome that is its link's first frame opens it: a restarted table's notice may follow (`opening`).
+        this.opening = !this.heardOnLink;
         return;
       }
       case 'lobby':
@@ -2006,9 +2032,18 @@ export class TableClient {
       case 'hand_missed':
         if (isAudit(m.audit)) this.auditMissed(m.audit);
         return;
-      case 'restored':
-        if (isInt(m.handNumber) && isInt(m.turnCounter) && m.turnCounter >= -1) this.noteRestore(m.handNumber, m.turnCounter);
+      case 'restored': {
+        if (!isInt(m.handNumber) || !isInt(m.turnCounter) || m.turnCounter < -1) return;
+        // Once per link, in its opening only: anywhere else a notice is the server's own making, and changes nothing.
+        const opening = this.opening;
+        this.opening = false;
+        if (!opening) {
+          this.flag(this.activeHand(), 'Host said it restarted, but not as its first word when this device joined again');
+          return;
+        }
+        this.noteRestore(m.handNumber, m.turnCounter);
         return;
+      }
       case 'match_over':
         if (!isView(m.view) || !Array.isArray(m.scores)) {
           this.update({ lastError: 'The table sent a malformed match result.' });
@@ -2153,13 +2188,28 @@ export class TableClient {
    * every link) and only once per hand: anything else is a rewind and fails as before. A hand
    * with turns undone this way can only be `partial`. A hand whose result this client holds stays
    * ended whatever the notice says.
+   *
+   * The notice comes only in a returning link's opening (`opening`), and names the hand this client is on
+   * (`activeHand`) or, when the table played on while this device had no link, a later one (at -1, the next hand
+   * to be dealt, when the restored table was between hands): a hand before that is the server's own making. A
+   * restarted table may keep time anew, so a notice begins a new clock era, once per hand on show (`eraHand`): a
+   * second notice, for another hand, while the same hand is on show is a second restart.
    */
   private noteRestore(h: number, r: number): void {
     if (this.handsEnded.has(h)) return;
+    const on = this.activeHand();
     const known = this.rewinds.find((x) => x.hand === h);
     if (known) {
       // Every rejoin during the hand brings the same notice again; a different one is a second restart.
-      if (known.tc !== r) this.flag(h, 'Host said it restarted this hand more than once');
+      if (known.tc !== r) this.flag(on, 'Host said it restarted this hand more than once');
+      return;
+    }
+    if (h < on) {
+      this.flag(on, 'Host sent a frame about a hand or turn this device was not on');
+      return;
+    }
+    if (this.eraHand === on) {
+      this.flag(on, 'Host said it restarted this hand more than once');
       return;
     }
     const play = this.plays.find((p) => p.hand === h);
@@ -2202,8 +2252,9 @@ export class TableClient {
     }
     // The host that restarted may keep time afresh: what was learned about its clock stops here.
     this.era++;
+    this.eraHand = on;
     this.rewinds.push({ hand: h, tc: r, undone });
-    if (this.rewinds.length > 4) this.rewinds.shift();
+    this.trimHands(this.rewinds, MAX_REWINDS, (x) => x.hand);
   }
 
   /** The host refused a move: mark it in the ledger so the audit does not expect it in the log. */

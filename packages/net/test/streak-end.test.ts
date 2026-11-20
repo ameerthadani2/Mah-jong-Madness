@@ -548,36 +548,60 @@ describe('honest ends (T27)', () => {
 });
 
 describe('a restart during the move (R9, T28)', () => {
-  it('a later end offered, then a restart announced just before the true end with the turn state again at the true end, and the seat timed out: amber restartClock, never green', () =>
+  /**
+   * A later end offered (a state re-sent with 60 s more), then a restart announced 1 to 1.5 s before the true end, with
+   * a ping on its way, and the seat timed out at the true end. `newLink`: as a restarted table announces it, the link
+   * drops and the notice is the new link's first word, followed by the turn's state as the table now has it;
+   * otherwise the notice and the turn's state at the true end come on the link that never dropped.
+   */
+  function restartBeforeEnd(code: string, newLink: boolean) {
+    let target = -1;
+    let turns = 0;
+    let restarted = false;
+    const w = wire({
+      code,
+      botDelayMs: 700,
+      // The seat's messages take half a second to reach the table, so a ping is on its way when the restart is announced.
+      up: () => 500,
+      think: (_k, tc) => (tc === target ? Infinity : 600),
+      after: (m, w) => {
+        if (m.t !== 'state' || target >= 0 || !w.discardTurn() || w.host.game!.turnCounter !== m.view.turnCounter) return [];
+        if (++turns < 2) return [];
+        target = m.view.turnCounter;
+        return [{ ...m, deadline: (m.deadline as number) + 60_000 }];
+      },
+      onTick: (w) => {
+        const end = target >= 0 && w.current() && w.host.game!.turnCounter === target ? hostEnd(w) : null;
+        // 1 to 1.5 s before the true end, with a ping on its way (the phone pings on the whole second).
+        if (restarted || end === null || hostOf(w).now() < end - 1_500 || w.clock.now % 1_000 !== 500) return;
+        restarted = true;
+        const v = w.c.state.view!;
+        if (newLink) {
+          w.afterWelcome({ t: 'restored', handNumber: v.handNumber, turnCounter: v.turnCounter });
+          w.dropNow(300);
+          return;
+        }
+        w.line.inject({ t: 'restored', handNumber: v.handNumber, turnCounter: v.turnCounter });
+        w.line.inject({ t: 'state', view: v, hash: w.c.state.stateHash!, deadline: end, timeBank: 0, inTimeBank: true, now: hostOf(w).now() });
+      },
+    });
+    w.finish();
+    need(restarted && w.judged().includes(target));
+    return w.verdict();
+  }
+
+  it('a later end offered, then a restart announced just before the true end, as the first word of a new link, and the seat timed out: amber restartClock, never green', () =>
     scenario((i) => {
-      let target = -1;
-      let turns = 0;
-      let restarted = false;
-      const w = wire({
-        code: `SER${i}`,
-        botDelayMs: 700,
-        // The seat's messages take half a second to reach the table, so a ping is on its way when the restart is announced.
-        up: () => 500,
-        think: (_k, tc) => (tc === target ? Infinity : 600),
-        after: (m, w) => {
-          if (m.t !== 'state' || target >= 0 || !w.discardTurn() || w.host.game!.turnCounter !== m.view.turnCounter) return [];
-          if (++turns < 2) return [];
-          target = m.view.turnCounter;
-          return [{ ...m, deadline: (m.deadline as number) + 60_000 }];
-        },
-        onTick: (w) => {
-          const end = target >= 0 && w.current() && w.host.game!.turnCounter === target ? hostEnd(w) : null;
-          // 1 to 1.5 s before the true end, with a ping on its way (the phone pings on the whole second).
-          if (restarted || end === null || hostOf(w).now() < end - 1_500 || w.clock.now % 1_000 !== 500) return;
-          restarted = true;
-          const v = w.c.state.view!;
-          w.line.inject({ t: 'restored', handNumber: v.handNumber, turnCounter: v.turnCounter });
-          w.line.inject({ t: 'state', view: v, hash: w.c.state.stateHash!, deadline: end, timeBank: 0, inTimeBank: true, now: hostOf(w).now() });
-        },
-      });
-      w.finish();
-      need(restarted && w.judged().includes(target));
-      expect(w.verdict()).toEqual({ status: 'partial', failures: [], caveats: ['restartClock'] });
+      const v = restartBeforeEnd(`SER${i}`, true);
+      expect(v).toMatchObject({ status: 'partial', failures: [] });
+      expect(v.caveats).toContain('restartClock');
+    }));
+
+  it('the same restart announced on the link that never dropped, with the turn state again at the true end: red, the notice changes nothing and the later end binds the table', () =>
+    scenario((i) => {
+      const v = restartBeforeEnd(`SEM${i}`, false);
+      expect(v.status).toBe('failed');
+      expect(v.failures).toEqual(expect.arrayContaining(['restartMidLink', 'playedEarly']));
     }));
 
   it('a restart while the seat owes nothing, followed by an answered ping, then a turn the table times out: no restartClock', () =>

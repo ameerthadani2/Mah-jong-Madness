@@ -1865,8 +1865,9 @@ describe('a seat opened on another device while the phone’s link was down', ()
           before = w.c.serialize().plays.at(-1)?.vouched ?? [];
           need(before.length === 1 && before[0].to - before[0].from >= 3);
           r = before[0].to - 2;
+          w.afterWelcome({ t: 'restored', handNumber: w.host.game!.handNumber, turnCounter: r });
         },
-        (w) => w.line.inject({ t: 'restored', handNumber: w.host.game!.handNumber, turnCounter: r }),
+        (w) => w.line.pump(),
       ),
     );
     expect(vouched).toEqual([{ from: before[0].from, to: r }]);
