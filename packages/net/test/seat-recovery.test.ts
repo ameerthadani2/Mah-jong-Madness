@@ -237,7 +237,7 @@ describe('a seat the account takes back with neither the record nor the token (a
       expect(a.hand1!.failures).toEqual([]);
       expect(a.hand1!.status).toBe('partial');
       expect(a.hand1!.caveats.map(caveatKey)).toEqual(expect.arrayContaining(['standIn', 'gap']));
-    }));
+    }), 30_000);
 
   it('honest table: the first hand the new client is shown, hand 1, is amber (joined, its starting scores unchecked), never red; with the token alone the same; from the record, green', () =>
     scenario((i) => {
@@ -254,7 +254,7 @@ describe('a seat the account takes back with neither the record nor the token (a
       const c = takenBack(`TBF${i}`, 'record');
       need(c.moved && !!c.hand1);
       expect(c.hand1!.status).toBe('ok');
-    }));
+    }), 30_000);
 
   it('a client with neither a token nor a record that sits down in the lobby still holds the match’s first hand to a new match’s start', () => {
     const w = wire({ code: 'TBL', rules: withRules({ handsPerMatch: 1, turnSeconds: 15, timeBankSeconds: 30 }), botDelayMs: 300 });

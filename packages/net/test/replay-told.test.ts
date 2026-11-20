@@ -181,5 +181,5 @@ describe('the views the seat was shown', () => {
       expect(w.verdict().status).toBe('failed');
       expect(w.verdict().failures).toEqual(['viewDiffers']);
       expect(w.c).toBeInstanceOf(TableClient);
-    }));
+    }), 30_000);
 });

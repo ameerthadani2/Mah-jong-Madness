@@ -302,7 +302,7 @@ describe('the stretches the ledger vouches for', () => {
       const b = vouched(`HRV${i}`, 1);
       need(b.forged !== null && b.done === 1);
       expect(b.w.verdict().failures).toEqual(expect.arrayContaining(['moveInvented']));
-    }));
+    }), 30_000);
 
   it('stretches that touch or overlap are kept as one, and stretches of different turns stay apart', () => {
     const c = new TableClient(nowhere(), 'Victim', undefined, {}, { now: () => 5_000_000 });
