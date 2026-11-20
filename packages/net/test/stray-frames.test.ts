@@ -10,7 +10,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { legalActions, withRules, type Action, type GameState } from '@mjm/engine';
-import { caveatKey, failureKey, type HostMessage, type TableClient } from '../src/index';
+import { AUDIT_CAVEATS, caveatKey, failureKey, type HostMessage, type TableClient } from '../src/index';
 import type { PlayRecord } from '../src/clientrecords';
 import { Missed, scenario, seededDeals } from './support';
 import { wire, type Wire } from './wire';
@@ -503,5 +503,67 @@ describe('restart notices for a hand the phone is not on, or more than one in a 
       expect(w.verdict().status).toBe('failed');
       expect(w.verdict().failures).toEqual(['restartMidLink']);
       expect(w.verdict().caveats).toContain('serverRestart');
+    }));
+});
+
+/**
+ * Normal, a match of one rotation, then a new one at the table. In the first (`carry`), once the seat has moved three
+ * times and owes nothing, the server drops the link and announces a restart as the new link's first word: a new clock
+ * era, in which the phone's ties to the server's clock from then on are made. In the second, after the seat's second
+ * move, on a whole second while it owes nothing, it does the same, then steps its clock forward 10 s and delays every
+ * frame to the phone 10 s (its answers to pings too): every turn after it is shown 10 s late. A new match once set the
+ * era count back to 0, so the tie carried from the first match counted in the second match's first restart's era,
+ * whose number it shared, and every arrival looked as quick as before it.
+ */
+function twoMatches(code: string, carry: boolean) {
+  let skew = 0;
+  let match = 1;
+  let first = false;
+  let leapAt: number | null = null;
+  const w = wire({
+    code,
+    rules: NORMAL,
+    botDelayMs: 700,
+    intermissionSeconds: 5,
+    hostSkew: () => skew,
+    think: () => 1_000,
+    delay: (_m, now) => (leapAt !== null && now >= leapAt ? 10_000 : 0),
+    onTick: (w) => {
+      const g = w.host.game;
+      const v = w.c.state.view;
+      if (!g || w.host.phase !== 'playing' || w.owes() || !v || v.turnCounter !== g.turnCounter || w.c.state.lastResult !== null || w.pendingReconnectAt !== null) return;
+      if (match === 1 && carry && !first && mine(w) >= 3) {
+        first = true;
+        w.afterWelcome({ t: 'restored', handNumber: g.handNumber, turnCounter: g.turnCounter } as HostMessage);
+        w.dropNow(300);
+      }
+      if (match === 2 && leapAt === null && mine(w) >= 2 && w.clock.now % 1_000 === 0) {
+        w.afterWelcome({ t: 'restored', handNumber: g.handNumber, turnCounter: g.turnCounter } as HostMessage);
+        w.dropNow(300);
+        skew += 10_000;
+        leapAt = w.clock.now;
+      }
+    },
+  });
+  for (let k = 0; k < 20_000 && !w.c.state.matchOver; k++) w.step();
+  need(w.c.state.matchOver && w.c.state.matchEndVerified && (first || !carry));
+  match = 2;
+  w.newMatch();
+  // (The phone shows the first match as over until the new table's welcome reaches it.)
+  for (let k = 0; k < 20_000 && (w.host.phase !== 'match_over' || !w.c.state.matchOver); k++) w.step();
+  return { w, leapt: leapAt !== null, second: w.c.state.audits.find((a) => a.audit.matchId === `m-${code}-2` && a.audit.handNumber === 0) };
+}
+
+describe('a new match at the table', () => {
+  it('Normal, a restart in the first match, then in the second a restart, the server’s clock stepped forward 10 s and every frame 10 s late: the second match’s first hand is amber, as without the restart in the first match', () =>
+    scenario((i) => {
+      const a = twoMatches(`SXM${i}`, true);
+      need(a.leapt && a.second !== undefined);
+      expect(a.second!.status).toBe('partial');
+      expect(a.second!.caveats).toContain(AUDIT_CAVEATS.lateShown);
+      const b = twoMatches(`SXM${i}`, false);
+      need(b.leapt && b.second !== undefined);
+      expect(b.second!.status).toBe('partial');
+      expect(b.second!.caveats).toContain(AUDIT_CAVEATS.lateShown);
     }));
 });

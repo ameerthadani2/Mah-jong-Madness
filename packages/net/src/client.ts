@@ -1634,8 +1634,12 @@ export class TableClient {
     this.lapse = false;
     this.lapseHand = null;
     this.lapseDeal = false;
-    this.era = 0;
-    this.clockBase = { era: 0, anchor: null, minOffset: null };
+    // A new match is played at a new table, whose clock may not be the last one's (each table keeps its own): the
+    // era count runs on, so nothing learned of the last table's clock, nor any tie to it, counts in the new match.
+    this.era++;
+    this.clockBase = { era: this.era, anchor: null, minOffset: null };
+    this.bestAnchor = null;
+    this.bestPong = null;
     this.lastStamp = null;
     this.ownAbsences = [];
     this.gapVerdicts = [];

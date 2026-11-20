@@ -114,12 +114,12 @@ export function wire(plan: Plan) {
   /** The host's bots' moves, due on the wire's clock. */
   const timers: Array<{ at: number; fn: () => void }> = [];
   /** The table in a process of the server's (`restore`: a table saved by an earlier one). */
-  const makeHost = (restore?: SerializedHost) =>
+  const makeHost = (restore?: SerializedHost, matchId = `m-${plan.code}`) =>
     new TableHost(hub.create('host'), {
       roomCode: plan.code,
       rules,
       ...(real ? {} : { now: hostNow() }),
-      matchId: `m-${plan.code}`,
+      matchId,
       intermissionSeconds: plan.intermissionSeconds ?? 30,
       botDelayMs: plan.botDelayMs ?? 0,
       schedule: (fn, ms) => void timers.push({ at: clock.now + ms, fn }),
@@ -182,6 +182,21 @@ export function wire(plan: Plan) {
      */
     afterWelcome(m: HostMessage) {
       behindWelcome.push(m);
+    },
+    /**
+     * A new match at the table, once the last one is over: the server opens a new table (a new match id, a clock of its
+     * own over the same wall clock) and the phone joins it on the link it has.
+     */
+    newMatch(tag = '2') {
+      host.close();
+      timers.length = 0;
+      host = makeHost(undefined, `m-${plan.code}-${tag}`);
+      w.host = host;
+      owed = { tc: -1, k: 0, since: 0, think: 0, acted: false };
+      w.created.clear();
+      w.shown.clear();
+      w.c.join(plan.seat);
+      host.start();
     },
     /** The phone drops the link in use and joins again `ms` later. */
     dropNow(ms = plan.reconnectMs ?? 1_000) {
