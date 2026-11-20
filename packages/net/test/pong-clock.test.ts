@@ -143,6 +143,42 @@ describe('the phone’s pings (T3)', () => {
     expect(net.pings()).toHaveLength(4);
   });
 
+  it('on a new link the table has not welcomed, and in a client restored from its record before any welcome, every check of the link sends a ping while it holds the seat; none once the seat was opened on another device', async () => {
+    const clock = { now: 50_000 };
+    const a = fakeLink();
+    const c = new TableClient(a.link, 'A', undefined, {}, { now: () => clock.now });
+    c.join();
+    await flush();
+    a.deliver(welcome());
+    a.close();
+    clock.now += 1_000;
+    const b = fakeLink();
+    c.rebind(b.link);
+    c.join();
+    await flush();
+    expect(c.state.connected).toBe(false);
+    expect(b.pings()).toHaveLength(1);
+    for (let s = 1; s <= 3; s++) {
+      clock.now += 1_000;
+      c.checkLink();
+    }
+    expect(b.pings()).toHaveLength(4);
+    const saved = JSON.parse(JSON.stringify(c.serialize())) as SerializedClient;
+    clock.now += 1_000;
+    const d = fakeLink();
+    const r = TableClient.restore(saved, d.link, 'A', undefined, {}, { now: () => clock.now });
+    r.join();
+    await flush();
+    clock.now += 1_000;
+    r.checkLink();
+    expect(r.state.connected).toBe(false);
+    expect(d.pings()).toHaveLength(2);
+    d.deliver({ t: 'disconnected' });
+    clock.now += 1_000;
+    r.checkLink();
+    expect(d.pings()).toHaveLength(2);
+  });
+
   it('a join followed at once by another link sends the ping on the link in use only', async () => {
     const a = fakeLink();
     const b = fakeLink();

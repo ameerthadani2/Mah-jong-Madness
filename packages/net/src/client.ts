@@ -546,6 +546,12 @@ export class TableClient {
   private firstLink = true;
   /** The link in use has brought a stamped frame: the watch measures it from then (a link that brings nothing is the heartbeat's to drop). */
   private linkStamped = false;
+  /**
+   * The link in use has not closed. What this device measures of the table (the pings, the link watch) runs while
+   * it holds a seat on such a link, whether or not the table has welcomed it there (`connected`): an honest host
+   * welcomes a link before it sends anything else on it, and one that never does must not turn the measures off.
+   */
+  private linkOpen = true;
   /** When `checkLink` last ran. */
   private checkedAt: number | null = null;
   /**
@@ -793,6 +799,7 @@ export class TableClient {
     this.heardOnLink = false;
     this.waitFrom = null;
     this.linkStamped = false;
+    this.linkOpen = true;
     this.watchFrom = null;
     // Binding a link is this app running, and nothing on the link can have arrived before it.
     this.boundAt = this.now();
@@ -818,6 +825,7 @@ export class TableClient {
     this.unsubClose =
       link.onClose?.(() => {
         if (this.link !== link) return;
+        this.linkOpen = false;
         this.noteLinkLost();
         this.update({ connected: false, disconnected: true, lastError: 'Connection to the table was lost.', lastErrorCode: null });
       }) ?? (() => undefined);
@@ -1021,8 +1029,9 @@ export class TableClient {
     this.ran(now);
     const verdict = this.watchLink(now);
     // A ping a second while this device holds a seat on a link that is up, whatever the watch found:
-    // every answer is a fixed point between the table's clock and this device's (`notePong`).
-    if (this.state.seat !== null && this.state.connected) this.ping();
+    // every answer is a fixed point between the table's clock and this device's (`notePong`). Whether
+    // the table has welcomed the link does not matter (`linkOpen`).
+    if (this.holdsSeat()) this.ping();
     return verdict;
   }
 
@@ -1128,10 +1137,20 @@ export class TableClient {
     return this.linkShown !== null && this.linkShown.epoch === this.epoch;
   }
 
-  /** A hand is being played at this seat over a link that is up. */
+  /**
+   * This device holds a seat on a link that is up: one it has not left, that has not closed, and on which its seat
+   * was not opened on another device. Not whether the table has welcomed it there (`connected`): an honest host
+   * welcomes a link before it sends anything else on it, so a table that sends frames on a link it never welcomed
+   * is measured as on any other (`linkOpen`).
+   */
+  private holdsSeat(): boolean {
+    return this.state.seat !== null && !this.state.kicked && this.linkOpen;
+  }
+
+  /** A hand is being played at this seat over a link that is up (`holdsSeat`). */
   private playing(): boolean {
     const st = this.state;
-    return st.connected && !st.disconnected && !st.kicked && !st.matchOver && st.seat !== null && st.view !== null && st.lastResult === null && st.ceremony === 'idle';
+    return this.holdsSeat() && !st.matchOver && st.view !== null && st.lastResult === null && st.ceremony === 'idle';
   }
 
   /** The run of this device's clock (see `clientClock`): it moves on when the clock follows the wall across a sleep. */
@@ -1220,6 +1239,7 @@ export class TableClient {
 
   leave(): void {
     this.noteOwnAbsence();
+    this.linkOpen = false;
     this.send({ t: 'leave' });
     this.unsubMessage();
     this.unsubClose();

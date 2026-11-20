@@ -28,7 +28,8 @@ describe('the fair play charter states the late-turn limits the table client use
   it('the phone pings the table once a second and right after each join, and measures every state against the answers, its pauses left out', () => {
     expect(turnRow).toContain('your phone pings the table once a second, and right after each join; the table answers each at once with its clock');
     expect(turnRow).toContain('Time the app was not running is left out.');
-    expect(api).toContain('The app sends one once a second while it holds a seat and the session is connected, and one right after each `join`.');
+    expect(api).toContain('The app sends one once a second while it holds a seat on a socket that is up, whether or not the table has welcomed it there, and one right after each `join`.');
+    expect(turnRow).toContain('It pings, and watches the connection (below), whether or not the table has welcomed it on that connection');
     expect(api).toContain(`A hand in which the app sent ${NO_ANSWER_PINGS} or more pings and no answer came back is amber.`);
     expect(turnRow).toContain('A table that answers none of your pings during a hand makes the hand amber.');
   });

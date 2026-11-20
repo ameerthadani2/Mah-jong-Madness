@@ -71,6 +71,8 @@ export interface Plan {
   onReconnect?: (w: Wire) => void;
   /** Between hands (default 30 s, longer than any delay the tests put on a result). */
   intermissionSeconds?: number;
+  /** A link the phone drops (`dropNow`) also tells its client it was lost, as a real socket's close does (default: it does not). */
+  fireClose?: boolean;
   /** How long the host's bots take over each move, on the wire's clock (default 0: at once). */
   botDelayMs?: number;
 }
@@ -88,6 +90,8 @@ export interface Line {
   pump(): void;
   uppump(): void;
   close(): void;
+  /** The phone's side learns the link was lost (its client's close handler runs). */
+  lost(): void;
 }
 
 export type Wire = ReturnType<typeof wire>;
@@ -170,6 +174,7 @@ export function wire(plan: Plan) {
     dropNow(ms = plan.reconnectMs ?? 1_000) {
       w.drops.push(clock.now);
       w.line.close();
+      if (plan.fireClose) w.line.lost();
       w.pendingReconnectAt = clock.now + ms;
     },
     /**
@@ -268,6 +273,7 @@ export function wire(plan: Plan) {
     const held: HostMessage[] = [];
     /** Nothing comes over a link once it is closed: what was still in the network is lost with it. */
     let closed = false;
+    const closeHandlers = new Set<() => void>();
     const deliver = (m: HostMessage) => {
       if (closed) return;
       if (m.t === 'state') {
@@ -281,6 +287,10 @@ export function wire(plan: Plan) {
       held,
       link: {
         ...base,
+        onClose: (f) => {
+          closeHandlers.add(f);
+          return () => closeHandlers.delete(f);
+        },
         send: (m) => {
           if (!plan.up || !upOn) return base.send(m);
           up.push({ at: Math.max(clock.now + plan.up(clock.now), up.length ? up[up.length - 1].at : Number.NEGATIVE_INFINITY), m });
@@ -315,6 +325,9 @@ export function wire(plan: Plan) {
       close: () => {
         closed = true;
         base.close();
+      },
+      lost: () => {
+        for (const f of [...closeHandlers]) f();
       },
     };
     return l;
