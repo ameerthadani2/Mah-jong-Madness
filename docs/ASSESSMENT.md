@@ -108,6 +108,28 @@ Serious defects that survived the skeptics:
        - Four minors: withholding the record of the hand the phone was on leaves that hand with no verdict at all; the board behind a verified match end is the server's, unchecked; after a hand that fails its replay, the next hand's starting scores are unchecked and carry no caveat; and a server that pads the record past the storage limit makes saves fail, so a red hand comes back amber after a cold start.
 
        Unit 20f closes these.
+     - **Closed by unit 20f (2026-11-21).** All ten:
+       - a hand the phone was asked to commit to is held to its ledger and clock from the deal, so a hand whose states are withheld while pings are answered, and whose moves the server plays, is red; answers to pings now keep the order of the table's stamps on every link;
+       - any answer to a move other than playing it or a refusal naming its turn counts as no answer, so a dropped move followed by another of the player's moves is red; frames on a connection before its welcome or after an eviction notice fail the hand;
+       - a second copy of a turn with a different view fails at once, and the record's cap gives up repeated copies first;
+       - an app restart keeps the vouched stretch of the hand under way;
+       - a new match at the same table must start at hand 0 from a new match's scores;
+       - a hand whose record the server withholds gets a verdict, and the hand after a record that does not replay is marked unchecked at its start;
+       - after "table gone" the app keeps the record for a day and takes it up if the account is seated there again, and a hand joined part-way leaves the match end unverified;
+       - the board behind the match end is the last verified one; what a server can make the app save is bounded (the largest honest record measured was 177,186 characters, against a cap of 512,000), and red hands are kept apart so that they survive a failed save.
+
+       Each item's own probe went to no green runs. 4,376 outputs of every earlier attack set are the same or redder, and the honest battery has no new red hand, no extra lost table and no drop loop.
+     - **Still open after unit 20f's checks (2026-11-21).** A malicious recheck found seven defects and a sweep of withholding and of the record's lifecycle found three. Two share a root, so nine in all, and two of them come from unit 20f's own changes. I reproduced all nine, each with its control, on a salt no check used:
+       - **After an app restart or a Resume from Home, the server can hold back the table and play the rest of the hand in the player's name** (blocker; green in 4 of 4 hands after a restart and 4 of 4 after a seat-taken notice, about eight forged moves a hand). The restored app vouches for the hand only up to its latest saved state and again from the next state it is shown, and the server decides when that is.
+       - **A seat-taken notice lets the server write a move as the player's own** (major; 4 of 4 green).
+       - **A hand dealt with a stand-in share after the link was cut at its commit request, then kept silent** (major; amber in 4 of 4, with the match end verified).
+       - **A share revealed again on a new connection** (major): the silent hand is amber in 4 of 4 instead of red.
+       - **Dropped moves, two more ways** (major): two late refusals naming the win's turn (2 of 3 green), or another seat's answer played first so that the player's next move falls on the next turn (2 of 2 green).
+       - **An eviction notice, then a welcome on the same connection** (major, from unit 20f: since then the app holds the player's move back after the notice; 4 of 4 green).
+       - **The record kept of a table that left Home can be made to miss** (major): another room code running the same match, a day's wait, three other tables or a stale saved table, and a forged hand comes back amber instead of red.
+       - **An honest table goes red after an app update** (minor, from unit 20f; 4 of 4): a record saved by the earlier build holds whole audits, which the new build compares with trimmed ones.
+
+       Unit 20g closes these.
 2. **Backdated first frames, then a delay: up to 74.5 s late and still green** (fairness, major). `docs/FAIRNESS.md` states this residual, but as "25 to 30 seconds". The challenger had the table play 17 of 17 of a victim's moves in a green hand, with the Fair play count at 0.
    - Closed by unit 20: each turn is measured against the table's answers to a ping a second; the bound is half the turn clock (2 s at Hyper). With the app's ping going out right behind its join, as it does, the probe's backdated frame is the answer to that ping, and every hand is amber with every turn counted. If the server backdates the deal itself instead and delays everything after it, pings included, the count still counts every turn (it measures turns against the answers to pings alone), and the hand is amber whenever the table plays over a move the player made with time on the screen's clock. What stays out of sight is a server whose whole clock runs behind from the first frame, or one that sends a single answer to a ping at once with its stamp moved back and everything after it late: to the phone that is a fast connection to a clock that is behind (a stated limit in FAIRNESS.md). The screen's clock counts that same clock, so such a server gains only the moves made in the last 1.5 s.
 3. **At Turbo and Hyper, a 15 s delay from the start lets the table play every turn while the hand stays green** (fairness, major; both skeptics confirmed it). This is inside the stated 17 s bound, and FAIRNESS.md gives its cost per speed. At a 4 s turn, though, it means the player never moves.
