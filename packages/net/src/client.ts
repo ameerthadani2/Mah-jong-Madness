@@ -844,7 +844,8 @@ export class TableClient {
     this.lapse = true;
     // The app stopped: the link it had is gone. Moves sent just before the last save may be missing
     // from the ledger, so it vouches for the log of a hand still under way only from the next state it sees.
-    // (Every such hand, whichever record was made last.)
+    // (Every such hand, whichever record was made last.) Before the latest state the record holds it still does: the
+    // record saved that stretch (`serialize`, `vouchedThrough`), and `cleanPlay` read it back if storage left it whole.
     this.noteLinkLost();
     for (const play of this.plays) if (!this.handsEnded.has(play.hand)) play.ledgerFrom = Number.POSITIVE_INFINITY;
   }
@@ -880,7 +881,14 @@ export class TableClient {
       records: this.records,
       // Each frame goes with its check figure, so a restored record can tell a damaged frame (`cleanSeen`), and so
       // does each answer to a ping and first ping of a scope: each measures only the frames of the run that made it.
-      plays: this.plays.map(savedPlay),
+      // A hand under way goes with the stretch its ledger vouches for up to the latest state it holds (`vouchedThrough`):
+      // the record is written after those states came, and every move is filed before it goes out, so every move made
+      // before the latest of them is in it. A client restored from it (`load`, which vouches again only from its next
+      // state) still holds the log to those moves.
+      plays: this.plays.map((p) => {
+        const vouched = this.vouchedThrough(p);
+        return savedPlay(vouched === p.vouched ? p : { ...p, vouched });
+      }),
       expected: this.expected,
       chainChecked: this.chainChecked,
       frozenBots: this.frozenBots,
@@ -1539,11 +1547,21 @@ export class TableClient {
    * dropping the oldest would excuse a move forged in it.
    */
   private closeLedger(play: PlayRecord): void {
+    const spans = this.vouchedThrough(play);
+    if (spans !== play.vouched) play.vouched = spans;
+  }
+
+  /**
+   * `play.vouched` with the stretch the ledger vouches for now added: from `ledgerFrom` up to (not including) the latest
+   * turn this run of the app was shown in the hand (two stretches that touch or overlap become one). The same object when
+   * there is nothing to add (the ledger does not vouch, the hand has ended, or no later state came in this run).
+   */
+  private vouchedThrough(play: PlayRecord): LedgerSpan[] | undefined {
     const from = play.ledgerFrom;
-    if (from === null || !Number.isFinite(from) || this.handsEnded.has(play.hand)) return;
+    if (from === null || !Number.isFinite(from) || this.handsEnded.has(play.hand)) return play.vouched;
     let to = from;
     for (const f of play.seen) if (f.run === this.runId && f.tc > to) to = f.tc;
-    if (to <= from) return;
+    if (to <= from) return play.vouched;
     const spans = [...(play.vouched ?? []), { from, to }].sort((a, b) => a.from - b.from);
     const merged: LedgerSpan[] = [];
     for (const v of spans) {
@@ -1551,7 +1569,7 @@ export class TableClient {
       if (last && v.from <= last.to) last.to = Math.max(last.to, v.to);
       else merged.push({ from: v.from, to: v.to });
     }
-    play.vouched = merged;
+    return merged;
   }
 
   /**
