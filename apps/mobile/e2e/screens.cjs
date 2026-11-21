@@ -122,8 +122,25 @@ const openWithin = async (page, sel, target, wait) => {
 
 /** Whether the app's root element (everything but a dialog's portal) is inert. */
 const pageInert = (page) => page.evaluate(() => !!document.getElementById('root')?.hasAttribute('inert'));
-/** Whether the page behind a dialog that just closed stays inert (it is given up to 3 s to come back: `until`). */
-const staysInert = async (page) => !(await until(page, async () => !(await pageInert(page))));
+/**
+ * Whether a modal dialog other than the one holding `closed` is open: one the page behind must be inert for (each modal
+ * sheet's dialog is marked aria-modal, react-native-web's Modal included).
+ */
+const otherDialogOpen = (page, closed) =>
+  page.evaluate(
+    (closed) => [...document.querySelectorAll('[aria-modal="true"]')].some((d) => { const r = d.getBoundingClientRect(); return r.width > 0 && r.height > 0 && !d.querySelector(closed); }),
+    closed,
+  );
+/**
+ * Whether the page behind the dialog holding `closed`, which just closed, stays inert: it is given up to 3 s to come back
+ * (`until`), and a page another modal dialog has opened over meanwhile is inert for that dialog, not stuck. At the table
+ * the game goes on under a sheet: when a bot wins while the exit sheet is open, the hand's result sheet (a modal) comes up,
+ * and the table is inert until it closes. Counting that page as stuck failed the screens run once at 1024x768 (a hand that
+ * ended four discards in); 64 runs of that case, alone and under load, never left the page inert with no dialog open, and
+ * every run that held the exit sheet open until the result sheet came up had the page back once the result sheet closed
+ * (unit 20f's log).
+ */
+const staysInert = async (page, closed) => !(await until(page, async () => !(await pageInert(page)) || (await otherDialogOpen(page, closed))));
 
 /**
  * A browser context whose pages draw Math.random and crypto.getRandomValues from one seeded generator (mulberry32), so a
@@ -640,7 +657,7 @@ async function discardsSheetCheck(page, r, shot) {
     open = !!(await visible(page, '[data-testid="discards-sheet"]'));
   }
   if (open) bad.push('Escape did not close the discards sheet');
-  if (await staysInert(page)) bad.push('the table stays inert after the discards sheet closed');
+  if (await staysInert(page, '[data-testid="discards-sheet"]')) bad.push('the table stays inert after the discards sheet closed');
   return bad.map((f) => `${f} (${felt.shown} shown, ${felt.earlier} behind the chip)`);
 }
 
@@ -955,7 +972,8 @@ async function run(browser, port, [w, h]) {
         fails.push(...(await dialogKeys(page)).map((f) => `Exit sheet: ${f}`));
         await tapSel(page, '[data-testid="leave-stay"]', 500);
         if (!(await goneWithin(page, '[data-testid="leave-sheet"]')) || !(await visible(page, '[data-testid="leave-table"]'))) fails.push('keep playing did not return to the table');
-        if (await staysInert(page)) fails.push('Exit sheet: the table stays inert after the sheet closed');
+        if (await staysInert(page, '[data-testid="leave-sheet"]')) fails.push('Exit sheet: the table stays inert after the sheet closed');
+        else if (await otherDialogOpen(page, '[data-testid="leave-sheet"]')) notes.push('the hand ended while the exit sheet was open: its result sheet keeps the table inert');
       }
       await page.waitForTimeout(300);
       continue;
@@ -1012,7 +1030,7 @@ async function run(browser, port, [w, h]) {
     }
     await tapSel(page, '[data-testid="confirm-no"]', 700);
     if (!(await goneWithin(page, '[data-testid="replace-table"]')) || !(await visible(page, '[data-testid="resume-card"]'))) fails.push('"Keep my table" did not keep the saved table');
-    if (await staysInert(page)) fails.push('Replace-table question: Home stays inert after the question closed');
+    if (await staysInert(page, '[data-testid="replace-table"]')) fails.push('Replace-table question: Home stays inert after the question closed');
     // "Abandon table" on the Resume card ends the saved table for good: one tap must only ask, and "Keep my table" keeps it.
     const savedTable = () => page.evaluate(() => (localStorage.getItem('mjm.activeSession') || '').length);
     if (!(await tapSel(page, '[data-testid="abandon-table"]', 900))) fails.push('the Resume card has no "Abandon table" button');
@@ -1271,7 +1289,7 @@ async function runCoach(browser, port, [[w, h], locale, tileScale, textScale, se
         open = !!(await visible(page, '[data-testid="coach-sheet"]'));
       }
       if (open) sheet.push("Escape did not close the coach's sheet");
-      if (await staysInert(page)) sheet.push("the table stays inert after the coach's sheet closed");
+      if (await staysInert(page, '[data-testid="coach-sheet"]')) sheet.push("the table stays inert after the coach's sheet closed");
     },
   });
   const finished = !!(await visible(page, '[data-testid="result-sheet"]'));
@@ -1470,7 +1488,7 @@ async function runPreview(browser, port, [w, h], zh) {
     if (!(await goneWithin(page, '[data-testid="look-preview"]'))) fails.push(`${where}: ${id}'s preview does not close`);
     const focusedOn = () => page.evaluate(() => document.activeElement?.getAttribute('data-testid'));
     if (!(await until(page, async () => (await focusedOn()) === `preview-${id}`))) fails.push(`${where}: focus went to ${(await focusedOn()) || 'nothing'}, not back to ${id}'s card, when the preview closed`);
-    if (await staysInert(page)) fails.push(`${where}: the Shop stays inert after ${id}'s preview closed`);
+    if (await staysInert(page, '[data-testid="look-preview"]')) fails.push(`${where}: the Shop stays inert after ${id}'s preview closed`);
   }
   await ctx.close();
   return { size: `${tag} preview${zh ? '-zh' : ''}`, finished: true, shots, notes: [], fails, errors };
