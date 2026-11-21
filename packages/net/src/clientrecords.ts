@@ -682,6 +682,11 @@ export interface SerializedClient {
   eraHand?: number | null;
   lapseHand: number | null;
   lapseDeal: boolean;
+  /**
+   * Where in `state.audits` the last audit is (`state.lastAudit` is then saved as null, so the record holds each audit once;
+   * absent in records saved by older builds, which carry it whole).
+   */
+  lastAuditAt?: number;
   /** What this client knows about the host's clock and its own absences (absent in records saved by older builds). */
   clock?: {
     era: number;
@@ -693,6 +698,73 @@ export interface SerializedClient {
     /** What each run of the app whose frames the record holds carried (`RunScope`), each with its check figure (absent in records saved by older builds). */
     runs?: Array<RunScope & { sum?: string }>;
   };
+}
+
+/**
+ * The most characters of JSON the record of a table may take when the app saves it. An honest table's largest, over the
+ * honest battery, is under 200 thousand; the platforms let one value take about 5 million (a browser's storage for the
+ * whole site, Android's for the whole app), so the record, the records the app keeps of tables that left Home and every
+ * other saved value fit together.
+ */
+export const RECORD_MAX_CHARS = 512_000;
+
+/** Characters of `v` as JSON. */
+function jsonChars(v: unknown): number {
+  return JSON.stringify(v)?.length ?? 0;
+}
+
+/**
+ * `rec` as the app saves it: the last audit once, as the entry of the list it is (`lastAuditAt`), and within
+ * `RECORD_MAX_CHARS`. Every part of the record is held to its own cap as it grows, and the frames it comes from to the
+ * protocol's bounds (`intake`), but a server that sends many hands' records at the largest size the bounds allow, or
+ * floods states, could still make it too large to be written. Then the record gives up, oldest first, audits that are
+ * not red (never the last two), the records of hands that ended (`ended`), and red audits (never the last two; the app
+ * keeps a list of the red hands apart, so a red verdict is not lost with them). The hand under way is never given up.
+ */
+export function fitRecord(rec: SerializedClient, ended: (hand: number) => boolean): SerializedClient {
+  const last = rec.state.lastAudit;
+  let audits = rec.state.audits;
+  let plays = rec.plays;
+  const build = (): SerializedClient => {
+    let at = -1;
+    if (last) for (let i = audits.length - 1; i >= 0 && at < 0; i--) if (audits[i].audit === last) at = i;
+    const { lastAuditAt: _l, ...rest } = rec;
+    void _l;
+    return { ...rest, state: { ...rec.state, audits, lastAudit: at >= 0 ? null : last }, plays, ...(at >= 0 ? { lastAuditAt: at } : {}) };
+  };
+  let out = build();
+  let size = jsonChars(out);
+  const giveUp = (): boolean => {
+    const keep = audits.length - 2;
+    let i = audits.findIndex((a, k) => k < keep && a.status !== 'failed');
+    if (i >= 0) {
+      audits = audits.filter((_, k) => k !== i);
+      return true;
+    }
+    i = plays.findIndex((p) => ended(p.hand));
+    if (i >= 0) {
+      plays = plays.filter((_, k) => k !== i);
+      return true;
+    }
+    if (keep > 0) {
+      audits = audits.slice(1);
+      return true;
+    }
+    return false;
+  };
+  while (size > RECORD_MAX_CHARS && giveUp()) {
+    out = build();
+    size = jsonChars(out);
+  }
+  return out;
+}
+
+/** The last audit of a saved record's state: its own field, or the entry of its list that `lastAuditAt` names. */
+export function lastAuditOf(st: { lastAudit?: unknown; audits?: unknown }, at: unknown): ClientState['lastAudit'] {
+  if (isObject(st.lastAudit)) return st.lastAudit as unknown as ClientState['lastAudit'];
+  const list = Array.isArray(st.audits) ? st.audits : [];
+  const entry = isInt(at) && at >= 0 && at < list.length ? list[at] : null;
+  return isObject(entry) && isAudit(entry.audit) ? entry.audit : null;
 }
 
 /** The match state the hand after `prev` starts from, or null when there is none. */

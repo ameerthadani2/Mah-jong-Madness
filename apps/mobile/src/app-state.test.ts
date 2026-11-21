@@ -49,3 +49,14 @@ describe('the records of online tables that leave the saved-table slot', () => {
     expect(code).toContain('archivedFor(archiveRef.current, url, room, Date.now())');
   });
 });
+
+describe('the red hands kept apart from the records', () => {
+  it('a hand that turns red is written down at once, apart from the record, and every record taken up gets them back', () => {
+    const at = code.indexOf('const keepRed = () => {');
+    expect(at).toBeGreaterThan(0);
+    const keep = code.slice(at, code.indexOf('const unsubRed = session.onChange(keepRed);', at));
+    expect(keep).toContain('session.client.redHands()');
+    expect(keep).toContain('void storage.saveRedHands(next);');
+    expect(code).toContain('setRedHandsSource((url, room) => redFor(redRef.current, url, room));');
+  });
+});

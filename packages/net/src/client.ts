@@ -54,6 +54,8 @@ import {
   cleanPlay,
   cleanRunScope,
   CLIENT_SNAPSHOT_VERSION,
+  fitRecord,
+  lastAuditOf,
   isAudit,
   isCommitSet,
   isInt,
@@ -340,6 +342,18 @@ export interface ChatLine {
   at: number;
 }
 
+/** A hand this client found red, as the app keeps it apart from the record of the table (`redHands`, `keepRed`). */
+export interface RedHand {
+  matchId: string;
+  hand: number;
+  /** Its first few failures, each cut short (they are this client's own sentences: `failureKey` reads them). */
+  failures: string[];
+}
+
+/** How many failures of a red hand, and how many characters of each, the list kept apart from the record holds. */
+const RED_FAILURES = 8;
+const RED_FAILURE_CHARS = 300;
+
 export interface ClientState {
   connected: boolean;
   seat: number | null;
@@ -525,6 +539,8 @@ export class TableClient {
    * about the table, unless that is a welcome naming another match (`takeUp`).
    */
   private pending: SerializedClient | null = null;
+  /** Red hands kept apart from the record (`keepRed`) for a kept record not yet taken up: they go with it. */
+  private pendingRed: unknown = null;
   /**
    * The link on which this client gave up a kept record because the welcome named another match: its join said which hands
    * of that other match the device held (`have`), and the records an honest table sends in answer, of its own match, are
@@ -830,6 +846,8 @@ export class TableClient {
       ...st,
       rules: st.rules ? sanitizeRules(st.rules) : null,
       audits: Array.isArray(st.audits) ? st.audits.slice(-MAX_AUDITS) : [],
+      // The last audit is saved once, as the entry of the list it is (`lastAuditAt`); records saved before carry it whole.
+      lastAudit: lastAuditOf(st, d.lastAuditAt),
       claimsPassedAway: Array.isArray(st.claimsPassedAway) ? st.claimsPassedAway.filter(isPassedClaimRecord).map((x) => ({ hand: x.hand, turn: x.turn, claim: x.claim, ...(x.late === true ? { late: true } : {}) })) : [],
       turnsShownLate: Array.isArray(st.turnsShownLate) ? st.turnsShownLate.filter(isLateTurnRecord).map((x) => ({ hand: x.hand, late: x.late.slice(), of: x.of })) : [],
       token: this.identity.token ?? st.token ?? null,
@@ -905,6 +923,50 @@ export class TableClient {
   }
 
   /**
+   * The hands of the match this client is in that it found red, each with its first few failures: a list small enough for
+   * the app to save apart from the record of the table (a few hundred characters a hand), so that a red verdict outlives a
+   * save of the record that was not written (`keepRed`).
+   */
+  redHands(): RedHand[] {
+    const m = this.state.matchId;
+    if (!m) return [];
+    const byHand = new Map<number, string[]>();
+    for (const a of this.state.audits) {
+      if (a.status !== 'failed' || a.audit.matchId !== m || !isInt(a.audit.handNumber)) continue;
+      byHand.set(a.audit.handNumber, [...new Set([...(byHand.get(a.audit.handNumber) ?? []), ...a.failures])]);
+    }
+    return [...byHand].map(([hand, failures]) => ({ matchId: m, hand, failures: failures.slice(0, RED_FAILURES).map((f) => f.slice(0, RED_FAILURE_CHARS)) }));
+  }
+
+  /**
+   * Red hands the app kept apart from the record (`redHands`) that the record this client was restored from does not show
+   * red: the app could not write the record after the hand failed, and storage still held an older one. Each is red again
+   * (a hand that has ended in the record is listed with its failures; one that has not carries them into its own audit),
+   * and so is the match. Entries for another match, or that do not hold together, are left out.
+   */
+  keepRed(list: unknown): void {
+    if (this.pending) {
+      this.pendingRed = list;
+      return;
+    }
+    const m = this.state.matchId;
+    if (!m || !Array.isArray(list)) return;
+    let audits = this.state.audits;
+    let any = false;
+    for (const x of list) {
+      if (!isObject(x) || x.matchId !== m || !isInt(x.hand) || x.hand < 0 || !Array.isArray(x.failures)) continue;
+      const failures = [...new Set(x.failures.filter((f): f is string => typeof f === 'string' && f.length > 0).slice(0, RED_FAILURES).map((f) => f.slice(0, RED_FAILURE_CHARS)))];
+      if (failures.length === 0 || audits.some((a) => a.status === 'failed' && a.audit.matchId === m && a.audit.handNumber === x.hand)) continue;
+      any = true;
+      if (this.handsEnded.has(x.hand)) {
+        const audit: Audit = { matchId: m, handNumber: x.hand, seed: '', commits: [], reveals: [], log: [], finalHash: '', rngVersion: '', ceremonyAttempts: 0, restarts: [], restartReasons: [] };
+        audits = [...audits, { audit, status: 'failed' as const, failures, caveats: [] }].slice(-MAX_AUDITS);
+      } else for (const f of failures) this.flag(x.hand, f);
+    }
+    if (any) this.update({ audits, matchFailed: true, matchEndVerified: false });
+  }
+
+  /**
    * Everything needed to carry on verifying after an app restart (see `TableClient.restore`). It keeps exactly what this
    * client keeps in memory: every collection is already held to its cap as it grows (`trimHands`, `flag`), never at
    * the cost of the hand this client is on, so it is written whole and comes back the same.
@@ -914,7 +976,7 @@ export class TableClient {
     void _c;
     void _e;
     void _r;
-    return {
+    return fitRecord({
       version: CLIENT_SNAPSHOT_VERSION,
       state: { ...state, audits: state.audits.slice(-MAX_AUDITS) },
       device: this.deviceId,
@@ -964,7 +1026,7 @@ export class TableClient {
       lapseHand: this.lapseHand,
       lapseDeal: this.lapseDeal,
       clock: { era: this.era, base: { ...this.clockBase }, lastStamp: this.lastStamp, ownAbsences: this.ownAbsences.slice(), gapVerdicts: this.gapVerdicts.slice(), runs: this.runScopes().map(withSum) },
-    };
+    }, (h) => this.handsEnded.has(h));
   }
 
   private bind(link: Link): void {
@@ -1949,6 +2011,9 @@ export class TableClient {
         this.load(d);
         // The join went out on this link before the record was taken up: what it said holds for the link as it is now.
         if (this.joinHave) this.joinHave = { ...this.joinHave, epoch: this.epoch };
+        const red = this.pendingRed;
+        this.pendingRed = null;
+        if (red !== null) this.keepRed(red);
         return;
       } catch {
         // (`fromArchive` found it loads.) A record that does not load is no record: nothing of it counts.
@@ -1956,6 +2021,7 @@ export class TableClient {
         this.state = { ...this.state, audits: [], lastAudit: null, auditStatus: 'unverified', auditFailures: [], auditCaveats: [] };
       }
     }
+    this.pendingRed = null;
     this.noHistory = false;
     this.lapse = false;
     this.fresh = true;

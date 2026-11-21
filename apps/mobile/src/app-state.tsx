@@ -2,7 +2,8 @@ import React, { createContext, useContext, useEffect, useMemo, useRef, useState 
 import { BackHandler, Platform } from 'react-native';
 import { DEFAULT_PROFILE, DEFAULT_PROGRESS, DEFAULT_SETTINGS, storage, type ActiveSession, type Profile, type Progress, type Settings } from './storage';
 import { clientSaves, saveScheduler } from './game/persist';
-import { setArchivedTableSource, setSavedClientSource, setSavedTokenSource, type CloseOptions, type Session } from './game/session';
+import { setArchivedTableSource, setRedHandsSource, setSavedClientSource, setSavedTokenSource, type CloseOptions, type Session } from './game/session';
+import { redFor, withRed, type KeptRed } from './logic/redHands';
 import { archivedFor, archiveOnSlotChange, type ArchivedTable } from './logic/tableArchive';
 import { acceptedName } from './logic/profile';
 import type { ShopFocus } from './logic/shopFocus';
@@ -88,8 +89,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const signalUrl = resolveSignalUrl(settings.devSignalUrl);
 
   useEffect(() => {
-    void Promise.all([storage.loadProfile(), storage.loadSettings(), storage.loadProgress(), storage.loadActiveSession(), loadWallet(), storage.loadArchive()]).then(([p, s, pr, as, w, kept]) => {
+    void Promise.all([storage.loadProfile(), storage.loadSettings(), storage.loadProgress(), storage.loadActiveSession(), loadWallet(), storage.loadArchive(), storage.loadRedHands()]).then(([p, s, pr, as, w, kept, red]) => {
       archiveRef.current = kept;
+      redRef.current = red;
       activeRef.current = as;
       setProfileState(p);
       // Apply the saved language before the first loaded render so the UI never flips.
@@ -166,6 +168,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   activeRef.current = activeSession;
   // The records of online tables that left the saved-table slot, kept for a day (logic/tableArchive.ts).
   const archiveRef = useRef<ArchivedTable[]>([]);
+  // The hands found red at online tables, kept apart from the records (logic/redHands.ts).
+  const redRef = useRef<readonly KeptRed[]>([]);
   const sessionRef = useRef<Session | null>(null);
   sessionRef.current = session;
   /**
@@ -200,6 +204,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const rec = activeRef.current;
       return rec?.kind === 'online' && rec.signalUrl === url && rec.roomCode === room && rec.token ? rec.token : undefined;
     });
+    // Every record taken up brings back the red hands of its table that a save it missed would have held.
+    setRedHandsSource((url, room) => redFor(redRef.current, url, room));
     // A join to a room whose table left the slot takes up the record kept of it (the table client keeps it only for its match).
     setArchivedTableSource((url, room) => {
       const e = archivedFor(archiveRef.current, url, room, Date.now());
@@ -209,6 +215,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setSavedClientSource(null);
       setSavedTokenSource(null);
       setArchivedTableSource(null);
+      setRedHandsSource(null);
     };
   }, []);
 
@@ -249,10 +256,22 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     // The session forwards its client's state (one client per table, kept across reconnects).
     // A local table's record holds its host, not the client's record: nothing there is worth an early write.
     const unsubClient = session.onChange(session.mode === 'local' ? () => scheduler.changed() : clientSaves(scheduler, session.client.state));
+    // A hand that turns red is written down at once, apart from the record: a small write that a record too large to be
+    // written, or a write that failed, does not take with it (logic/redHands.ts).
+    const keepRed = () => {
+      if (session.mode !== 'online') return;
+      const next = withRed(redRef.current, session.serverUrl ?? signalUrl, session.roomCode, session.client.redHands());
+      if (next === redRef.current) return;
+      redRef.current = next;
+      void storage.saveRedHands(next);
+    };
+    const unsubRed = session.onChange(keepRed);
+    keepRed();
     const unsubHost = session.host?.onChange(() => scheduler.changed());
     scheduler.changed();
     return () => {
       unsubClient();
+      unsubRed();
       unsubHost?.();
       scheduler.cancel();
     };

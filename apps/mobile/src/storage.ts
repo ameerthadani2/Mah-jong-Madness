@@ -10,6 +10,7 @@ import type { LocalePreference } from './i18n/resolve';
 import { migrateAgeRecord, type AgeRecord } from './legal/age';
 import { DEFAULT_PUZZLE_RATING, migratePuzzleProgress, type RatingEntry } from './logic/rating';
 import { validArchive, type ArchivedTable } from './logic/tableArchive';
+import { validRed, type KeptRed } from './logic/redHands';
 
 export { DEFAULT_PROFILE, type Profile } from './logic/profile';
 
@@ -82,7 +83,7 @@ export type ActiveSession =
       rulesReset?: boolean;
     };
 
-const KEYS = { profile: 'mjm.profile', settings: 'mjm.settings', progress: 'mjm.progress', session: 'mjm.activeSession', archive: 'mjm.tableArchive', age: 'mjm.age' } as const;
+const KEYS = { profile: 'mjm.profile', settings: 'mjm.settings', progress: 'mjm.progress', session: 'mjm.activeSession', archive: 'mjm.tableArchive', red: 'mjm.redHands', age: 'mjm.age' } as const;
 
 export const DEFAULT_SETTINGS: Settings = { rules: DEFAULT_RULES, coach: true, botSkill: 'beginner', sound: true, tableTheme: 'classic', locale: 'auto' };
 export const DEFAULT_PROGRESS: Progress = {
@@ -155,6 +156,16 @@ export const storage = {
       return [];
     }
   },
+  /** The hands found red at online tables (logic/redHands.ts), kept apart from the records of the tables. */
+  loadRedHands: async (): Promise<KeptRed[]> => {
+    try {
+      const raw = await AsyncStorage.getItem(KEYS.red);
+      return raw ? validRed(JSON.parse(raw)) : [];
+    } catch {
+      return [];
+    }
+  },
+  saveRedHands: (list: readonly KeptRed[]) => save(KEYS.red, list),
   saveArchive: async (list: readonly ArchivedTable[]) => {
     if (list.length > 0) return save(KEYS.archive, list);
     try {

@@ -29,6 +29,7 @@ import {
   type ClientState,
   type Link as TableLink,
   type QueueStatus,
+  type RedHand,
   type RoomInfo,
   type SerializedClient,
   type SerializedHost,
@@ -187,6 +188,15 @@ export function setArchivedTableSource(source: ArchivedTableSource | null): void
   archivedTableSource = source;
 }
 
+/** The hands this device found red at the table at this room, kept apart from its record (logic/redHands.ts). */
+type RedHandsSource = (signalUrl: string, roomCode: string) => RedHand[] | undefined;
+let redHandsSource: RedHandsSource | null = null;
+
+/** Register where the red hands live; null unregisters. */
+export function setRedHandsSource(source: RedHandsSource | null): void {
+  redHandsSource = source;
+}
+
 /**
  * The client for a join to `room` that holds no record of the saved table there: one that takes up a record this device
  * kept of the table at that room (`TableClient.fromArchive`: only if the table's welcome names its match, so a code that
@@ -195,8 +205,17 @@ export function setArchivedTableSource(source: ArchivedTableSource | null): void
  */
 function keptOrFresh(opts: Pick<OnlineOptions, 'signalUrl' | 'name' | 'avatar' | 'userId'>, link: TableLink, room: string, token: string | undefined): TableClient {
   const kept = archivedTableSource?.(opts.signalUrl, room);
-  if (kept && (token === undefined || token === kept.token)) return TableClient.fromArchive(kept.client, link, opts.name, opts.avatar, { token: kept.token || undefined, userId: opts.userId });
+  if (kept && (token === undefined || token === kept.token)) return withRed(TableClient.fromArchive(kept.client, link, opts.name, opts.avatar, { token: kept.token || undefined, userId: opts.userId }), opts.signalUrl, room);
   return new TableClient(link, opts.name, opts.avatar, { token, userId: opts.userId });
+}
+
+/**
+ * A client taken up from a record, with the hands this device found red at that table and kept apart from the record:
+ * a record saved before one of them failed, because the next save was not written, does not bring it back amber.
+ */
+function withRed(client: TableClient, signalUrl: string, room: string): TableClient {
+  client.keepRed(redHandsSource?.(signalUrl, room) ?? []);
+  return client;
 }
 
 /**
@@ -606,7 +625,7 @@ export async function createOnlineSession(opts: OnlineOptions): Promise<Session>
   // With no record of the saved table there, a join takes up one this device kept of the table at that room (`keptOrFresh`):
   // a server that said the table was gone, then seats the account there again, finds the phone holding what it checked.
   const client = saved
-    ? TableClient.restore(saved, connection.link, opts.name, opts.avatar, identity)
+    ? withRed(TableClient.restore(saved, connection.link, opts.name, opts.avatar, identity), opts.signalUrl, connection.room.room)
     : opts.action === 'join'
       ? keptOrFresh(opts, connection.link, connection.room.room, token)
       : new TableClient(connection.link, opts.name, opts.avatar, identity);
@@ -731,7 +750,7 @@ export function startQuickMatch(opts: QuickMatchOptions): { session: Promise<Ses
       // A room this device holds a record of (the saved table's, or one it kept: a server may match the account into a table
       // it sat at before) is joined as such a record is: taken up if the table's welcome names its match (`keptFor`).
       const kept = keptFor(opts.signalUrl, info.room);
-      const client = kept ? TableClient.fromArchive(kept.client, connection.link, opts.name, opts.avatar, { token: kept.token || undefined, userId: opts.userId }) : new TableClient(connection.link, opts.name, opts.avatar, { userId: opts.userId });
+      const client = kept ? withRed(TableClient.fromArchive(kept.client, connection.link, opts.name, opts.avatar, { token: kept.token || undefined, userId: opts.userId }), opts.signalUrl, info.room) : new TableClient(connection.link, opts.name, opts.avatar, { userId: opts.userId });
       const session = new OnlineSession(online, connection, client);
       client.join();
       return session;

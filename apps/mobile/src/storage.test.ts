@@ -57,3 +57,17 @@ describe('the records of tables that left the saved slot', () => {
     expect(stored.has('mjm.tableArchive')).toBe(false);
   });
 });
+
+describe('the red hands kept apart from the records', () => {
+  beforeEach(() => stored.clear());
+
+  it('are written under their own key and read back, damaged entries left out', async () => {
+    const good = { signalUrl: 'wss://example.test', roomCode: 'AB12', matchId: 'm-1', hand: 1, failures: ['Host sent a malformed frame'] };
+    await storage.saveRedHands([good]);
+    expect(await storage.loadRedHands()).toEqual([good]);
+    stored.set('mjm.redHands', JSON.stringify([good, { junk: true }]));
+    expect(await storage.loadRedHands()).toEqual([good]);
+    stored.set('mjm.redHands', '[{');
+    expect(await storage.loadRedHands()).toEqual([]);
+  });
+});

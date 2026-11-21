@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { chooseAction, DEFAULT_RULES, legalActions, withRules } from '@mjm/engine';
 import { LoopbackHub, TableClient, TableHost, transportLink, type ClientState, type SerializedClient } from '@mjm/net';
-import { connectSignaling, createLocalSession, createOnlineSession, isUnauthorised, seatOrRefusal, setArchivedTableSource, setSavedClientSource, setSavedTokenSource, startQuickMatch, UNAUTHORISED_CLOSE, type Session } from './session';
+import { connectSignaling, createLocalSession, createOnlineSession, isUnauthorised, seatOrRefusal, setArchivedTableSource, setRedHandsSource, setSavedClientSource, setSavedTokenSource, startQuickMatch, UNAUTHORISED_CLOSE, type Session } from './session';
 import { friendlyErrorMessage } from '../logic/errors';
 import { linkNotice } from '../logic/reconnect';
 
@@ -791,6 +791,23 @@ describe('cold resume after an app restart', () => {
     setSavedClientSource(null);
     setSavedTokenSource(null);
     setArchivedTableSource(null);
+    setRedHandsSource(null);
+  });
+
+  it('a record taken up brings back the red hands of its table kept apart from it (a later save was not written)', async () => {
+    const saved = savedRecord();
+    const matchId = saved.state.matchId!;
+    setSavedClientSource((url, room, token) => (room === 'ABC123' && token === saved.state.token ? saved : undefined));
+    setRedHandsSource((url, room) => (url === base.signalUrl && room === 'ABC123' ? [{ matchId, hand: 0, failures: ['Host sent a malformed frame'] }] : undefined));
+    const s = await createOnlineSession({ ...base, action: 'join', code: 'ABC123', token: saved.state.token! });
+    expect(s.client.state.matchFailed).toBe(true);
+    expect(s.client.state.audits.filter((a) => a.audit.handNumber === 0).map((a) => a.status)).toEqual(['ok', 'failed']);
+    s.close();
+    // A table with no red hands kept: nothing changes.
+    setRedHandsSource(() => []);
+    const plain = await createOnlineSession({ ...base, action: 'join', code: 'ABC123', token: saved.state.token! });
+    expect(plain.client.state.matchFailed).toBe(false);
+    plain.close();
   });
 
   const fromTable = (msg: Frame): Frame => ({ t: 'from', from: 'server-1', data: { ch: 'game', msg } });
