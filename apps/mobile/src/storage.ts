@@ -9,6 +9,7 @@ import { DEFAULT_PROFILE, migrateProfile, type Profile } from './logic/profile';
 import type { LocalePreference } from './i18n/resolve';
 import { migrateAgeRecord, type AgeRecord } from './legal/age';
 import { DEFAULT_PUZZLE_RATING, migratePuzzleProgress, type RatingEntry } from './logic/rating';
+import { validArchive, type ArchivedTable } from './logic/tableArchive';
 
 export { DEFAULT_PROFILE, type Profile } from './logic/profile';
 
@@ -81,7 +82,7 @@ export type ActiveSession =
       rulesReset?: boolean;
     };
 
-const KEYS = { profile: 'mjm.profile', settings: 'mjm.settings', progress: 'mjm.progress', session: 'mjm.activeSession', age: 'mjm.age' } as const;
+const KEYS = { profile: 'mjm.profile', settings: 'mjm.settings', progress: 'mjm.progress', session: 'mjm.activeSession', archive: 'mjm.tableArchive', age: 'mjm.age' } as const;
 
 export const DEFAULT_SETTINGS: Settings = { rules: DEFAULT_RULES, coach: true, botSkill: 'beginner', sound: true, tableTheme: 'classic', locale: 'auto' };
 export const DEFAULT_PROGRESS: Progress = {
@@ -145,6 +146,23 @@ export const storage = {
     }
   },
   saveActiveSession: (s: ActiveSession) => save(KEYS.session, s),
+  /** The records of online tables no longer in the saved-table slot (logic/tableArchive.ts): well-formed, unexpired ones. */
+  loadArchive: async (): Promise<ArchivedTable[]> => {
+    try {
+      const raw = await AsyncStorage.getItem(KEYS.archive);
+      return raw ? validArchive(JSON.parse(raw), Date.now()) : [];
+    } catch {
+      return [];
+    }
+  },
+  saveArchive: async (list: readonly ArchivedTable[]) => {
+    if (list.length > 0) return save(KEYS.archive, list);
+    try {
+      await AsyncStorage.removeItem(KEYS.archive);
+    } catch {
+      /* noop */
+    }
+  },
   /** The age gate's answer (src/legal/age.ts); null until the player has given a birth year. */
   loadAgeRecord: async (): Promise<AgeRecord | null> => {
     try {

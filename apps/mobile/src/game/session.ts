@@ -175,14 +175,54 @@ export function setSavedTokenSource(source: SavedTokenSource | null): void {
 }
 
 /**
+ * A record this device kept of a table at this room after it left the saved-table slot (the server said the table was
+ * gone, the player gave it up, or another table took the slot: logic/tableArchive.ts): its token and its client record.
+ * app-state registers where they live.
+ */
+type ArchivedTableSource = (signalUrl: string, roomCode: string) => { token: string; client: SerializedClient } | undefined;
+let archivedTableSource: ArchivedTableSource | null = null;
+
+/** Register where the kept records of tables live; null unregisters. */
+export function setArchivedTableSource(source: ArchivedTableSource | null): void {
+  archivedTableSource = source;
+}
+
+/**
+ * The client for a join to `room` that holds no record of the saved table there: one that takes up a record this device
+ * kept of the table at that room (`TableClient.fromArchive`: only if the table's welcome names its match, so a code that
+ * went to another table is joined as with nothing), or one with nothing. A join that brings a token of its own takes up
+ * only a record kept with that token.
+ */
+function keptOrFresh(opts: Pick<OnlineOptions, 'signalUrl' | 'name' | 'avatar' | 'userId'>, link: TableLink, room: string, token: string | undefined): TableClient {
+  const kept = archivedTableSource?.(opts.signalUrl, room);
+  if (kept && (token === undefined || token === kept.token)) return TableClient.fromArchive(kept.client, link, opts.name, opts.avatar, { token: kept.token || undefined, userId: opts.userId });
+  return new TableClient(link, opts.name, opts.avatar, { token, userId: opts.userId });
+}
+
+/**
  * The saved record to restore for this table, if it is the seat's: one kept under this room (the source matches the room
  * the session joined, not one a welcome named) for the seat's token, or for no token when the table gave none.
  */
 function savedClientFor(opts: OnlineOptions, code: string): SerializedClient | undefined {
   const token = opts.token ?? '';
   const saved = opts.restoreClient ?? savedClientSource?.(opts.signalUrl, code, token);
-  if (!saved || (saved.state?.token ?? '') !== token) return undefined;
+  if (!saved || (saved.state?.token ?? '') !== token || !holdsMatch(saved)) return undefined;
   return saved;
+}
+
+/**
+ * A record saved before the table's first welcome holds nothing of a match (the app saves a moment after a join): it is
+ * no record of the table, and a join goes on as with none (it then takes up a record kept of the table, `keptOrFresh`).
+ */
+function holdsMatch(saved: SerializedClient): boolean {
+  return typeof saved.state?.matchId === 'string' && saved.state.matchId !== '';
+}
+
+/** The record this device holds of the table at `room`: the saved table's (with its token), or one it kept. */
+function keptFor(signalUrl: string, room: string): { token: string; client: SerializedClient } | undefined {
+  const token = savedTokenSource?.(signalUrl, room) ?? '';
+  const saved = savedClientSource?.(signalUrl, room, token);
+  return saved && holdsMatch(saved) ? { token, client: saved } : archivedTableSource?.(signalUrl, room);
 }
 
 /** WebSocket close code the game server uses for a missing or bad session token. */
@@ -563,7 +603,13 @@ export async function createOnlineSession(opts: OnlineOptions): Promise<Session>
   const token = opts.token ?? (opts.action === 'join' ? savedTokenSource?.(opts.signalUrl, connection.room.room) || undefined : undefined);
   const identity = { token, userId: opts.userId };
   const saved = opts.action === 'join' ? savedClientFor({ ...opts, token }, connection.room.room) : undefined;
-  const client = saved ? TableClient.restore(saved, connection.link, opts.name, opts.avatar, identity) : new TableClient(connection.link, opts.name, opts.avatar, identity);
+  // With no record of the saved table there, a join takes up one this device kept of the table at that room (`keptOrFresh`):
+  // a server that said the table was gone, then seats the account there again, finds the phone holding what it checked.
+  const client = saved
+    ? TableClient.restore(saved, connection.link, opts.name, opts.avatar, identity)
+    : opts.action === 'join'
+      ? keptOrFresh(opts, connection.link, connection.room.room, token)
+      : new TableClient(connection.link, opts.name, opts.avatar, identity);
   const session = new OnlineSession(opts, connection, client);
   client.join();
   return session;
@@ -682,7 +728,10 @@ export function startQuickMatch(opts: QuickMatchOptions): { session: Promise<Ses
       const info = await signaling.joinRoom(room);
       const connection: Connection = { signaling, link: transportLink(transport, info.host), room: info, dropped };
       const online: OnlineOptions = { ...opts, rules: DEFAULT_RULES, action: 'join', code: info.room, quickMatch: true };
-      const client = new TableClient(connection.link, opts.name, opts.avatar, { userId: opts.userId });
+      // A room this device holds a record of (the saved table's, or one it kept: a server may match the account into a table
+      // it sat at before) is joined as such a record is: taken up if the table's welcome names its match (`keptFor`).
+      const kept = keptFor(opts.signalUrl, info.room);
+      const client = kept ? TableClient.fromArchive(kept.client, connection.link, opts.name, opts.avatar, { token: kept.token || undefined, userId: opts.userId }) : new TableClient(connection.link, opts.name, opts.avatar, { userId: opts.userId });
       const session = new OnlineSession(online, connection, client);
       client.join();
       return session;

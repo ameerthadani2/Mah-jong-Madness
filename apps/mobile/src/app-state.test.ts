@@ -29,3 +29,23 @@ describe('the resumable table record', () => {
     expect(save).not.toMatch(/roomCode: st\.roomCode/);
   });
 });
+
+describe('the records of online tables that leave the saved-table slot', () => {
+  it('every change of the slot goes through putActive, which keeps the table leaving it in the archive', () => {
+    // The load at start sets the slot as storage holds it; every other change goes through putActive.
+    expect([...code.matchAll(/setActiveSessionState\(/g)]).toHaveLength(2);
+    expect(code).toContain('setActiveSession: (s) => putActive(s),');
+    const at = code.indexOf('const save = () => {');
+    const save = code.slice(at, code.indexOf('const scheduler = saveScheduler(save);', at));
+    expect(save).toContain('putActive(null);');
+    expect(save).toContain('putActive(record);');
+    const put = code.slice(code.indexOf('const putActive = useRef('), code.indexOf('}).current;', code.indexOf('const putActive = useRef(')));
+    expect(put).toContain('archiveOnSlotChange(archiveRef.current, prev, next, live, Date.now())');
+    expect(put).toContain('void storage.saveArchive(kept);');
+  });
+
+  it('a join to a room finds the record kept of its table through the registered source', () => {
+    expect(code).toContain('setArchivedTableSource((url, room) => {');
+    expect(code).toContain('archivedFor(archiveRef.current, url, room, Date.now())');
+  });
+});

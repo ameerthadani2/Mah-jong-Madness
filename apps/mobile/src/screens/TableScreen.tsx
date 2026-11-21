@@ -355,7 +355,9 @@ export function TableScreen() {
     setLeaveAsk(false);
     const plan = exitPlan(choice, { quickMatch: session?.quickMatch });
     if (plan.closeSession) app.setSession(null, { keepSeat: plan.keepSeat });
-    if (plan.forgetTable) app.setActiveSession(null);
+    // A table the server no longer has (or will not let this account back to) is not offered on Home whichever way out is
+    // taken: its record leaves the saved-table slot (kept a while, src/app-state.tsx).
+    if (plan.forgetTable || (notice !== null && forgetsTable(notice))) app.setActiveSession(null);
     if (plan.goHome) app.reset({ name: 'home' });
   }
   // The match-over sheet's button: the table is done with. Every other way out (the exit icon, the result

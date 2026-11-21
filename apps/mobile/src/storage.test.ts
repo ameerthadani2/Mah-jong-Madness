@@ -35,3 +35,25 @@ describe('loading the saved table', () => {
     expect(stored.has(KEY)).toBe(true);
   });
 });
+
+describe('the records of tables that left the saved slot', () => {
+  beforeEach(() => stored.clear());
+  const entry = (room: string, at: number) => ({ signalUrl: 'wss://example.test', roomCode: room, matchId: `m-${room}`, token: 'tok', client: { version: 2, state: { matchId: `m-${room}` } }, archivedAt: at });
+
+  it('are written under their own key and read back, the expired and damaged ones left out', async () => {
+    const now = Date.now();
+    await storage.saveArchive([entry('A', now - 1_000)] as never);
+    expect(JSON.parse(stored.get('mjm.tableArchive')!)).toHaveLength(1);
+    expect((await storage.loadArchive()).map((e) => e.roomCode)).toEqual(['A']);
+    stored.set('mjm.tableArchive', JSON.stringify([entry('OLD', now - 2 * 24 * 3600_000), { junk: true }, entry('B', now)]));
+    expect((await storage.loadArchive()).map((e) => e.roomCode)).toEqual(['B']);
+    stored.set('mjm.tableArchive', '{"not json');
+    expect(await storage.loadArchive()).toEqual([]);
+  });
+
+  it('an empty list removes the key', async () => {
+    stored.set('mjm.tableArchive', '[]');
+    await storage.saveArchive([]);
+    expect(stored.has('mjm.tableArchive')).toBe(false);
+  });
+});

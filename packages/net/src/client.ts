@@ -520,6 +520,17 @@ export class TableClient {
    * any, and until then it cannot tell which (see `enterHand`, which clears it).
    */
   private fresh = false;
+  /**
+   * A record this device kept of the table at this room (`fromArchive`), not yet taken up: it is at the table's first word
+   * about the table, unless that is a welcome naming another match (`takeUp`).
+   */
+  private pending: SerializedClient | null = null;
+  /**
+   * The link on which this client gave up a kept record because the welcome named another match: its join said which hands
+   * of that other match the device held (`have`), and the records an honest table sends in answer, of its own match, are
+   * not this client's to judge (it joined with nothing).
+   */
+  private haveOfOther = -1;
   /** Hands whose `hand_over` we received. */
   private handsEnded = new Set<number>();
   /** Host misbehaviour seen during each hand. */
@@ -786,6 +797,30 @@ export class TableClient {
     return c;
   }
 
+  /**
+   * A client for a table whose record this device kept after the server said the table was gone, or after it gave the
+   * table up (the app keeps such records for a while, under the room and the match). It joins with the record's token and
+   * says which hands of the match it holds (`have`), and it takes the record up as `restore` does at the table's first
+   * word about the table, as long as that is not a `welcome` naming another match: another match at this room code is
+   * another table (codes are used again once a table is gone), and the client then goes on as one that joined with
+   * nothing (no record, no token). An unknown or damaged record gives a client built from `identity` alone.
+   */
+  static fromArchive(saved: unknown, link: Link, name: string, avatar?: string, identity: { token?: string; userId?: string } = {}, opts: TableClientOptions = {}): TableClient {
+    if (!isObject(saved) || saved.version !== CLIENT_SNAPSHOT_VERSION || !isObject(saved.state) || typeof saved.state.matchId !== 'string') return new TableClient(link, name, avatar, identity, opts);
+    const d = JSON.parse(JSON.stringify(saved)) as SerializedClient;
+    // A record that does not load (as `restore` would find) is no record.
+    const idle: Link = { send: () => undefined, onMessage: () => () => undefined, close: () => undefined };
+    try {
+      new TableClient(idle, name, avatar, identity, opts).load(JSON.parse(JSON.stringify(d)) as SerializedClient);
+    } catch {
+      return new TableClient(link, name, avatar, identity, opts);
+    }
+    const token = identity.token ?? (typeof d.state.token === 'string' && d.state.token ? d.state.token : undefined);
+    const c = new TableClient(link, name, avatar, { ...identity, ...(token ? { token } : {}) }, opts);
+    c.pending = d;
+    return c;
+  }
+
   private load(d: SerializedClient): void {
     this.fresh = false;
     if (typeof d.device === 'string' && /^[\w-]{6,64}$/.test(d.device)) this.deviceId = d.device;
@@ -1020,6 +1055,12 @@ export class TableClient {
 
   /** The last hand of this match whose end this client holds (-1: none yet, but it watched from the lobby). */
   private have(): number | undefined {
+    // A kept record not yet taken up says it for the match it holds.
+    const d = this.pending;
+    if (d) {
+      const ended = (Array.isArray(d.handsEnded) ? d.handsEnded : []).filter(isInt);
+      return ended.length > 0 ? Math.max(...ended) : d.atStart === true ? -1 : undefined;
+    }
     if (this.state.matchId === null) return undefined;
     if (this.handsEnded.size > 0) return Math.max(...this.handsEnded);
     return this.atStart ? -1 : undefined;
@@ -1894,6 +1935,35 @@ export class TableClient {
     return 'refuse';
   }
 
+  /**
+   * The kept record (`pending`) at the table's first word about the table: taken up as `restore` takes a record up, unless
+   * that word is a welcome naming another match than the record's. That is another table under the same room code: the
+   * client goes on as one that joined with nothing (no record, no token), and on this link it does not judge the records
+   * an honest table sends in answer to the hands its join said it held (`haveOfOther`), which are of the table's own match.
+   */
+  private takeUp(matchId: string | null): void {
+    const d = this.pending as SerializedClient;
+    this.pending = null;
+    if (matchId === null || matchId === d.state.matchId) {
+      try {
+        this.load(d);
+        // The join went out on this link before the record was taken up: what it said holds for the link as it is now.
+        if (this.joinHave) this.joinHave = { ...this.joinHave, epoch: this.epoch };
+        return;
+      } catch {
+        // (`fromArchive` found it loads.) A record that does not load is no record: nothing of it counts.
+        this.resetMatch();
+        this.state = { ...this.state, audits: [], lastAudit: null, auditStatus: 'unverified', auditFailures: [], auditCaveats: [] };
+      }
+    }
+    this.noHistory = false;
+    this.lapse = false;
+    this.fresh = true;
+    this.state = { ...this.state, token: null, matchId: null, seat: null };
+    if (this.joinHave && this.joinHave.epoch === this.epoch && this.joinHave.have !== undefined) this.haveOfOther = this.epoch;
+    if (this.joinHave) this.joinHave = { ...this.joinHave, have: undefined };
+  }
+
   /** Put a failure on show at once (not waiting for a hand to end), and keep it on the list of audits. */
   private failNow(problem: string): void {
     const last = this.state.lastAudit;
@@ -1934,6 +2004,9 @@ export class TableClient {
   private onMessage(raw: HostMessage): void {
     // Every frame meets the protocol's contract for its type before anything of it is used (`intake`).
     const taken = intake(raw);
+    // A kept record (`fromArchive`) is taken up, or given up, at the table's first word about the table: any frame but a
+    // pong or an error that refuses no move (the only frames an honest host sends a link before its welcome).
+    if (this.pending && !(taken?.ok && (taken.frame.t === 'pong' || (taken.frame.t === 'error' && !MOVE_REFUSALS.has(taken.frame.code))))) this.takeUp(taken?.ok && taken.frame.t === 'welcome' ? taken.frame.matchId : null);
     if (taken === null) {
       // A type no seat is sent: nothing of it is read (it still ends a link's opening).
       if (isObject(raw) && typeof raw.t === 'string' && !OPENING_FRAMES.has(raw.t)) this.opening = false;
@@ -2253,7 +2326,8 @@ export class TableClient {
         if (this.openHand === h) this.openHand = null;
         this.atStart = false;
         const end: SeenState = { tc: Number.POSITIVE_INFINITY, epoch: this.epoch, era: this.era, at: this.now(), now: typeof m.now === 'number' && Number.isFinite(m.now) ? m.now : undefined, run: this.runId, seg: this.seg(), owes: false, deadline: null, timeBank: 0, inBank: false, hash: '', ...(stampedEnd ? { atLo: stampedEnd.atLo, ref: stampedEnd.ref, wref: stampedEnd.wref, live: stampedEnd.live, seg: stampedEnd.seg } : {}) };
-        const { check, replayed, anchors, passed, late } = this.runAudit(m.audit, m.view, m.result, end);
+        const { check, replayed, anchors, passed, late, beforeJoin } = this.runAudit(m.audit, m.view, m.result, end);
+        if (beforeJoin) this.missedMoves = true;
         this.clockBase = foldClock(this.clockBase, this.era, { run: this.runId, seg: this.seg() }, this.plays.find((p) => p.hand === h) ?? null, end, anchors);
         // The strongest fixed point of this era, run of the app and run of this device's clock, for the
         // hands after this one: each worth no more than its round trip allows against the least arrival
@@ -2292,6 +2366,8 @@ export class TableClient {
         return;
       }
       case 'hand_missed':
+        // The answer to a join that said which hands of another match this device held (`takeUp`): not this client's.
+        if (this.haveOfOther === this.epoch) return;
         this.auditMissed(m.audit);
         return;
       case 'restored': {
@@ -2707,7 +2783,7 @@ export class TableClient {
   }
 
   /** verifyAudit, plus the replayed final state when the replay ran (to chain the next hand onto). */
-  private runAudit(audit: Audit, finalView: TableView, announced: HandResult | undefined, end: SeenState | null): { check: AuditCheck; replayed: GameState | null; anchors: ClockAnchor[]; passed: Array<{ turn: number; claim: PassedClaim; late?: boolean }>; late: { turns: number[]; of: number } } {
+  private runAudit(audit: Audit, finalView: TableView, announced: HandResult | undefined, end: SeenState | null): { check: AuditCheck; replayed: GameState | null; anchors: ClockAnchor[]; passed: Array<{ turn: number; claim: PassedClaim; late?: boolean }>; late: { turns: number[]; of: number }; beforeJoin: boolean } {
     const failures: string[] = [];
     const caveats: string[] = [];
     let replayed: GameState | null = null;
@@ -2715,8 +2791,8 @@ export class TableClient {
     const notes: ReplayNotes = { tableMoved: false };
     const rules = this.pinnedRules ?? this.state.rules;
     const none = { turns: [], of: 0 };
-    if (!rules || !this.state.matchId) return { check: { status: 'unverified', failures: ['No match context'], caveats }, replayed, anchors, passed: [], late: none };
-    if (!isAudit(audit) || !isView(finalView)) return { check: { status: 'failed', failures: ['The audit is malformed'], caveats }, replayed, anchors, passed: [], late: none };
+    if (!rules || !this.state.matchId) return { check: { status: 'unverified', failures: ['No match context'], caveats }, replayed, anchors, passed: [], late: none, beforeJoin: false };
+    if (!isAudit(audit) || !isView(finalView)) return { check: { status: 'failed', failures: ['The audit is malformed'], caveats }, replayed, anchors, passed: [], late: none, beforeJoin: false };
     const h = audit.handNumber;
     const me = this.state.seat;
 
@@ -2738,6 +2814,9 @@ export class TableClient {
     if (joined) caveats.push(AUDIT_CAVEATS.joined);
     else if (forgot) caveats.push(AUDIT_CAVEATS.appRestart);
     else if (!tookPart) failures.push('Host never asked this seat to commit');
+    // A hand this device came to part-way: it did not watch the moves the log credits to the seat before the first state it
+    // was shown there. Like the moves of a hand it missed, they keep the end of the match from being shown as verified.
+    const beforeJoin = joined && me !== null && movedBefore(audit.log, me, firstShown(this.plays.find((p) => p.hand === h)));
 
     // 4. Our own share.
     if (tookPart && stoodIn) caveats.push(AUDIT_CAVEATS.standIn);
@@ -2810,7 +2889,7 @@ export class TableClient {
     if (this.lapseHand === h && this.lapseDeal && !joined && !caveats.includes(AUDIT_CAVEATS.appRestart)) caveats.push(AUDIT_CAVEATS.appRestart);
 
     const status: AuditStatus = failures.length > 0 ? 'failed' : caveats.length > 0 ? 'partial' : 'ok';
-    return { check: { status, failures, caveats }, replayed, anchors, passed: notes.passedClaims ?? [], late: { turns: notes.lateTurns ?? [], of: notes.turnsMeasured ?? 0 } };
+    return { check: { status, failures, caveats }, replayed, anchors, passed: notes.passedClaims ?? [], late: { turns: notes.lateTurns ?? [], of: notes.turnsMeasured ?? 0 }, beforeJoin };
   }
 
   /**
@@ -3304,6 +3383,18 @@ function frameHand(m: HostMessage): number | null {
     default:
       return null;
   }
+}
+
+/** The first turn of a hand this device was shown (its earliest state on record), or +Infinity when it was shown none. */
+function firstShown(play: PlayRecord | undefined): number {
+  let first = Number.POSITIVE_INFINITY;
+  for (const f of play?.seen ?? []) if (isInt(f.tc) && f.tc < first) first = f.tc;
+  return first;
+}
+
+/** Whether `log` credits a move to seat `me` before turn `from` (an entry that names no turn counts as one). */
+function movedBefore(log: unknown, me: number, from: number): boolean {
+  return Array.isArray(log) && log.some((e) => isObject(e) && e.seat === me && !(isInt(e.n) && e.n >= from));
 }
 
 /** What a replay noticed that makes a hand amber rather than green. */

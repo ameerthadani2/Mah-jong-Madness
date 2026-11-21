@@ -2,7 +2,8 @@ import React, { createContext, useContext, useEffect, useMemo, useRef, useState 
 import { BackHandler, Platform } from 'react-native';
 import { DEFAULT_PROFILE, DEFAULT_PROGRESS, DEFAULT_SETTINGS, storage, type ActiveSession, type Profile, type Progress, type Settings } from './storage';
 import { clientSaves, saveScheduler } from './game/persist';
-import { setSavedClientSource, setSavedTokenSource, type CloseOptions, type Session } from './game/session';
+import { setArchivedTableSource, setSavedClientSource, setSavedTokenSource, type CloseOptions, type Session } from './game/session';
+import { archivedFor, archiveOnSlotChange, type ArchivedTable } from './logic/tableArchive';
 import { acceptedName } from './logic/profile';
 import type { ShopFocus } from './logic/shopFocus';
 import type { BoardKind } from './api/puzzles';
@@ -87,7 +88,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const signalUrl = resolveSignalUrl(settings.devSignalUrl);
 
   useEffect(() => {
-    void Promise.all([storage.loadProfile(), storage.loadSettings(), storage.loadProgress(), storage.loadActiveSession(), loadWallet()]).then(([p, s, pr, as, w]) => {
+    void Promise.all([storage.loadProfile(), storage.loadSettings(), storage.loadProgress(), storage.loadActiveSession(), loadWallet(), storage.loadArchive()]).then(([p, s, pr, as, w, kept]) => {
+      archiveRef.current = kept;
+      activeRef.current = as;
       setProfileState(p);
       // Apply the saved language before the first loaded render so the UI never flips.
       setLocalePreference(s.locale);
@@ -161,6 +164,32 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // A cold resume (Home's Resume card) restores the saved table client's record when it is for the same table and seat.
   const activeRef = useRef<ActiveSession | null>(null);
   activeRef.current = activeSession;
+  // The records of online tables that left the saved-table slot, kept for a day (logic/tableArchive.ts).
+  const archiveRef = useRef<ArchivedTable[]>([]);
+  const sessionRef = useRef<Session | null>(null);
+  sessionRef.current = session;
+  /**
+   * Put `next` in the saved-table slot (null empties it). The online table whose record leaves the slot (it is gone, given
+   * up, or another table takes the slot) is kept in the archive while its match is not over, with the record its client
+   * holds now when that table is the one open on this device: a join to its room takes the record up again. A table
+   * whose record comes back to the slot leaves the archive.
+   */
+  const putActive = useRef((next: ActiveSession | null) => {
+    const prev = activeRef.current;
+    const live = () => {
+      const open = sessionRef.current;
+      return prev?.kind === 'online' && open?.mode === 'online' && open.roomCode === prev.roomCode && open.serverUrl === prev.signalUrl ? open.client.serialize() : undefined;
+    };
+    const kept = archiveOnSlotChange(archiveRef.current, prev, next, live, Date.now());
+    if (kept !== archiveRef.current) {
+      archiveRef.current = [...kept];
+      void storage.saveArchive(kept);
+    }
+    activeRef.current = next;
+    setActiveSessionState(next);
+    if (next) void storage.saveActiveSession(next);
+    else void storage.clearActiveSession();
+  }).current;
   useEffect(() => {
     setSavedClientSource((url, room, token) => {
       const rec = activeRef.current;
@@ -171,9 +200,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const rec = activeRef.current;
       return rec?.kind === 'online' && rec.signalUrl === url && rec.roomCode === room && rec.token ? rec.token : undefined;
     });
+    // A join to a room whose table left the slot takes up the record kept of it (the table client keeps it only for its match).
+    setArchivedTableSource((url, room) => {
+      const e = archivedFor(archiveRef.current, url, room, Date.now());
+      return e ? { token: e.token, client: e.client } : undefined;
+    });
     return () => {
       setSavedClientSource(null);
       setSavedTokenSource(null);
+      setArchivedTableSource(null);
     };
   }, []);
 
@@ -185,8 +220,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const save = () => {
       const st = session.client.state;
       if (st.matchOver) {
-        setActiveSessionState(null);
-        void storage.clearActiveSession();
+        putActive(null);
         return;
       }
       // Saved whatever the client holds for a token: an honest table always gives one, and a table that leaves it out
@@ -208,8 +242,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
               client: session.client.serialize(),
               savedAt: Date.now(),
             };
-      setActiveSessionState(record);
-      void storage.saveActiveSession(record);
+      putActive(record);
     };
     // Saved a moment after a change, or at once while the client is agreeing a deal or when the seat has just been opened on another device (src/game/persist.ts).
     const scheduler = saveScheduler(save);
@@ -223,7 +256,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       unsubHost?.();
       scheduler.cancel();
     };
-  }, [session, shown, profile.avatar, signalUrl]);
+  }, [session, shown, profile.avatar, signalUrl, putActive]);
 
   const value = useMemo<AppState>(
     () => ({
@@ -267,11 +300,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         });
       },
       activeSession,
-      setActiveSession: (s) => {
-        setActiveSessionState(s);
-        if (s) void storage.saveActiveSession(s);
-        else void storage.clearActiveSession();
-      },
+      setActiveSession: (s) => putActive(s),
       wallet,
       setWallet: (w) => {
         setWalletState(w);
@@ -284,7 +313,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       },
       loaded,
     }),
-    [stack, profile, settings, signalUrl, progress, session, activeSession, wallet, loaded, hardwareBack, backAsked],
+    [stack, profile, settings, signalUrl, progress, session, activeSession, wallet, loaded, hardwareBack, backAsked, putActive],
   );
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

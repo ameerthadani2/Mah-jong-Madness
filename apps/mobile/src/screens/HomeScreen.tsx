@@ -11,6 +11,7 @@ import { ConsentQuestion } from '../components/ConsentQuestion';
 import { telemetryAvailable, useConsent } from '../telemetry';
 import { shouldAskConsent } from '../telemetry/consent';
 import { useApp } from '../app-state';
+import { isRoomUnavailable } from '@mjm/net';
 import { createLocalSession, createOnlineSession, seatOrRefusal } from '../game/session';
 import { useAuth } from '../auth/AuthProvider';
 import { AVATARS, effectiveStreak, todayKey } from '../storage';
@@ -64,6 +65,8 @@ export function HomeScreen() {
   const liveTable = app.session && !app.session.client.state.matchOver ? app.session : null;
   const [resuming, setResuming] = useState(false);
   const [resumeError, setResumeError] = useState<string | null>(null);
+  // The table the Resume card offered is gone from the game server: the card goes (its record is kept a day, src/app-state.tsx).
+  const [resumeGone, setResumeGone] = useState(false);
 
   // The age gate comes first on a fresh install (src/legal/age.ts, gateFor); `entry` guards the online resume.
   const { entry, gate } = useOnlineGuard();
@@ -135,7 +138,12 @@ export function HomeScreen() {
         app.go({ name: 'lobby' });
       }
     } catch (e) {
-      setResumeError(tableError(e, t));
+      // A table the game server no longer has is not offered again: its record leaves the saved-table slot (and is kept, so
+      // a server that seats the account there again finds this phone holding what it checked).
+      if (rec.kind === 'online' && isRoomUnavailable(e)) {
+        app.setActiveSession(null);
+        setResumeGone(true);
+      } else setResumeError(tableError(e, t));
     } finally {
       setResuming(false);
     }
@@ -371,6 +379,11 @@ export function HomeScreen() {
           {/* Giving the table up cannot be undone, so the button only opens the question below. */}
           <Button small kind="ghost" testID="abandon-table" title={t('home.resume.abandon')} onPress={() => setAskAbandon(true)} />
         </Card>
+      )}
+      {resumeGone && !app.activeSession && (
+        <View testID="resume-gone" accessibilityRole="alert" accessibilityLiveRegion="polite">
+          <Pill tone="danger" icon="warning" wrap text={t('lobby.tableGone')} />
+        </View>
       )}
 
       {wide ? (

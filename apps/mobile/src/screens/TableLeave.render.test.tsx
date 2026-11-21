@@ -19,10 +19,12 @@ afterEach(() => {
   jest.useRealTimers();
 });
 
-async function renderTable(quickMatch = false) {
+async function renderTable(quickMatch = false, gone = false) {
   session = createLocalSession('Mei', 'panda', DEFAULT_RULES);
   // A quick-match table is an online one; the flag alone is what the exit sheet and the exit plan read.
   if (quickMatch) session = { ...session, mode: 'online', quickMatch: true };
+  // An online table the game server answered "Room not found or full" for: the session stopped, the reason 'gone'.
+  if (gone) session = { ...session, mode: 'online', status: 'lost', lostReason: 'gone' };
   session.host!.start();
   const setSession = jest.fn();
   const setActiveSession = jest.fn();
@@ -65,6 +67,16 @@ describe("the table's exit icon", () => {
     await fireEvent.press(screen.getByRole('button', { name: 'Back to Home' }));
     expect(calls.setSession).toHaveBeenCalledWith(null, { keepSeat: false });
     expect(calls.setActiveSession).not.toHaveBeenCalled();
+    expect(calls.reset).toHaveBeenCalledWith({ name: 'home' });
+  });
+
+  it('at a table the game server no longer has, "Back to Home" takes it out of the saved slot too (Home does not offer it again)', async () => {
+    const calls = await renderTable(false, true);
+    expect(await screen.findByText('Table over')).toBeOnTheScreen();
+    await fireEvent.press(await screen.findByRole('button', { name: 'Leave table' }));
+    // The banner's own way out has the same words: this is the sheet's.
+    await fireEvent.press(screen.getByTestId('leave-away'));
+    expect(calls.setActiveSession).toHaveBeenCalledWith(null);
     expect(calls.reset).toHaveBeenCalledWith({ name: 'home' });
   });
 

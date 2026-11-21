@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { chooseAction, DEFAULT_RULES, legalActions, withRules } from '@mjm/engine';
 import { LoopbackHub, TableClient, TableHost, transportLink, type ClientState, type SerializedClient } from '@mjm/net';
-import { connectSignaling, createLocalSession, createOnlineSession, isUnauthorised, seatOrRefusal, setSavedClientSource, setSavedTokenSource, UNAUTHORISED_CLOSE, type Session } from './session';
+import { connectSignaling, createLocalSession, createOnlineSession, isUnauthorised, seatOrRefusal, setArchivedTableSource, setSavedClientSource, setSavedTokenSource, startQuickMatch, UNAUTHORISED_CLOSE, type Session } from './session';
 import { friendlyErrorMessage } from '../logic/errors';
 import { linkNotice } from '../logic/reconnect';
 
@@ -790,6 +790,79 @@ describe('cold resume after an app restart', () => {
   afterEach(() => {
     setSavedClientSource(null);
     setSavedTokenSource(null);
+    setArchivedTableSource(null);
+  });
+
+  const fromTable = (msg: Frame): Frame => ({ t: 'from', from: 'server-1', data: { ch: 'game', msg } });
+  const welcome = (matchId: string, token: string) => fromTable({ t: 'welcome', seat: 0, roomCode: 'ABC123', rules: withRules({ handsPerMatch: 4 }), seats: SEATS, matchId, token });
+
+  it('a join to a room whose table left the saved slot (gone, given up, replaced) takes up the record kept of it when the welcome names its match', async () => {
+    const saved = savedRecord();
+    setArchivedTableSource((url, room) => (url === base.signalUrl && room === 'ABC123' ? { token: saved.state.token!, client: saved } : undefined));
+    // Quick Match's answer that the account holds a seat there, a club's table, a notification, Join by code: no token.
+    const s = await createOnlineSession({ ...base, action: 'join', code: 'ABC123' });
+    expect(tableJoins(FakeSocket.last!)).toEqual([expect.objectContaining({ t: 'join', token: saved.state.token, have: 0 })]);
+    FakeSocket.last!.push(welcome('m-saved', saved.state.token!));
+    expect(s.client.state.audits.map((a) => a.audit.matchId)).toEqual(['m-saved']);
+    expect(s.client.serialize().handsEnded).toEqual([0]);
+    s.close();
+  });
+
+  it('a kept record is not taken up at a table whose welcome names another match (the code went to another table)', async () => {
+    const saved = savedRecord();
+    setArchivedTableSource((url, room) => (url === base.signalUrl && room === 'ABC123' ? { token: saved.state.token!, client: saved } : undefined));
+    const s = await createOnlineSession({ ...base, action: 'join', code: 'ABC123' });
+    FakeSocket.last!.push(welcome('m-new-table', TOKEN));
+    expect(s.client.state.matchId).toBe('m-new-table');
+    expect(s.client.state.audits).toEqual([]);
+    expect(s.client.serialize().handsEnded).toEqual([]);
+    s.close();
+  });
+
+  it('the saved slot comes first, and a join that brings another token of its own takes up no kept record', async () => {
+    const saved = savedRecord();
+    const kept = savedRecord();
+    kept.state.audits = [];
+    setSavedClientSource((url, room, token) => (room === 'ABC123' && token === saved.state.token ? saved : undefined));
+    setSavedTokenSource((url, room) => (room === 'ABC123' ? saved.state.token! : undefined));
+    setArchivedTableSource(() => ({ token: kept.state.token!, client: kept }));
+    const s = await createOnlineSession({ ...base, action: 'join', code: 'ABC123' });
+    expect(s.client.state.audits).toHaveLength(1);
+    s.close();
+    setSavedClientSource(null);
+    setSavedTokenSource(null);
+    const own = await createOnlineSession({ ...base, action: 'join', code: 'ABC123', token: TOKEN });
+    expect(tableJoins(FakeSocket.last!)).toEqual([expect.objectContaining({ t: 'join', token: TOKEN })]);
+    expect(tableJoins(FakeSocket.last!)[0]).not.toHaveProperty('have');
+    own.close();
+  });
+
+  it("a record the app saved before the table's first welcome holds no match: the join takes up the kept record instead", async () => {
+    const saved = savedRecord();
+    const early = JSON.parse(JSON.stringify(saved)) as SerializedClient;
+    early.state.matchId = null;
+    early.state.audits = [];
+    early.handsEnded = [];
+    setSavedClientSource((url, room, token) => (room === 'ABC123' && token === saved.state.token ? early : undefined));
+    setSavedTokenSource((url, room) => (room === 'ABC123' ? saved.state.token! : undefined));
+    setArchivedTableSource((url, room) => (room === 'ABC123' ? { token: saved.state.token!, client: saved } : undefined));
+    const s = await createOnlineSession({ ...base, action: 'join', code: 'ABC123' });
+    expect(tableJoins(FakeSocket.last!)).toEqual([expect.objectContaining({ t: 'join', token: saved.state.token, have: 0 })]);
+    FakeSocket.last!.push(welcome('m-saved', saved.state.token!));
+    expect(s.client.state.audits).toHaveLength(1);
+    s.close();
+  });
+
+  it('quick match: a table the server matches the account into, which this device holds a record of, is joined with that record', async () => {
+    const saved = savedRecord();
+    setArchivedTableSource((url, room) => (url === base.signalUrl && room === 'ABC123' ? { token: saved.state.token!, client: saved } : undefined));
+    FakeSocket.reply = (f) => (f.t === 'queue' ? { t: 'matched', room: 'ABC123' } : roomReply(f));
+    const q = startQuickMatch({ signalUrl: base.signalUrl, name: 'Tester', avatar: 'lady', userId: 'user-123456' });
+    const s = await q.session;
+    expect(tableJoins(FakeSocket.last!)).toEqual([expect.objectContaining({ t: 'join', token: saved.state.token, have: 0 })]);
+    FakeSocket.last!.push(welcome('m-saved', saved.state.token!));
+    expect(s.client.state.audits.map((a) => a.audit.matchId)).toEqual(['m-saved']);
+    s.close();
   });
 
   it('restores the saved client record passed in the options', async () => {
