@@ -171,6 +171,41 @@ describe('a red verdict that a save did not write', () => {
       expect((back as unknown as { tamper: Map<number, string[]> }).tamper.get(1)).toEqual(r.red!.failures);
     }));
 
+  it('a hand under way that the table was caught out in is listed before it ends, and a record saved before the frame takes it back', () =>
+    scenario((i) => {
+      let bad = false;
+      let saved: SerializedClient | null = null;
+      let listed: unknown[] = [];
+      const w = wire({
+        code: `SZF${i}`,
+        rules: TWO,
+        botDelayMs: 500,
+        intermissionSeconds: 5,
+        think: () => 700,
+        after: (m) => {
+          if (bad || m.t !== 'state' || m.view.handNumber !== 1 || m.view.turnCounter < 4) return [];
+          bad = true;
+          return [{ t: 'commit_request', handNumber: -1 } as unknown as HostMessage];
+        },
+      });
+      for (let k = 0; k < 40_000 && !bad; k++) {
+        w.step();
+        if (!bad && w.c.state.view?.handNumber === 1) saved = JSON.parse(JSON.stringify(w.c.serialize())) as SerializedClient;
+      }
+      for (let k = 0; k < 4 && listed.length === 0; k++) {
+        w.step();
+        listed = JSON.parse(JSON.stringify(w.c.redHands())) as unknown[];
+      }
+      need(bad && !!saved && !w.c.state.audits.some((a) => a.audit.handNumber === 1));
+      // Hand 1 is still under way, and already listed with the failure it will carry.
+      expect(listed).toEqual([{ matchId: w.c.state.matchId, hand: 1, failures: ['Host sent a malformed frame'] }]);
+      const back = TableClient.restore(saved, { send: () => undefined, onMessage: () => () => undefined, close: () => undefined }, 'Victim');
+      expect((back as unknown as { tamper: Map<number, string[]> }).tamper.get(1)).toBeUndefined();
+      back.keepRed(listed);
+      expect((back as unknown as { tamper: Map<number, string[]> }).tamper.get(1)).toEqual(['Host sent a malformed frame']);
+      expect(back.state.matchFailed).toBe(true);
+    }));
+
   it('a hand that ended in the record comes back listed red; entries of another match, or damaged ones, are left out', () =>
     scenario((i) => {
       const r = redAfterLastSave(`SZE${i}`);

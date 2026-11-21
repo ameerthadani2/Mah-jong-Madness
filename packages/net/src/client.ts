@@ -923,18 +923,19 @@ export class TableClient {
   }
 
   /**
-   * The hands of the match this client is in that it found red, each with its first few failures: a list small enough for
-   * the app to save apart from the record of the table (a few hundred characters a hand), so that a red verdict outlives a
-   * save of the record that was not written (`keepRed`).
+   * The hands of the match this client is in that it found red, each with its first few failures (a hand still under way
+   * that the table was already caught out in among them): a list small enough for the app to save apart from the record
+   * of the table (a few hundred characters a hand), so that a red verdict outlives a save of the record that was not
+   * written (`keepRed`).
    */
   redHands(): RedHand[] {
     const m = this.state.matchId;
     if (!m) return [];
     const byHand = new Map<number, string[]>();
-    for (const a of this.state.audits) {
-      if (a.status !== 'failed' || a.audit.matchId !== m || !isInt(a.audit.handNumber)) continue;
-      byHand.set(a.audit.handNumber, [...new Set([...(byHand.get(a.audit.handNumber) ?? []), ...a.failures])]);
-    }
+    const add = (hand: number, failures: readonly string[]) => byHand.set(hand, [...new Set([...(byHand.get(hand) ?? []), ...failures])]);
+    for (const a of this.state.audits) if (a.status === 'failed' && a.audit.matchId === m && isInt(a.audit.handNumber)) add(a.audit.handNumber, a.failures);
+    // A hand not yet ended that this client has already caught the table out in: its audit will carry these failures.
+    for (const [hand, flags] of this.tamper) if (flags.length > 0 && !this.handsEnded.has(hand)) add(hand, flags);
     return [...byHand].map(([hand, failures]) => ({ matchId: m, hand, failures: failures.slice(0, RED_FAILURES).map((f) => f.slice(0, RED_FAILURE_CHARS)) }));
   }
 
