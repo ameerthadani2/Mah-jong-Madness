@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { SerializedClient } from '@mjm/net';
-import { ARCHIVE_MAX, ARCHIVE_TTL_MS, archivedFor, archiveEntry, archiveOnSlotChange, validArchive, withArchived, type ArchivedTable, type Slot } from './tableArchive';
+import { ARCHIVE_MAX, ARCHIVE_MAX_CHARS, ARCHIVE_TTL_MS, archivedFor, archiveEntry, archiveOnSlotChange, validArchive, withArchived, type ArchivedTable, type Slot } from './tableArchive';
 
 const URL = 'wss://game.example/ws';
 /** A client record as the table client saves it, for a match `matchId` (`over`: the match ended). */
@@ -57,6 +57,15 @@ describe('the records of tables that left the saved-table slot', () => {
     expect(list[list.length - 1].roomCode).toBe(`R${ARCHIVE_MAX + 1}`);
     expect(archivedFor(list, URL, `R${ARCHIVE_MAX + 1}`, 30 + ARCHIVE_TTL_MS - 20)).toBeDefined();
     expect(archivedFor(list, URL, `R${ARCHIVE_MAX + 1}`, 30 + ARCHIVE_TTL_MS)).toBeUndefined();
+  });
+
+  it('keeps them together within a bound: the oldest go first, never the newest', () => {
+    const large = (room: string, at: number) => archiveEntry({ signalUrl: URL, roomCode: room, token: 't', client: { ...record(`m-${room}`), pad: 'x'.repeat(400_000) } as unknown as SerializedClient }, at)!;
+    let list: ArchivedTable[] = [];
+    for (const [i, room] of ['A', 'B', 'C'].entries()) list = withArchived(list, large(room, i), i);
+    expect(list.map((e) => e.roomCode)).toEqual(['B', 'C']);
+    expect(JSON.stringify(list).length).toBeLessThanOrEqual(ARCHIVE_MAX_CHARS);
+    expect(validArchive([large('A', 0), large('B', 1), large('C', 2)], 10).map((e) => e.roomCode)).toEqual(['B', 'C']);
   });
 
   it('of several matches at one room code, the newest is the one a join takes up', () => {

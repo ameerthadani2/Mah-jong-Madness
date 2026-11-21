@@ -24,6 +24,19 @@ export interface ArchivedTable {
 export const ARCHIVE_TTL_MS = 24 * 60 * 60 * 1000;
 /** How many are kept at most (the newest). */
 export const ARCHIVE_MAX = 3;
+/**
+ * The most characters of JSON they may take together (the newest are kept): each record is at most 512,000
+ * (`RECORD_MAX_CHARS`) and an honest one under 200,000, so with the saved table's record and every other saved value the
+ * app stays well within what the platforms let it store.
+ */
+export const ARCHIVE_MAX_CHARS = 1_000_000;
+
+/** The newest entries of `list` that fit in ARCHIVE_MAX_CHARS together, at most ARCHIVE_MAX. */
+function within(list: readonly ArchivedTable[]): ArchivedTable[] {
+  let out = list.slice(-ARCHIVE_MAX);
+  while (out.length > 1 && JSON.stringify(out).length > ARCHIVE_MAX_CHARS) out = out.slice(1);
+  return out;
+}
 
 /**
  * The online table record leaving the saved-table slot, as an entry, when it holds a match that is not over. The token is
@@ -69,9 +82,9 @@ export function liveArchive(list: readonly ArchivedTable[], now: number): Archiv
   return list.filter((e) => live(e, now));
 }
 
-/** The list with `e` in it (in place of an entry for the same table and match), the expired ones gone, the newest ARCHIVE_MAX last. */
+/** The list with `e` in it (in place of an entry for the same table and match), the expired ones gone, the newest that fit (`ARCHIVE_MAX`, `ARCHIVE_MAX_CHARS`) last. */
 export function withArchived(list: readonly ArchivedTable[], e: ArchivedTable, now: number): ArchivedTable[] {
-  return [...liveArchive(list, now).filter((x) => !sameMatch(x, e)), e].slice(-ARCHIVE_MAX);
+  return within([...liveArchive(list, now).filter((x) => !sameMatch(x, e)), e]);
 }
 
 /** The list without the entry for this table and match (its record is in the saved-table slot again). */
@@ -89,7 +102,7 @@ export function archivedFor(list: readonly ArchivedTable[], signalUrl: string, r
 
 const str = (x: unknown): x is string => typeof x === 'string';
 
-/** The entries read back from storage: well-formed and still kept ones only, at most ARCHIVE_MAX. */
+/** The entries read back from storage: well-formed and still kept ones only, the newest that fit. */
 export function validArchive(raw: unknown, now: number): ArchivedTable[] {
   if (!Array.isArray(raw)) return [];
   const ok = raw.filter((e): e is ArchivedTable => {
@@ -98,5 +111,5 @@ export function validArchive(raw: unknown, now: number): ArchivedTable[] {
     const c = x.client as { state?: { matchId?: unknown } } | null | undefined;
     return str(x.signalUrl) && str(x.roomCode) && str(x.matchId) && x.matchId !== '' && str(x.token) && typeof x.archivedAt === 'number' && Number.isFinite(x.archivedAt) && !!c && typeof c === 'object' && c.state?.matchId === x.matchId;
   });
-  return liveArchive(ok, now).slice(-ARCHIVE_MAX);
+  return within(liveArchive(ok, now));
 }
