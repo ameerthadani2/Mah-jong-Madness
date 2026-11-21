@@ -75,19 +75,19 @@ function neverWelcomed(code: string, welcome: boolean, hold: number, think: numb
 }
 
 describe('a link the table never welcomes is measured as any other', () => {
-  it('Hyper, the second hand’s turns held 3 s on a link the table never welcomed: the phone keeps pinging, and the hand is amber with the table’s moves on the held turns taken as late, never green; the same with the welcome sent', () =>
+  it('Hyper, the second hand’s turns held 3 s on a link the table never welcomed: the phone keeps pinging, and the hand fails, the table having sent the game on a link where it never seated the phone (it was once amber); with the welcome sent, amber with the table’s moves on the held turns taken as late', () =>
     scenario((i) => {
       const t = neverWelcomed(`NW${i}`, false, 3_000, 1_500);
       need(t.dropped && t.welcomes >= 2 && t.second !== undefined && t.taken > 0);
       expect(t.w.c.state.connected).toBe(false);
       expect(t.pings).toBeGreaterThan(5);
-      expect(t.second!.status).toBe('partial');
-      expect(t.second!.failures).toEqual([]);
-      expect(t.second!.caveats).toContain('The table played for this seat on a turn that reached this device late, so it did not see that turn in time');
+      expect(t.second!.status).toBe('failed');
+      expect(t.second!.failures).toEqual(['Host sent table frames on a connection where this device held no seat']);
       const ctl = neverWelcomed(`NW${i}`, true, 3_000, 1_500);
       need(ctl.second !== undefined && ctl.taken > 0);
       expect(ctl.w.c.state.connected).toBe(true);
       expect(ctl.second!.status).toBe('partial');
+      expect(ctl.second!.caveats).toContain('The table played for this seat on a turn that reached this device late, so it did not see that turn in time');
     }));
 });
 

@@ -44,7 +44,7 @@ import { commitFor, deriveSeed, makeSecret, verifyReveals, type Commitment } fro
 import { randomHex } from './sha256';
 import type { Link } from './host';
 import { CLOCK_FRAME_MS, RESTART_CAUSES, type Audit, type ClientMessage, type HostMessage, type SeatInfo } from './messages';
-import { intake } from './intake';
+import { intake, MOVE_REFUSALS } from './intake';
 import { isFrame, type Transport, type Unsubscribe } from './transport';
 import { BANK_ROUND_MS, clientClock, type ClockBase, DRIFT_CAP_MS, DRIFT_RATE, foldClock, LATE_MS, LINK_PAUSE_MS, MAX_PAUSES, MAX_PING_SCOPES, MAX_PINGS, MAX_RUN_SCOPES, MAX_PONGS, NO_ANSWER_PINGS, ORDER_SLACK_MS, ownClockFrom, PAUSE_GRACE_MS, PONG_WINDOW_MS, RAN_GAP_MS, RTT_PUBLISH_MS, SILENT_ANSWER_MS, STEADY_SLACK_MS, WATCH_WINDOW_MS, type OwnClock, type TableClientOptions } from './clientclock';
 import { armedLate, clockTrack, firstSend, fixedPoint, flightAllowance, heldLive, isBotSkill, judgeTableMove, lateAnchor, lateBy, lateCountMs, lateLimitMs, lateRef, legalFor, ownRun, pausedIn, restartInRun, sameActionSafe, scopeOf, seatRun, seenHere, streakEnd, tableRule, turnLateBy, unanswered, unstamped, type LateScope, type MoveJudge, type PongClock } from './clientmoves';
@@ -217,6 +217,9 @@ export const AUDIT_FAILURES = {
   // An honest host answers `not_seated` only on a link it seats no one on: on one where it seated this device, which still
   // holds the seat there, the answer leaves a move this seat made there unanswered, unjudged.
   seatDenied: 'Host said this device had no seat on a connection where the table had seated it',
+  // A frame about the table on a connection where the host had not seated this device (before its welcome there) or had
+  // taken its seat away (after `evicted`): an honest host sends such a connection nothing but pongs and refusals of no move.
+  unseatedFrame: 'Host sent table frames on a connection where this device held no seat',
   // A frame naming a hand or turn an honest host would not name at that point: a clock frame for a turn other than the
   // one whose state it last sent the link, or a deal's frame for a hand other than the one being dealt.
   strayFrame: 'Host sent a frame about a hand or turn this device was not on',
@@ -274,6 +277,9 @@ export const AUDIT_FAILURES = {
   playedWhileDown: /^The table played for this seat while its connection was down, before its clock could have run out \(turn (?<turn>[^)]*)\)$/,
   bankTaken: /^The table took time from this seat's time bank while its connection was down \(turn (?<turn>[^)]*)\)$/,
   moveIgnored: /^The table ignored a move this seat sent in good time and played its own instead \(turn (?<turn>[^)]*)\)$/,
+  // A legal move of this seat that the table neither played nor refused with that move's turn, followed on the same
+  // connection by another move of the seat played at that turn: an honest host answers every move in the order it came.
+  moveDropped: /^The table left a move this seat sent unanswered and played another of its moves in its place \(turn (?<turn>[^)]*)\)$/,
   tableMoveDiffers: /^The table played for this seat a move other than the one its published rule gives \(turn (?<turn>[^)]*)\)$/,
   // The moves the table made for the other seats.
   botMoveDiffers: /^The bot in seat (?<seat>-?\d+) played a move other than the one its published rule gives \(turn (?<turn>[^)]*)\)$/,
@@ -482,6 +488,14 @@ export class TableClient {
    * device (`disconnected`, `kicked`).
    */
   private seatedOn = -1;
+  /**
+   * The link epoch the table last welcomed this client on, and the one it took the seat away on (`evicted`). On a link
+   * where this client holds no seat (before its welcome, or after an eviction) an honest host sends nothing about the
+   * table: the `TableHost` answers a connection it seats no one on only with `pong` and `error` frames that refuse no
+   * move (`not_seated`, `full`, `already_seated`), and the server takes an evicted connection out of the room.
+   */
+  private welcomedOn = -1;
+  private evictedOn = -1;
   /** Hand for which the host says it supplied our share. */
   private standInHand: number | null = null;
   /** The hand already under way when we first saw the table (we could not take part in its deal). */
@@ -982,8 +996,9 @@ export class TableClient {
   }
 
   act(action: Action): void {
-    // Nor does it send a move once its seat was opened on another device: the player takes the seat back from Home first.
-    if (this.state.seat === null || this.state.kicked) return;
+    // Nor does it send a move once its seat was opened on another device (the player takes the seat back from Home first),
+    // or taken away on this link.
+    if (this.state.seat === null || this.state.kicked || this.evictedOn === this.epoch) return;
     // A view from before the link was lost says nothing about the table now: wait for the first state on this link.
     if (this.viewEpoch !== this.epoch) return;
     const v = this.state.view;
@@ -1250,7 +1265,7 @@ export class TableClient {
    * is measured as on any other (`linkOpen`).
    */
   private holdsSeat(): boolean {
-    return this.state.seat !== null && !this.state.kicked && this.linkOpen;
+    return this.state.seat !== null && !this.state.kicked && this.linkOpen && this.evictedOn !== this.epoch;
   }
 
   /** A hand is being played at this seat over a link that is up (`holdsSeat`). */
@@ -1849,10 +1864,20 @@ export class TableClient {
     const m = taken.frame;
     // A link's opening ends at its first frame about the table's play (`opening`).
     if (!OPENING_FRAMES.has(m.t)) this.opening = false;
+    // On a link where this client holds no seat (not yet welcomed there, or evicted there) an honest host sends only pongs
+    // and errors that refuse no move (`welcomedOn`): anything else is the server's own making. It fails the hand it names
+    // and the hand this client is on, and is taken as any frame is (the hands' audits carry the failure).
+    if (m.t !== 'welcome' && m.t !== 'pong' && !(m.t === 'error' && !MOVE_REFUSALS.has(m.code)) && (this.welcomedOn !== this.epoch || this.evictedOn === this.epoch)) {
+      const h = frameHand(m);
+      if (h !== null && !this.handsEnded.has(h)) this.flag(h, 'Host sent table frames on a connection where this device held no seat');
+      this.flag(this.activeHand(), 'Host sent table frames on a connection where this device held no seat');
+    }
     switch (m.t) {
       case 'welcome': {
         // Whatever else it says, a welcome seats this client on this link.
         this.seatedOn = this.epoch;
+        this.welcomedOn = this.epoch;
+        this.evictedOn = -1;
         const seats = m.seats;
         // The rejoin token (an honest table gives one in every welcome, `intake`). The table's room code is pinned from
         // the first welcome: the app keeps the record under the room it joined, which a welcome does not move.
@@ -2219,8 +2244,12 @@ export class TableClient {
         this.update({ emotes: [...this.state.emotes.slice(-20), { seat: m.seat, emote: m.emote, at: this.now() }] });
         return;
       case 'error':
-        // The table took the seat away on this link: from here on it answers `not_seated` there.
-        if (m.code === 'evicted') this.seatedOn = -1;
+        // The table took the seat away on this link: from here on it answers `not_seated` there, and the server takes the
+        // connection out of the room, so nothing about the table follows on it (`evictedOn`).
+        if (m.code === 'evicted') {
+          this.seatedOn = -1;
+          this.evictedOn = this.epoch;
+        }
         // Sent on a link the table seated this client on, which still holds the seat, `not_seated` is the server's own
         // making: the move it answers would go unanswered (it names no turn, so it excuses no move, `noteRefusal`).
         else if (m.code === 'not_seated' && this.seatedOn === this.epoch && this.holdsSeat()) this.flag(this.activeHand(), 'Host said this device had no seat on a connection where the table had seated it');
@@ -2423,13 +2452,14 @@ export class TableClient {
 
   /**
    * The host refused a move: mark it in the ledger so the audit does not expect it in the log, and file the refusal for
-   * the audit to judge (`checkRefusals`). A refusal that names no turn excuses no move: the host names the turn of every
-   * move of a seated player it refuses (`intake` holds it to that), and a `not_seated`, which it sends a link that holds
-   * no seat, answers no move this seat made there. Such a move stays as sent, for the rules on moves the table played over.
+   * the audit to judge (`checkRefusals`). Only a refusal of a seated player's move counts (`MOVE_REFUSALS`: the host names
+   * the turn of every such move it refuses, and `intake` holds it to that): a `not_seated`, which it sends a link that
+   * holds no seat, answers no move this seat made there, with or without a turn, and nor does any other code. Such a move
+   * stays as sent, unanswered, for the rules on moves the table played over and on the seat's own moves played after it.
    */
   private noteRefusal(m: Extract<HostMessage, { t: 'error' }>): void {
     const code = m.code;
-    if (!['illegal', 'not_playing', 'wrong_seat', 'not_seated'].includes(code) || !isInt(m.turnCounter)) return;
+    if (!MOVE_REFUSALS.has(code) || !isInt(m.turnCounter)) return;
     const tc = m.turnCounter;
     // A refusal answers a move this seat made in the hand being played, the one on show (`act` files each move
     // under it), never the hand of whichever record was made last.
@@ -2859,6 +2889,12 @@ export class TableClient {
             const match = copies.slice().sort((a, b) => Number(!!a.rejected) - Number(!!b.rejected) || b.tc - a.tc)[0];
             if (match) {
               match.used = true;
+              // A legal move this seat sent at this turn before this one, over the same link, that the log did not play
+              // and no refusal answered: an honest host answers moves in the order they come, and at this turn it would
+              // have played that one (it is legal in this very state) or refused it naming its turn. Whatever else came
+              // back (another code, a refusal naming another turn, nothing), the table lost it and played this one.
+              const mi = sent.indexOf(match);
+              if (sent.some((x, k) => k < mi && !x.used && !x.rejected && x.tc === n && x.epoch === match.epoch && x.run === match.run && legalFor(s, me, x.action) && !sameActionSafe(x.action, entry.action, s, me))) problems.add(`The table left a move this seat sent unanswered and played another of its moves in its place (turn ${n})`);
               judgeShown(play, n, prevMine);
               // The host cannot have played this move before this device sent it: a fixed point between the
               // two clocks. Of copies of the same move sent more than once, the first counts (the host may
@@ -3147,6 +3183,27 @@ export class TableClient {
     const dealt = byN.get(attempts);
     if (blamedMe && !flaggedBlame && dealt && dealt.committed && !dealt.stoodIn) failures.push('The audit blames this seat for a restart, yet the deal used a new share from it instead of standing it in');
     return failures;
+  }
+}
+
+/** The hand a frame names, if it names one. */
+function frameHand(m: HostMessage): number | null {
+  switch (m.t) {
+    case 'state':
+      return m.view.handNumber;
+    case 'hand_over':
+    case 'hand_missed':
+      return m.audit.handNumber;
+    case 'commit_request':
+    case 'commits':
+    case 'reveal_request':
+    case 'stand_in':
+    case 'restored':
+      return m.handNumber;
+    case 'clock':
+      return m.hand;
+    default:
+      return null;
   }
 }
 

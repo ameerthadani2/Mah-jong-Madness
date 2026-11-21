@@ -50,7 +50,9 @@ describe('held frames: stamps that crawl while the turn state is held', () => {
         expect(h.w.drops[0] - from).toBeLessThanOrEqual(SILENT_BOUND);
         // A pong answered a second after its ping and stamped a millisecond after the last is a fixed point: this
         // device's clock is that far ahead of the table's. Every honest stamp after it then calls the table's move early.
-        expect(h.w.verdict()).toMatchObject({ status: 'failed', failures: ['playedEarly'] });
+        // (Holding every other frame holds the new link's welcome too, while the crawling clock frames go out on that
+        // link: frames about the table on a link it never welcomed, `unseatedFrame`.)
+        expect(h.w.verdict()).toMatchObject({ status: 'failed', failures: all ? ['unseatedFrame', 'playedEarly'] : ['playedEarly'] });
       }),
     );
   }
@@ -570,6 +572,8 @@ describe('clock: a delay present from the start', () => {
           onReconnect: (w) => {
             if (again !== 'newLink' || asked || !w.host.game) return;
             asked = true;
+            // Behind the new link's welcome, as a server that asks there does.
+            w.line.pump();
             w.line.inject({ t: 'reveal_request', handNumber: w.host.game.handNumber });
           },
         });
@@ -598,8 +602,10 @@ describe('clock: a delay present from the start', () => {
           seat,
           rules: withRules({ handsPerMatch: 2, turnSeconds: 15, timeBankSeconds: 30 }),
           think: () => think,
-          // The relay: every frame is held 25 s, and goes out on whatever link is up then (a lost link's frames too).
+          // The relay: every frame is held 25 s, and goes out on whatever link is up then (a lost link's frames too),
+          // behind that link's welcome, which goes first (a server welcomes a link before it sends it anything else).
           map: (m, w) => {
+            if (m.t === 'welcome') return m;
             if (m.t === 'state' && dealt === null) dealt = w.clock.now;
             Q.push({ at: Math.max(w.clock.now + 25_000, Q.length ? Q[Q.length - 1].at : 0), m });
             return null;
@@ -993,6 +999,8 @@ describe('reconnect: a server that forces the phone onto new links', () => {
       onReconnect: (w) => {
         if (!h.st.holding) return;
         shown ??= w.lastState;
+        // Behind the new link's welcome.
+        w.line.pump();
         if (shown) w.line.inject(shown);
       },
     });
@@ -1058,6 +1066,9 @@ describe('reconnect: a server that forces the phone onto new links', () => {
         back = true;
         const g = w.host.game!;
         const now = w.clock.now;
+        // The welcome it held goes first: a frame about the table before it would be one on a link it never welcomed.
+        const k = w.line.held.findIndex((m) => m.t === 'welcome');
+        if (k >= 0) w.line.inject(w.line.held.splice(k, 1)[0]);
         if (first === 'pong') w.line.inject({ t: 'pong', at: 0, now });
         if (first === 'clock') w.line.inject({ t: 'clock', now, hand: g.handNumber, tc: g.turnCounter });
         if (first === 'hand_over' && ended) w.line.inject({ ...ended, now } as HostMessage);
@@ -1130,6 +1141,8 @@ describe('reconnect: a server that forces the phone onto new links', () => {
           if (!h.st.holding || !first) return;
           h.st.holding = false;
           h.st.released = true;
+          // Behind the new link's welcome.
+          w.line.pump();
           for (const m of first.held.splice(0)) w.line.inject(m);
         },
       });

@@ -316,7 +316,7 @@ describe('a refusal that names no turn', () => {
     scenario((i) => {
       const a = notSeatedThenOwn(`INO${i}`);
       need(a.attacked);
-      expect(a.w.verdict()).toMatchObject({ status: 'failed', failures: ['seatDenied'] });
+      expect(a.w.verdict()).toMatchObject({ status: 'failed', failures: ['seatDenied', 'moveDropped'] });
     }));
 
   it('"not seated" where an honest table sends it: to a connection it took the seat away on (a club eviction), or never seated the phone on: nothing failed', () => {
