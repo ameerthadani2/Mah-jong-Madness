@@ -149,6 +149,9 @@ export const AUDIT_CAVEATS = {
   // The table moved on past the hand this device was on, while its link was down, and sent no record of it this device
   // could check: the hand's deal, the views it was shown and its moves are unchecked (`closeUnheard`).
   noRecord: 'This device was on this hand when its connection dropped, and the table moved on without sending a record of it that this device could check',
+  // The record of the hand before this one did not replay (or could not be read), so nothing chains into this one
+  // (`brokenHand`): the scores, dealer and wind it started from are the table's word.
+  unchained: 'The record of the hand before this one did not replay, so the scores this hand started from could not be checked',
 } as const;
 
 export type AuditCaveat = keyof typeof AUDIT_CAVEATS;
@@ -693,6 +696,11 @@ export class TableClient {
   private atStart = false;
   /** A hand reached after hands this client missed with no record of them: its starting scores cannot be checked. */
   private gapHand: number | null = null;
+  /**
+   * The hand after one whose record did not replay (or could not be read): nothing chains into it, so its start is checked
+   * against nothing and its audit says so (`unchained`). Honest records always replay.
+   */
+  private brokenHand: number | null = null;
   /** The link the last `join` went over, and the last hand of the match it said this client held the end of (`have`). */
   private joinHave: { epoch: number; have: number | undefined } | null = null;
   /** The link on which the record of the hand this client is on (`openHand`) last came as a `hand_missed`. */
@@ -828,6 +836,7 @@ export class TableClient {
     this.matchEnded = d.matchEnded === true;
     this.atStart = d.atStart === true;
     this.gapHand = isInt(d.gapHand) ? d.gapHand : null;
+    this.brokenHand = isInt(d.brokenHand) ? d.brokenHand : null;
     this.chainGap = d.chainGap === true || this.gapHand !== null;
     this.missedMoves = d.missedMoves === true;
     // (A record saved before the flag was kept says so by the audits it holds of this match.)
@@ -912,6 +921,7 @@ export class TableClient {
       matchEnded: this.matchEnded,
       atStart: this.atStart,
       gapHand: this.gapHand,
+      brokenHand: this.brokenHand,
       chainGap: this.chainGap,
       missedMoves: this.missedMoves,
       rewinds: this.rewinds,
@@ -1756,6 +1766,18 @@ export class TableClient {
     this.update({ audits: [...this.state.audits, { audit, status, failures, caveats }].slice(-MAX_AUDITS), ...(status === 'failed' ? { matchFailed: true, matchEndVerified: false } : {}) });
   }
 
+  /**
+   * Hand `h` was audited (`expected` set from its replay, or null when its record did not replay): with nothing to chain
+   * from, the hand after it starts from scores this client cannot check, and its audit says so (`brokenHand`). The final
+   * scores then rest on it too (`chainGap`).
+   */
+  private noteChainEnd(h: number): void {
+    if (this.brokenHand === h) this.brokenHand = null;
+    if (this.expected !== null) return;
+    this.brokenHand = h + 1;
+    this.chainGap = true;
+  }
+
   /** Hands were played while this client's link was down and it holds no record of them: nothing chains into `h`. */
   private noteGap(h: number): void {
     this.gapHand = h;
@@ -1813,6 +1835,7 @@ export class TableClient {
     this.matchEnded = false;
     this.atStart = false;
     this.gapHand = null;
+    this.brokenHand = null;
     this.chainGap = false;
     this.missedMoves = false;
     this.rewinds = [];
@@ -2260,6 +2283,7 @@ export class TableClient {
         // The next hand must start where this one, as replayed, left the match.
         this.expected = replayed && hashState(replayed) === m.audit.finalHash ? nextHand(replayed) : null;
         this.chainChecked = null;
+        this.noteChainEnd(h);
         this.quietSince = this.epoch;
         this.tamper.delete(h);
         if (this.gapHand === h) this.gapHand = null;
@@ -2639,6 +2663,7 @@ export class TableClient {
     this.atStart = false;
     this.expected = replayed && hashState(replayed) === audit.finalHash ? nextHand(replayed) : null;
     this.chainChecked = null;
+    this.noteChainEnd(h);
     this.tamper.delete(h);
     // A record that fails is the host's doing now, not then: the hand on the table carries it too.
     if (status === 'failed') this.flag(this.activeHand(), `The record of hand ${h + 1}, played while this device was away, failed its checks`);
@@ -2768,6 +2793,7 @@ export class TableClient {
     if (rec?.linkLost) caveats.push(AUDIT_CAVEATS.linkLost);
     else if (tookPart && !stoodIn && rec && !rec.fromStart) caveats.push(AUDIT_CAVEATS.missedAttempts);
     if (this.gapHand === h) caveats.push(AUDIT_CAVEATS.gap);
+    if (this.brokenHand === h) caveats.push(AUDIT_CAVEATS.unchained);
     if (this.rewinds.some((x) => x.hand === h && x.undone)) caveats.push(AUDIT_CAVEATS.serverRestart);
     caveats.push(...tableMoveCaveats(notes));
     if (notes.restartClock) caveats.push(AUDIT_CAVEATS.restartClock);

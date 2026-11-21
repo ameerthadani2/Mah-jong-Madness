@@ -33,6 +33,7 @@
     "missedAttempts": "Your phone did not see every attempt at this deal.",
     "away": "Your phone was away when this hand ended. It checked the hand's record afterwards, but did not watch the play.",
     "gap": "Your phone missed the hands before this one and was not shown their records, so it could not check the scores this hand started from.",
+    "unchained": "The record of the hand before this one did not replay, so your phone could not check the scores, dealer and wind this hand started from. That hand failed its check.",
     "serverRestart": "The server restarted during this hand, and some turns were played again.",
     "appRestart": "The app was restarted around this deal, so your phone cannot be sure it watched all of it. This is expected for the first hand after a restart; later hands can be Verified again.",
     "tableMoved": "The table played for you while your connection was down. It does that for a seat whose clock has run out or whose player has left the table; your phone did not watch those moves being made.",

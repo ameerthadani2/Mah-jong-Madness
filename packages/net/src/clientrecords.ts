@@ -673,6 +673,8 @@ export interface SerializedClient {
   matchEnded: boolean;
   atStart: boolean;
   gapHand: number | null;
+  /** The hand after one whose record did not replay (`TableClient.brokenHand`; absent in records saved by older builds). */
+  brokenHand?: number | null;
   chainGap?: boolean;
   missedMoves?: boolean;
   rewinds: Array<{ hand: number; tc: number; undone: boolean }>;
