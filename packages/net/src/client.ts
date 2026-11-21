@@ -2322,9 +2322,10 @@ export class TableClient {
           // The end itself is checked (and frees the record for a new match), but scores that rest on a hand whose start
           // could not be checked, or that a hand this device caught the table out in led to, are not shown as verified.
           const matchEndVerified = this.matchEnded && !this.chainGap && !this.missedMoves && !this.state.matchFailed;
-          // The last hand's verified view stays on show; the host's is used only when this device holds none.
-          const own = this.state.view;
-          const view = own && this.state.lastResult !== null && own.handNumber === m.view.handNumber ? own : m.view;
+          // The view on show stays, whatever hand the frame's own view names: every view this device was shown is held to
+          // the replay of its hand, while this one is checked by nothing (only the frame's scores are, `matchEndVerdict`).
+          // The host's view goes on show only on a device that holds none (one that came to the table at its end).
+          const view = this.state.view ?? m.view;
           this.update({ view, matchOver: true, finalScores: m.scores.slice(), matchEndVerified, deadline: null, intermissionDeadline: null });
         }
         return;
