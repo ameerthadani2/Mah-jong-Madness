@@ -1941,6 +1941,11 @@ export class TableClient {
         // A new attempt publishes a new set: the one held for this hand belonged to the last attempt.
         this.dropSet(h);
         this.commitHand = h;
+        // This device holds the seat from before the deal: from the deal on, every move the log credits to its player in
+        // this hand must be one it sent, whether or not it is shown the hand (an honest host takes a move as the player's
+        // own only from the connection it seats this device on, and a seat opened on another device says so, `seatTaken`).
+        const play = this.playFor(h);
+        if (play.ledgerFrom === null) play.ledgerFrom = 0;
         if (this.standInHand === h) this.standInHand = null;
         // Record the commitment before sending it: the host may answer at once.
         this.update({ ceremony: 'committed', standIn: false });
@@ -2069,20 +2074,19 @@ export class TableClient {
         const rec = this.recordFor(h);
         if (rec) rec.dealt = true;
         const stamped = this.noteStamp(m.now, true);
-        this.noteOrder(m.now, h, v.turnCounter);
+        const behind = this.noteOrder(m.now, h, v.turnCounter);
         // An honest host sends every turn's state to every seat it has a link to, so a link that
         // stayed up brings every turn: one skipped on it was held back. The first state of a hand
-        // is its deal, on a link that was up before the deal (it brought an earlier hand, or this
-        // device revealed its share for this hand over it).
+        // is its deal, on a link that was up before the deal (`upBeforeDeal`).
         const shownHere = this.linkShown && this.linkShown.epoch === this.epoch ? this.linkShown : null;
         const revealedHere = !!this.recordFor(h)?.attempts.some((x) => x.revealed && x.revealedEpoch === this.epoch);
         if (shownHere && shownHere.hand === h && v.turnCounter > shownHere.tc + 1) this.noteHeld(h, shownHere.tc + 1);
-        else if (v.turnCounter > 0 && ((shownHere && shownHere.hand !== h) || (!shownHere && revealedHere))) this.noteHeld(h, 0);
+        else if (v.turnCounter > 0 && (!shownHere || shownHere.hand !== h) && this.upBeforeDeal(h, shownHere)) this.noteHeld(h, 0);
         // An honest host stamps every state. One with no stamp, on a link that has brought a state, a
         // stamp or this device's share, would escape every check of when it was shown: it is not
         // believed, and counts as held back (on a new link it is judged as shown late; see `unstamped`).
         if (!stamped && (shownHere || revealedHere || this.linkStamped)) this.noteHeld(h, v.turnCounter);
-        this.noteState(v, m, stamped, shownHere !== null || revealedHere);
+        this.noteState(v, m, stamped, shownHere !== null || revealedHere, behind);
         this.linkShown = { epoch: this.epoch, hand: h, tc: v.turnCounter };
         this.viewEpoch = this.epoch;
         // What goes on show is what `noteState` filed: the same view, hash and clock figures, as `intake` took them.
@@ -2118,6 +2122,16 @@ export class TableClient {
         this.noteHand(h);
         const rec = this.recordFor(h);
         if (rec) rec.dealt = true;
+        {
+          // The hand's end is its first frame on this link. On a link that was up before the deal, every state of the hand
+          // was owed there first (only a hand that ended at the deal has none): whatever the table played was held back
+          // (`noteHeld`). On a later link the hand began, or went on, without this device: what the table played for the
+          // seat is judged from the last frame it held before (`before`), as for a hand whose first state comes there.
+          const shownHere = this.linkShown && this.linkShown.epoch === this.epoch ? this.linkShown : null;
+          if ((!shownHere || shownHere.hand !== h) && this.upBeforeDeal(h, shownHere)) this.noteHeld(h, 0);
+          const play = this.playFor(h);
+          if (play.before === undefined && play.seen.length === 0) play.before = this.lastStamp && this.lastStamp.epoch !== this.epoch ? { ...this.lastStamp } : null;
+        }
         // A hand that ended at the deal sends no state first: check where it started from its end.
         if (!this.handStart || this.handStart.handNumber !== h) this.checkChain(snapshotFromView(m.view, true));
         this.handsEnded.add(h);
@@ -2215,11 +2229,11 @@ export class TableClient {
         return;
       case 'pong':
         // On a link that has brought no state, a pong's stamp does not feed the watch: an honest host sends
-        // the state first. As a fixed point it counts on any link (`notePong`).
-        if (this.stateHere()) {
-          this.noteStamp(m.now);
-          this.noteOrder(m.now, null, null);
-        }
+        // the state first. As a fixed point it counts on any link (`notePong`), and so does its place in the order of the
+        // stamps (`noteOrder`): an honest host's stamps never go back on a link, so a state that arrives behind an answer
+        // stamped later was held back, the deal's own state while this device waits for it included.
+        if (this.stateHere()) this.noteStamp(m.now);
+        this.noteOrder(m.now, null, null);
         this.notePong(m.at, m.now);
         return;
       case 'clock': {
@@ -2253,13 +2267,30 @@ export class TableClient {
    * delay the watch's reference may take in (`watchRefAt`). It only keeps the order: it does not feed
    * the link watch, which measures the stamps against this device's clock instead (`noteStamp`,
    * `checkLink`), so a stamp that moves on by a millisecond does not count as hearing from the table.
+   * Every stamped frame of the link counts, the answers to this device's pings included, from the link's first frame:
+   * so a hand's state held back while the table answers the pings (its deal's, while this device waits for the deal
+   * after revealing its share, included) arrives behind them. Returns whether this frame did.
    */
-  private noteOrder(now: unknown, hand: number | null, tc: number | null): void {
-    if (typeof now !== 'number' || !Number.isFinite(now)) return;
+  private noteOrder(now: unknown, hand: number | null, tc: number | null): boolean {
+    if (typeof now !== 'number' || !Number.isFinite(now)) return false;
     const last = this.linkStamp;
     const same = last !== null && last.epoch === this.epoch && last.era === this.era;
-    if (same && now < last.now - ORDER_SLACK_MS && hand !== null && tc !== null && isInt(tc)) this.noteHeld(hand, tc);
+    const behind = same && now < last.now - ORDER_SLACK_MS && hand !== null && tc !== null && isInt(tc);
+    if (behind) this.noteHeld(hand, tc);
     if (!same || now > last.now) this.linkStamp = { epoch: this.epoch, era: this.era, now };
+    return behind;
+  }
+
+  /**
+   * The link in use was up before hand `h` was dealt (`shown`: the last state it brought): it brought a state of an
+   * earlier hand, or this device was asked to commit to `h`, or revealed its share for it, over it. An honest host sends
+   * every seat it has a link to the deal's state, then the state of every turn after it, so the first frame of the hand
+   * such a link brings is its deal.
+   */
+  private upBeforeDeal(h: number, shown: { hand: number } | null): boolean {
+    if (shown && shown.hand < h) return true;
+    if (this.ceremonyEpoch === this.epoch && this.commitHand === h) return true;
+    return !!this.recordFor(h)?.attempts.some((x) => x.revealed && x.revealedEpoch === this.epoch);
   }
 
   /** The host held back the state of turn `tc` of hand `hand` (or of an earlier turn already noted). */
@@ -2270,7 +2301,7 @@ export class TableClient {
   }
 
   /** Record a state frame of the hand being played: its hash, timing and whether we owed a move. */
-  private noteState(v: TableView, m: Extract<HostMessage, { t: 'state' }>, stamped: { at: number; atLo: number; ref: number | null; wref: number | null; live: boolean; working: boolean; seg: number } | null = null, onLink = false): void {
+  private noteState(v: TableView, m: Extract<HostMessage, { t: 'state' }>, stamped: { at: number; atLo: number; ref: number | null; wref: number | null; live: boolean; working: boolean; seg: number } | null = null, onLink = false, behind = false): void {
     const play = this.playFor(v.handNumber);
     // (A state restored damaged may hold any hash, `cleanSeen`: it is not compared.)
     const prior = play.seen.find((s) => s.tc === v.turnCounter && s.kept !== false);
@@ -2301,6 +2332,8 @@ export class TableClient {
       ...(stamped ? { atLo: stamped.atLo, ref: stamped.ref, wref: stamped.wref, live: stamped.live, working: stamped.working, seg: stamped.seg } : {}),
       run: this.runId,
       onLink,
+      // It arrived behind a frame of its link stamped later (`noteOrder`): the host held it back.
+      ...(behind ? { behind: true } : {}),
       owes,
       // The figures the app shows (`state`): finite, as `intake` holds every state to.
       deadline: m.deadline,
@@ -2796,7 +2829,8 @@ export class TableClient {
       const whole = rules.turnSeconds * 1000 + Math.min(tracked, r0.timeBank * 1000);
       const left = r0.deadline === null || typeof r0.now !== 'number' ? Number.POSITIVE_INFINITY : (r0.inBank ? r0.deadline : r0.deadline + r0.timeBank * 1000) - r0.now;
       const here = seenHere(r0, this.runId);
-      if ((here && armedLate(r0, rules)) || heldLive(r0, this.runId)) problems.add(`The host showed this seat its turn late, on a link that stayed open (turn ${n})`);
+      // (Or it arrived behind a frame of its link stamped later, the answer to a ping say: the host held it, `noteOrder`.)
+      if ((here && (armedLate(r0, rules) || r0.behind === true)) || heldLive(r0, this.runId)) problems.add(`The host showed this seat its turn late, on a link that stayed open (turn ${n})`);
       else if (notes) {
         const by = pong ? lateBy(r0, pong.points, pong.scope) : null;
         // One no fixed point bounds: late when the table had left the pings of its scope unanswered past the limit (`unanswered`).
@@ -2959,7 +2993,7 @@ export class TableClient {
         problems.add(`The host held back its frames on a link that stayed open, then played for this seat (turn ${n})`);
         continue;
       }
-      const verdict = judgeTableMove(this.moveJudge(), play, n, end, rules, anchors, track, gaps, prevOf.get(n) ?? -1, scope, pong);
+      const verdict = judgeTableMove(this.moveJudge(h), play, n, end, rules, anchors, track, gaps, prevOf.get(n) ?? -1, scope, pong);
       if (doubt && (verdict === 'held' || verdict === 'early' || verdict === 'downEarly')) {
         if (notes) notes.damaged = true;
       } else if (verdict === 'held') problems.add(`The host held back its frames on a link that stayed open, then played for this seat (turn ${n})`);
@@ -3024,9 +3058,19 @@ export class TableClient {
     return [...this.earlier.filter((e) => used.has(e.run)), own].slice(-MAX_RUN_SCOPES);
   }
 
-  /** What the table-move checks (`judgeTableMove`) read of this client's clock record, and keep. */
-  private moveJudge(): MoveJudge {
-    return { clockBase: this.clockBase, gapVerdicts: this.gapVerdicts, ownAbsences: this.ownAbsences };
+  /** What the table-move checks (`judgeTableMove`) read of this client's clock record for hand `h`, and keep. */
+  private moveJudge(h: number): MoveJudge {
+    return { clockBase: this.clockBase, gapVerdicts: this.gapVerdicts, ownAbsences: this.ownAbsences, dealAfter: this.shareSent(h) };
+  }
+
+  /** When this device last sent its share for hand `h` in this run of the app, and over which link (null: it sent none). */
+  private shareSent(h: number): MoveJudge['dealAfter'] {
+    let out: MoveJudge['dealAfter'] = null;
+    for (const x of this.recordFor(h)?.attempts ?? []) {
+      if (!x.revealed || typeof x.revealedAt !== 'number' || x.revealedRun !== this.runId || !isInt(x.revealedSeg) || !isInt(x.revealedEpoch)) continue;
+      if (!out || x.revealedAt > out.at) out = { at: x.revealedAt, run: this.runId, seg: x.revealedSeg, epoch: x.revealedEpoch };
+    }
+    return out;
   }
 
   private checkAccounting(audit: Audit): string[] {

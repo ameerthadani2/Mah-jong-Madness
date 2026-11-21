@@ -193,6 +193,12 @@ export interface SeenState {
   run?: string;
   /** The link it came over had already brought an earlier state, or this device revealed its share for the hand on it. */
   onLink?: boolean;
+  /**
+   * It arrived behind a frame of its link that the host stamped more than `ORDER_SLACK_MS` later (an answer to a ping, a
+   * clock frame, a later state): an honest host's stamps never go back on a link, so the host held it back
+   * (`TableClient.noteOrder`). Only a frame this run of the app saw, or one restored intact, is judged by it.
+   */
+  behind?: boolean;
   /** This seat had a move to make in this view. */
   owes: boolean;
   deadline: number | null;
@@ -364,8 +370,10 @@ const finiteTime = (x: unknown): x is number => typeof x === 'number' && Number.
  * hand amber, not red.
  */
 export function cleanSeen(f: SeenState): SeenState {
-  const { atLo, ref, wref, live, working, seg, run, onLink, sum, kept: _kept, ...old } = f as SeenState & { sum?: unknown };
+  // (`behind` too is a measure a damaged frame may hold anywhere: left out with the rest when the check figure does not match.)
+  const { atLo, ref, wref, live, working, seg, run, onLink, behind: _behind, sum, kept: _kept, ...old } = f as SeenState & { sum?: unknown };
   void _kept;
+  void _behind;
   // A frame whose check figure still matches is as this device read it: storage did not change it,
   // so it is kept whole, however far its figures lie from what an honest host sends (a deadline a
   // day before its stamp is still a cut clock).
@@ -401,9 +409,10 @@ export function cleanSeen(f: SeenState): SeenState {
   // Marked as not kept, so that no figure is saved for it again (`savedSeen`): a figure worked out over
   // what storage left would vouch for it after the next restart.
   if (!ok) return { ...old, kept: false };
-  const { sum: _s, kept: _k, ...clean } = f as SeenState & { sum?: unknown };
+  const { sum: _s, kept: _k, behind: _b, ...clean } = f as SeenState & { sum?: unknown };
   void _s;
   void _k;
+  void _b;
   return { ...clean, kept: false };
 }
 

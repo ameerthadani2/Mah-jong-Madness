@@ -436,17 +436,15 @@ function heldUnderNotices(code: string, notice: boolean) {
 }
 
 describe('restart notices for a hand the phone is not on, or more than one in a hand', () => {
-  it('Normal, three turns held 10 s, each under a restart notice for a hand never dealt, on a link that never dropped: red (the notices change nothing, and the turns stay late); without the notices amber lateShown', () =>
+  it('Normal, three turns held 10 s, each under a restart notice for a hand never dealt, on a link that never dropped: red (the notices change nothing, and the turns stay late); without the notices red too, each held turn having come behind answers to the pings stamped later (it was once amber lateShown)', () =>
     scenario((i) => {
       const a = heldUnderNotices(`SRN${i}`, true);
       need(a.held.length >= 2);
       expect(a.w.verdict().status).toBe('failed');
-      expect(a.w.verdict().failures).toEqual(['restartMidLink']);
-      expect(a.w.verdict().caveats).toContain('lateShown');
+      expect(a.w.verdict().failures).toEqual(['restartMidLink', 'lateTurn']);
       const b = heldUnderNotices(`SRN${i}`, false);
       need(b.held.length >= 2);
-      expect(b.w.verdict()).toMatchObject({ status: 'partial', failures: [] });
-      expect(b.w.verdict().caveats).toContain('lateShown');
+      expect(b.w.verdict()).toMatchObject({ status: 'failed', failures: ['lateTurn'] });
     }));
 
   it('Normal, the link dropped on two of the seat’s turns, each time with a restart notice for a hand never dealt as the new link’s first word: the first may begin a new clock era, the second, with the same hand on show, is a second restart: red', () =>

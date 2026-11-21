@@ -14,6 +14,11 @@ export interface MoveJudge {
   clockBase: ClockBase;
   gapVerdicts: Array<{ at: number; ok: boolean }>;
   ownAbsences: number[];
+  /**
+   * When this device last sent its share for the hand in this run of the app (its clock, and the run of its clock and the
+   * link it went over), or null: the deal, and so the seat's clock in the hand, came after it (`judgeFrom`).
+   */
+  dealAfter?: { at: number; run: string; seg: number; epoch: number } | null;
 }
 
 /**
@@ -432,7 +437,9 @@ function judgeFrom(j: MoveJudge, play: PlayRecord, n: number, rules: RuleSet, an
     return era > 0 && !fixed ? 'unanchored' : 'ok';
   }
   const from: GapStart | null = a ? (typeof a.now === 'number' ? { at: a.at, now: a.now, epoch: a.epoch, era: a.era ?? 0 } : null) : (play.before ?? null);
-  const startAt = a ? a.at : play.before?.at;
+  // With no frame of the hand before the move, the deal came after this device sent its share for it (`dealAfter`).
+  const dealAfter = a ? null : (j.dealAfter ?? null);
+  const startAt = a ? a.at : (play.before?.at ?? dealAfter?.at);
   // The seat's first frame of the match came after the move: this device was not at the table yet.
   if (startAt === undefined) return 'ok';
   // A later move of this hand in a stretch already judged: the first one spoke for it.
@@ -441,8 +448,15 @@ function judgeFrom(j: MoveJudge, play: PlayRecord, n: number, rules: RuleSet, an
   const known = j.gapVerdicts.find((g) => g.at === startAt);
   if (known) return known.ok ? 'down' : 'downEarly';
   let verdict: 'down' | 'downEarly' = 'down';
-  const since = a ? a.epoch : (play.before as GapStart).epoch;
+  const since = a ? a.epoch : play.before ? play.before.epoch : (dealAfter as NonNullable<typeof dealAfter>).epoch;
   const own = j.ownAbsences.some((e) => e >= since && e < (b as SeenState).epoch);
+  // The seat's first move of a hand dealt after this device sent its share needed a whole clock (the turn clock and the
+  // full bank every deal starts with) after the share went out, on this device's own clock: the host cannot have dealt
+  // before it had the share, nor timed the seat out before its clock had run. Only within one run of the app and of its clock.
+  if (!own && dealAfter && b.run === dealAfter.run && (b.seg ?? 0) === dealAfter.seg) {
+    const whole = (rules.turnSeconds + rules.timeBankSeconds) * 1000;
+    if (b.at < dealAfter.at + whole * (1 - DRIFT_RATE) - CLOCK_SLACK_MS) verdict = 'downEarly';
+  }
   if (!own && from) {
     const turn = rules.turnSeconds * 1000;
     const expiry = !a ? from.now + turn + rules.timeBankSeconds * 1000 : a.owes ? Math.max(track.bound.get(a) ?? Number.NEGATIVE_INFINITY, claimed) : from.now + turn + (track.bank.get(a) ?? 0);
