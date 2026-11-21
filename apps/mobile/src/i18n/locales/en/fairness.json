@@ -50,7 +50,8 @@
     "damaged": "Part of the record your phone had saved of this hand was damaged when the app restarted (its storage changed it), so your phone could not make the checks that rest on that part. The server cannot cause this.",
     "overflow": "The table sent your phone far more states in this hand than any table needs to, more than your phone keeps for one hand, so it could not keep them all and cannot vouch for the whole hand. An honest table never comes near this.",
     "inFlight": "The table played for you while a move you had sent in good time was still on its way to it. A slow connection can do that to a move made near the end of your clock; if it keeps happening, the server may be holding your moves back.",
-    "noAnswer": "The table did not answer your phone's timing checks during this hand, so your phone could not tie the server's clock to its own. An honest table answers every one."
+    "noAnswer": "The table did not answer your phone's timing checks during this hand, so your phone could not tie the server's clock to its own. An honest table answers every one.",
+    "noRecord": "Your phone was playing this hand when its connection dropped, and the table moved on without sending a record of the hand that your phone could check. Its deal, what you were shown in it and your moves in it are unchecked."
   },
   "failure": {
     "dealtPlayedHand": "The table tried to deal a hand that had already been played.",
@@ -81,6 +82,7 @@
     "missedOtherMatch": "The table sent the record of a hand from a different match.",
     "missedBroken": "The records of the hands your phone missed do not follow on from the last hand it checked.",
     "missedWhileConnected": "The table said your phone missed a hand, although it was connected the whole time.",
+    "recordWithheld": "The table moved on to a later hand without sending the record of this one, which your phone was playing and asked for when it joined again. An honest table sends that record first.",
     "awayHandFailed": "The record of hand %{hand}, played while your phone was away, failed its checks.",
     "skippedFirstAttempts": "The table left your phone out of the first attempts at this deal (up to attempt %{last}).",
     "attemptTwice": "The table ran attempt %{n} at this deal twice.",

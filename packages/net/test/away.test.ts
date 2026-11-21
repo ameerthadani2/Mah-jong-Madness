@@ -182,16 +182,16 @@ describe('an honest host and a player who misses hands', () => {
     expect((t.a.serialize() as unknown as { matchEnded: boolean }).matchEnded).toBe(true);
   });
 
-  deal('a host that sends no records of the missed hands leaves a gap: a caveat on the next hand, never a failure', () => {
+  deal('a host that sends no records of the missed hands after the phone said which hands it held: the hand the phone was on fails with a verdict of its own (an honest host sends them; it once had no verdict), the next hand is amber, its start unchecked', () => {
     const t = table('AW4');
     t.until(() => handNow(t) === 1 && t.host.phase === 'playing' && t.host.game!.turnCounter >= 6);
     t.leave();
     t.until(() => handNow(t) === 3 && t.host.phase === 'playing' && t.host.game!.turnCounter >= 4);
     t.back('rebind', (m) => (m.t === 'hand_missed' ? null : m));
     t.until(() => handNow(t) === 5 && t.host.phase === 'playing');
-    expect(summary(t.a)).toBe('0:ok 3:partial 4:ok');
-    expect(failuresOf(t.a)).toEqual([]);
-    expect(t.a.state.audits[1].caveats).toContain(AUDIT_CAVEATS.gap);
+    expect(summary(t.a)).toBe('0:ok 1:failed 3:partial 4:ok');
+    expect(failuresOf(t.a)).toEqual(['Host moved on to a later hand without sending the record of this one, which this device asked for when it joined again']);
+    expect(t.a.state.audits[2].caveats).toContain(AUDIT_CAVEATS.gap);
   });
 
   deal('final scores that rest on such a gap are not shown as verified, although the end of the match is', () => {
@@ -202,7 +202,8 @@ describe('an honest host and a player who misses hands', () => {
     t.back('rebind', (m) => (m.t === 'hand_missed' ? null : m));
     t.until(() => t.host.phase === 'match_over');
     expect(t.a.state.matchOver).toBe(true);
-    expect(failuresOf(t.a)).toEqual([]);
+    // (The hand the phone was on fails: the host owed its record. The hands after the gap are amber at worst.)
+    expect(failuresOf(t.a)).toEqual(['Host moved on to a later hand without sending the record of this one, which this device asked for when it joined again']);
     expect(t.a.state.audits.some((x) => x.caveats.includes(AUDIT_CAVEATS.gap))).toBe(true);
     // The hands after the gap chain from it and say the match is over, so a new match may start a fresh record...
     expect((t.a.serialize() as unknown as { matchEnded: boolean }).matchEnded).toBe(true);
@@ -279,8 +280,9 @@ describe('a dishonest gap still fails', () => {
     // The host shows hand 2's record but not hand 1's.
     t.back('rebind', (m) => (m.t === 'hand_missed' && m.audit.handNumber === 1 ? null : m));
     t.until(() => handNow(t) === 4 && t.host.phase === 'playing');
-    expect(summary(t.a)).toBe('0:ok 3:failed');
-    expect(t.a.state.audits[1].failures).toContain('The record of the hands this device missed does not follow from the last hand it verified');
+    // The hand the phone was on fails with a verdict of its own (its record was left out), and the hand on the table with it.
+    expect(summary(t.a)).toBe('0:ok 1:failed 3:failed');
+    expect(t.a.state.audits[2].failures).toContain('The record of the hands this device missed does not follow from the last hand it verified');
   });
 
   deal('a hand reported as missed to a player who never left is refused: the play checks cannot be dodged', () => {

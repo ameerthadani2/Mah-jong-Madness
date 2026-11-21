@@ -146,6 +146,9 @@ export const AUDIT_CAVEATS = {
   inFlight: 'The table played for this seat while a move it had sent in good time was still on its way',
   // This device pinged the table through the hand and no answer came back: nothing tied the table's clock to its own.
   noAnswer: "The table did not answer this device's timing checks during this hand",
+  // The table moved on past the hand this device was on, while its link was down, and sent no record of it this device
+  // could check: the hand's deal, the views it was shown and its moves are unchecked (`closeUnheard`).
+  noRecord: 'This device was on this hand when its connection dropped, and the table moved on without sending a record of it that this device could check',
 } as const;
 
 export type AuditCaveat = keyof typeof AUDIT_CAVEATS;
@@ -230,6 +233,9 @@ export const AUDIT_FAILURES = {
   missedOtherMatch: 'Host sent the record of a hand from a different match',
   missedBroken: 'The record of the hands this device missed does not follow from the last hand it verified',
   missedWhileConnected: 'Host reported a hand as missed although this device was connected throughout',
+  // The table moved on past the hand this device was on without its record, after a join that said which hands this
+  // device held: an honest host sends the record of every later hand that ended before anything else (`sendMissed`).
+  recordWithheld: 'Host moved on to a later hand without sending the record of this one, which this device asked for when it joined again',
   awayHandFailed: /^The record of hand (?<hand>-?\d+), played while this device was away, failed its checks$/,
   // Agreeing the deal.
   skippedFirstAttempts: /^Host never asked this seat to commit to attempts 1–(?<last>-?\d+) of this hand$/,
@@ -687,6 +693,10 @@ export class TableClient {
   private atStart = false;
   /** A hand reached after hands this client missed with no record of them: its starting scores cannot be checked. */
   private gapHand: number | null = null;
+  /** The link the last `join` went over, and the last hand of the match it said this client held the end of (`have`). */
+  private joinHave: { epoch: number; have: number | undefined } | null = null;
+  /** The link on which the record of the hand this client is on (`openHand`) last came as a `hand_missed`. */
+  private openRecordOn = -1;
   /**
    * Some hand of this match began from scores this client could not check (see `noteGap`). The hands
    * after it chain from it, so the final scores rest on it: the end of the match may be real, but
@@ -985,7 +995,9 @@ export class TableClient {
 
   join(wantSeat?: number): void {
     const token = this.state.token ?? this.identity.token;
-    this.send({ t: 'join', name: this.name, avatar: this.avatar, wantSeat, token, userId: this.identity.userId, have: this.have(), device: this.deviceId });
+    const have = this.have();
+    this.joinHave = { epoch: this.epoch, have };
+    this.send({ t: 'join', name: this.name, avatar: this.avatar, wantSeat, token, userId: this.identity.userId, have, device: this.deviceId });
     // A ping right behind the join, so the table's answer ties its clock to this device's from the first
     // frames of the link. Sent once `join` has returned: a transport that delivers at once must not be
     // entered again from inside it.
@@ -1691,12 +1703,19 @@ export class TableClient {
       if (this.expected && this.expected.handNumber !== h) this.flag(this.expected.handNumber, 'Host asked to deal a hand that was already played');
     } else if (this.openHand !== null) {
       // The hand this client is on never ended, as far as it has seen.
-      this.carryFlags(this.openHand, h);
       if (this.handEpoch === this.epoch) {
+        this.carryFlags(this.openHand, h);
         const problem = 'Host started another hand before the one in progress had ended';
         this.flag(h, problem);
         this.failNow(problem);
-      } else this.noteGap(h);
+      } else {
+        // The table played on while this device's link was down: the hand it was on gets a verdict of its own, and what
+        // was flagged against it, the hand then on the table, still counts against the hand the table moved on to.
+        const was = this.openHand;
+        this.closeUnheard(was);
+        this.carryFlags(was, h);
+        this.noteGap(h);
+      }
     } else if (base?.matchOver) this.flag(h, 'Host dealt another hand after the match was over');
     else if (takenBack && h > 0) {
       // Sat down with neither a token nor a record, and the first hand it hears of is not the match's first: the table
@@ -1712,6 +1731,29 @@ export class TableClient {
       this.noteGap(h);
     }
     this.noteOpenHand(h);
+  }
+
+  /**
+   * The table moved on past hand `h`, the one this client was on, while its link was down, and sent no record of `h` this
+   * client could check. The hand gets a verdict of its own, listed with the audits, its own flags with it, never silence:
+   * amber (`noRecord`), or red when the join on this link said which hands this client held (`have`, before `h`), the
+   * table welcomed it there, and no record of `h` came on it. An honest host then sends the record of every later hand
+   * that ended (`TableHost.sendMissed`: it keeps every audit of the match, a restored table too, whose snapshot holds them)
+   * before anything else about the table; a join that says nothing is sent no records, and a record that came but that
+   * nothing this client holds chains into is no record it could check.
+   */
+  private closeUnheard(h: number): void {
+    const j = this.joinHave;
+    const asked = j !== null && j.epoch === this.epoch && j.have !== undefined && j.have < h && this.welcomedOn === this.epoch && this.openRecordOn !== this.epoch;
+    const failures = [...(this.tamper.get(h) ?? [])];
+    if (asked) failures.push('Host moved on to a later hand without sending the record of this one, which this device asked for when it joined again');
+    const caveats: string[] = [AUDIT_CAVEATS.noRecord];
+    // (Not among the hands whose end this client holds: what it tells the table it holds, `have`, stays the same.)
+    if (this.openHand === h) this.openHand = null;
+    const status: AuditStatus = failures.length > 0 ? 'failed' : 'partial';
+    // Listed by what this client holds of it: its match, its number and the commitments it was shown.
+    const audit: Audit = { matchId: this.state.matchId ?? '', handNumber: h, seed: '', commits: (this.setFor(h) ?? []).map((c) => ({ seat: c.seat, hash: c.hash })), reveals: [], log: [], finalHash: '', rngVersion: '', ceremonyAttempts: 0, restarts: [], restartReasons: [] };
+    this.update({ audits: [...this.state.audits, { audit, status, failures, caveats }].slice(-MAX_AUDITS), ...(status === 'failed' ? { matchFailed: true, matchEndVerified: false } : {}) });
   }
 
   /** Hands were played while this client's link was down and it holds no record of them: nothing chains into `h`. */
@@ -2520,6 +2562,7 @@ export class TableClient {
     const h = audit.handNumber;
     const rules = this.pinnedRules ?? this.state.rules;
     if (!rules || !this.state.matchId) return;
+    if (h === this.openHand && audit.matchId === this.state.matchId) this.openRecordOn = this.epoch;
     if (audit.matchId !== this.state.matchId) {
       this.flag(this.activeHand(), 'Host sent the record of a hand from a different match');
       return;
