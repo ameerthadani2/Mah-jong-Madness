@@ -1913,8 +1913,15 @@ export class TableClient {
           if (this.state.matchOver) this.failNow(problem);
           return;
         }
-        // A new match at this table (after the last one verifiably ended) starts a fresh record.
-        if (this.state.matchId !== null && m.matchId !== this.state.matchId) this.resetMatch();
+        // A new match at this table (after the last one verifiably ended) starts a fresh record, from a new match's start:
+        // its first hand must be the match's first, from the rules' starting position, whatever number the host gives it
+        // (`atStart`). An honest server runs one match per table, with one match id for the table's life (apps/signal
+        // attaches one `TableHost` to a room), and the app keeps one client per table; so a new match id on the same table
+        // is one this client sits at from its lobby.
+        if (this.state.matchId !== null && m.matchId !== this.state.matchId) {
+          this.resetMatch();
+          this.atStart = true;
+        }
         const rules = sanitizeRules(m.rules);
         if (this.pinnedRules && stableStringify(rules) !== stableStringify(this.pinnedRules)) this.flag(this.activeHand(), 'Host changed the rules mid-match');
         if (this.state.matchId === null) {
