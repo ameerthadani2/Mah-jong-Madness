@@ -578,30 +578,58 @@ export const MAX_SEEN = 600;
 export const MAX_SENT = 300;
 
 /**
- * Keep a hand's record of states within `MAX_SEEN` once a new one has been added. An honest table sends
- * a seat well under a hundred states in a hand, so only a table that sends the same states again and
- * again fills it. A state sent again for a turn this client already holds over the same link (the same
- * turn, hash, link and clock era) gives way first: the first copy (which showed the seat the turn) and
- * the latest (the last frame before what came next) are kept, and a copy between them goes. Only when
- * there is none is the oldest state dropped. Either way the record is no longer whole (`overflow`).
+ * Keep a hand's record of states within `MAX_SEEN` once a new one has been added. An honest table sends a seat well under
+ * a hundred states in a hand, so only a table that sends the same states again and again fills it, and the record is then
+ * no longer whole (`overflow`: amber at best). What gives way first is a copy that adds nothing the checks read
+ * (`seenToDrop`): every turn's first copy on each link, its latest and the latest end any copy claimed stay while such a
+ * copy is left, and every view and hash shown stays while anything else is. A copy that disagrees with another copy of
+ * its turn has already failed the hand when it came (`noteState`).
  */
 export function keepSeen(play: PlayRecord): void {
   if (play.seen.length <= MAX_SEEN) return;
   play.overflow = true;
-  const key = (f: SeenState) => `${f.tc}|${f.hash}|${f.epoch}|${f.era ?? 0}`;
-  const last = new Map<string, number>();
-  play.seen.forEach((f, i) => last.set(key(f), i));
-  const first = new Set<string>();
-  let drop = 0;
-  for (let i = 0; i < play.seen.length; i++) {
-    const k = key(play.seen[i]);
-    if (first.has(k) && (last.get(k) as number) > i) {
-      drop = i;
-      break;
-    }
-    first.add(k);
+  while (play.seen.length > MAX_SEEN) play.seen.splice(seenToDrop(play.seen), 1);
+}
+
+/** The end a state claims for the move it shows the seat owing, on the host's clock (minus infinity with no deadline). */
+const endOf = (f: SeenState): number => (f.deadline === null ? Number.NEGATIVE_INFINITY : f.inBank ? f.deadline : f.deadline + f.timeBank * 1000);
+
+/**
+ * Which state a record that ran over gives up (`keepSeen`); never the one just added. First the oldest copy of a turn
+ * shown again over the same link (the same turn, link and clock era) that is neither the first copy (which showed the
+ * seat the turn, and whose arrival times it) nor the latest (the last frame before what came next), shows the same hash
+ * and view as the first, and is not the only copy claiming the latest end any copy claimed (the end the app counts to
+ * binds the table, `streakEnd`). Else the oldest state whose turn, hash and view another state also holds. Else the oldest.
+ */
+function seenToDrop(seen: SeenState[]): number {
+  const newest = seen.length - 1;
+  const group = (f: SeenState) => `${f.tc}|${f.epoch}|${f.era ?? 0}`;
+  const first = new Map<string, SeenState>();
+  const lastAt = new Map<string, number>();
+  const ends = new Map<string, { max: number; n: number }>();
+  seen.forEach((f, i) => {
+    const k = group(f);
+    if (!first.has(k)) first.set(k, f);
+    lastAt.set(k, i);
+    const e = endOf(f);
+    const g = ends.get(k);
+    if (!g || e > g.max) ends.set(k, { max: e, n: 1 });
+    else if (e === g.max) g.n++;
+  });
+  for (let i = 0; i < newest; i++) {
+    const f = seen[i];
+    const k = group(f);
+    const head = first.get(k) as SeenState;
+    if (head === f || lastAt.get(k) === i || f.hash !== head.hash || f.view !== head.view) continue;
+    const g = ends.get(k) as { max: number; n: number };
+    if (endOf(f) === g.max && g.n === 1) continue;
+    return i;
   }
-  play.seen.splice(drop, play.seen.length - MAX_SEEN);
+  const shows = (f: SeenState) => `${f.tc}|${f.hash}|${f.view ?? ''}`;
+  const held = new Map<string, number>();
+  for (const f of seen) held.set(shows(f), (held.get(shows(f)) ?? 0) + 1);
+  for (let i = 0; i < newest; i++) if ((held.get(shows(seen[i])) ?? 0) > 1) return i;
+  return 0;
 }
 
 /** Version of `SerializedClient`; bump on any incompatible change. */

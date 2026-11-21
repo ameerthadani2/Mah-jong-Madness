@@ -2332,9 +2332,13 @@ export class TableClient {
   /** Record a state frame of the hand being played: its hash, timing and whether we owed a move. */
   private noteState(v: TableView, m: Extract<HostMessage, { t: 'state' }>, stamped: { at: number; atLo: number; ref: number | null; wref: number | null; live: boolean; working: boolean; seg: number } | null = null, onLink = false, behind = false): void {
     const play = this.playFor(v.handNumber);
-    // (A state restored damaged may hold any hash, `cleanSeen`: it is not compared.)
+    const digest = viewDigest(v);
+    // (A state restored damaged may hold any hash or view, `cleanSeen`: it is not compared.) An honest host sends one
+    // turn's state with one hash and exactly the view of that state for this seat, so a second copy that shows another
+    // view is as much another state as one with another hash: it fails at once, and no cap on the record can then give
+    // up the copy that disagrees before the audit (`keepSeen`).
     const prior = play.seen.find((s) => s.tc === v.turnCounter && s.kept !== false);
-    if (prior && prior.hash !== m.hash) this.flag(v.handNumber, `Host showed two different states for turn ${v.turnCounter}`);
+    if (prior && (prior.hash !== m.hash || (typeof prior.view === 'string' && prior.view !== digest))) this.flag(v.handNumber, `Host showed two different states for turn ${v.turnCounter}`);
     // From here on this client watched the hand, so every move credited to its player must be one it sent.
     if (play.ledgerFrom === null || (play.ledgerFrom === Number.POSITIVE_INFINITY && !this.state.kicked)) play.ledgerFrom = v.turnCounter;
     const me = this.state.seat;
@@ -2369,7 +2373,7 @@ export class TableClient {
       timeBank: m.timeBank,
       inBank: m.inTimeBank,
       hash: m.hash,
-      view: viewDigest(v),
+      view: digest,
     });
     keepSeen(play);
   }

@@ -113,7 +113,7 @@ describe('the fair play charter states the late-turn limits the table client use
   });
 
   it('states how many states of a hand the phone keeps', () => {
-    expect(doc).toContain(`It keeps up to ${MAX_SEEN} states of each hand`);
+    expect(doc).toContain(`Your phone keeps up to ${MAX_SEEN} states of each hand`);
   });
 
   it('no longer gives 17 s as the bound on a late turn, says turns 25 to 30 s late stay green, or says a protocol change is still needed', () => {
