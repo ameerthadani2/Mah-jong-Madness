@@ -371,6 +371,16 @@ export function otherDeviceAt(play: PlayRecord, n: number): boolean {
   return (play.otherDevice ?? []).some((v) => n >= v.from && (v.to === undefined || n < v.to));
 }
 
+/** `spans` with the closed stretch from `from` up to `to` added (past the cap the two oldest become one). */
+export function closedOtherDevice(spans: readonly OtherDeviceSpan[] | undefined, from: number, to: number): OtherDeviceSpan[] {
+  const out = [...(spans ?? []).map((v) => ({ ...v })), { from, to: Math.max(from, to) }];
+  while (out.length > MAX_OTHER_DEVICE) {
+    const [a, b] = out.splice(0, 2);
+    out.unshift({ from: Math.min(a.from, b.from), ...(a.to === undefined || b.to === undefined ? {} : { to: Math.max(a.to, b.to) }) });
+  }
+  return out;
+}
+
 /** `spans` with one opened at turn `from`, unless one is open already (the earlier start covers more); past the cap the two oldest become one. */
 export function openOtherDevice(spans: readonly OtherDeviceSpan[] | undefined, from: number): OtherDeviceSpan[] {
   const out = (spans ?? []).map((v) => ({ ...v }));
@@ -810,6 +820,11 @@ export interface SerializedClient {
    * it are in the record (absent in records saved by older builds, and by a client without a journal).
    */
   sentSeq?: number;
+  /**
+   * The server said another device held the seat, and this client had not been shown the hand since it was welcomed back
+   * (`PlayRecord.otherDevice`; absent: no such stretch is open, and in records saved by older builds).
+   */
+  elsewhereOpen?: true;
   /** What this client knows about the host's clock and its own absences (absent in records saved by older builds). */
   clock?: {
     era: number;

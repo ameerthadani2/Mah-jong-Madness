@@ -69,6 +69,7 @@ import {
   keepSeen,
   ledgerVouches,
   MAX_SENT,
+  closedOtherDevice,
   openOtherDevice,
   otherDeviceAt,
   nextDeal,
@@ -456,6 +457,8 @@ const MAX_FLAGGED_HANDS = 12;
 const MAX_REWINDS = 4;
 /** Frames that may come in a link's opening, between its `welcome` and a restart notice (`TableClient.opening`). */
 const OPENING_FRAMES: ReadonlySet<string> = new Set(['hand_missed', 'lobby', 'pong', 'chat', 'emote', 'restored']);
+/** Frames about a hand: its deal under way, a state, a clock, a result, a hand missed (`handFrameOn`). */
+const HAND_FRAMES: ReadonlySet<string> = new Set(['commit_request', 'commits', 'reveal_request', 'stand_in', 'state', 'clock', 'hand_over', 'hand_missed', 'match_over']);
 /** A move sent this long before the table's own move for the same turn arrived, time the app did not run left out, was not lost to a slow network. */
 export const MOVE_SLACK_MS = 30_000;
 /** Marks, among the problems of a replay, a move the table made for this seat that is judged once the replay is done. */
@@ -800,6 +803,23 @@ export class TableClient {
    * device had been shown, was held back (`noteHeld`).
    */
   private pongAfterWelcome = -1;
+  /** The link epoch on which a frame about a hand came (a deal under way, a state, a result): see `runFromHand`. */
+  private handFrameOn = -1;
+  /**
+   * The first hand this run of the app saw begin, or could tell would begin, while it held the seat: it saw the hand
+   * before it end, or the table had no hand under way when it welcomed this run (its welcome and the answer to the ping
+   * behind the join came with no frame about a hand between them). Every move this device sent in such a hand was sent
+   * in this run, so this client knows them all. Null: none yet. Never saved.
+   */
+  private runFromHand: number | null = null;
+  /** This client was restored with the app's journal, and the journal vouched for the record (`takeJournal`): it knows every move this device sent. */
+  private journalWhole = false;
+  /**
+   * The server said another device held the seat (a seat-taken notice, or a welcome that says so), and this device has
+   * not been shown the hand since it was welcomed back: the hand it is shown next was the other device's up to that
+   * state (`PlayRecord.otherDevice`). Saved with the record.
+   */
+  private elsewhereOpen = false;
 
   constructor(
     link: Link,
@@ -941,6 +961,8 @@ export class TableClient {
     // With the app's journal, the moves filed after the record was written go back into it: this client then knows every
     // move this device sent, over every run of the app (`writeAhead`).
     const whole = this.takeJournal(d);
+    this.journalWhole = whole;
+    this.elsewhereOpen = d.elsewhereOpen === true;
     // What this device did before the app stopped is not all on record (it may have left the table).
     this.noteOwnAbsence();
     this.lapse = true;
@@ -1100,6 +1122,7 @@ export class TableClient {
       lapseHand: this.lapseHand,
       lapseDeal: this.lapseDeal,
       ...(this.seq > 0 ? { sentSeq: this.seq } : {}),
+      ...(this.elsewhereOpen ? { elsewhereOpen: true as const } : {}),
       clock: { era: this.era, base: { ...this.clockBase }, lastStamp: this.lastStamp, ownAbsences: this.ownAbsences.slice(), gapVerdicts: this.gapVerdicts.slice(), runs: this.runScopes().map(withSum) },
     }, (h) => this.handsEnded.has(h));
   }
@@ -1785,6 +1808,8 @@ export class TableClient {
       play.ledgerFrom = Number.POSITIVE_INFINITY;
       play.otherDevice = openOtherDevice(play.otherDevice, this.lastShown(play.hand));
     }
+    // (And a hand this device has no record of yet, up to the first state it is shown of it once welcomed back.)
+    this.elsewhereOpen = true;
     this.kickedLink = this.link;
     this.update({ connected: false, kicked: true, lastError: 'This seat was opened on another device.' });
   }
@@ -1833,6 +1858,24 @@ export class TableClient {
   private takenElsewhere(): void {
     this.noteOwnAbsence(this.epoch - 1);
     this.seatTaken();
+  }
+
+  /**
+   * The first welcome of this run of the app (a client restored from its record, or one new to the table) says another
+   * device held the seat (`welcome.elsewhere`): the player took the seat back from there by opening the table here, so
+   * this client goes on, but from the latest turn this device was shown of each hand under way, and in a hand it has no
+   * record of, up to the first state it is shown, the moves credited to the player may be that device's: the ledger does
+   * not vouch for them (`otherDevice`). Without this, a client that kept its ledger across the restart through the app's
+   * journal would take such a move for one forged in the player's name.
+   */
+  private heldElsewhere(): void {
+    for (const play of this.plays) {
+      if (this.handsEnded.has(play.hand)) continue;
+      this.closeLedger(play);
+      play.ledgerFrom = Number.POSITIVE_INFINITY;
+      play.otherDevice = openOtherDevice(play.otherDevice, this.lastShown(play.hand));
+    }
+    this.elsewhereOpen = true;
   }
 
   private recordFor(hand: number): CeremonyRecord | null {
@@ -2222,6 +2265,8 @@ export class TableClient {
       if (h !== null && !this.handsEnded.has(h)) this.flag(h, 'Host sent table frames on a connection where this device held no seat');
       this.flag(this.activeHand(), 'Host sent table frames on a connection where this device held no seat');
     }
+    // A frame about a hand (its deal under way, a state, a result): the table had a hand to show this link (`runFromHand`).
+    if (HAND_FRAMES.has(m.t)) this.handFrameOn = this.epoch;
     switch (m.t) {
       case 'welcome': {
         // Whatever else it says, a welcome seats this client on this link.
@@ -2274,6 +2319,7 @@ export class TableClient {
         // Nor is a welcome after the first frame of its link: what this device was shown on the link already
         // is not to be excused after the fact, as the time before it would be.)
         if (m.elsewhere === true && this.welcomed && !this.heardOnLink) this.takenElsewhere();
+        else if (m.elsewhere === true && !this.welcomed && !this.heardOnLink) this.heldElsewhere();
         this.welcomed = true;
         // A welcome that is its link's first frame opens it: a restarted table's notice may follow (`opening`).
         this.opening = !this.heardOnLink;
@@ -2328,6 +2374,8 @@ export class TableClient {
         // own only from the connection it seats this device on, and a seat opened on another device says so, `seatTaken`).
         const play = this.playFor(h);
         if (play.ledgerFrom === null) play.ledgerFrom = 0;
+        // (Then no other device holds it: a stretch the server said another device held the seat in ends before this deal.)
+        this.elsewhereOpen = false;
         if (this.standInHand === h) this.standInHand = null;
         // Record the commitment before sending it: the host may answer at once.
         this.update({ ceremony: 'committed', standIn: false });
@@ -2370,6 +2418,14 @@ export class TableClient {
           this.noteAhead(h);
         } else return;
         this.standInHand = h;
+        // The table made this seat's share for the hand being dealt because this device had no link at its commit request,
+        // and seats it here again: from the deal on, as after a commit request, every move the log credits to its player
+        // must be one this device sent (an honest host takes a move as the player's own only from the link it seats this
+        // device on, and a seat opened on another device says so). Only where this client knows every move it sent in the
+        // hand: it kept the app's journal (`journalWhole`), or the hand began in this run while it held the seat
+        // (`runFromHand`); and not while the server says another device held the seat (`elsewhereOpen`).
+        const play = this.playFor(h);
+        if (play.ledgerFrom === null && !this.elsewhereOpen && (this.journalWhole || (this.runFromHand !== null && h >= this.runFromHand))) play.ledgerFrom = 0;
         this.update({ standIn: true });
         return;
       }
@@ -2524,6 +2580,7 @@ export class TableClient {
         // A hand that ended at the deal sends no state first: check where it started from its end.
         if (!this.handStart || this.handStart.handNumber !== h) this.checkChain(snapshotFromView(m.view, true));
         this.handsEnded.add(h);
+        this.runFromHand = Math.max(this.runFromHand ?? 0, h + 1);
         if (this.openHand === h) this.openHand = null;
         this.atStart = false;
         const end: SeenState = { tc: Number.POSITIVE_INFINITY, epoch: this.epoch, era: this.era, at: this.now(), now: typeof m.now === 'number' && Number.isFinite(m.now) ? m.now : undefined, run: this.runId, seg: this.seg(), owes: false, deadline: null, timeBank: 0, inBank: false, hash: '', ...(stampedEnd ? { atLo: stampedEnd.atLo, ref: stampedEnd.ref, wref: stampedEnd.wref, live: stampedEnd.live, seg: stampedEnd.seg } : {}) };
@@ -2636,6 +2693,13 @@ export class TableClient {
         // An answer after the welcome, on a link that has brought no state yet: the link's first state can now only be a
         // deal's (`pongAfterWelcome`).
         if (this.welcomedOn === this.epoch && !this.stateHere()) this.pongAfterWelcome = this.epoch;
+        // An honest host sends right behind its welcome whatever it has of a hand for this seat (a deal under way, a state,
+        // a result): an answer that comes first on such a link says the table had no hand under way when it seated this
+        // run, so every hand after the last one this client saw end begins while it holds the seat (`runFromHand`).
+        if (this.welcomedOn === this.epoch && this.handFrameOn !== this.epoch && this.state.matchId !== null) {
+          const next = this.handsEnded.size > 0 ? Math.max(...this.handsEnded) + 1 : 0;
+          this.runFromHand = Math.max(this.runFromHand ?? 0, next);
+        }
         return;
       case 'clock': {
         this.aboutHand(m.hand);
@@ -2724,6 +2788,10 @@ export class TableClient {
       play.ledgerFrom = v.turnCounter;
       const open = play.otherDevice?.find((x) => x.to === undefined);
       if (open) open.to = Math.max(open.from, v.turnCounter);
+      // A hand this device has no stretch for yet, first shown since the server said another device held the seat: that
+      // device's from the deal up to this state.
+      else if (this.elsewhereOpen && v.turnCounter > 0) play.otherDevice = closedOtherDevice(play.otherDevice, 0, v.turnCounter);
+      this.elsewhereOpen = false;
     }
     const me = this.state.seat;
     let owes = false;

@@ -205,6 +205,62 @@ describe('a seat the server says another device held', () => {
     }));
 });
 
+describe('a restored app whose first welcome says another device held the seat', () => {
+  /**
+   * Normal, with the app's journal. Half a second into the seat's third discard turn the app stops; meanwhile the player
+   * makes that turn's move on another device (a legal discard, written as the player's own), and opens the table here
+   * again (the record restored with the journal). `elsewhere`: the welcome says another device held the seat, as an honest
+   * host's does when the join names another device than the one that last held it.
+   */
+  function restoredAfterOtherDevice(code: string, elsewhere: boolean) {
+    let done = false;
+    let tag = false;
+    const w = wire({
+      code,
+      rules: NORMAL,
+      botDelayMs: 700,
+      think: () => 3_000,
+      journal: true,
+      map: (m) => {
+        if (tag && m.t === 'welcome') {
+          tag = false;
+          return elsewhere ? { ...m, elsewhere: true } : m;
+        }
+        return m;
+      },
+      onTick: (w) => {
+        const g = w.host.game;
+        if (done || !g || w.host.phase !== 'playing') return;
+        if (!w.discardTurn() || !w.current() || mine(w) < 2 || w.clock.now - (w.shown.get(g.turnCounter) ?? Infinity) < 500) return;
+        const move = otherDiscard(w);
+        if (!move) return;
+        done = true;
+        host(w).apply(0, move, 'player');
+        tag = true;
+        w.restart();
+      },
+    });
+    for (let k = 0; k < 20_000 && !w.c.state.matchOver; k++) w.step();
+    return { w, done };
+  }
+
+  it('honest: the other device’s move is not taken for a forged one (amber otherDevice, the end not verified; it was red, the journal’s ledger holding the hand)', () =>
+    scenario((i) => {
+      const r = restoredAfterOtherDevice(`ODR${i}`, true);
+      need(r.done && r.w.c.state.matchOver);
+      expect(hand0(r.w)!.failures).toEqual([]);
+      expect(hand0(r.w)!.caveats).toContain('otherDevice');
+      expect(r.w.c.state.matchEndVerified).toBe(false);
+    }));
+
+  it('control: the same move with a welcome that says nothing of another device: red (a move the seat never made)', () =>
+    scenario((i) => {
+      const r = restoredAfterOtherDevice(`ODRC${i}`, false);
+      need(r.done);
+      expect(hand0(r.w)!.failures).toEqual(expect.arrayContaining(['moveInvented']));
+    }));
+});
+
 describe('the stretches the record keeps', () => {
   const nowhere = (): Link => ({ send: () => undefined, onMessage: () => () => undefined, close: () => undefined });
 

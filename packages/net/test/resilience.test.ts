@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { chooseAction, legalActions, withRules } from '@mjm/engine';
-import { LoopbackHub, TableClient, TableHost, transportLink, type SerializedHost } from '../src/index';
+import { AUDIT_CAVEATS, LoopbackHub, TableClient, TableHost, transportLink, type SerializedHost } from '../src/index';
 
 function stepHumans(host: TableHost, clients: TableClient[], max = 3000): void {
   let guard = 0;
@@ -165,9 +165,11 @@ describe('crash recovery', () => {
     expect(host2.phase).toBe('hand_over');
     expect(c2.state.lastResult).not.toBeNull();
     // Replay from the hand snapshot must still match the host's final hash, even though this client missed the start.
-    // Its share was not part of this deal, so the hand verifies as partial rather than ok.
+    // Its share was not part of this deal, so the hand verifies as partial rather than ok. A client with no record is a new
+    // device to the table (its own device id): the welcome says another device held the seat, and the moves the first
+    // client made are that device's, not this one's (`otherDevice`).
     expect(c2.state.auditFailures).toEqual([]);
     expect(c2.state.auditStatus).toBe('partial');
-    expect(c2.state.auditCaveats).toEqual(['Joined during this hand; log verified, share not used']);
+    expect(c2.state.auditCaveats).toEqual(['Joined during this hand; log verified, share not used', AUDIT_CAVEATS.otherDevice]);
   });
 });
