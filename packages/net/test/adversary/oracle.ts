@@ -103,7 +103,7 @@ export const EXCEPTIONS: Record<ExceptionName, StatedLimit> = {
   },
   noRecordJoin: {
     quote: 'Such a phone did not watch the moves credited to your seat in that hand before it was first shown the hand, so, like the moves of a hand it missed, they keep the end of the match from being shown as verified.',
-    covers: 'a move made before a phone with no record of the table was first shown the hand, when the record was lost the ways the charter states (another phone; before unit 20g also the archive\'s day or three tables; since, its thirty days, or records holding red hands filling its million characters)',
+    covers: 'a move made before a phone with no record of the table was first shown the hand, when the record was lost the ways the charter states (another phone; an app started again after its storage took no more writes; before unit 20g also the archive\'s day or three tables; since, its thirty days, or records holding red hands filling its million characters)',
     end: 'unverified',
     endQuote: 'they keep the end of the match from being shown as verified',
   },
@@ -178,10 +178,14 @@ function judgeOf(t: Truth, hand: number): RunInfo | undefined {
 }
 
 /**
- * The phone's record of the table was lost a way the charter states: another phone (and before the app kept its records by
- * match, unit 20g, the archive's day or three other tables; the routes the fuzzer models no longer lose it since).
+ * The phone's record of the table was lost a way the charter states: another phone, or an app started again after its
+ * storage stopped taking writes (it reads only the last record written, or none); and before the app kept its records by
+ * match, unit 20g, the archive's day or three other tables (the routes the fuzzer models no longer lose it since).
  */
-const statedLoss = (t: Truth): boolean => t.freshPhones > 0 || (!BY_MATCH && t.goneRoutes.some((r) => r === 'expired' || r === 'pushed'));
+const statedLoss = (t: Truth): boolean =>
+  t.freshPhones > 0 ||
+  (t.storageFailedAt !== null && t.appStops.some((s) => s.startAt !== null && s.startAt >= t.storageFailedAt!)) ||
+  (!BY_MATCH && t.goneRoutes.some((r) => r === 'expired' || r === 'pushed'));
 
 /**
  * The phone that judged `hand` started from no record (a new phone, or a token alone) after what happened at `at` on

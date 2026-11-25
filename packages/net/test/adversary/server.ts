@@ -218,6 +218,7 @@ export class Server implements Adversary {
         return;
       case 'saveFails':
         phone.app.failing = true;
+        sim.truth.storageFailedAt ??= sim.clock.now;
         return this.end(r);
       case 'fresh':
         // The account is seated again on another phone: nothing of this one's record goes with it.

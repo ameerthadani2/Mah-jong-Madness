@@ -260,6 +260,8 @@ export class Truth {
   otherMatch = false;
   goneRoutes: string[] = [];
   freshPhones = 0;
+  /** When the phone's storage stopped taking writes (`saveFails`), if it did. */
+  storageFailedAt: number | null = null;
   otherDeviceActive = false;
   readonly otherDeviceSpans: Array<{ from: number; to: number | null }> = [];
   private eraStart = 0;
