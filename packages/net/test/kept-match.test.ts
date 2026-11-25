@@ -8,6 +8,10 @@
 import { describe, expect, it } from 'vitest';
 import { chooseAction, legalActions, sameAction, withRules, type Action, type GameState } from '@mjm/engine';
 import { caveatKey, failureKey, LoopbackHub, TableClient, TableHost, transportLink, type KeptRecord, type Link, type SerializedClient } from '../src/index';
+import { seededDeals } from './support';
+
+// The same deals every run.
+seededDeals();
 
 const RULES = withRules({ handsPerMatch: 2, turnSeconds: 15, timeBankSeconds: 30 });
 const USER = 'u-victim';

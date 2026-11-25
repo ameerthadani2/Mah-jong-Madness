@@ -125,6 +125,19 @@ describe('saving the table record', () => {
     expect(again).not.toHaveBeenCalled();
   });
 
+  it('saves at once when the table\'s first welcome says another device held the seat, so a client restored later knows', () => {
+    const save = vi.fn();
+    const onChange = clientSaves(saveScheduler(save), { kicked: false, heldElsewhere: false });
+    onChange({ ceremony: 'idle', kicked: false, heldElsewhere: false });
+    expect(save).not.toHaveBeenCalled();
+    onChange({ ceremony: 'idle', kicked: false, heldElsewhere: true });
+    expect(save).toHaveBeenCalledTimes(1);
+    onChange({ ceremony: 'idle', kicked: false, heldElsewhere: true });
+    expect(save).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(SAVE_DELAY_MS);
+    expect(save).toHaveBeenCalledTimes(2);
+  });
+
   it('counts committed and revealed as the middle of a deal, and nothing else', () => {
     expect(midCeremony('committed')).toBe(true);
     expect(midCeremony('revealed')).toBe(true);

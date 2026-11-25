@@ -96,7 +96,7 @@ export type HostMessage =
    * `elsewhere`: on a rejoin, the seat was taken from another device (`join.device`) since this one
    * last held it: the `disconnected` that said so may never have reached it.
    */
-  | { t: 'welcome'; seat: number; roomCode: string; rules: RuleSet; seats: SeatInfo[]; matchId: string; token: string; botSkill?: BotSkill; clockMs?: number; elsewhere?: boolean }
+  | { t: 'welcome'; seat: number; roomCode: string; rules: RuleSet; seats: SeatInfo[]; matchId: string; token: string; botSkill?: BotSkill; clockMs?: number; elsewhere?: boolean; handovers?: number }
   | { t: 'lobby'; seats: SeatInfo[] }
   /** `attempt`: which ceremony attempt at this hand (1 for the first). */
   | { t: 'commit_request'; handNumber: number; attempt?: number }

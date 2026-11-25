@@ -4,13 +4,30 @@
  * journal holds, so a move written in the player's name while the app was not running is caught, however close to the
  * app's last save it was made.
  */
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { chooseAction, legalActions, sameAction, withRules, type Action, type GameState } from '@mjm/engine';
 import { failureKey, LoopbackHub, TableClient, TableHost, transportLink, type JournalEntry, type Link, type SerializedClient } from '@mjm/net';
 import { journalKeeper, type JournalStore } from './journalKeeper';
 import type { MoveJournal } from '../logic/moveJournal';
 
 const URL = 'wss://game.example/ws';
+
+// The same deals every run (xorshift32 over the random source the deal draws from, as the table package's tests do).
+beforeEach(() => {
+  let state = 20261125;
+  vi.spyOn(globalThis.crypto, 'getRandomValues').mockImplementation(((buf: Uint8Array) => {
+    for (let i = 0; i < buf.length; i++) {
+      state ^= state << 13;
+      state ^= state >>> 17;
+      state ^= state << 5;
+      buf[i] = (state >>> 0) & 0xff;
+    }
+    return buf;
+  }) as never);
+});
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 const RULES = withRules({ handsPerMatch: 1, turnSeconds: 15, timeBankSeconds: 30 });
 type HostInside = { apply(seat: number, a: Action, source: string): void; timeoutAction(g: GameState, seat: number): Action };
 

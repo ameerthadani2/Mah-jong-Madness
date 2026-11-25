@@ -441,6 +441,12 @@ export interface ClientState {
   disconnected: boolean;
   /** The seat was opened on another device: this one must not take it back. */
   kicked: boolean;
+  /**
+   * The first welcome of this client said another device had held the seat since this device last did (`heldElsewhere`):
+   * the moves credited to the player from the latest turn this device was shown may be that device's. The app saves the
+   * record at once when this turns true, so the next client restored from it knows (src/game/persist.ts).
+   */
+  heldElsewhere: boolean;
 }
 
 export function transportLink(transport: Transport, hostPeerId: string): Link {
@@ -505,6 +511,7 @@ export class TableClient {
     standIn: false,
     disconnected: false,
     kicked: false,
+    heldElsewhere: false,
   };
   private secret: string | null = null;
   /**
@@ -807,6 +814,8 @@ export class TableClient {
   private keptRecord: TableClientOptions['keptRecord'] | null;
   /** Red hands the app kept of a match, for a client that holds no record of it, until its welcome names the match. */
   private redLater: unknown = null;
+  /** The seat's count of moves between devices as the last welcome this client took said it (`welcome.handovers`; saved). */
+  private handovers: number | null = null;
   /** The place of the last move this client filed (`SentAction.seq`), over every run of the app. */
   private seq = 0;
   /**
@@ -946,6 +955,7 @@ export class TableClient {
   private load(d: SerializedClient): void {
     this.fresh = false;
     if (typeof d.device === 'string' && /^[\w-]{6,64}$/.test(d.device)) this.deviceId = d.device;
+    this.handovers = isInt(d.handovers) && d.handovers >= 0 ? d.handovers : null;
     const st = d.state;
     // Each audit as this build files it (`keptAudit`, as `intake` cuts every audit that comes): a record an earlier build
     // saved may hold them whole (`restartReasons` and all), and a result the table sends again is compared with the one
@@ -967,6 +977,7 @@ export class TableClient {
       connected: false,
       disconnected: true,
       kicked: false,
+      heldElsewhere: false,
       chat: [],
       emotes: [],
       rttMs: null,
@@ -1148,6 +1159,7 @@ export class TableClient {
       version: CLIENT_SNAPSHOT_VERSION,
       state: { ...state, audits: state.audits.slice(-MAX_AUDITS) },
       device: this.deviceId,
+      ...(this.handovers !== null ? { handovers: this.handovers } : {}),
       secret: this.secret,
       // The set of the hand last published, as records saved before the sets were kept per hand hold it.
       commits: this.commitSets[this.commitSets.length - 1]?.commits ?? null,
@@ -1962,6 +1974,7 @@ export class TableClient {
       play.otherDevice = openOtherDevice(play.otherDevice, this.lastShown(play.hand));
     }
     this.elsewhereOpen = true;
+    this.update({ heldElsewhere: true });
   }
 
   private recordFor(hand: number): CeremonyRecord | null {
@@ -2405,9 +2418,14 @@ export class TableClient {
         // A rejoin to a seat another device took in between: the 'disconnected' that said so never came.
         // (The first welcome of a client restored from its record is no rejoin: the restore noted its absence.
         // Nor is a welcome after the first frame of its link: what this device was shown on the link already
-        // is not to be excused after the fact, as the time before it would be.)
-        if (m.elsewhere === true && this.welcomed && !this.heardOnLink) this.takenElsewhere();
-        else if (m.elsewhere === true && !this.welcomed && !this.heardOnLink) this.heldElsewhere();
+        // is not to be excused after the fact, as the time before it would be.) The table also counts the seat's moves
+        // from one device to another (`handovers`): two more than the last welcome this client took said is another
+        // device holding the seat and this one taking it back, even when the welcome that said so was lost (its link
+        // broke, or the app stopped before it came).
+        const away = m.elsewhere === true || (isInt(m.handovers) && this.handovers !== null && m.handovers >= this.handovers + 2);
+        if (away && this.welcomed && !this.heardOnLink) this.takenElsewhere();
+        else if (away && !this.welcomed && !this.heardOnLink) this.heldElsewhere();
+        if (isInt(m.handovers) && m.handovers >= 0) this.handovers = m.handovers;
         this.welcomed = true;
         // A welcome that is its link's first frame opens it: a restarted table's notice may follow (`opening`).
         this.opening = !this.heardOnLink;

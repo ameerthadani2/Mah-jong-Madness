@@ -820,6 +820,8 @@ export interface SerializedClient {
   state: Omit<ClientState, 'chat' | 'emotes' | 'rttMs'>;
   /** The id this client gives the host as its device (`join.device`), kept across app restarts (absent in records saved by older builds). */
   device?: string;
+  /** The table's count of the seat's moves from one device to another, as the last welcome this client took said it (`welcome.handovers`). */
+  handovers?: number;
   secret: string | null;
   /** The set of the hand last published (`commitsHand`), as records saved before the sets were kept per hand hold it. */
   commits: Commitment[] | null;

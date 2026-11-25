@@ -9,7 +9,8 @@
  * after a restart stays amber, because a restarted app cannot prove the save happened
  * (docs/FAIRNESS.md). So is the change that says the seat was opened on another device: the table
  * screen goes soon after, and a save still waiting goes with it, while Home's Resume restores what
- * was saved last.
+ * was saved last; and the one that says another device held the seat before this client took it
+ * back (the table's first welcome to it): a client restored from an older record would not know.
  */
 import type { ClientState } from '@mjm/net';
 
@@ -60,13 +61,17 @@ export function saveScheduler(save: () => void, delayMs: number = SAVE_DELAY_MS)
 
 /**
  * What the table client's changes do to the save (`scheduler`): each is saved, and at once the
- * moment the seat is opened on another device (the client turns `kicked`).
+ * moment the seat is opened on another device (the client turns `kicked`), or the table's first
+ * welcome says another device held the seat (the client turns `heldElsewhere`): a client restored
+ * from the record later must know that the moves made meanwhile may be that device's.
  */
-export function clientSaves(scheduler: SaveScheduler, initial: Pick<ClientState, 'kicked'>): (st: Pick<ClientState, 'ceremony' | 'kicked'>) => void {
+export function clientSaves(scheduler: SaveScheduler, initial: Pick<ClientState, 'kicked'> & Partial<Pick<ClientState, 'heldElsewhere'>>): (st: Pick<ClientState, 'ceremony' | 'kicked'> & Partial<Pick<ClientState, 'heldElsewhere'>>) => void {
   let kicked = initial.kicked;
+  let held = initial.heldElsewhere === true;
   return (st) => {
-    const now = st.kicked && !kicked;
+    const now = (st.kicked && !kicked) || (st.heldElsewhere === true && !held);
     kicked = st.kicked;
+    held = st.heldElsewhere === true;
     scheduler.changed(st.ceremony, now);
   };
 }

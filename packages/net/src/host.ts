@@ -138,6 +138,12 @@ interface SeatState extends SeatInfo {
   /** The device (`join.device`) that took the seat last: a rejoin from another one is told so (`welcome.elsewhere`). */
   device?: string;
   /**
+   * How many times the seat went from one device to another: every welcome says it (`welcome.handovers`), so a device
+   * whose welcome that said another device had held the seat was lost (with its link, or with an app that stopped) learns it
+   * from the next one.
+   */
+  handovers?: number;
+  /**
    * This seat lost its link and its clock then ran out once: the table plays it at bot pace until
    * the player returns. A seat that only dropped keeps its turn clock and time bank (it is held),
    * so a second without a signal never costs a turn.
@@ -781,8 +787,9 @@ export class TableHost {
     // A seat taken back from another device: its client is told, in case the 'disconnected' that ended its
     // last link never reached it (it would then take that device's moves for ones forged in its name).
     const elsewhere = !newOccupant && (seat.device ?? null) !== (device ?? null);
+    if (elsewhere) seat.handovers = (seat.handovers ?? 0) + 1;
     seat.device = device;
-    this.sendTo(from, { t: 'welcome', seat: seat.seat, roomCode: this.roomCode, rules: this.rules, seats: this.seatInfo(), matchId: this.matchId, token: seat.token, botSkill: this.botSkill, clockMs: CLOCK_FRAME_MS, ...(elsewhere ? { elsewhere: true } : {}) });
+    this.sendTo(from, { t: 'welcome', seat: seat.seat, roomCode: this.roomCode, rules: this.rules, seats: this.seatInfo(), matchId: this.matchId, token: seat.token, botSkill: this.botSkill, clockMs: CLOCK_FRAME_MS, handovers: seat.handovers ?? 0, ...(elsewhere ? { elsewhere: true } : {}) });
     // A returning seat first gets the audits of the hands that ended without it, so its client can
     // check them and carry its record of the match forward to the hand now on the table.
     if (!newOccupant && have !== undefined) this.sendMissed(from, have);

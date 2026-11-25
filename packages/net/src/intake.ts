@@ -87,6 +87,7 @@ export const FRAME_FIELDS: { readonly [T in HostMessage['t']]: Readonly<Record<s
     botSkill: { check: skill, optional: true },
     clockMs: { check: (v) => isInt(v) && v > 0, optional: true },
     elsewhere: { check: bool, optional: true },
+    handovers: { check: count, optional: true },
   },
   lobby: { seats: { check: seats } },
   commit_request: { handNumber: { check: count }, attempt: { check: (v) => isInt(v) && v >= 1, optional: true } },
