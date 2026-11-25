@@ -2,9 +2,10 @@ import React, { createContext, useContext, useEffect, useMemo, useRef, useState 
 import { BackHandler, Platform } from 'react-native';
 import { DEFAULT_PROFILE, DEFAULT_PROGRESS, DEFAULT_SETTINGS, storage, type ActiveSession, type Profile, type Progress, type Settings } from './storage';
 import { clientSaves, saveScheduler } from './game/persist';
-import { setArchivedTableSource, setRedHandsSource, setSavedClientSource, setSavedTokenSource, type CloseOptions, type Session } from './game/session';
+import { setArchivedTableSource, setMoveJournalSource, setRedHandsSource, setSavedClientSource, setSavedTokenSource, type CloseOptions, type Session } from './game/session';
 import { redFor, withRed, type KeptRed } from './logic/redHands';
 import { archivedFor, archiveOnSlotChange, type ArchivedTable } from './logic/tableArchive';
+import { journalKeeper } from './game/journalKeeper';
 import { acceptedName } from './logic/profile';
 import type { ShopFocus } from './logic/shopFocus';
 import type { BoardKind } from './api/puzzles';
@@ -77,6 +78,17 @@ const Ctx = createContext<AppState | null>(null);
 /** For render tests only (src/test/providers.tsx): a screen under test reads a fake app state from here. */
 export const AppStateContext = Ctx;
 
+/**
+ * Whether the app still keeps a record of match `matchId` at game server `signalUrl`: the saved-table slot's, one in the
+ * archive, or the table open on this device (`open`, whose first record may not be written yet).
+ */
+function heldMatch(slot: ActiveSession | null, archive: readonly ArchivedTable[], open: { signalUrl: string; matchId: string | null } | null): (signalUrl: string, matchId: string) => boolean {
+  return (url, m) =>
+    (slot?.kind === 'online' && slot.signalUrl === url && slot.client?.state?.matchId === m) ||
+    archive.some((e) => e.signalUrl === url && e.matchId === m) ||
+    (open !== null && open.signalUrl === url && open.matchId === m);
+}
+
 export function AppProvider({ children }: { children: React.ReactNode }) {
   const [stack, setStack] = useState<Screen[]>([{ name: 'home' }]);
   const [profile, setProfileState] = useState<Profile>(DEFAULT_PROFILE);
@@ -87,12 +99,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [wallet, setWalletState] = useState<Wallet>(EMPTY_WALLET);
   const [loaded, setLoaded] = useState(false);
   const signalUrl = resolveSignalUrl(settings.devSignalUrl);
+  // The journal of moves (logic/moveJournal.ts, game/journalKeeper.ts): written before each move goes out.
+  const journal = useRef(journalKeeper({ write: storage.writeJournal })).current;
 
   useEffect(() => {
-    void Promise.all([storage.loadProfile(), storage.loadSettings(), storage.loadProgress(), storage.loadActiveSession(), loadWallet(), storage.loadArchive(), storage.loadRedHands()]).then(([p, s, pr, as, w, kept, red]) => {
+    void Promise.all([storage.loadProfile(), storage.loadSettings(), storage.loadProgress(), storage.loadActiveSession(), loadWallet(), storage.loadArchive(), storage.loadRedHands(), storage.loadJournal()]).then(([p, s, pr, as, w, kept, red, journalRead]) => {
       archiveRef.current = kept;
       redRef.current = red;
       activeRef.current = as;
+      // The journal's lists of matches whose record the app no longer keeps go with them.
+      journal.load(journalRead);
+      journal.keep(heldMatch(as, kept, null));
       setProfileState(p);
       // Apply the saved language before the first loaded render so the UI never flips.
       setLocalePreference(s.locale);
@@ -102,7 +119,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setWalletState(w);
       setLoaded(true);
     });
-  }, []);
+  }, [journal]);
 
   // Funnel: one app_open per launch, once the saved language is known.
   useEffect(() => {
@@ -191,8 +208,21 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
     activeRef.current = next;
     setActiveSessionState(next);
-    if (next) void storage.saveActiveSession(next);
-    else void storage.clearActiveSession();
+    // The journal keeps the moves of a match only as long as a record of it is kept (or its table is open).
+    const open = sessionRef.current;
+    const playing = open?.mode === 'online' && !open.client.state.matchOver ? { signalUrl: open.serverUrl ?? '', matchId: open.client.state.matchId } : null;
+    journal.keep(heldMatch(next, archiveRef.current, playing));
+    if (!next) {
+      void storage.clearActiveSession();
+      return;
+    }
+    // Once the record is written, the moves it holds leave the journal: what stays is what was sent after it.
+    void storage.saveActiveSession(next).then((ok) => {
+      const m = next.kind === 'online' ? next.client?.state?.matchId : null;
+      if (!ok || next.kind !== 'online' || typeof m !== 'string' || m === '') return;
+      const seq = next.client?.sentSeq;
+      journal.saved(next.signalUrl, m, typeof seq === 'number' && Number.isInteger(seq) ? seq : 0);
+    });
   }).current;
   useEffect(() => {
     setSavedClientSource((url, room, token) => {
@@ -211,13 +241,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const e = archivedFor(archiveRef.current, url, room, Date.now());
       return e ? { token: e.token, client: e.client } : undefined;
     });
+    // Every move an online table client files is written to the journal before it goes out, and a client restored from a
+    // record is given what the journal holds for its match. A move whose write failed (and the journal could not be taken
+    // off the device either) does not go out, and leaves the journal again.
+    setMoveJournalSource(journal);
     return () => {
       setSavedClientSource(null);
       setSavedTokenSource(null);
       setArchivedTableSource(null);
       setRedHandsSource(null);
+      setMoveJournalSource(null);
     };
-  }, []);
+  }, [journal]);
 
   // Keep the resumable-session record in sync with whatever table we are at. A name the server refused
   // is not carried into it (the resume falls back to "Player").

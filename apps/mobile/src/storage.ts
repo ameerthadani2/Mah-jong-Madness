@@ -11,6 +11,7 @@ import { migrateAgeRecord, type AgeRecord } from './legal/age';
 import { DEFAULT_PUZZLE_RATING, migratePuzzleProgress, type RatingEntry } from './logic/rating';
 import { validArchive, type ArchivedTable } from './logic/tableArchive';
 import { validRed, type KeptRed } from './logic/redHands';
+import { validJournal, type MoveJournal } from './logic/moveJournal';
 
 export { DEFAULT_PROFILE, type Profile } from './logic/profile';
 
@@ -83,7 +84,7 @@ export type ActiveSession =
       rulesReset?: boolean;
     };
 
-const KEYS = { profile: 'mjm.profile', settings: 'mjm.settings', progress: 'mjm.progress', session: 'mjm.activeSession', archive: 'mjm.tableArchive', red: 'mjm.redHands', age: 'mjm.age' } as const;
+const KEYS = { profile: 'mjm.profile', settings: 'mjm.settings', progress: 'mjm.progress', session: 'mjm.activeSession', archive: 'mjm.tableArchive', red: 'mjm.redHands', journal: 'mjm.moveJournal', age: 'mjm.age' } as const;
 
 export const DEFAULT_SETTINGS: Settings = { rules: DEFAULT_RULES, coach: true, botSkill: 'beginner', sound: true, tableTheme: 'classic', locale: 'auto' };
 export const DEFAULT_PROGRESS: Progress = {
@@ -114,12 +115,54 @@ async function load<T>(key: string, fallback: T): Promise<T> {
   }
 }
 
-async function save<T>(key: string, value: T): Promise<void> {
+/** Write `value` under `key`; resolves true once it is written, false when the write failed (storage is best-effort). */
+async function save<T>(key: string, value: T): Promise<boolean> {
   try {
     await AsyncStorage.setItem(key, JSON.stringify(value));
+    return true;
   } catch {
-    /* storage is best-effort */
+    return false;
   }
+}
+
+/** The browser's own storage, on the web (AsyncStorage keeps its keys there too); null on a phone or where it is barred. */
+function webStorage(): Pick<Storage, 'setItem' | 'removeItem'> | null {
+  try {
+    const ls = (globalThis as { localStorage?: Storage }).localStorage;
+    return ls && typeof ls.setItem === 'function' ? ls : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The journal's writes on a phone, one after another in the order they were asked for. */
+let journalWrites: Promise<unknown> = Promise.resolve();
+
+/**
+ * Write the journal of moves (logic/moveJournal.ts) before a move goes out. On the web it is written at once
+ * (localStorage), so the move leaves in the same turn of the event loop; on a phone through AsyncStorage, and the move
+ * leaves once the write is done (the promise). A write that fails takes the journal off the device instead, so that a
+ * record restored later vouches as one without a journal does, and the move still goes; only when that fails too is the
+ * move kept back (this throws, or the promise is rejected: the table client then does not send it).
+ */
+function writeJournal(j: MoveJournal): void | Promise<void> {
+  const text = JSON.stringify(j);
+  const web = webStorage();
+  if (web) {
+    try {
+      web.setItem(KEYS.journal, text);
+    } catch {
+      web.removeItem(KEYS.journal);
+    }
+    return;
+  }
+  const done = journalWrites.then(
+    () => AsyncStorage.setItem(KEYS.journal, text),
+    () => AsyncStorage.setItem(KEYS.journal, text),
+  );
+  const out = done.catch(() => AsyncStorage.removeItem(KEYS.journal));
+  journalWrites = out.catch(() => undefined);
+  return out;
 }
 
 export const storage = {
@@ -166,6 +209,16 @@ export const storage = {
     }
   },
   saveRedHands: (list: readonly KeptRed[]) => save(KEYS.red, list),
+  /** The journal of moves (logic/moveJournal.ts): its well-formed lists, or none. */
+  loadJournal: async (): Promise<MoveJournal> => {
+    try {
+      const raw = await AsyncStorage.getItem(KEYS.journal);
+      return raw ? validJournal(JSON.parse(raw)) : [];
+    } catch {
+      return [];
+    }
+  },
+  writeJournal,
   saveArchive: async (list: readonly ArchivedTable[]) => {
     if (list.length > 0) return save(KEYS.archive, list);
     try {

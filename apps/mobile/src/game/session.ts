@@ -33,6 +33,7 @@ import {
   type RoomInfo,
   type SerializedClient,
   type SerializedHost,
+  type TableClientOptions,
   type WebSocketFactory,
   type WebSocketLike,
 } from '@mjm/net';
@@ -188,6 +189,32 @@ export function setArchivedTableSource(source: ArchivedTableSource | null): void
   archivedTableSource = source;
 }
 
+/**
+ * The app's journal of moves (logic/moveJournal.ts): every move an online table client files is written there before it
+ * goes out (`writeAhead`, for the game server the session is on), and a client restored from a record is given back what
+ * the journal holds for the record's match (`journalFor`), so it knows every move this device sent. app-state registers it.
+ */
+export interface MoveJournalSource {
+  writeAhead(signalUrl: string): NonNullable<TableClientOptions['writeAhead']>;
+  journalFor(signalUrl: string, matchId: string): readonly unknown[] | undefined;
+}
+let moveJournalSource: MoveJournalSource | null = null;
+
+/** Register the journal of moves; null unregisters (clients are then made without one). */
+export function setMoveJournalSource(source: MoveJournalSource | null): void {
+  moveJournalSource = source;
+}
+
+/**
+ * The options of an online table client at `signalUrl`: the journal of moves, and for a client restored from a record of
+ * match `matchId` what the journal holds for that match.
+ */
+function journalOptions(signalUrl: string, matchId?: unknown): TableClientOptions {
+  const src = moveJournalSource;
+  if (!src) return {};
+  return { writeAhead: src.writeAhead(signalUrl), ...(typeof matchId === 'string' && matchId !== '' ? { journal: src.journalFor(signalUrl, matchId) } : {}) };
+}
+
 /** The hands this device found red at the table at this room, kept apart from its record (logic/redHands.ts). */
 type RedHandsSource = (signalUrl: string, roomCode: string) => RedHand[] | undefined;
 let redHandsSource: RedHandsSource | null = null;
@@ -205,8 +232,8 @@ export function setRedHandsSource(source: RedHandsSource | null): void {
  */
 function keptOrFresh(opts: Pick<OnlineOptions, 'signalUrl' | 'name' | 'avatar' | 'userId'>, link: TableLink, room: string, token: string | undefined): TableClient {
   const kept = archivedTableSource?.(opts.signalUrl, room);
-  if (kept && (token === undefined || token === kept.token)) return withRed(TableClient.fromArchive(kept.client, link, opts.name, opts.avatar, { token: kept.token || undefined, userId: opts.userId }), opts.signalUrl, room);
-  return new TableClient(link, opts.name, opts.avatar, { token, userId: opts.userId });
+  if (kept && (token === undefined || token === kept.token)) return withRed(TableClient.fromArchive(kept.client, link, opts.name, opts.avatar, { token: kept.token || undefined, userId: opts.userId }, journalOptions(opts.signalUrl, kept.client.state?.matchId)), opts.signalUrl, room);
+  return new TableClient(link, opts.name, opts.avatar, { token, userId: opts.userId }, journalOptions(opts.signalUrl));
 }
 
 /**
@@ -625,10 +652,10 @@ export async function createOnlineSession(opts: OnlineOptions): Promise<Session>
   // With no record of the saved table there, a join takes up one this device kept of the table at that room (`keptOrFresh`):
   // a server that said the table was gone, then seats the account there again, finds the phone holding what it checked.
   const client = saved
-    ? withRed(TableClient.restore(saved, connection.link, opts.name, opts.avatar, identity), opts.signalUrl, connection.room.room)
+    ? withRed(TableClient.restore(saved, connection.link, opts.name, opts.avatar, identity, journalOptions(opts.signalUrl, saved.state?.matchId)), opts.signalUrl, connection.room.room)
     : opts.action === 'join'
       ? keptOrFresh(opts, connection.link, connection.room.room, token)
-      : new TableClient(connection.link, opts.name, opts.avatar, identity);
+      : new TableClient(connection.link, opts.name, opts.avatar, identity, journalOptions(opts.signalUrl));
   const session = new OnlineSession(opts, connection, client);
   client.join();
   return session;
@@ -750,7 +777,9 @@ export function startQuickMatch(opts: QuickMatchOptions): { session: Promise<Ses
       // A room this device holds a record of (the saved table's, or one it kept: a server may match the account into a table
       // it sat at before) is joined as such a record is: taken up if the table's welcome names its match (`keptFor`).
       const kept = keptFor(opts.signalUrl, info.room);
-      const client = kept ? withRed(TableClient.fromArchive(kept.client, connection.link, opts.name, opts.avatar, { token: kept.token || undefined, userId: opts.userId }), opts.signalUrl, info.room) : new TableClient(connection.link, opts.name, opts.avatar, { userId: opts.userId });
+      const client = kept
+        ? withRed(TableClient.fromArchive(kept.client, connection.link, opts.name, opts.avatar, { token: kept.token || undefined, userId: opts.userId }, journalOptions(opts.signalUrl, kept.client.state?.matchId)), opts.signalUrl, info.room)
+        : new TableClient(connection.link, opts.name, opts.avatar, { userId: opts.userId }, journalOptions(opts.signalUrl));
       const session = new OnlineSession(online, connection, client);
       client.join();
       return session;

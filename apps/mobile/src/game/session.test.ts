@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { chooseAction, DEFAULT_RULES, legalActions, withRules } from '@mjm/engine';
-import { LoopbackHub, TableClient, TableHost, transportLink, type ClientState, type SerializedClient } from '@mjm/net';
-import { connectSignaling, createLocalSession, createOnlineSession, isUnauthorised, seatOrRefusal, setArchivedTableSource, setRedHandsSource, setSavedClientSource, setSavedTokenSource, startQuickMatch, UNAUTHORISED_CLOSE, type Session } from './session';
+import { LoopbackHub, TableClient, TableHost, transportLink, type ClientState, type JournalEntry, type SerializedClient } from '@mjm/net';
+import { connectSignaling, createLocalSession, createOnlineSession, isUnauthorised, seatOrRefusal, setArchivedTableSource, setMoveJournalSource, setRedHandsSource, setSavedClientSource, setSavedTokenSource, startQuickMatch, UNAUTHORISED_CLOSE, type Session } from './session';
 import { friendlyErrorMessage } from '../logic/errors';
 import { linkNotice } from '../logic/reconnect';
 
@@ -792,6 +792,73 @@ describe('cold resume after an app restart', () => {
     setSavedTokenSource(null);
     setArchivedTableSource(null);
     setRedHandsSource(null);
+    setMoveJournalSource(null);
+  });
+
+  /**
+   * A record saved part-way through hand 0 at table ABC123 by a client with the app's journal, and the journal entries of
+   * the moves it sent after that save (the app stopped before it saved again).
+   */
+  function savedMidHand(): { rec: SerializedClient; later: JournalEntry[] } {
+    const hub = new LoopbackHub();
+    const host = new TableHost(hub.create('host'), { roomCode: 'ABC123', rules: withRules({ handsPerMatch: 4 }), matchId: 'm-saved' });
+    const entries: JournalEntry[] = [];
+    const c = new TableClient(transportLink(hub.create('p0'), 'host'), 'Tester', 'lady', { userId: 'user-123456' }, { writeAhead: (e) => void entries.push(e) });
+    c.join();
+    host.start();
+    let rec: SerializedClient | null = null;
+    let guard = 0;
+    while (host.phase === 'playing' && entries.length < 4 && guard++ < 4000) {
+      if (entries.length === 2 && !rec) rec = JSON.parse(JSON.stringify(c.serialize())) as SerializedClient;
+      const st = c.localState();
+      if (st && legalActions(st, 0).length > 0) c.act(chooseAction(st, 0)!);
+      else host.tick();
+    }
+    expect(rec?.sentSeq).toBe(2);
+    return { rec: rec!, later: entries.filter((e) => e.seq > 2) };
+  }
+
+  /** The journal of moves as app-state registers it, holding `entries` for match m-saved; it lists each game server its hooks were made for. */
+  const journalSource = (entries: JournalEntry[]) => {
+    const hooked: string[] = [];
+    setMoveJournalSource({
+      writeAhead: (url) => {
+        hooked.push(url);
+        return () => undefined;
+      },
+      journalFor: (url, matchId) => (url === base.signalUrl && matchId === 'm-saved' ? entries : undefined),
+    });
+    return hooked;
+  };
+  const sentIn = (c: TableClient, hand: number) => (c.serialize().plays.find((p) => p.hand === hand)?.sent ?? []).length;
+
+  it('a client restored from the saved record is given what the journal holds for its match: it knows the moves sent after the save', async () => {
+    const { rec, later } = savedMidHand();
+    expect(later.length).toBeGreaterThan(0);
+    const hooked = journalSource(later);
+    const s = await createOnlineSession({ ...base, action: 'join', code: 'ABC123', token: rec.state.token!, restoreClient: rec });
+    expect(hooked).toEqual([base.signalUrl]);
+    expect(sentIn(s.client, 0)).toBe(2 + later.length);
+    expect(s.client.serialize().sentSeq).toBe(later[later.length - 1].seq);
+    s.close();
+    // Without the journal: only what the record holds.
+    setMoveJournalSource(null);
+    const plain = await createOnlineSession({ ...base, action: 'join', code: 'ABC123', token: rec.state.token!, restoreClient: rec });
+    expect(sentIn(plain.client, 0)).toBe(2);
+    plain.close();
+  });
+
+  it('a record taken up from the archive, and every new online client, gets the journal too', async () => {
+    const { rec, later } = savedMidHand();
+    const hooked = journalSource(later);
+    setArchivedTableSource((url, room) => (room === 'ABC123' ? { token: rec.state.token!, client: rec } : undefined));
+    const s = await createOnlineSession({ ...base, action: 'join', code: 'ABC123' });
+    FakeSocket.last!.push(welcome('m-saved', rec.state.token!));
+    expect(sentIn(s.client, 0)).toBe(2 + later.length);
+    s.close();
+    const fresh = await createOnlineSession({ ...base, action: 'create' });
+    fresh.close();
+    expect(hooked).toEqual([base.signalUrl, base.signalUrl]);
   });
 
   it('a record taken up brings back the red hands of its table kept apart from it (a later save was not written)', async () => {
