@@ -37,6 +37,30 @@ describe('loading the saved table', () => {
     expect(stored.has(KEY)).toBe(false);
   });
 
+  it('hands a stale online record that holds a match to be kept before it deletes it; nothing else is handed over', async () => {
+    const old = Date.now() - 13 * 3600_000;
+    const online = { kind: 'online', signalUrl: 'wss://example.test', roomCode: 'AB12', token: 'tok', name: 'Tester', avatar: 'auntie', savedAt: old, client: { version: 2, state: { matchId: 'm-1' } } };
+    stored.set(KEY, JSON.stringify(online));
+    const kept: unknown[] = [];
+    expect(
+      await storage.loadActiveSession(async (s) => {
+        // Still stored while it is being kept.
+        expect(stored.has(KEY)).toBe(true);
+        kept.push(s);
+      }),
+    ).toBeNull();
+    expect(kept).toEqual([online]);
+    expect(stored.has(KEY)).toBe(false);
+    // One with no match, or a local one: deleted, nothing kept.
+    for (const rec of [{ ...online, client: { version: 2, state: { matchId: null } } }, { ...online, kind: 'local' }]) {
+      stored.set(KEY, JSON.stringify(rec));
+      kept.length = 0;
+      expect(await storage.loadActiveSession((s) => void kept.push(s))).toBeNull();
+      expect(kept).toEqual([]);
+      expect(stored.has(KEY)).toBe(false);
+    }
+  });
+
   it('returns a sound record and leaves it stored', async () => {
     const record = { kind: 'online', signalUrl: 'wss://example.test', roomCode: 'AB12', token: 'tok', name: 'Tester', avatar: 'auntie', savedAt: Date.now() };
     stored.set(KEY, JSON.stringify(record));
@@ -54,7 +78,7 @@ describe('the records of tables that left the saved slot', () => {
     await storage.saveArchive([entry('A', now - 1_000)] as never);
     expect(JSON.parse(stored.get('mjm.tableArchive')!)).toHaveLength(1);
     expect((await storage.loadArchive()).map((e) => e.roomCode)).toEqual(['A']);
-    stored.set('mjm.tableArchive', JSON.stringify([entry('OLD', now - 2 * 24 * 3600_000), { junk: true }, entry('B', now)]));
+    stored.set('mjm.tableArchive', JSON.stringify([entry('OLD', now - 31 * 24 * 3600_000), { junk: true }, entry('B', now)]));
     expect((await storage.loadArchive()).map((e) => e.roomCode)).toEqual(['B']);
     stored.set('mjm.tableArchive', '{"not json');
     expect(await storage.loadArchive()).toEqual([]);

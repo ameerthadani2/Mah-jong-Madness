@@ -2,9 +2,9 @@ import React, { createContext, useContext, useEffect, useMemo, useRef, useState 
 import { BackHandler, Platform } from 'react-native';
 import { DEFAULT_PROFILE, DEFAULT_PROGRESS, DEFAULT_SETTINGS, storage, type ActiveSession, type Profile, type Progress, type Settings } from './storage';
 import { clientSaves, saveScheduler } from './game/persist';
-import { setArchivedTableSource, setMoveJournalSource, setRedHandsSource, setSavedClientSource, setSavedTokenSource, type CloseOptions, type Session } from './game/session';
+import { setArchivedTableSource, setKeptMatchSource, setMoveJournalSource, setRedHandsSource, setSavedClientSource, setSavedTokenSource, type CloseOptions, type Session } from './game/session';
 import { redFor, withRed, type KeptRed } from './logic/redHands';
-import { archivedFor, archiveOnSlotChange, type ArchivedTable } from './logic/tableArchive';
+import { archivedFor, archivedMatch, archiveOnSlotChange, type ArchivedTable } from './logic/tableArchive';
 import { journalKeeper } from './game/journalKeeper';
 import { acceptedName } from './logic/profile';
 import type { ShopFocus } from './logic/shopFocus';
@@ -103,7 +103,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const journal = useRef(journalKeeper({ write: storage.writeJournal })).current;
 
   useEffect(() => {
-    void Promise.all([storage.loadProfile(), storage.loadSettings(), storage.loadProgress(), storage.loadActiveSession(), loadWallet(), storage.loadArchive(), storage.loadRedHands(), storage.loadJournal()]).then(([p, s, pr, as, w, kept, red, journalRead]) => {
+    // The archive is read before the saved table: a saved table gone stale is kept in it, not thrown away.
+    const savedTable = storage.loadArchive().then(async (archived) => {
+      let kept = archived;
+      const as = await storage.loadActiveSession(async (stale) => {
+        kept = [...archiveOnSlotChange(kept, stale, null, () => undefined, Date.now())];
+        await storage.saveArchive(kept);
+      });
+      return [as, kept] as const;
+    });
+    void Promise.all([storage.loadProfile(), storage.loadSettings(), storage.loadProgress(), savedTable, loadWallet(), storage.loadRedHands(), storage.loadJournal()]).then(([p, s, pr, [as, kept], w, red, journalRead]) => {
       archiveRef.current = kept;
       redRef.current = red;
       activeRef.current = as;
@@ -234,8 +243,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const rec = activeRef.current;
       return rec?.kind === 'online' && rec.signalUrl === url && rec.roomCode === room && rec.token ? rec.token : undefined;
     });
-    // Every record taken up brings back the red hands of its table that a save it missed would have held.
-    setRedHandsSource((url, room) => redFor(redRef.current, url, room));
+    // Every record taken up brings back the red hands of its match that a save it missed would have held.
+    setRedHandsSource((url) => redFor(redRef.current, url));
+    // A welcome into a match the client holds no record of: the record this device keeps of that match, wherever its
+    // table ran (the saved table's, else the archive's), and the red hands of the match either way.
+    setKeptMatchSource((url, matchId, room) => {
+      const red = redFor(redRef.current, url);
+      const slot = activeRef.current;
+      const fromSlot = slot?.kind === 'online' && slot.signalUrl === url && slot.client?.state?.matchId === matchId ? { roomCode: slot.roomCode, client: slot.client } : undefined;
+      const e = fromSlot ?? archivedMatch(archiveRef.current, url, matchId, Date.now());
+      if (!e) return { red };
+      return { client: e.client, journal: journal.journalFor(url, matchId), moved: e.roomCode !== room, red };
+    });
     // A join to a room whose table left the slot takes up the record kept of it (the table client keeps it only for its match).
     setArchivedTableSource((url, room) => {
       const e = archivedFor(archiveRef.current, url, room, Date.now());
@@ -251,6 +270,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setArchivedTableSource(null);
       setRedHandsSource(null);
       setMoveJournalSource(null);
+      setKeptMatchSource(null);
     };
   }, [journal]);
 

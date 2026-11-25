@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { chooseAction, DEFAULT_RULES, legalActions, withRules } from '@mjm/engine';
 import { LoopbackHub, TableClient, TableHost, transportLink, type ClientState, type JournalEntry, type SerializedClient } from '@mjm/net';
-import { connectSignaling, createLocalSession, createOnlineSession, isUnauthorised, seatOrRefusal, setArchivedTableSource, setMoveJournalSource, setRedHandsSource, setSavedClientSource, setSavedTokenSource, startQuickMatch, UNAUTHORISED_CLOSE, type Session } from './session';
+import { connectSignaling, createLocalSession, createOnlineSession, isUnauthorised, seatOrRefusal, setArchivedTableSource, setKeptMatchSource, setMoveJournalSource, setRedHandsSource, setSavedClientSource, setSavedTokenSource, startQuickMatch, UNAUTHORISED_CLOSE, type Session } from './session';
 import { friendlyErrorMessage } from '../logic/errors';
 import { linkNotice } from '../logic/reconnect';
 
@@ -793,6 +793,36 @@ describe('cold resume after an app restart', () => {
     setArchivedTableSource(null);
     setRedHandsSource(null);
     setMoveJournalSource(null);
+    setKeptMatchSource(null);
+  });
+
+  it('a welcome into a match the client holds no record of asks for one by match: a record kept under another room is taken up, and its hand fails', async () => {
+    const saved = savedRecord();
+    const asked: string[] = [];
+    setKeptMatchSource((url, matchId, room) => {
+      asked.push(`${url} ${matchId} ${room}`);
+      return matchId === 'm-saved' ? { client: saved, moved: room !== 'KEPT01' } : undefined;
+    });
+    const s = await createOnlineSession({ ...base, action: 'join', code: 'ABC123' });
+    // Nothing was found by room: the join says nothing of the hands it holds.
+    expect(tableJoins(FakeSocket.last!)[0]).not.toHaveProperty('have');
+    FakeSocket.last!.push(welcome('m-saved', TOKEN));
+    expect(asked).toEqual([`${base.signalUrl} m-saved ABC123`]);
+    expect(s.client.serialize().handsEnded).toEqual([0]);
+    expect(s.client.state.matchFailed).toBe(true);
+    s.close();
+  });
+
+  it('a client with no record of its match gets the red hands kept of it at the welcome, with no record found', async () => {
+    setKeptMatchSource(() => ({ red: [{ matchId: 'm-red', hand: 0, failures: ['Host sent a malformed frame'] }] }));
+    const s = await createOnlineSession({ ...base, action: 'join', code: 'ABC123' });
+    FakeSocket.last!.push(welcome('m-red', TOKEN));
+    expect(s.client.state.matchFailed).toBe(true);
+    s.close();
+    const other = await createOnlineSession({ ...base, action: 'join', code: 'ABC123' });
+    FakeSocket.last!.push(welcome('m-other', TOKEN));
+    expect(other.client.state.matchFailed).toBe(false);
+    other.close();
   });
 
   /**

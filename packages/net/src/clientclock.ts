@@ -167,6 +167,23 @@ export interface TableClientOptions {
    * the record holds (`SerializedClient.sentSeq` and before) may be dropped once that record is written.
    */
   journal?: readonly unknown[];
+  /**
+   * The records the app keeps of tables it no longer has open, looked up by match (apps/mobile `logic/tableArchive.ts`):
+   * asked once, at the first welcome that names a match this client holds no record of (it joined with nothing, with a
+   * token alone, or with a kept record of another match). A record it gives (`client`) is taken up as one given to
+   * `TableClient.fromArchive` is, with what the app's journal holds for the match (`journal`); `moved` says the app kept it
+   * under another room than the one this client joined, where an honest server never runs a match, so the hand the record
+   * was on fails. The red hands the app kept apart (`red`) are kept as `keepRed` keeps them, with or without a record.
+   */
+  keptRecord?: (matchId: string) => KeptRecord | undefined;
+}
+
+/** What the app keeps of a match it has no table open for (`TableClientOptions.keptRecord`). */
+export interface KeptRecord {
+  client?: unknown;
+  journal?: readonly unknown[];
+  moved?: boolean;
+  red?: readonly unknown[];
 }
 
 /** A wall clock that ran this much further than the monotonic one between two readings means the device slept. */

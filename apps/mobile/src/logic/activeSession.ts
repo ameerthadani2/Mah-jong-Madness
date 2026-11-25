@@ -6,7 +6,12 @@
 import { DEFAULT_RULES, sanitizeRules } from '@mjm/engine';
 import type { ActiveSession } from '../storage';
 
-/** A saved table older than this is stale: the match it points at is long over. */
+/**
+ * A saved table older than this is stale: Home no longer offers it (the match it points at is long over at an honest
+ * table). An online one that holds a match is not thrown away with it: the app keeps it in its archive
+ * (`staleOnlineSession`, logic/tableArchive.ts), so a server that seats the account at that match later finds the phone
+ * holding what it checked.
+ */
 export const SAVED_TABLE_MAX_AGE_MS = 12 * 3600_000;
 
 const HOST_PHASES = ['lobby', 'commit', 'reveal', 'playing', 'hand_over', 'match_over'];
@@ -115,4 +120,16 @@ export function validActiveSession(raw: unknown, now: number = Date.now()): Acti
     return rest as unknown as ActiveSession;
   }
   return raw as unknown as ActiveSession;
+}
+
+/**
+ * The saved record when it is a well-formed online one that is stale (older than SAVED_TABLE_MAX_AGE_MS) and holds a
+ * match: Home does not offer it, and the app keeps it in its archive instead of throwing it away.
+ */
+export function staleOnlineSession(raw: unknown, now: number = Date.now()): Extract<ActiveSession, { kind: 'online' }> | null {
+  if (!isObject(raw) || raw.kind !== 'online' || typeof raw.savedAt !== 'number' || !Number.isFinite(raw.savedAt) || now - raw.savedAt <= SAVED_TABLE_MAX_AGE_MS) return null;
+  const s = validActiveSession(raw, raw.savedAt);
+  if (s?.kind !== 'online') return null;
+  const m = s.client?.state?.matchId;
+  return typeof m === 'string' && m !== '' ? s : null;
 }

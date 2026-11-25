@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_RULES } from '@mjm/engine';
 import { createLocalSession } from '../game/session';
-import { SAVED_TABLE_MAX_AGE_MS, validActiveSession } from './activeSession';
+import { SAVED_TABLE_MAX_AGE_MS, staleOnlineSession, validActiveSession } from './activeSession';
 
 const NOW = 1_800_000_000_000;
 
@@ -133,5 +133,20 @@ describe('a saved table whose rules were emptied or damaged', () => {
     // A rule a newer build added and an older one did not save is not damage.
     const { liguTai: _added, ...older } = DEFAULT_RULES as unknown as Record<string, unknown>;
     expect(validActiveSession({ ...good, host: { ...host, rules: older, game: { ...(host.game as object), rules: older } } }, NOW)).not.toHaveProperty('rulesReset');
+  });
+});
+
+describe('a saved online table gone stale', () => {
+  it('is handed back, to be kept in the archive, when it is well formed and holds a match', () => {
+    const NOW2 = 1_800_000_000_000;
+    const rec = (savedAt: number, matchId: unknown = 'm-1') => ({ kind: 'online', signalUrl: 'wss://example.test', roomCode: 'AB12', token: 'tok', name: 'n', avatar: 'a', savedAt, client: { version: 2, state: { matchId } } });
+    expect(staleOnlineSession(rec(NOW2 - SAVED_TABLE_MAX_AGE_MS - 1), NOW2)).toEqual(rec(NOW2 - SAVED_TABLE_MAX_AGE_MS - 1));
+    // Not stale: it is the saved table, not one to archive.
+    expect(staleOnlineSession(rec(NOW2 - 1000), NOW2)).toBeNull();
+    // No match, damaged, or not online: nothing to keep.
+    expect(staleOnlineSession(rec(NOW2 - SAVED_TABLE_MAX_AGE_MS - 1, null), NOW2)).toBeNull();
+    expect(staleOnlineSession({ ...rec(NOW2 - SAVED_TABLE_MAX_AGE_MS - 1), roomCode: '' }, NOW2)).toBeNull();
+    expect(staleOnlineSession({ ...rec(NOW2 - SAVED_TABLE_MAX_AGE_MS - 1), kind: 'local' }, NOW2)).toBeNull();
+    expect(staleOnlineSession('nope', NOW2)).toBeNull();
   });
 });

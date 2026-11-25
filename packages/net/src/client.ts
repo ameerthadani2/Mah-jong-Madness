@@ -95,7 +95,7 @@ import {
   type SerializedClient,
 } from './clientrecords';
 
-export { clientClock, SILENT_ANSWER_MS, steadyClock, type OwnClock, type TableClientOptions } from './clientclock';
+export { clientClock, SILENT_ANSWER_MS, steadyClock, type KeptRecord, type OwnClock, type TableClientOptions } from './clientclock';
 export { tableRule } from './clientmoves';
 export { CLIENT_SNAPSHOT_VERSION, type JournalEntry, type SerializedClient } from './clientrecords';
 
@@ -222,6 +222,9 @@ export const AUDIT_FAILURES = {
   skillChanged: 'Host changed how strong its bots are during the match',
   skillUnpublished: 'The table did not say how strong its bots are, yet it made moves for bots or for seats out of time, so none of them could be checked',
   movedMatch: 'Host moved this seat into a different match mid-match',
+  // A match the app kept the record of under one room code, run by the table under another: an honest server runs a match
+  // under one room code for its life (`TableClientOptions.keptRecord`, `moved`).
+  matchRoomMoved: 'Host ran this match under another room code than the one this device kept its record of',
   movedSeat: 'Host moved this seat to another seat mid-match',
   rulesChanged: 'Host changed the rules mid-match',
   redealt: 'Host re-dealt a hand in progress',
@@ -800,6 +803,10 @@ export class TableClient {
   private readonly writeAhead: NonNullable<TableClientOptions['writeAhead']> | null;
   /** What the app's journal held when this client was restored (`TableClientOptions.journal`), until the record is loaded. */
   private journal: readonly unknown[] | undefined;
+  /** Where the app keeps records of matches by match id (`TableClientOptions.keptRecord`): asked once, then null. */
+  private keptRecord: TableClientOptions['keptRecord'] | null;
+  /** Red hands the app kept of a match, for a client that holds no record of it, until its welcome names the match. */
+  private redLater: unknown = null;
   /** The place of the last move this client filed (`SentAction.seq`), over every run of the app. */
   private seq = 0;
   /**
@@ -839,6 +846,7 @@ export class TableClient {
     this.now = clientClock(opts);
     this.writeAhead = opts.writeAhead ?? null;
     this.journal = opts.journal;
+    this.keptRecord = opts.keptRecord ?? null;
     this.bind(link);
     if (identity.token) {
       this.state = { ...this.state, token: identity.token };
@@ -872,22 +880,67 @@ export class TableClient {
    * says which hands of the match it holds (`have`), and it takes the record up as `restore` does at the table's first
    * word about the table, as long as that is not a `welcome` naming another match: another match at this room code is
    * another table (codes are used again once a table is gone), and the client then goes on as one that joined with
-   * nothing (no record, no token). An unknown or damaged record gives a client built from `identity` alone.
+   * nothing (no record, no token). It joins as the device the record was made on (`device`), as `restore` does: a
+   * table that says another device held the seat since means one that is not this one. An unknown or damaged record
+   * gives a client built from `identity` alone.
    */
   static fromArchive(saved: unknown, link: Link, name: string, avatar?: string, identity: { token?: string; userId?: string } = {}, opts: TableClientOptions = {}): TableClient {
-    if (!isObject(saved) || saved.version !== CLIENT_SNAPSHOT_VERSION || !isObject(saved.state) || typeof saved.state.matchId !== 'string') return new TableClient(link, name, avatar, identity, opts);
-    const d = JSON.parse(JSON.stringify(saved)) as SerializedClient;
-    // A record that does not load (as `restore` would find) is no record.
-    const idle: Link = { send: () => undefined, onMessage: () => () => undefined, close: () => undefined };
-    try {
-      new TableClient(idle, name, avatar, identity, opts).load(JSON.parse(JSON.stringify(d)) as SerializedClient);
-    } catch {
-      return new TableClient(link, name, avatar, identity, opts);
-    }
+    const d = TableClient.loadable(saved, name, avatar);
+    if (!d) return new TableClient(link, name, avatar, identity, opts);
     const token = identity.token ?? (typeof d.state.token === 'string' && d.state.token ? d.state.token : undefined);
     const c = new TableClient(link, name, avatar, { ...identity, ...(token ? { token } : {}) }, opts);
     c.pending = d;
+    if (typeof d.device === 'string' && /^[\w-]{6,64}$/.test(d.device)) c.deviceId = d.device;
     return c;
+  }
+
+  /** A copy of `saved` when it is a record of a match that loads (as `restore` would find); null otherwise: it is no record. */
+  private static loadable(saved: unknown, name: string, avatar?: string): SerializedClient | null {
+    if (!isObject(saved) || saved.version !== CLIENT_SNAPSHOT_VERSION || !isObject(saved.state) || typeof saved.state.matchId !== 'string') return null;
+    const d = JSON.parse(JSON.stringify(saved)) as SerializedClient;
+    const idle: Link = { send: () => undefined, onMessage: () => () => undefined, close: () => undefined };
+    try {
+      new TableClient(idle, name, avatar, {}, {}).load(JSON.parse(JSON.stringify(d)) as SerializedClient);
+    } catch {
+      return null;
+    }
+    return d;
+  }
+
+  /**
+   * The first welcome naming a match (`m`) that this client holds no record of: the app may keep one of that match
+   * (`TableClientOptions.keptRecord`, asked once). One of this seat that loads is taken up as a kept record given to
+   * `fromArchive` is (`takeUp`), with the app's journal of the match; the join on this link said nothing of the hands it
+   * holds, so an honest table sends no records of the hands that ended meanwhile, and a hand the table moved past is amber
+   * (`closeUnheard`). One the app kept under another room than the one this client joined (`moved`): an honest server runs
+   * a match under one room code for its life, so the hand the record was on fails, and the match with it. The red hands
+   * the app kept apart are kept as `keepRed` keeps them, also when no record comes.
+   */
+  private lookUpKept(m: Extract<HostMessage, { t: 'welcome' }>): void {
+    const ask = this.keptRecord;
+    this.keptRecord = null;
+    if (!ask) return;
+    let k: ReturnType<NonNullable<TableClientOptions['keptRecord']>>;
+    try {
+      k = ask(m.matchId);
+    } catch {
+      return;
+    }
+    if (!isObject(k)) return;
+    const d = TableClient.loadable(k.client, this.name, this.avatar);
+    const seat = d && isObject(d.state) ? d.state.seat : null;
+    if (d && d.state.matchId === m.matchId && (seat === null || seat === undefined || seat === m.seat)) {
+      this.pending = d;
+      this.pendingRed = k.red ?? null;
+      this.journal = Array.isArray(k.journal) ? k.journal : undefined;
+      this.takeUp(m.matchId);
+      if (k.moved === true && this.state.matchId === m.matchId) {
+        this.flag(this.activeHand(), 'Host ran this match under another room code than the one this device kept its record of');
+        this.update({ matchFailed: true, matchEndVerified: false });
+      }
+      return;
+    }
+    if (k.red !== undefined) this.redLater = k.red;
   }
 
   private load(d: SerializedClient): void {
@@ -1060,7 +1113,12 @@ export class TableClient {
       return;
     }
     const m = this.state.matchId;
-    if (!m || !Array.isArray(list)) return;
+    // A client that holds no match yet keeps them for the match its first welcome names.
+    if (!m) {
+      if (Array.isArray(list)) this.redLater = list;
+      return;
+    }
+    if (!Array.isArray(list)) return;
     let audits = this.state.audits;
     let any = false;
     for (const x of list) {
@@ -2272,6 +2330,8 @@ export class TableClient {
     // A kept record (`fromArchive`) is taken up, or given up, at the table's first word about the table: any frame but a
     // pong or an error that refuses no move (the only frames an honest host sends a link before its welcome).
     if (this.pending && !(taken?.ok && (taken.frame.t === 'pong' || (taken.frame.t === 'error' && !MOVE_REFUSALS.has(taken.frame.code))))) this.takeUp(taken?.ok && taken.frame.t === 'welcome' ? taken.frame.matchId : null);
+    // A welcome naming a match this client holds no record of: the app may keep one (`lookUpKept`).
+    if (this.keptRecord && taken?.ok && taken.frame.t === 'welcome' && this.state.matchId === null) this.lookUpKept(taken.frame);
     if (taken === null) {
       // A type no seat is sent: nothing of it is read (it still ends a link's opening).
       if (isObject(raw) && typeof raw.t === 'string' && !OPENING_FRAMES.has(raw.t)) this.opening = false;
@@ -2351,6 +2411,12 @@ export class TableClient {
         this.welcomed = true;
         // A welcome that is its link's first frame opens it: a restarted table's notice may follow (`opening`).
         this.opening = !this.heardOnLink;
+        // Red hands the app kept of the match, for a client that held no record of it: kept now that the match is known.
+        if (this.redLater !== null) {
+          const red = this.redLater;
+          this.redLater = null;
+          this.keepRed(red);
+        }
         return;
       }
       case 'lobby':

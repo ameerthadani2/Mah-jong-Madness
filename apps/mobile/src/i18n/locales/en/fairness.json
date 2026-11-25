@@ -66,6 +66,7 @@
     "skillChanged": "The table changed how strong its bots are during the match.",
     "skillUnpublished": "The table did not say how strong its bots are, yet it made moves for the bots or for a player whose time ran out. Your phone needs that to check those moves, and every table on the current version says it.",
     "movedMatch": "The table moved you into a different match partway through.",
+    "matchRoomMoved": "The table ran this match under another room code than the one your phone kept its record of. An honest server keeps a match at one table.",
     "movedSeat": "The table moved you to a different seat partway through the match.",
     "rulesChanged": "The table changed the rules partway through the match.",
     "redealt": "The table dealt this hand again while it was being played.",

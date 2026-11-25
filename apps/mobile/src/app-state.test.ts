@@ -57,6 +57,38 @@ describe('the red hands kept apart from the records', () => {
     const keep = code.slice(at, code.indexOf('const unsubRed = session.onChange(keepRed);', at));
     expect(keep).toContain('session.client.redHands()');
     expect(keep).toContain('void storage.saveRedHands(next);');
-    expect(code).toContain('setRedHandsSource((url, room) => redFor(redRef.current, url, room));');
+    // Kept by match: every red hand of the game server goes back, and the client keeps those of its own match.
+    expect(code).toContain('setRedHandsSource((url) => redFor(redRef.current, url));');
+  });
+});
+
+describe('records found by match, and saved tables gone stale', () => {
+  it('a welcome into a match the client holds no record of finds the saved table or the archive by match, with the journal and the red hands', () => {
+    const at = code.indexOf('setKeptMatchSource((url, matchId, room) => {');
+    expect(at).toBeGreaterThan(0);
+    const src = code.slice(at, code.indexOf('});', code.indexOf('return { client', at)));
+    expect(src).toContain('archivedMatch(archiveRef.current, url, matchId, Date.now())');
+    expect(src).toContain('slot.client?.state?.matchId === matchId');
+    expect(src).toContain('journal: journal.journalFor(url, matchId), moved: e.roomCode !== room, red');
+    expect(src).toContain('if (!e) return { red };');
+  });
+
+  it('a saved table gone stale is kept in the archive before it is deleted', () => {
+    const at = code.indexOf('const savedTable = storage.loadArchive().then(');
+    expect(at).toBeGreaterThan(0);
+    const load = code.slice(at, code.indexOf('return [as, kept] as const;', at));
+    expect(load).toContain('storage.loadActiveSession(async (stale) => {');
+    expect(load).toContain('archiveOnSlotChange(kept, stale, null, () => undefined, Date.now())');
+    expect(load).toContain('await storage.saveArchive(kept);');
+  });
+});
+
+describe('the journal of moves', () => {
+  it('is handed to the table clients, and drops the moves of a record once it is written', () => {
+    expect(code).toContain('setMoveJournalSource(journal);');
+    const put = code.slice(code.indexOf('const putActive = useRef('), code.indexOf('}).current;', code.indexOf('const putActive = useRef(')));
+    expect(put).toContain('void storage.saveActiveSession(next).then((ok) => {');
+    expect(put).toContain('journal.saved(next.signalUrl, m,');
+    expect(put).toContain('journal.keep(heldMatch(next, archiveRef.current, playing));');
   });
 });
