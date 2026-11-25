@@ -70,8 +70,10 @@ import {
   ledgerVouches,
   MAX_SENT,
   closedOtherDevice,
+  MAX_REVEAL_LINKS,
   openOtherDevice,
   otherDeviceAt,
+  sharedOn,
   nextDeal,
   nextHand,
   sameCommitSet,
@@ -2487,6 +2489,8 @@ export class TableClient {
             attempt.revealedSeg = this.seg();
           }
           attempt.revealed = true;
+          // Every link the share went out on was up before the deal (`upBeforeDeal`), not only the first one's.
+          if (attempt.revealedEpoch !== this.epoch && !(attempt.revealedOn ?? []).includes(this.epoch)) attempt.revealedOn = [...(attempt.revealedOn ?? []), this.epoch].slice(-MAX_REVEAL_LINKS);
         }
         this.send({ t: 'reveal', secret: this.secret });
         this.update({ ceremony: 'revealed' });
@@ -2517,7 +2521,7 @@ export class TableClient {
         // stayed up brings every turn: one skipped on it was held back. The first state of a hand
         // is its deal, on a link that was up before the deal (`upBeforeDeal`).
         const shownHere = this.linkShown && this.linkShown.epoch === this.epoch ? this.linkShown : null;
-        const revealedHere = !!this.recordFor(h)?.attempts.some((x) => x.revealed && x.revealedEpoch === this.epoch);
+        const revealedHere = !!this.recordFor(h)?.attempts.some((x) => sharedOn(x, this.epoch));
         if (shownHere && shownHere.hand === h && v.turnCounter > shownHere.tc + 1) this.noteHeld(h, shownHere.tc + 1);
         else if (v.turnCounter > 0 && (!shownHere || shownHere.hand !== h) && this.upBeforeDeal(h, shownHere)) this.noteHeld(h, 0);
         // The link's first state, a later turn than a deal's, after the table answered a ping behind its welcome: an honest
@@ -2755,7 +2759,7 @@ export class TableClient {
   private upBeforeDeal(h: number, shown: { hand: number } | null): boolean {
     if (shown && shown.hand < h) return true;
     if (this.ceremonyEpoch === this.epoch && this.commitHand === h) return true;
-    return !!this.recordFor(h)?.attempts.some((x) => x.revealed && x.revealedEpoch === this.epoch);
+    return !!this.recordFor(h)?.attempts.some((x) => sharedOn(x, this.epoch));
   }
 
   /** The latest turn of hand `h` this device was shown, in any run of the app (0: none). */

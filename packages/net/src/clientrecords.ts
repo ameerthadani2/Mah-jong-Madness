@@ -98,6 +98,16 @@ export interface AttemptRecord {
   /** The run of the app and of this device's clock `revealedAt` was read in (fixed points are compared only within one). */
   revealedRun?: string;
   revealedSeg?: number;
+  /** The links (epochs) besides `revealedEpoch` it sent its secret on again, when asked again (at most `MAX_REVEAL_LINKS`). */
+  revealedOn?: number[];
+}
+
+/** The most links an attempt's record keeps of those its secret went out on again (`CeremonyAttempt.revealedOn`). */
+export const MAX_REVEAL_LINKS = 8;
+
+/** This device's secret for attempt `x` went out on link `epoch`: the first time (`revealedEpoch`) or again (`revealedOn`). */
+export function sharedOn(x: { revealed: boolean; revealedEpoch?: number; revealedOn?: number[] }, epoch: number): boolean {
+  return x.revealed && (x.revealedEpoch === epoch || (Array.isArray(x.revealedOn) && x.revealedOn.includes(epoch)));
 }
 
 /**
@@ -695,7 +705,19 @@ export function savedPlay(p: PlayRecord): PlayRecord & { ledgerSum?: string } {
 export function cleanCeremony(r: unknown): CeremonyRecord {
   if (!isObject(r) || !Array.isArray(r.attempts) || !r.attempts.every(isObject)) throw new Error('damaged ceremony record');
   const rec = r as unknown as CeremonyRecord;
-  return { ...rec, attempts: rec.attempts.map((a) => cleanRun(a, 'revealedRun', 'revealedSeg')) };
+  return {
+    ...rec,
+    attempts: rec.attempts.map((a) => {
+      const x = cleanRun(a, 'revealedRun', 'revealedSeg');
+      // (The links its secret went out on again: whole numbers only, as many as a record keeps.)
+      const on = (x as { revealedOn?: unknown }).revealedOn;
+      if (on === undefined) return x;
+      const { revealedOn: _drop, ...rest } = x;
+      void _drop;
+      const links = Array.isArray(on) ? on.filter(isInt).slice(-MAX_REVEAL_LINKS) : [];
+      return links.length > 0 ? { ...rest, revealedOn: links } : rest;
+    }),
+  };
 }
 
 /** Match fields a hand must start from, as the previous hand left them. */
