@@ -8,7 +8,7 @@
  * - a scenario made only of honest events never shows red.
  * The long runs are soak.ts (`npm run fuzz:fair -w @mjm/net -- --from 1 --to 5000 --mode both --workers 2`); this file
  * keeps a sample of them in CI, and adversary-gaps.test.ts and adversary-rules.test.ts the known gaps, limits and controls
- * in their fixed forms (known.ts). A failure prints the seed, the events and the command that replays it.
+ * in their fixed forms (known.ts), with the generated seeds of the gaps still open (ci.ts). A failure prints the seed, the events and the command that replays it.
  */
 import { describe, expect, it } from 'vitest';
 import { COVERED, failures, LIMIT } from './ci';
@@ -41,11 +41,6 @@ const MIXED_SEEDS = [
 ];
 const GAP_SEEDS = 12;
 
-/** Generated seeds that find a gap this code still has (`OPEN_GAPS`, ci.ts): run as expected failures. */
-const OPEN_MIXED_SEEDS = [
-  970, // N3
-];
-
 describe('the adversary fuzzer', () => {
   it('quotes each stated limit from docs/FAIRNESS.md word for word', () => {
     expect(quotesMissing()).toEqual([]);
@@ -60,10 +55,4 @@ describe('the adversary fuzzer', () => {
     const seeds = COVERED ? MIXED_SEEDS.slice(0, GAP_SEEDS) : MIXED_SEEDS;
     expect(seeds.flatMap((seed) => failures(generate(seed, 'mixed')))).toEqual([]);
   }, LIMIT);
-
-  for (const seed of OPEN_MIXED_SEEDS) {
-    it.fails(`still finds the open gap of mixed seed ${seed}`, () => {
-      expect(failures(generate(seed, 'mixed'))).toEqual([]);
-    }, LIMIT);
-  }
 });

@@ -46,9 +46,10 @@ another copy of the code (packages/net, packages/engine and apps/mobile/src/logi
 
 ## Open gaps
 
-`ci.ts` lists the gaps this code still has (`OPEN_GAPS`), and `adversary.test.ts` the generated seeds that find one
-(`OPEN_MIXED_SEEDS`): each runs as an expected failure, so the sample stays green while they are open and turns red the
-day one is closed; move it to the closed ones then. A gap the charter comes to state as a limit becomes a `limit` case
+`ci.ts` lists the gaps this code still has (`OPEN_GAPS`), the generated seeds that find one or a variant of a closed one
+(`OPEN_MIXED_SEEDS`), and the honest seeds that still show red (`OPEN_HONEST_SEEDS`); `adversary-gaps.test.ts` runs each
+as an expected failure, so the sample stays green while they are open and turns red the day one is closed; move it to
+the closed ones then. A gap the charter comes to state as a limit becomes a `limit` case
 in `known.ts`, with its exception in `oracle.ts`.
 
 ## When the charter changes
