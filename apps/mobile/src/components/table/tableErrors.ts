@@ -18,6 +18,8 @@ const BY_CODE: Readonly<Record<string, string>> = {
   not_controller: 'online.errors.notController',
   table_closed: 'online.errors.tableClosedByClub',
   evicted: 'online.errors.evictedByClub',
+  // The table client's own: the app's journal of moves could not keep a move, so it was not sent (`TableClientOptions.writeAhead`).
+  move_unsaved: 'online.errors.moveUnsaved',
 };
 
 /** The servers' own sentences (apps/signal/src/rooms.ts, packages/net/src/host.ts), for errors that arrive without a code. */

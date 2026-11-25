@@ -36,7 +36,7 @@ const green = (w: Wire) => expect(w.verdict()).toEqual({ status: 'ok', failures:
 
 describe('held frames: stamps that crawl while the turn state is held', () => {
   for (const all of [false, true]) {
-    it.each([25_000, 40_000, 44_000])(`a hold of %i ms, the clock frames and pongs crawling a millisecond at a time${all ? ', every other frame held too' : ''}: the link is dropped, and the hand is red (the crawled pongs are fixed points that the table’s later stamps contradict)`, (ms) =>
+    it.each([25_000, 40_000, 44_000])(`a hold of %i ms, the clock frames and pongs crawling a millisecond at a time${all ? ', every other frame held too' : ''}: the link is dropped, and the hand is red (${all ? 'the crawled pongs are fixed points that the table’s later stamps contradict' : 'on the new link the table answers a ping before the state it owes there'})`, (ms) =>
       scenario((i) => {
         const h = holdTurn({ code: `CR${ms}${all}${i}`, think: (_k, tc) => (tc === h.st.heldTc ? Infinity : 600) }, { all });
         need(h.arm());
@@ -48,11 +48,13 @@ describe('held frames: stamps that crawl while the turn state is held', () => {
         need(h.w.judged().includes(h.st.heldTc));
         expect(h.w.drops.length).toBeGreaterThan(0);
         expect(h.w.drops[0] - from).toBeLessThanOrEqual(SILENT_BOUND);
-        // A pong answered a second after its ping and stamped a millisecond after the last is a fixed point: this
-        // device's clock is that far ahead of the table's. Every honest stamp after it then calls the table's move early.
-        // (Holding every other frame holds the new link's welcome too, while the crawling clock frames go out on that
-        // link: frames about the table on a link it never welcomed, `unseatedFrame`.)
-        expect(h.w.verdict()).toMatchObject({ status: 'failed', failures: all ? ['unseatedFrame', 'playedEarly'] : ['playedEarly'] });
+        // On the new link the hold goes on: the table welcomes the phone and answers its pings, but sends the state it owes
+        // the seat only at the release, though an honest host sends it right behind the welcome (`heldFrame`).
+        // Holding every other frame holds the new link's welcome too, while the crawling clock frames go out on that link:
+        // frames about the table on a link it never welcomed (`unseatedFrame`). A pong answered a second after its ping
+        // and stamped a millisecond after the last is a fixed point: this device's clock is that far ahead of the table's,
+        // and every honest stamp after it then calls the table's move early (`playedEarly`).
+        expect(h.w.verdict()).toMatchObject({ status: 'failed', failures: all ? ['unseatedFrame', 'playedEarly'] : ['heldFrame'] });
       }),
     );
   }
@@ -69,7 +71,7 @@ describe('held frames: stamps that crawl while the turn state is held', () => {
       expect(h.w.verdict()).toMatchObject({ status: 'failed', failures: ['playedEarly'] });
     }));
 
-  it('an 18 s hold under crawling pongs, released with its own stamp, the seat timed out: red playedEarly', () =>
+  it('an 18 s hold under crawling pongs, released with its own stamp, the seat timed out: red heldFrame (the watch drops the link, and on the new one the table answers a ping before the state it owes there)', () =>
     scenario((i) => {
       const h = holdTurn({ code: `CB18${i}`, think: (_k, tc) => (tc === h.st.heldTc ? Infinity : 600) });
       need(h.arm());
@@ -78,7 +80,7 @@ describe('held frames: stamps that crawl while the turn state is held', () => {
       h.release();
       h.w.finish();
       need(h.w.judged().includes(h.st.heldTc));
-      expect(h.w.verdict()).toMatchObject({ status: 'failed', failures: ['playedEarly'] });
+      expect(h.w.verdict()).toMatchObject({ status: 'failed', failures: ['heldFrame'] });
     }));
 
   const slow = (base: number, _k: number, since: number, now: number) => base + 0.9 * (now - since);
@@ -212,7 +214,7 @@ describe('held frames: forged pongs', () => {
       expect(h.w.verdict()).toMatchObject({ status: 'failed', failures: ['heldFrame'] });
     }));
 
-  it('pongs that echo an old ping, stamped at the crawl: the link is dropped, and the hand is red (the table’s own crawled pongs contradict its later stamps)', () =>
+  it('pongs that echo an old ping, stamped at the crawl: the link is dropped, and the hand is red (on the new link the table sends a pong before the state it owes there)', () =>
     scenario((i) => {
       const h = holdTurn({
         code: `PC${i}`,
@@ -228,7 +230,7 @@ describe('held frames: forged pongs', () => {
       h.w.finish();
       need(h.w.judged().includes(h.st.heldTc));
       expect(h.w.drops.length).toBeGreaterThan(0);
-      expect(h.w.verdict()).toMatchObject({ status: 'failed', failures: ['playedEarly'] });
+      expect(h.w.verdict()).toMatchObject({ status: 'failed', failures: ['heldFrame'] });
     }));
 });
 
@@ -1103,14 +1105,20 @@ describe('reconnect: a server that forces the phone onto new links', () => {
       expect(w.verdict().caveats).toContain('tableMoved');
     }));
 
-  it.each(['pong', 'clock'] as const)('the same, with an unasked %s sent freshly stamped on the new link before what was held: it vouches for no state, and the hand is amber', (first) =>
+  it('the same, with an unasked clock frame sent freshly stamped on the new link before what was held: it vouches for no state, and the hand is amber', () =>
     scenario((i) => {
-      const { w, shown } = dropTurn(`RP${first}${i}`, first);
+      const { w, shown } = dropTurn(`RPclock${i}`, 'clock');
       expect(shown).toMatchObject({ working: false, onLink: false });
       expect(w.verdict().status).toBe('partial');
       expect(w.verdict().caveats).toContain('tableMoved');
-    }),
-  );
+    }));
+
+  it('the same, with an unasked pong sent freshly stamped on the new link before what was held: red, the table answered (as it says) before it sent the state it owed behind its welcome', () =>
+    scenario((i) => {
+      const { w, shown } = dropTurn(`RPpong${i}`, 'pong');
+      expect(shown).toMatchObject({ working: false, onLink: false });
+      expect(w.verdict()).toMatchObject({ status: 'failed', failures: ['heldFrame'] });
+    }));
 
   it('the same, the state that shows the turn let through on the new link without its stamp: amber, whether the table times the seat out or the seat moves (its turn shown late)', () =>
     scenario((i) => {

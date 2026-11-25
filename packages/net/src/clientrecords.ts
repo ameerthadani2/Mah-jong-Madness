@@ -240,6 +240,11 @@ export interface SentAction {
   /** The run of the app and of this device's clock `at` was read in. */
   run?: string;
   seg?: number;
+  /**
+   * Its place among the moves this client filed, over every run of the app (from 1), when it was handed to the app's
+   * journal before it went out (`TableClientOptions.writeAhead`); absent for a move filed without one.
+   */
+  seq?: number;
   /** The host refused it (error code). */
   rejected?: string;
   /** The turn the host's own frames had reached when its refusal arrived. */
@@ -311,6 +316,12 @@ export interface PlayRecord {
    */
   ledgerFrom: number | null;
   /**
+   * Every move this client sent in this hand was handed to the app's journal before it went out (`writeAhead`): a client
+   * restored from this record and the journal holds them all, so its ledger runs on across the restart (`TableClient.load`).
+   * Saved under the ledger's check figure (`ledgerSum`).
+   */
+  whole?: true;
+  /**
    * Earlier stretches of turns, each from `from` up to but not including `to`, for which the ledger
    * still vouches after it stopped (the seat was opened on another device): this client held the seat
    * on a link until it was shown the state of turn `to`, so every move before that turn was made while
@@ -341,6 +352,54 @@ export interface LedgerSpan {
 /** Whether every move the log credits to this seat's player at turn `n` must be one this client sent (`ledgerFrom`, `vouched`). */
 export function ledgerVouches(play: PlayRecord, n: number): boolean {
   return (play.ledgerFrom !== null && n >= play.ledgerFrom) || (play.vouched ?? []).some((v) => n >= v.from && n < v.to);
+}
+
+/**
+ * One move as this client filed it before it went out, as the app's journal keeps it (`TableClientOptions.writeAhead`).
+ * The app writes it before the move is sent, so a client restored from an older record of the table and the journal
+ * holds every move this device sent (`TableClient.load`).
+ */
+export interface JournalEntry {
+  /** The move's place among the moves this client filed, over every run of the app (from 1). */
+  seq: number;
+  /** The match and hand it was made in. */
+  matchId: string;
+  hand: number;
+  /** The move as filed (`SentAction`). */
+  tc: number;
+  action: Action;
+  epoch: number;
+  at: number;
+  run: string;
+  seg: number;
+  /** The turn from which the ledger vouched for the hand when the move was filed (`PlayRecord.ledgerFrom`; null: it did not). */
+  from: number | null;
+  /** Its check figure (`entrySum`): an entry storage changed is not read back. */
+  sum: string;
+}
+
+/** The journal entry of move `x` of hand `hand`, filed while the ledger vouched from `from`. */
+export function journalEntry(matchId: string, hand: number, x: SentAction & { seq: number; at: number; run: string; seg: number }, from: number | null): JournalEntry {
+  return withSum({ seq: x.seq, matchId, hand, tc: x.tc, action: x.action, epoch: x.epoch, at: x.at, run: x.run, seg: x.seg, from: from !== null && Number.isFinite(from) ? from : null });
+}
+
+/**
+ * The entries of match `matchId` in what the app's journal holds, oldest first, and the last place (`seq`) of any entry;
+ * `ok` is false when one of them is not what a client wrote (its check figure does not match, or a figure is not one a
+ * client files), or two of them share a place: the journal then vouches for nothing.
+ */
+export function cleanJournal(list: readonly unknown[], matchId: string): { ok: boolean; entries: JournalEntry[]; last: number } {
+  const entries: JournalEntry[] = [];
+  const seqs = new Set<number>();
+  let last = 0;
+  for (const x of list) {
+    if (!summed(x) || !isInt(x.seq) || x.seq < 1 || typeof x.matchId !== 'string' || !isCount(x.hand) || !isCount(x.tc) || !isObject(x.action) || !isCount(x.epoch) || !finiteTime(x.at) || !isRun(x.run) || !isCount(x.seg) || !(x.from === null || isCount(x.from))) return { ok: false, entries: [], last: 0 };
+    if (seqs.has(x.seq)) return { ok: false, entries: [], last: 0 };
+    seqs.add(x.seq);
+    last = Math.max(last, x.seq);
+    if (x.matchId === matchId) entries.push(x as unknown as JournalEntry);
+  }
+  return { ok: true, entries: entries.sort((a, b) => a.seq - b.seq), last };
 }
 
 /** About 300 years in ms: no reading of this device's clock or the host's, nor the offset between the two, is that large. */
@@ -496,13 +555,16 @@ export function cleanRunScope(x: unknown, maxPauses: number): RunScope | null {
 
 /**
  * The check figure a saved hand record carries for its ledger: the moves sent and the stretches the
- * ledger still vouches for (`PlayRecord.vouched`). Those stretches hold a restored record to every
- * move it lists, so they are read back only when the figure still matches (`cleanPlay`): storage that
- * changed a move must not make the table's log look forged.
+ * ledger still vouches for (`PlayRecord.vouched`), and for a ledger kept whole (`PlayRecord.whole`) the turn it vouches
+ * from as well (`rest`). Those hold a restored record to every move it lists, so they are read back only when the figure
+ * still matches (`cleanPlay`): storage that changed a move must not make the table's log look forged.
  */
-export function ledgerSum(sent: unknown, vouched: unknown): string {
-  return fnv(stableStringify({ sent, vouched }));
+export function ledgerSum(sent: unknown, vouched: unknown, rest?: Record<string, unknown>): string {
+  return fnv(stableStringify({ sent, vouched, ...(rest ?? {}) }));
 }
+
+/** What a whole ledger's check figure covers beyond the moves and stretches (`ledgerSum`). */
+const wholeRest = (p: { ledgerFrom?: unknown; whole?: unknown }): Record<string, unknown> => ({ ledgerFrom: p.ledgerFrom, whole: p.whole });
 
 /**
  * A frame as it is saved: with its check figure (`seenSum`), and without the mark of a restored one. A
@@ -535,9 +597,13 @@ function cleanRun<T extends object>(x: T, runKey: keyof T, segKey: keyof T): T {
  */
 export function cleanPlay(p: unknown): PlayRecord {
   if (!isObject(p) || !Array.isArray(p.seen) || !Array.isArray(p.sent) || !p.seen.every(isObject) || !p.sent.every(isObject)) throw new Error('damaged hand record');
-  const { vouched, ledgerSum: sum, pongs: savedPongs, pinged: savedPinged, pingedFrom: savedFrom, ...play } = p as unknown as Omit<PlayRecord, 'pongs' | 'pinged' | 'pingedFrom'> & { ledgerSum?: unknown; pongs?: unknown; pinged?: unknown; pingedFrom?: unknown };
+  const { vouched, ledgerSum: sum, whole: savedWhole, pongs: savedPongs, pinged: savedPinged, pingedFrom: savedFrom, ...play } = p as unknown as Omit<PlayRecord, 'pongs' | 'pinged' | 'pingedFrom' | 'whole'> & { ledgerSum?: unknown; whole?: unknown; pongs?: unknown; pinged?: unknown; pingedFrom?: unknown };
+  // A ledger kept whole, only from a record whose moves, stretches and first vouched turn storage left as they were: one that
+  // did not keep them is read as one that was not kept whole (its moves are then held to the log only from the next state).
+  const whole = savedWhole === true && typeof sum === 'string' && sum === ledgerSum(play.sent, vouched, wholeRest({ ledgerFrom: play.ledgerFrom, whole: true })) && (play.ledgerFrom === null || isCount(play.ledgerFrom));
+  const intact = whole || (typeof sum === 'string' && sum === ledgerSum(play.sent, vouched));
   // The stretches the ledger vouches for, only from a record whose moves and stretches storage left as they were.
-  const spans = Array.isArray(vouched) && typeof sum === 'string' && sum === ledgerSum(play.sent, vouched) && vouched.every((v) => isObject(v) && isInt(v.from) && isInt(v.to) && v.from < v.to) ? vouched : null;
+  const spans = Array.isArray(vouched) && intact && vouched.every((v) => isObject(v) && isInt(v.from) && isInt(v.to) && v.from < v.to) ? vouched : null;
   const pongs = Array.isArray(savedPongs) ? savedPongs.map(cleanPong).filter((k): k is ClockAnchor => k !== null) : [];
   const pingedFrom = Array.isArray(savedFrom) ? savedFrom.map(cleanPingStart).filter((k): k is PingStart => k !== null) : [];
   return {
@@ -545,6 +611,7 @@ export function cleanPlay(p: unknown): PlayRecord {
     seen: play.seen.map(cleanSeen),
     sent: play.sent.map((x) => cleanRun(x, 'run', 'seg')),
     ...(spans ? { vouched: spans } : {}),
+    ...(whole ? { whole: true as const } : {}),
     ...(pongs.length > 0 ? { pongs } : {}),
     ...(pingedFrom.length > 0 ? { pingedFrom } : {}),
     ...(isCount(savedPinged) && savedPinged < 1e9 ? { pinged: savedPinged } : {}),
@@ -553,11 +620,12 @@ export function cleanPlay(p: unknown): PlayRecord {
 
 /** A hand's record as it is saved: each frame with its check figure, and each answer to a ping and first ping with its own (`entrySum`). */
 export function savedPlay(p: PlayRecord): PlayRecord & { ledgerSum?: string } {
+  const ledgerFrom = p.ledgerFrom === Number.POSITIVE_INFINITY ? null : p.ledgerFrom;
   return {
     ...p,
     seen: p.seen.map(savedSeen),
-    ledgerFrom: p.ledgerFrom === Number.POSITIVE_INFINITY ? null : p.ledgerFrom,
-    ...(p.vouched?.length ? { ledgerSum: ledgerSum(p.sent, p.vouched) } : {}),
+    ledgerFrom,
+    ...(p.whole ? { ledgerSum: ledgerSum(p.sent, p.vouched, wholeRest({ ledgerFrom, whole: true })) } : p.vouched?.length ? { ledgerSum: ledgerSum(p.sent, p.vouched) } : {}),
     ...(p.pongs ? { pongs: p.pongs.map(withSum) } : {}),
     ...(p.pingedFrom ? { pingedFrom: p.pingedFrom.map(withSum) } : {}),
   };
@@ -687,6 +755,11 @@ export interface SerializedClient {
    * absent in records saved by older builds, which carry it whole).
    */
   lastAuditAt?: number;
+  /**
+   * The place (`SentAction.seq`) of the last move this client had filed when it wrote the record: the journal entries up to
+   * it are in the record (absent in records saved by older builds, and by a client without a journal).
+   */
+  sentSeq?: number;
   /** What this client knows about the host's clock and its own absences (absent in records saved by older builds). */
   clock?: {
     era: number;

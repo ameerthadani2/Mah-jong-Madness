@@ -12,6 +12,9 @@ describe('table join and lobby errors', () => {
     expect(tableErrorMessage({ code: 'room_unavailable', message: 'x' })?.key).toBe('online.errors.roomUnavailable');
     expect(tableErrorMessage({ code: 'table_cap', message: 'x' })?.key).toBe('online.errors.tableCap');
     expect(tableErrorMessage({ code: 'not_controller', message: 'x' })?.key).toBe('online.errors.notController');
+    // The table client's own: a move the app's journal could not keep was not sent.
+    expect(tableErrorMessage({ code: 'move_unsaved', message: 'This move could not be saved on this device, so it was not sent.' })?.key).toBe('online.errors.moveUnsaved');
+    expect(tableError({ code: 'move_unsaved', message: 'x' }, tr('zh-TW'))).not.toMatch(/[A-Za-z]{4,}/);
   });
 
   it('recognises the servers’ sentences when only the message survives', () => {

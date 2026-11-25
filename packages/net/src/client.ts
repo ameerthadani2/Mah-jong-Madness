@@ -51,6 +51,7 @@ import { armedLate, clockTrack, firstSend, fixedPoint, flightAllowance, heldLive
 import {
   CHAINED_FIELDS,
   cleanCeremony,
+  cleanJournal,
   cleanPlay,
   cleanRunScope,
   CLIENT_SNAPSHOT_VERSION,
@@ -64,6 +65,7 @@ import {
   isPassedClaimRecord,
   isRevealSet,
   isView,
+  journalEntry,
   keepSeen,
   ledgerVouches,
   MAX_SENT,
@@ -84,12 +86,13 @@ import {
   type PlayRecord,
   type RunScope,
   type SeenState,
+  type SentAction,
   type SerializedClient,
 } from './clientrecords';
 
 export { clientClock, SILENT_ANSWER_MS, steadyClock, type OwnClock, type TableClientOptions } from './clientclock';
 export { tableRule } from './clientmoves';
-export { CLIENT_SNAPSHOT_VERSION, type SerializedClient } from './clientrecords';
+export { CLIENT_SNAPSHOT_VERSION, type JournalEntry, type SerializedClient } from './clientrecords';
 
 /**
  * `ok`: this device watched the whole deal in one attempt, its own share protected the seed, and
@@ -776,6 +779,20 @@ export class TableClient {
   private unsubClose: Unsubscribe = () => undefined;
   private link: Link;
   private readonly now: () => number;
+  /** The app's journal of moves (`TableClientOptions.writeAhead`): every move goes to it before it goes out. Null: none. */
+  private readonly writeAhead: NonNullable<TableClientOptions['writeAhead']> | null;
+  /** What the app's journal held when this client was restored (`TableClientOptions.journal`), until the record is loaded. */
+  private journal: readonly unknown[] | undefined;
+  /** The place of the last move this client filed (`SentAction.seq`), over every run of the app. */
+  private seq = 0;
+  /**
+   * The link epoch on which the table answered a ping after its welcome there, before that link brought any state. An
+   * honest host sends a seat the state of the hand it is playing right behind the welcome, before it answers the ping the
+   * app sends behind its join (`TableHost.onJoin` answers the join in one step, and frames keep their order on a link):
+   * after such an answer, the link's first state can only be a deal's (turn 0). A later turn, or the end of a hand this
+   * device had been shown, was held back (`noteHeld`).
+   */
+  private pongAfterWelcome = -1;
 
   constructor(
     link: Link,
@@ -786,6 +803,8 @@ export class TableClient {
   ) {
     this.link = link;
     this.now = clientClock(opts);
+    this.writeAhead = opts.writeAhead ?? null;
+    this.journal = opts.journal;
     this.bind(link);
     if (identity.token) {
       this.state = { ...this.state, token: identity.token };
@@ -911,15 +930,62 @@ export class TableClient {
     // What the earlier runs carried, where its check figure matches (one that does not is not read back: those runs'
     // frames are then not measured by fixed points, as before such figures were kept).
     this.earlier = k && Array.isArray(k.runs) ? k.runs.map((x) => cleanRunScope(x, MAX_PAUSES)).filter((x): x is RunScope => x !== null && x.run !== this.runId).slice(-MAX_RUN_SCOPES) : [];
+    this.seq = Math.max(0, isInt(d.sentSeq) ? d.sentSeq : 0, ...this.plays.flatMap((p) => p.sent.map((x) => (isInt(x.seq) ? x.seq : 0))));
+    // With the app's journal, the moves filed after the record was written go back into it: this client then knows every
+    // move this device sent, over every run of the app (`writeAhead`).
+    const whole = this.takeJournal(d);
     // What this device did before the app stopped is not all on record (it may have left the table).
     this.noteOwnAbsence();
     this.lapse = true;
-    // The app stopped: the link it had is gone. Moves sent just before the last save may be missing
+    // The app stopped: the link it had is gone. Without a journal, moves sent just before the last save may be missing
     // from the ledger, so it vouches for the log of a hand still under way only from the next state it sees.
     // (Every such hand, whichever record was made last.) Before the latest state the record holds it still does: the
     // record saved that stretch (`serialize`, `vouchedThrough`), and `cleanPlay` read it back if storage left it whole.
+    // A hand whose every move went to the journal before it went out (`PlayRecord.whole`) keeps its ledger as it was.
     this.noteLinkLost();
-    for (const play of this.plays) if (!this.handsEnded.has(play.hand)) play.ledgerFrom = Number.POSITIVE_INFINITY;
+    for (const play of this.plays) if (!this.handsEnded.has(play.hand) && !(whole && play.whole)) play.ledgerFrom = Number.POSITIVE_INFINITY;
+  }
+
+  /**
+   * Put the moves the app's journal holds that the record `d` does not (filed after it was written) back into their hands'
+   * records, in the order they were filed. True when the journal vouches for the record: this client files moves through the
+   * journal (`writeAhead`), was given it (`TableClientOptions.journal`), every entry is what a client wrote, and the entries
+   * after the record's last move (`sentSeq`) run on without a gap. A hand under way whose ledger was kept whole then keeps
+   * it (`load`). False otherwise: the restored client vouches as one with no journal does.
+   */
+  private takeJournal(d: SerializedClient): boolean {
+    const list = this.journal;
+    this.journal = undefined;
+    const matchId = this.state.matchId;
+    if (!this.writeAhead || !Array.isArray(list) || typeof matchId !== 'string') return false;
+    const { ok, entries, last } = cleanJournal(list, matchId);
+    if (!ok) return false;
+    let next = (isInt(d.sentSeq) && d.sentSeq > 0 ? d.sentSeq : 0) + 1;
+    for (const e of entries) {
+      if (e.seq < next) continue;
+      if (e.seq !== next) return false;
+      next++;
+    }
+    for (const e of entries) {
+      if (this.handsEnded.has(e.hand)) continue;
+      let play = this.plays.find((p) => p.hand === e.hand);
+      if (!play) {
+        // A hand that began after the record was written: every move this device sent in it is in the journal, and the
+        // ledger vouched from where its first entry says.
+        play = { hand: e.hand, seen: [], sent: [], ledgerFrom: e.from, whole: true };
+        this.plays.push(play);
+        this.trimHands(this.plays, MAX_HAND_RECORDS, (p) => p.hand);
+      }
+      if (play.sent.some((x) => x.seq === e.seq)) continue;
+      play.sent.push({ tc: e.tc, action: e.action, epoch: e.epoch, at: e.at, run: e.run, seg: e.seg, seq: e.seq });
+      if (play.sent.length > MAX_SENT) play.sent.splice(0, play.sent.length - MAX_SENT);
+    }
+    // In the order they were filed (moves filed without a journal, by an earlier build, before any that were).
+    for (const play of this.plays) play.sent.sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0));
+    this.seq = Math.max(this.seq, last);
+    // The links the journal's moves went out on are gone too: the next one is a new link.
+    for (const e of entries) if (e.epoch > this.epoch) this.epoch = e.epoch;
+    return true;
   }
 
   /**
@@ -1026,6 +1092,7 @@ export class TableClient {
       eraHand: this.eraHand,
       lapseHand: this.lapseHand,
       lapseDeal: this.lapseDeal,
+      ...(this.seq > 0 ? { sentSeq: this.seq } : {}),
       clock: { era: this.era, base: { ...this.clockBase }, lastStamp: this.lastStamp, ownAbsences: this.ownAbsences.slice(), gapVerdicts: this.gapVerdicts.slice(), runs: this.runScopes().map(withSum) },
     }, (h) => this.handsEnded.has(h));
   }
@@ -1129,22 +1196,72 @@ export class TableClient {
     return this.atStart ? -1 : undefined;
   }
 
+  /**
+   * Send a move for this seat. It is filed first (`PlayRecord.sent`), so the audit holds the log to it whatever the table
+   * answers; with the app's journal (`TableClientOptions.writeAhead`) it then goes to the journal, and out once the journal
+   * has it: a client restored from the record and the journal knows every move this device sent.
+   */
   act(action: Action): void {
     // Nor does it send a move once its seat was opened on another device (the player takes the seat back from Home first),
     // or taken away on this link.
-    if (this.state.seat === null || this.state.kicked || this.evictedOn === this.epoch) return;
-    // A view from before the link was lost says nothing about the table now: wait for the first state on this link.
-    if (this.viewEpoch !== this.epoch) return;
+    if (!this.mayAct()) return;
     const v = this.state.view;
     const tc = v && isInt(v.turnCounter) ? v.turnCounter : undefined;
-    if (v && tc !== undefined) {
-      const play = this.playFor(v.handNumber);
-      const at = this.now();
-      this.ran(at);
-      play.sent.push({ tc, action, epoch: this.epoch, at, run: this.runId, seg: this.seg() });
-      if (play.sent.length > MAX_SENT) play.sent.splice(0, play.sent.length - MAX_SENT);
+    const msg: ClientMessage = { t: 'action', seat: this.state.seat as number, action, expectHash: this.state.stateHash ?? undefined, turnCounter: tc };
+    if (!v || tc === undefined) {
+      this.send(msg);
+      return;
     }
-    this.send({ t: 'action', seat: this.state.seat, action, expectHash: this.state.stateHash ?? undefined, turnCounter: tc });
+    const play = this.playFor(v.handNumber);
+    const at = this.now();
+    this.ran(at);
+    const filed: SentAction = { tc, action, epoch: this.epoch, at, run: this.runId, seg: this.seg(), ...(this.writeAhead ? { seq: ++this.seq } : {}) };
+    play.sent.push(filed);
+    if (play.sent.length > MAX_SENT) play.sent.splice(0, play.sent.length - MAX_SENT);
+    const hook = this.writeAhead;
+    if (!hook) {
+      this.send(msg);
+      return;
+    }
+    // Not sent: off the record, so it vouches for nothing in the log.
+    const drop = () => {
+      const i = play.sent.indexOf(filed);
+      if (i >= 0) play.sent.splice(i, 1);
+    };
+    // Not written down: not sent, and off the record (the player may make the move again).
+    const unfile = () => {
+      drop();
+      this.update({ lastError: 'This move could not be saved on this device, so it was not sent.', lastErrorCode: 'move_unsaved' });
+    };
+    let wrote: void | Promise<void>;
+    try {
+      wrote = hook(journalEntry(this.state.matchId ?? '', v.handNumber, filed as SentAction & { seq: number; at: number; run: string; seg: number }, play.ledgerFrom));
+    } catch {
+      unfile();
+      return;
+    }
+    if (!wrote || typeof (wrote as Promise<void>).then !== 'function') {
+      this.send(msg);
+      return;
+    }
+    // Out on the link it was filed for, once the journal has it, as long as this client may still move there (and off the
+    // record if not: the link it was made on is gone, or the seat with it).
+    const link = this.link;
+    const epoch = this.epoch;
+    (wrote as Promise<void>).then(
+      () => {
+        if (this.link === link && this.epoch === epoch && this.mayAct()) this.send(msg);
+        else drop();
+      },
+      unfile,
+    );
+  }
+
+  /** This client may send a move now: it holds a seat on the link in use, and has been shown a state there. */
+  private mayAct(): boolean {
+    if (this.state.seat === null || this.state.kicked || this.evictedOn === this.epoch) return false;
+    // A view from before the link was lost says nothing about the table now: wait for the first state on this link.
+    return this.viewEpoch === this.epoch;
   }
 
   ready(): void {
@@ -1749,7 +1866,8 @@ export class TableClient {
   private playFor(hand: number): PlayRecord {
     let play = this.plays.find((p) => p.hand === hand);
     if (!play) {
-      play = { hand, seen: [], sent: [], ledgerFrom: null };
+      // With the app's journal, every move this client sends in the hand goes to it first (`act`).
+      play = { hand, seen: [], sent: [], ledgerFrom: null, ...(this.writeAhead ? { whole: true as const } : {}) };
       this.plays.push(play);
       this.trimHands(this.plays, MAX_HAND_RECORDS, (p) => p.hand);
     }
@@ -2337,6 +2455,10 @@ export class TableClient {
         const revealedHere = !!this.recordFor(h)?.attempts.some((x) => x.revealed && x.revealedEpoch === this.epoch);
         if (shownHere && shownHere.hand === h && v.turnCounter > shownHere.tc + 1) this.noteHeld(h, shownHere.tc + 1);
         else if (v.turnCounter > 0 && (!shownHere || shownHere.hand !== h) && this.upBeforeDeal(h, shownHere)) this.noteHeld(h, 0);
+        // The link's first state, a later turn than a deal's, after the table answered a ping behind its welcome: an honest
+        // host sends the hand's state right behind the welcome, before that answer, so this one was held back since this
+        // device was seated here. What the table played for the seat from the latest turn this device had been shown fails.
+        else if (!shownHere && v.turnCounter > 0 && this.pongAfterWelcome === this.epoch) this.noteHeld(h, this.lastShown(h));
         // An honest host stamps every state. One with no stamp, on a link that has brought a state, a
         // stamp or this device's share, would escape every check of when it was shown: it is not
         // believed, and counts as held back (on a new link it is judged as shown late; see `unstamped`).
@@ -2384,6 +2506,9 @@ export class TableClient {
           // seat is judged from the last frame it held before (`before`), as for a hand whose first state comes there.
           const shownHere = this.linkShown && this.linkShown.epoch === this.epoch ? this.linkShown : null;
           if ((!shownHere || shownHere.hand !== h) && this.upBeforeDeal(h, shownHere)) this.noteHeld(h, 0);
+          // The same after the table answered a ping behind its welcome on a link that brought no state: the hand's state
+          // was owed first (a hand dealt since then sends its deal's state first, unless it ended at the deal: no moves).
+          else if (!shownHere && this.pongAfterWelcome === this.epoch) this.noteHeld(h, this.lastShown(h));
           const play = this.playFor(h);
           if (play.before === undefined && play.seen.length === 0) play.before = this.lastStamp && this.lastStamp.epoch !== this.epoch ? { ...this.lastStamp } : null;
         }
@@ -2499,6 +2624,9 @@ export class TableClient {
         if (this.stateHere()) this.noteStamp(m.now);
         this.noteOrder(m.now, null, null);
         this.notePong(m.at, m.now);
+        // An answer after the welcome, on a link that has brought no state yet: the link's first state can now only be a
+        // deal's (`pongAfterWelcome`).
+        if (this.welcomedOn === this.epoch && !this.stateHere()) this.pongAfterWelcome = this.epoch;
         return;
       case 'clock': {
         this.aboutHand(m.hand);
@@ -2555,6 +2683,13 @@ export class TableClient {
     if (shown && shown.hand < h) return true;
     if (this.ceremonyEpoch === this.epoch && this.commitHand === h) return true;
     return !!this.recordFor(h)?.attempts.some((x) => x.revealed && x.revealedEpoch === this.epoch);
+  }
+
+  /** The latest turn of hand `h` this device was shown, in any run of the app (0: none). */
+  private lastShown(h: number): number {
+    let t = 0;
+    for (const f of this.plays.find((p) => p.hand === h)?.seen ?? []) if (isInt(f.tc) && f.tc > t) t = f.tc;
+    return t;
   }
 
   /** The host held back the state of turn `tc` of hand `hand` (or of an earlier turn already noted). */
@@ -3154,6 +3289,9 @@ export class TableClient {
             // another device, came in between): whoever sent it, the state that showed this seat the turn is
             // judged as any other, so a server gains nothing by making the app start again.
             judgeShown(play, n, prevMine);
+            // But not one at or after a turn whose state the host held back on a link that stayed open (`held`): nothing an
+            // honest host does marks that, and a server that holds the table back can credit moves to the player unseen.
+            if (play.held !== undefined && n >= play.held) problems.add(`The host held back its frames on a link that stayed open, then played for this seat (turn ${n})`);
           }
         } else {
           let couldWin = false;

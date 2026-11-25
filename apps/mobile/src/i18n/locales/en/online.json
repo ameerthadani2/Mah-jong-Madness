@@ -26,7 +26,8 @@
     "tableClosedByClub": "The club closed this table.",
     "evictedByClub": "The club removed you from this table.",
     "clubDeleted": "The club was deleted, so this table has closed.",
-    "watcherDropped": "A player needed your place at this table. Join the table again to sit down."
+    "watcherDropped": "A player needed your place at this table. Join the table again to sit down.",
+    "moveUnsaved": "This move could not be saved on this phone, so it was not sent. Try it again."
   },
   "quick": {
     "title": "Quick match",

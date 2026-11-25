@@ -5,7 +5,7 @@
  * far ahead of the host's clock this device's is at the least (`offsetFloor`). Also the clocks a
  * host keeps time by, which never step back: `clientClock` by default, `steadyClock` on the server.
  */
-import type { ClockAnchor, PlayRecord, SeenState } from './clientrecords';
+import type { ClockAnchor, JournalEntry, PlayRecord, SeenState } from './clientrecords';
 
 /** How long the watch's `pong` request may stay out, while the host's stamps keep falling behind, before `checkLink` calls the link silent. */
 export const SILENT_ANSWER_MS = 5_000;
@@ -153,6 +153,20 @@ export interface TableClientOptions {
    * drives both).
    */
   monotonic?: () => number;
+  /**
+   * The app's journal of moves, written before each move goes out: `act` files the move, hands this hook the move as filed
+   * (`JournalEntry`), and sends it once the hook has returned, or once the promise it returns is fulfilled (on the link it
+   * was filed for, if that link is still the one in use). A hook that throws, or whose promise is rejected, keeps the move
+   * from going out, and the client takes it off its record. A client restored with the journal (`journal`) then holds every
+   * move this device sent, so its ledger runs on across an app restart. Without a hook a client works as before.
+   */
+  writeAhead?: (entry: JournalEntry) => void | Promise<void>;
+  /**
+   * When a client is restored (`TableClient.restore`, `TableClient.fromArchive`) with `writeAhead`: what the app's journal
+   * holds for the table, every entry handed to the hook since the record was written (more does no harm). The entries
+   * the record holds (`SerializedClient.sentSeq` and before) may be dropped once that record is written.
+   */
+  journal?: readonly unknown[];
 }
 
 /** A wall clock that ran this much further than the monotonic one between two readings means the device slept. */

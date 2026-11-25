@@ -17,7 +17,7 @@
  */
 import { vi } from 'vitest';
 import { chooseAction, legalActions, withRules, type Action, type RuleSet } from '@mjm/engine';
-import { caveatKey, clientClock, failureKey, LoopbackHub, TableClient, TableHost, transportLink, type ClientMessage, type HostMessage, type Link, type SerializedClient, type SerializedHost } from '../src/index';
+import { caveatKey, clientClock, failureKey, LoopbackHub, TableClient, TableHost, transportLink, type ClientMessage, type HostMessage, type JournalEntry, type Link, type SerializedClient, type SerializedHost } from '../src/index';
 
 export const TURN = 15_000;
 export const BANK = 30_000;
@@ -79,6 +79,11 @@ export interface Plan {
   fireClose?: boolean;
   /** How long the host's bots take over each move, on the wire's clock (default 0: at once). */
   botDelayMs?: number;
+  /**
+   * The app keeps a journal of moves (`TableClientOptions.writeAhead`): every move the phone sends goes to `w.journal`
+   * first, and a client restored by `restart` is given what the journal holds (default: no journal).
+   */
+  journal?: boolean;
 }
 
 /** One link from the phone to the table. */
@@ -164,16 +169,19 @@ export function wire(plan: Plan) {
       w.c.join();
       plan.onReconnect?.(w);
     },
+    /** The moves the app's journal holds (`plan.journal`), oldest first. */
+    journal: [] as JournalEntry[],
     /**
      * The app restarts: the client is saved (`edit` may change the saved record), its link is gone, and
-     * a client restored from the record joins on a new link.
+     * a client restored from the record joins on a new link. `from`: the record the app wrote earlier, restored in
+     * place of one written now (with `plan.journal`, together with the journal as it stands).
      */
-    restart(edit?: (saved: SerializedClient) => SerializedClient) {
-      let saved = JSON.parse(JSON.stringify(w.c.serialize())) as SerializedClient;
+    restart(edit?: (saved: SerializedClient) => SerializedClient, from?: SerializedClient) {
+      let saved = JSON.parse(JSON.stringify(from ?? w.c.serialize())) as SerializedClient;
       if (edit) saved = edit(saved);
       w.line.close();
       w.line = line();
-      w.c = TableClient.restore(saved, w.line.link, 'Victim', undefined, { token: saved.state.token ?? undefined }, clientOpts);
+      w.c = TableClient.restore(saved, w.line.link, 'Victim', undefined, { token: saved.state.token ?? undefined }, { ...clientOpts, ...(plan.journal ? { journal: JSON.parse(JSON.stringify(w.journal)) as unknown[] } : {}) });
       w.c.join();
     },
     /**
@@ -384,7 +392,10 @@ export function wire(plan: Plan) {
 
   w.line = line();
   const wallOf = () => clock.now + (plan.devSkew?.(clock.now) ?? 0);
-  const clientOpts = plan.asleep ? { now: wallOf, monotonic: () => mono } : { now: wallOf };
+  const clientOpts = {
+    ...(plan.asleep ? { now: wallOf, monotonic: () => mono } : { now: wallOf }),
+    ...(plan.journal ? { writeAhead: (e: JournalEntry) => void w.journal.push(e) } : {}),
+  };
   w.c = new TableClient(w.line.link, 'Victim', undefined, {}, clientOpts);
   w.c.join(plan.seat);
   host.start();
