@@ -44,7 +44,7 @@ import { commitFor, deriveSeed, makeSecret, verifyReveals, type Commitment } fro
 import { randomHex } from './sha256';
 import type { Link } from './host';
 import { CLOCK_FRAME_MS, RESTART_CAUSES, type Audit, type ClientMessage, type HostMessage, type SeatInfo } from './messages';
-import { intake, MOVE_REFUSALS } from './intake';
+import { intake, keptAudit, MOVE_REFUSALS } from './intake';
 import { isFrame, type Transport, type Unsubscribe } from './transport';
 import { BANK_ROUND_MS, clientClock, type ClockBase, DRIFT_CAP_MS, DRIFT_RATE, foldClock, LATE_MS, LINK_PAUSE_MS, MAX_PAUSES, MAX_PING_SCOPES, MAX_PINGS, MAX_RUN_SCOPES, MAX_PONGS, NO_ANSWER_PINGS, ORDER_SLACK_MS, ownClockFrom, PAUSE_GRACE_MS, PONG_WINDOW_MS, RAN_GAP_MS, RTT_PUBLISH_MS, SILENT_ANSWER_MS, STEADY_SLACK_MS, WATCH_WINDOW_MS, type OwnClock, type TableClientOptions } from './clientclock';
 import { armedLate, clockTrack, firstSend, fixedPoint, flightAllowance, heldLive, isBotSkill, judgeTableMove, lateAnchor, lateBy, lateCountMs, lateLimitMs, lateRef, legalFor, ownRun, pausedIn, restartInRun, sameActionSafe, scopeOf, seatRun, seenHere, streakEnd, tableRule, turnLateBy, unanswered, unstamped, type LateScope, type MoveJudge, type PongClock } from './clientmoves';
@@ -894,13 +894,20 @@ export class TableClient {
     this.fresh = false;
     if (typeof d.device === 'string' && /^[\w-]{6,64}$/.test(d.device)) this.deviceId = d.device;
     const st = d.state;
+    // Each audit as this build files it (`keptAudit`, as `intake` cuts every audit that comes): a record an earlier build
+    // saved may hold them whole (`restartReasons` and all), and a result the table sends again is compared with the one
+    // on file, like with like. The last audit stays the entry of the list it is.
+    const savedAudits = Array.isArray(st.audits) ? st.audits.slice(-MAX_AUDITS) : [];
+    const savedLast = lastAuditOf(st, d.lastAuditAt);
+    const audits = savedAudits.map((a) => (isObject(a) && isObject(a.audit) ? { ...a, audit: keptAudit(a.audit) } : a));
+    const lastAt = savedLast ? savedAudits.findIndex((a) => isObject(a) && a.audit === savedLast) : -1;
     this.state = {
       ...this.state,
       ...st,
       rules: st.rules ? sanitizeRules(st.rules) : null,
-      audits: Array.isArray(st.audits) ? st.audits.slice(-MAX_AUDITS) : [],
+      audits,
       // The last audit is saved once, as the entry of the list it is (`lastAuditAt`); records saved before carry it whole.
-      lastAudit: lastAuditOf(st, d.lastAuditAt),
+      lastAudit: lastAt >= 0 ? audits[lastAt].audit : savedLast ? keptAudit(savedLast) : null,
       claimsPassedAway: Array.isArray(st.claimsPassedAway) ? st.claimsPassedAway.filter(isPassedClaimRecord).map((x) => ({ hand: x.hand, turn: x.turn, claim: x.claim, ...(x.late === true ? { late: true } : {}) })) : [],
       turnsShownLate: Array.isArray(st.turnsShownLate) ? st.turnsShownLate.filter(isLateTurnRecord).map((x) => ({ hand: x.hand, late: x.late.slice(), of: x.of })) : [],
       token: this.identity.token ?? st.token ?? null,
