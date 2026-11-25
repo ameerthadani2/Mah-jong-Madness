@@ -3280,13 +3280,25 @@ export class TableClient {
     const droppedBefore = (yi: number, n: number, sameAsY: (x: (typeof sent)[number]) => boolean): boolean => {
       const y = sent[yi];
       if (!y || !play) return false;
+      // The link `y` went out over brought what came after its play (frames keep their order on a link): every answer
+      // the table sent over it before that play has come too. When another link brought it, an answer to an earlier move
+      // may have been lost with the link that broke, and a move of an earlier turn is not held against the table (one of
+      // `y`'s own turn is: it was legal in the very state the table played `y` in, so an honest table would have played it).
+      const after = frameAfter(n);
+      const whole = !!after && after.epoch === y.epoch && after.run === y.run;
       const left = new Map<number, { all: number; legal: number }>();
       for (let k = 0; k < yi; k++) {
         const x = sent[k];
         if (x.used || x.epoch !== y.epoch || x.run !== y.run || (x.tc === n && sameAsY(x))) continue;
-        // A repeat of a move the log played (the same move on the same turn, sent again, on this link or another): that
-        // move was answered. Which of the copies the table played cannot be told, and the player loses nothing either way.
+        if (x.tc < n && !whole) continue;
+        // A repeat of a move the log played (the same move on the same turn, sent again, on this link or another; or the
+        // same tile discarded or declared a kong on a later turn, a move that reached the table late being played on the
+        // seat's next turn): that move was answered. Which of the copies the table played cannot be told, and the player
+        // loses nothing either way. Nor does a pass the table lost: the table's own rule for a seat out of time passes too.
         if (x.copyOf >= 0 && sent.some((z) => z.used && z.tc === x.tc && z.copyOf === x.copyOf)) continue;
+        if (x.action.type === 'pass') continue;
+        const tile = (x.action.type === 'discard' || x.action.type === 'kong') && isInt(x.action.tile) ? x.action.tile : null;
+        if (tile !== null && sent.some((z) => z.used && z.action.type === x.action.type && (z.action as { tile?: unknown }).tile === tile)) continue;
         const c = left.get(x.tc) ?? { all: 0, legal: 0 };
         c.all++;
         if (x.legal === true) c.legal++;
@@ -3431,16 +3443,17 @@ export class TableClient {
           if (isInt(n) && ledgerVouches(play, n)) {
             // Any move this client sent and the log has not used yet may be the one: a move that reaches
             // the table late (after its clock ran out, say) is played on the seat's next turn if still legal.
-            // Of several, the likeliest: one the host did not refuse, made on the latest turn.
+            // Of several, the likeliest: one the host did not refuse; of those, one sent over the latest link (a copy
+            // over a link that broke may never have come); over one link, the first sent (an honest host answers a
+            // link's moves in the order they came, so it plays the first copy that is legal when it comes).
             const copies = sent.filter((x) => !x.used && x.tc <= n && sameActionSafe(x.action, entry.action, s, me));
-            const match = copies.slice().sort((a, b) => Number(!!a.rejected) - Number(!!b.rejected) || b.tc - a.tc)[0];
+            const match = copies.slice().sort((a, b) => Number(!!a.rejected) - Number(!!b.rejected) || b.epoch - a.epoch || sent.indexOf(a) - sent.indexOf(b))[0];
             if (match) {
               match.used = true;
               // A legal move this seat sent before this one, over the same link, that the log did not play and no refusal
               // answered in order (`droppedBefore`): whatever else came back (another code, a refusal naming another turn,
               // one that came after the state showing this move, nothing), the table lost it and played this one.
-              const mi = sent.indexOf(match);
-              if (droppedBefore(mi, n, (x) => sameActionSafe(x.action, entry.action, s, me))) problems.add(`The table left a move this seat sent unanswered and played another of its moves in its place (turn ${n})`);
+              if (droppedBefore(sent.indexOf(match), n, (x) => sameActionSafe(x.action, entry.action, s, me))) problems.add(`The table left a move this seat sent unanswered and played another of its moves in its place (turn ${n})`);
               judgeShown(play, n, prevMine);
               // The host cannot have played this move before this device sent it: a fixed point between the
               // two clocks. Of copies of the same move sent more than once, the first counts (the host may

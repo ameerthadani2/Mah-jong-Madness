@@ -358,23 +358,36 @@ function swallowed(code: string, kind: 'bank0' | 'ext' | 'none', show: number, n
   return { w, target, over, screenAtSend: screenAtSend as number | null };
 }
 
+/**
+ * A move the server dropped on a link that stayed up, the table playing its own over it: in flight (amber), never green;
+ * red once the table plays a later move the seat sent over that link (`moveDropped`), unless that later move is the same
+ * tile discarded again (the lost one may then have reached the table late and been played there: the player loses nothing).
+ */
+const lostInFlight = (v: { status: string; failures: Array<string | null>; caveats: Array<string | null> }) => {
+  expect(v.caveats).toContain('inFlight');
+  expect(['partial', 'failed']).toContain(v.status);
+  expect(v.failures).toEqual(v.status === 'failed' ? ['moveDropped'] : []);
+};
+
 describe('a move sent with time on the screen, lost to the table’s own (R4 against the end the screen showed, T29)', () => {
   for (const [kind, what] of [
     ['bank0', 'the turn’s state says the bank is spent while the host keeps it, so the screen runs on into the bank the phone tracked'],
     ['ext', 'right behind the turn’s state, a copy with a deadline 20 s later that the host keeps to'],
   ] as const) {
-    it(`Normal: ${what}; the seat moves when its screen shows 3 s, the server drops the move and the table plays its own at the end: in flight (never green), and red once the seat's next move on that link is played (the table left the move unanswered: it was amber)`, () =>
+    it(`Normal: ${what}; the seat moves when its screen shows 3 s, the server drops the move and the table plays its own at the end: in flight, never green (red once the table plays another move the seat sent over that link)`, () =>
       scenario((i) => {
         reseed(7_300 + i);
         const t = swallowed(`SEF${kind}${i}`, kind, 3_000);
         need(t.target >= 0 && t.over);
         expect(t.screenAtSend).toBeGreaterThan(2_000);
-        expect(t.w.verdict()).toEqual({ status: 'failed', failures: ['moveDropped'], caveats: ['inFlight'] });
-        // The same deal with honest states, the move dropped once the turn clock is over: in flight, and red as well.
+        lostInFlight(t.w.verdict());
+        expect(t.w.verdict().caveats).toEqual(['inFlight']);
+        // The same deal with honest states, the move dropped once the turn clock is over: the same.
         reseed(7_300 + i);
         const honest = swallowed(`SEF${kind}${i}`, 'none', 3_000);
         need(honest.target === t.target && honest.over);
-        expect(honest.w.verdict()).toEqual({ status: 'failed', failures: ['moveDropped'], caveats: ['inFlight'] });
+        lostInFlight(honest.w.verdict());
+        expect(honest.w.verdict().caveats).toEqual(['inFlight']);
       }));
   }
 });
@@ -484,26 +497,22 @@ describe('a move made after an app resume the server forced, lost to the table�
       const t = resumedDrop(`SEQ${i}`, true, 5_000, 2, true);
       need(t.target >= 0 && t.kicked && t.over);
       expect(t.screenAtSend).toBeGreaterThan(4_000);
-      // (Dropped on the link the table welcomed the resumed app on, which stayed up: once the seat's next move there is
-      // played, the table left it unanswered, `moveDropped`. It was amber.)
-      expect(t.w.verdict().failures).toEqual(['moveDropped']);
-      expect(t.w.verdict().status).toBe('failed');
-      expect(t.w.verdict().caveats).toContain('inFlight');
+      // (Dropped on the link the table welcomed the resumed app on, which stayed up: `lostInFlight`.)
+      lostInFlight(t.w.verdict());
     }));
   for (const show of [3_000, 10_000]) {
-    it(`Normal: the seat opened “on another device” a second into the turn, the table resumed from Home, the move made with ${show / 1000} s on the screen dropped and the seat timed out: in flight, never green, and red once the seat's next move on that link is played; the same without the resume`, () =>
+    it(`Normal: the seat opened “on another device” a second into the turn, the table resumed from Home, the move made with ${show / 1000} s on the screen dropped and the seat timed out: in flight, never green (red once the table plays another move the seat sent over that link); the same without the resume`, () =>
       scenario((i) => {
         reseed(7_700 + i);
         const t = resumedDrop(`SER${show}${i}`, true, show);
         need(t.target >= 0 && t.kicked && t.over);
         expect(t.screenAtSend).toBeGreaterThan(show - 1_000);
-        expect(t.w.verdict().failures).toEqual(['moveDropped']);
-        expect(t.w.verdict().status).toBe('failed');
-        expect(t.w.verdict().caveats).toContain('inFlight');
+        lostInFlight(t.w.verdict());
         reseed(7_700 + i);
         const ctl = resumedDrop(`SER${show}${i}`, false, show);
         need(ctl.target === t.target && ctl.over);
-        expect(ctl.w.verdict()).toEqual({ status: 'failed', failures: ['moveDropped'], caveats: ['inFlight'] });
+        lostInFlight(ctl.w.verdict());
+        expect(ctl.w.verdict().caveats).toEqual(['inFlight']);
       }));
   }
 });
