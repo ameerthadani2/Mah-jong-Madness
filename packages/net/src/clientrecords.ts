@@ -302,8 +302,11 @@ export interface PlayRecord {
   hand: number;
   seen: SeenState[];
   sent: SentAction[];
-  /** Refusals of this seat's moves: the turn the move was made on (as the host echoed it) and the turn the host's frames had reached. */
-  refusals?: Array<{ tc: number; at: number }>;
+  /**
+   * Refusals of this seat's moves: the turn the move was made on (as the host echoed it), the turn the host's frames had
+   * reached when the refusal came, and the link and run of the app it came on (absent in records saved by older builds).
+   */
+  refusals?: Array<{ tc: number; at: number; epoch?: number; run?: string }>;
   /**
    * Fixed points from the host's answers (`pong`) to the pings this device sent while the hand was on show, or its
    * deal was being agreed: one per `PONG_WINDOW_MS` of ping time, the one with the shortest round trip, at most

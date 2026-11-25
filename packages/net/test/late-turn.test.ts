@@ -2314,14 +2314,24 @@ describe('the table’s answers to the phone’s pings: how late a turn may come
   /**
    * Normal turns, no bank. On the seat's third discard the seat moves `think` ms after it is shown the
    * turn, with a discard other than the one the table's timeout rule plays (`illegal`: a tile it does not
-   * hold), and the server drops that move unseen, so the table times the seat out.
+   * hold), and the server drops that move unseen, so the table times the seat out. `late`: the move is not dropped
+   * but reaches the table only once the table has timed the seat out (an honest table then refuses it, naming its turn).
    */
-  function dropMove(code: string, think: number, illegal = false) {
+  function dropMove(code: string, think: number, illegal = false, late = false) {
     const rules = withRules({ handsPerMatch: 1, turnSeconds: 15, timeBankSeconds: 0 });
     const st = { tc: -1, discards: 0, dropped: 0 };
+    let held: [string, unknown] | null = null;
+    let deliver: (from: string, msg: unknown) => void = () => undefined;
     const w: Wire = wire({
       code,
       rules,
+      onTick: (w) => {
+        const g = w.host.game;
+        if (!held || !g || g.turnCounter <= st.tc) return;
+        const [from, msg] = held;
+        held = null;
+        deliver(from, msg);
+      },
       think: (_k, tc) => {
         const s = w.c.localState();
         const discard = !!s && legalActions(s, 0).every((a) => a.type === 'discard');
@@ -2341,9 +2351,14 @@ describe('the table’s answers to the phone’s pings: how late a turn may come
     };
     const h = internals(w);
     const handle = h.handle.bind(w.host);
+    deliver = handle;
     h.handle = (from, msg) => {
       const m = msg as { t?: string; turnCounter?: number };
-      if (!illegal && m?.t === 'action' && m.turnCounter === st.tc && from.startsWith('p0')) return void st.dropped++;
+      if (!illegal && m?.t === 'action' && m.turnCounter === st.tc && from.startsWith('p0')) {
+        st.dropped++;
+        if (late) held = [from, msg];
+        return;
+      }
       handle(from, msg);
     };
     w.finish();
@@ -2351,16 +2366,17 @@ describe('the table’s answers to the phone’s pings: how late a turn may come
     return w;
   }
 
-  it('a move sent with 6 s of its clock left that the server drops, the table playing its own: amber, the move was in flight (it was green) (T13)', () =>
+  it('a move sent with 6 s of its clock left that the server drops, the table playing its own: amber, the move was in flight, until the seat’s next move on that link is played: then red, the table left it unanswered (an honest table answers a link’s moves in order; it was amber, and before that green) (T13)', () =>
     scenario((i) => {
       const w = dropMove(`IF6${i}`, 9_000);
-      expect(w.verdict()).toMatchObject({ status: 'partial', failures: [] });
+      expect(w.verdict().status).toBe('failed');
+      expect(w.verdict().failures).toEqual(['moveDropped']);
       expect(w.verdict().caveats).toContain('inFlight');
     }));
 
-  it('the same with 1 s left: green (a move made in the last 1.5 s may honestly arrive too late); a move refused as illegal: nothing in flight (T13)', () =>
+  it('the same with 1 s left, the move reaching the table after it timed the seat out (refused, naming its turn): green (a move made in the last 1.5 s may honestly arrive too late); a move refused as illegal: nothing in flight (T13)', () =>
     scenario((i) => {
-      green(dropMove(`IF1${i}`, 14_000));
+      green(dropMove(`IF1${i}`, 14_000, false, true));
       const bad = dropMove(`IFX${i}`, 9_000, true);
       expect(bad.verdict().caveats).not.toContain('inFlight');
       expect(bad.verdict().failures).toEqual([]);
@@ -2445,17 +2461,19 @@ describe('the table’s answers to the phone’s pings: how late a turn may come
     return w;
   }
 
-  it('a move the app sent just before the phone slept 50 s, which never reached the table: amber (in flight), not red: the 30 s a move may lie unanswered leave out the time the app did not run (T15)', () =>
+  it('a move the app sent just before the phone slept 50 s, which never reached the table over the link that stayed up: the 30 s a move may lie unanswered leave out the time the app did not run (in flight, not ignored), but once the seat’s next move on that link is played the table left it unanswered: red (an honest connection delivers what was sent, or breaks; it was amber) (T15)', () =>
     scenario((i) => {
       const w = lyingMove(`SL50${i}`, 50_000);
-      expect(w.verdict()).toMatchObject({ status: 'partial', failures: [] });
+      expect(w.verdict().status).toBe('failed');
+      expect(w.verdict().failures).toEqual(['moveDropped']);
       expect(w.verdict().caveats).toContain('inFlight');
     }));
 
   it('the same with the app running all along, the move left lying 44 s on a live link: red, as before (T15)', () =>
     scenario((i) => {
       const w = lyingMove(`SL0${i}`, 0);
-      expect(w.verdict()).toMatchObject({ status: 'failed', failures: ['moveIgnored'] });
+      expect(w.verdict().status).toBe('failed');
+      expect(w.verdict().failures).toEqual(expect.arrayContaining(['moveIgnored']));
     }));
 
   /**

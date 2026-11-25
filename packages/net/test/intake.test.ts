@@ -355,12 +355,17 @@ describe('a refusal that names no turn', () => {
 
   it('the same refused as not seated, with no turn: red, an answer an honest table gives only to a connection it seats no one on; it excuses nothing, so the move counts as one the table ignored, as when no refusal comes', () =>
     scenario((i) => {
+      // (And once the seat's next move on that link is played, the table played it over one it never answered in order,
+      // `moveDropped`.)
       const a = refused(`INS${i}`, 'notSeated');
       need(a.attacked);
-      expect(a.w.verdict()).toMatchObject({ status: 'failed', failures: ['seatDenied', 'moveIgnored'] });
+      expect(a.w.verdict().status).toBe('failed');
+      expect(a.w.verdict().failures).toEqual(expect.arrayContaining(['seatDenied', 'moveIgnored']));
       const b = refused(`INS${i}`, 'silent');
       need(b.attacked);
-      expect(b.w.verdict()).toMatchObject({ status: 'failed', failures: ['moveIgnored'] });
+      expect(b.w.verdict().status).toBe('failed');
+      expect(b.w.verdict().failures).toEqual(expect.arrayContaining(['moveIgnored']));
+      expect(b.w.verdict().failures).not.toEqual(expect.arrayContaining(['seatDenied']));
     }));
 });
 
@@ -398,7 +403,8 @@ describe('a state the phone cannot file', () => {
       expect(a.w.verdict().failures).toEqual(expect.arrayContaining(['malformedFrame']));
       const b = edited(`INT${i}`, null, 'copy');
       need(b.target !== null);
-      expect(b.w.verdict()).toMatchObject({ status: 'failed', failures: ['moveIgnored'] });
+      expect(b.w.verdict().status).toBe('failed');
+      expect(b.w.verdict().failures).toEqual(expect.arrayContaining(['moveIgnored']));
     }));
 
   it('the turn’s state with no hash, or its deadline sent as text: red, malformed, never shown (each was once shown and left unchecked)', () =>

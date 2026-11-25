@@ -363,18 +363,18 @@ describe('a move sent with time on the screen, lost to the table’s own (R4 aga
     ['bank0', 'the turn’s state says the bank is spent while the host keeps it, so the screen runs on into the bank the phone tracked'],
     ['ext', 'right behind the turn’s state, a copy with a deadline 20 s later that the host keeps to'],
   ] as const) {
-    it(`Normal: ${what}; the seat moves when its screen shows 3 s, the server drops the move and the table plays its own at the end: amber inFlight, never green`, () =>
+    it(`Normal: ${what}; the seat moves when its screen shows 3 s, the server drops the move and the table plays its own at the end: in flight (never green), and red once the seat's next move on that link is played (the table left the move unanswered: it was amber)`, () =>
       scenario((i) => {
         reseed(7_300 + i);
         const t = swallowed(`SEF${kind}${i}`, kind, 3_000);
         need(t.target >= 0 && t.over);
         expect(t.screenAtSend).toBeGreaterThan(2_000);
-        expect(t.w.verdict()).toEqual({ status: 'partial', failures: [], caveats: ['inFlight'] });
-        // The same deal with honest states, the move dropped once the turn clock is over: amber inFlight as well.
+        expect(t.w.verdict()).toEqual({ status: 'failed', failures: ['moveDropped'], caveats: ['inFlight'] });
+        // The same deal with honest states, the move dropped once the turn clock is over: in flight, and red as well.
         reseed(7_300 + i);
         const honest = swallowed(`SEF${kind}${i}`, 'none', 3_000);
         need(honest.target === t.target && honest.over);
-        expect(honest.w.verdict()).toEqual({ status: 'partial', failures: [], caveats: ['inFlight'] });
+        expect(honest.w.verdict()).toEqual({ status: 'failed', failures: ['moveDropped'], caveats: ['inFlight'] });
       }));
   }
 });
@@ -478,30 +478,32 @@ describe('the round trip that bounds a move lost on its way (flightAllowance)', 
 });
 
 describe('a move made after an app resume the server forced, lost to the table’s own (R4 in the run that sent the move)', () => {
-  it('Normal: the same with 5 s on the screen, and the table answering no ping of the new run of the app until the turn is over: the hand’s best round trip, measured before the resume, still bounds the allowance, so amber inFlight, never green', () =>
+  it('Normal: the same with 5 s on the screen, and the table answering no ping of the new run of the app until the turn is over: the hand’s best round trip, measured before the resume, still bounds the allowance, so in flight, never green', () =>
     scenario((i) => {
       reseed(7_800 + i);
       const t = resumedDrop(`SEQ${i}`, true, 5_000, 2, true);
       need(t.target >= 0 && t.kicked && t.over);
       expect(t.screenAtSend).toBeGreaterThan(4_000);
-      expect(t.w.verdict().failures).toEqual([]);
-      expect(t.w.verdict().status).toBe('partial');
+      // (Dropped on the link the table welcomed the resumed app on, which stayed up: once the seat's next move there is
+      // played, the table left it unanswered, `moveDropped`. It was amber.)
+      expect(t.w.verdict().failures).toEqual(['moveDropped']);
+      expect(t.w.verdict().status).toBe('failed');
       expect(t.w.verdict().caveats).toContain('inFlight');
     }));
   for (const show of [3_000, 10_000]) {
-    it(`Normal: the seat opened “on another device” a second into the turn, the table resumed from Home, the move made with ${show / 1000} s on the screen dropped and the seat timed out: amber inFlight, never green; the same without the resume`, () =>
+    it(`Normal: the seat opened “on another device” a second into the turn, the table resumed from Home, the move made with ${show / 1000} s on the screen dropped and the seat timed out: in flight, never green, and red once the seat's next move on that link is played; the same without the resume`, () =>
       scenario((i) => {
         reseed(7_700 + i);
         const t = resumedDrop(`SER${show}${i}`, true, show);
         need(t.target >= 0 && t.kicked && t.over);
         expect(t.screenAtSend).toBeGreaterThan(show - 1_000);
-        expect(t.w.verdict().failures).toEqual([]);
-        expect(t.w.verdict().status).toBe('partial');
+        expect(t.w.verdict().failures).toEqual(['moveDropped']);
+        expect(t.w.verdict().status).toBe('failed');
         expect(t.w.verdict().caveats).toContain('inFlight');
         reseed(7_700 + i);
         const ctl = resumedDrop(`SER${show}${i}`, false, show);
         need(ctl.target === t.target && ctl.over);
-        expect(ctl.w.verdict()).toEqual({ status: 'partial', failures: [], caveats: ['inFlight'] });
+        expect(ctl.w.verdict()).toEqual({ status: 'failed', failures: ['moveDropped'], caveats: ['inFlight'] });
       }));
   }
 });
@@ -706,6 +708,7 @@ describe('a move the server drops and then cuts the link (R4 across links)', () 
       // Without the cut the move lies 40 s on a link that never dropped before the table plays over it: no network is that slow.
       const ctl = droppedThenCut(`SDC${i}`, false);
       need(ctl.dropped && ctl.taken);
-      expect(ctl.w.verdict()).toMatchObject({ status: 'failed', failures: ['moveIgnored'] });
+      expect(ctl.w.verdict().status).toBe('failed');
+      expect(ctl.w.verdict().failures).toEqual(expect.arrayContaining(['moveIgnored']));
     }));
 });

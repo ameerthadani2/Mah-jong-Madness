@@ -2926,7 +2926,8 @@ export class TableClient {
     const v = this.state.view;
     const play = v && !this.handsEnded.has(v.handNumber) ? this.plays.find((p) => p.hand === v.handNumber) : undefined;
     if (!play || !v) return;
-    const open = play.sent.filter((s) => !s.rejected && s.tc === tc);
+    // (An honest host answers a move on the link it came over: only this link's moves, made in this run of the app.)
+    const open = play.sent.filter((s) => !s.rejected && s.tc === tc && s.epoch === this.epoch && s.run === this.runId);
     const target = open[open.length - 1];
     // Every state the host reached before it refused has arrived before the refusal (frames come in order).
     const at = v.turnCounter;
@@ -2934,7 +2935,7 @@ export class TableClient {
     if (target) {
       target.rejected = code;
       target.refusedAt = at;
-      play.refusals = [...(play.refusals ?? []), { tc, at }].slice(-MAX_SENT);
+      play.refusals = [...(play.refusals ?? []), { tc, at, epoch: this.epoch, run: this.runId }].slice(-MAX_SENT);
     }
   }
 
@@ -3224,7 +3225,53 @@ export class TableClient {
         views.delete(s.turnCounter);
       }
     };
-    const sent = (play?.sent ?? []).map((x) => ({ ...x, used: false }));
+    /**
+     * The moves this client sent, in the order sent. `legal`: whether the move was legal in the state of the turn it was
+     * made on; `copyOf`: the first move sent on that turn that is the same move there (itself, or one it repeats: a second
+     * tap, or the move made again on a new link) (`noteLegal`).
+     */
+    const sent = (play?.sent ?? []).map((x) => ({ ...x, used: false, legal: undefined as boolean | undefined, copyOf: -1 }));
+    /** Note, for each move made on the turn of state `s`, whether it was legal there (the state the seat acted on), and which it repeats. */
+    const noteLegal = (s: GameState) => {
+      if (me === null) return;
+      for (const x of sent) {
+        if (x.tc !== s.turnCounter || x.legal !== undefined) continue;
+        x.legal = legalFor(s, me, x.action);
+        x.copyOf = sent.findIndex((z) => z.tc === x.tc && sameActionSafe(z.action, x.action, s, me));
+      }
+    };
+    /**
+     * An honest host answers a link's moves in the order they came, each by playing it or by a refusal naming its turn,
+     * before anything later of that link is played. So once the log plays move `y` (the `yi`-th sent) at turn `n`, every move
+     * sent before it over the same link in the same run of the app must have been played already, or refused by a refusal
+     * that came before the state showing `y` (one naming its turn that arrived while the host's frames were at turn `n` or
+     * before): a refusal that came after that state is out of order and answers nothing. True when such a move, legal on
+     * the turn it was made on, was neither: the table lost it, whatever turn `y` falls on. Refusals of a turn are counted
+     * against all the moves of that turn left unplayed (an honest host answers each one); a copy of `y` itself made on its
+     * turn (sent twice) is not one of them.
+     */
+    const droppedBefore = (yi: number, n: number, sameAsY: (x: (typeof sent)[number]) => boolean): boolean => {
+      const y = sent[yi];
+      if (!y || !play) return false;
+      const left = new Map<number, { all: number; legal: number }>();
+      for (let k = 0; k < yi; k++) {
+        const x = sent[k];
+        if (x.used || x.epoch !== y.epoch || x.run !== y.run || (x.tc === n && sameAsY(x))) continue;
+        // A repeat of a move the log played (the same move on the same turn, sent again, on this link or another): that
+        // move was answered. Which of the copies the table played cannot be told, and the player loses nothing either way.
+        if (x.copyOf >= 0 && sent.some((z) => z.used && z.tc === x.tc && z.copyOf === x.copyOf)) continue;
+        const c = left.get(x.tc) ?? { all: 0, legal: 0 };
+        c.all++;
+        if (x.legal === true) c.legal++;
+        left.set(x.tc, c);
+      }
+      for (const [t, c] of left) {
+        if (c.legal === 0) continue;
+        const answered = (play.refusals ?? []).filter((r) => r.tc === t && r.at <= n && (r.epoch === undefined || r.epoch === y.epoch) && (r.run === undefined || r.run === y.run)).length;
+        if (c.all > answered) return true;
+      }
+      return false;
+    };
     const problems = new Set<string>();
     // The host refuses only what is not legal in the state it is in. Each refusal names the turn
     // the move was made on; it is excused by one move this client sent on that turn that was not
@@ -3296,6 +3343,7 @@ export class TableClient {
     let s = dealFromSnapshot(start, seed, rules);
     checkHash(s);
     checkRefusals(s);
+    noteLegal(s);
     /** The turn of this seat's last move in the log so far (-1: none), and, for each table move, the one before it. */
     let lastMine = -1;
     const prevOf = new Map<number, number>();
@@ -3361,12 +3409,11 @@ export class TableClient {
             const match = copies.slice().sort((a, b) => Number(!!a.rejected) - Number(!!b.rejected) || b.tc - a.tc)[0];
             if (match) {
               match.used = true;
-              // A legal move this seat sent at this turn before this one, over the same link, that the log did not play
-              // and no refusal answered: an honest host answers moves in the order they come, and at this turn it would
-              // have played that one (it is legal in this very state) or refused it naming its turn. Whatever else came
-              // back (another code, a refusal naming another turn, nothing), the table lost it and played this one.
+              // A legal move this seat sent before this one, over the same link, that the log did not play and no refusal
+              // answered in order (`droppedBefore`): whatever else came back (another code, a refusal naming another turn,
+              // one that came after the state showing this move, nothing), the table lost it and played this one.
               const mi = sent.indexOf(match);
-              if (sent.some((x, k) => k < mi && !x.used && !x.rejected && x.tc === n && x.epoch === match.epoch && x.run === match.run && legalFor(s, me, x.action) && !sameActionSafe(x.action, entry.action, s, me))) problems.add(`The table left a move this seat sent unanswered and played another of its moves in its place (turn ${n})`);
+              if (droppedBefore(mi, n, (x) => sameActionSafe(x.action, entry.action, s, me))) problems.add(`The table left a move this seat sent unanswered and played another of its moves in its place (turn ${n})`);
               judgeShown(play, n, prevMine);
               // The host cannot have played this move before this device sent it: a fixed point between the
               // two clocks. Of copies of the same move sent more than once, the first counts (the host may
@@ -3474,6 +3521,7 @@ export class TableClient {
       s = applyAction(s, entry.seat, entry.action);
       checkHash(s);
       checkRefusals(s);
+      noteLegal(s);
     }
     // States shown for turns the log never reached: the log was cut short or rewritten.
     for (const tc of shown.keys()) if (tc > s.turnCounter) problems.add(`The state this seat was shown at turn ${tc} is not in the replay`);
