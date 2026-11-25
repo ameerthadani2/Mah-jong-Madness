@@ -166,6 +166,54 @@ describe('answers come in order', () => {
     }));
 });
 
+describe('a pass dropped on its own turn', () => {
+  it('the seat passes a Pong, the server drops the pass, and plays the Pong the seat then makes on that turn: red (an honest table plays the pass, which came first)', () =>
+    scenario((i) => {
+      let at: number | null = null;
+      let passed = false;
+      let ponged = false;
+      let sentAt = 0;
+      const w = wire({
+        code: `AMP${i}`,
+        rules: NORMAL,
+        botDelayMs: 700,
+        think: (_k, tc) => (at === null || tc === at ? Infinity : 600),
+        upFilter: (m, w) => {
+          if (m.t !== 'action' || m.action.type !== 'pass' || at === null || m.turnCounter !== at || ponged) return true;
+          w.line.inject({ t: 'error', code: 'busy', message: 'Busy.' } as HostMessage);
+          return false;
+        },
+        onTick: (w) => {
+          const s = w.c.localState();
+          if (!s || !w.current() || w.host.phase !== 'playing') return;
+          const acts = legalActions(s, 0);
+          if (at === null) {
+            if (!acts.some((a) => a.type === 'pong')) return;
+            at = s.turnCounter;
+          }
+          if (s.turnCounter !== at) return;
+          if (!passed) {
+            passed = true;
+            sentAt = w.clock.now;
+            w.c.act({ type: 'pass' });
+            return;
+          }
+          if (!ponged && w.clock.now - sentAt >= 1_000) {
+            const pong = acts.find((a) => a.type === 'pong');
+            if (!pong) return;
+            ponged = true;
+            w.c.act(pong);
+          }
+        },
+      });
+      w.finish();
+      const entry = at === null ? undefined : w.c.state.lastAudit?.log.find((e) => e.seat === 0 && e.n === at);
+      need(ponged && !!entry && entry.action.type === 'pong' && entry.source === 'player');
+      expect(w.verdict().status).toBe('failed');
+      expect(w.verdict().failures).toEqual(expect.arrayContaining(['moveDropped']));
+    }));
+});
+
 /**
  * Normal, four hands. The seat's first claim (a win, Pong, Kong or Chow on a discard) made while another seat's offer in
  * the same window is still open is dropped on its way and answered `busy`. The seat then passes, once:

@@ -3282,23 +3282,26 @@ export class TableClient {
       if (!y || !play) return false;
       // The link `y` went out over brought what came after its play (frames keep their order on a link): every answer
       // the table sent over it before that play has come too. When another link brought it, an answer to an earlier move
-      // may have been lost with the link that broke, and a move of an earlier turn is not held against the table (one of
-      // `y`'s own turn is: it was legal in the very state the table played `y` in, so an honest table would have played it).
+      // may have been lost with the link that broke, and a move of an earlier turn is not held against the table.
       const after = frameAfter(n);
       const whole = !!after && after.epoch === y.epoch && after.run === y.run;
       const left = new Map<number, { all: number; legal: number }>();
       for (let k = 0; k < yi; k++) {
         const x = sent[k];
         if (x.used || x.epoch !== y.epoch || x.run !== y.run || (x.tc === n && sameAsY(x))) continue;
-        if (x.tc < n && !whole) continue;
-        // A repeat of a move the log played (the same move on the same turn, sent again, on this link or another; or the
-        // same tile discarded or declared a kong on a later turn, a move that reached the table late being played on the
-        // seat's next turn): that move was answered. Which of the copies the table played cannot be told, and the player
-        // loses nothing either way. Nor does a pass the table lost: the table's own rule for a seat out of time passes too.
+        // A repeat of a move the log played (the same move on the same turn, sent again, on this link or another): that move
+        // was answered. Which of the copies the table played cannot be told, and the player loses nothing either way.
         if (x.copyOf >= 0 && sent.some((z) => z.used && z.tc === x.tc && z.copyOf === x.copyOf)) continue;
-        if (x.action.type === 'pass') continue;
-        const tile = (x.action.type === 'discard' || x.action.type === 'kong') && isInt(x.action.tile) ? x.action.tile : null;
-        if (tile !== null && sent.some((z) => z.used && z.action.type === x.action.type && (z.action as { tile?: unknown }).tile === tile)) continue;
+        // A move of an earlier turn than `y`'s, it reaching the table late: judged only over a link that brought what came
+        // after `y` (above), and not when it is a pass (the table's own rule for a seat out of time passes too, so the player
+        // loses nothing), or the same tile discarded or declared a kong again on a later turn (played there late, perhaps:
+        // which copy the table played cannot be told). On `y`'s own turn none of this holds: that move was legal in the
+        // very state the table played `y` in, so an honest table would have played it.
+        if (x.tc < n) {
+          if (!whole || x.action.type === 'pass') continue;
+          const tile = (x.action.type === 'discard' || x.action.type === 'kong') && isInt(x.action.tile) ? x.action.tile : null;
+          if (tile !== null && sent.some((z) => z.used && z.action.type === x.action.type && (z.action as { tile?: unknown }).tile === tile)) continue;
+        }
         const c = left.get(x.tc) ?? { all: 0, legal: 0 };
         c.all++;
         if (x.legal === true) c.legal++;
