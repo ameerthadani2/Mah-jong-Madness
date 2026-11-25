@@ -211,7 +211,8 @@ function evidenceLost(t: Truth, hand: number, run: number, at: number): boolean 
   for (const r of t.runs) {
     if (r.run <= run || r.run > judge.run) continue;
     if (r.how === 'restore' || r.how === 'archive') {
-      const save = t.saveTimes.filter((x) => x <= r.createdAt).pop() ?? -Infinity;
+      // A restore takes up the record the app holds in memory (written to the device or not); for an archived one, the last save.
+      const save = r.recordAt ?? t.saveTimes.filter((x) => x <= r.createdAt).pop() ?? -Infinity;
       if (save < at) return true;
     }
   }
@@ -260,8 +261,28 @@ function inRestoredStretch(t: Truth, lm: LogMove): boolean {
   return lm.n >= latest && lm.at <= shownAt && stopped;
 }
 
+/**
+ * The phone sent this very move on an earlier turn of the hand and never saw it played or refused: an honest table plays a
+ * move when it comes, on a later turn where it is legal (docs/API.md: "the host plays the first that is legal when it
+ * comes, a late one on a later turn"), so to the phone the log's entry is its own move, played late. (A server that
+ * refuses it and keeps the refusal from the phone can play it so; the move is still one the player made.)
+ */
+function playedLate(t: Truth, lm: LogMove): boolean {
+  return t.sent.some(
+    (s) =>
+      s.hand === lm.hand &&
+      s.tc !== null &&
+      s.tc < lm.n &&
+      s.at <= lm.at &&
+      sameMove(s.action, lm.action) &&
+      !t.log.some((x) => x !== lm && x.origin === 'victim' && x.line === s.line && x.msgTc === s.tc && x.at >= s.at && sameMove(x.action, s.action)) &&
+      !t.refusalsSeen.some((r) => r.line === s.line && r.turn === s.tc && r.at >= s.at && r.at <= lm.at),
+  );
+}
+
 function forgedPlayer(t: Truth, lm: LogMove): Cheat | null {
   if (t.sent.some((s) => s.hand === lm.hand && s.tc === lm.n && sameMove(s.action, lm.action))) return null;
+  if (playedLate(t, lm)) return null;
   const ctx = lm.ctx;
   const excuses: ExceptionName[] = [];
   const tags: string[] = [];

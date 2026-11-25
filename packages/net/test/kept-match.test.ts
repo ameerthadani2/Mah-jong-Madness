@@ -7,7 +7,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { chooseAction, legalActions, sameAction, withRules, type Action, type GameState } from '@mjm/engine';
-import { caveatKey, failureKey, LoopbackHub, TableClient, TableHost, transportLink, type KeptRecord, type Link, type SerializedClient } from '../src/index';
+import { caveatKey, failureKey, LoopbackHub, TableClient, TableHost, transportLink, type HostMessage, type KeptRecord, type Link, type SerializedClient } from '../src/index';
 import { seededDeals } from './support';
 
 // The same deals every run.
@@ -27,10 +27,16 @@ function table(code: string, journal: unknown[] | null = null) {
   const hub = new LoopbackHub();
   const host = new TableHost(hub.create('host'), { roomCode: code, rules: RULES, matchId: `m-${code}`, now: () => now, botDelayMs: 400, schedule: (fn, ms) => void timers.push({ at: now + ms, fn }), intermissionSeconds: 3, verifiedUserIds: true });
   let n = 0;
-  const open = (): Link => transportLink(hub.create(`p${n++}`), 'host');
+  /** Every welcome the table sends the player's links, in order. */
+  const welcomes: Array<Extract<HostMessage, { t: 'welcome' }>> = [];
+  const open = (): Link => {
+    const base = transportLink(hub.create(`p${n++}`), 'host');
+    return { ...base, onMessage: (cb) => base.onMessage((m) => ((m as HostMessage).t === 'welcome' && welcomes.push(m as Extract<HostMessage, { t: 'welcome' }>), cb(m))) };
+  };
   let link = open();
   const t = {
     host,
+    welcomes,
     inside: host as unknown as HostInside,
     client: new TableClient(link, 'A', undefined, { userId: USER }, { now: () => now, monotonic: () => now, ...(journal ? { writeAhead: (e: unknown) => void journal.push(e) } : {}) }),
     playing: true,
@@ -63,6 +69,34 @@ function table(code: string, journal: unknown[] | null = null) {
     away() {
       t.playing = false;
       link.close();
+    },
+    /** The link drops and the same client joins again on a new one. */
+    rejoin() {
+      link.close();
+      link = open();
+      t.client.rebind(link);
+      t.client.join();
+    },
+    /** Another device opens the seat with its token, plays `moves` of its turns there, and goes. */
+    otherDevice(moves: number) {
+      const token = t.client.state.token ?? undefined;
+      const playing = t.playing;
+      t.playing = false;
+      const l = open();
+      const o = new TableClient(l, 'A', undefined, { token, userId: USER }, { now: () => now, monotonic: () => now });
+      o.join();
+      let made = 0;
+      for (let i = 0; i < 4000 && made < moves; i++) {
+        t.step();
+        const s = o.localState();
+        if (s && legalActions(s, 0).length > 0 && host.game && legalActions(host.game, 0).length > 0) {
+          o.act(chooseAction(s, 0)!);
+          made++;
+        }
+      }
+      l.close();
+      t.playing = playing;
+      return made;
     },
     /** The account sits at the table again with a client that holds nothing (no token, no record), as the app makes it. */
     back(keptRecord?: (m: string) => KeptRecord | undefined, before?: (c: TableClient) => void) {
@@ -97,7 +131,7 @@ const verdicts = (c: TableClient) => c.state.audits.map((a) => `${a.audit.handNu
  * account is seated at another room code). `whileAway`: the move is written while the phone is away instead, and the
  * phone keeps the app's journal.
  */
-function attack(code: string, keptRecord: ((rec: SerializedClient, journal: unknown[]) => (m: string) => KeptRecord | undefined) | null, whileAway = false) {
+function attack(code: string, keptRecord: ((rec: SerializedClient, journal: unknown[]) => (m: string) => KeptRecord | undefined) | null, whileAway = false, meanwhile?: (t: ReturnType<typeof table>) => void) {
   const journal: unknown[] = [];
   const t = table(code, whileAway ? journal : null);
   let forged = false;
@@ -117,6 +151,7 @@ function attack(code: string, keptRecord: ((rec: SerializedClient, journal: unkn
   const rec = JSON.parse(JSON.stringify(t.client.serialize())) as SerializedClient;
   t.away();
   if (whileAway) t.run(() => (t.owes() && forge(), forged), 2000);
+  meanwhile?.(t);
   t.back(keptRecord ? keptRecord(rec, journal) : undefined);
   t.run(() => t.client.state.audits.some((a) => a.audit.handNumber === 0));
   return { t, forged, rec };
@@ -130,11 +165,30 @@ describe('a record kept of the match, found by the match the welcome names', () 
     expect(t.client.state.matchFailed).toBe(true);
   });
 
-  it('a move written in the player\'s name while the phone was away: amber with the welcome\'s word that another device held the seat (it joined as a new one), never green', () => {
+  it('a move written in the player\'s name while the phone was away fails the hand, with the journal: the welcome counts one move of the seat between devices, this client\'s own join', () => {
     const { t, forged } = attack('KM4', (rec, journal) => (m) => (m === rec.state.matchId ? { client: rec, journal } : undefined), true);
     expect(forged).toBe(true);
+    expect(verdicts(t.client)).toContainEqual(expect.stringMatching(/^0:failed .*moveInvented/));
+    expect(t.client.state.matchFailed).toBe(true);
+  });
+
+  it('another device held the seat while the phone was away (the count is two more than the record\'s): such a move is amber, as one made there would be, never green', () => {
+    let played = 0;
+    const { t, forged } = attack('KM5', (rec, journal) => (m) => (m === rec.state.matchId ? { client: rec, journal } : undefined), true, (x) => void (played = x.otherDevice(1)));
+    expect(forged).toBe(true);
+    expect(played).toBe(1);
     expect(t.client.state.audits.filter((a) => a.audit.handNumber === 0).map((a) => [a.status, a.caveats.map((c) => caveatKey(c))])).toEqual([['partial', ['otherDevice']]]);
     expect(t.client.state.matchEndVerified).toBe(false);
+  });
+
+  it('a record saved before records held the count: the welcome\'s word that another device held the seat stands, so such a move is amber, never green', () => {
+    const { t, forged } = attack('KM6', (rec, journal) => (m) => {
+      const old = JSON.parse(JSON.stringify(rec)) as SerializedClient;
+      delete old.handovers;
+      return m === rec.state.matchId ? { client: old, journal } : undefined;
+    }, true);
+    expect(forged).toBe(true);
+    expect(t.client.state.audits.filter((a) => a.audit.handNumber === 0).map((a) => [a.status, a.caveats.map((c) => caveatKey(c))])).toEqual([['partial', ['otherDevice']]]);
   });
 
   it('without it the client holds nothing, and the hand is amber at best (control)', () => {
@@ -161,6 +215,27 @@ describe('a record kept of the match, found by the match the welcome names', () 
     expect(t.client.state.audits.filter((a) => a.audit.handNumber === 0).every((a) => a.status !== 'failed' || !a.failures.some((f) => failureKey(f) === 'moveInvented'))).toBe(true);
     expect(t.client.serialize().handsEnded).not.toContain(-1);
     expect(asked).toBe(1);
+  });
+});
+
+describe('a record taken up at the welcome keeps the device the client joined as', () => {
+  it('the link drops and the client joins again: the table counts no move of the seat to another device, and the hand stays green', () => {
+    const t = table('KW1');
+    t.run(() => t.host.game !== null && t.host.game.actionLog.filter((e) => e.seat === 0 && e.source === 'player').length >= 1 && !t.owes());
+    const rec = JSON.parse(JSON.stringify(t.client.serialize())) as SerializedClient;
+    t.away();
+    t.back((m) => (m === rec.state.matchId ? { client: rec } : undefined));
+    t.run(() => t.client.state.matchId === rec.state.matchId && t.client.state.view !== null);
+    const taken = t.welcomes.length;
+    // The take-up's own welcome: this client joined as a new device, one move of the seat.
+    expect(t.welcomes[taken - 1].handovers).toBe((rec.handovers ?? 0) + 1);
+    t.run(() => t.host.game !== null && t.host.game.actionLog.filter((e) => e.seat === 0 && e.source === 'player').length >= 2 && !t.owes());
+    t.rejoin();
+    expect(t.welcomes.length).toBe(taken + 1);
+    expect(t.welcomes[taken].elsewhere).toBeUndefined();
+    expect(t.welcomes[taken].handovers).toBe(t.welcomes[taken - 1].handovers);
+    t.run(() => t.client.state.audits.some((a) => a.audit.handNumber === 0));
+    expect(t.client.state.audits.filter((a) => a.audit.handNumber === 0).map((a) => [a.status, a.caveats.map((c) => caveatKey(c) ?? c)])).toEqual([['ok', []]]);
   });
 });
 

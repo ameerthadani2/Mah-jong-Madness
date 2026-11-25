@@ -26,6 +26,8 @@ export const RECONNECT_MS = 1_000;
 /** apps/mobile/src/game/persist.ts SAVE_DELAY_MS. */
 export const SAVE_DELAY_MS = 400;
 const HOUR = 3_600_000;
+/** A copy of what the app writes to or reads from the device (JSON, as storage.ts writes it). */
+const clone = <T>(x: T): T => (x === null || x === undefined ? x : (JSON.parse(JSON.stringify(x)) as T));
 /**
  * The app writes each move to its journal before it goes out and gives what the journal holds for a match back to a client
  * restored from a record of it (`TableClientOptions.writeAhead` and `journal`; apps/mobile/src/logic/moveJournal.ts and
@@ -165,8 +167,18 @@ export function stateKind(g: GameState): StateKind {
  * left Home, the red hands kept apart, and the save schedule (apps/mobile/src/game/persist.ts).
  */
 export class App {
+  /**
+   * The saved-table slot and the archive as this run of the app holds them (app-state.tsx keeps both in memory and writes
+   * them to the device as they change): a resume from Home and a reseat in the same run read these.
+   */
   slot: (Exclude<Slot, null> & { savedAt: number }) | null = null;
   archive: ArchivedTable[] = [];
+  /** What is on the device (src/storage.ts), which a cold start reads back: written as they change, unless writes fail. */
+  slotStored: (Exclude<Slot, null> & { savedAt: number }) | null = null;
+  archiveStored: ArchivedTable[] = [];
+  /** When (the table's clock) the record in the slot was put there, and when the one on the device was written. */
+  slotAt: number | null = null;
+  private slotStoredAt: number | null = null;
   red: readonly KeptRed[] = [];
   /**
    * The journal of moves (`APP_JOURNAL`): what this run of the app holds (`journal`, which a resume in the same run is
@@ -176,7 +188,10 @@ export class App {
   journal: MoveJournal = [];
   journalStored: MoveJournal | null = [];
   pendingAt: number | null = null;
-  /** Saves of the record are not written (a full storage, a write that fails); the red hands still are. */
+  /**
+   * Writes to the device fail from now on (a full storage): the record, the archive and the journal stay in the app's
+   * memory but are not written (a journal whose write fails is taken off the device); the red hands still are.
+   */
   failing = false;
   saves = 0;
   private unsub: (() => void) | null = null;
@@ -233,10 +248,11 @@ export class App {
     const rec = { kind: 'online' as const, signalUrl: SIGNAL_URL, roomCode: this.phone.sim.room, token: c.state.token ?? '', name: NAME, avatar: 'auntie', client: JSON.parse(JSON.stringify(c.serialize())) as SerializedClient, savedAt: this.now() };
     this.put(rec);
   }
-  /** app-state.tsx `putActive`: the slot changes; a table that leaves it goes to the archive. */
+  /**
+   * app-state.tsx `putActive`: the slot changes; a table that leaves it goes to the archive. Both change in memory at
+   * once and are then written to the device, unless writes fail (`failing`).
+   */
   put(next: App['slot']): void {
-    if (this.failing) return;
-    this.saves++;
     if (archiveLogic) {
       const prev = this.slot;
       const c = this.phone.client;
@@ -244,15 +260,21 @@ export class App {
       this.archive = [...archiveLogic.archiveOnSlotChange(this.archive, prev, next, live, this.now())];
     }
     this.slot = next;
-    this.phone.sim.truth.saved(this.phone, next?.client ?? null);
-    // The journal (app-state.tsx): kept for the matches the app keeps a record of, and once the record is written the moves
-    // it holds leave it.
+    this.slotAt = next?.client ? this.phone.sim.clock.now : null;
+    // The journal (app-state.tsx): kept for the matches the app keeps a record of.
     if (APP_JOURNAL && journalLogic) {
       const open = this.phone.client && !this.phone.client.state.matchOver ? this.phone.client.state.matchId : null;
       this.setJournal(journalLogic.keptFor(this.journal, (_u, m) => m === open || m === next?.client?.state?.matchId || this.archive.some((e) => e.matchId === m)));
-      const m = next?.client?.state?.matchId;
-      if (typeof m === 'string' && m !== '') this.setJournal(journalLogic.afterSave(this.journal, SIGNAL_URL, m, next?.client?.sentSeq ?? 0));
     }
+    if (this.failing) return;
+    this.saves++;
+    this.slotStored = clone(next);
+    this.slotStoredAt = this.slotAt;
+    this.archiveStored = clone(this.archive);
+    this.phone.sim.truth.saved(this.phone, next?.client ?? null);
+    // Once the record is written, the moves it holds leave the journal.
+    const m = next?.client?.state?.matchId;
+    if (APP_JOURNAL && journalLogic && typeof m === 'string' && m !== '') this.setJournal(journalLogic.afterSave(this.journal, SIGNAL_URL, m, next?.client?.sentSeq ?? 0));
   }
   /** The journal's write (storage.ts writeJournal): one that fails takes it off the device. */
   private setJournal(j: MoveJournal): void {
@@ -300,11 +322,20 @@ export class App {
    * was deleted, since then an online one that holds a match goes to the archive first). The journal is what the device holds.
    */
   launch(): void {
+    this.slot = clone(this.slotStored);
+    this.slotAt = this.slotStoredAt;
+    this.archive = clone(this.archiveStored);
     const max = slotLogic?.SAVED_TABLE_MAX_AGE_MS ?? 12 * HOUR;
     if (this.slot && this.now() - this.slot.savedAt > max) {
-      const stale = BY_MATCH && slotLogic?.staleOnlineSession ? slotLogic.staleOnlineSession(JSON.parse(JSON.stringify(this.slot)), this.now()) : null;
-      if (stale && archiveLogic && !this.failing) this.archive = [...archiveLogic.archiveOnSlotChange(this.archive, stale, null, () => undefined, this.now())];
+      const stale = BY_MATCH && slotLogic?.staleOnlineSession ? slotLogic.staleOnlineSession(clone(this.slot), this.now()) : null;
+      if (stale && archiveLogic) {
+        this.archive = [...archiveLogic.archiveOnSlotChange(this.archive, stale, null, () => undefined, this.now())];
+        if (!this.failing) this.archiveStored = clone(this.archive);
+      }
+      // storage.ts loadActiveSession removes the key (a removal goes through on a full storage).
       this.slot = null;
+      this.slotStored = null;
+      this.slotAt = this.slotStoredAt = null;
     }
     this.journal = this.journalStored ?? [];
   }

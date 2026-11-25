@@ -816,6 +816,11 @@ export class TableClient {
   private redLater: unknown = null;
   /** The seat's count of moves between devices as the last welcome this client took said it (`welcome.handovers`; saved). */
   private handovers: number | null = null;
+  /**
+   * A record was taken up at this link's welcome (`lookUpKept`): the record was made under the device id of the client that
+   * made it, and this client joined under its own, so the table counted that join as one move of the seat.
+   */
+  private tookUpAtWelcome = false;
   /** The place of the last move this client filed (`SentAction.seq`), over every run of the app. */
   private seq = 0;
   /**
@@ -939,10 +944,17 @@ export class TableClient {
     const d = TableClient.loadable(k.client, this.name, this.avatar);
     const seat = d && isObject(d.state) ? d.state.seat : null;
     if (d && d.state.matchId === m.matchId && (seat === null || seat === undefined || seat === m.seat)) {
+      const joinedAs = this.deviceId;
       this.pending = d;
       this.pendingRed = k.red ?? null;
       this.journal = Array.isArray(k.journal) ? k.journal : undefined;
       this.takeUp(m.matchId);
+      if (this.state.matchId === m.matchId) {
+        // The table holds the seat under the device this client joined as: it stays this client's, or its next join would
+        // be counted as another move of the seat.
+        this.deviceId = joinedAs;
+        this.tookUpAtWelcome = true;
+      }
       if (k.moved === true && this.state.matchId === m.matchId) {
         this.flag(this.activeHand(), 'Host ran this match under another room code than the one this device kept its record of');
         this.update({ matchFailed: true, matchEndVerified: false });
@@ -2370,6 +2382,11 @@ export class TableClient {
     if (HAND_FRAMES.has(m.t)) this.handFrameOn = this.epoch;
     switch (m.t) {
       case 'welcome': {
+        // A record taken up at this welcome (`lookUpKept`) holds the count of the last welcome its own client took, and this
+        // client joined under another device id: one more than that count is this join alone, so no other device held the
+        // seat since, whatever `elsewhere` says of the join.
+        const ownJoin = this.tookUpAtWelcome && isInt(m.handovers) && this.handovers !== null && m.handovers === this.handovers + 1;
+        this.tookUpAtWelcome = false;
         // Whatever else it says, a welcome seats this client on this link.
         this.seatedOn = this.epoch;
         this.welcomedOn = this.epoch;
@@ -2422,7 +2439,7 @@ export class TableClient {
         // from one device to another (`handovers`): two more than the last welcome this client took said is another
         // device holding the seat and this one taking it back, even when the welcome that said so was lost (its link
         // broke, or the app stopped before it came).
-        const away = m.elsewhere === true || (isInt(m.handovers) && this.handovers !== null && m.handovers >= this.handovers + 2);
+        const away = (m.elsewhere === true && !ownJoin) || (isInt(m.handovers) && this.handovers !== null && m.handovers >= this.handovers + 2);
         if (away && this.welcomed && !this.heardOnLink) this.takenElsewhere();
         else if (away && !this.welcomed && !this.heardOnLink) this.heldElsewhere();
         if (isInt(m.handovers) && m.handovers >= 0) this.handovers = m.handovers;

@@ -46,6 +46,8 @@ export interface RunInfo {
   journal: boolean;
   /** A run that joined holding no record took one up at its first welcome (the lookup by match): moved, when it was kept under another room. */
   tookUpAtWelcome: { moved: boolean } | null;
+  /** A run restored from the saved slot: when the record it took up was put there (null for other runs). */
+  recordAt: number | null;
   /** A welcome that said another device had held the seat reached the run (the first such, when). */
   elsewhereAt: number | null;
 }
@@ -226,6 +228,8 @@ export class Truth {
   readonly decisions = new Map<string, DecisionInfo>();
   readonly log: LogMove[] = [];
   readonly sent: SentMove[] = [];
+  /** Every refusal of a move (`illegal`, `not_playing`, `wrong_seat`) that reached the phone: its line, the turn it names, when. */
+  readonly refusalsSeen: Array<{ line: number; turn: number | null; at: number }> = [];
   readonly dropped: DroppedMove[] = [];
   readonly intents: Intent[] = [];
   readonly notices: Notice[] = [];
@@ -292,7 +296,7 @@ export class Truth {
     const rec = how === 'restore' ? (p.app.slot?.client ?? null) : how === 'archive' ? null : null;
     const newDevice = this.lastApp !== null && this.lastApp !== p.app;
     this.lastApp = p.app;
-    this.runs.push({ run: p.run, appRun: p.appRun, how, createdAt: this.now, endedAt: null, recordLatest: latestTurns(rec), firstShown: new Map(), welcomedAt: null, recordAge: how === 'restore' && p.app.slot ? p.app.now() - p.app.slot.savedAt : null, newDevice, shown: null, journal: this.journalPending, tookUpAtWelcome: null, elsewhereAt: null });
+    this.runs.push({ run: p.run, appRun: p.appRun, how, createdAt: this.now, endedAt: null, recordLatest: latestTurns(rec), firstShown: new Map(), welcomedAt: null, recordAge: how === 'restore' && p.app.slot ? p.app.now() - p.app.slot.savedAt : null, newDevice, shown: null, journal: this.journalPending, tookUpAtWelcome: null, elsewhereAt: null, recordAt: how === 'restore' ? p.app.slotAt : null });
     this.journalPending = false;
     this.note(`client run ${p.run} (${how})`);
   }
@@ -381,6 +385,7 @@ export class Truth {
     // latest turn your phone was shown until your phone is shown the hand again"), on a later run of its client.
     if (m.t === 'state') for (const k of this.kicks) if (k.endAt === null && k.run < l.run) k.endAt = this.now;
     if (m.t === 'pong') li.pongs.push({ at: this.now, sentAt: this.sim.hostSentAt(m) ?? this.now });
+    if (m.t === 'error' && (m.code === 'illegal' || m.code === 'not_playing' || m.code === 'wrong_seat')) this.refusalsSeen.push({ line: l.n, turn: typeof m.turnCounter === 'number' ? m.turnCounter : null, at: this.now });
     const refusal = this.refusalFrames.get(m);
     if (refusal && refusal.reachedAt === null) {
       refusal.reachedAt = this.now;
