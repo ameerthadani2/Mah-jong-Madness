@@ -691,6 +691,11 @@ export class TableClient {
    * there anyway is not shown, played on or measured; the player takes the seat back from Home, on a new link.
    */
   private kickedLink: Link | null = null;
+  /**
+   * The link the table took this seat away on (`error` `evicted`): an honest server takes an evicted connection out of the
+   * room, so nothing about the table comes on it after that. Any frame there fails the hand on show and is not taken.
+   */
+  private evictedLink: Link | null = null;
   /** When `checkLink` last ran. */
   private checkedAt: number | null = null;
   /**
@@ -1151,6 +1156,20 @@ export class TableClient {
       if (!isFrame(m)) return;
       // The seat was opened on another device on this link: this client takes nothing more from it (`kickedLink`).
       if (this.state.kicked && this.kickedLink === link) return;
+      // Nor from a link the table took the seat away on (`evictedLink`). A frame about the table there, a welcome included,
+      // is the server's own making: it fails the hand on show. (Not the answers a table gives a link that holds no seat: a
+      // pong, or an error that refuses no move. They say nothing about the table, and are not taken either.)
+      if (this.evictedLink === link) {
+        const t = (m as { t: string }).t;
+        const code = (m as { code?: unknown }).code;
+        if (t !== 'pong' && !(t === 'error' && !(typeof code === 'string' && MOVE_REFUSALS.has(code)))) {
+          const problem = 'Host sent table frames on a connection where this device held no seat';
+          this.flag(this.activeHand(), problem);
+          // (No result of that hand comes to this client now: the failure is put on show at once.)
+          this.failNow(problem);
+        }
+        return;
+      }
       // Any frame shows this app running; only stamps feed the watch (see `noteStamp`), so chat,
       // emotes and stamps that crawl or stand still do not keep the link alive. A frame handled
       // just after the app did not run may have waited in the device through the pause, though
@@ -2679,6 +2698,7 @@ export class TableClient {
         if (m.code === 'evicted') {
           this.seatedOn = -1;
           this.evictedOn = this.epoch;
+          this.evictedLink = this.link;
         }
         // Sent on a link the table seated this client on, which still holds the seat, `not_seated` is the server's own
         // making: the move it answers would go unanswered (it names no turn, so it excuses no move, `noteRefusal`).

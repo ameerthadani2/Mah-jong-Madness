@@ -227,13 +227,58 @@ describe('a dropped claim, then the seat’s pass at the next turn', () => {
 });
 
 describe('a link where the phone holds no seat', () => {
-  it('the seat taken away (`evicted`), then the table carries on over the same link: red, it sends the game on a link where the phone holds no seat, and the phone sends no move there', () =>
+  it('the seat taken away (`evicted`), then the table carries on over the same link: red at once, it sends the game on a link where the phone holds no seat; the phone takes nothing from it and sends no move there', () =>
     scenario((i) => {
       const a = droppedThenOwn(`AME${i}`, 'evicted');
-      need(a.w.c.state.lastAudit !== null);
+      need(a.dropped);
       expect(a.w.verdict().status).toBe('failed');
       expect(a.w.verdict().failures).toEqual(expect.arrayContaining(['unseatedFrame']));
+      expect(a.w.c.state.matchFailed).toBe(true);
       expect(a.attacked).toBe(false);
+      // Nothing it sent there was taken: the hand's result among it.
+      expect(a.w.c.state.audits.some((x) => x.audit.handNumber === 0 && x.status !== 'failed')).toBe(false);
+    }));
+
+  it('the seat taken away (`evicted`), then a welcome on the same link and the table as it stands: red at once, and the phone takes nothing from it (it once seated the phone again there)', () =>
+    scenario((i) => {
+      let target: number | null = null;
+      let evicted = false;
+      let welcomed = false;
+      let shownAfter = false;
+      const w = wire({
+        code: `AMEW${i}`,
+        rules: NORMAL,
+        botDelayMs: 700,
+        think: (_k, tc) => (tc === target ? Infinity : 600),
+        map: (m, w) => {
+          if (target === null && m.t === 'state' && thirdDue(w, m)) target = m.view.turnCounter;
+          // Between the eviction and the welcome the server sends the link nothing.
+          return evicted && !welcomed ? null : m;
+        },
+        after: (m) => {
+          // The seat's turn shown, then at once the eviction.
+          if (evicted || target === null || m.t !== 'state' || m.view.turnCounter !== target) return [];
+          evicted = true;
+          return [{ t: 'error', code: 'evicted', message: 'The club removed you from this table.' } as HostMessage];
+        },
+        onTick: (w) => {
+          // Once the table has timed the seat out by its clock, its welcome for the seat on that link, and the table.
+          const g = w.host.game;
+          if (!evicted || welcomed || !g || target === null || g.turnCounter <= target) return;
+          welcomed = true;
+          const h = w.host as unknown as { seats: Array<{ token?: string }>; stateMsg(seat: number): HostMessage };
+          w.line.inject({ t: 'welcome', seat: 0, roomCode: w.host.roomCode, rules: NORMAL, seats: w.host.seatInfo(), matchId: w.host.matchId, token: h.seats[0].token ?? 'ab'.repeat(16) } as HostMessage);
+          w.line.inject(h.stateMsg(0));
+          shownAfter = (w.c.state.view?.turnCounter ?? -1) > target;
+        },
+      });
+      for (let k = 0; k < 20_000 && !w.c.state.matchOver && !welcomed; k++) w.step();
+      need(evicted && welcomed);
+      expect(w.verdict().status).toBe('failed');
+      expect(w.verdict().failures).toEqual(['unseatedFrame']);
+      expect(w.c.state.matchFailed).toBe(true);
+      // The welcome did not seat the phone there again, nor was the table it sent shown.
+      expect(shownAfter).toBe(false);
     }));
 
   /** Normal. The server sends `extra` on the phone's first link before its welcome; the hand is then played as usual. */
