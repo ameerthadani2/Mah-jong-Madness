@@ -130,6 +130,37 @@ Serious defects that survived the skeptics:
        - **An honest table goes red after an app update** (minor, from unit 20f; 4 of 4): a record saved by the earlier build holds whole audits, which the new build compares with trimmed ones.
 
        Unit 20g closes these.
+     - **Closed by unit 20g (2026-11-25).** All nine, at three roots:
+       - **Moves written down before they are sent.** The app writes each move to a journal, kept by match, before it goes out, and a restored app takes the journal back. A move the server writes in the player's name after a restart or a Resume is red. So is a later turn held back since the phone sat down again, whoever the table then credits the move to.
+       - **Another device.** A seat-taken notice, or a welcome saying another device held the seat, opens a stretch. In it, a move this phone did not send is amber and the match end is not verified, never green. The table also counts the seat's handovers between devices in every welcome.
+       - **The deal.** A stand-in deal after a cut at the commit request is held to the moves the phone sent from the deal. Every connection the phone's share went out on counts as up before the deal.
+       - **Answers in order.** Once the log plays a later move from a connection, every earlier legal move from that connection must already have been played or refused, on any turn. Refusals that arrive out of order excuse nothing. After an eviction notice the phone takes nothing more from that connection and the hand fails.
+       - **Records kept by match.** The record of a table that left Home is kept by match for 30 days, up to 32 records, and red verdicts are kept for a year. A record saved by an earlier build is read the way this build files audits.
+
+       Each item's own probe went to no green runs on six salts at Normal and Turbo. 6,148 outputs of every earlier attack set are the same or redder. The honest battery (1,018 rows) has no new red hand, no extra lost table and no drop loop. Its cost: 604 hands where a second device really played the seat go from green to amber, a cost FAIRNESS.md states.
+
+       Unit 20g also adds a permanent adversary fuzzer (`packages/net/test/adversary`). It runs the real table and the real phone client on a simulated clock against a programmable malicious server, with a model of the app around the client and an oracle that knows what really happened. A 20 s sample runs in CI and lists every known open gap by seed; `npm run fuzz:fair -w @mjm/net` runs long soaks. On the same 6,000 mixed seeds, fuzz failures fell from 398 on `d6745d5` to 27.
+     - **Still open after unit 20g's checks (2026-11-25).** A malicious recheck found five defects. A soak of 21,400 fuzz scenarios found nine more in the phone's checks and five in the fuzzer itself. I reproduced the recheck's five and five of the soak's, each with its control, on a salt no check used. Four come from unit 20g's own changes:
+       - **The journal keeps 12 matches but the archive keeps 32** (major). With 12 other unfinished tables in between, moves written in the player's name while away are green with the match end verified (4 of 4). On `d6745d5` they were amber.
+       - **An honest table goes red when the phone's storage refuses the archive write** but takes the small ones (minor; 4 of 4). The journal has already dropped moves that no stored record holds.
+       - **An honest table goes red when a journal write takes 30 s or more** (minor; 4 of 8 at Normal with 45 s writes). The move is timed from when it was filed, not from when it went out.
+       - **An honest table on a connection that slows toward it goes red when the player sends a second, different move** (major). One fuzz seed is red where `d6745d5` was amber. In a sweep at Turbo and Hyper, 4 of 192 honest slow-link tables were red, against 2 on `d6745d5`. The phone pins a late move on the wrong sent copy.
+
+       Older, the same on `d6745d5`:
+       - **A dropped win or claim laundered through an earlier pass** (major; 8 of 8 wins and 5 of 5 claims green). The server drops one of the player's passes. Later it drops a win, writes a pass in the player's name and cuts the connection. The phone matches the forged pass to the old one.
+       - **A turn held behind a rejoin welcome at a hand's first turn** (major; green, match end verified). The rule against turns held after a welcome starts at the second turn. Not answering the join's ping also gets round the rule (minor).
+       - **A stand-in at the first hand of a match** (major): amber with the match end verified, where hand 1 is red.
+       - **Three more majors, each amber with the match end verified:** holds are judged only while their connection lives; a table move off the rule followed by a Resume; and a phone with no record that joins a stood-in hand.
+       - **Minors:**
+         - evidence that reaches the phone in the 0.4 s before it leaves the table screen is lost;
+         - three honest reds, in rare cases:
+           - server restarts that push the deal past the attempt cap;
+           - two restarts in one hand;
+           - another device opening the seat right after a commit request;
+         - a view whose melds are not objects gets in, and the table screen throws;
+         - a match record is lost after "table gone" in two event combinations.
+
+       Unit 20h closes the four from unit 20g, the laundered pass (it shares a root with the slow-link red), the first-turn and first-hand gaps, the restart reds, the save window and the meld check. The rest go to a later fairness round; the fuzzer's CI sample lists each by seed.
 2. **Backdated first frames, then a delay: up to 74.5 s late and still green** (fairness, major). `docs/FAIRNESS.md` states this residual, but as "25 to 30 seconds". The challenger had the table play 17 of 17 of a victim's moves in a green hand, with the Fair play count at 0.
    - Closed by unit 20: each turn is measured against the table's answers to a ping a second; the bound is half the turn clock (2 s at Hyper). With the app's ping going out right behind its join, as it does, the probe's backdated frame is the answer to that ping, and every hand is amber with every turn counted. If the server backdates the deal itself instead and delays everything after it, pings included, the count still counts every turn (it measures turns against the answers to pings alone), and the hand is amber whenever the table plays over a move the player made with time on the screen's clock. What stays out of sight is a server whose whole clock runs behind from the first frame, or one that sends a single answer to a ping at once with its stamp moved back and everything after it late: to the phone that is a fast connection to a clock that is behind (a stated limit in FAIRNESS.md). The screen's clock counts that same clock, so such a server gains only the moves made in the last 1.5 s.
 3. **At Turbo and Hyper, a 15 s delay from the start lets the table play every turn while the hand stays green** (fairness, major; both skeptics confirmed it). This is inside the stated 17 s bound, and FAIRNESS.md gives its cost per speed. At a 4 s turn, though, it means the player never moves.
