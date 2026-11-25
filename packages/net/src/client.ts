@@ -3239,6 +3239,8 @@ export class TableClient {
     }
     /** Some state of this hand was restored damaged: a clock check that may rest on it fails nothing, it makes the hand amber. */
     const doubt = play?.seen.some((f) => f.kept === false) === true;
+    /** The moves this seat sent or the refusals of them were restored damaged (`movesKept`): a check of the table's answers resting on them fails nothing either. */
+    const movesDoubt = play?.movesKept === false;
     // Not every state the table sent in this hand was kept: what was dropped cannot be checked.
     if (play?.overflow === true && notes) notes.overflow = true;
     const checkHash = (s: GameState) => {
@@ -3315,6 +3317,11 @@ export class TableClient {
       return false;
     };
     const problems = new Set<string>();
+    /** A finding that rests on the moves this seat sent and the refusals of them: the hand fails, or, with those restored damaged (`movesDoubt`), it is amber. */
+    const onMoves = (finding: string) => {
+      if (!movesDoubt) problems.add(finding);
+      else if (notes) notes.damaged = true;
+    };
     // The host refuses only what is not legal in the state it is in. Each refusal names the turn
     // the move was made on; it is excused by one move this client sent on that turn that was not
     // legal in the state the host's own frames showed when the refusal arrived.
@@ -3323,7 +3330,7 @@ export class TableClient {
       const here = (play.refusals ?? []).filter((r) => r.at === s.turnCounter);
       for (const tc of new Set(here.map((r) => r.tc))) {
         const excused = sent.filter((x) => x.tc === tc && !legalFor(s, me, x.action)).length;
-        if (here.filter((r) => r.tc === tc).length > excused) problems.add(`The host refused a legal move this seat made (turn ${s.turnCounter})`);
+        if (here.filter((r) => r.tc === tc).length > excused) onMoves(`The host refused a legal move this seat made (turn ${s.turnCounter})`);
       }
     };
     /** The first frame this client got after turn `n` was played (the hand's result if none). */
@@ -3456,14 +3463,15 @@ export class TableClient {
               // A legal move this seat sent before this one, over the same link, that the log did not play and no refusal
               // answered in order (`droppedBefore`): whatever else came back (another code, a refusal naming another turn,
               // one that came after the state showing this move, nothing), the table lost it and played this one.
-              if (droppedBefore(sent.indexOf(match), n, (x) => sameActionSafe(x.action, entry.action, s, me))) problems.add(`The table left a move this seat sent unanswered and played another of its moves in its place (turn ${n})`);
+              if (droppedBefore(sent.indexOf(match), n, (x) => sameActionSafe(x.action, entry.action, s, me))) onMoves(`The table left a move this seat sent unanswered and played another of its moves in its place (turn ${n})`);
               judgeShown(play, n, prevMine);
               // The host cannot have played this move before this device sent it: a fixed point between the
               // two clocks. Of copies of the same move sent more than once, the first counts (the host may
               // have played that one), with the round trip from it to the first frame that shows the move.
               const f = frameAfter(n);
               const first = firstSend(copies);
-              if (f && f.kept !== false && first && typeof first.at === 'number' && typeof f.now === 'number' && f.epoch === first.epoch && f.at >= first.at) anchors.push({ at: first.at, now: f.now, era: f.era ?? 0, run: first.run, seg: first.seg, fat: f.at });
+              // (Not from moves restored damaged, `movesDoubt`: the time a move was sent may then be any.)
+              if (!movesDoubt && f && f.kept !== false && first && typeof first.at === 'number' && typeof f.now === 'number' && f.epoch === first.epoch && f.at >= first.at) anchors.push({ at: first.at, now: f.now, era: f.era ?? 0, run: first.run, seg: first.seg, fat: f.at });
             } else if (sent.some((x) => !x.used && !x.rejected && x.tc <= n)) problems.add(`The log changed a move this seat made (turn ${n})`);
             else problems.add(`The log shows a move this seat never made (turn ${n})`);
           } else if (isInt(n)) {
@@ -3556,7 +3564,7 @@ export class TableClient {
           if (after && sent.some((x) => lying(x, true) && after.at - x.at - pausedIn(scopeOf(scope, x.run)?.pauses ?? [], x.at, after.at) > MOVE_SLACK_MS)) {
             if (after.kept === false) {
               if (notes) notes.damaged = true;
-            } else problems.add(`The table ignored a move this seat sent in good time and played its own instead (turn ${n})`);
+            } else onMoves(`The table ignored a move this seat sent in good time and played its own instead (turn ${n})`);
           }
         }
       }

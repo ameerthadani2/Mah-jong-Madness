@@ -105,7 +105,7 @@ function role(l: Literal, caveats: { from: number; to: number }, failures: { fro
   if (l.line >= caveats.from && l.line <= caveats.to) return 'caveat';
   if (l.line >= failures.from && l.line <= failures.to) return 'map';
   if (/\blastError:/.test(l.lineText)) return 'status';
-  if (/\b(flag|failNow)\(|\bfailures\.push\(|\bproblems\.add\(|\bproblem = |\bfailures: \[|\breturn \[/.test(l.lineText)) return 'failure';
+  if (/\b(flag|failNow|onMoves)\(|\bfailures\.push\(|\bproblems\.add\(|\bproblem = |\bfailures: \[|\breturn \[/.test(l.lineText)) return 'failure';
   return 'other';
 }
 

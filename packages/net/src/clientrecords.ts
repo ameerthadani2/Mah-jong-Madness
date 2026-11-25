@@ -362,6 +362,13 @@ export interface PlayRecord {
   held?: number;
   /** More states came in this hand than `MAX_SEEN`, so some were not kept (`keepSeen`): the hand is amber at best. */
   overflow?: boolean;
+  /**
+   * False when this record was restored from storage that changed the moves sent or the refusals of them (their check
+   * figure, `movesSum`, did not match): the checks of the table's answers that rest on them (a legal move refused, a
+   * move left unanswered or ignored) fail nothing, they make the hand amber (`damaged`). Saved as it is, so later
+   * restarts read it the same way. Absent: whole, or saved by an earlier build, which kept no figure for them.
+   */
+  movesKept?: false;
 }
 
 /** A stretch of turns the ledger vouches for: from `from` up to but not including `to`. */
@@ -633,6 +640,16 @@ export function ledgerSum(sent: unknown, vouched: unknown, rest?: Record<string,
   return fnv(stableStringify({ sent, vouched, ...(rest ?? {}) }));
 }
 
+/**
+ * The check figure every saved hand record carries for the moves sent and the table's refusals of them, which the checks
+ * of the table's answers rest on (a move refused while legal, one left unanswered or ignored): read back with a figure
+ * that does not match, they fail nothing (`PlayRecord.movesKept`), as storage that changed one must not make an honest
+ * table's answers look wrong.
+ */
+export function movesSum(sent: unknown, refusals: unknown): string {
+  return fnv(stableStringify({ sent, refusals: refusals ?? [] }));
+}
+
 /** What a whole ledger's check figure covers beyond the moves and stretches (`ledgerSum`). */
 const wholeRest = (p: { ledgerFrom?: unknown; whole?: unknown }): Record<string, unknown> => ({ ledgerFrom: p.ledgerFrom, whole: p.whole });
 
@@ -667,7 +684,10 @@ function cleanRun<T extends object>(x: T, runKey: keyof T, segKey: keyof T): T {
  */
 export function cleanPlay(p: unknown): PlayRecord {
   if (!isObject(p) || !Array.isArray(p.seen) || !Array.isArray(p.sent) || !p.seen.every(isObject) || !p.sent.every(isObject)) throw new Error('damaged hand record');
-  const { vouched, ledgerSum: sum, whole: savedWhole, pongs: savedPongs, pinged: savedPinged, pingedFrom: savedFrom, otherDevice: savedOther, ...play } = p as unknown as Omit<PlayRecord, 'pongs' | 'pinged' | 'pingedFrom' | 'whole' | 'otherDevice'> & { ledgerSum?: unknown; whole?: unknown; pongs?: unknown; pinged?: unknown; pingedFrom?: unknown; otherDevice?: unknown };
+  const { vouched, ledgerSum: sum, whole: savedWhole, pongs: savedPongs, pinged: savedPinged, pingedFrom: savedFrom, otherDevice: savedOther, movesSum: savedMoves, movesKept: savedKept, ...play } = p as unknown as Omit<PlayRecord, 'pongs' | 'pinged' | 'pingedFrom' | 'whole' | 'otherDevice' | 'movesKept'> & { ledgerSum?: unknown; whole?: unknown; pongs?: unknown; pinged?: unknown; pingedFrom?: unknown; otherDevice?: unknown; movesSum?: unknown; movesKept?: unknown };
+  // The moves sent and the refusals of them as this device wrote them, unless the figure saved with them no longer matches
+  // or an earlier restore found it did not (a record an earlier build saved carries none: read as before).
+  const movesKept = savedKept === false || (savedMoves !== undefined && savedMoves !== movesSum(play.sent, play.refusals)) ? false : undefined;
   // A ledger kept whole, only from a record whose moves, stretches and first vouched turn storage left as they were: one that
   // did not keep them is read as one that was not kept whole (its moves are then held to the log only from the next state).
   const whole = savedWhole === true && typeof sum === 'string' && sum === ledgerSum(play.sent, vouched, wholeRest({ ledgerFrom: play.ledgerFrom, whole: true })) && (play.ledgerFrom === null || isCount(play.ledgerFrom));
@@ -685,19 +705,25 @@ export function cleanPlay(p: unknown): PlayRecord {
     ...(spans ? { vouched: spans } : {}),
     ...(whole ? { whole: true as const } : {}),
     ...(otherDevice.length > 0 ? { otherDevice } : {}),
+    ...(movesKept === false ? { movesKept } : {}),
     ...(pongs.length > 0 ? { pongs } : {}),
     ...(pingedFrom.length > 0 ? { pingedFrom } : {}),
     ...(isCount(savedPinged) && savedPinged < 1e9 ? { pinged: savedPinged } : {}),
   };
 }
 
-/** A hand's record as it is saved: each frame with its check figure, and each answer to a ping and first ping with its own (`entrySum`). */
-export function savedPlay(p: PlayRecord): PlayRecord & { ledgerSum?: string } {
+/**
+ * A hand's record as it is saved: each frame with its check figure, the moves sent and their refusals with theirs
+ * (`movesSum`; none once a restore found them changed, `movesKept`), and each answer to a ping and first ping with its
+ * own (`entrySum`).
+ */
+export function savedPlay(p: PlayRecord): PlayRecord & { ledgerSum?: string; movesSum?: string } {
   const ledgerFrom = p.ledgerFrom === Number.POSITIVE_INFINITY ? null : p.ledgerFrom;
   return {
     ...p,
     seen: p.seen.map(savedSeen),
     ledgerFrom,
+    ...(p.movesKept === false ? {} : { movesSum: movesSum(p.sent, p.refusals) }),
     ...(p.whole ? { ledgerSum: ledgerSum(p.sent, p.vouched, wholeRest({ ledgerFrom, whole: true })) } : p.vouched?.length ? { ledgerSum: ledgerSum(p.sent, p.vouched) } : {}),
     ...(p.pongs ? { pongs: p.pongs.map(withSum) } : {}),
     ...(p.pingedFrom ? { pingedFrom: p.pingedFrom.map(withSum) } : {}),
