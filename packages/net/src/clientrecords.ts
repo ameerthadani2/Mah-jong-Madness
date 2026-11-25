@@ -329,6 +329,14 @@ export interface PlayRecord {
    */
   vouched?: LedgerSpan[];
   /**
+   * Stretches of the hand in which the server said another device held the seat (a seat-taken notice, or a welcome
+   * that says so, `welcome.elsewhere`): from the latest turn this device had been shown of the hand when it was told,
+   * up to but not including the first state it was shown once welcomed again (`to` absent: not yet). A move the log
+   * credits to the player there that this device did not send may be one made on that device: it is not held against
+   * the table, but the hand is amber (`AUDIT_CAVEATS.otherDevice`) and the end of the match is not shown as verified.
+   */
+  otherDevice?: OtherDeviceSpan[];
+  /**
    * The last stamped frame this client held before this hand's first frame, when that frame came
    * over an earlier link: the hand began, or went on, while this device had no link. Null when the
    * hand's first frame followed on the same link.
@@ -347,6 +355,45 @@ export interface PlayRecord {
 export interface LedgerSpan {
   from: number;
   to: number;
+}
+
+/** A stretch of turns another device held the seat in, as the server said (`PlayRecord.otherDevice`); `to` absent: still open. */
+export interface OtherDeviceSpan {
+  from: number;
+  to?: number;
+}
+
+/** The most stretches of a hand `PlayRecord.otherDevice` keeps: past it the two oldest become one (wider, never dropped). */
+export const MAX_OTHER_DEVICE = 16;
+
+/** Whether turn `n` falls in a stretch the server said another device held the seat in (`PlayRecord.otherDevice`). */
+export function otherDeviceAt(play: PlayRecord, n: number): boolean {
+  return (play.otherDevice ?? []).some((v) => n >= v.from && (v.to === undefined || n < v.to));
+}
+
+/** `spans` with one opened at turn `from`, unless one is open already (the earlier start covers more); past the cap the two oldest become one. */
+export function openOtherDevice(spans: readonly OtherDeviceSpan[] | undefined, from: number): OtherDeviceSpan[] {
+  const out = (spans ?? []).map((v) => ({ ...v }));
+  if (out.some((v) => v.to === undefined)) return out;
+  out.push({ from });
+  while (out.length > MAX_OTHER_DEVICE) {
+    const [a, b] = out.splice(0, 2);
+    out.unshift({ from: Math.min(a.from, b.from), ...(a.to === undefined || b.to === undefined ? {} : { to: Math.max(a.to, b.to) }) });
+  }
+  return out;
+}
+
+/** The stretches of `x` that are well formed (`PlayRecord.otherDevice` as read back), at most `MAX_OTHER_DEVICE`. */
+function cleanOtherDevice(x: unknown): OtherDeviceSpan[] {
+  if (!Array.isArray(x)) return [];
+  let out: OtherDeviceSpan[] = [];
+  for (const v of x) if (isObject(v) && isCount(v.from) && (v.to === undefined || (isCount(v.to) && v.to >= v.from))) out = [...out, { from: v.from, ...(v.to === undefined ? {} : { to: v.to as number }) }];
+  // (Stored past the cap: the oldest become one, as `openOtherDevice` keeps them.)
+  while (out.length > MAX_OTHER_DEVICE) {
+    const [a, b] = out.splice(0, 2);
+    out.unshift({ from: Math.min(a.from, b.from), ...(a.to === undefined || b.to === undefined ? {} : { to: Math.max(a.to, b.to) }) });
+  }
+  return out;
 }
 
 /** Whether every move the log credits to this seat's player at turn `n` must be one this client sent (`ledgerFrom`, `vouched`). */
@@ -597,7 +644,7 @@ function cleanRun<T extends object>(x: T, runKey: keyof T, segKey: keyof T): T {
  */
 export function cleanPlay(p: unknown): PlayRecord {
   if (!isObject(p) || !Array.isArray(p.seen) || !Array.isArray(p.sent) || !p.seen.every(isObject) || !p.sent.every(isObject)) throw new Error('damaged hand record');
-  const { vouched, ledgerSum: sum, whole: savedWhole, pongs: savedPongs, pinged: savedPinged, pingedFrom: savedFrom, ...play } = p as unknown as Omit<PlayRecord, 'pongs' | 'pinged' | 'pingedFrom' | 'whole'> & { ledgerSum?: unknown; whole?: unknown; pongs?: unknown; pinged?: unknown; pingedFrom?: unknown };
+  const { vouched, ledgerSum: sum, whole: savedWhole, pongs: savedPongs, pinged: savedPinged, pingedFrom: savedFrom, otherDevice: savedOther, ...play } = p as unknown as Omit<PlayRecord, 'pongs' | 'pinged' | 'pingedFrom' | 'whole' | 'otherDevice'> & { ledgerSum?: unknown; whole?: unknown; pongs?: unknown; pinged?: unknown; pingedFrom?: unknown; otherDevice?: unknown };
   // A ledger kept whole, only from a record whose moves, stretches and first vouched turn storage left as they were: one that
   // did not keep them is read as one that was not kept whole (its moves are then held to the log only from the next state).
   const whole = savedWhole === true && typeof sum === 'string' && sum === ledgerSum(play.sent, vouched, wholeRest({ ledgerFrom: play.ledgerFrom, whole: true })) && (play.ledgerFrom === null || isCount(play.ledgerFrom));
@@ -606,12 +653,15 @@ export function cleanPlay(p: unknown): PlayRecord {
   const spans = Array.isArray(vouched) && intact && vouched.every((v) => isObject(v) && isInt(v.from) && isInt(v.to) && v.from < v.to) ? vouched : null;
   const pongs = Array.isArray(savedPongs) ? savedPongs.map(cleanPong).filter((k): k is ClockAnchor => k !== null) : [];
   const pingedFrom = Array.isArray(savedFrom) ? savedFrom.map(cleanPingStart).filter((k): k is PingStart => k !== null) : [];
+  // (A stretch storage made up excuses no more than a move written as the table's would be: amber, the end unverified.)
+  const otherDevice = cleanOtherDevice(savedOther);
   return {
     ...play,
     seen: play.seen.map(cleanSeen),
     sent: play.sent.map((x) => cleanRun(x, 'run', 'seg')),
     ...(spans ? { vouched: spans } : {}),
     ...(whole ? { whole: true as const } : {}),
+    ...(otherDevice.length > 0 ? { otherDevice } : {}),
     ...(pongs.length > 0 ? { pongs } : {}),
     ...(pingedFrom.length > 0 ? { pingedFrom } : {}),
     ...(isCount(savedPinged) && savedPinged < 1e9 ? { pinged: savedPinged } : {}),

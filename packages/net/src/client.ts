@@ -69,6 +69,8 @@ import {
   keepSeen,
   ledgerVouches,
   MAX_SENT,
+  openOtherDevice,
+  otherDeviceAt,
   nextDeal,
   nextHand,
   sameCommitSet,
@@ -157,6 +159,11 @@ export const AUDIT_CAVEATS = {
   // The record of the hand before this one did not replay (or could not be read), so nothing chains into this one
   // (`brokenHand`): the scores, dealer and wind it started from are the table's word.
   unchained: 'The record of the hand before this one did not replay, so the scores this hand started from could not be checked',
+  // The server said another device held the seat for part of the hand (a seat-taken notice, or `welcome.elsewhere`), and
+  // the log credits the player there with a move this device did not send (`PlayRecord.otherDevice`): it may have been
+  // made on that device, so it is not held against the table, but nothing vouches for it, and the end of the match is
+  // not shown as verified.
+  otherDevice: 'The server said this seat was opened on another device during this hand, and the log credits this seat with moves this device did not send there',
 } as const;
 
 export type AuditCaveat = keyof typeof AUDIT_CAVEATS;
@@ -1770,11 +1777,13 @@ export class TableClient {
   private seatTaken(): void {
     this.noteOwnAbsence();
     this.noteLinkLost();
-    // Every hand still under way, whichever record was made last.
+    // Every hand still under way, whichever record was made last. From the latest turn this device was shown of it until
+    // it is shown the hand again once welcomed back, the server says another device held the seat (`otherDevice`).
     for (const play of this.plays) {
       if (this.handsEnded.has(play.hand)) continue;
       this.closeLedger(play);
       play.ledgerFrom = Number.POSITIVE_INFINITY;
+      play.otherDevice = openOtherDevice(play.otherDevice, this.lastShown(play.hand));
     }
     this.kickedLink = this.link;
     this.update({ connected: false, kicked: true, lastError: 'This seat was opened on another device.' });
@@ -2709,8 +2718,13 @@ export class TableClient {
     // up the copy that disagrees before the audit (`keepSeen`).
     const prior = play.seen.find((s) => s.tc === v.turnCounter && s.kept !== false);
     if (prior && (prior.hash !== m.hash || (typeof prior.view === 'string' && prior.view !== digest))) this.flag(v.handNumber, `Host showed two different states for turn ${v.turnCounter}`);
-    // From here on this client watched the hand, so every move credited to its player must be one it sent.
-    if (play.ledgerFrom === null || (play.ledgerFrom === Number.POSITIVE_INFINITY && !this.state.kicked)) play.ledgerFrom = v.turnCounter;
+    // From here on this client watched the hand, so every move credited to its player must be one it sent. A stretch the
+    // server said another device held the seat in ends here (this device holds the seat again, and is shown the hand).
+    if (play.ledgerFrom === null || (play.ledgerFrom === Number.POSITIVE_INFINITY && !this.state.kicked)) {
+      play.ledgerFrom = v.turnCounter;
+      const open = play.otherDevice?.find((x) => x.to === undefined);
+      if (open) open.to = Math.max(open.from, v.turnCounter);
+    }
     const me = this.state.seat;
     let owes = false;
     if (me !== null) {
@@ -2984,7 +2998,11 @@ export class TableClient {
     return this.runAudit(audit, finalView, announced, null).check;
   }
 
-  /** verifyAudit, plus the replayed final state when the replay ran (to chain the next hand onto). */
+  /**
+   * verifyAudit, plus the replayed final state when the replay ran (to chain the next hand onto). `beforeJoin`: the log
+   * credits this seat with moves this device did not watch being made (before it joined the hand part-way, or on another
+   * device the server named, `otherDevice`), so the end of the match is not shown as verified (`missedMoves`).
+   */
   private runAudit(audit: Audit, finalView: TableView, announced: HandResult | undefined, end: SeenState | null): { check: AuditCheck; replayed: GameState | null; anchors: ClockAnchor[]; passed: Array<{ turn: number; claim: PassedClaim; late?: boolean }>; late: { turns: number[]; of: number }; beforeJoin: boolean } {
     const failures: string[] = [];
     const caveats: string[] = [];
@@ -3086,12 +3104,14 @@ export class TableClient {
     if (notes.overflow) caveats.push(AUDIT_CAVEATS.overflow);
     if (notes.inFlight) caveats.push(AUDIT_CAVEATS.inFlight);
     if (notes.noAnswer) caveats.push(AUDIT_CAVEATS.noAnswer);
+    if (notes.otherDevice) caveats.push(AUDIT_CAVEATS.otherDevice);
     // An app restart around the deal: this device cannot say it watched all of it, whatever its record now shows.
     // (A seat that joined mid-hand has already said it took no part in the deal.)
     if (this.lapseHand === h && this.lapseDeal && !joined && !caveats.includes(AUDIT_CAVEATS.appRestart)) caveats.push(AUDIT_CAVEATS.appRestart);
 
     const status: AuditStatus = failures.length > 0 ? 'failed' : caveats.length > 0 ? 'partial' : 'ok';
-    return { check: { status, failures, caveats }, replayed, anchors, passed: notes.passedClaims ?? [], late: { turns: notes.lateTurns ?? [], of: notes.turnsMeasured ?? 0 }, beforeJoin };
+    // (Moves this device did not watch being made, on another device the server named: the end of the match is not verified.)
+    return { check: { status, failures, caveats }, replayed, anchors, passed: notes.passedClaims ?? [], late: { turns: notes.lateTurns ?? [], of: notes.turnsMeasured ?? 0 }, beforeJoin: beforeJoin || notes.otherDevice === true };
   }
 
   /**
@@ -3292,6 +3312,15 @@ export class TableClient {
             // But not one at or after a turn whose state the host held back on a link that stayed open (`held`): nothing an
             // honest host does marks that, and a server that holds the table back can credit moves to the player unseen.
             if (play.held !== undefined && n >= play.held) problems.add(`The host held back its frames on a link that stayed open, then played for this seat (turn ${n})`);
+            else if (otherDeviceAt(play, n)) {
+              // In a stretch the server said another device held the seat in: a move this device sent is its own; any other
+              // may have been made on that device. It is not held against the table, but nothing vouches for it: the hand
+              // is amber and the end of the match is not shown as verified (`otherDevice`).
+              const copies = sent.filter((x) => !x.used && x.tc <= n && sameActionSafe(x.action, entry.action, s, me));
+              const match = copies.slice().sort((a, b) => Number(!!a.rejected) - Number(!!b.rejected) || b.tc - a.tc)[0];
+              if (match) match.used = true;
+              else if (notes) notes.otherDevice = true;
+            }
           }
         } else {
           let couldWin = false;
@@ -3620,6 +3649,8 @@ interface ReplayNotes {
   inFlight?: boolean;
   /** The table answered none of the pings this device sent during the hand (`AUDIT_CAVEATS.noAnswer`). */
   noAnswer?: boolean;
+  /** The log credits the player with a move this device did not send, in a stretch the server said another device held the seat in (`AUDIT_CAVEATS.otherDevice`). */
+  otherDevice?: boolean;
   /** Claims the table passed for this seat while its link was down, or on a turn that reached this device late (`late`), in turn order. */
   passedClaims?: Array<{ turn: number; claim: PassedClaim; late?: boolean }>;
   /** The seat's turns whose state reached this device late enough to be counted (`lateCountMs`, or `lateLimitMs` without pong fixed points), and how many of its turns it could measure. */
