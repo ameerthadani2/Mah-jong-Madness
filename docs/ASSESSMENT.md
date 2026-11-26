@@ -161,6 +161,31 @@ Serious defects that survived the skeptics:
          - a match record is lost after "table gone" in two event combinations.
 
        Unit 20h closes the four from unit 20g, the laundered pass (it shares a root with the slow-link red), the first-turn and first-hand gaps, the restart reds, the save window and the meld check. The rest go to a later fairness round; the fuzzer's CI sample lists each by seed.
+     - **Closed by unit 20h (2026-11-26).** All four from unit 20g, and the older gaps it took on:
+       - **The laundered pass and the slow-link red**: one rule for which sent copy a played move is. The first unanswered copy of exactly that move on the link the seat held then, in order; never one the table had already taken up. The checker attacked 1,023 hands in every variant: none green. On a fresh salt, 0 of 33 attacked hands were green, against 23 of 33 on `d5e6158`.
+       - **The journal keeps a list for every match the archive keeps**, and a missing list vouches for nothing (red 4 of 4; green with the end verified before).
+       - **The archive is written before the saved table gives a record up**, so a failed archive write no longer turns an honest hand red (0 of 4; 4 of 4 before).
+       - **A move is timed from when it went out**, not from when the journal took it (45 s writes: no red hand; 4 before).
+       - **A turn held behind a rejoin welcome** is caught at the hand's first turn and when the join's ping goes unanswered (red 3 of 4; green 4 of 4 before). A hold of under 17 s after the welcome stays a stated limit.
+       - **The first hand of a match** is held to the stand-in ledger (nine cases, amber with the end verified before, now red).
+       - **One or two honest server restarts** are amber, never red (81 honest reds before at two restarts).
+       - **Each meld, tile and hand size is checked on arrival**, so a malformed view can no longer crash the table screen.
+       - **The waiting save is written** when the table screen goes or the app goes to the background.
+       - **A match's record is kept** after "table gone".
+       - **The fuzzer** now models the app's writes, holds after a welcome and direct chains, and its oracle is narrower.
+
+       The checker's honest sweeps (slow and lossy links, rejoins, first-hand stand-ins, restarts) showed no new red. Its 38-row honest battery sample showed, against `d5e6158`, no new red, lost table or drop; 12 hands went from green to amber. Across 19,400 soak scenarios, against `d5e6158`, no honest scenario was redder and no hand a cheat touched was greener.
+     - **What its checks found, and what I did with it (2026-11-26).** Four defects, none from unit 20h's own changes:
+       - **Fixed: a slow journal turned an honest hand red** (major; 76 of 225 sweep runs). A move written to the journal after its hand had ended went out, and the honest table played it in the next hand. Such a move is now not sent. Its own sweeps now show no red in 225 slow-journal runs (76 before) or 660 app-write runs (33 before).
+       - **Now amber: a pass the server kept back and played at a later claim window, before the player acts** (major, older; green in 125 of 125 attacked hands). The server keeps a second tap, or a pass it dropped, answers no pings after it, and writes it in at a later window where the player could have claimed or won. Such a pass is now amber. In the checker's own probe, 0 of 396 attacked hands are green, against 165 of 371 on unit 20h's code. The rule is narrow on purpose. Applying it to every move made at an earlier decision added 49 honest ambers in 514 sweep hands; applying it only to a pass where the seat could claim or win added none.
+       - **Stated as limits (minor; never red, amber on return)**: a record taken back from the archive is lost if the saved-table write then fails, and two accounts at the same match on one device keep one record.
+     - **What is left (this was the last fairness round).** Each item below is a stated limit in `docs/FAIRNESS.md`, or an open seed the fuzzer's CI sample runs as an expected failure:
+       - holds under 17 s after a rejoin welcome with the pings withheld;
+       - a table move dropped with its connection and played over by the table (amber);
+       - the N1 family of holds (amber where red is due);
+       - the seat opened on another device right after a commit request (honest red, seed 5247);
+       - a move forged while the same move waits for a very slow journal write (green, seed 57);
+       - the archive's million-character bound.
 2. **Backdated first frames, then a delay: up to 74.5 s late and still green** (fairness, major). `docs/FAIRNESS.md` states this residual, but as "25 to 30 seconds". The challenger had the table play 17 of 17 of a victim's moves in a green hand, with the Fair play count at 0.
    - Closed by unit 20: each turn is measured against the table's answers to a ping a second; the bound is half the turn clock (2 s at Hyper). With the app's ping going out right behind its join, as it does, the probe's backdated frame is the answer to that ping, and every hand is amber with every turn counted. If the server backdates the deal itself instead and delays everything after it, pings included, the count still counts every turn (it measures turns against the answers to pings alone), and the hand is amber whenever the table plays over a move the player made with time on the screen's clock. What stays out of sight is a server whose whole clock runs behind from the first frame, or one that sends a single answer to a ping at once with its stamp moved back and everything after it late: to the phone that is a fast connection to a clock that is behind (a stated limit in FAIRNESS.md). The screen's clock counts that same clock, so such a server gains only the moves made in the last 1.5 s.
 3. **At Turbo and Hyper, a 15 s delay from the start lets the table play every turn while the hand stays green** (fairness, major; both skeptics confirmed it). This is inside the stated 17 s bound, and FAIRNESS.md gives its cost per speed. At a 4 s turn, though, it means the player never moves.
