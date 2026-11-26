@@ -18,6 +18,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { legalActions, withRules, type Action, type GameState } from '@mjm/engine';
+import { caveatKey } from '../src/index';
 import { runScenario } from './adversary/fuzz';
 import type { Scenario } from './adversary/scenario';
 import { Missed, scenario, seededDeals } from './support';
@@ -244,4 +245,80 @@ describe('a restored record that storage changed', () => {
       need(a.damaged && a.refused);
       expect(a.w.verdict().failures).toEqual([]);
     }));
+});
+
+/**
+ * Normal. At a claim window the seat passes, and the server keeps that pass from the table (`drop`: the table times the
+ * window out with its own pass), or the seat's app sends its pass twice and the server lets the first through and keeps
+ * the second from the table, never answering it (`tap`). From then on the server answers none of the seat's pings, so no
+ * answer pins when the table took the kept pass up. At the next claim window of the hand where the seat could claim or
+ * win, as soon as it opens and before any other move of the seat reached the table, the server writes a pass in the
+ * seat's name there (unit 20h's check: green before).
+ */
+function heldPass(code: string, reserve: 'drop' | 'tap') {
+  const st = { reserved: false, hand: -1, tc: -1, tap: false, idle: false, forged: false };
+  const w = wire({
+    code,
+    rules: NORMAL,
+    botDelayMs: 700,
+    journal: true,
+    think: () => 1_500,
+    upFilter: (m, w) => {
+      if (st.reserved && !st.forged && m.t === 'ping') return false;
+      if (m.t !== 'action') return true;
+      const g = w.host.game;
+      if (!st.reserved && !st.forged && g && claimWindow(g) && m.action.type === 'pass') {
+        Object.assign(st, { reserved: true, hand: g.handNumber, tc: m.turnCounter as number, idle: false });
+        if (reserve === 'tap') {
+          st.tap = true;
+          return true;
+        }
+        return false;
+      }
+      // The second tap: kept from the table, never answered.
+      if (reserve === 'tap' && st.reserved && !st.forged && m.action.type === 'pass' && m.turnCounter === st.tc) return false;
+      // Another move of the seat reaches the table first: the attack needs none, so it starts again.
+      if (st.reserved && !st.forged) st.reserved = false;
+      return true;
+    },
+    onTick: (w) => {
+      const g = w.host.game;
+      if (!g || w.host.phase !== 'playing') return;
+      if (st.tap) {
+        st.tap = false;
+        w.c.act({ type: 'pass' });
+      }
+      if (!st.reserved || st.forged) return;
+      // A reserve left unused when its hand ended is made again in the next.
+      if (g.handNumber !== st.hand) {
+        st.reserved = false;
+        return;
+      }
+      // The window of the reserve is over once the seat is asked nothing.
+      if (legalActions(g, 0).length === 0) st.idle = true;
+      else if (st.idle && claimWindow(g) && legalActions(g, 0).some((a) => CLAIMS.has(a.type))) {
+        st.forged = true;
+        apply(w, 0, { type: 'pass' });
+      }
+    },
+  });
+  w.dealt();
+  for (let e = 0; e < 7_200_000 && w.host.phase !== 'match_over'; e += 500) w.step();
+  for (let e = 0; e < 120_000 && !w.c.state.matchOver; e += 500) w.step();
+  need(st.forged);
+  return w.c.state.audits.find((a) => a.audit.handNumber === st.hand);
+}
+
+describe('a pass the server kept back, written in the player’s name at a later claim window', () => {
+  it.each(['drop', 'tap'] as const)(
+    'reserve %s, pings unanswered after it: amber (a pass of a decision that had closed, where the seat could claim), never green',
+    (reserve) =>
+      scenario((i) => {
+        const audit = heldPass(`HP${reserve}${i}`, reserve);
+        need(audit !== undefined);
+        expect(audit?.status, JSON.stringify(keys(audit))).not.toBe('ok');
+        expect(audit?.caveats.some((c) => caveatKey(c) === 'lateCopy') || audit?.status === 'failed', JSON.stringify(keys(audit))).toBe(true);
+      }),
+    60_000,
+  );
 });

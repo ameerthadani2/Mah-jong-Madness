@@ -157,10 +157,10 @@ export const AUDIT_CAVEATS = {
   // The table played for this seat over a legal move it sent with more of the turn's clock left than the
   // best round trip of the hand and `FLIGHT_SLACK_MS` explain losing on the way (`flightAllowance`).
   inFlight: 'The table played for this seat while a move it had sent in good time was still on its way',
-  // The log credits this seat, at a turn, with a move it made on an earlier turn, while it made another move on that turn
-  // (the copy rule, `replayChecked`): a connection slow toward the table delivers the earlier move there, and a server
-  // that held it back can play it there in place of the later one.
-  lateCopy: 'The table played a move this seat made on an earlier turn in place of the move it made on that turn, so this device cannot vouch for that turn',
+  // The log credits this seat, at a turn, with a move it made on an earlier turn, while it made another move on that turn,
+  // or with a pass of a decision that had closed, where it could claim or win (the copy rule, `replayChecked`): a
+  // connection slow toward the table delivers the earlier move there, and a server that held it back can play it there.
+  lateCopy: 'The table played a move this seat made on an earlier turn at a later one, in place of the move it made there or a claim or win it could have made, so this device cannot vouch for that turn',
   // This device pinged the table through the hand and no answer came back: nothing tied the table's clock to its own.
   noAnswer: "The table did not answer this device's timing checks during this hand",
   // The table moved on past the hand this device was on, while its link was down, and sent no record of it this device
@@ -1454,13 +1454,17 @@ export class TableClient {
       this.sendMove(msg, filed);
       return;
     }
-    // Out on the link it was filed for, once the journal has it, as long as this client may still move there (and off the
-    // record if not: the link it was made on is gone, or the seat with it).
+    // Out on the link it was filed for, once the journal has it, as long as this client may still move there and the hand
+    // it was made in is still under way (and off the record if not: the link it was made on is gone, or the seat with it,
+    // or the hand is over). A table plays a move in whatever hand it has on: one written after its hand ended would be
+    // played in the next, whose record does not hold it, for a seat whose player never chose it there.
     const link = this.link;
     const epoch = this.epoch;
+    const hand = v.handNumber;
     (wrote as Promise<void>).then(
       () => {
-        if (this.link === link && this.epoch === epoch && this.mayAct()) this.sendMove(msg, filed);
+        const under = !this.handsEnded.has(hand) && this.state.view?.handNumber === hand;
+        if (this.link === link && this.epoch === epoch && this.mayAct() && under) this.sendMove(msg, filed);
         else drop();
       },
       unfile,
@@ -3759,6 +3763,20 @@ export class TableClient {
     /** The turn of this seat's last move in the log so far (-1: none), and, for each table move, the one before it. */
     let lastMine = -1;
     const prevOf = new Map<number, number>();
+    /**
+     * The latest turn so far at which this seat was asked nothing (it had no legal move in the state the replay had reached:
+     * another seat's turn, a claim it was not offered or had answered). A move of this seat made before that turn was
+     * made for a decision that had closed by then (`lateCopy`, below).
+     */
+    let idleAt = -1;
+    /** This seat could claim or win in state `st` (a legal move other than a pass). */
+    const couldClaim = (st: GameState, seat: number): boolean => {
+      try {
+        return legalActions(st, seat).some((a) => a.type !== 'pass');
+      } catch {
+        return false;
+      }
+    };
     const scope = this.lateScope();
     // The table's answers to this run's pings during the hand are fixed points like the deal and this seat's
     // moves (they count wherever those do). With them every turn is measured by `lateBy` against
@@ -3806,6 +3824,13 @@ export class TableClient {
       if (!isObject(entry) || entry.n !== s.turnCounter) problems.add(`The log numbers the move made at turn ${s.turnCounter} as another turn`);
       // The refusals the host sent before it played this turn answer their moves first.
       takeRefusals(s.turnCounter);
+      if (me !== null) {
+        try {
+          if (legalActions(s, me).length === 0) idleAt = s.turnCounter;
+        } catch {
+          // (A state the engine cannot read is judged by the replay below.)
+        }
+      }
       if (play && me !== null && isObject(entry) && entry.seat === me) {
         const n = entry.n;
         const prevMine = lastMine;
@@ -3842,6 +3867,13 @@ export class TableClient {
               const onShow = play.seen.find((f) => f.kept !== false && f.tc === n && f.run === match.run && (f.seg ?? 0) === (match.seg ?? 0));
               const sentLate = typeof outAt === 'number' && !!onShow && outAt >= onShow.at;
               if (match.tc < n && notes && !sentLate && sent.some((x) => x !== match && x.tc === n && x.legal === true && !sameActionSafe(x.action, entry.action, s, me))) notes.lateCopy = true;
+              // So is a pass made for a decision that had closed before this turn (the seat was asked nothing at a turn in
+              // between: its clock ran out and the table moved for it, or the claim it answered was settled), played here,
+              // where the seat could have claimed or won: a pass that reached an honest table late is played so, and so is
+              // one a server kept back (a second tap, or a pass it dropped) to take a claim or a win from the seat. The same,
+              // amber. (Not other moves of an earlier decision: a player on a slow connection often makes a move again, or
+              // another in its place, and none of those takes a claim away.)
+              if (idleAt > match.tc && notes && !sentLate && isObject(entry.action) && entry.action.type === 'pass' && couldClaim(s, me)) notes.lateCopy = true;
               judgeShown(play, n, prevMine);
               // The host cannot have played this move before this device sent it: a fixed point between the
               // two clocks. Of copies of the same move sent more than once, the first counts (the host may
@@ -4213,7 +4245,7 @@ interface ReplayNotes {
   overflow?: boolean;
   /** The table played for this seat over a move it sent in good time (`AUDIT_CAVEATS.inFlight`). */
   inFlight?: boolean;
-  /** The log credits this seat with a move it made on an earlier turn, in place of the move it made on that turn (`AUDIT_CAVEATS.lateCopy`). */
+  /** The log credits this seat with a move it made on an earlier turn, in place of the move it made on that turn or of a claim it could make there (`AUDIT_CAVEATS.lateCopy`). */
   lateCopy?: boolean;
   /** The table answered none of the pings this device sent during the hand (`AUDIT_CAVEATS.noAnswer`). */
   noAnswer?: boolean;

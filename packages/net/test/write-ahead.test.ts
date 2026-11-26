@@ -13,6 +13,8 @@ import { describe, expect, it } from 'vitest';
 import { legalActions, sameAction, withRules, type Action, type GameState } from '@mjm/engine';
 import { LoopbackHub, TableClient, TableHost, transportLink, type ClientMessage, type HostMessage, type JournalEntry, type Link, type SerializedClient } from '../src/index';
 import { Missed, scenario, scenarioAsync, seededDeals } from './support';
+import { runScenario } from './adversary/fuzz';
+import type { Scenario } from './adversary/scenario';
 import { wire, type Wire } from './wire';
 
 seededDeals();
@@ -444,5 +446,22 @@ describe('a journal write that takes long (a phone whose storage is slow)', () =
       verdicts.push(w.verdict());
     }
     expect(verdicts.filter((v) => v.status === 'failed')).toEqual([]);
+  });
+});
+
+describe('a journal write that outlasts its hand (a phone whose storage is very slow)', () => {
+  // Found by unit 20h's check: every write of the journal takes 5 s (Hyper) or 40 s (Normal), each waiting behind the one
+  // before, as the app chains them. Moves made late in a hand were written, and went out, after that hand had ended, and
+  // the honest table played one in the next hand, whose record does not hold it (red, moveChanged). A move whose hand is
+  // over by the time the journal has it is not sent (as one whose link is gone): the table plays its own move for the seat.
+  const player = { thinkMs: [800, 2500], retry: { kind: 'other', afterMs: 500 }, readyMs: 1000 };
+  const cases: Array<[string, Scenario]> = [
+    ['sj-hyper-deal0-5000', { seed: 969601, speed: 'hyper', hands: 3, othersPresent: true, botDelayMs: 300, player, events: [{ at: { on: 'deal', hand: 0, ms: 1 }, do: { a: 'slowJournal', ms: 5000, forMs: 120000 } }] } as Scenario],
+    ['app-normal-res0-slow40-only', { seed: 959501, speed: 'normal', hands: 3, othersPresent: true, botDelayMs: 300, player, events: [{ at: { on: 'result', hand: 0, ms: 1 }, do: { a: 'slowJournal', ms: 40000, forMs: 90000 } }] } as Scenario],
+  ];
+  it.each(cases)('%s: no hand red, and no move goes out after its hand', (_name, s) => {
+    const o = runScenario(s);
+    expect([...o.judgement.verdicts.values()].filter((v) => v.status === 'failed').map((v) => v.failures)).toEqual([]);
+    expect(o.judgement.violations.map((v) => v.property)).not.toContain('falseRed');
   });
 });
