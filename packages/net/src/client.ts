@@ -1834,8 +1834,12 @@ export class TableClient {
     return ++this.outCount;
   }
 
-  /** Send a move this client filed, noting where it went in the order of the frames this run sent (`markReached`). */
+  /**
+   * Send a move this client filed, noting where it went in the order of the frames this run sent (`markReached`), and, for
+   * a move filed with the app's journal, when it went out (`SentAction.out`: it waited for the journal's write).
+   */
   private sendMove(msg: ClientMessage, filed: SentAction): void {
+    if (filed.seq !== undefined) filed.out = this.now();
     this.movesOut.set(filed, this.send(msg));
   }
 
@@ -3684,14 +3688,18 @@ export class TableClient {
               if (droppedBefore(sent.indexOf(match), n, (x) => sameActionSafe(x.action, entry.action, s, me))) onMoves(`The table left a move this seat sent unanswered and played another of its moves in its place (turn ${n})`);
               // A move made on an earlier turn, played here in place of another move this seat made on this very turn: a
               // connection slow toward the table does that, and so does a server that held the earlier move back and played
-              // it here. This device cannot tell the two apart: the hand is amber (`lateCopy`).
-              if (match.tc < n && notes && sent.some((x) => x !== match && x.tc === n && x.legal === true && !sameActionSafe(x.action, entry.action, s, me))) notes.lateCopy = true;
+              // it here. This device cannot tell the two apart: the hand is amber (`lateCopy`). Not when the move went out
+              // only once this turn was on show here (it waited for the app's journal, `SentAction.out`): nothing held it.
+              const outAt = match.out ?? match.at;
+              const onShow = play.seen.find((f) => f.tc === n && f.run === match.run && (f.seg ?? 0) === (match.seg ?? 0));
+              const sentLate = typeof outAt === 'number' && !!onShow && outAt >= onShow.at;
+              if (match.tc < n && notes && !sentLate && sent.some((x) => x !== match && x.tc === n && x.legal === true && !sameActionSafe(x.action, entry.action, s, me))) notes.lateCopy = true;
               judgeShown(play, n, prevMine);
               // The host cannot have played this move before this device sent it: a fixed point between the
               // two clocks. Of copies of the same move sent more than once, the first counts (the host may
               // have played that one), with the round trip from it to the first frame that shows the move.
               const f = frameAfter(n);
-              const first = firstSend(copies);
+              const first = firstSend(copies.map((x) => ({ ...x, at: x.out ?? x.at })));
               // (Not from moves restored damaged, `movesDoubt`: the time a move was sent may then be any.)
               if (!movesDoubt && f && f.kept !== false && first && typeof first.at === 'number' && typeof f.now === 'number' && f.epoch === first.epoch && f.at >= first.at) anchors.push({ at: first.at, now: f.now, era: f.era ?? 0, run: first.run, seg: first.seg, fat: f.at });
             } else if (sent.some((x) => !x.used && x.refusedAt === undefined && x.tc <= n)) problems.add(`The log changed a move this seat made (turn ${n})`);
@@ -3775,15 +3783,24 @@ export class TableClient {
               const ends = p && Number.isFinite(end) ? Math.max(own, p.at + end - (p.now as number)) : own;
               return ends > Number.NEGATIVE_INFINITY ? { shown: q.atLo ?? q.at, ends } : null;
             };
+            // (Timed from when the move went out: one filed with the app's journal waited for its write first, `SentAction.out`.)
             const timely = (x: (typeof sent)[number] & { at: number }): boolean => {
               const e = endIn(x.run);
-              return e !== null && x.at >= e.shown && x.at + flightAllowance(x, anchors, scope, limit) <= e.ends;
+              const t = x.out ?? x.at;
+              return e !== null && t >= e.shown && t + flightAllowance({ ...x, at: t }, anchors, scope, limit) <= e.ends;
             };
             if (r0 && sent.some((x) => lying(x) && x.tc >= r0.tc && timely(x))) notes.inFlight = true;
           }
           // One left lying for more than `MOVE_SLACK_MS` (time the app was not running left out) over a link
-          // that never dropped: no network is that slow.
-          if (after && sent.some((x) => lying(x, true) && after.at - x.at - pausedIn(scopeOf(scope, x.run)?.pauses ?? [], x.at, after.at) > MOVE_SLACK_MS)) {
+          // that never dropped: no network is that slow. Counted from when it went out: a move filed with the app's
+          // journal waits for the journal's write first (`SentAction.out`), and one whose going out is not known (given
+          // back by the journal to a restored client) is not counted.
+          const outAt = (x: (typeof sent)[number] & { at: number }): number | null => (typeof x.out === 'number' ? x.out : x.seq === undefined ? x.at : null);
+          const leftLying = (x: (typeof sent)[number] & { at: number }): boolean => {
+            const t = outAt(x);
+            return after !== null && t !== null && after.at - t - pausedIn(scopeOf(scope, x.run)?.pauses ?? [], t, after.at) > MOVE_SLACK_MS;
+          };
+          if (after && sent.some((x) => lying(x, true) && leftLying(x))) {
             if (after.kept === false) {
               if (notes) notes.damaged = true;
             } else onMoves(`The table ignored a move this seat sent in good time and played its own instead (turn ${n})`);

@@ -245,8 +245,14 @@ export interface SentAction {
   tc: number;
   action: Action;
   epoch: number;
-  /** This device's clock when it sent the move. */
+  /** This device's clock when it filed the move (when it sent it, without the app's journal). */
   at?: number;
+  /**
+   * This device's clock when the move went out, for a move filed with the app's journal (`TableClientOptions.writeAhead`):
+   * it waits for the journal's write first. Absent for such a move: not known (one the journal gave back to a restored
+   * client, or one that never went out). The checks that time a move from when it went out read this (`sentAt`).
+   */
+  out?: number;
   /** The run of the app and of this device's clock `at` was read in. */
   run?: string;
   seg?: number;
@@ -681,12 +687,23 @@ function cleanRun<T extends object>(x: T, runKey: keyof T, segKey: keyof T): T {
   return out;
 }
 
-/** A move sent, from a saved copy: the turn the table had taken it up by (`SentAction.byTurn`) kept only when it is a turn number. */
+/**
+ * A move sent, from a saved copy: the turn the table had taken it up by (`SentAction.byTurn`) kept only when it is a turn
+ * number, and when it went out (`SentAction.out`) only when it is a reading of a clock.
+ */
 function cleanReached(x: SentAction): SentAction {
-  if (x.byTurn === undefined || isCount(x.byTurn)) return x;
-  const { byTurn: _drop, ...rest } = x;
-  void _drop;
-  return rest;
+  let out = x;
+  if (out.byTurn !== undefined && !isCount(out.byTurn)) {
+    const { byTurn: _drop, ...rest } = out;
+    void _drop;
+    out = rest;
+  }
+  if (out.out !== undefined && !finiteTime(out.out)) {
+    const { out: _drop, ...rest } = out;
+    void _drop;
+    out = rest;
+  }
+  return out;
 }
 
 /**

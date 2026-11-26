@@ -369,3 +369,60 @@ describe('after an app restart, the server holds the table back and plays in the
       expect(a.w.verdict().failures).toEqual([]);
     }));
 });
+
+describe('a journal write that takes long (a phone whose storage is slow)', () => {
+  /**
+   * Normal, an honest table. The journal's write of the seat's `k`-th move takes `delayMs` on the table's clock (the writes
+   * after it wait behind it, as the app chains them); the others end at once. Each move goes out once it is written, so the
+   * slow one goes out late, and the table plays its own move for the seat once the clock has run out.
+   */
+  async function slow(code: string, k: number, delayMs: number) {
+    const due: Array<{ at: number; done: () => void }> = [];
+    let chain: Promise<void> = Promise.resolve();
+    let n = 0;
+    const w = wire({
+      code,
+      rules: NORMAL,
+      botDelayMs: 700,
+      journal: true,
+      journalWrite: (_e, w) => {
+        const wait = ++n === k ? delayMs : 0;
+        chain = chain.then(() => new Promise<void>((done) => (wait === 0 ? done() : due.push({ at: w.clock.now + wait, done }))));
+        return chain;
+      },
+      onTick: (w) => {
+        for (let i = 0; i < due.length; ) {
+          if (due[i].at <= w.clock.now) due.splice(i, 1)[0].done();
+          else i++;
+        }
+      },
+    });
+    const flush = () => new Promise<void>((r) => setImmediate(r));
+    for (let e = 0; e < 3_600_000 && w.host.phase !== 'hand_over' && w.host.phase !== 'match_over'; e += 500) {
+      w.step();
+      await flush();
+    }
+    for (let e = 0; e < 120_000 && w.c.state.lastResult === null; e += 500) {
+      w.step();
+      await flush();
+    }
+    return { w, slowFiled: n >= k };
+  }
+
+  it('writes of 31 s and 45 s: the move goes out late and the table has played its own; no hand red (a move is timed from when it went out)', async () => {
+    const verdicts: Array<ReturnType<Wire['verdict']>> = [];
+    for (const [code, k, ms] of [
+      ['WS1', 3, 45_000],
+      ['WS2', 3, 45_000],
+      ['WS3', 4, 45_000],
+      ['WS4', 3, 31_000],
+      ['WS5', 2, 45_000],
+      ['WS6', 3, 60_000],
+    ] as const) {
+      const { w, slowFiled } = await slow(code, k, ms);
+      need(slowFiled && w.c.state.lastAudit !== null);
+      verdicts.push(w.verdict());
+    }
+    expect(verdicts.filter((v) => v.status === 'failed')).toEqual([]);
+  });
+});

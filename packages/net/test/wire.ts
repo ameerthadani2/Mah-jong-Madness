@@ -84,6 +84,11 @@ export interface Plan {
    * first, and a client restored by `restart` is given what the journal holds (default: no journal).
    */
   journal?: boolean;
+  /**
+   * With `journal`: how the journal's write of each entry ends, given the entry (it is in `w.journal` already). Nothing:
+   * at once, as the web build writes. A promise: the move goes out once it is fulfilled (a phone's storage).
+   */
+  journalWrite?: (e: JournalEntry, w: Wire) => void | Promise<void>;
 }
 
 /** One link from the phone to the table. */
@@ -394,7 +399,14 @@ export function wire(plan: Plan) {
   const wallOf = () => clock.now + (plan.devSkew?.(clock.now) ?? 0);
   const clientOpts = {
     ...(plan.asleep ? { now: wallOf, monotonic: () => mono } : { now: wallOf }),
-    ...(plan.journal ? { writeAhead: (e: JournalEntry) => void w.journal.push(e) } : {}),
+    ...(plan.journal
+      ? {
+          writeAhead: (e: JournalEntry) => {
+            w.journal.push(e);
+            return plan.journalWrite?.(e, w);
+          },
+        }
+      : {}),
   };
   w.c = new TableClient(w.line.link, 'Victim', undefined, {}, clientOpts);
   w.c.join(plan.seat);

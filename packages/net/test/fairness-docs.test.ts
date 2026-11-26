@@ -52,7 +52,7 @@ describe('the fair play charter states the late-turn limits the table client use
   });
 
   it('a move sent in good time that the table plays over is amber; in good time is more than 1.5 s before the end of the screen’s clock; one left 30 s, pauses left out, fails', () => {
-    expect(movesRow).toContain(`a legal move left unanswered for more than ${s(MOVE_SLACK_MS)} seconds and replaced by the table's own fails (time your app was not running is left out of the ${s(MOVE_SLACK_MS)} seconds)`);
+    expect(movesRow).toContain(`a legal move left unanswered for more than ${s(MOVE_SLACK_MS)} seconds and replaced by the table's own fails (counted from when the move went out, after the journal's write, above; time your app was not running is left out of the ${s(MOVE_SLACK_MS)} seconds)`);
     expect(movesRow).toContain(`more than ${s(FLIGHT_SLACK_MS)} seconds before the end of the clock your screen showed`);
     expect(movesRow).toContain(`more than the best round trip of the hand plus ${s(FLIGHT_SLACK_MS)} seconds, at most half the turn clock`);
     expect(movesRow).toContain(`a move you sent in the last ${s(FLIGHT_SLACK_MS)} seconds your screen showed`);
