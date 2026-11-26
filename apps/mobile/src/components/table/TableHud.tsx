@@ -1,6 +1,7 @@
 /** The strip above the table: round, wall count, room code, my clock, the status line on short screens, and the emote / coach / leave buttons. */
 import React from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
+import { Text } from '../Text';
 import { WINDS, type TableView } from '@mjm/engine';
 import { colors, fonts } from '../../theme';
 import { useT } from '../../i18n';

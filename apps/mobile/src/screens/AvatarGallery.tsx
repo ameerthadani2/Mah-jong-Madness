@@ -4,7 +4,8 @@
  * plates in their table states, so avatar changes can be reviewed at a glance.
  */
 import React from 'react';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ScrollView, StyleSheet, View } from 'react-native';
+import { Text } from '../components/Text';
 import { Avatar, AvatarPlate, AVATAR_IDS, avatarName } from '../components/Avatars';
 import { useT } from '../i18n';
 import { colors } from '../theme';

@@ -10,7 +10,7 @@ Nothing in the UI is an emoji or a system icon. Every icon, avatar, illustration
 
 | File | What it draws |
 | --- | --- |
-| `theme.ts` | Colour, radius, spacing and font tokens; text helpers that keep Chinese on the system CJK font |
+| `theme.ts` | Colour, radius, spacing and font tokens; the system Chinese faces and the weights Chinese takes beside each Latin face |
 | `components/Ui.tsx` | Panels, two-tone pressable buttons, chips, toggles, steppers, `StrokeText` display type, screen header |
 | `components/Tile.tsx` | SVG tiles: ivory gradient face, bevel, thickness layer, suit art per kind, patterned backs, highlights |
 | `components/Avatars.tsx`, `components/portraits/` | Twelve PokerBros-style caricature portraits (auntie, uncle, grandma, boss, lady, shades, hoops, cowboy, student, chef, sporty, gent) on dark violet spotlight discs, and the seat plate with a thin gold ring, turn timer, dealer badge and seat wind. Open the web build with `#avatars` for a gallery |
@@ -49,7 +49,8 @@ Every filled shape has the same build: a lighter top tone, the fill, a darker ha
 * **Luckiest Guy**: the logo wordmark only. On a Traditional Chinese device the wordmark reads the locale's app name (`common.appName`, 麻將狂熱) in the display face, with the English name small and gold beneath. On the web the page's title is that name too (麻將狂熱 in Traditional Chinese, Mahjong Mania in English), set with the page's `lang` whenever the language is chosen or changed (`i18n/resolve.ts` `applyDocumentLocale`); the app has no router that would set a title of its own.
 * **Fredoka** 500–700: UI labels and buttons.
 * **Nunito** 600–800: body text.
-* **Chinese**: never given a font family, so iOS uses PingFang TC and Android uses Noto Sans CJK at a heavy weight. CJK fonts are not bundled (they would add megabytes).
+* **Chinese**: the system's Chinese face, heavy: PingFang TC on iOS, Noto Sans CJK on Android, and on the web the first Traditional Chinese face the device has (`theme.ts` `CJK_FACES`). The Latin faces have no Chinese glyphs, and a platform's fallback for a missing glyph is its regular weight, so the app's `Text` (`components/Text.tsx`, which every screen uses in place of React Native's) gives Chinese in a Latin face the Chinese face at 900 beside display and UI type and 700 in body text; a Chinese word in English text takes it too. CJK fonts are not bundled (they would add megabytes).
+* **Whole words**: a line may break between any two Chinese characters, so the same `Text` keeps scoring terms (門清自摸), tile names (五筒, 9 Dot) and a number with its unit (15 秒, 1 台) whole (`logic/keepWhole.ts`: a word joiner inside a term, a no-break space inside a number and its unit).
 
 Fonts load in `App.tsx` behind a branded loading screen; after three seconds the app falls back to system fonts so it never shows a blank screen.
 

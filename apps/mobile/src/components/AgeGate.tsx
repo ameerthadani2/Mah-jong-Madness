@@ -3,7 +3,8 @@
  * `AgeGate` asks; `AgeBlocked` is the polite screen for players under the limit.
  */
 import React, { useState } from 'react';
-import { ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ScrollView, StyleSheet, TextInput, View } from 'react-native';
+import { Text } from './Text';
 import { useT } from '../i18n';
 import { AGE_LIMIT, allowedFromYear, parseBirthYear } from '../legal/age';
 import { useAgeGate } from '../legal/useAgeGate';

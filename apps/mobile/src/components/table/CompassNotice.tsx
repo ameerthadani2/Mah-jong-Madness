@@ -4,7 +4,8 @@
  * Android and the web read the region; iOS ignores live regions and is told through `useAnnounce`.
  */
 import React, { useEffect, useRef, useState } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
+import { Text } from '../Text';
 import { useT } from '../../i18n';
 import { useAnnounce } from './announce';
 import { hudNotice, type HudFacts } from './hudSpeech';

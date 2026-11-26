@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
-import { ScrollView, Share, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ScrollView, Share, StyleSheet, TextInput, View } from 'react-native';
+import { Text } from '../components/Text';
 import { BOT_SKILLS, RULE_PRESETS, rulesFromPreset, type BotSkill, type RuleSet } from '@mjm/engine';
 import { useApp } from '../app-state';
 import { clubErrorText, clubLink, clubListLine, clubMemberCount, clubsApi, hasPendingRequest, httpBase, isMemberView, ownerRestricted, PENDING_POLL_MS, type ClubContext, type ClubListing, type ClubMember, type ClubTable } from '../api/clubs';

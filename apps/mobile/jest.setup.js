@@ -24,3 +24,11 @@ jest.mock('expo-audio', () => ({
   createAudioPlayer: jest.fn(() => ({ volume: 1, play: jest.fn(), seekTo: jest.fn(async () => undefined), remove: jest.fn() })),
   setAudioModeAsync: jest.fn(async () => undefined),
 }));
+
+// The app's Text joins a scoring term's characters with a word joiner (U+2060, src/logic/keepWhole.ts) so a line never
+// splits it. A word joiner has no width and a screen reader skips it; text queries and toHaveTextContent skip it too,
+// and so match the text as it was written. (A no-break space already matches a space: the default normalizer folds
+// whitespace.) keepWhole's own tests and the text render tests check the joins themselves.
+const rntlMatches = require('@testing-library/react-native/dist/matches');
+const matchWritten = rntlMatches.matches;
+rntlMatches.matches = (matcher, text, normalizer, exact) => matchWritten(matcher, typeof text === 'string' ? text.split('⁠').join('') : text, normalizer, exact);

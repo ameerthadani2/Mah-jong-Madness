@@ -8,6 +8,7 @@ import type { Session } from '../game/session';
 import { FakeProviders } from '../test/providers';
 import { setLocalePreference } from '../i18n';
 import { colors } from '../theme';
+import { unjoined } from '../logic/keepWhole';
 
 type AuditEntry = ClientState['audits'][number];
 
@@ -197,7 +198,8 @@ describe('the fair play screen', () => {
   it('speaks Traditional Chinese, the reasons and the count included', async () => {
     setLocalePreference('zh-TW');
     await renderFairness(fakeSession({ audits: HANDS, claimsPassedAway: PASSED }).session);
-    expect(screen.getAllByText(/^第 \d 局$/).map((n) => n.props.children)).toEqual(['第 3 局', '第 2 局', '第 1 局']);
+    // Drawn with a no-break space between a number and its unit (src/logic/keepWhole.ts).
+    expect(screen.getAllByText(/^第 \d 局$/).map((n) => unjoined(n.props.children))).toEqual(['第 3 局', '第 2 局', '第 1 局']);
     expect(screen.getAllByText(/^(已驗證|驗證失敗|已記錄——這副牌可能是伺服器挑的)$/).map((n) => n.props.children)).toEqual(['已記錄——這副牌可能是伺服器挑的', '驗證失敗', '已記錄——這副牌可能是伺服器挑的', '已驗證']);
     expect(screen.getByText('伺服器替這個位子產生了祕密（太慢或不在線上），所以這副牌可能是它挑的。')).toBeOnTheScreen();
     expect(screen.getByText('牌桌替你出牌，卻放掉了你可以胡的牌（第 12 手）。')).toBeOnTheScreen();

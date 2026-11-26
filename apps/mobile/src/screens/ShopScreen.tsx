@@ -1,7 +1,8 @@
 import { track } from '../telemetry';
 import React, { useEffect, useRef, useState } from 'react';
 import { plansInOrder, shopTabFor, type ShopFocus, type ShopTab } from '../logic/shopFocus';
-import { Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, View, useWindowDimensions } from 'react-native';
+import { Text } from '../components/Text';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useApp } from '../app-state';
 import { useAuth } from '../auth/AuthProvider';

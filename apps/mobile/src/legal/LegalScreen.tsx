@@ -4,7 +4,8 @@
  * screen without a route), or rendered directly by a route if one is added later.
  */
 import React from 'react';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ScrollView, StyleSheet, View } from 'react-native';
+import { Text } from '../components/Text';
 import { useT } from '../i18n';
 import { colors, fonts, space } from '../theme';
 import { Card, fontFor, H2, P, ScreenHeader } from '../components/Ui';

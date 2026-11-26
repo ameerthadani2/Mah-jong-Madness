@@ -5,7 +5,8 @@
  * the question is not shown again. Only the services this build has keys for are listed.
  */
 import React from 'react';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ScrollView, StyleSheet, View } from 'react-native';
+import { Text } from './Text';
 import { httpBase } from '../api/http';
 import { useApp } from '../app-state';
 import { useAuth } from '../auth/AuthProvider';

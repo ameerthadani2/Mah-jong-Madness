@@ -4,7 +4,8 @@
  * reader is told about the clock, and the clock-tick sound (the seat timer ring is TableParts' SeatPlate).
  */
 import React, { useEffect, useState } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
+import { Text } from '../Text';
 import { useClockTick, useCountdown, useTurnCountdown } from '../../game/useTable';
 import { colors, fonts } from '../../theme';
 import { useT } from '../../i18n';

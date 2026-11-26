@@ -6,7 +6,8 @@
  * full-screen sheet (src/legal/LegalScreen.tsx), so it works from any screen without a route.
  */
 import React, { useState } from 'react';
-import { Linking, Modal, Platform, Pressable, StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
+import { Linking, Modal, Platform, Pressable, StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
+import { Text } from './Text';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useT } from '../i18n';
 import { legalTarget, readLegalEnv, type LegalDoc } from '../legal/links';

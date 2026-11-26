@@ -4,7 +4,8 @@
  * at that moment. Shown under the standings, which these matches never count toward.
  */
 import React from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
+import { Text } from './Text';
 import type { ClosedMatch } from '../api/clubs';
 import { useT } from '../i18n';
 import { colors, fonts } from '../theme';

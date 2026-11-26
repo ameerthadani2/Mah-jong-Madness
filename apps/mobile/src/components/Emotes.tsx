@@ -3,7 +3,7 @@
  * not recognise (e.g. text from an older client) is shown as plain text.
  */
 import React from 'react';
-import { Text } from 'react-native';
+import { Text } from './Text';
 import Svg, { Circle, Ellipse, G, Path, Rect, Text as SvgText } from 'react-native-svg';
 import { colors } from '../theme';
 import { isPackEmoteId } from '../monetisation/cosmetics';

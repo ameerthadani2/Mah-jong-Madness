@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Platform, Pressable, StyleSheet, Text, TextInput, View, type StyleProp, type TextStyle, type ViewStyle } from 'react-native';
+import { Platform, Pressable, StyleSheet, TextInput, View, type StyleProp, type TextStyle, type ViewStyle } from 'react-native';
+import { cjkStyle, Text } from './Text';
 import { atLimit, HOLD_DELAY_MS, HOLD_REPEAT_MS, holdMultiplier, stepped, typedValue } from '../logic/stepper';
 import { colors, fonts, hasCJK, pillTones, radius, space, type PillTone } from '../theme';
 import { Icon, type IconName } from './Icons';
@@ -35,9 +36,9 @@ function childText(children: React.ReactNode): string {
   return '';
 }
 
-/** Picks a Latin face, or leaves fontFamily unset (system CJK, heavy) when the text is Chinese. */
+/** Picks a Latin face, or the system's Chinese face, heavy, when the text is Chinese (see ./Text.tsx). */
 export function fontFor(children: React.ReactNode, latin: string, cjkWeight: TextStyle['fontWeight'] = '900'): TextStyle {
-  return hasCJK(childText(children)) ? { fontWeight: cjkWeight } : { fontFamily: latin };
+  return hasCJK(childText(children)) ? cjkStyle(latin, cjkWeight) : { fontFamily: latin };
 }
 
 /**

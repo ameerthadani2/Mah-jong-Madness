@@ -8,7 +8,8 @@
  * least of all Win, is ever cut at its edge.
  */
 import React, { useEffect, useState } from 'react';
-import { Pressable, StyleSheet, Text, View, type LayoutChangeEvent } from 'react-native';
+import { Pressable, StyleSheet, View, type LayoutChangeEvent } from 'react-native';
+import { Text } from '../Text';
 import { kindOf, type Action, type Hint, type TableView, type TileId } from '@mjm/engine';
 import { colors, fonts } from '../../theme';
 import { useT, type Locale } from '../../i18n';

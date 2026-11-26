@@ -5,7 +5,8 @@
  */
 import React, { useState } from 'react';
 import { caveatText, endNote, failureText } from '../../logic/fairnessText';
-import { Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import { Modal, Platform, Pressable, ScrollView, StyleSheet, View, useWindowDimensions } from 'react-native';
+import { Text } from '../Text';
 import type { HandResult, TableView, WinRecord } from '@mjm/engine';
 import type { ClientState } from '@mjm/net';
 import { colors, fonts, nameFont, space } from '../../theme';

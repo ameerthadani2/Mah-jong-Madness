@@ -49,7 +49,11 @@ describe('the Learn screen', () => {
   it('shows every lesson and practice blurb whole: no line limit cuts a sentence', async () => {
     await renderLearn();
     // The sentences: the welcome, each practice card's text and each lesson's summary (buttons and pills keep one line).
-    const sentences = screen.getAllByText(/\S/).filter((el) => /\w[^.!?]*[.!?]$/.test(String([el.props.children].flat().join(''))) && String([el.props.children].flat().join('')).length > 30);
+    // A sentence with a Chinese word in it draws that word in a nested Text (components/Text.tsx): match the sentence
+    // itself (a query returns the deepest Text that matches), and read through the nested Text for its length.
+    const textOf = (n: unknown): string =>
+      typeof n === 'string' || typeof n === 'number' ? String(n) : Array.isArray(n) ? n.map(textOf).join('') : n && typeof n === 'object' && 'props' in n ? textOf((n as { props: { children?: unknown } }).props.children) : '';
+    const sentences = screen.getAllByText(/\w[^.!?]*[.!?]$/).filter((el) => textOf(el.props.children).length > 30);
     expect(sentences.length).toBeGreaterThan(LESSONS.length);
     for (const el of sentences) expect(el.props.numberOfLines).toBeUndefined();
   });

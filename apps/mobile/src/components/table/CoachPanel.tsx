@@ -12,7 +12,8 @@
  *   its reason, and Pass where it would let a claim go by), in a modal sheet at the reader's text size.
  */
 import React, { useState } from 'react';
-import { Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions, type StyleProp, type TextStyle, type ViewStyle } from 'react-native';
+import { Modal, Platform, Pressable, ScrollView, StyleSheet, View, useWindowDimensions, type StyleProp, type TextStyle, type ViewStyle } from 'react-native';
+import { Text } from '../Text';
 import type { Hint } from '@mjm/engine';
 import { colors, fonts, radius, space } from '../../theme';
 import { useT } from '../../i18n';

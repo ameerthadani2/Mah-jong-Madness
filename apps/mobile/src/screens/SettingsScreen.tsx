@@ -1,5 +1,6 @@
 import React from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
+import { Text } from '../components/Text';
 import { BOT_SKILLS, DEFAULT_RULES, type BotSkill } from '@mjm/engine';
 import { useApp } from '../app-state';
 import { useAuth } from '../auth/AuthProvider';

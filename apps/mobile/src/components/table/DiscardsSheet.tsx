@@ -7,7 +7,8 @@
  * (../Scrim.tsx), as for the coach's sheet.
  */
 import React from 'react';
-import { Modal, Platform, ScrollView, StyleSheet, Text, View, useWindowDimensions, type TextStyle } from 'react-native';
+import { Modal, Platform, ScrollView, StyleSheet, View, useWindowDimensions, type TextStyle } from 'react-native';
+import { Text } from '../Text';
 import type { TableView, TileId } from '@mjm/engine';
 import { colors, fonts, radius, space } from '../../theme';
 import { useT } from '../../i18n';

@@ -7,7 +7,8 @@
  * DiscardsSheet.tsx), so what the felt has no room for is one tap away.
  */
 import React, { useEffect, useRef, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View, type LayoutChangeEvent, type StyleProp, type ViewStyle } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, View, type LayoutChangeEvent, type StyleProp, type ViewStyle } from 'react-native';
+import { Text } from '../Text';
 import type { Hint, PlayerView, TableView, TileId } from '@mjm/engine';
 import { DiscardPool, FeltFrame, meldSizes, MeldsAndFlowers, SeatBadge, tilesOf, WallRing } from '../TableParts';
 import { HiddenHand, scaledTile } from '../Tile';

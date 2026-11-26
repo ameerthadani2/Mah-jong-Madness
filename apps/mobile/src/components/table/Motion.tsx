@@ -3,7 +3,8 @@
  * a discard sliding into its pond, a tile flipping face up, and a number rolling up to its value.
  */
 import React, { useEffect, useRef, useState } from 'react';
-import { Animated, Easing, Platform, Text, type StyleProp, type TextStyle } from 'react-native';
+import { Animated, Easing, Platform, type StyleProp, type TextStyle } from 'react-native';
+import { Text } from '../Text';
 import { useReducedMotion } from '../../display/reducedMotion';
 import { DISCARD_SLIDE_MS, FLIP_HALF_MS, rollUp, rollUpMs } from './feel';
 

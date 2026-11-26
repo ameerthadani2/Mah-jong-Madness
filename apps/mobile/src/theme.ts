@@ -105,8 +105,8 @@ export const space = { xs: 4, sm: 8, md: 12, lg: 16, xl: 24 };
 export const stroke = { panel: 3, button: 3, chip: 2 };
 
 /**
- * Font families registered in App.tsx with expo-font. Latin only: Chinese text
- * leaves fontFamily unset so the system CJK face (PingFang TC on iOS) renders it.
+ * Font families registered in App.tsx with expo-font. Latin only: Chinese text is drawn in the system's Chinese face
+ * (CJK_FACES below), which the app's Text (components/Text.tsx) puts in place of these for it.
  */
 export const fonts = {
   display: 'Lilita',
@@ -117,6 +117,31 @@ export const fonts = {
   body: 'Nunito-SemiBold',
   bodyBold: 'Nunito-Bold',
   bodyHeavy: 'Nunito-ExtraBold',
+};
+
+/**
+ * The system face Chinese text is drawn in, per platform. The app's own faces have no Chinese glyphs, and the face a
+ * platform falls back to for a missing glyph is its regular weight, so Chinese set in a display face came out thin
+ * (the showcase review of 20 November). The app's Text (components/Text.tsx) names one of these instead, heavy:
+ * PingFang TC on iOS (the system face), Noto Sans CJK on Android (sans-serif), and on the web the first Traditional
+ * Chinese face the device has, then the system stack. System fonts only: the app bundles no Chinese font.
+ */
+export const CJK_FACES = {
+  ios: 'System',
+  android: 'sans-serif',
+  web: '"PingFang TC", "Heiti TC", "Microsoft JhengHei", "Noto Sans CJK TC", "Noto Sans TC", "Source Han Sans TC", System',
+} as const;
+
+/** How heavy Chinese is drawn in place of each Latin face: 900 beside the display and UI faces, 700 in body text (as P). */
+export const CJK_WEIGHT: Record<string, TextStyle['fontWeight']> = {
+  [fonts.display]: '900',
+  [fonts.logo]: '900',
+  [fonts.ui]: '900',
+  [fonts.uiBold]: '900',
+  [fonts.uiMedium]: '700',
+  [fonts.body]: '700',
+  [fonts.bodyBold]: '800',
+  [fonts.bodyHeavy]: '900',
 };
 
 export const type = {

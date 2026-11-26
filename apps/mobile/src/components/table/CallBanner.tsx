@@ -4,7 +4,8 @@
  * win, the winner's hand is laid out face up underneath, the tiles flipping over one by one.
  */
 import React, { useEffect, useRef } from 'react';
-import { Animated, Easing, StyleSheet, Text, View } from 'react-native';
+import { Animated, Easing, StyleSheet, View } from 'react-native';
+import { Text } from '../Text';
 import type { WinRecord } from '@mjm/engine';
 import type { CallKind } from '../../audio/cues';
 import { colors, nameFont } from '../../theme';

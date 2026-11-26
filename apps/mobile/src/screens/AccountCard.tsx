@@ -7,7 +7,8 @@
  * Everything here works offline: with no server answer there are simply no provider buttons.
  */
 import React, { useEffect, useState } from 'react';
-import { Linking, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Linking, Platform, Pressable, StyleSheet, TextInput, View } from 'react-native';
+import { Text } from '../components/Text';
 import { useApp } from '../app-state';
 import { useAuth } from '../auth/AuthProvider';
 import { canConfirmDeletion, deletionLosses, manageSubscriptionUrl } from '../monetisation/deletion';

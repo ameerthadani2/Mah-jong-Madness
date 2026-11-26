@@ -7,7 +7,8 @@
  * animates whatever is inside: the drawn portraits today or imported image art later.
  */
 import React, { useEffect, useMemo, useRef } from 'react';
-import { Animated, Easing, Platform, StyleSheet, Text, View } from 'react-native';
+import { Animated, Easing, Platform, StyleSheet, View } from 'react-native';
+import { Text } from './Text';
 import Svg, { Path } from 'react-native-svg';
 import { colors } from '../theme';
 import { useReducedMotion } from '../display/reducedMotion';

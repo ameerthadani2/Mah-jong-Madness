@@ -7,7 +7,8 @@
  * The coach owl keeps its original flat cartoon look.
  */
 import React from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
+import { Text } from './Text';
 import Svg, { Circle, ClipPath, Defs, Ellipse, G, Image as SvgImage, Path, Polygon } from 'react-native-svg';
 import { colors } from '../theme';
 import { t } from '../i18n';

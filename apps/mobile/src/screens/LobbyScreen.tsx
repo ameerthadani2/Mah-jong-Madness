@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo } from 'react';
-import { ScrollView, Share, StyleSheet, Text, View } from 'react-native';
+import { ScrollView, Share, StyleSheet, View } from 'react-native';
+import { Text } from '../components/Text';
 import { useApp, useHardwareBack } from '../app-state';
 import { useConnection, useSession } from '../game/useTable';
 import { useT } from '../i18n';

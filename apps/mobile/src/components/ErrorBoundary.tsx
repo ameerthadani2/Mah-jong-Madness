@@ -4,7 +4,8 @@
  * itself when `resetKey` changes, so moving to another screen tries again.
  */
 import React from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
+import { Text } from './Text';
 import { t } from '../i18n';
 import { captureError } from '../telemetry';
 import { colors } from '../theme';

@@ -10,7 +10,8 @@
  * Close button, the scrim or the Back key; the Shop gives focus back to the card that opened it (display/focus.ts).
  */
 import React, { useEffect, useRef, useState } from 'react';
-import { Animated, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import { Animated, Modal, Platform, Pressable, ScrollView, StyleSheet, View, useWindowDimensions } from 'react-native';
+import { Text } from './Text';
 import { kindFromCode } from '@mjm/engine';
 import { productById, productText, type Product } from '../monetisation/catalog';
 import { EMOTE_PACKS, tileBackById, type CelebrationId, type TileBackDesign } from '../monetisation/cosmetics';

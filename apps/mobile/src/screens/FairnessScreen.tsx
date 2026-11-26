@@ -1,5 +1,6 @@
 import React from 'react';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ScrollView, StyleSheet, View } from 'react-native';
+import { Text } from '../components/Text';
 import { useApp } from '../app-state';
 import { useSession } from '../game/useTable';
 import { colors, fonts, space } from '../theme';
