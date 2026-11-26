@@ -152,7 +152,7 @@ describe('the journal is written before the move goes out', () => {
  * would not make, written down as the player's own, and the app restarts at once from the record (`restart`): before any
  * later state reached it. `journal`: the app keeps the journal. `edit` changes what the journal holds first.
  */
-function forgedThenRestart(code: string, journal: boolean, edit?: (j: JournalEntry[]) => void) {
+function forgedThenRestart(code: string, journal: boolean, edit?: (j: JournalEntry[]) => void, lost = false) {
   let forged: { tc: number } | null = null;
   const w = wire({
     code,
@@ -169,7 +169,7 @@ function forgedThenRestart(code: string, journal: boolean, edit?: (j: JournalEnt
       forged = { tc: g.turnCounter };
       host(w).apply(0, move, 'player');
       edit?.(w.journal);
-      w.restart();
+      w.restart(undefined, undefined, lost);
     },
   });
   w.finish();
@@ -182,7 +182,7 @@ function forgedThenRestart(code: string, journal: boolean, edit?: (j: JournalEnt
  * it wrote before the third (an app saves a moment after a change: those moves are not in it). `journal`: the app keeps
  * the journal. `edit` changes what the journal holds first (`after`: the place of the record's last move).
  */
-function ownMoveThenStaleRestart(code: string, journal: boolean, edit?: (j: JournalEntry[], after: number) => void, moves = 1) {
+function ownMoveThenStaleRestart(code: string, journal: boolean, edit?: (j: JournalEntry[], after: number) => void, moves = 1, lost = false) {
   let prev: SerializedClient | null = null;
   let restarted = false;
   const w = wire({
@@ -196,7 +196,7 @@ function ownMoveThenStaleRestart(code: string, journal: boolean, edit?: (j: Jour
       if (mine(w) >= 2 + moves && prev) {
         restarted = true;
         edit?.(w.journal, prev.sentSeq ?? 0);
-        w.restart(undefined, prev);
+        w.restart(undefined, prev, lost);
         return;
       }
       // The record as the app last wrote it: before the seat's third move.
@@ -259,14 +259,34 @@ describe('a client restored with the journal knows every move this device sent',
       expect(a.w.verdict().failures).toEqual([]);
     }));
 
-  it('a forged move under a damaged journal: not checked, as without one (damaged storage never fails a hand)', () =>
+  it('a forged move under a damaged journal: not held against the table (damaged storage never fails a hand), but amber and the end not verified', () =>
     scenario((i) => {
       const a = forgedThenRestart(`WJX${i}`, true, (j) => {
         const e = j[j.length - 1];
         if (e) j[j.length - 1] = { ...e, at: e.at + 1 };
       });
       need(a.forged);
-      expect(a.w.verdict().failures).not.toEqual(expect.arrayContaining(['moveInvented']));
+      expect(a.w.verdict()).toMatchObject({ status: 'partial', failures: [] });
+      expect(a.w.verdict().caveats).toContain('journalLost');
+    }));
+
+  it('a record this build wrote, restored with no list of its match in the journal: the forged move is amber and the end of the match not verified, never green', () =>
+    scenario((i) => {
+      const a = forgedThenRestart(`WJL${i}`, true, undefined, true);
+      need(a.forged);
+      expect(a.w.verdict()).toMatchObject({ status: 'partial', failures: [] });
+      expect(a.w.verdict().caveats).toContain('journalLost');
+      a.w.c.ready();
+      for (let e = 0; e < 600_000 && !a.w.c.state.matchOver; e += 500) a.w.step();
+      expect([a.w.c.state.matchOver, a.w.c.state.matchEndVerified]).toEqual([true, false]);
+    }));
+
+  it('honest: the seat’s own move after the last save, then a restore with no list: never red, amber (the phone cannot tell it from a forged one)', () =>
+    scenario((i) => {
+      const a = ownMoveThenStaleRestart(`WJLH${i}`, true, undefined, 1, true);
+      need(a.restarted);
+      expect(a.w.verdict()).toMatchObject({ status: 'partial', failures: [] });
+      expect(a.w.verdict().caveats).toContain('journalLost');
     }));
 });
 

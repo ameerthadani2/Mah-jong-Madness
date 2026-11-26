@@ -179,14 +179,15 @@ export function wire(plan: Plan) {
     /**
      * The app restarts: the client is saved (`edit` may change the saved record), its link is gone, and
      * a client restored from the record joins on a new link. `from`: the record the app wrote earlier, restored in
-     * place of one written now (with `plan.journal`, together with the journal as it stands).
+     * place of one written now (with `plan.journal`, together with the journal as it stands, unless `lost`: the app
+     * holds no list of the match any more, so the client is restored without one).
      */
-    restart(edit?: (saved: SerializedClient) => SerializedClient, from?: SerializedClient) {
+    restart(edit?: (saved: SerializedClient) => SerializedClient, from?: SerializedClient, lost = false) {
       let saved = JSON.parse(JSON.stringify(from ?? w.c.serialize())) as SerializedClient;
       if (edit) saved = edit(saved);
       w.line.close();
       w.line = line();
-      w.c = TableClient.restore(saved, w.line.link, 'Victim', undefined, { token: saved.state.token ?? undefined }, { ...clientOpts, ...(plan.journal ? { journal: JSON.parse(JSON.stringify(w.journal)) as unknown[] } : {}) });
+      w.c = TableClient.restore(saved, w.line.link, 'Victim', undefined, { token: saved.state.token ?? undefined }, { ...clientOpts, ...(plan.journal && !lost ? { journal: JSON.parse(JSON.stringify(w.journal)) as unknown[] } : {}) });
       w.c.join();
     },
     /**

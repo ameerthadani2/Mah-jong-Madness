@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { afterSave, journalOf, JOURNAL_ENTRIES_MAX, JOURNAL_MATCHES_MAX, keptFor, validJournal, withEntry, withoutEntry, type MoveJournal } from './moveJournal';
+import { ARCHIVE_MAX, archiveEntry, archivedMatch, withArchived, type ArchivedTable } from './tableArchive';
 
 const URL = 'wss://game.example/ws';
 /** A journal entry as the table client hands it over (only the fields the journal reads matter here). */
@@ -65,6 +66,34 @@ describe('the journal of moves', () => {
     const list = journalOf(long, URL, 'm-1')!;
     expect(list).toHaveLength(JOURNAL_ENTRIES_MAX);
     expect(list[0]).toEqual(entry(6));
+  });
+
+  it('keeps the list of every match whose record the app keeps: 31 other tables that leave Home unfinished push out neither the record nor the list', () => {
+    // A record of each table as the archive keeps it (only what the archive reads).
+    const record = (matchId: string) => ({ version: 1, state: { matchId, matchOver: false } }) as unknown as ArchivedTable['client'];
+    const held = (archive: readonly ArchivedTable[]) => (url: string, m: string) => archive.some((e) => e.signalUrl === url && e.matchId === m);
+    // The table the server cut the player off from: its record was written (its list stays, empty) and it left Home.
+    let j = afterSave(withEntry([], URL, entry(1)), URL, 'm-victim', 1);
+    let archive = withArchived([], archiveEntry({ signalUrl: URL, roomCode: 'VICTIM', token: 't', client: record('m-victim') }, 1_000)!, 1_000);
+    // Then the account sits at 31 other tables, each saved once (its list made) and each leaving Home unfinished.
+    for (let k = 1; k <= ARCHIVE_MAX - 1; k++) {
+      j = afterSave(j, URL, `m-other-${k}`, 0);
+      archive = withArchived(archive, archiveEntry({ signalUrl: URL, roomCode: `OTHER${k}`, token: 't', client: record(`m-other-${k}`) }, 1_000 + k)!, 1_000 + k);
+      j = keptFor(j, held(archive));
+    }
+    // The record is still kept, and so is its list: empty, which says nothing was sent after the record.
+    expect(archivedMatch(archive, URL, 'm-victim', 2_000)).toBeDefined();
+    expect(journalOf(j, URL, 'm-victim')).toEqual([]);
+    // And as read back from storage after a cold start.
+    expect(journalOf(validJournal(JSON.parse(JSON.stringify(j))), URL, 'm-victim')).toEqual([]);
+    // One more pushes the record out (the stated limit), and its list goes with it.
+    j = afterSave(j, URL, 'm-other-x', 0);
+    archive = withArchived(archive, archiveEntry({ signalUrl: URL, roomCode: 'OTHERX', token: 't', client: record('m-other-x') }, 1_100)!, 1_100);
+    j = keptFor(j, held(archive));
+    expect(archivedMatch(archive, URL, 'm-victim', 2_000)).toBeUndefined();
+    expect(journalOf(j, URL, 'm-victim')).toBeUndefined();
+    // The cap leaves room for the archive's records, the saved table's and the table open on this device.
+    expect(JOURNAL_MATCHES_MAX).toBeGreaterThanOrEqual(ARCHIVE_MAX + 2);
   });
 
   it('reads back only well-formed lists from storage', () => {

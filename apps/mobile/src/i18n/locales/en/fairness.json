@@ -55,7 +55,8 @@
     "lateCopy": "The table played a move you made on an earlier turn in place of the move you made on that turn. A connection that grew slow toward the table delivers an earlier move that late; a server that held your earlier move back can do the same, so your phone cannot vouch for that turn.",
     "noAnswer": "The table did not answer your phone's timing checks during this hand, so your phone could not tie the server's clock to its own. An honest table answers every one.",
     "noRecord": "Your phone was playing this hand when its connection dropped, and the table moved on without sending a record of the hand that your phone could check. Its deal, what you were shown in it and your moves in it are unchecked.",
-    "otherDevice": "The server said your seat was opened on another device during this hand, and its record credits you with moves your phone did not send. They may be yours, made on that device, so they do not fail the hand; but your phone did not see them made, so the hand is not verified, and nor are the match's final scores."
+    "otherDevice": "The server said your seat was opened on another device during this hand, and its record credits you with moves your phone did not send. They may be yours, made on that device, so they do not fail the hand; but your phone did not see them made, so the hand is not verified, and nor are the match's final scores.",
+    "journalLost": "Your app restarted without its journal of the moves you sent (your phone's storage lost it or could not write it), and this hand's record credits you with moves your phone's saved record does not hold. They may be moves you sent just before the app stopped, so they do not fail the hand; but your phone cannot vouch for them, so the hand is not verified, and nor are the match's final scores."
   },
   "failure": {
     "dealtPlayedHand": "The table tried to deal a hand that had already been played.",

@@ -74,6 +74,7 @@ import {
   openOtherDevice,
   otherDeviceAt,
   sharedOn,
+  unjournaledAt,
   nextDeal,
   nextHand,
   sameCommitSet,
@@ -173,6 +174,12 @@ export const AUDIT_CAVEATS = {
   // made on that device, so it is not held against the table, but nothing vouches for it, and the end of the match is
   // not shown as verified.
   otherDevice: 'The server said this seat was opened on another device during this hand, and the log credits this seat with moves this device did not send there',
+  // The app restarted (or the table was taken up again) without its journal of the moves it sent, in a hand whose every
+  // move went to the journal first, and the log credits the player with a move the restored record does not hold, from
+  // the latest turn the record held until the hand was shown again (`PlayRecord.unjournaled`): it may be one this device
+  // sent after the record was written, so it is not held against the table, but nothing vouches for it, and the end of
+  // the match is not shown as verified.
+  journalLost: "This app restarted without its journal of the moves it sent, and the log credits this seat with moves its record does not hold, so this device cannot vouch for them",
 } as const;
 
 export type AuditCaveat = keyof typeof AUDIT_CAVEATS;
@@ -1113,7 +1120,17 @@ export class TableClient {
     // record saved that stretch (`serialize`, `vouchedThrough`), and `cleanPlay` read it back if storage left it whole.
     // A hand whose every move went to the journal before it went out (`PlayRecord.whole`) keeps its ledger as it was.
     this.noteLinkLost();
-    for (const play of this.plays) if (!this.handsEnded.has(play.hand) && !(whole && play.whole)) play.ledgerFrom = Number.POSITIVE_INFINITY;
+    for (const play of this.plays) {
+      if (this.handsEnded.has(play.hand) || (whole && play.whole)) continue;
+      // Such a hand restored without a journal that vouches (the app holds no list for the match, or one with a gap or that
+      // storage damaged): a move this device sent after the record was written may be missing from it, and the journal
+      // that would hold it is gone. A missing journal vouches for nothing: from the latest turn the record holds until
+      // this client is shown the hand again, a move credited to the player that the record does not hold makes the hand
+      // amber and keeps the end of the match unverified (`unjournaled`), where a record an earlier build wrote leaves it
+      // unchecked.
+      if (play.whole) play.unjournaled = openOtherDevice(play.unjournaled, this.lastShown(play.hand));
+      play.ledgerFrom = Number.POSITIVE_INFINITY;
+    }
   }
 
   /**
@@ -3070,6 +3087,9 @@ export class TableClient {
     // server said another device held the seat in ends here (this device holds the seat again, and is shown the hand).
     if (play.ledgerFrom === null || (play.ledgerFrom === Number.POSITIVE_INFINITY && !this.state.kicked)) {
       play.ledgerFrom = v.turnCounter;
+      // (So does a stretch a restore without the app's journal left open, `unjournaled`.)
+      const lost = play.unjournaled?.find((x) => x.to === undefined);
+      if (lost) lost.to = Math.max(lost.from, v.turnCounter);
       const open = play.otherDevice?.find((x) => x.to === undefined);
       if (open) open.to = Math.max(open.from, v.turnCounter);
       // A hand this device has no stretch for yet, first shown since the server said another device held the seat: that
@@ -3468,13 +3488,14 @@ export class TableClient {
     if (notes.lateCopy) caveats.push(AUDIT_CAVEATS.lateCopy);
     if (notes.noAnswer) caveats.push(AUDIT_CAVEATS.noAnswer);
     if (notes.otherDevice) caveats.push(AUDIT_CAVEATS.otherDevice);
+    if (notes.journalLost) caveats.push(AUDIT_CAVEATS.journalLost);
     // An app restart around the deal: this device cannot say it watched all of it, whatever its record now shows.
     // (A seat that joined mid-hand has already said it took no part in the deal.)
     if (this.lapseHand === h && this.lapseDeal && !joined && !caveats.includes(AUDIT_CAVEATS.appRestart)) caveats.push(AUDIT_CAVEATS.appRestart);
 
     const status: AuditStatus = failures.length > 0 ? 'failed' : caveats.length > 0 ? 'partial' : 'ok';
     // (Moves this device did not watch being made, on another device the server named: the end of the match is not verified.)
-    return { check: { status, failures, caveats }, replayed, anchors, passed: notes.passedClaims ?? [], late: { turns: notes.lateTurns ?? [], of: notes.turnsMeasured ?? 0 }, beforeJoin: beforeJoin || notes.otherDevice === true };
+    return { check: { status, failures, caveats }, replayed, anchors, passed: notes.passedClaims ?? [], late: { turns: notes.lateTurns ?? [], of: notes.turnsMeasured ?? 0 }, beforeJoin: beforeJoin || notes.otherDevice === true || notes.journalLost === true };
   }
 
   /**
@@ -3847,6 +3868,9 @@ export class TableClient {
               // It is not held against the table, but nothing vouches for it: the hand is amber and the end of the match is
               // not shown as verified (`otherDevice`).
               else if (otherDeviceAt(play, n) && notes) notes.otherDevice = true;
+              // In a stretch a restore without the app's journal left open in a hand whose every move went to the journal, it
+              // may be one this device sent after the record was written: amber, and the end not verified (`journalLost`).
+              else if (unjournaledAt(play, n) && notes) notes.journalLost = true;
             }
           }
         } else {
@@ -4195,6 +4219,8 @@ interface ReplayNotes {
   noAnswer?: boolean;
   /** The log credits the player with a move this device did not send, in a stretch the server said another device held the seat in (`AUDIT_CAVEATS.otherDevice`). */
   otherDevice?: boolean;
+  /** The log credits the player with a move the restored record does not hold, in a stretch a restore without the app's journal left open (`AUDIT_CAVEATS.journalLost`). */
+  journalLost?: boolean;
   /** Claims the table passed for this seat while its link was down, or on a turn that reached this device late (`late`), in turn order. */
   passedClaims?: Array<{ turn: number; claim: PassedClaim; late?: boolean }>;
   /** The seat's turns whose state reached this device late enough to be counted (`lateCountMs`, or `lateLimitMs` without pong fixed points), and how many of its turns it could measure. */

@@ -387,6 +387,16 @@ export interface PlayRecord {
    */
   otherDevice?: OtherDeviceSpan[];
   /**
+   * Stretches of the hand the restored ledger cannot vouch for although every move this device sent in the hand went to
+   * the app's journal first (`whole`): the client was restored from this record without a journal that vouched for it (no
+   * list for the match, a gap after the record's last move, or one storage damaged), so a move sent after the record was
+   * written may be missing from it. From the latest turn the record held up to but not including the first state shown
+   * once restored (`to` absent: not yet), a move the log credits to the player that this device's record does not hold is
+   * not held against the table, but nothing vouches for it: the hand is amber (`AUDIT_CAVEATS.journalLost`) and the end
+   * of the match is not shown as verified (`TableClient.load`).
+   */
+  unjournaled?: OtherDeviceSpan[];
+  /**
    * The last stamped frame this client held before this hand's first frame, when that frame came
    * over an earlier link: the hand began, or went on, while this device had no link. Null when the
    * hand's first frame followed on the same link.
@@ -426,6 +436,11 @@ export const MAX_OTHER_DEVICE = 16;
 /** Whether turn `n` falls in a stretch the server said another device held the seat in (`PlayRecord.otherDevice`). */
 export function otherDeviceAt(play: PlayRecord, n: number): boolean {
   return (play.otherDevice ?? []).some((v) => n >= v.from && (v.to === undefined || n < v.to));
+}
+
+/** Whether turn `n` falls in a stretch a restore without the app's journal left the ledger unable to vouch for (`PlayRecord.unjournaled`). */
+export function unjournaledAt(play: PlayRecord, n: number): boolean {
+  return (play.unjournaled ?? []).some((v) => n >= v.from && (v.to === undefined || n < v.to));
 }
 
 /** `spans` with the closed stretch from `from` up to `to` added (past the cap the two oldest become one). */
@@ -740,7 +755,7 @@ function cleanReached(x: SentAction): SentAction {
  */
 export function cleanPlay(p: unknown): PlayRecord {
   if (!isObject(p) || !Array.isArray(p.seen) || !Array.isArray(p.sent) || !p.seen.every(isObject) || !p.sent.every(isObject)) throw new Error('damaged hand record');
-  const { vouched, ledgerSum: sum, whole: savedWhole, pongs: savedPongs, pinged: savedPinged, pingedFrom: savedFrom, otherDevice: savedOther, movesSum: savedMoves, movesKept: savedKept, ...play } = p as unknown as Omit<PlayRecord, 'pongs' | 'pinged' | 'pingedFrom' | 'whole' | 'otherDevice' | 'movesKept'> & { ledgerSum?: unknown; whole?: unknown; pongs?: unknown; pinged?: unknown; pingedFrom?: unknown; otherDevice?: unknown; movesSum?: unknown; movesKept?: unknown };
+  const { vouched, ledgerSum: sum, whole: savedWhole, pongs: savedPongs, pinged: savedPinged, pingedFrom: savedFrom, otherDevice: savedOther, unjournaled: savedUnjournaled, movesSum: savedMoves, movesKept: savedKept, ...play } = p as unknown as Omit<PlayRecord, 'pongs' | 'pinged' | 'pingedFrom' | 'whole' | 'otherDevice' | 'unjournaled' | 'movesKept'> & { ledgerSum?: unknown; whole?: unknown; pongs?: unknown; pinged?: unknown; pingedFrom?: unknown; otherDevice?: unknown; unjournaled?: unknown; movesSum?: unknown; movesKept?: unknown };
   // The moves sent and the refusals of them as this device wrote them, unless the figure saved with them no longer matches
   // or an earlier restore found it did not (a record an earlier build saved carries none: read as before).
   const movesKept = savedKept === false || (savedMoves !== undefined && savedMoves !== movesSum(play.sent, play.refusals)) ? false : undefined;
@@ -754,6 +769,7 @@ export function cleanPlay(p: unknown): PlayRecord {
   const pingedFrom = Array.isArray(savedFrom) ? savedFrom.map(cleanPingStart).filter((k): k is PingStart => k !== null) : [];
   // (A stretch storage made up excuses no more than a move written as the table's would be: amber, the end unverified.)
   const otherDevice = cleanOtherDevice(savedOther);
+  const unjournaled = cleanOtherDevice(savedUnjournaled);
   return {
     ...play,
     seen: play.seen.map(cleanSeen),
@@ -761,6 +777,7 @@ export function cleanPlay(p: unknown): PlayRecord {
     ...(spans ? { vouched: spans } : {}),
     ...(whole ? { whole: true as const } : {}),
     ...(otherDevice.length > 0 ? { otherDevice } : {}),
+    ...(unjournaled.length > 0 ? { unjournaled } : {}),
     ...(movesKept === false ? { movesKept } : {}),
     ...(pongs.length > 0 ? { pongs } : {}),
     ...(pingedFrom.length > 0 ? { pingedFrom } : {}),

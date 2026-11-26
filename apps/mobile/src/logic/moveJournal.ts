@@ -5,13 +5,17 @@
  * (`TableClientOptions.journal`), so it knows every move this device sent, also those sent after the record was last
  * written, and holds the hand under way to them from the deal on.
  *
- * The journal is kept by game server and match, and only for as long as the app keeps a record of that match (the
- * saved-table slot or the archive, src/app-state.tsx): once a record that holds a match's moves has been written, the
- * entries it holds leave the journal (`afterSave`), so the journal stays a few entries long. A match the journal holds no
- * list for is one it cannot vouch for (`journalOf` gives nothing): a restored client then vouches as one without a journal
- * does. After a record is written the match's list stays, empty, which says there is nothing beyond the record. Pure:
- * src/storage.ts reads and writes it.
+ * The journal is kept by game server and match, for as long as the app keeps a record of that match (the saved-table
+ * slot or the archive, src/app-state.tsx): a list leaves the journal with its match's record (`keptFor`), never before
+ * it. Once a record that holds a match's moves has been written, the entries it holds leave the journal (`afterSave`),
+ * so the journal stays a few entries long. After a record is written the match's list stays, empty, which says there is
+ * nothing beyond the record. A match the journal holds no list for is one it cannot vouch for (`journalOf` gives
+ * nothing): a restored client then holds the hand under way as one without a journal does, except that a record this
+ * build wrote says every move of the hand went to the journal, so a move after the record that the client cannot check
+ * keeps the hand amber and the end of the match unverified (packages/net `TableClient.load`). Pure: src/storage.ts
+ * reads and writes it.
  */
+import { ARCHIVE_MAX } from './tableArchive';
 
 export interface MatchJournal {
   signalUrl: string;
@@ -22,8 +26,14 @@ export interface MatchJournal {
 
 export type MoveJournal = readonly MatchJournal[];
 
-/** The most matches it keeps a list for (the newest written last): more than the records the app keeps at once. */
-export const JOURNAL_MATCHES_MAX = 12;
+/**
+ * The most matches it keeps a list for (the newest written last): room for every match the app can keep a record of at
+ * once, with some to spare. That is the archive's records (ARCHIVE_MAX), the saved table's, the table open on this
+ * device, and the one open before it while the first record of the new one is not yet written. Lists go with their
+ * records (`keptFor`, src/app-state.tsx), so this cap never drops the list of a match whose record is kept; it bounds a
+ * journal read back from storage.
+ */
+export const JOURNAL_MATCHES_MAX = ARCHIVE_MAX + 8;
 /**
  * The most entries one match's list keeps (the newest): far more than an honest table makes between two writes of the
  * record. Dropping the oldest leaves a gap after the record's last move, so the client then vouches as one without a
