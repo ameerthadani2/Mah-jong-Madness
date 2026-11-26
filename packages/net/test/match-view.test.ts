@@ -24,10 +24,14 @@ function endWith(code: string, alter: 'other' | 'same' | 'none') {
       if (m.t !== 'match_over' || alter === 'none') return m;
       const c = JSON.parse(JSON.stringify(m)) as MatchOver;
       if (alter === 'other') c.view.handNumber += 1;
-      // A table the replay never reached: every pond and the seat's own hand emptied.
+      // A table the replay never reached: every pond and the seat's own hand emptied (its count with it: a view whose
+      // hand and count disagree is malformed, and not taken at all).
       for (const p of c.view.players) {
         p.discards = [];
-        if (p.hand) p.hand = [];
+        if (p.hand) {
+          p.hand = [];
+          p.handCount = 0;
+        }
       }
       fake = JSON.stringify(c.view);
       return c;

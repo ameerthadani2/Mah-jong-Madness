@@ -4,7 +4,7 @@
  * shape of its saved copy (`SerializedClient`); with the guards that check what the host sends
  * before the client uses it, and the match snapshots a hand starts from.
  */
-import { advanceMatch, sha256Hex, stableStringify, type Action, type BotSkill, type GameState, type MatchSnapshot, type RuleSet, type TableView } from '@mjm/engine';
+import { advanceMatch, NUM_TILES, sha256Hex, stableStringify, type Action, type BotSkill, type GameState, type MatchSnapshot, type RuleSet, type TableView } from '@mjm/engine';
 import { SHARE_SEATS, type Commitment, type Reveal } from './fairness';
 import type { Audit } from './messages';
 import type { ClientState, LateTurnRecord, PassedClaim, PassedClaimRecord } from './client';
@@ -14,8 +14,32 @@ const HEX64 = /^[0-9a-f]{64}$/;
 export const isObject = (x: unknown): x is Record<string, unknown> => typeof x === 'object' && x !== null && !Array.isArray(x);
 export const isInt = (x: unknown): x is number => typeof x === 'number' && Number.isInteger(x);
 
+/** A tile a view shows: a physical tile's number (another seat's concealed kong shows a placeholder, which is one too). */
+const isTile = (t: unknown): boolean => isInt(t) && t >= 0 && t < NUM_TILES;
+
+/** A meld as the engine keeps one: a chow or a pong of three tiles, or a kong of four, said to be concealed or not. */
+function isMeld(m: unknown): boolean {
+  if (!isObject(m) || typeof m.concealed !== 'boolean' || !Array.isArray(m.tiles) || !m.tiles.every(isTile)) return false;
+  if (m.from !== undefined && !(isInt(m.from) && m.from >= 0 && m.from <= 3)) return false;
+  if (m.claimed !== undefined && !isTile(m.claimed)) return false;
+  return m.type === 'kong' ? m.tiles.length === 4 : (m.type === 'chow' || m.type === 'pong') && m.tiles.length === 3;
+}
+
+/** A seat in a view: its melds, flowers and discards tiles; the viewer's own hand as many tiles as the count says, no more than 17. */
 function isPlayerView(p: unknown): boolean {
-  return isObject(p) && isInt(p.handCount) && p.handCount >= 0 && p.handCount <= 17 && (p.hand === undefined || Array.isArray(p.hand)) && Array.isArray(p.melds) && Array.isArray(p.flowers) && Array.isArray(p.discards);
+  return (
+    isObject(p) &&
+    isInt(p.handCount) &&
+    p.handCount >= 0 &&
+    p.handCount <= 17 &&
+    (p.hand === undefined || (Array.isArray(p.hand) && p.hand.length === p.handCount && p.hand.every(isTile))) &&
+    Array.isArray(p.melds) &&
+    p.melds.every(isMeld) &&
+    Array.isArray(p.flowers) &&
+    p.flowers.every(isTile) &&
+    Array.isArray(p.discards) &&
+    p.discards.every(isTile)
+  );
 }
 
 /** Enough of a seat view for the client and the engine helpers to use without throwing. */

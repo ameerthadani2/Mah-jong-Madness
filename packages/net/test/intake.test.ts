@@ -456,3 +456,39 @@ describe('a malformed frame does not excuse the table', () => {
       expect(w.verdict().failures).toEqual(expect.arrayContaining(['malformedFrame', 'playedEarly']));
     }));
 });
+
+describe('a view whose seats are not what the engine keeps', () => {
+  it('a meld that is not a meld (a number, two tiles, a kong of three, a tile out of range), a hand of more or fewer tiles than its count says, or things that are not tiles in a hand, the flowers or the discards: malformed, not shown, and the hand on show fails (each was once shown, and the table screen threw on a meld)', () => {
+    const t = playing('INV');
+    const flags = () => (t.c as unknown as { tamper: Map<number, string[]> }).tamper.get(0) ?? [];
+    const base = t.c.state.view!;
+    const pong = { type: 'pong', tiles: [8, 9, 10], concealed: false, from: 1 };
+    const changes: Array<[string, (v: { players: Array<Record<string, unknown>> }) => void]> = [
+      ['own melds [0]', (v) => (v.players[0].melds = [0])],
+      ['another seat’s melds [0]', (v) => (v.players[2].melds = [0])],
+      ['a meld with no tiles list', (v) => (v.players[1].melds = [{ type: 'pong', concealed: false }])],
+      ['a pong of two tiles', (v) => (v.players[1].melds = [{ ...pong, tiles: [8, 9] }])],
+      ['a kong of three tiles', (v) => (v.players[1].melds = [{ ...pong, type: 'kong' }])],
+      ['a meld of another type', (v) => (v.players[1].melds = [{ ...pong, type: 'set' }])],
+      ['a meld with a tile out of range', (v) => (v.players[1].melds = [{ ...pong, tiles: [8, 9, 144] }])],
+      ['a meld with no concealed flag', (v) => (v.players[1].melds = [{ type: 'pong', tiles: [8, 9, 10] }])],
+      ['own hand of three more tiles than its count', (v) => (v.players[0].hand = [...(v.players[0].hand as number[]), 1, 2, 3])],
+      ['own hand [0.5]', (v) => (v.players[0].hand = [0.5])],
+      ['discards ["x"]', (v) => (v.players[1].discards = ['x'])],
+      ['flowers [-1]', (v) => (v.players[3].flowers = [-1])],
+    ];
+    for (const [what, change] of changes) {
+      const view = JSON.parse(JSON.stringify(base)) as { players: Array<Record<string, unknown>> };
+      change(view);
+      expect(intake({ ...SAMPLES.state, view: { ...view, turnCounter: base.turnCounter } })?.ok, what).toBe(false);
+      const before = shown(t.c);
+      t.inject({ t: 'state', view, hash: t.c.state.stateHash, deadline: null, timeBank: 30, inTimeBank: false, now: t.clock.now });
+      expect(shown(t.c), what).toBe(before);
+      expect(flags().map(failureKey), what).toContain('malformedFrame');
+    }
+    // A well-formed meld (as the engine keeps one) is taken.
+    const ok = JSON.parse(JSON.stringify(SAMPLES.state)) as { view: { players: Array<Record<string, unknown>> } };
+    ok.view.players[1].melds = [pong, { type: 'kong', tiles: [136, 136, 136, 136], concealed: true }];
+    expect(intake(ok)?.ok).toBe(true);
+  });
+});
