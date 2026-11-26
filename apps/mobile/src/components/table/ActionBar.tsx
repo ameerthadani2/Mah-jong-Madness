@@ -11,7 +11,7 @@ import React, { useEffect, useState } from 'react';
 import { Pressable, StyleSheet, View, type LayoutChangeEvent } from 'react-native';
 import { Text } from '../Text';
 import { kindOf, type Action, type Hint, type TableView, type TileId } from '@mjm/engine';
-import { colors, fonts } from '../../theme';
+import { claimTones, colors, fonts } from '../../theme';
 import { useT, type Locale } from '../../i18n';
 import { Tile } from '../Tile';
 import { StrokeText, type ButtonKind } from '../Ui';
@@ -24,21 +24,13 @@ export function tileName(tile: TileId, locale: Locale): string {
   return tileLabel(kindOf(tile), locale);
 }
 
-const PAL: Record<ButtonKind, [string, string, string]> = {
-  primary: [colors.cta, colors.ctaLight, colors.ctaShelf],
-  secondary: [colors.info, colors.infoLight, colors.infoShelf],
-  danger: [colors.danger, colors.dangerLight, colors.dangerShelf],
-  gold: [colors.gold, colors.goldLight, colors.goldShelf],
-  premium: [colors.premium, colors.premiumLight, colors.premiumShelf],
-  ghost: [colors.creamDeep, colors.creamLight, colors.creamShelf],
-};
 
 /**
  * Chunky claim button: a big CJK verb plus the tiles it would take. In English the verb carries a small gloss
  * before it ("Pong 碰"); the zh-TW gloss is empty.
  */
 function ClaimButton({ label, gloss, a11y, tiles, kind, onPress, big, small, testID }: { label: string; gloss?: string; a11y: string; tiles?: TileId[]; kind: ButtonKind; onPress: () => void; big?: boolean; /** A compact row (ActionBar `compact`) with three or more buttons: less padding, smaller tiles. */ small?: boolean; testID?: string }) {
-  const [fill, light, shelf] = PAL[kind];
+  const { fill, light, shelf, gloss: glossInk } = claimTones[kind];
   const h = big ? 60 : 50;
   return (
     <Pressable onPress={onPress} hitSlop={slopFor(h, 4)} accessibilityRole="button" accessibilityLabel={a11y} testID={testID}>
@@ -46,7 +38,7 @@ function ClaimButton({ label, gloss, a11y, tiles, kind, onPress, big, small, tes
         <View style={[styles.claimShell, { backgroundColor: shelf, height: h, borderRadius: h / 2, paddingBottom: pressed ? 0 : 5, paddingTop: pressed ? 5 : 0 }, small && styles.claimShellSmall]}>
           <View style={[styles.claimFace, { backgroundColor: fill, borderRadius: h / 2 }, small && styles.claimFaceSmall]}>
             <View style={[styles.claimTop, { backgroundColor: light }]} />
-            {!!gloss && <Text style={[styles.gloss, kind === 'ghost' ? { color: colors.ink } : null]}>{gloss}</Text>}
+            {!!gloss && <Text style={[styles.gloss, { color: glossInk }]}>{gloss}</Text>}
             {!label ? null : kind === 'ghost' ? (
               <Text style={[styles.claimGhost, { fontSize: big ? 24 : 21 }]}>{label}</Text>
             ) : (
@@ -213,5 +205,5 @@ const styles = StyleSheet.create({
   claimFaceSmall: { gap: 4, paddingHorizontal: 10 },
   claimTop: { position: 'absolute', top: 0, left: 0, right: 0, height: '50%' },
   claimGhost: { color: colors.ink, fontWeight: '900' },
-  gloss: { color: '#FFFFFF', fontFamily: fonts.uiBold, fontSize: 13 },
+  gloss: { fontFamily: fonts.uiBold, fontSize: 13 },
 });

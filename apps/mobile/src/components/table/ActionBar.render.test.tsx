@@ -5,6 +5,7 @@ import { fireEvent, render, screen, within } from '@testing-library/react-native
 import type { Action, TableView, TileId } from '@mjm/engine';
 import { ActionBar } from './ActionBar';
 import { setLocalePreference } from '../../i18n';
+import { contrast } from '../../theme';
 
 /**
  * A phone's portrait claim strip and short landscape dock (`compact`) keep to one row, so they never take height from the
@@ -148,5 +149,44 @@ describe('the short landscape dock, which never scrolls a button out of view', (
     expect(shell().height).toBe(50);
     await render(<ActionBar actions={[{ type: 'hu' } as Action]} act={() => {}} selected={null} hint={null} view={selfDraw} compact />);
     expect(shell().height).toBe(60);
+  });
+});
+
+describe('the English glosses', () => {
+  type Host = { type: unknown; props: { style?: unknown; children?: unknown }; children: Array<Host | string> };
+  const colorsIn = (node: Host | string, out: { bgs: string[]; texts: Array<[string, string]> } = { bgs: [], texts: [] }) => {
+    if (typeof node === 'string') return out;
+    const st = (StyleSheet.flatten(node.props.style as never) ?? {}) as { backgroundColor?: string; color?: string };
+    if (node.type === 'View' && st.backgroundColor) out.bgs.push(st.backgroundColor);
+    const text = node.children.filter((c): c is string => typeof c === 'string').join('');
+    if (node.type === 'Text' && st.color && text) out.texts.push([text, st.color]);
+    node.children.forEach((c) => colorsIn(c, out));
+    return out;
+  };
+
+  // The showcase review of 20 November: "Self-draw" pale yellow on yellow, "Kong" lavender on purple (white, then).
+  it('keep 4.5:1 on their button: its fill and its top tone, which the gloss sits across', async () => {
+    const all: Action[] = [{ type: 'pass' }, chi(4, 8), { type: 'pong' } as Action, { type: 'kong', tile: 12 } as Action, { type: 'hu' } as Action];
+    const glosses = ['Pass', 'Chow', 'Pong', 'Kong', 'Win'];
+    await render(<ActionBar actions={all} act={() => {}} selected={null} hint={null} view={view(12)} />);
+    const selfDraw = { phase: 'discard', pending: null } as unknown as TableView;
+    const seen: string[] = [];
+    const low: string[] = [];
+    const check = () => {
+      for (const button of screen.getAllByRole('button')) {
+        // The button's shelf, its fill, then its top tone (ActionBar's ClaimButton); the gloss is the small Text.
+        const { bgs, texts } = colorsIn(button as unknown as Host);
+        const [, fill, light] = bgs;
+        for (const [text, color] of texts.filter(([x]) => glosses.includes(x) || x === 'Self-draw')) {
+          seen.push(text);
+          for (const bg of [fill, light]) if (contrast(color, bg) < 4.5) low.push(`${text} ${color} on ${bg}: ${contrast(color, bg).toFixed(2)}`);
+        }
+      }
+    };
+    check();
+    await render(<ActionBar actions={[{ type: 'hu' } as Action, { type: 'kong', tile: 12 } as Action]} act={() => {}} selected={null} hint={null} view={selfDraw} />);
+    check();
+    expect(new Set(seen)).toEqual(new Set([...glosses, 'Self-draw']));
+    expect(low).toEqual([]);
   });
 });

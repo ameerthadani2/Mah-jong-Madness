@@ -168,18 +168,23 @@ export function ResultSheet({ result, view, state, mySeat, autoNext, onNext, onL
   const title = t(result.type === 'draw' ? 'table.result.drawTitle' : iWon ? 'table.result.wonTitle' : 'table.result.overTitle');
   const sub = t(result.type === 'draw' ? 'table.result.drawSub' : iWon ? 'table.result.wonSub' : 'table.result.overSub');
   const ribbon = result.type === 'draw' ? colors.info : iWon ? colors.gold : colors.premium;
+  // The title and its stars are one unit that never wraps: at phone width the stars around the title and its subtitle
+  // left a lone ☆ on a second line (the showcase review of 20 November). The subtitle goes under them; on a short
+  // landscape phone, beside them where the row has the room.
   const ribbonView = (
-    <View style={[styles.ribbon, { backgroundColor: ribbon }, twoCol && { alignSelf: 'flex-start', paddingVertical: 3 }]} accessibilityRole="header">
-      {iWon && <Icon name="star" size={twoCol ? 24 : 30} />}
-      <StrokeText style={{ fontSize: twoCol ? 24 : 30, lineHeight: twoCol ? 30 : 36 }} strokeWidth={2.5} drop={2}>
-        {title}
-      </StrokeText>
+    <View style={[styles.ribbon, { backgroundColor: ribbon }, twoCol && styles.ribbonRow]} accessibilityRole="header" testID="result-ribbon">
+      <View style={styles.ribbonTitle} testID="result-ribbon-title">
+        {iWon && <Icon name="star" size={twoCol ? 24 : 30} />}
+        <StrokeText style={{ fontSize: twoCol ? 24 : 30, lineHeight: twoCol ? 30 : 36 }} strokeWidth={2.5} drop={2}>
+          {title}
+        </StrokeText>
+        {iWon && <Icon name="star" size={twoCol ? 24 : 30} />}
+      </View>
       {!!sub && (
         <StrokeText style={{ fontSize: twoCol ? 15 : 18 }} strokeWidth={2} drop={1.5}>
           {sub}
         </StrokeText>
       )}
-      {iWon && <Icon name="star" size={twoCol ? 24 : 30} />}
     </View>
   );
   const results = (
@@ -325,7 +330,7 @@ export function MatchOverSheet({ state, onLeave, rating }: { state: ClientState;
           {/* Never taller than the window: the ranks scroll inside the card (a short phone, a large text size, the note). */}
           <View style={[styles.overlayCard, styles.matchCard, { maxHeight: L.maxHeight }, L.compact && { paddingVertical: 8 }]} testID="match-over" {...a11y}>
             <ScrollView style={{ flexGrow: 0 }} contentContainerStyle={{ gap: L.compact ? 6 : space.md }} testID="match-over-scroll">
-              <View style={[styles.ribbon, { backgroundColor: colors.gold }, L.compact && { paddingVertical: 2 }]} accessibilityRole="header">
+              <View style={[styles.ribbon, styles.ribbonTitle, { backgroundColor: colors.gold }, L.compact && { paddingVertical: 2 }]} accessibilityRole="header">
                 <Icon name="trophy" size={L.trophy} />
                 <StrokeText style={{ fontSize: L.title }} strokeWidth={2.5} drop={2}>
                   {t('table.matchOver')}
@@ -370,7 +375,9 @@ const styles = StyleSheet.create({
   overlayScroll: { flexGrow: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 16 },
   overlayCard: { backgroundColor: colors.cream, borderRadius: 26, padding: space.lg, paddingTop: 10, gap: space.md, width: '100%', maxWidth: 720, borderWidth: 3, borderColor: colors.ink, borderBottomWidth: 8 },
   overlayWide: { flexDirection: 'row', maxWidth: 860, flex: 1, padding: 10, paddingTop: 8, gap: 10 },
-  ribbon: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, borderWidth: 3, borderColor: colors.ink, borderRadius: 18, paddingVertical: 6, paddingHorizontal: 16, alignSelf: 'center', marginTop: -2, flexWrap: 'wrap' },
+  ribbon: { alignItems: 'center', justifyContent: 'center', gap: 2, borderWidth: 3, borderColor: colors.ink, borderRadius: 18, paddingVertical: 6, paddingHorizontal: 16, alignSelf: 'center', marginTop: -2 },
+  ribbonRow: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 10, alignSelf: 'flex-start', paddingVertical: 3 },
+  ribbonTitle: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   winCard: { gap: 8, backgroundColor: '#FFFFFF', borderWidth: 2.5, borderColor: colors.ink, borderRadius: 18, padding: 12 },
   winTitle: { color: colors.ink, fontSize: 17 },
   winSub: { color: colors.inkDim, fontSize: 13, fontWeight: '900' },

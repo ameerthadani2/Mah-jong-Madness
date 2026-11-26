@@ -1,11 +1,21 @@
 import { describe, expect, it } from 'vitest';
-import { colors, contrast, pillTones } from './theme';
+import { claimTones, colors, contrast, pillTones } from './theme';
 
 describe('small text on coloured fills', () => {
   it('measures contrast as WCAG does', () => {
     expect(contrast('#000000', '#FFFFFF')).toBeCloseTo(21, 5);
     expect(contrast('#FFFFFF', '#FFFFFF')).toBe(1);
     expect(contrast('#FFFFFF', colors.danger)).toBeLessThan(4.5);
+  });
+
+  // The showcase review of 20 November: "Self-draw" pale yellow on the gold Win button, "Kong" lavender on the purple one.
+  it('every claim button keeps 4.5:1 between its English gloss and both its fill and its top tone', () => {
+    for (const [kind, { fill, light, gloss }] of Object.entries(claimTones)) {
+      expect(contrast(gloss, fill), `${kind} fill`).toBeGreaterThanOrEqual(4.5);
+      expect(contrast(gloss, light), `${kind} top tone`).toBeGreaterThanOrEqual(4.5);
+    }
+    // White, as the glosses were, fails on all but the ghost's cream (and there it is worse).
+    expect(Object.values(claimTones).filter(({ fill }) => contrast('#FFFFFF', fill) >= 4.5)).toEqual([]);
   });
 
   it('every pill tone keeps 4.5:1 between its text and its fill', () => {

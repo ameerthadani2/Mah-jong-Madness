@@ -281,3 +281,32 @@ describe('the end-of-hand sheets are modal dialogs', () => {
     expect(within(screen.getByTestId('match-over')).getByRole('button', { name: 'Back to home' })).toBeOnTheScreen();
   });
 });
+
+describe('the result sheet’s ribbon', () => {
+  afterEach(() => {
+    setLocalePreference('auto');
+  });
+
+  // The showcase review of 20 November: at phone width "☆ 你胡了! You won the hand!" wrapped and left the closing ☆ alone
+  // on a second line. The stars and the title are one row that does not wrap; the English line is outside it.
+  it('keeps both stars beside the title, and the subtitle apart from them', async () => {
+    await renderResult({ type: 'win', wins: [win({ tai: 10, taiUncapped: 10, items: BIG })], scoreDelta: [120, -40, -40, -40] } as unknown as HandResult);
+    const title = screen.getByTestId('result-ribbon-title');
+    expect(within(title).getAllByText('你胡了！').length).toBeGreaterThan(0);
+    expect(within(title).queryByText('You won the hand!')).toBeNull();
+    expect(title).toHaveStyle({ flexDirection: 'row' });
+    expect(title).not.toHaveStyle({ flexWrap: 'wrap' });
+    // Two stars, both inside the unbreakable row (the icons are the only drawings in it).
+    const stars = (node: { type: unknown; children: unknown[] }): number =>
+      (node.type === 'RNSVGSvgView' || node.type === 'svg' ? 1 : 0) + node.children.reduce<number>((n, c) => n + (typeof c === 'object' && c ? stars(c as never) : 0), 0);
+    expect(stars(title as never)).toBe(2);
+    expect(stars(screen.getByTestId('result-ribbon') as never)).toBe(2);
+    expect(within(screen.getByTestId('result-ribbon')).getAllByText('You won the hand!').length).toBeGreaterThan(0);
+  });
+
+  it('in Chinese, where the ribbon has no subtitle, says 你胡了！ with full-width punctuation', async () => {
+    setLocalePreference('zh-TW');
+    await renderResult({ type: 'win', wins: [win({ tai: 10, taiUncapped: 10, items: BIG })], scoreDelta: [120, -40, -40, -40] } as unknown as HandResult);
+    expect(within(screen.getByTestId('result-ribbon-title')).getAllByText('你胡了！').length).toBeGreaterThan(0);
+  });
+});

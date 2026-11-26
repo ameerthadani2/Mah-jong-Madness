@@ -86,6 +86,22 @@ export const pillTones: Record<PillTone, { bg: string; fg: string }> = {
   dark: { bg: 'rgba(16,20,47,0.72)', fg: '#FFFFFF' },
 };
 
+export type ClaimKind = 'primary' | 'secondary' | 'danger' | 'gold' | 'premium' | 'ghost';
+
+/**
+ * The claim buttons' fill, top tone, shelf, and the small English gloss on them ("Pass", "Self-draw", "Kong": 13 px bold,
+ * normal-size text under WCAG). The gloss sits across the top tone and the fill, so it keeps 4.5:1 on both: ink on every
+ * fill (white was 1.6:1 on the gold Win button and 3.3:1 on the purple Kong, the showcase review of 20 November).
+ */
+export const claimTones: Record<ClaimKind, { fill: string; light: string; shelf: string; gloss: string }> = {
+  primary: { fill: colors.cta, light: colors.ctaLight, shelf: colors.ctaShelf, gloss: colors.ink },
+  secondary: { fill: colors.info, light: colors.infoLight, shelf: colors.infoShelf, gloss: colors.ink },
+  danger: { fill: colors.danger, light: colors.dangerLight, shelf: colors.dangerShelf, gloss: colors.ink },
+  gold: { fill: colors.gold, light: colors.goldLight, shelf: colors.goldShelf, gloss: colors.ink },
+  premium: { fill: colors.premium, light: colors.premiumLight, shelf: colors.premiumShelf, gloss: colors.ink },
+  ghost: { fill: colors.creamDeep, light: colors.creamLight, shelf: colors.creamShelf, gloss: colors.ink },
+};
+
 /** WCAG relative luminance of a #RRGGBB colour. */
 export function luminance(hex: string): number {
   const n = parseInt(hex.replace('#', ''), 16);
