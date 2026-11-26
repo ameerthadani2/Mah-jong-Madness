@@ -24,10 +24,32 @@ import { relLineExtra, relTagLabel, SEAT_TAG_CHROME, seatTagText, sideNameSize }
 import { useDisplayScale } from '../display/DisplayScale';
 
 /**
+ * The tiles of a set as a view holds it, or null when it is not a set the engine keeps (not an object, or no list of
+ * tiles). The table client's intake refuses a view with such a set (packages/net `isPlayerView`); the table draws nothing
+ * for one that gets through rather than stop.
+ */
+export function meldTiles(m: unknown): TileId[] | null {
+  const tiles = typeof m === 'object' && m !== null ? (m as { tiles?: unknown }).tiles : null;
+  return Array.isArray(tiles) && tiles.every((t) => typeof t === 'number') ? (tiles as TileId[]) : null;
+}
+
+/** How many tiles each of a seat's sets holds, for the felt's layout (a set with no tile list counts none). */
+export function meldSizes(melds: unknown): number[] {
+  return Array.isArray(melds) ? melds.map((m) => meldTiles(m)?.length ?? 0) : [];
+}
+
+/** A list of tiles as a view holds it, or none when it is not one (`meldTiles`). */
+export function tilesOf(x: unknown): TileId[] {
+  return Array.isArray(x) && x.every((t) => typeof t === 'number') ? (x as TileId[]) : [];
+}
+
+/**
  * One meld: its tiles a pixel apart, the claimed one lying on its side. `flat` (the portrait felt's last stage,
- * display/portraitFit.ts): every tile upright and less room after the meld, so two share a narrow column.
+ * display/portraitFit.ts): every tile upright and less room after the meld, so two share a narrow column. Nothing for a
+ * set that is not one (`meldTiles`).
  */
 export function MeldView({ meld, size = 'sm', flat }: { meld: Meld; size?: TileSize | number; flat?: boolean }) {
+  if (meldTiles(meld) === null) return null;
   // Another seat's concealed kong arrives as placeholders until the hand ends: show all four face down.
   const unknown = meld.concealed && meld.tiles.every((t) => t === PLACEHOLDER_TILE);
   return (
@@ -42,15 +64,18 @@ export function MeldView({ meld, size = 'sm', flat }: { meld: Meld; size?: TileS
 
 /** A seat's exposed melds and set-aside flowers, in one wrapping row. */
 export function MeldsAndFlowers({ player, size = 'xs', flowerSize = 'xs', style, flat }: { player: PlayerView; size?: TileSize | number; flowerSize?: TileSize | number; style?: StyleProp<ViewStyle>; flat?: boolean }) {
-  if (player.melds.length === 0 && player.flowers.length === 0) return null;
+  // (Lists as a view holds them: none where it holds something else, `meldTiles`.)
+  const melds: Meld[] = Array.isArray(player.melds) ? player.melds.filter((m) => meldTiles(m) !== null) : [];
+  const flowers = tilesOf(player.flowers);
+  if (melds.length === 0 && flowers.length === 0) return null;
   return (
     <View style={[styles.meldRow, style]}>
-      {player.melds.map((m, i) => (
+      {melds.map((m, i) => (
         <MeldView key={i} meld={m} size={size} flat={flat} />
       ))}
-      {player.flowers.length > 0 && (
+      {flowers.length > 0 && (
         <View style={styles.flowers}>
-          {player.flowers.map((f) => (
+          {flowers.map((f) => (
             <Tile key={f} tile={f} size={flowerSize} />
           ))}
         </View>

@@ -14,7 +14,8 @@ import { BOT_NAME_SLOT, botNamer, withBotLabels } from '../logic/seatName';
 import { justReturned, RETURNED_NOTICE_MS } from '../logic/back';
 import { colors, fonts, nameFont } from '../theme';
 import { Tile } from '../components/Tile';
-import { Compass } from '../components/TableParts';
+import { Compass, meldSizes, meldTiles } from '../components/TableParts';
+import { withShownSets } from '../logic/shownView';
 import type { Relation } from '../components/table/hudSpeech';
 import type { SeatReaction, SeatReactionKind } from '../components/SeatMotion';
 import { Button, P } from '../components/Ui';
@@ -97,7 +98,8 @@ export function TableScreen() {
   // Bot seats carry the app's own label in the reader's language (src/logic/seatName.ts).
   const tableState = useSession(session);
   const botLabel = t('common.botName', { name: BOT_NAME_SLOT });
-  const state = useMemo(() => (tableState ? withBotLabels(tableState, botNamer(botLabel)) : null), [tableState, botLabel]);
+  // (Drawn with any set that is not one left out: the client's intake refuses such a view, logic/shownView.ts.)
+  const state = useMemo(() => (tableState ? withShownSets(withBotLabels(tableState, botNamer(botLabel))) : null), [tableState, botLabel]);
   const conn = useConnection(session);
   const sfx = useSfx();
   const { tileScale, osScale } = useDisplayScale();
@@ -167,8 +169,8 @@ export function TableScreen() {
 
   const view = state?.view ?? null;
   const mySeat = state?.seat ?? 0;
-  const local: GameState | null = useMemo(() => (view ? viewToState(view) : null), [view]);
-  const actions: Action[] = useMemo(() => (local ? legalActions(local, mySeat) : []), [local, mySeat]);
+  const local: GameState | null = useMemo(() => (view ? safeState(view) : null), [view]);
+  const actions: Action[] = useMemo(() => (local ? safeActions(local, mySeat) : []), [local, mySeat]);
   // While the coach is on it always has something to say, "Hand over" included, so it never leaves the screen while
   // its button shows it on.
   const hint: Hint | null = useMemo(() => (coachOpen && local ? safeHint(local, mySeat) : null), [coachOpen, local, mySeat]);
@@ -268,8 +270,9 @@ export function TableScreen() {
   useEffect(() => {
     if (!view || !myMelds) return;
     const next = { hand: view.handNumber, count: myMelds.length };
-    if (autoClaimed(meldCount.current, next, sentClaim.current)) {
-      const made = myMelds[myMelds.length - 1].type;
+    const last = myMelds[myMelds.length - 1];
+    if (autoClaimed(meldCount.current, next, sentClaim.current) && meldTiles(last) !== null) {
+      const made = last.type;
       setAutoNotice({ call: made === 'chow' ? 'chi' : made, key: ++eventKey });
       buzz('dealin');
     }
@@ -390,12 +393,15 @@ export function TableScreen() {
   const squeezeKey = `${width}x${height}:${tileScale}:${view.handNumber}`;
   const squeezeSteps = squeeze.key === squeezeKey ? squeeze.steps : 0;
   const handScale = Math.max(1, tileScale - SQUEEZE_STEP * squeezeSteps);
-  const hand = fitHand(width, height, L, (me.hand ?? []).length, me.melds.reduce((n, m) => n + m.tiles.length, 0), me.melds.length, handScale);
+  // (My sets as the felt lays them out: one that is not a set counts no tiles, components/TableParts.tsx `meldSizes`.)
+  const mySets = meldSizes(me.melds).filter((n) => n > 0);
+  const setTiles = mySets.reduce((n, k) => n + k, 0);
+  const hand = fitHand(width, height, L, (me.hand ?? []).length, setTiles, mySets.length, handScale);
   const onFeltShort = () => {
     if (!(L.portrait || L.compact) || handScale <= 1) return;
     // A step that draws the hand no smaller gives the felt nothing (a 568x320 phone draws Extra-large and Large both 29 px
     // wide, a row of their own above the rail), and the felt, its height unchanged, would not ask again: take the next too.
-    const handAt = (steps: number) => fitHand(width, height, L, (me.hand ?? []).length, me.melds.reduce((n, m) => n + m.tiles.length, 0), me.melds.length, Math.max(1, tileScale - SQUEEZE_STEP * steps));
+    const handAt = (steps: number) => fitHand(width, height, L, (me.hand ?? []).length, setTiles, mySets.length, Math.max(1, tileScale - SQUEEZE_STEP * steps));
     let steps = squeezeSteps + 1;
     for (let next = handAt(steps); tileScale - SQUEEZE_STEP * steps > 1 && next.tile === hand.tile && next.wide === hand.wide && next.rows === hand.rows; next = handAt(steps)) steps++;
     setSqueeze({ key: squeezeKey, steps });
@@ -693,6 +699,27 @@ function safeHint(s: GameState, seat: number): Hint | null {
     return hintFor(s, seat);
   } catch {
     return null;
+  }
+}
+
+/**
+ * The game the view shows, and the moves it offers this seat: none (no moves to offer) when the engine cannot read the
+ * view. The table client's intake refuses a view whose sets, tiles or hand are not what the engine keeps (packages/net
+ * `isPlayerView`); one that gets through leaves the table standing rather than stop.
+ */
+function safeState(view: Parameters<typeof viewToState>[0]): GameState | null {
+  try {
+    return viewToState(view);
+  } catch {
+    return null;
+  }
+}
+
+function safeActions(s: GameState, seat: number): Action[] {
+  try {
+    return legalActions(s, seat);
+  } catch {
+    return [];
   }
 }
 

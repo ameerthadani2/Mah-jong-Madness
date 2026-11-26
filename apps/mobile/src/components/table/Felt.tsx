@@ -9,7 +9,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View, type LayoutChangeEvent, type StyleProp, type ViewStyle } from 'react-native';
 import type { Hint, PlayerView, TableView, TileId } from '@mjm/engine';
-import { DiscardPool, FeltFrame, MeldsAndFlowers, SeatBadge, WallRing } from '../TableParts';
+import { DiscardPool, FeltFrame, meldSizes, MeldsAndFlowers, SeatBadge, tilesOf, WallRing } from '../TableParts';
 import { HiddenHand, scaledTile } from '../Tile';
 import { tileDims } from '../tileDims';
 import { useDisplayScale } from '../../display/DisplayScale';
@@ -175,7 +175,7 @@ export function Felt({
   const seatOf = (r: number) => view.players[seatAt(r)];
   const portraitSeat = (r: number) => {
     const p = seatOf(r);
-    return { melds: p.melds.map((m) => m.tiles.length), flowers: p.flowers.length, discards: p.discards.length, hand: p.handCount };
+    return { melds: meldSizes(p.melds), flowers: tilesOf(p.flowers).length, discards: tilesOf(p.discards).length, hand: p.handCount };
   };
   const topHandTile = tablet ? 15 : 9;
   // The centre column's width, measured (below).
@@ -322,9 +322,9 @@ export function Felt({
       column: Math.max(0, (sideBox[`col${r}`] ?? 0) - (r === 3 ? leftClear : 0)),
       plate: sideBox[`plate${r}`] ?? 0,
       hand: p.handCount > 0 ? handH + 2 : 0,
-      melds: p.melds.map((m) => m.tiles.length),
-      flowers: p.flowers.length,
-      discards: p.discards.length,
+      melds: meldSizes(p.melds),
+      flowers: tilesOf(p.flowers).length,
+      discards: tilesOf(p.discards).length,
       meld: tileDims(sideMeld).w,
       pool: tileDims(pool).w,
     });
@@ -385,7 +385,7 @@ export function Felt({
   // of 120 to 160 px on a 568 px phone (the side seats' ponds still grow).
   const compactTop = { tile: tileDims(L.pool).w, perRow: L.centerPerRow };
   const across = seatOf(2);
-  const topMeld = centreW > 0 && compactPlate.w > 0 ? compactTopMeld(centreW - compactPlate.w - TOP_ROW_GAP, across.melds.map((m) => m.tiles.length), across.flowers.length) : COMPACT_TOP_MELD;
+  const topMeld = centreW > 0 && compactPlate.w > 0 ? compactTopMeld(centreW - compactPlate.w - TOP_ROW_GAP, meldSizes(across.melds), tilesOf(across.flowers).length) : COMPACT_TOP_MELD;
   const compactFit = fitCompactCentre({
     column: L.compact ? centreH : 0,
     topRow: compactTopRow,
