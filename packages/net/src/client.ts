@@ -839,6 +839,19 @@ export class TableClient {
    * device had been shown, was held back (`noteHeld`).
    */
   private pongAfterWelcome = -1;
+  /**
+   * The link epoch on which the table answered a ping after its welcome there before the link brought any frame about a
+   * hand: the table had no hand under way when it seated this client there. The first state of a hand this device had been
+   * shown before, on that link (its turn 0 included), was held back (`noteHeld`).
+   */
+  private pongBeforeHand = -1;
+  /** This device's clock when the welcome of the link in use came (`welcomeEpoch`): the state the table owes right behind it is held back when it comes much later with no answer to a ping between (`noteHeld`). */
+  private welcomeAt: number | null = null;
+  private welcomeEpoch = -1;
+  /** The link epoch on which the table answered a ping sent after this client's join there (`joinOut`). */
+  private pongOn = -1;
+  /** The link this client last sent a `join` on, and that frame's place among the frames this run sent (`outCount`). */
+  private joinOut: { epoch: number; out: number } | null = null;
   /** The link epoch on which a frame about a hand came (a deal under way, a state, a result): see `runFromHand`. */
   private handFrameOn = -1;
   /**
@@ -1320,7 +1333,7 @@ export class TableClient {
     const token = this.state.token ?? this.identity.token;
     const have = this.have();
     this.joinHave = { epoch: this.epoch, have };
-    this.send({ t: 'join', name: this.name, avatar: this.avatar, wantSeat, token, userId: this.identity.userId, have, device: this.deviceId });
+    this.joinOut = { epoch: this.epoch, out: this.send({ t: 'join', name: this.name, avatar: this.avatar, wantSeat, token, userId: this.identity.userId, have, device: this.deviceId }) };
     // A ping right behind the join, so the table's answer ties its clock to this device's from the first
     // frames of the link. Sent once `join` has returned: a transport that delivers at once must not be
     // entered again from inside it.
@@ -2430,6 +2443,11 @@ export class TableClient {
         this.seatedOn = this.epoch;
         this.welcomedOn = this.epoch;
         this.evictedOn = -1;
+        // (The first welcome of the link: when it came, for the state the table owes right behind it.)
+        if (this.welcomeEpoch !== this.epoch) {
+          this.welcomeEpoch = this.epoch;
+          this.welcomeAt = this.now();
+        }
         const seats = m.seats;
         // The rejoin token (an honest table gives one in every welcome, `intake`). The table's room code is pinned from
         // the first welcome: the app keeps the record under the room it joined, which a welcome does not move.
@@ -2694,6 +2712,14 @@ export class TableClient {
         // host sends the hand's state right behind the welcome, before that answer, so this one was held back since this
         // device was seated here. What the table played for the seat from the latest turn this device had been shown fails.
         else if (!shownHere && v.turnCounter > 0 && this.pongAfterWelcome === this.epoch) this.noteHeld(h, this.lastShown(h));
+        // The same at any turn, the deal's included, of a hand this device had been shown on an earlier link, when the
+        // answer came before any frame about a hand: the table said it had no hand under way when it seated this client,
+        // yet this one was (`pongBeforeHand`).
+        else if (!shownHere && this.pongBeforeHand === this.epoch && this.shownBefore(h)) this.noteHeld(h, this.lastShown(h));
+        // The link's first state, of a later turn of a hand this device had been shown, more than `LATE_MS` after the
+        // welcome with no answer to a ping in between (the ping behind the join included): an honest host sends it right
+        // behind the welcome and answers the ping after it, so a server that also holds the answers back held it.
+        else if (!shownHere && this.welcomeEpoch === this.epoch && this.welcomeAt !== null && this.pongOn !== this.epoch && this.shownBefore(h) && v.turnCounter > this.lastShown(h) && (this.frameAtLo ?? this.now()) - this.welcomeAt > LATE_MS) this.noteHeld(h, this.lastShown(h));
         // An honest host stamps every state. One with no stamp, on a link that has brought a state, a
         // stamp or this device's share, would escape every check of when it was shown: it is not
         // believed, and counts as held back (on a new link it is judged as shown late; see `unstamped`).
@@ -2853,7 +2879,10 @@ export class TableClient {
         this.noteRefusal(m);
         this.update({ lastError: m.message, lastErrorCode: m.code });
         return;
-      case 'pong':
+      case 'pong': {
+        // (The ping it answers, if this run sent it: whether it went out after this link's join.)
+        const ping = this.pings.get(m.at);
+        const afterJoin = !!ping && !!this.joinOut && ping.epoch === this.epoch && this.joinOut.epoch === this.epoch && ping.out > this.joinOut.out;
         // On a link that has brought no state, a pong's stamp does not feed the watch: an honest host sends
         // the state first. As a fixed point it counts on any link (`notePong`), and so does its place in the order of the
         // stamps (`noteOrder`): an honest host's stamps never go back on a link, so a state that arrives behind an answer
@@ -2862,8 +2891,12 @@ export class TableClient {
         this.noteOrder(m.now, null, null);
         this.notePong(m.at, m.now);
         // An answer after the welcome, on a link that has brought no state yet: the link's first state can now only be a
-        // deal's (`pongAfterWelcome`).
+        // deal's (`pongAfterWelcome`); before any frame about a hand, the table had no hand under way (`pongBeforeHand`).
         if (this.welcomedOn === this.epoch && !this.stateHere()) this.pongAfterWelcome = this.epoch;
+        // An answer to a ping sent after the join (the one behind it included): an honest host had already sent whatever it
+        // had of a hand for this seat, right behind its welcome (`pongBeforeHand`, `pongOn`).
+        if (afterJoin && this.handFrameOn !== this.epoch) this.pongBeforeHand = this.epoch;
+        if (afterJoin) this.pongOn = this.epoch;
         // An honest host sends right behind its welcome whatever it has of a hand for this seat (a deal under way, a state,
         // a result): an answer that comes first on such a link says the table had no hand under way when it seated this
         // run, so every hand after the last one this client saw end begins while it holds the seat (`runFromHand`).
@@ -2872,6 +2905,7 @@ export class TableClient {
           this.runFromHand = Math.max(this.runFromHand ?? 0, next);
         }
         return;
+      }
       case 'clock': {
         this.aboutHand(m.hand);
         // Nor a clock frame: an honest host sends one only to a seat it has sent the turn's state.
@@ -2927,6 +2961,11 @@ export class TableClient {
     if (shown && shown.hand < h) return true;
     if (this.ceremonyEpoch === this.epoch && this.commitHand === h) return true;
     return !!this.recordFor(h)?.attempts.some((x) => sharedOn(x, this.epoch));
+  }
+
+  /** This device had been shown a state of hand `h`, in any run of the app. */
+  private shownBefore(h: number): boolean {
+    return (this.plays.find((p) => p.hand === h)?.seen.length ?? 0) > 0;
   }
 
   /** The latest turn of hand `h` this device was shown, in any run of the app (0: none). */

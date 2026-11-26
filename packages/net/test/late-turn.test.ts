@@ -51,10 +51,12 @@ describe('held frames: stamps that crawl while the turn state is held', () => {
         // On the new link the hold goes on: the table welcomes the phone and answers its pings, but sends the state it owes
         // the seat only at the release, though an honest host sends it right behind the welcome (`heldFrame`).
         // Holding every other frame holds the new link's welcome too, while the crawling clock frames go out on that link:
-        // frames about the table on a link it never welcomed (`unseatedFrame`). A pong answered a second after its ping
-        // and stamped a millisecond after the last is a fixed point: this device's clock is that far ahead of the table's,
-        // and every honest stamp after it then calls the table's move early (`playedEarly`).
-        expect(h.w.verdict()).toMatchObject({ status: 'failed', failures: all ? ['unseatedFrame', 'playedEarly'] : ['heldFrame'] });
+        // frames about the table on a link it never welcomed (`unseatedFrame`). The answer to the ping behind the join comes
+        // before any frame about the hand: the table said it had no hand under way, so the state of the hand this device
+        // had been shown, when it comes, was held back, and the table's move for the seat with it (`heldFrame`; before
+        // unit 20h, `playedEarly`: a pong answered a second after its ping and stamped a millisecond after the last is a
+        // fixed point that every honest stamp after it contradicts).
+        expect(h.w.verdict()).toMatchObject({ status: 'failed', failures: all ? ['unseatedFrame', 'heldFrame'] : ['heldFrame'] });
       }),
     );
   }
