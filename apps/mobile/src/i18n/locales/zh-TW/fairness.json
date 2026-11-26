@@ -134,7 +134,7 @@
     "attemptsMissing": "紀錄沒有寫這次發牌嘗試了幾次。",
     "restartsMissing": "紀錄沒有列出發牌重來的經過。",
     "restartCount": "紀錄寫的發牌嘗試次數（%{attempts}）和它列出的重來次數（%{restarts}）對不上。",
-    "tooManyAttempts": "這次發牌嘗試了 %{attempts} 次。牌桌上有 %{humans} 位真人玩家，連同最多兩次伺服器重新啟動，照規矩最多只需要 %{most} 次。",
+    "tooManyAttempts": "這次發牌嘗試了 %{attempts} 次。牌桌上有 %{humans} 位真人玩家，加上伺服器回報的重新啟動（最多算兩次），照規矩最多只需要 %{most} 次。",
     "restartMalformed": "發牌第 %{n} 次重來的紀錄有毀損。",
     "restartBadSeat": "發牌第 %{n} 次重來提到的位子不是玩家的位子。",
     "restartBlamesBot": "發牌第 %{n} 次重來算在 %{seat} 號位頭上，但那是電腦玩家。",

@@ -134,7 +134,7 @@
     "attemptsMissing": "The record does not say how many attempts the deal took.",
     "restartsMissing": "The record does not list the restarts of the deal.",
     "restartCount": "The record's count of attempts at the deal (%{attempts}) does not fit the restarts it lists (%{restarts}).",
-    "tooManyAttempts": "The deal took %{attempts} attempts. An honest table with this many human players (%{humans}) needs %{most} at most, counting up to two server restarts.",
+    "tooManyAttempts": "The deal took %{attempts} attempts. With this many human players (%{humans}) and the server restarts it reported (at most two count), an honest table needs %{most} at most.",
     "restartMalformed": "The record of restart %{n} of the deal is damaged.",
     "restartBadSeat": "Restart %{n} of the deal names a seat that is not a player's seat.",
     "restartBlamesBot": "Restart %{n} of the deal blames seat %{seat}, which is a bot.",

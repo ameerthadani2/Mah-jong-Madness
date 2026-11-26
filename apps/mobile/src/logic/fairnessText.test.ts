@@ -81,7 +81,7 @@ describe('audit failure texts in the app', () => {
     expect(failureText(zh, 'The table played for this seat and passed up its win (turn 17)')).toBe('牌桌替你出牌，卻放掉了你可以胡的牌（第 17 手）。');
     expect(failureText(english, 'The table played for this seat and passed up its win (turn 17)')).toBe('The table played for you and passed up your win (turn 17).');
     expect(failureText(zh, 'Restart 1 blames seat 3, which is a bot')).toBe('發牌第 1 次重來算在 3 號位頭上，但那是電腦玩家。');
-    expect(failureText(english, '4 ceremony attempts is more than 2, the most an honest table with 1 human seats needs')).toBe('The deal took 4 attempts. An honest table with this many human players (1) needs 2 at most.');
+    expect(failureText(english, '4 ceremony attempts is more than 2, the most an honest table with 1 human seats needs')).toBe('The deal took 4 attempts. With this many human players (1) and the server restarts it reported (at most two count), an honest table needs 2 at most.');
     expect(failureText(zh, 'Host altered my secret')).toBe('紀錄裡你這個位子的祕密，和你的手機送出的不一樣。');
   });
 
