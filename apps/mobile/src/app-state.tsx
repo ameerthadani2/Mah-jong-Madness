@@ -6,6 +6,7 @@ import { setArchivedTableSource, setKeptMatchSource, setMoveJournalSource, setRe
 import { redFor, withRed, type KeptRed } from './logic/redHands';
 import { archivedFor, archivedMatch, archiveOnSlotChange, type ArchivedTable } from './logic/tableArchive';
 import { journalKeeper } from './game/journalKeeper';
+import { slotWriter } from './game/slotWriter';
 import { acceptedName } from './logic/profile';
 import type { ShopFocus } from './logic/shopFocus';
 import type { BoardKind } from './api/puzzles';
@@ -101,21 +102,28 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const signalUrl = resolveSignalUrl(settings.devSignalUrl);
   // The journal of moves (logic/moveJournal.ts, game/journalKeeper.ts): written before each move goes out.
   const journal = useRef(journalKeeper({ write: storage.writeJournal })).current;
+  // The saved table and the archive are written in order, the slot only once the archive holds what it gives up (game/slotWriter.ts).
+  const slots = useRef(slotWriter(storage, journal)).current;
 
   useEffect(() => {
-    // The archive is read before the saved table: a saved table gone stale is kept in it, not thrown away.
+    // The archive is read before the saved table: a saved table gone stale is kept in it, not thrown away. One whose
+    // archive could not be written stays in the slot on the device until it can be (game/slotWriter.ts).
     const savedTable = storage.loadArchive().then(async (archived) => {
       let kept = archived;
-      const as = await storage.loadActiveSession(async (stale) => {
-        kept = [...archiveOnSlotChange(kept, stale, null, () => undefined, Date.now())];
-        await storage.saveArchive(kept);
+      const stale = { stored: null as ActiveSession | null };
+      const as = await storage.loadActiveSession(async (s) => {
+        kept = [...archiveOnSlotChange(kept, s, null, () => undefined, Date.now())];
+        const ok = await storage.saveArchive(kept);
+        if (!ok) stale.stored = s;
+        return ok;
       });
-      return [as, kept] as const;
+      return [as, kept, stale.stored] as const;
     });
-    void Promise.all([storage.loadProfile(), storage.loadSettings(), storage.loadProgress(), savedTable, loadWallet(), storage.loadRedHands(), storage.loadJournal()]).then(([p, s, pr, [as, kept], w, red, journalRead]) => {
+    void Promise.all([storage.loadProfile(), storage.loadSettings(), storage.loadProgress(), savedTable, loadWallet(), storage.loadRedHands(), storage.loadJournal()]).then(([p, s, pr, [as, kept, staleStored], w, red, journalRead]) => {
       archiveRef.current = kept;
       redRef.current = red;
       activeRef.current = as;
+      slots.begin({ stored: as ?? staleStored, archive: kept, archiveBehind: staleStored !== null });
       // The journal's lists of matches whose record the app no longer keeps go with them.
       journal.load(journalRead);
       journal.keep(heldMatch(as, kept, null));
@@ -128,7 +136,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setWalletState(w);
       setLoaded(true);
     });
-  }, [journal]);
+  }, [journal, slots]);
 
   // Funnel: one app_open per launch, once the saved language is known.
   useEffect(() => {
@@ -202,7 +210,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
    * Put `next` in the saved-table slot (null empties it). The online table whose record leaves the slot (it is gone, given
    * up, or another table takes the slot) is kept in the archive while its match is not over, with the record its client
    * holds now when that table is the one open on this device: a join to its room takes the record up again. A table
-   * whose record comes back to the slot leaves the archive.
+   * whose record comes back to the slot leaves the archive. Memory changes at once; the device is written in order, the
+   * archive before the slot, and once a record is in the slot the moves it holds leave the journal (game/slotWriter.ts).
    */
   const putActive = useRef((next: ActiveSession | null) => {
     const prev = activeRef.current;
@@ -211,27 +220,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       return prev?.kind === 'online' && open?.mode === 'online' && open.roomCode === prev.roomCode && open.serverUrl === prev.signalUrl ? open.client.serialize() : undefined;
     };
     const kept = archiveOnSlotChange(archiveRef.current, prev, next, live, Date.now());
-    if (kept !== archiveRef.current) {
-      archiveRef.current = [...kept];
-      void storage.saveArchive(kept);
-    }
+    const changed = kept !== archiveRef.current;
+    if (changed) archiveRef.current = [...kept];
     activeRef.current = next;
     setActiveSessionState(next);
     // The journal keeps the moves of a match only as long as a record of it is kept (or its table is open).
     const open = sessionRef.current;
     const playing = open?.mode === 'online' && !open.client.state.matchOver ? { signalUrl: open.serverUrl ?? '', matchId: open.client.state.matchId } : null;
     journal.keep(heldMatch(next, archiveRef.current, playing));
-    if (!next) {
-      void storage.clearActiveSession();
-      return;
-    }
-    // Once the record is written, the moves it holds leave the journal: what stays is what was sent after it.
-    void storage.saveActiveSession(next).then((ok) => {
-      const m = next.kind === 'online' ? next.client?.state?.matchId : null;
-      if (!ok || next.kind !== 'online' || typeof m !== 'string' || m === '') return;
-      const seq = next.client?.sentSeq;
-      journal.saved(next.signalUrl, m, typeof seq === 'number' && Number.isInteger(seq) ? seq : 0);
-    });
+    void slots.put(next, changed ? kept : undefined);
   }).current;
   useEffect(() => {
     setSavedClientSource((url, room, token) => {

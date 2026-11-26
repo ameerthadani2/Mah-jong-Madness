@@ -92,6 +92,15 @@ export function afterSave(j: MoveJournal, signalUrl: string, matchId: string, se
   return entries.length === m.entries.length ? j : j.map((x) => (x === m ? { ...m, entries } : x));
 }
 
+/**
+ * The journal without the list of match `matchId`: what it holds no longer goes with a record a cold start would read
+ * (src/game/slotWriter.ts), so a client restored later vouches for nothing past its record. The same journal when it
+ * holds no such list.
+ */
+export function withoutMatch(j: MoveJournal, signalUrl: string, matchId: string): MoveJournal {
+  return j.some((x) => same(x, signalUrl, matchId)) ? j.filter((x) => !same(x, signalUrl, matchId)) : j;
+}
+
 /** The journal with the lists of the matches `held` says the app still keeps a record of, and no others. */
 export function keptFor(j: MoveJournal, held: (signalUrl: string, matchId: string) => boolean): MoveJournal {
   const out = j.filter((x) => held(x.signalUrl, x.matchId));

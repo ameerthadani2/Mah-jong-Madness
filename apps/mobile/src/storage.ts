@@ -178,7 +178,8 @@ export const storage = {
   /**
    * The saved table, or null. A damaged or stale record is deleted, so it is not read again on every launch; a stale
    * online one that holds a match is first handed to `keepStale` (the app keeps it in its archive), and deleted only once
-   * that is done.
+   * that is done: when `keepStale` says it could not be kept (false: the archive was not written), it stays stored, so
+   * a cold start still finds the record (src/game/slotWriter.ts), and the next launch tries again.
    */
   loadActiveSession: async (keepStale?: (stale: Extract<ActiveSession, { kind: 'online' }>) => Promise<unknown> | unknown): Promise<ActiveSession | null> => {
     try {
@@ -188,8 +189,8 @@ export const storage = {
       const s = validActiveSession(parsed);
       if (!s) {
         const stale = keepStale ? staleOnlineSession(parsed) : null;
-        if (stale) await keepStale!(stale);
-        await AsyncStorage.removeItem(KEYS.session);
+        const kept = stale ? await keepStale!(stale) : true;
+        if (kept !== false) await AsyncStorage.removeItem(KEYS.session);
       }
       return s;
     } catch {
@@ -228,12 +229,14 @@ export const storage = {
     }
   },
   writeJournal,
-  saveArchive: async (list: readonly ArchivedTable[]) => {
+  /** Write the records of tables that left the saved slot (an empty list removes the key): true once the device holds `list`. */
+  saveArchive: async (list: readonly ArchivedTable[]): Promise<boolean> => {
     if (list.length > 0) return save(KEYS.archive, list);
     try {
       await AsyncStorage.removeItem(KEYS.archive);
+      return true;
     } catch {
-      /* noop */
+      return false;
     }
   },
   /** The age gate's answer (src/legal/age.ts); null until the player has given a birth year. */
@@ -246,11 +249,13 @@ export const storage = {
     }
   },
   saveAgeRecord: (r: AgeRecord) => save(KEYS.age, r),
-  clearActiveSession: async () => {
+  /** Empty the saved-table slot: true once the device holds no saved table. */
+  clearActiveSession: async (): Promise<boolean> => {
     try {
       await AsyncStorage.removeItem(KEYS.session);
+      return true;
     } catch {
-      /* noop */
+      return false;
     }
   },
 };

@@ -61,6 +61,35 @@ describe('loading the saved table', () => {
     }
   });
 
+  it('a stale record that could not be kept (the archive was not written) stays stored, for the next launch to try again', async () => {
+    const old = Date.now() - 13 * 3600_000;
+    const online = { kind: 'online', signalUrl: 'wss://example.test', roomCode: 'AB12', token: 'tok', name: 'Tester', avatar: 'auntie', savedAt: old, client: { version: 2, state: { matchId: 'm-1' } } };
+    stored.set(KEY, JSON.stringify(online));
+    expect(await storage.loadActiveSession(async () => false)).toBeNull();
+    expect(stored.has(KEY)).toBe(true);
+  });
+
+  it('says whether the archive and the emptied slot were written', async () => {
+    failing.set = true;
+    try {
+      expect(await storage.saveArchive([{ signalUrl: 'wss://example.test', roomCode: 'A', matchId: 'm-A', token: 'tok', client: { version: 2, state: { matchId: 'm-A' } }, archivedAt: Date.now() }] as never)).toBe(false);
+    } finally {
+      failing.set = false;
+    }
+    expect(await storage.saveArchive([])).toBe(true);
+    stored.set(KEY, '{}');
+    expect(await storage.clearActiveSession()).toBe(true);
+    expect(stored.has(KEY)).toBe(false);
+    failing.remove = true;
+    try {
+      stored.set(KEY, '{}');
+      expect(await storage.clearActiveSession()).toBe(false);
+      expect(await storage.saveArchive([])).toBe(false);
+    } finally {
+      failing.remove = false;
+    }
+  });
+
   it('returns a sound record and leaves it stored', async () => {
     const record = { kind: 'online', signalUrl: 'wss://example.test', roomCode: 'AB12', token: 'tok', name: 'Tester', avatar: 'auntie', savedAt: Date.now() };
     stored.set(KEY, JSON.stringify(record));

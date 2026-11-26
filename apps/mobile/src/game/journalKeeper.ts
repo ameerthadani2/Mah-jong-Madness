@@ -5,7 +5,7 @@
  * clients (src/game/session.ts `setMoveJournalSource`).
  */
 import type { TableClientOptions } from '@mjm/net';
-import { afterSave, journalOf, keptFor, withEntry, withoutEntry, type MoveJournal } from '../logic/moveJournal';
+import { afterSave, journalOf, keptFor, withEntry, withoutEntry, withoutMatch, type MoveJournal } from '../logic/moveJournal';
 
 export interface JournalStore {
   /**
@@ -28,6 +28,11 @@ export interface JournalKeeper {
   saved(signalUrl: string, matchId: string, sentSeq: number): void;
   /** Keep the lists of the matches the app still keeps a record of (`held`), no others. */
   keep(held: (signalUrl: string, matchId: string) => boolean): void;
+  /**
+   * Drop the list of a match whose record a cold start would no longer read (game/slotWriter.ts). Resolves true once the
+   * device no longer holds it (the journal was written, or taken off the device), false when neither could be done.
+   */
+  forget(signalUrl: string, matchId: string): Promise<boolean>;
 }
 
 export function journalKeeper(store: JournalStore): JournalKeeper {
@@ -69,5 +74,16 @@ export function journalKeeper(store: JournalStore): JournalKeeper {
     journalFor: (signalUrl, matchId) => journalOf(j, signalUrl, matchId),
     saved: (signalUrl, matchId, sentSeq) => rewrite(afterSave(j, signalUrl, matchId, sentSeq)),
     keep: (held) => rewrite(keptFor(j, held)),
+    forget: async (signalUrl, matchId) => {
+      const next = withoutMatch(j, signalUrl, matchId);
+      j = next;
+      try {
+        // (A write that fails takes the journal off the device: the list is gone either way. Only one that can do neither throws.)
+        await store.write(next);
+        return true;
+      } catch {
+        return false;
+      }
+    },
   };
 }
