@@ -191,7 +191,7 @@ export function HomeScreen() {
   const playCard = (
     <ModeCard key="play" colorsPair={WINDOWS.play} windowH={windowH} windowW={homePlayArtWidth(width)} scene={<TableScene width="100%" height="100%" />} title={t('home.play.title')} style={wide ? { flex: 1.55 } : undefined} horizontal={!wide}>
       {/* The whole rules line, clocks included: it wraps rather than ending in an ellipsis. */}
-      <P dim style={styles.cardText} numberOfLines={phoneLand ? 2 : undefined}>
+      <P dim style={styles.cardText} numberOfLines={phoneLand ? 2 : undefined} testID="home-rules">
         {rulesSummary(app.settings.rules, t, locale)}
       </P>
       {skillChips}

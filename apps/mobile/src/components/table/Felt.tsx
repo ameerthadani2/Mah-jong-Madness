@@ -170,6 +170,8 @@ export function Felt({
   const plateFor = (seat: number): PlateProps => (onSeatPress ? { ...plateProps(seat), onLongPress: undefined, onLongPressHint: undefined } : plateProps(seat));
   const latestFor = (seat: number): TileId | undefined => (view.lastDiscard && view.lastDiscard.seat === seat ? view.lastDiscard.tile : undefined);
   const coach = coachOpen && hint ? hint : null;
+  // The coach's full panel, under the right seat (tablets and tall landscape screens).
+  const coachBeside = !!coach && L.coach === 'side' && !portrait;
   // Portrait: the felt fits its box (portraitFit.ts): the ring and the compass, the tile sizes, the rows of face-down
   // tiles, the older rows of each pond and then the melds' tiles lying on their side give way, in that order, as far as
   // they must.
@@ -492,7 +494,8 @@ export function Felt({
           )
         ) : (
           // Tablets and tall landscape: floating just above my pond, over the empty felt in the middle.
-          <View style={[styles.actionCenter, { bottom: pondH + 4 }]} pointerEvents="box-none" testID="action-dock">
+          // Clear of the strip the coach's side panel reaches into (layout.ts coachReach), so it never covers a button.
+          <View style={[styles.actionCenter, { bottom: pondH + 4 }, coachBeside && { left: L.coachReach, right: L.coachReach }]} pointerEvents="box-none" testID="action-dock">
             {actions}
           </View>
         ))}
@@ -519,9 +522,10 @@ export function Felt({
           {centerColumn}
           <View style={{ gap: 8, flexShrink: 1 }}>
             {sideSeat(1)}
-            {coach && L.coach === 'side' && (
-              // The coach keeps its height (the right seat gives way); past most of the column it scrolls, with "More".
-              <View style={{ width: sideWidth, flexShrink: 0 }}>
+            {coachBeside && (
+              // The coach keeps its height (the right seat gives way); past most of the column it scrolls, with "More". Where the
+              // centre has room, it reaches into it (layout.ts coachReach), drawn over the centre's edge.
+              <View style={{ width: sideWidth + L.coachReach, marginLeft: -L.coachReach, flexShrink: 0, zIndex: 2 }} testID="coach-side">
                 <CoachPanel hint={coach} maxHeight={centreH > 0 ? Math.round(centreH * 0.62) : undefined} onOpen={onCoachMore} />
               </View>
             )}

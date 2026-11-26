@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { calloutMs, RESULT_HOLD_MS, rollUp, rollUpMs, slideFrom } from './feel';
 import { readFileSync } from 'fs';
 import { join } from 'path';
-import { ACTION_DOCK_H, coachBarLines, compactCompassSize, dockHeight, fitTile, handLayout, landscapeWallSize, matchOverLayout, MIN_TOUCH, pinnedCoachFace, portraitCoachStatus, resultLayout, slopFor, tableLayout, TAP_HINT_DOCK_H } from './layout';
+import { ACTION_DOCK_H, CENTRE_KEEP, COACH_PANEL_MAX, coachBarLines, compactCompassSize, dockHeight, fitTile, handLayout, landscapeWallSize, matchOverLayout, MIN_TOUCH, pinnedCoachFace, portraitCoachStatus, resultLayout, slopFor, tableLayout, TAP_HINT_DOCK_H } from './layout';
 
 describe('tableLayout', () => {
   it('docks the claim buttons over the centre column in landscape, never over a side pond', () => {
@@ -46,6 +46,40 @@ describe('tableLayout', () => {
     // Portrait wraps into rows of nine.
     const p = handLayout(360, tableLayout(360, 740), 17, 0, 0);
     expect(p.tile * 9 + 2 * 8).toBeLessThanOrEqual(360 - 24);
+  });
+});
+
+// The showcase review of 20 November: on an 11-inch tablet (1194 x 834) the coach's panel, 214 px wide under the right
+// seat, broke its lines every dozen characters (補 / 到胡牌, 槓上開花（1 / 台）).
+describe("the coach's side panel", () => {
+  it('reaches into the centre where it has room, up to 300 px in all, and leaves the centre at least 520 px', () => {
+    for (const [w, h] of [
+      [1194, 834],
+      [1366, 1024],
+      [1180, 820],
+      [1112, 834],
+    ]) {
+      const L = tableLayout(w, h);
+      expect(L.coach, `${w}x${h}`).toBe('side');
+      expect(L.coachReach, `${w}x${h}`).toBeGreaterThan(0);
+      expect(L.sideWidth + L.coachReach, `${w}x${h}`).toBeLessThanOrEqual(COACH_PANEL_MAX);
+      expect(L.centerW - 2 * L.coachReach, `${w}x${h}`).toBeGreaterThanOrEqual(CENTRE_KEEP);
+      // The wall ring, centred, stays clear of the strip the panel takes.
+      expect((L.centerW - L.wallSize) / 2, `${w}x${h}`).toBeGreaterThan(L.coachReach);
+    }
+    // The showcase's tablet, and a 12.9-inch one: the whole 300 px.
+    expect(tableLayout(1194, 834).sideWidth + tableLayout(1194, 834).coachReach).toBe(COACH_PANEL_MAX);
+    expect(tableLayout(1366, 1024).sideWidth + tableLayout(1366, 1024).coachReach).toBe(COACH_PANEL_MAX);
+  });
+
+  it('keeps the side column\'s width where the centre has no room to give, and anywhere the coach is not a side panel', () => {
+    expect(tableLayout(1024, 768).coachReach).toBe(0);
+    for (const [w, h] of [
+      [390, 844],
+      [844, 390],
+      [667, 375],
+      [768, 1024],
+    ]) expect(tableLayout(w, h).coachReach, `${w}x${h}`).toBe(0);
   });
 });
 

@@ -297,11 +297,11 @@ export function H2({ children, style, heading }: { children: React.ReactNode; st
   );
 }
 /** Body text. It follows Settings → Display → Text (never below the OS text size); callers' sizes scale too. */
-export function P({ children, dim, style, numberOfLines }: { children: React.ReactNode; dim?: boolean; style?: StyleProp<TextStyle>; numberOfLines?: number }) {
+export function P({ children, dim, style, numberOfLines, testID }: { children: React.ReactNode; dim?: boolean; style?: StyleProp<TextStyle>; numberOfLines?: number; testID?: string }) {
   const { fontFactor } = useDisplayScale();
   const sized = fontFactor === 1 ? null : scaledType(style, fontFactor);
   return (
-    <Text numberOfLines={numberOfLines} style={[styles.p, fontFor(children, fonts.body, '700'), dim && { color: colors.inkDim }, style, sized]}>
+    <Text testID={testID} numberOfLines={numberOfLines} style={[styles.p, fontFor(children, fonts.body, '700'), dim && { color: colors.inkDim }, style, sized]}>
       {children}
     </Text>
   );

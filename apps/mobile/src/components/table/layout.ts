@@ -27,6 +27,13 @@ export interface TableLayout {
    */
   actions: 'center' | 'strip';
   sideWidth: number;
+  /**
+   * How far the coach's side panel (coach 'side') reaches into the centre column, beside the side column it sits in: on a
+   * screen whose centre has room to spare, up to COACH_PANEL_MAX wide in all. At the side column's 214 px its lines broke
+   * every dozen characters (補 / 到胡牌, the showcase review of 20 November). The claim buttons keep clear of the strip it
+   * takes (Felt.tsx), and the wall ring is narrower than the centre it leaves, so the panel never covers either.
+   */
+  coachReach: number;
   plate: number;
   pool: TileSize;
   rail: number;
@@ -40,6 +47,10 @@ export interface TableLayout {
   wallSize: number;
   compassSize: number;
 }
+
+/** The widest the coach's side panel grows to, and the least width of the centre column it leaves for the claim buttons. */
+export const COACH_PANEL_MAX = 300;
+export const CENTRE_KEEP = 520;
 
 export function tableLayout(width: number, height: number): TableLayout {
   const portrait = height > width;
@@ -58,14 +69,19 @@ export function tableLayout(width: number, height: number): TableLayout {
   const showWall = tablet || portrait;
   const wallSize = tablet ? Math.min(centerW - 24, 300) : Math.max(120, Math.min(centerW - 4, 220));
   const compassSize = tablet ? 96 : portrait ? Math.min(66, Math.round(wallSize * 0.42)) : compact ? 62 : 74;
+  const coach = portrait ? 'pinned' : height < 520 ? 'rail' : 'side';
+  const spare = Math.min(COACH_PANEL_MAX - sideWidth, Math.floor((centerW - CENTRE_KEEP) / 2));
+  // A reach of a few pixels changes no line: only one worth a few characters is taken.
+  const coachReach = coach === 'side' && spare >= 24 ? spare : 0;
   return {
     portrait,
     tablet,
     compact,
-    coach: portrait ? 'pinned' : height < 520 ? 'rail' : 'side',
+    coach,
     statusInHud: !portrait && !tablet && compact,
     actions: portrait ? 'strip' : 'center',
     sideWidth,
+    coachReach,
     plate,
     pool,
     rail,

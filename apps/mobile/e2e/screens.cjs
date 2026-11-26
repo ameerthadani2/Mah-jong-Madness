@@ -25,14 +25,19 @@
  * -leaderboards-zh.png, -leaderboards-xl.png) does not show its offline state, clips text or has a choice under 44 px,
  * a table HUD icon takes a press smaller than 44 x 44 px, a control on Home (in English and in zh-TW) or anywhere in
  * Settings takes a press smaller than 44 x 44 px, a tap on a control's face on Home reaches another control (tapsReach), the Shop's Looks tab cuts a description (<size>-shop-looks.png),
+ * or Home or Learn in Traditional Chinese draws Chinese in one of the app's Latin faces (thin: latinChinese) or splits a
+ * number from its unit in Home's rules line (splitWords; <size>-learn-zh.png),
  * or a seat name is cut at a table in Traditional Chinese (each viewport at Normal text, and the portrait ones again at
  * Extra-large text: <size>-table-zh.png, <size>-table-zh-xl.png at every viewport; the hand tiles' size is logged as a note),
  * or the Shop's try-on preview fails its checks (runPreview below: <size>-preview-<kind>.png and -zh.png, at every
  * viewport and at 320x568), or the coach fails coachCheck at one of my decisions (on screen whenever its button shows it
  * on, a line of its advice whole on screen on my turn and at each claim chance, never covering my pond, my hand, the claim or discard buttons or
- * the tap hint, never cut, and "More" beside advice longer than its lines) in the whole hand each table run plays: the
+ * the tap hint, never cut, "More" beside advice longer than its lines, no Chinese of it in a Latin face, and no scoring
+ * term, tile name or number with its unit split across two of its lines) in the whole hand each table run plays: the
  * main run at every viewport, the Extra-large runs, the zh-TW runs, and the coach runs on the smallest phones (568x320,
- * 320x568) and at Large tiles at 667x375 (<size>-coach-*.png), or the felt fails feltCheck at one of my decisions in any
+ * 320x568), at Large tiles at 667x375, on an 11-inch tablet in Traditional Chinese (1194x834, the coach's wider side
+ * panel) and on a phone that follows the coach to a win (390x844, seed 22) (<size>-coach-*.png), or the result sheet after
+ * my win in those runs puts a star of its ribbon off the title's line (ribbonCheck), or the felt fails feltCheck at one of my decisions in any
  * of those runs (the portrait felt scrolls; an opponent's discard (in landscape the across seat's), the newest of each, my
  * pond, my hand or a claim or discard button is not whole on screen; a button covers a discard; something lies over the
  * top edge of a tile of my hand; a "+N" chip for earlier discards is cut; or the coach's press reaches over my pond or my
@@ -444,14 +449,86 @@ async function coachCheck(page, advised) {
 }
 
 /**
+ * Chinese drawn in one of the app's Latin faces (Lilita, Luckiest, Fredoka, Nunito), which have no Chinese glyphs: the
+ * browser falls back to its regular weight, thin beside the heavy titles (the showcase review of 20 November). The app's
+ * Text names the system's Chinese face for it instead (src/components/Text.tsx). Each such text, with its face, under
+ * `sel` (the whole page by default).
+ */
+const latinChinese = (page, sel = null) =>
+  page.evaluate((sel) => {
+    const root = sel ? document.querySelector(sel) : document.body;
+    if (!root) return [];
+    const out = new Set();
+    for (const el of root.querySelectorAll('div, span')) {
+      const own = [...el.childNodes].filter((n) => n.nodeType === 3).map((n) => n.textContent).join('');
+      if (!/[\u3400-\u9fff]/.test(own) || el.getBoundingClientRect().width === 0) continue;
+      const face = getComputedStyle(el).fontFamily.split(',')[0].replace(/["']/g, '').trim();
+      if (/^(Lilita|Luckiest|Fredoka|Nunito)/.test(face)) out.add(`"${own.trim().slice(0, 16)}" in ${face}`);
+    }
+    return [...out];
+  }, sel);
+
+/**
+ * What a line must not split (src/logic/keepWhole.ts): a scoring term, a Chinese tile name, a number and its unit. Each
+ * occurrence in the text under `sel` that is drawn on two lines, measured from its own glyphs.
+ */
+const KEEP_WHOLE = ['門清自摸', '槓上開花', '花上自摸', '海底撈月', '河底撈魚', '八仙過海', '嚦咕嚦咕', '碰碰胡', '全求人', '半求人', '三暗刻', '四暗刻', '五暗刻', '混一色', '清一色', '字一色', '小三元', '大三元', '小四喜', '大四喜', '搶槓', '平胡', '獨聽', '門清', '自摸', '莊家', '連莊'];
+const splitWords = (page, sel) =>
+  page.evaluate(
+    ([sel, terms]) => {
+      const words = new RegExp([...terms.map((w) => [...w].join('\u2060?')), '[一二三四五六七八九]\u2060?[萬筒條]', '\\d[ \u00a0](?:台|秒|張)'].join('|'), 'g');
+      const out = new Set();
+      for (const root of document.querySelectorAll(sel)) {
+        if (root.getBoundingClientRect().width === 0) continue;
+        const walk = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+        for (let n = walk.nextNode(); n; n = walk.nextNode()) {
+          if (n.parentElement.closest('[aria-hidden="true"]')) continue;
+          words.lastIndex = 0;
+          for (let m; (m = words.exec(n.textContent)); ) {
+            const range = document.createRange();
+            range.setStart(n, m.index);
+            range.setEnd(n, m.index + m[0].length);
+            const tops = new Set([...range.getClientRects()].filter((r) => r.width > 0).map((r) => Math.round(r.top)));
+            if (tops.size > 1) out.add(`"${m[0].replace(/\u2060/g, '')}" is split across two lines in "${n.textContent.replace(/\u2060/g, '').slice(0, 24)}…"`);
+          }
+        }
+      }
+      return [...out];
+    },
+    [sel, KEEP_WHOLE],
+  );
+
+/**
+ * The result sheet's ribbon after my win: both stars on the title's line (the showcase review of 20 November: at phone
+ * width the closing ☆ wrapped onto a line of its own). Nothing to look at after a draw or another seat's win.
+ */
+const ribbonCheck = (page) =>
+  page.evaluate(() => {
+    const seen = (e) => e.getBoundingClientRect().width > 0;
+    const sheet = [...document.querySelectorAll('[data-testid="result-sheet"]')].find(seen);
+    const ribbon = sheet && [...sheet.querySelectorAll('[role="heading"]')].find(seen);
+    if (!ribbon) return [];
+    const stars = [...ribbon.querySelectorAll('svg')].filter(seen);
+    if (stars.length === 0) return [];
+    // The title: the ribbon's largest text.
+    const texts = [...ribbon.querySelectorAll('div[dir="auto"]')].filter((e) => seen(e) && e.textContent.trim() && e.closest('[aria-hidden="true"]') === null);
+    const title = texts.sort((a, b) => parseFloat(getComputedStyle(b).fontSize) - parseFloat(getComputedStyle(a).fontSize))[0];
+    if (!title) return ['the result ribbon has no title'];
+    const t = title.getBoundingClientRect();
+    const mid = (r) => (r.top + r.bottom) / 2;
+    return stars.filter((s) => Math.abs(mid(s.getBoundingClientRect()) - mid(t)) > t.height / 2).map((s) => `a star of the result ribbon sits off the title's line (its middle at ${Math.round(mid(s.getBoundingClientRect()))}, the title's at ${Math.round(mid(t))})`);
+  });
+
+/**
  * coachCheck once the table has settled: a finding is kept only if it is still there after two more looks 800 ms apart (a
  * new line is laid out a frame after it shows, later on a busy machine).
  */
 async function coachSettled(page, advised) {
-  let found = await coachCheck(page, advised);
+  const look = async () => [...(await coachCheck(page, advised)), ...(await latinChinese(page, '[data-testid="coach"]')).map((f) => `the coach draws ${f}`), ...(await splitWords(page, '[data-testid="coach"]')).map((f) => `the coach: ${f}`)];
+  let found = await look();
   for (let i = 0; i < 2 && found.length > 0; i++) {
     await page.waitForTimeout(800);
-    found = await coachCheck(page, advised);
+    found = await look();
   }
   return found;
 }
@@ -825,6 +902,10 @@ async function playCoachedHand(page, { onDiscard = async () => undefined, untilD
     }
     await page.waitForTimeout(250);
   }
+  if (await visible(page, '[data-testid="result-sheet"]')) {
+    await page.waitForTimeout(600);
+    found.push(...(await ribbonCheck(page)));
+  }
   return { found: tally(found), discards, prompts };
 }
 
@@ -897,8 +978,15 @@ async function runHomeZh(browser, port, [w, h]) {
   });
   if (mark.length === 0) fails.push('Home (zh-TW): the wordmark does not read 麻將狂熱');
   else if (mark.some((m) => m.off || m.cut)) fails.push('Home (zh-TW): the 麻將狂熱 wordmark is cut, wrapped or off screen');
+  // Every Chinese title heavy, in the system's Chinese face: Home's cards, then Learn's (its cards and lesson titles).
+  fails.push(...(await latinChinese(page)).map((f) => `Home (zh-TW): Chinese in a Latin face, thin: ${f}`));
+  fails.push(...(await splitWords(page, '[data-testid="home-rules"]')).map((f) => `Home (zh-TW): ${f}`));
+  if (await tapSel(page, '[data-testid="open-learn"]', 1200)) {
+    await page.screenshot({ path: path.join(out, `${tag}-learn-zh.png`) });
+    fails.push(...(await latinChinese(page)).map((f) => `Learn (zh-TW): Chinese in a Latin face, thin: ${f}`));
+  } else fails.push('Home (zh-TW): Learn does not open');
   await ctx.close();
-  return { size: `${tag} zh-TW`, finished: true, shots: ['home-zh'], notes: [], fails, errors };
+  return { size: `${tag} zh-TW`, finished: true, shots: ['home-zh', 'learn-zh'], notes: [], fails, errors };
 }
 
 async function run(browser, port, [w, h]) {
@@ -1246,11 +1334,15 @@ const COACH_RUNS = [
   [[320, 568], 'en-US', 1, 1, 13],
   [[320, 568], 'zh-TW', 1.5, 1.3, 14],
   [[667, 375], 'en-US', 1.25, 1.15, 15],
+  // An 11-inch tablet (the showcase's): the coach's side panel, wider where the centre has room (layout.ts coachReach).
+  [[1194, 834], 'zh-TW', 1, 1, 16],
+  // A phone in portrait that follows the coach to a win (seed 22): the result ribbon's stars beside its title (ribbonCheck).
+  [[390, 844], 'en-US', 1, 1, 22, 'coach'],
 ];
 
-async function runCoach(browser, port, [[w, h], locale, tileScale, textScale, seed]) {
+async function runCoach(browser, port, [[w, h], locale, tileScale, textScale, seed, follow]) {
   const tag = `${w}x${h}`;
-  const name = `coach-${locale === 'zh-TW' ? 'zh' : 'en'}-t${tileScale}`;
+  const name = `coach-${locale === 'zh-TW' ? 'zh' : 'en'}-t${tileScale}${follow ? `-${follow}` : ''}`;
   const ctx = await browser.newContext({ viewport: { width: w, height: h }, locale });
   await ctx.addInitScript(([t, x]) => {
     localStorage.setItem('mjm.profile', JSON.stringify({ userId: 'user-e2e-1234567', userSecret: '0123456789abcdef0123456789abcdef', name: 'Tester', avatar: 'panda' }));
@@ -1266,11 +1358,12 @@ async function runCoach(browser, port, [[w, h], locale, tileScale, textScale, se
   await page.waitForSelector('[data-testid^="tile-"]', { timeout: 15000 });
   const sheet = [];
   const played = await playCoachedHand(page, {
-    // Landscape: the hand follows the coach, so win prompts come up in the narrow dock.
-    discard: w > h ? 'coach' : 'last',
+    // Landscape: the hand follows the coach, so win prompts come up in the narrow dock (and where a run asks for it).
+    discard: follow ?? (w > h ? 'coach' : 'last'),
     onDiscard: async (n) => {
       if (n === 4) await page.screenshot({ path: path.join(out, `${tag}-${name}.png`) });
-      if (n !== 2) return;
+      // A tablet's coach is the full panel, not a bar that opens a sheet ("More" opens it where its text runs over).
+      if (n !== 2 || Math.min(w, h) >= 680) return;
       // The coach's sheet, from its bar: everything it says, a dialog that keeps the keyboard and the page as the other
       // sheets do (dialogKeys), closed by Escape with focus back on the bar.
       // The sheet slides in; on a busy machine that can take longer than the usual pause (`openWithin`).
