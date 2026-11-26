@@ -86,71 +86,47 @@ export interface DiscardPuzzleOptions {
    */
   readShape?: boolean;
   /**
-   * The share of shape-reading seeds whose hand may still be answered by the isolated-tile rule
-   * (`isolatedTile`); the rest are redrawn until the rule's tile is not an accepted answer, so the
-   * puzzle turns on comparing shapes. Defaults to ISOLATED_TILE_PUZZLE_SHARE for the difficulty.
-   * Medium puzzles use it; hard puzzles and the daily are `deep` instead.
+   * Without `deep`: the share of shape-reading seeds whose hand may still be answered by the isolated-tile
+   * rule (`isolatedTile`); the rest are redrawn until the rule's tile is not an accepted answer.
+   * Defaults to ISOLATED_TILE_PUZZLE_SHARE for the difficulty.
    */
   isolatedTileShare?: number;
   /**
-   * Split shape-reading seeds into rule-proof and spread hands (RULE_PROOF_PUZZLE_SHARE). On by default
-   * at hard; the daily turns it on at every difficulty. `isolatedTileShare` is then not used.
+   * Place the answer at a depth the seed draws among the tiles rules of thumb throw first
+   * (ANSWER_DEPTH_SHARE). On by default at medium and hard; the daily turns it on at every difficulty.
    */
   deep?: boolean;
 }
 
 /**
- * The share of shape-reading discard puzzles (seeds outside LONE_HONOUR_PUZZLE_SHARE) that may be
- * answered by "throw an isolated tile, honours first, then terminals, then the outermost". Every
- * other one is a hand where that tile is not an accepted answer: which 搭子 to break, keep or break
- * the pair, the wider wait, a lone-looking tile worth keeping. Medium keeps about two thirds; easy
- * puzzles (1) are not redrawn. Hard puzzles and the daily go further (RULE_PROOF_PUZZLE_SHARE); their
- * entry here is kept for callers that ask for the older redraw by name.
+ * The share of shape-reading seeds that may still be answered by "throw an isolated tile, honours first,
+ * then terminals, then the outermost" when a puzzle is not `deep` (no generator default uses that now:
+ * medium and hard drills and the daily place the answer by depth). Easy puzzles (1) are not redrawn.
  */
 export const ISOLATED_TILE_PUZZLE_SHARE: Record<1 | 2 | 3, number> = { 1: 1, 2: 0.6, 3: 0.3 };
 
 /**
- * Hard discard puzzles and the daily (at every difficulty) split their shape-reading seeds in two. Each
- * hand is dealt at random and then changed one tile at a time until it qualifies:
+ * Medium and hard discard puzzles and the daily (at every difficulty) place the answer by the seed. A rule of
+ * thumb throws the tiles that keep the hand closest to ready in an order of its own (`obviousOrders`: the
+ * fewest neighbours by any weighting, by kinds or by tiles; the outermost tile or single; and the fewest
+ * neighbours among the tiles left over once complete sets are taken out, read three ways). The answer's depth
+ * is the earliest any of those orders reaches an accepted answer: 0 when some rule's first pick is right.
+ * Each seed draws the depth from these shares: 0, 1, or 2 and later (2 also off the most connected tile:
+ * `connectedOrders`, "break the pair with the most neighbours" and "throw the tile with the most").
  *
- * - rule-proof, this share of seeds by difficulty: no tile a rule of thumb would throw first is accepted (`ruleOfThumbPicks`:
- *   the least connected tile by any count, the outermost tile, the outermost single, among all the tiles
- *   or among those that keep the best shanten). At medium and hard (the daily's Tuesday, Thursday and
- *   weekend puzzles, and hard drills and Rush), nor any of those among the tiles left over once the
- *   complete sets are taken out (`ruleOfThumbPicks` with `sets`); without that, the answer was often one
- *   of a pair inside a run, which "take out your sets, then throw the leftover with the fewest neighbours"
- *   finds;
- * - spread, the rest: at least SPREAD_DISCARDS_PER_ANSWER discards that keep the hand as close to ready
- *   for each accepted one, so working out the shanten alone does not find the answer. The least
- *   connected tile is still right in about three in four of these, as in play.
- *
- * Rule-proof hands alone would teach the opposite rule ("fewest steps to ready, then break the pair with
- * the most neighbours" was right on about half of them), so the share balances the two ends. Before this
- * (the isolated-tile redraw alone), "throw the tile with the fewest neighbours" was right on 227 of the
- * next 365 dailies and "fewest steps to ready, then fewest neighbours" on 253, and on 228 of 300 hard
- * puzzles; now the strongest of 15 rules and 16 neighbour weightings is right on about 45% of either
- * (test/puzzle_rules.test.ts pins them under 48%).
- *
- * The sets-first read was right on about three in four of both (268 of 365 dailies, 217 of 300 hard
- * puzzles). Since medium and hard rule-proof hands beat it too, and more of their seeds draw one, it is
- * right on about 40% of hard puzzles and 57 to 60% of dailies: under half of the medium and hard ones, but
- * about three in four of the easy ones, which keep the older rule-proofing. Beating it there as well took a
- * walk ten times as long (a median over 100 ms) and made the other rules stronger on those days.
+ * The obvious tile was right on nearly every natural hand, and the rule-proof hands of 18 to 20 November
+ * 2026, where no rule's first pick was right, made "avoid the obvious tile" a rule of its own (right on 52%
+ * of hard puzzles). With the depth drawn, a rule's first pick is right on about a third, the second pick and
+ * the most connected tile on fewer, and no measured rule on more than 45% of hard puzzles and of medium and
+ * hard dailies, 50% of medium drills and 60% of easy dailies (test/puzzle_rules.test.ts, docs/ARCHITECTURE.md).
  */
-export const RULE_PROOF_PUZZLE_SHARE: Record<1 | 2 | 3, number> = { 1: 0.55, 2: 0.85, 3: 0.75 };
-/** A spread puzzle has at least this many discards that keep the best shanten for each accepted answer. */
-export const SPREAD_DISCARDS_PER_ANSWER = 3;
+export const ANSWER_DEPTH_SHARE: readonly number[] = [1 / 3, 1 / 3, 1 / 3];
+/** A depth-placed puzzle has at least this many discards that keep the hand closest to ready, and two for each accepted one. */
+export const BEST_DISCARDS_MIN = 3;
 /** The options the daily puzzle is generated with (`dailyPuzzle`), for callers that rebuild it by hand. */
 export const DAILY_DISCARD_OPTIONS: Readonly<DiscardPuzzleOptions> = { readShape: true, deep: true };
-/**
- * Steps of the walk at a rule-proof hand before settling for a spread one, at a spread one before any
- * hand that is a decision, and at that: bounds the time a puzzle takes.
- */
-const RULE_PROOF_STEPS = 110;
-/** The same at medium and hard, where a rule-proof hand must also beat the sets-first reads (`ruleOfThumbPicks` with `sets`), which fewer hands do. */
-const SETS_PROOF_STEPS = 350;
-const SPREAD_STEPS = 40;
-const DRAWN_STEPS = 50;
+/** Steps of the walk towards the seed's depth before settling for the nearest hand: bounds the time a puzzle takes. */
+const ANSWER_DEPTH_STEPS = 300;
 
 /** True when the suited tile has no other tile of its suit within two ranks (honours have none). */
 function hasNoNeighbour(counts: Counts, k: Kind): boolean {
@@ -375,8 +351,6 @@ export function ruleOfThumbPicks(hand: readonly Kind[], opts: { sets?: boolean }
   return [...ruleOfThumbPicksOf(heldKinds(countsFromKinds(hand)), opts.sets === true)].sort((a, b) => a - b);
 }
 
-type DiscardDepth = 'drawn' | 'spread' | 'ruleProof';
-
 const holdsLoneHonour = (counts: Counts): boolean => {
   for (let k = KIND_WIND; k < NUM_PLAY_KINDS; k++) if (counts[k] === 1) return true;
   return false;
@@ -408,9 +382,10 @@ function quickHand(rng: Rng, wall: Kind[], maxShanten: number, minShanten: numbe
 /**
  * One step of the walk: draw a tile from the rest of the wall and throw a random tile of the hand, as in
  * play, keeping the hand inside the shanten bounds (and free of isolated honours when `shapeOnly`).
- * `wall[0..16]` is the hand and `counts` its counts; both change in place. False when no step was found.
+ * `wall[0..16]` is the hand and `counts` its counts; both change in place. Returns the two wall positions
+ * swapped, for `undoStep`, or null when no step was found.
  */
-function walkHand(rng: Rng, wall: Kind[], counts: Counts, maxShanten: number, minShanten: number, shapeOnly: boolean): boolean {
+function walkStep(rng: Rng, wall: Kind[], counts: Counts, maxShanten: number, minShanten: number, shapeOnly: boolean): [number, number] | null {
   for (let tries = 0; tries < 200; tries++) {
     const i = rng.int(17);
     const j = 17 + rng.int(wall.length - 17);
@@ -424,43 +399,102 @@ function walkHand(rng: Rng, wall: Kind[], counts: Counts, maxShanten: number, mi
       if (sh <= maxShanten && sh >= minShanten) {
         wall[i] = inn;
         wall[j] = out;
-        return true;
+        return [i, j];
       }
     }
     counts[inn]--;
     counts[out]++;
   }
-  return false;
+  return null;
+}
+
+/** Takes back a step of the walk. */
+function undoStep(wall: Kind[], counts: Counts, [i, j]: [number, number]): void {
+  const inn = wall[i];
+  const out = wall[j];
+  counts[inn]--;
+  counts[out]++;
+  wall[i] = out;
+  wall[j] = inn;
+}
+
+/** Sorts by the keys in order, then by kind. */
+const byKeys = (kinds: readonly HeldKind[], key: (h: HeldKind) => readonly number[]): Kind[] => {
+  const keys = new Map(kinds.map((h) => [h.kind, key(h)]));
+  const cmp = (a: Kind, b: Kind): number => {
+    const x = keys.get(a)!;
+    const y = keys.get(b)!;
+    for (let i = 0; i < x.length; i++) if (x[i] !== y[i]) return x[i] - y[i];
+    return a - b;
+  };
+  return kinds.map((h) => h.kind).sort(cmp);
+};
+
+/** Neighbour count with weights for extra copies, kinds one rank away and kinds two ranks away (`byTiles`: tiles of them). */
+const weighed = (h: HeldKind, copy: number, next: number, gap: number, byTiles = false): number =>
+  (h.copies - 1) * copy + (byTiles ? h.nextTiles : h.nextKinds) * next + (byTiles ? h.gapTiles : h.gapKinds) * gap;
+
+/**
+ * The discards that keep the hand closest to ready (`best`), in the orders rules of thumb throw them, the most
+ * obvious first: the fewest neighbours over the whole hand (several weightings, by kinds and by tiles), the
+ * outermost tile, the outermost single, and the fewest neighbours among the tiles left over once complete sets
+ * are taken out (pongs first, runs first, the most sets; a tile used in a set comes after every leftover).
+ */
+function obviousOrders(held: readonly HeldKind[], best: number, counts: Counts): Kind[][] {
+  const keep = held.filter((h) => h.shanten === best);
+  const orders: Kind[][] = [
+    byKeys(keep, (h) => [weighed(h, 3, 2, 1), h.position]),
+    byKeys(keep, (h) => [weighed(h, 1, 1, 1), h.position]),
+    byKeys(keep, (h) => [weighed(h, 2, 1, 0), h.position]),
+    byKeys(keep, (h) => [weighed(h, 1, 1, 1, true), h.position]),
+    byKeys(keep, (h) => [h.position]),
+    byKeys(keep, (h) => [h.copies === 1 ? 0 : 1, h.position]),
+  ];
+  for (const read of SET_READS) {
+    const left = new Map(leftoverKinds(held, leftAfterSets(counts, read)).map((h) => [h.kind, h]));
+    for (const [copy, next, gap] of [
+      [3, 2, 1],
+      [1, 1, 1],
+    ]) {
+      orders.push(
+        byKeys(keep, (h) => {
+          const l = left.get(h.kind);
+          return l ? [0, weighed(l, copy, next, gap), l.position] : [1, 0, h.position];
+        }),
+      );
+    }
+  }
+  return orders;
+}
+
+/** The other end of the same discards: break the pair with the most neighbours (holding two or more pairs), or throw the tile with the most neighbours. */
+function connectedOrders(held: readonly HeldKind[], best: number): Kind[][] {
+  const keep = held.filter((h) => h.shanten === best);
+  const pairs = held.filter((h) => h.copies === 2).length >= 2;
+  const links = (h: HeldKind): number => h.nextKinds * 2 + h.gapKinds;
+  return [byKeys(keep, (h) => [pairs && h.copies === 2 ? 0 : 1, -links(h)]), byKeys(keep, (h) => [-links(h)]), byKeys(keep, (h) => [-weighed(h, 3, 2, 1), -h.position])];
 }
 
 /**
- * The accepted answers of the hand when it qualifies for `depth`, else null. Only the discards that keep
- * the best shanten are counted, and for a rule-proof hand the tiles a rule of thumb throws are counted
- * last, so the hand is dropped as soon as one of them keeps nearly as many tiles as the best of the rest.
+ * Where the answer of a 17-tile hand sits for rules of thumb: its accepted answers, the depth (the earliest
+ * position at which any obvious order reaches one), whether one is the first pick of a connected order, and
+ * how many discards keep the hand closest to ready. Null when the hand is not a puzzle: fewer than
+ * BEST_DISCARDS_MIN such discards or two for each answer, or so many answers that it is no decision.
  */
-function qualifyingAnswers(counts: Counts, depth: DiscardDepth, setsProof = false): Kind[] | null {
+function answerDepth(counts: Counts): { answers: Kind[]; depth: number; connected: boolean; candidates: number } | null {
   const held = heldKinds(counts);
-  const bestShanten = Math.min(...held.map((h) => h.shanten));
-  const keep = held.filter((h) => h.shanten === bestShanten).map((h) => h.kind);
-  const spread = depth === 'spread';
-  if (spread && keep.length < SPREAD_DISCARDS_PER_ANSWER) return null;
-  const ruledOut = depth === 'ruleProof' ? ruleOfThumbPicksOf(held, setsProof) : null;
-  if (ruledOut && keep.every((k) => ruledOut.has(k))) return null;
+  const best = Math.min(...held.map((h) => h.shanten));
+  const keep = held.filter((h) => h.shanten === best).map((h) => h.kind);
+  if (keep.length < BEST_DISCARDS_MIN) return null;
   const unseen = counts.map((c) => 4 - c);
-  const order = ruledOut ? [...keep.filter((k) => !ruledOut.has(k)), ...keep.filter((k) => ruledOut.has(k))] : keep;
-  const acceptance = new Map<Kind, number>();
-  let top = 0;
-  for (const k of order) {
-    const n = acceptanceAfter(counts, TOTAL_SETS, k, unseen);
-    acceptance.set(k, n);
-    top = Math.max(top, n);
-    if (ruledOut?.has(k) && n >= top * 0.9) return null;
-  }
+  const acceptance = new Map(keep.map((k) => [k, acceptanceAfter(counts, TOTAL_SETS, k, unseen)]));
+  const top = Math.max(...acceptance.values());
   const answers = keep.filter((k) => acceptance.get(k)! >= top * 0.9);
-  // Skip hands where almost anything is right: a puzzle needs a real decision.
-  if (answers.length > Math.max(2, Math.floor(held.length / 3))) return null;
-  if (spread && keep.length < SPREAD_DISCARDS_PER_ANSWER * answers.length) return null;
-  return answers;
+  // A real decision: never more than a third of the discards accepted, and two that keep the shape for each answer.
+  if (answers.length > Math.max(2, Math.floor(held.length / 3)) || keep.length < 2 * answers.length) return null;
+  const depth = Math.min(...obviousOrders(held, best, counts).map((o) => o.findIndex((k) => answers.includes(k))));
+  const connected = connectedOrders(held, best).some((o) => answers.includes(o[0]));
+  return { answers, depth, connected, candidates: keep.length };
 }
 
 /** The puzzle of a 17-tile hand: its analysis, answers within 10% of the best acceptance at the best shanten, and its decision. */
@@ -475,39 +509,39 @@ function analysedPuzzle(seed: string, counts: Counts): DiscardPuzzle {
 }
 
 /**
- * Hard puzzles and the daily: a rule-proof or a spread hand, as the seed draws (RULE_PROOF_PUZZLE_SHARE).
- * The hand is dealt at random and then changed one tile at a time, a tile drawn from the wall and one
- * thrown (`walkHand`), until it qualifies: a fresh hand for every try would cost several times as much,
- * since the shanten tables of its suits are new. After RULE_PROOF_STEPS a rule-proof walk settles for a
- * spread hand, and after SPREAD_STEPS more for any hand that is a decision.
+ * Medium and hard puzzles and the daily: the answer at the depth the seed draws (ANSWER_DEPTH_SHARE). The hand
+ * is dealt at random and then changed one tile at a time, a tile drawn from the wall and one thrown, keeping a
+ * change unless it takes the hand further from that depth, until it is there: a fresh hand for every try
+ * would cost several times as much, since the shanten tables of its suits are new. After ANSWER_DEPTH_STEPS
+ * it settles for the hand it has, which is as near as the walk got.
  */
-function deepDiscardPuzzle(seed: string, rng: Rng, maxS: number, minS: number, readShape: boolean, ruleProofShare: number, setsProof: boolean): DiscardPuzzle {
-  const drawn = rng.next();
-  const first: DiscardDepth = !readShape ? 'drawn' : drawn < ruleProofShare ? 'ruleProof' : 'spread';
-  const plan: Array<[DiscardDepth, number]> = [
-    ...(first === 'ruleProof' ? [['ruleProof', setsProof ? SETS_PROOF_STEPS : RULE_PROOF_STEPS] as [DiscardDepth, number]] : []),
-    ...(first !== 'drawn' ? [['spread', SPREAD_STEPS] as [DiscardDepth, number]] : []),
-    ['drawn', DRAWN_STEPS],
-  ];
+function depthDiscardPuzzle(seed: string, rng: Rng, maxS: number, minS: number, readShape: boolean): DiscardPuzzle {
+  const draw = rng.next();
+  let bucket = 0;
+  let upTo = ANSWER_DEPTH_SHARE[0];
+  while (bucket < ANSWER_DEPTH_SHARE.length - 1 && draw >= upTo) upTo += ANSWER_DEPTH_SHARE[++bucket];
   const wall: Kind[] = [];
   for (let k = 0; k < NUM_PLAY_KINDS; k++) for (let c = 0; c < 4; c++) wall.push(k);
   const counts = quickHand(rng, wall, maxS, minS, readShape);
-  if (counts) {
-    for (const [depth, steps] of plan) {
-      for (let step = 0; step < steps; step++) {
-        if (qualifyingAnswers(counts, depth, setsProof)) return analysedPuzzle(seed, counts);
-        walkHand(rng, wall, counts, maxS, minS, readShape);
-      }
-    }
+  if (!counts) return analysedPuzzle(seed, countsFromKinds(randomHand(rng, 8)));
+  /** How near a hand is to the drawn depth (higher is nearer), and whether it is there. A hand with few such discards aims shallower. */
+  const fit = (d: ReturnType<typeof answerDepth>): { score: number; there: boolean } => {
+    if (!d) return { score: -1, there: false };
+    const deepest = Math.min(ANSWER_DEPTH_SHARE.length, d.candidates) - 1;
+    const want = Math.min(bucket, deepest);
+    if (want < deepest || want === 0) return { score: d.depth === want ? want + 1 : Math.min(d.depth, want), there: d.depth === want };
+    // The deepest bucket: at least that deep, and not the first pick of a connected order either.
+    return { score: Math.min(d.depth, want) + (d.connected ? 0 : 0.5), there: d.depth >= want && !d.connected };
+  };
+  let now = fit(answerDepth(counts));
+  for (let step = 0; step < ANSWER_DEPTH_STEPS && !now.there; step++) {
+    const move = walkStep(rng, wall, counts, maxS, minS, readShape);
+    if (!move) continue;
+    const next = fit(answerDepth(counts));
+    if (next.score >= now.score) now = next;
+    else undoStep(wall, counts, move);
   }
-  // Fallback, as in discardPuzzle: accept whatever we got.
-  const hand = randomHand(rng, 8);
-  const any = countsFromKinds(hand);
-  const options = discardOptions(any, TOTAL_SETS, any.map((c) => 4 - c));
-  const bestShanten = Math.min(...options.map((o) => o.shanten));
-  const bestAcceptance = Math.max(...options.filter((o) => o.shanten === bestShanten).map((o) => o.acceptance));
-  const best = options.find((o) => o.shanten === bestShanten && o.acceptance === bestAcceptance)!.kind;
-  return withDecision({ type: 'discard', seed, hand, answers: [best], best, bestShanten, bestAcceptance, currentShanten: shanten(any, TOTAL_SETS), options });
+  return analysedPuzzle(seed, counts);
 }
 
 export function discardPuzzle(seed: string, difficulty: 1 | 2 | 3 = 2, opts: DiscardPuzzleOptions = {}): DiscardPuzzle {
@@ -517,7 +551,7 @@ export function discardPuzzle(seed: string, difficulty: 1 | 2 | 3 = 2, opts: Dis
   // Easy puzzles draw no extra number, so they stay exactly as they were for every seed.
   const readShapeOn = opts.readShape ?? difficulty >= 2;
   const readShape = readShapeOn && rng.next() >= LONE_HONOUR_PUZZLE_SHARE;
-  if (readShapeOn && (opts.deep ?? difficulty === 3)) return deepDiscardPuzzle(seed, rng, maxS, minS, readShape, RULE_PROOF_PUZZLE_SHARE[difficulty], difficulty >= 2);
+  if (readShapeOn && (opts.deep ?? difficulty >= 2)) return depthDiscardPuzzle(seed, rng, maxS, minS, readShape);
   const accept = readShape ? (hand: Kind[]) => loneHonours(hand).length === 0 : undefined;
   // A second draw (never at easy, so easy puzzles keep their seeds) decides whether the hand must beat the isolated-tile rule.
   const tileShare = opts.isolatedTileShare ?? ISOLATED_TILE_PUZZLE_SHARE[difficulty];

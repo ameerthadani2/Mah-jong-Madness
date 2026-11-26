@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { timeBound } from './helpers/timing';
-import { DISCARD_RULES, neighbourWeightRules, setsFirstRules, type DiscardRule } from './helpers/discardRules';
+import { DISCARD_RULES, fewestStepsThenNeighbours, neighbourWeightRules, setsFirstRules, type DiscardRule } from './helpers/discardRules';
 import {
+  ANSWER_DEPTH_SHARE,
   checkDiscardAnswer,
   countsFromKinds,
   DAILY_DISCARD_OPTIONS,
@@ -9,31 +10,31 @@ import {
   discardOptions,
   discardPuzzle,
   ruleOfThumbPicks,
-  RULE_PROOF_PUZZLE_SHARE,
   sha256Hex,
-  SPREAD_DISCARDS_PER_ANSWER,
+  shanten,
   type DiscardPuzzle,
 } from '../src/index';
 
-// How often a rule of thumb answers the daily and hard discard puzzles, against random guessing.
+// How often a rule of thumb answers the daily, hard and medium discard puzzles, against random guessing.
 //
-// Measured on 18 November 2026 on 365 dailies from that date and 300 hard puzzles on fresh seeds
-// (u18d3-0 ...), after (before) the change: random guessing 49 and 30 (65 and 44);
-// "fewest steps to ready, then fewest neighbours" 160 and 119 (253 and 242); "fewest neighbours" 159 and
-// 115 (227 and 186); the least connected tile 159 and 109 (200 and 161); "fewest steps, then break the pair
-// with the most neighbours" 161 and 136; the isolated-tile rule 141 and 85 (114 and 76).
+// Until 18 November 2026 the obvious tile was right on nearly every puzzle ("fewest steps to ready, then fewest
+// neighbours" on 253 of 365 dailies and 242 of 300 hard puzzles). Then hard puzzles and the daily were split into
+// rule-proof hands, where no tile a rule of thumb throws first was accepted, and spread hands. That made the
+// opposite a rule: the eighth assessment's challenger found "fewest steps, skip every such tile, then fewest
+// neighbours" right on 155 of 300 hard puzzles (52%), a sets-first read right on 119 of 156 easy dailies (76%),
+// and greedy on 218 of 300 medium drills, which were never rule-proofed.
 //
-// The seventh pass's engine checker then read the hand another way: take out the complete sets (pongs
-// first, then runs from the low end of each suit) and throw the leftover with the fewest neighbours among
-// the leftovers. That was right on 268 and 274 of 365 dailies from 2027 and 2029 and 217 of 300 hard
-// puzzles (vfy18h-0 ...), since a rule-proof hand's answer is often one of a pair inside a run, a leftover
-// single to that read. Since then medium and hard rule-proof hands beat the sets-first reads too
-// (`ruleOfThumbPicks` with `sets`), and a larger share of their seeds draw one (RULE_PROOF_PUZZLE_SHARE).
-// Measured on 19 November 2026: the checker's read is right on 207 and 217 of those dailies and 117 of
-// those hard puzzles; on 300 more hard seeds (u18r-h-0 ...) every rule here is right on under 43%. The
-// easy dailies (Monday, Wednesday, Friday) still give way to it, about three times in four: proving them
-// against it as well took a walk too long for a phone (a median over 100 ms) and made the other rules
-// stronger there, so the easy daily keeps it as the lesson of the day.
+// Since 26 November 2026 medium and hard drills and the daily place the answer at a depth each seed draws among
+// the orders rules of thumb throw the tiles in (ANSWER_DEPTH_SHARE, `answerDepth` in src/puzzles.ts): some rule's
+// first pick is right on about a third, its second pick or later on the rest. Measured on fresh seed sets fixed
+// before the change was tuned (300 hard u21rep-h-*, 300 medium u21rep-m-*, the 365 dailies from 1 January 2033),
+// the strongest of the rules measured (the 43 here and the assessors') was right on 30.3% of hard puzzles (chance 10.4%, 28.4%
+// among the discards that keep the hand closest to ready), 34.4% of medium and hard dailies (10.8%, 25.8%), 36.3% of
+// medium drills (12.2%, 25.6%) and 44.9% of easy dailies (15.9%, 25.4%); the obvious tile ("fewest steps, then
+// fewest neighbours") on 26.0%, 16.3%, 33.7% and 35.9%, about as often as a guess among those discards. On the sets
+// below, before (after): the strongest rule 42.0% (32.0%) of hard puzzles, 43.8% (38.5%) of medium and hard dailies,
+// 92.0% (34.7%) of medium drills, 75.0% (41.7%) of easy dailies; the obvious tile 39.3% (22.7%), 38.5% (27.1%),
+// 78.7% (33.3%) and 56.9% (33.3%).
 
 const rate = (puzzles: readonly DiscardPuzzle[], rule: DiscardRule) => puzzles.filter((p) => checkDiscardAnswer(p, rule(p.hand))).length / puzzles.length;
 /** The expected share right when guessing one of the hand's kinds at random. */
@@ -42,14 +43,40 @@ const randomGuess = (puzzles: readonly DiscardPuzzle[]) =>
     const kinds = [...new Set(p.hand)];
     return sum + kinds.filter((k) => p.answers.includes(k)).length / kinds.length;
   }, 0) / puzzles.length;
+/** The same, guessing among the discards that keep the hand closest to ready. */
+const bestGuess = (puzzles: readonly DiscardPuzzle[]) =>
+  puzzles.reduce((sum, p) => {
+    const best = p.options.filter((o) => o.shanten === p.bestShanten);
+    return sum + best.filter((o) => p.answers.includes(o.kind)).length / best.length;
+  }, 0) / puzzles.length;
+
+/** Counting, not a rule of thumb: fewest steps to ready, then the most kinds of tile that improve the hand (copies not counted). */
+const countKinds: DiscardRule = (hand) => {
+  const c = countsFromKinds(hand);
+  const after = (k: number): [number, number] => {
+    c[k]--;
+    const sh = shanten(c, 5);
+    let n = 0;
+    for (let t = 0; t < 34; t++) {
+      if (c[t] >= 4) continue;
+      c[t]++;
+      if (shanten(c, 5) < sh) n++;
+      c[t]--;
+    }
+    c[k]++;
+    return [sh, n];
+  };
+  const score = new Map([...new Set(hand)].map((k) => [k, after(k)]));
+  return [...score.keys()].sort((a, b) => score.get(a)![0] - score.get(b)![0] || score.get(b)![1] - score.get(a)![1] || a - b)[0];
+};
 
 const RULES: Record<string, DiscardRule> = {
   ...DISCARD_RULES,
   ...neighbourWeightRules(),
+  ...setsFirstRules(),
 };
-const SETS_FIRST: Record<string, DiscardRule> = setsFirstRules();
 
-describe('how often a rule of thumb answers the daily and hard discard puzzles', () => {
+describe('how often a rule of thumb answers the daily, hard and medium discard puzzles', () => {
   const dailyMs: number[] = [];
   // 24 weeks, so every weekday's difficulty is counted alike.
   const days = Array.from({ length: 168 }, (_, i) => new Date(Date.UTC(2027, 0, 4 + i)));
@@ -59,8 +86,9 @@ describe('how often a rule of thumb answers the daily and hard discard puzzles',
     dailyMs.push(performance.now() - t0);
     return p;
   });
-  /** The medium and hard dailies (Tuesday, Thursday and the weekend), as `dailyPuzzle` picks the difficulty. */
+  /** The medium and hard dailies (Tuesday, Thursday and the weekend), as `dailyPuzzle` picks the difficulty, and the easy ones. */
   const harderDailies = dailies.filter((_, i) => days[i].getUTCDay() % 2 === 0);
+  const easyDailies = dailies.filter((_, i) => days[i].getUTCDay() % 2 === 1);
   const hardMs: number[] = [];
   const hard = Array.from({ length: 150 }, (_, i) => {
     const t0 = performance.now();
@@ -68,47 +96,44 @@ describe('how often a rule of thumb answers the daily and hard discard puzzles',
     hardMs.push(performance.now() - t0);
     return p;
   });
-  const over = (puzzles: readonly DiscardPuzzle[], rules: Record<string, DiscardRule>, bar: number) =>
-    Object.entries(rules)
+  const medium = Array.from({ length: 150 }, (_, i) => discardPuzzle(`rules-m-${i}`, 2));
+  const over = (puzzles: readonly DiscardPuzzle[], bar: number) =>
+    Object.entries(RULES)
       .map(([name, rule]) => [name, rate(puzzles, rule)] as const)
       .filter(([, r]) => r >= bar);
+  /** The bars of the eighth assessment's goal: hard puzzles and medium and hard dailies, medium drills, easy dailies. */
+  const groups = [
+    ['hard puzzles', hard, 0.45],
+    ['medium and hard dailies', harderDailies, 0.45],
+    ['medium drills', medium, 0.5],
+    ['easy dailies', easyDailies, 0.6],
+  ] as const;
 
-  it('on hard puzzles every rule measured is right on under half, the sets-first reads included, each well above random guessing', () => {
-    expect(over(hard, { ...RULES, ...SETS_FIRST }, 0.48)).toEqual([]);
-    expect(randomGuess(hard)).toBeLessThan(0.15);
-    expect(Math.max(...Object.values({ ...RULES, ...SETS_FIRST }).map((rule) => rate(hard, rule)))).toBeGreaterThan(0.3);
-  });
-
-  it('on daily puzzles every rule measured but the sets-first reads is right on under half; those are right on under half of the medium and hard dailies, and on most easy ones', () => {
-    expect(over(dailies, RULES, 0.48)).toEqual([]);
-    expect(randomGuess(dailies)).toBeLessThan(0.2);
-    expect(Math.max(...Object.values(RULES).map((rule) => rate(dailies, rule)))).toBeGreaterThan(0.3);
+  it('every rule measured, "avoid the obvious tile" included, is right on under 45% of hard puzzles and medium and hard dailies, 50% of medium drills and 60% of easy dailies', () => {
     expect(harderDailies.length).toBe(96);
-    expect(over(harderDailies, SETS_FIRST, 0.5)).toEqual([]);
-    // Over every day of the week, well under the three in four of before.
-    expect(over(dailies, SETS_FIRST, 0.62)).toEqual([]);
+    for (const [name, puzzles, bar] of groups) {
+      expect(over(puzzles, bar), name).toEqual([]);
+      // Each still well above random guessing: the puzzles are not noise.
+      expect(Math.max(...Object.values(RULES).map((rule) => rate(puzzles, rule))), name).toBeGreaterThan(2 * randomGuess(puzzles));
+    }
   });
 
-  it('about half are rule-proof (no tile a rule of thumb throws first is accepted), and the rest have a spread', () => {
-    for (const puzzles of [dailies, hard]) {
-      const proof = puzzles.filter((p) => !ruleOfThumbPicks(p.hand).some((k) => p.answers.includes(k))).length;
-      const keep = (p: DiscardPuzzle) => p.options.filter((o) => o.shanten === p.bestShanten).length;
-      const spread = puzzles.filter((p) => ruleOfThumbPicks(p.hand).some((k) => p.answers.includes(k)) && keep(p) >= SPREAD_DISCARDS_PER_ANSWER * p.answers.length).length;
-      // The share is drawn per seed (and a tenth of seeds keep a lone honour), and a medium or hard walk that
-      // must beat the sets-first reads too settles for a spread hand more often, so the counts are loose.
-      expect(proof / puzzles.length).toBeGreaterThan(0.38);
-      expect(proof / puzzles.length).toBeLessThan(0.68);
-      expect((proof + spread) / puzzles.length).toBeGreaterThan(0.8);
+  it('the obvious tile is right about as often as a guess among the discards that keep the hand closest to ready, neither always nor never', () => {
+    for (const [name, puzzles] of groups) {
+      const obvious = rate(puzzles, fewestStepsThenNeighbours);
+      expect(obvious, name).toBeGreaterThan(0.6 * bestGuess(puzzles));
+      expect(obvious, name).toBeLessThan(1.5 * bestGuess(puzzles));
+      expect(obvious, name).toBeGreaterThan(0.15);
     }
-    // Hard rule-proof hands beat the sets-first reads as well (a few spread hands are rule-proof by chance, not by the walk).
-    const hardProof = hard.filter((p) => !ruleOfThumbPicks(p.hand).some((k) => p.answers.includes(k)));
-    const setsProof = hardProof.filter((p) => !ruleOfThumbPicks(p.hand, { sets: true }).some((k) => p.answers.includes(k)));
-    expect(setsProof.length).toBeGreaterThanOrEqual(0.9 * hardProof.length);
-    expect(RULE_PROOF_PUZZLE_SHARE[1]).toBeLessThan(RULE_PROOF_PUZZLE_SHARE[3]);
+    expect(ANSWER_DEPTH_SHARE.reduce((a, b) => a + b, 0)).toBeCloseTo(1, 9);
+  });
+
+  it('counting the tiles that improve the hand still finds the answer on most', () => {
+    for (const [name, puzzles] of groups) expect(rate(puzzles, countKinds), name).toBeGreaterThan(0.75);
   });
 
   it('keeps every answer exact: each discard within 10 percent of the best acceptance, at the best shanten', () => {
-    for (const p of [...dailies, ...hard]) {
+    for (const p of [...dailies, ...hard, ...medium]) {
       const counts = countsFromKinds(p.hand);
       const opts = discardOptions(
         counts,
@@ -131,8 +156,9 @@ describe('how often a rule of thumb answers the daily and hard discard puzzles',
   it('gives the same puzzle for the same seed, quickly enough for the server to make it again', () => {
     expect(dailyPuzzle(new Date(Date.UTC(2027, 0, 9)))).toEqual(dailies[5]);
     expect(discardPuzzle('rules-h-12', 3)).toEqual(hard[12]);
+    expect(discardPuzzle('rules-m-7', 2)).toEqual(medium[7]);
     expect(dailyPuzzle(new Date(Date.UTC(2027, 0, 4)))).toEqual(discardPuzzle('daily-2027-01-04', 1, DAILY_DISCARD_OPTIONS));
-    // The slowest of 365 dailies took about 150 ms on 18 November 2026 (the first, before the shanten tables fill), a hard puzzle about 50 ms.
+    // On an idle machine on 26 November 2026: a daily about 10 ms (median) and at most about 250 ms, a hard puzzle about 8 ms and 100 ms.
     for (const ms of [dailyMs, hardMs]) {
       const sorted = [...ms].sort((a, b) => a - b);
       expect(sorted[Math.floor(sorted.length / 2)]).toBeLessThan(timeBound(30));
@@ -153,12 +179,14 @@ describe('the rules of thumb, as the generator reads them', () => {
   });
 });
 
-describe('medium and easy discard puzzles stay as they were', () => {
-  // Hands and answers of 120 seeds, recorded on 18 November 2026 before the hard and daily puzzles
-  // changed; the explanation fields are left out of the hash (their wording may change).
+describe('easy and medium discard drills stay as recorded', () => {
+  // Hands and answers of 120 seeds; the explanation fields are left out of the hash (their wording may change).
+  // Easy: recorded on 18 November 2026, before the hard and daily puzzles changed, and unchanged since. Medium:
+  // recorded again on 26 November 2026, when medium drills began to place the answer by depth (was
+  // 95ff08692958fa1ea27acdec232b1fa0d33b7aadbfd914b9293792a148c06af5).
   const pinned = {
     1: 'b4c15eac9eee2354943d28ed718993a321fbe64220f92691629b56397ccce443',
-    2: '95ff08692958fa1ea27acdec232b1fa0d33b7aadbfd914b9293792a148c06af5',
+    2: '038a8a88f574702fb16e5ea56616bcf79bacc12b40c55e859f6bcb96195c0e18',
   } as const;
   for (const d of [1, 2] as const) {
     it(`difficulty ${d}: 120 seeded puzzles are byte-identical`, () => {

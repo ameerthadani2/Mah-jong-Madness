@@ -193,6 +193,24 @@ export const secondChoice: DiscardRule = (hand) => {
   return order[1] ?? order[0];
 };
 
+/** The rules above that throw the most obvious tile (each picks one). */
+const OBVIOUS_RULES: readonly DiscardRule[] = [isolatedTileRule, fewestNeighbours, edgeFirst, fewestStepsThenNeighbours, leastConnected, weakestPartialFirst, keepPairsThenNeighbours, fewestStepsThenOutermost, fewestJoiners];
+
+/**
+ * "Avoid the obvious tile": fewest steps to ready, skip every tile one of the obvious rules above would throw,
+ * then the fewest neighbours (the eighth assessment's challenger: right on 52% of hard puzzles when every
+ * obvious tile was made wrong). Written apart from the generator, as the rest of this file.
+ */
+export const avoidTheObvious: DiscardRule = (hand) => {
+  const c = counts(hand);
+  const sh = new Map(kindsOf(hand).map((k) => [k, shantenAfter(c, k)]));
+  const best = Math.min(...sh.values());
+  const obvious = new Set(OBVIOUS_RULES.map((rule) => rule(hand)));
+  const keep = kindsOf(hand).filter((k) => sh.get(k) === best);
+  const rest = keep.filter((k) => !obvious.has(k));
+  return (rest.length > 0 ? rest : keep).sort((a, b) => neighbours(c, a) - neighbours(c, b) || outerFirst(a, b))[0];
+};
+
 /** Every rule measured, by the name the test reports. */
 export const DISCARD_RULES: Readonly<Record<string, DiscardRule>> = {
   isolatedTile: isolatedTileRule,
@@ -209,6 +227,7 @@ export const DISCARD_RULES: Readonly<Record<string, DiscardRule>> = {
   fewestStepsThenMostConnectedPair,
   fewestStepsThenMostNeighbours,
   secondChoice,
+  avoidTheObvious,
 };
 
 /**
