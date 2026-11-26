@@ -14,7 +14,7 @@ import { BOT_NAME_SLOT, botNamer, withBotLabels } from '../logic/seatName';
 import { justReturned, RETURNED_NOTICE_MS } from '../logic/back';
 import { colors, fonts, nameFont } from '../theme';
 import { Tile } from '../components/Tile';
-import { Compass, meldSizes, meldTiles } from '../components/TableParts';
+import { Compass, meldSizes } from '../components/TableParts';
 import { withShownSets } from '../logic/shownView';
 import type { Relation } from '../components/table/hudSpeech';
 import type { SeatReaction, SeatReactionKind } from '../components/SeatMotion';
@@ -271,7 +271,7 @@ export function TableScreen() {
     if (!view || !myMelds) return;
     const next = { hand: view.handNumber, count: myMelds.length };
     const last = myMelds[myMelds.length - 1];
-    if (autoClaimed(meldCount.current, next, sentClaim.current) && meldTiles(last) !== null) {
+    if (autoClaimed(meldCount.current, next, sentClaim.current)) {
       const made = last.type;
       setAutoNotice({ call: made === 'chow' ? 'chi' : made, key: ++eventKey });
       buzz('dealin');
