@@ -284,6 +284,51 @@ describe('天胡, 地胡 and 人胡 from a real deal, and the call that voids th
     s = applyAction(s, 3, { type: 'hu' });
     expect(keysOf(recordedWin(s, {}).score)).not.toContain('dihu');
   });
+
+  it('a chow voids 地胡 too: a self-draw on a first draw after it is an ordinary win', () => {
+    // Seat 1 chows the dealer's 9 Dots and throws the East; seat 2 then draws for the first time and wins.
+    const chower = 'ESWN CFB 3569m 78p 147s';
+    let s = dealt({}, ['ESWN CFB 147m 258p 139s', chower, '123m 456m 789m 45s 678s 22p', D3], { front: ['9p', '3s'] });
+    s = discard(s, 0, '9p');
+    expect(s.pending?.offers.map((o) => [o.seat, o.chi.length])).toEqual([[1, 1]]);
+    s = respond(s, { 1: { type: 'chi', tiles: s.pending!.offers[0].chi[0] } });
+    expect(s.players[1].melds.map((m) => m.type)).toEqual(['chow']);
+    s = discard(s, 1, 'E');
+    expect(s.turn).toBe(2);
+    expect(s.players[2].draws).toBe(1);
+    s = applyAction(s, 2, { type: 'hu' });
+    const w = recordedWin(s, {});
+    expect(w.seat).toBe(2);
+    expect(keysOf(w.score)).not.toContain('dihu');
+  });
+
+  it('地胡 is the first draw only: a self-draw on the second draw of a quiet first round is an ordinary win', () => {
+    // Nobody can claim or win on anything thrown until seat 1 draws its 5 Bamboo on its second turn.
+    let s = dealt({}, [D1, WAITS_5S, D2, D3], { front: ['9p', 'N', 'W', 'S', 'C', '5s'] });
+    s = discard(s, 0, '9p');
+    s = discard(s, 1, 'N');
+    s = discard(s, 2, 'W');
+    s = discard(s, 3, 'S');
+    s = discard(s, 0, 'C');
+    expect([s.turn, s.players[1].draws, s.anyClaimThisHand]).toEqual([1, 2, false]);
+    s = applyAction(s, 1, { type: 'hu' });
+    const w = recordedWin(s, {});
+    expect(w.seat).toBe(1);
+    expect(keysOf(w.score)).not.toContain('dihu');
+  });
+
+  it("人胡 is a win on the dealer's first discard only: a seat that has not drawn, winning on another seat's first discard, has an ordinary win", () => {
+    // The dealer's 9 Dots goes by; seat 1 draws and throws 3 Bamboo, and seat 2 (no draw yet) wins on it.
+    let s = dealt({}, [D1, D2, '123m 456m 789p 45s 678s 22p', D3], { front: ['9p', '3s'] });
+    s = discard(s, 0, '9p');
+    s = discard(s, 1, '3s');
+    expect([s.dealerDiscards, s.players[2].draws, s.anyClaimThisHand]).toEqual([1, 0, false]);
+    expect(s.pending?.offers.map((o) => [o.seat, o.hu])).toEqual([[2, true]]);
+    s = respond(s, { 2: { type: 'hu' } });
+    const w = recordedWin(s, {});
+    expect([w.seat, w.fromSeat]).toEqual([2, 1]);
+    expect(keysOf(w.score)).not.toContain('renhu');
+  });
 });
 
 describe('八仙過海 and 七搶一', () => {
