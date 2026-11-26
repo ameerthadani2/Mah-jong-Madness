@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { timeBound } from './helpers/timing';
-import { checkDiscardAnswer, countsFromKinds, DAILY_DISCARD_OPTIONS, dailyPuzzle, discardAnalysis, discardDecision, DISCARD_DECISIONS, discardOptions, ISOLATED_TILE_PUZZLE_SHARE, isolatedTile, DEFENCE_SAFETY_ORDER, defenceOrderRule, defencePuzzle, discardPuzzle, kindInfo, LONE_HONOUR_PUZZLE_SHARE, loneHonours, sha256Hex, VALUE_BIG_PATTERN_TAI, valuePatternRule, valuePuzzle, valueSpeedRule, type DefenceOption, type DiscardPuzzle, type TaiItem, type ValueOption, type ValuePuzzle } from '../src/index';
+import { checkDiscardAnswer, countsFromKinds, DAILY_DISCARD_OPTIONS, dailyPuzzle, discardAnalysis, discardDecision, DISCARD_DECISIONS, discardOptions, ISOLATED_TILE_PUZZLE_SHARE, isolatedTile, DEFENCE_SAFETY_ORDER, defenceOrderRule, defencePuzzle, discardPuzzle, kindInfo, LONE_HONOUR_PUZZLE_SHARE, loneHonours, sha256Hex, VALUE_BIG_PATTERN_TAI, VALUE_HARD_SHARES, valuePatternRule, valuePuzzle, valueSpeedRule, valueTwoLineRule, type DefenceOption, type DiscardPuzzle, type TaiItem, type ValueOption, type ValuePuzzle } from '../src/index';
 
 // How often a one-line rule answers a puzzle: "keep the most winning tiles" for value puzzles, a
 // fixed safety order for defence puzzles. Easy and medium puzzles teach those rules; hard ones
@@ -112,6 +112,35 @@ describe('hard value puzzles need judgement, not a two-line rule', () => {
 
   it('"chase a pattern of 4 台 that keeps half the winning tiles" is wrong in at least 30 percent', () => {
     expect(share((p) => valuePatternRule(p) === false)).toBeGreaterThanOrEqual(0.3);
+  });
+
+  it('the two-line rule is right on under 60 percent at its best threshold, whatever share of the winning tiles it asks for', () => {
+    // The rule picks differently only where the threshold passes some ready discard's share of the most winning
+    // tiles: try each share and just above it. Until 26 November 2026, "more than half" was right on 94 to 98%.
+    const thresholds = new Set([0, 1.01]);
+    for (const p of hard) {
+      const ready = p.options.filter((o) => o.ready);
+      const most = Math.max(...ready.map((o) => o.acceptance!));
+      for (const o of ready) for (const r of [o.acceptance! / most, o.acceptance! / most + 1e-9]) thresholds.add(r);
+    }
+    const best = Math.max(...[...thresholds].map((r) => share((p) => valueTwoLineRule(p, r) === true)));
+    expect(best).toBeLessThan(0.6);
+    expect(best).toBeGreaterThan(0.4);
+    // At one half it is the engine's own measure of the rule.
+    for (const p of hard) expect(valueTwoLineRule(p, 0.5)).toBe(valuePatternRule(p));
+    // Both winners keep the same shares of the most winning tiles, so a threshold cannot tell them apart.
+    const shares = (wins: boolean) =>
+      new Set(
+        hard
+          .filter((p) => valueSpeedRule(p) === !wins)
+          .map((p) => {
+            const ready = p.options.filter((o) => o.ready);
+            const big = ready.filter((o) => bigItems(o).length > 0).sort((x, y) => y.bestTai! - x.bestTai!)[0];
+            return Math.round((1000 * big.acceptance!) / Math.max(...ready.map((o) => o.acceptance!)));
+          }),
+      );
+    expect([...shares(true)].sort()).toEqual(VALUE_HARD_SHARES.map(([kept, of]) => Math.round((1000 * kept) / of)).sort());
+    expect([...shares(false)].sort()).toEqual([...shares(true)].sort());
   });
 
   it('the one-line rules stay near half: most winning tiles, and the biggest win', () => {

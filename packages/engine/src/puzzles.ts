@@ -1908,11 +1908,42 @@ export const VALUE_TOLERANCE = 0.9;
 /** Share of hard value puzzles where the bigger hand wins, so keeping the most winning tiles is wrong. */
 export const VALUE_HARD_SIZE_SHARE = 0.5;
 /**
- * Share of hard value puzzles, on each side of `VALUE_HARD_SIZE_SHARE`, where the two-line rule
- * (`valuePatternRule`) is wrong: the bigger hand wins without a pattern of 4 台 (or with one that
- * keeps under half the winning tiles), or a pattern of 4 台 that keeps half the tiles is not worth them.
+ * The share of the most winning tiles that the one discard holding a pattern of 4 台 or more keeps in a hard
+ * value puzzle, as [kept, most] (or the same fraction of other counts), drawn per seed and the same whichever
+ * hand wins. From 17 November 2026 most speed wins were against a pattern keeping exactly half the tiles, and
+ * the bigger hands won keeping more, so "chase a pattern of 4 台 if it keeps more than half the most winning
+ * tiles, else keep the most" was right on 94 to 98% of hard value puzzles. With the share the same on both
+ * sides, the threshold says nothing: what decides is how big the pattern is against the faster hand.
  */
-export const VALUE_HARD_TRAP_SHARE = 0.8;
+export const VALUE_HARD_SHARES: readonly (readonly [number, number])[] = [
+  [4, 7],
+  [2, 3],
+];
+/** Hands tried for a hard value puzzle before settling for one with the right winner and another share. */
+const VALUE_HARD_ATTEMPTS = 1500;
+/**
+ * How each hard target is built, by share (as in VALUE_HARD_SHARES) and winner, one chosen per hand: the theme,
+ * and whether the hand is built for size (a pure flush with a narrow wait, five pongs) or against it. These are
+ * the ones that give the target most often (measured on seed prefix `u21tune-v`), with pongs among the bigger
+ * hands at 2 of 3 so that they do not all win with a flush.
+ */
+const VALUE_HARD_BUILDS: readonly { pattern: readonly [ValueTheme, boolean][]; speed: readonly [ValueTheme, boolean][] }[] = [
+  {
+    pattern: [['pongs', true]],
+    speed: [
+      ['honours', false],
+      ['pongs', false],
+    ],
+  },
+  {
+    pattern: [
+      ['flush', true],
+      ['flush', true],
+      ['pongs', true],
+    ],
+    speed: [['flush', true]],
+  },
+];
 
 /** One winning tile of a ready discard, with what a win on it scores. */
 export interface ValueWait {
@@ -2187,28 +2218,20 @@ function valueText(
  * `VALUE_TOLERANCE` of the best is accepted, and at least one ready discard is clearly worse.
  * Difficulty 1: the best discard is also at least as fast as the rival; 3: in about half the
  * seeds (`VALUE_HARD_SIZE_SHARE`) the bigger hand wins, so keeping the most winning tiles is wrong
- * (`valueSpeedRule`), and in the rest the best discard wins on speed against a bigger hand. Most of
- * the speed wins (`VALUE_HARD_TRAP_SHARE`) are against a pattern of 4 台 or more that keeps at
- * least half the winning tiles, so "chase such a pattern, else keep the most tiles"
- * (`valuePatternRule`) is wrong there, while the bigger hands that win do so with it.
+ * (`valueSpeedRule`), and in the rest the best discard wins on speed against a bigger hand. Either way the
+ * pattern of 4 台 or more keeps the same share of the most winning tiles (`VALUE_HARD_SHARES`), so no
+ * threshold on that share tells the two apart (`hardValuePuzzle`).
  */
 export function valuePuzzle(seed: string, difficulty: PuzzleDifficulty = 2): ValuePuzzle {
   const rng = createRng(`value:${seed}:${difficulty}`);
-  // Hard puzzles: half are won by the bigger hand (the most winning tiles is wrong), half by
-  // speed against a bigger hand (the most winning tiles is right), drawn per seed; most of the
-  // speed wins beat a big pattern that keeps half the tiles (`trap`), the rest a smaller one.
-  const sizeWins = difficulty === 3 && rng.next() < VALUE_HARD_SIZE_SHARE;
-  const trap = difficulty === 3 && !sizeWins && rng.next() < VALUE_HARD_TRAP_SHARE;
+  if (difficulty === 3) return hardValuePuzzle(seed, rng);
   let fallback: ValuePuzzle | null = null;
   for (let attempt = 0; attempt < 600; attempt++) {
-    const p = valueAttempt(seed, difficulty, rng, sizeWins, trap);
+    const p = valueAttempt(seed, difficulty, rng);
     if (!p) continue;
     const a = p.options.find((o) => o.kind === p.answer)!;
     const r = p.options.find((o) => o.kind === p.rival)!;
-    const trade = r.acceptance! > a.acceptance! || r.bestTai! > a.bestTai!;
-    const hard = (): boolean =>
-      (sizeWins ? valueSpeedRule(p) === false : trade && valueSpeedRule(p) === true) && valuePatternRule(p) === !trap;
-    if (difficulty === 1 ? a.acceptance! >= r.acceptance! && p.patternKey !== '' : difficulty === 3 ? hard() : true) return p;
+    if (difficulty === 1 ? a.acceptance! >= r.acceptance! && p.patternKey !== '' : true) return p;
     fallback = fallback ?? p;
     if (attempt >= 300) return fallback;
   }
@@ -2216,7 +2239,75 @@ export function valuePuzzle(seed: string, difficulty: PuzzleDifficulty = 2): Val
   throw new Error(`valuePuzzle: no puzzle for seed ${seed}`);
 }
 
-function valueAttempt(seed: string, difficulty: PuzzleDifficulty, rng: Rng, sizeBias = false, trap = false): ValuePuzzle | null {
+/**
+ * The two-line rule at any threshold, against the judge: "take the discard whose best win holds a pattern of
+ * 4 台 or more and keeps at least `share` of the most winning tiles (the biggest such win), else keep the most
+ * winning tiles". True when every discard it picks is accepted, false when none is, null when they split
+ * (`valuePatternRule` is this rule at a share of one half).
+ */
+export function valueTwoLineRule(p: Pick<ValuePuzzle, 'options'>, share: number): boolean | null {
+  const ready = p.options.filter((o) => o.ready);
+  const most = Math.max(...ready.map((o) => o.acceptance ?? 0));
+  const big = ready.filter((o) => (o.items ?? []).some((i) => i.tai >= VALUE_BIG_PATTERN_TAI) && (o.acceptance ?? 0) >= share * most);
+  const top = Math.max(...big.map((o) => o.bestTai ?? -1));
+  const picks = big.length > 0 ? big.filter((o) => o.bestTai === top) : ready.filter((o) => (o.acceptance ?? 0) === most);
+  const right = picks.filter((o) => o.accepted).length;
+  return right === picks.length ? true : right === 0 ? false : null;
+}
+
+/**
+ * True when the two-line rule is right at a threshold exactly when the threshold is at most `kept / of` (the
+ * pattern wins) or exactly when it is above it (speed wins), at every threshold that changes what it picks.
+ */
+function twoLineStep(p: ValuePuzzle, kept: number, of: number, patternWins: boolean): boolean {
+  const ready = p.options.filter((o) => o.ready);
+  const most = Math.max(...ready.map((o) => o.acceptance ?? 0));
+  if (!ready.some((o) => (o.acceptance ?? 0) * of === most * kept && (o.items ?? []).some((i) => i.tai >= VALUE_BIG_PATTERN_TAI))) return false;
+  const shares = [0, 1.01, ...ready.flatMap((o) => [(o.acceptance ?? 0) / most, (o.acceptance ?? 0) / most + 1e-9])];
+  return shares.every((r) => valueTwoLineRule(p, r) === (patternWins === r * of <= kept));
+}
+
+/**
+ * A hard value puzzle: the seed draws who wins (`VALUE_HARD_SIZE_SHARE`: the bigger hand, so keeping the most
+ * winning tiles is wrong; else speed against a bigger hand) and the share of the most winning tiles the pattern
+ * keeps (`VALUE_HARD_SHARES`), and hands are drawn until one has both. Bigger hands come from a pure flush with a
+ * narrow wait or from pongs, speed wins from a flush, pongs or a family of honours against the faster wait.
+ */
+function hardValuePuzzle(seed: string, rng: Rng): ValuePuzzle {
+  const sizeWins = rng.next() < VALUE_HARD_SIZE_SHARE;
+  const target = rng.int(VALUE_HARD_SHARES.length);
+  const [kept, of] = VALUE_HARD_SHARES[target];
+  const builds = VALUE_HARD_BUILDS[target][sizeWins ? 'pattern' : 'speed'];
+  let fallback: ValuePuzzle | null = null;
+  let fallbackWins = false;
+  for (let attempt = 0; attempt < VALUE_HARD_ATTEMPTS; attempt++) {
+    const [theme, forSize] = builds[rng.int(builds.length)];
+    const p = valueAttempt(seed, 3, rng, forSize, !forSize, theme, [kept, of]);
+    if (!p) continue;
+    if (twoLineStep(p, kept, of, sizeWins)) return p;
+    // Settle, if it comes to that, for a hand with the right winner.
+    const wins = valueSpeedRule(p) === !sizeWins;
+    if (!fallback || (wins && !fallbackWins)) {
+      fallback = p;
+      fallbackWins = wins;
+    }
+  }
+  // None had the share: the first hand with the right winner whatever its share, or failing that any hand.
+  for (let attempt = 0; attempt < VALUE_HARD_ATTEMPTS && !fallbackWins; attempt++) {
+    const [theme, forSize] = builds[rng.int(builds.length)];
+    const p = valueAttempt(seed, 3, rng, forSize, !forSize, theme);
+    if (!p) continue;
+    const wins = valueSpeedRule(p) === !sizeWins;
+    if (!fallback || wins) {
+      fallback = p;
+      fallbackWins = wins;
+    }
+  }
+  if (fallback) return fallback;
+  throw new Error(`valuePuzzle: no puzzle for seed ${seed}`);
+}
+
+function valueAttempt(seed: string, difficulty: PuzzleDifficulty, rng: Rng, sizeBias = false, trap = false, forced?: ValueTheme, share?: readonly [number, number]): ValuePuzzle | null {
   const pool = new TilePool();
   const dealerSeat = rng.int(4);
   const prevailingWind = rng.int(2);
@@ -2229,8 +2320,9 @@ function valueAttempt(seed: string, difficulty: PuzzleDifficulty, rng: Rng, size
   // or two dragon pongs with the third dragon as the pair (小三元). `pure`: a flush without
   // honours, and five pongs.
   const [flushShare, pongShare] = sizeBias ? [0.45, 0.55] : trap ? [0.3, 0.35] : VALUE_THEME_MIX[difficulty];
-  const theme: ValueTheme = roll < flushShare ? 'flush' : roll < flushShare + pongShare ? 'pongs' : sizeBias || trap ? 'honours' : 'honour';
-  const pure = sizeBias || (trap && (theme !== 'flush' || roll < flushShare / 3));
+  const theme: ValueTheme = forced ?? (roll < flushShare ? 'flush' : roll < flushShare + pongShare ? 'pongs' : sizeBias || trap ? 'honours' : 'honour');
+  // A flush against speed is pure a third of the time.
+  const pure = sizeBias || (trap && (theme !== 'flush' || (forced ? roll < 1 / 3 : roll < flushShare / 3)));
   const nExposed = difficulty === 1 ? 0 : rng.int(3);
   const built = themedHand(rng, pool, theme, valueHonours, pure);
   if (!built) return null;
@@ -2277,19 +2369,28 @@ function valueAttempt(seed: string, difficulty: PuzzleDifficulty, rng: Rng, size
   if (isComplete(counts, setsNeeded)) return null;
   const ownMeldCounts = countsFromKinds(melds.flatMap((m) => m.kinds));
   const meldObjs: Meld[] = melds.map((m) => ({ type: m.type, tiles: m.kinds.map((k, i) => k * 4 + i), concealed: false, from: m.from }));
-  const options: ValueOption[] = [];
   const c = counts.slice();
+  // Live from your own view: the discarded copy is gone too, so count the hand before the discard.
+  const shapes: Array<{ kind: Kind; live: { kind: Kind; live: number }[] | null }> = [];
   for (let k = 0; k < NUM_PLAY_KINDS; k++) {
     if (counts[k] === 0) continue;
     c[k]--;
     const shape = shapeWaits(c, setsNeeded);
     c[k]++;
-    if (shape.length === 0) {
+    shapes.push({ kind: k, live: shape.length === 0 ? null : shape.map((w) => ({ kind: w, live: 4 - counts[w] - ownMeldCounts[w] })).filter((w) => w.live > 0) });
+  }
+  // A hard puzzle asks for a ready discard that keeps exactly `share` of the most winning tiles: without one, skip the scoring.
+  if (share) {
+    const tiles = shapes.flatMap((x) => (x.live ? [x.live.reduce((n, w) => n + w.live, 0)] : []));
+    const most = Math.max(...tiles);
+    if (!tiles.some((n) => n * share[1] === most * share[0])) return null;
+  }
+  const options: ValueOption[] = [];
+  for (const { kind: k, live } of shapes) {
+    if (!live) {
       options.push({ kind: k, ready: false });
       continue;
     }
-    // Live from your own view: the discarded copy is gone too, so count the hand before the discard.
-    const live = shape.map((w) => ({ kind: w, live: 4 - counts[w] - ownMeldCounts[w] })).filter((w) => w.live > 0);
     const rest = concealed.slice();
     rest.splice(rest.indexOf(k), 1);
     const v = scoreWaits(rest, live, meldObjs, dealerSeat, prevailingWind, difficulty === 3 ? HARD_HEADLINE_KEYS : HEADLINE_KEYS);
