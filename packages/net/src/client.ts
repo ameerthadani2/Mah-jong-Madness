@@ -3555,9 +3555,13 @@ export class TableClient {
       if (a.type === 'chi') return Array.isArray(b.tiles) && b.tiles.length === 2 && b.tiles[0] === a.tiles[0] && b.tiles[1] === a.tiles[1];
       return true;
     };
-    /** For each link (by its epoch, which only grows, over every run of the app), the earliest turn of this hand a state it brought showed. */
+    /**
+     * For each link (by its epoch, which only grows, over every run of the app), the earliest turn of this hand a state it
+     * brought showed. Only states as this device read them: one restored without its check figure (`kept: false`, storage
+     * changed it, or an earlier build saved it) may hold any epoch and turn, and must not end a link early.
+     */
     const firstOn = new Map<number, number>();
-    for (const f of play?.seen ?? []) if (isInt(f.epoch) && isInt(f.tc) && f.tc < (firstOn.get(f.epoch) ?? Number.POSITIVE_INFINITY)) firstOn.set(f.epoch, f.tc);
+    for (const f of play?.seen ?? []) if (f.kept !== false && isInt(f.epoch) && isInt(f.tc) && f.tc < (firstOn.get(f.epoch) ?? Number.POSITIVE_INFINITY)) firstOn.set(f.epoch, f.tc);
     /** The last turn at which the table can have played a move that went out over link `epoch`: before a later link's first state of this hand. */
     const linkEnd = (epoch: number): number => {
       let end = Number.POSITIVE_INFINITY;
@@ -3573,9 +3577,11 @@ export class TableClient {
      * Answer with every refusal that came while the host's frames were at turn `n` or before: an honest host sent each one
      * before it played the move at `n` (once it had, its next state would have come first). A refusal answers the first move,
      * after the last one of its link the log played, of its link and turn that is still unanswered; one that answers none
-     * (a move the table had already taken up, or none at all) answers nothing.
+     * (a move the table had already taken up, or none at all) answers nothing. Refusals restored damaged (`movesDoubt`)
+     * answer nothing either: storage may have moved one onto another move.
      */
     const takeRefusals = (n: number) => {
+      if (movesDoubt) return;
       for (const r of refs) {
         if (r.done || r.at > n) continue;
         r.done = true;
@@ -3812,7 +3818,7 @@ export class TableClient {
               // it here. This device cannot tell the two apart: the hand is amber (`lateCopy`). Not when the move went out
               // only once this turn was on show here (it waited for the app's journal, `SentAction.out`): nothing held it.
               const outAt = match.out ?? match.at;
-              const onShow = play.seen.find((f) => f.tc === n && f.run === match.run && (f.seg ?? 0) === (match.seg ?? 0));
+              const onShow = play.seen.find((f) => f.kept !== false && f.tc === n && f.run === match.run && (f.seg ?? 0) === (match.seg ?? 0));
               const sentLate = typeof outAt === 'number' && !!onShow && outAt >= onShow.at;
               if (match.tc < n && notes && !sentLate && sent.some((x) => x !== match && x.tc === n && x.legal === true && !sameActionSafe(x.action, entry.action, s, me))) notes.lateCopy = true;
               judgeShown(play, n, prevMine);

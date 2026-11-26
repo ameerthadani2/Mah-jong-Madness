@@ -183,3 +183,65 @@ describe('a connection that grows slow toward the table, with a second move sent
     expect(o.judgement.violations.map((v) => v.property)).not.toContain('falseRed');
   });
 });
+
+describe('a restored record that storage changed', () => {
+  /**
+   * Normal, with the app's journal. Once the seat has made three moves and owes nothing, the app restarts, and storage has
+   * changed one digit of the saved record: the link of the state of an early turn (`epoch`, one restored without its check
+   * figure, `kept: false`) or the turn a refusal named (refusals restored damaged, `movesKept: false`). The table is
+   * honest. Before, the copy rule read link ends and refusals from such a record: a state whose link was moved on ended
+   * the link the seat's moves went out on before they were played, and every one of them was "changed" (honest
+   * battery, Relaxed, storage damage).
+   */
+  function damagedRestart(code: string, damage: 'frame' | 'refusal') {
+    let restarted = false;
+    let damaged = false;
+    let refused = false;
+    const w = wire({
+      code,
+      rules: withRules({ handsPerMatch: 1, turnSeconds: 15, timeBankSeconds: 30 }),
+      botDelayMs: 700,
+      journal: true,
+      think: () => 1_500,
+      onTick: (w) => {
+        const g = w.host.game;
+        if (restarted || !g || w.host.phase !== 'playing') return;
+        if (g.actionLog.filter((e) => e.seat === 0 && e.source === 'player').length < 3 || w.owes() || w.c.state.view?.turnCounter !== g.turnCounter) return;
+        restarted = true;
+        w.restart((saved) => {
+          const play = (saved as unknown as { plays: Array<{ hand: number; seen: Array<{ tc: number; epoch: number }>; sent: Array<{ tc: number; epoch: number }>; refusals?: Array<{ tc: number; at: number; epoch?: number }> }> }).plays.find((p) => p.hand === 0);
+          if (!play) return saved;
+          if (damage === 'frame') {
+            const early = play.seen.find((f) => f.tc > 0 && f.tc < play.sent[play.sent.length - 1].tc);
+            if (early) {
+              early.epoch += 8;
+              damaged = true;
+            }
+          } else {
+            // A refusal of the seat's first move, as if the table had answered it so: storage wrote it where none was.
+            const first = play.sent[0];
+            (play.refusals ??= []).push({ tc: first.tc, at: first.tc, epoch: first.epoch });
+            damaged = refused = true;
+          }
+          return saved;
+        });
+      },
+    });
+    w.finish();
+    return { w, damaged, refused };
+  }
+
+  it('a saved state whose link storage changed (its check figure no longer matches): not red', () =>
+    scenario((i) => {
+      const a = damagedRestart(`CRD${i}`, 'frame');
+      need(a.damaged);
+      expect(a.w.verdict().failures).toEqual([]);
+    }));
+
+  it('a refusal storage wrote into the saved record (the moves’ check figure no longer matches): not red', () =>
+    scenario((i) => {
+      const a = damagedRestart(`CRR${i}`, 'refusal');
+      need(a.damaged && a.refused);
+      expect(a.w.verdict().failures).toEqual([]);
+    }));
+});
