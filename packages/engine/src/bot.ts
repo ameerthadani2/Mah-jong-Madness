@@ -61,6 +61,19 @@ export interface DiscardAdvice {
   score: number;
   /** Present when 嚦咕嚦咕 is strictly nearer than five sets and a pair after this discard. */
   ligu?: true;
+  /** At a table that plays 嚦咕嚦咕: the distance discards are compared by (`DiscardOption.rank`). */
+  rank?: number;
+  /**
+   * What `score` holds besides speed, so the coach can say why a tile that keeps fewer improving tiles
+   * ranks first: the points taken off for the expected cost of dealing in (Club's and Pro's lean, Pro's
+   * fold; 0 while nobody looks close to ready) ...
+   */
+  safety: number;
+  /** ... the points added for the value-honour pairs and pongs the hand keeps (Pro) ... */
+  valuePairs: number;
+  /** ... and the points added for throwing a tile off the suit of a flush in reach (Pro), with that suit (0 Characters, 1 Dots, 2 Bamboo). */
+  flush: number;
+  flushSuit?: number;
 }
 
 /** Honours that score for `seat` this hand: seat wind, prevailing wind and the three dragons. */
@@ -478,20 +491,40 @@ export function rankDiscards(s: GameState, seat: number, skill: BotSkill = 'club
     // Fewer unseen copies → tile is less useful to keep.
     score += (4 - unseen[o.kind]) * 1;
     const risk = defend ? dealInRisk(o.kind, reads, unseen, shapes) : 0;
-    if (lean > 0) score -= lean * dealInCost(s, o.kind, leanOn, unseen, shapes);
-    if (perPoint > 0) score -= perPoint * dealInCost(s, o.kind, strong, unseen, shapes);
+    // Each term is also kept apart (`safety`, `valuePairs`, `flush`); `score` adds them exactly as before.
+    let safety = 0;
+    let valuePairs = 0;
+    let flushPoints = 0;
+    if (lean > 0) {
+      const cost = lean * dealInCost(s, o.kind, leanOn, unseen, shapes);
+      score -= cost;
+      safety += cost;
+    }
+    if (perPoint > 0) {
+      const cost = perPoint * dealInCost(s, o.kind, strong, unseen, shapes);
+      score -= cost;
+      safety += cost;
+    }
     if (skill === 'pro') {
       // 台 value: keep value-honour pairs and pongs, and chase a flush once it is in reach.
-      for (const k of values) if (counts[k] - (k === o.kind ? 1 : 0) >= 2) score += BOT_WEIGHTS.proValuePair * honourTai(s, seat, k);
+      for (const k of values) {
+        if (counts[k] - (k === o.kind ? 1 : 0) < 2) continue;
+        const kept = BOT_WEIGHTS.proValuePair * honourTai(s, seat, k);
+        score += kept;
+        valuePairs += kept;
+      }
       if (chaseFlush && suitOf(o.kind) >= 0 && suitOf(o.kind) !== flush!.suit) {
         const reach = BOT_WEIGHTS.proFlushReach;
-        score += (BOT_WEIGHTS.proFlush * (reach + 1 - flush!.offSuit)) / reach;
+        flushPoints = (BOT_WEIGHTS.proFlush * (reach + 1 - flush!.offSuit)) / reach;
+        score += flushPoints;
       }
     }
     // A smooth cap (tanh) keeps the order of the capped terms, so between tiles of equal acceptance the safer still ranks first.
     if (push) score = speedOnly + PUSH_TIEBREAK * Math.tanh((score - speedOnly) / PUSH_TIEBREAK);
-    const advice: DiscardAdvice = { tile, kind: o.kind, shanten: o.shanten, acceptance: o.acceptance, accepts: o.accepts, danger: risk, score };
+    const advice: DiscardAdvice = { tile, kind: o.kind, shanten: o.shanten, acceptance: o.acceptance, accepts: o.accepts, danger: risk, score, safety, valuePairs, flush: flushPoints };
     if (o.ligu) advice.ligu = true;
+    if (o.rank !== undefined) advice.rank = o.rank;
+    if (flushPoints > 0) advice.flushSuit = flush!.suit;
     out.push(advice);
   }
   return out.sort((a, b) => b.score - a.score || a.kind - b.kind);

@@ -8,12 +8,12 @@
  * it, so the app can show the advice in the player's language. Each English
  * text field is exactly the English template filled with those params.
  */
-import { coachAction, COACH_SKILL, currentShanten, followsLigu, rankDiscards, shantenAfterClaim, unseenCounts, valueKinds, type DiscardAdvice } from './bot';
+import { coachAction, COACH_SKILL, currentShanten, followsLigu, honourTai, rankDiscards, shantenAfterClaim, unseenCounts, valueKinds, type DiscardAdvice } from './bot';
 import { countsFromKinds, TOTAL_SETS, waits } from './hand';
 import { type Action, type GameState, legalActions, buildWinContext, sameAction, waitsFor } from './game';
 import { playsLigu } from './rules';
 import { scoreWin, type ScoreResult } from './scoring';
-import { kindInfo, kindOf, type Kind, type TileId } from './tiles';
+import { kindInfo, kindOf, SUIT_EN, SUIT_ZH, type Kind, type Suit, type TileId } from './tiles';
 
 /** Values for a reason template's %{name} placeholders: tile codes, tile names and numbers. */
 export type ReasonParams = Record<string, string | number>;
@@ -53,6 +53,19 @@ function withConcealedVariant<K extends string>(key: K, en: string, zh: string):
   } as Record<K | `${K}Concealed`, ReasonTemplate>;
 }
 
+const MORE_TILES_EN = ' Throwing %{otherName} instead would keep more tiles that improve your hand (%{more} more).';
+const MORE_TILES_ZH = '打 %{otherZh} 會多 %{more} 張進張。';
+const MORE_WAITS_EN = ' Throwing %{otherName} instead would leave you more winning tiles (%{more} more).';
+const MORE_WAITS_ZH = '打 %{otherZh} 會多聽 %{more} 張。';
+
+/** A trade reason ending with the improving tiles given up, and its `Ready` form ending with the winning tiles given up. */
+function withReadyVariant<K extends string>(key: K, en: string, zh: string): Record<K | `${K}Ready`, ReasonTemplate> {
+  return {
+    [key]: { en: en + MORE_TILES_EN, 'zh-TW': zh + MORE_TILES_ZH },
+    [`${key}Ready`]: { en: en + MORE_WAITS_EN, 'zh-TW': zh + MORE_WAITS_ZH },
+  } as Record<K | `${K}Ready`, ReasonTemplate>;
+}
+
 /**
  * Coach templates. Tile params come in three forms: `tile` (code such as "5m"),
  * `tileName` (Chinese and English name, used by the English text) and `tileZh`
@@ -87,6 +100,24 @@ export const HINT_REASON_KEYS = {
     en: 'Discard %{tileName}. %{kinds} kinds (%{accepts}) then improve your hand — %{copies} copies still unseen.',
     'zh-TW': '打 %{tileZh}。之後有 %{kinds} 種牌（%{accepts}）能改善手牌，還有 %{copies} 張沒出現。',
   },
+
+  // The coach's tile keeps fewer improving tiles than the most efficient one, `otherName`, which keeps `more` more:
+  // it says what it traded them for (`tradeReason`). The Ready forms count winning tiles, for a discard that leaves the hand ready.
+  ...withReadyVariant(
+    'hint.discard.flush',
+    'Discard %{tileName}: you are going for a flush in %{suit}.',
+    '打 %{tileZh}：你在做%{suitZh}的清一色或混一色。',
+  ),
+  ...withReadyVariant(
+    'hint.discard.keepValue',
+    'Discard %{tileName} and keep your pair of %{otherName}: a pong of it is worth %{tai} 台.',
+    '打 %{tileZh}，留著 %{otherZh} 這一對：碰成刻子有 %{tai} 台。',
+  ),
+  ...withReadyVariant(
+    'hint.discard.safer',
+    'Discard %{tileName}: an opponent may be close to ready, and it is the safer tile.',
+    '打 %{tileZh}：有對手可能快聽牌了，這張比較安全。',
+  ),
 
   'hint.discard.efficiencyLigu': {
     en: 'Discard %{tileName}: 嚦咕嚦咕 (seven pairs and a triplet) is your nearest hand. %{kinds} kinds (%{accepts}) then bring it closer — %{copies} copies still unseen.',
@@ -249,7 +280,7 @@ export function hintFor(s: GameState, seat: number): Hint {
       // At a 嚦咕嚦咕 table the discard can leave the hand ready for seven pairs and a triplet too.
       const afterWaits = d.shanten === 0 || ligu ? waitsAfterDiscard(s, seat, d.tile, unseen) : [];
       base.waits = afterWaits;
-      const why = explainDiscard(d, afterWaits, base.discards);
+      const why = explainDiscard(d, afterWaits, base.discards, s, seat);
       base.discardReason = englishOf(why);
       base.discardReasonKey = why.key;
       base.discardReasonParams = why.params;
@@ -321,10 +352,53 @@ function readyShanten(sh: number, handWaits: readonly WaitInfo[]): number {
   return handWaits.length > 0 && sh > 0 ? 0 : sh;
 }
 
-function explainDiscard(d: DiscardAdvice, afterWaits: WaitInfo[], all: readonly DiscardAdvice[]): Reason {
+/**
+ * The reasons that call the coach's discard the efficient one. It gives them only for a tile the discard
+ * puzzles would accept (`efficientDiscard`); for any other tile it names what the coach traded for.
+ */
+export const EFFICIENCY_REASON_KEYS: readonly HintReasonKey[] = ['hint.discard.ready', 'hint.discard.readyNoWaits', 'hint.discard.isolated', 'hint.discard.efficiency', 'hint.discard.efficiencyLigu'];
+
+const distance = (o: DiscardAdvice): number => o.rank ?? o.shanten;
+
+/**
+ * The discard puzzles' judge (`analysedPuzzle` in puzzles.ts) on the coach's own counts: the fewest steps
+ * from ready, and within 10 percent of the most improving tiles at that distance.
+ */
+function efficientDiscard(d: DiscardAdvice, all: readonly DiscardAdvice[]): boolean {
+  const best = Math.min(...all.map(distance));
+  if (distance(d) !== best) return false;
+  const top = Math.max(...all.filter((o) => distance(o) === best).map((o) => o.acceptance));
+  return d.acceptance >= top * 0.9;
+}
+
+/** Why the coach threw `d` rather than `e`, the most efficient tile: the part of the score that outweighs the improving tiles given up. */
+function tradeReason(d: DiscardAdvice, e: DiscardAdvice, s: GameState, seat: number): Reason {
+  const params: ReasonParams = { ...tileParams(d.kind), otherName: describeKind(e.kind), otherZh: kindInfo(e.kind).nameZh, other: kindInfo(e.kind).code, more: e.acceptance - d.acceptance };
+  const edges: Array<[HintReasonKey, number]> = [
+    ['hint.discard.flush', d.flush - e.flush],
+    ['hint.discard.keepValue', d.valuePairs - e.valuePairs],
+    ['hint.discard.safer', e.safety - d.safety],
+  ];
+  const [key] = edges.reduce((a, b) => (b[1] > a[1] ? b : a));
+  // Both discards leave the hand ready (the fewest steps is 0): the tiles given up are winning tiles.
+  const form = (k: HintReasonKey): HintReasonKey => (d.shanten === 0 ? (`${k}Ready` as HintReasonKey) : k);
+  if (key === 'hint.discard.flush') {
+    const suit = (['m', 'p', 's'] as Suit[])[d.flushSuit ?? 0];
+    return reason(form(key), { ...params, suit: SUIT_EN[suit], suitZh: `${SUIT_ZH[suit]}子` });
+  }
+  if (key === 'hint.discard.keepValue') return reason(form(key), { ...params, tai: honourTai(s, seat, e.kind) });
+  return reason(form(key), params);
+}
+
+function explainDiscard(d: DiscardAdvice, afterWaits: WaitInfo[], all: readonly DiscardAdvice[], s: GameState, seat: number): Reason {
   const tile = tileParams(d.kind);
-  // The coach gave up speed for safety: say so rather than calling the tile efficient.
-  if (all.some((o) => o.shanten < d.shanten && o.danger > d.danger)) return reason('hint.discard.fold', tile);
+  const best = Math.min(...all.map(distance));
+  // The coach gave up a step for safety (only the fold weighs more than a step): say so rather than calling the tile efficient.
+  if (distance(d) > best) return reason('hint.discard.fold', tile);
+  if (!efficientDiscard(d, all)) {
+    const e = all.filter((o) => distance(o) === best).reduce((a, b) => (b.acceptance > a.acceptance ? b : a));
+    return tradeReason(d, e, s, seat);
+  }
   if (d.shanten === 0) {
     if (afterWaits.length === 0) return reason('hint.discard.readyNoWaits', tile);
     const w = afterWaits.map((x) => `${kindInfo(x.kind).nameZh}×${x.remaining}`).join(', ');
