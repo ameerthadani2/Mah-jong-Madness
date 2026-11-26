@@ -39,7 +39,6 @@ export const OPEN_MIXED_SEEDS = COVERED
       3414, // R2: a move lost under a 12 s delay, answered by late refusals, then a seat-taken notice: the table's move green
       5174, // S1: a claim lost and a pass of the same link played, saves failing, then a restart: green
       6014, // a server restart in a deal, then a claim written as the table's own: amber, the end verified
-      6664, // a 12 s stall, then a move written as the player's own on a turn shown late: amber, the end verified
       5285, // states held, then another device: the table's moves on turns never shown amber with no stated limit
     ];
 /** Honest seeds that show red on this code: run as expected failures too. Not under coverage. */

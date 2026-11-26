@@ -259,6 +259,13 @@ export interface SentAction {
   rejected?: string;
   /** The turn the host's own frames had reached when its refusal arrived. */
   refusedAt?: number;
+  /**
+   * The turn this hand's state had reached on this device when the table answered a ping sent after this move, over the
+   * same link: an honest table takes a link's frames in the order they were sent, so it had taken this move up by then (it
+   * played it before that turn, or refused it, or it was lost). The log cannot credit it to a later turn
+   * (`TableClient.replayChecked`, the copy rule). Absent: no such answer came while the hand was on show.
+   */
+  byTurn?: number;
   /** Matched to an entry of the hand's log during the audit. */
   used?: boolean;
 }
@@ -674,6 +681,14 @@ function cleanRun<T extends object>(x: T, runKey: keyof T, segKey: keyof T): T {
   return out;
 }
 
+/** A move sent, from a saved copy: the turn the table had taken it up by (`SentAction.byTurn`) kept only when it is a turn number. */
+function cleanReached(x: SentAction): SentAction {
+  if (x.byTurn === undefined || isCount(x.byTurn)) return x;
+  const { byTurn: _drop, ...rest } = x;
+  void _drop;
+  return rest;
+}
+
 /**
  * A hand's record from a saved copy, with every frame cleaned (`cleanSeen`) and the run of each move
  * sent kept only when it is what this build writes. The answers to pings and the first pings of each
@@ -701,7 +716,7 @@ export function cleanPlay(p: unknown): PlayRecord {
   return {
     ...play,
     seen: play.seen.map(cleanSeen),
-    sent: play.sent.map((x) => cleanRun(x, 'run', 'seg')),
+    sent: play.sent.map((x) => cleanReached(cleanRun(x, 'run', 'seg'))),
     ...(spans ? { vouched: spans } : {}),
     ...(whole ? { whole: true as const } : {}),
     ...(otherDevice.length > 0 ? { otherDevice } : {}),

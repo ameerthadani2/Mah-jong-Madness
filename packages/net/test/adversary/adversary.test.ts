@@ -36,10 +36,11 @@ const MIXED_SEEDS = [
   452, // N1
   2828, // N5
   955, // S3 (a stale saved table: kept in the archive since unit 20g)
+  6664, // a 12 s stall, then a move written as the player's own on a turn shown late, matched to an older move of the same kind: red since unit 20h (the copy rule)
   // Clean on d6745d5 (`GAP_SEEDS` counts the seeds above).
   ...Array.from({ length: 8 }, (_, i) => 2 + i),
 ];
-const GAP_SEEDS = 12;
+const GAP_SEEDS = 13;
 
 describe('the adversary fuzzer', () => {
   it('quotes each stated limit from docs/FAIRNESS.md word for word', () => {

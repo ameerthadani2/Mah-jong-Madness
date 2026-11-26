@@ -154,6 +154,10 @@ export const AUDIT_CAVEATS = {
   // The table played for this seat over a legal move it sent with more of the turn's clock left than the
   // best round trip of the hand and `FLIGHT_SLACK_MS` explain losing on the way (`flightAllowance`).
   inFlight: 'The table played for this seat while a move it had sent in good time was still on its way',
+  // The log credits this seat, at a turn, with a move it made on an earlier turn, while it made another move on that turn
+  // (the copy rule, `replayChecked`): a connection slow toward the table delivers the earlier move there, and a server
+  // that held it back can play it there in place of the later one.
+  lateCopy: 'The table played a move this seat made on an earlier turn in place of the move it made on that turn, so this device cannot vouch for that turn',
   // This device pinged the table through the hand and no answer came back: nothing tied the table's clock to its own.
   noAnswer: "The table did not answer this device's timing checks during this hand",
   // The table moved on past the hand this device was on, while its link was down, and sent no record of it this device
@@ -647,7 +651,11 @@ export class TableClient {
    * none). Never saved: a pong is a fixed point only within the run of the app and of its clock that sent
    * the ping.
    */
-  private readonly pings = new Map<number, { seg: number; hand: number | null }>();
+  private readonly pings = new Map<number, { seg: number; hand: number | null; epoch: number; out: number }>();
+  /** Frames this run has sent so far (`send`): the place of each in the order they went out. Never saved. */
+  private outCount = 0;
+  /** The place among the frames this run sent (`outCount`) at which each move it filed went out (`act`; `markReached`). Never saved. */
+  private readonly movesOut = new WeakMap<SentAction, number>();
   /** The last `MAX_PAUSES` stretches of this run in which the app did not run (see `ran`; saved with the record, `runScopes`): no frame's lateness and no move's wait is the server's doing while they last. */
   private readonly pauses: Array<{ from: number; to: number }> = [];
   /** When this client last published a round trip (`rttMs`; see `RTT_PUBLISH_MS`). */
@@ -1360,7 +1368,7 @@ export class TableClient {
     if (play.sent.length > MAX_SENT) play.sent.splice(0, play.sent.length - MAX_SENT);
     const hook = this.writeAhead;
     if (!hook) {
-      this.send(msg);
+      this.sendMove(msg, filed);
       return;
     }
     // Not sent: off the record, so it vouches for nothing in the log.
@@ -1381,7 +1389,7 @@ export class TableClient {
       return;
     }
     if (!wrote || typeof (wrote as Promise<void>).then !== 'function') {
-      this.send(msg);
+      this.sendMove(msg, filed);
       return;
     }
     // Out on the link it was filed for, once the journal has it, as long as this client may still move there (and off the
@@ -1390,7 +1398,7 @@ export class TableClient {
     const epoch = this.epoch;
     (wrote as Promise<void>).then(
       () => {
-        if (this.link === link && this.epoch === epoch && this.mayAct()) this.send(msg);
+        if (this.link === link && this.epoch === epoch && this.mayAct()) this.sendMove(msg, filed);
         else drop();
       },
       unfile,
@@ -1430,7 +1438,8 @@ export class TableClient {
     if (this.pings.has(at)) return;
     const play = this.handOnShow();
     const seg = this.seg();
-    this.pings.set(at, { seg, hand: play ? play.hand : null });
+    const ping = { seg, hand: play ? play.hand : null, epoch: this.epoch, out: 0 };
+    this.pings.set(at, ping);
     if (this.pings.size > MAX_PINGS) this.pings.delete(this.pings.keys().next().value as number);
     if (play) {
       play.pinged = (play.pinged ?? 0) + 1;
@@ -1440,7 +1449,7 @@ export class TableClient {
         if (from.length > MAX_PING_SCOPES) from.shift();
       }
     }
-    this.send({ t: 'ping', at });
+    ping.out = this.send({ t: 'ping', at });
   }
 
   /**
@@ -1473,6 +1482,8 @@ export class TableClient {
     const fat = this.now();
     const seg = sent.seg;
     if (seg !== this.seg() || fat < at) return;
+    // (Whatever its stamp says: what it proves about the moves sent before the ping is its place on the link.)
+    this.markReached(sent.epoch, sent.out);
     // Nothing on screen reads the round trip: publishing it with every pong would re-render the table and save the record each second.
     if (this.rttAt === null || fat - this.rttAt >= RTT_PUBLISH_MS) {
       this.rttAt = fat;
@@ -1817,8 +1828,32 @@ export class TableClient {
     return this.now();
   }
 
-  private send(msg: ClientMessage): void {
+  /** Send a frame on the link in use; returns its place among the frames this run has sent (`outCount`). */
+  private send(msg: ClientMessage): number {
     this.link.send(msg);
+    return ++this.outCount;
+  }
+
+  /** Send a move this client filed, noting where it went in the order of the frames this run sent (`markReached`). */
+  private sendMove(msg: ClientMessage, filed: SentAction): void {
+    this.movesOut.set(filed, this.send(msg));
+  }
+
+  /**
+   * The table answered, over link `epoch`, a ping this run sent as the `out`-th frame: every move this run sent over the
+   * same link before it was taken up by the table by then (an honest table takes a link's frames in order). Each such move
+   * of the hand on show, while it is played, is marked with the turn its state has reached (`SentAction.byTurn`).
+   */
+  private markReached(epoch: number, out: number): void {
+    const v = this.state.view;
+    if (!v || !isInt(v.turnCounter) || this.state.lastResult !== null || this.handsEnded.has(v.handNumber) || epoch !== this.epoch) return;
+    const play = this.plays.find((p) => p.hand === v.handNumber);
+    if (!play) return;
+    for (const x of play.sent) {
+      if (x.byTurn !== undefined || x.run !== this.runId || x.epoch !== epoch) continue;
+      const at = this.movesOut.get(x);
+      if (at !== undefined && at < out) x.byTurn = v.turnCounter;
+    }
   }
 
   private update(patch: Partial<ClientState>): void {
@@ -3150,6 +3185,7 @@ export class TableClient {
     if (notes.damaged) caveats.push(AUDIT_CAVEATS.damaged);
     if (notes.overflow) caveats.push(AUDIT_CAVEATS.overflow);
     if (notes.inFlight) caveats.push(AUDIT_CAVEATS.inFlight);
+    if (notes.lateCopy) caveats.push(AUDIT_CAVEATS.lateCopy);
     if (notes.noAnswer) caveats.push(AUDIT_CAVEATS.noAnswer);
     const status: AuditStatus = failures.length > 0 ? 'failed' : 'partial';
     this.handsEnded.add(h);
@@ -3304,6 +3340,7 @@ export class TableClient {
     if (notes.damaged) caveats.push(AUDIT_CAVEATS.damaged);
     if (notes.overflow) caveats.push(AUDIT_CAVEATS.overflow);
     if (notes.inFlight) caveats.push(AUDIT_CAVEATS.inFlight);
+    if (notes.lateCopy) caveats.push(AUDIT_CAVEATS.lateCopy);
     if (notes.noAnswer) caveats.push(AUDIT_CAVEATS.noAnswer);
     if (notes.otherDevice) caveats.push(AUDIT_CAVEATS.otherDevice);
     // An app restart around the deal: this device cannot say it watched all of it, whatever its record now shows.
@@ -3358,9 +3395,12 @@ export class TableClient {
     /**
      * The moves this client sent, in the order sent. `legal`: whether the move was legal in the state of the turn it was
      * made on; `copyOf`: the first move sent on that turn that is the same move there (itself, or one it repeats: a second
-     * tap, or the move made again on a new link) (`noteLegal`).
+     * tap, or the move made again on a new link) (`noteLegal`). What the table did with each, as the replay finds it: `used`,
+     * it played it, at turn `playedAt` (`take`); `refusedAt`, a refusal answered it in order, and the turn the host's frames had reached when that
+     * refusal came (`takeRefusals`); `passed`, the table took it up without an answer, or it was lost with its link (`take`).
      */
-    const sent = (play?.sent ?? []).map((x) => ({ ...x, used: false, legal: undefined as boolean | undefined, copyOf: -1 }));
+    const sent = (play?.sent ?? []).map((x) => ({ ...x, used: false, playedAt: -1, legal: undefined as boolean | undefined, copyOf: -1, refusedAt: undefined as number | undefined, passed: false }));
+    type Sent = (typeof sent)[number];
     /** Note, for each move made on the turn of state `s`, whether it was legal there (the state the seat acted on), and which it repeats. */
     const noteLegal = (s: GameState) => {
       if (me === null) return;
@@ -3371,16 +3411,93 @@ export class TableClient {
       }
     };
     /**
+     * The copy rule: which move this client sent a move the log credits to its player at turn `n` is. An honest host takes a
+     * link's frames in the order they were sent, and answers each move by playing it, at the turn it reached the table at if
+     * it is legal there, or by a refusal naming the turn it was made on; a new link the table seats the player on ends the
+     * old one there (its first state is the turn the table had reached). So the move it played at `n` is the first move
+     * still unanswered on the link the seat held at `n`, that is the move the log shows, tile for tile (`sameMove`):
+     * - not one a refusal answered in order (`takeRefusals`), nor one the table took up before (`passed`);
+     * - not one sent before a move of the same link the log played earlier, nor one over a link before the latest link a
+     *   played move went out on (`lastPlayed`, `lastLink`);
+     * - not one over a link that ended before `n` (`linkEnd`: a later link of this hand had brought a state of an earlier turn);
+     * - not one made after `n`, nor one the table had already taken up by `n`: the table answered a ping sent after it over
+     *   the same link while this hand's state was at `n` or before (`SentAction.byTurn`; not from moves restored damaged).
+     * With no such move the entry is not the player's own (`copyFor` gives null).
+     */
+    const sameMove = (a: Action, b: unknown): boolean => {
+      if (!isObject(b) || b.type !== a.type) return false;
+      if (a.type === 'discard' || a.type === 'kong') return b.tile === a.tile;
+      if (a.type === 'chi') return Array.isArray(b.tiles) && b.tiles.length === 2 && b.tiles[0] === a.tiles[0] && b.tiles[1] === a.tiles[1];
+      return true;
+    };
+    /** For each link (by its epoch, which only grows, over every run of the app), the earliest turn of this hand a state it brought showed. */
+    const firstOn = new Map<number, number>();
+    for (const f of play?.seen ?? []) if (isInt(f.epoch) && isInt(f.tc) && f.tc < (firstOn.get(f.epoch) ?? Number.POSITIVE_INFINITY)) firstOn.set(f.epoch, f.tc);
+    /** The last turn at which the table can have played a move that went out over link `epoch`: before a later link's first state of this hand. */
+    const linkEnd = (epoch: number): number => {
+      let end = Number.POSITIVE_INFINITY;
+      for (const [e, tc] of firstOn) if (e > epoch && tc - 1 < end) end = tc - 1;
+      return end;
+    };
+    /** The index in `sent` of the last move of each link (by epoch) the log played, and the latest link a played move went out on. */
+    const lastPlayed = new Map<number, number>();
+    let lastLink = Number.NEGATIVE_INFINITY;
+    /** The refusals of this seat's moves in the order they came, each answering in turn the first move of its link and turn still unanswered there. */
+    const refs = (play?.refusals ?? []).map((r) => ({ ...r, done: false }));
+    /**
+     * Answer with every refusal that came while the host's frames were at turn `n` or before: an honest host sent each one
+     * before it played the move at `n` (once it had, its next state would have come first). A refusal answers the first move,
+     * after the last one of its link the log played, of its link and turn that is still unanswered; one that answers none
+     * (a move the table had already taken up, or none at all) answers nothing.
+     */
+    const takeRefusals = (n: number) => {
+      for (const r of refs) {
+        if (r.done || r.at > n) continue;
+        r.done = true;
+        const from = r.epoch === undefined ? -1 : (lastPlayed.get(r.epoch) ?? -1);
+        const x = sent.find((z, i) => i > from && !z.used && !z.passed && z.refusedAt === undefined && z.tc === r.tc && (r.epoch === undefined || z.epoch === r.epoch) && (r.run === undefined || z.run === r.run));
+        if (x) x.refusedAt = r.at;
+      }
+    };
+    /**
+     * The moves the copy rule allows for an entry of action `action` at turn `n`, in the order sent (the first is the copy);
+     * with `reached` false, also those the table had already taken up by then (`SentAction.byTurn`).
+     */
+    const copiesFor = (action: unknown, n: number, reached = true): Sent[] =>
+      sent.filter(
+        (x, i) =>
+          !x.used &&
+          !x.passed &&
+          x.refusedAt === undefined &&
+          x.tc <= n &&
+          sameMove(x.action, action) &&
+          x.epoch >= lastLink &&
+          i > (lastPlayed.get(x.epoch) ?? -1) &&
+          n <= linkEnd(x.epoch) &&
+          !(reached && !movesDoubt && isInt(x.byTurn) && x.byTurn <= n),
+      );
+    /** The log played `y` at turn `n`: every move before it over its link still unanswered, and every one over an earlier link, was taken up without an answer or lost. */
+    const take = (y: Sent, n: number) => {
+      const yi = sent.indexOf(y);
+      for (let k = 0; k < yi; k++) {
+        const x = sent[k];
+        if (!x.used && x.refusedAt === undefined && x.epoch <= y.epoch) x.passed = true;
+      }
+      y.used = true;
+      y.playedAt = n;
+      lastPlayed.set(y.epoch, yi);
+      lastLink = Math.max(lastLink, y.epoch);
+    };
+    /**
      * An honest host answers a link's moves in the order they came, each by playing it or by a refusal naming its turn,
      * before anything later of that link is played. So once the log plays move `y` (the `yi`-th sent) at turn `n`, every move
      * sent before it over the same link in the same run of the app must have been played already, or refused by a refusal
      * that came before the state showing `y` (one naming its turn that arrived while the host's frames were at turn `n` or
-     * before): a refusal that came after that state is out of order and answers nothing. True when such a move, legal on
-     * the turn it was made on, was neither: the table lost it, whatever turn `y` falls on. Refusals of a turn are counted
-     * against all the moves of that turn left unplayed (an honest host answers each one); a copy of `y` itself made on its
-     * turn (sent twice) is not one of them.
+     * before, in order: `takeRefusals`): a refusal that came after that state is out of order and answers nothing. True when
+     * such a move, legal on the turn it was made on, was neither: the table lost it, whatever turn `y` falls on. A copy of `y`
+     * itself made on its turn (sent twice) is not one of them.
      */
-    const droppedBefore = (yi: number, n: number, sameAsY: (x: (typeof sent)[number]) => boolean): boolean => {
+    const droppedBefore = (yi: number, n: number, sameAsY: (x: Sent) => boolean): boolean => {
       const y = sent[yi];
       if (!y || !play) return false;
       // The link `y` went out over brought what came after its play (frames keep their order on a link): every answer
@@ -3388,32 +3505,25 @@ export class TableClient {
       // may have been lost with the link that broke, and a move of an earlier turn is not held against the table.
       const after = frameAfter(n);
       const whole = !!after && after.epoch === y.epoch && after.run === y.run;
-      const left = new Map<number, { all: number; legal: number }>();
       for (let k = 0; k < yi; k++) {
         const x = sent[k];
-        if (x.used || x.epoch !== y.epoch || x.run !== y.run || (x.tc === n && sameAsY(x))) continue;
+        if (x.used || x.refusedAt !== undefined || x.epoch !== y.epoch || x.run !== y.run || (x.tc === n && sameAsY(x))) continue;
         // A repeat of a move the log played (the same move on the same turn, sent again, on this link or another): that move
         // was answered. Which of the copies the table played cannot be told, and the player loses nothing either way.
         if (x.copyOf >= 0 && sent.some((z) => z.used && z.tc === x.tc && z.copyOf === x.copyOf)) continue;
         // A move of an earlier turn than `y`'s, it reaching the table late: judged only over a link that brought what came
         // after `y` (above), and not when it is a pass (the table's own rule for a seat out of time passes too, so the player
         // loses nothing), or the same tile discarded or declared a kong again on a later turn (played there late, perhaps:
-        // which copy the table played cannot be told). On `y`'s own turn none of this holds: that move was legal in the
-        // very state the table played `y` in, so an honest table would have played it.
+        // which copy the table played cannot be told, unless the table had taken this one up before that turn,
+        // `SentAction.byTurn`). On `y`'s own turn none of this holds: that move was legal in the very state the table played
+        // `y` in, so an honest table would have played it.
         if (x.tc < n) {
           if (!whole || x.action.type === 'pass') continue;
           const tile = (x.action.type === 'discard' || x.action.type === 'kong') && isInt(x.action.tile) ? x.action.tile : null;
-          if (tile !== null && sent.some((z) => z.used && z.action.type === x.action.type && (z.action as { tile?: unknown }).tile === tile)) continue;
+          const before = (t: number) => !movesDoubt && isInt(x.byTurn) && x.byTurn <= t;
+          if (tile !== null && sent.some((z) => z.used && z.action.type === x.action.type && (z.action as { tile?: unknown }).tile === tile && !before(z.playedAt))) continue;
         }
-        const c = left.get(x.tc) ?? { all: 0, legal: 0 };
-        c.all++;
-        if (x.legal === true) c.legal++;
-        left.set(x.tc, c);
-      }
-      for (const [t, c] of left) {
-        if (c.legal === 0) continue;
-        const answered = (play.refusals ?? []).filter((r) => r.tc === t && r.at <= n && (r.epoch === undefined || r.epoch === y.epoch) && (r.run === undefined || r.run === y.run)).length;
-        if (c.all > answered) return true;
+        if (x.legal === true) return true;
       }
       return false;
     };
@@ -3542,6 +3652,8 @@ export class TableClient {
       // Each entry is the move made at the turn the replay has reached, and says so: an honest host logs every move with
       // the turn it was made on (`applyAction`), and every check of this seat's moves below is keyed by that number.
       if (!isObject(entry) || entry.n !== s.turnCounter) problems.add(`The log numbers the move made at turn ${s.turnCounter} as another turn`);
+      // The refusals the host sent before it played this turn answer their moves first.
+      takeRefusals(s.turnCounter);
       if (play && me !== null && isObject(entry) && entry.seat === me) {
         const n = entry.n;
         const prevMine = lastMine;
@@ -3552,19 +3664,28 @@ export class TableClient {
         const source = byTable(entry) ? 'auto' : 'player';
         if (source === 'player') {
           if (isInt(n) && ledgerVouches(play, n)) {
-            // Any move this client sent and the log has not used yet may be the one: a move that reaches
-            // the table late (after its clock ran out, say) is played on the seat's next turn if still legal.
-            // Of several, the likeliest: one the host did not refuse; of those, one sent over the latest link (a copy
-            // over a link that broke may never have come); over one link, the first sent (an honest host answers a
-            // link's moves in the order they came, so it plays the first copy that is legal when it comes).
-            const copies = sent.filter((x) => !x.used && x.tc <= n && sameActionSafe(x.action, entry.action, s, me));
-            const match = copies.slice().sort((a, b) => Number(!!a.rejected) - Number(!!b.rejected) || b.epoch - a.epoch || sent.indexOf(a) - sent.indexOf(b))[0];
+            // The move this client sent that an honest host could have played here (the copy rule, `copiesFor`): a move that
+            // reaches the table late (after its clock ran out, say) is played at the turn it reached the table at, if still
+            // legal there, given the order of its link.
+            let copies = copiesFor(entry.action, n);
+            // Only a move the table had taken up before this turn (it answered a ping sent after it over the same link while
+            // the state this device was shown was at this turn or before): the log can be true only if the table held its
+            // state back behind that answer. The move is taken as the one played, and the hand fails for the hold.
+            if (copies.length === 0) {
+              copies = copiesFor(entry.action, n, false);
+              if (copies.length > 0) problems.add(`The host held back its frames on a link that stayed open, then played for this seat (turn ${n})`);
+            }
+            const match = copies[0];
             if (match) {
-              match.used = true;
               // A legal move this seat sent before this one, over the same link, that the log did not play and no refusal
               // answered in order (`droppedBefore`): whatever else came back (another code, a refusal naming another turn,
               // one that came after the state showing this move, nothing), the table lost it and played this one.
+              take(match, n);
               if (droppedBefore(sent.indexOf(match), n, (x) => sameActionSafe(x.action, entry.action, s, me))) onMoves(`The table left a move this seat sent unanswered and played another of its moves in its place (turn ${n})`);
+              // A move made on an earlier turn, played here in place of another move this seat made on this very turn: a
+              // connection slow toward the table does that, and so does a server that held the earlier move back and played
+              // it here. This device cannot tell the two apart: the hand is amber (`lateCopy`).
+              if (match.tc < n && notes && sent.some((x) => x !== match && x.tc === n && x.legal === true && !sameActionSafe(x.action, entry.action, s, me))) notes.lateCopy = true;
               judgeShown(play, n, prevMine);
               // The host cannot have played this move before this device sent it: a fixed point between the
               // two clocks. Of copies of the same move sent more than once, the first counts (the host may
@@ -3573,7 +3694,7 @@ export class TableClient {
               const first = firstSend(copies);
               // (Not from moves restored damaged, `movesDoubt`: the time a move was sent may then be any.)
               if (!movesDoubt && f && f.kept !== false && first && typeof first.at === 'number' && typeof f.now === 'number' && f.epoch === first.epoch && f.at >= first.at) anchors.push({ at: first.at, now: f.now, era: f.era ?? 0, run: first.run, seg: first.seg, fat: f.at });
-            } else if (sent.some((x) => !x.used && !x.rejected && x.tc <= n)) problems.add(`The log changed a move this seat made (turn ${n})`);
+            } else if (sent.some((x) => !x.used && x.refusedAt === undefined && x.tc <= n)) problems.add(`The log changed a move this seat made (turn ${n})`);
             else problems.add(`The log shows a move this seat never made (turn ${n})`);
           } else if (isInt(n)) {
             // A move from before this device could vouch for its ledger (an app restart, or the seat opened on
@@ -3583,14 +3704,14 @@ export class TableClient {
             // But not one at or after a turn whose state the host held back on a link that stayed open (`held`): nothing an
             // honest host does marks that, and a server that holds the table back can credit moves to the player unseen.
             if (play.held !== undefined && n >= play.held) problems.add(`The host held back its frames on a link that stayed open, then played for this seat (turn ${n})`);
-            else if (otherDeviceAt(play, n)) {
-              // In a stretch the server said another device held the seat in: a move this device sent is its own; any other
-              // may have been made on that device. It is not held against the table, but nothing vouches for it: the hand
-              // is amber and the end of the match is not shown as verified (`otherDevice`).
-              const copies = sent.filter((x) => !x.used && x.tc <= n && sameActionSafe(x.action, entry.action, s, me));
-              const match = copies.slice().sort((a, b) => Number(!!a.rejected) - Number(!!b.rejected) || b.tc - a.tc)[0];
-              if (match) match.used = true;
-              else if (notes) notes.otherDevice = true;
+            else {
+              // A move this device sent that the copy rule allows here is its own (the order of its link goes on from it).
+              const match = copiesFor(entry.action, n)[0] ?? copiesFor(entry.action, n, false)[0];
+              if (match) take(match, n);
+              // In a stretch the server said another device held the seat in, any other may have been made on that device.
+              // It is not held against the table, but nothing vouches for it: the hand is amber and the end of the match is
+              // not shown as verified (`otherDevice`).
+              else if (otherDeviceAt(play, n) && notes) notes.otherDevice = true;
             }
           }
         } else {
@@ -3919,6 +4040,8 @@ interface ReplayNotes {
   overflow?: boolean;
   /** The table played for this seat over a move it sent in good time (`AUDIT_CAVEATS.inFlight`). */
   inFlight?: boolean;
+  /** The log credits this seat with a move it made on an earlier turn, in place of the move it made on that turn (`AUDIT_CAVEATS.lateCopy`). */
+  lateCopy?: boolean;
   /** The table answered none of the pings this device sent during the hand (`AUDIT_CAVEATS.noAnswer`). */
   noAnswer?: boolean;
   /** The log credits the player with a move this device did not send, in a stretch the server said another device held the seat in (`AUDIT_CAVEATS.otherDevice`). */
