@@ -1134,7 +1134,7 @@ function defenceText(p: Pick<DefencePuzzle, 'answer' | 'answers' | 'threatSeat' 
   const who = SEAT_EN[p.threatSeat];
   const whoZh = SEAT_ZH[p.threatSeat];
   const threatEn = `${capitalise(who)} has four exposed sets and needs only one more set or the pair.`;
-  const threatZh = `${whoZh}已經亮了四組面子，只差一組面子或一對眼。`;
+  const threatZh = `${whoZh}已經亮了四組，只差一組或一對眼。`;
   let en: string;
   let zh: string;
   switch (p.reason) {
@@ -1554,7 +1554,7 @@ function claimText(p: Pick<ClaimPuzzle, 'answer' | 'discard' | 'shantenBefore' |
     return {
       reasonKey: 'puzzle.claim.hu',
       explanation: `${tileEn(p.discard)} completes your hand: five sets and a pair. A win comes before every other claim, so call 胡.`,
-      explanationZh: `${tileZh(p.discard)}讓你湊齊五組面子加一對眼，胡牌優先於任何吃碰，直接胡。`,
+      explanationZh: `${tileZh(p.discard)}讓你湊齊五組加一對眼，胡牌優先於任何吃碰，直接胡。`,
     };
   }
   if (a.type === 'pass') {
@@ -1569,7 +1569,7 @@ function claimText(p: Pick<ClaimPuzzle, 'answer' | 'discard' | 'shantenBefore' |
     return {
       reasonKey: 'puzzle.claim.passNoGain',
       explanation: `No claim here leaves the hand better off: none of them gets you closer to ready with as much to win. Exposing a set for nothing gives away information and flexibility, so pass.${o.en}`,
-      explanationZh: `這些吃碰都不能讓牌變得更好：沒有離聽牌更近，能胡的牌和台數也沒有增加。白白亮出一組面子只會洩露牌型、少了變化，所以不要。${o.zh}`,
+      explanationZh: `這些吃碰都不能讓牌變得更好：沒有離聽牌更近，能胡的牌和台數也沒有增加。白白亮出一組牌只會洩露牌型、少了變化，所以不要。${o.zh}`,
     };
   }
   const after = a.shantenAfter;

@@ -68,8 +68,10 @@ describe('engine reason keys', () => {
 
   it('every template has both locales, and zh-TW uses the params of the English', () => {
     expect(keys.length).toBeGreaterThan(40);
-    // The English names a tile in both scripts (tileName); the Chinese uses the Chinese name alone (tileZh).
-    const asChinese = (p: string) => (p === 'tileName' ? 'tileZh' : p);
+    // The English names a tile in both scripts (tileName); the Chinese uses the Chinese name alone (tileZh). A claim is
+    // named in each language's own word (claimName: chow, pong; claimZh: 吃, 碰).
+    const CHINESE: Record<string, string> = { tileName: 'tileZh', claimName: 'claimZh' };
+    const asChinese = (p: string) => CHINESE[p] ?? p;
     for (const key of keys) {
       const tpl = ENGINE_REASON_KEYS[key];
       expect(tpl.en.length, key).toBeGreaterThan(0);

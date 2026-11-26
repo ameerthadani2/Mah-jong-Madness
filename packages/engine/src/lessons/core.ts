@@ -46,13 +46,13 @@ export const CORE_LESSONS: Lesson[] = [
     titleZh: '怎麼胡牌',
     minutes: 1,
     summary: 'Taiwanese Mahjong uses 16 tiles. A winning hand is five sets plus one pair.',
-    summaryZh: '台灣麻將一手牌 16 張。胡牌的牌型是五組面子加一對眼。',
+    summaryZh: '台灣麻將一手牌 16 張。胡牌是五組順子或刻子，加一對眼。',
     steps: [
       {
         title: 'Five sets + a pair',
-        titleZh: '五組面子加一對眼',
+        titleZh: '五組加一對眼',
         body: 'A set is a chow (三張連號 123) or a pong (三張相同). You hold 16 tiles and win with a 17th that completes 5 sets + 1 pair.',
-        bodyZh: '面子可以是順子（三張連號，像 123）或刻子（三張相同）。手上有 16 張，進第 17 張湊成五組面子加一對眼就胡牌。',
+        bodyZh: '每一組是順子（三張連號，像 123）或刻子（三張相同）。手上有 16 張，進第 17 張湊成五組加一對眼就胡牌。',
         hand: '123m 456m 789p 234s EEE CC',
       },
       {
@@ -78,7 +78,7 @@ export const CORE_LESSONS: Lesson[] = [
           hand: '123m 456m 789p 234s EEE C',
           answer: 'C',
           explanation: 'Five sets are complete; the lone 中 needs its partner to form the pair (單騎).',
-          explanationZh: '五組面子都齊了；單張的中要再來一張中才能配成眼（單騎）。',
+          explanationZh: '五組都齊了；單張的中要再來一張中才能配成眼（單騎）。',
         },
       },
     ],
@@ -90,13 +90,13 @@ export const CORE_LESSONS: Lesson[] = [
     titleZh: '吃碰槓',
     minutes: 1,
     summary: 'Use other players’ discards to build sets, and understand the priority order.',
-    summaryZh: '用別家打出的牌來湊面子，並弄懂吃、碰、槓、胡的優先順序。',
+    summaryZh: '用別家打出的牌湊成一組，並弄懂吃、碰、槓、胡的優先順序。',
     steps: [
       {
         title: 'Chi (吃)',
         titleZh: '吃',
         body: 'Only the discard from the player on your left (上家) can be taken for a chow. The set is laid face up.',
-        bodyZh: '只有上家打出的牌可以吃成順子。吃下來的面子要攤開放在桌上。',
+        bodyZh: '只有上家打出的牌可以吃成順子。吃下來的順子要攤開放在桌上。',
       },
       {
         title: 'Pong (碰)',
@@ -120,7 +120,7 @@ export const CORE_LESSONS: Lesson[] = [
         title: 'The cost of calling',
         titleZh: '吃碰的代價',
         body: 'Exposing sets gives up 門清 (concealed hand) and shows opponents what you need. Call when it clearly moves you closer to ready.',
-        bodyZh: '亮出面子就沒有門清，對手也看得出你缺什麼牌。只有在明顯能讓你更接近聽牌時才吃碰。',
+        bodyZh: '一吃碰亮牌就沒有門清，對手也看得出你缺什麼牌。只有在明顯能讓你更接近聽牌時才吃碰。',
       },
     ],
   },
@@ -197,7 +197,7 @@ export const CORE_LESSONS: Lesson[] = [
           hand: '234m 567m 45p 789p NN 678s 1s',
           answer: '1s',
           explanation: 'The 1s has no partner: there is no 2s or 3s to build on, and 678s is too far away. The two North winds are your pair, so they stay. Throw 1s and you are ready on 3p or 6p; everything else is part of a set, the pair or the two-sided 45p.',
-          explanationZh: '1s 沒有任何牌可以搭：手上沒有 2s、3s，678s 又離得太遠。兩張北風是你的眼，要留著。打掉 1s 就聽 3p 或 6p；其他牌都是面子、對子或兩面搭子 45p。',
+          explanationZh: '1s 沒有任何牌可以搭：手上沒有 2s、3s，678s 又離得太遠。兩張北風是你的眼，要留著。打掉 1s 就聽 3p 或 6p；其他牌都已經成組、成對，或是兩面搭子 45p。',
         },
       },
       {
@@ -229,7 +229,7 @@ export const CORE_LESSONS: Lesson[] = [
         title: 'Read the table',
         titleZh: '看懂牌桌',
         body: 'A winning hand needs five sets and a pair. A player with four exposed sets has only one set or the pair left to finish, so treat them as close to ready; three exposed sets late in the hand is a warning too.',
-        bodyZh: '胡牌要五組面子加一對眼。已經亮出四組面子的玩家只差一組面子或一對眼，要當作他快聽牌了；牌局後段亮出三組也是警訊。',
+        bodyZh: '胡牌要五組加一對眼。已經亮出四組的玩家只差一組或一對眼，要當作他快聽牌了；牌局後段亮出三組也是警訊。',
       },
       {
         title: 'Safe tiles',
@@ -285,7 +285,7 @@ export const CORE_LESSONS: Lesson[] = [
         title: 'Practice: flowers sit beside your hand',
         titleZh: '練習：花不算在手牌裡',
         body: 'You have laid out 菊 and 冬. They sit beside your hand, not in it: your 16 tiles still need five sets and a pair.',
-        bodyZh: '你已經亮出菊和冬。花牌放在手牌旁邊，不算在手牌裡：你的 16 張還是要湊成五組面子加一對眼。',
+        bodyZh: '你已經亮出菊和冬。花牌放在手牌旁邊，不算在手牌裡：你的 16 張還是要湊成五組加一對眼。',
         quiz: {
           prompt: 'Which tile completes this hand?',
           promptZh: '哪一張牌能讓這手牌胡？',
@@ -318,7 +318,7 @@ export const CORE_LESSONS: Lesson[] = [
     titleZh: '風圈、莊家與一將',
     minutes: 3,
     summary: 'Who deals, which winds score, and how a match of 16 dealer rotations runs from the 東 round to the 北 round.',
-    summaryZh: '誰當莊、哪些風有台，以及一將十六圈莊怎麼從東風圈打到北風圈。',
+    summaryZh: '誰當莊、哪些風有台，以及一將四圈怎麼從東風圈打到北風圈。',
     steps: [
       {
         title: 'Seats and seat winds',
@@ -337,7 +337,7 @@ export const CORE_LESSONS: Lesson[] = [
         title: 'Prevailing wind and the match',
         titleZh: '圈風與一將',
         body: 'The match starts in the 東 round. Once the deal has passed four times, so that each player has dealt, the prevailing wind (圈風) moves on to 南, then 西, then 北. A full match is 16 passes of the deal, four rounds of four dealers: 一將. Hands where the dealer kept the deal do not count towards the 16, so a match often runs well past 16 hands. Clubs can choose a shorter match.',
-        bodyZh: '一將從東風圈開始。莊家換過四次、每個人都當過莊之後，圈風就換成南，再來是西、北。一將打滿 16 次換莊，也就是四圈、每圈四個莊。連莊的那幾局不算在 16 次裡，所以一將常常打超過 16 局。俱樂部也可以選比較短的局數。',
+        bodyZh: '一將從東風圈開始。莊家換過四次、每個人都當過莊之後，圈風就換成南，再來是西、北。一將打滿 16 次換莊，也就是四圈、每圈四個莊。連莊的那幾局不算在 16 次裡，所以一將常常打超過 16 局。俱樂部也可以打短一點，例如一圈或兩圈。',
       },
       {
         title: '連莊 and its 台',

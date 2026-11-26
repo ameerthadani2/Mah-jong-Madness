@@ -21,14 +21,14 @@ export const SCORING_LESSONS: Lesson[] = [
         title: 'How you won',
         titleZh: '胡牌方式',
         body: '自摸 1. 門清 1 (no exposed sets, won on a discard). 門清自摸 3, which replaces both. 槓上開花 1 (win on a kong replacement), 花上自摸 1 (win on a flower replacement), 搶槓 1 (win on a tile added to a pong), 海底撈月 1 (the last drawable tile) and 河底撈魚 1 (the discard after it).',
-        bodyZh: '自摸 1 台。門清 1 台（沒有亮出面子，胡別人打的牌）。門清自摸 3 台，取代前兩項。槓上開花 1 台（補槓的牌胡）、花上自摸 1 台（補花的牌胡）、搶槓 1 台（胡別人加槓的那張）、海底撈月 1 台（最後一張可摸的牌）、河底撈魚 1 台（最後一張打出的牌）。',
+        bodyZh: '自摸 1 台。門清 1 台（沒有吃、碰或明槓，胡別人打的牌）。門清自摸 3 台，取代前兩項。槓上開花 1 台（補槓的牌胡）、花上自摸 1 台（補花的牌胡）、搶槓 1 台（胡別人加槓的那張）、海底撈月 1 台（最後一張可摸的牌）、河底撈魚 1 台（最後一張打出的牌）。',
         hand: '123m 456m 789s 234s 55s 67p',
       },
       {
         title: 'Shape and wait',
         titleZh: '牌型與聽牌',
         body: '獨聽 1 and 平胡 2, never both. 碰碰胡 4. 三暗刻 2, 四暗刻 5, 五暗刻 8. 全求人 2: all five sets exposed, won on a discard for the pair. 半求人 1: the same but self-drawn, and it stacks with 自摸. Both 求人 hands absorb 獨聽.',
-        bodyZh: '獨聽 1 台、平胡 2 台，兩者不同時成立。碰碰胡 4 台。三暗刻 2 台、四暗刻 5 台、五暗刻 8 台。全求人 2 台：五組面子都亮出來，胡別人打的牌做眼。半求人 1 台：一樣五組都亮，但自摸，可以再加自摸。兩種求人都吸收獨聽。',
+        bodyZh: '獨聽 1 台、平胡 2 台，兩者不同時成立。碰碰胡 4 台。三暗刻 2 台、四暗刻 5 台、五暗刻 8 台。全求人 2 台：五組都吃碰亮出來，胡別人打的牌做眼。半求人 1 台：一樣五組都亮，但自摸，可以再加自摸。兩種求人都吸收獨聽。',
         hand: '222m 555p 888s 456m 33s 99p',
       },
       {
@@ -382,7 +382,7 @@ export const SCORING_LESSONS: Lesson[] = [
         title: 'The hand',
         titleZh: '牌',
         body: 'Exposed sets come first, then the concealed tiles, then any bonus tiles. The winning tile is highlighted, so you can see what finished the hand.',
-        bodyZh: '先列出亮出的面子，再來是手牌，最後是花牌。胡的那張牌會特別標示，一眼就看得出是哪張胡的。',
+        bodyZh: '先列出吃碰亮出的牌，再來是手牌，最後是花牌。胡的那張牌會特別標示，一眼就看得出是哪張胡的。',
         hand: '111m 234m 789m 55m EEE FFF',
       },
       {

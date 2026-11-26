@@ -9,7 +9,7 @@
  */
 import { coachAction, COACH_SKILL, currentShanten, rankDiscards, shantenAfterClaim } from './bot';
 import { applyAction, dealFromSnapshot, legalActions, sameAction, type Action, type GameState, type LoggedAction, type MatchSnapshot } from './game';
-import { fillTemplate, HINT_REASON_KEYS, type Reason, type ReasonLocale, type ReasonParams, type ReasonTemplate } from './hints';
+import { claimNames, fillTemplate, HINT_REASON_KEYS, type Reason, type ReasonLocale, type ReasonParams, type ReasonTemplate } from './hints';
 import { type RuleSet } from './rules';
 import { kindInfo, kindOf, type Kind, type TileId } from './tiles';
 
@@ -55,7 +55,7 @@ export interface HandReview {
  * zh-TW templates: first pass, needs native review.
  */
 export const REVIEW_REASON_KEYS = {
-  'review.summary.none': { en: 'No decisions to review.', 'zh-TW': '沒有可以複盤的決策。' },
+  'review.summary.none': { en: 'No decisions to review.', 'zh-TW': '沒有可以覆盤的決策。' },
   'review.summary.counts': {
     en: '%{accuracy}% accuracy over %{moves} decisions — %{blunders} blunders, %{mistakes} mistakes, %{inaccuracies} inaccuracies.',
     'zh-TW': '%{moves} 個決策，準確率 %{accuracy}%：大失誤 %{blunders} 次、失誤 %{mistakes} 次、欠佳 %{inaccuracies} 次。',
@@ -98,14 +98,14 @@ export const REVIEW_REASON_KEYS = {
     en: 'Calling was right, but a different call would have left you %{shantenBest} from ready instead of %{shantenActual}.',
     'zh-TW': '吃碰是對的，但換一種吃碰法會差 %{shantenBest} 張聽牌，而不是差 %{shantenActual} 張。',
   },
-  'review.call.shouldCall': { en: 'Calling would have brought you closer to ready.', 'zh-TW': '吃碰這張能讓你更接近聽牌。' },
+  'review.call.shouldCall': { en: 'A %{claimName} would have brought you closer to ready.', 'zh-TW': '%{claimZh}這張能讓你更接近聽牌。' },
   'review.call.closerConcealed': {
-    en: 'The call moved you closer to ready, but gave up 門清 when staying concealed was worth more.',
-    'zh-TW': '吃碰讓你更接近聽牌，但保持門清更有價值，卻被你放棄了。',
+    en: 'The %{claimName} moved you closer to ready, but gave up 門清 when staying concealed was worth more.',
+    'zh-TW': '這次%{claimZh}讓你更接近聽牌，但保持門清更有價值，卻被你放棄了。',
   },
-  'review.call.closerExposed': { en: 'The call moved you closer to ready, but exposed your hand for little gain.', 'zh-TW': '吃碰讓你更接近聽牌，但亮牌的收穫不大。' },
-  'review.call.noGain': { en: 'This call did not bring you closer to ready.', 'zh-TW': '這次吃碰沒有讓你離聽牌更近。' },
-  'review.call.noGainConcealed': { en: 'This call did not bring you closer to ready and gave up 門清.', 'zh-TW': '這次吃碰沒有讓你離聽牌更近，還放棄了門清。' },
+  'review.call.closerExposed': { en: 'The %{claimName} moved you closer to ready, but exposed your hand for little gain.', 'zh-TW': '這次%{claimZh}讓你更接近聽牌，但亮牌的收穫不大。' },
+  'review.call.noGain': { en: 'This %{claimName} did not bring you closer to ready.', 'zh-TW': '這次%{claimZh}沒有讓你更接近聽牌。' },
+  'review.call.noGainConcealed': { en: 'This %{claimName} did not bring you closer to ready and gave up 門清.', 'zh-TW': '這次%{claimZh}沒有讓你更接近聽牌，還放棄了門清。' },
 
   'review.turn.win': { en: 'You took the win.', 'zh-TW': '你胡牌了。' },
   'review.turn.kong': { en: 'Kong for a replacement draw.', 'zh-TW': '開槓補牌。' },
@@ -273,11 +273,12 @@ function gradeMove(s: GameState, seat: number, actual: Action, n: number): Revie
       return move('inaccuracy', 'review.call.worseShanten', best, { shantenActual: mineAfter, shantenBest: bestAfter });
     }
     const concealed = s.players[seat].melds.every((m) => m.concealed);
-    if (actualIsPass) return move('inaccuracy', 'review.call.shouldCall', best);
+    if (actualIsPass) return move('inaccuracy', 'review.call.shouldCall', best, claimNames(best!.type));
     // The player called where the coach would pass. Did the call at least improve the hand?
     const after = shantenAfterClaim(s, seat, actual);
-    if (after < shantenBefore) return move('inaccuracy', concealed ? 'review.call.closerConcealed' : 'review.call.closerExposed', best, { shantenBefore, shantenAfter: after });
-    return move('mistake', concealed ? 'review.call.noGainConcealed' : 'review.call.noGain', best, { shantenBefore, shantenAfter: after });
+    const named = { shantenBefore, shantenAfter: after, ...claimNames(actual.type) };
+    if (after < shantenBefore) return move('inaccuracy', concealed ? 'review.call.closerConcealed' : 'review.call.closerExposed', best, named);
+    return move('mistake', concealed ? 'review.call.noGainConcealed' : 'review.call.noGain', best, named);
   }
 
   if (actual.type === 'hu') {

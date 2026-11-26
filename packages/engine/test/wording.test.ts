@@ -25,9 +25,22 @@ describe('plain Taiwanese wording', () => {
 
   it('keeps the lesson on counting exact: the formula, the five-slot limit and what 0 and -1 mean', () => {
     const steps = strings(LESSONS).map(([, s]) => s);
-    expect(steps.some((s) => s.includes('離聽牌還差幾張 = 10 − 2 × 面子數 − 搭子數 − 有眼再減 1'))).toBe(true);
+    expect(steps.some((s) => s.includes('離聽牌還差幾張 = 10 − 2 × 組數 − 搭子數 − 有眼再減 1'))).toBe(true);
     expect(steps.some((s) => s.includes('tiles from ready = 10 − 2 × sets − partial sets (搭子) − 1 if you have a 眼'))).toBe(true);
-    expect(steps.some((s) => s.includes('面子和搭子加起來最多只算五個') && s.includes('0 就是聽牌，−1 就是胡了'))).toBe(true);
+    expect(steps.some((s) => s.includes('組數是已經湊好的順子和刻子') && s.includes('組數和搭子加起來最多只算五個') && s.includes('0 就是聽牌，−1 就是胡了'))).toBe(true);
+  });
+
+  // 面子 is a riichi word, and 湊面子 reads as "saving face": a set is 順子 or 刻子, or 一組 (the showcase review of 20 November).
+  it('never says 面子, in a lesson, a hint, a review reason or a puzzle explanation', () => {
+    const found = [...strings(LESSONS, 'LESSONS'), ...strings(ENGINE_REASON_KEYS, 'reasons')].filter(([, s]) => s.includes('面子'));
+    expect(found).toEqual([]);
+    expect(readFileSync(join(__dirname, '../src/puzzles.ts'), 'utf8')).not.toContain('面子');
+  });
+
+  it('says a match is 一將 of 四圈 (16 莊), never 十六圈 or 圈莊', () => {
+    const steps = strings(LESSONS).map(([, s]) => s);
+    expect(steps.filter((s) => /十六圈|圈莊/.test(s))).toEqual([]);
+    expect(steps.some((s) => s.includes('一將四圈'))).toBe(true);
   });
 });
 

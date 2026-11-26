@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applyAction, chooseAction, coachAction, hintFor, kindOf, legalActions, newGame, NUM_PLAY_KINDS, reviewHand, matchSnapshot, shantenAfterClaim, unseenCounts, type Action, type GameState } from '../src/index';
+import { applyAction, chooseAction, coachAction, formatEngineReason, hintFor, kindOf, legalActions, newGame, NUM_PLAY_KINDS, reviewHand, matchSnapshot, shantenAfterClaim, unseenCounts, type Action, type GameState } from '../src/index';
 
 function advanceToClaim(seed: string, pred: (s: GameState) => boolean): GameState | null {
   let s = newGame(seed);
@@ -66,6 +66,29 @@ describe('coach accuracy', () => {
     }
     expect(checked).toBeGreaterThan(0);
     expect(improving).toBeGreaterThan(0);
+  });
+
+  it('names the claim on offer, in both languages: 吃 or chow for a chow, 碰 or pong for a pong, never 吃碰', () => {
+    // Before 26 November 2026 every claim's reason said 吃碰這張… and "This claim…", whichever claim was on offer.
+    const seen = { chi: 0, pong: 0 };
+    for (let i = 0; i < 60 && (seen.chi < 5 || seen.pong < 5); i++) {
+      const s = advanceToClaim(`claimname-${i}`, (st) => st.pending!.offers.some((o) => o.pong || o.chi.length > 0));
+      if (!s) continue;
+      for (const o of s.pending!.offers) {
+        for (const c of hintFor(s, o.seat).claims) {
+          if (c.action.type !== 'pong' && c.action.type !== 'chi') continue;
+          const zh = formatEngineReason(c.reasonKey, c.reasonParams, 'zh-TW');
+          expect(zh, c.reasonKey).not.toContain('吃碰');
+          if (!/^hint\.claim\.(recommended|improves|alreadyReady|noGain)/.test(c.reasonKey)) continue;
+          seen[c.action.type]++;
+          expect(zh, c.reasonKey).toContain(c.action.type === 'chi' ? '吃' : '碰');
+          expect(zh, c.reasonKey).not.toContain(c.action.type === 'chi' ? '碰' : '吃');
+          expect(c.reason, c.reasonKey).toContain(c.action.type === 'chi' ? 'chow' : 'pong');
+        }
+      }
+    }
+    expect(seen.chi).toBeGreaterThan(0);
+    expect(seen.pong).toBeGreaterThan(0);
   });
 
   it('marks at most one kong as recommended', () => {

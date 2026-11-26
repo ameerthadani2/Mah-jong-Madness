@@ -43,7 +43,7 @@ export function templateParams(template: string): string[] {
 }
 
 const LOSES_CONCEALED_EN = ' You would lose 門清 (1 台, or 門清自摸 3 台).';
-const LOSES_CONCEALED_ZH = '會失去門清（1 台，門清自摸則是 3 台）。';
+const LOSES_CONCEALED_ZH = '%{claimZh}了就沒有門清（1 台，門清自摸則是 3 台）。';
 
 /** A claim reason and its "you would lose 門清" form, as two keys (i18n-js templates have no conditionals). */
 function withConcealedVariant<K extends string>(key: K, en: string, zh: string): Record<K | `${K}Concealed`, ReasonTemplate> {
@@ -63,15 +63,15 @@ export const HINT_REASON_KEYS = {
   'hint.status.canWinSelfDraw': { en: 'You can win now (%{how}) for %{tai} 台.', 'zh-TW': '現在就能胡（%{how}），共 %{tai} 台。' },
   'hint.status.canWinDiscard': { en: 'You can win on this discard for %{tai} 台.', 'zh-TW': '這張可以胡，共 %{tai} 台。' },
   'hint.status.readyAfterDiscard': { en: 'Ready (聽牌) after this discard.', 'zh-TW': '打完這張就聽牌。' },
-  'hint.status.oneAway': { en: 'One tile from ready.', 'zh-TW': '差一張聽牌：再進一張好牌就聽牌。' },
-  'hint.status.twoAway': { en: 'Two tiles from ready.', 'zh-TW': '差兩張聽牌：還要再進兩張好牌才聽牌。' },
-  'hint.status.manyAway': { en: '%{shanten} tiles from ready — build sets, keep pairs.', 'zh-TW': '差 %{shanten} 張聽牌：先湊面子，留住對子。' },
+  'hint.status.oneAway': { en: 'One tile from ready.', 'zh-TW': '差一張就聽牌了。' },
+  'hint.status.twoAway': { en: 'Two tiles from ready.', 'zh-TW': '還差兩張才聽牌。' },
+  'hint.status.manyAway': { en: '%{shanten} tiles from ready — build sets, keep pairs.', 'zh-TW': '還差 %{shanten} 張才聽牌：先湊成順子或刻子，對子留著。' },
   // At a table that plays 嚦咕嚦咕, while seven pairs and a triplet is nearer than five sets and a pair.
-  'hint.status.oneAwayLigu': { en: 'One tile from ready for 嚦咕嚦咕 (seven pairs and a triplet).', 'zh-TW': '差一張聽嚦咕嚦咕（七對子加一刻）。' },
-  'hint.status.twoAwayLigu': { en: 'Two tiles from ready for 嚦咕嚦咕 (seven pairs and a triplet).', 'zh-TW': '差兩張聽嚦咕嚦咕（七對子加一刻）。' },
+  'hint.status.oneAwayLigu': { en: 'One tile from ready for 嚦咕嚦咕 (seven pairs and a triplet).', 'zh-TW': '差一張就聽嚦咕嚦咕（七對加一刻）了。' },
+  'hint.status.twoAwayLigu': { en: 'Two tiles from ready for 嚦咕嚦咕 (seven pairs and a triplet).', 'zh-TW': '還差兩張才聽嚦咕嚦咕（七對加一刻）。' },
   'hint.status.manyAwayLigu': {
     en: '%{shanten} tiles from ready for 嚦咕嚦咕 (seven pairs and a triplet) — keep your pairs.',
-    'zh-TW': '差 %{shanten} 張聽嚦咕嚦咕（七對子加一刻）：留住對子。',
+    'zh-TW': '還差 %{shanten} 張才聽嚦咕嚦咕（七對加一刻）：對子留著。',
   },
   'hint.status.readyCount': { en: 'Ready — waiting on %{kinds} kind(s).', 'zh-TW': '聽牌：聽 %{kinds} 種牌。' },
   'hint.status.readyWaits': { en: 'Ready (聽牌) — waiting on %{waits}', 'zh-TW': '聽牌：聽 %{waits}' },
@@ -82,7 +82,7 @@ export const HINT_REASON_KEYS = {
   },
   'hint.discard.ready': { en: 'Discard %{tileName} to be ready, waiting on %{waits}.', 'zh-TW': '打 %{tileZh} 就聽牌，聽 %{waits}。' },
   'hint.discard.readyNoWaits': { en: 'Discard %{tileName} to be ready, waiting on nothing visible.', 'zh-TW': '打 %{tileZh} 就聽牌，但看不到還能聽的牌。' },
-  'hint.discard.isolated': { en: 'Discard %{tileName}; it does not fit any set you are building.', 'zh-TW': '打 %{tileZh}：它跟你正在湊的面子都搭不上。' },
+  'hint.discard.isolated': { en: 'Discard %{tileName}; it does not fit any set you are building.', 'zh-TW': '打 %{tileZh}：它跟你正在湊的牌都搭不上。' },
   'hint.discard.efficiency': {
     en: 'Discard %{tileName}. %{kinds} kinds (%{accepts}) then improve your hand — %{copies} copies still unseen.',
     'zh-TW': '打 %{tileZh}。之後有 %{kinds} 種牌（%{accepts}）能改善手牌，還有 %{copies} 張沒出現。',
@@ -90,7 +90,7 @@ export const HINT_REASON_KEYS = {
 
   'hint.discard.efficiencyLigu': {
     en: 'Discard %{tileName}: 嚦咕嚦咕 (seven pairs and a triplet) is your nearest hand. %{kinds} kinds (%{accepts}) then bring it closer — %{copies} copies still unseen.',
-    'zh-TW': '打 %{tileZh}：嚦咕嚦咕（七對子加一刻）是你最接近的牌型。之後有 %{kinds} 種牌（%{accepts}）能讓它更接近聽牌，還有 %{copies} 張沒出現。',
+    'zh-TW': '打 %{tileZh}：嚦咕嚦咕（七對加一刻）是你最接近的牌型。之後有 %{kinds} 種牌（%{accepts}）能讓它更接近聽牌，還有 %{copies} 張沒出現。',
   },
   'hint.label.kongSelf': { en: 'Kong %{tileName}', 'zh-TW': '槓 %{tileZh}' },
   'hint.label.hu': { en: 'Win (胡) on %{tileName}', 'zh-TW': '胡 %{tileZh}' },
@@ -101,24 +101,24 @@ export const HINT_REASON_KEYS = {
 
   'hint.claim.kongSelf': {
     en: 'A kong draws a replacement tile and can add 槓上開花 (1 台) if you win on it. Skip it if the four tiles are part of two sets.',
-    'zh-TW': '開槓可以補一張牌，補到胡牌還能加槓上開花（1 台）。如果這四張牌分屬兩組面子，就別槓。',
+    'zh-TW': '開槓可以補一張牌，補到胡牌還能加槓上開花（1 台）。如果這四張分在兩組裡，就別槓。',
   },
   'hint.claim.hu': { en: 'Take the win. Compare with your waits only if you are chasing a much bigger hand.', 'zh-TW': '胡下去吧。只有在做更大的牌時，才需要跟你聽的牌比較。' },
   'hint.claim.kongGood': { en: 'Kong: adds a replacement draw and keeps all four tiles together.', 'zh-TW': '槓：多補一張牌，四張也留在一起。' },
-  'hint.claim.kongBad': { en: 'The kong would break up sets you are using elsewhere.', 'zh-TW': '槓了會拆散你別處要用的面子。' },
+  'hint.claim.kongBad': { en: 'The kong would break up sets you are using elsewhere.', 'zh-TW': '槓了會拆掉你別處要用的順子或刻子。' },
   'hint.claim.kongBreaksConcealed': { en: 'An exposed kong would cost you 門清 on a hand that is already ready.', 'zh-TW': '已經聽牌了，明槓會失去門清。' },
   'hint.claim.takeWin': { en: 'Take the win instead.', 'zh-TW': '直接胡牌就好。' },
   'hint.claim.coachPrefers': { en: 'The coach prefers %{label}, which leaves the hand in the same shape.', 'zh-TW': '教練比較建議%{label}，牌型一樣好。' },
-  ...withConcealedVariant('hint.claim.recommendedReady', 'This claim makes you ready.', '吃碰這張就能聽牌。'),
-  ...withConcealedVariant('hint.claim.recommendedCloser', 'This claim brings you closer to ready.', '吃碰這張能讓你更接近聽牌。'),
-  ...withConcealedVariant('hint.claim.improvesReady', 'This claim would make you ready, but your concealed hand is worth more here.', '吃碰這張雖然能聽牌，但這裡保持門清更有價值。'),
+  ...withConcealedVariant('hint.claim.recommendedReady', 'This %{claimName} makes you ready.', '%{claimZh}這張就能聽牌。'),
+  ...withConcealedVariant('hint.claim.recommendedCloser', 'This %{claimName} brings you closer to ready.', '%{claimZh}這張能讓你更接近聽牌。'),
+  ...withConcealedVariant('hint.claim.improvesReady', 'This %{claimName} would make you ready, but your concealed hand is worth more here.', '%{claimZh}這張雖然能聽牌，但這裡保持門清更有價值。'),
   ...withConcealedVariant(
     'hint.claim.improvesCloser',
-    'This claim would bring you closer to ready, but your concealed hand is worth more here.',
-    '吃碰這張雖然能更接近聽牌，但這裡保持門清更有價值。',
+    'This %{claimName} would bring you closer to ready, but your concealed hand is worth more here.',
+    '%{claimZh}這張雖然能更接近聽牌，但這裡保持門清更有價值。',
   ),
-  ...withConcealedVariant('hint.claim.alreadyReady', 'You are already ready; claiming would not help.', '你已經聽牌了，吃碰沒有幫助。'),
-  ...withConcealedVariant('hint.claim.noGain', 'This does not bring you closer to ready.', '吃碰這張不會讓你離聽牌更近。'),
+  ...withConcealedVariant('hint.claim.alreadyReady', 'You are already ready; a %{claimName} would not help.', '你已經聽牌了，%{claimZh}也沒有幫助。'),
+  ...withConcealedVariant('hint.claim.noGain', 'This %{claimName} does not bring you closer to ready.', '%{claimZh}這張也不會更接近聽牌。'),
 } satisfies Record<string, ReasonTemplate>;
 
 export type HintReasonKey = keyof typeof HINT_REASON_KEYS;
@@ -359,6 +359,13 @@ function claimLabel(a: Action, s: GameState): Reason {
   }
 }
 
+/** A claim's name in a reason: the English word and the Chinese verb, so a line names the claim on offer (吃 or 碰), never 吃碰. */
+export function claimNames(type: Action['type']): { claimName: string; claimZh: string } {
+  if (type === 'chi') return { claimName: 'chow', claimZh: '吃' };
+  if (type === 'kong') return { claimName: 'kong', claimZh: '槓' };
+  return { claimName: 'pong', claimZh: '碰' };
+}
+
 function claimReason(a: Action, s: GameState, seat: number, sh: number, recommended: boolean, coachPick: Action | null): Reason {
   const p = s.players[seat];
   const concealed = p.melds.every((m) => m.concealed);
@@ -373,7 +380,7 @@ function claimReason(a: Action, s: GameState, seat: number, sh: number, recommen
   const after = shantenAfterClaim(s, seat, a);
   const improves = after < sh;
   const readyAfter = after === 0;
-  const params: ReasonParams = { shanten: sh, shantenAfter: after };
+  const params: ReasonParams = { shanten: sh, shantenAfter: after, ...claimNames(a.type) };
   if (!recommended && coachPick && coachPick.type !== 'pass' && improves) {
     const other = claimLabel(coachPick, s);
     // The label is the Chinese claim text (碰 五筒 …), which the English UI already uses on its claim buttons.

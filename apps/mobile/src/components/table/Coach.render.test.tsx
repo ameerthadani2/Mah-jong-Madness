@@ -81,9 +81,9 @@ describe('the coach bar (phones)', () => {
   });
 
   it('names the claim it recommends, and leads with a win and what it scores', async () => {
-    const pong = { action: { type: 'pong' as const }, label: '', labelKey: 'hint.label.pong', labelParams: NORTH, recommended: true, reason: '', reasonKey: 'hint.claim.recommendedCloser', reasonParams: {} };
+    const pong = { action: { type: 'pong' as const }, label: '', labelKey: 'hint.label.pong', labelParams: NORTH, recommended: true, reason: '', reasonKey: 'hint.claim.recommendedCloser', reasonParams: { claimName: 'pong', claimZh: '碰' } };
     await render(<CoachBar hint={hint({ phase: 'claim', claims: [pong] })} lines={{ status: 0, advice: 1 }} onOpen={() => undefined} />);
-    expect(screen.getByTestId('coach-advice')).toHaveTextContent('Pong (碰) 北 (North): This claim brings you closer to ready.');
+    expect(screen.getByTestId('coach-advice')).toHaveTextContent('Pong (碰) 北 (North): This pong brings you closer to ready.');
     const winPreview = { items: [{ nameZh: '自摸', tai: 1 }, { nameZh: '門清', tai: 1 }], tai: 2 } as unknown as Hint['winPreview'];
     await render(<CoachBar hint={hint({ statusKey: 'hint.status.canWinSelfDraw', statusParams: { how: '自摸', tai: 2 }, winPreview })} lines={{ status: 0, advice: 1 }} onOpen={() => undefined} />);
     expect(screen.getByTestId('coach-advice')).toHaveTextContent('自摸 1 · 門清 1 = 2 台');
@@ -92,7 +92,7 @@ describe('the coach bar (phones)', () => {
   it('speaks Traditional Chinese on a zh-TW phone', async () => {
     setLocalePreference('zh-TW');
     await render(<CoachBar hint={DISCARD} lines={{ status: 1, advice: 2 }} onOpen={() => undefined} />);
-    expect(screen.getByTestId('coach-advice')).toHaveTextContent('打 北：它跟你正在湊的面子都搭不上。');
+    expect(screen.getByTestId('coach-advice')).toHaveTextContent('打 北：它跟你正在湊的牌都搭不上。');
     expect(screen.getByText('更多')).toBeOnTheScreen();
   });
 });
@@ -140,24 +140,25 @@ describe('the coach panel (tablets)', () => {
 });
 
 describe('the coach at a claim chance it would let go by', () => {
-  const claim = (labelKey: string) => ({ action: { type: 'pass' as const }, label: '', labelKey, labelParams: { tileName: '五筒 (5 Dots)', tileZh: '五筒' }, recommended: false, reason: '', reasonKey: 'hint.claim.noGain', reasonParams: {} });
+  const claim = (labelKey: string) => ({ action: { type: 'pass' as const }, label: '', labelKey, labelParams: { tileName: '五筒 (5 Dots)', tileZh: '五筒' }, recommended: false, reason: '', reasonKey: 'hint.claim.noGain', reasonParams: { claimName: 'pong', claimZh: '碰' } });
   const PASSING = hint({ phase: 'claim', claims: [claim('hint.label.pong')] });
 
   it('says Pass on the bar, with why the claim on offer does not help', async () => {
     await render(<CoachBar hint={PASSING} lines={{ status: 0, advice: 2 }} onOpen={() => undefined} />);
-    expect(screen.getByTestId('coach-advice')).toHaveTextContent('Pass (過): This does not bring you closer to ready.');
+    expect(screen.getByTestId('coach-advice')).toHaveTextContent('Pass (過): This pong does not bring you closer to ready.');
   });
 
   it('says it in the sheet too, ticked, above the claim it lets go by', async () => {
     await render(<CoachSheet visible hint={PASSING} onClose={() => undefined} />);
     const sheet = screen.getByTestId('coach-sheet');
-    expect(within(sheet).getByTestId('coach-advice')).toHaveTextContent('Pass (過): This does not bring you closer to ready.');
+    expect(within(sheet).getByTestId('coach-advice')).toHaveTextContent('Pass (過): This pong does not bring you closer to ready.');
     expect(within(sheet).getByText(/^Pong \(碰\) 五筒 \(5 Dots\): /)).toBeOnTheScreen();
   });
 
   it('in Traditional Chinese', async () => {
     setLocalePreference('zh-TW');
     await render(<CoachBar hint={PASSING} lines={{ status: 0, advice: 2 }} onOpen={() => undefined} />);
-    expect(screen.getByTestId('coach-advice')).toHaveTextContent('過：吃碰這張不會讓你離聽牌更近。');
+    // The claim on offer is a pong: the line names it, never 吃碰 (before 26 November 2026: 過：吃碰這張不會讓你離聽牌更近。).
+    expect(screen.getByTestId('coach-advice')).toHaveTextContent('過：碰這張也不會更接近聽牌。');
   });
 });

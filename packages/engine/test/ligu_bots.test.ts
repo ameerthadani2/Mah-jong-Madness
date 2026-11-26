@@ -173,6 +173,6 @@ describe('the coach at a 嚦咕嚦咕 table', () => {
     expect(h.statusKey).toBe('hint.status.manyAwayLigu');
     expect(h.statusParams).toEqual({ shanten: 4 });
     expect(h.status).toBe('4 tiles from ready for 嚦咕嚦咕 (seven pairs and a triplet) — keep your pairs.');
-    expect(formatEngineReason(h.statusKey, h.statusParams, 'zh-TW')).toBe('差 4 張聽嚦咕嚦咕（七對子加一刻）：留住對子。');
+    expect(formatEngineReason(h.statusKey, h.statusParams, 'zh-TW')).toBe('還差 4 張才聽嚦咕嚦咕（七對加一刻）：對子留著。');
   });
 });
