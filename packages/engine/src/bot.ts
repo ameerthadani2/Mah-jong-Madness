@@ -19,7 +19,7 @@
  *
  * 嚦咕嚦咕 (`RuleSet.liguTai`): at a table that plays it, every tier measures a hand with no melds on
  * both paths (`liguPath`) and follows seven pairs and a triplet when it is more than
- * `BOT_WEIGHTS.liguMargin` steps nearer than five sets and a pair, keeping the tiles of that path;
+ * `BOT_WEIGHTS.liguMargin` steps nearer than five sets and a pair (Beginner: `liguMarginBeginner`, 3), keeping the tiles of that path;
  * while it follows it, it calls a chow, pong or kong only when that leaves the hand strictly closer to
  * ready. Beginner keeps its noise and its habit of grabbing harmless claims.
  */
@@ -371,16 +371,29 @@ export const BOT_WEIGHTS = {
    * prefix `u11tune` and reported on `u11report` (docs/ARCHITECTURE.md).
    */
   liguMargin: 1,
+  /**
+   * Beginner's margin: it follows 嚦咕嚦咕 only when that is more than three steps nearer. Its loose discards
+   * and its grabbed claims almost never finish seven pairs and a triplet, so following it costs points: at a
+   * margin of 1, 1.69 a hand against the same Beginner blind to the hand on the eighth assessment's 2,000
+   * hands, and at 2, 0.25 a hand on 4,000 held-out hands (`u21rep-ligu`), both behind at 95%. 3 is reported
+   * on `u21rep2-ligu` (docs/ARCHITECTURE.md).
+   */
+  liguMarginBeginner: 3,
 };
+
+/** How many steps nearer 嚦咕嚦咕 must be for `skill` to follow it (Club and Pro, and the coach: `liguMargin`). */
+export function liguMarginOf(skill?: BotSkill): number {
+  return skill === 'beginner' ? BOT_WEIGHTS.liguMarginBeginner : BOT_WEIGHTS.liguMargin;
+}
 
 /** Whether `seat` weighs 嚦咕嚦咕: the table plays it, the bots are not blind to it and the hand has no melds. */
 export function liguFor(s: GameState, seat: number): boolean {
   return playsLigu(s.rules) && BOT_WEIGHTS.ligu > 0 && s.players[seat].melds.length === 0;
 }
 
-/** True when `seat` weighs 嚦咕嚦咕 and it is strictly nearer than five sets and a pair for the hand as it stands. */
-export function followsLigu(s: GameState, seat: number): boolean {
-  return liguFor(s, seat) && liguPath(countsFromKinds(s.players[seat].hand.map(kindOf)), TOTAL_SETS, BOT_WEIGHTS.liguMargin).ligu;
+/** True when `seat` weighs 嚦咕嚦咕 and it is nearer than five sets and a pair, by more than `skill`'s margin, for the hand as it stands. */
+export function followsLigu(s: GameState, seat: number, skill?: BotSkill): boolean {
+  return liguFor(s, seat) && liguPath(countsFromKinds(s.players[seat].hand.map(kindOf)), TOTAL_SETS, liguMarginOf(skill)).ligu;
 }
 
 /**
@@ -436,7 +449,7 @@ export function rankDiscards(s: GameState, seat: number, skill: BotSkill = 'club
   const setsNeeded = TOTAL_SETS - p.melds.length;
   const counts = countsFromKinds(p.hand.map(kindOf));
   const unseen = unseenCounts(s, seat);
-  const options = discardOptions(counts, setsNeeded, unseen, liguFor(s, seat) ? BOT_WEIGHTS.liguMargin : undefined);
+  const options = discardOptions(counts, setsNeeded, unseen, liguFor(s, seat) ? liguMarginOf(skill) : undefined);
   const defend = skill !== 'beginner';
   const reads = defend ? readOpponents(s, seat) : [];
   const threatened = reads.some((r) => r.tenpai > 0);
@@ -546,15 +559,15 @@ function winPoints(s: GameState, seat: number): number {
   return 1.5 * (rules.basePoints + rules.taiPoints * (tai + dealerExtra * payers));
 }
 
-/** Shanten of `seat`'s hand as it stands; at a 嚦咕嚦咕 table, on the path it follows (`liguPath`). */
-export function currentShanten(s: GameState, seat: number): number {
+/** Shanten of `seat`'s hand as it stands; at a 嚦咕嚦咕 table, on the path `skill` follows (`liguPath`). */
+export function currentShanten(s: GameState, seat: number, skill?: BotSkill): number {
   const p = s.players[seat];
   const counts = countsFromKinds(p.hand.map(kindOf));
-  return liguFor(s, seat) ? liguPath(counts, TOTAL_SETS - p.melds.length, BOT_WEIGHTS.liguMargin).shanten : shanten(counts, TOTAL_SETS - p.melds.length);
+  return liguFor(s, seat) ? liguPath(counts, TOTAL_SETS - p.melds.length, liguMarginOf(skill)).shanten : shanten(counts, TOTAL_SETS - p.melds.length);
 }
 
-/** Shanten of the hand after taking a claim and then making its best discard. */
-export function shantenAfterClaim(s: GameState, seat: number, action: Action): number {
+/** Shanten of the hand after taking a claim and then making its best discard (a pass: as it stands, for `skill`). */
+export function shantenAfterClaim(s: GameState, seat: number, action: Action, skill?: BotSkill): number {
   const p = s.players[seat];
   const pending = s.pending!;
   const k = kindOf(pending.tile);
@@ -573,7 +586,7 @@ export function shantenAfterClaim(s: GameState, seat: number, action: Action): n
     const [a, b] = action.tiles.map(kindOf);
     hand = removeOne(removeOne(hand, a), b);
     melds++;
-  } else return currentShanten(s, seat);
+  } else return currentShanten(s, seat, skill);
   // hand now has 3n+1 tiles for the new meld count: shanten() accepts that size.
   return shanten(countsFromKinds(hand), TOTAL_SETS - melds);
 }
@@ -625,9 +638,9 @@ export function chooseAction(s: GameState, seat: number, opts: BotOptions = {}):
   if (actions.some((a) => a.type === 'hu')) return { type: 'hu' };
 
   if (s.phase === 'discard') {
-    const before = currentShanten(s, seat);
+    const before = currentShanten(s, seat, opts.skill ?? 'club');
     // A kong is a meld: it ends a 嚦咕嚦咕, so while that is the nearer path it must bring the hand closer.
-    const ligu = followsLigu(s, seat);
+    const ligu = followsLigu(s, seat, opts.skill ?? 'club');
     // Concealed/added kong when it does not hurt the shape.
     for (const a of actions) {
       if (a.type !== 'kong') continue;
@@ -659,11 +672,11 @@ export function chooseAction(s: GameState, seat: number, opts: BotOptions = {}):
   // Claim phase
   const skill = opts.skill ?? 'club';
   const greedy = opts.greedyClaims ?? true;
-  const before = currentShanten(s, seat);
+  const before = currentShanten(s, seat, skill);
   const p = s.players[seat];
   const concealed = p.melds.every((m) => m.concealed);
   // Any call ends a 嚦咕嚦咕: while it is the nearer path, call only to get strictly closer to ready.
-  const ligu = followsLigu(s, seat);
+  const ligu = followsLigu(s, seat, skill);
   // Stay concealed (門清) instead of calling when already this close: Club at one from ready, Pro only
   // once ready (`BOT_WEIGHTS.proConcealedShanten`). Pro at 2 lost to Club; the CI gates (the recorded
   // decision replay in bots.test.ts and `npm run sim -- --gate`) fail if it goes back.

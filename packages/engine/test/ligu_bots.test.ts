@@ -1,7 +1,7 @@
 /**
  * Bots at a table that plays 嚦咕嚦咕 (`liguTai` above 0): every tier weighs seven pairs and a triplet
- * beside five sets and a pair while its hand has no melds, and does not call a chow, pong or kong out
- * of a 嚦咕嚦咕 that is nearer than the standard hand. At a table that does not play it nothing changes:
+ * beside five sets and a pair while its hand has no melds (Beginner only when it is more than three steps
+ * nearer), and does not call a chow, pong or kong out of a 嚦咕嚦咕 that is nearer than the standard hand. At a table that does not play it nothing changes:
  * the decisions recorded before the bots knew the hand still come out, state for state.
  */
 import { readFileSync } from 'node:fs';
@@ -14,16 +14,15 @@ import {
   formatEngineReason,
   hintFor,
   kindOf,
+  liguMarginOf,
   rankDiscards,
   type Action,
-  type BotSkill,
   type GameState,
 } from '../src/index';
 import { pinnedDecisions, PIN_STATES } from './helpers/pin';
 import { discard, setup } from './helpers/state';
 
 const ON = { liguTai: 4 };
-const SKILLS: readonly BotSkill[] = ['beginner', 'club', 'pro'];
 const count = (s: GameState, seat: number, kind: number): number => s.players[seat].hand.filter((t) => kindOf(t) === kind).length;
 
 /** Runs `f` with the bots blind to 嚦咕嚦咕, as they were before they knew it. */
@@ -71,10 +70,10 @@ describe('bots at a 嚦咕嚦咕 table', () => {
     expect(hintFor(close, 0).statusKey).toBe('hint.status.manyAway');
   });
 
-  it('at every tier keep the pairs and throw a single, where the same bots blind to it break a pair', () => {
+  it('keep the pairs and throw a single, where the same bots blind to it break a pair (Beginner only when 嚦咕嚦咕 is nearer still)', () => {
     // Blind, every tier throws a 4m from its pair.
     const s = setup(ON, [PAIRS_HAND, '', '', ''], 40);
-    for (const skill of SKILLS) {
+    for (const skill of ['club', 'pro'] as const) {
       const top = rankDiscards(s, 0, skill)[0];
       expect(top.ligu, skill).toBe(true);
       expect(top.shanten, skill).toBe(1);
@@ -89,6 +88,9 @@ describe('bots at a 嚦咕嚦咕 table', () => {
       const a = chooseAction(s, 0, { skill, seed: 'ligu' }) as Extract<Action, { type: 'discard' }>;
       expect(count(s, 0, kindOf(a.tile)), skill).toBe(1);
     }
+    // One step from ready against four is three steps nearer: not enough for Beginner (`liguMarginBeginner`).
+    expect(followsLigu(s, 0, 'beginner')).toBe(false);
+    expect(rankDiscards(s, 0, 'beginner').some((d) => d.ligu)).toBe(false);
   });
 
   it('count the tiles that pair a single as useful while 嚦咕嚦咕 is the nearer path', () => {
@@ -126,6 +128,29 @@ describe('bots at a 嚦咕嚦咕 table', () => {
       expect(a, skill).toEqual(blind(() => chooseAction(s, 1, { skill, seed: 'c' })));
       expect(a?.type, skill).toBe('pong');
     }
+  });
+
+  it('Beginner follows 嚦咕嚦咕 only when it is more than three steps nearer; Club, Pro and the coach at more than one', () => {
+    // Two from ready for 嚦咕嚦咕, four for five sets and a pair: two steps nearer.
+    const s = setup(ON, ['1m 44m 55m 9m 11p 9p 22s 44s 7s 9s EE', '', '', ''], 40);
+    expect(BOT_WEIGHTS.liguMarginBeginner).toBe(3);
+    expect(liguMarginOf('beginner')).toBe(3);
+    expect(liguMarginOf('club')).toBe(BOT_WEIGHTS.liguMargin);
+    for (const skill of ['club', 'pro'] as const) {
+      expect(followsLigu(s, 0, skill), skill).toBe(true);
+      expect(currentShanten(s, 0, skill), skill).toBe(2);
+      expect(rankDiscards(s, 0, skill)[0].ligu, skill).toBe(true);
+    }
+    expect(followsLigu(s, 0)).toBe(true);
+    expect(hintFor(s, 0).statusKey).toBe('hint.status.twoAwayLigu');
+    expect(followsLigu(s, 0, 'beginner')).toBe(false);
+    expect(currentShanten(s, 0, 'beginner')).toBe(4);
+    expect(rankDiscards(s, 0, 'beginner').some((d) => d.ligu)).toBe(false);
+    // Three steps nearer (one against four) is still not enough for Beginner.
+    const nearer = setup(ON, [PAIRS_HAND, '', '', ''], 40);
+    expect(followsLigu(nearer, 0, 'club')).toBe(true);
+    expect(followsLigu(nearer, 0, 'beginner')).toBe(false);
+    expect(currentShanten(nearer, 0, 'beginner')).toBe(4);
   });
 
   it('change no decision at a table that does not play 嚦咕嚦咕: the recorded decisions on 300 states still come out', () => {
