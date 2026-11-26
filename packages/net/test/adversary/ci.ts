@@ -22,7 +22,7 @@ export function failures(s: Scenario): string[] {
  * while its gap is open (`it.fails`), so the run stays green, and turns red the day the gap is closed, when the case moves
  * to the closed ones. A gap docs/FAIRNESS.md comes to state as a limit becomes a `limit` case in known.ts instead.
  */
-export const OPEN_GAPS = new Set(['N2', 'N3', 'N4']);
+export const OPEN_GAPS = new Set(['N2', 'N3']);
 
 /**
  * Generated seeds that find a gap this code still has (one of `OPEN_GAPS`, or a variant of a closed one the long runs found):
@@ -44,6 +44,5 @@ export const OPEN_MIXED_SEEDS = COVERED
 export const OPEN_HONEST_SEEDS = COVERED
   ? []
   : [
-      409, // N4: two server restarts, the second in the next deal: that hand red (restartedTwice)
       5247, // the seat opened on another device right after the commit request, then back here: red (myCommitAltered, mySecretAltered)
     ];

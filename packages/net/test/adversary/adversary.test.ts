@@ -15,8 +15,12 @@ import { COVERED, failures, LIMIT } from './ci';
 import { generate } from './generate';
 import { quotesMissing } from './oracle';
 
-/** Honest scenarios: cuts, delays, restarts, resumes, a new phone, the seat on another phone, a server restart, sleep (four under coverage). */
-const HONEST_SEEDS = Array.from({ length: COVERED ? 4 : 12 }, (_, i) => 1 + i * 83);
+/**
+ * Honest scenarios: cuts, delays, restarts, resumes, a new phone, the seat on another phone, a server restart, sleep (four under
+ * coverage), and honest seeds the long runs found red, closed since: 409 (N4: two server restarts in one hand, red until unit
+ * 20h; now amber, `restartedAgain`).
+ */
+const HONEST_SEEDS = [409, ...Array.from({ length: COVERED ? 4 : 12 }, (_, i) => 1 + i * 83)];
 /**
  * Generated attacks. The first seeds are ones the fuzzer found gaps with on the code before unit 20g (d6745d5), one or
  * two per gap (named in the comments), closed since; the rest are a plain sample. Seeds name scenarios of this

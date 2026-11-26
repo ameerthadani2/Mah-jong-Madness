@@ -447,7 +447,7 @@ describe('restart notices for a hand the phone is not on, or more than one in a 
       expect(b.w.verdict()).toMatchObject({ status: 'failed', failures: ['lateTurn'] });
     }));
 
-  it('Normal, the link dropped on two of the seat’s turns, each time with a restart notice for a hand never dealt as the new link’s first word: the first may begin a new clock era, the second, with the same hand on show, is a second restart: red', () =>
+  it('Normal, the link dropped on two of the seat’s turns, each time with a restart notice for a hand never dealt as the new link’s first word: the first may begin a new clock era, the second, with the same hand on show, would be a second restart, and names another hand than the one on show: red', () =>
     scenario((i) => {
       let drops = 0;
       let lastTc = -1;
@@ -468,7 +468,8 @@ describe('restart notices for a hand the phone is not on, or more than one in a 
       w.finish();
       need(drops === 2);
       expect(w.verdict().status).toBe('failed');
-      expect(w.verdict().failures).toEqual(['restartedTwice']);
+      // (A second restart in a hand may only resume the hand on show; before unit 20h any second one was `restartedTwice`.)
+      expect(w.verdict().failures).toEqual(['strayFrame']);
     }));
 
   it('Normal, a restart that took back a turn, announced as the new link’s first word, then four notices for hands never dealt on that link: red, and the restart that took back the turn is still named', () =>

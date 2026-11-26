@@ -890,9 +890,11 @@ export interface SerializedClient {
   brokenHand?: number | null;
   chainGap?: boolean;
   missedMoves?: boolean;
-  rewinds: Array<{ hand: number; tc: number; undone: boolean }>;
+  rewinds: Array<{ hand: number; tc: number; undone: boolean; again?: true }>;
   /** The hand on show when a restart notice last began a clock era (absent in records saved by older builds). */
   eraHand?: number | null;
+  /** How many clock eras restart notices began while that hand was on show (absent in records saved by older builds: one). */
+  erasInHand?: number;
   lapseHand: number | null;
   lapseDeal: boolean;
   /**

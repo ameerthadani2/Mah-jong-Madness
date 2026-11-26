@@ -125,6 +125,8 @@ export const AUDIT_CAVEATS = {
   away: 'This device was away when the hand ended; its record was checked afterwards, the play was not watched',
   gap: 'This device missed the hands before this one and was not shown their records, so the scores it started from could not be checked',
   serverRestart: 'The server restarted during this hand and some turns were played again',
+  // A second restart notice while the hand was on show (`noteRestore`): its clock was measured afresh within the hand.
+  restartedAgain: 'The server said it restarted twice during this hand, so this device measured its clock afresh within the hand',
   appRestart: 'This app was restarted around this deal, so it cannot vouch for all of it',
   tableMoved: 'The table played for this seat while its connection was down',
   // The same, on a turn whose state reached this device too late for its stamp to be believed (the
@@ -238,7 +240,7 @@ export const AUDIT_FAILURES = {
   resultChanged: 'Host re-sent a different result for a hand it had already ended',
   endUnsupported: 'Host announced the end of the match, which the hands this device verified do not support',
   twoStates: /^Host showed two different states for turn (?<turn>-?\d+)$/,
-  restartedTwice: 'Host said it restarted this hand more than once',
+  restartedTwice: 'Host said it restarted this hand more than twice',
   // A frame of a known type that does not carry what an honest host always sends in it, or carries it as another type
   // (`intake`): the client takes nothing from it.
   malformedFrame: 'Host sent a malformed frame',
@@ -468,8 +470,10 @@ export const MAX_AUDITS = 50;
 const MAX_HAND_RECORDS = 3;
 /** Hands whose flags are kept until they are audited (see `flag`). */
 const MAX_FLAGGED_HANDS = 12;
-/** Restart notices kept (see `noteRestore`): at most one begins a clock era per hand on show. */
+/** Restart notices kept (see `noteRestore`): at most two begin a clock era per hand on show. */
 const MAX_REWINDS = 4;
+/** How many clock eras restart notices may begin while one hand is on show (`noteRestore`); the second makes it amber. */
+const MAX_RESTART_ERAS = 2;
 /** Frames that may come in a link's opening, between its `welcome` and a restart notice (`TableClient.opening`). */
 const OPENING_FRAMES: ReadonlySet<string> = new Set(['hand_missed', 'lobby', 'pong', 'chat', 'emote', 'restored']);
 /** Frames about a hand: its deal under way, a state, a clock, a result, a hand missed (`handFrameOn`). */
@@ -793,12 +797,14 @@ export class TableClient {
    * Hands the host said it resumed from a snapshot after a restart, and the turn it resumed at
    * (-1: before the deal). `undone`: this client had been shown more than that, and dropped it.
    */
-  private rewinds: Array<{ hand: number; tc: number; undone: boolean }> = [];
+  private rewinds: Array<{ hand: number; tc: number; undone: boolean; again?: true }> = [];
   /**
    * The hand on show (`activeHand`) when a restart notice last began a clock era: a server may announce one restart
    * per hand, so a second notice while the same hand is on show, for another hand, begins none (`noteRestore`).
    */
   private eraHand: number | null = null;
+  /** How many clock eras restart notices began while `eraHand` was on show: at most `MAX_RESTART_ERAS` (`noteRestore`). */
+  private erasInHand = 0;
   /**
    * The link in use opened as a returning seat's does: its first frame was the `welcome`, and only the records of the
    * hands it missed (and frames that name no hand) have followed. A restarted table's notice comes here and nowhere
@@ -1064,8 +1070,9 @@ export class TableClient {
     // (A record saved before the flag was kept says so by the audits it holds of this match.)
     const matchFailed = st.matchFailed === true || this.state.audits.some((a) => isObject(a) && a.status === 'failed' && isObject(a.audit) && a.audit.matchId === this.state.matchId);
     this.state = { ...this.state, matchFailed, matchEndVerified: this.matchEnded && !this.chainGap && !this.missedMoves && !matchFailed && this.state.matchOver };
-    this.rewinds = Array.isArray(d.rewinds) ? d.rewinds.filter((x) => isObject(x) && isInt(x.hand) && isInt(x.tc)) : [];
+    this.rewinds = Array.isArray(d.rewinds) ? d.rewinds.filter((x) => isObject(x) && isInt(x.hand) && isInt(x.tc)).map((x) => ({ hand: x.hand, tc: x.tc, undone: x.undone === true, ...(x.again === true ? { again: true as const } : {}) })) : [];
     this.eraHand = isInt(d.eraHand) ? d.eraHand : null;
+    this.erasInHand = this.eraHand === null ? 0 : isInt(d.erasInHand) && d.erasInHand >= 1 ? Math.min(d.erasInHand, MAX_RESTART_ERAS) : 1;
     this.lapseHand = isInt(d.lapseHand) ? d.lapseHand : null;
     this.lapseDeal = d.lapseDeal === true;
     const k = isObject(d.clock) ? d.clock : null;
@@ -1248,6 +1255,7 @@ export class TableClient {
       missedMoves: this.missedMoves,
       rewinds: this.rewinds,
       eraHand: this.eraHand,
+      erasInHand: this.erasInHand,
       lapseHand: this.lapseHand,
       lapseDeal: this.lapseDeal,
       ...(this.seq > 0 ? { sentSeq: this.seq } : {}),
@@ -2289,6 +2297,7 @@ export class TableClient {
     this.missedMoves = false;
     this.rewinds = [];
     this.eraHand = null;
+    this.erasInHand = 0;
     this.lapse = false;
     this.lapseHand = null;
     this.lapseDeal = false;
@@ -3067,26 +3076,32 @@ export class TableClient {
    * The notice comes only in a returning link's opening (`opening`), and names the hand this client is on
    * (`activeHand`) or, when the table played on while this device had no link, a later one (at -1, the next hand
    * to be dealt, when the restored table was between hands): a hand before that is the server's own making. A
-   * restarted table may keep time anew, so a notice begins a new clock era, once per hand on show (`eraHand`): a
-   * second notice, for another hand, while the same hand is on show is a second restart.
+   * restarted table may keep time anew, so a notice begins a new clock era, at most `MAX_RESTART_ERAS` times per hand on
+   * show (`eraHand`, `erasInHand`): a second restart makes that hand amber (`AUDIT_CAVEATS.restartedAgain`: its clock
+   * was measured afresh within it), and a third fails it, as does a second that names another hand than the one on show.
+   * (A server restart blames nobody, and a real one may come twice in a hand; a server can say it restarted at will, so the
+   * count is bounded.)
    */
   private noteRestore(h: number, r: number): void {
     // A restored table may be behind what it sent before it restarted (a later hand's deal included).
     this.aheadOf = null;
     if (this.handsEnded.has(h)) return;
     const on = this.activeHand();
-    const known = this.rewinds.find((x) => x.hand === h);
-    if (known) {
-      // Every rejoin during the hand brings the same notice again; a different one is a second restart.
-      if (known.tc !== r) this.flag(on, 'Host said it restarted this hand more than once');
-      return;
-    }
+    // Every rejoin during the hand brings the same notice again; a different one is another restart.
+    if (this.rewinds.some((x) => x.hand === h && x.tc === r)) return;
     if (h < on) {
       this.flag(on, 'Host sent a frame about a hand or turn this device was not on');
       return;
     }
-    if (this.eraHand === on) {
-      this.flag(on, 'Host said it restarted this hand more than once');
+    const eras = this.eraHand === on ? this.erasInHand : 0;
+    if (eras >= MAX_RESTART_ERAS) {
+      this.flag(on, 'Host said it restarted this hand more than twice');
+      return;
+    }
+    // A second restart in a hand resumes the hand on show: a restored table that had moved on past it would have sent its
+    // record first (`sendMissed`), and this device would be on the next hand.
+    if (eras > 0 && h !== on) {
+      this.flag(on, 'Host sent a frame about a hand or turn this device was not on');
       return;
     }
     const play = this.plays.find((p) => p.hand === h);
@@ -3127,7 +3142,8 @@ export class TableClient {
     // The host that restarted may keep time afresh: what was learned about its clock stops here.
     this.era++;
     this.eraHand = on;
-    this.rewinds.push({ hand: h, tc: r, undone });
+    this.erasInHand = eras + 1;
+    this.rewinds.push({ hand: h, tc: r, undone, ...(eras > 0 ? { again: true as const } : {}) });
     this.trimHands(this.rewinds, MAX_REWINDS, (x) => x.hand);
   }
 
@@ -3390,6 +3406,7 @@ export class TableClient {
     if (this.gapHand === h) caveats.push(AUDIT_CAVEATS.gap);
     if (this.brokenHand === h) caveats.push(AUDIT_CAVEATS.unchained);
     if (this.rewinds.some((x) => x.hand === h && x.undone)) caveats.push(AUDIT_CAVEATS.serverRestart);
+    if (this.rewinds.some((x) => x.hand === h && x.again)) caveats.push(AUDIT_CAVEATS.restartedAgain);
     caveats.push(...tableMoveCaveats(notes));
     if (notes.restartClock) caveats.push(AUDIT_CAVEATS.restartClock);
     if (notes.appClock) caveats.push(AUDIT_CAVEATS.appClock);
@@ -3996,7 +4013,12 @@ export class TableClient {
     // The bot seats as they stood at the match's first deal: the host cannot add phantom humans later.
     const bots = this.frozenBots ?? this.state.seats.filter((s) => s.isBot).map((s) => s.seat);
     const humans = 4 - bots.length;
-    if (attempts > 1 + humans) failures.push(`${attempts} ceremony attempts is more than ${1 + humans}, the most an honest table with ${humans} human seats needs`);
+    // A restart the server made by restarting blames nobody, so it adds an attempt beyond one per human seat; a server can
+    // say it restarted at will, so at most `MAX_RESTART_ERAS` such restarts count (the hand is amber either way: the server
+    // could have picked its deal).
+    const serverRestarts = (restarts ?? []).filter((r) => isObject(r) && r.cause === 'host_restarted').length;
+    const most = 1 + humans + Math.min(serverRestarts, MAX_RESTART_ERAS);
+    if (attempts > most) failures.push(`${attempts} ceremony attempts is more than ${most}, the most an honest table with ${humans} human seats needs`);
     restarts.forEach((r, i) => {
       if (!isObject(r) || r.attempt !== i + 1 || !Array.isArray(r.seats) || !RESTART_CAUSES.includes(r.cause)) {
         failures.push(`Restart ${i + 1} is malformed`);

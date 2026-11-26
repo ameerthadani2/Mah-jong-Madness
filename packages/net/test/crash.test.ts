@@ -175,7 +175,7 @@ describe('a server crash in the middle of a hand', () => {
     expect(last(t.a).failures.join(' ')).toContain('two different states');
   });
 
-  deal('a second restart of the same hand fails it', () => {
+  deal('a second restart of the same hand makes it amber (its clock measured afresh within it), never red; a third fails it', () => {
     const t = table('CR5');
     t.until(() => humanToDiscard(t, 0, 8));
     const first = t.snap();
@@ -186,8 +186,21 @@ describe('a server crash in the middle of a hand', () => {
     t.until(() => playing(t, 0, second.game!.turnCounter + 4));
     t.crash(second);
     t.until(() => playing(t, 1));
-    expect(last(t.a).status).toBe('failed');
-    expect(last(t.a).failures).toContain('Host said it restarted this hand more than once');
+    // (It was red, "restarted this hand more than once", until unit 20h: a server restart blames nobody.)
+    expect(last(t.a).status).toBe('partial');
+    expect(last(t.a).failures).toEqual([]);
+    expect(last(t.a).caveats).toContain(AUDIT_CAVEATS.restartedAgain);
+    const u = table('CR5b');
+    u.until(() => humanToDiscard(u, 0, 8));
+    for (let k = 0; k < 3; k++) {
+      const snap = u.snap();
+      u.until(() => playing(u, 0, snap.game!.turnCounter + 4));
+      u.crash(snap);
+      if (k < 2) u.until(() => humanToDiscard(u, 0, snap.game!.turnCounter + 6));
+    }
+    u.until(() => playing(u, 1));
+    expect(last(u.a).status).toBe('failed');
+    expect(last(u.a).failures).toContain('Host said it restarted this hand more than twice');
   });
 });
 
