@@ -34,7 +34,6 @@ export const OPEN_MIXED_SEEDS = COVERED
   : [
       970, // N3
       468, // N1: states held on a link that was up, then the link ended: the table's moves for the player amber, the end verified
-      1660, // R1: cut at the first commit request, a stand-in deal, states held, moves written as the player's, a restart: the end verified
       6534, // R1: a stand-in deal and moves written as the player's, judged by a phone with no record: the end verified
       3414, // R2: a move lost under a 12 s delay, answered by late refusals, then a seat-taken notice: the table's move green
       5174, // S1: a claim lost and a pass of the same link played, saves failing, then a restart: green

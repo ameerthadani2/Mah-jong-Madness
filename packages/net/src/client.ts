@@ -564,6 +564,12 @@ export class TableClient {
    */
   private fresh = false;
   /**
+   * This client was built with neither a rejoin token nor a record, and has taken up none since (`takeUp`): the first run of
+   * this device at the table, so every move this device sent there went out in this run, and is on its record. (An earlier
+   * device that held the seat had another device id: the table's welcome says so, `elsewhere`.)
+   */
+  private firstRun = false;
+  /**
    * A record this device kept of the table at this room (`fromArchive`), not yet taken up: it is at the table's first word
    * about the table, unless that is a welcome naming another match (`takeUp`).
    */
@@ -889,7 +895,10 @@ export class TableClient {
       // Whatever an earlier run of the app did at this table is unknown: the deal of the first hand
       // this client hears of may have been agreed, in part, before it existed.
       this.lapse = true;
-    } else this.fresh = true;
+    } else {
+      this.fresh = true;
+      this.firstRun = true;
+    }
   }
 
   /**
@@ -925,6 +934,8 @@ export class TableClient {
     const token = identity.token ?? (typeof d.state.token === 'string' && d.state.token ? d.state.token : undefined);
     const c = new TableClient(link, name, avatar, { ...identity, ...(token ? { token } : {}) }, opts);
     c.pending = d;
+    // (This device kept a record at this table: not its first run there, whether or not the record is taken up.)
+    c.firstRun = false;
     if (typeof d.device === 'string' && /^[\w-]{6,64}$/.test(d.device)) c.deviceId = d.device;
     return c;
   }
@@ -987,6 +998,7 @@ export class TableClient {
 
   private load(d: SerializedClient): void {
     this.fresh = false;
+    this.firstRun = false;
     if (typeof d.device === 'string' && /^[\w-]{6,64}$/.test(d.device)) this.deviceId = d.device;
     this.handovers = isInt(d.handovers) && d.handovers >= 0 ? d.handovers : null;
     const st = d.state;
@@ -2580,12 +2592,14 @@ export class TableClient {
         const rec = this.recordFor(h);
         const cur = this.currentAttempt(h);
         const n = isInt(m.attempt) && m.attempt >= 1 ? m.attempt : (cur?.n ?? 1);
+        let told = false;
         // Our secret is kept either way: the audit must still show it was not used.
         if (h === this.commitHand && this.state.ceremony === 'committed' && cur && n === cur.n && !cur.revealed) {
           // While this attempt's commitments are still being collected.
           cur.stoodIn = true;
         } else if (this.standInHand === h && rec?.attempts.some((a) => a.n === n && a.stoodIn)) {
-          return; // told again on a rejoin
+          // Told again on a rejoin: nothing new about the deal, but a client restored since may hold the hand's ledger now.
+          told = true;
         } else if (this.ceremonyEpoch !== this.epoch && !this.handsEnded.has(h) && !rec?.dealt && !(cur && n < cur.n) && !rec?.attempts.some((a) => a.n === n && a.revealed)) {
           // Back after a lost link: the host made our share for an attempt we may never have heard of.
           const r = rec ?? { hand: h, attempts: [], fromStart: false, linkLost: true, dealt: false };
@@ -2603,16 +2617,17 @@ export class TableClient {
           r.attempts.sort((a, b) => a.n - b.n);
           this.noteAhead(h);
         } else return;
-        this.standInHand = h;
+        if (!told) this.standInHand = h;
         // The table made this seat's share for the hand being dealt because this device had no link at its commit request,
         // and seats it here again: from the deal on, as after a commit request, every move the log credits to its player
         // must be one this device sent (an honest host takes a move as the player's own only from the link it seats this
         // device on, and a seat opened on another device says so). Only where this client knows every move it sent in the
-        // hand: it kept the app's journal (`journalWhole`), or the hand began in this run while it held the seat
-        // (`runFromHand`); and not while the server says another device held the seat (`elsewhereOpen`).
+        // hand: it kept the app's journal (`journalWhole`), the hand began in this run while it held the seat
+        // (`runFromHand`), or this is the device's first run at the table (`firstRun`: the first hand of a match it sat down
+        // for, say); and not while the server says another device held the seat (`elsewhereOpen`).
         const play = this.playFor(h);
-        if (play.ledgerFrom === null && !this.elsewhereOpen && (this.journalWhole || (this.runFromHand !== null && h >= this.runFromHand))) play.ledgerFrom = 0;
-        this.update({ standIn: true });
+        if (play.ledgerFrom === null && !this.elsewhereOpen && (this.journalWhole || this.firstRun || (this.runFromHand !== null && h >= this.runFromHand))) play.ledgerFrom = 0;
+        if (!told) this.update({ standIn: true });
         return;
       }
       case 'disconnected':

@@ -5,7 +5,8 @@
  * phone is seated again and told so, it holds the hand's log from the deal on, as after a commit request: an honest host
  * takes a move as the player's own only from the link it seats this phone on, and while the seat had no link nobody could
  * send one. (Only where the phone knows every move it sent in the hand: the hand began in this run of the app while it
- * held the seat, or the app's journal vouched for the record; and not while the server says another device held the seat.)
+ * held the seat, this is the device's first run at the table (the match's first hand, say), or the app's journal vouched for
+ * the record; and not while the server says another device held the seat.)
  * Before, the moves before the first state the phone was shown were not held to anything: a server that cut the link at
  * the commit request could play them in the player's name, its own choice of move, and the hand was amber.
  */
@@ -34,15 +35,17 @@ type StandIn = 'forge' | 'silent' | 'timeout';
 
 /**
  * Normal, two hands. Right after hand 0's result reaches the phone its link is cut, and the phone's next link comes 12 s
- * later: after hand 1 was dealt with a share the table made for the seat. On it the table seats the phone again and says
- * it stood in (`stand_in`), then:
+ * later: after hand 1 was dealt with a share the table made for the seat. With `hand` 0, the cut comes instead at the
+ * match's first commit request, which never reaches the phone, and the stood-in hand is hand 0 (the phone sat down in the
+ * lobby: its first run at the table). On it the table seats the phone again and says it stood in (`stand_in`), then:
  *   forge   : shows the table as it stands (the state right behind the welcome), but while the link was down it played the
  *             seat's moves itself, written as the player's own (its own choice of move);
  *   silent  : the same moves, and every state and clock frame of hand 1 withheld on the new link;
  *   timeout : nothing forged (the table moves for the seat only when its clock runs out): control.
  */
-function standIn(code: string, mode: StandIn) {
+function standIn(code: string, mode: StandIn, hand: 0 | 1 = 1) {
   let cutAt: number | null = null;
+  let lost = false;
   let back = false;
   let forged = 0;
   const w = wire({
@@ -53,21 +56,26 @@ function standIn(code: string, mode: StandIn) {
     intermissionSeconds: 5,
     reconnectMs: 12_000,
     map: (m) => {
+      // (`hand` 0: the first commit request is lost with the link, cut right after it went out.)
+      if (hand === 0 && !back && !lost && m.t === 'commit_request' && m.handNumber === 0) {
+        lost = true;
+        return null;
+      }
       if (mode !== 'silent' || !back) return m;
       const h = m.t === 'state' ? m.view.handNumber : m.t === 'clock' ? m.hand : null;
-      return h === 1 ? null : m;
+      return h === hand ? null : m;
     },
     onReconnect: () => {
       back = true;
     },
     onTick: (w) => {
-      if (cutAt === null && w.c.state.audits.some((a) => a.audit.handNumber === 0)) {
+      if (cutAt === null && (hand === 0 ? lost && w.c.state.seat !== null : w.c.state.audits.some((a) => a.audit.handNumber === 0))) {
         cutAt = w.clock.now;
         w.dropNow(12_000);
         return;
       }
       const g = w.host.game;
-      if (mode === 'timeout' || cutAt === null || !g || w.host.phase !== 'playing' || g.handNumber !== 1) return;
+      if (mode === 'timeout' || cutAt === null || !g || w.host.phase !== 'playing' || g.handNumber !== hand) return;
       // While the link is down (and, when silent, after it too), the table plays the seat's moves in the player's name.
       if (back && mode !== 'silent') return;
       if (legalActions(g, 0).length === 0) return;
@@ -80,8 +88,8 @@ function standIn(code: string, mode: StandIn) {
   // The table plays on while nobody human is connected (as the server's does once a hand is dealt).
   (w.host as unknown as { anyHumanConnected(): boolean }).anyHumanConnected = () => true;
   for (let k = 0; k < 40_000 && !w.c.state.matchOver; k++) w.step();
-  const stoodIn = w.c.state.audits.find((a) => a.audit.handNumber === 1)?.caveats.map(caveatKey).includes('standIn') ?? false;
-  return { w, forged, stoodIn, back, player: playerMoves(w, 1) };
+  const stoodIn = w.c.state.audits.find((a) => a.audit.handNumber === hand)?.caveats.map(caveatKey).includes('standIn') ?? false;
+  return { w, forged, stoodIn, back, player: playerMoves(w, hand) };
 }
 
 describe('a hand the table stood in for, the phone seated again', () => {
@@ -106,6 +114,25 @@ describe('a hand the table stood in for, the phone seated again', () => {
       need(r.back && r.stoodIn);
       expect(verdictOf(r.w, 1)?.status).toBe('partial');
       expect(verdictOf(r.w, 1)?.failures).toEqual([]);
+    }));
+
+  it('the first hand of a match: the moves written in the player’s name while the link was down are red too (they were amber, with the end of the match verified)', () =>
+    scenario((i) => {
+      for (const mode of ['forge', 'silent'] as const) {
+        const r = standIn(`SI0${mode}${i}`, mode, 0);
+        need(r.back && r.forged > 0);
+        expect(verdictOf(r.w, 0)?.status).toBe('failed');
+        expect(verdictOf(r.w, 0)?.failures).toEqual(expect.arrayContaining(['moveInvented']));
+        expect(r.w.c.state.matchEndVerified).toBe(false);
+      }
+    }));
+
+  it('control, the first hand of a match: nothing written for the seat while it was away: not red', () =>
+    scenario((i) => {
+      const r = standIn(`SI0T${i}`, 'timeout', 0);
+      need(r.back && r.stoodIn);
+      expect(verdictOf(r.w, 0)?.status).toBe('partial');
+      expect(verdictOf(r.w, 0)?.failures).toEqual([]);
     }));
 
   it('honest: an app restarted from a record written before it was seated again in the stood-in hand holds the hand only from the state it is then shown (its earlier run may have moved there unrecorded)', () =>
