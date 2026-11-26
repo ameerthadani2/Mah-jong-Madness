@@ -13,9 +13,18 @@
  * Any step may be missing; the rest of the chain then sets on the moment of the match the missing step would have.
  */
 import { Rng } from './random';
-import type { Act, Anchor, Event, MoveKind, Scenario, Speed, StateKind } from './scenario';
+import { CLOCKS, type Act, type Anchor, type Event, type MoveKind, type Scenario, type Speed, type StateKind } from './scenario';
 
-export type Mode = 'honest' | 'mixed';
+/**
+ * `honest` and `mixed` as above; `direct`: attacks without the concealment a mixed chain adds after a cut at the deal's
+ * ceremony, so the rules that concealment would trip decide nothing and the rules behind them decide alone: a cut at the
+ * commit request (the hand dealt with a stand-in share) followed at once by moves written for the seat; a cut at the reveal
+ * (the share sent again on the next link) followed by moves written for the seat, or by the deal's frames lost on that link
+ * while the table plays the seat; and the app's own records (other tables filling the archive, a storage that refuses the
+ * archive's writes, a slow journal, a resume or restart right after the evidence). Its own stream of draws: the seeds of
+ * `honest` and `mixed` name the same scenarios as before it.
+ */
+export type Mode = 'honest' | 'mixed' | 'direct';
 
 export interface GenOptions {
   /** A second build is loaded: honest scenarios may hold an app update. */
@@ -283,7 +292,79 @@ function chain(rng: Rng, hands: number, events: Event[]): void {
   if (prev !== null && rng.chance(0.3)) add(after(prev, 'end', rng.pick([0, 1_000, 2_000, 6_000])), coverUp(rng));
 }
 
+/**
+ * One attack of the `direct` mode: its steps, appended to `events`. True when the attack needs the fastest clock (a table
+ * move for the seat timed after the seat's whole clock, while the deal's frames are still lost: the scenario then plays at
+ * `hyper`, four seconds a turn and no bank, so the link stays quiet for less than its watch allows).
+ */
+function directChain(rng: Rng, hands: number, events: Event[]): boolean {
+  const base = events.length;
+  const at = (i: number, edge: 'start' | 'end', ms = 0): Anchor => after(base + i, edge, ms);
+  const hand = rng.int(0, hands - 1);
+  const forge = (): Act => ({ a: 'forge', label: rng.chance(0.75) ? 'player' : 'auto', policy: rng.chance(0.7) ? 'other' : 'timeout', n: rng.weighted<number | 'hand'>([['hand', 2], [1, 2], [3, 2]]), delayMs: rng.pick([0, 300, 800, 3_000]) });
+  const kind = rng.weighted<'standIn' | 'reveal' | 'crowded' | 'archive' | 'journal' | 'window'>([
+    ['standIn', 3],
+    ['reveal', 2],
+    ['crowded', 1],
+    ['archive', 1],
+    ['journal', 0.7],
+    ['window', 1.3],
+  ]);
+  switch (kind) {
+    case 'standIn':
+      // The link cut at the commit request (the hand dealt with a stand-in share), then moves written for the seat while
+      // it is down or once it is back, with no hold between: the stand-in ledger decides alone.
+      events.push({ at: { on: 'commit', hand, ms: rng.pick([0, 1, 500]) }, do: { a: 'cut', downMs: rng.pick([3_000, 9_000, 20_000]), ...(rng.chance(0.5) ? { half: true } : {}), ...(rng.chance(0.8) ? { lose: true } : {}) } });
+      events.push({ at: rng.chance(0.6) ? at(0, 'start', rng.pick([300, 1_000, 3_000])) : at(0, 'end', rng.pick([0, 1_000])), do: rng.chance(0.85) ? forge() : { a: 'repick' } });
+      break;
+    case 'reveal':
+      // The link cut at the reveal (the share sent again on the next link), then either moves written for the seat at
+      // once, or the deal's frames lost on that link for a while, every frame or the states, with the join's ping lost or
+      // not, and the table playing the seat meanwhile: nothing but the link the share went out on says the deal was due
+      // on it (the reveal-link rule decides alone).
+      events.push({ at: { on: 'reveal', hand, ms: rng.pick([0, 1, 500]) }, do: { a: 'cut', downMs: rng.pick([1_000, 3_000, 9_000]), ...(rng.chance(0.5) ? { half: true } : {}), lose: true, ...(rng.chance(0.5) ? { noPing: true } : {}) } });
+      if (rng.chance(0.3)) {
+        events.push({ at: at(0, 'end', rng.pick([0, 1_000])), do: rng.chance(0.85) ? forge() : { a: 'repick' } });
+        break;
+      }
+      {
+        // The table's move for the seat once its whole clock (`hyper`: four seconds) could have run out, so no timing
+        // check of the move decides either.
+        const playAt = CLOCKS.hyper.turn * 1_000 + rng.pick([500, 2_000]);
+        events.push({ at: { on: 'deal', hand }, do: { a: 'drop', what: rng.chance(0.7) ? 'any' : 'state', forMs: playAt + rng.pick([2_000, 5_000]) } });
+        events.push({ at: at(1, 'start', playAt), do: rng.chance(0.7) ? { a: 'forge', label: 'auto', policy: 'timeout', n: 1, delayMs: 0 } : forge() });
+      }
+      return true;
+    case 'crowded':
+      // The table said gone, other tables leaving Home meanwhile, moves written for the seat while it is away.
+      events.push({ at: moment(rng, hands, [['state', 3], ['move', 1]]), do: { a: 'gone', route: 'pushed', reseatMs: rng.pick([8_000, 20_000]), others: rng.pick([3, 12, 20, 31, 40]) } });
+      events.push({ at: at(0, 'start', rng.pick([1_000, 3_000])), do: forge() });
+      break;
+    case 'archive':
+      // A storage that refuses the archive's writes, the table given up and sat at again (or said gone), then a cold start.
+      events.push({ at: moment(rng, hands, [['state', 2], ['deal', 1]]), do: { a: 'saveFails', what: 'archive' } });
+      events.push({ at: at(0, 'end', rng.pick([2_000, 8_000])), do: rng.chance(0.6) ? { a: 'leave', backMs: rng.pick([3_000, 8_000]) } : { a: 'gone', route: rng.pick(['same', 'pushed'] as const), reseatMs: rng.pick([3_000, 8_000]) } });
+      events.push({ at: at(1, 'start', rng.pick([1_000, 2_000])), do: { a: 'restart', downMs: rng.pick([1_000, 3_000]) } });
+      if (rng.chance(0.5)) events.push({ at: at(1, 'start', 500), do: forge() });
+      break;
+    case 'journal':
+      // A slow journal (honest), with or without moves written for the seat meanwhile.
+      events.push({ at: moment(rng, hands, [['state', 3], ['move', 1]]), do: { a: 'slowJournal', ms: rng.pick([5_000, 20_000, 45_000]), forMs: rng.pick([1_500, 20_000, 60_000]) } });
+      if (rng.chance(0.5)) events.push({ at: at(0, 'start', rng.pick([500, 3_000])), do: forge() });
+      break;
+    default: {
+      // Evidence (a changed view, a move lost and answered any way, a move written for the seat), then a resume or a
+      // restart right after it, within the save delay or just past it.
+      const x = exploitation(rng);
+      events.push({ at: x.a === 'dropMove' ? { on: 'deal', hand } : moment(rng, hands), do: x });
+      events.push({ at: at(0, 'end', rng.pick([0, 100, 300, 600])), do: rng.chance(0.7) ? { a: 'resume', afterMs: rng.pick([0, 1_000]) } : { a: 'restart', downMs: rng.pick([1_000, 3_000]) } });
+    }
+  }
+  return false;
+}
+
 export function generate(seed: number, mode: Mode, opts: GenOptions = {}): Scenario {
+  if (mode === 'direct') return generateDirect(seed);
   const rng = new Rng(seed ^ (mode === 'honest' ? 0x5bd1e995 : 0x27d4eb2f));
   const hands = rng.weighted([
     [1, 4],
@@ -322,5 +403,41 @@ export function generate(seed: number, mode: Mode, opts: GenOptions = {}): Scena
   // With a second build loaded, half the honest tables also lose the player's share at the first deal: an update then
   // finds a record whose audit names a restarted deal (what the saved record of the earlier build holds differs most).
   if (mode === 'honest' && opts.update && rng.chance(0.5)) s.events.push({ at: { on: rng.pick(['reveal', 'commit'] as const), hand: 0 }, do: { a: 'cut', downMs: rng.pick([1_000, 3_000]), lose: true } });
+  return s;
+}
+
+/** A scenario of the `direct` mode (its own stream of draws). */
+function generateDirect(seed: number): Scenario {
+  const rng = new Rng(seed ^ 0x3c6ef372);
+  const hands = rng.weighted([
+    [1, 3],
+    [2, 4],
+    [3, 2],
+  ]);
+  const s: Scenario = {
+    seed,
+    speed: rng.weighted(SPEEDS),
+    hands,
+    othersPresent: rng.chance(0.65),
+    botDelayMs: rng.pick([300, 700, 700, 1_200]),
+    player: {
+      thinkMs: rng.pick<[number, number]>([
+        [300, 800],
+        [600, 1_500],
+        [1_000, 3_000],
+      ]),
+      retry: { kind: rng.weighted<'none' | 'same' | 'other'>([['none', 1], ['same', 1], ['other', 2]]), afterMs: rng.pick([0, 500, 1_500]) },
+      readyMs: rng.chance(0.15) ? null : rng.pick([300, 1_000, 3_000]),
+    },
+    events: [],
+  };
+  const n = rng.chance(0.7) ? 1 : 2;
+  let hyper = false;
+  for (let i = 0; i < n; i++) hyper = directChain(rng, hands, s.events) || hyper;
+  if (hyper) s.speed = 'hyper';
+  if (rng.chance(0.4)) {
+    const act = honestAct(rng, {});
+    s.events.push({ at: honestAnchor(rng, act, hands), do: act });
+  }
   return s;
 }

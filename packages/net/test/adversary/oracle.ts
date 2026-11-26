@@ -26,7 +26,8 @@
  */
 import { readFileSync } from 'node:fs';
 import type { Action } from '@mjm/engine';
-import { BY_MATCH, engine, fairnessDocPath, net } from './load';
+import { BY_MATCH, engine, fairnessDocPath, net, redLogic } from './load';
+import { APP_JOURNAL } from './sim';
 import { isHonest, type Scenario } from './scenario';
 import type { DecisionInfo, LogMove, MoveContext, RunInfo, Truth, Verdict } from './truth';
 
@@ -44,7 +45,7 @@ export interface Cheat {
   tags: string[];
 }
 
-export type Property = 'green' | 'amber' | 'endVerified' | 'noVerdict' | 'redForgotten' | 'falseRed' | 'crash';
+export type Property = 'green' | 'amber' | 'endVerified' | 'noVerdict' | 'redForgotten' | 'falseRed' | 'crash' | 'recordLost' | 'frameTaken';
 
 export interface Violation {
   property: Property;
@@ -58,7 +59,7 @@ export interface Violation {
 
 // ------------------------------------------------------------------- stated limits
 
-export type ExceptionName = 'restoredLedger' | 'otherDevice' | 'missedHand' | 'partWay' | 'noRecordJoin' | 'otherMatch' | 'noMeasure' | 'noTimelyView' | 'restartClock' | 'inFlight' | 'serverRewind' | 'standIn';
+export type ExceptionName = 'restoredLedger' | 'journalLost' | 'otherDevice' | 'missedHand' | 'partWay' | 'noRecordJoin' | 'otherMatch' | 'noMeasure' | 'noTimelyView' | 'restartClock' | 'inFlight' | 'serverRewind' | 'standIn';
 
 /**
  * The cases docs/FAIRNESS.md states as limits: a cheat covered by one may be amber. Each stated limit: the charter's words (`quote`), what the oracle lets through under it (`covers`), and whether the
@@ -77,6 +78,12 @@ export const EXCEPTIONS: Record<ExceptionName, StatedLimit> = {
     quote: "without the journal (a record written by an earlier build of the app, a journal that storage damaged, or one the phone could not write), a move credited to you at the latest saved state's turn or later, before the restored app is shown the table again, is not checked against your moves when the server shows the table right behind its welcome",
     covers: "a move credited to the player at or after the latest state of the record a restored client loaded without the app's journal of the match, made while the player's app was not running (or in the 0.6 s before it stopped), before the restored client was shown the hand",
     end: 'unstated',
+  },
+  journalLost: {
+    quote: 'A record this build wrote says that every move of the hand went to the journal first, so when the journal that should go with it is missing or vouches for nothing, such a move that the record does not hold does not fail the hand, but the hand is amber',
+    covers: "a move in the restored-ledger stretch of a hand the record held, written by an app that keeps the journal, when the restored client was given no journal of the match that vouched for it",
+    end: 'unverified',
+    endQuote: 'and the end of the match is not shown as verified',
   },
   otherDevice: {
     quote: 'a move it credits to you that your phone did not send, from the latest turn your phone was shown until your phone is shown the hand again, cannot be told from one made there',
@@ -103,7 +110,7 @@ export const EXCEPTIONS: Record<ExceptionName, StatedLimit> = {
   },
   noRecordJoin: {
     quote: 'Such a phone did not watch the moves credited to your seat in that hand before it was first shown the hand, so, like the moves of a hand it missed, they keep the end of the match from being shown as verified.',
-    covers: 'a move made before a phone with no record of the table was first shown the hand, when the record was lost the ways the charter states (another phone; an app started again after its storage took no more writes; before unit 20g also the archive\'s day or three tables; since, its thirty days, or records holding red hands filling its million characters)',
+    covers: 'a move made before a phone with no record of the table was first shown the hand, when the record was lost the ways the charter states (another phone; an app started again after its storage took no more writes; before unit 20g also the archive\'s day or three tables; since, its thirty days, more than 31 other tables, or the records of other tables filling its million characters)',
     end: 'unverified',
     endQuote: 'they keep the end of the match from being shown as verified',
   },
@@ -185,7 +192,14 @@ function judgeOf(t: Truth, hand: number): RunInfo | undefined {
 const statedLoss = (t: Truth): boolean =>
   t.freshPhones > 0 ||
   (t.storageFailedAt !== null && t.appStops.some((s) => s.startAt !== null && s.startAt >= t.storageFailedAt!)) ||
-  (!BY_MATCH && t.goneRoutes.some((r) => r === 'expired' || r === 'pushed'));
+  // Another record took the device's slot while the archive could not be written, then a cold start (docs/FAIRNESS.md:
+  // "when another table must take the saved table's place, the journal's list of the match that leaves goes first").
+  (t.recordGivenUpAt !== null && t.appStops.some((s) => s.startAt !== null && s.startAt >= t.recordGivenUpAt!)) ||
+  (!BY_MATCH && t.goneRoutes.some((r) => r === 'expired' || r === 'pushed')) ||
+  // Since unit 20g: more than 31 other tables that left Home unfinished meanwhile, or fewer whose records filled the
+  // archive's million characters, pushed the record out (docs/FAIRNESS.md, its limits).
+  t.goneRoutes.includes('crowded') ||
+  t.archivePushedOut;
 
 /**
  * The phone that judged `hand` started from no record (a new phone, or a token alone) after what happened at `at` on
@@ -223,22 +237,28 @@ function evidenceLost(t: Truth, hand: number, run: number, at: number): boolean 
   return false;
 }
 
-/** Excuses and tags for a cheat a phone with no record judged: amber is stated when the record was lost a stated way. */
+/**
+ * Excuses and tags for a cheat a phone with no record judged: amber is stated when the record was lost a stated way, or
+ * when the app never held one (no run of its client before that one was welcomed into the match).
+ */
 function blindness(t: Truth, hand: number, at: number, run: number | null, excuses: ExceptionName[], tags: string[]): void {
-  if (!blindJudge(t, hand, at, run)) return;
+  const base = blindJudge(t, hand, at, run);
+  if (!base) return;
   tags.push('freshJudge');
-  if (statedLoss(t)) excuses.push('noRecordJoin');
+  const neverHeld = t.runs.every((r) => r.run >= base.run || r.welcomedAt === null);
+  if (statedLoss(t) || neverHeld) excuses.push('noRecordJoin');
   // A stand-in notice for the hand, taken by a phone that was not shown its deal.
   if (t.stoodIn.has(hand)) tags.push('stoodIn');
 }
 
 /**
- * A later run of the client was welcomed with word that another device had held the seat, after the move and before it
- * was first shown the hand, and the move is at or after the latest turn of the record that run held: from the latest turn
- * the phone was shown until it is shown the hand again, such a move cannot be told from one made on another device.
+ * A run of the client (the one the move was made in, before its welcome came, or a later one) was welcomed with word that
+ * another device had held the seat, after the move and before it was first shown the hand, and the move is at or after
+ * the latest turn of the record that run held: from the latest turn the phone was shown until it is shown the hand again,
+ * such a move cannot be told from one made on another device.
  */
 function elsewhereAfter(t: Truth, lm: LogMove): boolean {
-  return t.runs.some((r) => r.run > lm.ctx.run && r.elsewhereAt !== null && r.elsewhereAt >= lm.at && lm.at <= (r.firstShown.get(lm.hand) ?? Infinity) && lm.n >= (r.recordLatest.get(lm.hand) ?? -1));
+  return t.runs.some((r) => r.run >= lm.ctx.run && r.elsewhereAt !== null && r.elsewhereAt >= lm.at && lm.at <= (r.firstShown.get(lm.hand) ?? Infinity) && lm.n >= (r.recordLatest.get(lm.hand) ?? -1));
 }
 
 /** A seat-taken notice reached the run the move was made in after the move, before a later state of the hand reached it. */
@@ -252,17 +272,30 @@ function kickedAfter(t: Truth, lm: LogMove): boolean {
  * client was shown the hand, at or after the latest state the record holds, made while the app was not running or in the
  * moment before it stopped (the save delay, with a margin).
  */
-function inRestoredStretch(t: Truth, lm: LogMove): boolean {
+/**
+ * The stated limit a move in the restored stretch falls under: `journalLost` when the record held the hand and the app keeps
+ * the journal (every move of the hand went to it first: since unit 20h a missing journal keeps the end unverified),
+ * `restoredLedger` otherwise (no journal at all, or a hand the record did not hold yet); null outside the stretch.
+ */
+function stretchLimit(t: Truth, lm: LogMove): ExceptionName | null {
+  const restored = restoredStretch(t, lm);
+  if (!restored) return null;
+  return APP_JOURNAL && restored.recordLatest.has(lm.hand) ? 'journalLost' : 'restoredLedger';
+}
+
+function restoredStretch(t: Truth, lm: LogMove): RunInfo | null {
   const ctx = lm.ctx;
   const restored = t.runs.find((r) => r.run > ctx.run && r.createdAt >= lm.at && (r.how === 'restore' || r.how === 'archive' || r.tookUpAtWelcome));
   // With the app's journal of the match the restored client knows every move it sent: the limit does not apply.
-  if (!restored || restored.journal) return false;
+  if (!restored || restored.journal) return null;
   const latest = restored.recordLatest.get(lm.hand) ?? -1;
   const shownAt = restored.firstShown.get(lm.hand) ?? Infinity;
   const prev = t.runs.find((r) => r.run === ctx.run);
   const stopped = !ctx.hasClient || !ctx.appRunning || (prev?.endedAt != null && prev.endedAt - lm.at <= 600 && prev.endedAt >= lm.at);
+  // (Or made after the phone's storage stopped taking writes: the record the restored client read could not hold it.)
+  const unsaved = t.storageFailedAt !== null && lm.at >= t.storageFailedAt;
   // Within one step of the fake clock the server acts before the phone takes its frames, so a tie is before.
-  return lm.n >= latest && lm.at <= shownAt && stopped;
+  return lm.n >= latest && lm.at <= shownAt && (stopped || unsaved) ? restored : null;
 }
 
 /**
@@ -279,6 +312,8 @@ function playedLate(t: Truth, lm: LogMove): boolean {
       s.tc < lm.n &&
       s.at <= lm.at &&
       sameMove(s.action, lm.action) &&
+      // (Not a move the server kept from the table: an honest table cannot play a move it never got.)
+      !t.dropped.some((d) => d.line === s.line && d.at === s.at && sameMove(d.action, s.action)) &&
       !t.log.some((x) => x !== lm && x.origin === 'victim' && x.line === s.line && x.msgTc === s.tc && x.at >= s.at && sameMove(x.action, s.action)) &&
       !t.refusalsSeen.some((r) => r.line === s.line && r.turn === s.tc && r.at >= s.at && r.at <= lm.at),
   );
@@ -290,8 +325,9 @@ function forgedPlayer(t: Truth, lm: LogMove): Cheat | null {
   const ctx = lm.ctx;
   const excuses: ExceptionName[] = [];
   const tags: string[] = [];
-  if (inRestoredStretch(t, lm)) {
-    excuses.push('restoredLedger');
+  const limit = stretchLimit(t, lm);
+  if (limit) {
+    excuses.push(limit);
     tags.push('appDown');
   }
   // From the latest turn the phone was shown until it is shown the hand again, once the server says another device held
@@ -400,6 +436,13 @@ function tableMove(t: Truth, lm: LogMove): Cheat | null {
   return { kind: 'tableEarly', hand: lm.hand, turn: lm.n, at: lm.at, what: `the table's move ${(ctx.earlyBy / 1000).toFixed(1)} s before the seat's clock ran out`, excuses, tags };
 }
 
+/** A state of the decision's hand at a later turn reached the phone on line `line`. */
+const laterStateOn = (t: Truth, d: DecisionInfo, line: number): boolean =>
+  [...t.statesReached].some(([key, xs]) => {
+    const [h, tc] = key.split(':').map(Number);
+    return h === d.hand && tc > d.tc && xs.some((x) => x.line === line);
+  });
+
 /**
  * The decision's state was kept from the phone on a link it held, and the table played it: on that link an answer to a
  * ping the host sent after the state reached the phone while the state did not (a connection delivers in order, so only
@@ -415,12 +458,22 @@ function withheld(t: Truth, d: DecisionInfo): Cheat | null {
     if (!li) continue;
     if (li.welcomedAt === null || li.welcomedAt > s.at) continue;
     const reachedAt = d.reached.find((x) => x.line === li.n)?.at ?? Infinity;
-    // An answer sent after the state, that reached the phone before it, before the table played the turn.
-    if (!li.pongs.some((p) => p.sentAt > s.at && p.at <= playedAt && p.at < reachedAt)) continue;
+    // An answer sent after the state, that reached the phone before it, before the table played the turn; or the host's
+    // clock frame naming that turn or a later one of the hand, which it sends only after the turn's state.
+    const pong = li.pongs.some((p) => p.sentAt > s.at && p.at <= playedAt && p.at < reachedAt);
+    const clock = li.clocks.some((c) => c.hand === d.hand && c.tc >= d.tc && c.sentAt >= s.at && c.at <= playedAt && c.at < reachedAt);
     const shownBefore = (li.firstStateAt.get(d.hand) ?? Infinity) < s.at;
+    // Or a later state of the hand reached the phone on the line while this one never did (a connection delivers in order,
+    // so only a server that dropped it does that), on a line the phone knows brought every turn: one its share went out on
+    // before the deal (docs/FAIRNESS.md: every link the share went out on was up before the deal), or one that had shown it
+    // the hand.
+    const dropped = !pong && !clock && reachedAt === Infinity && (li.revealed.has(d.hand) || shownBefore) && laterStateOn(t, d, li.n);
+    if (!pong && !clock && !dropped) continue;
     const upBefore = li.committed.has(d.hand) || li.revealed.has(d.hand) || [...li.brought].some((h) => h < d.hand);
-    if (!shownBefore && !upBefore) continue;
-    const tags: string[] = [];
+    // Also on a link the phone was welcomed on before the host sent the state (docs/FAIRNESS.md: an honest host sends the
+    // state right behind its welcome, before its answer to the ping behind the join).
+    const afterWelcome = !shownBefore && !upBefore;
+    const tags: string[] = [...(pong ? [] : [clock ? 'clockProof' : 'stateProof']), ...(afterWelcome ? ['afterWelcome'] : [])];
     const excuses: ExceptionName[] = [];
     const first = [...t.lines.values()].filter((x) => x.revealed.has(d.hand)).sort((a, b) => a.n - b.n)[0];
     if (li.revealed.has(d.hand) && first && first.n !== li.n) tags.push('revealedAgain');
@@ -428,7 +481,7 @@ function withheld(t: Truth, d: DecisionInfo): Cheat | null {
     // The link went before the turn's state reached the phone on it.
     if (li.closedAt !== null && reachedAt === Infinity) tags.push('linkEnded');
     blindness(t, d.hand, s.at, li.run, excuses, tags);
-    return { kind: 'withheldPlay', hand: d.hand, turn: d.tc, at: playedAt, what: `turn ${d.tc}'s state kept from the phone on link ${li.n} (an answer to a ping sent after it came first) while the table played it (${lm.origin === 'forged' ? `forged ${lm.source}` : 'timeout'})`, excuses, tags };
+    return { kind: 'withheldPlay', hand: d.hand, turn: d.tc, at: playedAt, what: `turn ${d.tc}'s state kept from the phone on link ${li.n} (${pong || clock ? 'an answer to a ping sent after it came first' : 'a later state of the hand came on it'}) while the table played it (${lm.origin === 'forged' ? `forged ${lm.source}` : 'timeout'})`, excuses, tags };
   }
   return null;
 }
@@ -446,6 +499,10 @@ export function cheatsOf(t: Truth): Cheat[] {
   }
   for (const d of t.dropped) {
     if (!d.legal) continue;
+    // A lost pass whose claim window closed without it (another seat's claim, or the table's own pass for the seat): the
+    // window came out as the pass would have left it, so nothing was taken from the player.
+    const settled = t.decisions.get(`${d.hand}:${d.hostTc}`);
+    if (d.action.type === 'pass' && (!settled?.playedBy || sameMove(settled.playedBy.action, d.action))) continue;
     const late = d.refusals.filter((r) => r.afterState).length;
     const tags = [`refusals:${d.refusals.length}`, ...(late >= 2 ? ['lateRefusals'] : late === 1 ? ['lateRefusal'] : [])];
     const blind: ExceptionName[] = [];
@@ -453,7 +510,8 @@ export function cheatsOf(t: Truth): Cheat[] {
     if (d.replacedBy) {
       if (d.replacedBy.n > d.hostTc) tags.push('bump');
       // The move played in its place is one the restored-ledger limit leaves unchecked.
-      const stretch: ExceptionName[] = inRestoredStretch(t, d.replacedBy) ? ['restoredLedger'] : [];
+      const limit = stretchLimit(t, d.replacedBy);
+      const stretch: ExceptionName[] = limit ? [limit] : [];
       const by = d.replacedBy.ctx;
       const cur = t.runs.find((r) => r.run === by.run);
       if (cur && cur.how !== 'initial' && !by.shownThisRun && by.hasClient) tags.push('afterRestore');
@@ -462,6 +520,8 @@ export function cheatsOf(t: Truth): Cheat[] {
     }
     for (const r of d.refusals) {
       if (!REFUSALS.has(r.code) || !r.legalNow || r.turn !== (d.msgTc ?? d.hostTc)) continue;
+      // Not while the player's other device really held the seat: the table then answers this one's moves so, honestly.
+      if (t.otherDeviceSpans.some((x) => r.at >= x.from && (x.to === null || r.at <= x.to))) continue;
       // A refusal the phone never got, or lost with a record saved before it came, tells the phone nothing.
       if (r.reachedAt === null || r.run === null || evidenceLost(t, d.hand, r.run, r.reachedAt)) continue;
       out.push({ kind: 'refusedLegal', hand: d.hand, turn: d.hostTc, at: r.at, what: `${JSON.stringify(d.action)} refused (${r.code}) while it was legal`, excuses: [...blind], tags });
@@ -530,6 +590,8 @@ export const FOUND: Record<string, string> = {
   N3: "the link cut right after the commit request, so the hand is dealt with a stand-in share: the table's own move for the seat 0.3 s into the hand is amber, not red (cut at the reveal or the deal instead: red playedWhileDown)",
   N4: 'honest: two server restarts, one between hands and one during the next deal, fail that hand red (restartedTwice)',
   N5: 'a move lost on the way and played over by the table (amber inFlight) turns green when the app restarts, or the phone resumes after the seat is opened on another device, later in the same hand',
+  N6: "a hand's turn-0 state held on a new link right behind its welcome (an answer to a ping came first) while the table times the dealer out: green (closed in unit 20h)",
+  N1w: "N1 after a rejoin welcome: states held on a link the phone was welcomed on (pings answered), then that link ended (an app restart, another device): amber, the end verified",
 };
 
 function nameOf(v: Omit<Violation, 'known'>, scenario: Scenario, t: Truth): string {
@@ -556,14 +618,16 @@ function nameOf(v: Omit<Violation, 'known'>, scenario: Scenario, t: Truth): stri
   if (has('withheldPlay', 'revealedAgain')) return 'R5';
   // A move in flight, played over by the table, shown green.
   if (v.property === 'green' && has('droppedForTable')) return 'N5';
+  if (has('withheldPlay', 'afterWelcome') && (has('withheldPlay', 'linkEnded') || t.appStops.length > 0 || t.kicks.length > 0)) return 'N1w';
   if (has('withheldPlay', 'linkEnded') || has('tableEarly', 'linkEnded')) return 'N1';
+  if (has('withheldPlay', 'afterWelcome')) return 'N6';
   // Moves for the seat in a hand the phone saw nothing of kept the end from being verified only until the app restarted.
   if (v.property === 'endVerified' && v.cheats.every((c) => c.excuses.some((e) => e === 'missedHand' || e === 'partWay')) && t.appStops.length > 0) return 'N2';
   if (has('forgedPlayer', 'kicked') || has('droppedMove', 'kicked')) return 'S2';
   if (has('forgedPlayer', 'afterRestore') || has('droppedMove', 'afterRestore')) return 'S1';
   if (has('forgedPlayer', 'beforeResume')) return 'R7';
   // The restored-ledger stretch: a move written in the player's name while the app was down, shown green (S1's root).
-  if (v.property === 'green' && (has('forgedPlayer', 'appDown') || v.cheats.some((c) => c.excuses.includes('restoredLedger')))) return 'S1';
+  if (v.property === 'green' && (has('forgedPlayer', 'appDown') || v.cheats.some((c) => c.excuses.includes('restoredLedger') || c.excuses.includes('journalLost')))) return 'S1';
   return 'new';
 }
 
@@ -624,6 +688,32 @@ export function judge(scenario: Scenario, t: Truth): Judgement {
     if (t.redSeen.size === 0 && shown.some((r) => r.shown!.matchFailed)) out.push({ property: 'falseRed', hand: null, verdict: 'match failed', cheats: [], detail: 'honest match shown failed' });
   }
   for (const c of t.crashes) out.push({ property: 'crash', hand: null, verdict: '', cheats: [], detail: c });
+  // A malformed frame reached the phone while a hand was on show, and no hand was ever shown red nor the match failed (the
+  // charter: such a frame fails the hand on show). Not when the record was lost a way the charter states, nor when the run
+  // that took it stopped within its save delay after it, for an app that keeps no red hands apart.
+  if (!honest && !statedLoss(t)) {
+    const anyRed = t.redSeen.size > 0 || shown.some((r) => r.shown!.matchFailed);
+    for (const f of t.mustFail) {
+      if (f.over || anyRed || !t.dealtAt.has(f.hand)) continue;
+      const run = t.runs.find((r) => r.run === f.run);
+      if (!redLogic && run && run.endedAt !== null && run.endedAt - f.at <= 600) continue;
+      out.push({ property: 'frameTaken', hand: null, verdict: 'no red', cheats: [], detail: `${f.mark} reached client run ${f.run} on link ${f.line} and no hand was shown red` });
+      break;
+    }
+  }
+  // Since the app keeps its records by match (unit 20g), a client of the same app that seats the account at the match again
+  // holds the record it wrote of it (restored, from the archive, or taken up at the welcome), unless the record was lost a
+  // way the charter states. A later run that started from nothing and took nothing up lost it.
+  if (BY_MATCH && t.firstRecordAt !== null && !statedLoss(t)) {
+    for (const r of t.runs) {
+      if (r.how !== 'fresh' && r.how !== 'token') continue;
+      if (r.newDevice || r.tookUpAtWelcome || r.welcomedAt === null || r.createdAt <= t.firstRecordAt || r.createdAt > (t.matchOverAt ?? Infinity)) continue;
+      // (Nor after the app was shown the match over: it keeps no record of a match it holds ended.)
+      if (t.runs.some((x) => x.run < r.run && x.shown?.matchOver)) continue;
+      out.push({ property: 'recordLost', hand: null, verdict: '', cheats: [], detail: `client run ${r.run} (${r.how}) seated the account at the match again holding no record of it, though the app wrote one` });
+      break;
+    }
+  }
   const named = out.map((v) => ({ ...v, known: nameOf(v, scenario, t) }));
   // The end shown verified, or a red hand forgotten, shares the root of the hand failures beside it.
   const root = named.find((v) => v.known !== 'new' && v.hand !== null)?.known;

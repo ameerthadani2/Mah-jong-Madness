@@ -200,6 +200,10 @@ export class App {
   archiveFails = false;
   /** The device's archive is older than the one in memory (a write of it failed since the last one that went through). */
   private archiveBehind = false;
+  /** Each write of the journal of moves takes `ms` until `until` (a slow storage): the move goes out once it is done. */
+  journalDelay: { ms: number; until: number } | null = null;
+  /** Journal writes under way (`journalDelay`): each completes at its time, and its move then goes out. */
+  private writes: Array<{ at: number; done: () => void }> = [];
   saves = 0;
   private unsub: (() => void) | null = null;
   private kicked = false;
@@ -242,7 +246,10 @@ export class App {
     this.pendingAt = this.phone.sim.clock.now + SAVE_DELAY_MS;
   }
   tick(): void {
-    if (this.pendingAt !== null && this.phone.sim.clock.now >= this.pendingAt) {
+    const now = this.phone.sim.clock.now;
+    // (In order: a phone's writes go one after another.)
+    while (this.writes.length > 0 && this.writes[0].at <= now) this.writes.shift()!.done();
+    if (this.pendingAt !== null && now >= this.pendingAt) {
       this.pendingAt = null;
       this.save();
     }
@@ -275,6 +282,9 @@ export class App {
       const c = this.phone.client;
       const live = () => (prev && c && c.state.matchId === prev.client?.state?.matchId ? (JSON.parse(JSON.stringify(c.serialize())) as SerializedClient) : undefined);
       const kept = archiveLogic.archiveOnSlotChange(this.archive, prev, next, live, this.now());
+      // (The archive's bounds pushed the record of the table's match out: it left the archive, and not for the slot.)
+      const ours = this.phone.sim.matchId;
+      if (ours && this.archive.some((e) => e.matchId === ours) && !kept.some((e) => e.matchId === ours) && next?.client?.state?.matchId !== ours) this.phone.sim.truth.archivePushedOut = true;
       changed = kept !== this.archive;
       this.archive = [...kept];
     }
@@ -301,6 +311,9 @@ export class App {
       }
     }
     const leaving = ORDERED_WRITES && slotWriterLogic ? slotWriterLogic.leavingMatch(this.slotStored, next) : null;
+    // (The device's slot gives a match's record up for another one's while the device's archive does not hold it.)
+    const storedMatch = this.slotStored?.client?.state?.matchId;
+    if (this.archiveBehind && next && typeof storedMatch === 'string' && storedMatch !== '' && next.client?.state?.matchId !== storedMatch) this.phone.sim.truth.recordGivenUpAt ??= this.phone.sim.clock.now;
     if (leaving && this.archiveBehind) {
       if (!next) return;
       if (APP_JOURNAL && journalLogic?.withoutMatch) this.setJournal(journalLogic.withoutMatch(this.journal, leaving.signalUrl, leaving.matchId));
@@ -319,11 +332,36 @@ export class App {
     this.journal = j;
     this.journalStored = this.failing ? null : j;
   }
-  /** The table client's hook (game/journalKeeper.ts `writeAhead`): written before the move goes out; it goes out either way. */
-  journalWrite(entry: unknown): void {
+  /**
+   * The table client's hook (game/journalKeeper.ts `writeAhead`): written before the move goes out; it goes out either way.
+   * A slow storage (`journalDelay`) finishes the write later: the hook then gives the client a promise of it, which the app
+   * keeps (a thenable that completes at the fake clock's time, as the phone's queue of writes would).
+   */
+  journalWrite(entry: unknown): void | PromiseLike<void> {
     if (!journalLogic) return;
     this.journal = journalLogic.withEntry(this.journal, SIGNAL_URL, entry);
-    this.journalStored = this.failing ? null : this.journal;
+    const stored = this.failing ? null : this.journal;
+    const now = this.phone.sim.clock.now;
+    const d = this.journalDelay;
+    const slow = !!d && now < d.until;
+    // (A write waits behind those still under way: the phone's storage runs them one after another.)
+    if (!slow && this.writes.length === 0) {
+      this.journalStored = stored;
+      return;
+    }
+    const at = Math.max(now, this.writes.length > 0 ? this.writes[this.writes.length - 1].at : now) + (slow ? d!.ms : 0);
+    return {
+      then: (ok?: (() => unknown) | null) => {
+        this.writes.push({
+          at,
+          done: () => {
+            this.journalStored = stored;
+            ok?.();
+          },
+        });
+        return Promise.resolve();
+      },
+    } as PromiseLike<void>;
   }
   /** What the journal holds for a match, for a client restored from a record of it. */
   journalFor(matchId: unknown): unknown[] | undefined {
@@ -426,13 +464,13 @@ export class Phone {
    * phone the journal's hook (a write that fails takes the journal off the device and lets the move go) and the lookup by
    * match at the first welcome (joining `room`).
    */
-  opts(room: string = this.sim.room): { now: () => number; monotonic: () => number; writeAhead?: (entry: unknown) => void; keptRecord?: (matchId: string) => KeptRecord | undefined } {
+  opts(room: string = this.sim.room): { now: () => number; monotonic: () => number; writeAhead?: (entry: unknown) => void | Promise<void>; keptRecord?: (matchId: string) => KeptRecord | undefined } {
     const clock = { now: () => this.sim.clock.now, monotonic: () => this.sim.clock.now + this.monoOffset };
     if (this.kind !== 'victim') return clock;
     const app = this.app;
     return {
       ...clock,
-      ...(APP_JOURNAL ? { writeAhead: (entry: unknown) => app.journalWrite(entry) } : {}),
+      ...(APP_JOURNAL ? { writeAhead: (entry: unknown) => app.journalWrite(entry) as void | Promise<void> } : {}),
       ...(BY_MATCH ? { keptRecord: (matchId: string) => app.keptMatch(matchId, room) } : {}),
     };
   }
@@ -558,6 +596,7 @@ export class Phone {
         (c as TableClient & { keepRed?: (l: unknown) => void }).keepRed?.(this.app.redFor(room));
         return c;
       }, 'archive');
+      this.sim.truth.tookUpFromArchive(this.run, kept.client);
     } else this.start((link) => new TC(link, NAME, 'auntie', { userId: ACCOUNT }, this.opts(room)), 'fresh');
   }
   tick(): void {
@@ -700,6 +739,8 @@ export class Sim {
   forging: 'player' | 'auto' | null = null;
   /** Frames the server changed (a doctored view). */
   readonly doctoredFrames = new WeakSet<object>();
+  /** Frames the server made malformed: the charter says each fails the hand on show (the mark names what was done). */
+  readonly mustFail = new WeakMap<object, string>();
   /** When the host sent each frame it sent the phone (the server's own frames are not in it). */
   private readonly sentAt = new WeakMap<object, number>();
   private timers: Array<{ at: number; fn: () => void }> = [];

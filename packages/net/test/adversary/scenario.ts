@@ -15,16 +15,20 @@
  *   `evicted` (taken back with a welcome on the same link, or not), `restored` (a restart notice of the server's own
  *   making), `standIn`;
  * - the log: `forge` (a move for the player's seat written as the player's own, or as the table's, at once or late);
- * - views: `doctor` (a state's view changed, its hash kept);
+ * - views: `doctor` (a state's view changed, its hash kept; `meld`: a seat given a set that is not one; `turn`: the turn
+ *   number sent as text);
  * - answers: `dropMove` (a move of the player's lost on the server's side, answered `busy`, with refusals of any code
  *   naming any turn, at once or after the next state, or not at all; `contested`: only a claim made while another
  *   seat's answer to the same discard is still open);
  * - the deal and the match: `repick` (the server's share chosen again after the phone revealed), `newMatch` (a welcome
  *   naming another match), `withholdRecord` (a hand's result kept from the phone);
  * - the app: `restart` (the app stops and starts from its saved record), `resume` (the player leaves for Home and resumes
- *   the table), `gone` (the server says the table is gone, then seats the account there again, by one of several routes),
- *   `fresh` (the account seated again on a phone with no record), `saveFails` (the app's saves stop being written),
- *   `update` (an app update between two builds);
+ *   the table), `gone` (the server says the table is gone, then seats the account there again, by one of several routes;
+ *   `others`: how many other tables leave Home meanwhile on the `pushed` route, 3 when not said), `fresh` (the account
+ *   seated again on a phone with no record), `saveFails` (the app's saves stop being written; `archive`: only the
+ *   archive's, the largest), `slowJournal` (each write of the journal of moves takes `ms`, so a move goes out that much
+ *   later), `leave` (the player gives the table up from its exit sheet and sits at it again by its code later), `update`
+ *   (an app update between two builds);
  * - honest company: `otherDevice` (the player really opens the seat on another phone, plays there, and comes back),
  *   `serverRestart` (the server restarts and restores the table), `sleep` (the phone sleeps or the app is in the
  *   background).
@@ -73,16 +77,18 @@ export type Act =
   | { a: 'restored'; back: number }
   | { a: 'standIn' }
   | { a: 'forge'; label: 'player' | 'auto'; policy: 'other' | 'timeout'; n: number | 'hand'; delayMs: number }
-  | { a: 'doctor'; field: 'scores' | 'tile' | 'offer' | 'drawn'; n: number }
+  | { a: 'doctor'; field: 'scores' | 'tile' | 'offer' | 'drawn' | 'meld' | 'turn'; n: number }
   | { a: 'dropMove'; kind: MoveKind; busy: boolean; refuse: 'none' | 'now' | 'afterState'; code: string; turn: 'same' | 'before' | 'none'; times: number; contested?: boolean }
   | { a: 'repick' }
   | { a: 'newMatch' }
   | { a: 'withholdRecord' }
   | { a: 'restart'; downMs: number }
   | { a: 'resume'; afterMs: number }
-  | { a: 'gone'; route: GoneRoute; reseatMs: number }
+  | { a: 'gone'; route: GoneRoute; reseatMs: number; others?: number }
   | { a: 'fresh'; afterMs: number }
-  | { a: 'saveFails' }
+  | { a: 'saveFails'; what?: 'all' | 'archive' }
+  | { a: 'slowJournal'; ms: number; forMs: number }
+  | { a: 'leave'; backMs: number }
   | { a: 'update'; downMs: number }
   | { a: 'otherDevice'; forMs: number }
   | { a: 'serverRestart'; downMs: number }
@@ -117,7 +123,7 @@ export interface Scenario {
 }
 
 /** The acts an honest server, an honest network and an honest phone can do. */
-export const HONEST_ACTS: ReadonlySet<ActName> = new Set<ActName>(['cut', 'latency', 'stall', 'pingLoss', 'restart', 'resume', 'fresh', 'saveFails', 'update', 'otherDevice', 'serverRestart', 'sleep']);
+export const HONEST_ACTS: ReadonlySet<ActName> = new Set<ActName>(['cut', 'latency', 'stall', 'pingLoss', 'restart', 'resume', 'fresh', 'saveFails', 'slowJournal', 'leave', 'update', 'otherDevice', 'serverRestart', 'sleep']);
 
 /** Honest when every event is: what the oracle then holds the verdicts to is that none is red. */
 export const isHonest = (s: Scenario): boolean => s.events.every((e) => HONEST_ACTS.has(e.do.a));

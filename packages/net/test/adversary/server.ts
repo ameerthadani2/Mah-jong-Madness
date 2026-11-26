@@ -217,9 +217,26 @@ export class Server implements Adversary {
         r.s.until = phone.resumeAt;
         return;
       case 'saveFails':
-        phone.app.failing = true;
-        sim.truth.storageFailedAt ??= sim.clock.now;
+        // `archive`: a nearly full storage that takes the small writes but not the archive's (the largest).
+        if (act.what === 'archive') phone.app.archiveFails = true;
+        else {
+          phone.app.failing = true;
+          sim.truth.storageFailedAt ??= sim.clock.now;
+        }
         return this.end(r);
+      case 'slowJournal':
+        phone.app.journalDelay = { ms: act.ms, until: this.now + act.forMs };
+        r.s.until = this.now + act.forMs;
+        return;
+      case 'leave':
+        // The player gives the table up from its exit sheet (the app keeps its record in the archive), and sits at it
+        // again by its code later: the join finds the record kept of the table at that room.
+        phone.app.put(null);
+        phone.leave();
+        phone.reseatAt = this.now + act.backMs;
+        phone.reseatRoom = sim.room;
+        r.s.until = phone.reseatAt;
+        return;
       case 'fresh':
         // The account is seated again on another phone: nothing of this one's record goes with it.
         phone.leave();
@@ -258,7 +275,9 @@ export class Server implements Adversary {
   private gone(r: Running, route: string, reseatMs: number): void {
     const sim = this.sim;
     const phone = sim.phone;
-    sim.truth.goneRoutes.push(route);
+    const act = r.e.do as Extract<Act, { a: 'gone' }>;
+    // More than 31 other tables leaving Home meanwhile push the record out (a limit docs/FAIRNESS.md states): `crowded`.
+    sim.truth.goneRoutes.push(route === 'pushed' && (act.others ?? 3) > 31 ? 'crowded' : route);
     phone.reseatRoom = route === 'moved' ? `${sim.room}Y` : sim.room;
     if (route === 'stale') {
       // The app is closed with the table in its saved slot and opened 13 h later: the launch deletes the stale record.
@@ -430,7 +449,7 @@ export class Server implements Adversary {
         // (the app was not running when the server said the table was gone) gives it up to the first, into the archive.
         const app = phone.app;
         const base = app.slot;
-        for (let k = 1; k <= 3; k++) {
+        for (let k = 1; k <= (act.others ?? 3); k++) {
           const other = JSON.parse(JSON.stringify(app.archive[app.archive.length - 1]?.client ?? base?.client ?? null));
           if (!other?.state) continue;
           other.state.matchId = `m-other-${k}`;
@@ -534,6 +553,8 @@ export class Server implements Adversary {
               if (d) {
                 r.s.n = ((r.s.n as number | undefined) ?? 0) + 1;
                 this.sim.doctoredFrames.add(d);
+                // A set that is not one, or a turn number as text: a malformed frame, which fails the hand on show.
+                if (act.field === 'meld' || act.field === 'turn') this.sim.mustFail.set(d, `malformed:state.${act.field}`);
                 next.push(d);
                 if ((r.s.n as number) >= act.n) this.end(r);
                 break;
@@ -583,6 +604,14 @@ export class Server implements Adversary {
     } else if (field === 'drawn') {
       if (typeof v.lastDrawn !== 'number') return null;
       v.lastDrawn = otherTile(v.lastDrawn);
+    } else if (field === 'meld') {
+      // Another seat given a set that is not one (the engine keeps a set as an object with its tiles).
+      const p = v.players[1];
+      if (!p) return null;
+      (p.melds as unknown[]).push(0);
+    } else if (field === 'turn') {
+      // The turn number sent as text (a frame the client's intake refuses).
+      (v as unknown as { turnCounter: unknown }).turnCounter = String(v.turnCounter);
     }
     return { ...m, view: v };
   }

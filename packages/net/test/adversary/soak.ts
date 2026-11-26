@@ -6,7 +6,7 @@
  *   npx tsx packages/net/test/adversary/soak.ts --replay '<scenario JSON>' [--timeline]
  *   npx tsx packages/net/test/adversary/soak.ts --seed 1234 --mode mixed [--timeline]
  *
- * Options: `--mode honest|mixed|both` (both: each seed once of each), `--workers N` (processes; default 1),
+ * Options: `--mode honest|mixed|direct|both|all` (both: each seed once as honest and as mixed; all: of the three), `--workers N` (processes; default 1),
  * `--no-minimize` (print a failure as generated), `--budget N` (runs spent minimizing one failure; default 40),
  * `--out file.jsonl` (one line per failing scenario: seed, mode, violations, the minimized scenario), `--update` (honest
  * scenarios may hold an app update; needs ADVERSARY_OLD_TREE), `--quiet` (the summary only). ADVERSARY_TREE runs
@@ -52,7 +52,7 @@ function parse(argv: string[]): Args {
     else if (k === '--to') a.to = Number(v());
     else if (k === '--mode') {
       const m = v();
-      a.modes = m === 'both' ? ['honest', 'mixed'] : [m as Mode];
+      a.modes = m === 'both' ? ['honest', 'mixed'] : m === 'all' ? ['honest', 'mixed', 'direct'] : [m as Mode];
     } else if (k === '--workers') a.workers = Math.max(1, Number(v()));
     else if (k === '--no-minimize') a.minimize = false;
     else if (k === '--budget') a.budget = Number(v());

@@ -22,7 +22,7 @@ export function failures(s: Scenario): string[] {
  * while its gap is open (`it.fails`), so the run stays green, and turns red the day the gap is closed, when the case moves
  * to the closed ones. A gap docs/FAIRNESS.md comes to state as a limit becomes a `limit` case in known.ts instead.
  */
-export const OPEN_GAPS = new Set(['N2', 'N3']);
+export const OPEN_GAPS = new Set(['N2', 'N3', 'N1w']);
 
 /**
  * Generated seeds that find a gap this code still has (one of `OPEN_GAPS`, or a variant of a closed one the long runs found):
@@ -38,6 +38,15 @@ export const OPEN_MIXED_SEEDS = COVERED
       3414, // R2: a move lost under a 12 s delay, answered by late refusals, then a seat-taken notice: the table's move green
       6014, // a server restart in a deal, then a claim written as the table's own: amber, the end verified
       5285, // states held, then another device: the table's moves on turns never shown amber with no stated limit
+    ];
+/**
+ * Direct seeds (generate.ts `direct`) that find a gap this code still has: run as expected failures too. Not under coverage.
+ */
+export const OPEN_DIRECT_SEEDS = COVERED
+  ? []
+  : [
+      57, // a move written as the player's own while the same move the player made still waited for a slow journal write (20 s): the hand green, the end verified
+      203, // N1w: the deal's state held on the link after a rejoin welcome, the table playing the seat, then the link ends: amber, the end not verified
     ];
 /** Honest seeds that show red on this code: run as expected failures too. Not under coverage. */
 export const OPEN_HONEST_SEEDS = COVERED

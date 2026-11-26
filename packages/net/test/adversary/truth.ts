@@ -71,6 +71,11 @@ export interface LineInfo {
   evictFalse: boolean;
   /** A frame about the game reached the phone on the line after its eviction. */
   frameAfterEvict: boolean;
+  /**
+   * The host's own clock frames that reached the phone on the line: an honest host sends one only after the turn's state
+   * on that link, so one that comes before that state proves the state was held.
+   */
+  clocks: Array<{ at: number; sentAt: number; hand: number; tc: number }>;
 }
 
 /** A decision the host asked of seat 0. */
@@ -230,6 +235,10 @@ export class Truth {
   readonly sent: SentMove[] = [];
   /** Every refusal of a move (`illegal`, `not_playing`, `wrong_seat`) that reached the phone: its line, the turn it names, when. */
   readonly refusalsSeen: Array<{ line: number; turn: number | null; at: number }> = [];
+  /** Malformed frames that reached the phone while it heeded the link they came on (the charter says each fails the hand on show). */
+  readonly mustFail: Array<{ run: number; line: number; at: number; mark: string; over: boolean; hand: number }> = [];
+  /** When the phone sent each of its messages (a move sent before a lost one does not take its place). */
+  private readonly sentAtOf = new WeakMap<object, number>();
   readonly dropped: DroppedMove[] = [];
   readonly intents: Intent[] = [];
   readonly notices: Notice[] = [];
@@ -262,6 +271,18 @@ export class Truth {
   freshPhones = 0;
   /** When the phone's storage stopped taking writes (`saveFails`), if it did. */
   storageFailedAt: number | null = null;
+  /**
+   * When the device's slot first gave a match's record up for another (another table's, or a record of the same table
+   * holding no match yet) while the device's archive did not hold it (its writes failing: `saveFails` of the archive).
+   * A cold start after it holds no record of that match, or an older one: the charter states it.
+   */
+  recordGivenUpAt: number | null = null;
+  /**
+   * The bounds of the app's archive pushed the record of the match out (room made for the records of other tables that
+   * left Home after it: more than 31 of them, or records filling its million characters; or its thirty days): the charter
+   * states it.
+   */
+  archivePushedOut = false;
   otherDeviceActive = false;
   readonly otherDeviceSpans: Array<{ from: number; to: number | null }> = [];
   private eraStart = 0;
@@ -306,6 +327,11 @@ export class Truth {
   journalGiven(given: boolean): void {
     this.journalPending = given;
   }
+  /** A run made from a record the app kept in its archive (`fromArchive`): the latest turn of each hand that record holds. */
+  tookUpFromArchive(run: number, rec: SerializedClient): void {
+    const r = this.runInfo(run);
+    if (r) r.recordLatest = latestTurns(rec);
+  }
   /** A run that joined holding no record took one up at its first welcome (`moved`: kept under another room). */
   tookUpAtWelcome(run: number, moved: boolean, rec: SerializedClient): void {
     const r = this.runInfo(run);
@@ -335,9 +361,12 @@ export class Truth {
     this.savedRecord = rec;
     this.savedAt = this.now;
     if (rec) this.saveTimes.push(this.now);
+    if (rec && this.firstRecordAt === null && rec.state?.matchId === this.sim.matchId) this.firstRecordAt = this.now;
   }
+  /** When the app first wrote a record holding the match to the device (null: never). */
+  firstRecordAt: number | null = null;
   lineOpened(l: Line): void {
-    this.lines.set(l.n, { n: l.n, run: l.run, openedAt: this.now, closedAt: null, welcomedAt: null, brought: new Set(), statesOf: new Set(), firstStateAt: new Map(), committed: new Set(), revealed: new Set(), pongs: [], evictedAt: null, evictFalse: false, frameAfterEvict: false });
+    this.lines.set(l.n, { n: l.n, run: l.run, openedAt: this.now, closedAt: null, welcomedAt: null, brought: new Set(), statesOf: new Set(), firstStateAt: new Map(), committed: new Set(), revealed: new Set(), pongs: [], clocks: [], evictedAt: null, evictFalse: false, frameAfterEvict: false });
   }
   lineClosed(l: Line): void {
     const li = this.lines.get(l.n);
@@ -374,6 +403,17 @@ export class Truth {
     const li = this.lines.get(l.n);
     const run = this.runInfo(l.run);
     if (!li) return;
+    const mark = this.sim.mustFail.get(m);
+    if (mark) {
+      // The hand on show: the one being played, else the next to be dealt. (A client that took a seat-taken notice, or an
+      // eviction, on that link takes nothing more from it.)
+      const host = this.sim.hostInside();
+      const hand = host.phase === 'playing' && host.game ? host.game.handNumber : host.snapshot.handNumber;
+      const deaf = li.evictedAt !== null || this.kicks.some((k) => k.run === l.run && k.at <= this.now);
+      if (!deaf) this.mustFail.push({ run: l.run, line: l.n, at: this.now, mark, over: !!this.phone.client?.state.matchOver, hand });
+      // A malformed frame: the phone takes nothing from it (and it may not hold the fields read below).
+      return;
+    }
     const h = handOf(m);
     if (li.evictedAt !== null && GAME_FRAMES.has(m.t)) li.frameAfterEvict = true;
     if (m.t === 'error' && m.code === 'evicted') li.evictedAt ??= this.now;
@@ -387,6 +427,9 @@ export class Truth {
     // latest turn your phone was shown until your phone is shown the hand again"), on a later run of its client.
     if (m.t === 'state') for (const k of this.kicks) if (k.endAt === null && k.run < l.run) k.endAt = this.now;
     if (m.t === 'pong') li.pongs.push({ at: this.now, sentAt: this.sim.hostSentAt(m) ?? this.now });
+    // (Only the host's own clock frames: one of the server's making proves nothing.)
+    const clockSent = this.sim.hostSentAt(m);
+    if (m.t === 'clock' && clockSent !== undefined) li.clocks.push({ at: this.now, sentAt: clockSent, hand: m.hand, tc: m.tc });
     if (m.t === 'error' && (m.code === 'illegal' || m.code === 'not_playing' || m.code === 'wrong_seat')) this.refusalsSeen.push({ line: l.n, turn: typeof m.turnCounter === 'number' ? m.turnCounter : null, at: this.now });
     const refusal = this.refusalFrames.get(m);
     if (refusal && refusal.reachedAt === null) {
@@ -412,6 +455,15 @@ export class Truth {
   afterDelivered(l: Line, m: HostMessage, c: TableClient): void {
     // A changed view the client took and put on the screen (one it refused, or took nothing from that link for, was not shown).
     if (m.t === 'state' && this.sim.adversaryDoctored(m) && c.state.view && JSON.stringify(c.state.view) === JSON.stringify(m.view)) this.doctored.push({ run: l.run, line: l.n, hand: m.view.handNumber, tc: m.view.turnCounter, at: this.now });
+    // A welcome whose count of moves between devices made the phone hold that another device held the seat (unit 20g).
+    if (m.t === 'welcome' && m.elsewhere !== true && (c.state as { heldElsewhere?: boolean }).heldElsewhere === true) {
+      const run = this.runInfo(l.run);
+      if (run && run.elsewhereAt === null) {
+        run.elsewhereAt = this.now;
+        this.notice('elsewhere', l, !this.otherDeviceActive);
+        this.note(`client run ${l.run} holds that another device held the seat (the welcome's count)`);
+      }
+    }
     if (c.state.kicked && !this.kicks.some((k) => k.run === l.run)) {
       const n = [...this.notices].reverse().find((x) => (x.kind === 'seatTaken' || x.kind === 'elsewhere') && x.run === l.run);
       this.kicks.push({ run: l.run, at: this.now, endAt: null, falseNotice: n ? n.falseNotice : !this.otherDeviceActive });
@@ -427,6 +479,7 @@ export class Truth {
     }
   }
   clientSent(l: Line, m: ClientMessage): void {
+    this.sentAtOf.set(m, this.now);
     const li = this.lines.get(l.n);
     const v = this.phone.client?.state.view ?? null;
     if (m.t === 'action') {
@@ -506,8 +559,11 @@ export class Truth {
   beforeApply(seat: number, a: Action, before: GameState | null): void {
     if (seat !== 0 || !before || this.origin?.kind !== 'victim') return;
     const line = this.origin.line.n;
+    // Only a move sent after the lost one takes its place (an honest table plays the first that comes).
+    const sentAt = this.sentAtOf.get(this.origin.m) ?? this.now;
     for (const d of this.dropped) {
       if (!d.legal || d.replacedBy || d.line !== line || d.hand !== before.handNumber || d.lineBroke) continue;
+      if (sentAt < d.at) continue;
       // The seat's decision the lost move was for was settled since (the table played for it, say): nothing is pending.
       if (this.log.some((x) => x.hand === d.hand && x.at >= d.at && x.n >= d.hostTc)) continue;
       let still = false;

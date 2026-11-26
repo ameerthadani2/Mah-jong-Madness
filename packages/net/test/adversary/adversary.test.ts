@@ -6,8 +6,8 @@
  * - a hand in which the player was cheated is never green, amber only where docs/FAIRNESS.md states the case as a limit
  *   (each limit quoted word for word in `EXCEPTIONS`), and the end of the match is not shown verified;
  * - a scenario made only of honest events never shows red.
- * The long runs are soak.ts (`npm run fuzz:fair -w @mjm/net -- --from 1 --to 5000 --mode both --workers 2`); this file
- * keeps a sample of them in CI, and adversary-gaps.test.ts and adversary-rules.test.ts the known gaps, limits and controls
+ * The long runs are soak.ts (`npm run fuzz:fair -w @mjm/net -- --from 1 --to 5000 --mode both --workers 2`, and `--mode
+ * direct`); this file keeps a sample of them in CI, and adversary-gaps.test.ts and adversary-rules.test.ts the known gaps, limits and controls
  * in their fixed forms (known.ts), with the generated seeds of the gaps still open (ci.ts). A failure prints the seed, the events and the command that replays it.
  */
 import { describe, expect, it } from 'vitest';
@@ -47,6 +47,27 @@ const MIXED_SEEDS = [
   ...Array.from({ length: 8 }, (_, i) => 2 + i),
 ];
 const GAP_SEEDS = 15;
+/**
+ * Direct attacks (generate.ts `direct`): the gaps of the code before unit 20h's second part (d5e6158) they find, one or two
+ * seeds each, and the rules a mixed chain's concealment hides, each deciding alone (a check without the rule fails).
+ */
+const DIRECT_SEEDS = [
+  86, // a cut at the commit request of a later hand, the hand dealt with a stand-in share, moves written as the player's: the stand-in ledger alone (amber R1 without it)
+  117,
+  188,
+  102, // a cut at the reveal, the share sent again on the next link, the deal's frames lost there while the table plays the seat once its clock could have run out: the reveal-link rule alone (amber R5 without it)
+  204,
+  18, // the same stand-in at the match's first hand (amber R1 on d5e6158)
+  2, // a claim lost and answered late, then a restart: S1 green on d5e6158
+  31, // honest: the archive's writes refused, the table given up and sat at again, a cold start: the record lost on d5e6158
+  43, // the table said gone, 20 other tables leaving Home meanwhile, moves written as the player's: the end verified on d5e6158 (its journal kept 12 matches)
+  82, // honest: a slow journal (45 s a write), then a server restart: red on d5e6158
+  297, // honest: a slow journal, the archive's writes refused, the table given up and sat at again: red on d5e6158
+  14, // the archive's writes refused, the table said gone with three other tables taking the saved slot, a cold start: the record lost the way the charter states
+  81, // the table said gone, 20 other tables whose records fill the archive's million characters: the record pushed out the way the charter states
+];
+/** Under coverage: one direct seed of each kind. */
+const DIRECT_COVERED = [86, 102, 31, 14];
 
 describe('the adversary fuzzer', () => {
   it('quotes each stated limit from docs/FAIRNESS.md word for word', () => {
@@ -61,5 +82,9 @@ describe('the adversary fuzzer', () => {
     // Under coverage, the seeds of the gaps only.
     const seeds = COVERED ? MIXED_SEEDS.slice(0, GAP_SEEDS) : MIXED_SEEDS;
     expect(seeds.flatMap((seed) => failures(generate(seed, 'mixed')))).toEqual([]);
+  }, LIMIT);
+
+  it('holds every direct attack to the charter', () => {
+    expect((COVERED ? DIRECT_COVERED : DIRECT_SEEDS).flatMap((seed) => failures(generate(seed, 'direct')))).toEqual([]);
   }, LIMIT);
 });

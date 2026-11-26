@@ -2,12 +2,14 @@
  * The code the fuzzer runs. In the repository it is the package it lives in (`../../src`) and the engine that package
  * imports. Two switches point it elsewhere, for runs outside the repository's tests:
  * - `ADVERSARY_TREE`: a folder holding another copy of the code (packages/net, packages/engine and apps/mobile/src/logic,
- *   as `git archive` gives them), run instead of this one;
+ *   with apps/mobile/src/game for the save schedule and the order of writes, as `git archive` gives them), run instead of
+ *   this one;
  * - `ADVERSARY_OLD_TREE`: a second copy, the build an app update replaces: the victim's phone runs its table client until
  *   the update, which then restores the record that client saved (`update` in scenario.ts).
  * The app's own logic for the records it keeps of a table (apps/mobile/src/logic: the archive of tables that left Home,
- * the red hands kept apart, the age of the saved table, the journal of moves) is loaded when the copy has it; without it
- * the phone keeps none of them, as the app did before it had them.
+ * the red hands kept apart, the age of the saved table, the journal of moves; apps/mobile/src/game: when a waiting save is
+ * written, the order the saved table and the archive are written in) is loaded when the copy has it; without it the phone
+ * keeps none of them, as the app did before it had them.
  */
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
