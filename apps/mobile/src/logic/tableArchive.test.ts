@@ -57,9 +57,16 @@ describe('the records of tables that left the saved-table slot', () => {
 
   it('a record of another match taking the slot at the same room code (the code went to another table) keeps the first', () => {
     expect(archiveOnSlotChange([], slot('ABC123', 'm-1'), slot('ABC123', 'm-2'), none, 1_000).map((e) => e.matchId)).toEqual(['m-1']);
-    // A record of the same table saved before its first welcome (no match yet) is that table: nothing moves.
-    const list: ArchivedTable[] = [];
-    expect(archiveOnSlotChange(list, slot('ABC123', 'm-1'), slot('ABC123', null), none, 1_000)).toBe(list);
+  });
+
+  it('a client of the same table that holds no match yet (saved before its first welcome) takes the slot: the match it held is kept, to be taken up by its match at that welcome', () => {
+    const kept = archiveOnSlotChange([], slot('ABC123', 'm-1'), slot('ABC123', null), none, 1_000);
+    expect(kept.map((e) => e.matchId)).toEqual(['m-1']);
+    expect(archivedMatch(kept, URL, 'm-1', 2_000)?.roomCode).toBe('ABC123');
+    // Its welcome names the match and its record holds it: the match leaves the archive again.
+    expect(archiveOnSlotChange(kept, slot('ABC123', null), slot('ABC123', 'm-1'), none, 2_000)).toEqual([]);
+    // Its welcome names another match (the code went to another table): the first stays kept.
+    expect(archiveOnSlotChange(kept, slot('ABC123', null), slot('ABC123', 'm-2'), none, 2_000)).toBe(kept);
   });
 
   it('is found by its match wherever the table runs it, and by the room it was played at', () => {

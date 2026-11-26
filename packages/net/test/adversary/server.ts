@@ -425,7 +425,9 @@ export class Server implements Adversary {
       r.s.reseatPlanned = true;
       if (act.route === 'expired') sim.appClockSkew += 25 * HOUR;
       if (act.route === 'pushed') {
-        // Three other tables leave Home after it, each with a record of its own.
+        // Three other tables leave Home after it, each with a record of its own: each takes the saved slot (it is saved
+        // there, as the app saves any table it sits at) and then leaves it. A slot that still holds this table's record
+        // (the app was not running when the server said the table was gone) gives it up to the first, into the archive.
         const app = phone.app;
         const base = app.slot;
         for (let k = 1; k <= 3; k++) {
@@ -433,7 +435,7 @@ export class Server implements Adversary {
           if (!other?.state) continue;
           other.state.matchId = `m-other-${k}`;
           other.state.roomCode = `OTHER${k}`;
-          app.slot = { kind: 'online', signalUrl: 'wss://game.example/ws', roomCode: `OTHER${k}`, token: 'tok', client: other, savedAt: app.now() };
+          app.put({ kind: 'online', signalUrl: 'wss://game.example/ws', roomCode: `OTHER${k}`, token: 'tok', client: other, savedAt: app.now() });
           sim.appClockSkew += 60_000;
           app.put(null);
         }

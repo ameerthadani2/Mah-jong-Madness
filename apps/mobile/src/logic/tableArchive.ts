@@ -79,15 +79,17 @@ const matchOf = (s: Slot): string | null => (s?.kind === 'online' && typeof s.cl
  * The archive after the saved-table slot goes from `prev` to `next`. An online table that leaves the slot (it is gone,
  * given up, or another table, or a record of another match, takes the slot) is kept while its match can still go on,
  * with the record its client holds now when it is the table open on this device (`live`); a match whose record is the
- * slot's again leaves the archive. The same list comes back when nothing changed (so nothing is written).
+ * slot's again leaves the archive. So is the record of a match that a client holding no match yet takes the slot from,
+ * at the same table (it joined holding nothing: a token the record was not saved under, say): that client takes the
+ * record up by its match at its first welcome, and if the welcome names another match, the record stays kept. The same
+ * list comes back when nothing changed (so nothing is written).
  */
 export function archiveOnSlotChange(list: readonly ArchivedTable[], prev: Slot, next: Slot, live: () => SerializedClient | undefined, now: number): readonly ArchivedTable[] {
   let kept = list;
   const prevMatch = matchOf(prev);
   const nextMatch = matchOf(next);
-  const sameTable = prev?.kind === 'online' && next?.kind === 'online' && next.signalUrl === prev.signalUrl && next.roomCode === prev.roomCode;
-  // The same table whose next record holds no match yet (saved before its first welcome), or the same match: it stays.
-  const stays = prev?.kind === 'online' && next?.kind === 'online' && next.signalUrl === prev.signalUrl && (nextMatch === null ? sameTable : nextMatch === prevMatch);
+  // The same match: it stays. (A record of the same table saved before its first welcome holds no match: it does not.)
+  const stays = prev?.kind === 'online' && next?.kind === 'online' && next.signalUrl === prev.signalUrl && nextMatch !== null && nextMatch === prevMatch;
   if (prev?.kind === 'online' && !stays) {
     const entry = archiveEntry({ ...prev, client: live() ?? prev.client }, now);
     if (entry) kept = withArchived(kept, entry, now);

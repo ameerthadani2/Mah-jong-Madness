@@ -530,11 +530,26 @@ export class Phone {
     this.boot(build);
     this.resume();
   }
-  /** The account is seated at `room` again by any path (session.ts `keptOrFresh`): a record kept of the table there, or nothing. */
+  /**
+   * The account is seated at `room` again by any path (session.ts `createOnlineSession`): the saved table's record when the
+   * slot holds one of that room (`savedClientFor`, with the slot's token), else a record kept of the table there
+   * (`keptOrFresh`), or nothing.
+   */
   reseat(room: string): void {
     this.leave();
     if (!this.running) this.boot();
     this.gone = false;
+    const rec = this.app.slot;
+    if (rec && rec.roomCode === room && rec.client && (rec.client.state?.token ?? '') === rec.token && typeof rec.client.state?.matchId === 'string' && rec.client.state.matchId !== '') {
+      const saved = rec.client;
+      const TC0 = this.build.TableClient;
+      this.start((link) => {
+        const c = TC0.restore(saved, link, NAME, 'auntie', { token: rec.token || undefined, userId: ACCOUNT }, this.restoreOpts(saved.state?.matchId, room));
+        (c as TableClient & { keepRed?: (l: unknown) => void }).keepRed?.(this.app.redFor(room));
+        return c;
+      }, 'restore');
+      return;
+    }
     const kept = archiveLogic ? archiveLogic.archivedFor(this.app.archive, SIGNAL_URL, room, this.app.now()) : undefined;
     const TC = this.build.TableClient as Net['TableClient'] & { fromArchive?: Net['TableClient']['restore'] };
     if (kept && typeof TC.fromArchive === 'function') {
