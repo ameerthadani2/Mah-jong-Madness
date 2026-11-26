@@ -2,6 +2,8 @@
  * Store-style frames for the showcase (docs/SCREENSHOTS.md): each screenshot in a device frame under a headline, on the
  * app's sky; and a one-image collage per language with the Home screen's logo cut out of its sky.
  * Usage: node frame.cjs <frames.json> <shotsdir> <outdir> <webdir>
+ * Writes <outdir>/<name>.png and <outdir>/jpeg/<name>.jpg (quality 90) for each frame, and for each phone frame a Google
+ * Play variant at 9:16 too (<name>-play).
  * The headline fonts are the app's own (Lilita One, Fredoka) from the web export; Chinese headlines use Noto Sans TC
  * when NOTO_CSS names its stylesheet (npm pack @fontsource/noto-sans-tc; 900.css), else the system's CJK font.
  */
@@ -72,7 +74,7 @@ const caption = (it) => `<div class="cap"><div class="title">${it.title}</div>${
 const device = (src, left, top, sw, sh, bz, radius) =>
   `<div class="device" style="left:${left}px;top:${top}px;width:${sw + 2 * bz}px;height:${sh + 2 * bz}px;border-radius:${radius}px;padding:${bz}px"><div class="screen" style="border-radius:${radius - bz}px"><img src="${url(src)}"></div></div>`;
 
-const SIZES = { phone: [1290, 2796], tablet: [2732, 2048], collage: [3200, 1800] };
+const SIZES = { phone: [1290, 2796], tablet: [2732, 2048], collage: [3200, 1800], play: [1080, 1920] };
 
 function phoneHtml(it) {
   const [W, H] = SIZES.phone;
@@ -84,6 +86,23 @@ function phoneHtml(it) {
   const extra = `.cap { position: absolute; left: 70px; right: 70px; top: 0; height: ${top}px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 34px; }
   .title { font-size: ${zh ? 112 : 118}px; --stroke: ${zh ? 14 : 16}px; --drop: 9px; } .sub { font-size: 46px; padding: 14px 40px 16px; --sb: 6px; }`;
   return page(it.lang, W, H, extra, caption(it) + device(shot(it.src), (W - sw) / 2 - bz, top, sw, sh, bz, 118));
+}
+
+/**
+ * Google Play's phone frame. Play takes no phone screenshot more than twice as long as it is wide, and the App Store's
+ * phone frame is 2.17:1 (1290 x 2796), so each phone frame also comes as a 9:16 one (1080 x 1920): the same screenshot and
+ * caption, the device smaller under the same headline block.
+ */
+function playHtml(it) {
+  const [W, H] = SIZES.play;
+  const sh = 1400;
+  const sw = Math.round((sh * 1290) / 2796);
+  const bz = 18;
+  const top = H - sh - 2 * bz - 64;
+  const zh = it.lang === 'zh';
+  const extra = `.cap { position: absolute; left: 48px; right: 48px; top: 0; height: ${top}px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 22px; }
+  .title { font-size: ${zh ? 72 : 76}px; --stroke: ${zh ? 9 : 10}px; --drop: 6px; } .sub { font-size: 31px; padding: 9px 26px 11px; --sb: 4px; }`;
+  return page(it.lang, W, H, extra, caption(it) + device(shot(it.src), (W - sw) / 2 - bz, top, sw, sh, bz, 80));
 }
 
 function tabletHtml(it) {
@@ -199,17 +218,32 @@ async function cutLogo(browser, src) {
   return data;
 }
 
+/**
+ * A frame's PNG must be what the stores take: its size exactly, 8-bit RGB with no alpha (Google Play refuses an alpha
+ * channel). Reads the PNG's header (IHDR).
+ */
+function checkPng(file, [width, height]) {
+  const b = fs.readFileSync(file);
+  const [w, h, depth, colour] = [b.readUInt32BE(16), b.readUInt32BE(20), b[24], b[25]];
+  if (w !== width || h !== height || depth !== 8 || colour !== 2) throw new Error(`${file}: ${w}x${h}, ${depth}-bit, colour type ${colour}; wanted ${width}x${height} 8-bit RGB (type 2) with no alpha`);
+}
+
 (async () => {
   const browser = await launch(['--allow-file-access-from-files']);
   const holder = path.join(out, '.logo.html');
-  for (const it of spec) {
+  // The repository keeps JPEGs at quality 90 (docs/SCREENSHOTS.md): written beside the PNGs, in <outdir>/jpeg.
+  const jpegDir = path.join(out, 'jpeg');
+  fs.mkdirSync(jpegDir, { recursive: true });
+  // Each phone frame comes twice: the App Store's size, then Google Play's 9:16 (named <out>-play).
+  const jobs = spec.flatMap((it) => (it.kind === 'phone' ? [it, { ...it, kind: 'play', out: `${it.out}-play` }] : [it]));
+  for (const it of jobs) {
     let logo = null;
     if (it.kind === 'collage' && it.logo) {
       fs.writeFileSync(holder, `<!doctype html><img src="${url(shot(it.logo))}">`);
       logo = await cutLogo(browser, holder);
       fs.unlinkSync(holder);
     }
-    const html = it.kind === 'tablet' ? tabletHtml(it) : it.kind === 'collage' ? collageHtml(it, logo) : phoneHtml(it);
+    const html = it.kind === 'tablet' ? tabletHtml(it) : it.kind === 'collage' ? collageHtml(it, logo) : it.kind === 'play' ? playHtml(it) : phoneHtml(it);
     const tmp = path.join(out, `.${it.out}.html`);
     fs.writeFileSync(tmp, html);
     const [width, height] = SIZES[it.kind];
@@ -218,8 +252,10 @@ async function cutLogo(browser, src) {
     await p.evaluate(() => document.fonts.ready);
     await p.waitForTimeout(400);
     await p.screenshot({ path: path.join(out, it.out + '.png') });
+    await p.screenshot({ path: path.join(jpegDir, it.out + '.jpg'), type: 'jpeg', quality: 90 });
     await p.close();
     fs.unlinkSync(tmp);
+    checkPng(path.join(out, it.out + '.png'), SIZES[it.kind]);
     console.log('framed', it.out);
   }
   await browser.close();

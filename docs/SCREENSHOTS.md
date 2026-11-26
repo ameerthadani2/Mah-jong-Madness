@@ -7,6 +7,7 @@ in English (`en-*`) and Traditional Chinese (`zh-*`), and one collage per langua
 | --- | --- | --- |
 | `*-00-collage.jpg` | 3200 × 1800 | One image to share: five phones under the logo |
 | `*-01-hero.jpg` to `*-09-fair.jpg` | 1290 × 2796 | Phone frames in store order; the App Store's 6.7" iPhone size |
+| `*-01-hero-play.jpg` to `*-09-fair-play.jpg` | 1080 × 1920 | The same phone frames at 9:16, for Google Play |
 | `*-10-tablet-table.jpg` to `*-12-tablet-fair.jpg` | 2732 × 2048 | Tablet frames; the App Store's 12.9"/13" iPad size, landscape |
 
 The order follows a review of the first set by an art director, a visual QA pass and a native Taiwanese copywriter: the
@@ -14,9 +15,11 @@ win first, then what it is worth, the coach, learning, the hand review, clubs, l
 shuffle. The club frame says that creating a club takes The Four Winds Club (App Store guideline 2.3.2: a screenshot of
 something that needs a purchase says so).
 
-Google Play takes phone screenshots no more than twice as long as they are wide, so the 1290 × 2796 frames do not fit
-there; for Play, change the phone size in `apps/mobile/e2e/showcase/capture.cjs` (`DEVICES`) to a 9:16 screen (for
-example 412 × 732 at 2.625, which gives 1082 × 1922) and frame those.
+Google Play takes phone screenshots no more than twice as long as they are wide, so the 1290 × 2796 frames (2.17:1) do
+not fit there. Each phone frame therefore also comes at 9:16, 1080 × 1920, named with `-play` after it and kept beside it
+in `docs/screenshots/` (`en-01-hero-play.jpg` beside `en-01-hero.jpg`): the same screenshot and caption, the device
+smaller under the same headline block. They are 24-bit JPEG with no alpha channel, as Play asks; the tool also writes
+each frame as 24-bit PNG and checks it. The tablet frames and the collages are within Play's limits as they are.
 
 ## What is staged, and what is real
 
@@ -55,8 +58,10 @@ PGURL=postgres://postgres@localhost:5432 apps/mobile/e2e/showcase/showcase.sh /t
 - `DEAL` (optional): another deal seed. `node apps/mobile/e2e/showcase/find-deal.cjs <webdir> 1 60` plays sixty deals
   and lists the player's best wins.
 
-It writes every capture to `<outdir>/shots` and the framed set to `<outdir>/framed` (PNG). The headlines and
-sub-captions are in `apps/mobile/e2e/showcase/frames.json`. The repository keeps the framed set as JPEG at quality 90.
+It writes every capture to `<outdir>/shots` and the framed set to `<outdir>/framed`: each frame as PNG, and as JPEG at
+quality 90 in `<outdir>/framed/jpeg`, which is what the repository keeps (copy them to `docs/screenshots/` as they are).
+The headlines and sub-captions are in `apps/mobile/e2e/showcase/frames.json`; each phone frame there also gives its
+Google Play variant.
 
 | Script | What it does |
 | --- | --- |
@@ -64,5 +69,5 @@ sub-captions are in `apps/mobile/e2e/showcase/frames.json`. The repository keeps
 | `boot.cjs` | The sample player's first launch: the app signs up its own account; the page's storage is saved |
 | `seed.cjs` | The two clubs (over the API), then players, boards, standings, diamonds and the Night Market set (in SQL); then each language's names |
 | `capture.cjs` | The screens, in six stories: the seeded hand, the same hand at the Night Market table, a hand at an online club table and its check, learning and leaderboards, clubs, the Shop |
-| `frame.cjs` | The device frames, headlines and collages |
+| `frame.cjs` | The device frames, headlines and collages, and the Google Play variant of each phone frame |
 | `find-deal.cjs` | Plays many deals and lists the player's best wins |
