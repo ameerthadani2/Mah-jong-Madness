@@ -5,11 +5,13 @@
  * deal under way), and only then the answer to the ping the app sends right behind its join. So, on a new link:
  * - an answer to a ping sent after the join that comes before any frame about a hand says the table had no hand under way;
  *   the first state of a hand this device had been shown on an earlier link, its turn 0 included, was held back;
- * - the first state of a later turn of such a hand that comes more than `LATE_MS` after the welcome, with no answer to a
- *   ping sent after the join in between, was held back too: an honest host sends it right behind the welcome.
+ * - the first state of a later turn of such a hand that comes with no answer to a ping sent after the join before it was
+ *   held back too when its own stamp, placed on this device's clock by the answers to the pings sent from the join on,
+ *   is more than `LATE_MS` after the welcome came: an honest host stamps it as it sends it, right behind the welcome.
  * A move the table then makes for the seat fails the hand (`heldFrame`). Before, the rule needed a later turn than the
  * deal, and an answer to a ping between the welcome and the state: a server that held the deal's first turn, or held the
- * answers as well, played the seat's turns unseen.
+ * answers as well, played the seat's turns unseen. (A first cut timed the state by when it came: a network that stalled
+ * right after the welcome made an honest table red.)
  */
 import { describe, expect, it } from 'vitest';
 import { legalActions, sameAction, withRules, type Action, type GameState } from '@mjm/engine';
@@ -123,6 +125,72 @@ describe('after an app restart, the server holds the table back and every answer
         need(a.restarted);
         expect(a.w.verdict().failures).toEqual([]);
       }
+    }));
+});
+
+describe('an honest network that stalls right behind a rejoin welcome', () => {
+  /**
+   * Hyper-like (5 s turns, no bank). The app checks the link and pings each second, but its limit for a silent link has
+   * grown past the stall (as after drops in a row), so it keeps the link (`watch: false`, `checkLink` here). Once the seat
+   * has made two moves and owes nothing, the link drops for 3 s (`restart`: then the app restarts) and the phone joins
+   * again, the table having moved on. The welcome comes at once; then the network toward the phone stalls for `LATE_MS + 5 s`, so the state
+   * the table sent right behind the welcome, and every answer to a ping, come that much later, and the table times the
+   * seat out meanwhile. The table is honest: its stamps say it sent the state right behind the welcome.
+   */
+  function stallAfterWelcome(code: string, restart: boolean) {
+    let rejoined = false;
+    let restartAt = Number.POSITIVE_INFINITY;
+    let checkedAt = Number.NEGATIVE_INFINITY;
+    let stallFrom: number | null = null;
+    const STALL = LATE_MS + 5_000;
+    const w = wire({
+      code,
+      rules: withRules({ handsPerMatch: 1, turnSeconds: 5, timeBankSeconds: 0 }),
+      botDelayMs: 700,
+      watch: false,
+      think: () => 1_500,
+      journal: restart,
+      delay: (m, now) => {
+        if (rejoined && stallFrom === null && m.t === 'welcome') {
+          stallFrom = now;
+          return 0;
+        }
+        return stallFrom !== null && now < stallFrom + STALL ? stallFrom + STALL - now : 0;
+      },
+      onTick: (w) => {
+        const g = w.host.game;
+        if (w.clock.now - checkedAt >= 1_000) {
+          checkedAt = w.clock.now;
+          w.c.checkLink();
+        }
+        if (w.clock.now >= restartAt) {
+          restartAt = Number.POSITIVE_INFINITY;
+          w.pendingReconnectAt = null;
+          w.restart();
+          return;
+        }
+        if (rejoined || !g || w.host.phase !== 'playing' || mine(w) < 2 || w.owes() || w.c.state.view?.turnCounter !== g.turnCounter) return;
+        rejoined = true;
+        w.dropNow(restart ? 600_000 : 3_000);
+        if (restart) restartAt = w.clock.now + 3_000;
+      },
+    });
+    w.finish();
+    return { w, stalled: stallFrom !== null, tableMoved: w.judged().length > 0 };
+  }
+
+  it(`a ${LATE_MS / 1000 + 5} s stall after the welcome of a link that dropped, the table timing the seat out meanwhile: not red (it was red heldFrame)`, () =>
+    scenario((i) => {
+      const a = stallAfterWelcome(`HSD${i}`, false);
+      need(a.stalled && a.tableMoved);
+      expect(a.w.verdict().failures).toEqual([]);
+    }));
+
+  it('the same stall after the welcome of an app restart (with the journal): not red', () =>
+    scenario((i) => {
+      const a = stallAfterWelcome(`HSR${i}`, true);
+      need(a.stalled && a.tableMoved);
+      expect(a.w.verdict().failures).toEqual([]);
     }));
 });
 

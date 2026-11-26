@@ -474,6 +474,8 @@ const MAX_FLAGGED_HANDS = 12;
 const MAX_REWINDS = 4;
 /** How many clock eras restart notices may begin while one hand is on show (`noteRestore`); the second makes it amber. */
 const MAX_RESTART_ERAS = 2;
+/** First states of links waiting for an answer to a ping to place their stamps (`TableClient.lateWelcome`). */
+const MAX_LATE_WELCOMES = 8;
 /** Frames that may come in a link's opening, between its `welcome` and a restart notice (`TableClient.opening`). */
 const OPENING_FRAMES: ReadonlySet<string> = new Set(['hand_missed', 'lobby', 'pong', 'chat', 'emote', 'restored']);
 /** Frames about a hand: its deal under way, a state, a clock, a result, a hand missed (`handFrameOn`). */
@@ -857,13 +859,22 @@ export class TableClient {
    * shown before, on that link (its turn 0 included), was held back (`noteHeld`).
    */
   private pongBeforeHand = -1;
-  /** This device's clock when the welcome of the link in use came (`welcomeEpoch`): the state the table owes right behind it is held back when it comes much later with no answer to a ping between (`noteHeld`). */
+  /** This device's clock when the welcome of the link in use came (`welcomeEpoch`; in the run of its clock `welcomeSeg`): the state the table owes right behind it is held back when the host's own stamp puts it much later (`lateWelcome`). */
   private welcomeAt: number | null = null;
   private welcomeEpoch = -1;
+  private welcomeSeg = 0;
+  /**
+   * First states of links that came with no answer before them to a ping sent after the join, of a later turn of a hand
+   * this device had been shown: each one's stamp, its clock era, the welcome it came behind, when the join went, and the
+   * turn from which what the table played for the seat fails when the stamp, placed on this device's clock by an answer to
+   * a ping sent since that join in the same era and run of its clock (`checkLateWelcome`), shows the host sent it more than
+   * `LATE_MS` after that welcome came.
+   */
+  private lateWelcome: Array<{ hand: number; from: number; stamp: number; era: number; seg: number; welcomeAt: number; after: number }> = [];
   /** The link epoch on which the table answered a ping sent after this client's join there (`joinOut`). */
   private pongOn = -1;
-  /** The link this client last sent a `join` on, and that frame's place among the frames this run sent (`outCount`). */
-  private joinOut: { epoch: number; out: number } | null = null;
+  /** The link this client last sent a `join` on, that frame's place among the frames this run sent (`outCount`), and when it went. */
+  private joinOut: { epoch: number; out: number; at: number } | null = null;
   /** The link epoch on which a frame about a hand came (a deal under way, a state, a result): see `runFromHand`. */
   private handFrameOn = -1;
   /**
@@ -1353,7 +1364,8 @@ export class TableClient {
     const token = this.state.token ?? this.identity.token;
     const have = this.have();
     this.joinHave = { epoch: this.epoch, have };
-    this.joinOut = { epoch: this.epoch, out: this.send({ t: 'join', name: this.name, avatar: this.avatar, wantSeat, token, userId: this.identity.userId, have, device: this.deviceId }) };
+    const joinAt = this.now();
+    this.joinOut = { epoch: this.epoch, out: this.send({ t: 'join', name: this.name, avatar: this.avatar, wantSeat, token, userId: this.identity.userId, have, device: this.deviceId }), at: joinAt };
     // A ping right behind the join, so the table's answer ties its clock to this device's from the first
     // frames of the link. Sent once `join` has returned: a transport that delivers at once must not be
     // entered again from inside it.
@@ -1517,6 +1529,8 @@ export class TableClient {
     if (seg !== this.seg() || fat < at) return;
     // (Whatever its stamp says: what it proves about the moves sent before the ping is its place on the link.)
     this.markReached(sent.epoch, sent.out);
+    // A fixed point for the first states of links that came with no answer before them (`lateWelcome`).
+    this.checkLateWelcome({ at, now, era: this.era, run: this.runId, seg, fat });
     // Nothing on screen reads the round trip: publishing it with every pong would re-render the table and save the record each second.
     if (this.rttAt === null || fat - this.rttAt >= RTT_PUBLISH_MS) {
       this.rttAt = fat;
@@ -2298,6 +2312,7 @@ export class TableClient {
     this.rewinds = [];
     this.eraHand = null;
     this.erasInHand = 0;
+    this.lateWelcome = [];
     this.lapse = false;
     this.lapseHand = null;
     this.lapseDeal = false;
@@ -2468,6 +2483,7 @@ export class TableClient {
         if (this.welcomeEpoch !== this.epoch) {
           this.welcomeEpoch = this.epoch;
           this.welcomeAt = this.now();
+          this.welcomeSeg = this.seg();
         }
         const seats = m.seats;
         // The rejoin token (an honest table gives one in every welcome, `intake`). The table's room code is pinned from
@@ -2740,10 +2756,20 @@ export class TableClient {
         // answer came before any frame about a hand: the table said it had no hand under way when it seated this client,
         // yet this one was (`pongBeforeHand`).
         else if (!shownHere && this.pongBeforeHand === this.epoch && this.shownBefore(h)) this.noteHeld(h, this.lastShown(h));
-        // The link's first state, of a later turn of a hand this device had been shown, more than `LATE_MS` after the
-        // welcome with no answer to a ping in between (the ping behind the join included): an honest host sends it right
-        // behind the welcome and answers the ping after it, so a server that also holds the answers back held it.
-        else if (!shownHere && this.welcomeEpoch === this.epoch && this.welcomeAt !== null && this.pongOn !== this.epoch && this.shownBefore(h) && v.turnCounter > this.lastShown(h) && (this.frameAtLo ?? this.now()) - this.welcomeAt > LATE_MS) this.noteHeld(h, this.lastShown(h));
+        // The link's first state, of a later turn of a hand this device had been shown, with no answer to a ping before it
+        // (the ping behind the join included), that the host itself stamped more than `LATE_MS` after the welcome came: an
+        // honest host stamps it as it sends it, right behind the welcome, so a network that holds it up (a stall that
+        // begins right after the welcome) leaves the stamp as it was; a server that also holds the answers back held it.
+        // The stamp is placed on this device's clock by the answers to the pings it sends from the join on, on this link or
+        // a later one (`checkLateWelcome`). (A state with no stamp, which no honest host sends, by when it came.)
+        else if (!shownHere && this.welcomeEpoch === this.epoch && this.welcomeAt !== null && this.pongOn !== this.epoch && this.shownBefore(h) && v.turnCounter > this.lastShown(h)) {
+          if (!stamped) {
+            if ((this.frameAtLo ?? this.now()) - this.welcomeAt > LATE_MS) this.noteHeld(h, this.lastShown(h));
+          } else if (this.seg() === this.welcomeSeg && this.joinOut?.epoch === this.epoch) {
+            this.lateWelcome.push({ hand: h, from: this.lastShown(h), stamp: m.now as number, era: this.era, seg: this.welcomeSeg, welcomeAt: this.welcomeAt, after: this.joinOut.at });
+            if (this.lateWelcome.length > MAX_LATE_WELCOMES) this.lateWelcome.splice(0, this.lateWelcome.length - MAX_LATE_WELCOMES);
+          }
+        }
         // An honest host stamps every state. One with no stamp, on a link that has brought a state, a
         // stamp or this device's share, would escape every check of when it was shown: it is not
         // believed, and counts as held back (on a new link it is judged as shown late; see `unstamped`).
@@ -3004,6 +3030,30 @@ export class TableClient {
     if (this.handsEnded.has(hand)) return;
     const play = this.playFor(hand);
     play.held = Math.min(play.held ?? Number.POSITIVE_INFINITY, tc);
+  }
+
+  /**
+   * A link's first state that came with no answer to a ping before it (`lateWelcome`), against a fixed point between the
+   * two clocks (`k`, an answer to a ping sent since that link's join, in the same clock era and run of this device's
+   * clock): the host stamped the answer after the ping left, so the state it stamped `stamp` left it no earlier than
+   * `stamp - k.now + k.at` on this device's clock, less the drift the two clocks may show between the two stamps. An honest
+   * host sends that state right behind the welcome, on a steady clock, so it left before the welcome came, whatever the
+   * network did to either: one the host itself puts more than `LATE_MS` after the welcome came was held back (`noteHeld`).
+   * (Only pings sent since the join: a clock the server moved on before it, as in a drop, is judged by the other checks.)
+   */
+  private checkLateWelcome(k: ClockAnchor): void {
+    if (k.run !== this.runId) return;
+    for (const x of [...this.lateWelcome]) {
+      if (this.handsEnded.has(x.hand)) {
+        this.lateWelcome.splice(this.lateWelcome.indexOf(x), 1);
+        continue;
+      }
+      if (k.era !== x.era || (k.seg ?? 0) !== x.seg || k.at < x.after) continue;
+      const left = x.stamp - k.now + k.at - DRIFT_RATE * Math.abs(x.stamp - k.now);
+      if (left - x.welcomeAt <= LATE_MS) continue;
+      this.lateWelcome.splice(this.lateWelcome.indexOf(x), 1);
+      this.noteHeld(x.hand, x.from);
+    }
   }
 
   /** Record a state frame of the hand being played: its hash, timing and whether we owed a move. */
