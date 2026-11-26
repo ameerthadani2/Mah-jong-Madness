@@ -73,8 +73,21 @@ export function rulesSummary(r: RuleSet, t: Translate, locale: Locale): string {
   const extras = ruleExtras(r)
     .map((e) => ruleExtraLabel(e, t))
     .join(' · ');
-  const main = t('common.rules.summary', { base: r.basePoints, tai: r.taiPoints, hands: r.handsPerMatch, speed: clockLabel(r, locale), turn: r.turnSeconds, bank: r.timeBankSeconds });
+  const main = t('common.rules.summary', { base: r.basePoints, tai: r.taiPoints, length: matchLength(r.handsPerMatch, t), speed: clockLabel(r, locale), turn: r.turnSeconds, bank: r.timeBankSeconds });
   return extras ? `${main} · ${extras}` : main;
+}
+
+/**
+ * A match's length. Taiwanese players count a match in 圈 of four 莊 each (一將 is 四圈), never in 局, which also counts the
+ * hands a dealer keeps: a whole number of 圈 reads 四圈, 兩圈 …, any other length 輪莊 N 次. `common.rules.roundCounts`
+ * names 1 to 16 圈 in each language: 一 … 十六 in Chinese, and in English the rotations they hold (4 … 64), since English
+ * counts dealer rotations either way, as the engine's describeRules does.
+ */
+export function matchLength(rotations: number, t: Translate): string {
+  const counts = t('common.rules.roundCounts').split(',');
+  const rounds = rotations / 4;
+  if (Number.isInteger(rounds) && rounds >= 1 && rounds <= counts.length) return t('common.rules.rounds', { count: counts[rounds - 1] });
+  return t('common.rules.rotations', { count: rotations });
 }
 
 /** Only the stakes ("底100 / 台20"), the same in every language. */

@@ -78,7 +78,7 @@ describe('rows', () => {
     ]);
     expect(v.rows[1].label).toBe('Rank 2, P2, solved in 1 minute 15 seconds');
     expect(v.rows[2].label).toBe('Rank 3, P3, Not solved');
-    expect(boardView(board, null, zh).rows[0].label).toBe('第 1 名，P1，用時 12 秒 解出');
+    expect(boardView(board, null, zh).rows[0].label).toBe('第 1 名，P1，12 秒解出');
     expect(v.empty).toBe(false);
   });
 

@@ -25,8 +25,8 @@
     "pong": "碰",
     "kong": "槓",
     "discard": "打",
-    "selfDrawWin": "自摸 胡!",
-    "win": "胡!"
+    "selfDrawWin": "自摸！",
+    "win": "胡！"
   },
   "coach": {
     "title": "Coach",
@@ -97,7 +97,7 @@
   "result": {
     "drawTitle": "流局",
     "drawSub": "Draw",
-    "wonTitle": "你胡了!",
+    "wonTitle": "你胡了！",
     "wonSub": "You won the hand!",
     "overTitle": "本局結束",
     "overSub": "Hand over",

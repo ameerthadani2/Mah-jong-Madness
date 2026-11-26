@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { BOT_SKILLS, DEFAULT_RULES, describeRules, RULE_LIMITS, RULE_PRESETS, rulesFromPreset, SPEED_PRESETS, type BotSkill, type GameSpeed } from '@mjm/engine';
-import { botDescription, botLabel, choosePreset, matchingPreset, presetDescription, presetName, RULE_GROUPS, ruleExtraLabel, rulesStakes, rulesSummary, sameRules, setRule, speedLabel } from './rules-text';
+import { botDescription, botLabel, choosePreset, matchLength, matchingPreset, presetDescription, presetName, RULE_GROUPS, ruleExtraLabel, rulesStakes, rulesSummary, sameRules, setRule, speedLabel } from './rules-text';
 import { translator } from './translator.fixture';
 
 const en = translator('en');
@@ -42,13 +42,28 @@ describe('rulesSummary', () => {
     expect(s).not.toMatch(/rotations|bank/);
   });
 
+  // The showcase review of 20 November: 底100 / 台20 · 16 局 · 一般. Players count a match in 圈 (一將 is 四圈), and 局 also
+  // counts the hands a dealer keeps; a number keeps its unit on one line (it wrapped as 15 / 秒).
+  it('counts a match in 圈 in zh-TW, never in 局, and keeps each number with its unit', () => {
+    const s = rulesSummary(DEFAULT_RULES, zh, 'zh-TW');
+    expect(s).toBe('底100 / 台20 · 四圈 · 一般（每手 15\u00a0秒 + 備用 30\u00a0秒）');
+    expect(s).not.toMatch(/\d+ 局/);
+    const length = (n: number) => matchLength(n, zh);
+    expect([4, 8, 12, 16, 32, 64].map(length)).toEqual(['一圈', '兩圈', '三圈', '四圈', '八圈', '十六圈']);
+    expect(length(6)).toBe('輪莊 6\u00a0次');
+    expect(length(1)).toBe('輪莊 1\u00a0次');
+    // English counts rotations, as describeRules does.
+    expect([4, 6, 16].map((n) => matchLength(n, en))).toEqual(['4 rotations', '6 rotations', '16 rotations']);
+    for (const id of ['taiwan-standard', 'turbo', 'beginner']) expect(presetDescription(RULE_PRESETS.find((p) => p.id === id)!, zh, 'zh-TW'), id).not.toMatch(/\d+ 局/);
+  });
+
   it('says Custom, not the speed\'s name, when the clock was changed by hand', () => {
     const fast = setRule(DEFAULT_RULES, 'speed', 'fast');
     expect(rulesSummary(fast, en, 'en')).toContain(`${SPEED_PRESETS.fast.label} (${SPEED_PRESETS.fast.turnSeconds}s`);
     const changed = setRule(fast, 'turnSeconds', 99);
     expect(rulesSummary(changed, en, 'en')).toContain('Custom (99s');
     expect(rulesSummary(changed, en, 'en')).not.toContain(SPEED_PRESETS.fast.label);
-    expect(rulesSummary(changed, zh, 'zh-TW')).toContain('自訂（每手 99 秒');
+    expect(rulesSummary(changed, zh, 'zh-TW')).toContain('自訂（每手 99\u00a0秒');
   });
 });
 

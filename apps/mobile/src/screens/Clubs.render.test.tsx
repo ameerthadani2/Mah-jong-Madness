@@ -254,8 +254,8 @@ describe('the club settings', () => {
     try {
       await renderClub(club('owner', { settings: { membersCanOpenTables: true, joinRequiresApproval: false, membersToCount: 3 } }));
       await fireEvent.press(screen.getByRole('button', { name: '規則' }));
-      expect(screen.getByText('計入排名所需成員數')).toBeOnTheScreen();
-      expect(screen.getByRole('button', { name: '3 位成員' })).toBeSelected();
+      expect(screen.getByText('計入排名所需會員數')).toBeOnTheScreen();
+      expect(screen.getByRole('button', { name: '3 位會員' })).toBeSelected();
     } finally {
       setLocalePreference('auto');
     }

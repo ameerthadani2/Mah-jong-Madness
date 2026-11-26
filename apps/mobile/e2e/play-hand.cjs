@@ -55,7 +55,7 @@ const visible = async (page, sel) => {
   while (Date.now() - started < 240000) {
     if (await visible(page, 'text=Next hand')) break;
     let el;
-    if ((el = await visible(page, 'text=/胡!/'))) { await tap(page, el); stats.wins++; await page.waitForTimeout(400); continue; }
+    if ((el = await visible(page, '[data-testid="claim-win"]'))) { await tap(page, el); stats.wins++; await page.waitForTimeout(400); continue; }
     if ((el = await visible(page, 'text="過"'))) { await tap(page, el); stats.passes++; await page.waitForTimeout(300); continue; }
     if ((el = await visible(page, 'text="打"'))) { await tap(page, el); stats.discards++; await page.waitForTimeout(300); continue; }
     // My discard turn: the first-game tap hint, or (once it has retired) the hand marked for discarding.

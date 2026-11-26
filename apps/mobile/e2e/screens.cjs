@@ -938,7 +938,7 @@ async function run(browser, port, [w, h]) {
     if (!done.has('win-hold') && (await visible(page, '[data-testid="win-reveal"]'))) { done.add('win-hold'); await page.waitForTimeout(700); await shot('win-hold'); }
     if (!done.has('callout') && (await visible(page, '[data-testid="call-banner"]'))) { done.add('callout'); await shot('callout'); }
     let el;
-    if ((el = await visible(page, 'text=/胡!/'))) { coach.push(...(await coachSettled(page, true))); feltFound.push(...(await feltSettled(page))); await tap(page, el); await page.waitForTimeout(400); continue; }
+    if ((el = await visible(page, '[data-testid="claim-win"]'))) { coach.push(...(await coachSettled(page, true))); feltFound.push(...(await feltSettled(page))); await tap(page, el); await page.waitForTimeout(400); continue; }
     if ((el = await visible(page, 'text="過"'))) {
       coach.push(...(await coachSettled(page, true)));
       feltFound.push(...(await feltSettled(page)));

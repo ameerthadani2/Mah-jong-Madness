@@ -15,7 +15,7 @@
   "looks": {
     "tileBack": "牌背",
     "frame": "頭像框",
-    "emotes": "表情包",
+    "emotes": "表情貼圖",
     "celebration": "胡牌慶祝",
     "default": "預設",
     "none": "還沒有，可以到商店看看。"
@@ -33,11 +33,11 @@
   "houseRules": "自訂規則（台灣麻將）",
   "presets": {
     "title": "預設規則",
-    "taiwan-standard": "底100 台20，16 局，一般速度。俱樂部的標準牌局。",
+    "taiwan-standard": "底100 台20，四圈，一般速度。俱樂部的標準牌局。",
     "small": "底50 台10。規則相同，輸贏比較小。",
     "big": "底300 台100。每一台都很重要。",
-    "turbo": "每手 7 秒、備用 10 秒，8 局。午休打一將剛好。",
-    "beginner": "時間寬鬆，封頂 8 台，4 局。",
+    "turbo": "每手 7 秒、備用 10 秒，兩圈。午休時間剛好打完。",
+    "beginner": "時間寬鬆，封頂 8 台，一圈。",
     "purist": "開啟過水：放過可胡的牌後，必須再摸一張牌才能胡。一張牌只能一家胡。",
     "party": "開啟一炮多響、無花 1 台，快速。"
   },
@@ -47,7 +47,7 @@
   "taiPoints": "每台點數",
   "maxTai": "封頂台數（0 = 不封頂）",
   "dealerStreakTai": "每次連莊加台",
-  "handsPerMatch": "每場局數",
+  "handsPerMatch": "每場輪莊次數",
   "handsFormat": "%{hands}（%{rounds} 圈）",
   "turnSeconds": "每手秒數",
   "timeBank": "每局備用時間（秒）",
@@ -93,7 +93,7 @@
     "signOutGuestWarning": "登出不會刪除伺服器上的資料，但之後就無法再找回這個訪客帳號，它的進度、鑽石、外觀和俱樂部都會遺失。請先登入以保留。",
     "signOutConfirm": "仍要登出",
     "delete": "刪除帳號",
-    "deleteBody": "這會從伺服器移除你的帳號、名字和俱樂部成員資格。你的鑽石和已擁有的外觀會永久消失，無法恢復。購買紀錄會保留。請輸入 %{word} 確認。",
+    "deleteBody": "這會從伺服器移除你的帳號、名字和俱樂部會員資格。你的鑽石和已擁有的外觀會永久消失，無法恢復。購買紀錄會保留。請輸入 %{word} 確認。",
     "deleteSubscription": "%{plan} 使用中（%{date} 續訂或到期）。刪除帳號不會取消訂閱：在你到 App Store 或 Google Play 取消之前，商店會繼續扣款。",
     "manageSubscription": "管理訂閱",
     "deleteSubscriptionAck": "我了解在商店取消之前，訂閱會繼續扣款",

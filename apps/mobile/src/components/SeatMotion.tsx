@@ -28,13 +28,14 @@ const played = new Set<number>();
 
 const NATIVE = Platform.OS !== 'web';
 
-// Win call-outs avoid the exact text "胡!" used by the claim button (and the e2e test).
+// Full-width ！ as in Chinese text. The win on a discard says 胡了！, not the claim button's 胡！, so a test that finds the
+// button by its text finds only the button; the e2e scripts find it by its test ID.
 const CALLOUT: Record<SeatReactionKind, { text: string; fill: string; edge: string; ink: string }> = {
-  pong: { text: '碰!', fill: colors.cta, edge: colors.ctaOutline, ink: '#FFFFFF' },
-  chow: { text: '吃!', fill: colors.info, edge: colors.infoShelf, ink: '#FFFFFF' },
-  kong: { text: '槓!', fill: colors.premium, edge: colors.premiumShelf, ink: '#FFFFFF' },
-  win: { text: '胡牌!', fill: colors.gold, edge: colors.goldDim, ink: colors.ink },
-  selfdraw: { text: '自摸!', fill: colors.gold, edge: colors.goldDim, ink: colors.ink },
+  pong: { text: '碰！', fill: colors.cta, edge: colors.ctaOutline, ink: '#FFFFFF' },
+  chow: { text: '吃！', fill: colors.info, edge: colors.infoShelf, ink: '#FFFFFF' },
+  kong: { text: '槓！', fill: colors.premium, edge: colors.premiumShelf, ink: '#FFFFFF' },
+  win: { text: '胡了！', fill: colors.gold, edge: colors.goldDim, ink: colors.ink },
+  selfdraw: { text: '自摸！', fill: colors.gold, edge: colors.goldDim, ink: colors.ink },
   dealin: { text: '放槍…', fill: colors.danger, edge: colors.dangerShelf, ink: '#FFFFFF' },
 };
 

@@ -39,6 +39,9 @@
     "clearHint": "If this keeps happening, the saved table may be damaged. Clearing it gives up that table; everything else is kept."
   },
   "rules": {
-    "summary": "底%{base} / 台%{tai} · %{hands} rotations · %{speed} (%{turn}s + %{bank}s bank)"
+    "summary": "底%{base} / 台%{tai} · %{length} · %{speed} (%{turn}s + %{bank}s bank)",
+    "rotations": "%{count} rotations",
+    "rounds": "%{count} rotations",
+    "roundCounts": "4,8,12,16,20,24,28,32,36,40,44,48,52,56,60,64"
   }
 }

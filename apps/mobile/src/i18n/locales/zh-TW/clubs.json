@@ -2,7 +2,7 @@
   "_review": "first pass, needs native review",
   "title": "俱樂部",
   "quickTable": "快速開桌",
-  "note": "俱樂部就是你的私人房間：你的規則、你的成員、你的排行榜。分享代碼，隨時隨地開打。",
+  "note": "俱樂部就是你的私人房間：你的規則、你的會員、你的排行榜。分享代碼，隨時隨地開打。",
   "join": {
     "title": "加入俱樂部",
     "placeholder": "俱樂部代碼",
@@ -14,9 +14,9 @@
     "new": "新俱樂部",
     "namePlaceholder": "俱樂部名稱",
     "preset": "預設規則",
-    "approval": "成員加入前需要核准",
+    "approval": "會員加入前需要核准",
     "button": "建立",
-    "fourWindsTitle": "經營俱樂部需要四風俱樂部會員",
+    "fourWindsTitle": "經營俱樂部需要四風俱樂部方案",
     "fourWindsBody": "訂閱四風俱樂部即可建立並經營最多 3 個俱樂部。加入俱樂部和在俱樂部打牌永遠免費。",
     "fourWindsButton": "查看四風俱樂部"
   },
@@ -35,21 +35,21 @@
   "tableLabel": "%{name} 的牌桌",
   "code": "代碼 %{code}",
   "memberCount": {
-    "one": "%{count} 位成員",
-    "other": "%{count} 位成員"
+    "one": "%{count} 位會員",
+    "other": "%{count} 位會員"
   },
   "guest": {
-    "body": "你還不是這個俱樂部的成員。加入後就能看到牌桌、排行榜和俱樂部規則。",
-    "approvalBody": "你還不是這個俱樂部的成員。新成員要先經過會長或管理員核准：送出申請，核准後俱樂部就會出現在「我的俱樂部」。",
+    "body": "你還不是這個俱樂部的會員。加入後就能看到牌桌、排行榜和俱樂部規則。",
+    "approvalBody": "你還不是這個俱樂部的會員。新會員要先經過會長或管理員核准：送出申請，核准後俱樂部就會出現在「我的俱樂部」。",
     "join": "加入這個俱樂部",
     "ask": "申請加入",
     "requested": "已送出申請。管理員核准後，俱樂部就會出現在「我的俱樂部」。",
-    "removed": "你已經不是這個俱樂部的成員了。"
+    "removed": "你已經不是這個俱樂部的會員了。"
   },
   "members": {
     "makeAdmin": "設為管理員",
     "makeMember": "改為一般會員",
-    "transfer": "轉讓負責人",
+    "transfer": "轉讓會長",
     "transferConfirm": "要把俱樂部轉讓給 %{name} 嗎？你會改為管理員。",
     "remove": "移除",
     "removeConfirm": "要將 %{name} 移出俱樂部嗎？他也會離開正在進行的俱樂部牌桌。他的排名成績會保留，重新加入後就會恢復。",
@@ -107,17 +107,17 @@
     "presets": "預設規則",
     "speed": "速度",
     "speedChip": "%{label} %{turn}秒",
-    "membersCanOpen": "成員可以開桌",
-    "approveNew": "新成員需要核准",
+    "membersCanOpen": "會員可以開桌",
+    "approveNew": "新會員需要核准",
     "multipleWinners": "一炮多響",
     "passRule": "過水",
     "allowChi": "可以吃",
     "adminOnly": "只有會長和管理員可以修改規則。",
     "botSkill": "俱樂部電腦等級",
     "botSkillNote": "俱樂部的每一桌都使用這個等級的電腦。",
-    "membersToCount": "計入排名所需成員數",
-    "membersToCountNote": "一場比賽開始時至少要有這麼多位成員入座，才會計入排名；其餘座位由電腦補上。修改只適用於之後開始的比賽。",
-    "membersToCountChip": "%{n} 位成員",
+    "membersToCount": "計入排名所需會員數",
+    "membersToCountNote": "一場比賽開始時至少要有這麼多位會員入座，才會計入排名；其餘座位由電腦補上。修改只適用於之後開始的比賽。",
+    "membersToCountChip": "%{n} 位會員",
     "houseNote": "會員開的桌一律使用這套房規。"
   },
   "signIn": {
@@ -147,7 +147,7 @@
     "message": "來 %{app} 加入我的俱樂部「%{name}」！俱樂部代碼 %{code}：%{link}"
   },
   "owner": {
-    "restricted": "這個俱樂部目前不在有效的四風俱樂部會員涵蓋範圍內（負責人的會員已過期，或已用於另外 3 個俱樂部），在負責人續訂或轉讓俱樂部之前，只能同時開一桌。",
+    "restricted": "這個俱樂部目前不在有效的四風俱樂部方案涵蓋範圍內（會長的方案已過期，或已用於另外 3 個俱樂部），在會長續訂或轉讓俱樂部之前，只能同時開一桌。",
     "renew": "續訂"
   },
   "ruleEditor": {
@@ -196,12 +196,12 @@
   "errors": {
     "cannotJoin": "你無法加入這個俱樂部。",
     "ownLimit": "每個帳號最多只能經營 %{max} 個俱樂部。",
-    "lapsedCap": "負責人續訂四風俱樂部前，這個俱樂部只能同時開一桌。",
+    "lapsedCap": "會長續訂四風俱樂部前，這個俱樂部只能同時開一桌。",
     "confirmName": "請完整輸入俱樂部名稱才能刪除。",
     "tableNotFound": "這一桌已經關閉了。",
     "notBanned": "這個帳號沒有被封鎖。",
-    "adminOnAdmin": "只有負責人可以移除或封鎖管理員。",
-    "ownerProtected": "負責人不能被移除或封鎖。",
+    "adminOnAdmin": "只有會長可以移除或封鎖管理員。",
+    "ownerProtected": "會長不能被移除或封鎖。",
     "notYourself": "你不能對自己這麼做。",
     "transferLimit": "這位會員已經經營 %{max} 個俱樂部，已達每個帳號的上限。",
     "joinRateIp": "這個網路連線加入的俱樂部太多了，請一小時後再試。",

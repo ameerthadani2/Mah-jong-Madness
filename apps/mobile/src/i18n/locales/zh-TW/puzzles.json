@@ -63,7 +63,7 @@
     "waits": "聽："
   },
   "types": {
-    "discard": "最佳打牌",
+    "discard": "打哪張？",
     "waits": "看聽牌",
     "defence": "防守",
     "claim": "吃碰判斷",
@@ -118,7 +118,7 @@
   "claim": {
     "intro": "%{seat}打出%{tile}，你要怎麼做？",
     "yourHand": "你的手牌",
-    "yourMelds": "你的面子",
+    "yourMelds": "你亮出的牌",
     "pass": "不要",
     "chi": "用%{a}%{b}吃%{tile}",
     "pong": "碰%{tile}",
@@ -138,7 +138,7 @@
   },
   "value": {
     "intro": "好幾種打法都能聽牌，打哪一張最有價值？",
-    "yourMelds": "你的面子",
+    "yourMelds": "你亮出的牌",
     "seatWind": "門風 %{wind}",
     "roundWind": "圈風 %{wind}",
     "good": "最有價值！",
@@ -172,7 +172,7 @@
   "server": {
     "ranked": "已列入排名",
     "unranked": "未列入排名：無法連上遊戲伺服器。成績已保存在這台裝置上。",
-    "time": "用時 %{n} 秒",
+    "time": "時間 %{n} 秒",
     "newRun": "開始新的一輪",
     "checking": "正在向遊戲伺服器確認…",
     "starting": "正在開始這一輪…",
@@ -189,7 +189,7 @@
       "runNotFound": "遊戲伺服器找不到這一輪。請開始新的一輪。",
       "runFinished": "這一輪已經記錄過了。",
       "runExpired": "這一輪已經過期。開始新的一輪，就能挑戰排行榜。",
-      "forbidden": "只有俱樂部成員才能查看這個俱樂部的排行榜。",
+      "forbidden": "只有俱樂部會員才能查看這個俱樂部的排行榜。",
       "notFound": "遊戲伺服器找不到這個項目，請再試一次。",
       "rateLimited": "短時間內送出太多謎題請求。請稍等幾秒再試。",
       "unreachable": "無法連上遊戲伺服器，這次成績不列入排名。",
@@ -217,14 +217,14 @@
     "everyone": "所有玩家",
     "scopeA11y": "顯示：%{name}",
     "notes": {
-      "daily": "今天的謎題：先比是否解出，再比誰最快。",
+      "daily": "今天的謎題：先比有沒有解出來，再比誰最快。",
       "rush": "每位玩家在這段期間的最佳分數。",
       "rating": "至少有 %{count} 次計分作答的玩家，積分高者在前。"
     },
     "columns": {
       "rank": "名次",
       "player": "玩家",
-      "daily": "用時",
+      "daily": "時間",
       "rush": "分數",
       "rating": "積分"
     },
@@ -240,7 +240,7 @@
     },
     "minutesSecondsSpoken": "%{m} %{s}",
     "notSolved": "未解出",
-    "solvedIn": "用時 %{time} 解出",
+    "solvedIn": "%{time}解出",
     "scoreSpoken": {
       "one": "%{count} 分",
       "other": "%{count} 分"
@@ -279,7 +279,7 @@
     "playRush": "玩謎題衝刺",
     "errors": {
       "invalid": "遊戲伺服器無法讀取這個排行榜請求，請再試一次。",
-      "forbidden": "只有俱樂部成員才能查看這個俱樂部的排行榜。改為顯示所有玩家。",
+      "forbidden": "只有俱樂部會員才能查看這個俱樂部的排行榜。改為顯示所有玩家。",
       "notFound": "這個俱樂部已不存在。改為顯示所有玩家。",
       "rateLimited": "短時間內查看排行榜太多次。請稍等幾秒再試。",
       "badReply": "遊戲伺服器的回覆無法讀取，請再試一次。",

@@ -121,7 +121,7 @@ describe('the line under a club in My clubs', () => {
 
   it('shows members, open tables and stakes for a club this player belongs to', () => {
     expect(clubListLine(mine(3, 2), en)).toBe(`3 members · 2 tables open · ${rulesStakes(DEFAULT_RULES)}`);
-    expect(clubListLine(mine(3, 2), zh)).toBe(`3 位成員 · 2 張牌桌開放中 · ${rulesStakes(DEFAULT_RULES)}`);
+    expect(clubListLine(mine(3, 2), zh)).toBe(`3 位會員 · 2 張牌桌開放中 · ${rulesStakes(DEFAULT_RULES)}`);
     expect(clubListLine(mine(0, 0), en)).toContain('0 members · 0 tables open');
   });
 
@@ -129,14 +129,14 @@ describe('the line under a club in My clubs', () => {
     expect(clubListLine(mine(1, 1), en)).toBe(`1 member · 1 table open · ${rulesStakes(DEFAULT_RULES)}`);
     expect(en('clubs.memberCount', { count: 1 })).toBe('1 member');
     expect(en('clubs.memberCount', { count: 2 })).toBe('2 members');
-    expect(zh('clubs.memberCount', { count: 1 })).toBe('1 位成員');
+    expect(zh('clubs.memberCount', { count: 1 })).toBe('1 位會員');
   });
 
   it('shows the member count alone for a club the player has only asked to join (the server sends no rules)', () => {
     // What GET /api/users/:id/clubs returns for a pending request: the public view.
     const pending = { code: 'AB12', name: 'Dragon Gate', description: '', memberCount: 4, joinRequiresApproval: true };
     expect(clubListLine(pending, en)).toBe('4 members');
-    expect(clubListLine(pending, zh)).toBe('4 位成員');
+    expect(clubListLine(pending, zh)).toBe('4 位會員');
   });
 });
 

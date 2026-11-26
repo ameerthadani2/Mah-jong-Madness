@@ -18,7 +18,7 @@
   "roles": {
     "owner": "會長",
     "admin": "管理員",
-    "member": "成員",
+    "member": "會員",
     "guest": "訪客"
   },
   "typeValue": "點一下直接輸入數字",
@@ -39,6 +39,9 @@
     "clearHint": "如果一直出現這個畫面，可能是保存的牌桌資料損壞了。清除後就不能再回到那一桌，其他資料都會保留。"
   },
   "rules": {
-    "summary": "底%{base} / 台%{tai} · %{hands} 局 · %{speed}（每手 %{turn} 秒 + 備用 %{bank} 秒）"
+    "summary": "底%{base} / 台%{tai} · %{length} · %{speed}（每手 %{turn}\u00a0秒 + 備用 %{bank}\u00a0秒）",
+    "rotations": "輪莊 %{count}\u00a0次",
+    "rounds": "%{count}圈",
+    "roundCounts": "一,兩,三,四,五,六,七,八,九,十,十一,十二,十三,十四,十五,十六"
   }
 }

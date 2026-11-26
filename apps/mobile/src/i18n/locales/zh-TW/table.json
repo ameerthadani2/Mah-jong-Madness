@@ -25,8 +25,8 @@
     "pong": "碰",
     "kong": "槓",
     "discard": "打",
-    "selfDrawWin": "自摸 胡!",
-    "win": "胡!"
+    "selfDrawWin": "自摸！",
+    "win": "胡！"
   },
   "coach": {
     "title": "教練",
@@ -97,7 +97,7 @@
   "result": {
     "drawTitle": "流局",
     "drawSub": "",
-    "wonTitle": "你胡了!",
+    "wonTitle": "你胡了！",
     "wonSub": "",
     "overTitle": "本局結束",
     "overSub": "",
@@ -105,8 +105,8 @@
     "drawPasses": "牌摸完了，流局。莊家下莊。",
     "nextHand": "下一局",
     "waiting": "等待其他玩家…",
-    "review": "複盤",
-    "reviewMyHand": "複盤這一局",
+    "review": "覆盤",
+    "reviewMyHand": "覆盤這一局",
     "leaveTable": "離開牌桌",
     "autoNext": "線上牌桌過幾秒就會自動開下一局。",
     "nextHandIn": "%{n} 秒後開下一局",
@@ -123,11 +123,11 @@
   "ratingPending": "正在更新快速配對積分…",
   "backHome": "回首頁",
   "quickChat": {
-    "nice": "讚喔!",
-    "sorry": "歹勢!",
+    "nice": "讚喔！",
+    "sorry": "歹勢！",
     "gg": "GG",
-    "hurry": "快一點!",
-    "goodHand": "好牌!",
+    "hurry": "快一點！",
+    "goodHand": "好牌！",
     "dealtIn": "放槍了…",
     "oneMore": "再來一局",
     "faster": "等到花兒都謝了…"
@@ -221,7 +221,7 @@
     "kong": "槓",
     "discard": "打出",
     "win": "胡牌",
-    "selfDrawWin": "自摸胡牌",
+    "selfDrawWin": "自摸",
     "callout": "%{name}：%{call}",
     "drawsLeft": "牌牆剩 %{n} 張",
     "hand": "你的手牌，共 %{n} 張",

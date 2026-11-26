@@ -1,7 +1,7 @@
 {
   "_review": "first pass, needs native review",
   "engineReason": "%{text}",
-  "title": "複盤",
+  "title": "覆盤",
   "grade": {
     "best": "最佳",
     "good": "不錯",
@@ -10,15 +10,15 @@
     "blunder": "大失誤 ??"
   },
   "gradeCount": "%{label} %{n}",
-  "dailyUsedTitle": "今日複盤次數已用完",
-  "dailyUsedText": "免費帳號每天可以完整複盤一局。四風俱樂部每一局都幫你複盤。",
+  "dailyUsedTitle": "今天的覆盤次數已用完",
+  "dailyUsedText": "免費帳號每天可以完整覆盤一局。四風俱樂部每一局都幫你覆盤。",
   "seePlans": "查看方案",
   "back": "返回",
-  "nothing": "還沒有可以複盤的牌局，先打完一局吧。",
+  "nothing": "還沒有可以覆盤的牌局，先打完一局吧。",
   "accuracyOver": "%{n} 次決策的準確率",
   "rolling": {
-    "one": "最近 %{count} 局複盤的平均準確率：%{pct}%",
-    "other": "最近 %{count} 局複盤的平均準確率：%{pct}%"
+    "one": "最近 %{count} 局覆盤的平均準確率：%{pct}%",
+    "other": "最近 %{count} 局覆盤的平均準確率：%{pct}%"
   },
   "keyMoments": "關鍵時刻",
   "clean": "漂亮的一局：每個決策都和教練一致",
