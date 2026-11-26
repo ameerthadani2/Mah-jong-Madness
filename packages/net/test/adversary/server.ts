@@ -240,6 +240,8 @@ export class Server implements Adversary {
         r.s.until = this.now + act.downMs;
         return;
       case 'sleep':
+        // The app goes to the background: since unit 20h a save still waiting is written then (`App.flush`).
+        phone.app.flush();
         phone.asleep = true;
         r.s.until = this.now + act.forMs;
         return;

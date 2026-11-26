@@ -74,11 +74,13 @@ export interface JournalLogic {
   afterSave(j: MoveJournal, signalUrl: string, matchId: string, sentSeq: number): MoveJournal;
   journalOf(j: MoveJournal, signalUrl: string, matchId: string): unknown[] | undefined;
   keptFor(j: MoveJournal, held: (signalUrl: string, matchId: string) => boolean): MoveJournal;
+  /** Since unit 20h: the journal without one match's list (game/slotWriter.ts drops it before the slot gives the match's record up while the archive is behind). */
+  withoutMatch?(j: MoveJournal, signalUrl: string, matchId: string): MoveJournal;
 }
 
-async function appLogic<T>(file: string): Promise<T | null> {
+async function appLogic<T>(file: string, dir = 'logic'): Promise<T | null> {
   const root = tree ?? checkout;
-  const rel = join('apps/mobile/src/logic', file);
+  const rel = join('apps/mobile/src', dir, file);
   return existsSync(join(root, rel)) ? ((await load(root, rel)) as T) : null;
 }
 
@@ -91,6 +93,27 @@ export const journalLogic = await appLogic<JournalLogic>('moveJournal.ts');
  * welcomed into a match it holds no record of asks for one by match, a stale saved table is archived at launch.
  */
 export const BY_MATCH = typeof archiveLogic?.archivedMatch === 'function';
+
+/** The app's save schedule (apps/mobile/src/game/persist.ts; a copy of the code holding only `logic` has none). */
+export interface PersistLogic {
+  saveScheduler(save: () => void): { flush?: () => void };
+}
+/** The app's order of writes for the saved table and the archive (apps/mobile/src/game/slotWriter.ts, since unit 20h). */
+export interface SlotWriterLogic {
+  leavingMatch(stored: unknown, next: unknown): { signalUrl: string; matchId: string } | null;
+}
+const persistLogic = await appLogic<PersistLogic>('persist.ts', 'game');
+export const slotWriterLogic = await appLogic<SlotWriterLogic>('slotWriter.ts', 'game');
+/**
+ * Since unit 20h the app writes a save still waiting when the table screen goes or the app goes to the background
+ * (`flush`), instead of dropping it; before, a save still waiting went with the screen.
+ */
+export const SAVE_FLUSH = typeof persistLogic?.saveScheduler(() => undefined).flush === 'function';
+/**
+ * Since unit 20h the saved table gives a record up on the device only once the archive holds it (game/slotWriter.ts): while
+ * the archive cannot be written, the slot keeps the record, or the journal's list of the match goes first.
+ */
+export const ORDERED_WRITES = typeof slotWriterLogic?.leavingMatch === 'function';
 
 /** docs/FAIRNESS.md of the checkout this folder sits in: the stated limits the oracle names are quoted from it. */
 export const fairnessDocPath = join(checkout, 'docs', 'FAIRNESS.md');

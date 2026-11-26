@@ -90,6 +90,16 @@ describe('records found by match, and saved tables gone stale', () => {
   });
 });
 
+describe('the save still waiting when the table screen goes', () => {
+  it('is written (not dropped) when the screen goes and when the app goes to the background (behaviour: AppSaves.render.test.tsx)', () => {
+    const at = code.indexOf('const scheduler = saveScheduler(save);');
+    const effect = code.slice(at, code.indexOf('}, [session, shown, profile.avatar, signalUrl, putActive]);', at));
+    expect(effect).toContain("if (st !== 'active') scheduler.flush();");
+    expect(effect).toContain('scheduler.flush();');
+    expect(effect).not.toContain('scheduler.cancel();');
+  });
+});
+
 describe('the journal of moves', () => {
   it('is handed to the table clients, and drops the moves of a record once it is written', () => {
     expect(code).toContain('setMoveJournalSource(journal);');

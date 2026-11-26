@@ -11,7 +11,7 @@
  */
 import type { Action, GameState, RuleSet } from '@mjm/engine';
 import type { ClientMessage, HostMessage, KeptRecord, Link, LoopbackHub, LoopbackTransport, SerializedClient, SerializedHost, TableClient, TableHost } from '../../src/index';
-import { archiveLogic, BY_MATCH, engine, journalLogic, net, redLogic, slotLogic, type ArchivedTable, type KeptRed, type MoveJournal, type Net, type Slot } from './load';
+import { archiveLogic, BY_MATCH, engine, journalLogic, net, ORDERED_WRITES, redLogic, SAVE_FLUSH, slotLogic, slotWriterLogic, type ArchivedTable, type KeptRed, type MoveJournal, type Net, type Slot } from './load';
 import { hashOf } from './random';
 import { CLOCKS, type MoveKind, type Scenario, type StateKind } from './scenario';
 import type { Truth } from './truth';
@@ -193,6 +193,13 @@ export class App {
    * memory but are not written (a journal whose write fails is taken off the device); the red hands still are.
    */
   failing = false;
+  /**
+   * Only the archive's writes fail from now on (a nearly full storage: the archive is the app's largest write, up to a
+   * million characters); the saved table, the journal and the red hands are still written.
+   */
+  archiveFails = false;
+  /** The device's archive is older than the one in memory (a write of it failed since the last one that went through). */
+  private archiveBehind = false;
   saves = 0;
   private unsub: (() => void) | null = null;
   private kicked = false;
@@ -240,6 +247,15 @@ export class App {
       this.save();
     }
   }
+  /**
+   * A save still waiting is written now: the table screen goes, or the app goes to the background (persist.ts `flush`,
+   * since unit 20h, `SAVE_FLUSH`; before, a save still waiting went with the screen).
+   */
+  flush(): void {
+    if (this.pendingAt === null || !SAVE_FLUSH) return;
+    this.pendingAt = null;
+    this.save();
+  }
   save(): void {
     const c = this.phone.client;
     if (!c) return;
@@ -253,12 +269,18 @@ export class App {
    * once and are then written to the device, unless writes fail (`failing`).
    */
   put(next: App['slot']): void {
+    const prev = this.slot;
+    let changed = false;
     if (archiveLogic) {
-      const prev = this.slot;
       const c = this.phone.client;
       const live = () => (prev && c && c.state.matchId === prev.client?.state?.matchId ? (JSON.parse(JSON.stringify(c.serialize())) as SerializedClient) : undefined);
-      this.archive = [...archiveLogic.archiveOnSlotChange(this.archive, prev, next, live, this.now())];
+      const kept = archiveLogic.archiveOnSlotChange(this.archive, prev, next, live, this.now());
+      changed = kept !== this.archive;
+      this.archive = [...kept];
     }
+    // The slot is given anything but the open table (app-state.tsx `putActive`): a save still waiting for that table is
+    // dropped, not written back when the screen goes (the archive took the record its client holds now).
+    if (!next || next.roomCode !== this.phone.sim.room) this.pendingAt = null;
     this.slot = next;
     this.slotAt = next?.client ? this.phone.sim.clock.now : null;
     // The journal (app-state.tsx): kept for the matches the app keeps a record of.
@@ -267,10 +289,25 @@ export class App {
       this.setJournal(journalLogic.keptFor(this.journal, (_u, m) => m === open || m === next?.client?.state?.matchId || this.archive.some((e) => e.matchId === m)));
     }
     if (this.failing) return;
+    // The archive, then the slot. Since unit 20h (game/slotWriter.ts, `ORDERED_WRITES`) the slot gives a record up on the
+    // device only once the archive holds it: while the archive cannot be written, the slot keeps the record when no table
+    // takes its place, and otherwise the journal's list of the match that leaves goes first. Before, the slot was emptied
+    // or replaced whatever became of the archive's write.
+    if (changed || (ORDERED_WRITES && this.archiveBehind)) {
+      if (this.archiveFails) this.archiveBehind = true;
+      else {
+        this.archiveStored = clone(this.archive);
+        this.archiveBehind = false;
+      }
+    }
+    const leaving = ORDERED_WRITES && slotWriterLogic ? slotWriterLogic.leavingMatch(this.slotStored, next) : null;
+    if (leaving && this.archiveBehind) {
+      if (!next) return;
+      if (APP_JOURNAL && journalLogic?.withoutMatch) this.setJournal(journalLogic.withoutMatch(this.journal, leaving.signalUrl, leaving.matchId));
+    }
     this.saves++;
     this.slotStored = clone(next);
     this.slotStoredAt = this.slotAt;
-    this.archiveStored = clone(this.archive);
     this.phone.sim.truth.saved(this.phone, next?.client ?? null);
     // Once the record is written, the moves it holds leave the journal.
     const m = next?.client?.state?.matchId;
@@ -328,14 +365,21 @@ export class App {
     const max = slotLogic?.SAVED_TABLE_MAX_AGE_MS ?? 12 * HOUR;
     if (this.slot && this.now() - this.slot.savedAt > max) {
       const stale = BY_MATCH && slotLogic?.staleOnlineSession ? slotLogic.staleOnlineSession(clone(this.slot), this.now()) : null;
+      let wrote = true;
       if (stale && archiveLogic) {
         this.archive = [...archiveLogic.archiveOnSlotChange(this.archive, stale, null, () => undefined, this.now())];
-        if (!this.failing) this.archiveStored = clone(this.archive);
+        wrote = !this.failing && !this.archiveFails;
+        if (wrote) this.archiveStored = clone(this.archive);
+        else this.archiveBehind = true;
       }
-      // storage.ts loadActiveSession removes the key (a removal goes through on a full storage).
+      // storage.ts loadActiveSession removes the key (a removal goes through on a full storage); since unit 20h only once
+      // the archive holding it was written (`ORDERED_WRITES`): until then the device's slot keeps it, not offered on Home.
       this.slot = null;
-      this.slotStored = null;
-      this.slotAt = this.slotStoredAt = null;
+      this.slotAt = null;
+      if (!ORDERED_WRITES || wrote) {
+        this.slotStored = null;
+        this.slotStoredAt = null;
+      }
     }
     this.journal = this.journalStored ?? [];
   }
@@ -435,8 +479,9 @@ export class Phone {
     this.sim.closeLine(this.line, { phone: true, host: opts.host, tell: true });
     this.reconnectAt = this.sim.clock.now + ms;
   }
-  /** Leave the table screen: the client and its link go (a save still waiting goes with them). */
+  /** Leave the table screen: the client and its link go (a save still waiting is written first since unit 20h, `App.flush`; before, it went with them). */
   leave(): void {
+    if (this.kind === 'victim' && this.client) this.app.flush();
     if (this.line) this.sim.closeLine(this.line, { phone: true, host: true, tell: false });
     if (this.client && this.kind === 'victim') this.sim.truth.runEnded(this, this.client);
     this.app.detach();

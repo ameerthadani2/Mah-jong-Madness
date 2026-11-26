@@ -72,6 +72,20 @@ describe('saving the table record', () => {
     expect(save).toHaveBeenCalledTimes(2);
   });
 
+  it('a save still waiting is written at once when flushed (the table screen goes, the app goes to the background), and only once', () => {
+    const save = vi.fn();
+    const s = saveScheduler(save);
+    s.flush();
+    expect(save).not.toHaveBeenCalled();
+    s.changed('idle');
+    s.flush();
+    expect(save).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(5 * SAVE_DELAY_MS);
+    expect(save).toHaveBeenCalledTimes(1);
+    s.flush();
+    expect(save).toHaveBeenCalledTimes(1);
+  });
+
   it('a cancelled save never runs', () => {
     const save = vi.fn();
     const s = saveScheduler(save);

@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { BackHandler, Platform } from 'react-native';
+import { AppState as AppLifecycle, BackHandler, Platform } from 'react-native';
 import { DEFAULT_PROFILE, DEFAULT_PROGRESS, DEFAULT_SETTINGS, storage, type ActiveSession, type Profile, type Progress, type Settings } from './storage';
-import { clientSaves, saveScheduler } from './game/persist';
+import { clientSaves, saveScheduler, type SaveScheduler } from './game/persist';
 import { setArchivedTableSource, setKeptMatchSource, setMoveJournalSource, setRedHandsSource, setSavedClientSource, setSavedTokenSource, type CloseOptions, type Session } from './game/session';
 import { redFor, withRed, type KeptRed } from './logic/redHands';
 import { archivedFor, archivedMatch, archiveOnSlotChange, type ArchivedTable } from './logic/tableArchive';
@@ -206,6 +206,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const redRef = useRef<readonly KeptRed[]>([]);
   const sessionRef = useRef<Session | null>(null);
   sessionRef.current = session;
+  // The open table's save schedule (the effect below), so that a slot that gives the table up drops a save still waiting for it.
+  const openSave = useRef<{ session: Session; scheduler: SaveScheduler } | null>(null);
   /**
    * Put `next` in the saved-table slot (null empties it). The online table whose record leaves the slot (it is gone, given
    * up, or another table takes the slot) is kept in the archive while its match is not over, with the record its client
@@ -220,6 +222,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       return prev?.kind === 'online' && open?.mode === 'online' && open.roomCode === prev.roomCode && open.serverUrl === prev.signalUrl ? open.client.serialize() : undefined;
     };
     const kept = archiveOnSlotChange(archiveRef.current, prev, next, live, Date.now());
+    // The slot is given up for anything but the open table (that table is gone, given up, or over): a save still waiting
+    // for it is dropped, not written back into the slot when the table screen goes (the archive took the record its
+    // client holds now, when the slot held it).
+    const o = openSave.current;
+    const ofOpen = (r: ActiveSession | null) => !!r && !!o && (r.kind === 'local' ? o.session.mode === 'local' : o.session.mode === 'online' && o.session.roomCode === r.roomCode && (o.session.serverUrl ?? r.signalUrl) === r.signalUrl);
+    if (o && !ofOpen(next)) o.scheduler.cancel();
     const changed = kept !== archiveRef.current;
     if (changed) archiveRef.current = [...kept];
     activeRef.current = next;
@@ -320,12 +328,21 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const unsubRed = session.onChange(keepRed);
     keepRed();
     const unsubHost = session.host?.onChange(() => scheduler.changed());
+    // A save still waiting is written when the app goes to the background (it may be stopped there), and when the table
+    // screen goes (below): Home's Resume restores what was saved last, so what reached the phone in the moment before is
+    // kept (src/game/persist.ts).
+    const lifecycle = AppLifecycle.addEventListener('change', (st) => {
+      if (st !== 'active') scheduler.flush();
+    });
+    openSave.current = { session, scheduler };
     scheduler.changed();
     return () => {
       unsubClient();
       unsubRed();
       unsubHost?.();
-      scheduler.cancel();
+      lifecycle.remove();
+      if (openSave.current?.scheduler === scheduler) openSave.current = null;
+      scheduler.flush();
     };
   }, [session, shown, profile.avatar, signalUrl, putActive]);
 

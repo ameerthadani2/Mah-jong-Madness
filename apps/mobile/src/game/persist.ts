@@ -7,10 +7,12 @@
  * the record then says that this phone has committed to (or revealed in) an attempt, and an app
  * killed in the next instant comes back knowing it. That only narrows the window: the first hand
  * after a restart stays amber, because a restarted app cannot prove the save happened
- * (docs/FAIRNESS.md). So is the change that says the seat was opened on another device: the table
- * screen goes soon after, and a save still waiting goes with it, while Home's Resume restores what
- * was saved last; and the one that says another device held the seat before this client took it
- * back (the table's first welcome to it): a client restored from an older record would not know.
+ * (docs/FAIRNESS.md). So is the change that says the seat was opened on another device, and the
+ * one that says another device held the seat before this client took it back (the table's first
+ * welcome to it): a client restored from an older record would not know. A save still waiting when
+ * the table screen goes, or when the app goes to the background, is written then (`flush`), not
+ * dropped: Home's Resume restores what was saved last, so what reached the phone in the moment
+ * before is kept. Only an app stopped outright loses it.
  */
 import type { ClientState } from '@mjm/net';
 
@@ -25,7 +27,9 @@ export interface SaveScheduler {
    * save at once whatever the ceremony.
    */
   changed(ceremony?: ClientState['ceremony'], now?: boolean): void;
-  /** Drop a save that is still waiting (the screen is going away). */
+  /** Write a save that is still waiting, now (the table screen is going away, or the app to the background). */
+  flush(): void;
+  /** Drop a save that is still waiting (the saved table gave the table up: what it holds went to the archive). */
   cancel(): void;
 }
 
@@ -54,6 +58,11 @@ export function saveScheduler(save: () => void, delayMs: number = SAVE_DELAY_MS)
         timer = null;
         save();
       }, delayMs);
+    },
+    flush() {
+      if (timer === null) return;
+      cancel();
+      save();
     },
     cancel,
   };
