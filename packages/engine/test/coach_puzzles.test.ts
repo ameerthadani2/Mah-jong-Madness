@@ -119,4 +119,43 @@ describe('the coach and the discard puzzles', () => {
     expect(ready.discardReason).toBe('Discard 五條 (5 Bamboo): an opponent may be close to ready, and it is the safer tile. Throwing 三萬 (3 Character) instead would leave you more winning tiles (1 more).');
     expect(zh(ready)).toBe('打 五條：有對手可能快聽牌了，這張比較安全。打 三萬 會多聽 1 張。');
   });
+
+  it('says it folds when it gives up a step for safety, and never counts a trade it did not make', () => {
+    const distance = (d: Hint['discards'][number]) => d.rank ?? d.shanten;
+    const s = playedTo('fold-pin-28', 39);
+    const h = hintFor(s, 3);
+    expect(h.discardReasonKey).toBe('hint.discard.fold');
+    expect(h.discardReason).toBe('An opponent looks ready. Discard 一萬 (1 Character), a safer tile, rather than pushing a dangerous one: losing this hand costs less than paying for theirs.');
+    expect(zh(h)).toBe('有對手看起來已經聽牌。打 一萬 這張較安全的牌，不要硬打危險牌：放棄這手牌，比付對方的台便宜。');
+    expect(distance(h.bestDiscard!)).toBeGreaterThan(Math.min(...h.discards.map(distance)));
+    // Over whole hands: the line says fold exactly when the tile is further from ready than the best one, and a
+    // trade always names a positive number of tiles given up (dropping the fold rule printed "(-29 more)").
+    let decisions = 0;
+    let folds = 0;
+    for (const seed of ['fold-pin-13', 'fold-pin-28', 'fold-pin-49', 'fold-pin-72', 'fold-pin-96', 'fold-pin-114']) {
+      let g = newGame(seed);
+      for (let step = 0; step < 400 && g.phase !== 'ended'; step++) {
+        if (g.phase === 'discard') {
+          const x = hintFor(g, g.turn);
+          const gaveUpStep = distance(x.bestDiscard!) > Math.min(...x.discards.map(distance));
+          expect(x.discardReasonKey === 'hint.discard.fold', `${seed} step ${step}: ${x.discardReason}`).toBe(gaveUpStep);
+          const more = x.discardReasonParams?.more;
+          if (typeof more === 'number') expect(more, `${seed} step ${step}`).toBeGreaterThan(0);
+          decisions++;
+          if (gaveUpStep) folds++;
+        }
+        let acted = false;
+        for (let seat = 0; seat < 4 && !acted; seat++) {
+          const a = chooseAction(g, seat, { skill: 'club', seed: `run${seat}` });
+          if (a) {
+            g = applyAction(g, seat, a);
+            acted = true;
+          }
+        }
+        if (!acted) break;
+      }
+    }
+    expect(decisions).toBeGreaterThan(250);
+    expect(folds).toBeGreaterThan(0);
+  });
 });
