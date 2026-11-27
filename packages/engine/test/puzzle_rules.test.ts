@@ -200,6 +200,7 @@ describe('easy and medium discard drills stay as recorded', () => {
       const all = Array.from({ length: 120 }, (_, i) => discardPuzzle(`pin-${i}`, d));
       const recorded = all.map(({ reasonKey: _k, explanation: _e, explanationZh: _z, ...rest }) => rest);
       expect(sha256Hex(JSON.stringify(recorded))).toBe(pinned[d]);
-    });
+      // 120 medium puzzles walk to their depth: a few seconds, past the default 5 s when the machine is busy.
+    }, 30_000);
   }
 });
