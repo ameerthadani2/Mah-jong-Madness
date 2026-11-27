@@ -18,6 +18,15 @@
  *   bank from the rules, and fail a hand whose bank shrank further than the seat's own moves allow);
  * - a seat the snapshot calls a bot must not have made a move its own player chose in the hand in play
  *   or in any hand record (the apps freeze the bot seats at the match's first deal);
+ * - a seat the snapshot calls a player must have someone to give it back to, its account or its
+ *   rejoin token, unless it is an empty seat in the lobby or its player left the table (the table
+ *   plays that seat until they come back): a bot's seat called a player's would hold the table up
+ *   waiting on a seat nobody can take;
+ * - the hand records must be this match's hands so far, in order: one for each hand before the
+ *   match position (numbered 0, 1, 2, …), each naming this match, with a seed, its moves and a final
+ *   hash of the engine's form. The earlier hands are not replayed here (the players' apps replay
+ *   every record they get, and replaying a long match at every restore would cost about 3 ms a
+ *   hand); the last hand is checked against its record as above;
  * - the seats, time banks, hand records and match position must have the shape the host needs.
  *
  * `snapshotProblem` answers what is wrong, in a few words for the log and the admin view, or null.
@@ -44,6 +53,40 @@ function botSeatsProblem(data: Obj): string | null {
     if (s.isBot !== true || (s.name as string).endsWith('(away)')) continue;
     const seat = s.seat as number;
     if (playerMoved(game?.actionLog, seat) || (data.audits as Obj[]).some((a) => playerMoved(a.log, seat))) return `seat ${seat} is called a bot, yet its own player made moves in this match`;
+  }
+  return null;
+}
+
+/**
+ * The seats the snapshot calls players: each needs its account or its rejoin token, unless it is an
+ * empty lobby seat (no name) or a seat its player left, which the table plays until they return.
+ */
+function playerSeatsProblem(data: Obj): string | null {
+  for (const s of data.seats as Obj[]) {
+    if (s.isBot === true || s.left === true) continue;
+    const held = (typeof s.userId === 'string' && s.userId !== '') || (typeof s.token === 'string' && s.token !== '');
+    if (held || (data.phase === 'lobby' && s.name === '')) continue;
+    return `seat ${s.seat as number} is called a player, yet it has no account and no rejoin token: nobody can take it back`;
+  }
+  return null;
+}
+
+/** A final hash as the engine writes it (`hashState`: eight hex digits). */
+const HAND_HASH = /^[0-9a-f]{8}$/;
+
+/**
+ * The hand records against the match position: this match's hands so far, in order, each a record
+ * the host could have written. Every hand before the position has one; so has the hand at it once
+ * that hand is over ('hand_over': the position is still the one it was dealt from).
+ */
+function auditsProblem(data: Obj): string | null {
+  const audits = data.audits as Obj[];
+  const ended = ((data.snapshot as Obj).handNumber as number) + (data.phase === 'hand_over' ? 1 : 0);
+  if (audits.length !== ended) return `the hand records do not match the hands played (${audits.length} records for ${ended} hands)`;
+  for (const [i, a] of audits.entries()) {
+    if (a.matchId !== data.matchId) return `hand record ${i} is from another match`;
+    if (a.handNumber !== i) return `hand record ${i} is numbered ${String(a.handNumber)}`;
+    if (typeof a.seed !== 'string' || !a.seed || !Array.isArray(a.log) || !HAND_HASH.test(a.finalHash as string)) return `hand record ${i} is not a hand the engine wrote`;
   }
   return null;
 }
@@ -94,7 +137,11 @@ function gameProblem(data: Obj, rules: RuleSet): string | null {
     } catch (e) {
       return `the hand does not replay (${(e as Error).message.slice(0, 120)})`;
     }
-    return hashState(replayed) === hashState(game as unknown as GameState) ? null : 'the hand is not what its deal and moves give';
+    if (hashState(replayed) !== hashState(game as unknown as GameState)) return 'the hand is not what its deal and moves give';
+    // A hand that is over is on record already: the last record must be this hand.
+    const last = audits[audits.length - 1];
+    if (data.phase === 'hand_over' && (!isObject(last) || last.finalHash !== hashState(replayed) || last.seed !== game.seed)) return 'the hand that ended is not the one its record shows';
+    return null;
   }
   // Between hands (or before the first): the last hand as its record published it, if there was one.
   if (game === null || game === undefined) return audits.length === 0 ? null : 'the last hand is missing';
@@ -130,9 +177,11 @@ export function snapshotProblem(data: unknown): string | null {
   if (!fourNumbers(data.banks)) return 'the time banks are not four numbers';
   if ((data.banks as number[]).some((b) => b < 0 || b > clean.timeBankSeconds * 1000)) return 'a time bank is outside what the rules give';
   if (!Array.isArray(data.audits) || data.audits.some((a) => !isObject(a) || !Number.isInteger(a.handNumber) || typeof a.finalHash !== 'string')) return 'the hand records are not valid';
-  const bots = botSeatsProblem(data);
+  const bots = botSeatsProblem(data) ?? playerSeatsProblem(data);
   if (bots) return bots;
   const match = matchProblem(data.snapshot);
   if (match) return match;
+  const records = auditsProblem(data);
+  if (records) return records;
   return gameProblem(data, clean);
 }

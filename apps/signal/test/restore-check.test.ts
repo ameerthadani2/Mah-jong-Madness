@@ -111,6 +111,13 @@ describe('snapshotProblem', () => {
       ["bot strength 'garbage'", (s) => void (s.botSkill = 'garbage' as never), /bot strength/],
       ['bot strength missing', (s) => void delete (s as Record<string, unknown>).botSkill, /bot strength/],
       ['a player’s seat called a bot', (s) => void (s.seats[0].isBot = true), /seat 0 is called a bot/],
+      ['a bot’s seat called a player', (s) => void (s.seats[2].isBot = false), /seat 2 is called a player, yet it has no account and no rejoin token/],
+      ['a hand record that never happened', (s) => void s.audits.push({ handNumber: 99, finalHash: 'zz' } as never), new RegExp(`hand records do not match the hands played \\(${base.audits.length + 1} records for ${base.audits.length} hands\\)`)],
+      ['a hand record taken out', (s) => void s.audits.pop(), new RegExp(`hand records do not match the hands played \\(${base.audits.length - 1} records for ${base.audits.length} hands\\)`)],
+      ['a hand record renumbered', (s) => void (s.audits[0].handNumber = 1), /hand record 0 is numbered 1/],
+      ['a hand record from another match', (s) => void (s.audits[0].matchId = 'other-match'), /hand record 0 is from another match/],
+      ['a hand record with a made-up hash', (s) => void (s.audits[0].finalHash = 'zz'), /hand record 0 is not a hand the engine wrote/],
+      ['a hand record with no moves', (s) => void delete (s.audits[0] as unknown as Record<string, unknown>).log, /hand record 0 is not a hand the engine wrote/],
       ['a match position out of range', (s) => void (s.snapshot.dealerSeat = 7), /match position is not valid/],
       ['an unknown version', (s) => void (s.version = 2 as never), /version 2 is unknown/],
       ['a phase that cannot be resumed', (s) => void (s.phase = 'match_over'), /cannot be resumed/],
@@ -128,7 +135,33 @@ describe('snapshotProblem', () => {
     moved.snapshot.dealerStreak += 1;
     expect(snapshotProblem(moved)).toMatch(/does not follow the last hand/);
     expect(snapshotProblem({ ...copy(after), game: null })).toMatch(/last hand is missing/);
+    // A hand that is over must be the one its record shows.
+    const over = snaps.filter((s) => s.phase === 'hand_over');
+    expect(over.length).toBeGreaterThan(0);
+    const recorded = copy(over[over.length - 1]);
+    recorded.audits[recorded.audits.length - 1].finalHash = '00000000';
+    expect(snapshotProblem(recorded)).toMatch(/hand that ended is not the one its record shows/);
     expect(snapshotProblem(null)).toMatch(/not an object/);
+  });
+
+  it('passes a player’s seat with only its account or only its rejoin token, the seat of a player the club took off (left, no account, no token), and an empty lobby seat', () => {
+    const base = playing[playing.length - 1];
+    const tokenOnly = copy(base);
+    delete tokenOnly.seats[0].userId;
+    expect(snapshotProblem(tokenOnly)).toBeNull();
+    const accountOnly = copy(base);
+    delete (accountOnly.seats[0] as unknown as Record<string, unknown>).token;
+    expect(snapshotProblem(accountOnly)).toBeNull();
+    const evicted = copy(base);
+    Object.assign(evicted.seats[0], { userId: undefined, token: undefined, name: '老王', left: true });
+    expect(snapshotProblem(JSON.parse(JSON.stringify(evicted)))).toBeNull();
+    const lobby = snaps.find((s) => s.phase === 'lobby' && s.seats.some((x) => !x.isBot && x.name === ''));
+    expect(lobby).toBeDefined();
+    expect(snapshotProblem(lobby)).toBeNull();
+    // The same empty seat with a name, once the match has started, is a seat nobody holds.
+    const named = copy(base);
+    Object.assign(named.seats[0], { userId: undefined, token: undefined });
+    expect(snapshotProblem(JSON.parse(JSON.stringify(named)))).toMatch(/seat 0 is called a player/);
   });
 
   it('passes the seat of a player who left as an older build wrote it (a bot named “… (away)”), and banks anywhere from nothing to the whole bank', () => {
@@ -149,8 +182,8 @@ describe('snapshotProblem', () => {
   });
 });
 
-/** Three tables mid-hand written by one process; one snapshot's game is set to {broken:1}, another's rules to 'x'. */
-async function writeTables(repo: TableSnapshotsRepo) {
+/** Three tables mid-hand written by one process; one snapshot's game is set to {broken:1}, another's rules to 'x' (or as `spoil` says). */
+async function writeTables(repo: TableSnapshotsRepo, spoil: [(s: Snap) => void, (s: Snap) => void] = [(s) => void (s.game = { broken: 1 } as never), (s) => void (s.rules = 'x' as never)]) {
   const rooms = new RoomRegistry({ allowHosted: true, botDelayMs: 0 });
   const persister = new TablePersister(rooms, repo, { log: () => undefined });
   persister.start();
@@ -166,10 +199,12 @@ async function writeTables(repo: TableSnapshotsRepo) {
   persister.stop();
   rooms.shutdown();
   const [good, badGame, badRules] = codes;
-  const g = (await repo.get(badGame))!;
-  await repo.save({ ...g, snapshot: { ...(g.snapshot as Snap), game: { broken: 1 } } });
-  const r = (await repo.get(badRules))!;
-  await repo.save({ ...r, snapshot: { ...(r.snapshot as Snap), rules: 'x' } });
+  for (const [i, code] of [badGame, badRules].entries()) {
+    const row = (await repo.get(code))!;
+    const snapshot = copy(row.snapshot as Snap);
+    spoil[i](snapshot);
+    await repo.save({ ...row, snapshot });
+  }
   return { good, badGame, badRules };
 }
 
@@ -213,6 +248,27 @@ function restoreContract(name: string, repo: () => TableSnapshotsRepo) {
       expect(await next.prune()).toBeGreaterThanOrEqual(2);
       expect(await repo().get(badGame)).toBeNull();
       expect(await repo().get(badRules)).toBeNull();
+    });
+
+    it('keeps a table whose bot seat was called a player, and one with a hand record that never happened, for an admin instead of restoring them', async () => {
+      const { good, badGame: relabelled, badRules: phantom } = await writeTables(repo(), [
+        (s) => void (s.seats[2].isBot = false),
+        (s) => void s.audits.push({ ...(s.audits[0] ?? {}), matchId: s.matchId, handNumber: 99, finalHash: 'zz' } as never),
+      ]);
+      const rooms = new RoomRegistry({ allowHosted: true, botDelayMs: 0 });
+      const persister = new TablePersister(rooms, repo(), { log: () => undefined });
+      // (The repository still holds the sound table of the test above, which is restored again.)
+      const restored = await persister.restore();
+      expect(restored).toContain(good);
+      expect(restored).not.toContain(relabelled);
+      expect(restored).not.toContain(phantom);
+      expect(persister.damaged).toBe(2);
+      expect(rooms.hostedTable(relabelled)).toBeUndefined();
+      expect(rooms.hostedTable(phantom)).toBeUndefined();
+      expect(await repo().get(relabelled)).toMatchObject({ status: 'damaged', problem: expect.stringMatching(/seat 2 is called a player/) });
+      expect(await repo().get(phantom)).toMatchObject({ status: 'damaged', problem: expect.stringMatching(/hand records do not match the hands played/) });
+      expect((await repo().listDamaged(100)).map((s) => s.roomCode)).toEqual(expect.arrayContaining([relabelled, phantom]));
+      rooms.shutdown();
     });
   });
 }
