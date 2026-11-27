@@ -125,11 +125,20 @@ export type StoreOutcome =
   | 'ignored_invalid';
 
 /**
- * Longest a store event may grant ahead: a subscription end more than this after the event (its
- * `event_timestamp_ms`, when given) or after now is refused as invalid. A yearly plan runs 365
- * or 366 days, so this leaves a month for grace periods and late delivery.
+ * How far past one period of its plan a store event may grant. The stores stretch a period on
+ * their own: Apple extends a renewal date by up to 90 days at a time (at most twice a year), and
+ * Google Play defers a renewal by up to a year. So a subscription period may end at most one
+ * period of its plan plus this after the event (its `event_timestamp_ms`, when given) or after
+ * now, whichever is earlier (`maxStoreExpiryMs`): 431 days for a monthly plan, 766 for a yearly
+ * one. That is a year and a month of room, for the stores' extensions, grace periods and late
+ * delivery. A later end is refused as invalid: a date that far out is a fault, not a grant.
  */
-export const MAX_STORE_EXPIRY_MS = 400 * 86_400_000;
+export const MAX_STORE_EXTENSION_MS = 400 * 86_400_000;
+
+/** The latest a period of a plan sold by `period` may end, counted from the event or now (see `MAX_STORE_EXTENSION_MS`). */
+export function maxStoreExpiryMs(period: keyof typeof PERIOD_MS): number {
+  return PERIOD_MS[period] + MAX_STORE_EXTENSION_MS;
+}
 
 /**
  * Prices a purchase row records are below this: `purchases.price` is `numeric(14, 4)`, which holds
@@ -604,12 +613,13 @@ export class WalletService {
       case 'RENEWAL':
       case 'UNCANCELLATION':
       case 'SUBSCRIPTION_EXTENDED': {
-        // The period's end: the store's expiry, or one period from the purchase. Either way one more than
-        // 400 days ahead is refused, on every store alike (a time past the end of JavaScript's dates is
-        // one Postgres cannot even hold).
+        // The period's end: the store's expiry, or one period from the purchase. Either way one later than
+        // a period of the plan plus the stores' room for extensions is refused, on every store alike (a
+        // time past the end of JavaScript's dates is one Postgres cannot even hold).
         const until = e.expiresAt ?? (e.purchasedAt ?? at) + PERIOD_MS[product.period];
-        if (Math.min(e.eventAt ?? at, at) + MAX_STORE_EXPIRY_MS < until) {
-          this.log(`[signal] store event ${e.eventId} (${e.type}) ends its period ${when(until)}, more than 400 days ahead; recorded as invalid, nothing granted`);
+        const limit = maxStoreExpiryMs(product.period);
+        if (Math.min(e.eventAt ?? at, at) + limit < until) {
+          this.log(`[signal] store event ${e.eventId} (${e.type}) ends its period ${when(until)}, more than ${Math.round(limit / 86_400_000)} days ahead; recorded as invalid, nothing granted`);
           return { outcome: 'ignored_invalid', userId };
         }
         // The period end is kept only under the store's own transaction id, which a refund names.

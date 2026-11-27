@@ -176,11 +176,11 @@ function contract(name: string, repos: () => Repos) {
       ]);
     });
 
-    it('refuses as invalid, on every store alike, a subscription whose period would end more than 400 days ahead, however it is given; the webhook never throws over it', async () => {
+    it('refuses as invalid, on every store alike, a subscription whose period would end more than a period of its plan and 400 days ahead, however it is given; the webhook never throws over it', async () => {
       const r = repos();
       const wallet = new WalletService(r, { now: () => T0, log: () => {}, testerUserIds: [] });
       // No expiry: the period runs from the purchase, which may lie past the end of JavaScript's dates (8.64e15) or far ahead.
-      const given: Array<Partial<StoreEvent>> = [8.64e15, 9e15, 1e17, 1e14, T0 + 400 * DAY].map((purchasedAt) => ({ purchasedAt }));
+      const given: Array<Partial<StoreEvent>> = [8.64e15, 9e15, 1e17, 1e14, T0 + 401 * DAY].map((purchasedAt) => ({ purchasedAt }));
       // An expiry past the end of the dates is refused as before, and its log line does not throw either.
       given.push({ expiresAt: 9e15 }, { expiresAt: 1e17 });
       for (const [i, extra] of given.entries()) {
@@ -194,6 +194,53 @@ function contract(name: string, repos: () => Repos) {
       const u = await user();
       expect((await wallet.applyStoreEvent(storeEvent(u, 'INITIAL_PURCHASE', { storeProductId: 'fourwinds.month', transactionId: `tx-month-${u}`, price: 4.99, currency: 'USD' }))).outcome).toBe('entitled');
       expect((await r.wallet.getEntitlements(u)).map((e) => e.expiresAt)).toEqual([T0 + 31 * DAY]);
+    });
+
+    it('honours the extensions the stores grant on their own, up to a period of the plan and 400 days ahead, and a Restore repairs one the webhook missed', async () => {
+      const r = repos();
+      let t = T0;
+      const wallet = new WalletService(r, { now: () => t, log: () => {}, testerUserIds: [] });
+      // A yearly plan bought ten days ago, ending in 355 days, extended by the store.
+      const extended = async (product: string, period: number, days: number) => {
+        const u = await user();
+        const txn = `tx-ext-${randomHex(6)}`;
+        t = T0 - 10 * DAY;
+        await wallet.applyStoreEvent(storeEvent(u, 'INITIAL_PURCHASE', { storeProductId: product, transactionId: txn, originalTransactionId: txn, purchasedAt: t, expiresAt: t + period * DAY }));
+        t = T0;
+        const end = T0 - 10 * DAY + (period + days) * DAY;
+        const res = await wallet.applyStoreEvent(storeEvent(u, 'SUBSCRIPTION_EXTENDED', { storeProductId: product, originalTransactionId: txn, eventAt: T0, expiresAt: end }));
+        const ends = (await r.wallet.getEntitlements(u)).map((e) => e.expiresAt);
+        return { outcome: res.outcome, ends, end, start: T0 - 10 * DAY + period * DAY };
+      };
+      // Apple: 90 days at a time, twice a year. Google Play: a deferral of up to a year.
+      for (const [product, period, days] of [
+        ['fourwinds.year', 365, 90],
+        ['fourwinds.year', 365, 180],
+        ['coach.gold.year', 365, 365],
+        ['fourwinds.month', 30, 90],
+        ['coach.gold.month', 30, 365],
+      ] as const) {
+        const x = await extended(product, period, days);
+        expect(x, `${product} +${days}`).toMatchObject({ outcome: 'extended', ends: [x.end] });
+      }
+      // The bound counts from the event: a yearly plan may end 766 days after it, a monthly one 431; a day more is refused.
+      const year = await extended('fourwinds.year', 365, 766 - 355);
+      expect(year.outcome).toBe('extended');
+      const yearOver = await extended('fourwinds.year', 365, 766 - 355 + 1);
+      expect(yearOver).toMatchObject({ outcome: 'ignored_invalid', ends: [yearOver.start] });
+      const monthOver = await extended('fourwinds.month', 30, 431 - 20 + 1);
+      expect(monthOver).toMatchObject({ outcome: 'ignored_invalid', ends: [monthOver.start] });
+      // A store record read by Restore (reconciliation) carries the extension to an account the webhook missed it for.
+      const u = await user();
+      const txn = `tx-ext-sync-${u}`;
+      t = T0 - 10 * DAY;
+      await wallet.applyStoreEvent(storeEvent(u, 'INITIAL_PURCHASE', { storeProductId: 'fourwinds.year', transactionId: txn, originalTransactionId: txn, purchasedAt: t, expiresAt: t + 365 * DAY }));
+      t = T0;
+      const end = T0 + 535 * DAY;
+      const record = { subscriber: { subscriptions: { 'fourwinds.year': { expires_date: new Date(end).toISOString(), purchase_date: new Date(T0 - 10 * DAY).toISOString(), store: 'play_store', is_sandbox: false, store_transaction_id: txn } } } };
+      const reconciler = new Reconciler({ repos: r, wallet, client: { subscriber: async (id: string) => (id === u ? record : null) }, now: () => T0, log: () => {} });
+      expect((await reconciler.syncUser(u)).outcomes.map((o) => o.outcome)).toEqual(['extended']);
+      expect((await r.wallet.getEntitlements(u)).map((e) => e.expiresAt)).toEqual([end]);
     });
 
     it('keeps the end of the period a subscription purchase paid for; none for a pack', async () => {
