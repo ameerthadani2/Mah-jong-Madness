@@ -87,7 +87,7 @@ describe('subscription plans are separate entitlements', () => {
 });
 
 describe('refunded diamond packs', () => {
-  it('buy, spend and refund cycles never end with free looks: the debt blocks the next spend', async () => {
+  it('buy, spend and refund cycles never end with free looks: each refund takes back the look its pack bought', async () => {
     const f = fixture();
     const g = await f.guest('G');
     const looks = ['theme.bamboo', 'theme.imperial', 'theme.nightmarket'];
@@ -97,22 +97,23 @@ describe('refunded diamond packs', () => {
       spends.push((await f.call('POST', '/api/wallet/spend', { productId: look }, g.auth)).status);
       expect(await f.post(rc('CANCELLATION', g.userId, { product_id: 'diamonds.300', transaction_id: `G-${i}`, cancel_reason: 'CUSTOMER_SUPPORT' }))).toBe('refunded');
     }
-    // The first look was paid for and then refunded: the account owes 300, and nothing else could be bought.
-    expect(spends).toEqual([200, 409, 409]);
+    // Each look was bought and its pack refunded: the look went back with the pack, and nothing is owed.
+    expect(spends).toEqual([200, 200, 200]);
     const me = await f.me(g.auth);
-    expect(me.wallet).toEqual({ diamonds: -300, bonusDiamonds: 0 });
-    expect(me.cosmetics).toEqual(['theme.bamboo']);
+    expect(me.wallet).toEqual({ diamonds: 0, bonusDiamonds: 0 });
+    expect(me.cosmetics).toEqual([]);
   });
 
-  it('refunding the largest pack after spending it takes back the bonus and the rest', async () => {
+  it('refunding the largest pack after spending it takes back the looks, newest first, then the bonus and the rest', async () => {
     const f = fixture();
     const e = await f.guest('E');
     await f.post(rc('NON_RENEWING_PURCHASE', e.userId, { product_id: 'diamonds.7500', transaction_id: 'E-1' }));
     for (const p of ['theme.jade', 'theme.bamboo', 'theme.imperial', 'theme.nightmarket']) expect((await f.call('POST', '/api/wallet/spend', { productId: p }, e.auth)).status).toBe(200);
     expect((await f.me(e.auth)).wallet).toEqual({ diamonds: 6000, bonusDiamonds: 200 });
     expect(await f.post(rc('CANCELLATION', e.userId, { product_id: 'diamonds.7500', transaction_id: 'E-1', cancel_reason: 'CUSTOMER_SUPPORT' }))).toBe('refunded');
-    expect((await f.me(e.auth)).wallet).toEqual({ diamonds: -1300, bonusDiamonds: 0 });
-    expect((await f.call('POST', '/api/wallet/spend', { productId: 'theme.bamboo' }, e.auth)).json.error).toBe('owned');
+    // All four were paid for with the pack's diamonds: all four go back, and the pack's 7,500 go with them.
+    expect(await f.me(e.auth)).toMatchObject({ wallet: { diamonds: 0, bonusDiamonds: 0 }, cosmetics: [] });
+    expect((await f.call('POST', '/api/wallet/spend', { productId: 'theme.bamboo' }, e.auth)).json.error).toBe('insufficient');
   });
 });
 

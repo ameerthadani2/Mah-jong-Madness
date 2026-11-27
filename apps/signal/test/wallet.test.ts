@@ -103,7 +103,8 @@ describe('spend', () => {
     expect((await wallet.summary(u)).cosmetics).toEqual(['back.midnight', 'emotes.nightmarket', 'frame.lantern', 'theme.nightmarket']);
     await expect(wallet.spend(u, 'bundle.nightmarket')).rejects.toMatchObject({ code: 'owned' });
     expect(await balance(repos, u)).toEqual([3000 - 300 - 610, 0]);
-    expect((await repos.wallet.listLedger(u)).at(-1)).toMatchObject({ reason: 'spend', ref: 'bundle.nightmarket', delta: -610 });
+    // The ledger names the looks the set granted (not the table the player already owned), so a refund can take back exactly those.
+    expect((await repos.wallet.listLedger(u)).at(-1)).toMatchObject({ reason: 'spend', ref: 'bundle.nightmarket:back.midnight,frame.lantern,emotes.nightmarket', delta: -610 });
   });
 
   it('refuses products that are not sold for diamonds (404)', async () => {
@@ -144,7 +145,7 @@ describe('store events', () => {
     expect(await balance(repos, unknown)).toEqual([60, 0]);
   });
 
-  it('a refunded pack takes back everything it credited: spent diamonds leave a negative balance that blocks spends', async () => {
+  it('a refunded pack takes back everything it credited, and first the look its diamonds bought', async () => {
     const { repos, wallet, user } = await setup();
     const u = await user();
     const buy = storeEvent(u, 'NON_RENEWING_PURCHASE', { storeProductId: 'diamonds.1300' });
@@ -152,8 +153,23 @@ describe('store events', () => {
     await wallet.spend(u, 'theme.jade'); // 100 bonus + 300 purchased
     const refund = storeEvent(u, 'CANCELLATION', { storeProductId: 'diamonds.1300', transactionId: buy.transactionId, cancelReason: 'CUSTOMER_SUPPORT' });
     expect((await wallet.applyStoreEvent(refund)).outcome).toBe('refunded');
-    expect(await balance(repos, u)).toEqual([-400, 0]);
+    // The table goes back (its 300 purchased and 100 bonus diamonds return), then the pack's 1,200 and 100 go: nothing is owed.
+    expect(await balance(repos, u)).toEqual([0, 0]);
+    expect((await wallet.summary(u)).cosmetics).toEqual([]);
+    expect((await repos.wallet.listLedger(u)).filter((l) => l.reason === 'takeback').map((l) => [l.delta, l.bonus])).toEqual([[300, 100]]);
     expect((await wallet.applyStoreEvent({ ...refund, eventId: randomUUID() })).outcome).toBe('duplicate');
+    expect(await balance(repos, u)).toEqual([0, 0]);
+  });
+
+  it('a debt left when no look can be taken back blocks spends until a purchase covers it', async () => {
+    const { repos, wallet, user } = await setup();
+    const u = await user();
+    const buy = storeEvent(u, 'NON_RENEWING_PURCHASE', { storeProductId: 'diamonds.1300' });
+    await wallet.applyStoreEvent(buy);
+    await wallet.spend(u, 'theme.jade');
+    // The table is no longer there to take back (support took it off, say): the refund leaves a debt.
+    await repos.wallet.deleteEntitlement(u, 'theme.jade');
+    await wallet.applyStoreEvent(storeEvent(u, 'CANCELLATION', { storeProductId: 'diamonds.1300', transactionId: buy.transactionId, cancelReason: 'CUSTOMER_SUPPORT' }));
     expect(await balance(repos, u)).toEqual([-400, 0]);
     // A later purchase is credited on top of the debt; spends wait until the balance is above zero.
     await wallet.credit(u, 0, 'grant', null, 500);
@@ -169,6 +185,8 @@ describe('store events', () => {
     const buy = storeEvent(u, 'NON_RENEWING_PURCHASE', { storeProductId: 'diamonds.1300' });
     await wallet.applyStoreEvent(buy);
     await wallet.spend(u, 'theme.jade');
+    // No look left to take back: the refund leaves a debt.
+    await repos.wallet.deleteEntitlement(u, 'theme.jade');
     await wallet.applyStoreEvent(storeEvent(u, 'CANCELLATION', { storeProductId: 'diamonds.1300', transactionId: buy.transactionId, cancelReason: 'CUSTOMER_SUPPORT' }));
     // -400 purchased and 5,000 bonus: the total covers any look, but the debt comes first.
     await wallet.credit(u, 0, 'grant', null, 5000);

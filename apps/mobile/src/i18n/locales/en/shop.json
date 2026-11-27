@@ -43,14 +43,14 @@
   "restoredUnchecked": "Your store sent your purchases, but the game server could not check them just now. If something is missing, tap Restore purchases again in a minute.",
   "owed": {
     "title": "%{n} diamonds owed after a refund",
-    "body": "A diamond pack was refunded after its diamonds had been spent, so your balance is below zero. Diamonds cannot be spent until it is back to zero: the next %{n} diamonds you buy pay it back."
+    "body": "A diamond pack was refunded after its diamonds had been spent, and no look was left to take back, so your balance is below zero. Diamonds cannot be spent until it is back to zero: the next %{n} diamonds you buy pay it back."
   },
   "errors": {
     "store_product_missing": "This item is not on sale in your store yet.",
     "store_not_signed_in": "Connect to the game server first, so the purchase reaches your account.",
     "store_unavailable": "The store is not available on this build."
   },
-  "foot": "Prices come from your App Store or Google Play region. Subscriptions renew automatically unless you cancel them in your store account settings at least 24 hours before the renewal date. When your store extends a plan or puts off its renewal, the plan runs to the new date the store gives. Restore purchases moves the subscriptions bought with the same store account to the game account you are signed in to, and they stay with it; diamonds and looks belong to the game account they were bought on, so sign in with Apple or Google to keep them on a new phone.",
+  "foot": "Prices come from your App Store or Google Play region. Subscriptions renew automatically unless you cancel them in your store account settings at least 24 hours before the renewal date. When your store extends a plan or puts off its renewal, the plan runs to the new date the store gives. Restore purchases moves the subscriptions bought with the same store account to the game account you are signed in to, and they stay with it; diamonds and looks belong to the game account they were bought on, so sign in with Apple or Google to keep them on a new phone. If a diamond pack is refunded after you spent it, looks are taken back, newest first, until its diamonds are paid back; looks paid for with diamonds you still have stay.",
   "products": {
     "diamonds_60": {
       "title": "60 Diamonds",

@@ -4,7 +4,9 @@
  *
  * - `credit` adds diamonds with a ledger entry.
  * - `spend` buys a cosmetic with diamonds: an atomic debit plus a permanent entitlement, or
- *   `409 insufficient` / `409 owned`. Bonus diamonds are spent before purchased ones.
+ *   `409 insufficient` / `409 owned`. Bonus diamonds are spent before purchased ones. A refunded
+ *   diamond pack whose diamonds were spent takes back looks, newest first, while the account
+ *   would otherwise owe diamonds (`refundDiamonds`).
  * - `applyStoreEvent` turns a vendor-neutral store notification (see revenuecat.ts) into grants.
  *   It is idempotent on the event id: the event row is written first, in the same transaction as
  *   its effects, so a redelivered event changes nothing. Diamond credits are additionally keyed
@@ -22,7 +24,7 @@
  */
 import { bundlePrice, COSMETIC_ENTITLEMENTS, PERIOD_MS, planOfEntitlement, productForStoreId, serverProduct, supportPlanKey, TIER_RANK, tierOfEntitlement, tierOfEntitlements, type CoachTier, type ServerProduct } from './catalog';
 import { NO_ANALYTICS, withConsent, type Analytics } from './observability';
-import type { EntitlementRecord, PurchaseRecord, Repos, UserRecord, WalletRecord } from './repos/types';
+import type { EntitlementRecord, LedgerEntry, PurchaseRecord, Repos, UserRecord, WalletRecord } from './repos/types';
 
 export type WalletErrorCode = 'insufficient' | 'owned' | 'not_for_sale' | 'invalid' | 'not_found' | 'unauthorised' | 'rate_limited' | 'unavailable' | 'store_unreachable';
 
@@ -352,7 +354,9 @@ export class WalletService {
         if (w.diamonds < 0 || w.diamonds + w.bonusDiamonds < price) throw new WalletError('insufficient', 'Not enough diamonds');
         const fromBonus = Math.min(w.bonusDiamonds, price);
         const at = this.now();
-        const res = await tx.wallet.apply({ userId, delta: -(price - fromBonus), bonus: -fromBonus, reason: 'spend', ref: product.id, createdAt: at });
+        // A set's ledger entry names the looks it granted (not those the player already owned), so a refund can take back exactly those.
+        const ref = product.contains ? `${product.id}:${grants.join(',')}` : product.id;
+        const res = await tx.wallet.apply({ userId, delta: -(price - fromBonus), bonus: -fromBonus, reason: 'spend', ref, createdAt: at });
         if (!res) throw new WalletError('insufficient', 'Not enough diamonds');
         for (const entitlement of grants) await tx.wallet.setEntitlement({ userId, entitlement, expiresAt: null, source: SPEND_SOURCE, updatedAt: at });
         return { wallet: res.wallet, entitlement: product.entitlement, spent: price, granted: grants };
@@ -706,16 +710,79 @@ export class WalletService {
     return until;
   }
 
+  /** The ledger ref that records that the looks of the spend with this ledger id were taken back. */
+  private static takebackRef(spendId: number): string {
+    return `takeback:${spendId}`;
+  }
+
+  /**
+   * The looks a spend granted that the account still holds from it: a single look is the spend's
+   * ref; a set's ref names the looks it granted (`<set>:<look>,<look>`). A set spent before sets
+   * named them counts the set's looks whose row was written by that spend.
+   */
+  private static spendLooks(spend: LedgerEntry, owned: ReadonlyMap<string, EntitlementRecord>): string[] {
+    const ref = spend.ref ?? '';
+    const colon = ref.indexOf(':');
+    const product = serverProduct(colon === -1 ? ref : ref.slice(0, colon));
+    if (product?.kind !== 'cosmetic') return [];
+    const fromSpend = (id: string) => owned.get(id)?.source === SPEND_SOURCE;
+    if (!product.contains) return fromSpend(product.entitlement) ? [product.entitlement] : [];
+    if (colon !== -1) return ref.slice(colon + 1).split(',').filter((id) => product.contains!.includes(id) && fromSpend(id));
+    return product.contains.filter((id) => fromSpend(id) && owned.get(id)!.updatedAt === spend.createdAt);
+  }
+
+  /**
+   * The looks a refunded pack takes back (`refundDiamonds`), inside its transaction: the account's
+   * spends, newest first, each still holding a look, are undone one by one (the look goes, its
+   * price comes back as it was paid: purchased and bonus diamonds) while the refund would still
+   * leave purchased diamonds below zero. The newest come first, so the looks bought since the pack
+   * go before any bought earlier, and an earlier one goes only when the diamonds it was bought with
+   * are owed too (another refund took the diamonds that covered it). A spend undone is noted
+   * (`takebackRef`) and never undone twice. Returns the looks taken back.
+   */
+  private async takeBackLooks(tx: Repos, userId: string, product: Extract<ServerProduct, { kind: 'diamonds' }>, at: number): Promise<string[]> {
+    const w = await tx.wallet.get(userId);
+    let diamonds = w.diamonds;
+    let bonus = w.bonusDiamonds;
+    // Purchased diamonds after the refund as it is taken (bonus first, as far as the pack's bonus goes).
+    const after = () => diamonds - (product.diamonds + product.bonus - Math.min(Math.max(0, bonus), product.bonus));
+    if (after() >= 0) return [];
+    const ledger = await tx.wallet.listLedger(userId);
+    const undone = new Set(ledger.filter((l) => l.reason === 'takeback').map((l) => l.ref));
+    const spends = ledger.filter((l) => l.reason === 'spend' && !undone.has(WalletService.takebackRef(l.id))).reverse();
+    const owned = new Map((await tx.wallet.getEntitlements(userId)).map((e) => [e.entitlement, e]));
+    const taken: string[] = [];
+    for (const spend of spends) {
+      if (after() >= 0) break;
+      const looks = WalletService.spendLooks(spend, owned);
+      if (looks.length === 0) continue;
+      for (const look of looks) {
+        await tx.wallet.deleteEntitlement(userId, look);
+        owned.delete(look);
+      }
+      const res = await tx.wallet.apply({ userId, delta: -spend.delta, bonus: -spend.bonus, reason: 'takeback', ref: WalletService.takebackRef(spend.id), createdAt: at });
+      if (!res) throw new Error('Look take-back refused');
+      diamonds = res.wallet.diamonds;
+      bonus = res.wallet.bonusDiamonds;
+      taken.push(...looks);
+    }
+    return taken;
+  }
+
   /**
    * A refunded diamond pack: take back everything it credited, from the account that holds the
    * purchase. That is not always the account the refund names: after a Restore on another account
    * the store reports the purchase (and its refund) under the new app user id, while the diamonds
-   * stayed where they were credited. Bonus diamonds come back first as far as they go; the rest
-   * comes off purchased diamonds, which may go below zero when the pack was already spent. A
-   * negative balance blocks every spend until a purchase covers it, so a buy, spend, refund cycle
-   * never ends with free looks. A refund that arrives before the purchase is remembered on the
-   * account it names, so the purchase is not credited when it comes. `namedUserId` is null when
-   * the event names no account we know: the result then has a user only if a holder was debited.
+   * stayed where they were credited. When the pack's diamonds were already spent, looks are taken
+   * back first, newest first, each returning what it cost, until the refund no longer leaves
+   * purchased diamonds below zero (`takeBackLooks`): the looks bought since the pack go first, and
+   * looks paid for with diamonds the account still has stay. Then bonus diamonds come back first as
+   * far as they go; the rest comes off purchased diamonds, which may still go below zero when no
+   * look is left to take back (support gave the look again, say). A negative balance blocks every
+   * spend until a purchase covers it, so a buy, spend, refund cycle never ends with free looks. A refund that arrives before the
+   * purchase is remembered on the account it names, so the purchase is not credited when it comes.
+   * `namedUserId` is null when the event names no account we know: the result then has a user only
+   * if a holder was debited.
    */
   private async refundDiamonds(
     tx: Repos,
@@ -738,6 +805,8 @@ export class WalletService {
     if (!holder) return { outcome: 'recorded', userId: namedUserId };
     const userId = holder.id;
     if (await this.refunded(tx, userId, transactionId)) return { outcome: 'duplicate', userId };
+    const taken = await this.takeBackLooks(tx, userId, product, at);
+    if (taken.length > 0) this.log(`[signal] refund ${transactionId} took back ${taken.length} look(s) from ${userId}, newest first: ${taken.join(', ')}`);
     const w = await tx.wallet.get(userId);
     const bonus = Math.min(Math.max(0, w.bonusDiamonds), product.bonus);
     const delta = -(product.diamonds + product.bonus - bonus);

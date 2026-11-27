@@ -91,7 +91,7 @@ function contract(name: string, repos: () => Repos) {
       expect(active.filter((x) => x === b)).toHaveLength(1);
     });
 
-    it('a refunded pack that was spent leaves a debt that blocks spends (WalletService over these repos)', async () => {
+    it('a refunded pack that was spent, with no look left to take back, leaves a debt that blocks spends (WalletService over these repos)', async () => {
       const r = repos();
       const u = await user();
       const wallet = new WalletService(r, { now: () => T0, log: () => {}, testerUserIds: [] });
@@ -116,6 +116,8 @@ function contract(name: string, repos: () => Repos) {
       });
       expect((await wallet.applyStoreEvent(event('NON_RENEWING_PURCHASE'))).outcome).toBe('credited');
       await wallet.spend(u, 'theme.bamboo');
+      // The look is no longer there to take back (support took it off, say).
+      await r.wallet.deleteEntitlement(u, 'theme.bamboo');
       expect((await wallet.applyStoreEvent(event('CANCELLATION', { cancelReason: 'CUSTOMER_SUPPORT' }))).outcome).toBe('refunded');
       expect(await r.wallet.get(u)).toMatchObject({ diamonds: -300 });
       await wallet.credit(u, 0, 'grant', null, 400);
@@ -130,6 +132,8 @@ function contract(name: string, repos: () => Repos) {
         wallet.applyStoreEvent(storeEvent(u, type, { storeProductId, transactionId, price: 4.99, currency: 'USD', ...extra }));
       expect((await pack('NON_RENEWING_PURCHASE', 'diamonds.300', `tx-debt-${u}`)).outcome).toBe('credited');
       await wallet.spend(u, 'theme.bamboo');
+      // Support gave the look again on its own row, so the refund has no look of the player's buying to take back: a debt.
+      await r.wallet.setEntitlement({ userId: u, entitlement: 'theme.bamboo', expiresAt: null, source: 'support', updatedAt: T0 });
       expect((await pack('CANCELLATION', 'diamonds.300', `tx-debt-${u}`, { cancelReason: 'CUSTOMER_SUPPORT' })).outcome).toBe('refunded');
       // Bonus diamonds alone would pay for a 300-diamond look, but purchased diamonds are below zero.
       await wallet.credit(u, 0, 'grant', null, 1_000);
@@ -145,6 +149,131 @@ function contract(name: string, repos: () => Repos) {
       expect(await r.wallet.get(u)).toMatchObject({ diamonds: 60, bonusDiamonds: 1_000 });
       expect(await wallet.spend(u, 'theme.imperial')).toMatchObject({ spent: 300, wallet: { diamonds: 60, bonusDiamonds: 700 } });
       expect((await r.wallet.getEntitlements(u)).map((e) => e.entitlement).sort()).toEqual(['theme.bamboo', 'theme.imperial']);
+    });
+
+    it('a refunded pack takes back looks, newest first, only while its diamonds are missing; looks paid for with other diamonds stay', async () => {
+      const r = repos();
+      let t = T0;
+      const lines: string[] = [];
+      const wallet = new WalletService(r, { now: () => t, log: (l) => lines.push(l), testerUserIds: [] });
+      const u = await user();
+      const pack = (type: string, storeProductId: string, transactionId: string, extra: Partial<StoreEvent> = {}) => {
+        t += 1000;
+        return wallet.applyStoreEvent(storeEvent(u, type, { storeProductId, transactionId, price: 4.99, currency: 'USD', ...extra }));
+      };
+      const spend = (look: string) => {
+        t += 1000;
+        return wallet.spend(u, look);
+      };
+      // 600 of the player's own, a table from them; then a 300 pack, a frame and a tile back.
+      await pack('NON_RENEWING_PURCHASE', 'diamonds.600', `tx-own-${u}`);
+      await spend('theme.jade'); // 400
+      await pack('NON_RENEWING_PURCHASE', 'diamonds.300', `tx-take-${u}`);
+      await spend('frame.jade'); // 200
+      await spend('back.jade'); // 250
+      expect(await r.wallet.get(u)).toMatchObject({ diamonds: 50, bonusDiamonds: 0 });
+      // Refunding the 300 pack would leave -250: the tile back (newest) goes and covers it; the frame and the table stay.
+      expect((await pack('CANCELLATION', 'diamonds.300', `tx-take-${u}`, { cancelReason: 'CUSTOMER_SUPPORT' })).outcome).toBe('refunded');
+      expect(await r.wallet.get(u)).toMatchObject({ diamonds: 0, bonusDiamonds: 0 });
+      expect((await wallet.summary(u)).cosmetics).toEqual(['frame.jade', 'theme.jade']);
+      const ledger = await r.wallet.listLedger(u);
+      const back = ledger.find((l) => l.reason === 'spend' && l.ref === 'back.jade')!;
+      expect(ledger.filter((l) => l.reason === 'takeback').map((l) => [l.delta, l.bonus, l.ref])).toEqual([[250, 0, `takeback:${back.id}`]]);
+      expect(lines.filter((l) => l.includes('took back 1 look(s)'))).toHaveLength(1);
+      // The same refund again (the nightly sync) takes nothing more.
+      expect((await pack('CANCELLATION', 'diamonds.300', `tx-take-${u}`, { cancelReason: 'CUSTOMER_SUPPORT' })).outcome).toBe('duplicate');
+      expect((await wallet.summary(u)).cosmetics).toEqual(['frame.jade', 'theme.jade']);
+      // A pack bought and refunded without being spent takes no look.
+      await pack('NON_RENEWING_PURCHASE', 'diamonds.300', `tx-idle-${u}`);
+      await pack('CANCELLATION', 'diamonds.300', `tx-idle-${u}`, { cancelReason: 'CUSTOMER_SUPPORT' });
+      expect(await wallet.summary(u)).toMatchObject({ wallet: { diamonds: 0, bonusDiamonds: 0 }, cosmetics: ['frame.jade', 'theme.jade'] });
+    });
+
+    it('a refunded pack takes back the looks a set granted, not those the player owned before it', async () => {
+      const r = repos();
+      let t = T0;
+      const wallet = new WalletService(r, { now: () => t, log: () => {}, testerUserIds: [] });
+      const u = await user();
+      t += 1000;
+      await wallet.credit(u, 300, 'grant');
+      t += 1000;
+      await wallet.spend(u, 'theme.nightmarket'); // the set's table, from other diamonds
+      t += 1000;
+      await wallet.applyStoreEvent(storeEvent(u, 'NON_RENEWING_PURCHASE', { storeProductId: 'diamonds.1300', transactionId: `tx-set-${u}` }));
+      t += 1000;
+      expect(await wallet.spend(u, 'bundle.nightmarket')).toMatchObject({ spent: 610, granted: ['back.midnight', 'frame.lantern', 'emotes.nightmarket'] });
+      t += 1000;
+      await wallet.applyStoreEvent(storeEvent(u, 'CANCELLATION', { storeProductId: 'diamonds.1300', transactionId: `tx-set-${u}`, cancelReason: 'CUSTOMER_SUPPORT' }));
+      // The three looks the set granted go back with its 610; the table bought before the pack stays.
+      expect(await wallet.summary(u)).toMatchObject({ wallet: { diamonds: 0, bonusDiamonds: 0 }, cosmetics: ['theme.nightmarket'] });
+    });
+
+    it('a guest who bought a set with a pack and then signed in to an account loses the set when the pack is refunded', async () => {
+      const r = repos();
+      let t = T0;
+      const wallet = new WalletService(r, { now: () => t, log: () => {}, testerUserIds: [] });
+      const [guest, account] = [await user(), await user()];
+      t += 1000;
+      await wallet.applyStoreEvent(storeEvent(guest, 'NON_RENEWING_PURCHASE', { storeProductId: 'diamonds.1300', transactionId: `tx-merged-${guest}` }));
+      t += 1000;
+      await wallet.spend(guest, 'bundle.garden');
+      // The guest signs in: its wallet, ledger and looks move to the account (the looks' rows are written anew).
+      t += 1000;
+      await r.wallet.mergeInto(guest, account, t);
+      await r.users.update(guest, { deletedAt: t, mergedInto: account });
+      expect((await wallet.summary(account)).cosmetics).toEqual(['back.lotus', 'frame.blossom', 'theme.plumblossom', 'win.petals']);
+      t += 1000;
+      expect(await wallet.applyStoreEvent(storeEvent(guest, 'CANCELLATION', { storeProductId: 'diamonds.1300', transactionId: `tx-merged-${guest}`, cancelReason: 'CUSTOMER_SUPPORT' }))).toMatchObject({ outcome: 'refunded', userId: account });
+      expect(await wallet.summary(account)).toMatchObject({ wallet: { diamonds: 0, bonusDiamonds: 0 }, cosmetics: [] });
+    });
+
+    it('a spend whose look was taken back is never undone again, even when a merge brings the same look from another spend', async () => {
+      const r = repos();
+      let t = T0;
+      const wallet = new WalletService(r, { now: () => t, log: () => {}, testerUserIds: [] });
+      const [account, guest] = [await user(), await user()];
+      const at = (ms: number) => (t = T0 + ms);
+      // The account buys a 300 pack and the bamboo table with it.
+      at(1000);
+      await wallet.applyStoreEvent(storeEvent(account, 'NON_RENEWING_PURCHASE', { storeProductId: 'diamonds.300', transactionId: `tx-acc-${account}` }));
+      at(2000);
+      await wallet.spend(account, 'theme.bamboo');
+      // A guest buys the same table with part of a 1300 pack (100 bonus and 200 purchased); that pack is refunded: the table goes back.
+      at(3000);
+      await wallet.applyStoreEvent(storeEvent(guest, 'NON_RENEWING_PURCHASE', { storeProductId: 'diamonds.1300', transactionId: `tx-guest-${guest}` }));
+      at(4000);
+      await wallet.spend(guest, 'theme.bamboo');
+      at(5000);
+      await wallet.applyStoreEvent(storeEvent(guest, 'CANCELLATION', { storeProductId: 'diamonds.1300', transactionId: `tx-guest-${guest}`, cancelReason: 'CUSTOMER_SUPPORT' }));
+      expect(await wallet.summary(guest)).toMatchObject({ wallet: { diamonds: 0, bonusDiamonds: 0 }, cosmetics: [] });
+      // The guest signs in to the account; then the account's own pack is refunded. Its table goes back at the price the account paid.
+      at(6000);
+      await r.wallet.mergeInto(guest, account, t);
+      await r.users.update(guest, { deletedAt: t, mergedInto: account });
+      at(7000);
+      await wallet.applyStoreEvent(storeEvent(account, 'CANCELLATION', { storeProductId: 'diamonds.300', transactionId: `tx-acc-${account}`, cancelReason: 'CUSTOMER_SUPPORT' }));
+      expect(await wallet.summary(account)).toMatchObject({ wallet: { diamonds: 0, bonusDiamonds: 0 }, cosmetics: [] });
+    });
+
+    it('when two packs are refunded, a look the first one paid for goes back with the second', async () => {
+      const r = repos();
+      let t = T0;
+      const wallet = new WalletService(r, { now: () => t, log: () => {}, testerUserIds: [] });
+      const u = await user();
+      const pack = (type: string, transactionId: string, extra: Partial<StoreEvent> = {}) => {
+        t += 1000;
+        return wallet.applyStoreEvent(storeEvent(u, type, { storeProductId: 'diamonds.300', transactionId, ...extra }));
+      };
+      await pack('NON_RENEWING_PURCHASE', `tx-p0-${u}`);
+      t += 1000;
+      await wallet.spend(u, 'theme.bamboo'); // 300
+      await pack('NON_RENEWING_PURCHASE', `tx-p1-${u}`);
+      // The first refund is covered by the second pack's diamonds: the table stays.
+      await pack('CANCELLATION', `tx-p0-${u}`, { cancelReason: 'CUSTOMER_SUPPORT' });
+      expect(await wallet.summary(u)).toMatchObject({ wallet: { diamonds: 0, bonusDiamonds: 0 }, cosmetics: ['theme.bamboo'] });
+      // The second refund leaves nothing to pay for it: the table, bought before that pack, goes back now.
+      await pack('CANCELLATION', `tx-p1-${u}`, { cancelReason: 'CUSTOMER_SUPPORT' });
+      expect(await wallet.summary(u)).toMatchObject({ wallet: { diamonds: 0, bonusDiamonds: 0 }, cosmetics: [] });
     });
 
     it('finds a purchase by its store transaction id, whichever account holds it', async () => {
@@ -291,8 +420,10 @@ function contract(name: string, repos: () => Repos) {
       const refund = await wallet.applyStoreEvent(storeEvent(c, 'CANCELLATION', { ...pack, cancelReason: 'CUSTOMER_SUPPORT' }));
       expect(refund).toMatchObject({ outcome: 'refunded', userId: a });
       const after = await r.wallet.get(a);
-      expect(spent.diamonds + spent.bonusDiamonds - (after.diamonds + after.bonusDiamonds)).toBe(7500);
-      expect(after.diamonds).toBeLessThan(0);
+      // The set bought with the pack goes back (its 1,750 return), then the pack's 7,500 go: nothing is left, and nothing is owed.
+      expect(spent.diamonds + spent.bonusDiamonds + 1750 - (after.diamonds + after.bonusDiamonds)).toBe(7500);
+      expect(after).toMatchObject({ diamonds: 0, bonusDiamonds: 0 });
+      expect((await wallet.summary(a)).cosmetics).toEqual([]);
       expect(await r.wallet.get(c)).toMatchObject({ diamonds: 0, bonusDiamonds: 0 });
       await expect(wallet.spend(a, 'theme.bamboo')).rejects.toMatchObject({ code: 'insufficient' });
       // The same refund under another event id (the nightly sync also reports it) takes nothing more.
