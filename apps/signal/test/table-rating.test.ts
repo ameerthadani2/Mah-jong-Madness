@@ -14,7 +14,7 @@ import { createPool, type Pool } from '../src/db';
 import { migrate } from '../src/migrate';
 import { createMemoryRepos, createPgRepos, createRepos, type Repos } from '../src/repos';
 import { createSignalServer, type SignalServer } from '../src/server';
-import { applyQuickMatchRating, DEFAULT_TABLE_RATING, expectedScore, hasLinkedPair, kFor, PROVISIONAL_K, PROVISIONAL_MATCHES, ratingChanges, TABLE_RATING_K, tableRatingView } from '../src/tableRating';
+import { applyQuickMatchRating, DEFAULT_TABLE_RATING, expectedScore, kFor, linkedAccounts, PROVISIONAL_K, PROVISIONAL_MATCHES, ratingChanges, TABLE_RATING_K, tableRatingView } from '../src/tableRating';
 
 const PG_URL = process.env.DATABASE_URL_TEST?.trim();
 const T0 = Date.UTC(2026, 10, 17, 8, 0, 0);
@@ -89,11 +89,12 @@ describe('the rating update', () => {
     expect(ratingChanges(seats)).toEqual([0, -20, 20]);
   });
 
-  it('counts a linked pair only when it names two different accounts', () => {
-    expect(hasLinkedPair(undefined)).toBe(false);
-    expect(hasLinkedPair([])).toBe(false);
-    expect(hasLinkedPair([['a', 'a']])).toBe(false);
-    expect(hasLinkedPair([['a', 'b']])).toBe(true);
+  it('counts the accounts of a linked pair only when it names two different accounts', () => {
+    expect([...linkedAccounts(undefined)]).toEqual([]);
+    expect([...linkedAccounts([])]).toEqual([]);
+    expect([...linkedAccounts([['a', 'a']])]).toEqual([]);
+    expect([...linkedAccounts([['a', 'b']])]).toEqual(['a', 'b']);
+    expect([...linkedAccounts([['a', 'b'], ['b', 'c']])].sort()).toEqual(['a', 'b', 'c']);
   });
 
   it('answers 1500, provisional, for an account that has played no rated match', () => {
@@ -131,21 +132,39 @@ function contract(name: string, repos: () => Repos) {
       expect((await r.tableRatings.getMany([a, b, bot])).map((x) => x.userId).sort()).toEqual([a, b].sort());
     });
 
-    it('moves nobody at a table opened for a pair that queued from one address or device, strangers included', async () => {
+    it('leaves the accounts of a linked pair unrated, and rates every other human at the table against every human seat', async () => {
       const r = repos();
       const [main, alt] = [await user('Main'), await user('Alt')];
       // A second account behind the same home address loses on purpose: the first gains nothing.
       const farm = { matchId: 'farm-' + randomHex(6), room: 'QF1', seats: [seat(main), seat(alt), seat(undefined, true), seat(undefined, true)], scores: [900, -900, 0, 0], players: [main, alt], linked: [[alt, main] as [string, string]] };
       expect((await applyQuickMatchRating(r, farm, T0)).size).toBe(0);
       expect(await r.tableRatings.getMany([main, alt])).toEqual([]);
-      // With a stranger at the table, the second account still feeds the first, which finishes above
-      // the stranger: three such matches move nobody, the stranger included, and count for nobody.
+      // With strangers at the table, the pair still moves nobody of its own: three such matches leave
+      // the pair as it was and count for neither. The strangers are rated against all three others.
       const [stranger, other] = [await user('Stranger'), await user('Other')];
       for (let m = 1; m <= 3; m++) {
         const mixed = { matchId: `mixed-${m}-` + randomHex(6), room: `QF${m + 1}`, seats: [seat(main), seat(alt), seat(stranger), seat(other)], scores: [900, -900, 0, 0], players: [main, alt, stranger, other], linked: [[main, alt] as [string, string]] };
-        expect((await applyQuickMatchRating(r, mixed, T0 + m * 1000)).size).toBe(0);
+        const changes = await applyQuickMatchRating(r, mixed, T0 + m * 1000);
+        expect([...changes.keys()].sort()).toEqual([stranger, other].sort());
       }
-      expect(await r.tableRatings.getMany([main, alt, stranger, other])).toEqual([]);
+      expect(await r.tableRatings.getMany([main, alt])).toEqual([]);
+      // Each stranger beat alt and lost to main (and drew the other stranger) at 1500 against 1500: no change, but three matches counted.
+      expect(await r.tableRatings.get(stranger)).toMatchObject({ rating: 1500, matches: 3, lastRoom: 'QF4', lastChange: 0 });
+      expect(await r.tableRatings.get(other)).toMatchObject({ rating: 1500, matches: 3 });
+      // The honest third player who beats the pair gains on both of them; the pair still does not move.
+      const third = await user('Third');
+      const cgnat = { matchId: 'cgnat-' + randomHex(6), room: 'QC1', seats: [seat(main), seat(alt), seat(third), seat(undefined, true)], scores: [-300, -200, 500, 0], players: [main, alt, third], linked: [[main, alt] as [string, string]] };
+      expect([...(await applyQuickMatchRating(r, cgnat, T0 + 5000))]).toEqual([[third, PROVISIONAL_K / 2]]);
+      expect(await r.tableRatings.get(third)).toMatchObject({ rating: 1500 + PROVISIONAL_K / 2, matches: 1, lastRoom: 'QC1' });
+      expect(await r.tableRatings.getMany([main, alt])).toEqual([]);
+      // Reported again (after a restart): nothing moves twice.
+      expect((await applyQuickMatchRating(r, cgnat, T0 + 6000)).size).toBe(0);
+      expect((await r.tableRatings.get(third))?.matches).toBe(1);
+      // A table of two linked pairs rates nobody.
+      const [x, y] = [await user('X'), await user('Y')];
+      const two = { matchId: 'two-' + randomHex(6), room: 'QC2', seats: [seat(main), seat(alt), seat(x), seat(y)], scores: [400, -400, 300, -300], players: [main, alt, x, y], linked: [[main, alt] as [string, string], [x, y] as [string, string]] };
+      expect((await applyQuickMatchRating(r, two, T0 + 7000)).size).toBe(0);
+      expect(await r.tableRatings.getMany([x, y])).toEqual([]);
       // The same table with no linked pair is rated as usual.
       const open = { matchId: 'open-' + randomHex(6), room: 'QF9', seats: [seat(main), seat(alt), seat(stranger), seat(other)], scores: [900, -900, 0, 0], players: [main, alt, stranger, other], linked: [] };
       const changes = await applyQuickMatchRating(r, open, T0 + 9000);
@@ -156,7 +175,7 @@ function contract(name: string, repos: () => Repos) {
         [other, 0],
       ]);
       expect(await r.tableRatings.get(main)).toMatchObject({ rating: 1500 + PROVISIONAL_K / 2, matches: 1, lastRoom: 'QF9' });
-      expect(await r.tableRatings.get(stranger)).toMatchObject({ rating: 1500, matches: 1, lastRoom: 'QF9' });
+      expect(await r.tableRatings.get(stranger)).toMatchObject({ rating: 1500, matches: 4, lastRoom: 'QF9' });
     });
 
     it('moves nobody when fewer than two humans played, or for an account the table was not opened for', async () => {

@@ -6,15 +6,21 @@
  * rating about as much as one game whatever the number of humans. `K` is `TABLE_RATING_K` (small),
  * and `PROVISIONAL_K` for an account's first `PROVISIONAL_MATCHES` matches, so a new account finds
  * its level quickly. Bots never move a rating and are never rated against; a match with fewer than
- * two humans (distinct accounts) moves none. A table the queue opened for a linked pair (two
- * accounts that joined from one address, an IPv4 address or an IPv6 /64, or from one device:
- * matchmaking.ts `linkedPairs`) moves nobody's rating, theirs or anyone else's at it. Scoring the pair
- * only against the others would still let a second account behind one home address feed the first:
- * the second loses on purpose, the first then finishes above the strangers and gains on them. Such
- * tables are few (the queue seats two accounts from one IPv4 address together only when the other
- * choice is bots, and keeps the pair apart after three such tables a day), so leaving the whole
- * table unrated costs honest players little and is the simplest rule to state. Quick match prefers
- * tables of close ratings (matchmaking.ts).
+ * two humans (distinct accounts) moves none. Quick match prefers tables of close ratings
+ * (matchmaking.ts).
+ *
+ * Linked accounts. Two accounts at a table are linked when the queue seated them together although
+ * they joined from one address key (an IPv4 address or an IPv6 /64) or one device (matchmaking.ts
+ * `linkedPairs`). The queue never seats two accounts from one IPv6 /64 or one device together, so a
+ * linked pair is in practice two accounts behind one IPv4 address: a household, or strangers behind
+ * a mobile carrier's shared address. A linked account's rating does not move at that table and the
+ * match does not count for it, whatever it scored, so a second account behind one home address
+ * cannot lose on purpose to feed the first. Every other human at the table is rated as usual,
+ * against every human seat (linked ones included, at their ratings as they stand): an honest
+ * stranger who sat with such a pair loses nothing. A linked pair could still lose on purpose to a
+ * third account of theirs on another network, but two accounts on two networks can do that at any
+ * table already, and the queue seats a linked pair together only when the other choice is bots
+ * (and keeps it apart for the rest of the UTC day after three such tables).
  */
 import type { Repos, TableRatingRecord } from './repos';
 
@@ -93,24 +99,25 @@ export interface FinishedSeat {
 /**
  * Apply a finished quick-match match to the ratings of its humans, in one transaction. Seats that
  * are bots, have no account, or are not among `players` (the accounts the table was opened for)
- * are left out; an account in two seats counts once (its first). A table opened with a pair in
- * `linked` (the queue's pairs that shared an address or a device) moves nobody, whoever finished
- * where (see the top of this file). A match already applied (any of its humans' last match is this
- * one, as after a restart) changes nothing. Returns the changes by account (empty when nothing moved).
+ * are left out; an account in two seats counts once (its first). The accounts of a pair in
+ * `linked` (the queue's pairs that shared an address or a device) are not rated at this table;
+ * the other humans are, against every human seat (see the top of this file). A match already
+ * applied (any of its humans' last match is this one, as after a restart) changes nothing.
+ * Returns the changes by account (empty when nothing moved).
  */
 export async function applyQuickMatchRating(
   repos: Pick<Repos, 'transaction'>,
   match: { matchId: string; room: string; seats: FinishedSeat[]; scores: number[]; players?: Iterable<string>; linked?: Iterable<readonly [string, string]> },
   at: number,
 ): Promise<Map<string, number>> {
-  if (hasLinkedPair(match.linked)) return new Map();
   const allowed = match.players ? new Set(match.players) : null;
+  const linked = linkedAccounts(match.linked);
   const humans: Array<{ userId: string; score: number }> = [];
   match.seats.forEach((s, i) => {
     if (s.isBot || !s.userId || (allowed && !allowed.has(s.userId)) || humans.some((h) => h.userId === s.userId)) return;
     humans.push({ userId: s.userId, score: match.scores[i] ?? 0 });
   });
-  if (humans.length < 2 || !match.matchId) return new Map();
+  if (humans.length < 2 || !match.matchId || humans.every((h) => linked.has(h.userId))) return new Map();
   return repos.transaction(async (tx) => {
     const rows = new Map((await tx.tableRatings.getManyForUpdate(humans.map((h) => h.userId))).map((r) => [r.userId, r]));
     if ([...rows.values()].some((r) => r.lastMatchId === match.matchId)) return new Map<string, number>();
@@ -119,6 +126,8 @@ export async function applyQuickMatchRating(
     const out = new Map<string, number>();
     for (let i = 0; i < seats.length; i++) {
       const s = seats[i];
+      // A linked account is scored against (its rating stands in the others' expectations) but not moved.
+      if (linked.has(s.userId)) continue;
       await tx.tableRatings.set({ userId: s.userId, rating: s.rating + changes[i], matches: s.matches + 1, lastMatchId: match.matchId.slice(0, 128), lastRoom: match.room.slice(0, 32), lastChange: changes[i], updatedAt: at });
       out.set(s.userId, changes[i]);
     }
@@ -126,8 +135,13 @@ export async function applyQuickMatchRating(
   });
 }
 
-/** True when the table was opened for a linked pair: two different accounts from one address or one device. */
-export function hasLinkedPair(linked: Iterable<readonly [string, string]> | undefined): boolean {
-  for (const [a, b] of linked ?? []) if (a !== b) return true;
-  return false;
+/** The accounts of a table's linked pairs: both accounts of each pair that names two different ones. */
+export function linkedAccounts(linked: Iterable<readonly [string, string]> | undefined): Set<string> {
+  const out = new Set<string>();
+  for (const [a, b] of linked ?? []) {
+    if (a === b) continue;
+    out.add(a);
+    out.add(b);
+  }
+  return out;
 }

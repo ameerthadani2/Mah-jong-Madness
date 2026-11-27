@@ -82,7 +82,7 @@
     "id": "玩家編號：%{id}",
     "tableRating": "快速配對積分：%{rating}",
     "tableRatingProvisional": "暫定積分：已打 %{matches}／20 場計分比賽",
-    "tableRatingHint": "只有和真人的快速配對會改變積分，電腦玩家不計。若同桌有兩位玩家從同一網路或同一裝置加入，這一局對所有人都不計入積分。",
+    "tableRatingHint": "只有和真人的快速配對會改變積分，電腦玩家不計。若同桌有兩位玩家從同一網路或同一裝置加入，這一局不計入這兩位的積分，同桌其他玩家照常計分。",
     "apple": "使用 Apple 登入",
     "google": "使用 Google 登入",
     "linkedApple": "已連結 Apple",

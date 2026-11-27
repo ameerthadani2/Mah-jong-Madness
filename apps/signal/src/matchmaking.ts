@@ -23,8 +23,8 @@
  * a restart; shown to moderators). A pair that shared an IPv4 address at three tables in one UTC day
  * (`KEEP_APART_SHARED_PER_DAY`) is kept apart from then on, as a block keeps two accounts apart: a
  * second account behind one home address cannot keep sitting with the first. The table is opened
- * with the pairs of its players that queued from one address key or one device (`linkedPairs`),
- * and a table opened with such a pair moves nobody's table rating (src/tableRating.ts). A group
+ * with the pairs of its players that queued from one address key or one device (`linkedPairs`):
+ * neither account of such a pair is rated at that table, and every other human is (src/tableRating.ts). A group
  * of four within the rating spread is seated at once; any group is seated, with Club bots in the
  * empty seats, once its first player has waited `fillMs` (QUICK_MATCH_FILL_MS, default 20 s), so a
  * solo player always gets a game. Each player of a seated group gets `{t:'matched', room, humans, bots}` and
@@ -611,7 +611,7 @@ function clash(a: Entry, b: Entry): boolean {
 
 /**
  * The pairs of a seated group (by account) that queued from one address key (an IPv4 address or an
- * IPv6 /64) or one device: a table opened with one moves nobody's table rating (src/tableRating.ts).
+ * IPv6 /64) or one device: neither account of such a pair is rated at that table (src/tableRating.ts).
  */
 export function linkedPairs(seated: Array<{ peer: { userId: string }; address: string | null; device: string | null }>): Array<[string, string]> {
   const out: Array<[string, string]> = [];
