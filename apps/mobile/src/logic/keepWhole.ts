@@ -96,7 +96,10 @@ const LEAD_RE = /(第|底)( ?)(?=\d)|(台)()(?=\d)/g;
 /** A tile with its count (六萬×3). */
 const TIMES_RE = /(?<=[㐀-鿿])×(?=\d)/g;
 /** The last two characters of a line, before any closing punctuation; or a short Chinese word ending a line after a space (cap on 台). */
-const LAST_PAIR_RE = /([㐀-鿿])([㐀-鿿][^㐀-鿿\w\n]*)$/gm;
+const LAST_PAIR_RE = /([㐀-鿿])([㐀-鿿][^㐀-鿿\w\n]*)$/;
+/** A line too short to wrap (a label: 解題, 麻將狂熱) is left as it is. */
+const LAST_PAIR_MIN = 6;
+const lastPair = (line: string): string => ((line.match(/[㐀-鿿]/g) ?? []).length >= LAST_PAIR_MIN ? line.replace(LAST_PAIR_RE, `$1${WORD_JOINER}$2`) : line);
 const LAST_WORD_RE = / (?=[㐀-鿿]{1,2}[^㐀-鿿\w\s]*$)/gm;
 /** 明槓, 暗槓, 加槓, but not the 加槓 of 加槓上開花. */
 const KONG_RE = /[明暗加]槓(?!上開花)/g;
@@ -121,7 +124,9 @@ export function keepWhole(text: string): string {
       .replace(ZH_COUNT_RE, glue)
       .replace(KONG_RE, glue)
       .replace(ZH_RE, glue)
-      .replace(LAST_PAIR_RE, `$1${WORD_JOINER}$2`)
+      .split('\n')
+      .map(lastPair)
+      .join('\n')
       .replace(LAST_WORD_RE, NO_BREAK_SPACE);
   }
   return out.replace(EN_RE, (w) => w.replace(/ /g, NO_BREAK_SPACE)).replace(EN_UNIT_RE, `$1${NO_BREAK_SPACE}`);

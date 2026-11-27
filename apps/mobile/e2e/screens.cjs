@@ -441,7 +441,7 @@ async function coachCheck(page, advised) {
       if (hits('[data-testid="my-pond"] [data-testid^="tile-"]')) bad.push('the coach covers my pond');
       if (hits('[data-testid="hand"] [data-testid^="tile-"], [data-testid="hand-discard"] [data-testid^="tile-"]')) bad.push('the coach covers my hand');
       if (hits('[data-testid="action-dock"] [role="button"], [data-testid="action-strip"] [role="button"]')) bad.push('the coach covers the claim or discard buttons');
-      const hint = [...document.querySelectorAll('div[dir="auto"]')].find((e) => /^(Tap a tile, tap again to discard|點一張牌，再點一次打出)$/.test(e.textContent) && seen(e));
+      const hint = [...document.querySelectorAll('div[dir="auto"]')].find((e) => /^(Tap a tile, tap again to discard|點一張牌，再點一次打出)$/.test(e.textContent.replace(/\u2060/g, '')) && seen(e));
       if (hint && meet(box, shown(hint.parentElement))) bad.push('the coach covers the tap hint');
     }
     return bad;
@@ -837,7 +837,7 @@ async function playCoachedHand(page, { onDiscard = async () => undefined, untilD
   };
   const started = Date.now();
   while (Date.now() - started < limitMs && discards < untilDiscards) {
-    if ((await visible(page, '[data-testid="result-sheet"]')) || (await visible(page, 'text=/^(Next hand|下一局)/'))) break;
+    if ((await visible(page, '[data-testid="result-sheet"]')) || (await visible(page, 'text=/^(Next hand|下一\u2060?局)/'))) break;
     if (await visible(page, '[data-testid="tiles-smaller-notice"]')) toldSmaller = true;
     let el;
     if ((el = await visible(page, '[data-testid="claim-win"]'))) {
@@ -929,7 +929,7 @@ async function runTableZh(browser, port, [w, h], xl) {
   await page.screenshot({ path: path.join(out, `${tag}-${name}.png`) });
   const where = `Table (zh-TW${xl ? ', Extra-large text' : ''})`;
   const fails = [];
-  if (!(await page.evaluate(() => [...document.querySelectorAll('[data-testid="seat-name"]')].some((e) => /電腦/.test(e.textContent))))) fails.push(`${where}: no bot seat is named in Chinese`);
+  if (!(await page.evaluate(() => [...document.querySelectorAll('[data-testid="seat-name"]')].some((e) => /電腦/.test(e.textContent.replace(/\u2060/g, '')))))) fails.push(`${where}: no bot seat is named in Chinese`);
   // Going from Home to the table keeps the page's Chinese title (nothing else sets it).
   const title = await page.title();
   if (title !== '麻將狂熱') fails.push(`${where}: the page title is "${title}", not 麻將狂熱`);
@@ -973,7 +973,7 @@ async function runHomeZh(browser, port, [w, h]) {
   fails.push(...(await tapsReach(page)).map((f) => `Home (zh-TW): ${f}`));
   // The wordmark reads the Chinese app name (common.appName), whole and on screen.
   const mark = await page.evaluate(() => {
-    const els = [...document.querySelectorAll('div[dir="auto"]')].filter((e) => e.children.length === 0 && e.textContent === '麻將狂熱' && e.getBoundingClientRect().width > 0);
+    const els = [...document.querySelectorAll('div[dir="auto"]')].filter((e) => e.children.length === 0 && e.textContent.replace(/\u2060/g, '') === '麻將狂熱' && e.getBoundingClientRect().width > 0);
     return els.map((e) => { const r = e.getBoundingClientRect(); return { off: r.left < -1 || r.right > innerWidth + 1 || r.top < -1, cut: e.scrollWidth > e.clientWidth + 1 || r.height > parseFloat(getComputedStyle(e).lineHeight || '0') * 1.6 + 2 }; });
   });
   if (mark.length === 0) fails.push('Home (zh-TW): the wordmark does not read 麻將狂熱');
