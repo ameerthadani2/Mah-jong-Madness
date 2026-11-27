@@ -84,7 +84,9 @@ async function open(browser, { seeded = false, look = false } = {}) {
 }
 
 /** The visible element whose text is exactly `text` (stroked labels repeat it; any copy will do). */
-const tapText = (page, text, wait) => tapSel(page, `text="${text}"`, wait);
+/** A label as drawn: the app's Text may join its characters with a word joiner, or a number to its unit with a no-break space (src/logic/keepWhole.ts). */
+const drawn = (text) => new RegExp(`^\\s*${[...text].map((c) => (c === ' ' ? '[ \\u00a0]' : c.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&'))).join('\\u2060?')}\\s*$`);
+const tapText = (page, text, wait) => tapSel(page, `text=${drawn(text)}`, wait);
 
 /** The test store's notice is for development builds only: hide it so the Shop looks as it does in a release build. */
 const hideTestStoreNotice = (page) =>
@@ -175,10 +177,38 @@ async function storyFair(browser) {
     const heading = T('fairness', 'sessionHands');
     // The list is the end of the page, so this scrolls as far as it goes: the hand's card whole at the bottom.
     await page.evaluate((text) => {
-      const h = [...document.querySelectorAll('div')].find((d) => d.childElementCount === 0 && d.textContent === text);
+      const h = [...document.querySelectorAll('div')].find((d) => d.childElementCount === 0 && d.textContent.replace(/\u2060/g, '') === text);
       if (h) h.scrollIntoView({ block: 'start' });
     }, heading);
     await page.waitForTimeout(900);
+    // At the end of the page the screen's top edge can cut a line of the paragraph above in half (unit 21's check of
+    // the 09-fair frames): scroll back to the top of that line, as far as the hand's card stays whole at the bottom.
+    const fix = await page.evaluate(() => {
+      const scroller = [...document.querySelectorAll('div')].find((d) => d.scrollTop > 0 && d.scrollHeight > d.clientHeight);
+      if (!scroller) return 'no scroller';
+      const box = scroller.getBoundingClientRect();
+      const lines = [];
+      const walker = document.createTreeWalker(scroller, NodeFilter.SHOW_TEXT);
+      for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+        if (!n.textContent.trim()) continue;
+        const range = document.createRange();
+        range.selectNodeContents(n);
+        for (const r of range.getClientRects()) if (r.height > 0) lines.push([r.top, r.bottom]);
+      }
+      const bordered = [...scroller.querySelectorAll('div')].filter((d) => parseFloat(getComputedStyle(d).borderBottomWidth) >= 2);
+      const room = Math.floor(box.bottom - 2 - Math.max(...bordered.map((d) => d.getBoundingClientRect().bottom)));
+      // The least scroll back that leaves no line across the top edge, within the room under the card.
+      const cuts = (up) => lines.some(([top, bottom]) => top + up < box.top - 0.5 && bottom + up > box.top + 0.5);
+      if (!cuts(0)) return 'no cut line';
+      for (let up = 1; up <= room; up++)
+        if (!cuts(up)) {
+          scroller.scrollTop -= up;
+          return `scrolled back ${up} px`;
+        }
+      return `kept: no clean edge within the ${room} px under the card`;
+    });
+    console.log(`  fair-online top line: ${fix}`);
+    await page.waitForTimeout(400);
     await shot(page, 'fair-online');
   }
   await ctx.close();
