@@ -115,7 +115,7 @@ export function ActionBar({
   const canDiscard = actions.some((a) => a.type === 'discard');
   const recommended = (a: Action) => hint?.claims.find((c) => JSON.stringify(c.action) === JSON.stringify(a))?.recommended;
   const pendingTile = view.pending?.tile;
-  const names = (tiles: TileId[]) => tiles.map((x) => tileName(x, locale)).join(', ');
+  const names = (tiles: TileId[]) => tiles.map((x) => tileName(x, locale)).join(locale === 'zh-TW' ? '、' : ', ');
   const label = (verb: string, tiles?: TileId[]) => (tiles && tiles.length ? t('table.a11y.claimWith', { verb, tiles: names(tiles) }) : verb);
   const prompt = view.pending ? `${view.pending.from}:${view.pending.tile}` : '';
   // Several 吃 choices in a compact strip: one 吃 button that opens them (with a way back to the other claims).

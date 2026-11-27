@@ -27,12 +27,12 @@ describe('rulesSummary', () => {
     const english = rulesSummary(off, en, 'en');
     expect(english).toBe(describeRules(off));
     expect(english).toContain('天胡 off · 地胡 off · 人胡 off');
-    expect(english).not.toMatch(/胡0台/);
+    expect(english).not.toMatch(/胡 ?0 ?台/);
     const chinese = rulesSummary(off, zh, 'zh-TW');
     expect(chinese).toContain('不計天胡 · 不計地胡 · 不計人胡');
-    expect(chinese).not.toMatch(/胡0台|off/);
+    expect(chinese).not.toMatch(/胡 ?0 ?台|off/);
     // A value above 0 still reads as a number of 台 in both languages.
-    expect(rulesSummary({ ...DEFAULT_RULES, heavenlyTai: 16 }, zh, 'zh-TW')).toContain('天胡16台');
+    expect(rulesSummary({ ...DEFAULT_RULES, heavenlyTai: 16 }, zh, 'zh-TW')).toContain('天胡 16 台');
   });
 
   it('reads Chinese in zh-TW and keeps the stakes first', () => {
@@ -158,8 +158,8 @@ describe('嚦咕嚦咕 in the rule editor and summaries', () => {
   it('reads as a number of 台 in both languages when a table plays it', () => {
     const on = { ...DEFAULT_RULES, liguTai: 8 };
     expect(rulesSummary(on, en, 'en')).toBe(describeRules(on));
-    expect(rulesSummary(on, en, 'en')).toContain('嚦咕嚦咕8台');
-    expect(rulesSummary(on, zh, 'zh-TW')).toContain('嚦咕嚦咕8台');
+    expect(rulesSummary(on, en, 'en')).toContain('嚦咕嚦咕 8 台');
+    expect(rulesSummary(on, zh, 'zh-TW')).toContain('嚦咕嚦咕 8 台');
     // Should a caller list it at 0, it reads as off, never 0台.
     expect(ruleExtraLabel({ kind: 'liguTai', value: 0 }, en)).toBe('嚦咕嚦咕 off');
     expect(ruleExtraLabel({ kind: 'liguTai', value: 0 }, zh)).toBe('不計嚦咕嚦咕');
@@ -172,12 +172,12 @@ describe('rulesSummary lists every non-default rule', () => {
   it('in English, exactly as the engine describes it', () => {
     const s = rulesSummary(house, en, 'en');
     expect(s).toBe(describeRules(house));
-    for (const part of ['dealer 2台', '連莊 +3台 a hand', '流局不連莊', 'dead wall 8', '天胡16台', '地胡8台', '人胡8台', 'start 1000']) expect(s).toContain(part);
+    for (const part of ['dealer 2 台', '連莊 +3 台 a hand', '流局不連莊', 'dead wall 8', '天胡 16 台', '地胡 8 台', '人胡 8 台', 'start 1000']) expect(s).toContain(part);
   });
 
   it('in Traditional Chinese', () => {
     const s = rulesSummary(house, zh, 'zh-TW');
-    for (const part of ['莊家2台', '連莊每次加3台', '流局不連莊', '留8張', '天胡16台', '地胡8台', '人胡8台', '起始1000分']) expect(s).toContain(part);
+    for (const part of ['莊家 2 台', '連莊每次加 3 台', '流局不連莊', '留 8 張', '天胡 16 台', '地胡 8 台', '人胡 8 台', '起始 1000 分']) expect(s).toContain(part);
     expect(s).not.toMatch(/dealer|dead wall|start/);
   });
 });

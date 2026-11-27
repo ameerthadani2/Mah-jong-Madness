@@ -187,10 +187,13 @@ describe('easy and medium value puzzles stay as they are', () => {
   // are built must not move an easy or medium one (the daily and Rush seeds keep their puzzles).
   // Since 18 November 2026 the English explanation is left out of the hash: its tile names became
   // singular ("5 Dot", was "5 Dots"). Everything else, the Chinese explanation included, is as recorded;
-  // the same hash without the English text was checked against the code of 17 November.
+  // the same hash without the English text was checked against the code of 17 November. On 27 November 2026 the
+  // Chinese sentence for a speed-for-value trade was reworded (這是值得的以速度換台數 → 用速度換台數，這樣很值得), and the
+  // Chinese explanations write a space between a number and its unit (聽 4 張, 8 台), as the coach and the lessons do;
+  // only the Chinese explanations changed (checked with both explanations left out). Was a81efc96… and eabe428b….
   const pinned = {
-    1: 'a81efc96e0ce8487ff01103c17a9a3f575a4db57d3abce2518f2633f04d4c64a',
-    2: 'eabe428b3859b1ef4684c24852161a1e17e1f046a85d293d75ff23640bc1748e',
+    1: 'c534c6796de907e079cd8c662cef94fc1ee77150959c6257cf44fc233e5c40c8',
+    2: '9bc6668141f5fd24e5e951d5012b875451dbd1a3e8e2a106019c14b0094c9514',
   } as const;
   for (const d of [1, 2] as const) {
     it(`difficulty ${d}: 120 seeded puzzles are byte-identical to the recorded ones`, () => {

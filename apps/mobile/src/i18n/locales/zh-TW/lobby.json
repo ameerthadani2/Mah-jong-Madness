@@ -8,7 +8,7 @@
   "serverTable": "伺服器牌桌",
   "onDevice": "在這台裝置上",
   "seats": "座位",
-  "emptySeat": "空位 — 等待牌友",
+  "emptySeat": "空位（等待牌友）",
   "remove": "移除",
   "addBot": "加入電腦",
   "fillHint": "開始時空位會由電腦補上。",

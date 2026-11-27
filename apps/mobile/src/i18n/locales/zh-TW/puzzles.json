@@ -82,11 +82,11 @@
     "defenceTerminal": "么九牌比較安全",
     "claimHu": "胡牌",
     "claimPassReady": "保持門清",
-    "claimPassNoGain": "吃碰沒好處，不要",
+    "claimPassNoGain": "要了也沒好處，過",
     "claimKong": "槓牌多補一張",
-    "claimReady": "吃碰後聽牌",
-    "claimCloser": "吃碰後更接近聽牌",
-    "claimEven": "和不吃不碰差不多",
+    "claimReady": "要這張就聽牌",
+    "claimCloser": "要這張更接近聽牌",
+    "claimEven": "和不要這張差不多",
     "claimValue": "碰了有台數",
     "valueKeepPattern": "保住牌型",
     "valueTradeSpeed": "慢一點也值得",
@@ -119,7 +119,7 @@
     "intro": "%{seat}打出%{tile}，你要怎麼做？",
     "yourHand": "你的手牌",
     "yourMelds": "你亮出的牌",
-    "pass": "不要",
+    "pass": "過",
     "chi": "用%{a}%{b}吃%{tile}",
     "pong": "碰%{tile}",
     "kong": "槓%{tile}",
@@ -133,7 +133,7 @@
       "one": "聽牌，%{count} 張可以胡",
       "other": "聽牌，%{count} 張可以胡"
     },
-    "away": "離聽牌 %{n} 步",
+    "away": "差 %{n} 張聽牌",
     "win": "直接胡牌"
   },
   "value": {
@@ -171,7 +171,7 @@
   },
   "server": {
     "ranked": "已列入排名",
-    "unranked": "未列入排名：無法連上遊戲伺服器。成績已保存在這台裝置上。",
+    "unranked": "未列入排名：無法連上遊戲伺服器。成績已儲存在這台裝置上。",
     "time": "時間 %{n} 秒",
     "newRun": "開始新的一輪",
     "checking": "正在向遊戲伺服器確認…",

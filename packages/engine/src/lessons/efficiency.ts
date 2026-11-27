@@ -34,7 +34,7 @@ export const EFFICIENCY_LESSONS: Lesson[] = [
         title: 'Take away what you can see',
         titleZh: '扣掉看得到的牌',
         body: 'Copies you hold yourself, or can see on the table, cannot come to you. Here your 123p already uses one 3p; if two 6p are also in the discards, 45p is down to five tiles. The coach counts everything visible to you: your own hand and sets, every discard and every exposed set.',
-        bodyZh: '自己手上的牌，還有桌上看得到的牌，都不可能再摸到。這裡你的 123p 已經用掉一張 3p；如果牌河裡又有兩張 6p，45p 就只剩五張可進。教練會把你看得到的牌全部扣掉：自己的手牌和亮出的牌、所有打出的牌，還有別家亮出的牌。',
+        bodyZh: '自己手上的牌，還有桌上看得到的牌，都不可能再摸到。這裡你的 123p 已經用掉一張 3p；如果打出的牌裡又有兩張 6p，45p 就只剩五張可進。教練會把你看得到的牌全部扣掉：自己的手牌和亮出的牌、所有打出的牌，還有別家亮出的牌。',
         hand: '123p 45p 789s',
       },
       {
@@ -197,7 +197,7 @@ export const EFFICIENCY_LESSONS: Lesson[] = [
     id: 'eff-early',
     track: 'efficiency',
     title: 'Early discards: honours and terminals',
-    titleZh: '開局先打什麼：字牌與么九',
+    titleZh: '開局先打字牌和么九',
     minutes: 3,
     summary: 'In the first turns, throw the lone tiles least likely to join a set: honours first, then terminals.',
     summaryZh: '開局前幾巡，先打最難湊成一組的單張：先打字牌，再打么九牌。',
@@ -227,7 +227,7 @@ export const EFFICIENCY_LESSONS: Lesson[] = [
           hand: '234m 567p 11s 46m 789p 9s 2p 5s 8m',
           answer: '9s',
           explanation: 'The 9s is a terminal: it can only grow with a 7s, an 8s or a second 9s. The 2p and the 5s are loose too, but each has neighbours on both sides to build with. Throw 9s and 66 tiles still improve the hand; throw 2p or 5s instead and only 58 do.',
-          explanationZh: '9s 是老頭牌，只能靠 7s、8s 或再一張 9s 發展。2p 和 5s 雖然也是散牌，但兩邊都有牌可以搭。打 9s 之後還有 66 張能改善手牌；改打 2p 或 5s 就只剩 58 張。',
+          explanationZh: '9s 是么九牌，只能靠 7s、8s 或再一張 9s 發展。2p 和 5s 雖然也是散牌，但兩邊都有牌可以搭。打 9s 之後還有 66 張能改善手牌；改打 2p 或 5s 就只剩 58 張。',
         },
       },
       {

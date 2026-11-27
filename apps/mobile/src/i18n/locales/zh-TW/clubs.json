@@ -7,7 +7,7 @@
     "title": "加入俱樂部",
     "placeholder": "俱樂部代碼",
     "button": "加入",
-    "requestSent": "已送出申請 — 需等管理員核准。"
+    "requestSent": "已送出申請，需等管理員核准。"
   },
   "create": {
     "title": "建立俱樂部",
@@ -86,7 +86,7 @@
     "join": "加入牌桌",
     "pendingRequests": "待審申請",
     "approve": "核准",
-    "variant": "變化桌・不計排名",
+    "variant": "變化桌 · 不計排名",
     "openVariant": "開變化桌",
     "variantNote": "變化桌使用不同的規則，不計入排名。",
     "openWithRules": "用這套規則開桌",
@@ -106,7 +106,7 @@
   "rules": {
     "presets": "預設規則",
     "speed": "速度",
-    "speedChip": "%{label} %{turn}秒",
+    "speedChip": "%{label} %{turn} 秒",
     "membersCanOpen": "會員可以開桌",
     "approveNew": "新會員需要核准",
     "multipleWinners": "一炮多響",
@@ -122,7 +122,7 @@
   },
   "signIn": {
     "title": "登入後才能使用俱樂部",
-    "body": "俱樂部存放在遊戲伺服器上，所以需要帳號。連上伺服器時，應用程式會為你建立訪客帳號；在那之前仍可離線和電腦對打、上課。",
+    "body": "俱樂部存放在遊戲伺服器上，所以需要帳號。連上伺服器時，App會為你建立訪客帳號；在那之前仍可離線和電腦對打、上課。",
     "retry": "連線",
     "connecting": "連線中…"
   },
@@ -136,10 +136,10 @@
   },
   "report": "檢舉",
   "rulesText": {
-    "dealerTai": "莊家%{n}台",
-    "dealerStreakTai": "連莊每次加%{n}台",
-    "deadWall": "留%{n}張",
-    "startingPoints": "起始%{n}分",
+    "dealerTai": "莊家 %{n} 台",
+    "dealerStreakTai": "連莊每次加 %{n} 台",
+    "deadWall": "留 %{n} 張",
+    "startingPoints": "起始 %{n} 分",
     "limitOff": "不計%{name}"
   },
   "share": {
@@ -167,12 +167,12 @@
       "wall": "留牌",
       "claims": "吃碰與胡牌",
       "flowers": "花牌",
-      "special": "天胡・地胡・人胡・嚦咕嚦咕",
+      "special": "天胡、地胡、人胡、嚦咕嚦咕",
       "speed": "速度"
     },
     "fields": {
       "basePoints": "底",
-      "taiPoints": "每台分數",
+      "taiPoints": "每台點數",
       "maxTai": "封頂台數",
       "handsPerMatch": "輪莊次數",
       "startingPoints": "起始分數",

@@ -51,6 +51,6 @@ describe("the HUD's round chip", () => {
     const zh = (k: string, p?: Record<string, unknown>) => translate('zh-TW', k, p);
     expect(roundSentence(en, 0, 3, 0)).toBe('East round, hand 3');
     expect(roundSentence(en, 1, 3, 2)).toBe('South round, hand 3, the dealer has kept the deal 2 times');
-    expect(roundSentence(zh, 1, 3, 2)).toBe('南風圈，第3局，莊家連2');
+    expect(roundSentence(zh, 1, 3, 2)).toBe('南風圈，第 3 局，莊家連2');
   });
 });

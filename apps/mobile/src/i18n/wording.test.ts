@@ -1,3 +1,4 @@
+import { readFileSync } from 'fs';
 import { describe, expect, it } from 'vitest';
 import { en, zhTW } from './locales';
 
@@ -39,6 +40,47 @@ describe('plain Taiwanese wording in the app', () => {
     expect(hits(/權利/), '權利 is a legal right: 資格').toEqual([]);
     expect(hits(/自摸胡|最佳打牌|十六圈莊|圈莊/)).toEqual([]);
     expect(hits(/吃碰這張|吃碰沒有幫助/), 'a claim reason names the claim on offer').toEqual([]);
+  });
+
+  // Unit 21's language check over every zh-TW string: riichi words left in the teaching text, Japanese marks, Mainland
+  // words, and things with two or three names.
+  it('uses no riichi word, Japanese mark or Mainland word, and one name for each thing', async () => {
+    const { engineStrings } = await import('./engineWording');
+    const all = [...strings(zhTW, 'zh-TW'), ...strings(engineStrings('zh-TW'), 'engine')];
+    const hits = (re: RegExp) => all.filter(([, s]) => re.test(s)).map(([k]) => k);
+    expect(hits(/振聽|筋牌|老頭牌|捨牌|牌河/), 'riichi words: 打過的牌也能胡, 打出的牌, 么九牌').toEqual([]);
+    expect(hits(/・| — /), 'a katakana middle dot or a spaced em dash: · 、 ，').toEqual([]);
+    expect(hits(/花兒|烤串|消息|應用程式|單吊|比較建議|明牌/), 'Mainland or second names: 花, 串燒, 訊息, App, 單騎, 會選, 亮出的牌').toEqual([]);
+    // 保存 stays where the legal and fairness texts mean "keep a record"; what the app saves is 儲存.
+    expect(hits(/保存/).filter((k) => !/^zh-TW\.(legal|fairness)\./.test(k)), 'the app saves: 儲存').toEqual([]);
+    // 不吃不碰 (not claiming at all) stays as an idiom for passing; a line about one claim on offer does not say 吃碰.
+    expect(hits(/吃碰後|，不要$/), 'a claim line says 要這張 or names the claim, and passing is 過').toEqual([]);
+    expect(zhTW.puzzles.claim.pass).toBe(zhTW.table.claim.pass);
+    expect(zhTW.puzzles.claim.away).toBe(zhTW.puzzles.view.fromReady);
+    expect(zhTW.clubs.ruleEditor.fields.taiPoints).toBe(zhTW.settings.taiPoints);
+    expect(zhTW.clubs.ruleEditor.fields.dealerStreakTai).toBe(zhTW.settings.dealerStreakTai);
+    expect(zhTW.clubs.ruleEditor.fields.deadWallSize).toBe(zhTW.settings.deadWall);
+    // An emote pack's description names its six emotes as the emotes themselves are named.
+    const packs = { emotes_teahouse: 'th', emotes_nightmarket: 'nm', emotes_festival: 'fs' } as const;
+    for (const [product, pack] of Object.entries(packs)) {
+      const names = Object.values(zhTW.table.emoteName[pack] as Record<string, string>);
+      expect(zhTW.shop.products[product as keyof typeof packs].description, product).toBe(`六個表情：${names.join('、')}。`);
+    }
+  });
+
+  // The store listing is read by players before the app: unit 21's check found 複盤 and 開設 left in it.
+  it('uses the same Taiwan wording in the zh-TW store listing', () => {
+    const listing = readFileSync(new URL('../../../../docs/store/listing/zh-TW.md', import.meta.url), 'utf8');
+    for (const word of ['複盤', '開設', '面子', '成員', '負責人', '表情包', '十六圈', '圈莊', '振聽', '牌河', '・']) expect(listing, word).not.toContain(word);
+    expect(listing).toContain('覆盤');
+  });
+
+  it('writes a number and its Chinese unit one way, with a space between', async () => {
+    const { engineStrings } = await import('./engineWording');
+    const all = [...strings(zhTW, 'zh-TW'), ...strings(engineStrings('zh-TW'), 'engine')];
+    // A placeholder or a digit right against a unit (%{s}秒, 莊家%{n}台); a count in Chinese numerals (%{count}圈 → 四圈) is written whole.
+    const tight = all.filter(([k, s]) => /(\d|%\{\w+\})[台秒張分天局次位題組步場勝課]/.test(s) && k !== 'zh-TW.common.rules.rounds');
+    expect(tight).toEqual([]);
   });
 
   it('writes the full-width ！ in Chinese text, in both locales and in the engine templates', async () => {

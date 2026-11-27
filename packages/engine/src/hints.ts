@@ -87,13 +87,13 @@ export const HINT_REASON_KEYS = {
     'zh-TW': '還差 %{shanten} 張才聽嚦咕嚦咕（七對加一刻）：對子留著。',
   },
   'hint.status.readyCount': { en: 'Ready — waiting on %{kinds} kind(s).', 'zh-TW': '聽牌：聽 %{kinds} 種牌。' },
-  'hint.status.readyWaits': { en: 'Ready (聽牌) — waiting on %{waits}', 'zh-TW': '聽牌：聽 %{waits}' },
+  'hint.status.readyWaits': { en: 'Ready (聽牌) — waiting on %{waits}', 'zh-TW': '聽牌：聽 %{waitsZh}' },
 
   'hint.discard.fold': {
     en: 'An opponent looks ready. Discard %{tileName}, a safer tile, rather than pushing a dangerous one: losing this hand costs less than paying for theirs.',
     'zh-TW': '有對手看起來已經聽牌。打 %{tileZh} 這張較安全的牌，不要硬打危險牌：放棄這手牌，比付對方的台便宜。',
   },
-  'hint.discard.ready': { en: 'Discard %{tileName} to be ready, waiting on %{waits}.', 'zh-TW': '打 %{tileZh} 就聽牌，聽 %{waits}。' },
+  'hint.discard.ready': { en: 'Discard %{tileName} to be ready, waiting on %{waits}.', 'zh-TW': '打 %{tileZh} 就聽牌，聽 %{waitsZh}。' },
   'hint.discard.readyNoWaits': { en: 'Discard %{tileName} to be ready, waiting on nothing visible.', 'zh-TW': '打 %{tileZh} 就聽牌，但看不到還能聽的牌。' },
   'hint.discard.isolated': { en: 'Discard %{tileName}; it does not fit any set you are building.', 'zh-TW': '打 %{tileZh}：它跟你正在湊的牌都搭不上。' },
   'hint.discard.efficiency': {
@@ -139,7 +139,7 @@ export const HINT_REASON_KEYS = {
   'hint.claim.kongBad': { en: 'The kong would break up sets you are using elsewhere.', 'zh-TW': '槓了會拆掉你別處要用的順子或刻子。' },
   'hint.claim.kongBreaksConcealed': { en: 'An exposed kong would cost you 門清 on a hand that is already ready.', 'zh-TW': '已經聽牌了，明槓會失去門清。' },
   'hint.claim.takeWin': { en: 'Take the win instead.', 'zh-TW': '直接胡牌就好。' },
-  'hint.claim.coachPrefers': { en: 'The coach prefers %{label}, which leaves the hand in the same shape.', 'zh-TW': '教練比較建議%{label}，牌型一樣好。' },
+  'hint.claim.coachPrefers': { en: 'The coach prefers %{label}, which leaves the hand in the same shape.', 'zh-TW': '教練會選%{label}，牌型一樣好。' },
   ...withConcealedVariant('hint.claim.recommendedReady', 'This %{claimName} makes you ready.', '%{claimZh}這張就能聽牌。'),
   ...withConcealedVariant('hint.claim.recommendedCloser', 'This %{claimName} brings you closer to ready.', '%{claimZh}這張能讓你更接近聽牌。'),
   ...withConcealedVariant('hint.claim.improvesReady', 'This %{claimName} would make you ready, but your concealed hand is worth more here.', '%{claimZh}這張雖然能聽牌，但這裡保持門清更有價值。'),
@@ -315,7 +315,7 @@ export function hintFor(s: GameState, seat: number): Hint {
   setStatus(
     base,
     base.shanten === 0
-      ? reason('hint.status.readyWaits', { waits: base.waits.map((w) => kindInfo(w.kind).nameZh).join(' '), tiles: codes(base.waits.map((w) => w.kind)) })
+      ? reason('hint.status.readyWaits', { waits: base.waits.map((w) => kindInfo(w.kind).nameZh).join(' '), waitsZh: base.waits.map((w) => kindInfo(w.kind).nameZh).join('、'), tiles: codes(base.waits.map((w) => w.kind)) })
       : statusText(base.shanten, followsLigu(s, seat)),
   );
   return base;
@@ -401,8 +401,9 @@ function explainDiscard(d: DiscardAdvice, afterWaits: WaitInfo[], all: readonly 
   }
   if (d.shanten === 0) {
     if (afterWaits.length === 0) return reason('hint.discard.readyNoWaits', tile);
-    const w = afterWaits.map((x) => `${kindInfo(x.kind).nameZh}×${x.remaining}`).join(', ');
-    return reason('hint.discard.ready', { ...tile, waits: w, tiles: codes(afterWaits.map((x) => x.kind)) });
+    // Each winning tile with its live count; Chinese lists them with 、, English with commas.
+    const w = afterWaits.map((x) => `${kindInfo(x.kind).nameZh}×${x.remaining}`);
+    return reason('hint.discard.ready', { ...tile, waits: w.join(', '), waitsZh: w.join('、'), tiles: codes(afterWaits.map((x) => x.kind)) });
   }
   if (d.accepts.length === 0) return reason('hint.discard.isolated', tile);
   const acc = d.accepts.slice(0, 6).map((k) => kindInfo(k).nameZh).join(' ');

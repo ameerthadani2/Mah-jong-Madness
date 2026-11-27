@@ -241,7 +241,7 @@ export const CALLING_LESSONS: Lesson[] = [
         title: '過水 (house option)',
         titleZh: '過水（自訂規則）',
         body: 'Some tables play 過水: if you pass on a discard you could have won on, you cannot win on another player’s tile until your next turn, though you may still win by 自摸. It is off by default; without it, Taiwanese rules have no furiten at all.',
-        bodyZh: '有些牌桌打過水：能胡的牌你沒胡，在下一次輪到你之前，都不能胡別人打的牌，但自摸還是可以。這條規則預設關閉；不打過水的話，台灣麻將完全沒有振聽。',
+        bodyZh: '有些牌桌打過水：能胡的牌你沒胡，在下一次輪到你之前，都不能胡別人打的牌，但自摸還是可以。這條規則預設關閉；不打過水的話，放過的牌之後一樣可以胡。',
       },
       {
         title: 'Every wait counts',

@@ -89,7 +89,7 @@ export const SCORING_LESSONS: Lesson[] = [
     titleZh: '底台怎麼算',
     minutes: 3,
     summary: 'Turn 台 into points: 底 + 台 × 台值, with worked examples at 底100/台20 and 底300/台100.',
-    summaryZh: '把台數換成點數：底加台數乘以每台點數，用底 100 台 20 和底 300 台 100 實際算一遍。',
+    summaryZh: '把台數換成點數：底加台數乘以每台點數，用底100/台20和底300/台100實際算一遍。',
     steps: [
       {
         title: 'The formula',
@@ -99,14 +99,14 @@ export const SCORING_LESSONS: Lesson[] = [
       },
       {
         title: 'Worked example: 底100/台20',
-        titleZh: '範例：底 100 台 20',
+        titleZh: '範例：底100/台20',
         body: 'You are not the dealer. This closed hand wins on someone’s 8p: 門清 1 + 平胡 2 = 3 台, so the discarder pays 160. Draw the 8p yourself and it is 門清自摸 3: each non-dealer pays 160 and the dealer 180 (the dealer’s 1 台), 500 in all.',
         bodyZh: '你不是莊家。這手門清牌胡別人打的 8p：門清 1 台加平胡 2 台，共 3 台，放槍的人付 160。自己摸到 8p 就是門清自摸 3 台：兩位閒家各付 160，莊家付 180（多莊家 1 台），一共 500。',
         hand: '123m 456m 789s 234s 55s 67p',
       },
       {
         title: 'Worked example: 底300/台100',
-        titleZh: '範例：底 300 台 100',
+        titleZh: '範例：底300/台100',
         body: 'The Big Game preset plays 底300/台100. You sit South in the East round, waiting on 3p or 6p. On a discard: 混一色 4 + 門風 1 + 門清 1 = 6 台, 300 + 600 = 900. Self-drawn it is 8 台: 1,100 from each non-dealer and 1,200 from the dealer, 3,400 in all.',
         bodyZh: '大局打底 300、每台 100。你坐南，東風圈，聽 3p 或 6p。胡別人打的：混一色 4 台、門風 1 台、門清 1 台，共 6 台，300 加 600 等於 900。自摸就是 8 台：兩位閒家各付 1,100，莊家付 1,200，一共 3,400。',
         hand: '111p 234p 678p 99p SSS 45p',

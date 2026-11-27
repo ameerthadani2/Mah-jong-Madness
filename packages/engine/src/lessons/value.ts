@@ -389,7 +389,7 @@ export const VALUE_LESSONS: Lesson[] = [
         title: 'When the single wait is right',
         titleZh: '什麼時候該聽單張',
         body: 'Count live tiles, not shapes. A two-sided wait whose tiles already sit in the discards and exposed melds can have fewer left than a 單騎 on a fresh tile, and then the single wait is faster as well as worth 獨聽. Unless it is defending, the coach picks the wait with the most unseen winning tiles.',
-        bodyZh: '要數還沒出現的牌，不是只看牌型。兩面聽的牌如果大多已經在牌河或別人亮出的牌裡，剩下的可能比單騎一張還沒出現的牌更少，這時聽單張不但比較快，還多獨聽 1 台。除非在防守，教練都會選還沒出現的胡牌張最多的聽法。',
+        bodyZh: '要數還沒出現的牌，不是只看牌型。兩面聽的牌如果大多已經被打出來或在別人亮出的牌裡，剩下的可能比單騎一張還沒出現的牌更少，這時聽單張不但比較快，還多獨聽 1 台。除非在防守，教練都會選還沒出現的胡牌張最多的聽法。',
         hand: '123m 456m 789p 234s 55s 79s',
       },
       {

@@ -22,7 +22,7 @@
   },
   "discard": {
     "title": "Best discard",
-    "text": "Random hands; pick the discard. The coach grades shanten and acceptance.",
+    "text": "Random hands; pick the discard. The coach grades how close to ready you get and how many tiles help.",
     "none": "No drills yet",
     "stat": "%{pct}% · %{n} played",
     "cta": "Train"

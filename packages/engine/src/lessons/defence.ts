@@ -51,7 +51,7 @@ export const DEFENCE_LESSONS: Lesson[] = [
         title: 'Three sets: a warning',
         titleZh: '亮三組：警訊',
         body: 'Three sets out leaves seven hidden tiles: two sets and a pair, less one tile. So the player can already be ready, although early in the hand they are usually still building. Late in the hand, treat three sets as a hand well on its way. No sets showing tells you little: a 門清 hand can be ready with nothing exposed, so keep reading the discards too.',
-        bodyZh: '亮出三組還有 7 張暗牌：兩組加一對眼，只少一張。所以他可能已經聽牌了，不過在牌局前段，通常還在湊牌。到了後段，亮三組就要當作快胡的牌。沒有亮牌不代表安全：門清的牌什麼都不亮也能聽牌，所以牌河也要一直看。',
+        bodyZh: '亮出三組還有 7 張暗牌：兩組加一對眼，只少一張。所以他可能已經聽牌了，不過在牌局前段，通常還在湊牌。到了後段，亮三組就要當作快胡的牌。沒有亮牌不代表安全：門清的牌什麼都不亮也能聽牌，所以打出的牌也要一直看。',
         hand: '345m 678m 222p',
       },
       {
@@ -81,20 +81,20 @@ export const DEFENCE_LESSONS: Lesson[] = [
     id: 'def-discards',
     track: 'defence',
     title: 'Reading the discard pool',
-    titleZh: '從牌河看牌',
+    titleZh: '看懂打出的牌',
     minutes: 4,
     summary: 'Taiwanese rules have no furiten, so no discard is ever guaranteed safe. Learn what the pool does tell you, and what it does not.',
-    summaryZh: '台灣麻將沒有振聽，所以沒有哪一張牌保證安全。學會牌河能告訴你什麼、不能告訴你什麼。',
+    summaryZh: '台灣麻將打過的牌之後還是可以胡，所以沒有哪一張牌保證安全。學會看打出的牌能告訴你什麼、不能告訴你什麼。',
     steps: [
       {
         title: 'No furiten',
-        titleZh: '沒有振聽',
+        titleZh: '打過的牌也能胡',
         body: 'In Taiwanese 16-tile mahjong a player may win on any discard, even a kind they threw themselves earlier. No rule makes their own discards safe. The only related rule is the house option 過水: when it is on, a player who passes on a winning discard cannot win on another discard until they draw again. Treat the pool as evidence, not a guarantee.',
-        bodyZh: '台灣十六張麻將裡，任何一張打出來的牌都可以胡，就算是自己之前打過的那一種也一樣。沒有任何規則讓自己打過的牌變成安全牌。唯一相關的是自選規則「過水」：開啟時，放過一張能胡的牌之後，要等自己再摸一張，才能再胡別人打的牌。牌河是線索，不是保證。',
+        bodyZh: '台灣十六張麻將裡，任何一張打出來的牌都可以胡，就算是自己之前打過的那一種也一樣。沒有任何規則讓自己打過的牌變成安全牌。唯一相關的是自選規則「過水」：開啟時，放過一張能胡的牌之後，要等自己再摸一張，才能再胡別人打的牌。打出的牌是線索，不是保證。',
       },
       {
         title: 'What an early discard tells you',
-        titleZh: '早巡的捨牌',
+        titleZh: '早巡打出的牌',
         body: 'If a player threw 5p early, they were not keeping a pair of 5p at the time, so a pong or 單騎 wait on it is less likely. But hands change. After throwing it they can still build 46p or 34p and end up waiting on 5p for a chow. The longer ago the discard, the less it tells you about the hand they hold now.',
         bodyZh: '如果有人早巡就打了 5p，代表他那時沒有留 5p 的對子，所以之後碰 5p 或單騎 5p 的機會比較小。不過手牌會變。打掉之後，他還是可能湊出 46p 或 34p，最後又聽 5p 來湊順子。打得越早的牌，越說明不了他現在的手牌。',
         hand: '5p 46p 34p',
@@ -110,7 +110,7 @@ export const DEFENCE_LESSONS: Lesson[] = [
           hand: '123m 789m 46p 345s 678s WW',
           answer: '5p',
           explanation: '46p waits in the middle (嵌張) for 5p. They threw a 5p early, before they had the 46p, and it still wins for them now: there is no furiten.',
-          explanationZh: '46p 是嵌張，等 5p。他早巡打過 5p，那時候還沒有 46p；現在這張牌照樣能讓他胡：沒有振聽。',
+          explanationZh: '46p 是嵌張，等 5p。他早巡打過 5p，那時候還沒有 46p；現在這張牌照樣能讓他胡：打過的牌也能胡。',
         },
       },
       {
@@ -129,7 +129,7 @@ export const DEFENCE_LESSONS: Lesson[] = [
         title: 'Practice: a nearly dead honour',
         titleZh: '練習：快死的字牌',
         body: 'Two 西 are in the discards and you hold the third, so only one copy is unseen. Late in the hand you are about to throw your 西.',
-        bodyZh: '牌河裡已經有兩張西，你手上有第三張，所以只剩一張看不到。牌局後段，你正想打掉這張西。',
+        bodyZh: '打出的牌裡已經有兩張西，你手上有第三張，所以只剩一張看不到。牌局後段，你正想打掉這張西。',
         quiz: {
           prompt: 'An opponent is holding the hand below. Which tile completes it?',
           promptZh: '有一家對手的手牌如下。哪一張牌能讓他胡？',
@@ -189,7 +189,7 @@ export const DEFENCE_LESSONS: Lesson[] = [
         title: 'Practice: four visible is not enough',
         titleZh: '練習：四張都看到也不夠',
         body: 'Three 6p are in the discards and you hold the fourth. Every copy is accounted for, so is it safe?',
-        bodyZh: '牌河裡有三張 6p，你手上有第四張。四張都看得到了，那它安全嗎？',
+        bodyZh: '打出的牌裡有三張 6p，你手上有第四張。四張都看得到了，那它安全嗎？',
         quiz: {
           prompt: 'An opponent is holding the hand below. Which tile completes it?',
           promptZh: '有一家對手的手牌如下。哪一張牌能讓他胡？',
@@ -233,7 +233,7 @@ export const DEFENCE_LESSONS: Lesson[] = [
         title: 'How dangerous each tile is',
         titleZh: '每張牌有多危險',
         body: 'If an opponent is ready, how likely is each tile to be one of their winning tiles? A tile they threw themselves almost never is, and a tile someone threw after their last discard, which they did not win on, only a little more often. An honour only finishes a pair or a pong, so it is safe once every other copy is visible and nearly safe with one left. Suited tiles are riskier towards the middle (3 to 7) and when more copies are unseen; a tile three away from one they threw (筋, a 1 behind their 4) is safer. If their exposed sets are all one suit and their discards avoid it, that suit is much more dangerous. The coach multiplies by the chance they are ready and adds up over the opponents.',
-        bodyZh: '如果對手已經聽牌，你手上每張牌有多大機會是他要的？他自己打過的牌幾乎不會是，他上一次打牌之後別人打過、他沒有胡的牌也只是稍微多一點。字牌只能湊對或碰，其他幾張都看得到就安全，只剩一張也差不多安全。數字牌越靠中間（3到7）、看不到的張數越多就越危險；跟他打過的牌差三的筋牌（他打4，你的1）比較安全。如果他亮出的牌都是同一門，打出來的牌又避開那一門，那一門就特別危險。教練把這個機率乘上他聽牌的機率，再把每一家加起來。',
+        bodyZh: '如果對手已經聽牌，你手上每張牌有多大機會是他要的？他自己打過的牌幾乎不會是，他上一次打牌之後別人打過、他沒有胡的牌也只是稍微多一點。字牌只能湊對或碰，其他幾張都看得到就安全，只剩一張也差不多安全。數字牌越靠中間（3到7）、看不到的張數越多就越危險；跟他打過的牌相差三的牌（他打過 4，你的 1）比較安全。如果他亮出的牌都是同一門，打出來的牌又避開那一門，那一門就特別危險。教練把這個機率乘上他聽牌的機率，再把每一家加起來。',
         hand: 'C 1m 5p',
       },
       {

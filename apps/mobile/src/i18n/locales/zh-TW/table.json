@@ -9,10 +9,10 @@
     "revealed": "已公開"
   },
   "leave": "離開",
-  "roundChip": "風 · 第%{hand}局",
+  "roundChip": "風 · 第 %{hand} 局",
   "dealerStreak": " · 連%{n}",
-  "timeBank": "備用 %{s}秒",
-  "seconds": "%{s}秒",
+  "timeBank": "備用 %{s} 秒",
+  "seconds": "%{s} 秒",
   "status": {
     "discarded": "%{name} 打出 %{tile}",
     "addedKong": "（加槓）",
@@ -45,13 +45,13 @@
     "title": "棄牌",
     "sheetLabel": "牌桌上的全部棄牌",
     "close": "關閉棄牌",
-    "seat": "%{name}・%{rel}",
+    "seat": "%{name} · %{rel}",
     "count": {
       "one": "%{count} 張",
       "other": "%{count} 張"
     },
     "none": "還沒有棄牌",
-    "sets": "明牌與花牌"
+    "sets": "亮出的牌與花牌"
   },
   "connection": {
     "lostTitle": "連線中斷",
@@ -130,7 +130,7 @@
     "goodHand": "好牌！",
     "dealtIn": "放槍了…",
     "oneMore": "再來一局",
-    "faster": "等到花兒都謝了…"
+    "faster": "等到花都謝了…"
   },
   "emoteName": {
     "thumbs": "讚",
@@ -232,7 +232,7 @@
     "reportHint": "長按即可檢舉這位玩家",
     "tileBack": "背面朝上的牌",
     "pondEarlier": "較早的 %{n} 張棄牌未顯示",
-    "seatHint": "顯示牌桌上全部的棄牌與明牌",
+    "seatHint": "顯示牌桌上全部打出的牌與亮出的牌",
     "seatButton": {
       "one": "%{name}，%{rel}，%{score} 分，%{count} 張棄牌",
       "other": "%{name}，%{rel}，%{score} 分，%{count} 張棄牌"
@@ -243,7 +243,7 @@
     "clockBank": "開始用備用時間：%{s} 秒",
     "compass": "%{round}風圈，你是%{seat}家，莊家是你的%{dealer}",
     "compassDealer": "%{round}風圈，你是%{seat}家，也是莊家",
-    "roundChip": "%{round}風圈，第%{hand}局",
+    "roundChip": "%{round}風圈，第 %{hand} 局",
     "dealerStreak": "，莊家連%{n}",
     "sentenceBreak": "。",
     "drawsLeftOne": "牌牆剩最後 1 張",

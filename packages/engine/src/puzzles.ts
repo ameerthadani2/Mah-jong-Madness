@@ -1202,7 +1202,7 @@ function defenceText(p: Pick<DefencePuzzle, 'answer' | 'answers' | 'threatSeat' 
   switch (p.reason) {
     case 'theirDiscard':
       en = `${t} is a tile ${who} has thrown. Taiwanese rules have no furiten, so it is not a guarantee, but players rarely wait on a tile they have discarded.`;
-      zh = `${tz}是${whoZh}自己打過的熟張。台灣麻將沒有振聽，不是百分之百安全，但很少有人聽自己打掉的牌。`;
+      zh = `${tz}是${whoZh}自己打過的熟張。台灣麻將打過的牌也能胡，所以不是百分之百安全，但很少有人聽自己打掉的牌。`;
       break;
     case 'passed':
       en = `${t} was thrown after ${who}'s last discard and ${who} did not win on it, so it is not one of their winning tiles unless they changed their wait since.`;
@@ -1214,7 +1214,7 @@ function defenceText(p: Pick<DefencePuzzle, 'answer' | 'answers' | 'threatSeat' 
       break;
     case 'lastHonour':
       en = `Only one ${t} is unseen. An honour never joins a chow, so the only way to deal in is a single-tile wait on that last copy.`;
-      zh = `${tz}只剩一張沒出現。字牌不能吃，只有對方單吊最後那張才會放槍。`;
+      zh = `${tz}只剩一張沒出現。字牌不能吃，只有對方單騎最後那張才會放槍。`;
       break;
     case 'honour':
       en = `${t} is an honour: it can complete a pair or a pong but never a chow.`;
@@ -1302,7 +1302,7 @@ function orderText(p: Pick<DefencePuzzle, 'answer' | 'threatSeat' | 'opponents' 
   const suji = p.answer < KIND_WIND ? [...new Set(threw)].filter((k) => k < KIND_WIND && Math.floor(k / 9) === Math.floor(p.answer / 9) && Math.abs(k - p.answer) === 3) : [];
   if (suji.length > 0) {
     orderEn += ` ${capitalise(who)} threw ${suji.map(tileEn).join(' and ')}, so a two-sided wait on ${t} would also win on a tile they gave up: players rarely wait that way.`;
-    orderZh += `${whoZh}打過${suji.map(tileZh).join('、')}，聽${tz}的兩面聽也會胡他打過的牌，很少有人這樣聽（筋牌）。`;
+    orderZh += `${whoZh}打過${suji.map(tileZh).join('、')}，聽${tz}的兩面聽也會胡他打過的牌，很少有人這樣聽。`;
   }
   return { orderEn, orderZh };
 }
@@ -1625,13 +1625,13 @@ function claimText(p: Pick<ClaimPuzzle, 'answer' | 'discard' | 'shantenBefore' |
       return {
         reasonKey: 'puzzle.claim.passReady',
         explanation: `You are already ready (聽牌) with a concealed hand and ${a.acceptance} live winning ${a.acceptance === 1 ? 'tile' : 'tiles'}. No claim gets you closer, and calling would cost you 門清 (and 門清自摸 on a self-draw), so pass.${o.en}`,
-        explanationZh: `你已經聽牌，而且是門清，還有${a.acceptance}張可以胡。吃碰不會讓你更接近胡牌，還會失去門清（自摸時的門清自摸），所以不要。${o.zh}`,
+        explanationZh: `你已經聽牌，而且是門清，還有 ${a.acceptance} 張可以胡。吃碰不會讓你更接近胡牌，還會失去門清（自摸時的門清自摸），所以這張過。${o.zh}`,
       };
     }
     return {
       reasonKey: 'puzzle.claim.passNoGain',
       explanation: `No claim here leaves the hand better off: none of them gets you closer to ready with as much to win. Exposing a set for nothing gives away information and flexibility, so pass.${o.en}`,
-      explanationZh: `這些吃碰都不能讓牌變得更好：沒有離聽牌更近，能胡的牌和台數也沒有增加。白白亮出一組牌只會洩露牌型、少了變化，所以不要。${o.zh}`,
+      explanationZh: `這些吃碰都不能讓牌變得更好：沒有離聽牌更近，能胡的牌和台數也沒有增加。白白亮出一組牌只會洩露牌型、少了變化，所以這張過。${o.zh}`,
     };
   }
   const after = a.shantenAfter;
@@ -1639,12 +1639,14 @@ function claimText(p: Pick<ClaimPuzzle, 'answer' | 'discard' | 'shantenBefore' |
   const closer = after < p.shantenBefore;
   const tilesFrom = (k: number) => `${k} ${k === 1 ? 'tile' : 'tiles'} from ready`;
   const stepsEn = !closer ? (after === 0 ? 'keeps you ready (聽牌), as passing does' : `leaves you ${tilesFrom(after)}, as passing does`) : after === 0 ? 'makes you ready (聽牌)' : `takes you from ${p.shantenBefore} to ${tilesFrom(after)}`;
-  const stepsZh = !closer ? (after === 0 ? '吃碰後還是聽牌，和不吃不碰一樣' : `吃碰後還是差${after}張聽牌，和不吃不碰一樣`) : after === 0 ? '吃碰後就聽牌' : `從差${p.shantenBefore}張聽牌變成差${after}張`;
+  // Named for the claim on offer (吃, 碰 or 槓), never 吃碰.
+  const verb = a.type === 'chi' ? '吃' : a.type === 'kong' ? '槓' : '碰';
+  const stepsZh = !closer ? (after === 0 ? `這樣還是聽牌，和不${verb}一樣` : `這樣還是差 ${after} 張聽牌，和不${verb}一樣`) : after === 0 ? '這樣就聽牌' : `從差 ${p.shantenBefore} 張聽牌變成差 ${after} 張`;
   const waitEn = after === 0 && a.waits ? ` It leaves ${a.acceptance} live winning ${a.acceptance === 1 ? 'tile' : 'tiles'}.` : '';
-  const waitZh = after === 0 && a.waits ? `聽${a.acceptance}張。` : '';
+  const waitZh = after === 0 && a.waits ? `聽 ${a.acceptance} 張。` : '';
   // A pong that brings the hand no closer is taken for its 台: said so, not as an extra.
   const valueEn = valuePong ? ` The pong of ${tileEn(p.discard)} is ${closer ? 'also ' : ''}worth ${valuePong} 台.` : '';
-  const valueZh = valuePong ? `${tileZh(p.discard)}的刻子${closer ? '還' : ''}有${valuePong}台。` : '';
+  const valueZh = valuePong ? `${tileZh(p.discard)}的刻子${closer ? '還' : ''}有 ${valuePong} 台。` : '';
   const kongEn = a.type === 'kong' ? ' A kong also brings a replacement tile from the back of the wall.' : '';
   const kongZh = a.type === 'kong' ? '槓還可以從牌尾補一張。' : '';
   return {
@@ -2202,7 +2204,7 @@ function valueText(
   const Rz = tileZh(p.rival);
   const ratio = Math.round((100 * r.expectedScore!) / a.expectedScore!);
   let en = `Throwing ${A} leaves ${a.acceptance} winning tiles worth ${fmt1(a.expectedTai!)} 台 a win on average (up to ${a.bestTai} 台). Throwing ${R} leaves ${r.acceptance}, worth ${fmt1(r.expectedTai!)} 台 on average (up to ${r.bestTai} 台).`;
-  let zh = `打${Az}聽${a.acceptance}張，平均每次胡${fmt1(a.expectedTai!)}台（最多${a.bestTai}台）；打${Rz}聽${r.acceptance}張，平均${fmt1(r.expectedTai!)}台（最多${r.bestTai}台）。`;
+  let zh = `打${Az}聽 ${a.acceptance} 張，平均每次胡 ${fmt1(a.expectedTai!)} 台（最多 ${a.bestTai} 台）；打${Rz}聽 ${r.acceptance} 張，平均 ${fmt1(r.expectedTai!)} 台（最多 ${r.bestTai} 台）。`;
   if (reasonKey === 'puzzle.value.speed') {
     en += ` More winning tiles beat the bigger hand here: counting 100 points a win plus 20 a 台, ${R} is worth only ${ratio}% of ${A}.`;
     zh += `這手牌速度比台數重要：以底100、每台20計算，打${Rz}的期望值只有打${Az}的${ratio}%。`;
@@ -2216,17 +2218,17 @@ function valueText(
     zh += `打${Az}${tilesZh}，但是每次胡的台數比較多：以底100、每台20計算，打${Rz}的期望值只有打${Az}的${ratio}%。`;
   } else {
     const keep = p.patternEn ? ` keeps ${p.patternEn} (${p.patternZh}, ${p.patternTai} 台), and` : '';
-    const keepZh = p.patternZh ? `保住${p.patternZh}（${p.patternTai}台），` : '';
+    const keepZh = p.patternZh ? `保住${p.patternZh}（${p.patternTai} 台），` : '';
     en += ` ${A}${keep} counting 100 points a win plus 20 a 台, ${R} is worth only ${ratio}% of it.`;
     zh += `打${Az}${keepZh}以底100、每台20計算，打${Rz}的期望值只有它的${ratio}%。`;
     if (reasonKey === 'puzzle.value.tradeSpeed') {
       en += ` That is a trade of speed for value worth making.`;
-      zh += `這是值得的以速度換台數。`;
+      zh += `用速度換台數，這樣很值得。`;
     }
   }
   if (chase) {
     en += ` ${R} goes for ${chase.nameEn} (${patternNameZh(chase)}, ${chase.tai} 台), but with ${r.acceptance} winning tiles against ${a.acceptance} that is not worth it.`;
-    zh += `打${Rz}是做${patternNameZh(chase)}（${chase.tai}台），但是只聽${r.acceptance}張、比${a.acceptance}張少，不值得。`;
+    zh += `打${Rz}是做${patternNameZh(chase)}（${chase.tai} 台），但是只聽 ${r.acceptance} 張、比 ${a.acceptance} 張少，不值得。`;
   }
   const others = p.answers.filter((k) => k !== p.answer);
   if (others.length > 0) {
@@ -2585,7 +2587,7 @@ export function answerExplanation(p: AnyPuzzle, answer: Kind | readonly Kind[] |
       return {
         reasonKey: 'puzzle.value.nearBest',
         explanation: `Throwing ${B} is right too: it leaves ${b.acceptance} winning tiles worth ${fmt1(b.expectedTai!)} 台 a win on average (up to ${b.bestTai} 台), so its expected score is ${scoreEn}. ${best.explanation}`,
-        explanationZh: `打${Bz}也算對：聽${b.acceptance}張，平均每次胡${fmt1(b.expectedTai!)}台（最多${b.bestTai}台），期望值${scoreZh}。${best.explanationZh}`,
+        explanationZh: `打${Bz}也算對：聽 ${b.acceptance} 張，平均每次胡 ${fmt1(b.expectedTai!)} 台（最多 ${b.bestTai} 台），期望值${scoreZh}。${best.explanationZh}`,
       };
     }
   }

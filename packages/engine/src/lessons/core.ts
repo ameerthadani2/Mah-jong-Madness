@@ -235,7 +235,7 @@ export const CORE_LESSONS: Lesson[] = [
         title: 'Safe tiles',
         titleZh: '安全牌',
         body: 'Taiwanese rules have no furiten: a player may win on a tile they threw earlier. Still, players rarely wait on what they discarded, so their own discards are your safest choice. When you can see every other copy of an honour, nobody can pair or pong it, so it is completely safe. Suited tiles never are: an opponent can wait on one to finish a chow without holding a copy.',
-        bodyZh: '台灣麻將沒有振聽：打過的牌之後還是可以胡。不過玩家很少聽自己打過的牌，所以對手打過的牌是你最安全的選擇。一張字牌的其他幾張你都看得到時，沒有人能拿它做眼或碰，就是絕對安全。數字牌永遠不算絕對安全：對手手上不用有同一張，也能聽它來湊順子。',
+        bodyZh: '台灣麻將打過的牌，之後還是可以胡。不過玩家很少聽自己打過的牌，所以對手打過的牌是你最安全的選擇。一張字牌的其他幾張你都看得到時，沒有人能拿它做眼或碰，就是絕對安全。數字牌永遠不算絕對安全：對手手上不用有同一張，也能聽它來湊順子。',
       },
       {
         title: 'Fold when behind',
@@ -329,7 +329,7 @@ export const CORE_LESSONS: Lesson[] = [
       },
       {
         title: 'The deal moves on',
-        titleZh: '換莊',
+        titleZh: '輪莊',
         body: 'When a player other than the dealer wins, the deal passes to the dealer’s 下家, and every seat wind moves with it. When the dealer wins, or the hand is a draw (流局), the dealer keeps the deal: 連莊. Keeping the deal on a draw is the default; clubs can switch it off.',
         bodyZh: '莊家以外的人胡牌，就換莊家的下家當莊，每個人的門風也跟著換。莊家胡牌或流局時，莊家繼續當莊，叫連莊。流局連莊是預設規則，俱樂部可以關掉。',
       },
@@ -337,13 +337,13 @@ export const CORE_LESSONS: Lesson[] = [
         title: 'Prevailing wind and the match',
         titleZh: '圈風與一將',
         body: 'The match starts in the 東 round. Once the deal has passed four times, so that each player has dealt, the prevailing wind (圈風) moves on to 南, then 西, then 北. A full match is 16 passes of the deal, four rounds of four dealers: 一將. Hands where the dealer kept the deal do not count towards the 16, so a match often runs well past 16 hands. Clubs can choose a shorter match.',
-        bodyZh: '一將從東風圈開始。莊家換過四次、每個人都當過莊之後，圈風就換成南，再來是西、北。一將打滿 16 次換莊，也就是四圈、每圈四個莊。連莊的那幾局不算在 16 次裡，所以一將常常打超過 16 局。俱樂部也可以打短一點，例如一圈或兩圈。',
+        bodyZh: '一將從東風圈開始。莊家換過四次、每個人都當過莊之後，圈風就換成南，再來是西、北。一將打滿 16 次輪莊，也就是四圈、每圈四個莊。連莊的那幾局不算在 16 次裡，所以一將常常打超過 16 局。俱樂部也可以打短一點，例如一圈或兩圈。',
       },
       {
         title: '連莊 and its 台',
         titleZh: '連莊的台',
         body: 'Each time the dealer keeps the deal the streak grows. Every payment the dealer is part of, winning or paying, carries the dealer’s 1 台 plus 2 for each 連莊 (連1拉1, 連2拉2 and so on). When the deal passes, the streak starts again from nothing.',
-        bodyZh: '莊家每連一次莊，連莊數就加一。莊家有份的每一筆付款，不管是胡牌還是付錢，都要加莊家 1 台，再加每連莊一次 2 台（連一拉一、連二拉二，以此類推）。一換莊，連莊數就歸零。',
+        bodyZh: '莊家每連一次莊，連莊數就加一。莊家有份的每一筆付款，不管是胡牌還是付錢，都要加莊家 1 台，再加每連莊一次 2 台（連一拉一、連二拉二，以此類推）。換人當莊，連莊數就歸零。',
       },
       {
         title: 'Value winds',

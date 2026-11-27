@@ -1,7 +1,7 @@
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { describe, expect, it } from 'vitest';
-import { discardAnalysis, discardPuzzle, ENGINE_REASON_KEYS, kindInfo, LESSONS } from '../src/index';
+import { claimPuzzle, discardAnalysis, discardPuzzle, ENGINE_REASON_KEYS, kindInfo, LESSONS, valuePuzzle, type PuzzleDifficulty } from '../src/index';
 
 /** Every string inside a value, with its path. */
 function strings(value: unknown, path = ''): Array<[string, string]> {
@@ -35,6 +35,23 @@ describe('plain Taiwanese wording', () => {
     const found = [...strings(LESSONS, 'LESSONS'), ...strings(ENGINE_REASON_KEYS, 'reasons')].filter(([, s]) => s.includes('面子'));
     expect(found).toEqual([]);
     expect(readFileSync(join(__dirname, '../src/puzzles.ts'), 'utf8')).not.toContain('面子');
+  });
+
+  // Unit 21's language check: riichi words left in the teaching text (振聽, 筋牌, 老頭牌, 捨牌, 牌河), 單吊 beside 單騎, and claim
+  // lines that said 吃碰 when one claim was on offer. The puzzles' Chinese names the claim, and a number and its unit have a
+  // space between, as the coach and the lessons write them.
+  it('uses no riichi word in a lesson, a hint, a review reason or a puzzle explanation, and names the claim on offer', () => {
+    const zh = [...strings(LESSONS, 'LESSONS'), ...strings(ENGINE_REASON_KEYS, 'reasons')].filter(([k]) => /Zh$|zh-TW/.test(k));
+    expect(zh.filter(([, s]) => /振聽|筋牌|老頭牌|捨牌|牌河|單吊/.test(s))).toEqual([]);
+    const src = readFileSync(join(__dirname, '../src/puzzles.ts'), 'utf8');
+    for (const word of ['振聽', '筋牌', '老頭牌', '捨牌', '牌河', '單吊', '吃碰後', '和不吃不碰一樣', '這是值得的']) expect(src, word).not.toContain(word);
+    const claims = Array.from({ length: 60 }, (_, i) => claimPuzzle(`wording-c-${i}`, (1 + (i % 3)) as PuzzleDifficulty));
+    for (const p of claims) {
+      expect(p.explanationZh, p.seed).not.toMatch(/吃碰後|不吃不碰一樣/);
+      expect(p.explanationZh, p.seed).not.toMatch(/(\d)[台張]/);
+    }
+    const values = Array.from({ length: 30 }, (_, i) => valuePuzzle(`wording-v-${i}`, (1 + (i % 3)) as PuzzleDifficulty));
+    for (const p of values) expect(p.explanationZh, p.seed).not.toMatch(/(\d)[台張]/);
   });
 
   it('says a match is 一將 of 四圈 (16 莊), never 十六圈 or 圈莊', () => {

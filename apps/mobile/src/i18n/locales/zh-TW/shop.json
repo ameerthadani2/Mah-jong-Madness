@@ -218,15 +218,15 @@
     },
     "emotes_teahouse": {
       "title": "茶館表情",
-      "description": "六個表情：茶、包子、餃子、麵、月餅、橘子。"
+      "description": "六個表情：熱茶、包子、水餃、麵、月餅、橘子。"
     },
     "emotes_nightmarket": {
       "title": "夜市表情",
-      "description": "六個表情：珍奶、烤串、剉冰、烤玉米、燈籠、鞭炮。"
+      "description": "六個表情：珍珠奶茶、串燒、剉冰、烤玉米、燈籠、鞭炮。"
     },
     "emotes_festival": {
       "title": "節慶表情",
-      "description": "六個表情：煙火、中國結、鼓、風箏、月亮、龍舟。"
+      "description": "六個表情：煙火、中國結、大鼓、風箏、滿月、龍舟。"
     },
     "emotes_zodiac": {
       "title": "生肖表情",

@@ -164,9 +164,9 @@ export interface RulePreset {
 
 /** Club-ready presets. Points are a score, nothing more: they have no monetary value and cannot be redeemed or transferred. */
 export const RULE_PRESETS: RulePreset[] = [
-  { id: 'taiwan-standard', name: 'Taiwan Standard', nameZh: '台灣標準', description: '底100 台20, 16 rotations, normal speed. The default club game.', rules: {} },
-  { id: 'small', name: 'Small Game', nameZh: '小局', description: '底50 台10. Same rules, gentler score swings.', rules: { basePoints: 50, taiPoints: 10 } },
-  { id: 'big', name: 'Big Game', nameZh: '大局', description: '底300 台100. Every 台 matters.', rules: { basePoints: 300, taiPoints: 100 } },
+  { id: 'taiwan-standard', name: 'Taiwan Standard', nameZh: '台灣標準', description: '底100/台20, 16 rotations, normal speed. The default club game.', rules: {} },
+  { id: 'small', name: 'Small Game', nameZh: '小局', description: '底50/台10. Same rules, gentler score swings.', rules: { basePoints: 50, taiPoints: 10 } },
+  { id: 'big', name: 'Big Game', nameZh: '大局', description: '底300/台100. Every 台 matters.', rules: { basePoints: 300, taiPoints: 100 } },
   { id: 'turbo', name: 'Turbo', nameZh: '極速局', description: '7-second turns with a 10-second bank, 8 rotations. Lunch-break mahjong.', rules: { ...speedFields('turbo'), handsPerMatch: 8 } },
   { id: 'beginner', name: 'Beginner Friendly', nameZh: '新手局', description: 'Relaxed clock, 台 capped at 8, 4 rotations.', rules: { ...speedFields('relaxed'), maxTai: 8, handsPerMatch: 4 } },
   { id: 'purist', name: 'Purist', nameZh: '嚴格局', description: '過水 on: pass on a winning discard and you must draw before winning again. One winner per discard.', rules: { passRule: true, multipleWinners: false } },
@@ -232,29 +232,29 @@ export function ruleExtraText(e: RuleExtra): string {
     case 'passRule':
       return '過水';
     case 'noFlowerTai':
-      return '無花1台';
+      return '無花 1 台';
     case 'noChi':
       return '不可吃';
     case 'maxTai':
-      return `封頂${e.value}台`;
+      return `封頂 ${e.value} 台`;
     case 'dealerTai':
-      return `dealer ${e.value}台`;
+      return `dealer ${e.value} 台`;
     case 'dealerStreakTai':
-      return `連莊 +${e.value}台 a hand`;
+      return `連莊 +${e.value} 台 a hand`;
     case 'drawPassesDeal':
       return '流局不連莊';
     case 'deadWall':
       return `dead wall ${e.value}`;
     // 0 switches the limit hand off (the win is scored on its own items), so it is not "0台".
     case 'heavenlyTai':
-      return e.value > 0 ? `天胡${e.value}台` : '天胡 off';
+      return e.value > 0 ? `天胡 ${e.value} 台` : '天胡 off';
     case 'earthlyTai':
-      return e.value > 0 ? `地胡${e.value}台` : '地胡 off';
+      return e.value > 0 ? `地胡 ${e.value} 台` : '地胡 off';
     case 'humanlyTai':
-      return e.value > 0 ? `人胡${e.value}台` : '人胡 off';
+      return e.value > 0 ? `人胡 ${e.value} 台` : '人胡 off';
     // 0 is the default (the hand is not played), so it is listed only if a caller passes it.
     case 'liguTai':
-      return e.value > 0 ? `嚦咕嚦咕${e.value}台` : '嚦咕嚦咕 off';
+      return e.value > 0 ? `嚦咕嚦咕 ${e.value} 台` : '嚦咕嚦咕 off';
     case 'startingPoints':
       return `start ${e.value}`;
   }

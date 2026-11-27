@@ -33,9 +33,9 @@
   "houseRules": "House rules (台灣麻將)",
   "presets": {
     "title": "Presets",
-    "taiwan-standard": "底100 台20, 16 rotations, normal speed. The default club game.",
-    "small": "底50 台10. Same rules, gentler score swings.",
-    "big": "底300 台100. Every 台 matters.",
+    "taiwan-standard": "底100/台20, 16 rotations, normal speed. The default club game.",
+    "small": "底50/台10. Same rules, gentler score swings.",
+    "big": "底300/台100. Every 台 matters.",
     "turbo": "7-second turns with a 10-second bank, 8 rotations. Lunch-break mahjong.",
     "beginner": "Relaxed clock, 台 capped at 8, 4 rotations.",
     "purist": "過水 on: pass on a winning discard and you must draw before winning again. One winner per discard.",
