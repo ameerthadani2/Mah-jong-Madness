@@ -108,11 +108,12 @@ export const ISOLATED_TILE_PUZZLE_SHARE: Record<1 | 2 | 3, number> = { 1: 1, 2: 
 /**
  * Medium and hard discard puzzles and the daily (at every difficulty) place the answer by the seed. A rule of
  * thumb throws the tiles that keep the hand closest to ready in an order of its own (`obviousOrders`: the
- * fewest neighbours by any weighting, by kinds or by tiles; the outermost tile or single; and the fewest
- * neighbours among the tiles left over once complete sets are taken out, read three ways). The answer's depth
+ * fewest neighbours by any weighting, by kinds or by tiles; the outermost tile or single; the spare tile, from
+ * the suit holding one over a multiple of three; and the fewest neighbours among the tiles left over once
+ * complete sets are taken out, read three ways). The answer's depth
  * is the earliest any of those orders reaches an accepted answer: 0 when some rule's first pick is right.
- * Each seed draws the depth from these shares: 0, 1, or 2 and later (2 also off the most connected tile:
- * `connectedOrders`, "break the pair with the most neighbours" and "throw the tile with the most").
+ * Each seed draws the depth from these shares: 0, 1, or 2 and later (2 also off the first pick of
+ * `connectedOrders`: the most connected tile, "break the pair with the most neighbours", and two more).
  *
  * The obvious tile was right on nearly every natural hand, and the rule-proof hands of 18 to 20 November
  * 2026, where no rule's first pick was right, made "avoid the obvious tile" a rule of its own (right on 52%
@@ -169,6 +170,14 @@ interface HeldKind {
   gapTiles: number;
   /** 0 for an honour, 1 for a terminal, 2 for a 2 or an 8, up to 5 for a 5. */
   position: number;
+}
+
+/** Tiles held of the kind's suit, all honours counting as one group. */
+function groupTiles(counts: Counts, kind: Kind): number {
+  const [from, to] = kind >= KIND_WIND ? [KIND_WIND, NUM_PLAY_KINDS] : [kind - (kind % 9), kind - (kind % 9) + 9];
+  let n = 0;
+  for (let k = from; k < to; k++) n += counts[k];
+  return n;
 }
 
 function heldKinds(counts: Counts): HeldKind[] {
@@ -437,8 +446,8 @@ const weighed = (h: HeldKind, copy: number, next: number, gap: number, byTiles =
 /**
  * The discards that keep the hand closest to ready (`best`), in the orders rules of thumb throw them, the most
  * obvious first: the fewest neighbours over the whole hand (several weightings, by kinds and by tiles), the
- * outermost tile, the outermost single, and the fewest neighbours among the tiles left over once complete sets
- * are taken out (pongs first, runs first, the most sets; a tile used in a set comes after every leftover).
+ * outermost tile, the outermost single, the spare tile, and the fewest neighbours among the tiles left over once
+ * complete sets are taken out (pongs first, runs first, the most sets; a tile used in a set comes after every leftover).
  */
 function obviousOrders(held: readonly HeldKind[], best: number, counts: Counts): Kind[][] {
   const keep = held.filter((h) => h.shanten === best);
@@ -450,6 +459,13 @@ function obviousOrders(held: readonly HeldKind[], best: number, counts: Counts):
     byKeys(keep, (h) => [h.position]),
     byKeys(keep, (h) => [h.copies === 1 ? 0 : 1, h.position]),
   ];
+  // The spare tile: throw from the suit (the honours count as one) whose tile count is one over a multiple of
+  // three, there the tile with the fewest kinds next to it (one rank away, or one or two), the middle or the
+  // outermost first on a tie. Without these orders it was right on about half the hard puzzles (unit 21's check).
+  const spare = (h: HeldKind): number => (groupTiles(counts, h.kind) % 3 === 1 ? 0 : 1);
+  for (const near of [(h: HeldKind) => h.nextKinds, (h: HeldKind) => h.nextKinds + h.gapKinds]) {
+    orders.push(byKeys(keep, (h) => [spare(h), near(h), -h.position]), byKeys(keep, (h) => [spare(h), near(h), h.position]));
+  }
   for (const read of SET_READS) {
     const left = new Map(leftoverKinds(held, leftAfterSets(counts, read)).map((h) => [h.kind, h]));
     for (const [copy, next, gap] of [
@@ -467,12 +483,24 @@ function obviousOrders(held: readonly HeldKind[], best: number, counts: Counts):
   return orders;
 }
 
-/** The other end of the same discards: break the pair with the most neighbours (holding two or more pairs), or throw the tile with the most neighbours. */
-function connectedOrders(held: readonly HeldKind[], best: number): Kind[][] {
+/**
+ * Orders whose first pick the deepest bucket also misses. The other end of the same discards: break the pair with
+ * the most neighbours (holding two or more pairs), throw the tile with the most neighbours, or the one with the
+ * most in the spare suit (the spare tile's opposite). And a search's find once the spare tile was placed: the
+ * fewest kinds two ranks away, from the longest suit, then the fewest neighbours (right on 43% of hard puzzles
+ * without this order, checked on seeds that took no part in choosing it).
+ */
+function connectedOrders(held: readonly HeldKind[], best: number, counts: Counts): Kind[][] {
   const keep = held.filter((h) => h.shanten === best);
   const pairs = held.filter((h) => h.copies === 2).length >= 2;
   const links = (h: HeldKind): number => h.nextKinds * 2 + h.gapKinds;
-  return [byKeys(keep, (h) => [pairs && h.copies === 2 ? 0 : 1, -links(h)]), byKeys(keep, (h) => [-links(h)]), byKeys(keep, (h) => [-weighed(h, 3, 2, 1), -h.position])];
+  return [
+    byKeys(keep, (h) => [pairs && h.copies === 2 ? 0 : 1, -links(h)]),
+    byKeys(keep, (h) => [-links(h)]),
+    byKeys(keep, (h) => [-weighed(h, 3, 2, 1), -h.position]),
+    byKeys(keep, (h) => [groupTiles(counts, h.kind) % 3 === 1 ? 0 : 1, -weighed(h, 3, 2, 1), -h.position]),
+    byKeys(keep, (h) => [h.gapKinds, -groupTiles(counts, h.kind), weighed(h, 3, 2, 1), -h.position]),
+  ];
 }
 
 /**
@@ -493,7 +521,7 @@ function answerDepth(counts: Counts): { answers: Kind[]; depth: number; connecte
   // A real decision: never more than a third of the discards accepted, and two that keep the shape for each answer.
   if (answers.length > Math.max(2, Math.floor(held.length / 3)) || keep.length < 2 * answers.length) return null;
   const depth = Math.min(...obviousOrders(held, best, counts).map((o) => o.findIndex((k) => answers.includes(k))));
-  const connected = connectedOrders(held, best).some((o) => answers.includes(o[0]));
+  const connected = connectedOrders(held, best, counts).some((o) => answers.includes(o[0]));
   return { answers, depth, connected, candidates: keep.length };
 }
 

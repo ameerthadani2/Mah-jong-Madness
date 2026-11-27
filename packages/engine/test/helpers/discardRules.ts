@@ -211,6 +211,33 @@ export const avoidTheObvious: DiscardRule = (hand) => {
   return (rest.length > 0 ? rest : keep).sort((a, b) => neighbours(c, a) - neighbours(c, b) || outerFirst(a, b))[0];
 };
 
+/** Tiles held of the kind's suit, the honours counting as one group. */
+const groupCount = (c: number[], k: number): number => {
+  const [from, to] = k >= 27 ? [27, 34] : [k - (k % 9), k - (k % 9) + 9];
+  let n = 0;
+  for (let i = from; i < to; i++) n += c[i];
+  return n;
+};
+
+/**
+ * "The spare tile" (unit 21's check of the learning track, right on about half the hard puzzles before the generator
+ * placed it): fewest steps to ready; then from the suit (honours as one group) whose tile count is one over a multiple
+ * of three; there the fewest kinds next to it (`reach`: one rank away, or one or two); then the tile nearer the middle.
+ * `most` throws the one with the most instead (the spare tile's opposite). Written apart from the generator.
+ */
+export function spareTile(reach: 1 | 2, most = false): DiscardRule {
+  return (hand) => {
+    const c = counts(hand);
+    const sh = new Map(kindsOf(hand).map((k) => [k, shantenAfter(c, k)]));
+    const best = Math.min(...sh.values());
+    const spare = (k: number) => (groupCount(c, k) % 3 === 1 ? 0 : 1);
+    const kinds = (k: number) => [-2, -1, 1, 2].filter((d) => Math.abs(d) <= reach && near(c, k, d)).length;
+    const middle = (k: number) => (k >= 27 ? 9 : Math.abs(4 - (k % 9)));
+    const keep = kindsOf(hand).filter((k) => sh.get(k) === best);
+    return keep.sort((a, b) => spare(a) - spare(b) || (most ? kinds(b) - kinds(a) : kinds(a) - kinds(b)) || middle(a) - middle(b) || a - b)[0];
+  };
+}
+
 /** Every rule measured, by the name the test reports. */
 export const DISCARD_RULES: Readonly<Record<string, DiscardRule>> = {
   isolatedTile: isolatedTileRule,
@@ -228,6 +255,9 @@ export const DISCARD_RULES: Readonly<Record<string, DiscardRule>> = {
   fewestStepsThenMostNeighbours,
   secondChoice,
   avoidTheObvious,
+  spareTile: spareTile(2),
+  spareTileNextOnly: spareTile(1),
+  spareTileMostNeighbours: spareTile(2, true),
 };
 
 /**

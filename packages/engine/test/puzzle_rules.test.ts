@@ -35,6 +35,12 @@ import {
 // below, before (after): the strongest rule 42.0% (32.0%) of hard puzzles, 43.8% (38.5%) of medium and hard dailies,
 // 92.0% (34.7%) of medium drills, 75.0% (41.7%) of easy dailies; the obvious tile 39.3% (22.7%), 38.5% (27.1%),
 // 78.7% (33.3%) and 56.9% (33.3%).
+//
+// Unit 21's check then found the spare tile (fewest steps, then from the suit holding one over a multiple of three
+// tiles, the fewest kinds next to it) right on 49 to 53% of fresh hard puzzles; it is among the rules below now, and
+// since 27 November 2026 among the orders the answer is placed by. Measured once on sets fixed beforehand (1,000 hard
+// r21r-h-*, 1,000 medium r21r-m-*, the 730 dailies from 1 January 2046): 26.0% of hard puzzles (50.8% before),
+// 22.9% of medium drills, 21.6% of medium and hard dailies and 22.0% of easy ones; no rule measured reaches its bar.
 
 const rate = (puzzles: readonly DiscardPuzzle[], rule: DiscardRule) => puzzles.filter((p) => checkDiscardAnswer(p, rule(p.hand))).length / puzzles.length;
 /** The expected share right when guessing one of the hand's kinds at random. */
@@ -183,10 +189,11 @@ describe('easy and medium discard drills stay as recorded', () => {
   // Hands and answers of 120 seeds; the explanation fields are left out of the hash (their wording may change).
   // Easy: recorded on 18 November 2026, before the hard and daily puzzles changed, and unchanged since. Medium:
   // recorded again on 26 November 2026, when medium drills began to place the answer by depth (was
-  // 95ff08692958fa1ea27acdec232b1fa0d33b7aadbfd914b9293792a148c06af5).
+  // 95ff08692958fa1ea27acdec232b1fa0d33b7aadbfd914b9293792a148c06af5), and on 27 November 2026, when the spare-tile
+  // orders joined the depth placement (was 038a8a88f574702fb16e5ea56616bcf79bacc12b40c55e859f6bcb96195c0e18).
   const pinned = {
     1: 'b4c15eac9eee2354943d28ed718993a321fbe64220f92691629b56397ccce443',
-    2: '038a8a88f574702fb16e5ea56616bcf79bacc12b40c55e859f6bcb96195c0e18',
+    2: '2e418ee78f10912382aa12c2e361e45816f390bb5f3024fbff4f1dcc7989c9da',
   } as const;
   for (const d of [1, 2] as const) {
     it(`difficulty ${d}: 120 seeded puzzles are byte-identical`, () => {
