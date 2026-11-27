@@ -38,6 +38,10 @@ describe('keepWhole', () => {
     expect(keepWhole('連2拉2')).toBe(`連${WJ}2${WJ}拉${WJ}2`);
     expect(keepWhole('每天一題、人人同題，連續紀錄別中斷！')).toMatch(new RegExp(`別中${WJ}斷！$`));
     expect(keepWhole('先湊成順子或刻子，對子留著。\n下一行')).toContain(`留${WJ}著。\n`);
+    // The game's own words, and the kinds of kong without taking 加槓 out of 加槓上開花.
+    expect(keepWhole('學會像教練一樣，把對子變成刻子。')).toContain(`像${joined('教練')}一樣，把${joined('對子')}變成${joined('刻子')}。`);
+    expect(keepWhole('暗槓、明槓、加槓都會補一張牌')).toContain(`${joined('暗槓')}、${joined('明槓')}、${joined('加槓')}`);
+    expect(keepWhole('還能加槓上開花（1 台）。')).toContain(`加${joined('槓上開花')}（`);
   });
 
   it('joins a four-character term whole, never as two words a line could part', () => {

@@ -472,11 +472,11 @@ const latinChinese = (page, sel = null) =>
  * What a line must not split (src/logic/keepWhole.ts): a scoring term, a Chinese tile name, a number and its unit. Each
  * occurrence in the text under `sel` that is drawn on two lines, measured from its own glyphs.
  */
-const KEEP_WHOLE = ['門清自摸', '槓上開花', '花上自摸', '海底撈月', '河底撈魚', '八仙過海', '嚦咕嚦咕', '碰碰胡', '全求人', '半求人', '三暗刻', '四暗刻', '五暗刻', '混一色', '清一色', '字一色', '小三元', '大三元', '小四喜', '大四喜', '搶槓', '平胡', '獨聽', '門清', '自摸', '莊家', '連莊'];
+const KEEP_WHOLE = ['門清自摸', '槓上開花', '花上自摸', '海底撈月', '河底撈魚', '八仙過海', '嚦咕嚦咕', '碰碰胡', '全求人', '半求人', '三暗刻', '四暗刻', '五暗刻', '混一色', '清一色', '字一色', '小三元', '大三元', '小四喜', '大四喜', '搶槓', '平胡', '獨聽', '門清', '自摸', '莊家', '連莊', '放槍', '胡牌', '聽牌', '覆盤', '俱樂部', '么九'];
 const splitWords = (page, sel) =>
   page.evaluate(
     ([sel, terms]) => {
-      const words = new RegExp([...terms.map((w) => [...w].join('\u2060?')), '[一二三四五六七八九]\u2060?[萬筒條]', '\\d[ \u00a0](?:台|秒|張)'].join('|'), 'g');
+      const words = new RegExp([...terms.map((w) => [...w].join('\u2060?')), '[一二三四五六七八九]\u2060?[萬筒條]', '[一兩二三四五六七八九十](?:\u2060?[一二三四五六七八九十])*\u2060?(?:圈|將|組|張)', '\\d[ \u00a0\u2060]?(?:台|秒|張|局|點|分|組|步|課)', '[萬筒條風中發白]\u2060?×\u2060?\\d'].join('|'), 'g');
       const out = new Set();
       for (const root of document.querySelectorAll(sel)) {
         if (root.getBoundingClientRect().width === 0) continue;
@@ -984,6 +984,8 @@ async function runHomeZh(browser, port, [w, h]) {
   if (await tapSel(page, '[data-testid="open-learn"]', 1200)) {
     await page.screenshot({ path: path.join(out, `${tag}-learn-zh.png`) });
     fails.push(...(await latinChinese(page)).map((f) => `Learn (zh-TW): Chinese in a Latin face, thin: ${f}`));
+    // Unit 21's check: 一將四 / 圈 and 底 / 300 on the lesson cards.
+    fails.push(...(await splitWords(page, 'body')).map((f) => `Learn (zh-TW): ${f}`));
   } else fails.push('Home (zh-TW): Learn does not open');
   await ctx.close();
   return { size: `${tag} zh-TW`, finished: true, shots: ['home-zh', 'learn-zh'], notes: [], fails, errors };

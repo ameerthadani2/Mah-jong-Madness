@@ -200,7 +200,7 @@ describe('the fair play screen', () => {
     await renderFairness(fakeSession({ audits: HANDS, claimsPassedAway: PASSED }).session);
     // Drawn with a no-break space between a number and its unit (src/logic/keepWhole.ts).
     expect(screen.getAllByText(/^第 \d 局$/).map((n) => unjoined(n.props.children))).toEqual(['第 3 局', '第 2 局', '第 1 局']);
-    expect(screen.getAllByText(/^(已驗證|驗證失敗|已記錄——這副牌可能是伺服器挑的)$/).map((n) => n.props.children)).toEqual(['已記錄——這副牌可能是伺服器挑的', '驗證失敗', '已記錄——這副牌可能是伺服器挑的', '已驗證']);
+    expect(screen.getAllByText(/^(已驗證|驗證失敗|已記錄——這副牌可能是伺服器挑的)$/).map((n) => unjoined(n.props.children))).toEqual(['已記錄——這副牌可能是伺服器挑的', '驗證失敗', '已記錄——這副牌可能是伺服器挑的', '已驗證']);
     expect(screen.getByText('伺服器替這個位子產生了祕密（太慢或不在線上），所以這副牌可能是它挑的。')).toBeOnTheScreen();
     expect(screen.getByText('牌桌替你出牌，卻放掉了你可以胡的牌（第 12 手）。')).toBeOnTheScreen();
     expect(screen.getByText('洗牌種子不是用公開的祕密算出來的。')).toBeOnTheScreen();

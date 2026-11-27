@@ -3,6 +3,7 @@ import React from 'react';
 import { render, screen } from '@testing-library/react-native';
 import type { TableView } from '@mjm/engine';
 import { setLocalePreference } from '../i18n';
+import { unjoined } from '../logic/keepWhole';
 import { Compass } from './TableParts';
 import { TableHud } from './table/TableHud';
 import type { Relation } from './table/hudSpeech';
@@ -14,7 +15,8 @@ const notice = (): string => {
   const live = screen.getByTestId('compass-notice');
   expect(live.props.accessibilityLiveRegion).toBe('polite');
   const text = live.children[0] as unknown as { children: unknown[] };
-  return text.children.filter((c) => typeof c === 'string').join('');
+  // As written: the app's Text joins a count and its word with a no-break space (src/logic/keepWhole.ts).
+  return unjoined(text.children.filter((c) => typeof c === 'string').join(''));
 };
 
 describe('the compass and the wall count, as a screen reader hears them', () => {

@@ -63,8 +63,15 @@ const SCORING_TERMS = [
   '聽牌',
 ];
 
-/** Words the app's own screens name in a sentence. */
-const APP_TERMS = ['覆盤', '表情貼圖', '俱樂部', '么九牌', '么九', '字牌', '花牌', '會員', '會長', '鑽石'];
+/**
+ * Words the app's own screens and the lessons name in a sentence: the game's vocabulary, never parted in a line. The kinds
+ * of kong (明槓, 暗槓, 加槓) are joined apart (KONG_RE): in a list they would match inside 加槓上開花 (add 槓上開花).
+ */
+const APP_TERMS = [
+  ...['覆盤', '表情貼圖', '四風俱樂部', '俱樂部', '黃金教練', '教練', '每日謎題', '謎題衝刺', '謎題', '排行榜', '準確率', '打哪張', '會員', '會長', '鑽石'],
+  ...['么九牌', '么九', '字牌', '花牌', '中張', '安全牌', '危險牌', '順子', '刻子', '對子', '搭子', '兩面', '進張', '補花', '流局'],
+  ...['對家', '上家', '下家', '東風圈', '南風圈', '西風圈', '北風圈'],
+];
 
 const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const kinds = (n: number) => Array.from({ length: n }, (_, k) => kindInfo(k));
@@ -90,6 +97,8 @@ const LEAD_RE = /(第|底)( ?)(?=\d)|(台)()(?=\d)/g;
 const TIMES_RE = /(?<=[㐀-鿿])×(?=\d)/g;
 /** The last two characters of a line, before any closing punctuation. */
 const LAST_PAIR_RE = /([㐀-鿿])([㐀-鿿][^㐀-鿿\w\n]*)$/gm;
+/** 明槓, 暗槓, 加槓, but not the 加槓 of 加槓上開花. */
+const KONG_RE = /[明暗加]槓(?!上開花)/g;
 const CJK = /[㐀-鿿]/;
 
 /** A word kept whole: its spaces become no-break spaces and a word joiner goes between its other characters (not inside a number). */
@@ -109,6 +118,7 @@ export function keepWhole(text: string): string {
       .replace(LEAD_RE, (_, lead: string | undefined, space: string | undefined, tai: string | undefined) => (lead ?? tai) + (space ? NO_BREAK_SPACE : WORD_JOINER))
       .replace(TIMES_RE, `${WORD_JOINER}×${WORD_JOINER}`)
       .replace(ZH_COUNT_RE, glue)
+      .replace(KONG_RE, glue)
       .replace(ZH_RE, glue)
       .replace(LAST_PAIR_RE, `$1${WORD_JOINER}$2`);
   }
