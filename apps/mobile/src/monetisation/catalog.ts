@@ -227,7 +227,7 @@ export function tierOfEntitlement(name: string): Exclude<CoachTier, 'free'> | nu
   return null;
 }
 
-/** Daily meters for the free tier (reset at local midnight, by the server's clock when known). */
+/** Daily meters for the free tier (reset at midnight UTC, as the server's own meters do, by the server's clock when known). */
 export const FREE_METERS = { reviewsPerDay: 1, rushPerDay: 1 };
 
 /** Locale key prefix for a product: `diamonds.60` → `shop.products.diamonds_60`. */
