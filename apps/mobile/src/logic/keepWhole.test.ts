@@ -42,6 +42,8 @@ describe('keepWhole', () => {
     expect(keepWhole('學會像教練一樣，把對子變成刻子。')).toContain(`像${joined('教練')}一樣，把${joined('對子')}變成${joined('刻子')}。`);
     expect(keepWhole('暗槓、明槓、加槓都會補一張牌')).toContain(`${joined('暗槓')}、${joined('明槓')}、${joined('加槓')}`);
     expect(keepWhole('還能加槓上開花（1 台）。')).toContain(`加${joined('槓上開花')}（`);
+    // A lone Chinese word ending an English label stays with the word before it (320 wide: '封頂 cap on' / '台').
+    expect(keepWhole('封頂 cap on 台')).toBe(`封頂 cap on${NB}台`);
   });
 
   it('joins a four-character term whole, never as two words a line could part', () => {
