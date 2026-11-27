@@ -531,6 +531,60 @@ function contract(name: string, repos: () => Repos) {
       expect(lines.filter((l) => l.includes('names no account we know; a TRANSFER moved its purchase'))).toHaveLength(2);
     });
 
+    it('a purchase delivered after the TRANSFER that moved it goes where the TRANSFER sent it, as when it comes first', async () => {
+      const r = repos();
+      let t = T0;
+      const wallet = new WalletService(r, { now: () => t, log: () => {}, testerUserIds: [] });
+      const [a, b] = [await user(), await user()];
+      const first = `tx-late-${a}`;
+      const plan = { storeProductId: 'fourwinds.month', originalTransactionId: first };
+      // The Restore on B happened a day after A bought the plan, and its TRANSFER reaches us first: nothing to move yet.
+      t = T0 + DAY;
+      expect((await wallet.applyStoreEvent(storeEvent(null, 'TRANSFER', { transferredFrom: [a], transferredTo: [b], eventAt: T0 + DAY }))).outcome).toBe('recorded');
+      // Then the purchase, naming A, made before the TRANSFER: it is B's, as the store says.
+      t = T0 + DAY + 60_000;
+      expect(await wallet.applyStoreEvent(storeEvent(a, 'INITIAL_PURCHASE', { ...plan, transactionId: first, purchasedAt: T0, expiresAt: T0 + 30 * DAY }))).toMatchObject({ outcome: 'entitled', userId: b });
+      expect(await wallet.tierOf(b)).toBe('fourwinds');
+      expect(await wallet.tierOf(a)).toBe('free');
+      expect((await r.wallet.findPurchase(first))?.userId).toBe(b);
+      // Its later events that still name A follow it to B: a renewal, then the refund of that renewal.
+      t = T0 + 29 * DAY;
+      expect(await wallet.applyStoreEvent(storeEvent(a, 'RENEWAL', { ...plan, transactionId: `${first}-r`, purchasedAt: t, expiresAt: T0 + 60 * DAY }))).toMatchObject({ outcome: 'extended', userId: b });
+      expect(await wallet.tierOf(a)).toBe('free');
+      t = T0 + 31 * DAY;
+      expect(await wallet.applyStoreEvent(storeEvent(a, 'CANCELLATION', { ...plan, transactionId: `${first}-r`, cancelReason: 'CUSTOMER_SUPPORT', expiresAt: t }))).toMatchObject({ outcome: 'refunded', userId: b });
+      expect(await wallet.tierOf(b)).toBe('free');
+      // A plan A buys after the TRANSFER is A's own.
+      t = T0 + 32 * DAY;
+      expect(await wallet.applyStoreEvent(storeEvent(a, 'INITIAL_PURCHASE', { storeProductId: 'coach.gold.month', transactionId: `tx-own-${a}`, originalTransactionId: `tx-own-${a}`, purchasedAt: t, expiresAt: t + 30 * DAY }))).toMatchObject({ outcome: 'entitled', userId: a });
+      expect(await wallet.tierOf(a)).toBe('gold');
+    });
+
+    it('a late purchase follows only a TRANSFER from its own store, along a chain of them, and a refund that came first still stops it', async () => {
+      const r = repos();
+      let t = T0 + DAY;
+      const wallet = new WalletService(r, { now: () => t, log: () => {}, testerUserIds: [] });
+      const [a, b, c] = [await user(), await user(), await user()];
+      // An App Store Restore moves nothing bought on Google Play: a Play purchase delivered after it stays with A.
+      await wallet.applyStoreEvent(storeEvent(null, 'TRANSFER', { store: 'app_store', transferredFrom: [a], transferredTo: [b], eventAt: T0 + DAY }));
+      const play = `GPA.late-${a}`;
+      expect(await wallet.applyStoreEvent(storeEvent(a, 'INITIAL_PURCHASE', { store: 'play_store', storeProductId: 'coach.gold:month', transactionId: play, originalTransactionId: play, purchasedAt: T0, expiresAt: T0 + 30 * DAY }))).toMatchObject({ outcome: 'entitled', userId: a });
+      // A to B, then B to C, both before the purchase reaches us: it ends with C.
+      t = T0 + 2 * DAY;
+      await wallet.applyStoreEvent(storeEvent(null, 'TRANSFER', { store: 'app_store', transferredFrom: [b], transferredTo: [c], eventAt: T0 + 2 * DAY }));
+      const ios = `ios-late-${a}`;
+      expect(await wallet.applyStoreEvent(storeEvent(a, 'INITIAL_PURCHASE', { storeProductId: 'fourwinds.month', transactionId: ios, originalTransactionId: ios, purchasedAt: T0, expiresAt: T0 + 30 * DAY }))).toMatchObject({ outcome: 'entitled', userId: c });
+      expect([await wallet.tierOf(a), await wallet.tierOf(b), await wallet.tierOf(c)]).toEqual(['gold', 'free', 'fourwinds']);
+      // A refund that reaches us before its purchase, after the TRANSFER, is noted where the purchase will go: the purchase grants nothing.
+      const [d, f] = [await user(), await user()];
+      await wallet.applyStoreEvent(storeEvent(null, 'TRANSFER', { transferredFrom: [d], transferredTo: [f], eventAt: T0 + DAY }));
+      const refunded = `tx-refunded-${d}`;
+      const gold = { storeProductId: 'coach.gold.month', transactionId: refunded, originalTransactionId: refunded, purchasedAt: T0 };
+      expect(await wallet.applyStoreEvent(storeEvent(d, 'CANCELLATION', { ...gold, cancelReason: 'CUSTOMER_SUPPORT', expiresAt: t }))).toMatchObject({ outcome: 'refunded', userId: f });
+      expect(await wallet.applyStoreEvent(storeEvent(d, 'INITIAL_PURCHASE', { ...gold, expiresAt: T0 + 30 * DAY }))).toMatchObject({ outcome: 'refunded', userId: f });
+      expect([await wallet.tierOf(d), await wallet.tierOf(f)]).toEqual(['free', 'free']);
+    });
+
     it('a TRANSFER moves only the plans bought on the store it came from; support grants and other stores stay', async () => {
       const r = repos();
       const wallet = new WalletService(r, { now: () => T0, log: () => {}, testerUserIds: [] });

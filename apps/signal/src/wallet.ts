@@ -12,7 +12,9 @@
  *   credited twice, under two event ids or under two accounts, and its refund is taken from the
  *   account that holds the purchase. A TRANSFER moves a plan's purchases with the plan, and a
  *   later event for one of them that names an account it moved away from (a refund or renewal
- *   delivered late) is applied to the account that holds it now.
+ *   delivered late) is applied to the account that holds it now. A TRANSFER is also noted on the
+ *   account it moved purchases away from, so a purchase delivered after its TRANSFER (deliveries
+ *   are retried out of order) goes where the TRANSFER sent it, as if it had come first.
  *
  * Diamonds and entitlements have no monetary value and cannot be redeemed or transferred between
  * players. Work for one user is serialised in this process (one game server machine), and on
@@ -400,16 +402,66 @@ export class WalletService {
     return `transfer:${transactionId}`;
   }
 
+  /** Note on `fromId` that the purchase of this transaction, now on record with `holderId`, moved away from it (once). */
+  private async noteMoved(tx: Repos, fromId: string, holderId: string, transactionId: string, at: number): Promise<void> {
+    if ((await tx.wallet.findPurchase(transactionId))?.userId !== holderId) return;
+    const ref = WalletService.transferRef(transactionId);
+    if ((await tx.wallet.listLedger(fromId)).some((l) => l.ref === ref)) return;
+    await tx.wallet.apply({ userId: fromId, delta: 0, bonus: 0, reason: 'transfer', ref, createdAt: at });
+  }
+
+  /**
+   * The ledger ref that notes, on the account a TRANSFER moved purchases away from, where they went:
+   * the store it moved (`*`: every store), the account that received them and when (ms).
+   */
+  private static transferAwayRef(store: string | null, toId: string, at: number): string {
+    return `transfer-away:${store ?? '*'}:${toId}:${Math.round(at)}`;
+  }
+
+  /** A `transferAwayRef` read back, or null for any other ref. */
+  private static parseTransferAway(ref: string | null): { store: string | null; toId: string; at: number } | null {
+    const m = /^transfer-away:([^:]+):([^:]+):(-?\d+)$/.exec(ref ?? '');
+    return m ? { store: m[1] === '*' ? null : m[1], toId: m[2], at: Number(m[3]) } : null;
+  }
+
+  /**
+   * Where a TRANSFER that reached us before this event's purchase sent that purchase: the account a
+   * TRANSFER moved `fromId`'s purchases on the event's store to, at or after the purchase was made
+   * (`purchasedAt`), and on through any later TRANSFER from there. Null when no TRANSFER did, or the
+   * event gives no purchase time.
+   */
+  private async pendingTransferHolder(repos: Repos, e: StoreEvent, fromId: string): Promise<UserRecord | null> {
+    if (e.purchasedAt === null || !Number.isFinite(e.purchasedAt)) return null;
+    let since = e.purchasedAt;
+    let id = fromId;
+    let holder: UserRecord | null = null;
+    for (let hops = 0; hops < 5; hops++) {
+      const next = (await repos.wallet.listLedger(id))
+        .map((l) => WalletService.parseTransferAway(l.ref))
+        .filter((t): t is NonNullable<typeof t> => t !== null && (t.store === null || t.store === e.store) && t.at >= since)
+        .sort((x, y) => x.at - y.at)[0];
+      if (!next) break;
+      const to = await this.resolveUser([next.toId], repos);
+      if (!to || to.id === id) break;
+      holder = to;
+      id = to.id;
+      since = next.at;
+    }
+    return holder;
+  }
+
   /**
    * The account a subscription event goes to instead of the one it names, or null to apply it as
    * named. Its purchase is the one on record for its transaction, or else for its original
    * transaction (`originalTransactionId`, the subscription's first purchase). The event goes to
    * the account that holds that purchase now when a TRANSFER moved the purchase, or the
    * subscription's first purchase, away from the account the event names (that account carries
-   * `transferRef`), or when the event names no account we know. Otherwise the named account is the
-   * store's word: after a TRANSFER that never reached us, for one, the store names the new owner
-   * while the purchase is still on the old one. An event read from the store's current record
-   * (`fromSync`) is never routed.
+   * `transferRef`), or when the event names no account we know. With no purchase on record, it goes
+   * where a TRANSFER that reached us first sent the named account's purchases on its store, when
+   * that TRANSFER came at or after the purchase was made (`pendingTransferHolder`). Otherwise the
+   * named account is the store's word: after a TRANSFER that never reached us, for one, the store
+   * names the new owner while the purchase is still on the old one. An event read from the store's
+   * current record (`fromSync`) is never routed.
    */
   private async routedHolder(repos: Repos, e: StoreEvent, named: UserRecord | null): Promise<UserRecord | null> {
     if (e.fromSync || e.type === 'TRANSFER' || productForStoreId(e.storeProductId)?.kind !== 'subscription') return null;
@@ -418,7 +470,10 @@ export class WalletService {
       const purchase = id ? await repos.wallet.findPurchase(id) : null;
       if (purchase) found.push(purchase);
     }
-    if (found.length === 0) return null;
+    if (found.length === 0) {
+      const pending = named ? await this.pendingTransferHolder(repos, e, named.id) : null;
+      return pending && pending.id !== named?.id ? pending : null;
+    }
     const holder = await this.resolveUser([found[0].userId], repos);
     if (!holder || holder.id === named?.id) return null;
     if (!named) return holder;
@@ -475,6 +530,8 @@ export class WalletService {
           });
           if (!fresh) return { outcome: 'duplicate' as const, userId: user?.id ?? null, duplicate: true };
           const { outcome, userId } = await this.applyEffects(tx, e, product, user);
+          // A purchase that went past the account it names is noted there as moved, so its later events follow it.
+          if (holder && named && e.transactionId) await this.noteMoved(tx, named.id, holder.id, e.transactionId, this.now());
           await tx.storeEvents.setOutcome(e.eventId, outcome, userId);
           return { outcome, userId, duplicate: false };
         }),
@@ -699,9 +756,16 @@ export class WalletService {
     const theirs = new Map((await tx.wallet.getEntitlements(to.id)).map((x) => [x.entitlement, x]));
     const eventStore = e.store && e.store !== 'unknown' ? e.store : null;
     let moved = 0;
+    const noted = new Set<string>();
     for (const fromId of e.transferredFrom) {
       const from = await this.resolveUser([fromId], tx, true);
       if (!from || from.id === to.id) continue;
+      // Noted on the old account whatever moves now: a purchase of its that reaches us after this
+      // TRANSFER (deliveries are retried out of order) goes where this one sent its purchases.
+      if (!noted.has(from.id)) {
+        noted.add(from.id);
+        await tx.wallet.apply({ userId: from.id, delta: 0, bonus: 0, reason: 'transfer', ref: WalletService.transferAwayRef(eventStore, to.id, e.eventAt ?? at), createdAt: at });
+      }
       const purchases = await tx.wallet.listPurchases(from.id);
       // The store each plan was last bought or renewed on (purchases are listed oldest first).
       const boughtOn = new Map<string, string>();
