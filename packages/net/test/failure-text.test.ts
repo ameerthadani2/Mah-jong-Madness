@@ -86,7 +86,8 @@ function literals(source: string): Literal[] {
 }
 
 const read = (relative: string) => readFileSync(fileURLToPath(new URL(relative, import.meta.url)), 'utf8');
-const clientSource = read('../src/client.ts');
+// The client's files, as split by concern (src/client.ts names them): the words of the audit and every check that writes one.
+const clientSource = ['clientwords', 'clientcore', 'clientledger', 'clientwatch', 'clientreplay', 'clientaudit', 'clientframes', 'client'].map((f) => read(`../src/${f}.ts`)).join('\n');
 
 /** Lines `from`…`to` (1-based) of the object literal that starts with `opening`. */
 function block(opening: string): { from: number; to: number } {
