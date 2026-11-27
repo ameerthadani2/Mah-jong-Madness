@@ -22,6 +22,24 @@ describe('keepWhole', () => {
     expect(keepWhole('阿花 (Bot) discarded 9 Dot')).toBe(`阿花 (Bot) discarded 9${NB}Dot`);
   });
 
+  // Unit 21's check of the web export: 四 / 圈 on Home (320 wide, Extra-large), 一將四 / 圈 on a lesson card, 放 / 槍 on the
+  // result sheet, 六萬 / ×3 in the coach, 底 / 300 in a lesson summary, 第 / 3 / 局, 140 / 點, and a lone last character.
+  it('joins a count in Chinese numerals, a number with any unit, the stakes, a tile with its count and a line\'s last two characters', () => {
+    expect(keepWhole('底100 / 台20 · 四圈 · 一般')).toContain(` ${joined('四圈')} `);
+    expect(keepWhole('以及一將四圈怎麼從東風圈打到北風圈。')).toContain(`${joined('一將')}${joined('四圈')}`);
+    expect(keepWhole('Tester 胡牌 / 阿花（電腦）放槍')).toContain(`）${joined('放槍')}`);
+    expect(keepWhole('打 四條 就聽牌，聽 三萬×1、六萬×3。')).toContain(`、${joined('六萬')}${WJ}×${WJ}3。`);
+    expect(keepWhole('用底100/台20和底300/台100實際算一遍。')).toContain(`和底${WJ}300${WJ}/${WJ}台${WJ}100實`);
+    expect(keepWhole('底100 / 台20 · 16 rotations')).toBe(`底${WJ}100${NB}/${NB}台${WJ}20 · 16${NB}rotations`);
+    expect(keepWhole('第 3 局')).toBe(`第${NB}3${NB}局`);
+    expect(keepWhole('第3局')).toBe(`第${WJ}3${WJ}局`);
+    expect(keepWhole('140 點')).toBe(`140${NB}點`);
+    expect(keepWhole('平均 2.3台')).toContain(`2.3${WJ}台`);
+    expect(keepWhole('連2拉2')).toBe(`連${WJ}2${WJ}拉${WJ}2`);
+    expect(keepWhole('每天一題、人人同題，連續紀錄別中斷！')).toMatch(new RegExp(`別中${WJ}斷！$`));
+    expect(keepWhole('先湊成順子或刻子，對子留著。\n下一行')).toContain(`留${WJ}著。\n`);
+  });
+
   it('joins a four-character term whole, never as two words a line could part', () => {
     expect(keepWhole('門清自摸 3 台')).toContain(joined('門清自摸'));
     expect(keepWhole('現在就能胡（槓上開花），共 5 台。')).toContain(joined('槓上開花'));
