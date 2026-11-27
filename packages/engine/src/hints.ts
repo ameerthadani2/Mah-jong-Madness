@@ -361,7 +361,7 @@ export const EFFICIENCY_REASON_KEYS: readonly HintReasonKey[] = ['hint.discard.r
 const distance = (o: DiscardAdvice): number => o.rank ?? o.shanten;
 
 /**
- * The discard puzzles' judge (`analysedPuzzle` in puzzles.ts) on the coach's own counts: the fewest steps
+ * The discard puzzles' judge (`analysedPuzzle` in puzzlediscard.ts) on the coach's own counts: the fewest steps
  * from ready, and within 10 percent of the most improving tiles at that distance.
  */
 function efficientDiscard(d: DiscardAdvice, all: readonly DiscardAdvice[]): boolean {

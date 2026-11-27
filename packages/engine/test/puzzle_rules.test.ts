@@ -25,7 +25,7 @@ import {
 // and greedy on 218 of 300 medium drills, which were never rule-proofed.
 //
 // Since 26 November 2026 medium and hard drills and the daily place the answer at a depth each seed draws among
-// the orders rules of thumb throw the tiles in (ANSWER_DEPTH_SHARE, `answerDepth` in src/puzzles.ts): some rule's
+// the orders rules of thumb throw the tiles in (ANSWER_DEPTH_SHARE, `answerDepth` in src/puzzlediscard.ts): some rule's
 // first pick is right on about a third, its second pick or later on the rest. Measured on fresh seed sets fixed
 // before the change was tuned (300 hard u21rep-h-*, 300 medium u21rep-m-*, the 365 dailies from 1 January 2033),
 // the strongest of the rules measured (the 43 here and the assessors') was right on 30.3% of hard puzzles (chance 10.4%, 28.4%

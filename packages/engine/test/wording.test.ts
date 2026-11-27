@@ -3,6 +3,9 @@ import { join } from 'path';
 import { describe, expect, it } from 'vitest';
 import { claimPuzzle, discardAnalysis, discardPuzzle, ENGINE_REASON_KEYS, kindInfo, LESSONS, valuePuzzle, type PuzzleDifficulty } from '../src/index';
 
+/** The puzzles' source: puzzles.ts and the files its themes are in. */
+const puzzleSource = () => ['puzzles', 'puzzletable', 'puzzlediscard', 'puzzledefence', 'puzzleclaim', 'puzzlevalue'].map((f) => readFileSync(join(__dirname, `../src/${f}.ts`), 'utf8')).join('\n');
+
 /** Every string inside a value, with its path. */
 function strings(value: unknown, path = ''): Array<[string, string]> {
   if (typeof value === 'string') return [[path, value]];
@@ -20,7 +23,7 @@ describe('plain Taiwanese wording', () => {
   });
 
   it('never writes 向聽 into a puzzle explanation', () => {
-    expect(readFileSync(join(__dirname, '../src/puzzles.ts'), 'utf8')).not.toContain('向聽');
+    expect(puzzleSource()).not.toContain('向聽');
   });
 
   it('keeps the lesson on counting exact: the formula, the five-slot limit and what 0 and -1 mean', () => {
@@ -34,7 +37,7 @@ describe('plain Taiwanese wording', () => {
   it('never says 面子, in a lesson, a hint, a review reason or a puzzle explanation', () => {
     const found = [...strings(LESSONS, 'LESSONS'), ...strings(ENGINE_REASON_KEYS, 'reasons')].filter(([, s]) => s.includes('面子'));
     expect(found).toEqual([]);
-    expect(readFileSync(join(__dirname, '../src/puzzles.ts'), 'utf8')).not.toContain('面子');
+    expect(puzzleSource()).not.toContain('面子');
   });
 
   // Unit 21's language check: riichi words left in the teaching text (振聽, 筋牌, 老頭牌, 捨牌, 牌河), 單吊 beside 單騎, and claim
@@ -43,7 +46,7 @@ describe('plain Taiwanese wording', () => {
   it('uses no riichi word in a lesson, a hint, a review reason or a puzzle explanation, and names the claim on offer', () => {
     const zh = [...strings(LESSONS, 'LESSONS'), ...strings(ENGINE_REASON_KEYS, 'reasons')].filter(([k]) => /Zh$|zh-TW/.test(k));
     expect(zh.filter(([, s]) => /振聽|筋牌|老頭牌|捨牌|牌河|單吊/.test(s))).toEqual([]);
-    const src = readFileSync(join(__dirname, '../src/puzzles.ts'), 'utf8');
+    const src = puzzleSource();
     for (const word of ['振聽', '筋牌', '老頭牌', '捨牌', '牌河', '單吊', '吃碰後', '和不吃不碰一樣', '這是值得的']) expect(src, word).not.toContain(word);
     const claims = Array.from({ length: 60 }, (_, i) => claimPuzzle(`wording-c-${i}`, (1 + (i % 3)) as PuzzleDifficulty));
     for (const p of claims) {

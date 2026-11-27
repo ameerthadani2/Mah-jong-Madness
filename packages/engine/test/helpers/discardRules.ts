@@ -1,6 +1,6 @@
 /**
  * Rules of thumb a player might use on a discard puzzle, written here apart from the generator's own
- * `ruleOfThumbPicks` (src/puzzles.ts): only `countsFromKinds` and `shanten` come from the engine. Each
+ * `ruleOfThumbPicks` (src/puzzlediscard.ts): only `countsFromKinds` and `shanten` come from the engine. Each
  * rule takes the 17-tile hand and names the tile it would throw. `test/puzzle_rules.test.ts` measures how
  * often each is an accepted answer on fixed seed sets, against random guessing.
  *
