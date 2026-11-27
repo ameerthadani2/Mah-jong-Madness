@@ -15,7 +15,7 @@
  */
 import { judgePuzzleAnswer, type AnyPuzzle, type DiscardPuzzle, type PuzzleAnswerInput, type PuzzleQuestion } from '@mjm/engine';
 import { ApiError } from '../api/http';
-import { isPuzzleServerDown, type DailyFinish, type DailyStart, type RatingReply, type RushAnswerReply, type RushFinish, type RushServed, type RushStart, type ServerRating } from '../api/puzzles';
+import { isPuzzleServerDown, type DailyFinish, type DailyStart, type RatingReply, type ReviewReply, type RushAnswerReply, type RushFinish, type RushServed, type RushStart, type ServerRating } from '../api/puzzles';
 
 /** The server calls this module makes (the `puzzlesApi` functions with their context bound). */
 export interface PuzzleServer {
@@ -25,6 +25,8 @@ export interface PuzzleServer {
   answerRush(runId: string, index: number, answer: PuzzleAnswerInput): Promise<RushAnswerReply>;
   finishRush(runId: string): Promise<RushFinish>;
   getPuzzleRating(): Promise<RatingReply>;
+  /** The server's free hand-review meter (`POST /api/reviews`). */
+  openReview(hand: string): Promise<ReviewReply>;
 }
 
 /** Where a puzzle stands with the server: ranked (and how to finish it), or played on the device only. */

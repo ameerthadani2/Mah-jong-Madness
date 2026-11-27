@@ -742,6 +742,27 @@ export interface DailyAttemptsRepo {
   prune(before: number): Promise<number>;
 }
 
+/** What happened when an account opened a full review of a hand (`HandReviewsRepo.open`). */
+export type HandReviewOutcome = 'counted' | 'again' | 'limited';
+
+/** The hands each account opened a full review of (hand_reviews, migration 0022; src/reviews.ts). */
+export interface HandReviewsRepo {
+  /**
+   * The account opens a full review of a hand at `at`. A hand it reviewed before (and not pruned)
+   * is `again` and counts nothing. Otherwise, when `limit` is a number and that many hands or more
+   * were recorded for the account since `since`, it is `limited` and nothing is recorded; else it
+   * is recorded and `counted`. One account's opens are taken one at a time. `used` is the number of
+   * hands recorded since `since` afterwards.
+   */
+  open(userId: string, handKey: string, at: number, since: number, limit: number | null): Promise<{ outcome: HandReviewOutcome; used: number }>;
+  /** Hands recorded for the account since `since`. */
+  countSince(userId: string, since: number): Promise<number>;
+  /** An account merge: the hands move unless the target already has them. */
+  moveToUser(fromUserId: string, toUserId: string): Promise<number>;
+  /** Deletes the rows of reviews opened before `before`. */
+  prune(before: number): Promise<number>;
+}
+
 /** Where an account's automation flag stands: flagged by the check, cleared or confirmed by an admin. */
 export type PuzzleFlagStatus = 'flagged' | 'cleared' | 'confirmed';
 export const PUZZLE_FLAG_STATUSES: readonly PuzzleFlagStatus[] = ['flagged', 'cleared', 'confirmed'];
@@ -859,6 +880,7 @@ export interface Repos {
   joinAllowances: JoinAllowancesRepo;
   rushRuns: RushRunsRepo;
   dailyAttempts: DailyAttemptsRepo;
+  handReviews: HandReviewsRepo;
   puzzleFlags: PuzzleFlagsRepo;
   leaderboards: LeaderboardsRepo;
   blocks: BlocksRepo;

@@ -11,7 +11,7 @@
   },
   "gradeCount": "%{label} %{n}",
   "dailyUsedTitle": "Daily review used",
-  "dailyUsedText": "Free accounts get one full hand review a day. The Four Winds Club reviews every hand you play.",
+  "dailyUsedText": "Free accounts get one full review of a new hand a day, counted by your account on every phone you sign in to. The Four Winds Club reviews every hand you play.",
   "seePlans": "See plans",
   "back": "Back",
   "nothing": "Nothing to review yet. Finish a hand first.",
@@ -36,5 +36,8 @@
     "hu": "Win",
     "pong": "Pong",
     "pass": "Pass"
-  }
+  },
+  "checking": "Checking today's free review…",
+  "nextFreeToday": "Your next free review comes today at %{time}, your time.",
+  "nextFreeTomorrow": "Your next free review comes tomorrow at %{time}, your time."
 }

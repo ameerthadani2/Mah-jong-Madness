@@ -253,6 +253,15 @@ Errors for the boards: `400 invalid` (a date or period that is not one), `403 fo
 
 **Limits.** Per account: 20 submissions a minute (daily starts and answers, Rush starts and finishes together), 60 Rush answers a minute and 30 board or rating reads a minute; per address: 60 Rush starts an hour. Each answers `429 rate_limited` with `retry-after: 12`. The body limit (64 KiB) and the per-address request limit apply as everywhere.
 
+## Hand reviews
+
+Bearer. Code: `apps/signal/src/reviews.ts`, table `hand_reviews` (migration 0022). The review itself is worked out on the phone (the engine replays the hand there); the server counts the free reviews for the account, as it counts free Puzzle Rush runs, so clearing the app's storage or using a second phone gives no second free review.
+
+- `POST /api/reviews { "hand": "<match id>:<hand number>" }` → `200 { "counted", "unlimited", "used", "limit", "resetsAt" }`. The app asks before it opens a full review of a hand. A free account gets `limit` (1) review of a new hand a UTC day: `counted: true` the first time, and `used` is the count for the UTC day so far. Opening a hand the account reviewed in the last 30 days again is free (`counted: false`). With The Four Winds Club every hand opens (`unlimited: true`, `limit` and `resetsAt` null) and nothing is counted or recorded. `resetsAt` is the next midnight UTC (08:00 in Taiwan).
+- `403 review_daily_limit { "used", "limit", "resetsAt" }` when the day's free review is gone; nothing is recorded. `400 invalid` for a `hand` that is not 1 to 64 letters, digits or `.:_-`; `429 rate_limited` past 20 a minute.
+- Two opens at once are taken one at a time (the account's row is locked), so they cannot both have the last free review. A guest's reviewed hands move with it when it signs in to an account (an account merge), rows go 30 days after the review, and with the account at the deletion purge.
+- **Offline.** When the server cannot be reached (no answer, a timeout, a fault, or any refusal but `review_daily_limit`), the app counts the review on the phone, one a UTC day, as it did before the server counted; that count is not sent later. Online, the phone's count follows the server's: it is never below the `used` the server answered.
+
 ## Moderation (`Authorization: Bearer <ADMIN_TOKEN>`)
 
 Compared in constant time. Without `ADMIN_TOKEN` every route here answers `503 unavailable`; a wrong token `401 unauthorised`.

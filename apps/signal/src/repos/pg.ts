@@ -19,7 +19,7 @@ import { pgStoreEvents, pgWallet } from './pgWallet';
 import { pgBlocks, pgModeration, pgReports } from './pgModeration';
 import { pgClubs, pgJoinAllowances } from './pgClubs';
 import { pgMatchResults, pgQuickMatchPairs, pgTableRatings, pgTableSnapshots } from './pgTables';
-import { pgDailyAttempts, pgLeaderboards, pgPuzzleFlags, pgPuzzleRatings, pgPuzzleResults, pgRushRuns } from './pgPuzzles';
+import { pgDailyAttempts, pgHandReviews, pgLeaderboards, pgPuzzleFlags, pgPuzzleRatings, pgPuzzleResults, pgRushRuns } from './pgPuzzles';
 
 export { isUuid } from './pgShared';
 
@@ -43,6 +43,7 @@ function build(q: Queryable, tx: Tx, transaction: Repos['transaction']): Repos {
     joinAllowances: pgJoinAllowances(q),
     rushRuns: pgRushRuns(q),
     dailyAttempts: pgDailyAttempts(q),
+    handReviews: pgHandReviews(q, tx),
     puzzleFlags: pgPuzzleFlags(q),
     leaderboards: pgLeaderboards(q),
     blocks: pgBlocks(q, tx),

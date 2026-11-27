@@ -25,6 +25,7 @@ import { LIMITS, type SignalConfig } from './config';
 import { BucketTable } from './limits';
 import { blockedEitherWay, fillMsFromEnv, Matchmaker, quickMatchCheck } from './matchmaking';
 import { applyQuickMatchRating, DEFAULT_TABLE_RATING } from './tableRating';
+import { HAND_REVIEW_KEEP_MS } from './reviews';
 import { LatencyWindow } from './metrics';
 import { MuteList } from './moderation';
 import { NO_ANALYTICS, reportError, withConsent, type Analytics } from './observability';
@@ -376,6 +377,8 @@ export async function createSignalServer(opts: SignalServerOptions): Promise<Sig
     repos.repos.rushRuns.pruneUnfinished(now() - DAY_MS).catch((e: Error) => console.error('[signal] rush run prune failed', e.message));
     // Daily puzzle attempts whose date closed long ago (a key is open for at most three days).
     repos.repos.dailyAttempts.prune(now() - 7 * DAY_MS).catch((e: Error) => console.error('[signal] daily attempt prune failed', e.message));
+    // Hands reviewed long ago: reopening one counts as a new review again.
+    repos.repos.handReviews.prune(now() - HAND_REVIEW_KEEP_MS).catch((e: Error) => console.error('[signal] hand review prune failed', e.message));
     // The hard delete promised at soft deletion (30 days), and sessions that have ended.
     // The clubs in memory still hold the purged accounts' rows: drop them before the next club write.
     purgeDeletedUsers(repos.repos, { now })

@@ -25,6 +25,7 @@ export function usePuzzleServer(): { server: PuzzleServer | null; userId: string
       answerRush: (id, index, answer) => puzzlesApi.answerRush(ctx, id, index, answer),
       finishRush: (id) => puzzlesApi.finishRush(ctx, id),
       getPuzzleRating: () => puzzlesApi.getPuzzleRating(ctx),
+      openReview: (hand) => puzzlesApi.openReview(ctx, hand),
     };
   }, [hasSession, app.signalUrl, auth.client]);
   return { server, userId };

@@ -4,7 +4,7 @@ import { act, fireEvent, render, screen } from '@testing-library/react-native';
 import { DEFAULT_RULES, legalActions, viewToState } from '@mjm/engine';
 import { ReviewScreen } from './ReviewScreen';
 import { createLocalSession, type Session } from '../game/session';
-import { FakeProviders } from '../test/providers';
+import { FakeProviders, sessionClient } from '../test/providers';
 import { DEFAULT_PROGRESS, type Progress } from '../storage';
 import { canUse, consume, EMPTY_WALLET, type Wallet } from '../monetisation/wallet';
 import type { AppState } from '../app-state';
@@ -57,14 +57,27 @@ async function playedHand(): Promise<Session> {
   return s;
 }
 
-async function renderReview(app: Partial<AppState>) {
+async function renderReview(app: Partial<AppState>, opts: { signedIn?: boolean } = {}) {
   const calls = { back: jest.fn(), go: jest.fn(), setWallet: jest.fn<(w: Wallet) => void>(), setProgress: jest.fn<(p: Progress | ((p: Progress) => Progress)) => void>() };
+  const auth = opts.signedIn ? { status: 'guest' as const, client: sessionClient('u-1'), user: { id: 'u-1' } as never } : {};
   await render(
-    <FakeProviders app={{ ...calls, screen: { name: 'review' }, ...app }}>
+    <FakeProviders app={{ ...calls, screen: { name: 'review' }, ...app }} auth={auth}>
       <ReviewScreen />
     </FakeProviders>,
   );
   return calls;
+}
+
+/** The game server's review meter as this screen sees it (`POST /api/reviews`): its answer, or no answer at all. */
+function serveReviews(answer: { status: number; body: unknown } | 'down') {
+  const asked: string[] = [];
+  jest.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
+    if (!String(input).endsWith('/api/reviews')) return Promise.resolve(new Response('{}', { status: 404 }));
+    asked.push(JSON.parse(String(init?.body ?? '{}')).hand);
+    if (answer === 'down') return Promise.reject(new TypeError('Network request failed'));
+    return Promise.resolve(new Response(JSON.stringify(answer.body), { status: answer.status }));
+  });
+  return asked;
 }
 const progressAfter = (setProgress: jest.Mock<(p: Progress | ((p: Progress) => Progress)) => void>, from: Progress) =>
   setProgress.mock.calls.reduce<Progress>((p, [f]) => (typeof f === 'function' ? f(p) : f), from);
@@ -101,6 +114,39 @@ describe('the hand review', () => {
     await fireEvent.press(screen.getByRole('button', { name: 'See plans' }));
     expect(calls.go).toHaveBeenCalledWith({ name: 'shop', focus: 'fourwinds' });
     expect(calls.setWallet).not.toHaveBeenCalled();
+  });
+
+  it('signed in, asks the server before opening a new hand, and follows its count on this phone', async () => {
+    const s = await playedHand();
+    const audit = s.client.state.lastAudit!;
+    const asked = serveReviews({ status: 200, body: { counted: true, unlimited: false, used: 1, limit: 1, resetsAt: '2026-11-18T00:00:00.000Z' } });
+    const calls = await renderReview({ session: s }, { signedIn: true });
+    expect(await screen.findByText(/^accuracy over \d+ decisions$/)).toBeOnTheScreen();
+    expect(asked).toEqual([`${audit.matchId}:${audit.handNumber}`]);
+    // The phone's own count follows the server's: today's free review is gone here too.
+    const followed = calls.setWallet.mock.calls.at(-1)![0];
+    expect(canUse(followed, 'reviews').ok).toBe(false);
+  });
+
+  it('signed in, a phone whose storage was cleared still finds the day’s review used: the server’s count decides', async () => {
+    const s = await playedHand();
+    serveReviews({ status: 403, body: { error: 'review_daily_limit', message: 'used', used: 1, limit: 1, resetsAt: '2026-11-18T00:00:00.000Z' } });
+    // A fresh wallet: nothing counted on this phone.
+    const calls = await renderReview({ session: s, wallet: EMPTY_WALLET }, { signedIn: true });
+    expect(await screen.findByText('Daily review used')).toBeOnTheScreen();
+    expect(screen.getByText(/counted by your account on every phone you sign in to/)).toBeOnTheScreen();
+    // 09:00 UTC on 17 November: the next free review comes at the next midnight UTC, in this phone's time.
+    expect(screen.getByText(/^Your next free review comes (today|tomorrow) at \d\d:\d\d, your time\.$/)).toBeOnTheScreen();
+    expect(screen.queryByText(/^accuracy over/)).toBeNull();
+    expect(canUse(calls.setWallet.mock.calls.at(-1)![0], 'reviews').ok).toBe(false);
+  });
+
+  it('signed in but the server cannot be reached: this phone counts the free review, as offline', async () => {
+    const s = await playedHand();
+    serveReviews('down');
+    const calls = await renderReview({ session: s }, { signedIn: true });
+    expect(await screen.findByText(/^accuracy over \d+ decisions$/, {}, { timeout: 15_000 })).toBeOnTheScreen();
+    expect(canUse(calls.setWallet.mock.calls.at(-1)![0], 'reviews').ok).toBe(false);
   });
 
   it('says there is nothing to review before a hand is finished, and spends nothing', async () => {

@@ -2,7 +2,8 @@
  * Client for the server's puzzle routes (docs/API.md, "Puzzles and leaderboards"): the daily
  * puzzle timed by the server (start, then finish with the answer), Puzzle Rush runs the server
  * serves one puzzle at a time, judging and stamping each answer as it is made, the server's puzzle rating, the leaderboards and the "Show me on
- * leaderboards" choice. Pure TypeScript: `fetch` is injected, so tests drive it with a fake.
+ * leaderboards" choice, and the server's free hand-review meter (`openReview`). Pure TypeScript:
+ * `fetch` is injected, so tests drive it with a fake.
  *
  * Failures are `ApiError`s (src/api/http.ts); `puzzleErrorMessage` turns each code into
  * translated copy (`puzzles.server.errors.*`), and `isPuzzleServerDown` says when the app should
@@ -50,6 +51,20 @@ export interface DailyFinish {
   rating: ServerRating;
   /** The whole puzzle, revealed with the verdict, for the feedback. */
   revealed: DiscardPuzzle;
+}
+
+/**
+ * The server's answer when the app opens a full review of a hand (docs/API.md, "Hand reviews"): whether
+ * this opening counted against the day's free reviews (a hand reviewed before does not), how many the
+ * account has used this UTC day, the day's allowance (null with a plan that reviews every hand) and when
+ * it refills. A free account with none left gets `403 review_daily_limit` instead.
+ */
+export interface ReviewReply {
+  counted: boolean;
+  unlimited: boolean;
+  used: number;
+  limit: number | null;
+  resetsAt: string | null;
 }
 
 /** A Rush puzzle as the server serves it: its place in the run and its question (the answer comes only with the verdict). */
@@ -175,6 +190,8 @@ export const puzzlesApi = {
   /** Ends a run (the clock ran out or the player left): the server scores it from the answers it stamped. */
   finishRush: (ctx: PuzzleContext, runId: string) => call<RushFinish>(ctx, 'POST', `/api/puzzles/rush/${encodeURIComponent(runId)}/finish`, {}),
   getPuzzleRating: (ctx: PuzzleContext) => call<RatingReply>(ctx, 'GET', '/api/puzzles/rating'),
+  /** Asks to open a full review of a hand (`<match id>:<hand number>`): the server counts the free reviews. */
+  openReview: (ctx: PuzzleContext, hand: string) => call<ReviewReply>(ctx, 'POST', '/api/reviews', { hand }),
   getLeaderboard: (ctx: PuzzleContext, kind: BoardKind, opts: BoardOptions = {}) => call<Board>(ctx, 'GET', boardPath(kind, opts)),
   /** Whether the player appears on public leaderboards (on unless they turned it off). */
   getLeaderboardVisible: async (ctx: PuzzleContext) => (await call<{ leaderboardVisible?: unknown }>(ctx, 'GET', '/api/me')).leaderboardVisible !== false,
@@ -188,6 +205,7 @@ export const {
   answerRush,
   finishRush,
   getPuzzleRating,
+  openReview,
   getLeaderboard,
   getLeaderboardVisible,
   setLeaderboardVisible,
@@ -209,6 +227,8 @@ const PUZZLE_ERRORS: Readonly<Record<string, string>> = {
   rush_held: 'puzzles.server.errors.rushHeld',
   // The server's free Rush meter: the Shop's own Coach Gold message, as the Rush screen's lock shows it.
   rush_daily_limit: 'shop.rushUsed',
+  // The server's free review meter: the review screen's own lock says it.
+  review_daily_limit: 'review.dailyUsedText',
   run_not_found: 'puzzles.server.errors.runNotFound',
   run_finished: 'puzzles.server.errors.runFinished',
   run_expired: 'puzzles.server.errors.runExpired',

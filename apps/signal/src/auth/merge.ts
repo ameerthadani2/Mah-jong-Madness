@@ -114,6 +114,8 @@ export async function link(repos: Repos, userId: string, identity: VerifiedIdent
       await tx.tableRatings.mergeInto(user.id, target.id);
       await tx.rushRuns.moveToUser(user.id, target.id);
       await tx.dailyAttempts.moveToUser(user.id, target.id);
+      // The guest's reviewed hands count on the account: signing in gives no second free review that day.
+      await tx.handReviews.moveToUser(user.id, target.id);
       await tx.puzzleFlags.moveToUser(user.id, target.id);
       await tx.devices.moveToUser(user.id, target.id);
       await tx.reports.moveToUser(user.id, target.id);

@@ -11,7 +11,7 @@
   },
   "gradeCount": "%{label} %{n}",
   "dailyUsedTitle": "今天的覆盤次數已用完",
-  "dailyUsedText": "免費帳號每天可以完整覆盤一局。四風俱樂部每一局都幫你覆盤。",
+  "dailyUsedText": "免費帳號每天可以完整覆盤一局新的牌，次數跟著帳號計算，換哪支手機登入都一樣。四風俱樂部每一局都幫你覆盤。",
   "seePlans": "查看方案",
   "back": "返回",
   "nothing": "還沒有可以覆盤的牌局，先打完一局吧。",
@@ -36,5 +36,8 @@
     "hu": "胡",
     "pong": "碰",
     "pass": "過"
-  }
+  },
+  "checking": "正在確認今天的免費覆盤…",
+  "nextFreeToday": "下一次免費覆盤在今天 %{time}（你的當地時間）開放。",
+  "nextFreeTomorrow": "下一次免費覆盤在明天 %{time}（你的當地時間）開放。"
 }

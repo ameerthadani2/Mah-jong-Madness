@@ -3,7 +3,10 @@ import { ScrollView, StyleSheet, View } from 'react-native';
 import { kindOf, reviewHand, type MoveGrade, type ReviewedMove } from '@mjm/engine';
 import { reviewAction, reviewReasonParams } from '../logic/reviewText';
 import { useApp } from '../app-state';
-import { canUse, consume } from '../monetisation/store';
+import { localReviewAllowance, needsServer, serverReviewAllowance, type ReviewAllowance } from '../logic/reviewMeter';
+import { trustedNow } from '../monetisation/store';
+import { usePuzzleServer } from '../components/puzzles/usePuzzleServer';
+import { nextFreeRushText } from '../logic/rush';
 import { rollingAccuracy } from '../logic/accuracy';
 import { colors, fonts, space } from '../theme';
 import { Tile } from '../components/Tile';
@@ -34,22 +37,34 @@ export function ReviewScreen() {
   const { audit, snapshot, seat, rules } = frozen;
   const key = audit ? `${audit.matchId}:${audit.handNumber}` : null;
   const alreadyReviewed = !!key && app.progress.reviewedHands.includes(key);
-  // Free tier: one full review per day (re-opening a reviewed hand is always free).
-  const [allowance] = useState(() => (alreadyReviewed ? { ok: true, left: Infinity, limit: null } : canUse(app.wallet, 'reviews')));
+  // Free tier: one full review of a new hand a UTC day (re-opening a reviewed hand is always free). With a
+  // session the server counts it for the account and the app follows its answer; offline this phone counts it.
+  const { server } = usePuzzleServer();
+  const [ask] = useState(() => needsServer(app.wallet, alreadyReviewed, server, key));
+  const [allowance, setAllowance] = useState<ReviewAllowance | null>(() => (ask ? null : localReviewAllowance(app.wallet, alreadyReviewed).allowance));
   useEffect(() => {
-    if (allowance.ok && !alreadyReviewed && allowance.limit !== null) app.setWallet(consume(app.wallet, 'reviews'));
+    let live = true;
+    const opened = ask && server && key ? serverReviewAllowance(server, key, app.wallet) : Promise.resolve(localReviewAllowance(app.wallet, alreadyReviewed));
+    void opened.then((r) => {
+      if (!live) return;
+      if (r.wallet !== app.wallet) app.setWallet(r.wallet);
+      setAllowance(r.allowance);
+    });
+    return () => {
+      live = false;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const review = useMemo(() => {
-    if (!allowance.ok) return null;
+    if (!allowance?.ok) return null;
     if (!audit || !snapshot || !rules) return null;
     try {
       return reviewHand(snapshot, audit.seed, rules, audit.log, seat);
     } catch {
       return null;
     }
-  }, [allowance.ok, audit, snapshot, rules, seat]);
+  }, [allowance?.ok, audit, snapshot, rules, seat]);
 
   useEffect(() => {
     if (!review || !audit) return;
@@ -58,11 +73,22 @@ export function ReviewScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [review?.accuracy]);
 
-  if (!allowance.ok) {
+  if (!allowance) {
     return (
-      <View style={styles.center}>
+      <View style={styles.center} testID="review-checking">
+        <P dim>{t('review.checking')}</P>
+      </View>
+    );
+  }
+  if (!allowance.ok) {
+    const next = nextFreeRushText(new Date(trustedNow(app.wallet)));
+    return (
+      <View style={styles.center} testID="review-used">
         <H1 style={{ fontSize: 26 }}>{t('review.dailyUsedTitle')}</H1>
         <P style={{ textAlign: 'center', maxWidth: 420 }}>{t('review.dailyUsedText')}</P>
+        <P dim style={{ textAlign: 'center', maxWidth: 420 }}>
+          {t(next.key === 'puzzles.rush.nextFreeToday' ? 'review.nextFreeToday' : 'review.nextFreeTomorrow', next.params)}
+        </P>
         <Row>
           <Button title={t('review.seePlans')} onPress={() => app.go({ name: 'shop', focus: 'fourwinds' })} />
           <Button kind="ghost" title={t('review.back')} onPress={app.back} />

@@ -335,6 +335,7 @@ describe('link, login, merge, unlink and deletion', () => {
     await repos.wallet.recordPurchase({ userId: u.userId, store: 'app_store', transactionId: 'u-tx', productId: 'diamonds_50', price: 0.99, currency: 'USD', eventId: null, raw: {}, createdAt: t });
     await repos.wallet.setEntitlement({ userId: u.userId, entitlement: 'coach_gold', expiresAt: t + 30 * DAY, source: 'store', updatedAt: t });
     await repos.puzzleResults.record({ userId: u.userId, kind: 'daily', puzzleKey: '2026-04-01', correct: true, seconds: 30, ratingAfter: 1210, createdAt: t });
+    expect((await repos.handReviews.open(u.userId, 'u-hand:0', t, 0, 1)).outcome).toBe('counted');
     const uClub = club(u.userId, 'Guest U');
     const shared = club('owner-x', 'Xu', { members: [{ userId: u.userId, name: 'Guest U', role: 'member', joinedAt: t, points: 100, matchesPlayed: 1, matchesWon: 1, handsWon: 3 }, { userId: v.userId, name: 'Vera', role: 'admin', joinedAt: t, points: 900, matchesPlayed: 9, matchesWon: 5, handsWon: 20 }] });
     await repos.clubs.save(uClub);
@@ -353,6 +354,8 @@ describe('link, login, merge, unlink and deletion', () => {
     expect((await repos.wallet.listPurchases(v.userId)).map((p) => p.transactionId)).toEqual(['u-tx']);
     expect((await repos.wallet.getEntitlements(v.userId)).map((e) => e.entitlement)).toEqual(['coach_gold']);
     expect(await repos.puzzleResults.listForUser(v.userId)).toHaveLength(1);
+    // The guest's free review of the day counts on the account: signing in gives no second one.
+    expect(await repos.handReviews.open(v.userId, 'v-hand:0', t, 0, 1)).toEqual({ outcome: 'limited', used: 1 });
     expect((await repos.devices.get(u.deviceId))?.userId).toBe(v.userId);
     // Clubs: U's own club transfers to V; in the shared club V's row stays.
     const moved = (await repos.clubs.get(uClub.code))!;

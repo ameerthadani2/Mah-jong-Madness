@@ -17,13 +17,14 @@ import {
   type RushRunsRepo,
   type DailyAttemptRecord,
   type DailyAttemptsRepo,
+  type HandReviewsRepo,
   type PuzzleFlagRecord,
   type PuzzleFlagsRepo,
   type PuzzleFlagStatus,
   type RecentPuzzleResult,
   type RushAnswerRecord,
 } from './types';
-import { isUuid, toDate, toMs } from './pgShared';
+import { type Tx, isUuid, toDate, toMs } from './pgShared';
 
 interface PuzzleRow {
   id: string;
@@ -294,6 +295,43 @@ export function pgDailyAttempts(q: Queryable): DailyAttemptsRepo {
     },
     async prune(before) {
       const res = await q.query('DELETE FROM puzzle_daily_attempts WHERE started_at < $1', [toDate(before)]);
+      return res.rowCount ?? 0;
+    },
+  };
+}
+
+export function pgHandReviews(q: Queryable, tx: Tx): HandReviewsRepo {
+  const countSince = async (c: Queryable, userId: string, since: number) =>
+    Number((await c.query<{ n: string }>('SELECT count(*) AS n FROM hand_reviews WHERE user_id = $1 AND reviewed_at >= $2', [userId, toDate(since)])).rows[0].n);
+  return {
+    async open(userId, handKey, at, since, limit) {
+      if (!isUuid(userId)) return { outcome: 'limited', used: 0 };
+      return tx(async (c) => {
+        // The account's row is locked first, so two opens at once cannot both take the last free review.
+        await c.query('SELECT id FROM users WHERE id = $1 FOR UPDATE', [userId]);
+        const seen = await c.query('SELECT 1 FROM hand_reviews WHERE user_id = $1 AND hand_key = $2', [userId, handKey]);
+        const used = await countSince(c, userId, since);
+        if (seen.rows.length > 0) return { outcome: 'again' as const, used };
+        if (limit !== null && used >= limit) return { outcome: 'limited' as const, used };
+        await c.query('INSERT INTO hand_reviews (user_id, hand_key, reviewed_at) VALUES ($1, $2, $3) ON CONFLICT (user_id, hand_key) DO NOTHING', [userId, handKey, toDate(at)]);
+        return { outcome: 'counted' as const, used: used + 1 };
+      });
+    },
+    async countSince(userId, since) {
+      if (!isUuid(userId)) return 0;
+      return countSince(q, userId, since);
+    },
+    async moveToUser(fromUserId, toUserId) {
+      if (!isUuid(fromUserId) || !isUuid(toUserId)) return 0;
+      const res = await q.query(
+        'UPDATE hand_reviews h SET user_id = $2 WHERE h.user_id = $1 AND NOT EXISTS (SELECT 1 FROM hand_reviews t WHERE t.user_id = $2 AND t.hand_key = h.hand_key)',
+        [fromUserId, toUserId],
+      );
+      await q.query('DELETE FROM hand_reviews WHERE user_id = $1', [fromUserId]);
+      return res.rowCount ?? 0;
+    },
+    async prune(before) {
+      const res = await q.query('DELETE FROM hand_reviews WHERE reviewed_at < $1', [toDate(before)]);
       return res.rowCount ?? 0;
     },
   };

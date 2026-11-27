@@ -40,6 +40,7 @@ import { storeRoutes } from './admin';
 import { adminModerationRoutes, blockRoutes, ModerationError, MuteList, NAME_NOT_ALLOWED, nameAllowed } from './moderation';
 import { EXPO_PUSH_TOKEN, type PushService } from './push';
 import { PuzzleError, puzzleRoutes, type PuzzleDeps } from './puzzles';
+import { reviewRoutes } from './reviews';
 import { REPORT_REASONS, type ReportReason, type Repos, type UserRecord } from './repos/types';
 import { parseRevenueCatWebhook, webhookAuthorised } from './revenuecat';
 import type { SnapshotWrites } from './persist';
@@ -514,6 +515,8 @@ export function buildRoutes(deps: ApiDeps, opts: Pick<ApiOptions, 'reportIpLimit
 
     // ------------------------------------------------------------------ puzzles and leaderboards
     ...puzzleRoutes(r, { repos, clubs, now, reply: (status, body) => new Reply(status, body), unlimitedRush: (userId) => wallet.hasCoachGold(userId), ...deps.puzzles }),
+    // The free hand-review meter (The Four Winds Club reviews every hand).
+    ...reviewRoutes(r, { repos, now, reply: (status, body) => new Reply(status, body), unlimitedReviews: (userId) => wallet.hasFourWinds(userId) }),
 
     // ------------------------------------------------------------------ reports and push
     r('POST', '/api/reports', async (ctx) => {

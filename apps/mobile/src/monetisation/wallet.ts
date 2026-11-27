@@ -41,11 +41,12 @@ export interface Wallet {
   clock: { offsetMs: number; floor: number };
   /** Device time of the last successful sync; null when the server has never been seen. */
   syncedAt: number | null;
-  /** Free-tier usage today (counted on this device). */
   /**
-   * Free-tier meters on this device. `day` is the local day the review count is for; `rushDay` is
-   * the UTC day (`YYYY-MM-DD`) the Rush count is for, the day the server's free Rush meter counts
-   * (absent in a wallet saved before it was kept apart).
+   * Free-tier meters as this device last knew them. `day` is the UTC day (`YYYY-MM-DD`) the review
+   * count is for and `rushDay` the one the Rush count is for: the days the server's own meters count
+   * (`rushDay` is absent in a wallet saved before it was kept apart; a `day` saved by an older build
+   * was the local day, and its count carries over only when it reads the same as today's UTC key).
+   * Online, the server's count of reviews is followed (`followServerReviews`); offline, this count.
    */
   meters: { day: string; reviews: number; rush: number; rushDay?: string };
   /** Development builds' mock store only: grants made locally that the next sync replaces. */
@@ -255,28 +256,34 @@ export function canAfford(wallet: Wallet, diamondPrice: number): { ok: boolean; 
   return { ok: short === 0, short };
 }
 
-function localDayKey(d: Date): string {
-  return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
-}
-
 /**
- * Today's meters: reviews count by the player's local day; Puzzle Rush counts by the UTC day,
- * as the server's free Rush meter does (apps/signal/src/puzzles.ts, `dayStart`), so the app never
- * offers a free run the server will refuse (in Taiwan the UTC day starts at 08:00).
+ * Today's meters: hand reviews and Puzzle Rush both count by the UTC day, as the server's own
+ * meters do (apps/signal/src/reviews.ts and puzzles.ts, `dayStart`), so the app never offers a free
+ * review or run the server will refuse (in Taiwan the UTC day starts at 08:00).
  */
 function metersFor(wallet: Wallet, now: Date): Wallet['meters'] {
-  const day = localDayKey(now);
-  const rushDay = utcDateKey(now.getTime());
+  const day = utcDateKey(now.getTime());
   const m = wallet.meters;
-  return { day, reviews: m.day === day ? m.reviews : 0, rush: m.rushDay === rushDay ? m.rush : 0, rushDay };
+  return { day, reviews: m.day === day ? m.reviews : 0, rush: m.rushDay === day ? m.rush : 0, rushDay: day };
 }
 
-/** When the next free Puzzle Rush comes: the next midnight UTC after `now` (show it in the player's local time). */
+/** When the next free Puzzle Rush (or hand review) comes: the next midnight UTC after `now` (show it in the player's local time). */
 export function nextFreeRushAt(now: Date): Date {
   return new Date(Math.floor(now.getTime() / DAY_MS) * DAY_MS + DAY_MS);
 }
 
-/** Free-tier meters (full product, limited count; reviews reset at local midnight, Rush at midnight UTC, by the trusted clock). */
+/**
+ * The review meter after the server's answer (`POST /api/reviews`): the server counts the account's
+ * reviews, so this device's count for today is never below the server's `used` (a phone whose
+ * storage was cleared, or a second phone, learns the day's review is gone).
+ */
+export function followServerReviews(wallet: Wallet, used: number, now: Date = new Date(trustedNow(wallet))): Wallet {
+  const m = metersFor(wallet, now);
+  const n = Math.max(m.reviews, count(used));
+  return n === wallet.meters.reviews && m.day === wallet.meters.day ? wallet : { ...wallet, meters: { ...m, reviews: n } };
+}
+
+/** Free-tier meters (full product, limited count; both reset at midnight UTC, by the trusted clock). */
 export function canUse(wallet: Wallet, meter: 'reviews' | 'rush', now: Date = new Date(trustedNow(wallet))): { ok: boolean; left: number; limit: number | null } {
   if (meter === 'reviews' && hasTier(wallet, 'fourwinds', now.getTime())) return { ok: true, left: Infinity, limit: null };
   if (meter === 'rush' && hasTier(wallet, 'gold', now.getTime())) return { ok: true, left: Infinity, limit: null };

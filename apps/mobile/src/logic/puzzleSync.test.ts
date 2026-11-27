@@ -28,6 +28,7 @@ function fake(over: Partial<PuzzleServer> = {}) {
     answerRush: async (id, index, answer) => (calls.push(['answerRush', id, index, answer]), { index, counted: true, correct: true, solved: index + 1, wrong: 0, revealed: revealedAt(index), done: false, next: served(index + 1) }),
     finishRush: async (id) => (calls.push(['finishRush', id]), { runId: id, solved: 2, wrong: 1, seconds: 31, score: 190, answers: [], rating: { rating: 1020, change: 20, rated: 3 } }),
     getPuzzleRating: async () => (calls.push(['getPuzzleRating']), { rating: 1100, rated: 9, updatedAt: null }),
+    openReview: async (hand) => (calls.push(['openReview', hand]), { counted: true, unlimited: false, used: 1, limit: 1, resetsAt: null }),
     ...over,
   };
   return { server, calls };

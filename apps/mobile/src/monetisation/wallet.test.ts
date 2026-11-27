@@ -150,11 +150,12 @@ describe('server clock', () => {
       expect(canUse(morning, 'rush', taipei(19, 8, 0)).ok).toBe(true);
     });
 
-    it('reviews still count the local day', () => {
+    it('reviews count the UTC day too, as the server’s review meter does: a review used at 23:30 local is used until 08:00', () => {
       const used = consume(EMPTY_WALLET, 'reviews', taipei(17, 23, 30));
       expect(canUse(used, 'reviews', taipei(17, 23, 45)).ok).toBe(false);
-      expect(canUse(used, 'reviews', taipei(18, 0, 30)).ok).toBe(true);
-      // A saved wallet keeps the Rush day apart from the review day.
+      expect(canUse(used, 'reviews', taipei(18, 0, 30)).ok).toBe(false);
+      expect(canUse(used, 'reviews', taipei(18, 8, 0)).ok).toBe(true);
+      // A saved wallet keeps both counts under the UTC day they are for (15:30 UTC on the 17th).
       expect(migrateWallet({ ...used, meters: { ...used.meters, rush: 1 } }).meters).toEqual({ day: '2026-11-17', reviews: 1, rush: 1, rushDay: '2026-11-17' });
     });
   });

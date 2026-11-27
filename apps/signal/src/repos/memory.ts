@@ -55,6 +55,7 @@ import {
   type RushRunsRepo,
   type DailyAttemptRecord,
   type DailyAttemptsRepo,
+  type HandReviewsRepo,
   type ReportRecord,
   type ReportsRepo,
   type Repos,
@@ -117,6 +118,8 @@ interface MemoryState {
   rushAnswers: Map<string, RushAnswerRecord[]>;
   /** puzzle_daily_attempts, by attempt id. */
   dailyAttempts: Map<string, DailyAttemptRecord>;
+  /** hand_reviews: when each account opened a review of each hand, by "user hand". */
+  handReviews: Map<string, { userId: string; handKey: string; at: number }>;
   /** Users who hid themselves from leaderboards (users.leaderboard_visible = false). */
   boardHidden: Set<string>;
   /** Each user's analytics choice (users.analytics_consent in Postgres). */
@@ -160,6 +163,7 @@ const emptyState = (): MemoryState => ({
   rushRuns: new Map(),
   rushAnswers: new Map(),
   dailyAttempts: new Map(),
+  handReviews: new Map(),
   boardHidden: new Set(),
   consent: new Map(),
   blocks: [],
@@ -243,6 +247,7 @@ function memoryUsers(s: MemoryState): UsersRepo {
           s.rushAnswers.delete(k);
         }
         for (const [k, a] of [...s.dailyAttempts]) if (a.userId === id) s.dailyAttempts.delete(k);
+        for (const [k, h] of [...s.handReviews]) if (h.userId === id) s.handReviews.delete(k);
         s.blocks = s.blocks.filter((b) => b.blockerId !== id && b.blockedId !== id);
         s.moderation.delete(id);
         s.bannedDevices = s.bannedDevices.filter((b) => b.userId !== id);
@@ -903,6 +908,44 @@ function memoryQuickMatchPairs(s: MemoryState): QuickMatchPairsRepo {
   };
 }
 
+function memoryHandReviews(s: MemoryState): HandReviewsRepo {
+  const countSince = (userId: string, since: number) => [...s.handReviews.values()].filter((h) => h.userId === userId && h.at >= since).length;
+  return {
+    async open(userId, handKey, at, since, limit) {
+      const key = `${userId} ${handKey}`;
+      if (s.handReviews.has(key)) return { outcome: 'again', used: countSince(userId, since) };
+      const used = countSince(userId, since);
+      if (limit !== null && used >= limit) return { outcome: 'limited', used };
+      s.handReviews.set(key, { userId, handKey, at });
+      return { outcome: 'counted', used: used + 1 };
+    },
+    async countSince(userId, since) {
+      return countSince(userId, since);
+    },
+    async moveToUser(fromUserId, toUserId) {
+      let moved = 0;
+      for (const [k, h] of [...s.handReviews]) {
+        if (h.userId !== fromUserId) continue;
+        s.handReviews.delete(k);
+        const to = `${toUserId} ${h.handKey}`;
+        if (s.handReviews.has(to)) continue;
+        s.handReviews.set(to, { ...h, userId: toUserId });
+        moved++;
+      }
+      return moved;
+    },
+    async prune(before) {
+      let n = 0;
+      for (const [k, h] of [...s.handReviews]) {
+        if (h.at >= before) continue;
+        s.handReviews.delete(k);
+        n++;
+      }
+      return n;
+    },
+  };
+}
+
 function memoryJoinAllowances(s: MemoryState): JoinAllowancesRepo {
   const id = (r: { kind: string; clubCode: string; key: string }) => `${r.kind} ${r.clubCode} ${r.key}`;
   return {
@@ -1178,6 +1221,7 @@ function build(s: MemoryState, transaction: Repos['transaction']): Repos {
     joinAllowances: memoryJoinAllowances(s),
     rushRuns: memoryRushRuns(s),
     dailyAttempts: memoryDailyAttempts(s),
+    handReviews: memoryHandReviews(s),
     puzzleFlags: memoryPuzzleFlags(s),
     leaderboards: memoryLeaderboards(s),
     blocks: memoryBlocks(s),
