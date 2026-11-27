@@ -46,8 +46,10 @@ export interface DailyFinish {
   correct: boolean;
   /** The server's time from the start to the answer. */
   seconds: number;
-  /** False when the server timed it under the human-time floor (3 s): recorded, not ranked. Absent from older servers. */
+  /** False when the server timed it under the human-time floor (3 s), or held it: recorded, not ranked. Absent from older servers. */
   ranked?: boolean;
+  /** True when a right answer came under the review line (7 s): held off the board until a person has checked it. */
+  held?: boolean;
   rating: ServerRating;
   /** The whole puzzle, revealed with the verdict, for the feedback. */
   revealed: DiscardPuzzle;
@@ -225,6 +227,8 @@ const PUZZLE_ERRORS: Readonly<Record<string, string>> = {
   too_fast_to_rank: 'puzzles.server.errors.tooFastToRank',
   // This client's own: the server held a run over its ceiling of puzzles solved for an admin to confirm.
   rush_held: 'puzzles.server.errors.rushHeld',
+  // This client's own: the server held a very fast right daily answer for an admin to confirm.
+  daily_held: 'puzzles.server.errors.dailyHeld',
   // The server's free Rush meter: the Shop's own Coach Gold message, as the Rush screen's lock shows it.
   rush_daily_limit: 'shop.rushUsed',
   // The server's free review meter: the review screen's own lock says it.

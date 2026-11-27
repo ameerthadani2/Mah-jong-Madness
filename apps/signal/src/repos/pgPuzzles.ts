@@ -36,6 +36,7 @@ interface PuzzleRow {
   rating_after: number | null;
   created_at: Date;
   ranked: boolean;
+  held: boolean;
 }
 
 const puzzleFromRow = (r: PuzzleRow): PuzzleResultRecord => ({
@@ -48,24 +49,25 @@ const puzzleFromRow = (r: PuzzleRow): PuzzleResultRecord => ({
   ratingAfter: r.rating_after,
   createdAt: r.created_at.getTime(),
   ranked: r.ranked,
+  held: r.held,
 });
 
 export function pgPuzzleResults(q: Queryable): PuzzleResultsRepo {
-  const COLS = 'id, user_id, kind, puzzle_key, correct, seconds, rating_after, created_at, ranked';
+  const COLS = 'id, user_id, kind, puzzle_key, correct, seconds, rating_after, created_at, ranked, held';
   return {
     async record(p) {
       const res = await q.query<PuzzleRow>(
-        'INSERT INTO puzzle_results (user_id, kind, puzzle_key, correct, seconds, rating_after, created_at, ranked) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING ' + COLS,
-        [p.userId, p.kind, p.puzzleKey, p.correct, p.seconds, p.ratingAfter, toDate(p.createdAt), p.ranked ?? true],
+        'INSERT INTO puzzle_results (user_id, kind, puzzle_key, correct, seconds, rating_after, created_at, ranked, held) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING ' + COLS,
+        [p.userId, p.kind, p.puzzleKey, p.correct, p.seconds, p.ratingAfter, toDate(p.createdAt), p.ranked ?? true, p.held ?? false],
       );
       return puzzleFromRow(res.rows[0]);
     },
     async recordDaily(p) {
       if (!isUuid(p.userId)) return null;
       const res = await q.query<PuzzleRow>(
-        "INSERT INTO puzzle_results (user_id, kind, puzzle_key, correct, seconds, rating_after, created_at, ranked) VALUES ($1, 'daily', $2, $3, $4, $5, $6, $7) ON CONFLICT (user_id, puzzle_key) WHERE kind = 'daily' DO NOTHING RETURNING " +
+        "INSERT INTO puzzle_results (user_id, kind, puzzle_key, correct, seconds, rating_after, created_at, ranked, held) VALUES ($1, 'daily', $2, $3, $4, $5, $6, $7, $8) ON CONFLICT (user_id, puzzle_key) WHERE kind = 'daily' DO NOTHING RETURNING " +
           COLS,
-        [p.userId, p.puzzleKey, p.correct, p.seconds, p.ratingAfter, toDate(p.createdAt), p.ranked ?? true],
+        [p.userId, p.puzzleKey, p.correct, p.seconds, p.ratingAfter, toDate(p.createdAt), p.ranked ?? true, p.held ?? false],
       );
       return res.rows[0] ? puzzleFromRow(res.rows[0]) : null;
     },
@@ -85,6 +87,15 @@ export function pgPuzzleResults(q: Queryable): PuzzleResultsRepo {
         [fromUserId, toUserId],
       );
       return res.rowCount ?? 0;
+    },
+    async listHeldDaily(limit) {
+      const res = await q.query<PuzzleRow>('SELECT ' + COLS + " FROM puzzle_results WHERE held AND kind = 'daily' ORDER BY created_at, id LIMIT $1", [Math.max(1, Math.min(1000, Math.floor(limit)))]);
+      return res.rows.map(puzzleFromRow);
+    },
+    async reviewHeldDaily(id, confirmed) {
+      if (!Number.isSafeInteger(id) || id < 1) return null;
+      const res = await q.query<PuzzleRow>("UPDATE puzzle_results SET held = false, ranked = $2 WHERE id = $1 AND held AND kind = 'daily' RETURNING " + COLS, [id, confirmed]);
+      return res.rows[0] ? puzzleFromRow(res.rows[0]) : null;
     },
   };
 }

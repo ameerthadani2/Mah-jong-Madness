@@ -783,7 +783,7 @@ function memoryMatchResults(s: MemoryState): MatchResultsRepo {
 function memoryPuzzleResults(s: MemoryState): PuzzleResultsRepo {
   return {
     async record(r) {
-      const row: PuzzleResultRecord = { ...copy(r), ranked: r.ranked ?? true, id: ++s.puzzleSeq };
+      const row: PuzzleResultRecord = { ...copy(r), ranked: r.ranked ?? true, held: r.held ?? false, id: ++s.puzzleSeq };
       s.puzzles.push(row);
       return copy(row);
     },
@@ -808,6 +808,20 @@ function memoryPuzzleResults(s: MemoryState): PuzzleResultsRepo {
         n++;
       }
       return n;
+    },
+    async listHeldDaily(limit) {
+      return s.puzzles
+        .filter((r) => r.held && r.kind === 'daily')
+        .sort((a, b) => a.createdAt - b.createdAt || a.id - b.id)
+        .slice(0, Math.max(1, Math.min(1000, Math.floor(limit))))
+        .map(copy);
+    },
+    async reviewHeldDaily(id, confirmed) {
+      const r = s.puzzles.find((x) => x.id === id && x.held && x.kind === 'daily');
+      if (!r) return null;
+      r.held = false;
+      r.ranked = confirmed;
+      return copy(r);
     },
   };
 }

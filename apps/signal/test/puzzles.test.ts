@@ -168,7 +168,7 @@ function contract(name: string, repos: () => Repos) {
       expect(ok.status, ok.body).toBe(200);
       const difficulty = dailyPuzzleDifficulty(dateOfDailyKey(TODAY)!);
       const up = ratePuzzleAnswer(DEFAULT_PUZZLE_RATING, 'discard', difficulty, true);
-      expect(ok.json).toEqual({ date: TODAY, correct: true, seconds: 31, ranked: true, rating: { rating: up.rating, change: up.delta, rated: 1 }, revealed: dailyPuzzleForKey(TODAY) });
+      expect(ok.json).toEqual({ date: TODAY, correct: true, seconds: 31, ranked: true, held: false, rating: { rating: up.rating, change: up.delta, rated: 1 }, revealed: dailyPuzzleForKey(TODAY) });
       // A wrong answer that claims to be right is wrong.
       const forged = await f.daily(b, TODAY, dailyWrong(TODAY), 3, { correct: true });
       const down = ratePuzzleAnswer(DEFAULT_PUZZLE_RATING, 'discard', difficulty, false);
@@ -300,15 +300,15 @@ function contract(name: string, repos: () => Repos) {
       const f = fixture(repos());
       const key = '2026-11-17';
       const [bot, human, gold, edge] = [await f.guest('Bot'), await f.guest('Human'), await f.guest('Gold'), await f.guest('Edge')];
-      // The daily puzzle: 2.999 s is under the floor, 3 s is not.
+      // The daily puzzle: 2.999 s is under the floor, 7 s is not (from 3 s to under 6.5 s a right answer waits for an admin, below).
       const started = await f.startDaily(bot, key);
       f.clock.now += 2999;
       const fast = await f.call('POST', '/api/puzzles/daily', { attemptId: started.json.attemptId, answer: dailyRight(key) }, bot.auth);
       expect(fast.json).toMatchObject({ correct: true, ranked: false, rating: { rating: DEFAULT_PUZZLE_RATING, change: 0, rated: 0 } });
       expect((await f.repos.puzzleResults.listForUser(bot.userId)).map((r) => [r.kind, r.correct, r.ranked])).toEqual([['daily', true, false]]);
       expect((await f.daily(bot, key, dailyRight(key))).json.error).toBe('already_played');
-      const ok = await f.daily(human, key, dailyRight(key), 3);
-      expect(ok.json).toMatchObject({ correct: true, ranked: true, seconds: 3, rating: { rated: 1 } });
+      const ok = await f.daily(human, key, dailyRight(key), 7);
+      expect(ok.json).toMatchObject({ correct: true, ranked: true, held: false, seconds: 7, rating: { rated: 1 } });
       const mine = (rows: Row[]) => rows.filter((r) => [bot, human, gold, edge].some((g) => g.userId === r.userId)).map((r) => r.displayName);
       const daily = await f.board(bot, `daily?date=${key}`);
       expect(mine(daily.rows)).toEqual(['Human']);
@@ -520,8 +520,8 @@ function contract(name: string, repos: () => Repos) {
         f.clock.now = t0 + RUSH_SECONDS * 1000;
         return (await f.call('POST', `/api/puzzles/rush/${run.runId}/finish`, {}, g.auth)).json;
       };
-      // The script, as the fifth assessment ran it: the daily after 6 s, then 89 Rush answers every 2.02 s with one deliberate mistake.
-      expect((await f.daily(script, TODAY, dailyRight(TODAY), 6)).json).toMatchObject({ ranked: true });
+      // The script, as the fifth assessment ran it: the daily after 6 s (held for an admin, see below), then 89 Rush answers every 2.02 s with one deliberate mistake.
+      expect((await f.daily(script, TODAY, dailyRight(TODAY), 6)).json).toMatchObject({ ranked: false, held: true });
       const scripted = await play(script, Array.from({ length: 89 }, () => 2020), (i) => i === 17);
       expect(scripted).toMatchObject({ solved: 88, wrong: 1, ranked: false, inhuman: true });
       expect((await f.repos.puzzleFlags.get(script.userId))?.status).toBe('flagged');
@@ -540,7 +540,47 @@ function contract(name: string, repos: () => Repos) {
       // The script is on no board (flagged, and its run unranked); the honest player is.
       for (const path of ['rush?period=all', `daily?date=${TODAY}`]) expect(mine((await f.board(human, path)).rows)).not.toContain('Paced script');
       expect(mine((await f.board(human, 'rush?period=all')).rows)).toEqual(['Honest']);
-      expect((await f.board(script, `daily?date=${TODAY}`)).me).toMatchObject({ hidden: true, flagged: true });
+      // Its 6 s daily answer was held, so it is not on the daily board at all, not even as its own row.
+      expect((await f.board(script, `daily?date=${TODAY}`)).me).toBeNull();
+    });
+
+    it('holds a right daily answer under 6.5 s for an admin: off the board and the rating until confirmed (the eighth assessment\'s daily-only script)', async () => {
+      const f = fixture(repos());
+      const admin = { authorization: `Bearer ${ADMIN}` };
+      const [script, quick, honest, slow] = [await f.guest('Daily script'), await f.guest('Quick'), await f.guest('Honest'), await f.guest('Slow')];
+      const mine = (rows: Row[]) => rows.filter((r) => [script, quick, honest, slow].some((g) => g.userId === r.userId)).map((r) => r.displayName);
+      // The script computes the day's answer and waits 6 s; a quick person answers in 6.499 s; the tests' honest players take 12 and 25 s.
+      const held = await f.daily(script, TODAY, dailyRight(TODAY), 6);
+      expect(held.json).toMatchObject({ correct: true, ranked: false, held: true, seconds: 6, rating: { rating: DEFAULT_PUZZLE_RATING, change: 0, rated: 0 } });
+      const started = await f.startDaily(quick, TODAY);
+      f.clock.now += 6499;
+      expect((await f.call('POST', '/api/puzzles/daily', { attemptId: started.json.attemptId, answer: dailyRight(TODAY) }, quick.auth)).json).toMatchObject({ ranked: false, held: true });
+      expect((await f.daily(honest, TODAY, dailyRight(TODAY), 12)).json).toMatchObject({ ranked: true, held: false, rating: { rated: 1 } });
+      // A wrong answer is not held, however fast: it ranks below every right one.
+      expect((await f.daily(slow, TODAY, dailyWrong(TODAY), 4)).json).toMatchObject({ correct: false, ranked: true, held: false });
+      expect(mine((await f.board(honest, `daily?date=${TODAY}`)).rows)).toEqual(['Honest', 'Slow']);
+      expect((await f.board(script, `daily?date=${TODAY}`)).me).toBeNull();
+      expect(await f.repos.puzzleFlags.get(script.userId)).toBeNull();
+      // The admin queue lists the held answers, oldest first; confirming one puts it on the board, rejecting keeps it off.
+      const queue = await f.call('GET', '/api/admin/puzzle-flags', undefined, admin);
+      // (The repositories are shared with the tests above, whose own held answers wait there too.)
+      const ours = (list: unknown) => (list as Array<Record<string, unknown>>).filter((a) => [script.userId, quick.userId].includes(a.userId as string));
+      const answers = ours(queue.json.heldDailies);
+      expect(answers.map((a) => [a.userId, a.date, a.seconds, a.held])).toEqual([
+        [script.userId, TODAY, 6, true],
+        [quick.userId, TODAY, 6, true],
+      ]);
+      expect(answers[0].account).toMatchObject({ id: script.userId, displayName: 'Daily script' });
+      expect((await f.call('POST', `/api/admin/puzzle-flags/daily/${answers[1].id}`, { action: 'confirm' }, honest.auth)).status).toBe(401);
+      expect((await f.call('POST', `/api/admin/puzzle-flags/daily/${answers[1].id}`, { action: 'ban' }, admin)).json.error).toBe('invalid');
+      expect((await f.call('POST', `/api/admin/puzzle-flags/daily/${answers[0].id}`, { action: 'reject' }, admin)).json).toMatchObject({ ok: true, answer: { held: false, ranked: false } });
+      expect((await f.call('POST', `/api/admin/puzzle-flags/daily/${answers[1].id}`, { action: 'confirm' }, admin)).json).toMatchObject({ ok: true, answer: { held: false, ranked: true } });
+      expect((await f.call('POST', `/api/admin/puzzle-flags/daily/${answers[1].id}`, { action: 'confirm' }, admin)).status).toBe(404);
+      expect((await f.call('POST', '/api/admin/puzzle-flags/daily/nope', { action: 'confirm' }, admin)).status).toBe(404);
+      expect(ours((await f.call('GET', '/api/admin/puzzle-flags', undefined, admin)).json.heldDailies)).toEqual([]);
+      // The confirmed quick answer shows first; its rating step was not taken (a held answer moves no rating).
+      expect(mine((await f.board(honest, `daily?date=${TODAY}`)).rows)).toEqual(['Quick', 'Honest', 'Slow']);
+      expect(await f.repos.puzzleRatings.get(quick.userId)).toBeNull();
     });
 
     it("holds the sixth assessment's jittered script and a run over the ceiling for an admin, and ranks an honest player who slows down", async () => {
@@ -578,7 +618,7 @@ function contract(name: string, repos: () => Repos) {
       // A fixed pattern (3.5 to 6.5 s, the same on every stretch: coefficient of variation about 0.2) that the machine-steady
       // rule does not take, and under 6 s on the hard puzzles as on the first fifteen: only the slowdown sign is left.
       const pattern = [3500, 6500, 4500, 5500, 4000, 6000];
-      const evenScript = await play(even, (i) => (i < 30 ? pattern[i % pattern.length] : 999_999), (i) => i === 4);
+      const evenScript = await play(even, (i) => (i < 26 ? pattern[i % pattern.length] : 999_999), (i) => i === 4);
       expect(evenScript).toMatchObject({ ranked: false, inhuman: false, held: true });
       expect(evenScript.solved as number).toBeLessThanOrEqual(RUSH_HOLD_SOLVED);
       expect(await f.repos.puzzleFlags.get(even.userId)).toBeNull();
@@ -617,6 +657,41 @@ function contract(name: string, repos: () => Repos) {
       // Six runs of about 55 answers, each puzzle made three times (served, judged, and here to answer it): about 4 s in
       // memory and 4.5 to 5.2 s on Postgres since hard discard puzzles beat the sets-first read too (about 20 ms each,
       // on average, against 7 ms; 2.7 and 4.2 s before), past the 5 s default.
+    }, 30_000);
+
+    it("holds the eighth assessment's paced script, which slows on hard puzzles and stops at 34 solved, and ranks the simulated honest players", async () => {
+      const f = fixture(repos());
+      let seed = 3434;
+      const rand = () => ((seed = (seed * 1103515245 + 12345) % 2 ** 31) / 2 ** 31);
+      /** Plays a run one answer at a time with gap(i) ms before answer i (within the three minutes), wrong where `wrongAt` says. */
+      const play = async (g: Awaited<ReturnType<typeof f.guest>>, gap: (i: number) => number, wrongAt: (i: number) => boolean) => {
+        const run = await f.startRush(g);
+        const t0 = f.now();
+        for (let i = 0; ; i++) {
+          const ms = Math.round(gap(i));
+          if (f.now() + ms - t0 > 179_000) break;
+          f.clock.now += ms;
+          const p = rushRunPuzzle(run.seed, i);
+          const res = await f.answer(g, run.runId, i, wrongAt(i) ? wrong(p) : right(p));
+          expect(res.status, res.body).toBe(200);
+          if (res.json.done) return res.json.result as Json;
+        }
+        f.clock.now = t0 + RUSH_SECONDS * 1000;
+        return (await f.call('POST', `/api/puzzles/rush/${run.runId}/finish`, {}, g.auth)).json;
+      };
+      const [script, best] = [await f.guest('Paced to 34'), await f.guest('Never wrong')];
+      // Easy 2.2 to 4 s, medium 2.8 to 5 s, hard 3.9 to 6.5 s; one early mistake, then two deliberate ones at 34 solved.
+      let solved = 0;
+      const stops = await play(script, (i) => (i < 5 ? 2200 + rand() * 1800 : i < 15 ? 2800 + rand() * 2200 : 3900 + rand() * 2600), (i) => {
+        const miss = i === 7 || solved >= 34;
+        if (!miss) solved++;
+        return miss;
+      });
+      expect(stops).toMatchObject({ solved: 34, wrong: 3, ranked: false, inhuman: false, held: true });
+      // The simulated honest player at the top of its range (times growing with difficulty) who never errs: 27 at most, ranked.
+      const top = await play(best, (i) => (i < 5 ? 2500 + rand() * 3500 : i < 15 ? 4000 + rand() * 5000 : 6000 + rand() * 7000), () => false);
+      expect(top).toMatchObject({ ranked: true, held: false });
+      expect(top.solved as number).toBeLessThanOrEqual(RUSH_HOLD_SOLVED);
     }, 30_000);
 
     it('verifies a hard daily puzzle and the hard value and defence puzzles of a Rush run by regenerating them', async () => {
@@ -828,7 +903,7 @@ describe('plausible answer times', () => {
   });
   it('has the thresholds the API documents', () => {
     expect([RUSH_TIMING_MIN_ANSWERS, RUSH_ACCURATE_SHARE, RUSH_ACCURATE_PACE_MS, RUSH_STEADY_CV, RUSH_SNAP_MS, RUSH_SNAP_MAX, RUSH_TIMING_FLAG_WEIGHT]).toEqual([15, 0.95, 3000, 0.15, 800, 3, 2]);
-    expect([RUSH_SLOWDOWN_EARLY, RUSH_SLOWDOWN_MIN_HARD, RUSH_SLOWDOWN_MIN_RATIO, RUSH_SLOWDOWN_PACE_MS, RUSH_HOLD_SOLVED]).toEqual([15, 5, 1.2, 6000, 35]);
+    expect([RUSH_SLOWDOWN_EARLY, RUSH_SLOWDOWN_MIN_HARD, RUSH_SLOWDOWN_MIN_RATIO, RUSH_SLOWDOWN_PACE_MS, RUSH_HOLD_SOLVED]).toEqual([15, 5, 1.2, 6000, 27]);
   });
 });
 

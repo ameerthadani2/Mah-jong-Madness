@@ -65,6 +65,7 @@ export type DailyOutcome =
 /** A result the server recorded under a human-time floor (docs/API.md): shown as not ranked, with its own line. */
 const rushHeld = () => new ApiError('The game server recorded this run and holds it off the leaderboard until a person has checked it', 'rush_held');
 const tooFastToRank = () => new ApiError('The game server recorded this result but did not rank it: it was faster than the human-time floor', 'too_fast_to_rank');
+const dailyHeld = () => new ApiError('The game server recorded this answer and holds it off the leaderboard until a person has checked it', 'daily_held');
 /** A reply without the question or the revealed puzzle it must carry. */
 const badReply = () => new ApiError('The game server sent a reply the app could not read', 'puzzle_bad_reply');
 const isPuzzle = (v: unknown): v is AnyPuzzle => !!v && typeof v === 'object' && typeof (v as { type?: unknown }).type === 'string';
@@ -78,7 +79,7 @@ export async function submitDaily(server: PuzzleServer | null, link: DailyLink, 
   if (!server || !link.ranked) return link.ranked ? { ranked: false, down: true } : link;
   try {
     const r = await server.finishDaily(link.attemptId, answer);
-    if (r.ranked === false) return { ranked: false, error: tooFastToRank(), down: false };
+    if (r.ranked === false) return { ranked: false, error: r.held ? dailyHeld() : tooFastToRank(), down: false };
     if (!isPuzzle(r.revealed) || r.revealed.type !== 'discard') return { ranked: false, error: badReply(), down: true };
     const localCorrect = judgePuzzleAnswer(r.revealed, answer);
     const mismatch = r.correct !== localCorrect;

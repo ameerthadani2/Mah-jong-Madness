@@ -498,12 +498,14 @@ export interface PuzzleResultRecord {
   seconds: number;
   ratingAfter: number | null;
   createdAt: number;
-  /** False for a result recorded but kept off the boards (a daily answer under the human-time floor). */
+  /** False for a result recorded but kept off the boards (a daily answer under the human-time floor, or held). */
   ranked: boolean;
+  /** True for a right daily answer under the review line, kept off the board until an admin confirms it. */
+  held: boolean;
 }
 
-/** A result to record: `ranked` defaults to true. */
-export type NewPuzzleResult = Omit<PuzzleResultRecord, 'id' | 'ranked'> & { ranked?: boolean };
+/** A result to record: `ranked` defaults to true, `held` to false. */
+export type NewPuzzleResult = Omit<PuzzleResultRecord, 'id' | 'ranked' | 'held'> & { ranked?: boolean; held?: boolean };
 
 export interface PuzzleResultsRepo {
   record(result: NewPuzzleResult): Promise<PuzzleResultRecord>;
@@ -519,6 +521,13 @@ export interface PuzzleResultsRepo {
    * already has stays behind (and goes with the merged-away user at the purge): one per key.
    */
   moveToUser(fromUserId: string, toUserId: string): Promise<number>;
+  /** Daily answers held for an admin (`held`), oldest first, at most `limit`. */
+  listHeldDaily(limit: number): Promise<PuzzleResultRecord[]>;
+  /**
+   * An admin decides a held daily answer: confirmed, it goes on the daily board (`ranked`); rejected,
+   * it stays off. Either way it is no longer held. Null when there is no held answer with that id.
+   */
+  reviewHeldDaily(id: number, confirmed: boolean): Promise<PuzzleResultRecord | null>;
 }
 
 /** One account's puzzle rating, moved only by answers the server verified. */

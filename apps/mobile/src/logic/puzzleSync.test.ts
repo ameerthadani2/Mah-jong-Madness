@@ -107,6 +107,14 @@ describe('results under the server’s human-time floors', () => {
     }
   });
 
+  it('says a very fast right daily answer the server held waits for a person, not that it was too fast', async () => {
+    const { server } = fake({ finishDaily: async () => ({ date: 'd', correct: true, seconds: 6, ranked: false, held: true, rating: { rating: 1000, change: 0, rated: 0 } }) as DailyFinish });
+    const out = await submitDaily(server, await openDaily(server, 'd'), 7);
+    expect(out).toMatchObject({ ranked: false, down: false, error: { code: 'daily_held' } });
+    if (out.ranked) throw new Error('ranked');
+    expect(puzzleErrorMessage(out.error).key).toBe('puzzles.server.errors.dailyHeld');
+  });
+
   it('says a Rush run the server held over its ceiling waits for a person, not that it was too fast', async () => {
     const { server } = fake({
       finishRush: async (id) => ({ runId: id, solved: 40, wrong: 1, seconds: 180, score: 4000, ranked: false, held: true, answers: [], rating: { rating: 1000, change: 0, rated: 0 } }) as RushFinish,

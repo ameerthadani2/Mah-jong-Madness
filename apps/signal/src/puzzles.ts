@@ -69,6 +69,19 @@ export const FREE_RUSH_RUNS_PER_DAY = 1;
 export const DAILY_RANK_FLOOR_MS = 3000;
 export const RUSH_RANK_FLOOR_MS = 1500;
 /**
+ * The review line for the daily puzzle (docs/API.md, "Human-time floors"). A right daily answer the
+ * server timed at or over the floor but under `DAILY_REVIEW_MS` is recorded and held: off the daily
+ * board, and its rating step not taken, until an admin confirms it (then it goes on the board; the
+ * rating step stays untaken). The daily comes from the date through the engine the app ships, so a
+ * script can answer it at once and wait; the eighth assessment's daily-only script waited 6 s (6.0
+ * to 6.3 s as the server times it, with the network), just over the 5 s at which an answer counts
+ * toward the automation flag. The honest-paced probe these floors were set from answered in 6 s or
+ * more, and the tests' honest players in 12 and 25 s: spread from 6 to 30 s, 2 answers in 100 come
+ * under the line. That is the cost: a person who answers right in under 6.5 s waits for an admin
+ * before the answer shows. A script that waits longer ranks as a person that fast would.
+ */
+export const DAILY_REVIEW_MS = 6500;
+/**
  * Automation flags (docs/API.md, "Automation flags"). After every daily answer and Rush run the
  * server reads the account's last `FLAG_WINDOW` results (ranked or not; only those after an admin
  * last cleared a flag) and flags the account when at least `FLAG_MIN_INHUMAN` of them are at a
@@ -132,11 +145,16 @@ export const RUSH_TIMING_FLAG_WEIGHT = 2;
 /**
  * A ceiling on puzzles solved in one ranked Rush run (docs/API.md, "Plausible answer times"): a run
  * that would rank with more than `RUSH_HOLD_SOLVED` solved is recorded but held off the Rush board
- * until an admin confirms it in the puzzle flag view (GET /api/admin/puzzle-flags). Provisional:
- * the sixth assessment's simulated honest players solve 17 to 26 in three minutes and its jittered
- * script 56; set from those, not from measured play.
+ * until an admin confirms it in the puzzle flag view (GET /api/admin/puzzle-flags). Set from the
+ * simulated honest players (100,000 runs of each, apps/signal/test/puzzles.test.ts models): the one
+ * whose times grow with difficulty (easy 2.5 to 6 s, medium 4 to 9 s, hard 6 to 13 s) solves at most
+ * 26, the same player who never errs 27, and the one at 4 to 12 s an answer 24; none of their runs
+ * is held. The eighth assessment's paced script, which slows on hard puzzles and stops at 34 or 35
+ * solved, waits for an admin. The cost: a person faster than those simulated players waits for an
+ * admin when a run solves 28 or more. A script that stops at 27 ranks as such a person would.
+ * Provisional, like the thresholds above, until there are real players.
  */
-export const RUSH_HOLD_SOLVED = 35;
+export const RUSH_HOLD_SOLVED = 27;
 /** An answer stamped this long after the run's three minutes is not counted (it was made after the clock ran out on the phone). */
 export const RUSH_ANSWER_GRACE_MS = 2000;
 
@@ -456,20 +474,22 @@ export function puzzleRoutes<R>(r: PuzzleRouteFactory<R>, deps: PuzzleDeps): R[]
       const difficulty = dailyPuzzleDifficulty(day);
       const elapsedMs = Math.max(0, at - attempt.startedAt);
       const seconds = Math.min(DAILY_MAX_SECONDS, Math.round(elapsedMs / 1000));
-      // Under the floor: recorded, but off the daily board and the rating.
-      const ranked = elapsedMs >= DAILY_RANK_FLOOR_MS;
+      // Under the floor: recorded, but off the daily board and the rating. A right answer under the
+      // review line: recorded and held off both until an admin confirms it (`DAILY_REVIEW_MS`).
+      const held = correct && elapsedMs >= DAILY_RANK_FLOOR_MS && elapsedMs < DAILY_REVIEW_MS;
+      const ranked = elapsedMs >= DAILY_RANK_FLOOR_MS && !held;
       const key = attempt.dateKey;
       const result = await repos.transaction(async (tx) => {
         // An attempt is finished once; throwing below undoes this and the rating step together.
         if (!(await tx.dailyAttempts.finish(attempt.id, at))) throw new PuzzleError(409, 'already_played', 'You have already played this daily puzzle');
         const { rating, after } = await applyRatings(tx, me.userId, ranked && movesPuzzleRating('daily') ? [{ type: 'discard', difficulty, correct }] : [], at);
-        const row = await tx.puzzleResults.recordDaily({ userId: me.userId, puzzleKey: key, correct, seconds, ratingAfter: after[0] ?? null, createdAt: at, ranked });
+        const row = await tx.puzzleResults.recordDaily({ userId: me.userId, puzzleKey: key, correct, seconds, ratingAfter: after[0] ?? null, createdAt: at, ranked, held });
         // Only the first attempt per date key is ranked and rated.
         if (!row) throw new PuzzleError(409, 'already_played', 'You have already played this daily puzzle');
         await checkAutomation(tx, me.userId, at);
         return { rating, row };
       });
-      return { date: key, correct, seconds: result.row.seconds, ranked, rating: ratingJson(result.rating), revealed: puzzle };
+      return { date: key, correct, seconds: result.row.seconds, ranked, held, rating: ratingJson(result.rating), revealed: puzzle };
     }),
 
     // ------------------------------------------------------------------ Puzzle Rush
