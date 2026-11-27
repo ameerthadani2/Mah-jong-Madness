@@ -485,6 +485,52 @@ function contract(name: string, repos: () => Repos) {
       expect(await wallet.tierOf(b)).toBe('free');
     });
 
+    it('a TRANSFER moves only the purchases bought on its store: the same plan bought on another store stays on record with the old account, whose renewals still reach it', async () => {
+      const r = repos();
+      let t = T0;
+      const wallet = new WalletService(r, { now: () => t, log: () => {}, testerUserIds: [] });
+      const [a, b] = [await user(), await user()];
+      const [play, ios] = [`GPA.split-${a}`, `ios-split-${a}`];
+      // The same plan bought first on Google Play, then on the App Store (the later purchase sets the plan's store).
+      await wallet.applyStoreEvent(storeEvent(a, 'INITIAL_PURCHASE', { store: 'play_store', storeProductId: 'coach.gold:month', transactionId: play, originalTransactionId: play, expiresAt: T0 + 30 * DAY }));
+      t = T0 + DAY;
+      await wallet.applyStoreEvent(storeEvent(a, 'INITIAL_PURCHASE', { store: 'app_store', storeProductId: 'coach.gold.month', transactionId: ios, originalTransactionId: ios, purchasedAt: t, expiresAt: T0 + 31 * DAY }));
+      t = T0 + 2 * DAY;
+      expect((await wallet.applyStoreEvent(storeEvent(null, 'TRANSFER', { store: 'app_store', transferredFrom: [a], transferredTo: [b] }))).outcome).toBe('transferred');
+      // Only the App Store purchase moved with the plan; the Play purchase stays with A, with no note that it moved.
+      expect((await r.wallet.findPurchase(ios))?.userId).toBe(b);
+      expect((await r.wallet.findPurchase(play))?.userId).toBe(a);
+      const notes = (await r.wallet.listLedger(a)).filter((l) => l.ref?.startsWith('transfer:')).map((l) => l.ref);
+      expect(notes).toEqual([`transfer:${ios}`]);
+      // The Play subscription renews under A's name: it is A's, not the account the App Store receipts went to.
+      t = T0 + 30 * DAY;
+      expect(await wallet.applyStoreEvent(storeEvent(a, 'RENEWAL', { store: 'play_store', storeProductId: 'coach.gold:month', transactionId: `${play}..0`, originalTransactionId: play, purchasedAt: t, expiresAt: T0 + 60 * DAY }))).toMatchObject({ outcome: 'entitled', userId: a });
+      expect((await r.wallet.getEntitlements(a)).find((e) => e.entitlement === 'coach.gold.month')?.expiresAt).toBe(T0 + 60 * DAY);
+      expect((await r.wallet.getEntitlements(b)).find((e) => e.entitlement === 'coach.gold.month')?.expiresAt).toBe(T0 + 31 * DAY);
+    });
+
+    it('a subscription event that names no account we know reaches the account that holds its purchase', async () => {
+      const r = repos();
+      let t = T0;
+      const lines: string[] = [];
+      const wallet = new WalletService(r, { now: () => t, log: (l) => lines.push(l), testerUserIds: [] });
+      const a = await user();
+      const first = `tx-anon-${a}`;
+      const plan = { storeProductId: 'fourwinds.month', originalTransactionId: first };
+      await wallet.applyStoreEvent(storeEvent(a, 'INITIAL_PURCHASE', { ...plan, transactionId: first, expiresAt: T0 + 30 * DAY }));
+      // The store names an id we never saw (an anonymous id, or an account since purged): the renewal is the holder's.
+      t = T0 + 29 * DAY;
+      const stranger = `$RCAnonymousID:${randomHex(8)}`;
+      expect(await wallet.applyStoreEvent(storeEvent(stranger, 'RENEWAL', { ...plan, transactionId: `${first}-r`, purchasedAt: t, expiresAt: T0 + 60 * DAY }))).toMatchObject({ outcome: 'extended', userId: a });
+      expect((await r.wallet.getEntitlements(a)).find((e) => e.entitlement === 'fourwinds.month')?.expiresAt).toBe(T0 + 60 * DAY);
+      expect((await r.wallet.findPurchase(`${first}-r`))?.userId).toBe(a);
+      // So is its refund.
+      t += DAY;
+      expect(await wallet.applyStoreEvent(storeEvent(stranger, 'CANCELLATION', { ...plan, transactionId: `${first}-r`, cancelReason: 'CUSTOMER_SUPPORT', expiresAt: t }))).toMatchObject({ outcome: 'refunded', userId: a });
+      expect(await wallet.tierOf(a)).toBe('free');
+      expect(lines.filter((l) => l.includes('names no account we know; a TRANSFER moved its purchase'))).toHaveLength(2);
+    });
+
     it('a TRANSFER moves only the plans bought on the store it came from; support grants and other stores stay', async () => {
       const r = repos();
       const wallet = new WalletService(r, { now: () => T0, log: () => {}, testerUserIds: [] });

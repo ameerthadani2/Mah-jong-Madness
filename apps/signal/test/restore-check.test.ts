@@ -135,6 +135,14 @@ describe('snapshotProblem', () => {
     moved.snapshot.dealerStreak += 1;
     expect(snapshotProblem(moved)).toMatch(/does not follow the last hand/);
     expect(snapshotProblem({ ...copy(after), game: null })).toMatch(/last hand is missing/);
+    // A finished match is not resumable whatever phase the snapshot names: the match position says it is over.
+    const finished = snaps.filter((s) => s.phase === 'match_over');
+    expect(finished.length).toBeGreaterThan(0);
+    for (const phase of ['lobby', 'commit', 'reveal'] as const) {
+      const s = copy(finished[finished.length - 1]);
+      s.phase = phase;
+      expect(snapshotProblem(s), phase).toBe('the match is over');
+    }
     // A hand that is over must be the one its record shows.
     const over = snaps.filter((s) => s.phase === 'hand_over');
     expect(over.length).toBeGreaterThan(0);
