@@ -135,7 +135,11 @@ jobs:
       - run: npm ci
       - name: Install Chromium for Playwright
         working-directory: apps/mobile
-        run: npx playwright install --with-deps chromium
+        # The runner image's Microsoft package source can fail (403, "no longer signed") and stop apt from updating;
+        # Playwright's system libraries come from Ubuntu's own archive, so that source is taken out first.
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/microsoft-prod.list /etc/apt/sources.list.d/microsoft-prod.sources
+          npx playwright install --with-deps chromium
       - name: Play a full hand through the UI
         working-directory: apps/mobile
         run: npm run e2e
