@@ -21,8 +21,9 @@
  * counts how often each pair of accounts sat together and at how many of those tables they shared
  * an IPv4 address (`pairStore`: the repositories, so the database on Postgres and the counts survive
  * a restart; shown to moderators). A pair that shared an IPv4 address at three tables in one UTC day
- * (`KEEP_APART_SHARED_PER_DAY`) is kept apart from then on, as a block keeps two accounts apart: a
- * second account behind one home address cannot keep sitting with the first. The table is opened
+ * (`KEEP_APART_SHARED_PER_DAY`) is kept apart for the rest of that day, as a block keeps two accounts
+ * apart: a second account behind one home address cannot keep sitting with the first. The next day
+ * the pair may sit together again, and its count starts again from nothing. The table is opened
  * with the pairs of its players that queued from one address key or one device (`linkedPairs`):
  * neither account of such a pair is rated at that table, and every other human is (src/tableRating.ts). A group
  * of four within the rating spread is seated at once; any group is seated, with Club bots in the
@@ -161,7 +162,7 @@ export interface MatchmakerOptions {
    * so they survive a restart and the admin view reads them there). Without it they are kept in
    * this process (`frequentPairs`).
    */
-  pairStore?: { record(pairs: Array<{ a: string; b: string; shared: boolean }>, at: number, max: number): Promise<void>; keptApart(userId: string): Promise<string[]> };
+  pairStore?: { record(pairs: Array<{ a: string; b: string; shared: boolean }>, at: number, max: number): Promise<void>; keptApart(userId: string, at: number): Promise<string[]> };
   log?: (line: string) => void;
 }
 
@@ -171,7 +172,7 @@ interface Entry {
   /** Arrival order among entries that joined in the same millisecond. */
   seq: number;
   avoid: Set<string>;
-  /** Accounts kept apart from this one for sharing an IPv4 address too often (`KEEP_APART_SHARED_PER_DAY`). */
+  /** Accounts kept apart from this one today for sharing an IPv4 address too often (`KEEP_APART_SHARED_PER_DAY`). */
   apart: Set<string>;
   /**
    * The address key and device: no two entries that share a device or an IPv6 /64 sit at one
@@ -245,7 +246,7 @@ export class Matchmaker implements QueueGate {
   /** Quick-match tables shared, by pair of accounts ("a b", a < b), least recently seen first. */
   private readonly pairs = new Map<string, QuickMatchPair>();
   private seq = 0;
-  /** Without a `pairStore`: the IPv4 tables each pair shared in one UTC day, and whether that kept it apart. */
+  /** Without a `pairStore`: the IPv4 tables each pair shared on its last such UTC day, and whether that kept it apart that day. */
   private readonly sharedDays = new Map<string, { day: number; today: number; apart: boolean }>();
   /** The chain of pair-count writes to `pairStore`. */
   private pairWrites: Promise<void> = Promise.resolve();
@@ -382,10 +383,12 @@ export class Matchmaker implements QueueGate {
           const day = Math.floor(at / DAY_MS);
           const d = this.sharedDays.get(key);
           const today = d && d.day === day ? d.today + 1 : 1;
-          this.sharedDays.set(key, { day, today, apart: (d?.apart ?? false) || today >= KEEP_APART_SHARED_PER_DAY });
+          // Kept apart for the rest of this UTC day only: a new day starts the count again.
+          this.sharedDays.set(key, { day, today, apart: today >= KEEP_APART_SHARED_PER_DAY });
         }
         if (this.pairs.size > MAX_TRACKED_PAIRS) {
-          const old = [...this.pairs.keys()].find((k) => !this.sharedDays.get(k)?.apart);
+          // The pair seen together least recently goes, unless it is kept apart today.
+          const old = [...this.pairs.keys()].find((k) => !this.apartToday(this.sharedDays.get(k), at));
           if (old !== undefined) {
             this.pairs.delete(old);
             this.sharedDays.delete(old);
@@ -395,20 +398,26 @@ export class Matchmaker implements QueueGate {
     }
   }
 
-  /** Who this account is kept apart from (after every pair count written so far); unknown reads as nobody. */
+  /** Whether a pair's shared-address count keeps it apart on the UTC day of `at`. */
+  private apartToday(d: { day: number; apart: boolean } | undefined, at: number): boolean {
+    return !!d && d.apart && d.day === Math.floor(at / DAY_MS);
+  }
+
+  /** Who this account is kept apart from today (after every pair count written so far); unknown reads as nobody. */
   private async keptApartFrom(userId: string): Promise<Set<string>> {
     const store = this.opts.pairStore;
+    const at = this.now();
     if (!store) {
       const out = new Set<string>();
       for (const [key, d] of this.sharedDays) {
         const [a, b] = key.split(' ');
-        if (d.apart && (a === userId || b === userId)) out.add(a === userId ? b : a);
+        if (this.apartToday(d, at) && (a === userId || b === userId)) out.add(a === userId ? b : a);
       }
       return out;
     }
     try {
       await this.pairWrites;
-      return new Set(await store.keptApart(userId));
+      return new Set(await store.keptApart(userId, at));
     } catch (e) {
       this.opts.log?.(`[signal] quick match kept-apart pairs not read: ${(e as Error).message}`);
       return new Set();

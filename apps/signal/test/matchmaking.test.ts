@@ -212,19 +212,37 @@ describe('one address or one device at a quick-match table', () => {
     expect(q.linked).toEqual([[['a', 'd']]]);
   });
 
-  it('keeps a pair apart for good once it shared an IPv4 address at three tables in one day', async () => {
+  it('keeps a pair apart for the rest of the UTC day once it shared an IPv4 address at three tables that day', async () => {
     const q = queue();
+    q.clock.now = Date.UTC(2026, 10, 17, 9, 0, 0);
     for (let i = 0; i < 3; i++) {
       await q.join('a', { address: '203.0.113.7' });
       await q.join('b', { address: '203.0.113.7' });
       q.advance(20_000);
     }
     expect(q.tables).toEqual([['a', 'b'], ['a', 'b'], ['a', 'b']]);
-    // From then on they are seated apart, with bots, from any address.
+    // From then on that day they are seated apart, with bots, from any address.
     await q.join('a', { address: '203.0.113.7' });
     await q.join('b', { address: '198.51.100.9' });
     q.advance(20_000);
     expect(q.tables.slice(3)).toEqual([['a'], ['b']]);
+    q.clock.now = Date.UTC(2026, 10, 17, 23, 59, 0);
+    await q.join('a', { address: '203.0.113.7' });
+    await q.join('b', { address: '203.0.113.7' });
+    q.advance(20_000);
+    expect(q.tables.slice(5)).toEqual([['a'], ['b']]);
+    // The next UTC day they may sit together again, and three more tables that day keep them apart again.
+    q.clock.now = Date.UTC(2026, 10, 18, 0, 30, 0);
+    for (let i = 0; i < 3; i++) {
+      await q.join('a', { address: '203.0.113.7' });
+      await q.join('b', { address: '203.0.113.7' });
+      q.advance(20_000);
+    }
+    expect(q.tables.slice(7)).toEqual([['a', 'b'], ['a', 'b'], ['a', 'b']]);
+    await q.join('a', { address: '203.0.113.7' });
+    await q.join('b', { address: '203.0.113.7' });
+    q.advance(20_000);
+    expect(q.tables.slice(10)).toEqual([['a'], ['b']]);
   });
 
   it('counts the shared tables per UTC day: two one day and one the next do not keep a pair apart', async () => {

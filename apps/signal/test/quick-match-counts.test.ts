@@ -51,7 +51,7 @@ function contract(name: string, repos: () => Repos) {
       expect((await r.quickMatchPairs.frequent(1, 1000)).some((p) => p.a === a || p.b === a)).toBe(false);
     });
 
-    it('keeps a pair apart for good once it shared an IPv4 address at three tables in one UTC day, and never forgets it for room', async () => {
+    it('keeps a pair apart for the rest of the UTC day once it shared an IPv4 address at three tables that day, and trims its row like any other once the day is over', async () => {
       const r = repos();
       const [a, b] = sorted(await user(), await user());
       const [c, d] = sorted(await user(), await user());
@@ -61,19 +61,34 @@ function contract(name: string, repos: () => Repos) {
       await r.quickMatchPairs.record([{ a, b, shared: true }], day2 - 1000, 20_000);
       await r.quickMatchPairs.record([{ a, b, shared: false }], day2 + 500, 20_000);
       await r.quickMatchPairs.record([{ a, b, shared: true }], day2 + 1000, 20_000);
-      expect(await r.quickMatchPairs.keptApart(a)).toEqual([]);
-      // Two more that day make three: kept apart from then on, from either side.
+      expect(await r.quickMatchPairs.keptApart(a, day2 + 1500)).toEqual([]);
+      // Two more that day make three: kept apart for the rest of that day, from either side.
       await r.quickMatchPairs.record([{ a, b, shared: true }, { a: c, b: d, shared: true }], day2 + 2000, 20_000);
-      expect(await r.quickMatchPairs.keptApart(a)).toEqual([]);
+      expect(await r.quickMatchPairs.keptApart(a, day2 + 2500)).toEqual([]);
       await r.quickMatchPairs.record([{ a, b, shared: true }], day2 + 3000, 20_000);
-      expect(await r.quickMatchPairs.keptApart(a)).toEqual([b]);
-      expect(await r.quickMatchPairs.keptApart(b)).toEqual([a]);
-      expect(await r.quickMatchPairs.keptApart(c)).toEqual([]);
-      // Past the most pairs kept (counting those not kept apart), the kept-apart pair stays although c and d were seen more recently.
+      expect(await r.quickMatchPairs.keptApart(a, day2 + 3500)).toEqual([b]);
+      expect(await r.quickMatchPairs.keptApart(b, day2 + DAY - 1)).toEqual([a]);
+      expect(await r.quickMatchPairs.keptApart(c, day2 + 3500)).toEqual([]);
+      // Past the most pairs kept, the pair kept apart today stays although c and d were seen more recently.
       const [e, f] = sorted(await user(), await user());
       await r.quickMatchPairs.record([{ a: e, b: f, shared: false }], day2 + 9000, 1);
-      expect(await r.quickMatchPairs.keptApart(a)).toEqual([b]);
+      expect(await r.quickMatchPairs.keptApart(a, day2 + 9500)).toEqual([b]);
       expect((await r.quickMatchPairs.frequent(1, 1000)).filter((p) => [a, c, e].includes(p.a)).map((p) => p.a).sort()).toEqual([a, e].sort());
+      // The next UTC day they are no longer kept apart, and a shared table there counts from one again.
+      const day3 = day2 + DAY;
+      expect(await r.quickMatchPairs.keptApart(a, day3)).toEqual([]);
+      expect(await r.quickMatchPairs.keptApart(b, day3 + 1000)).toEqual([]);
+      await r.quickMatchPairs.record([{ a, b, shared: true }], day3 + 1000, 20_000);
+      await r.quickMatchPairs.record([{ a, b, shared: true }], day3 + 2000, 20_000);
+      expect(await r.quickMatchPairs.keptApart(a, day3 + 2500)).toEqual([]);
+      await r.quickMatchPairs.record([{ a, b, shared: true }], day3 + 3000, 20_000);
+      expect(await r.quickMatchPairs.keptApart(a, day3 + 3500)).toEqual([b]);
+      // A day later still, its row goes like any other: e and f, seen more recently, stay.
+      const day4 = day3 + DAY;
+      await r.quickMatchPairs.record([{ a: e, b: f, shared: false }], day4 + 1000, 1);
+      const left = (await r.quickMatchPairs.frequent(1, 1000)).filter((p) => [a, c, e].includes(p.a));
+      expect(left.map((p) => p.a)).toEqual([e]);
+      expect(await r.quickMatchPairs.keptApart(a, day4 + 2000)).toEqual([]);
     });
 
     it('a matchmaker on the store keeps apart a pair that shared an address at three tables in a day, after a restart too', async () => {
@@ -111,6 +126,14 @@ function contract(name: string, repos: () => Repos) {
       clock += 1000;
       mm.tick();
       expect(tables.slice(3)).toEqual([[x, z], [y]]);
+      // The next UTC day the restarted matchmaker seats them together again when the other choice is bots.
+      clock = Date.UTC(2026, 10, 18, 9, 0, 0);
+      await mm.enqueue(peer(x, '198.51.100.30'));
+      await mm.enqueue(peer(y, '198.51.100.30'));
+      clock += 1000;
+      mm.tick();
+      await mm.pairsSaved();
+      expect(tables.slice(5)).toEqual([[x, y]]);
     });
 
     it('keeps the join allowance buckets by club, with one salt, and prunes the ones a day old', async () => {

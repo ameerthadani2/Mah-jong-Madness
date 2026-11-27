@@ -866,24 +866,30 @@ function memoryQuickMatchPairs(s: MemoryState): QuickMatchPairsRepo {
           const day = Math.floor(at / DAY_MS);
           const d = s.quickMatchShared.get(key);
           const today = d && d.day === day ? d.today + 1 : 1;
-          s.quickMatchShared.set(key, { day, today, apart: (d?.apart ?? false) || today >= KEEP_APART_SHARED_PER_DAY });
+          // Kept apart for the rest of this UTC day only: a new day starts the count again.
+          s.quickMatchShared.set(key, { day, today, apart: today >= KEEP_APART_SHARED_PER_DAY });
         }
-        // Past `max` pairs not kept apart, the least recently seen go first; a kept-apart pair is never forgotten.
-        let over = [...s.quickMatchPairs.keys()].filter((k) => !s.quickMatchShared.get(k)?.apart).length - max;
+        // Past `max` pairs, the least recently seen go first; a pair kept apart today stays until its day is over.
+        const keptToday = (k: string) => {
+          const d = s.quickMatchShared.get(k);
+          return !!d && d.apart && d.day === Math.floor(at / DAY_MS);
+        };
+        let over = [...s.quickMatchPairs.keys()].filter((k) => !keptToday(k)).length - max;
         for (const k of [...s.quickMatchPairs.keys()]) {
           if (over <= 0) break;
-          if (s.quickMatchShared.get(k)?.apart) continue;
+          if (keptToday(k)) continue;
           s.quickMatchPairs.delete(k);
           s.quickMatchShared.delete(k);
           over--;
         }
       }
     },
-    async keptApart(userId) {
+    async keptApart(userId, at) {
+      const day = Math.floor(at / DAY_MS);
       const out: string[] = [];
       for (const [k, d] of s.quickMatchShared) {
         const [a, b] = k.split(' ');
-        if (d.apart && (a === userId || b === userId)) out.push(a === userId ? b : a);
+        if (d.apart && d.day === day && (a === userId || b === userId)) out.push(a === userId ? b : a);
       }
       return out.sort();
     },
