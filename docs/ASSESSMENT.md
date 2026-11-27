@@ -242,6 +242,15 @@ New minor findings, each reported by one side (the next unit reproduces each bef
 
   Unit 20 fixed these five UX findings (see item 4).
 
+  **Fixed since this pass by unit 21a (2026-11-27), not rescored.** The rules, bots and learning findings above, and the app findings of the showcase screenshot review:
+  - **Rules.** New tests play games through to the voided 地胡 and 人胡 cases (a later draw, a chi, a win on a non-dealer's discard). Each of the three surviving mutations now fails its own test. Three other mutants still survive; the engineer argues that two of them cannot occur in real play.
+  - **Bots.** Beginner follows 嚦咕嚦咕 only when it is more than three steps nearer. On 4,000 paired hands no tier is behind (Beginner +0.04 a hand, se 0.05). The bot gate is unchanged.
+  - **The coach and the puzzles agree.** The coach names what it trades the improving tiles for. It never gives an efficiency reason for a tile the puzzle rejects: 0 of 19,603 real decisions did.
+  - **Discard puzzles.** The answer is placed at a depth the seed draws among the tiles that rules of thumb throw. In the checker's battery of 101 rules, none is over a bar (the strongest gets 41% of hard puzzles). The "spare tile" rule it found first is right on 27% of hard puzzles and 15 to 28% of dailies on my fresh seeds (about 50% before the repair).
+  - **Hard value puzzles still fall to a short rule.** The rule the item named now gets 51 to 56% (was 94 to 98%). But "chase the pattern when it is worth about twice the 台" now gets 299 of 300 on each of my two fresh sets (84 to 87% before). The repair showed that the current hand builds cannot keep both rules down at once. Closing this needs new builds, so it is open.
+  - **The app's Chinese and its look.** The review's wording is in: 覆盤, 四圈, 順子或刻子, 會員 and 會長, 去上課, 打哪張？, and full-width ！. None of the replaced words is left in the app, the engine or the zh-TW listing. Display text in Chinese uses a heavy system face. Scoring terms, tile names and numbers stay whole across line breaks. Both win-ribbon stars sit on the title's line. The claim-button glosses are readable: at least 5:1 on every button, where some were as low as 1.3:1. `docs/screenshots` holds 44 re-rendered images, the Google Play 9:16 frames included.
+  - **Still open from this list:** the daily-only script that waits 6 s, the fairness harness note, and the multiplayer, production, engineering and monetisation minors (unit 21b). A native Taiwanese reader should give the new Chinese lines a final read (owner).
+
 Owner-blocked, as before:
 - deployment;
 - native builds (android-play has never run, and the ios-testflight runs of 1 Nov failed);
